@@ -479,6 +479,9 @@ use crate::test_runner::jest::Jest;
 use crate::api::JSBundler;
 use bun_jsc::ZigStringJsc as _; // to_error_instance / to_type_error_instance
 use bun_jsc::call_frame::ArgumentsSlice;
+use bun_jsc::{StringJsc as _, bun_string_jsc};
+use bun_str::zig_string::Slice as ZigStringSlice;
+use crate::test_runner::expect::{JSGlobalObjectTestExt as _, JSValueTestExt as _};
 
 // ── local shim: JSC-side `ZigString.toJS / toExternalValue / toAtomicValue` ──
 // `bun_jsc::ZigString` is a `pub type` alias for `bun_str::ZigString`; the

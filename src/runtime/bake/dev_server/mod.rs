@@ -294,8 +294,8 @@ impl GraphTraceState {
     }
 
     pub fn clear(&mut self) {
-        self.server_bits.set_all(false);
-        self.client_bits.set_all(false);
+        self.server_bits.unmanaged.set_all(false);
+        self.client_bits.unmanaged.set_all(false);
     }
 
     pub fn resize(&mut self, side: Side, new_size: usize) -> Result<(), bun_core::Error> {
@@ -303,7 +303,7 @@ impl GraphTraceState {
             Side::Client => &mut self.client_bits,
             Side::Server => &mut self.server_bits,
         };
-        if b.bit_length() < new_size {
+        if b.unmanaged.bit_length < new_size {
             b.resize(new_size, false)?;
         }
         Ok(())

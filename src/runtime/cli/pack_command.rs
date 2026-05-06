@@ -848,7 +848,7 @@ fn add_bundled_dep(
         let _close = scopeguard::guard((), |_| dir.close());
 
         let mut iter = DirIterator::iterate(Fd::from_std_dir(&dir));
-        while let Some(entry) = iter.next().unwrap().ok().flatten() {
+        while let Some(entry) = iter.next().ok().flatten() {
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
                 continue;
             }
@@ -863,7 +863,7 @@ fn add_bundled_dep(
                             break 'root_depth;
                         }
                         // find more dependencies to bundle
-                        let source = match File::to_source_at(&dir, entry_name_z(entry_name, &entry_subpath_), Default::default()).unwrap() {
+                        let source = match file_to_source_at(&dir, entry_name_z(entry_name, &entry_subpath_)) {
                             Ok(s) => s,
                             Err(err) => {
                                 Output::err(
@@ -875,7 +875,7 @@ fn add_bundled_dep(
                             }
                         };
 
-                        let json = match JSON::parse_package_json_utf8(&source, &mut ctx.manager.log) {
+                        let json = match JSON::parse_package_json_utf8(&source, pm_log(ctx.manager), pack_bump()) {
                             Ok(j) => j,
                             Err(_) => break 'root_depth,
                         };
@@ -886,7 +886,7 @@ fn add_bundled_dep(
 
                         for dependency_group in [b"dependencies".as_slice(), b"optionalDependencies".as_slice()] {
                             let Some(dependencies_expr) = json.get(dependency_group) else { continue };
-                            let Expr::Data::EObject(dependencies) = &dependencies_expr.data else { continue };
+                            let ExprData::EObject(dependencies) = &dependencies_expr.data else { continue };
                             // TODO(port): Expr.data tagged-union pattern match shape
 
                             'next_dep: for dep in dependencies.properties.slice() {
@@ -915,7 +915,7 @@ fn add_bundled_dep(
                                 // starting at `node_modules/is-even/node_modules/is-odd`
                                 let mut dep_dir_depth: usize = bundled_root_depth + 2;
 
-                                match root_dir.open_dir_z(dep_subpath, bun_sys::OpenDirOptions { iterate: true }) {
+                                match dir_open_dir_z(root_dir, dep_subpath, bun_sys::OpenDirOptions { iterate: true, ..Default::default() }) {
                                     Ok(dep_dir) => {
                                         let dedupe_entry = dedupe.get_or_put(dep_subpath.as_bytes())?;
                                         if dedupe_entry.found_existing {
@@ -950,10 +950,7 @@ fn add_bundled_dep(
                                             };
                                             remain_end = node_modules_start;
 
-                                            let parent_dep_dir = match root_dir.open_dir_z(
-                                                parent_dep_subpath,
-                                                bun_sys::OpenDirOptions { iterate: true },
-                                            ) {
+                                            let parent_dep_dir = match dir_open_dir_z(root_dir, parent_dep_subpath, bun_sys::OpenDirOptions { iterate: true, ..Default::default() }) {
                                                 Ok(d) => d,
                                                 Err(_) => continue,
                                             };
@@ -1066,7 +1063,7 @@ fn iterate_project_tree(
         }
 
         let mut dir_iter = DirIterator::iterate(Fd::from_std_dir(&dir));
-        'next_entry: while let Some(entry) = dir_iter.next().unwrap().ok().flatten() {
+        'next_entry: while let Some(entry) = dir_iter.next().ok().flatten() {
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
                 continue;
             }
@@ -1141,7 +1138,7 @@ fn get_bundled_deps(json: &Expr, field: &'static str) -> Result<Option<Vec<Bundl
 
     'invalid_field: {
         match &bundled_deps.data {
-            Expr::Data::EArray(_) => {
+            ExprData::EArray(_) => {
                 let Some(mut iter) = bundled_deps.as_array() else { return Ok(Some(Vec::new())) };
 
                 while let Some(bundled_dep_item) = iter.next() {
@@ -1155,14 +1152,14 @@ fn get_bundled_deps(json: &Expr, field: &'static str) -> Result<Option<Vec<Bundl
                     });
                 }
             }
-            Expr::Data::EBoolean(_) => {
+            ExprData::EBoolean(_) => {
                 let Some(b) = bundled_deps.as_bool() else { return Ok(Some(Vec::new())) };
                 if !b == true {
                     return Ok(Some(Vec::new()));
                 }
 
                 if let Some(dependencies_expr) = json.get(b"dependencies") {
-                    if let Expr::Data::EObject(dependencies) = &dependencies_expr.data {
+                    if let ExprData::EObject(dependencies) = &dependencies_expr.data {
                         for dependency in dependencies.properties.slice() {
                             if dependency.key.is_none() {
                                 continue;
@@ -1207,7 +1204,7 @@ enum BinType {
 }
 
 struct BinInfo {
-    path: Box<ZStr>,
+    path: ZBox,
     ty: BinType,
 }
 
@@ -1220,13 +1217,13 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
         if let Some(bin_str) = bin.expr.as_string() {
             let normalized = resolve_path::normalize_buf::<resolve_path::platform::Posix>(bin_str, &mut path_buf);
             bins.push(BinInfo {
-                path: ZStr::from_bytes(normalized),
+                path: ZBox::from_bytes(normalized),
                 ty: BinType::File,
             });
             return Ok(bins);
         }
 
-        if let Expr::Data::EObject(bin_obj) = &bin.expr.data {
+        if let ExprData::EObject(bin_obj) = &bin.expr.data {
             if bin_obj.properties.len() == 0 {
                 return Ok(Vec::new());
             }
@@ -1236,7 +1233,7 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
                     if let Some(bin_str) = bin_prop_value.as_string() {
                         let normalized = resolve_path::normalize_buf::<resolve_path::platform::Posix>(bin_str, &mut path_buf);
                         bins.push(BinInfo {
-                            path: ZStr::from_bytes(normalized),
+                            path: ZBox::from_bytes(normalized),
                             ty: BinType::File,
                         });
                     }
@@ -1248,12 +1245,12 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
     }
 
     if let Some(directories) = json.as_property(b"directories") {
-        if let Expr::Data::EObject(directories_obj) = &directories.expr.data {
+        if let ExprData::EObject(directories_obj) = &directories.expr.data {
             if let Some(bin) = directories_obj.as_property(b"bin") {
                 if let Some(bin_str) = bin.expr.as_string() {
                     let normalized = resolve_path::normalize_buf::<resolve_path::platform::Posix>(bin_str, &mut path_buf);
                     bins.push(BinInfo {
-                        path: ZStr::from_bytes(normalized),
+                        path: ZBox::from_bytes(normalized),
                         ty: BinType::Dir,
                     });
                 }
@@ -1510,7 +1507,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
         let Some(scripts) = json.root.as_property(b"scripts") else {
             break 'post_scripts (None, None, None, false);
         };
-        if !matches!(scripts.expr.data, Expr::Data::EObject(_)) {
+        if !matches!(scripts.expr.data, ExprData::EObject(_)) {
             break 'post_scripts (None, None, None, false);
         }
 
@@ -2505,7 +2502,7 @@ fn edit_root_package_json(
         b"optionalDependencies".as_slice(),
     ] {
         if let Some(dependencies_expr) = json.root.get(dependency_group) {
-            if let Expr::Data::EObject(dependencies) = &dependencies_expr.data {
+            if let ExprData::EObject(dependencies) = &dependencies_expr.data {
                 for dependency in dependencies.properties.slice_mut() {
                     // TODO(port): Zig iterated `slice()` of `*dependency`; need mutable iter
                     if dependency.key.is_none() {

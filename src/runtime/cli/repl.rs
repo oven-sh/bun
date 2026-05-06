@@ -1744,12 +1744,15 @@ impl<'a> Repl<'a> {
     fn print_formatted_value(&mut self, value: JSValue) {
         let Some(global) = self.global else { return; };
         let writer = Output::writer();
+        // PORT NOTE: see `print_js_error_to` — buffer because
+        // `bun_core::io::Writer` doesn't implement `bun_io::Write`.
+        let mut buf: Vec<u8> = Vec::new();
         if let Err(err) = jsc::ConsoleObject::format2(
             jsc::ConsoleObject::MessageLevel::Log,
             global,
             &value,
             1,
-            writer,
+            &mut buf,
             jsc::ConsoleObject::FormatOptions {
                 enable_colors: self.use_colors,
                 add_newline: true,

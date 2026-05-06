@@ -624,10 +624,9 @@ impl S3Client {
     }
 }
 
-// TODO(port): `FormatTag` / `JSType` are the ConsoleObject formatter enums
-// (`.Double`, `.NumberObject`). Import from the ported ConsoleObject module
-// once available.
-use crate::console_object::{FormatTag, JSType};
+// `FormatTag` / `JSType` are the ConsoleObject formatter enums
+// (`.Double`, `.NumberObject`), re-exported at the `bun_jsc` crate root.
+use bun_jsc::{FormatTag, JSType};
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

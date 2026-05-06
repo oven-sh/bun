@@ -41,8 +41,9 @@ impl ObjectURLRegistry {
         let uuid = vm.rare_data().next_uuid();
         let entry = Entry::init(blob);
 
-        let mut map = self.map.lock();
+        let map = self.map.lock();
         map.insert(uuid, entry);
+        self.map.unlock();
         uuid
     }
 

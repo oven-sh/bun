@@ -11,6 +11,7 @@ use crate::linker_context_mod::{GenerateChunkCtx, LinkerOptionsMode};
 use crate::LinkerContext;
 use crate::options;
 use crate::options_impl::{LoaderExt as _, TargetExt as _};
+#[allow(unused_imports)]
 use crate::bun_renamer as renamer;
 #[allow(unused_imports)]
 use crate::bundle_v2::__phase_a_draft::{get_hmr_runtime, HmrRuntimeSide};
@@ -806,7 +807,6 @@ pub fn generate_entry_point_tail_js(
     r: js_printer::renamer::Renamer,
     mut module_info: Option<&mut ModuleInfo>,
 ) -> CompileResult {
-    let _ = (&temp_allocator, &module_info, to_common_js_ref, to_esm_ref);
     let flags: crate::js_meta::Flags = c.graph.meta.items_flags()[source_index as usize];
     // PERF(port): was arena-backed ArrayList(Stmt) — profile in Phase B
     let mut stmts: Vec<Stmt> = Vec::new();

@@ -578,6 +578,72 @@ pub mod fs {
             self.is_symlink = true;
         }
 
+        /// Port of `Path.assertPrettyIsValid` in `fs.zig` — debug-only check that
+        /// `pretty` contains no backslashes (Windows). No-op on POSIX.
+        #[inline]
+        pub fn assert_pretty_is_valid(&self) {
+            #[cfg(all(windows, debug_assertions))]
+            if bun_string::strings::index_of_char(self.pretty, b'\\').is_some() {
+                panic!("Expected pretty file path to have only forward slashes");
+            }
+        }
+
+        /// Port of `Path.assertFilePathIsAbsolute` in `fs.zig` — CI-assert only.
+        #[inline]
+        pub fn assert_file_path_is_absolute(&self) {
+            if bun_core::Environment::CI_ASSERT && self.is_file() {
+                debug_assert!(bun_paths::is_absolute(self.text));
+            }
+        }
+
+        /// Port of `Path.dupeAlloc` in `fs.zig` — interns `text`/`pretty` into the
+        /// process-static `FilenameStore` so the returned `Path` borrows `'static`
+        /// data. PORT NOTE: TYPE_ONLY shim — full overlap/slice-range
+        /// short-circuiting lives in the gated `fs_full::Path::dupe_alloc`; this
+        /// always interns to keep the bundler compiling until the two `Path`
+        /// definitions unify.
+        pub fn dupe_alloc(&self) -> Result<Path<'static>, bun_core::Error> {
+            let text = FilenameStore::instance().append_slice(self.text)?;
+            let pretty: &'static [u8] =
+                if core::ptr::eq(self.text.as_ptr(), self.pretty.as_ptr())
+                    && self.text.len() == self.pretty.len()
+                {
+                    text
+                } else if self.pretty.is_empty() {
+                    b""
+                } else {
+                    FilenameStore::instance().append_slice(self.pretty)?
+                };
+            let mut new_path = Path::<'static>::init(text);
+            new_path.pretty = pretty;
+            new_path.namespace = match self.namespace {
+                b"" | b"file" => b"file",
+                ns => FilenameStore::instance().append_slice(ns)?,
+            };
+            new_path.is_symlink = self.is_symlink;
+            new_path.is_disabled = self.is_disabled;
+            Ok(new_path)
+        }
+
+        /// Port of `Path.dupeAllocFixPretty` in `fs.zig`.
+        pub fn dupe_alloc_fix_pretty(&self) -> Result<Path<'static>, bun_core::Error> {
+            #[cfg(not(windows))]
+            {
+                self.dupe_alloc()
+            }
+            #[cfg(windows)]
+            {
+                let mut new = self.clone();
+                new.pretty = b"";
+                let mut new = new.dupe_alloc()?;
+                let mut owned: Vec<u8> = self.pretty.to_vec();
+                bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut owned);
+                new.pretty = FilenameStore::instance().append_slice(&owned)?;
+                new.assert_pretty_is_valid();
+                Ok(new)
+            }
+        }
+
         /// Port of `Path.hashKey` in `fs.zig`.
         pub fn hash_key(&self) -> u64 {
             if self.is_file() {

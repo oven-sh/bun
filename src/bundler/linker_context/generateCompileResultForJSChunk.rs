@@ -131,12 +131,12 @@ fn generate_compile_result_for_js_chunk_impl(
     let runtime_scope: &mut Scope =
         &mut c.graph.ast.items_module_scope_mut()[c.graph.files.items_input_file()[Index::RUNTIME.get() as usize].get() as usize];
     let runtime_members = &runtime_scope.members;
-    let to_common_js_ref = c.graph.symbols.follow(runtime_members.get(b"__toCommonJS").unwrap().ref_);
-    let to_esm_ref = c.graph.symbols.follow(runtime_members.get(b"__toESM").unwrap().ref_);
+    let to_common_js_ref = c.graph.symbols.follow(runtime_members.get(b"__toCommonJS".as_slice()).unwrap().ref_);
+    let to_esm_ref = c.graph.symbols.follow(runtime_members.get(b"__toESM".as_slice()).unwrap().ref_);
     let runtime_require_ref = if c.options.output_format == OutputFormat::Cjs {
         None
     } else {
-        Some(c.graph.symbols.follow(runtime_members.get(b"__require").unwrap().ref_))
+        Some(c.graph.symbols.follow(runtime_members.get(b"__require".as_slice()).unwrap().ref_))
     };
 
     let collect_decls = c.options.generate_bytecode_cache

@@ -153,7 +153,7 @@ pub trait HTMLProcessorHandler {
 impl<'a> HTMLProcessorHandler for HTMLScanner<'a> {
     fn on_tag(
         &mut self,
-        element: *mut lol::Element,
+        element: &mut lol::Element,
         path: &[u8],
         url_attribute: &[u8],
         kind: ImportKind,
@@ -289,9 +289,10 @@ impl<T: HTMLProcessorHandler> lol::DirectiveCallback<lol::Element> for TagUserDa
                         bstr::BStr::new(value.slice())
                     );
                     // SAFETY: `self.this` was set from `&mut T` in `run` and is
-                    // valid for the lifetime of the rewriter.
+                    // valid for the lifetime of the rewriter; `element` is the
+                    // live FFI handle passed to this handler.
                     unsafe {
-                        (*self.this).on_tag(element, value.slice(), tag_info.url_attribute, tag_info.kind);
+                        (*self.this).on_tag(&mut *element, value.slice(), tag_info.url_attribute, tag_info.kind);
                     }
                 }
             }

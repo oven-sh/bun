@@ -646,6 +646,8 @@ impl Pending {
         // self.future to Default (Zig left it untouched — no reader observes it after this).
         self.state = PendingState::None;
         self.result = StreamResult::Done;
+        // SAFETY: VM event loop is a singleton; temporary `&mut` is the sole
+        // borrow for the duration of `enqueue_task` (no re-entry into Rust).
         unsafe { &mut *vm.event_loop() }
             .enqueue_task(bun_event_loop::Task::init(Box::into_raw(clone)));
     }

@@ -175,8 +175,8 @@ pub fn write<W: Write + ?Sized>(
     chunks: &[Chunk],
     writer: &mut W,
 ) -> Result<(), bun_core::Error> {
-    let browser_source_index = graph.html_imports.html_source_indices.as_slice()[index as usize];
-    let server_source_index = graph.html_imports.server_source_indices.as_slice()[index as usize];
+    let browser_source_index = graph.html_imports.html_source_indices.slice()[index as usize];
+    let server_source_index = graph.html_imports.server_source_indices.slice()[index as usize];
     let sources: &[Source] = graph.input_files.items_source();
     // SAFETY: graph points to BundleV2.graph (Zig: @fieldParentPtr).
     let bv2: &BundleV2<'_> = unsafe {
@@ -244,7 +244,7 @@ pub fn write<W: Write + ?Sized>(
     // Also include browser chunks from server builds (lazy-loaded chunks from dynamic imports).
     // When there's only one HTML import, all browser chunks belong to that manifest.
     // When there are multiple HTML imports, only include chunks that intersect with this entry's bits.
-    let has_single_html_import = graph.html_imports.html_source_indices.len() == 1;
+    let has_single_html_import = graph.html_imports.html_source_indices.len == 1;
     for ch in chunks.iter() {
         if ch.entry_bits().has_intersection(&entry_point_bits)
             || (has_single_html_import

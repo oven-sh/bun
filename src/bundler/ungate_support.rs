@@ -569,16 +569,15 @@ pub mod html_import_manifest {
         w: &mut &mut [u8],
     ) -> Result<(), core::fmt::Error> {
         // PORT NOTE: Zig's `std.io.fixedBufferStream(remain).writer()` advances
-        // the slice in place; mirror that with a `fmt::Write` adapter so the
+        // the slice in place; mirror that with a `bun_io::Write` adapter so the
         // caller can recover `pos = before_len - cursor.len()`.
         struct FixedBufWriter<'a, 'b>(&'a mut &'b mut [u8]);
-        impl core::fmt::Write for FixedBufWriter<'_, '_> {
-            fn write_str(&mut self, s: &str) -> core::fmt::Result {
-                let bytes = s.as_bytes();
+        impl bun_io::Write for FixedBufWriter<'_, '_> {
+            fn write_all(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error> {
                 if bytes.len() > self.0.len() {
                     // Zig: error.NoSpaceLeft => unreachable (buffer was sized
                     // by the counting pass).
-                    return Err(core::fmt::Error);
+                    return Err(bun_core::err!("NoSpaceLeft"));
                 }
                 let (head, tail) = core::mem::take(self.0).split_at_mut(bytes.len());
                 head.copy_from_slice(bytes);

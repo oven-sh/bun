@@ -846,26 +846,32 @@ pub mod command {
                 super::build_command::BuildCommand::exec(ctx, None)?;
             }
             Tag::InstallCommand => {
+                // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
                 let ctx = unsafe { &mut *init(Tag::InstallCommand, log)? };
                 return super::install_command::InstallCommand::exec(ctx);
             }
             Tag::AddCommand => {
+                // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
                 let ctx = unsafe { &mut *init(Tag::AddCommand, log)? };
                 return super::add_command::AddCommand::exec(ctx);
             }
             Tag::UpdateCommand => {
+                // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
                 let ctx = unsafe { &mut *init(Tag::UpdateCommand, log)? };
                 return super::update_command::UpdateCommand::exec(ctx);
             }
             Tag::PatchCommand => {
+                // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
                 let ctx = unsafe { &mut *init(Tag::PatchCommand, log)? };
                 return super::patch_command::PatchCommand::exec(ctx);
             }
             Tag::PatchCommitCommand => {
+                // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
                 let ctx = unsafe { &mut *init(Tag::PatchCommitCommand, log)? };
                 return super::patch_commit_command::PatchCommitCommand::exec(ctx);
             }
             Tag::OutdatedCommand => {
+                // SAFETY: single-threaded startup (see RunAsNodeCommand arm).
                 let ctx = unsafe { &mut *init(Tag::OutdatedCommand, log)? };
                 return super::outdated_command::OutdatedCommand::exec(ctx);
             }

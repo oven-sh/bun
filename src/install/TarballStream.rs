@@ -810,7 +810,10 @@ impl TarballStream {
         // SAFETY: see comment above; network_task is live until published below.
         unsafe { (*network).response_buffer = Default::default() };
 
-        // SAFETY: task is live until pushed onto resolve_tasks below.
+        // SAFETY: `task` is live until pushed onto `resolve_tasks` below.
+        // `self.extract_task` is a raw `*mut Task` (not `&mut`), so this is
+        // the only `&mut Task` in existence — no aliasing with a stored
+        // reference. `populate_result` does not touch `self.extract_task`.
         self.populate_result(unsafe { &mut *task });
 
         // Temp-dir cleanup must happen before we release the stream or
@@ -974,7 +977,7 @@ impl TarballStream {
     }
 }
 
-impl<'a> Drop for TarballStream<'a> {
+impl Drop for TarballStream {
     fn drop(&mut self) {
         if let Some(fd) = self.out_fd {
             fd.close();

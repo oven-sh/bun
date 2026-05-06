@@ -1359,7 +1359,7 @@ pub fn load_npmrc(
     if let Some(query) = out.as_property(b"registry") {
         if let Some(str_) = query.expr.as_utf8_string_literal() {
             let mut p = bun_api::npm_registry::Parser {
-                log,
+                log: &mut *log,
                 source,
             };
             install.default_registry =

@@ -43,11 +43,8 @@ impl Cd {
         };
 
         // TODO(b2-blocked): ShellExecEnv::change_cwd(target) — resolve relative
-        // to current cwd, openat(O_DIRECTORY), swap cwd_fd. Body gated.
-        
-        {
-            include!("cd_change_cwd_body.rs");
-        }
+        // to current cwd, openat(O_DIRECTORY), swap cwd_fd. Body gated until
+        // ShellExecEnv lookup is wired.
         let _ = target;
         Builtin::done(interp, cmd, 0)
     }

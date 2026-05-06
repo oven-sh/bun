@@ -1718,6 +1718,7 @@ dependencies = [
  "bun_simdutf_sys",
  "bun_sourcemap",
  "bun_sourcemap_jsc",
+ "bun_standalone_graph",
  "bun_string",
  "bun_sys",
  "bun_threading",

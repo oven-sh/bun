@@ -3943,15 +3943,14 @@ impl<'a> LinkerContext<'a> {
                         // happened yet). So we need to wait until after tree shaking happens.
                         let generated =
                             self.generate_named_export_in_file(source_index, module_ref, name, name)?;
-                        let alloc = self.allocator();
-                        let new_stmts = alloc.alloc_slice_fill_iter(core::iter::once(
+                        let new_stmts: *mut [Stmt] = alloc.alloc_slice_fill_iter(core::iter::once(
                             Stmt::alloc(
                                 S::Local {
                                     is_export: true,
                                     decls: G::DeclList::from_slice(&[G::Decl {
                                         binding: Binding::alloc(
                                             alloc,
-                                            bun_js_parser::ast::b::Identifier { ref_: generated.0 },
+                                            bun_js_parser::ast::b::Identifier { r#ref: generated.0 },
                                             expr.loc,
                                         ),
                                         value: property.value,
@@ -3964,7 +3963,7 @@ impl<'a> LinkerContext<'a> {
                         // PORT NOTE: `parts.ptr[generated[1]]` — re-borrow `parts`
                         // here for borrowck.
                         let parts = self.graph.ast.items_parts_mut()[source_index as usize].slice_mut();
-                        parts[generated.1 as usize].stmts = new_stmts as *mut [Stmt];
+                        parts[generated.1 as usize].stmts = new_stmts;
                     }
                 }
 

@@ -115,7 +115,7 @@ extern "C" fn on_data(socket: *mut uws::udp::Socket, buf: *mut uws::udp::PacketB
                 // SAFETY: libc addr-format fn; src points to in_addr, dst is INET6_ADDRSTRLEN+1 bytes.
                 hostname = unsafe {
                     inet_ntop(
-                        f as c_int,
+                        f,
                         &peer4.addr as *const _ as *const c_void,
                         addr_buf.as_mut_ptr(),
                         addr_buf.len() as c_int,
@@ -126,11 +126,11 @@ extern "C" fn on_data(socket: *mut uws::udp::Socket, buf: *mut uws::udp::PacketB
             }
             f if f == inet::AF_INET6 => {
                 // SAFETY: family == AF_INET6 so peer is sockaddr_in6.
-                let peer6 = unsafe { &*(peer as *const sockaddr_in6) };
+                let peer6 = unsafe { &*(peer as *const _ as *const sockaddr_in6) };
                 // SAFETY: libc addr-format fn; src points to in6_addr, dst is INET6_ADDRSTRLEN+1 bytes.
                 hostname = unsafe {
                     inet_ntop(
-                        f as c_int,
+                        f,
                         &peer6.addr as *const _ as *const c_void,
                         addr_buf.as_mut_ptr(),
                         addr_buf.len() as c_int,
@@ -696,7 +696,7 @@ impl UDPSocket {
         let res = if arguments.len() > 1
             && this.parse_addr(global_this, JSValue::js_number(0), arguments[1], &mut interface)?
         {
-            if addr.family != interface.family {
+            if addr.ss_family != interface.ss_family {
                 return global_this.throw_invalid_arguments(format_args!(
                     "Family mismatch between address and interface"
                 ));
@@ -781,7 +781,7 @@ impl UDPSocket {
         // SAFETY: initialized by parse_addr above.
         let group_addr = unsafe { group_addr.assume_init() };
 
-        if source_addr.family != group_addr.family {
+        if source_addr.ss_family != group_addr.ss_family {
             return global_this.throw_invalid_arguments(format_args!(
                 "Family mismatch between source and group addresses"
             ));
@@ -800,7 +800,7 @@ impl UDPSocket {
         {
             // SAFETY: initialized by parse_addr above.
             let interface = unsafe { interface.assume_init() };
-            if source_addr.family != interface.family {
+            if source_addr.ss_family != interface.ss_family {
                 return global_this.throw_invalid_arguments(format_args!(
                     "Family mismatch among source, group and interface addresses"
                 ));

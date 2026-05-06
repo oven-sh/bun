@@ -548,7 +548,7 @@ pub fn export_keying_material(this: &mut This, global: &JSGlobalObject, frame: &
         let context_arg = args.ptr[2];
 
         // PERF(port): was arena bulk-free — profile in Phase B
-        if let Some(sb) = jsc::node::StringOrBuffer::from_js(global, context_arg)? {
+        if let Some(sb) = StringOrBuffer::from_js(global, context_arg)? {
             let context_slice = sb.slice();
 
             let buffer_size = usize::try_from(length).unwrap();
@@ -725,7 +725,7 @@ pub fn set_session(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) 
     let session_arg = args.ptr[0];
     // PERF(port): was arena bulk-free — profile in Phase B
 
-    if let Some(sb) = jsc::node::StringOrBuffer::from_js(global, session_arg)? {
+    if let Some(sb) = StringOrBuffer::from_js(global, session_arg)? {
         let session_slice = sb.slice();
         let ssl_ptr = this.socket.ssl();
         let mut tmp: *const u8 = session_slice.as_ptr();

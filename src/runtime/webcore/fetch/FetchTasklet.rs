@@ -396,10 +396,11 @@ impl FetchTasklet {
             let mut js_err = JSValue::ZERO;
             // if we are streaming update with error
             if let Some(readable) = self.readable_stream_ref.get(global_this) {
-                if let readable_stream::Ptr::Bytes(bytes) = &readable.ptr {
+                if let readable_stream::Source::Bytes(bytes) = readable.ptr {
                     js_err = err.to_js(global_this);
                     js_err.ensure_still_alive();
-                    bytes.on_data(readable_stream::StreamResult::Err(BodyValueError::JSValue(js_err)))?;
+                    // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
+                    unsafe { (*bytes).on_data(StreamResult::Err(StreamError::JSValue(js_err)))? };
                 }
             }
             if let Some(sink) = self.sink.as_ref() {

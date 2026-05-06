@@ -695,7 +695,7 @@ impl Image {
             // SAFETY: `Owned` bytes outlive the task because `this_ref` is held
             // Strong while pending_tasks > 0 (see `schedule()`).
             Source::Owned(b) => Ok(Input { bytes: b.as_slice() as *const [u8], ..Default::default() }),
-            Source::Path(p) => Ok(Input { path: Some(p.as_ptr()), ..Default::default() }),
+            Source::Path(p) => Ok(Input { path: Some(p.as_zstr() as *const ZStr), ..Default::default() }),
             // schedule() peels this off before pin_for_task is reached.
             Source::Blob(_) => unreachable!(),
         }
@@ -1494,7 +1494,9 @@ impl<'a> PipelineTask<'a> {
         // Jpegli XYB) as sRGB and visibly shifts the colours — see #30197.
         // JPEG/PNG/WebP embed it; HEIC/AVIF via the system backend do not.
         if enc.icc_profile.is_none() {
-            enc.icc_profile = decoded.icc_profile.clone();
+            // `EncodeOptions.icc_profile` borrows for the duration of `encode()`
+            // (raw `NonNull<[u8]>`); `decoded` outlives the call below.
+            enc.icc_profile = decoded.icc_profile.as_deref().map(core::ptr::NonNull::from);
         }
         let out = match codecs::encode(&decoded.rgba, decoded.width, decoded.height, enc) {
             Ok(o) => o,

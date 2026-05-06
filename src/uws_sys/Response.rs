@@ -958,6 +958,14 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.clear_on_writable())
     }
 
+    pub fn has_responded(self) -> bool {
+        any_dispatch!(self, |r| r.has_responded())
+    }
+
+    pub fn reset_timeout(self) {
+        any_dispatch!(self, |r| r.reset_timeout())
+    }
+
     pub fn clear_on_data(self) {
         any_dispatch!(self, |r| r.clear_on_data())
     }

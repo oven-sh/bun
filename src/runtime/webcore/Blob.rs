@@ -1270,10 +1270,11 @@ pub fn mkdir_if_not_exists<T: MkdirpTarget>(
     err_path: &[u8],
 ) -> Retry {
     if err.get_errno() == bun_sys::E::NOENT && this.mkdirp_if_not_exists() {
-        if let Some(dirname) = bun_paths::dirname(path_string.as_bytes(), bun_paths::Platform::Auto) {
+        // Zig: `std.fs.path.dirname(path_string)` → `bun_core::dirname` (Option-returning).
+        if let Some(dirname) = bun_core::dirname(path_string.as_bytes()) {
             let mut node_fs = node::fs::NodeFS::default();
-            match node_fs.mkdir_recursive(node::fs::MkdirArgs {
-                path: node::PathLike::String(bun_str::PathString::init_borrowed(dirname)),
+            match node_fs.mkdir_recursive(node::fs::args::Mkdir {
+                path: node::PathLike::String(bun_str::PathString::init(dirname)),
                 recursive: true,
                 always_return_none: true,
                 ..Default::default()
@@ -1285,7 +1286,7 @@ pub fn mkdir_if_not_exists<T: MkdirpTarget>(
                 bun_sys::Result::Err(err2) => {
                     this.set_errno_if_present(bun_core::errno_to_zig_err(err2.errno));
                     this.set_system_error(err.with_path(err_path).to_system_error());
-                    this.set_opened_fd_if_present(bun_sys::INVALID_FD);
+                    this.set_opened_fd_if_present(Fd::INVALID);
                     return Retry::Fail;
                 }
             }
@@ -4834,6 +4835,10 @@ impl Blob {
 }
 
 } // mod _jsc_gated
+
+// Re-export the write-file glue so sibling modules (S3File.rs) can call it
+// without reaching through the private `_jsc_gated` shim module.
+pub use _jsc_gated::{WriteFileOptions, write_file_internal};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Un-gated core constructors / JS bridging (B-2 round: init_with_store / to_js

@@ -118,9 +118,11 @@ impl Handler {
 
         // SAFETY: Zig signature is `vm: *jsc.VirtualMachine` (mutable). VirtualMachine is the
         // process-lifetime singleton (LIFETIMES.tsv = STATIC) and is only touched on the JS
-        // thread; `uncaught_exception` needs `&mut` to bump counters / set flags. Upcast the
-        // shared ref here rather than thread `&mut` through every `run_error_callback` caller.
-        let vm_mut = unsafe { &mut *(vm as *const VirtualMachine as *mut VirtualMachine) };
+        // thread; `uncaught_exception` needs `&mut` to bump counters / set flags. Derive the
+        // mutable pointer from the stored raw `self.vm` (== `vm`) rather than casting the
+        // shared ref, which rustc's invalid_reference_casting lint rejects.
+        let _ = vm;
+        let vm_mut = unsafe { &mut *(self.vm as *mut VirtualMachine) };
         let _ = vm_mut.uncaught_exception(global_object, error_value, false);
     }
 

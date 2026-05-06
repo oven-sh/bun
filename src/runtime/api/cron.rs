@@ -1345,12 +1345,14 @@ impl CronJob {
     fn to_js_ptr(this: *mut Self, global: &JSGlobalObject) -> JSValue {
         unsafe extern "C" {
             #[link_name = "CronJob__create"]
-            fn __create(global: *mut JSGlobalObject, ptr: *mut CronJob) -> JSValue;
+            fn __create(global: *mut JSGlobalObject, ptr: *mut core::ffi::c_void) -> JSValue;
         }
         // SAFETY: `global` is live; `this` is a live `Box::into_raw` pointer.
         // Ownership of one ref transfers to the C++ wrapper (released via
         // `finalize` → `deref`). `as_mut_ptr` derives `*mut` via `UnsafeCell`.
-        unsafe { __create(global.as_mut_ptr(), this) }
+        // The extern takes `*mut c_void` to keep the FFI signature repr-C-safe;
+        // `CronJob` itself is repr(Rust) (`#[JsClass]` adds no `#[repr]`).
+        unsafe { __create(global.as_mut_ptr(), this as *mut core::ffi::c_void) }
     }
 
     fn release_pending_ref(this: *mut Self) {
@@ -1401,10 +1403,11 @@ impl CronJob {
         // `rare_data::high_tier::CronJob`; cast through `*mut ()` for compare.
         // SAFETY: address-equality only.
         let needle = this as *mut ();
-        // SAFETY: single JS thread; mutation of the per-VM Vec.
-        let rare = unsafe { &mut *(vm as *const VirtualMachine as *mut VirtualMachine) }
-            .rare_data
-            .as_mut();
+        // SAFETY: single JS thread; mutation of the per-VM Vec. Route through the
+        // thread-local raw pointer (`VirtualMachine::get`) instead of upcasting
+        // `&VirtualMachine` so the `invalid_reference_casting` lint stays clean.
+        let _ = vm;
+        let rare = unsafe { &mut *VirtualMachine::get() }.rare_data.as_mut();
         if let Some(rare) = rare {
             if let Some(i) = rare.cron_jobs.iter().position(|&j| j as *mut () == needle) {
                 rare.cron_jobs.swap_remove(i);
@@ -1539,8 +1542,9 @@ impl CronJob {
                     }
                     // SAFETY: `vm.global` is the live per-VM global.
                     let global_ref = unsafe { &*vm.global };
-                    // SAFETY: single JS thread; `&mut` derived for the call only.
-                    let _ = unsafe { &mut *(vm as *const VirtualMachine as *mut VirtualMachine) }
+                    // SAFETY: single JS thread; `&mut` derived via the thread-local
+                    // raw pointer (avoids `&T` → `&mut T` provenance laundering).
+                    let _ = unsafe { &mut *VirtualMachine::get() }
                         .uncaught_exception(global_ref, err, false);
                 }
                 Self::schedule_next(this, vm);

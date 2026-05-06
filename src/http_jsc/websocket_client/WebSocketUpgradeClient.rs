@@ -902,32 +902,40 @@ impl<const SSL: bool> HTTPClient<SSL> {
         unsafe { Self::deref(this) };
     }
 
-    fn handle_proxy_response(&mut self, socket: Socket<SSL>, data: &[u8]) {
+    /// # Safety
+    /// `this` must point to a live `Self`. Takes `*mut Self` because
+    /// `terminate`/`handle_data` may free `this`; see `fail`.
+    unsafe fn handle_proxy_response(this: *mut Self, socket: Socket<SSL>, data: &[u8]) {
         log!("handleProxyResponse");
 
+        // SAFETY: short-lived `&mut` for body buffering; no reentrant calls in
+        // this region until `terminate` below.
+        let me = unsafe { &mut *this };
         let mut body = data;
-        if !self.body.is_empty() {
-            self.body.extend_from_slice(data);
-            body = &self.body;
+        if !me.body.is_empty() {
+            me.body.extend_from_slice(data);
+            body = &me.body;
         }
 
         // Check for HTTP 200 response from proxy
-        let is_first = self.body.is_empty();
+        let is_first = me.body.is_empty();
         const HTTP_200: &[u8] = b"HTTP/1.1 200 ";
         const HTTP_200_ALT: &[u8] = b"HTTP/1.0 200 ";
         if is_first && body.len() > HTTP_200.len() {
             if !body.starts_with(HTTP_200) && !body.starts_with(HTTP_200_ALT) {
                 // Proxy connection failed
-                self.terminate(ErrorCode::ProxyConnectFailed);
+                // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
+                unsafe { Self::terminate(this, ErrorCode::ProxyConnectFailed) };
                 return;
             }
         }
 
         // Parse the response to find the end of headers
-        let response = match picohttp::Response::parse(body, &mut self.headers_buf) {
+        let response = match picohttp::Response::parse(body, &mut me.headers_buf) {
             Ok(r) => r,
             Err(picohttp::ParseError::MalformedHttpResponse) => {
-                self.terminate(ErrorCode::InvalidResponse);
+                // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
+                unsafe { Self::terminate(this, ErrorCode::InvalidResponse) };
                 return;
             }
             Err(picohttp::ParseError::ShortRead) => {

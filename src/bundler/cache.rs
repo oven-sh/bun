@@ -247,158 +247,20 @@ impl Default for Fs {
     }
 }
 
-#[repr(C)]
-pub struct ExternalFreeFunction {
-    pub ctx: *mut c_void,
-    pub function: Option<unsafe extern "C" fn(*mut c_void)>,
-}
+// ══════════════════════════════════════════════════════════════════════════
+// CYCLEBREAK MOVE_DOWN: `Entry`/`Contents`/`ExternalFreeFunction` are defined
+// canonically in `bun_resolver::cache` (lower tier) because `Resolver.caches`
+// is typed by them and the resolver crate cannot depend on the bundler.
+// Re-export here so `crate::cache::Entry` and `bun_resolver::cache::Entry`
+// are the SAME nominal type — `ParseTask::get_code_for_parse_task_*` receives
+// a resolver-produced `Entry` and hands it to bundler-typed consumers without
+// a structural shim. See src/resolver/lib.rs `pub mod cache`.
+// ══════════════════════════════════════════════════════════════════════════
+pub use bun_resolver::cache::{Contents, Entry, ExternalFreeFunction};
 
-impl ExternalFreeFunction {
-    pub const NONE: ExternalFreeFunction = ExternalFreeFunction {
-        ctx: core::ptr::null_mut(),
-        function: None,
-    };
-
-    pub fn call(&self) {
-        if let Some(func) = self.function {
-            // SAFETY: ctx was provided by the same native plugin that provided `function`
-            unsafe { func(self.ctx) };
-        }
-    }
-}
-
-impl Default for ExternalFreeFunction {
-    fn default() -> Self {
-        Self::NONE
-    }
-}
-
-/// Provenance-tagged backing for `Entry` source bytes.
-///
-/// Replaces the prior `&'static [u8]` + `Box::leak`/`Box::from_raw` pair
-/// (forbidden per docs/PORTING.md §Forbidden patterns). Zig's `string` field
-/// (cache.zig:20) carried an implicit allocator contract; Rust makes that
-/// explicit so `deinit` matches on the variant instead of guessing provenance.
-pub enum Contents {
-    /// Empty / static literal.
-    Empty,
-    /// Heap-owned buffer (default-allocator path). Freed when this variant
-    /// drops. Stored as `Vec<u8>` (not `Box<[u8]>`) so a sentinel NUL can sit
-    /// in spare capacity past `len`, matching fs.zig:1289.
-    Owned(Vec<u8>),
-    /// Borrows the per-thread `shared_buffer` (or other caller-kept-alive
-    /// storage). Caller guarantees the pointee outlives all reads through this
-    /// `Entry`. NOT freed on `deinit`.
-    SharedBuffer { ptr: *const u8, len: usize },
-    /// Native-plugin memory; freed via `Entry.external_free_function.call()`.
-    External { ptr: *const u8, len: usize },
-}
-
-impl Default for Contents {
-    fn default() -> Self {
-        Contents::Empty
-    }
-}
-
-impl Contents {
-    #[inline]
-    pub fn as_slice(&self) -> &[u8] {
-        match self {
-            Contents::Empty => b"",
-            Contents::Owned(v) => v.as_slice(),
-            // SAFETY: ARENA — caller-established invariant (see variant docs):
-            // `ptr[..len]` is valid for reads for the lifetime of this `Entry`.
-            Contents::SharedBuffer { ptr, len } | Contents::External { ptr, len } => unsafe {
-                core::slice::from_raw_parts(*ptr, *len)
-            },
-        }
-    }
-
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        match self {
-            Contents::Empty => true,
-            Contents::Owned(v) => v.is_empty(),
-            Contents::SharedBuffer { len, .. } | Contents::External { len, .. } => *len == 0,
-        }
-    }
-}
-
-impl From<Vec<u8>> for Contents {
-    fn from(v: Vec<u8>) -> Self {
-        if v.is_empty() { Contents::Empty } else { Contents::Owned(v) }
-    }
-}
-
-impl From<Box<[u8]>> for Contents {
-    fn from(b: Box<[u8]>) -> Self {
-        if b.is_empty() { Contents::Empty } else { Contents::Owned(b.into_vec()) }
-    }
-}
-
-/// Port of `Fs.Entry` (cache.zig:19). `contents` is provenance-tagged (see
-/// [`Contents`]); callers feed `entry.contents()` into `logger::Source`.
-/// Ownership is **manual** (`deinit`), matching Zig — callers frequently hand
-/// the bytes off to a `Source` that outlives the `Entry`.
-pub struct Entry {
-    pub contents: Contents,
-    pub fd: Fd,
-    /// When `contents` comes from a native plugin, this field is populated
-    /// with information on how to free it.
-    pub external_free_function: ExternalFreeFunction,
-}
-
-impl Default for Entry {
-    fn default() -> Self {
-        Entry {
-            contents: Contents::Empty,
-            fd: Fd::INVALID,
-            external_free_function: ExternalFreeFunction::NONE,
-        }
-    }
-}
-
-impl Entry {
-    /// Convenience: take ownership of a heap buffer.
-    pub fn new(contents: Box<[u8]>, fd: Fd, external_free_function: ExternalFreeFunction) -> Entry {
-        // PORT NOTE: Zig stored an allocator+slice pair; Rust tags provenance
-        // so `deinit` matches instead of guessing.
-        Entry { contents: Contents::from(contents), fd, external_free_function }
-    }
-
-    #[inline]
-    pub fn contents(&self) -> &[u8] {
-        self.contents.as_slice()
-    }
-
-    /// Port of `Entry.deinit` (cache.zig:39). NOT `Drop` — Zig callers free
-    /// explicitly (and frequently hand `contents` off to a `Source` that
-    /// outlives the `Entry`).
-    pub fn deinit(&mut self) {
-        if let Some(func) = self.external_free_function.function {
-            // SAFETY: ctx/function pair was supplied together by the native plugin.
-            unsafe { func(self.external_free_function.ctx) };
-            self.external_free_function = ExternalFreeFunction::NONE;
-        }
-        // `Owned` frees on drop; `SharedBuffer`/`External`/`Empty` are no-ops —
-        // matches Zig's `allocator.free(entry.contents)` which only freed the
-        // default-allocator path.
-        self.contents = Contents::Empty;
-    }
-}
-
-impl Entry {
-    pub fn close_fd(&mut self) -> Option<bun_sys::Error> {
-        use bun_sys::FdExt as _;
-        if self.fd.is_valid() {
-            let fd = self.fd;
-            self.fd = Fd::INVALID;
-            // TODO(port): @returnAddress() has no stable Rust equivalent; pass None for now
-            return fd.close_allowing_bad_file_descriptor(None);
-        }
-        None
-    }
-}
+/// Legacy alias — several call sites import `crate::cache::CacheEntry`
+/// (mirrors Zig's `bun.transpiler.cache.Fs.Entry` qualified name).
+pub type CacheEntry = Entry;
 
 impl Fs {
     // When we are in a macro, the shared buffer may be in use by the in-progress macro.

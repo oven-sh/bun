@@ -1408,87 +1408,13 @@ impl core::fmt::Display for EscapedNamespace<'_> {
     }
 }
 
-#[derive(Clone, Copy)]
-pub struct PendingImport {
-    pub to_source_index: Index,
-    pub import_record_index: u32,
-}
-
-pub struct BundleV2<'a> {
-    // PORT NOTE: Zig stored `*Transpiler` (and aliased the same pointer into
-    // `ssr_transpiler` when SSR graph isn't separate). Kept as `&'a mut` for
-    // ergonomic field access in the draft body; `ssr_transpiler` is `*mut` so
-    // the alias is legal.
-    pub transpiler: &'a mut Transpiler<'a>,
-    /// When Server Component is enabled, this is used for the client bundles
-    /// and `transpiler` is used for the server bundles.
-    pub client_transpiler: Option<NonNull<Transpiler<'a>>>,
-    /// See bake.Framework.ServerComponents.separate_ssr_graph
-    pub ssr_transpiler: *mut Transpiler<'a>,
-    /// When Bun Bake is used, the resolved framework is passed here
-    pub framework: Option<bake::Framework>,
-    pub graph: Graph,
-    pub linker: LinkerContext<'a>,
-    pub bun_watcher: Option<NonNull<()>>, // TODO(port): lifetime — opaque hot_reloader
-    pub plugins: Option<NonNull<jsc_api::JSBundler::Plugin>>,
-    pub completion: Option<*mut JSBundleCompletionTask>,
-    /// CYCLEBREAK GENUINE: erased bake::DevServer. Populated from
-    /// `transpiler.options.dev_server` (now `*const ()`) + the runtime-registered
-    /// vtable at construction. All ~15 DevServer call sites go through this.
-    pub dev_server: Option<dispatch::DevServerHandle>,
-    /// In-memory files that can be used as entrypoints or imported.
-    /// This is a pointer to the FileMap in the completion config.
-    pub file_map: Option<&'a jsc_api::JSBundler::FileMap>,
-    pub source_code_length: usize,
-
-    /// There is a race condition where an onResolve plugin may schedule a task on the bundle thread before its parsing task completes
-    pub resolve_tasks_waiting_for_import_source_index: ArrayHashMap<IndexInt, BabyList<PendingImport>>,
-
-    /// Allocations not tracked by a threadlocal heap
-    pub free_list: Vec<Box<[u8]>>,
-
-    /// See the comment in `Chunk.OutputPiece`
-    pub unique_key: u64,
-    pub dynamic_import_entry_points: ArrayHashMap<IndexInt, ()>,
-    pub has_on_parse_plugins: bool,
-
-    pub finalizers: Vec<crate::cache::ExternalFreeFunction>,
-
-    pub drain_defer_task: DeferredBatchTask,
-
-    /// Set true by DevServer. Currently every usage of the transpiler (Bun.build
-    /// and `bun build` cli) runs at the top of an event loop. When this is
-    /// true, a callback is executed after all work is complete.
-    ///
-    /// You can find which callbacks are run by looking at the
-    /// `finishFromBakeDevServer(...)` function here
-    pub asynchronous: bool,
-    pub thread_lock: bun_core::ThreadLock,
-
-    // if false we can skip TLA validation and propagation
-    pub has_any_top_level_await_modules: bool,
-
-    /// Barrel optimization: tracks which exports have been requested from each
-    /// module encountered during barrel BFS. Keys are source_indices. Values
-    /// track requested export names for deduplication and cycle detection.
-    /// Persists across calls to scheduleBarrelDeferredImports so cross-file
-    /// deduplication is free.
-    pub requested_exports: ArrayHashMap<u32, barrel_imports::RequestedExports>,
-}
-
-pub struct BakeOptions<'a> {
-    pub framework: bake::Framework,
-    pub client_transpiler: NonNull<Transpiler<'a>>,
-    pub ssr_transpiler: NonNull<Transpiler<'a>>,
-    pub plugins: Option<NonNull<jsc_api::JSBundler::Plugin>>,
-}
+// Unified with the canonical definitions at the parent module level (this
+// avoids two distinct nominal `BundleV2`/`PendingImport`/`BakeOptions` types
+// that previously caused widespread "expected `BundleV2`, found `BundleV2`"
+// errors in cross-module call sites).
+pub use super::{BundleV2, PendingImport, BakeOptions};
 
 impl<'a> BundleV2<'a> {
-    #[inline]
-    pub fn r#loop(&mut self) -> &mut crate::ungate_support::EventLoop {
-        &mut self.linker.r#loop
-    }
-
     /// Returns the jsc.EventLoop where plugin callbacks can be queued up on
     pub fn js_loop_for_plugins(&mut self) -> &dispatch::JsEventLoopHandle {
         // CYCLEBREAK GENUINE: jsc::EventLoop → vtable handle. PERF(port): was inline switch.
@@ -1553,53 +1479,18 @@ impl<'a> BundleV2<'a> {
         Ok(client_transpiler)
     }
 
-    /// Most of the time, accessing .transpiler directly is OK. This is only
-    /// needed when it is important to distinct between client and server
-    ///
-    /// Note that .log, .allocator, and other things are shared
-    /// between the three transpiler configurations
-    #[inline]
-    pub fn transpiler_for_target(&mut self, target: options::Target) -> &mut Transpiler<'a> {
-        if !self.transpiler.options.server_components && self.linker.dev_server.is_none() {
-            if target == Target::Browser && self.transpiler.options.target.is_server_side() {
-                if let Some(mut ct) = self.client_transpiler {
-                    // SAFETY: client_transpiler lives for 'a (set in init/initialize).
-                    return unsafe { ct.as_mut() };
-                }
-                return self.initialize_client_transpiler().unwrap_or_else(|e: Error| {
-                    panic!("Failed to initialize client transpiler: {}", e.name());
-                });
-            }
-            return self.transpiler;
-        }
-
-        match target {
-            // SAFETY: ptrs live for 'a (set in init).
-            Target::Browser => unsafe { self.client_transpiler.unwrap().as_mut() },
-            Target::BakeServerComponentsSsr => unsafe { &mut *self.ssr_transpiler },
-            _ => self.transpiler,
-        }
-    }
-
     /// By calling this function, it implies that the returned log *will* be
     /// written to. For DevServer, this allocates a per-file log for the sources
     /// it is called on. Function must be called on the bundle thread.
     pub fn log_for_resolution_failures(&mut self, abs_path: &[u8], bake_graph: bake::Graph) -> &mut Logger::Log {
         if let Some(dev) = self.dev_server_handle() {
             // CYCLEBREAK GENUINE: DevServer → vtable. PERF(port): was inline switch.
+            // SAFETY: owner is a live *mut DevServer per handle invariant.
             return unsafe { &mut *(dev.vtable.log_for_resolution_failures)(dev.owner, abs_path, bake_graph) };
         }
-        self.transpiler.log
-    }
-
-    #[inline]
-    pub fn dev_server_handle(&self) -> Option<&dispatch::DevServerHandle> {
-        self.dev_server.as_ref()
-    }
-
-    #[inline]
-    pub fn path_to_source_index_map(&mut self, target: options::Target) -> &mut PathToSourceIndexMap {
-        self.graph.path_to_source_index_map(target)
+        // SAFETY: `transpiler.log` is set from a live `*mut Log` in `init` and
+        // outlives `BundleV2`.
+        unsafe { &mut *self.transpiler.log }
     }
 }
 
@@ -5343,10 +5234,7 @@ impl JSMetaFlags {
     pub fn set_wrap(&mut self, v: WrapKind) { self.0 = (self.0 & 0b0011_1111) | ((v as u8) << 6); }
 }
 
-pub enum AdditionalFile {
-    SourceIndex(IndexInt),
-    OutputFile(IndexInt),
-}
+pub use crate::AdditionalFile;
 
 #[derive(Default)]
 pub struct EntryPoint {

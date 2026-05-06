@@ -900,7 +900,8 @@ impl UpgradeCommand {
                         });
 
                         if err == bun_core::err!("FileNotFound") {
-                            if sys::access_cwd(exe, Default::default()).is_ok() {
+                            // Zig: std.fs.cwd().access(exe, .{}) — we already chdir'd to tmpdir
+                            if sys::exists(exe) {
                                 // On systems like NixOS, the FileNotFound is actually the system-wide linker,
                                 // as they do not have one (most systems have it at a known path). This is how
                                 // ChildProcess returns FileNotFound despite the actual

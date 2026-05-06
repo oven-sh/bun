@@ -533,6 +533,17 @@ impl Drop for hostent_with_ttls {
     }
 }
 
+// Per-record-type newtype aliases. Zig instantiated the resolve machinery over
+// the same `struct_hostent` / `hostent_with_ttls` with a comptime `type_name`
+// string; Rust callers (`dns.rs`) need distinct type names to monomorphise the
+// `CAresRecordType` cache-field constant per record. For now these are plain
+// aliases — the trait impls live downstream.
+pub type NsHostent = struct_hostent;
+pub type PtrHostent = struct_hostent;
+pub type CnameHostent = struct_hostent;
+pub type AHostentWithTtls = hostent_with_ttls;
+pub type AaaaHostentWithTtls = hostent_with_ttls;
+
 #[repr(C)]
 pub struct struct_nameinfo {
     pub node: *mut u8,

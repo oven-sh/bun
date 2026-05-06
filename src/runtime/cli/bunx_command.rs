@@ -779,7 +779,7 @@ impl BunxCommand {
 
         this_transpiler.env.map.put(b"PATH", &path)?;
         // TODO(port): std.fmt.count("{d}", .{uid}) — compute decimal digit count of uid.
-        let uid_digits = bun_core::fmt::count_digits(uid as u64);
+        let uid_digits = bun_core::fmt::count_int(uid as i64);
         let bunx_cache_dir: &[u8] =
             &path[0..temp_dir.len() + b"/bunx--".len() + package_fmt.len() + uid_digits];
 

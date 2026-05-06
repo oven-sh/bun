@@ -1122,8 +1122,14 @@ pub fn release() -> BunString {
     #[cfg(target_os = "linux")]
     let value: &[u8] = {
         // TODO(port): std.posix.uname → bun_sys::posix::uname
-        let uts = bun_sys::posix::uname();
-        let result = bun_str::slice_to_nul(&uts.release);
+        // SAFETY: zeroed POD; uname(2) fills the struct on success
+        let mut uts: libc::utsname = unsafe { core::mem::zeroed() };
+        unsafe { libc::uname(&mut uts) };
+        // SAFETY: c_char[] reinterpreted as u8[]
+        let release = unsafe {
+            core::slice::from_raw_parts(uts.release.as_ptr() as *const u8, uts.release.len())
+        };
+        let result = bun_str::slice_to_nul(release);
         name_buffer[..result.len()].copy_from_slice(result);
         &name_buffer[0..result.len()]
     };

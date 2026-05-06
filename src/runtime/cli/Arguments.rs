@@ -1701,7 +1701,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
 
         if let Some(inspect_flag) = args.option("--inspect") {
             ctx.runtime_options.debugger = if inspect_flag.is_empty() {
-                Command::Debugger::Enable(Default::default())
+                Debugger::Enable(Default::default())
             } else {
                 Command::Debugger::Enable(Command::DebuggerEnable {
                     path_or_port: Some(inspect_flag),

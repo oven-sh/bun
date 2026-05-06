@@ -1153,7 +1153,7 @@ fn get_hashes(global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
     // SAFETY: `for_each_hash` matches the expected callback signature; `&mut hashes` is valid
     // for the duration of the call.
     unsafe {
-        boringssl::EVP_MD_do_all_sorted(
+        boringssl::c::EVP_MD_do_all_sorted(
             for_each_hash,
             (&mut hashes) as *mut _ as *mut c_void,
         );
@@ -1210,6 +1210,8 @@ pub fn create_node_crypto_binding_zig(global: &JSGlobalObject) -> JSValue {
     crypto
 }
 } // mod _impl
+
+pub use _impl::timing_safe_equal;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

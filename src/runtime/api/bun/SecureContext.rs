@@ -141,43 +141,6 @@ impl SecureContext {
         }))
     }
 
-    /// `tls.createSecureContext(opts)` entry point. WeakGCMap-memoised by config
-    /// digest so identical configs return the same `JSSecureContext` cell while
-    /// it's alive; falls through to `create()` (which itself hits the native
-    /// `SSLContextCache`) on miss. Returning the same cell is what makes
-    /// `secureContext === createSecureContext(opts)` hold and lets `Listener.zig`
-    /// pointer-compare without a JS-side WeakRef map.
-    #[bun_jsc::host_fn]
-    pub fn intern(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args = callframe.arguments();
-        let opts = if args.len() > 0 { args[0] } else { JSValue::UNDEFINED };
-
-        let config = SSLConfig::from_js(global.bun_vm(), global, opts)?.unwrap_or_else(SSLConfig::zero);
-        // `defer config.deinit()` — handled by Drop.
-
-        let ctx_opts = config.as_usockets();
-        let d = ctx_opts.digest();
-        let key = u64::from_le_bytes(d[0..8].try_into().unwrap());
-
-        // SAFETY: FFI; `global` is a valid &JSGlobalObject for the duration of the call.
-        let cached = unsafe { cpp::Bun__SecureContextCache__get(global, key) };
-        if !cached.is_empty() {
-            if let Some(existing) = Self::from_js(cached) {
-                // 64-bit key collision is ~2⁻⁶⁴ but a false hit hands the wrong
-                // cert to a connection. Full-digest compare is 32 bytes; cheap.
-                if strings::eql_long(&existing.digest, &d, false) {
-                    return Ok(cached);
-                }
-            }
-        }
-
-        let sc = Self::create_with_digest(global, ctx_opts, d)?;
-        let value = sc.to_js(global);
-        // SAFETY: FFI; `global` is valid, `value` is a live JSValue rooted on the stack.
-        unsafe { cpp::Bun__SecureContextCache__set(global, key, value) };
-        Ok(value)
-    }
-
     /// `SSL_CTX_up_ref` and return — for callers that want to outlive this
     /// wrapper's GC. Most paths just pass `this.ctx` directly and let `SSL_new`
     /// take its own ref.
@@ -200,14 +163,6 @@ impl SecureContext {
 
     pub fn memory_cost(&self) -> usize {
         core::mem::size_of::<SecureContext>() + self.extra_memory
-    }
-
-    /// Exposed via `bun:internal-for-testing` so churn tests can assert
-    /// `SSL_CTX_new` was called O(1) times, not O(connections).
-    #[bun_jsc::host_fn]
-    pub fn js_live_count(_global: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
-        // SAFETY: FFI; reads a global atomic counter, no preconditions.
-        Ok(JSValue::js_number(unsafe { c::us_ssl_ctx_live_count() }))
     }
 }
 

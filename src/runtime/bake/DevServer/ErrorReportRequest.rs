@@ -530,8 +530,8 @@ fn extract_json_encoded_source_code<'a, const N: usize>(
 
         // Decode it
         if has_extra_escapes {
-            let mut bytes: bumpalo::collections::Vec<'a, u8> =
-                bumpalo::collections::Vec::with_capacity_in(encoded_line.len(), arena);
+            let mut bytes: bun_alloc::ArenaVec<'a, u8> =
+                bun_alloc::ArenaVec::with_capacity_in(encoded_line.len(), arena);
             l.decode_escape_sequences(0, encoded_line, false, &mut bytes)?;
             *decoded_line = bytes.into_bump_slice();
         } else {

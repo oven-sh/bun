@@ -1424,12 +1424,14 @@ impl CommandLineReporter {
         let mut lcov_state: Option<(File, &bun_str::ZStr, /*buffered*/ bun_io::BufferedWriter)> = if REPORTERS_LCOV {
             'brk: {
                 // Ensure the directory exists
-                let mut fs = jsc::node::fs::NodeFS::default();
-                let _ = fs.mkdir_recursive(jsc::node::fs::MkdirRecursiveArgs {
-                    path: jsc::node::PathLike {
-                        encoded_slice: ZigStringSlice::from_utf8_never_free(&opts.reports_directory),
-                    },
+                let mut fs = crate::node::fs::NodeFS::default();
+                let _ = fs.mkdir_recursive(crate::node::fs::args::Mkdir {
+                    path: crate::node::PathLike::EncodedSlice(
+                        ZigStringSlice::from_utf8_never_free(&opts.reports_directory),
+                    ),
                     always_return_none: true,
+                    recursive: true,
+                    ..Default::default()
                 });
 
                 // Write the lcov.info file to a temporary file we atomically rename to the final name after it succeeds

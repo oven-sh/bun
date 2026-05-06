@@ -1403,6 +1403,13 @@ pub fn print(args: fmt::Arguments<'_>) {
     print_to(Destination::Stdout, args);
 }
 
+/// `bun.Output.println(fmt, args)` — `print()` with a trailing newline.
+#[inline]
+pub fn println(args: fmt::Arguments<'_>) {
+    print_to(Destination::Stdout, args);
+    write_bytes(Destination::Stdout, b"\n");
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Scoped debug logging
 // ──────────────────────────────────────────────────────────────────────────

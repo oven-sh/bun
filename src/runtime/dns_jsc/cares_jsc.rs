@@ -670,19 +670,24 @@ impl ErrorDeferred {
             global_this: *const JSGlobalObject,
         }
         impl Context {
-            fn callback(self: Box<Self>) -> JsResult<()> {
+            fn callback(this: *mut Context) -> JsResult<()> {
+                // SAFETY: `this` is the Box::into_raw'd pointer passed to ManagedTask::new
+                // below; ManagedTask::run calls us exactly once with that pointer.
+                let this = unsafe { Box::from_raw(this) };
                 // SAFETY: global_this outlives the enqueued task (VM-owned).
-                let global = unsafe { &*self.global_this };
-                self.deferred.reject(global)
+                let global = unsafe { &*this.global_this };
+                this.deferred.reject(global)
             }
         }
 
-        let context = Box::new(Context { deferred: self, global_this: global_this as *const _ });
+        let context = Box::into_raw(Box::new(Context {
+            deferred: self,
+            global_this: global_this as *const _,
+        }));
         // TODO(@heimskr): new custom Task type
-        // TODO(port): verify ManagedTask::new signature for Box<Ctx> + fn(Box<Ctx>) -> JsResult<()>
         global_this
             .bun_vm()
-            .enqueue_task(bun_jsc::ManagedTask::new(context, Context::callback));
+            .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new(context, Context::callback));
     }
 }
 

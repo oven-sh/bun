@@ -905,7 +905,10 @@ fn export_replacement_value(
     Ok(None)
 }
 
-#[bun_jsc::host_fn]
+impl JSTranspiler {
+// JsClass construct hook — invoked via the codegen'd `${T}Class__construct`
+// shim emitted by `#[bun_jsc::JsClass]`, NOT via `#[host_fn]` (constructors
+// return `*mut Self`, not `JSValue`, so the free-fn shim would be ill-typed).
 pub fn constructor(
     global: &JSGlobalObject,
     callframe: &CallFrame,

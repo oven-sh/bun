@@ -758,9 +758,9 @@ impl Subprocess<'_> {
 
         let ipc_data = this.ipc_data.as_mut();
         let context = if this.has_exited() {
-            IPC::SendContext::SubprocessExited
+            IPC::FromEnum::SubprocessExited
         } else {
-            IPC::SendContext::Subprocess
+            IPC::FromEnum::Subprocess
         };
         IPC::do_send(ipc_data, global, call_frame, context)
     }
@@ -1207,7 +1207,10 @@ impl Subprocess<'_> {
         this.clear_abort_signal();
 
         debug_assert!(
-            !this.compute_has_pending_activity() || VirtualMachine::get().is_shutting_down()
+            !this.compute_has_pending_activity()
+                // SAFETY: VirtualMachine::get() returns a non-null thread-local; finalize
+                // runs on the JS thread so the VM is live.
+                || unsafe { (*VirtualMachine::VirtualMachine::get()).is_shutting_down() }
         );
         this.finalize_streams();
 

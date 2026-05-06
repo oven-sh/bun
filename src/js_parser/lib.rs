@@ -1898,7 +1898,7 @@ pub mod defines_full_draft {
                 // SAFETY: `a` is a live arena `StoreRef` from `parse_env_json`.
                 let src = unsafe { &*a.as_ptr() };
                 let mut items =
-                    bun_collections::BabyList::<expr::Expr>::init_capacity(src.items.len() as usize)?;
+                    bun_collections::BabyList::<expr::Expr>::init_capacity(src.items.len as usize)?;
                 for it in src.items.slice() {
                     items.append(expr::Expr {
                         loc: it.loc,
@@ -1912,7 +1912,7 @@ pub mod defines_full_draft {
                 // SAFETY: `o` is a live arena `StoreRef` from `parse_env_json`.
                 let src = unsafe { &*o.as_ptr() };
                 let mut properties = bun_collections::BabyList::<G::Property>::init_capacity(
-                    src.properties.len() as usize,
+                    src.properties.len as usize,
                 )?;
                 for prop in src.properties.slice() {
                     let key = match &prop.key {

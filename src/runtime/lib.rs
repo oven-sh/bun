@@ -28,6 +28,13 @@ pub mod node;
 pub mod bake;
 pub mod shell;
 pub mod cli;
+// Port of src/bun.js.zig — `Run::boot` / `Run::boot_standalone`. Mounted here
+// (not as a separate crate) because every dependency it has is already a dep of
+// `bun_runtime`, and the CLI dispatch in `cli/` needs to call it directly. The
+// Phase-A "higher-tier crate" split was speculative; folding it in breaks the
+// cycle the `bun_bun_js` shims were papering over.
+#[path = "../bun.js.rs"]
+pub mod run_main;
 pub mod napi;
 #[path = "api.rs"]
 pub mod api;

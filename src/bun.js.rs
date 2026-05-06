@@ -4,19 +4,21 @@ use core::mem::MaybeUninit;
 use std::io::Write as _;
 
 use bun_alloc::Arena; // MimallocArena
-use bun_runtime::cli::cli::Command;
+use crate::cli::Command;
 use bun_core::{Global, Output};
 use bun_http::AsyncHTTP;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, VirtualMachine};
 use bun_logger as logger;
-use bun_runtime::api::dns::Resolver as DNSResolver;
+use crate::api::dns::Resolver as DNSResolver;
 use bun_str::strings;
+
+extern crate bun_standalone_graph as bun_standalone_module_graph;
 
 // Thin re-exports (mirrors `pub const X = @import(...)` at file top).
 pub use bun_jsc as jsc_mod; // TODO(port): naming — Zig exposed this as `bun.js.jsc`
 pub use bun_jsc::bindgen;
-pub use bun_runtime::api;
-pub use bun_runtime::webcore;
+pub use crate::api;
+pub use crate::webcore;
 
 pub fn apply_standalone_runtime_flags(
     b: &mut bun_bundler::Transpiler,
@@ -808,9 +810,9 @@ unsafe extern "C" {
 
 // TODO(port): these enum paths are placeholders for cross-crate types referenced
 // only by variant; Phase B fixes imports.
-use bun_runtime::cli::debug::HotReload;
-use bun_runtime::cli::debug::Macros;
-use bun_runtime::cli::debug::OfflineMode;
+use crate::cli::debug::HotReload;
+use crate::cli::debug::Macros;
+use crate::cli::debug::OfflineMode;
 use bun_jsc::bun_cpu_profiler as CPUProfiler;
 use bun_jsc::bun_heap_profiler as HeapProfiler;
 

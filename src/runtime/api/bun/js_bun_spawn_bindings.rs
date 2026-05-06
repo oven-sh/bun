@@ -1580,7 +1580,11 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         // Specifying both `timeout: number` and `AbortSignal.timeout` chooses the soonest one.
         // This does mean if an AbortSignal times out it will throw
         if let Some(signal) = subprocess.abort_signal.as_deref() {
-            if let Some(abort_signal_timeout) = signal.get_timeout() {
+            // PORT NOTE: explicit UFCS — the inherent `AbortSignal::get_timeout`
+            // (now un-stubbed) returns `bun_jsc::abort_signal::Timeout`, which
+            // hasn't grown `event_loop_timer` yet; keep routing through the
+            // local ext trait (returns `None`) until that field lands.
+            if let Some(abort_signal_timeout) = AbortSignalSpawnExt::get_timeout(signal) {
                 // PORT NOTE: `AbortSignal::Timeout.event_loop_timer` uses the
                 // bun_event_loop-local `Timespec` stub; convert fieldwise.
                 if abort_signal_timeout.event_loop_timer.state == crate::timer::EventLoopTimerState::ACTIVE {

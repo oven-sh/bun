@@ -159,7 +159,7 @@ impl TextEncoderStreamEncoder {
             );
         }
 
-        JSUint8Array::from_bytes(global, buffer)
+        JSUint8Array::from_bytes(global, buffer.into())
     }
 
     fn encode_utf16(&mut self, global: &JSGlobalObject, input: &[u16]) -> JSValue {

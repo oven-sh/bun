@@ -984,7 +984,7 @@ impl<'a> BunTest<'a> {
                 } else {
                     Order::AllOrderResult::EMPTY
                 };
-                order.generate_order_describe(self.collection.root_scope)?;
+                order.generate_order_describe(&mut self.collection.root_scope)?;
                 beforeall_order.set_failure_skip_to(&mut order);
                 let afterall_order: Order::AllOrderResult = if self.first_last.last {
                     order.generate_all_order(&root.hook_scope.after_all)?

@@ -331,15 +331,15 @@ impl FileReader {
     // a quirk; preserved as-is.
     pub fn setup(&mut self, fd: Fd) {
         *self = FileReader {
-            reader: UnsafeCell::new(IOReader::default()),
+            reader: UnsafeCell::new(IOReader::init::<FileReader>()),
             done: false,
             fd,
             ..Default::default()
         };
 
         // SAFETY: see `parent()` — tight deref, no overlapping &mut held.
-        self.event_loop =
-            EventLoopHandle::init(unsafe { (*self.parent()).global_this() }.bun_vm().event_loop());
+        let global = unsafe { &*(*self.parent()).global_this };
+        self.event_loop = EventLoopHandle::init(global.bun_vm().event_loop() as *mut ());
     }
 
     pub fn on_start(&mut self) -> streams::Start {

@@ -2967,12 +2967,9 @@ impl PackageManager {
         todo!("blocked_on: package_manager_real::run_tasks::alloc_github_url (reconciler-6)")
     }
 
-    /// Port of `lifecycle.findTrustedDependenciesFromUpdateRequests`.
-    pub fn find_trusted_dependencies_from_update_requests(
-        &self,
-    ) -> bun_collections::ArrayHashMap<TruncatedPackageNameHash, ()> {
-        bun_collections::ArrayHashMap::default()
-    }
+    // PORT NOTE: `find_trusted_dependencies_from_update_requests` stub removed —
+    // real body lives in `package_manager_real::package_manager_lifecycle`
+    // (PackageManagerLifecycle.rs, impl on this same `crate::PackageManager`).
 
     // PORT NOTE: `get_preinstall_state` / `set_preinstall_state` were stub-duplicated here;
     // the real bodies live in `package_manager_real::package_manager_lifecycle` (impl on this

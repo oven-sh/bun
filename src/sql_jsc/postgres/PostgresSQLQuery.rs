@@ -508,11 +508,14 @@ impl PostgresSQLQuery {
 
             // PostgresSQLStatement is intrusively refcounted; allocate a fresh box and
             // hand ownership to `this.statement` (count = 1).
-            let stmt: *mut PostgresSQLStatement = Box::into_raw(Box::new(PostgresSQLStatement {
-                signature: Signature::empty(),
-                status: StatementStatus::Parsing,
-                ..Default::default()
-            }));
+            // NOTE: PostgresSQLStatement implements Drop, so functional-record-update
+            // (`..Default::default()`) is forbidden (E0509). Build + mutate instead.
+            let stmt: *mut PostgresSQLStatement = {
+                let mut s = PostgresSQLStatement::default();
+                s.signature = Signature::empty();
+                s.status = StatementStatus::Parsing;
+                Box::into_raw(Box::new(s))
+            };
             // Query is simple and it's the only owner of the statement
             this.statement = Some(stmt);
 

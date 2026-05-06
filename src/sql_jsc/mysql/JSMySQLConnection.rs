@@ -477,7 +477,7 @@ impl JSMySQLConnection {
             tls_config = if tls_object.is_boolean() && tls_object.to_boolean() {
                 SSLConfig::default()
             } else if tls_object.is_object() {
-                match SSLConfig::from_js(vm, global_object, tls_object) {
+                match SSLConfig::from_js(&mut *vm, global_object, tls_object) {
                     Ok(Some(c)) => c,
                     Ok(None) => SSLConfig::default(),
                     Err(_) => return Ok(JSValue::ZERO),

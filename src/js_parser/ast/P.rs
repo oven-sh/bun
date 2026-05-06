@@ -5236,27 +5236,30 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
     }
 
-    #[cfg(any())] // blocked_on: b(); visit_expr; Runtime::ReplaceableExport variants
     pub fn replace_decl_and_possibly_remove(
         &mut self,
         decl: &mut G::Decl,
         replacement: &crate::parser::Runtime::ReplaceableExport,
     ) -> bool {
+        use crate::parser::Runtime::ReplaceableExport;
         match replacement {
-            crate::parser::Runtime::ReplaceableExport::Delete => false,
-            crate::parser::Runtime::ReplaceableExport::Replace(value) => {
+            ReplaceableExport::Delete => false,
+            ReplaceableExport::Replace(value) => {
                 decl.value = Some(self.visit_expr(*value));
                 true
             }
-            crate::parser::Runtime::ReplaceableExport::Inject(with) => {
+            ReplaceableExport::Inject { name, value } => {
                 let bind_loc = decl.binding.loc;
                 let val_loc = decl.value.map(|v| v.loc).unwrap_or(bind_loc);
+                // declare_symbol stores the name in the symbol table for the parser lifetime;
+                // arena-copy the boxed `name` so it lives for `'a`.
+                let name: &'a [u8] = self.allocator.alloc_slice_copy(name);
+                let r#ref = self
+                    .declare_symbol(js_ast::symbol::Kind::Other, bind_loc, name)
+                    .expect("unreachable");
                 *decl = G::Decl {
-                    binding: self.b(
-                        B::Identifier { r#ref: self.declare_symbol(js_ast::symbol::Kind::Other, bind_loc, with.name).expect("unreachable") },
-                        bind_loc,
-                    ),
-                    value: Some(self.visit_expr(Expr { data: with.value.data, loc: val_loc })),
+                    binding: self.b(B::Identifier { r#ref }, bind_loc),
+                    value: Some(self.visit_expr(Expr { data: value.data, loc: val_loc })),
                 };
                 true
             }

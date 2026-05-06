@@ -4,7 +4,7 @@
 
 use core::fmt;
 
-use bun_core::{Environment, feature_flags as FeatureFlags, Output};
+use bun_core::{Environment, feature_flags as FeatureFlags};
 use bun_logger as logger;
 use bun_logger::{Loc, Log, Range, Source};
 use bun_string::strings;
@@ -3017,11 +3017,11 @@ lexer_impl_header! {
                 }
                 c if c == 0x27 => {
                     self.step();
-                    self.parse_jsx_string_literal::<{b'\''}>()?;
+                    self.parse_jsx_string_literal::<b'\''>()?;
                 }
                 c if c == 0x22 => {
                     self.step();
-                    self.parse_jsx_string_literal::<{ b'"' }>()?;
+                    self.parse_jsx_string_literal::<b'"'>()?;
                 }
                 _ => {
                     if is_whitespace(self.code_point) {

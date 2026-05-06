@@ -840,9 +840,9 @@ impl<'a> Parser<'a> {
                         // duration of `append_part`; nothing else reads the map
                         // entry until we restore below.
                         p.scope_order_to_visit = unsafe {
-                            &mut *core::ptr::from_mut::<[_]>(
-                                p.scopes_in_order_for_enum.values_mut()[idx],
-                            )
+                            let slot: &mut &'a mut [_] =
+                                &mut p.scopes_in_order_for_enum.values_mut()[idx];
+                            &mut *(core::ptr::from_mut::<[_]>(*slot))
                         };
 
                         let mut enum_parts = BumpVec::<js_ast::Part>::new_in(allocator);
@@ -1050,9 +1050,10 @@ impl<'a> Parser<'a> {
 
         if p.should_unwrap_commonjs_to_esm() {
             if !p.imports_to_convert_from_require.as_slice().is_empty() {
-                let all_stmts = p
-                    .allocator
-                    .alloc_slice_fill_default::<Stmt>(p.imports_to_convert_from_require.len());
+                let all_stmts = p.allocator.alloc_slice_fill_with::<Stmt, _>(
+                    p.imports_to_convert_from_require.len(),
+                    |_| Stmt { loc: logger::Loc::EMPTY, data: js_ast::StmtData::SEmpty(S::Empty {}) },
+                );
                 before.reserve(p.imports_to_convert_from_require.len());
 
                 let mut remaining_stmts: &mut [Stmt] = all_stmts;
@@ -1064,7 +1065,8 @@ impl<'a> Parser<'a> {
                     // SAFETY: `module_scope` is a non-null arena pointer set by `prepare_for_visit_pass`.
                     unsafe { &mut *p.module_scope }
                         .generated
-                        .push(p.allocator, deferred_import.namespace.ref_.unwrap())?;
+                        .append(deferred_import.namespace.ref_.unwrap())
+                        .expect("oom");
 
                     import_part_stmts[0] = Stmt::alloc(
                         S::Import {
@@ -1240,10 +1242,12 @@ impl<'a> Parser<'a> {
                                 if let Some(id) = redirect_import_record_index {
                                     part.symbol_uses = Default::default();
                                     return Ok(js_ast::Result::Ast(js_ast::Ast {
-                                        import_records: BabyList::from_slice(
-                                            p.import_records.items(),
-                                        )
-                                        .expect("oom"),
+                                        // SAFETY: borrow the arena/Vec-backed records as a
+                                        // BabyList view (matches `P::to_ast`); `p` is dropped
+                                        // immediately after this return so no double-ownership.
+                                        import_records: unsafe {
+                                            BabyList::from_bump_slice(p.import_records.items_mut())
+                                        },
                                         redirect_import_record_index: Some(id),
                                         named_imports: core::mem::take(&mut *p.named_imports),
                                         named_exports: core::mem::take(&mut p.named_exports),
@@ -1424,8 +1428,10 @@ impl<'a> Parser<'a> {
                     if let Some(star) = export_star_redirect {
                         return Ok(js_ast::Result::Ast(js_ast::Ast {
                             // TODO(port): Zig set `.allocator = p.allocator`; arena ownership tracked elsewhere in Rust
-                            import_records: BabyList::from_slice(p.import_records.items())
-                                .expect("oom"),
+                            // SAFETY: see note on the matching arm above.
+                            import_records: unsafe {
+                                BabyList::from_bump_slice(p.import_records.items_mut())
+                            },
                             redirect_import_record_index: Some(star.import_record_index),
                             named_imports: core::mem::take(&mut *p.named_imports),
                             named_exports: core::mem::take(&mut p.named_exports),
@@ -1659,7 +1665,13 @@ impl<'a> Parser<'a> {
                 p.s(
                     S::Local {
                         kind: js_ast::LocalKind::KVar,
-                        decls: G::DeclList::from_slice(decls).expect("oom"),
+                        decls: {
+                            let mut dl = G::DeclList::init_capacity(decls.len()).expect("oom");
+                            for d in decls.iter_mut() {
+                                dl.append_assume_capacity(core::mem::take(d));
+                            }
+                            dl
+                        },
                         ..Default::default()
                     },
                     logger::Loc::EMPTY,
@@ -1852,7 +1864,7 @@ impl<'a> Parser<'a> {
                 unsafe { &mut *cache_ptr }.input_hash = None;
             }
             } // end #[cfg(any())] Jest gate
-            let _ = (jest, &mut declared_symbols);
+            let _ = jest;
         }
 
         #[cfg(any())] // blocked_on: RuntimeImports::iter() Entry shape + GenerateImportSymbols impl for RuntimeImports

@@ -150,12 +150,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // PORT NOTE: Zig used `bun.once` over a module-level `var shell_buf`
         // (run_command.zig:73). Process-lifetime; written exactly once on the
         // CLI thread.
-        static SHELL_BUF: ::core::cell::SyncUnsafeCell<PathBuffer> =
-            ::core::cell::SyncUnsafeCell::new(PathBuffer::ZEROED);
+        static mut SHELL_BUF: PathBuffer = PathBuffer::ZEROED;
         static ONCE: bun_core::Once<Option<&'static ZStr>> = bun_core::Once::new();
         ONCE.call(|| {
-            // SAFETY: single-writer (Once), process-lifetime storage.
-            let buf = unsafe { &mut *SHELL_BUF.get() };
+            // SAFETY: single-writer (Once gate), process-lifetime storage,
+            // CLI is single-threaded at this point.
+            let buf = unsafe { &mut *::core::ptr::addr_of_mut!(SHELL_BUF) };
             let len = Self::find_shell_impl(path, cwd, buf)?;
             buf[len] = 0;
             // SAFETY: `buf[len] == 0` written above; SHELL_BUF is `'static`.

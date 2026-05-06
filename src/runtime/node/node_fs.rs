@@ -1644,17 +1644,20 @@ pub mod args {
         pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Chown> {
             let path = PathLike::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments("path must be a string or TypedArray"))?;
+            // Zig: `errdefer path.deinit()` — fires on every error return, including
+            // `try validateInteger`. Model with scopeguard, defused on success.
+            let path = scopeguard::guard(path, |p| p.deinit());
             let uid: UidT = 'brk: {
-                let Some(uid_value) = arguments.next() else { path.deinit(); return Err(ctx.throw_invalid_arguments("uid is required")); };
+                let Some(uid_value) = arguments.next() else { return Err(ctx.throw_invalid_arguments("uid is required")); };
                 arguments.eat();
                 break 'brk wrap_to::<UidT>(node::validators::validate_integer(ctx, uid_value, "uid", Some(-1), Some(u32::MAX as i64))?);
             };
             let gid: GidT = 'brk: {
-                let Some(gid_value) = arguments.next() else { path.deinit(); return Err(ctx.throw_invalid_arguments("gid is required")); };
+                let Some(gid_value) = arguments.next() else { return Err(ctx.throw_invalid_arguments("gid is required")); };
                 arguments.eat();
                 break 'brk wrap_to::<GidT>(node::validators::validate_integer(ctx, gid_value, "gid", Some(-1), Some(u32::MAX as i64))?);
             };
-            Ok(Chown { path, uid, gid })
+            Ok(Chown { path: scopeguard::ScopeGuard::into_inner(path), uid, gid })
         }
     }
 
@@ -4156,7 +4159,8 @@ impl NodeFS {
                     dirent_path_prev = BunString::clone_utf8(path_u8);
                 }
             }
-            T::append_entry_recursive(entries, utf8_name, name_to_copy, &dirent_path_prev, effective_kind, args.encoding);
+            // async path: spec uses raw `bun.String.cloneUTF8` (node_fs.zig:4810/4819) — do not apply encoding.
+            T::append_entry_recursive(entries, utf8_name, name_to_copy, &dirent_path_prev, effective_kind, args.encoding, false);
         }
 
         dirent_path_prev.deref();
@@ -4315,7 +4319,8 @@ impl NodeFS {
                         );
                     }
                 }
-                T::append_entry_recursive(entries, utf8_name, name_to_copy, &dirent_path_prev, effective_kind, args.encoding);
+                // sync path: spec uses `WebCore.encoding.toBunString(.., args.encoding)` (node_fs.zig:4962-4982).
+                T::append_entry_recursive(entries, utf8_name, name_to_copy, &dirent_path_prev, effective_kind, args.encoding, true);
             }
             dirent_path_prev.deref();
         }
@@ -5948,9 +5953,14 @@ pub trait ReaddirEntry: Sized {
     );
     /// Recursive readdir: `utf8_name` is the bare entry name, `name_to_copy`
     /// is the path *relative to the recursion root* (what Node returns).
+    /// `apply_encoding` distinguishes the sync path (node_fs.zig:4962-4982,
+    /// which honours `args.encoding` via `WebCore.encoding.toBunString`) from
+    /// the async path (node_fs.zig:4800-4821, which uses raw
+    /// `bun.String.cloneUTF8` and ignores the requested encoding).
     fn append_entry_recursive(
         entries: &mut Vec<Self>, utf8_name: &[u8], name_to_copy: &[u8],
         dirent_path: &BunString, kind: sys::FileKind, encoding: Encoding,
+        apply_encoding: bool,
     );
 }
 impl ReaddirEntry for BunString {
@@ -5960,8 +5970,13 @@ impl ReaddirEntry for BunString {
     fn append_entry(entries: &mut Vec<Self>, utf8_name: &[u8], _dirent_path: &BunString, _kind: sys::FileKind, encoding: Encoding) {
         entries.push(webcore::encoding::to_bun_string(utf8_name, encoding));
     }
-    fn append_entry_recursive(entries: &mut Vec<Self>, _utf8_name: &[u8], name_to_copy: &[u8], _dirent_path: &BunString, _kind: sys::FileKind, encoding: Encoding) {
-        entries.push(webcore::encoding::to_bun_string(strings::without_nt_prefix::<u8>(name_to_copy), encoding));
+    fn append_entry_recursive(entries: &mut Vec<Self>, _utf8_name: &[u8], name_to_copy: &[u8], _dirent_path: &BunString, _kind: sys::FileKind, encoding: Encoding, apply_encoding: bool) {
+        let bytes = strings::without_nt_prefix::<u8>(name_to_copy);
+        entries.push(if apply_encoding {
+            webcore::encoding::to_bun_string(bytes, encoding)
+        } else {
+            BunString::clone_utf8(bytes)
+        });
     }
 }
 impl ReaddirEntry for Dirent {
@@ -5975,9 +5990,13 @@ impl ReaddirEntry for Dirent {
             kind,
         });
     }
-    fn append_entry_recursive(entries: &mut Vec<Self>, utf8_name: &[u8], _name_to_copy: &[u8], dirent_path: &BunString, kind: sys::FileKind, encoding: Encoding) {
+    fn append_entry_recursive(entries: &mut Vec<Self>, utf8_name: &[u8], _name_to_copy: &[u8], dirent_path: &BunString, kind: sys::FileKind, encoding: Encoding, apply_encoding: bool) {
         entries.push(Dirent {
-            name: webcore::encoding::to_bun_string(utf8_name, encoding),
+            name: if apply_encoding {
+                webcore::encoding::to_bun_string(utf8_name, encoding)
+            } else {
+                BunString::clone_utf8(utf8_name)
+            },
             path: dirent_path.dupe_ref(),
             kind,
         });
@@ -5990,7 +6009,7 @@ impl ReaddirEntry for Buffer {
     fn append_entry(entries: &mut Vec<Self>, utf8_name: &[u8], _dirent_path: &BunString, _kind: sys::FileKind, _encoding: Encoding) {
         entries.push(Buffer::from_string(utf8_name).expect("oom"));
     }
-    fn append_entry_recursive(entries: &mut Vec<Self>, _utf8_name: &[u8], name_to_copy: &[u8], _dirent_path: &BunString, _kind: sys::FileKind, _encoding: Encoding) {
+    fn append_entry_recursive(entries: &mut Vec<Self>, _utf8_name: &[u8], name_to_copy: &[u8], _dirent_path: &BunString, _kind: sys::FileKind, _encoding: Encoding, _apply_encoding: bool) {
         entries.push(Buffer::from_string(strings::without_nt_prefix::<u8>(name_to_copy)).expect("oom"));
     }
 }

@@ -657,64 +657,6 @@ impl Response {
         Ok(())
     }
 
-    pub fn is_ok(&self) -> bool {
-        self.init.status_code >= 200 && self.init.status_code <= 299
-    }
-
-    // PORT NOTE: Zig getUrl vs getURL collide under snake_case — JS getter renamed get_url_js
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
-    pub fn get_url_js(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        // https://developer.mozilla.org/en-US/docs/Web/API/Response/url
-        Ok(this.url.to_js(global_this))
-    }
-
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
-    pub fn get_response_type(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        if this.init.status_code < 200 {
-            return Ok(global_this.common_strings().error());
-        }
-
-        Ok(global_this.common_strings().default())
-    }
-
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
-    pub fn get_status_text(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        // https://developer.mozilla.org/en-US/docs/Web/API/Response/statusText
-        Ok(this.init.status_text.to_js(global_this))
-    }
-
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
-    pub fn get_redirected(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        // https://developer.mozilla.org/en-US/docs/Web/API/Response/redirected
-        JSValue::from(this.redirected)
-    }
-
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
-    pub fn get_ok(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        // https://developer.mozilla.org/en-US/docs/Web/API/Response/ok
-        JSValue::from(this.is_ok())
-    }
-
-    fn get_or_create_headers(&mut self, global_this: &JSGlobalObject) -> JsResult<&FetchHeaders> {
-        if self.init.headers.is_none() {
-            self.init.headers = Some(FetchHeaders::create_empty());
-
-            if let BodyValue::Blob(blob) = &self.body.value {
-                let content_type = &blob.content_type;
-                if !content_type.is_empty() {
-                    self.init.headers.as_ref().unwrap().put(FetchHeaders::HTTPHeaderName::ContentType, content_type, global_this)?;
-                }
-            }
-        }
-
-        Ok(self.init.headers.as_ref().unwrap())
-    }
-
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
-    pub fn get_headers(this: &mut Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(this.get_or_create_headers(global_this)?.to_js(global_this))
-    }
-
     // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     pub fn do_clone(this: &mut Self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let this_value = callframe.this();
@@ -779,12 +721,6 @@ impl Response {
         Ok(Box::into_raw(Box::new(self.clone_value(global_this)?)))
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
-    pub fn get_status(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        // https://developer.mozilla.org/en-US/docs/Web/API/Response/status
-        JSValue::js_number(this.init.status_code)
-    }
-
     fn destroy(this: *mut Response) {
         // SAFETY: called from unref() when ref_count hits 0; this is the unique owner
         unsafe {
@@ -834,22 +770,6 @@ impl Response {
             (*this).js_ref.finalize();
         }
         Self::unref(this);
-    }
-
-    pub fn get_content_type(&self) -> JsResult<Option<ZigString::Slice>> {
-        if let Some(headers) = &self.init.headers {
-            if let Some(value) = headers.fast_get(FetchHeaders::HTTPHeaderName::ContentType) {
-                return Ok(Some(value.to_slice()));
-            }
-        }
-
-        if let BodyValue::Blob(blob) = &self.body.value {
-            if !blob.content_type.is_empty() {
-                return Ok(Some(ZigString::Slice::from_utf8_never_free(&blob.content_type)));
-            }
-        }
-
-        Ok(None)
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn]

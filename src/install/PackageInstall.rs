@@ -2160,7 +2160,7 @@ impl<'a> PackageInstall<'a> {
                         .unwrap_or(false),
                     };
                     if exists {
-                        manager.set_preinstall_state(package_id, &manager.lockfile, crate::PreinstallState::Done);
+                        manager.set_preinstall_state(package_id, crate::PreinstallState::Done);
                     }
                     break 'brk !exists;
                 }
@@ -2182,7 +2182,7 @@ impl<'a> PackageInstall<'a> {
                 let exists =
                     sys::directory_exists_at(self.cache_dir.fd(), subpath).unwrap_or(false);
                 if exists {
-                    manager.set_preinstall_state(package_id, &manager.lockfile, crate::PreinstallState::Done);
+                    manager.set_preinstall_state(package_id, crate::PreinstallState::Done);
                 }
                 !exists
             }
@@ -2197,7 +2197,7 @@ impl<'a> PackageInstall<'a> {
         let exists = sys::directory_exists_at(self.cache_dir.fd(), self.cache_dir_subpath)
             .unwrap_or(false);
         if exists {
-            manager.set_preinstall_state(package_id, &manager.lockfile, crate::PreinstallState::Done);
+            manager.set_preinstall_state(package_id, crate::PreinstallState::Done);
         }
         !exists
     }

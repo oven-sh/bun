@@ -1089,16 +1089,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     )?;
                 }
 
-                // PORT NOTE: reshaped for borrowck — `set_preinstall_state` borrows
-                // `&mut self` and `&Lockfile` which would alias `manager.lockfile`.
-                let lockfile_ptr: *const Lockfile = &*manager.lockfile;
-                manager.set_preinstall_state(
-                    package_id,
-                    // SAFETY: `set_preinstall_state` only reads `lockfile.packages.len()`;
-                    // disjoint from `manager.preinstall_state` which it writes.
-                    unsafe { &*lockfile_ptr },
-                    bun_install::PreinstallState::Done,
-                );
+                manager.set_preinstall_state(package_id, bun_install::PreinstallState::Done);
 
                 if log_level.show_progress() {
                     if !*has_updated_this_run {
@@ -1208,7 +1199,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let repo = git.repo.slice(&manager.lockfile.buffers.string_bytes);
 
                     let resolved = crate::repository_real::Repository::find_commit(
-                        &mut manager.env,
+                        // SAFETY: `env` is set during `PackageManager::init` and
+                        // outlives all tasks.
+                        unsafe { manager.env.unwrap().as_mut() },
                         // SAFETY: `manager.log` is a non-null backref to the CLI log.
                         unsafe { &mut *manager.log },
                         task.data.git_clone.std_dir(),

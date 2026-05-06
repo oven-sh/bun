@@ -2366,10 +2366,11 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
                     bun_js_parser::ast::ExprData::EString(stri) => {
                         if !stri.data.is_empty() {
                             self.bin = Bin {
-                                tag: Bin::Tag::File,
-                                value: Bin::Value::file(
-                                    string_builder.append::<String>(&stri.data),
-                                ),
+                                tag: bin::Tag::File,
+                                value: bin::Value {
+                                    file: string_builder.append::<String>(stri.data),
+                                },
+                                ..Default::default()
                             };
                             break 'bin;
                         }
@@ -2390,10 +2391,11 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
                     if let Some(str_) = bin_prop.expr.as_string() {
                         if !str_.is_empty() {
                             self.bin = Bin {
-                                tag: Bin::Tag::Dir,
-                                value: Bin::Value::dir(
-                                    string_builder.append::<String>(str_),
-                                ),
+                                tag: bin::Tag::Dir,
+                                value: bin::Value {
+                                    dir: string_builder.append::<String>(str_),
+                                },
+                                ..Default::default()
                             };
                             break 'bin;
                         }
@@ -2402,7 +2404,7 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
             }
         }
 
-        self.scripts.parse_alloc(&mut string_builder, &json);
+        self.scripts.parse_alloc(&mut string_builder, json);
         self.scripts.filled = true;
 
         // It is allowed for duplicate dependencies to exist in optionalDependencies and regular dependencies
@@ -2411,7 +2413,7 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
             lockfile
                 .scratch
                 .duplicate_checker_map
-                .ensure_total_capacity(total_dependencies_count as usize)?;
+                .reserve(total_dependencies_count as usize);
         }
 
         let mut bundled_deps = StringSet::init();
@@ -2483,31 +2485,31 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
                                     continue;
                                 }
                                 if strings::eql_long(&value.name, &entry.name, true) {
-                                    let note_abs_path = resolve_path::join_abs_string_z(
-                                        cwd,
-                                        &[note_path, b"package.json"],
-                                        path::Platform::Auto,
+                                    let note_abs_path = resolve_path::join_abs_string_z::<
+                                        path::platform::Auto,
+                                    >(
+                                        cwd, &[note_path, b"package.json"]
                                     )
+                                    .to_bytes()
                                     .to_vec()
                                     .into_boxed_slice();
 
-                                    let note_src = File::to_source(
-                                        &note_abs_path,
-                                        Default::default(),
-                                    )
-                                    .unwrap_result()
-                                    .unwrap_or_else(|_| {
-                                        logger::Source::init_empty_file(&note_abs_path)
-                                    });
+                                    // TODO(port): `File::to_source` is unavailable in T1;
+                                    // use an empty-file Source carrying just the path so
+                                    // the diagnostic still names the right file. Real read
+                                    // can be restored once a `to_source` shim lands.
+                                    let note_src =
+                                        logger::Source::init_empty_file(&note_abs_path);
 
                                     notes.push(logger::Data {
                                         text: b"Package name is also declared here"
                                             .to_vec()
-                                            .into_boxed_slice(),
+                                            .into(),
                                         location: logger::Location::init_or_null(
-                                            &note_src,
+                                            Some(&note_src),
                                             note_src.range_of_string(value.name_loc),
                                         ),
+                                        ..Default::default()
                                     });
                                     i += 1;
                                 }
@@ -2516,20 +2518,18 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
                             break 'notes notes;
                         };
 
-                        let abs_path = resolve_path::join_abs_string_z(
+                        let abs_path = resolve_path::join_abs_string_z::<path::platform::Auto>(
                             cwd,
                             &[path_, b"package.json"],
-                            path::Platform::Auto,
                         );
 
-                        let src = File::to_source(abs_path, Default::default())
-                            .unwrap_result()
-                            .unwrap_or_else(|_| logger::Source::init_empty_file(abs_path));
+                        // TODO(port): `File::to_source` shim — see note above.
+                        let src = logger::Source::init_empty_file(abs_path.to_bytes());
 
                         let _ = log.add_range_error_fmt_with_notes(
-                            &src,
+                            Some(&src),
                             src.range_of_string(entry.name_loc),
-                            notes,
+                            notes.into(),
                             format_args!(
                                 "Workspace name \"{}\" already exists",
                                 bstr::BStr::new(&entry.name),
@@ -2558,13 +2558,14 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
                         None
                     };
 
-                    if let Some(dep_) = Self::parse_dependency::<FEATURES>(
+                    if let Some(dep_) = Self::parse_dependency(
                         lockfile,
                         pm,
                         log,
                         source,
                         group,
                         &mut string_builder,
+                        FEATURES,
                         package_dependencies,
                         total_dependencies_count,
                         Some(dependency::version::Tag::Workspace),
@@ -2576,7 +2577,7 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
                     )? {
                         let mut dep = dep_;
                         if group.behavior.is_peer()
-                            && optional_peer_dependencies.swap_remove(external_name.hash)
+                            && optional_peer_dependencies.swap_remove(&external_name.hash)
                         {
                             dep.behavior = dep.behavior.add(Behavior::OPTIONAL);
                         }
@@ -2605,13 +2606,14 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
                                     .append::<ExternalString>(key.as_string().unwrap());
                                 let version = value.as_string().unwrap_or(b"");
 
-                                if let Some(dep_) = Self::parse_dependency::<FEATURES>(
+                                if let Some(dep_) = Self::parse_dependency(
                                     lockfile,
                                     pm,
                                     log,
                                     source,
                                     group,
                                     &mut string_builder,
+                                    FEATURES,
                                     package_dependencies,
                                     total_dependencies_count,
                                     None,
@@ -2629,9 +2631,9 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
                                     // `peerDependenciesMeta`.
                                     if group.behavior.is_peer()
                                         && optional_peer_dependencies
-                                            .swap_remove(external_name.hash)
+                                            .swap_remove(&external_name.hash)
                                     {
-                                        dep.behavior.optional = true;
+                                        dep.behavior.insert(Behavior::OPTIONAL);
                                     }
 
                                     if bundle_all_deps
@@ -2639,7 +2641,7 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
                                             lockfile.buffers.string_bytes.as_slice(),
                                         ))
                                     {
-                                        dep.behavior.bundled = true;
+                                        dep.behavior.insert(Behavior::BUNDLED);
                                     }
 
                                     package_dependencies
@@ -2663,13 +2665,14 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
         let mut meta_only = optional_peer_dependencies.iterator();
         while let Some(entry) = meta_only.next() {
             let external_name = string_builder.append::<ExternalString>(*entry.value_ptr);
-            if let Some(dep_) = Self::parse_dependency::<FEATURES>(
+            if let Some(dep_) = Self::parse_dependency(
                 lockfile,
                 pm,
                 log,
                 source,
                 &DependencyGroup::PEER,
                 &mut string_builder,
+                FEATURES,
                 package_dependencies,
                 total_dependencies_count,
                 None,
@@ -2680,7 +2683,7 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
                 logger::Loc::EMPTY,
             )? {
                 let mut dep = dep_;
-                dep.behavior.optional = true;
+                dep.behavior.insert(Behavior::OPTIONAL);
                 package_dependencies[total_dependencies_count as usize] = dep;
                 total_dependencies_count += 1;
             }

@@ -1040,12 +1040,12 @@ pub fn install_isolated_packages(
                 let dep_name = dependencies[new_entry_dep_id as usize].name.slice(string_buf);
 
                 let Some(hoist_pattern) = &manager.options.hoist_pattern else {
-                    let hoist_entry = hidden_hoisted.get_or_put(dep_name);
+                    let hoist_entry = hidden_hoisted.get_or_put(dep_name)?;
                     break 'hoisted !hoist_entry.found_existing;
                 };
 
                 if hoist_pattern.is_match(dep_name) {
-                    let hoist_entry = hidden_hoisted.get_or_put(dep_name);
+                    let hoist_entry = hidden_hoisted.get_or_put(dep_name)?;
                     break 'hoisted !hoist_entry.found_existing;
                 }
 
@@ -1058,7 +1058,9 @@ pub fn install_isolated_packages(
                 parents: new_entry_parents,
                 peer_hash: new_entry_peer_hash,
                 hoisted,
-                ..Default::default()
+                step: core::sync::atomic::AtomicU32::new(0),
+                entry_hash: 0,
+                scripts: core::cell::UnsafeCell::new(None),
             };
 
             let new_entry_id: store::entry::Id = store::entry::Id::from(u32::try_from(store_entries.len()).unwrap());
@@ -1073,8 +1075,8 @@ pub fn install_isolated_packages(
                         break 'skip_adding_dependency;
                     }
 
-                    let entries = store_entries.slice();
-                    let entry_dependencies = entries.items_mut().dependencies;
+                    let mut entries = store_entries.slice();
+                    let entry_dependencies = entries.dependencies_mut();
                     let ctx = store::entry::DependenciesOrderedArraySetCtx {
                         string_buf,
                         dependencies,
@@ -1097,7 +1099,7 @@ pub fn install_isolated_packages(
                             let dep_name = dependencies[new_entry_dep_id as usize].name.slice(string_buf);
                             if let Some(public_hoist_pattern) = &manager.options.public_hoist_pattern {
                                 if public_hoist_pattern.is_match(dep_name) {
-                                    let hoist_entry = public_hoisted.get_or_put(dep_name);
+                                    let hoist_entry = public_hoisted.get_or_put(dep_name)?;
                                     if !hoist_entry.found_existing {
                                         entry_dependencies[0].insert(
                                             store::entry::DependenciesItem {
@@ -1132,7 +1134,7 @@ pub fn install_isolated_packages(
             let dedupe_end = timer.elapsed();
             Output::pretty_errorln(format_args!(
                 "Created store [{}]",
-                bun_fmt::fmt_duration_one_decimal(dedupe_end)
+                bun_fmt::fmt_duration_one_decimal(dedupe_end.as_nanos() as u64)
             ));
         }
 
@@ -1142,21 +1144,28 @@ pub fn install_isolated_packages(
         };
     };
 
-    let global_store_path: Option<bun_str::ZStr> = if manager.options.enable.global_virtual_store {
+    let global_store_path: Option<Vec<u8>> = if manager.options.enable.global_virtual_store {
         'global_store_path: {
             let entries = store.entries.slice();
-            let entry_hashes = entries.items_mut().entry_hash;
-            let entry_node_ids = entries.items().node_id;
-            let entry_dependencies = entries.items().dependencies;
+            // PORT NOTE: disjoint-column raw views (see above).
+            let entries_len = entries.len();
+            let entry_hashes: &mut [u64] = unsafe {
+                core::slice::from_raw_parts_mut(
+                    entries.items_raw::<u64>(store::EntryField::entry_hash),
+                    entries_len,
+                )
+            };
+            let entry_node_ids = entries.node_id();
+            let entry_dependencies = entries.dependencies();
 
-            let node_pkg_ids = store.nodes.items().pkg_id;
-            let node_dep_ids = store.nodes.items().dep_id;
+            let node_pkg_ids = store.nodes.items_pkg_id();
+            let node_dep_ids = store.nodes.items_dep_id();
 
             let pkgs = lockfile.packages.slice();
-            let pkg_names = pkgs.items().name;
-            let pkg_name_hashes = pkgs.items().name_hash;
-            let pkg_resolutions = pkgs.items().resolution;
-            let pkg_metas = pkgs.items().meta;
+            let pkg_names = pkgs.items_name();
+            let pkg_name_hashes = pkgs.items_name_hash();
+            let pkg_resolutions = pkgs.items_resolution();
+            let pkg_metas = pkgs.items_meta();
 
             let string_buf = &lockfile.buffers.string_bytes[..];
             let dependencies = &lockfile.buffers.dependencies[..];
@@ -1192,7 +1201,7 @@ pub fn install_isolated_packages(
                     // PORT NOTE: reshaped for borrowck — re-borrow `top` after each
                     // potential `stack.push()` realloc.
                     let id = stack[top_idx].id;
-                    let idx = id.get();
+                    let idx = id.get() as usize;
 
                     if states[idx] == State::Unvisited {
                         states[idx] = State::InProgress;
@@ -2117,7 +2126,7 @@ pub fn install_isolated_packages(
                                         .unwrap_or(false),
                                 };
                                 if exists {
-                                    manager.set_preinstall_state(pkg_id, installer.lockfile, install::PreinstallState::Done);
+                                    manager.set_preinstall_state(pkg_id, install::PreinstallState::Done);
                                 }
                                 break 'missing_from_cache !exists;
                             }

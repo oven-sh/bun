@@ -1734,9 +1734,14 @@ pub mod windows_shim {
 }
 
  #[path = "resolvers/folder_resolver.rs"]
-mod _folder_resolver;
+pub mod _folder_resolver;
 pub mod resolvers {
-    pub mod folder_resolver { pub use crate::FolderResolution; }
+    pub mod folder_resolver {
+        pub use crate::_folder_resolver::*;
+        // Legacy stub re-export kept for callers that only need an opaque
+        // `FolderResolution` value (e.g. `PackageManager` map type).
+        pub use crate::_folder_resolver::FolderResolution;
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

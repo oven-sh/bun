@@ -233,11 +233,12 @@ pub struct DirInfo {
 }
 
 use bun_install::{
-    initialize_store, ArrayIdentityContext, Dependency, DependencyID, Features, FolderResolution,
+    initialize_store, ArrayIdentityContext, Dependency, DependencyID, Features,
     IdentityContext, LifecycleScriptSubprocess, NetworkTask, PackageID, PackageManifestMap,
     PackageNameAndVersionHash, PackageNameHash, PatchTask, PostinstallOptimizer, PreinstallState,
     TaskCallbackContext,
 };
+use crate::resolvers::folder_resolver::FolderResolution;
 use bun_install::lockfile::{self, Lockfile};
 use crate::lockfile_real::package as Package;
 use crate::package_manager_task as Task;
@@ -1907,21 +1908,21 @@ pub fn init(
     {
         // SAFETY: as above; scoped reborrow for the options/manifest-cache block.
         let manager = unsafe { &mut *manager_ptr };
-        if !manager.options.enable.cache {
-            manager.options.enable.manifest_cache = false;
-            manager.options.enable.manifest_cache_control = false;
+        if !manager.options.enable.cache() {
+            manager.options.enable.set_manifest_cache(false);
+            manager.options.enable.set_manifest_cache_control(false);
         }
 
-        if let Some(manifest_cache) = env.get("BUN_MANIFEST_CACHE") {
+        if let Some(manifest_cache) = env.get(b"BUN_MANIFEST_CACHE") {
             if manifest_cache == b"1" {
-                manager.options.enable.manifest_cache = true;
-                manager.options.enable.manifest_cache_control = false;
+                manager.options.enable.set_manifest_cache(true);
+                manager.options.enable.set_manifest_cache_control(false);
             } else if manifest_cache == b"2" {
-                manager.options.enable.manifest_cache = true;
-                manager.options.enable.manifest_cache_control = true;
+                manager.options.enable.set_manifest_cache(true);
+                manager.options.enable.set_manifest_cache_control(true);
             } else {
-                manager.options.enable.manifest_cache = false;
-                manager.options.enable.manifest_cache_control = false;
+                manager.options.enable.set_manifest_cache(false);
+                manager.options.enable.set_manifest_cache_control(false);
             }
         }
 

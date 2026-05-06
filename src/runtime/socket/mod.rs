@@ -21,9 +21,6 @@ pub mod handlers;
 #[path = "Listener.rs"]
 pub mod listener;
 #[cfg(any())]
-#[path = "SSLConfig.rs"]
-pub mod ssl_config;
-#[cfg(any())]
 #[path = "UpgradedDuplex.rs"]
 pub mod upgraded_duplex;
 #[cfg(any())]

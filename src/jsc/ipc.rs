@@ -14,7 +14,7 @@ use crate::{
     VirtualMachine, ZigString,
 };
 use bun_string::{strings, String as BunString};
-use bun_sys::FdExt as _;
+use bun_sys::FdExt;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 use bun_sys::Fd;

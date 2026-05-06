@@ -22,7 +22,7 @@ pub mod dir_info;
 // reconciler-3: fs.rs references `bun_str`/`bun_output`/`MutableString`/
 // `PathString` (not yet ported); the inline `pub mod fs` below remains the
 // real type surface. Un-gate alongside those crate roots.
-#[cfg(any())] #[path = "fs.rs"] pub mod fs_full;
+#[cfg(any())] #[path = "fs.rs"] mod fs_full;
 pub mod node_fallbacks;
 pub mod package_json;
 pub mod tsconfig_json;

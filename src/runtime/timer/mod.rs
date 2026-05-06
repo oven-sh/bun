@@ -211,6 +211,20 @@ impl Default for EventLoopDelayMonitor {
 pub mod timer_object_internals;
 pub use timer_object_internals::{Flags as TimerFlags, TimerObjectInternals};
 
+/// `jsc.WebCore.AbortSignal.Timeout` — struct-only stub so `All::update`'s
+/// `@fieldParentPtr` epoch-bump (spec EventLoopTimer.zig:157-160) can resolve
+/// the `flags` slot. The real type lives in the gated `bun_jsc::abort_signal`
+/// Phase-A draft; field order/layout MUST match `src/jsc/AbortSignal.rs:Timeout`.
+// TODO(b2-blocked): replace with `pub use crate::jsc::abort_signal::Timeout as
+// AbortSignalTimeout;` once that module is un-gated.
+#[repr(C)]
+pub struct AbortSignalTimeout {
+    pub event_loop_timer: EventLoopTimer,
+    pub signal: *mut core::ffi::c_void, // *mut AbortSignal (opaque here)
+    pub flags: TimerFlags,
+    pub generation: u32,
+}
+
 pub struct TimeoutObject {
     pub ref_count: core::cell::Cell<u32>,
     pub event_loop_timer: EventLoopTimer,
@@ -258,9 +272,30 @@ macro_rules! impl_timer_refcount {
                 rc.set(n - 1);
                 if n == 1 {
                     // Zig `deinit`: `self.internals.deinit(); bun.destroy(self)`.
-                    // TODO(b2-blocked): `TimerObjectInternals::deinit` (map
-                    // removal) is in the gated draft; `JsRef` cleanup happens
-                    // via field `Drop` when the Box is reclaimed below.
+                    //
+                    // TODO(b2-blocked): `TimerObjectInternals::deinit` is in
+                    // the gated draft. Spec TimerObjectInternals.zig:498-528
+                    // performs FOUR obligations before free — enumerate so
+                    // none are forgotten when `TimeoutObject` is un-gated:
+                    //   (a) `this_value.deinit()` — handled by `JsRef: Drop`
+                    //       when the Box is reclaimed below.
+                    //   (b) `vm.timer.remove(eventLoopTimer())` if
+                    //       `event_loop_timer.state == .ACTIVE` — NOT done.
+                    //       Freeing a still-ACTIVE TimeoutObject leaves a
+                    //       dangling `*mut EventLoopTimer` in `All.timers`.
+                    //   (c) `vm.timer.maps.get(kind).remove(id)` if
+                    //       `flags.has_accessed_primitive` — NOT done.
+                    //   (d) `setEnableKeepingEventLoopAlive(vm, false)` —
+                    //       NOT done. Leaks `active_timer_count` /
+                    //       `immediate_ref_count` and can hang the process.
+                    // For the currently-live `ImmediateObject` path the state
+                    // is always FIRED and keep-alive already cleared by
+                    // `run_immediate_task`, so only (c) is observable today;
+                    // (b)/(d) become live the moment `TimeoutObject` fires.
+                    // Wire a real `TimerObjectInternals::deinit(vm)` (needs
+                    // `*mut VirtualMachine` plumbed through `deref`) before
+                    // un-gating `TimeoutObject::fire`.
+                    //
                     // SAFETY: refcount hit 0 ⇒ unique ownership; `bun.new` ↔
                     // `Box::into_raw`, so `Box::from_raw` is the paired free.
                     drop(unsafe { Box::from_raw(this) });
@@ -441,6 +476,14 @@ impl All {
                     .sub(offset_of!(ImmediateObject, event_loop_timer))
                     .cast::<ImmediateObject>();
                 Some(core::ptr::addr_of_mut!((*parent).internals.flags))
+            },
+            // Spec EventLoopTimer.zig:157-160 — `AbortSignal.Timeout` stores
+            // `flags` directly (not under `.internals`).
+            EventLoopTimerTag::AbortSignalTimeout => unsafe {
+                let parent = (timer as *mut u8)
+                    .sub(offset_of!(AbortSignalTimeout, event_loop_timer))
+                    .cast::<AbortSignalTimeout>();
+                Some(core::ptr::addr_of_mut!((*parent).flags))
             },
             _ => None,
         };

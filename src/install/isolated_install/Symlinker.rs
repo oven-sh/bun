@@ -1,6 +1,6 @@
 use bun_paths;
 use bun_str::strings;
-use bun_sys::{self, Errno, Fd};
+use bun_sys::{self, Errno, Fd, FdDirExt, FdExt};
 
 pub struct Symlinker {
     // TODO(port): bun.Path/RelPath/AbsPath are comptime-config generic (`.{ .sep = .auto }`);

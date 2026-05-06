@@ -650,11 +650,113 @@ pub mod lockfile {
         }
     }
 
+    pub type NameHashMap =
+        bun_collections::ArrayHashMap<PackageNameHash, bun_semver::String>;
+    pub type VersionHashMap =
+        bun_collections::ArrayHashMap<PackageNameHash, bun_semver::Version>;
+    pub type MetaHash = [u8; 32];
+
     #[derive(Default)] pub struct Lockfile {
         pub buffers: Buffers,
         pub packages: PackageList,
+        /// Zig: `Lockfile.workspace_paths` (src/install/lockfile.zig).
+        pub workspace_paths: NameHashMap,
+        /// Zig: `Lockfile.workspace_versions`.
+        pub workspace_versions: VersionHashMap,
+        /// Zig: `Lockfile.string_pool`.
+        pub string_pool: bun_semver::semver_string::StringPool,
+        /// Zig: `Lockfile.meta_hash`.
+        pub meta_hash: MetaHash,
+        /// Zig: `Lockfile.package_index`.
+        pub package_index: bun_collections::HashMap<PackageNameHash, PackageIndexEntry>,
     }
     impl Lockfile {
+        /// Port of `Lockfile.initEmpty` (src/install/lockfile.zig). Resets to a
+        /// fresh, empty lockfile.
+        pub fn init_empty(&mut self) {
+            *self = Self::default();
+        }
+
+        /// Port of `Lockfile.stringBuf` (src/install/lockfile.zig). Returns a
+        /// `String.Buf` view over `buffers.string_bytes` + `string_pool`.
+        pub fn string_buf(&mut self) -> bun_semver::semver_string::Buf<'_> {
+            bun_semver::semver_string::Buf {
+                bytes: &mut self.buffers.string_bytes,
+                pool: &mut self.string_pool,
+            }
+        }
+
+        /// Port of `Lockfile.getOrPutID` (src/install/lockfile.zig). Inserts
+        /// `id` into `package_index[name_hash]`, promoting Id→Ids on collision.
+        pub fn get_or_put_id(
+            &mut self,
+            id: PackageID,
+            name_hash: PackageNameHash,
+        ) -> Result<(), bun_core::Error> {
+            use std::collections::hash_map::Entry;
+            match self.package_index.entry(name_hash) {
+                Entry::Vacant(v) => {
+                    v.insert(PackageIndexEntry::Id(id));
+                }
+                Entry::Occupied(mut o) => match o.get_mut() {
+                    PackageIndexEntry::Id(existing) => {
+                        let existing = *existing;
+                        if existing != id {
+                            o.insert(PackageIndexEntry::Ids(vec![existing, id]));
+                        }
+                    }
+                    PackageIndexEntry::Ids(ids) => {
+                        if !ids.contains(&id) {
+                            ids.push(id);
+                        }
+                    }
+                },
+            }
+            Ok(())
+        }
+
+        /// Port of `Lockfile.getPackageID` (src/install/lockfile.zig).
+        /// Stub-typed: looks up by `name_hash` ignoring version/resolution
+        /// equality (full body lives in `lockfile_real`).
+        pub fn get_package_id(
+            &self,
+            name_hash: PackageNameHash,
+            _version: Option<&crate::dependency::Version>,
+            _resolution: &Resolution,
+        ) -> Option<PackageID> {
+            match self.package_index.get(&name_hash)? {
+                PackageIndexEntry::Id(id) => Some(*id),
+                PackageIndexEntry::Ids(ids) => ids.first().copied(),
+            }
+        }
+
+        /// Port of `Lockfile.resolve` (src/install/lockfile.zig). Hoisting /
+        /// tree-building runs against the real `lockfile_real::Lockfile`; the
+        /// stub no-ops so npm-migration callers can proceed past the call site.
+        pub fn resolve(
+            &mut self,
+            _log: &mut bun_logger::Log,
+        ) -> Result<(), bun_core::Error> {
+            // TODO(port): blocked_on: lockfile_real::Lockfile::resolve un-gate (reconciler-6)
+            Ok(())
+        }
+
+        /// Port of `Lockfile.verifyData` (src/install/lockfile.zig). Debug-only
+        /// invariant checks; no-op stub.
+        pub fn verify_data(&self) -> Result<(), bun_core::Error> {
+            Ok(())
+        }
+
+        /// Port of `Lockfile.generateMetaHash` (src/install/lockfile.zig).
+        pub fn generate_meta_hash(
+            &self,
+            _print_name_version_string: bool,
+            _packages_len: usize,
+        ) -> Result<MetaHash, bun_core::Error> {
+            // TODO(port): blocked_on: lockfile_real::generate_meta_hash un-gate (reconciler-6)
+            Ok([0; 32])
+        }
+
         /// Port of `Lockfile.getWorkspacePackageID`
         /// (src/install/lockfile.zig:621). Returns the package id whose
         /// resolution tag is `.workspace` and whose `name_hash` matches; falls

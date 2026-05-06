@@ -472,11 +472,11 @@ impl Options {
             }
 
             if let Some(jobs) = config.concurrent_scripts {
-                self.max_concurrent_lifecycle_scripts = jobs;
+                self.max_concurrent_lifecycle_scripts = jobs as usize;
             }
 
-            if let Some(cache_dir) = config.cache_directory {
-                self.cache_directory = cache_dir;
+            if let Some(cache_dir) = config.cache_directory.as_deref() {
+                self.cache_directory = leak_static(cache_dir);
             }
 
             if let Some(ignore_scripts) = config.ignore_scripts {
@@ -489,20 +489,25 @@ impl Options {
                 self.minimum_release_age_ms = Some(min_age_ms);
             }
 
-            if let Some(exclusions) = config.minimum_release_age_excludes {
-                self.minimum_release_age_excludes = Some(exclusions);
+            if let Some(exclusions) = &config.minimum_release_age_excludes {
+                let leaked: Vec<&'static [u8]> =
+                    exclusions.iter().map(|e| leak_static(e)).collect();
+                self.minimum_release_age_excludes =
+                    Some(&*Box::leak(leaked.into_boxed_slice()));
             }
 
-            if let Some(public_hoist_pattern) = config.public_hoist_pattern.clone() {
-                self.public_hoist_pattern = Some(public_hoist_pattern);
-            }
+            // TODO(port): CYCLEBREAK — Api::PnpmMatcher is an opaque mirror of
+            // bun_install_types::PnpmMatcher (`_opaque: ()`), so there is no
+            // data to carry across. The bunfig/.npmrc parser populates
+            // `Options::{public_,}hoist_pattern` directly via the install crate
+            // path; the schema fields are placeholders until the dep edge
+            // `bun_options_types -> bun_install_types` is added.
+            let _ = &config.public_hoist_pattern;
+            let _ = &config.hoist_pattern;
 
-            if let Some(hoist_pattern) = config.hoist_pattern.clone() {
-                self.hoist_pattern = Some(hoist_pattern);
+            if let Some(global_dir) = config.global_dir.as_deref() {
+                self.explicit_global_directory = leak_static(global_dir);
             }
-
-            self.explicit_global_directory =
-                config.global_dir.unwrap_or(self.explicit_global_directory);
         }
 
         if let Some(val) = env.get(b"BUN_INSTALL_GLOBAL_STORE") {
@@ -543,7 +548,7 @@ impl Options {
                             // PORT NOTE: was `std.mem.zeroes(Api.NpmRegistry)`; zeroed slices are
                             // invalid in Rust — use Default (empty strings) which is semantically equivalent.
                             let mut api_registry = Api::NpmRegistry::default();
-                            api_registry.url = registry_;
+                            api_registry.url = registry_.into();
                             api_registry.token = prev_scope.token;
                             self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
                             did_set = true;
@@ -566,7 +571,7 @@ impl Options {
                 if !did_set {
                     if let Some(registry_) = env.get(registry_key) {
                         if !registry_.is_empty() {
-                            self.scope.token = registry_;
+                            self.scope.token = registry_.into();
                             did_set = true;
                             // stage1 bug: break inside inline is broken
                             // break :load_registry;

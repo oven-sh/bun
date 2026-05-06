@@ -165,7 +165,7 @@ where
     // TODO(port): comptime `assertNoUninitializedPadding(@TypeOf(array))` — needs
     // a const-eval padding check on `T`; Phase B can add a `const _: () = assert!(...)`
     // per call site or a `NoPadding` marker trait.
-    let _ = assert_no_uninitialized_padding::<T>;
+    assert_no_uninitialized_padding(array);
     debug_assert_eq!(size, size_of::<T>());
     debug_assert_eq!(align, align_of::<T>());
 
@@ -191,7 +191,7 @@ where
     writer.write_all(prefix.as_bytes())?;
 
     if !bytes.is_empty() {
-        let _ = Aligner::write_with_align(sizes::ALIGN_TYPE_0, writer, stream.get_pos()?)?;
+        let _ = Aligner::write_with_align(sizes::ALIGN_TYPE_0, writer, stream.get_pos()? as u64)?;
 
         let real_start_pos = stream.get_pos()? as u64;
         writer.write_all(bytes)?;
@@ -341,9 +341,9 @@ where
         }
 
         // It would be faster to buffer these instead of one big allocation
-        let mut to_clone: Vec<Dependency::External> = Vec::with_capacity(remaining.len());
+        let mut to_clone: Vec<dependency::External> = Vec::with_capacity(remaining.len());
         for dep in remaining {
-            to_clone.push(Dependency::to_external(*dep));
+            to_clone.push(dependency::to_external(dep));
             // PERF(port): was appendAssumeCapacity — profile in Phase B
         }
 
@@ -353,8 +353,8 @@ where
             to_clone.as_slice(),
             // TODO(port): @typeName parity — Zig emits fully-qualified name
             "Dependency.External",
-            size_of::<Dependency::External>(),
-            align_of::<Dependency::External>(),
+            size_of::<dependency::External>(),
+            align_of::<dependency::External>(),
         )?;
 
         #[cfg(debug_assertions)]
@@ -412,14 +412,14 @@ pub fn load(
     pm_: Option<&mut PackageManager>,
 ) -> Result<Buffers, bun_core::Error> {
     let mut this = Buffers::default();
-    let mut external_dependency_list_: Vec<Dependency::External> = Vec::new();
+    let mut external_dependency_list_: Vec<dependency::External> = Vec::new();
 
     // PORT NOTE: Zig `inline for (sizes.names)` unrolled — see `sizes` module note.
 
     macro_rules! load_generic_field {
         ($field:ident, $name:literal, $elem:ty) => {{
             #[cfg(debug_assertions)]
-            let _pos: usize = stream.get_pos().unwrap_or(0);
+            let _pos: usize = stream.pos;
 
             this.$field = read_array::<$elem>(stream)?;
             if let Some(pm) = pm_.as_deref() {
@@ -439,7 +439,7 @@ pub fn load(
     // -- trees --
     {
         #[cfg(debug_assertions)]
-        let _pos: usize = stream.get_pos().unwrap_or(0);
+        let _pos: usize = stream.pos;
 
         let tree_list: Vec<tree::External> = read_array(stream)?;
         this.trees = tree::List::with_capacity(tree_list.len());
@@ -462,9 +462,9 @@ pub fn load(
     // -- dependencies --
     {
         #[cfg(debug_assertions)]
-        let _pos: usize = stream.get_pos().unwrap_or(0);
+        let _pos: usize = stream.pos;
 
-        external_dependency_list_ = read_array::<Dependency::External>(stream)?;
+        external_dependency_list_ = read_array::<dependency::External>(stream)?;
         if let Some(pm) = pm_.as_deref() {
             if pm.options.log_level.is_verbose() {
                 Output::pretty_errorln(format_args!(
@@ -491,7 +491,7 @@ pub fn load(
     // This is unfortunate. However, not using pointers for Semver Range's make the code a lot more complex.
     this.dependencies = DependencyList::with_capacity(external_dependency_list.len());
     let string_buf = this.string_bytes.as_slice();
-    let extern_context = Dependency::Context {
+    let mut extern_context = dependency::Context {
         log,
         // allocator: dropped — global mimalloc
         buffer: string_buf,
@@ -511,7 +511,7 @@ pub fn load(
         for dep in dependencies {
             // SAFETY: `external_deps` walks exactly `external_dependency_list.len()`
             // elements, equal to `dependencies.len()` (asserted above).
-            *dep = Dependency::to_dependency(unsafe { *external_deps }, &extern_context);
+            *dep = dependency::to_dependency(unsafe { *external_deps }, &mut extern_context);
             unsafe { external_deps = external_deps.add(1) };
         }
     }
@@ -527,7 +527,10 @@ pub fn load(
             this.trees[i].dependency_id =
                 this.legacy_package_to_dependency_id(Some(&mut visited), package_id)?;
         }
-        visited.set_range_value(0..this.dependencies.len(), false);
+        visited.set_range_value(
+            bun_collections::bit_set::Range { start: 0, end: this.dependencies.len() },
+            false,
+        );
         for i in 0..this.hoisted_dependencies.len() {
             let pid = this.hoisted_dependencies[i];
             this.hoisted_dependencies[i] =

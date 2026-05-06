@@ -1,3 +1,4 @@
+#[cfg(windows)]
 use core::ptr;
 
 use bun_alloc::AllocError;
@@ -52,6 +53,7 @@ impl FileCopier {
             Ok(d) => d,
             Err(e) => {
                 // TODO: remove the need for this and implement openDir makePath makeOpenPath in bun
+                #[allow(unused_mut)]
                 let mut errno: E = {
                     // `@as(anyerror, err)` → match against interned bun_core::Error tags.
                     let e: Error = e;
@@ -235,11 +237,7 @@ impl FileCopier {
                     };
                     // SAFETY: fchmod is safe to call with any fd + mode; errors are ignored (`_ =`).
                     unsafe {
-                        // TODO(port): confirm @intCast target type for mode (libc::mode_t vs bun_sys::Mode)
-                        let _ = bun_sys::c::fchmod(
-                            dest.handle().native(),
-                            libc::mode_t::try_from(stat.mode).unwrap(),
-                        );
+                        let _ = bun_sys::c::fchmod(dest.handle().native(), stat.st_mode);
                     }
                 }
 

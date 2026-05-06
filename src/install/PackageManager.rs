@@ -752,10 +752,27 @@ impl PackageManager {
         self.event_loop.wakeup();
     }
 
-    pub fn sleep_until<C>(&mut self, closure: &mut C, is_done_fn: fn(&mut C) -> bool) {
+    /// Spec: PackageManager.zig:424 `sleepUntil(this, closure, isDoneFn)`.
+    ///
+    /// Associated fn taking `*mut PackageManager` (NOT `&mut self`): every
+    /// `is_done_fn` body in this crate reborrows the *whole* `PackageManager`
+    /// from a raw pointer stashed in `C` (`&mut *closure.manager`). If this
+    /// were a `&mut self` method, that whole-struct Unique retag would pop
+    /// `self`'s tag (and the `&mut self.event_loop` borrow `tick` holds) under
+    /// Stacked Borrows, making the next loop-iteration deref UB. Zig spec has
+    /// no such constraint because Zig `*T` is non-exclusive.
+    ///
+    /// SAFETY: `this` must be valid for `&mut` access between callback
+    /// invocations; while `is_done_fn` runs, the callback owns the unique
+    /// `&mut PackageManager` and `sleep_until`/`tick_raw` hold no borrow.
+    pub unsafe fn sleep_until<C>(
+        this: *mut PackageManager,
+        closure: &mut C,
+        is_done_fn: fn(&mut C) -> bool,
+    ) {
         Output::flush();
         // PORT NOTE: Zig `sleepUntil(closure: anytype, isDoneFn)` passes a `*Closure` and
-        // a fn-pointer that mutates it. `AnyEventLoop::tick` takes the type-erased
+        // a fn-pointer that mutates it. `AnyEventLoop::tick_raw` takes the type-erased
         // `(*mut c_void, fn(*mut c_void) -> bool)`; trampoline through a small wrapper so
         // `is_done_fn` receives `&mut C` and can drive `run_tasks` / record `err`.
         struct Erased<C> {
@@ -763,14 +780,14 @@ impl PackageManager {
             is_done: fn(&mut C) -> bool,
         }
         fn trampoline<C>(p: *mut c_void) -> bool {
-            // SAFETY: `p` is the `Erased<C>` local we pass to `tick` below. We only
+            // SAFETY: `p` is the `Erased<C>` local we pass to `tick_raw` below. We only
             // read its two POD fields here (no `&mut Erased` materialized — the local
-            // `&mut erased` borrow in the caller is still notionally live across `tick`).
+            // `&mut erased` borrow in the caller is still notionally live across the call).
             let erased = p as *const Erased<C>;
             let (ctx_ptr, is_done) = unsafe { ((*erased).ctx, (*erased).is_done) };
             // SAFETY: `ctx_ptr` was derived from the caller's exclusive `closure: &mut C`
-            // and the caller does not touch `closure` again until `tick` returns, so this
-            // is the unique live `&mut C` for the duration of the callback.
+            // and the caller does not touch `closure` again until `tick_raw` returns, so
+            // this is the unique live `&mut C` for the duration of the callback.
             let ctx = unsafe { &mut *ctx_ptr };
             is_done(ctx)
         }
@@ -778,8 +795,22 @@ impl PackageManager {
             ctx: closure as *mut C,
             is_done: is_done_fn,
         };
-        self.event_loop
-            .tick(&mut erased as *mut _ as *mut c_void, trampoline::<C>);
+        // Derive the event-loop pointer through `this`'s raw provenance (NOT
+        // via a `&mut self.event_loop` reborrow) so it shares `this`'s SRW tag
+        // and survives the callback's `&mut *this` retag.
+        // SAFETY: `this` is valid per fn contract; `&raw mut` does not create a
+        // reference, only a place projection.
+        let event_loop: *mut AnyEventLoop = unsafe { &raw mut (*this).event_loop };
+        // SAFETY: `tick_raw` reborrows `*event_loop` only between `is_done`
+        // calls (never across them), so the callback's `&mut PackageManager`
+        // never overlaps a live `&mut AnyEventLoop`.
+        unsafe {
+            AnyEventLoop::tick_raw(
+                event_loop,
+                &mut erased as *mut _ as *mut c_void,
+                trampoline::<C>,
+            )
+        };
     }
 
     pub fn ensure_temp_node_gyp_script(&mut self) -> Result<(), Error> {

@@ -62,7 +62,7 @@ use crate::socket::socket_address::inet::{self, AF_INET, AF_INET6};
 // `JSGlobalObject.rs` module; bind the FFI symbol locally.
 #[inline]
 fn clear_exception(global: &JSGlobalObject) {
-    extern "C" {
+    unsafe extern "C" {
         fn JSGlobalObject__clearException(global: *const JSGlobalObject);
     }
     // SAFETY: FFI — `global` is a valid JSGlobalObject*; C++ side has no extra preconditions.
@@ -458,7 +458,7 @@ impl BlockList {
     /// an *existing* refcounted pointer instead, so we bind `${T}__create`
     /// directly (codegen-emitted; see generate-classes.ts).
     fn to_js_ptr(this: *mut Self, global: &JSGlobalObject) -> JSValue {
-        extern "C" {
+        unsafe extern "C" {
             #[link_name = "BlockList__create"]
             fn __create(global: *mut JSGlobalObject, ptr: *mut BlockList) -> JSValue;
         }

@@ -9,7 +9,7 @@ use crate::webcore::Blob;
 // `bun_jsc::JSValue` re-exports them.
 // ──────────────────────────────────────────────────────────────────────────
 
-extern "C" {
+unsafe extern "C" {
     fn JSC__JSValue__fromUInt64NoTruncate(global: *const JSGlobalObject, i: u64) -> JSValue;
     fn JSC__JSValue__toUInt64NoTruncate(this: JSValue) -> u64;
 }

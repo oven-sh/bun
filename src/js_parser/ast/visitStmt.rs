@@ -1182,83 +1182,953 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         Ok(())
     }
 
-    // ─── light visitors (bodies still gated) ────────────────────────────────
-    // Full draft bodies preserved verbatim under ` mod _draft` below.
-    // blocked_on: push_scope_for_visit_pass/find_label_symbol/SideEffects helpers per-variant;
-    //   un-gate in a follow-up round once those P helpers are real.
+    // ─── control-flow / scope visitors ──────────────────────────────────────
 
-    fn s_enum(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::Enum, was_after: bool) -> Result<(), Error> {
-        let _ = (p, stmts, stmt, data, was_after);
-        todo!("visitStmt: s_enum body — see _draft")
-    }
     fn s_break(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::Break) -> Result<(), Error> {
-        let _ = (p, stmts, stmt, data);
-        todo!("visitStmt: s_break body — see _draft")
+        if let Some(label) = &mut data.label {
+            let r = label
+                .ref_
+                .unwrap_or_else(|| p.panic_loc("Expected label to have a ref", format_args!(""), Some(label.loc)));
+            let name = p.load_name_from_ref(r);
+            let res = p.find_label_symbol(label.loc, name);
+            if res.found {
+                label.ref_ = Some(res.r#ref);
+            } else {
+                data.label = None;
+            }
+        } else if !p.fn_or_arrow_data_visit.is_inside_loop
+            && !p.fn_or_arrow_data_visit.is_inside_switch
+        {
+            let r = js_lexer::range_of_identifier(p.source, stmt.loc);
+            p.log
+                .add_range_error(Some(p.source), r, "Cannot use \"break\" here".into())
+                .expect("unreachable");
+        }
+
+        stmts.push(*stmt);
+        Ok(())
     }
+
     fn s_continue(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::Continue) -> Result<(), Error> {
-        let _ = (p, stmts, stmt, data);
-        todo!("visitStmt: s_continue body — see _draft")
+        if let Some(label) = &mut data.label {
+            let r = label.ref_.unwrap_or_else(|| {
+                p.panic_loc("Expected continue label to have a ref", format_args!(""), Some(label.loc))
+            });
+            let name = p.load_name_from_ref(r);
+            let res = p.find_label_symbol(label.loc, name);
+            label.ref_ = Some(res.r#ref);
+            if res.found && !res.is_loop {
+                let r = js_lexer::range_of_identifier(p.source, stmt.loc);
+                p.log
+                    .add_range_error_fmt(
+                        Some(p.source),
+                        r,
+                        format_args!("Cannot \"continue\" to label {}", bstr::BStr::new(name)),
+                    )
+                    .expect("unreachable");
+            }
+        } else if !p.fn_or_arrow_data_visit.is_inside_loop {
+            let r = js_lexer::range_of_identifier(p.source, stmt.loc);
+            p.log
+                .add_range_error(Some(p.source), r, "Cannot use \"continue\" here".into())
+                .expect("unreachable");
+        }
+
+        stmts.push(*stmt);
+        Ok(())
     }
+
     fn s_label(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::Label) -> Result<(), Error> {
-        let _ = (p, stmts, stmt, data);
-        todo!("visitStmt: s_label body — see _draft")
+        p.push_scope_for_visit_pass(js_ast::scope::Kind::Label, stmt.loc).expect("unreachable");
+        let name = p.load_name_from_ref(data.name.ref_.unwrap());
+        let ref_ = p.new_symbol(js_ast::symbol::Kind::Label, name).expect("unreachable");
+        data.name.ref_ = Some(ref_);
+        p.cur_scope().label_ref = Some(ref_);
+        match data.stmt.data {
+            StmtData::SFor(_)
+            | StmtData::SForIn(_)
+            | StmtData::SForOf(_)
+            | StmtData::SWhile(_)
+            | StmtData::SDoWhile(_) => {
+                p.cur_scope().label_stmt_is_loop = true;
+            }
+            _ => {}
+        }
+
+        data.stmt = p.visit_single_stmt(data.stmt, StmtsKind::None);
+        p.pop_scope();
+
+        stmts.push(*stmt);
+        Ok(())
     }
+
     fn s_expr(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::SExpr) -> Result<(), Error> {
-        let _ = (p, stmts, stmt, data);
-        todo!("visitStmt: s_expr body — see _draft")
+        let should_trim_primitive = p.options.features.dead_code_elimination
+            && (p.options.features.minify_syntax && data.value.is_primitive_literal());
+        p.stmt_expr_value = data.value.data;
+
+        let is_top_level = core::ptr::eq(p.current_scope, p.module_scope);
+        if p.should_unwrap_common_js_to_esm() {
+            p.commonjs_named_exports_needs_conversion = if is_top_level {
+                u32::MAX
+            } else {
+                p.commonjs_named_exports_needs_conversion
+            };
+        }
+
+        data.value = p.visit_expr(data.value);
+
+        // Zig: defer p.stmt_expr_value = .{ .e_missing = .{} };
+        // PORT NOTE: restructured — restored at every return below.
+        macro_rules! restore_stmt_expr {
+            () => { p.stmt_expr_value = js_ast::ExprData::EMissing(E::Missing {}); };
+        }
+
+        if should_trim_primitive && data.value.is_primitive_literal() {
+            restore_stmt_expr!();
+            return Ok(());
+        }
+
+        // simplify unused
+        let Some(simplified) = SideEffects::simplify_unused_expr(p, data.value) else {
+            restore_stmt_expr!();
+            return Ok(());
+        };
+        data.value = simplified;
+
+        if p.should_unwrap_common_js_to_esm() {
+            if is_top_level {
+                if matches!(data.value.data, js_ast::ExprData::EBinary(_)) {
+                    let to_convert = p.commonjs_named_exports_needs_conversion;
+                    if to_convert != u32::MAX {
+                        p.commonjs_named_exports_needs_conversion = u32::MAX;
+                        'convert: {
+                            // PORT NOTE: reshaped for borrowck — copy StoreRef so DerefMut
+                            // points into the arena, freeing `&mut data.value`.
+                            let js_ast::ExprData::EBinary(mut bin_ref) = data.value.data else {
+                                break 'convert;
+                            };
+                            let bin: &mut E::Binary = &mut *bin_ref;
+                            if bin.op == js_ast::OpCode::BinAssign
+                                && matches!(bin.left.data, js_ast::ExprData::ECommonJSExportIdentifier(_))
+                            {
+                                // last entry's value
+                                let key: &'a [u8] = as_static(unsafe {
+                                    arena_str(p.commonjs_named_exports.keys()[to_convert as usize])
+                                });
+                                let last = &mut p.commonjs_named_exports.values_mut()[to_convert as usize];
+                                if !last.needs_decl {
+                                    break 'convert;
+                                }
+                                last.needs_decl = false;
+                                let last_loc = last.loc_ref.loc;
+
+                                let mut decls = G::DeclList::init_capacity(1).expect("oom");
+                                let ref_ = match bin.left.data {
+                                    js_ast::ExprData::ECommonJSExportIdentifier(id) => id.ref_,
+                                    _ => unreachable!(),
+                                };
+                                decls
+                                    .append(G::Decl {
+                                        binding: p.b(B::Identifier { r#ref: ref_ }, bin.left.loc),
+                                        value: Some(bin.right),
+                                    })
+                                    .expect("oom");
+                                // we have to ensure these are known to be top-level
+                                p.declared_symbols
+                                    .append(js_ast::DeclaredSymbol { ref_, is_top_level: true })
+                                    .expect("oom");
+                                p.esm_export_keyword.loc = stmt.loc;
+                                p.esm_export_keyword.len = 5;
+                                p.had_commonjs_named_exports_this_visit = true;
+                                let clause_items = p.allocator.alloc_slice_copy(&[js_ast::ClauseItem {
+                                    // We want the generated name to not conflict
+                                    alias: key as *const [u8],
+                                    alias_loc: bin.left.loc,
+                                    name: js_ast::LocRef { ref_: Some(ref_), loc: last_loc },
+                                    ..Default::default()
+                                }]);
+                                let local = p.s(
+                                    S::Local {
+                                        kind: S::Kind::KVar,
+                                        is_export: false,
+                                        was_commonjs_export: true,
+                                        decls,
+                                        ..Default::default()
+                                    },
+                                    stmt.loc,
+                                );
+                                let export = p.s(
+                                    S::ExportClause {
+                                        items: clause_items as *mut [_],
+                                        is_single_line: true,
+                                    },
+                                    stmt.loc,
+                                );
+                                stmts.extend_from_slice(&[local, export]);
+
+                                restore_stmt_expr!();
+                                return Ok(());
+                            }
+                        }
+                    } else if p.commonjs_replacement_stmts.len() > 0 {
+                        // PORT NOTE: Zig directly swaps backing storage; commonjs_replacement_stmts
+                        // is `StmtNodeList = *mut [Stmt]` here, so copy then clear.
+                        // SAFETY: arena-owned slice valid for 'a.
+                        let repl: &[Stmt] = unsafe { &*p.commonjs_replacement_stmts };
+                        if stmts.is_empty() {
+                            *stmts = BumpVec::from_iter_in(repl.iter().copied(), p.allocator);
+                        } else {
+                            stmts.extend_from_slice(repl);
+                        }
+                        p.commonjs_replacement_stmts =
+                            core::ptr::slice_from_raw_parts_mut(core::ptr::NonNull::dangling().as_ptr(), 0);
+
+                        restore_stmt_expr!();
+                        return Ok(());
+                    }
+                }
+            }
+        }
+
+        stmts.push(*stmt);
+        restore_stmt_expr!();
+        Ok(())
     }
+
     fn s_throw(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::Throw) -> Result<(), Error> {
         data.value = p.visit_expr(data.value);
         stmts.push(*stmt);
         Ok(())
     }
+
     fn s_return(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::Return) -> Result<(), Error> {
-        let _ = (p, stmts, stmt, data);
-        todo!("visitStmt: s_return body — see _draft")
+        // Forbid top-level return inside modules with ECMAScript-style exports
+        if p.fn_or_arrow_data_visit.is_outside_fn_or_arrow {
+            let where_ = if p.esm_export_keyword.len > 0 {
+                p.esm_export_keyword
+            } else if p.top_level_await_keyword.len > 0 {
+                p.top_level_await_keyword
+            } else {
+                logger::Range::NONE
+            };
+
+            if where_.len > 0 {
+                p.log
+                    .add_range_error(
+                        Some(p.source),
+                        where_,
+                        "Top-level return cannot be used inside an ECMAScript module".into(),
+                    )
+                    .expect("unreachable");
+            }
+        }
+
+        if let Some(val) = data.value {
+            data.value = Some(p.visit_expr(val));
+
+            // "return undefined;" can safely just always be "return;"
+            if let Some(v) = data.value {
+                if matches!(v.data, js_ast::ExprData::EUndefined(_)) {
+                    // Returning undefined is implicit
+                    data.value = None;
+                }
+            }
+        }
+
+        stmts.push(*stmt);
+        Ok(())
     }
+
     fn s_block(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::Block) -> Result<(), Error> {
-        let _ = (p, stmts, stmt, data);
-        todo!("visitStmt: s_block body — see _draft")
+        {
+            p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, stmt.loc).expect("unreachable");
+
+            // Pass the "is loop body" status on to the direct children of a block used
+            // as a loop body. This is used to enable optimizations specific to the
+            // topmost scope in a loop body block.
+            let kind = if core::mem::discriminant(&p.loop_body) == core::mem::discriminant(&stmt.data)
+                && match (p.loop_body, stmt.data) {
+                    (StmtData::SBlock(a), StmtData::SBlock(b)) => core::ptr::eq(&*a as *const _, &*b as *const _),
+                    _ => false,
+                } {
+                StmtsKind::LoopBody
+            } else {
+                StmtsKind::None
+            };
+            let mut _stmts = stmts_to_list(p.allocator, data.stmts);
+            p.visit_stmts(&mut _stmts, kind).expect("unreachable");
+            data.stmts = list_to_stmts(_stmts);
+            p.pop_scope();
+        }
+
+        if p.options.features.minify_syntax {
+            // // trim empty statements
+            // SAFETY: arena-owned slice valid for 'a.
+            let block_stmts: &[Stmt] = unsafe { &*data.stmts };
+            if block_stmts.is_empty() {
+                stmts.push(Stmt { data: Stmt::empty().data, loc: stmt.loc });
+                return Ok(());
+            } else if block_stmts.len() == 1 && !statement_cares_about_scope(&block_stmts[0]) {
+                // Unwrap blocks containing a single statement
+                stmts.push(block_stmts[0]);
+                return Ok(());
+            }
+        }
+
+        stmts.push(*stmt);
+        Ok(())
     }
+
     fn s_with(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::With) -> Result<(), Error> {
-        let _ = (p, stmts, stmt, data);
-        todo!("visitStmt: s_with body — see _draft")
+        data.value = p.visit_expr(data.value);
+
+        p.push_scope_for_visit_pass(js_ast::scope::Kind::With, data.body_loc).expect("unreachable");
+
+        // This can be many different kinds of statements.
+        // example code:
+        //
+        //      with(this.document.defaultView || Object.create(null))
+        //         with(this.document)
+        //           with(this.form)
+        //             with(this.element)
+        //
+        data.body = p.visit_single_stmt(data.body, StmtsKind::None);
+
+        p.pop_scope();
+        stmts.push(*stmt);
+        Ok(())
     }
+
     fn s_while(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::While) -> Result<(), Error> {
-        let _ = (p, stmts, stmt, data);
-        todo!("visitStmt: s_while body — see _draft")
+        data.test_ = p.visit_expr(data.test_);
+        data.body = p.visit_loop_body(data.body);
+
+        data.test_ = SideEffects::simplify_boolean(p, data.test_);
+        let result = SideEffects::to_boolean(p, &data.test_.data);
+        if result.ok && result.side_effects == SideEffects::SideEffects::NoSideEffects {
+            data.test_ = p.new_expr(E::Boolean { value: result.value }, data.test_.loc);
+        }
+
+        stmts.push(*stmt);
+        Ok(())
     }
+
     fn s_do_while(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::DoWhile) -> Result<(), Error> {
-        let _ = (p, stmts, stmt, data);
-        todo!("visitStmt: s_do_while body — see _draft")
+        data.body = p.visit_loop_body(data.body);
+        data.test_ = p.visit_expr(data.test_);
+
+        data.test_ = SideEffects::simplify_boolean(p, data.test_);
+        stmts.push(*stmt);
+        Ok(())
     }
+
     fn s_if(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::If) -> Result<(), Error> {
-        let _ = (p, stmts, stmt, data);
-        todo!("visitStmt: s_if body — see _draft")
+        let prev_in_branch = p.in_branch_condition;
+        p.in_branch_condition = true;
+        data.test_ = p.visit_expr(data.test_);
+        p.in_branch_condition = prev_in_branch;
+
+        if p.options.features.minify_syntax {
+            data.test_ = SideEffects::simplify_boolean(p, data.test_);
+        }
+
+        let effects = SideEffects::to_boolean(p, &data.test_.data);
+        if effects.ok && !effects.value {
+            let old = p.is_control_flow_dead;
+            p.is_control_flow_dead = true;
+            data.yes = p.visit_single_stmt(data.yes, StmtsKind::None);
+            p.is_control_flow_dead = old;
+        } else {
+            data.yes = p.visit_single_stmt(data.yes, StmtsKind::None);
+        }
+
+        // The "else" clause is optional
+        if let Some(no) = data.no {
+            if effects.ok && effects.value {
+                let old = p.is_control_flow_dead;
+                p.is_control_flow_dead = true;
+                data.no = Some(p.visit_single_stmt(no, StmtsKind::None));
+                p.is_control_flow_dead = old;
+            } else {
+                data.no = Some(p.visit_single_stmt(no, StmtsKind::None));
+            }
+
+            // Trim unnecessary "else" clauses
+            if p.options.features.minify_syntax {
+                if let Some(no2) = data.no {
+                    if matches!(no2.data, StmtData::SEmpty(_)) {
+                        data.no = None;
+                    }
+                }
+            }
+        }
+
+        if p.options.features.minify_syntax {
+            if effects.ok {
+                if effects.value {
+                    if data.no.is_none()
+                        || !SideEffects::should_keep_stmt_in_dead_control_flow(data.no.unwrap(), p.allocator)
+                    {
+                        if effects.side_effects == SideEffects::SideEffects::CouldHaveSideEffects {
+                            // Keep the condition if it could have side effects (but is still known to be truthy)
+                            if let Some(test_) = SideEffects::simplify_unused_expr(p, data.test_) {
+                                stmts.push(p.s(S::SExpr { value: test_, ..Default::default() }, test_.loc));
+                            }
+                        }
+
+                        return p.append_if_body_preserving_scope(stmts, data.yes);
+                    } else {
+                        // We have to keep the "no" branch
+                    }
+                } else {
+                    // The test is falsy
+                    if !SideEffects::should_keep_stmt_in_dead_control_flow(data.yes, p.allocator) {
+                        if effects.side_effects == SideEffects::SideEffects::CouldHaveSideEffects {
+                            // Keep the condition if it could have side effects (but is still known to be truthy)
+                            if let Some(test_) = SideEffects::simplify_unused_expr(p, data.test_) {
+                                stmts.push(p.s(S::SExpr { value: test_, ..Default::default() }, test_.loc));
+                            }
+                        }
+
+                        if data.no.is_none() {
+                            return Ok(());
+                        }
+
+                        return p.append_if_body_preserving_scope(stmts, data.no.unwrap());
+                    }
+                }
+            }
+
+            // TODO: more if statement syntax minification
+            let can_remove_test = p.expr_can_be_removed_if_unused(&data.test_);
+            match data.yes.data {
+                StmtData::SExpr(yes_expr) => {
+                    if yes_expr.value.is_missing() {
+                        if data.no.is_none() {
+                            if can_remove_test {
+                                return Ok(());
+                            }
+                        } else if data.no.unwrap().is_missing_expr() && can_remove_test {
+                            return Ok(());
+                        }
+                    }
+                }
+                StmtData::SEmpty(_) => {
+                    if data.no.is_none() {
+                        if can_remove_test {
+                            return Ok(());
+                        }
+                    } else if data.no.unwrap().is_missing_expr() && can_remove_test {
+                        return Ok(());
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        stmts.push(*stmt);
+        Ok(())
     }
+
     fn s_for(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::For) -> Result<(), Error> {
-        let _ = (p, stmts, stmt, data);
-        todo!("visitStmt: s_for body — see _draft")
+        p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, stmt.loc).expect("unreachable");
+
+        if let Some(initst) = data.init {
+            data.init = Some(p.visit_for_loop_init(initst, false));
+        }
+
+        if let Some(test_) = data.test_ {
+            let visited = p.visit_expr(test_);
+            data.test_ = Some(SideEffects::simplify_boolean(p, visited));
+
+            let result = SideEffects::to_boolean(p, &data.test_.unwrap().data);
+            if result.ok && result.value && result.side_effects == SideEffects::SideEffects::NoSideEffects {
+                data.test_ = None;
+            }
+        }
+
+        if let Some(update) = data.update {
+            data.update = Some(p.visit_expr(update));
+        }
+
+        data.body = p.visit_loop_body(data.body);
+
+        if let Some(for_init) = data.init {
+            if let StmtData::SLocal(local) = for_init.data {
+                // Potentially relocate "var" declarations to the top level. Note that this
+                // must be done inside the scope of the for loop or they won't be relocated.
+                if local.kind == S::Kind::KVar {
+                    let relocate =
+                        p.maybe_relocate_vars_to_top_level(local.decls.slice(), RelocateVarsMode::Normal);
+                    if let Some(relocated) = relocate.stmt {
+                        data.init = Some(relocated);
+                    }
+                }
+            }
+        }
+
+        p.pop_scope();
+
+        stmts.push(*stmt);
+        Ok(())
     }
+
     fn s_for_in(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::ForIn) -> Result<(), Error> {
-        let _ = (p, stmts, stmt, data);
-        todo!("visitStmt: s_for_in body — see _draft")
+        {
+            p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, stmt.loc).expect("unreachable");
+            // Zig: defer p.popScope(); — restructured: pop at end of block
+            let _ = p.visit_for_loop_init(data.init, true);
+            data.value = p.visit_expr(data.value);
+            data.body = p.visit_loop_body(data.body);
+
+            // Check for a variable initializer
+            if let StmtData::SLocal(mut local_ref) = data.init.data {
+                let local: &mut S::Local = &mut *local_ref;
+                if local.kind == S::Kind::KVar {
+                    // Lower for-in variable initializers in case the output is used in strict mode
+                    if local.decls.len == 1 {
+                        let decl: &mut G::Decl = &mut local.decls.slice_mut()[0];
+                        if let js_ast::binding::Data::BIdentifier(b_id) = decl.binding.data {
+                            if let Some(val) = decl.value {
+                                // SAFETY: arena-owned B::Identifier ptr, valid for 'a.
+                                let id_ref = unsafe { (*b_id).r#ref };
+                                stmts.push(Stmt::assign(
+                                    Expr::init_identifier(id_ref, decl.binding.loc),
+                                    val,
+                                ));
+                                decl.value = None;
+                            }
+                        }
+                    }
+
+                    let relocate = p.maybe_relocate_vars_to_top_level(
+                        local.decls.slice(),
+                        RelocateVarsMode::ForInOrForOf,
+                    );
+                    if let Some(relocated_stmt) = relocate.stmt {
+                        data.init = relocated_stmt;
+                    }
+                }
+            }
+            p.pop_scope();
+        }
+
+        stmts.push(*stmt);
+        Ok(())
     }
+
     fn s_for_of(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::ForOf) -> Result<(), Error> {
-        let _ = (p, stmts, stmt, data);
-        todo!("visitStmt: s_for_of body — see _draft")
+        p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, stmt.loc).expect("unreachable");
+        // Zig: defer p.popScope();
+        let _ = p.visit_for_loop_init(data.init, true);
+        data.value = p.visit_expr(data.value);
+        data.body = p.visit_loop_body(data.body);
+
+        if let StmtData::SLocal(_) = data.init.data {
+            if let StmtData::SLocal(local) = data.init.data {
+                if local.kind == S::Kind::KVar {
+                    let relocate = p.maybe_relocate_vars_to_top_level(
+                        local.decls.slice(),
+                        RelocateVarsMode::ForInOrForOf,
+                    );
+                    if let Some(relocated_stmt) = relocate.stmt {
+                        data.init = relocated_stmt;
+                    }
+                }
+            }
+
+            // Handle "for (using x of y)" and "for (await using x of y)"
+            if let StmtData::SLocal(mut init2_ref) = data.init.data {
+                let init2: &mut S::Local = &mut *init2_ref;
+                if init2.kind.is_using() && p.options.features.lower_using {
+                    // fn lowerUsingDeclarationInForOf()
+                    let loc = data.init.loc;
+                    let binding = init2.decls.at(0).binding;
+                    // SAFETY: arena-owned B::Identifier ptr, valid for 'a.
+                    let id: &mut B::Identifier = match binding.data {
+                        js_ast::binding::Data::BIdentifier(b) => unsafe { &mut *b },
+                        _ => unreachable!("for-of using must bind an identifier"),
+                    };
+                    let id_original_name =
+                        unsafe { arena_str(p.symbols[id.r#ref.inner_index() as usize].original_name) };
+                    let temp_ref = p.generate_temp_ref(Some(as_static(id_original_name)));
+
+                    let mut first_decls = G::DeclList::init_capacity(1).expect("oom");
+                    first_decls
+                        .append(G::Decl {
+                            binding: p.b(B::Identifier { r#ref: id.r#ref }, loc),
+                            value: Some(Expr::init_identifier(temp_ref, loc)),
+                        })
+                        .expect("oom");
+                    let first = p.s(
+                        S::Local { kind: init2.kind, decls: first_decls, ..Default::default() },
+                        loc,
+                    );
+
+                    let length = if let StmtData::SBlock(b) = data.body.data {
+                        unsafe { &*b.stmts }.len()
+                    } else {
+                        1
+                    };
+                    let mut statements: BumpVec<'a, Stmt> = BumpVec::with_capacity_in(1 + length, p.allocator);
+                    statements.push(first);
+                    if let StmtData::SBlock(b) = data.body.data {
+                        statements.extend_from_slice(unsafe { &*b.stmts });
+                    } else {
+                        statements.push(data.body);
+                    }
+
+                    let mut ctx = crate::ast::p::LowerUsingDeclarationsContext::init(p)?;
+                    let stmts_slice = statements.into_bump_slice_mut();
+                    ctx.scan_stmts(p, stmts_slice);
+                    let visited_stmts = ctx.finalize(
+                        p,
+                        stmts_slice,
+                        p.will_wrap_module_in_try_catch_for_using
+                            && unsafe { &*p.current_scope }.parent.is_none(),
+                    );
+                    if let StmtData::SBlock(mut b) = data.body.data {
+                        b.stmts = list_to_stmts(visited_stmts);
+                    } else {
+                        data.body = p.s(
+                            S::Block { stmts: list_to_stmts(visited_stmts), ..Default::default() },
+                            loc,
+                        );
+                    }
+                    id.r#ref = temp_ref;
+                    init2.kind = S::Kind::KConst;
+                }
+            }
+        }
+
+        p.pop_scope();
+        stmts.push(*stmt);
+        Ok(())
     }
+
     fn s_try(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::Try) -> Result<(), Error> {
-        let _ = (p, stmts, stmt, data);
-        todo!("visitStmt: s_try body — see _draft")
+        p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, stmt.loc).expect("unreachable");
+        {
+            let mut _stmts = stmts_to_list(p.allocator, data.body);
+            p.fn_or_arrow_data_visit.try_body_count += 1;
+            p.visit_stmts(&mut _stmts, StmtsKind::None).expect("unreachable");
+            p.fn_or_arrow_data_visit.try_body_count -= 1;
+            data.body = list_to_stmts(_stmts);
+        }
+        p.pop_scope();
+
+        if let Some(catch_) = &mut data.catch_ {
+            p.push_scope_for_visit_pass(js_ast::scope::Kind::CatchBinding, catch_.loc)
+                .expect("unreachable");
+            {
+                if let Some(catch_binding) = catch_.binding {
+                    p.visit_binding(catch_binding, None);
+                }
+                let mut _stmts = stmts_to_list(p.allocator, catch_.body);
+                p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, catch_.body_loc)
+                    .expect("unreachable");
+                p.visit_stmts(&mut _stmts, StmtsKind::None).expect("unreachable");
+                p.pop_scope();
+                catch_.body = list_to_stmts(_stmts);
+            }
+            p.pop_scope();
+        }
+
+        if let Some(finally) = &mut data.finally {
+            p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, finally.loc).expect("unreachable");
+            {
+                let mut _stmts = stmts_to_list(p.allocator, finally.stmts);
+                p.visit_stmts(&mut _stmts, StmtsKind::None).expect("unreachable");
+                finally.stmts = list_to_stmts(_stmts);
+            }
+            p.pop_scope();
+        }
+
+        stmts.push(*stmt);
+        Ok(())
     }
+
     fn s_switch(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::Switch) -> Result<(), Error> {
-        let _ = (p, stmts, stmt, data);
-        todo!("visitStmt: s_switch body — see _draft")
+        data.test_ = p.visit_expr(data.test_);
+        {
+            p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, data.body_loc).expect("unreachable");
+            let old_is_inside_switch = p.fn_or_arrow_data_visit.is_inside_switch;
+            p.fn_or_arrow_data_visit.is_inside_switch = true;
+            // SAFETY: arena-owned slice valid for 'a.
+            let cases = unsafe { &mut *data.cases };
+            for i in 0..cases.len() {
+                if let Some(val) = cases[i].value {
+                    cases[i].value = Some(p.visit_expr(val));
+                    // TODO: error messages
+                    // Check("case", *c.Value, c.Value.Loc)
+                    //                 p.warnAboutTypeofAndString(s.Test, *c.Value)
+                }
+                let mut _stmts = stmts_to_list(p.allocator, cases[i].body);
+                p.visit_stmts(&mut _stmts, StmtsKind::None).expect("unreachable");
+                cases[i].body = list_to_stmts(_stmts);
+            }
+            p.fn_or_arrow_data_visit.is_inside_switch = old_is_inside_switch;
+            p.pop_scope();
+        }
+        // TODO: duplicate case checker
+
+        stmts.push(*stmt);
+        Ok(())
     }
+
+    fn s_enum(
+        p: &mut Self,
+        stmts: &mut StmtList<'a>,
+        stmt: &mut Stmt,
+        data: &mut S::Enum,
+        was_after_after_const_local_prefix: bool,
+    ) -> Result<(), Error> {
+        // Do not end the const local prefix after TypeScript enums. We process
+        // them first within their scope so that they are inlined into all code in
+        // that scope. We don't want that to cause the const local prefix to end.
+        p.cur_scope().is_after_const_local_prefix = was_after_after_const_local_prefix;
+
+        // Track cross-module enum constants during bundling. This
+        // part of the code is different from esbuilt in that we are
+        // only storing a list of enum indexes. At the time of
+        // referencing, `esbuild` builds a separate hash map of hash
+        // maps. We are avoiding that to reduce memory usage, since
+        // enum inlining already uses alot of hash maps.
+        if core::ptr::eq(p.current_scope, p.module_scope) && p.options.bundle {
+            p.top_level_enums.push(data.name.ref_.unwrap());
+        }
+
+        p.record_declared_symbol(data.name.ref_.unwrap());
+        p.push_scope_for_visit_pass(js_ast::scope::Kind::Entry, stmt.loc)?;
+        // Zig: defer p.popScope(); — moved to end (no early returns).
+        p.record_declared_symbol(data.arg);
+
+        // Scan ahead for any variables inside this namespace. This must be done
+        // ahead of time before visiting any statements inside the namespace
+        // because we may end up visiting the uses before the declarations.
+        // We need to convert the uses into property accesses on the namespace.
+        // SAFETY: arena-owned slice valid for 'a.
+        let values = unsafe { &mut *data.values };
+        for value in values.iter() {
+            if value.ref_.is_valid() {
+                p.is_exported_inside_namespace.insert(value.ref_, data.arg);
+            }
+        }
+
+        // Values without initializers are initialized to one more than the
+        // previous value if the previous value is numeric. Otherwise values
+        // without initializers are initialized to undefined.
+        let mut next_numeric_value: Option<f64> = Some(0.0);
+
+        let mut value_exprs: BumpVec<'a, Expr> = BumpVec::with_capacity_in(values.len(), p.allocator);
+
+        let mut all_values_are_pure = true;
+
+        // SAFETY: ts_namespace is set for the enum scope (push_scope_for_visit_pass populated it
+        // during the parse pass); exported_members is arena-owned, valid for 'a.
+        let exported_members: *mut js_ast::TSNamespaceMemberMap =
+            unsafe { p.cur_scope().ts_namespace.unwrap().as_ref().exported_members };
+
+        // We normally don't fold numeric constants because they might increase code
+        // size, but it's important to fold numeric constants inside enums since
+        // that's what the TypeScript compiler does.
+        let old_should_fold_typescript_constant_expressions =
+            p.should_fold_typescript_constant_expressions;
+        p.should_fold_typescript_constant_expressions = true;
+
+        // Create an assignment for each enum value
+        for value in values.iter_mut() {
+            // SAFETY: name is arena-owned, valid for 'a.
+            let name: &'a [u8] = unsafe { arena_str(value.name) };
+
+            let mut has_string_value = false;
+            if let Some(enum_value) = value.value {
+                next_numeric_value = None;
+
+                let visited = p.visit_expr(enum_value);
+
+                // "See through" any wrapped comments
+                let underlying_value = if let js_ast::ExprData::EInlinedEnum(ie) = visited.data {
+                    ie.value
+                } else {
+                    visited
+                };
+                value.value = Some(underlying_value);
+
+                match underlying_value.data {
+                    js_ast::ExprData::ENumber(num) => {
+                        // SAFETY: exported_members points to arena-owned map; no aliasing &mut.
+                        unsafe { &mut *exported_members }
+                            .get_ptr_mut(name)
+                            .unwrap()
+                            .data = js_ast::ts::Data::EnumNumber(num.value);
+
+                        p.ref_to_ts_namespace_member
+                            .insert(value.ref_, js_ast::ts::Data::EnumNumber(num.value));
+
+                        next_numeric_value = Some(num.value + 1.0);
+                    }
+                    js_ast::ExprData::EString(str_) => {
+                        has_string_value = true;
+
+                        // SAFETY: see above.
+                        unsafe { &mut *exported_members }
+                            .get_ptr_mut(name)
+                            .unwrap()
+                            .data = js_ast::ts::Data::EnumString(&*str_ as *const _);
+
+                        p.ref_to_ts_namespace_member
+                            .insert(value.ref_, js_ast::ts::Data::EnumString(&*str_ as *const _));
+                    }
+                    _ => {
+                        if visited.known_primitive() == js_ast::expr::PrimitiveType::String {
+                            has_string_value = true;
+                        }
+
+                        if !p.expr_can_be_removed_if_unused(&visited) {
+                            all_values_are_pure = false;
+                        }
+                    }
+                }
+            } else if let Some(num) = next_numeric_value {
+                value.value = Some(p.new_expr(E::Number { value: num }, value.loc));
+
+                next_numeric_value = Some(num + 1.0);
+
+                // SAFETY: see above.
+                unsafe { &mut *exported_members }.get_ptr_mut(name).unwrap().data =
+                    js_ast::ts::Data::EnumNumber(num);
+
+                p.ref_to_ts_namespace_member
+                    .insert(value.ref_, js_ast::ts::Data::EnumNumber(num));
+            } else {
+                value.value = Some(p.new_expr(E::Undefined {}, value.loc));
+            }
+
+            let is_assign_target =
+                p.options.features.minify_syntax && js_lexer::is_identifier(name);
+
+            let name_as_e_string = if !is_assign_target || !has_string_value {
+                Some(p.new_expr(value.name_as_e_string(p.allocator), value.loc))
+            } else {
+                None
+            };
+
+            let assign_target = if is_assign_target {
+                // "Enum.Name = value"
+                Expr::assign(
+                    p.new_expr(
+                        E::Dot {
+                            target: Expr::init_identifier(data.arg, value.loc),
+                            name: as_static(name),
+                            name_loc: value.loc,
+                            ..Default::default()
+                        },
+                        value.loc,
+                    ),
+                    value.value.unwrap(),
+                )
+            } else {
+                // "Enum['Name'] = value"
+                Expr::assign(
+                    p.new_expr(
+                        E::Index {
+                            target: Expr::init_identifier(data.arg, value.loc),
+                            index: name_as_e_string.unwrap(),
+                            ..Default::default()
+                        },
+                        value.loc,
+                    ),
+                    value.value.unwrap(),
+                )
+            };
+
+            p.record_usage(data.arg);
+
+            // String-valued enums do not form a two-way map
+            if has_string_value {
+                value_exprs.push(assign_target);
+            } else {
+                // "Enum[assignTarget] = 'Name'"
+                value_exprs.push(Expr::assign(
+                    p.new_expr(
+                        E::Index {
+                            target: Expr::init_identifier(data.arg, value.loc),
+                            index: assign_target,
+                            ..Default::default()
+                        },
+                        value.loc,
+                    ),
+                    name_as_e_string.unwrap(),
+                ));
+                p.record_usage(data.arg);
+            }
+        }
+
+        p.should_fold_typescript_constant_expressions = old_should_fold_typescript_constant_expressions;
+
+        let mut value_stmts: StmtList<'a> = BumpVec::with_capacity_in(value_exprs.len(), p.allocator);
+        // Generate statements from expressions
+        for expr in value_exprs.iter() {
+            // PERF(port): was assume_capacity
+            value_stmts.push(p.s(S::SExpr { value: *expr, ..Default::default() }, expr.loc));
+        }
+        drop(value_exprs);
+        p.generate_closure_for_type_script_namespace_or_enum(
+            stmts,
+            stmt.loc,
+            data.is_export,
+            data.name.loc,
+            data.name.ref_.unwrap(),
+            data.arg,
+            value_stmts.into_bump_slice_mut(),
+            all_values_are_pure,
+        )?;
+        p.pop_scope();
+        Ok(())
+    }
+
     fn s_namespace(p: &mut Self, stmts: &mut StmtList<'a>, stmt: &mut Stmt, data: &mut S::Namespace) -> Result<(), Error> {
-        let _ = (p, stmts, stmt, data);
-        todo!("visitStmt: s_namespace body — see _draft")
+        p.record_declared_symbol(data.name.ref_.unwrap());
+
+        // Scan ahead for any variables inside this namespace. This must be done
+        // ahead of time before visiting any statements inside the namespace
+        // because we may end up visiting the uses before the declarations.
+        // We need to convert the uses into property accesses on the namespace.
+        // SAFETY: arena-owned slice valid for 'a.
+        let child_stmts: &[Stmt] = unsafe { &*data.stmts };
+        for child_stmt in child_stmts.iter() {
+            if let StmtData::SLocal(local) = child_stmt.data {
+                if local.is_export {
+                    p.mark_exported_decls_inside_namespace(data.arg, local.decls.slice());
+                }
+            }
+        }
+
+        let mut prepend_temp_refs =
+            PrependTempRefsOpts { kind: StmtsKind::FnBody, ..Default::default() };
+        let mut prepend_list = stmts_to_list(p.allocator, data.stmts);
+
+        let old_enclosing_namespace_arg_ref = p.enclosing_namespace_arg_ref;
+        p.enclosing_namespace_arg_ref = Some(data.arg);
+        p.push_scope_for_visit_pass(js_ast::scope::Kind::Entry, stmt.loc).expect("unreachable");
+        p.record_declared_symbol(data.arg);
+        p.visit_stmts_and_prepend_temp_refs(&mut prepend_list, &mut prepend_temp_refs)?;
+        p.pop_scope();
+        p.enclosing_namespace_arg_ref = old_enclosing_namespace_arg_ref;
+
+        p.generate_closure_for_type_script_namespace_or_enum(
+            stmts,
+            stmt.loc,
+            data.is_export,
+            data.name.loc,
+            data.name.ref_.unwrap(),
+            data.arg,
+            prepend_list.into_bump_slice_mut(),
+            false,
+        )?;
+        Ok(())
     }
 }
 

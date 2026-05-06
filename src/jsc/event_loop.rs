@@ -331,8 +331,9 @@ impl EventLoop {
     /// SAFETY: returns `&mut` into VM-owned scratch; two calls alias the same
     /// buffer. Caller must not hold another live `&mut` to it.
     pub unsafe fn pipe_read_buffer(&self) -> &mut [u8] {
-        // TODO(b2-cycle): RareData::pipe_read_buffer — gated until rare_data.rs un-gates.
-        todo!("EventLoop::pipe_read_buffer")
+        // SAFETY: vm() is the live owning VM; rare_data() lazily inits the
+        // per-VM scratch buffer. Caller contract (see doc): no concurrent &mut.
+        unsafe { &mut (*self.vm()).rare_data().pipe_read_buffer()[..] }
     }
 
     pub fn drain_microtasks_with_global(

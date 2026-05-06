@@ -3903,11 +3903,19 @@ impl<'a> LinkerContext<'a> {
                 // the unused tail back to the arena (matches Zig `.len = 0`).
                 part.stmts = &mut [] as *mut [Stmt];
 
+                // PORT NOTE: detach the arena lifetime from `&self` so the
+                // `&mut self` calls below (`generate_named_export_in_file`)
+                // don't conflict with slices borrowed from it. The arena is
+                // GRAPHBACKED and outlives the link step (LIFETIMES.tsv).
+                // SAFETY: `self.graph.allocator()` returns a stable `&Bump`
+                // into `LinkerGraph`; never freed mid-link.
+                let alloc: &Bump = unsafe { &*(self.allocator() as *const Bump) };
+
                 if let bun_js_parser::ast::expr::Data::EObject(e_object) = expr.data {
                     for property_ in e_object.properties.slice() {
                         let property: &G::Property = property_;
                         let Some(key) = property.key.as_ref() else { continue };
-                        let bun_js_parser::ast::expr::Data::EString(key_str) = key.data else { continue };
+                        let bun_js_parser::ast::expr::Data::EString(mut key_str) = key.data else { continue };
                         if property.value.is_none()
                             || key_str.eql_comptime(b"default")
                             || key_str.eql_comptime(b"__esModule")
@@ -3915,7 +3923,7 @@ impl<'a> LinkerContext<'a> {
                             continue;
                         }
 
-                        let name = key_str.slice(self.allocator());
+                        let name = key_str.slice(alloc);
 
                         // TODO: support non-identifier names
                         if !lex::is_identifier(name) {

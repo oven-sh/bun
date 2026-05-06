@@ -116,9 +116,27 @@ pub mod Macro {
     }
     impl MacroContext {
         /// Zig: `pub fn init(transpiler: *Transpiler) MacroContext`.
+        ///
+        /// Spec body (js_parser_jsc/Macro.zig:22) is straight struct
+        /// construction: `.macros = MacroMap.init(default_allocator)`,
+        /// `.resolver = &transpiler.resolver`, `.env = transpiler.env`,
+        /// `.remap = transpiler.options.macro_remap`, with
+        /// `.javascript_object` left at its field default `JSValue.zero`.
+        ///
+        /// At this tier the JSC-backed fields are owned by
+        /// `bun_js_parser_jsc::MacroContext` (dep-cycle: `Transpiler` /
+        /// `Resolver` / `DotEnv.Loader` live in higher-tier crates that
+        /// already depend on `bun_js_parser`). The only field surfaced here is
+        /// `javascript_object`, so the ported body reduces to writing its Zig
+        /// default — `JSValue.zero` ↔ null. `_transpiler` stays generic so
+        /// `bun_bundler::Transpiler` callers compile without an upward dep.
         #[inline]
         pub fn init<T>(_transpiler: &mut T) -> Self {
-            todo!("b1-stub: Macro::MacroContext::init — owned by bun_js_parser_jsc")
+            // PORT NOTE: resolver/env/macros/remap backrefs are wired by the
+            // *_jsc-tier `MacroContext::init`; this JSC-free stub only carries
+            // the `javascript_object` slot the transpiler threads through
+            // (transpiler.zig:938-940).
+            Self { javascript_object: core::ptr::null_mut() }
         }
         /// Zig: `pub fn getRemap(self: *MacroContext, path: []const u8) ?MacroRemapEntry`.
         /// The real `MacroContext` (bun_js_parser_jsc) carries a `MacroMap`; this

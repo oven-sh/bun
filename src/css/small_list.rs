@@ -983,7 +983,7 @@ where
         // Convert to lab if needed (e.g. if oklab is not supported but lab is).
         if fallbacks.lab {
             for item in this.slice_mut() {
-                let new = item.get_fallback(ColorFallbackKind { lab: true, ..Default::default() });
+                let new = item.get_fallback(allocator, ColorFallbackKind { lab: true, ..Default::default() });
                 let old = core::mem::replace(item, new);
                 drop(old);
             }

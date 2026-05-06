@@ -1048,21 +1048,26 @@ impl SendQueue {
 
         // optimal case: appending a message without a handle to the end of the queue when the last message also doesn't have a handle and isn't ack/nack
         // this is rare. it will only happen if messages stack up after sending a handle, or if a long message is sent that is waiting for writable
-        if handle.is_none() && !self.queue.is_empty() {
-            // PORT NOTE: reshaped for borrowck — capture scalars before re-borrowing last.
+        // PORT NOTE: reshaped for borrowck (NLL limitation: early-return of
+        // `&mut self.queue[..]` would otherwise extend the borrow across the
+        // fallback push). Compute the predicate first, then re-borrow.
+        let use_last = if handle.is_none() && !self.queue.is_empty() {
             let len = self.queue.len();
-            let write_in_progress = self.write_in_progress;
-            let last = &mut self.queue[len - 1];
-            if last.handle.is_none()
+            let last = &self.queue[len - 1];
+            last.handle.is_none()
                 && !last.is_ack_nack()
-                && !(len == 1 && write_in_progress)
-            {
-                if callback.is_callable() {
-                    last.callbacks.push(callback, global)?;
-                }
-                // caller can append now
-                return Ok(last);
+                && !(len == 1 && self.write_in_progress)
+        } else {
+            false
+        };
+        if use_last {
+            let len = self.queue.len();
+            let last = &mut self.queue[len - 1];
+            if callback.is_callable() {
+                last.callbacks.push(callback, global)?;
             }
+            // caller can append now
+            return Ok(last);
         }
 
         // fallback case: append a new message to the queue

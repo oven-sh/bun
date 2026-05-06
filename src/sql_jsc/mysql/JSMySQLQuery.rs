@@ -82,7 +82,8 @@ impl JSMySQLQuery {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global_this.bun_vm(), arguments);
+        // SAFETY: JS-thread only; sole `&mut VirtualMachine` borrow in this scope.
+        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(unsafe { global_this.bun_vm() }, arguments);
         // defer args.deinit() — handled by Drop
         let Some(query) = args.next_eat() else {
             return global_this.throw("query must be a string", &[]);
@@ -122,7 +123,8 @@ impl JSMySQLQuery {
         let this = Box::into_raw(Box::new(Self {
             this_value: JsRef::empty(),
             ref_count: Cell::new(1),
-            vm: NonNull::from(global_this.bun_vm()),
+            // SAFETY: JS-thread only; pointer stored, no aliased `&mut` retained.
+            vm: NonNull::from(unsafe { global_this.bun_vm() }),
             global_object: NonNull::from(global_this),
             query: MySQLQuery::init(query.to_bun_string(global_this)?, bigint, simple),
         }));

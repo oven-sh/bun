@@ -758,7 +758,8 @@ pub extern "C" fn PostgresSQLConnection__createInstance(
 
 #[bun_jsc::host_fn]
 pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let vm = global_object.bun_vm();
+    // SAFETY: JS-thread only; sole `&mut VirtualMachine` borrow in this scope.
+    let vm = unsafe { global_object.bun_vm() };
     let arguments = callframe.arguments();
     let hostname_str = arguments[0].to_bun_string(global_object)?;
     let port = arguments[1].coerce::<i32>(global_object)?;

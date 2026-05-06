@@ -345,7 +345,8 @@ impl JSMySQLConnection {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let vm = global_object.bun_vm();
+        // SAFETY: JS-thread only; sole `&mut VirtualMachine` borrow in this scope.
+        let vm = unsafe { global_object.bun_vm() };
         let arguments = callframe.arguments();
         let hostname_str = arguments[0].to_bun_string(global_object)?;
         // defer hostname_str.deref() — Drop on bun_str::String

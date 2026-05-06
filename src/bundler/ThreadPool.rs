@@ -138,8 +138,9 @@ mod io_thread_pool {
         // indicate the thread pool is initialized) is guarded by the mutex.
         if REF_COUNT.load(Ordering::Relaxed) == 0 {
             // SAFETY: we hold MUTEX and REF_COUNT == 0, so no other thread is reading THREAD_POOL.
+            // `&raw mut` avoids the edition-2024 `static_mut_refs` hard error.
             unsafe {
-                THREAD_POOL.write(ThreadPoolLib::ThreadPool::init(ThreadPoolLib::Config {
+                (*(&raw mut THREAD_POOL)).write(ThreadPoolLib::ThreadPool::init(ThreadPoolLib::Config {
                     max_threads: u32::from(bun_core::get_thread_count().min(4).max(2)),
                     // Use a much smaller stack size for the IO thread pool
                     stack_size: 512 * 1024,

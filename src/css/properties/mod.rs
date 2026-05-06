@@ -303,6 +303,34 @@ mod generic_registrations {
         ui::ColorScheme,
     );
 
+    // `BoxShadow`: inherent `to_css` is real (box_shadow.rs) but `parse` is
+    // still `#[cfg(any())]`-gated. Split the registration so trait dispatch
+    // forwards to the working serializer instead of the `@stub` `todo!()`.
+    impl crate::generics::ToCss for box_shadow::BoxShadow {
+        #[inline]
+        fn to_css(
+            &self,
+            dest: &mut crate::printer::Printer,
+        ) -> ::core::result::Result<(), crate::PrintErr> {
+            box_shadow::BoxShadow::to_css(self, dest)
+        }
+    }
+    impl crate::generics::Parse for box_shadow::BoxShadow {
+        #[inline]
+        fn parse(_input: &mut crate::css_parser::Parser) -> crate::css_parser::CssResult<Self> {
+            todo!("blocked_on: BoxShadow::parse — inherent body still #[cfg(any())]-gated")
+        }
+    }
+    impl crate::generics::ParseWithOptions for box_shadow::BoxShadow {
+        #[inline]
+        fn parse_with_options(
+            _input: &mut crate::css_parser::Parser,
+            _o: &crate::css_parser::ParserOptions,
+        ) -> crate::css_parser::CssResult<Self> {
+            todo!("blocked_on: BoxShadow::parse — inherent body still #[cfg(any())]-gated")
+        }
+    }
+
     // `GenericBorder<S, P>` covers Border / BorderTop / … / Outline. The
     // inherent impl block bounds `S` on the protocol traits; mirror here.
     impl<S, const P: u8> crate::generics::Parse for GenericBorder<S, P>

@@ -383,7 +383,8 @@ impl PostgresSQLQuery {
             return global_object.throw("connection must be a PostgresSQLConnection", &[]);
         };
 
-        connection.poll_ref.ref_(global_object.bun_vm());
+        // SAFETY: JS-thread only; sole `&mut VirtualMachine` borrow in this scope.
+        connection.poll_ref.ref_(unsafe { global_object.bun_vm() });
         let query = arguments[1];
 
         if !query.is_object() {

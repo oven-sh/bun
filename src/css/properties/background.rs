@@ -33,7 +33,6 @@ pub struct Background {
     pub clip: BackgroundClip,
 }
 
-#[cfg(any())] // blocked_on: Image/CssColor/Position::{parse,to_css,is_default} + SmallList::{append,slice} + ColorFallbackKind methods
 impl Background {
     // Zig `deinit` was a no-op (all allocations in CSS parser are in arena) — Drop handles it.
 
@@ -50,59 +49,57 @@ impl Background {
         loop {
             // TODO: only allowed on the last background.
             if color.is_none() {
-                if let Some(value) = input.try_parse(CssColor::parse).as_value() {
+                if let Ok(value) = input.try_parse(CssColor::parse) {
                     color = Some(value);
                     continue;
                 }
             }
 
             if position.is_none() {
-                if let Some(value) = input.try_parse(BackgroundPosition::parse).as_value() {
+                if let Ok(value) = input.try_parse(BackgroundPosition::parse) {
                     position = Some(value);
 
                     size = input
                         .try_parse(|i: &mut Parser| -> css::Result<BackgroundSize> {
-                            if let Some(e) = i.expect_delim('/').as_err() {
-                                return css::Result::Err(e);
-                            }
+                            i.expect_delim(b'/')?;
                             BackgroundSize::parse(i)
                         })
-                        .as_value();
+                        .ok();
 
                     continue;
                 }
             }
 
             if image.is_none() {
-                if let Some(value) = input.try_parse(Image::parse).as_value() {
+                if let Ok(value) = input.try_parse(Image::parse) {
                     image = Some(value);
                     continue;
                 }
             }
 
             if repeat.is_none() {
-                if let Some(value) = input.try_parse(BackgroundRepeat::parse).as_value() {
+                if let Ok(value) = input.try_parse(BackgroundRepeat::parse) {
                     repeat = Some(value);
                     continue;
                 }
             }
 
             if attachment.is_none() {
-                if let Some(value) = input.try_parse(BackgroundAttachment::parse).as_value() {
+                if let Ok(value) = input.try_parse(BackgroundAttachment::parse) {
                     attachment = Some(value);
                     continue;
                 }
             }
 
             if origin.is_none() {
-                if let Some(value) = input.try_parse(BackgroundOrigin::parse).as_value() {
+                if let Ok(value) = input.try_parse(BackgroundOrigin::parse) {
                     origin = Some(value);
                     continue;
                 }
             }
 
             if clip.is_none() {
-                if let Some(value) = input.try_parse(BackgroundClip::parse).as_value() {
+                if let Ok(value) = input.try_parse(BackgroundClip::parse) {
                     clip = Some(value);
                     continue;
                 }
@@ -119,7 +116,7 @@ impl Background {
             }
         }
 
-        css::Result::Ok(Background {
+        Ok(Background {
             image: image.unwrap_or_else(Image::default),
             color: color.unwrap_or_else(CssColor::default),
             position: position.unwrap_or_else(BackgroundPosition::default),
@@ -134,7 +131,7 @@ impl Background {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         let mut has_output = false;
 
-        if !self.color.eql(&CssColor::default()) {
+        if self.color != CssColor::default() {
             self.color.to_css(dest)?;
             has_output = true;
         }
@@ -155,7 +152,7 @@ impl Background {
             position.to_css(dest)?;
 
             if !self.size.eql(&BackgroundSize::default()) {
-                dest.delim('/', true)?;
+                dest.delim(b'/', true)?;
                 self.size.to_css(dest)?;
             }
 
@@ -170,7 +167,7 @@ impl Background {
             has_output = true;
         }
 
-        if !self.attachment.eql(&BackgroundAttachment::default()) {
+        if self.attachment != BackgroundAttachment::default() {
             if has_output {
                 dest.write_str(" ")?;
             }
@@ -178,7 +175,7 @@ impl Background {
             has_output = true;
         }
 
-        let output_padding_box = !self.origin.eql(&BackgroundOrigin::PaddingBox)
+        let output_padding_box = self.origin != BackgroundOrigin::PaddingBox
             || (!self.clip.eql_origin(&BackgroundOrigin::BorderBox) && self.clip.is_background_box());
 
         if output_padding_box {
@@ -218,19 +215,13 @@ impl Background {
     }
 
     pub fn with_image(&self, allocator: &Bump, image: Image) -> Self {
-        let mut ret = self.clone();
-        ret.image = Image::None;
-        ret = ret.deep_clone(allocator);
+        let mut ret = self.deep_clone(allocator);
         ret.image = image;
         ret
     }
 
     pub fn get_fallback(&self, allocator: &Bump, kind: ColorFallbackKind) -> Background {
-        let mut ret: Background = self.clone();
-        // Dummy values for the clone
-        ret.color = CssColor::default();
-        ret.image = Image::default();
-        ret = ret.deep_clone(allocator);
+        let mut ret = self.deep_clone(allocator);
         ret.color = self.color.get_fallback(allocator, kind);
         ret.image = self.image.get_fallback(allocator, kind);
         ret
@@ -242,11 +233,29 @@ impl Background {
 
     #[inline]
     pub fn deep_clone(&self, allocator: &Bump) -> Self {
-        css::implement_deep_clone(self, allocator)
+        // PORT NOTE: `css.implementDeepClone` reflection — expanded field-wise.
+        // `Image` is the only non-`Clone` field; it provides its own `deep_clone`.
+        Self {
+            image: self.image.deep_clone(allocator),
+            color: self.color.clone(),
+            position: self.position.clone(),
+            repeat: self.repeat,
+            size: self.size.clone(),
+            attachment: self.attachment,
+            origin: self.origin,
+            clip: self.clip,
+        }
     }
 
     pub fn eql(&self, rhs: &Self) -> bool {
-        css::implement_eql(self, rhs)
+        self.image.eql(&rhs.image)
+            && self.color == rhs.color
+            && self.position == rhs.position
+            && self.repeat.eql(&rhs.repeat)
+            && self.size.eql(&rhs.size)
+            && self.attachment == rhs.attachment
+            && self.origin == rhs.origin
+            && self.clip == rhs.clip
     }
 }
 

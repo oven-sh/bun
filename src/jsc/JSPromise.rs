@@ -112,13 +112,19 @@ impl<'a, T> Weak<'a, T> {
         }
     }
 
-    pub fn get(&self) -> &mut JSPromise {
-        self.weak.get().unwrap().as_promise().unwrap()
+    /// SAFETY: returns `&mut JSPromise` derived from a GC-owned cell pointer;
+    /// two calls alias the same object. Caller must not hold another live
+    /// `&mut JSPromise` to it (resolver-style accessor).
+    pub unsafe fn get(&self) -> &mut JSPromise {
+        // SAFETY: `as_promise` returns a non-null `*mut JSPromise` for a live promise cell.
+        unsafe { &mut *self.weak.get().unwrap().as_promise().unwrap() }
     }
 
-    pub fn get_or_null(&self) -> Option<&mut JSPromise> {
+    /// SAFETY: see [`get`].
+    pub unsafe fn get_or_null(&self) -> Option<&mut JSPromise> {
         let promise_value = self.weak.get()?;
-        promise_value.as_promise()
+        // SAFETY: see `get`.
+        promise_value.as_promise().map(|p| unsafe { &mut *p })
     }
 
     pub fn value(&self) -> JSValue {
@@ -178,7 +184,8 @@ impl Strong {
             Ok(v) => v,
             Err(_) => return self.reject(global, val),
         };
-        err.attach_async_stack_from_promise(global, self.get());
+        // SAFETY: `&mut self` held; sole `&mut JSPromise` borrow in this scope.
+        err.attach_async_stack_from_promise(global, unsafe { self.get() });
         self.swap().reject(global, Ok(err))
     }
 
@@ -213,8 +220,12 @@ impl Strong {
         }
     }
 
-    pub fn get(&self) -> &mut JSPromise {
-        self.strong.get().unwrap().as_promise().unwrap()
+    /// SAFETY: returns `&mut JSPromise` derived from a GC-owned cell pointer;
+    /// two calls alias the same object. Caller must not hold another live
+    /// `&mut JSPromise` to it (resolver-style accessor).
+    pub unsafe fn get(&self) -> &mut JSPromise {
+        // SAFETY: `as_promise` returns a non-null `*mut JSPromise` for a live promise cell.
+        unsafe { &mut *self.strong.get().unwrap().as_promise().unwrap() }
     }
 
     pub fn value(&self) -> JSValue {

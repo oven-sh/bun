@@ -1936,9 +1936,14 @@ impl<'bump> Parser<'bump> {
     }
 
     fn add_error(&mut self, args: fmt::Arguments<'_>) -> ParseResult<()> {
-        let mut v = bumpalo::collections::Vec::new_in(self.alloc);
-        write!(&mut v, "{}", args)?;
-        let msg = v.into_bump_slice();
+        // PORT NOTE: bumpalo::collections::Vec<u8> doesn't impl io::Write.
+        // Format into a stack String, then bump-copy. PERF(port): collapse to
+        // a bumpalo `String` writer once available.
+        let s = bumpalo::collections::String::from_str_in(
+            &std::fmt::format(args),
+            self.alloc,
+        );
+        let msg = s.into_bump_str().as_bytes();
         self.errors.push(ParserError { msg });
         Ok(())
     }
@@ -2264,15 +2269,15 @@ pub enum RedirectDirection {
 }
 
 #[derive(Clone, Copy)]
-pub struct BacktrackSnapshot<const ENCODING: StringEncoding> {
-    chars: ShellCharIter<ENCODING>,
+pub struct BacktrackSnapshot<'bump, const ENCODING: StringEncoding> {
+    chars: ShellCharIter<'bump, ENCODING>,
     j: u32,
     word_start: u32,
     delimit_quote: bool,
 }
 
 pub struct Lexer<'bump, const ENCODING: StringEncoding> {
-    pub chars: ShellCharIter<ENCODING>,
+    pub chars: ShellCharIter<'bump, ENCODING>,
 
     /// Tell us the beginning of a "word", indexes into the string pool (`buf`)
     /// Anytime a word is added, this needs to be updated
@@ -3224,28 +3229,35 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
 
     /// Assumes the first character of the literal has been eaten
     /// Backtracks and returns false if unsuccessful
-    fn eat_literal<CP: PartialEq + Copy + Default, const N: usize>(
+    // PORT NOTE: shell.zig `eatLiteral` is dead (no callers); preserved for
+    // shape parity. Reshaped to avoid `{ N - 1 }` const-generic arithmetic by
+    // peeking element-wise — same observable behaviour.
+    fn eat_literal<CP: PartialEq + Copy + Default + TryFrom<u32>>(
         &mut self,
-        literal: &[CP; N],
+        literal: &[CP],
     ) -> bool {
-        // TODO(port): Zig used `comptime CodepointType: type` + `comptime literal: []const CodepointType`.
         let literal_skip_first = &literal[1..];
         let snapshot = self.make_snapshot();
-        let slice = match self.eat_slice::<CP, { N - 1 }>() {
-            // TODO(port): const-generic arithmetic — needs `generic_const_exprs` feature; revisit.
-            Some(s) => s,
-            None => {
-                self.backtrack(snapshot);
-                return false;
+        for &want in literal_skip_first {
+            match self.peek() {
+                Some(got) => {
+                    let Ok(v) = CP::try_from(got.char) else {
+                        self.backtrack(snapshot);
+                        return false;
+                    };
+                    if v != want {
+                        self.backtrack(snapshot);
+                        return false;
+                    }
+                    let _ = self.eat();
+                }
+                None => {
+                    self.backtrack(snapshot);
+                    return false;
+                }
             }
-        };
-
-        if &slice[..] == literal_skip_first {
-            return true;
         }
-
-        self.backtrack(snapshot);
-        false
+        true
     }
 
     fn eat_number_word(&mut self) -> Option<usize> {

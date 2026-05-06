@@ -1248,7 +1248,6 @@ impl RuntimeTranspilerCache {
 // once at startup (PORTING.md §Dispatch — cold path, one indirect call per
 // unbound-identifier visit; the Zig original inlined the static map).
 pub mod defines {
-    use core::ptr::NonNull;
     use std::sync::OnceLock;
 
     use bun_collections::{StringArrayHashMap, StringHashMap};
@@ -1316,11 +1315,13 @@ pub mod defines {
         }
         #[inline]
         pub fn call_can_be_unwrapped_if_unused(self) -> E::CallUnwrap {
-            // SAFETY: CallUnwrap is #[repr(u8)] with values 0..=2; mask is 2 bits.
-            unsafe {
-                core::mem::transmute::<u8, E::CallUnwrap>(
-                    (self.0 & Self::CALL_UNWRAP_MASK) >> Self::CALL_UNWRAP_SHIFT,
-                )
+            // 2-bit field; explicit match avoids transmute-to-enum UB if both
+            // bits are ever set (PORTING.md §Forbidden — `E::CallUnwrap` only
+            // has discriminants 0/1/2, bit-pattern 3 would be UB via transmute).
+            match (self.0 & Self::CALL_UNWRAP_MASK) >> Self::CALL_UNWRAP_SHIFT {
+                1 => E::CallUnwrap::IfUnused,
+                2 => E::CallUnwrap::IfUnusedAndToStringSafe,
+                _ => E::CallUnwrap::Never,
             }
         }
         #[inline]

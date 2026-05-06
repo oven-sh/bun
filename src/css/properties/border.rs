@@ -723,22 +723,35 @@ pub struct BorderHandler {
 }
 
 impl BorderHandler {
-    // No-op stubs so `DeclarationHandler` compiles; real bodies are gated below.
+    // PORT NOTE: the full Zig `handleProperty` body (40+ border-* arms +
+    // `flush`) lives in `border_handler_body` below, gated on the
+    // BorderShorthand/flush macro web. Until that un-gates, the Zig spec's
+    // fallthrough still requires delegating to the sub-handlers for
+    // border-image-* / border-radius-* properties — those handlers are real
+    // (border_image.rs / border_radius.rs un-gated). A blanket `false` here
+    // would silently drop their shorthand merging + fallback emission.
     #[inline]
     pub fn handle_property(
         &mut self,
-        _property: &Property,
-        _dest: &mut DeclarationList<'_>,
-        _context: &mut PropertyHandlerContext<'_>,
+        property: &Property,
+        dest: &mut DeclarationList<'_>,
+        context: &mut PropertyHandlerContext<'_>,
     ) -> bool {
-        false
+        // Zig: `_ => return self.border_image_handler.handleProperty(...) or
+        //             self.border_radius_handler.handleProperty(...)`
+        self.border_image_handler.handle_property(property, dest, context)
+            || self.border_radius_handler.handle_property(property, dest, context)
     }
     #[inline]
     pub fn finalize(
         &mut self,
-        _dest: &mut DeclarationList<'_>,
-        _context: &mut PropertyHandlerContext<'_>,
+        dest: &mut DeclarationList<'_>,
+        context: &mut PropertyHandlerContext<'_>,
     ) {
+        // Zig `finalize` flushes self + both sub-handlers; the self-flush stays
+        // gated, but the sub-handler finalize calls are independent and must run.
+        self.border_image_handler.finalize(dest, context);
+        self.border_radius_handler.finalize(dest, context);
     }
 }
 

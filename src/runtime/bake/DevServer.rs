@@ -3439,7 +3439,7 @@ pub fn finalize_bundle(
             )?,
         }
     }
-    for chunk in result.html_chunks() {
+    for chunk in html_chunks_mut.iter() {
         let index = bun_js_parser::ast::Index::init(chunk.entry_point.source_index());
         dev.client_graph
             .process_chunk_dependencies(&mut ctx, incremental_graph::ProcessMode::Normal, index)?;
@@ -3868,12 +3868,19 @@ pub fn finalize_bundle(
                 .set_route_bundle_state(dev, route_bundle::State::PossibleBundlingFailures);
             // SAFETY: vm is JSC_BORROW; vm.global is valid for VM lifetime
             let global = unsafe { &*(*dev.vm).global };
+            // PORT NOTE: `bundling_failures` lives on `*dev` but
+            // `send_serialized_failures` needs `&mut self`; reborrow the keys
+            // through `dev_ptr` (Zig passed `dev.bundling_failures.keys()` by
+            // value with no aliasing check). The callee never touches
+            // `bundling_failures`.
+            // SAFETY: `dev_ptr` is live for the entire fn body (see line 3133).
+            let failures = unsafe { (*dev_ptr).bundling_failures.keys() };
             dev.send_serialized_failures(
                 DevResponse::Promise(PromiseResponse {
                     promise: current_bundle!().promise.strong.take(),
                     global,
                 }),
-                dev.bundling_failures.keys(),
+                failures,
                 ErrorPageKind::Bundler,
                 // SAFETY: agent ptr is from `dev.inspector()` just above; live for this scope.
                 inspector_agent_ptr.map(|p| unsafe { &mut *p }),
@@ -3901,9 +3908,12 @@ pub fn finalize_bundle(
                 Handler::BundledHtmlPage(ram) => DevResponse::Http(ram.response),
             };
 
+            // SAFETY: see PORT NOTE on `failures` above; `dev_ptr` is live and
+            // `send_serialized_failures` does not mutate `bundling_failures`.
+            let failures = unsafe { (*dev_ptr).bundling_failures.keys() };
             dev.send_serialized_failures(
                 resp,
-                dev.bundling_failures.keys(),
+                failures,
                 ErrorPageKind::Bundler,
                 // SAFETY: agent ptr is from `dev.inspector()` above; live for this scope.
                 inspector_agent_ptr.take().map(|p| unsafe { &mut *p }),

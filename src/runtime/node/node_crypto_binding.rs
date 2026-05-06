@@ -631,7 +631,7 @@ pub mod random {
             }
         }
 
-        let (str, bytes) = BunString::create_uninitialized_latin1(36);
+        let (mut str, bytes) = BunString::create_uninitialized_latin1(36);
 
         let uuid = if disable_entropy_cache {
             UUID::init()
@@ -933,7 +933,7 @@ impl Scrypt {
             ));
         };
 
-        let password = scopeguard::guard(password, |p| {
+        let password = scopeguard::guard(password, |mut p| {
             if IS_ASYNC {
                 p.deinit_and_unprotect();
             } else {
@@ -951,7 +951,7 @@ impl Scrypt {
             ));
         };
 
-        let salt = scopeguard::guard(salt, |s| {
+        let salt = scopeguard::guard(salt, |mut s| {
             if IS_ASYNC {
                 s.deinit_and_unprotect();
             } else {
@@ -1060,7 +1060,7 @@ impl Scrypt {
             err: None,
         };
         // Re-arm errdefer guards now that ownership moved into `ctx`.
-        let ctx = scopeguard::guard(ctx, |c| {
+        let ctx = scopeguard::guard(ctx, |mut c| {
             if IS_ASYNC {
                 c.salt.deinit_and_unprotect();
                 c.password.deinit_and_unprotect();

@@ -124,7 +124,13 @@ impl BuildCommand {
         // borrows it for `'a` and `exec` never returns until process exit
         // (`exit_or_watch` diverges).
         let arena: &'static bun_alloc::Arena = Box::leak(Box::new(bun_alloc::Arena::new()));
-        let mut this_transpiler = transpiler::Transpiler::init(arena, log, ctx.args.clone(), None)?;
+        // PORT NOTE: `generate_from_cli` takes `&'a mut Transpiler<'a>`, which
+        // borrows the transpiler for its full lifetime — dropck then rejects a
+        // stack local because the borrow would still be live in its destructor.
+        // Leak to `'static` (same rationale as `arena` above; `exec` diverges).
+        let this_transpiler: &mut transpiler::Transpiler<'static> = Box::leak(Box::new(
+            transpiler::Transpiler::init(arena, log, ctx.args.clone(), None)?,
+        ));
         if let Some(fetch) = fetcher.as_deref() {
             this_transpiler.options.entry_points = fetch.entry_points.clone();
             // resolver.opts is a distinct subset type; entry_points / IMRE live
@@ -524,7 +530,7 @@ impl BuildCommand {
             }
 
             let build_result = match BundleV2::generate_from_cli(
-                &mut this_transpiler,
+                this_transpiler,
                 arena,
                 None, // EventLoop = Option<NonNull<()>>; CLI uses no JS loop
                 ctx.debug.hot_reload == HotReload::Watch,

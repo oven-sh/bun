@@ -203,5 +203,5 @@ pub fn is_blob_url(url: &[u8]) -> bool {
 //   source:     src/runtime/webcore/ObjectURLRegistry.zig (176 lines)
 //   confidence: medium
 //   todos:      4
-//   notes:      lock+map merged into Mutex<HashMap>; host_fn export names need macro support; verify bun_core::UUID crate path
+//   notes:      lock+map merged into Guarded<HashMap>; host_fn export names need macro support
 // ──────────────────────────────────────────────────────────────────────────

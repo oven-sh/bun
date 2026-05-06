@@ -2632,15 +2632,15 @@ pub enum RedirectDirection {
 }
 
 #[derive(Clone, Copy)]
-pub struct BacktrackSnapshot<const ENCODING: StringEncoding> {
-    chars: ShellCharIter<ENCODING>,
+pub struct BacktrackSnapshot<'a, const ENCODING: StringEncoding> {
+    chars: ShellCharIter<'a, ENCODING>,
     j: u32,
     word_start: u32,
     delimit_quote: bool,
 }
 
 pub struct Lexer<'bump, const ENCODING: StringEncoding> {
-    pub chars: ShellCharIter<ENCODING>,
+    pub chars: ShellCharIter<'bump, ENCODING>,
 
     /// Tell us the beginning of a "word", indexes into the string pool (`buf`)
     /// Anytime a word is added, this needs to be updated
@@ -2748,7 +2748,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         self.string_refs = core::mem::take(&mut sublexer.string_refs);
     }
 
-    fn make_snapshot(&self) -> BacktrackSnapshot<ENCODING> {
+    fn make_snapshot(&self) -> BacktrackSnapshot<'bump, ENCODING> {
         BacktrackSnapshot {
             chars: self.chars,
             j: self.j,
@@ -2757,7 +2757,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         }
     }
 
-    fn backtrack(&mut self, snap: BacktrackSnapshot<ENCODING>) {
+    fn backtrack(&mut self, snap: BacktrackSnapshot<'bump, ENCODING>) {
         self.chars = snap.chars;
         self.j = snap.j;
         self.word_start = snap.word_start;

@@ -1635,7 +1635,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
 
     pub fn on_open(
         this: &mut JSValkeyClient,
-        socket: Self::SocketType,
+        socket: SocketType<SSL>,
     ) -> jsc::JsTerminatedResult<()> {
         this.client.socket = Self::_socket(socket);
         this.client.on_open(Self::_socket(socket))
@@ -1791,7 +1791,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
 
     pub fn on_close(
         this: &mut JSValkeyClient,
-        _socket: Self::SocketType,
+        _socket: SocketType<SSL>,
         _code: i32,
         _reason: Option<*mut c_void>,
     ) {
@@ -1810,7 +1810,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         let _ = this.client.on_close(); // TODO: properly propagate exception upwards
     }
 
-    pub fn on_end(this: &mut JSValkeyClient, socket: Self::SocketType) {
+    pub fn on_end(this: &mut JSValkeyClient, socket: SocketType<SSL>) {
         let _ = this;
         let _ = socket;
 
@@ -1821,7 +1821,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
 
     pub fn on_connect_error(
         this: &mut JSValkeyClient,
-        _socket: Self::SocketType,
+        _socket: SocketType<SSL>,
         _code: i32,
     ) -> jsc::JsTerminatedResult<()> {
         // Ensure the socket pointer is updated.

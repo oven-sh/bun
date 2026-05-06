@@ -350,6 +350,7 @@ impl WindowsNamedPipe {
         (self.handlers.on_timeout)(self.handlers.ctx);
     }
 
+    #[cfg(windows)]
     pub fn from(
         pipe: Box<uv::Pipe>,
         handlers: Handlers,

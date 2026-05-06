@@ -1170,7 +1170,7 @@ impl ValkeyClient {
         // We'll handle this response specially in handleResponse
         let mut hello_cmd = Command {
             command: b"HELLO",
-            args: command::Args::Raw(hello_args),
+            args: Args::Raw(hello_args),
             ..Default::default()
         };
 
@@ -1192,7 +1192,7 @@ impl ValkeyClient {
             };
             let mut select_cmd = Command {
                 command: b"SELECT",
-                args: command::Args::Raw(&[db_str]),
+                args: Args::Raw(&[db_str]),
                 ..Default::default()
             };
             if let Err(err) = select_cmd.write(self.writer()) {

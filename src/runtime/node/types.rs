@@ -1046,7 +1046,7 @@ impl PathLike {
         }
 
         if sliced.len() >= buf.len() {
-            bun_core::output::debug_warn!(
+            bun_core::debug_warn!(
                 "path too long: {} bytes exceeds PathBuffer capacity of {}\n",
                 sliced.len(),
                 buf.len()

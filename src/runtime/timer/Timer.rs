@@ -14,16 +14,16 @@ use bun_uws::Loop as UwsLoop;
 use bun_sys::windows::libuv as uv;
 
 // Re-exports (thin — do NOT inline target bodies)
-pub use bun_event_loop::EventLoopTimer;
-pub use super::timeout_object::TimeoutObject;
-pub use super::immediate_object::ImmediateObject;
+pub use super::EventLoopTimer;
+pub use super::TimeoutObject;
+pub use super::ImmediateObject;
 pub use super::timer_object_internals::TimerObjectInternals;
 /// A timer created by WTF code and invoked by Bun's event loop
 pub use super::wtf_timer::WTFTimer;
-pub use super::date_header_timer::DateHeaderTimer;
-pub use super::event_loop_delay_monitor::EventLoopDelayMonitor;
+pub use super::DateHeaderTimer;
+pub use super::EventLoopDelayMonitor;
 
-use bun_jsc::jest::bun_test::FakeTimers;
+use super::FakeTimers;
 
 /// TimeoutMap is map of i32 to nullable Timeout structs
 /// i32 is exposed to JavaScript and can be used with clearTimeout, clearInterval, etc.

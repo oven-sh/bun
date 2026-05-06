@@ -9,7 +9,6 @@
 //! - Downgrades to weak on EOF from master_fd
 //! - Callbacks are stored via `values` in classes.ts, accessed via js.gc
 
-use core::cell::Cell;
 use core::ffi::{c_int, c_ulong, c_void};
 use core::sync::atomic::{AtomicU32, Ordering};
 

@@ -626,7 +626,7 @@ impl UDPSocket {
         let callback = Self::js().gc.on_error.get(this_value).unwrap_or(JSValue::ZERO);
         // SAFETY: global_this stored at construction; VM outlives socket.
         let global_this = unsafe { &*self.global_this };
-        let vm = global_this.bun_vm_ptr();
+        let vm = global_this.bun_vm();
 
         if err.is_termination_exception() {
             return;

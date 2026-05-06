@@ -112,11 +112,12 @@ impl Expect {
         }
 
         // handle failure
+        // PORT NOTE: Zig shares one Formatter across both `to_fmt` calls; in Rust each
+        // `to_fmt` borrows `&mut Formatter` for the lifetime of the returned wrapper, so
+        // create a second Formatter (cheap struct init, no shared state) to satisfy borrowck.
         let mut formatter = super::make_formatter(global);
-        let value_fmt = value.to_fmt(&mut formatter);
-        let expected_fmt = expected.to_fmt(&mut formatter);
+        let mut formatter2 = super::make_formatter(global);
         if not {
-            let received_fmt = value.to_fmt(&mut formatter);
             // PERF(port): was comptime getSignature — profile in Phase B (make get_signature const fn / const_format)
             let signature = get_signature("toContain", "<green>expected<r>", true);
             return this.throw(
@@ -127,7 +128,8 @@ impl Expect {
                         "\n\n",
                         "Expected to not contain: <green>{}<r>\nReceived: <red>{}<r>\n",
                     ),
-                    expected_fmt, received_fmt,
+                    expected.to_fmt(&mut formatter),
+                    value.to_fmt(&mut formatter2),
                 ),
             );
         }
@@ -143,7 +145,8 @@ impl Expect {
                     "Expected to contain: <green>{}<r>\n",
                     "Received: <red>{}<r>\n",
                 ),
-                expected_fmt, value_fmt,
+                expected.to_fmt(&mut formatter),
+                value.to_fmt(&mut formatter2),
             ),
         )
     }

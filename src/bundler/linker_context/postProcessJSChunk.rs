@@ -133,7 +133,7 @@ pub fn post_process_js_chunk(
 
         let ast = c.graph.ast.get(chunk.entry_point.source_index() as usize);
         let ast_view = ast.to_ast();
-        let source = c.get_source(chunk.entry_point.source_index() as usize);
+        let source = c.get_source(chunk.entry_point.source_index());
         let target = unsafe { &(*c.resolver).opts }.target;
 
         // Hoist `*mut [Stmt]` extraction so the two `&mut chunk` borrows below

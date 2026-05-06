@@ -2020,7 +2020,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         } else if let Some(special) = e_.target.data.e_special() {
             match special {
                 E::Special::HotAccept => {
-                    p.handle_import_meta_hot_accept_call(&mut e_);
+                    p.handle_import_meta_hot_accept_call(&mut *e_);
                     // After validating that the import.meta.hot
                     // code is correct, discard the entire
                     // expression in production.

@@ -488,9 +488,9 @@ pub mod registry {
                     bstr::BStr::new(strings::trim(&url.pathname, b"/")),
                 )
                 .unwrap();
-                url = URL::parse(&href);
-                // TODO(port): href must outlive url — URL::parse may need to own its input
-                let _ = href;
+                // PORT NOTE: Zig `allocPrint` with `default_allocator` — leaked.
+                let href: &'static [u8] = Box::leak(href.into_boxed_slice());
+                url = URL::parse(href);
             }
 
             let url_hash = Self::hash(strings::without_trailing_slash(&url.href));
@@ -1452,7 +1452,9 @@ pub mod package_manifest {
 
             {
                 // errdefer file.close() — handled by scopeguard
-                let guard = scopeguard::guard((), |_| { let _ = file.close(); });
+                // PORT NOTE: capture the `Copy` `Fd` so the closure doesn't move `file`.
+                let fd = file.handle;
+                let guard = scopeguard::guard((), move |_| { let _ = bun_sys::close(fd); });
                 file.write_all(&buffer)?;
                 scopeguard::ScopeGuard::into_inner(guard);
             }
@@ -1479,7 +1481,8 @@ pub mod package_manifest {
 
             #[cfg(target_os = "linux")]
             if is_using_o_tmpfile {
-                let _close = scopeguard::guard((), |_| { let _ = file.close(); });
+                let fd = file.handle;
+                let _close = scopeguard::guard((), move |_| { let _ = bun_sys::close(fd); });
                 // Attempt #1.
                 if bun_sys::linkat_tmpfile(file.handle, cache_dir, outpath).is_err() {
                     // Attempt #2: the file may already exist. Let's unlink and try again.
@@ -1492,7 +1495,8 @@ pub mod package_manifest {
 
             #[cfg(not(windows))]
             {
-                let _close = scopeguard::guard((), |_| { let _ = file.close(); });
+                let fd = file.handle;
+                let _close = scopeguard::guard((), move |_| { let _ = bun_sys::close(fd); });
                 // Attempt #1. Rename the file.
                 let rc = bun_sys::renameat(tmpdir, tmp_path, cache_dir, outpath);
 

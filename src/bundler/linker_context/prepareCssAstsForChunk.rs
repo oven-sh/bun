@@ -8,7 +8,9 @@ use crate::{BundleV2, Chunk, LinkerContext};
 #[cfg(feature = "css")]
 use bun_collections::BabyList;
 #[cfg(feature = "css")]
-use crate::bun_css::{BundlerStyleSheet, ImportConditions, ImportInfo, PrinterOptions, Targets};
+use crate::bun_css::{
+    BundlerStyleSheet, ImportConditions, ImportInfo, LocalsResultsMap, PrinterOptions, Targets,
+};
 #[cfg(feature = "css")]
 use crate::bun_css::css_parser::{
     BundlerCssRule, BundlerCssRuleList, BundlerLayerBlockRule, BundlerMediaRule,
@@ -142,16 +144,33 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
             // entry.conditions / entry.condition_import_records relies on disjoint field borrows.
             match &mut entry.kind {
                 CssImportOrderKind::Layers(layers) => {
-                    let len = layers.inner().len;
+                    let inner = layers.inner();
+                    let len = inner.len;
                     let mut rules = BundlerCssRuleList::default();
                     if len > 0 {
+                        // PORT NOTE: Zig `SmallList(LayerName,1).fromBabyListNoDeinit(layers.inner().*)`
+                        // is a bitwise BabyList→SmallList header transfer. In Rust the
+                        // `Chunk::Layers` payload is the lifetime-erased shadow
+                        // `ungate_support::bun_css::LayerName { v: BabyList<Box<[u8]>> }`,
+                        // not the real `css_parser::LayerName { v: SmallList<&'static [u8],1> }`,
+                        // so the layouts differ. Rebuild the real list element-by-element;
+                        // segments are arena-owned (`'bump`-laundered to `'static`) so the
+                        // `&[u8]` reborrows below are valid for the chunk lifetime.
+                        let mut names = SmallList::<LayerName, 1>::default();
+                        for shadow in inner.slice() {
+                            let mut real = LayerName::default();
+                            for seg in shadow.v.slice() {
+                                // SAFETY: `seg` borrows arena-owned bytes that outlive
+                                // this stylesheet; launder to `'static` like every other
+                                // CSS slice in this crate (see layer.rs TODO(port)).
+                                real.v.append(unsafe {
+                                    core::mem::transmute::<&[u8], &'static [u8]>(seg.as_ref())
+                                });
+                            }
+                            names.append(real);
+                        }
                         rules.v.push(BundlerCssRule::LayerStatement(LayerStatementRule {
-                            // SAFETY: Zig `layers.inner().*` — bitwise copy of the
-                            // BabyList header; storage is arena-owned and never
-                            // freed via this view.
-                            names: SmallList::<LayerName, 1>::from_baby_list_no_deinit(unsafe {
-                                core::ptr::read(layers.inner())
-                            }),
+                            names,
                             loc: Location::dummy(),
                         }));
                     }

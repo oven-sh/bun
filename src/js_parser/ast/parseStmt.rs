@@ -766,20 +766,24 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         loc: logger::Loc,
     ) -> Result<Stmt> {
         let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::Block, loc)?;
-        // TODO(port): was `defer p.popScope()` — manual pop_scope before return.
-        p.lexer.next()?;
-        let mut stmt_opts = ParseStatementOptions::default();
-        let stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut stmt_opts)?;
-        let close_brace_loc = p.lexer.loc();
-        p.lexer.next()?;
+        // Zig: `defer p.popScope()`. Wrap the body in an inner closure so `pop_scope` runs once on
+        // its `Result`, covering every `?` early-exit.
+        let result: Result<Stmt> = (|| {
+            p.lexer.next()?;
+            let mut stmt_opts = ParseStatementOptions::default();
+            let stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut stmt_opts)?;
+            let close_brace_loc = p.lexer.loc();
+            p.lexer.next()?;
+            Ok(p.s(
+                S::Block {
+                    stmts: stmts.into_bump_slice_mut(),
+                    close_brace_loc,
+                },
+                loc,
+            ))
+        })();
         p.pop_scope();
-        Ok(p.s(
-            S::Block {
-                stmts: stmts.into_bump_slice_mut(),
-                close_brace_loc,
-            },
-            loc,
-        ))
+        result
     }
 
     // ─── heavy bodies still blocked ──────────────────────────────────────────

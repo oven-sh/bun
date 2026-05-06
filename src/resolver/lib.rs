@@ -6021,7 +6021,9 @@ impl<'a> Resolver<'a> {
             dec_ret!(None);
         }
 
-        let entries = dir_entry.entries();
+        // SAFETY: see `dir_entry` PORT note above — ARENA-backed, re-borrowed at each use.
+        let entries: *const Fs::file_system::DirEntry = unsafe { &*dir_entry }.entries();
+        macro_rules! entries { () => { unsafe { &*entries } } }
 
         let base = bun_paths::basename(path);
 
@@ -6030,26 +6032,27 @@ impl<'a> Resolver<'a> {
             debug.add_note_fmt(format_args!("Checking for file \"{}\" ", bstr::BStr::new(base)));
         }
 
-        if let Some(query) = entries.get(base) {
-            if query.entry.kind(rfs, self.store_fd) == Fs::file_system::EntryKind::File {
+        if let Some(query) = entries!().get(base) {
+            if query.entry.kind(unsafe { &mut *rfs }, self.store_fd) == Fs::file_system::EntryKind::File {
                 if let Some(debug) = self.debug_logs.as_mut() {
                     debug.add_note_fmt(format_args!("Found file \"{}\" ", bstr::BStr::new(base)));
                 }
 
-                let abs_path: &[u8] = {
+                let abs_path: &'static [u8] = {
                     if query.entry.abs_path.is_empty() {
                         let abs_path_parts = [query.entry.dir, query.entry.base()];
                         query.entry.abs_path = PathString::init(
                             self.fs.dirname_store.append_slice(self.fs.abs_buf(&abs_path_parts, bufs!(load_as_file))).expect("unreachable"),
                         );
                     }
-                    query.entry.abs_path.slice()
+                    // SAFETY: PathString backs onto FilenameStore singleton (interned 'static).
+                    unsafe { core::mem::transmute::<&[u8], &'static [u8]>(query.entry.abs_path.slice()) }
                 };
 
                 dec_ret!(Some(LoadResult {
                     path: abs_path,
                     diff_case: query.diff_case,
-                    dirname_fd: entries.fd,
+                    dirname_fd: entries!().fd,
                     file_fd: query.entry.cache.fd,
                     dir_info: None,
                 }));
@@ -6059,13 +6062,13 @@ impl<'a> Resolver<'a> {
         // Try the path with extensions
         bufs!(load_as_file)[..path.len()].copy_from_slice(path);
         for ext in extension_order {
-            if let Some(result) = self.load_extension(base, path, ext, entries) {
+            if let Some(result) = self.load_extension(base, path, ext, entries!()) {
                 dec_ret!(Some(result));
             }
         }
 
         for ext in self.opts.extra_cjs_extensions.iter() {
-            if let Some(result) = self.load_extension(base, path, ext, entries) {
+            if let Some(result) = self.load_extension(base, path, ext, entries!()) {
                 dec_ret!(Some(result));
             }
         }
@@ -6108,8 +6111,8 @@ impl<'a> Resolver<'a> {
                     let buffer = &mut tail[0..segment.len() + ext_to_replace.len()];
                     buffer[segment.len()..].copy_from_slice(ext_to_replace);
 
-                    if let Some(query) = entries.get(&buffer[..]) {
-                        if query.entry.kind(rfs, self.store_fd) == Fs::file_system::EntryKind::File {
+                    if let Some(query) = entries!().get(&buffer[..]) {
+                        if query.entry.kind(unsafe { &mut *rfs }, self.store_fd) == Fs::file_system::EntryKind::File {
                             if let Some(debug) = self.debug_logs.as_mut() {
                                 debug.add_note_fmt(format_args!("Rewrote to \"{}\" ", bstr::BStr::new(&buffer[..])));
                             }
@@ -6126,10 +6129,11 @@ impl<'a> Resolver<'a> {
                                             query.entry.abs_path = PathString::init(self.fs.filename_store.append_parts(&parts).expect("unreachable"));
                                         }
                                     }
-                                    query.entry.abs_path.slice()
+                                    // SAFETY: PathString backs onto FilenameStore singleton (interned 'static).
+                                    unsafe { core::mem::transmute::<&[u8], &'static [u8]>(query.entry.abs_path.slice()) }
                                 },
                                 diff_case: query.diff_case,
-                                dirname_fd: entries.fd,
+                                dirname_fd: entries!().fd,
                                 file_fd: query.entry.cache.fd,
                                 dir_info: None,
                             }));
@@ -6150,7 +6154,7 @@ impl<'a> Resolver<'a> {
             // For existent directories which don't find a match
             // Start watching it automatically,
             if let Some(watcher) = self.watcher.as_ref() {
-                watcher.watch(entries.dir, entries.fd);
+                watcher.watch(entries!().dir, entries!().fd);
             }
         }
         dec_ret!(None);
@@ -6163,7 +6167,10 @@ impl<'a> Resolver<'a> {
         ext: &[u8],
         entries: &Fs::file_system::DirEntry,
     ) -> Option<LoadResult> {
-        let rfs: &mut Fs::file_system::RealFS = &mut self.fs.fs;
+        // SAFETY: PORT — see load_as_file; raw-ptr re-borrow so `&mut self`
+        // (debug_logs / dirname_store) doesn't alias `rfs`/`entries`.
+        let rfs: *mut Fs::file_system::RealFS = &mut self.fs.fs;
+        let entries: *const Fs::file_system::DirEntry = entries;
         let buffer = &mut bufs!(load_as_file)[0..path.len() + ext.len()];
         buffer[path.len()..].copy_from_slice(ext);
         let file_name = &buffer[path.len() - base.len()..buffer.len()];
@@ -6172,8 +6179,8 @@ impl<'a> Resolver<'a> {
             debug.add_note_fmt(format_args!("Checking for file \"{}\" ", bstr::BStr::new(&buffer[..])));
         }
 
-        if let Some(query) = entries.get(file_name) {
-            if query.entry.kind(rfs, self.store_fd) == Fs::file_system::EntryKind::File {
+        if let Some(query) = unsafe { &*entries }.get(file_name) {
+            if query.entry.kind(unsafe { &mut *rfs }, self.store_fd) == Fs::file_system::EntryKind::File {
                 if let Some(debug) = self.debug_logs.as_mut() {
                     debug.add_note_fmt(format_args!("Found file \"{}\" ", bstr::BStr::new(&buffer[..])));
                 }
@@ -6186,10 +6193,11 @@ impl<'a> Resolver<'a> {
                         } else {
                             query.entry.abs_path
                         };
-                        query.entry.abs_path.slice()
+                        // SAFETY: PathString backs onto DirnameStore singleton (interned 'static).
+                        unsafe { core::mem::transmute::<&[u8], &'static [u8]>(query.entry.abs_path.slice()) }
                     },
                     diff_case: query.diff_case,
-                    dirname_fd: entries.fd,
+                    dirname_fd: unsafe { &*entries }.fd,
                     file_fd: query.entry.cache.fd,
                     dir_info: None,
                 });

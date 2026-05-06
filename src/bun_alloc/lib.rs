@@ -99,7 +99,8 @@ pub mod stubs {
     pub use crate::out_of_memory;
     pub type ThreadLock = ();
     pub type PathBuffer = [u8; 4096];
-    pub const SEP_STR: &str = "/";
+    // Zig: `std.fs.path.sep_str` — "\\" on Windows, "/" elsewhere.
+    pub const SEP_STR: &str = if cfg!(windows) { "\\" } else { "/" };
     pub type ZStr = [u8];
     pub type CoreError = core::num::NonZeroU16;
     pub struct StoredTrace;

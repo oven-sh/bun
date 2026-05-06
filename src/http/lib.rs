@@ -1102,6 +1102,12 @@ impl HTTPThread {
     ) -> Result<Option<HttpSocket<IS_SSL>>, bun_core::Error> {
         todo!("HTTPThread::connect — gated in HTTPThread.rs")
     }
+    pub fn schedule(&mut self, _batch: bun_threading::thread_pool::Batch) {
+        todo!("HTTPThread::schedule — gated in HTTPThread.rs _phase_a_draft")
+    }
+    pub fn wakeup(&self) {
+        todo!("HTTPThread::wakeup — gated in HTTPThread.rs _phase_a_draft")
+    }
 }
 impl ProxyTunnel {
     pub fn shutdown(&mut self) {

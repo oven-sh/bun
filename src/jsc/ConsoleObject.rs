@@ -267,13 +267,14 @@ use bun_threading::Mutex;
 /// that casts it back; every body below goes through it instead of touching
 /// the field directly.
 #[inline]
-fn vm_console(global: &JSGlobalObject) -> &'static mut ConsoleObject {
+fn vm_console(global: &JSGlobalObject) -> *mut ConsoleObject {
     // SAFETY: `VirtualMachine.console` is initialized once at VM construction
     // (see `init` above — written into stable boxed storage) and lives for the
     // VM's lifetime; the C++ side never calls into `Bun__ConsoleObject__*`
-    // before that. The `'static` is a lie of convenience matching the Zig
-    // shape (`*ConsoleObject` field) — callers never outlive the VM.
-    unsafe { &mut *(global.bun_vm().console as *mut ConsoleObject) }
+    // before that. Returned as a raw pointer (not `&'static mut`) so callers
+    // dereference at each use site without holding overlapping `&mut`
+    // references — matches the Zig shape (`*ConsoleObject` field).
+    global.bun_vm().console as *mut ConsoleObject
 }
 
 static STDERR_MUTEX: Mutex = Mutex::new();
@@ -309,10 +310,12 @@ fn message_with_type_and_level_(
     vals: *const JSValue,
     len: usize,
 ) -> JsResult<()> {
-    let console = vm_console(global);
+    let console: *mut ConsoleObject = vm_console(global);
     // `defer console.default_indent +|= (message_type == StartGroup) as u16;`
-    let indent_guard = scopeguard::guard((), |_| {
-        console.default_indent = console
+    // Capture the raw pointer (Copy) so no `&mut ConsoleObject` is held across
+    // the body; dereference only at scope-exit.
+    let indent_guard = scopeguard::guard((), move |_| unsafe {
+        (*console).default_indent = (*console)
             .default_indent
             .saturating_add((message_type == MessageType::StartGroup) as u16);
     });
@@ -324,7 +327,9 @@ fn message_with_type_and_level_(
     }
 
     if message_type == MessageType::EndGroup {
-        console.default_indent = console.default_indent.saturating_sub(1);
+        unsafe {
+            (*console).default_indent = (*console).default_indent.saturating_sub(1);
+        }
         drop(indent_guard);
         return Ok(());
     }
@@ -379,8 +384,8 @@ fn message_with_type_and_level_(
         } else {
             "Assertion failed\n"
         };
-        let _ = console.error_writer().write_all(text.as_bytes());
-        let _ = console.error_writer().flush();
+        let _ = unsafe { (*console).error_writer() }.write_all(text.as_bytes());
+        let _ = unsafe { (*console).error_writer() }.flush();
         drop(indent_guard);
         return Ok(());
     }
@@ -392,9 +397,9 @@ fn message_with_type_and_level_(
     };
 
     let writer: &mut dyn bun_io::Write = if matches!(level, MessageLevel::Warning | MessageLevel::Error) {
-        console.error_writer()
+        unsafe { (*console).error_writer() }
     } else {
-        console.writer()
+        unsafe { (*console).writer() }
     };
 
     // TODO(port-cycle): `crate::Jest::runner()?.bun_test_root.on_before_print()`
@@ -422,7 +427,7 @@ fn message_with_type_and_level_(
         enable_colors,
         add_newline: true,
         flush: true,
-        default_indent: console.default_indent,
+        default_indent: unsafe { (*console).default_indent },
         max_depth: console_depth,
         error_display_level: match level {
             MessageLevel::Error => ErrorDisplayLevel::Full,
@@ -445,7 +450,7 @@ fn message_with_type_and_level_(
                 JSValue::UNDEFINED
             };
             let mut table_printer = TablePrinter::init(global, level, tabular_data, properties)?;
-            table_printer.value_formatter.indent += u32::from(console.default_indent);
+            table_printer.value_formatter.indent += u32::from(unsafe { (*console).default_indent });
 
             if enable_colors {
                 let _ = table_printer.print_table::<true>(writer);
@@ -480,8 +485,8 @@ fn message_with_type_and_level_(
     if print_length > 0 {
         format2(level, global, vals, print_length, writer, print_options)?;
     } else if message_type == MessageType::Log {
-        let _ = console.writer().write_all(b"\n");
-        let _ = console.writer().flush();
+        let _ = unsafe { (*console).writer() }.write_all(b"\n");
+        let _ = unsafe { (*console).writer() }.flush();
     } else if message_type != MessageType::Trace {
         let _ = writer.write_all(b"undefined\n");
     }
@@ -2112,7 +2117,12 @@ pub mod formatter {
                                 // then skip the second % so we dont hit it again
                                 slice = &slice[slice.len().min((i + 1) as usize)..];
                                 len = slice.len() as u32;
-                                i = 0;
+                                // PORT NOTE: replicates Zig's `while : (i += 1)` continue-
+                                // expression — Zig's `i = 0; continue;` is bumped to 1 by
+                                // the continue-expr, so the next iteration inspects
+                                // `slice[1]`, not `slice[0]`. (This is itself an upstream
+                                // off-by-one vs the WHATWG spec; tracked separately.)
+                                i = 1;
                                 continue;
                             }
                             _ => {
@@ -3996,8 +4006,11 @@ pub mod formatter {
                     value.for_each(self.global_this, &mut iter as *mut _ as *mut c_void,
                         MapIteratorCtx::<C, true, true>::for_each)?;
                     if self.failed { return Ok(()); }
-                    if iter.count > 0 {
-                        let _ = writer_.write_all(if label == "MapIterator" { b" " } else { b" " });
+                    // Spec divergence: Zig's `.SetIterator` arm writes NOTHING in
+                    // single-line mode (`if (count > 0 and !single_line) writeAll("\n")`),
+                    // only `.MapIterator` writes a trailing space.
+                    if iter.count > 0 && label == "MapIterator" {
+                        let _ = writer_.write_all(b" ");
                     }
                 } else {
                     let mut iter = MapIteratorCtx::<C, true, false> {
@@ -4010,11 +4023,6 @@ pub mod formatter {
                         let _ = writer_.write_all(b"\n");
                     }
                 }
-                // TODO(port): Zig's SetIterator branch differed slightly: it
-                // wrote `\n` only when `!single_line && count > 0`, and a
-                // single-line trailing space only for MapIterator. Reconcile
-                // exactly in Phase B by re-splitting into two helpers if
-                // snapshot tests diverge.
             }
             if !self.single_line {
                 let _ = self.write_indent(writer_);

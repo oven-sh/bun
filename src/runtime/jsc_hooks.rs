@@ -209,22 +209,16 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     let loop_ = unsafe { (*el).usockets_loop() };
 
     // ── tick_immediate_tasks ────────────────────────────────────────────
-    // PORT NOTE: `EventLoop::tick_immediate_tasks` is `#[cfg(any())]`-gated in
-    // `bun_jsc` (it derefs `*mut ImmediateObject`, a `bun_runtime` type).
-    // Inline the body here once `ImmediateObject::run_immediate_task` un-gates.
-    // TODO(b2-cycle): tick_immediate_tasks(el, vm).
-    //
-    // The Windows `wakeup()` (spec event_loop.zig:371-376) checks
-    // `immediate_tasks.len > 0` AFTER `tickImmediateTasks` swaps the
-    // `next_immediate_tasks` list in. With `tick_immediate_tasks` gated, the
-    // pre-swap check would be wrong and the immediates never run, so the
-    // wakeup just busy-spins. Gate the wakeup alongside the tick.
-    #[cfg(any())]
-    {
-        #[cfg(windows)]
-        if !unsafe { &*el }.immediate_tasks.is_empty() {
-            unsafe { (*el).wakeup() };
-        }
+    // Spec event_loop.zig:368-376. The swap + drain loop is now un-gated in
+    // `bun_jsc::event_loop` (per-task body dispatched via `RUN_IMMEDIATE_HOOK`),
+    // so `immediate_tasks` after this call reflects next-tick immediates and
+    // the `has_pending_immediate` read below is correct.
+    // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
+    unsafe { (*el).tick_immediate_tasks(vm) };
+    #[cfg(windows)]
+    if !unsafe { &*el }.immediate_tasks.is_empty() {
+        // SAFETY: `el` is the live per-thread event loop.
+        unsafe { (*el).wakeup() };
     }
 
     // ── pending unref ───────────────────────────────────────────────────
@@ -268,18 +262,11 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     // due `WTFTimer` heap entries), so it must stay guarded by `is_active()`
     // rather than running unconditionally.
     {
-        // PORT NOTE: spec Timer.zig:251-256 reads `immediate_tasks.items.len`
-        // AFTER `tickImmediateTasks` swaps `next_immediate_tasks` in, so it
-        // reflects next-tick immediates. With `tick_immediate_tasks` gated
-        // above, reading `immediate_tasks` here would see un-drained current
-        // immediates → `get_timeout` returns `{0,0}` forever → busy-spin and
-        // the immediates never run. Gate the read alongside the tick (same
-        // hazard the Windows wakeup gating at lines 200-206 avoids); restore
-        // the live read once `tick_immediate_tasks` un-gates.
-        #[cfg(any())]
+        // Spec Timer.zig:251-256 reads `immediate_tasks.items.len` AFTER
+        // `tickImmediateTasks` swaps `next_immediate_tasks` in, so this
+        // reflects next-tick immediates (queued during the drain above).
+        // SAFETY: `el` is the live per-thread event loop.
         let has_pending_immediate = !unsafe { &*el }.immediate_tasks.is_empty();
-        #[cfg(not(any()))]
-        let has_pending_immediate = false;
         // Spec Timer.zig:261-268: fold the QUIC deadline into the poll timeout.
         // SAFETY: `loop_` is the live per-thread uws loop.
         let quic_next_tick_us = unsafe {
@@ -442,18 +429,12 @@ fn transpile_source_code_inner(
                 L::Toml | L::Yaml | L::Json5 | L::Text | L::Json | L::Jsonc
             ))
     {
-        // TODO(b2-blocked): real `ResolvedSource` is a `stub_ty!` in `bun_jsc`
-        // — field-init form un-gates with `ResolvedSource.rs`.
-        #[cfg(any())]
-        {
-            return Ok(ResolvedSource {
-                source_code: bun_string::String::empty(),
-                specifier: input_specifier.dupe_ref(),
-                source_url: create_if_different(input_specifier, path.text),
-                ..Default::default()
-            });
-        }
-        return Ok(ResolvedSource::default());
+        return Ok(ResolvedSource {
+            source_code: bun_string::String::empty(),
+            specifier: input_specifier.dupe_ref(),
+            source_url: create_if_different(input_specifier, path.text),
+            ..Default::default()
+        });
     }
 
     match loader {

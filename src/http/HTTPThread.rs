@@ -92,6 +92,14 @@ pub struct HeapRequestBodyBuffer {
     pub fixed_buffer_allocator: usize,
 }
 
+/// Bridge stub: `AsyncHTTP::send_sync` calls `crate::http_thread::init(...)` but
+/// the real `init`/`InitOpts` live inside the gated `_phase_a_draft` block below.
+/// `Default::default()` at the callsite infers `T = ()` here until un-gated.
+#[doc(hidden)]
+pub fn init<T>(_opts: &T) {
+    todo!("http_thread::init — gated; un-gate with HTTPThread.rs _phase_a_draft")
+}
+
 // TODO(b2-blocked): HeapRequestBodyBuffer/RequestBodyBuffer/LibdeflateState
 // methods + every `impl HttpThread` block below dispatch into the gated
 // `impl HTTPClient` (start/do_redirect/progress_update) and use

@@ -18,8 +18,9 @@
 //!   * `impl MultiArrayElement for Foo { … }` with `SIZES_BYTES` /
 //!     `SIZES_FIELDS` computed by a const-eval bubble sort (Zig's
 //!     `mem.sort(Data, &data, {}, Sort.lessThan)` over `(size, align)`).
-//!   * `trait FooSliceExt` with `fn a(&self) -> &mut [u32]` etc. — the safe
-//!     typed wrappers around `Slice::items` that Zig got for free from
+//!   * `trait FooSliceExt` with `fn a(&self) -> &[u32]` /
+//!     `fn a_mut(&mut self) -> &mut [u32]` etc. — the safe typed wrappers
+//!     around `Slice::items{,_mut}` that Zig got for free from
 //!     `FieldType(field)`.
 //!   * `trait FooListExt` with `fn items_a(&self) -> &[u32]` /
 //!     `fn items_a_mut(&mut self) -> &mut [u32]` etc. — the safe typed
@@ -146,34 +147,58 @@ fn expand(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     // Zig: `slice.items(.field)` returns `[]FieldType(field)` because the
     // compiler maps the comptime enum value to a type. Rust can't, so emit
     // two extension traits with one safe method per field that wraps the
-    // unsafe `items::<F>` with the correct `F`:
-    //   * `*SliceExt` on `Slice<T>`: bare `field()` → `&mut [F]` (Zig's
-    //     `slice.items(.field)`, used after a single `.slice()`).
+    // unsafe `items::<F>` / `items_mut::<F>` with the correct `F`:
+    //   * `*SliceExt` on `Slice<T>`: `field()` → `&[F]` and
+    //     `field_mut()` → `&mut [F]` (Zig's `slice.items(.field)`, used after
+    //     a single `.slice()`).
     //   * `*ListExt` on `MultiArrayList<T>`: `items_field()` → `&[F]` and
     //     `items_field_mut()` → `&mut [F]` (Zig's `list.items(.field)`,
     //     the bundler's dominant convention).
+    // PORT NOTE: Zig hands out a mutable `[]F` from a non-exclusive receiver
+    // because Zig has no aliasing model. Porting that as a safe
+    // `&self -> &mut [F]` is aliased-&mut UB in Rust (PORTING.md §Forbidden);
+    // hence the `&self -> &[F]` / `&mut self -> &mut [F]` split here.
     // Both traits carry the struct's generic parameters so field types that
     // mention them (e.g. `&'arena [u8]`) are nameable in the signatures.
     let slice_ext = format_ident!("{}SliceExt", name);
     let list_ext = format_ident!("{}ListExt", name);
+    let field_mut_names: Vec<Ident> =
+        field_idents.iter().map(|id| format_ident!("{}_mut", id)).collect();
     let items_names: Vec<Ident> =
         field_idents.iter().map(|id| format_ident!("items_{}", id)).collect();
     let items_mut_names: Vec<Ident> =
         field_idents.iter().map(|id| format_ident!("items_{}_mut", id)).collect();
 
-    let slice_sigs = field_idents.iter().zip(&field_tys).map(|(id, ty)| {
-        quote! { fn #id(&self) -> &mut [#ty]; }
-    });
-    let slice_impls = field_idents.iter().zip(&field_tys).map(|(id, ty)| {
-        quote! {
-            #[inline]
-            fn #id(&self) -> &mut [#ty] {
-                // SAFETY: `#ty` is exactly the type of field `#id`;
-                // `#field_enum::#id as usize` is its column index.
-                unsafe { self.items::<#ty>(#field_enum::#id) }
+    let slice_sigs =
+        field_idents
+            .iter()
+            .zip(&field_mut_names)
+            .zip(&field_tys)
+            .map(|((id, id_mut), ty)| {
+                quote! {
+                    fn #id(&self) -> &[#ty];
+                    fn #id_mut(&mut self) -> &mut [#ty];
+                }
+            });
+    let slice_impls = field_idents
+        .iter()
+        .zip(&field_mut_names)
+        .zip(&field_tys)
+        .map(|((id, id_mut), ty)| {
+            quote! {
+                #[inline]
+                fn #id(&self) -> &[#ty] {
+                    // SAFETY: `#ty` is exactly the type of field `#id`;
+                    // `#field_enum::#id as usize` is its column index.
+                    unsafe { self.items::<#ty>(#field_enum::#id) }
+                }
+                #[inline]
+                fn #id_mut(&mut self) -> &mut [#ty] {
+                    // SAFETY: see above. `&mut self` enforces exclusive column access.
+                    unsafe { self.items_mut::<#ty>(#field_enum::#id) }
+                }
             }
-        }
-    });
+        });
 
     let list_sigs =
         items_names
@@ -196,12 +221,12 @@ fn expand(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
                 #[inline]
                 fn #get(&self) -> &[#ty] {
                     // SAFETY: `#ty` is exactly the column type for field `#id`.
-                    unsafe { &*self.items::<#ty>(#field_enum::#id) }
+                    unsafe { self.items::<#ty>(#field_enum::#id) }
                 }
                 #[inline]
                 fn #get_mut(&mut self) -> &mut [#ty] {
                     // SAFETY: see above. `&mut self` enforces exclusive column access.
-                    unsafe { self.items::<#ty>(#field_enum::#id) }
+                    unsafe { self.items_mut::<#ty>(#field_enum::#id) }
                 }
             }
         });

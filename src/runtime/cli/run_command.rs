@@ -12,9 +12,13 @@
 //! `#[cfg(any())]` blocks; their bodies are preserved verbatim in
 //! `phase_a_draft` below.
 
+use core::ffi::c_void;
+
 use bun_core::{self as core, Global, Output};
 use bun_core::{pretty, pretty_errorln, prettyln};
+use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::virtual_machine::{InitOptions as VmInitOptions, VirtualMachine};
+use bun_jsc::{JSGlobalObject, JSValue};
 use bun_options_types::BundleEnums::Loader;
 use bun_paths::{self as paths, MAX_PATH_BYTES, PathBuffer};
 

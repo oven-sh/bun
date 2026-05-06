@@ -307,25 +307,21 @@ impl<T: MultiArrayElement> MultiArrayList<T> {
         result
     }
 
-    /// Get the slice of values for a specified field.
-    /// If you need multiple fields, consider calling `slice()` instead.
+    /// Compute the column base pointer for `field` typed as `*mut F`.
+    /// Returns a dangling (non-null, aligned) pointer when capacity is 0 or
+    /// `F` is a ZST, suitable for `slice::from_raw_parts{,_mut}` of any length.
     ///
     /// # Safety
-    /// See `Slice::items`.
-    pub unsafe fn items<F>(&self, field: T::Field) -> &mut [F] {
+    /// `F` must be exactly the field's type.
+    #[inline]
+    unsafe fn column_ptr<F>(&self, field: T::Field) -> *mut F {
         // PORT NOTE: Zig's `self.slice().items(field)` works because the
         // returned slice borrows the underlying allocation, not the temporary
         // `Slice` (which only caches pointers). Reproduce by computing the
         // column ptr directly without the intermediate `Slice` value.
-        if self.capacity == 0 {
-            return &mut [];
-        }
-        if core::mem::size_of::<F>() == 0 {
+        if self.capacity == 0 || core::mem::size_of::<F>() == 0 {
             // Zig returns a ZST slice of length self.len (lib.zig:89-93), not 0.
-            // SAFETY: ZST slice; dangling ptr is valid for 0-size reads.
-            return unsafe {
-                core::slice::from_raw_parts_mut(core::ptr::NonNull::<F>::dangling().as_ptr(), self.len)
-            };
+            return core::ptr::NonNull::<F>::dangling().as_ptr();
         }
         let fi = T::field_index(field);
         let mut ptr = self.bytes;
@@ -339,9 +335,32 @@ impl<T: MultiArrayElement> MultiArrayList<T> {
             // SAFETY: column offsets within the single allocation.
             ptr = unsafe { ptr.add(T::SIZES_BYTES[k] * self.capacity) };
         }
-        // SAFETY: caller guarantees `F` matches field type; `ptr` points to
-        // `capacity` aligned `F`s and `len <= capacity`.
-        unsafe { core::slice::from_raw_parts_mut(ptr.cast::<F>(), self.len) }
+        ptr.cast::<F>()
+    }
+
+    /// Get the shared slice of values for a specified field.
+    /// If you need multiple fields, consider calling `slice()` instead.
+    ///
+    /// # Safety
+    /// See `Slice::items`.
+    pub unsafe fn items<F>(&self, field: T::Field) -> &[F] {
+        // SAFETY: caller guarantees `F` matches field type; `column_ptr` points
+        // to `capacity` aligned `F`s (or dangling for ZST/empty) and
+        // `len <= capacity`. Never materialize a `&mut [F]` from `&self`
+        // (PORTING.md §Forbidden: aliased &mut).
+        unsafe { core::slice::from_raw_parts(self.column_ptr::<F>(field), self.len) }
+    }
+
+    /// Get the mutable slice of values for a specified field.
+    /// If you need multiple fields, consider calling `slice()` instead.
+    ///
+    /// # Safety
+    /// See `Slice::items_mut`.
+    pub unsafe fn items_mut<F>(&mut self, field: T::Field) -> &mut [F] {
+        // SAFETY: caller guarantees `F` matches field type; `column_ptr` points
+        // to `capacity` aligned `F`s (or dangling for ZST/empty) and
+        // `len <= capacity`. `&mut self` enforces exclusive column access.
+        unsafe { core::slice::from_raw_parts_mut(self.column_ptr::<F>(field), self.len) }
     }
 
     /// Overwrite one array element with new data.
@@ -467,6 +486,9 @@ impl<T: MultiArrayElement> MultiArrayList<T> {
     /// item in the list into its position. Fast, but does not
     /// retain list ordering.
     pub fn swap_remove(&mut self, index: usize) {
+        // Zig's `field_slice[index]` / `field_slice[self.len - 1]` provide an
+        // implicit bounds + underflow check; mirror it explicitly.
+        assert!(index < self.len, "MultiArrayList::swap_remove: index out of bounds");
         let slices = self.slice();
         for fi in 0..T::FIELD_COUNT {
             let size = field_size_unsorted::<T>(fi);
@@ -492,6 +514,9 @@ impl<T: MultiArrayElement> MultiArrayList<T> {
     /// Remove the specified item from the list, shifting items
     /// after it to preserve order.
     pub fn ordered_remove(&mut self, index: usize) {
+        // Zig's `field_slice[index]` provides an implicit bounds + underflow
+        // (`self.len - 1` when len==0) check; mirror it explicitly.
+        assert!(index < self.len, "MultiArrayList::ordered_remove: index out of bounds");
         let slices = self.slice();
         for fi in 0..T::FIELD_COUNT {
             let size = field_size_unsorted::<T>(fi);
@@ -863,9 +888,11 @@ impl<T> Drop for MultiArrayList<T> {
 
 // ───────────────────────────── helpers ─────────────────────────────
 
-/// `std.atomic.cache_line` — 64 on x86_64/aarch64, which is all Bun targets.
-// TODO(port): move to `bun_core` if needed elsewhere.
-const CACHE_LINE: usize = 64;
+/// `std.atomic.cache_line` — **128** on x86_64 and aarch64
+/// (vendor/zig/lib/std/atomic.zig:416-422), which is all native Bun targets.
+// TODO(port): move to `bun_core` if needed elsewhere; `#[cfg]`-gate to 64 on
+// wasm if/when targeted (matches `std.atomic.cacheLineForCpu`).
+const CACHE_LINE: usize = 128;
 
 /// Look up the size of field index `fi` (unsorted / `Field`-enum order) by
 /// reverse-mapping through `SIZES_FIELDS`.

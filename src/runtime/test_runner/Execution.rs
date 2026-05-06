@@ -257,12 +257,20 @@ impl Execution {
         Ok(())
     }
 
-    fn bun_test(&mut self) -> &mut BunTest {
+    /// Recover the parent `BunTest` from `&mut self` (`@fieldParentPtr` in the Zig spec).
+    ///
+    /// Returns `NonNull` instead of `&mut BunTest` because `self` *is* `BunTest.execution`, so
+    /// materializing a `&mut BunTest` while `&mut self` is live would be aliased-`&mut` UB.
+    /// Callers must dereference at point-of-use into disjoint fields only, never holding the
+    /// resulting `&mut BunTest` across any access through `self`.
+    fn bun_test(&mut self) -> NonNull<BunTest> {
         // SAFETY: self points to BunTest.execution (Execution is only ever constructed embedded in BunTest)
         unsafe {
-            &mut *(self as *mut Execution as *mut u8)
-                .sub(core::mem::offset_of!(BunTest, execution))
-                .cast::<BunTest>()
+            NonNull::new_unchecked(
+                (self as *mut Execution as *mut u8)
+                    .sub(core::mem::offset_of!(BunTest, execution))
+                    .cast::<BunTest>(),
+            )
         }
     }
 
@@ -297,7 +305,9 @@ impl Execution {
             }
         }
 
-        self.bun_test().add_result(RefDataValue::Start);
+        let buntest = self.bun_test();
+        // SAFETY: deref parent at point-of-use; `self` is not accessed while this `&mut BunTest` is live.
+        unsafe { (*buntest.as_ptr()).add_result(RefDataValue::Start) };
         Ok(())
     }
 

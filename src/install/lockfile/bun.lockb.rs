@@ -30,8 +30,13 @@ const HAS_OVERRIDES_TAG: u64 = u64::from_ne_bytes(*b"oVeRriDs");
 const HAS_CATALOGS_TAG: u64 = u64::from_ne_bytes(*b"cAtAlOgS");
 const HAS_CONFIG_VERSION_TAG: u64 = u64::from_ne_bytes(*b"cNfGvRsN");
 
-/// Wraps a growing `Vec<u8>` to provide positional-write semantics for
+/// Wraps a growing `Vec<u8>` to provide both positional-write semantics
+/// (`get_pos`/`pwrite`) and append semantics (`write_all`/`write_int_*`) for
 /// `Lockfile.Package.Serializer.save` / `Lockfile.Buffers.save`.
+///
+/// PORT NOTE: reshaped for borrowck — Zig held a separate `stream` and `writer`
+/// over the same `bytes` simultaneously (legal in Zig, aliased `&mut` in Rust).
+/// Collapsed into a single type so callers pass exactly one `&mut StreamType`.
 ///
 /// LIFETIMES.tsv: `bytes` is BORROW_PARAM → `&'a mut Vec<u8>`.
 pub struct StreamType<'a> {
@@ -48,29 +53,21 @@ impl<'a> StreamType<'a> {
         self.bytes[index..index + data.len()].copy_from_slice(data);
         data.len()
     }
-}
 
-/// Minimal writer over `Vec<u8>` mirroring `std.array_list.Managed(u8).Writer`.
-/// Kept local because `save` only uses `writeAll` + `writeInt(.little)`.
-struct Writer<'a> {
-    bytes: &'a mut Vec<u8>,
-}
-
-impl<'a> Writer<'a> {
     #[inline]
-    fn write_all(&mut self, data: &[u8]) -> Result<(), Error> {
+    pub fn write_all(&mut self, data: &[u8]) -> Result<(), Error> {
         self.bytes.extend_from_slice(data);
         Ok(())
     }
 
     #[inline]
-    fn write_int_u32_le(&mut self, v: u32) -> Result<(), Error> {
+    pub fn write_int_u32_le(&mut self, v: u32) -> Result<(), Error> {
         self.bytes.extend_from_slice(&v.to_le_bytes());
         Ok(())
     }
 
     #[inline]
-    fn write_int_u64_le(&mut self, v: u64) -> Result<(), Error> {
+    pub fn write_int_u64_le(&mut self, v: u64) -> Result<(), Error> {
         self.bytes.extend_from_slice(&v.to_le_bytes());
         Ok(())
     }
@@ -90,20 +87,16 @@ pub fn save(
     drop(old_packages_list);
 
     // PORT NOTE: reshaped for borrowck — Zig holds `writer` and `stream` over
-    // the same `bytes` simultaneously; here we re-borrow per call.
-    {
-        let mut writer = Writer { bytes };
-        writer.write_all(HEADER_BYTES)?;
-        writer.write_int_u32_le(this.format as u32)?;
+    // the same `bytes` simultaneously; collapsed into a single `StreamType`.
+    let mut stream = StreamType { bytes };
 
-        writer.write_all(&this.meta_hash)?;
-    }
+    stream.write_all(HEADER_BYTES)?;
+    stream.write_int_u32_le(this.format as u32)?;
 
-    *end_pos = bytes.len();
-    {
-        let mut writer = Writer { bytes };
-        writer.write_int_u64_le(0)?;
-    }
+    stream.write_all(&this.meta_hash)?;
+
+    *end_pos = stream.get_pos()?;
+    stream.write_int_u64_le(0)?;
 
     if cfg!(debug_assertions) {
         for res in this.packages.items_resolution() {

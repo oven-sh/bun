@@ -893,7 +893,7 @@ impl Tree {
             if res_id == invalid_package_id {
                 debug_assert!(dep.behavior.is_optional_peer());
                 return Ok(HoistDependencyResult::ResolveReplace(ResolveReplace {
-                    id: self.id,
+                    id: this.id,
                     dep_id,
                 }));
             }
@@ -963,17 +963,15 @@ impl Tree {
         }
 
         // this dependency was not found in this tree, try hoisting or placing in the next parent
-        if self.parent != INVALID_ID && self.id != hoist_root_id {
-            let id = trees[self.parent as usize]
-                .hoist_dependency::<false, METHOD>(
-                    hoist_root_id,
-                    package_id,
-                    dependency,
-                    dependency_lists,
-                    trees,
-                    builder,
-                )
-                .expect("unreachable");
+        if this.parent != INVALID_ID && this.id != hoist_root_id {
+            let id = Tree::hoist_dependency::<false, METHOD>(
+                this.parent,
+                hoist_root_id,
+                package_id,
+                dependency,
+                builder,
+            )
+            .expect("unreachable");
             if !AS_DEFINED || !matches!(id, HoistDependencyResult::DependencyLoop) {
                 return Ok(id); // 1 or 2
             }
@@ -981,7 +979,7 @@ impl Tree {
 
         // place the dependency in the current tree
         Ok(HoistDependencyResult::Placement(Placement {
-            id: self.id,
+            id: this.id,
             bundled: false,
         })) // 2
     }

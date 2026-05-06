@@ -1610,16 +1610,18 @@ impl FileSystemFlags {
     pub fn from_js(ctx: &JSGlobalObject, val: JSValue) -> JsResult<Option<FileSystemFlags>> {
         if val.is_number() {
             if !val.is_int32() {
-                return ctx.throw_value(
-                    ctx.err(jsc::ErrorCode::OUT_OF_RANGE)
-                        .fmt(format_args!(
+                return Err(ctx.throw_value(
+                    ctx.err(
+                        jsc::ErrorCode::OUT_OF_RANGE,
+                        format_args!(
                             "The value of \"flags\" is out of range. It must be an integer. Received {}",
                             val.as_number()
-                        ))
-                        .to_js(),
-                );
+                        ),
+                    )
+                    .to_js(),
+                ));
             }
-            let number = val.coerce_i32(ctx)?;
+            let number = val.coerce_to_i32(ctx)?;
             let flags = number.max(0);
             // On Windows, numeric flags from fs.constants (e.g. O_CREAT=0x100)
             // use the platform's native MSVC/libuv values which differ from the

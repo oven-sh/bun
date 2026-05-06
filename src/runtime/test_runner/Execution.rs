@@ -302,7 +302,7 @@ impl Execution {
     // Zig `deinit` only freed `groups` and `#sequences` via the parent allocator.
     // Both are now `Box<[T]>` and drop automatically — no explicit Drop impl needed.
 
-    pub fn load_from_order(&mut self, order: &mut Order::Order) -> JsResult<()> {
+    pub fn load_from_order(&mut self, order: &Order::Order) -> JsResult<()> {
         debug_assert!(self.groups.is_empty());
         debug_assert!(self.sequences.is_empty());
         // Zig: bun.safety.CheckedAllocator asserts that order's lists used the same gpa.

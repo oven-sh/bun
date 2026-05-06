@@ -2806,14 +2806,17 @@ pub mod mock {
     }
 
     // Formatter for when there are multiple returns or errors
-    pub struct AllCallsFormatter<'a> {
-        pub global_this: &'a JSGlobalObject,
+    // PORT NOTE: split lifetimes — `&'f mut Formatter<'g>` instead of `&'a mut Formatter<'a>`.
+    // The single-lifetime form makes the mut-borrow invariant in `'a` and forces the borrow to
+    // last for the Formatter's whole lifetime, tripping dropck (E0597) at the call site.
+    pub struct AllCallsFormatter<'g, 'f> {
+        pub global_this: &'g JSGlobalObject,
         pub returns: JSValue,
         // PORT NOTE: reshaped for borrowck — Display::fmt takes &self but we need &mut Formatter
-        pub formatter: core::cell::RefCell<&'a mut ConsoleObject::Formatter<'a>>,
+        pub formatter: core::cell::RefCell<&'f mut ConsoleObject::Formatter<'g>>,
     }
 
-    impl fmt::Display for AllCallsFormatter<'_> {
+    impl fmt::Display for AllCallsFormatter<'_, '_> {
         fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
             let mut formatter = self.formatter.borrow_mut();
             let mut printed_once = false;

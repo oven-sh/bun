@@ -1381,6 +1381,13 @@ impl LABColor {
     pub fn into_lab(&self) -> LAB {
         LAB::from_lab_color(self)
     }
+
+    /// Project a LAB-space color into sRGB. Routes through the
+    /// `From<{LAB,LCH,OKLAB,OKLCH}>` lattice (LAB/LCH → XYZd50 → XYZd65 →
+    /// SRGBLinear → SRGB; OKLAB/OKLCH → XYZd65 → SRGBLinear → SRGB).
+    pub fn into_srgb(&self) -> SRGB {
+        SRGB::from_lab_color(self)
+    }
 }
 
 impl FloatColor {
@@ -1390,6 +1397,12 @@ impl FloatColor {
 
     pub fn into_lab(&self) -> LAB {
         LAB::from_float_color(self)
+    }
+
+    /// Project any float-color variant into sRGB.
+    #[inline]
+    pub fn into_srgb(&self) -> SRGB {
+        SRGB::from_float_color(self)
     }
 }
 

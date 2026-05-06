@@ -96,15 +96,15 @@ impl PackageManager {
         let mut iter = dir.iterate();
 
         while let Some(entry) = iter.next()? {
-            if entry.kind != bun_sys::DirEntryKind::Directory
-                && entry.kind != bun_sys::DirEntryKind::SymLink
+            if entry.kind != bun_sys::EntryKind::Directory
+                && entry.kind != bun_sys::EntryKind::SymLink
             {
                 continue;
             }
             let name: &[u8] = entry.name;
             let sliced = SlicedString::init(name, name);
             let parsed = semver::Version::parse(sliced);
-            if !parsed.valid || parsed.wildcard != semver::Wildcard::None {
+            if !parsed.valid || parsed.wildcard != semver::query::Wildcard::None {
                 continue;
             }
             // not handling OOM

@@ -30,11 +30,15 @@ use bun_jsc::virtual_machine::{ExitHandler, InitOptions as VmInitOptions, Virtua
 use bun_jsc::{JSGlobalObject, JSValue};
 use bun_options_types::schema::api;
 use bun_options_types::BundleEnums::Loader;
-use bun_paths::{self as paths, MAX_PATH_BYTES, PathBuffer};
+use bun_paths::{self as paths, DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP};
+#[cfg(windows)]
+use bun_paths::WPathBuffer;
 use bun_resolver::dir_info::DirInfo;
 use bun_string::strings;
+use bun_sys as sys;
 use bun_which::which;
 
+use crate::cli;
 use crate::cli::arguments;
 use crate::cli::Command;
 use crate::cli::command::{ContextData, Tag as CommandTag};

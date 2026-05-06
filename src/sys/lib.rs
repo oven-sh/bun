@@ -5355,6 +5355,16 @@ pub mod fs {
         /// Zig: `FileSystem.RealFS.getDefaultTempDir()` (fs.zig) — `BUN_TMPDIR`
         /// or the platform fallback. Process-static once-computed.
         pub get_default_temp_dir: fn() -> &'static [u8],
+        /// Zig: `fs.fs.readDirectory(dir, null, generation, store_fd)`
+        /// (fs.zig:872 `RealFS.readDirectory`). Returns the cached
+        /// `*EntriesOption` slot projected by-value across the seam; the
+        /// `*DirEntry` pointee is owned by the resolver's BSSMap singleton
+        /// (process-lifetime).
+        pub read_directory:
+            unsafe fn(*const FileSystem, &[u8], u16, bool) -> core::result::Result<EntriesOption, bun_core::Error>,
+        /// Zig: `f.top_level_dir = <slice>` (PackageManager.zig:776) — install
+        /// rewrites the cached cwd after `chdir` to the workspace root.
+        pub set_top_level_dir: unsafe fn(*const FileSystem, &'static [u8]),
     }
 
     /// Installed by `bun_resolver::fs::install_sys_fs_vtable()` at startup.

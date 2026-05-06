@@ -1069,8 +1069,6 @@ pub fn write_trace(_writer: &mut (impl bun_io::Write + ?Sized), _global: &JSGlob
     // the unported `ZigString::Slice` path. `console.trace()` falls through to a
     // no-op until those signatures settle.
     todo!("blocked_on: VirtualMachine::print_stack_trace writer type / remap_zig_exception slice param");
-    #[allow(unreachable_code)]
-    let _ = Output::enable_ansi_colors_stderr();
 }
 
 // ───────────────────────────────────────────────────────────────────────────

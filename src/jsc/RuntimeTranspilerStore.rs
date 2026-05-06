@@ -457,6 +457,7 @@ impl TranspilerJob {
 
     pub fn run(&mut self) {
          // TODO(b2-blocked): bun_alloc::Arena, bun_js_parser::ast::ASTMemoryAllocator, bun_transpiler::Transpiler, bun_watcher::Watcher::get_hash, bun_resolver::{node_fallbacks, package_json::MacroMap}, bun_resolve_builtins::HardcodedModule, bun_bundler::{analyze_transpiled_module, Transpiler::ParseOptions, parse_result::AlreadyBundled}, bun_js_printer::{BufferWriter, BufferPrinter, Format}, RuntimeTranspilerCache fields, ResolvedSource fields, VirtualMachine::{transpiler, bun_watcher, main, main_hash, debugger, module_loader, smol, source_map_handler, is_watcher_enabled, use_isolation_source_provider_cache, source_mappings}
+        #[cfg(any())]
         {
         // PERF(port): was ArenaAllocator bulk-free feeding transpiler/AST — kept as Bump.
         let mut arena = Arena::new();

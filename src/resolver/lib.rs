@@ -6344,7 +6344,9 @@ impl<'a> Resolver<'a> {
             }
             if let Some(existing) = in_place {
                 // SAFETY: see block-wide note above.
-                unsafe { &mut *existing }.data.clear_and_free();
+                // PORT NOTE: Zig `clearAndFree` — `StringHashMap` (std::HashMap newtype)
+                // has no separate `clear_and_free`; `clear()` drops all entries.
+                unsafe { &mut *existing }.data.clear();
             }
 
             if self.store_fd {

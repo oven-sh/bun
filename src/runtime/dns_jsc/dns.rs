@@ -3137,7 +3137,9 @@ impl Resolver {
         let key = self.get_key_host(index, PendingCacheField::PendingHostCacheCares);
 
         self.ref_();
-        let _g = scopeguard::guard((), |_| self.deref());
+        let this: *mut Self = self;
+        // SAFETY: `this` derived from `&mut self`; paired with `ref_()` above so count stays > 0.
+        let _g = scopeguard::guard((), move |_| unsafe { Self::deref(this) });
 
         let Some(addr) = result else {
             unsafe {

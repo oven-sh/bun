@@ -3604,12 +3604,35 @@ pub fn to_namespaced_path(
     to_namespaced_path_js_t::<u8>(global_object, is_windows, path_zslice.slice())
 }
 
-// TODO(port): Zig used `bun.jsc.host_fn.wrap4v(...)` to generate the C-ABI shims.
-// Phase B: emit via #[bun_jsc::host_fn] proc-macro or a wrap4v! macro that
-// produces `extern "C" fn(*JSGlobalObject, bool, *JSValue, u16) -> JSValue`.
-bun_jsc::export_host_fn_wrap4v! {
-    "Bun__Path__basename" => basename,
-    "Bun__Path__dirname" => dirname,
+// Zig used `bun.jsc.host_fn.wrap4v(...)` to generate the C-ABI shims. The Rust
+// proc-macro for `wrap4v` is not yet wired, so emit the SYSV-ABI thunks locally.
+// Each wrapper forwards `(global, is_windows, args_ptr, args_len)` and routes the
+// `JsResult<JSValue>` through `host_fn::to_js_host_call` (== Zig `toJSHostCall`).
+// TODO(port): jsc.conv ABI — emit `extern "sysv64"` on windows-x64 once the
+// `#[bun_jsc::host_call(wrap, sysv)]` proc-macro lands.
+macro_rules! export_path_host_fn {
+    ($( $export:literal => $target:path ),* $(,)?) => {$(
+        const _: () = {
+            #[unsafe(export_name = $export)]
+            unsafe extern "C" fn __wrapped(
+                global: *mut JSGlobalObject,
+                is_windows: bool,
+                args_ptr: *const JSValue,
+                args_len: u16,
+            ) -> JSValue {
+                // SAFETY: JSC guarantees `global` is live for the host call.
+                let global = unsafe { &*global };
+                crate::jsc::host_fn::to_js_host_call(
+                    global,
+                    $target(global, is_windows, args_ptr, args_len),
+                )
+            }
+        };
+    )*};
+}
+export_path_host_fn! {
+    "Bun__Path__basename" => super::_basename_js::basename,
+    "Bun__Path__dirname" => super::_dirname_js::dirname,
     "Bun__Path__extname" => extname,
     "Bun__Path__format" => format,
     "Bun__Path__isAbsolute" => is_absolute,

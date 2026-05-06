@@ -699,6 +699,41 @@ pub trait ZigHashAlgo: Default + Clone + 'static {
     fn final_(&mut self, out: &mut [u8]);
 }
 
+/// Stub hash-state types for the Zig-stdlib algorithms (`std.crypto.hash.{sha3,blake2}`)
+/// that BoringSSL does not expose as a streaming context. The Zig original drives
+/// these via comptime-generic `KeccakP`/`Blake2` states; until a Rust backend
+/// (`sha3`/`blake2` crates or a C shim) is wired in, these `todo!()`-panic at use.
+mod zig_crypto_stubs {
+    use super::{evp, ZigHashAlgo};
+
+    macro_rules! stub_algo {
+        ($ty:ident, $name:literal, $variant:ident, $len:expr) => {
+            #[derive(Default, Clone)]
+            pub struct $ty;
+            impl ZigHashAlgo for $ty {
+                const NAME: &'static [u8] = $name;
+                const ALGORITHM: evp::Algorithm = evp::Algorithm::$variant;
+                const DIGEST_LENGTH: u8 = $len;
+                fn update(&mut self, _bytes: &[u8]) {
+                    todo!("blocked_on: bun_crypto_std::{}", stringify!($ty))
+                }
+                fn final_(&mut self, _out: &mut [u8]) {
+                    todo!("blocked_on: bun_crypto_std::{}", stringify!($ty))
+                }
+            }
+        };
+    }
+
+    stub_algo!(Sha3_224, b"sha3-224", Sha3_224, 28);
+    stub_algo!(Sha3_256, b"sha3-256", Sha3_256, 32);
+    stub_algo!(Sha3_384, b"sha3-384", Sha3_384, 48);
+    stub_algo!(Sha3_512, b"sha3-512", Sha3_512, 64);
+    // Zig: digestLength(Shake128) = 16, digestLength(Shake256) = 32
+    stub_algo!(Shake128, b"shake128", Shake128, 16);
+    stub_algo!(Shake256, b"shake256", Shake256, 32);
+    stub_algo!(Blake2s256, b"blake2s256", Blake2s256, 32);
+}
+
 /// Expands `$body` once per `(name_literal, Type)` pair from the Zig `algo_map`.
 /// Heterogeneous-type `inline for` → `macro_rules!` per PORTING.md.
 macro_rules! for_each_zig_algo {

@@ -1113,8 +1113,8 @@ impl EnvMapIterKey<'_> {
 }
 
 pub struct EnvMapIterValue {
-    pub val: Box<bun_str::ZStr<'static>>,
-    // TODO(port): Zig stores `[:0]const u8` allocated from arena; using owned ZStr here.
+    pub val: &'static bun_str::ZStr,
+    // TODO(port): Zig stores `[:0]const u8` allocated from arena; using leaked &'static ZStr here.
 }
 
 impl core::fmt::Display for EnvMapIterValue {
@@ -1152,7 +1152,7 @@ impl<'a> EnvMapIter<'a> {
                 val: entry.key_ptr.as_slice(),
             },
             value: EnvMapIterValue {
-                val: Box::new(zstr),
+                val: zstr,
             },
         }))
     }

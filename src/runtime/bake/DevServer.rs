@@ -5227,30 +5227,44 @@ impl DevServer<'_> {
 
 /// Problem statement documented on `SCRIPT_UNREF_PAYLOAD`
 /// Takes 8 bytes: The generation ID in hex.
-struct UnrefSourceMapRequest<'a> {
-    dev: &'a mut DevServer<'a>,
+struct UnrefSourceMapRequest {
+    // BACKREF: DevServer outlives the request; raw ptr avoids the `'static`
+    // bound on `BodyReaderHandler` that a borrowed `&'a mut DevServer<'a>` would violate.
+    dev: *mut DevServer<'static>,
     body: uws::BodyReaderMixin<Self>, // TODO(port): BodyReaderMixin(@This(), "body", runWithBody, finalize)
 }
 
-impl<'a> UnrefSourceMapRequest<'a> {
+impl uws::BodyReaderHandler for UnrefSourceMapRequest {
+    const MIXIN_OFFSET: usize = offset_of!(UnrefSourceMapRequest, body);
+    fn on_body(&mut self, body: &[u8], resp: AnyResponse) -> Result<(), bun_core::Error> {
+        Self::run_with_body(self, body, resp)
+    }
+    fn on_error(&mut self) {
+        Self::finalize(self as *mut _);
+    }
+}
+
+impl UnrefSourceMapRequest {
     fn run<R>(dev: &mut DevServer, _: &mut Request, resp: &mut R)
     where
         R: uws::ResponseLike,
     {
         let ctx = Box::new(UnrefSourceMapRequest {
-            dev,
+            dev: dev as *mut DevServer<'_> as *mut DevServer<'static>,
             body: uws::BodyReaderMixin::init(),
         });
-        ctx.dev.server.as_ref().unwrap().on_pending_request();
-        ctx.body.read_body(resp);
+        // SAFETY: dev outlives the request
+        unsafe { (*ctx.dev).server.as_ref().unwrap().on_pending_request() };
         // TODO(port): ctx is leaked into the body reader; freed in finalize()
-        Box::into_raw(ctx);
+        let raw = Box::into_raw(ctx);
+        uws::BodyReaderMixin::<Self>::read_body(raw, resp);
     }
 
     fn finalize(ctx: *mut UnrefSourceMapRequest) {
         // SAFETY: ctx was Box::into_raw'd in run()
         let ctx = unsafe { Box::from_raw(ctx) };
-        ctx.dev.server.as_ref().unwrap().on_static_request_complete();
+        // SAFETY: dev outlives the request
+        unsafe { (*ctx.dev).server.as_ref().unwrap().on_static_request_complete() };
         drop(ctx);
     }
 

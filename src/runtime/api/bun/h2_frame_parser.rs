@@ -1150,13 +1150,19 @@ pub struct Stream {
 
 pub struct SignalRef {
     // LIFETIMES.tsv: SHARED — AbortSignal is intrusively refcounted across FFI/codegen.
-    // Per PORTING.md §Pointers (RefCount→IntrusiveRc when *T crosses FFI), use IntrusiveRc.
-    // TODO(port): move manual `signal.detach()` into IntrusiveRc<AbortSignal>::Drop semantics.
-    signal: bun_ptr::IntrusiveRc<AbortSignal>,
-    // LIFETIMES.tsv: SHARED — H2FrameParser carries an intrusive RefCount and is recovered
-    // via container_of! from the auto-flusher. Never plain Rc; use IntrusiveRc.
-    // TODO(port): move manual `parser.deref()` into IntrusiveRc<H2FrameParser>::Drop semantics.
-    parser: bun_ptr::IntrusiveRc<H2FrameParser>,
+    // `AbortSignal` is an opaque C++ type whose ref/unref go through
+    // `WebCore__AbortSignal__ref/unref`; it does not (and cannot) implement
+    // `bun_ptr::RefCounted`, so store the raw pointer and balance refs by hand
+    // in `attach_signal` / `Drop` (mirrors Zig `*AbortSignal`).
+    // TODO(port): wrap in a dedicated smart-pointer once AbortSignal grows one.
+    signal: *mut AbortSignal,
+    // LIFETIMES.tsv: SHARED — H2FrameParser carries an intrusive RefCount and is
+    // recovered via container_of! from the auto-flusher. It uses a hand-rolled
+    // `Cell<u32>` ref count (not `bun_ptr::RefCount<Self>`), so `IntrusiveRc`'s
+    // `RefCounted` bound is unsatisfiable. Store the raw pointer and call
+    // `ref_()/deref()` explicitly in `attach_signal` / `Drop` (mirrors Zig
+    // `*H2FrameParser`).
+    parser: *mut H2FrameParser,
     stream_id: u32,
 }
 

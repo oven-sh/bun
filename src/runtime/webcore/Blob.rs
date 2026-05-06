@@ -720,7 +720,7 @@ impl Blob {
         }
 
         writer.write_int_le::<u8>(self.is_jsdom_file as u8)?;
-        write_float::<f64, W>(self.last_modified, writer)?;
+        write_float::<W>(self.last_modified, writer)?;
 
         // Serialize File name if this is a File object
         if self.is_jsdom_file {
@@ -757,24 +757,17 @@ impl Blob {
     }
 }
 
-fn write_float<F, W: bun_io::Write>(value: F, writer: &mut W) -> Result<(), bun_core::Error>
-where
-    F: Copy,
-{
-    // SAFETY: F is f32/f64 — POD, all bit patterns valid.
-    let bytes: [u8; core::mem::size_of::<F>()] =
-        unsafe { core::mem::transmute_copy(&value) };
-    writer.write_all(&bytes)
+// Only ever called with f64 (Blob.last_modified). Zig generic `comptime FloatType`
+// collapses to a concrete impl here because Rust forbids `[u8; size_of::<F>()]`
+// without `generic_const_exprs`. `@bitCast` → native-endian bytes.
+fn write_float<W: bun_io::Write>(value: f64, writer: &mut W) -> Result<(), bun_core::Error> {
+    writer.write_all(&value.to_ne_bytes())
 }
 
-fn read_float<F, R: bun_io::Read>(reader: &mut R) -> Result<F, bun_core::Error>
-where
-    F: Copy,
-{
-    let mut bytes_buf = [0u8; core::mem::size_of::<F>()];
+fn read_float<R: bun_io::Read>(reader: &mut R) -> Result<f64, bun_core::Error> {
+    let mut bytes_buf = [0u8; core::mem::size_of::<f64>()];
     reader.read_slice_all(&mut bytes_buf)?;
-    // SAFETY: F is f32/f64 — POD, all bit patterns valid.
-    Ok(unsafe { core::mem::transmute_copy(&bytes_buf) })
+    Ok(f64::from_ne_bytes(bytes_buf))
 }
 
 fn read_slice<R: bun_io::Read>(reader: &mut R, len: usize) -> Result<Vec<u8>, bun_core::Error> {
@@ -881,7 +874,7 @@ fn _on_structured_clone_deserialize<R: bun_io::Read>(
         if version == 1 { break 'versions; }
 
         blob.is_jsdom_file = reader.read_int_le::<u8>()? != 0;
-        blob.last_modified = read_float::<f64, R>(reader)?;
+        blob.last_modified = read_float::<R>(reader)?;
 
         if version == 2 { break 'versions; }
 

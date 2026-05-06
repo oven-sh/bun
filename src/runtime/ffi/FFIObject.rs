@@ -52,7 +52,14 @@ pub fn new_cstring(
 // TODO(port): `DOMCall("FFI", @This(), "ptr", ...)` is a comptime type-generator that
 // emits a DOMJIT fast-path descriptor + slow-path host fn. Phase B needs a proc-macro
 // or codegen step (`bun_jsc::dom_call!`). Represented here as a const descriptor.
-pub const DOM_CALL: DomCall = DomCall::new("FFI", "ptr", DomEffect::for_read(DomEffect::Heap::TypedArrayProperties));
+// PORT NOTE: the `DOMEffect.forRead(.TypedArrayProperties)` argument is consumed by
+// the C++ codegen, not the runtime descriptor; it lives in the generated
+// `ZigLazyStaticFunctions-inlines.h` already.
+pub const DOM_CALL: DomCall = DomCall {
+    class_name: "FFI",
+    function_name: "ptr",
+    put: FFI__ptr__put,
+};
 
 pub fn to_js(global_object: &JSGlobalObject) -> JSValue {
     // Zig: `inline for (comptime std.meta.fieldNames(@TypeOf(fields)))` — comptime

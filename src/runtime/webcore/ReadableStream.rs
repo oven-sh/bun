@@ -1140,6 +1140,7 @@ pub mod js_readable_stream_source {
 
 // JSC C-API extern (process_result writes the `done` flag at index 0).
 // TODO(port): move to jsc_sys / re-export from `bun_jsc::c_api`.
+#[allow(deprecated)]
 unsafe extern "C" {
     fn JSObjectSetPropertyAtIndex(
         ctx: *const JSGlobalObject,

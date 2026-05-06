@@ -388,11 +388,11 @@ impl Terminal {
         let term_name = if options.term_name.len() > 0 {
             core::mem::take(&mut options.term_name)
         } else {
-            ZigString::Slice::from_utf8_never_free(b"xterm-256color")
+            ZigStringSlice::from_utf8_never_free(b"xterm-256color")
         };
         // Ownership moves to the struct below; clear so caller's options drop
         // doesn't double-free on the WriterStartFailed/ReaderStartFailed paths.
-        options.term_name = ZigString::Slice::default();
+        options.term_name = ZigStringSlice::default();
 
         // `bun.new(Terminal, .{...})` → Box::into_raw; the intrusive ref_count
         // field starts at 1 (JS side's ref). Wrapped as IntrusiveRc on success.

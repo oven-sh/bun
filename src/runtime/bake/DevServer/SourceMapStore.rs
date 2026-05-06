@@ -636,7 +636,7 @@ impl SourceMapStore {
     }
 
     pub fn sweep_weak_refs(timer: *mut EventLoopTimer, now_ts: &bun_core::Timespec) {
-        bun_output::scoped_log!(map_log, "sweepWeakRefs");
+        map_log!("sweepWeakRefs");
         // SAFETY: timer points to the `weak_ref_sweep_timer` field of a SourceMapStore.
         let store: &mut SourceMapStore = unsafe {
             &mut *(timer as *mut u8)

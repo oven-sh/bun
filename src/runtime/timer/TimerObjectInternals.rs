@@ -1,8 +1,8 @@
 use core::mem::offset_of;
 
 use bun_jsc::{Debugger, JSGlobalObject, JSValue, JsRef, JsResult, VirtualMachine};
-// TODO(port): verify crate location for `timespec` (bun.timespec)
-use bun_core::timespec::Timespec;
+// `bun.timespec` is `bun_core::Timespec` (lowercase `timespec` is a type alias, not a module)
+use bun_core::{Timespec, TimespecMockMode};
 
 use super::{EventLoopTimer, ImmediateObject, Kind, TimeoutMap, TimeoutObject, ID};
 

@@ -591,13 +591,15 @@ impl<'a> State<'a> {
         }
         for handle in self.handles.iter() {
             if let Some(proc) = &handle.process {
-                match proc.status {
+                match &proc.status {
                     Status::Exited(exited) => {
                         if exited.code != 0 {
                             return exited.code;
                         }
                     }
-                    Status::Signaled(signal) => return signal.to_exit_code().unwrap_or(1),
+                    Status::Signaled(signal) => {
+                        return bun_sys::SignalCode(*signal).to_exit_code().unwrap_or(1);
+                    }
                     _ => return 1,
                 }
             }

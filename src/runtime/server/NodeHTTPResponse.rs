@@ -1846,17 +1846,17 @@ impl NodeHTTPResponse {
 
         if let Some(raw_response) = &self.raw_response {
             raw_response.corked(|| {
-                handle_corked(global_object, arguments[0], &mut result, &mut is_exception)
+                handle_corked(global_object, arguments.ptr[0], &mut result, &mut is_exception)
             });
         } else {
-            handle_corked(global_object, arguments[0], &mut result, &mut is_exception);
+            handle_corked(global_object, arguments.ptr[0], &mut result, &mut is_exception);
         }
 
-        let ret = if is_exception {
+        let ret: JsResult<JSValue> = if is_exception {
             if !result.is_empty() {
-                global_object.throw_value(result)
+                Err(global_object.throw_value(result))
             } else {
-                global_object.throw("unknown error")
+                Err(global_object.throw("unknown error"))
             }
         } else if result.is_empty() {
             Ok(JSValue::UNDEFINED)

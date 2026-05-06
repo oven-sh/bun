@@ -5517,7 +5517,7 @@ impl H2FrameParser {
     pub fn read(this: &mut Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let args_list = callframe.arguments_old::<1>();
         if args_list.len < 1 {
-            return global_object.throw("Expected 1 argument");
+            return Err(global_object.throw("Expected 1 argument"));
         }
         let buffer = args_list.ptr[0];
         buffer.ensure_still_alive();
@@ -5530,7 +5530,7 @@ impl H2FrameParser {
             }
             Ok(JSValue::UNDEFINED)
         } else {
-            global_object.throw("Expected data to be a Buffer or ArrayBuffer")
+            Err(global_object.throw("Expected data to be a Buffer or ArrayBuffer"))
         };
         // defer
         this.increment_window_size_if_needed();

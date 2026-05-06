@@ -514,7 +514,7 @@ pub mod random {
     mod _hostfns {
     use super::*;
     use crate::node::util::validators;
-    use bun_jsc::UUID;
+    use bun_jsc::{UUID, JSType, StringJsc as _};
     use bun_str::String as BunString;
 
     #[bun_jsc::host_fn]

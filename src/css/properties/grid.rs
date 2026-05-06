@@ -65,7 +65,7 @@ impl TrackList {
 
         for names in self.line_names.slice_const() {
             if !names.is_empty() {
-                serialize_line_names(names, dest)?;
+                serialize_line_names(names.slice(), dest)?;
             }
 
             if items_index < self.items.len {
@@ -249,11 +249,11 @@ impl TrackBreadth {
         let location = input.current_source_location();
         let ident = input.expect_ident()?;
 
-        if strings::eql_case_insensitive_ascii_check_length(ident, b"auto") {
+        if strings::eql_case_insensitive_ascii(ident, b"auto", true) {
             return Ok(TrackBreadth::Auto);
-        } else if strings::eql_case_insensitive_ascii_check_length(ident, b"min-content") {
+        } else if strings::eql_case_insensitive_ascii(ident, b"min-content", true) {
             return Ok(TrackBreadth::MinContent);
-        } else if strings::eql_case_insensitive_ascii_check_length(ident, b"max-content") {
+        } else if strings::eql_case_insensitive_ascii(ident, b"max-content", true) {
             return Ok(TrackBreadth::MaxContent);
         }
 
@@ -344,7 +344,7 @@ impl TrackRepeat {
         let mut first = true;
         for names in self.line_names.slice_const() {
             if !names.is_empty() {
-                serialize_line_names(names, dest)?;
+                serialize_line_names(names.slice(), dest)?;
             }
 
             if track_sizes_index < self.track_sizes.len() {

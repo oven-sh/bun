@@ -382,11 +382,28 @@ impl ReadableStream {
                 reader.to_readable_stream(global_this)
             }
             webcore::blob::store::Data::S3(s3) => {
-                let _ = s3;
-                // TODO(port): `s3.get_credentials()` yields `&Arc<s3_stub::S3Credentials>`
-                // but `s3::client::readable_stream` wants `&mut bun_s3_signing::S3Credentials`;
-                // the two `S3Credentials` types are unrelated until the s3 stub is unified.
-                todo!("blocked_on: webcore::s3::client::readable_stream / s3_stub::S3Credentials unification")
+                let credentials = s3.get_credentials();
+                let path = s3.path();
+                // SAFETY: bun_vm() returns the live VM raw ptr; `transpiler.env` is the
+                // process-singleton dotenv loader, set during init and never null.
+                let proxy = unsafe {
+                    (*(*global_this.bun_vm()).transpiler.env).get_http_proxy(true, None, None)
+                };
+                let proxy_url = proxy.as_ref().map(|p| p.href);
+
+                crate::webcore::s3::client::readable_stream(
+                    credentials,
+                    path,
+                    blob.offset as usize,
+                    if blob.size != webcore::blob::MAX_SIZE {
+                        Some(blob.size as usize)
+                    } else {
+                        None
+                    },
+                    proxy_url,
+                    s3.request_payer,
+                    global_this,
+                )
             }
         }
     }

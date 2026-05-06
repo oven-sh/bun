@@ -468,7 +468,7 @@ where
             // The Zig source tagged the concrete `HotReloader.HotReloadTask` —
             // use the raw `(tag, ptr)` constructor.
             (*that).concurrent_task.write(ConcurrentTask {
-                task: JscTask::new(task_tag::HotReloadTask, (that as *mut ()).cast()),
+                task: JscTask::new(task_tag::HotReloadTask, that as *mut ()),
                 ..Default::default()
             });
             // TODO(port): `&that.concurrent_task` is an interior pointer into a
@@ -633,17 +633,20 @@ where
         let hashes = slice.items_hash();
         let parents = slice.items_parent_hash();
         let file_descriptors = slice.items_fd();
-        let ctx: *mut Watcher = self.get_context() as *mut _;
         // PORT NOTE: reshaped for borrowck — `ctx` is held as a raw pointer so
-        // `self` can be reborrowed inside the loop body for tombstone access.
-        // SAFETY: the Watcher outlives this call (it owns the Reloader that calls us).
-        let ctx = unsafe { &mut *ctx };
+        // `self` can be reborrowed inside the loop body for tombstone access,
+        // and so the deferred `flush_evictions` doesn't hold `&mut Watcher`
+        // across the loop.
+        let ctx: *mut Watcher = self.get_context() as *mut _;
         // `defer ctx.flushEvictions(); defer Output.flush();` — Zig defers run LIFO,
         // so Output.flush() fires first, then ctx.flushEvictions().
-        let _flush = scopeguard::guard((), |_| {
+        let _flush = scopeguard::guard(ctx, |ctx| {
             Output::flush();
-            ctx.flush_evictions();
+            // SAFETY: the Watcher outlives this call (it owns the Reloader that calls us).
+            unsafe { (*ctx).flush_evictions() };
         });
+        // SAFETY: the Watcher outlives this call (it owns the Reloader that calls us).
+        let ctx = unsafe { &mut *ctx };
 
         let fs: &mut FileSystem = FileSystem::instance();
         let rfs: &mut Fs::file_system::RealFS = &mut fs.fs;

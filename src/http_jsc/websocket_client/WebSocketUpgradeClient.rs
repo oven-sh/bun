@@ -549,13 +549,21 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // Either of the below two operations - closing the TCP socket or clearing the C++ reference could trigger a deref
         // Therefore, we need to make sure the `this` pointer is valid until the end of the function.
         self.r#ref();
-        let _guard = scopeguard::guard((), |_| self.deref());
-        // TODO(port): defer semantics — scopeguard captures &self; verify borrowck in Phase B.
+        // PORT NOTE: reshaped for borrowck — Zig `defer this.deref()`. Capture a
+        // raw `*mut Self` so the guard doesn't hold a `&self` borrow across the
+        // mutable accesses below.
+        let this: *mut Self = self;
+        let _guard = scopeguard::guard((), move |_| {
+            // SAFETY: `this` derived from `&mut self`; the +1 from `r#ref` above
+            // keeps the allocation live until this guard drops.
+            unsafe { Self::deref(this) }
+        });
 
         // The C++ end of the socket is no longer holding a reference to this, so we must clear it.
         if self.outgoing_websocket.is_some() {
             self.outgoing_websocket = None;
-            self.deref();
+            // SAFETY: `self: &mut Self`; refcount > 1 here (guard holds +1).
+            unsafe { Self::deref(self) };
         }
 
         // no need to be .failure we still wanna to send pending SSL buffer + close_notify
@@ -582,7 +590,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
         if let Some(ws) = self.outgoing_websocket.take() {
             // SAFETY: ws is a live C++ WebSocket back-reference (BACKREF).
             unsafe { (*ws).did_abrupt_close(code) };
-            self.deref();
+            // SAFETY: `self: &mut Self`; last use of `self` on this path.
+            unsafe { Self::deref(self) };
         }
     }
 
@@ -593,7 +602,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
         self.tcp.detach();
         self.dispatch_abrupt_close(ErrorCode::Ended);
 
-        self.deref();
+        // SAFETY: `self: &mut Self`; last use of `self`.
+        unsafe { Self::deref(self) };
     }
 
     pub fn terminate(&mut self, code: ErrorCode) {

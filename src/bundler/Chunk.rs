@@ -92,6 +92,35 @@ bitflags::bitflags! {
     }
 }
 
+impl Default for Content {
+    fn default() -> Self {
+        Content::Javascript(JavaScriptChunk::default())
+    }
+}
+
+impl Default for Chunk {
+    fn default() -> Self {
+        Chunk {
+            unique_key: b"",
+            files_with_parts_in_chunk: ArrayHashMap::new(),
+            // Zig: `entry_bits: AutoBitSet = undefined` — static-arm zero init.
+            entry_bits: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
+            final_rel_path: b"",
+            template: PathTemplate::default(),
+            cross_chunk_imports: BabyList::default(),
+            content: Content::default(),
+            entry_point: EntryPoint::default(),
+            output_source_map: source_map::SourceMapPieces::default(),
+            intermediate_output: IntermediateOutput::default(),
+            isolated_hash: u64::MAX,
+            renamer: bun_renamer::ChunkRenamer::default(),
+            compile_results_for_chunk: Box::default(),
+            metafile_chunk_json: b"",
+            flags: Flags::default(),
+        }
+    }
+}
+
 impl Chunk {
     #[inline]
     pub fn is_entry_point(&self) -> bool {

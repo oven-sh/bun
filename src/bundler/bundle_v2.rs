@@ -1382,9 +1382,9 @@ pub mod dispatch {
     /// One-shot hooks for `JSBundler::{Resolve,Load}::dispatch` — runtime writes
     /// the JS-thread trampoline (`runOnJSThread`) at init. See PORTING.md
     /// §Dispatch "Debug/crash hooks" pattern (AtomicPtr fn-ptr registration).
-    pub static PLUGIN_RESOLVE_HOOK: AtomicPtr<unsafe fn(*mut crate::api::JSBundler::Resolve)> =
+    pub static PLUGIN_RESOLVE_HOOK: AtomicPtr<unsafe fn(*mut super::api::JSBundler::Resolve)> =
         AtomicPtr::new(null_mut());
-    pub static PLUGIN_LOAD_HOOK: AtomicPtr<unsafe fn(*mut crate::api::JSBundler::Load)> =
+    pub static PLUGIN_LOAD_HOOK: AtomicPtr<unsafe fn(*mut super::api::JSBundler::Load)> =
         AtomicPtr::new(null_mut());
 }
 
@@ -1392,6 +1392,35 @@ pub mod dispatch {
 // is a T6 generic type instantiated over a T5 type. bundler stores it opaquely;
 // runtime constructs/drives it. SAFETY: erased — never dereferenced in bundler.
 pub type Watcher = *mut (); // TODO(b0-genuine): hot_reloader — opaque until runtime owns lifecycle
+
+/// `bun.jsc.AnyEventLoop` — erased handle. The draft body matched on
+/// `EventLoop::Js`/`EventLoop::Mini` (the Zig union arms); reproduce as a
+/// thin enum wrapping the erased pointers so `js_loop_for_plugins` /
+/// `wait_for_parse` keep their call shape.
+pub enum EventLoop {
+    Js(dispatch::JsEventLoopHandle),
+    Mini(core::ptr::NonNull<()>),
+}
+impl EventLoop {
+    /// Mirrors `AnyEventLoop.tick` — drives the loop until `is_done` returns
+    /// true. T5 cannot name the concrete loop, so this delegates through the
+    /// JsEventLoop vtable / spins on the Mini loop poll.
+    /// PORT NOTE: real body lives in T6; this is the data-only shim.
+    pub fn tick<Ctx>(&mut self, ctx: &mut Ctx, is_done: &impl Fn(&mut Ctx) -> bool) {
+        // Busy-wait on `is_done` — the bundle thread's pump is driven by
+        // worker callbacks that flip `pending_items`. The Mini loop in Zig
+        // also spins; the JS loop runs microtasks between checks (T6).
+        while !is_done(ctx) {
+            std::thread::yield_now();
+        }
+    }
+}
+
+/// `JSBundleCompletionTask` (JSBundler.zig) — TYPE_ONLY backref for
+/// `BundleV2.completion`. The bundler reads only `.jsc_event_loop`.
+pub struct JSBundleCompletionTask {
+    pub jsc_event_loop: dispatch::JsEventLoopHandle,
+}
 
 type IndexInt = u32; // Index.Int
 
@@ -1404,7 +1433,7 @@ pub fn generic_path_with_pretty_initialized(
     bump: &bun_alloc::Arena,
 ) -> Result<Fs::Path, Error> {
     // TODO(port): narrow error set
-    let buf = bun_paths::path_buffer_pool::get().get();
+    let mut buf = bun_paths::path_buffer_pool::get();
 
     let is_node = path.namespace == b"node";
     if is_node

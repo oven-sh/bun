@@ -76,7 +76,9 @@ pub struct PostgresSQLConnection {
     pub nonpipelinable_requests: u32,
 
     pub poll_ref: KeepAlive,
-    pub global_object: *mut JSGlobalObject,
+    // `*const`, not `*mut`: derived from a `&JSGlobalObject` in `call()`, so provenance is
+    // read-only. Only ever dereferenced as `&*` via `global()`; never written through.
+    pub global_object: *const JSGlobalObject,
     pub vm: *mut VirtualMachine,
     pub statements: PreparedStatementsMap,
     pub prepared_statement_id: u64,
@@ -949,10 +951,9 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
         pipelined_requests: 0,
         nonpipelinable_requests: 0,
         poll_ref: KeepAlive::default(),
-        // SAFETY(const_to_mut_cast): stored as `*mut` for FFI-shape parity but only ever
-        // read via `global()` (`&*`); never written through. Provenance is read-only and
-        // that is sufficient for all uses in this file.
-        global_object: global_object as *const _ as *mut JSGlobalObject,
+        // `&T` → `*const T` coercion; field is `*const` (read-only provenance) and only
+        // ever dereferenced as `&*` via `global()`.
+        global_object,
         // `VirtualMachine::get()` returns the singleton `*mut` with full write provenance
         // (same pointer as `global_object.bun_vm()`, asserted in debug builds). Avoids
         // deriving `*mut` from the `&VirtualMachine` above, which would make `vm()`'s
@@ -1903,7 +1904,7 @@ impl PostgresSQLConnection {
                     fields: &statement.fields,
                     binary: request.flags.binary,
                     bigint: request.flags.bigint,
-                    global_object: self.global_object,
+                    global_object: self.global(),
                     count: 0,
                     // TODO(port): other Putter default fields
                 };

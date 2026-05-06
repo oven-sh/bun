@@ -587,7 +587,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     side: Some(crate::bake_types::Side::Client),
                     entry_point_index: None,
                     referenced_css_chunks: Box::default(),
-                    bake_extra: OutputFile::BakeExtra::default(),
+                    bake_extra: BakeExtra::default(),
                     ..Default::default()
                 }));
                 continue;
@@ -775,14 +775,13 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         source_provider_url.ref_();
                         let _spu_guard = scopeguard::guard((), |_| source_provider_url.deref());
 
-                        if let Some(result) = unsafe {
+                        if let Some((bytecode, cached_bytecode)) = unsafe {
                             (bytecode_vt.generate)(
                                 c.options.output_format,
                                 &code_result.buffer,
-                                source_provider_url.as_bytes(),
+                                &source_provider_url.to_utf8().slice(),
                             )
                         } {
-                            let (bytecode, cached_bytecode) = result;
                             let source_provider_url_str = source_provider_url.to_utf8();
                             debug!(
                                 "Bytecode cache generated {}: {}",
@@ -790,12 +789,12 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                 bun_core::fmt::size(bytecode.len(), bun_core::fmt::SizeOpts { space_between_number_and_unit: true })
                             );
                             fdpath[..chunk.final_rel_path.len()].copy_from_slice(&chunk.final_rel_path);
-                            fdpath[chunk.final_rel_path.len()..][..bun_core::BYTECODE_EXTENSION.len()]
-                                .copy_from_slice(bun_core::BYTECODE_EXTENSION.as_bytes());
+                            fdpath[chunk.final_rel_path.len()..][..BYTECODE_EXTENSION.len()]
+                                .copy_from_slice(BYTECODE_EXTENSION.as_bytes());
 
                             let mut input_path_buf: Vec<u8> = Vec::new();
                             input_path_buf.extend_from_slice(&chunk.final_rel_path);
-                            input_path_buf.extend_from_slice(bun_core::BYTECODE_EXTENSION.as_bytes());
+                            input_path_buf.extend_from_slice(BYTECODE_EXTENSION.as_bytes());
 
                             break 'brk Some(options::OutputFile::init(options::OutputFileInit {
                                 output_path: Box::from(source_provider_url_str.slice()),
@@ -841,7 +840,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // Create module_info output file for ESM bytecode in --compile builds
             let module_info_output_file: Option<options::OutputFile> = 'brk: {
                 if c.options.generate_bytecode_cache
-                    && c.options.output_format == OutputFormat::Esm
+                    && c.options.output_format == options::Format::Esm
                     && c.options.compile
                 {
                     let loader: Loader = if chunk.entry_point.is_entry_point {
@@ -954,13 +953,13 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 },
                 bake_extra: 'brk: {
                     if c.framework.is_none() || IS_DEV_SERVER {
-                        break 'brk OutputFile::BakeExtra::default();
+                        break 'brk BakeExtra::default();
                     }
                     if !c.framework.as_ref().unwrap().is_built_in_react {
-                        break 'brk OutputFile::BakeExtra::default();
+                        break 'brk BakeExtra::default();
                     }
 
-                    let mut extra = OutputFile::BakeExtra::default();
+                    let mut extra = BakeExtra::default();
                     extra.bake_is_runtime =
                         chunk.files_with_parts_in_chunk.contains(Index::runtime().get());
                     if output_kind == options::OutputKind::EntryPoint && side == crate::bake_types::Side::Server {
@@ -1011,13 +1010,12 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     Ok(output_files.take())
 }
 
-pub use bun_bundler::ThreadPool;
+pub use crate::ThreadPool;
 
 // TODO(port): narrow error set
-// TODO(port): `EntryPointKind`, `OutputFormat`, `SourceMapMode` import paths are guesses; Phase B fixes.
-use bun_bundler::graph::EntryPointKind;
-use bun_bundler::options::OutputFormat;
-use bun_bundler::options::SourceMapMode;
+use crate::EntryPoint;
+use crate::options::SourceMapOption;
+use crate::output_file::BakeExtra;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

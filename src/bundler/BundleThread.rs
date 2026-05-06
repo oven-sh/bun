@@ -298,7 +298,7 @@ impl<C: CompletionStruct> BundleThread<C> {
         // `init_and_run` doc. Reborrow `transpiler` through a raw ptr so
         // `completion` can be borrowed again below (Zig stored `*Transpiler`).
         let transpiler_ptr: *mut Transpiler<'_> = transpiler;
-        let this = completion.init_and_run(
+        let run = completion.init_and_run(
             // SAFETY: `transpiler` lives in `bump` for the duration of `heap`.
             unsafe { &mut *transpiler_ptr },
             bump,
@@ -307,46 +307,24 @@ impl<C: CompletionStruct> BundleThread<C> {
 
         // PORT NOTE: Zig's overlapping `defer { ast_memory_allocator.pop();
         // this.deinitWithoutFreeingArena(); }` + `errdefer { wait_groups; copy log }`
-        // captured ≥2 disjoint &mut borrows. Restructured as straight-line: branch
-        // on result, then unconditional cleanup. Semantics preserved (errdefer body
-        // runs only on the error path; defer body runs on both).
-        let out = match this {
-            Ok(this) => {
-                this.plugins = completion.plugins();
-                this.completion = Some(completion.as_js_bundle_completion_task());
-                // Set the file_map pointer for in-memory file support
-                this.file_map = completion.file_map();
-                completion.set_transpiler(this as *mut _);
+        // captured ≥2 disjoint &mut borrows. Restructured as straight-line: log copy
+        // runs on both paths; `completeOnBundleThread` only on success (the error
+        // path's `set_result(Err)` + complete happens in `thread_main`). The
+        // `deinitWithoutFreeingArena` + wait-group drain live inside `init_and_run`
+        // (it owns `this`).
+        let mut out_log = Logger::Log::init();
+        // SAFETY: `transpiler.log` is the arena-allocated `*mut Log` set up by
+        // `configure_bundler`; valid for the lifetime of `heap`. Raw deref so the
+        // `&'a mut Transpiler` consumed by `init_and_run` above is not reborrowed.
+        unsafe { (*(*transpiler_ptr).log).append_to_with_recycled(&mut out_log, true) };
+        completion.set_log(out_log);
 
-                let mut out_log = Logger::Log::init();
-                // SAFETY: `transpiler.log` is the arena-allocated Log set up by
-                // `configure_bundler`; valid for the lifetime of `heap`.
-                unsafe { (*(*transpiler_ptr).log).append_to_with_recycled(&mut out_log, true) };
-                completion.set_log(out_log);
-                completion.complete_on_bundle_thread();
+        if run.is_ok() {
+            completion.complete_on_bundle_thread();
+        }
 
-                ast_memory_allocator.pop();
-                this.deinit_without_freeing_arena();
-                Ok(())
-            }
-            Err(err) => {
-                // Wait for wait groups to finish. There still may be ongoing work.
-                // PORT NOTE: on the error path `init_and_run` may have failed
-                // before `BundleV2` was constructed; the impl in T6 is
-                // responsible for draining its own wait groups before returning
-                // `Err` (it owns `this.linker`). Here we only restore the AST
-                // allocator stack and copy out the log.
-                let mut out_log = Logger::Log::init();
-                // SAFETY: as above.
-                unsafe { (*(*transpiler_ptr).log).append_to_with_recycled(&mut out_log, true) };
-                completion.set_log(out_log);
-
-                ast_memory_allocator.pop();
-                Err(err)
-            }
-        };
-
-        out
+        ast_memory_allocator.pop();
+        run
     }
 }
 

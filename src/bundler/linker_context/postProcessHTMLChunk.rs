@@ -50,5 +50,5 @@ pub fn post_process_html_chunk(
 //   source:     src/bundler/linker_context/postProcessHTMLChunk.zig (35 lines)
 //   confidence: medium
 //   todos:      2
-//   notes:      StringJoiner crate path guessed (bun_str::string_joiner); worker.allocator threading needs Phase B review
+//   notes:      worker.allocator is a per-worker arena — thread `&'bump Bump` to StringJoiner in Phase B; default_allocator arg to j.push dropped
 // ──────────────────────────────────────────────────────────────────────────

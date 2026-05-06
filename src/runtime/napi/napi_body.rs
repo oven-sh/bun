@@ -2515,27 +2515,29 @@ pub extern "C" fn napi_create_threadsafe_function(
         return NapiEnv::set_last_error(Some(env), NapiStatus::function_expected);
     }
 
-    let vm = env.to_js().bun_vm();
+    // SAFETY: bun_vm() never null for a Bun-owned global.
+    let vm = unsafe { &mut *env.to_js().bun_vm() };
     let callback = if let Some(c) = call_js_cb {
         TsfnCallback::C {
             napi_threadsafe_function_call_js: c,
             js: if func.is_empty() {
-                Strong::Optional::empty()
+                StrongOptional::empty()
             } else {
-                Strong::Optional::create(func.with_async_context_if_needed(env.to_js()), vm.global())
+                StrongOptional::create(func.with_async_context_if_needed(env.to_js()), vm.global())
             },
         }
     } else {
         TsfnCallback::Js(if func.is_empty() {
-            Strong::Optional::empty()
+            StrongOptional::empty()
         } else {
-            Strong::Optional::create(func.with_async_context_if_needed(env.to_js()), vm.global())
+            StrongOptional::create(func.with_async_context_if_needed(env.to_js()), vm.global())
         })
     };
 
     let function = ThreadSafeFunction::new(ThreadSafeFunction {
         event_loop: vm.event_loop(),
-        env: NapiEnvRef::clone_from_raw(env),
+        // SAFETY: env is a live C++-owned napi_env.
+        env: unsafe { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) },
         callback,
         ctx: context,
         queue: TsfnQueue::init(max_queue_size),
@@ -2547,7 +2549,7 @@ pub extern "C" fn napi_create_threadsafe_function(
         has_queued_finalizer: false,
         lock: Mutex::new(),
         dispatch_state: AtomicU8::new(DispatchState::Idle as u8),
-        blocking_condvar: Condvar::new(),
+        blocking_condvar: Condvar::default(),
         closing: AtomicU8::new(ClosingState::NotClosing as u8),
         aborted: AtomicBool::new(true),
     });

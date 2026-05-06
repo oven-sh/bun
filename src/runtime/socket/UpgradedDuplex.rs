@@ -422,7 +422,7 @@ impl<'a> UpgradedDuplex<'a> {
 
     pub fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
         if let Some(wrapper) = &self.wrapper {
-            return wrapper.ssl;
+            return wrapper.ssl.map(|p| p.as_ptr());
         }
         None
     }

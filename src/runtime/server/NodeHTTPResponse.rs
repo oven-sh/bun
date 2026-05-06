@@ -977,7 +977,7 @@ impl NodeHTTPResponse {
         self.raw_response
             .as_ref()
             .unwrap()
-            .on_data::<NodeHTTPResponse>(Self::on_buffer_request_body_while_paused, self);
+            .on_data(on_buffer_paused_shim, self as *mut Self);
 
         // TODO: figure out why windows is not emitting EOF with UV_DISCONNECT
         #[cfg(not(windows))]

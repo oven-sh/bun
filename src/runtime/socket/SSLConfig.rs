@@ -809,7 +809,7 @@ mod _gated_from_js {
                 result.requires_custom_request_ctx = true;
             }
             if let Some(ciphers) = generated.ciphers.get() {
-                result.ssl_ciphers = Some(ciphers.to_owned_slice_z());
+                result.ssl_ciphers = Some(zbox_into_cstring(ciphers.to_owned_slice_z()));
                 result.is_using_default_ciphers = false;
                 result.requires_custom_request_ctx = true;
             }

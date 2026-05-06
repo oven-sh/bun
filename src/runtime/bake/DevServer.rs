@@ -1215,9 +1215,9 @@ where
         // PORT NOTE: `AnyResponse: From<*mut Response<IS_SSL>>` only impl'd for
         // concrete `true`/`false`; branch at runtime on the const generic.
         let any = if IS_SSL {
-            AnyResponse::init(resp as *mut bun_uws_sys::TLSResponse)
+            AnyResponse::init(resp as *mut bun_uws_sys::response::Response<true>)
         } else {
-            AnyResponse::init(resp as *mut bun_uws_sys::TCPResponse)
+            AnyResponse::init(resp as *mut bun_uws_sys::response::Response<false>)
         };
         handler(dev, req, any);
     }

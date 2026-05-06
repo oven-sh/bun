@@ -2129,7 +2129,7 @@ impl AttributeIterator {
     fn detach(&mut self) {
         if !self.iterator.is_null() {
             // SAFETY: iterator allocated by lol-html; freed exactly once here.
-            unsafe { lolhtml::AttributeIterator::deinit(self.iterator) };
+            unsafe { lolhtml::AttributeIterator::destroy(self.iterator) };
             self.iterator = core::ptr::null_mut();
         }
     }

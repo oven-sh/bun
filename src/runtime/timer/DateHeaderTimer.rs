@@ -115,11 +115,13 @@ impl DateHeaderTimer {
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__internal_ensureDateHeaderTimerIsEnabled(loop_: *mut Loop) {
     if let Some(vm_ptr) = VirtualMachine::get_or_null() {
-        // SAFETY: vm_ptr is the live thread-local VM; loop_ is a valid uws Loop pointer
-        // passed from C++ and lives for the call duration.
-        let vm = unsafe { &mut *vm_ptr };
+        // SAFETY: loop_ is a valid uws Loop pointer passed from C++ and lives
+        // for the call duration.
         let loop_ref = unsafe { &*loop_ };
-        vm.timer.update_date_header_timer_if_necessary(loop_ref, vm);
+        // SAFETY: single JS thread; `timer_all()` returns the live per-thread
+        // `All` (non-null after init). `update_date_header_timer_if_necessary`
+        // takes the VM by raw pointer to avoid aliased-`&mut` (b2-cycle).
+        unsafe { (*timer_all()).update_date_header_timer_if_necessary(loop_ref, vm_ptr) };
     }
 }
 

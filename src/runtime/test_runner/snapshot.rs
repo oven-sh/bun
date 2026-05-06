@@ -291,10 +291,12 @@ impl<'a> Snapshots<'a> {
                 match &mut stmt.data {
                     js_ast::StmtData::SExpr(expr) => {
                         if let js_ast::ExprData::EBinary(e_binary) = &mut expr.value.data {
+                            // PORT NOTE: deref `StoreRef` once to a plain `&mut E::Binary`
+                            // so the borrow checker can see `.left`/`.right` as disjoint
+                            // field projections (custom `DerefMut` blocks split-borrows
+                            // otherwise).
+                            let e_binary = &mut **e_binary;
                             if e_binary.op == js_ast::Op::Code::BinAssign {
-                                // PORT NOTE: split-borrow `left`/`right` upfront so the
-                                // nested matches don't keep an exclusive borrow on the
-                                // whole `e_binary` when we reach for `.right`.
                                 let (left, right) = (&mut e_binary.left, &mut e_binary.right);
                                 if let js_ast::ExprData::EIndex(e_index) = &mut left.data {
                                     // PORT NOTE: split-borrow `index`/`target` so we can take

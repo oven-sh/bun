@@ -878,8 +878,18 @@ impl Writable {
                 }
 
                 Stdio::Blob(_) => {
-                    let blob = match core::mem::replace(&mut stdio, Stdio::Ignore) {
-                        Stdio::Blob(b) => b,
+                    // E0509: `Stdio` impls `Drop`, so the payload cannot be
+                    // destructure-moved out. Take ownership via ManuallyDrop +
+                    // ptr::read; the wrapper suppresses the Stdio destructor so
+                    // the blob is moved exactly once.
+                    let old = core::mem::ManuallyDrop::new(core::mem::replace(
+                        &mut stdio,
+                        Stdio::Ignore,
+                    ));
+                    // SAFETY: `old` is Blob (matched above) and ManuallyDrop
+                    // prevents its Drop from running, so this is the sole move.
+                    let blob = match &*old {
+                        Stdio::Blob(b) => unsafe { core::ptr::read(b) },
                         _ => unreachable!(),
                     };
                     Ok(Writable::Buffer(StaticPipeWriter::create(
@@ -1955,7 +1965,7 @@ impl PipeReader {
             }
             PipeReaderState::Done(bytes) => {
                 self.state = PipeReaderState::Done(Box::default());
-                ReadableStream::from_owned_slice(global_object, bytes, 0)
+                ReadableStream::from_owned_slice(global_object, bytes.into_vec(), 0)
             }
             PipeReaderState::Err(_err) => {
                 let empty = ReadableStream::empty(global_object)?;

@@ -21,14 +21,12 @@ impl Identifier {
 
     /// Returns `None` if the context referred to by `self` no longer exists
     pub fn bun_vm(self) -> Option<&'static VirtualMachine> {
-        
-        {
-            // concurrently because we expect these identifiers are mostly used by off-thread tasks
-            return self.global_object()?.bun_vm_concurrently();
-        }
-        // TODO(b2-blocked): bun_jsc::JSGlobalObject::bun_vm_concurrently
-        let _ = self;
-        None
+        // concurrently because we expect these identifiers are mostly used by off-thread tasks.
+        // `JSGlobalObject::bun_vm()` in bun_jsc is the raw FFI call with no threadlocal
+        // assertion, so it is already safe to call off-thread (≡ Zig `bunVMConcurrently`).
+        // SAFETY: `bun_vm()` never returns null for a Bun-owned global; the VM outlives all
+        // ScriptExecutionContexts it owns.
+        Some(unsafe { &*self.global_object()?.bun_vm() })
     }
 
     pub fn valid(self) -> bool {

@@ -223,7 +223,7 @@ pub fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
     let mut secret: Option<ZigStringSlice> = None;
     // `defer if (secret) |s| s.deinit();` — handled by Drop
     let mut max_age: u64 = csrf::DEFAULT_EXPIRATION_MS;
-    let mut encoding: csrf::TokenFormat = csrf::TokenFormat::Base64url;
+    let mut encoding: csrf::TokenFormat = csrf::TokenFormat::Base64Url;
 
     let mut algorithm: EvpAlgorithm = csrf::DEFAULT_ALGORITHM;
 
@@ -232,15 +232,15 @@ pub fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
         let options_value = args[1];
 
         // Extract the secret (required)
-        if let Some(secret_slice) = options_value.get_optional::<ZigStringSlice>(global, "secret")? {
-            if secret_slice.len() == 0 {
-                return global.throw_invalid_arguments(format_args!("Secret must be a non-empty string"));
+        if let Some(secret_slice) = get_optional_slice(options_value, global, b"secret")? {
+            if secret_slice.slice().is_empty() {
+                return Err(global.throw_invalid_arguments(format_args!("Secret must be a non-empty string")));
             }
             secret = Some(secret_slice);
         }
 
         // Extract maxAge (optional)
-        if let Some(max_age_js) = options_value.get_optional_int::<u64>(global, "maxAge")? {
+        if let Some(max_age_js) = get_optional_int_u64(options_value, global, "maxAge")? {
             max_age = max_age_js;
         }
 
@@ -249,27 +249,27 @@ pub fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
             let Some(encoding_enum) =
                 NodeEncoding::from_js_with_default_on_empty(encoding_js, global, NodeEncoding::Base64url)?
             else {
-                return global.throw_invalid_arguments(format_args!(
+                return Err(global.throw_invalid_arguments(format_args!(
                     "Invalid format: must be 'base64', 'base64url', or 'hex'"
-                ));
+                )));
             };
             encoding = match encoding_enum {
                 NodeEncoding::Base64 => csrf::TokenFormat::Base64,
-                NodeEncoding::Base64url => csrf::TokenFormat::Base64url,
+                NodeEncoding::Base64url => csrf::TokenFormat::Base64Url,
                 NodeEncoding::Hex => csrf::TokenFormat::Hex,
                 _ => {
-                    return global.throw_invalid_arguments(format_args!(
+                    return Err(global.throw_invalid_arguments(format_args!(
                         "Invalid format: must be 'base64', 'base64url', or 'hex'"
-                    ));
+                    )));
                 }
             };
         }
         if let Some(algorithm_js) = options_value.get(global, "algorithm")? {
             if !algorithm_js.is_string() {
-                return global.throw_invalid_argument_type_value("algorithm", "string", algorithm_js);
+                return Err(global.throw_invalid_argument_type_value("algorithm", "string", algorithm_js));
             }
-            let Some(algo) = EvpAlgorithm::map().from_js_case_insensitive(global, algorithm_js)? else {
-                return global.throw_invalid_arguments(format_args!("Algorithm not supported"));
+            let Some(algo) = algorithm_from_js_case_insensitive(global, algorithm_js)? else {
+                return Err(global.throw_invalid_arguments(format_args!("Algorithm not supported")));
             };
             algorithm = algo;
             match algorithm {
@@ -280,7 +280,7 @@ pub fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                 | EvpAlgorithm::Sha512
                 | EvpAlgorithm::Sha512_256 => {}
                 _ => {
-                    return global.throw_invalid_arguments(format_args!("Algorithm not supported"));
+                    return Err(global.throw_invalid_arguments(format_args!("Algorithm not supported")));
                 }
             }
         }
@@ -290,7 +290,11 @@ pub fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
         token: token.slice(),
         secret: match &secret {
             Some(s) => s.slice(),
-            None => global.bun_vm().rare_data().default_csrf_secret(),
+            // SAFETY: `bun_vm()` never returns null for a Bun-owned global; we are
+            // on the JS thread so the VM singleton is exclusively reachable here.
+            None => unsafe { &mut *global.bun_vm() }
+                .rare_data()
+                .default_csrf_secret(),
         },
         max_age_ms: max_age,
         encoding,

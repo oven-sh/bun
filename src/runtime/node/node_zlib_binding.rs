@@ -26,27 +26,30 @@ impl Drop for CountedKeepAlive {
     }
 }
 
+/// Zig: `?[*:0]const u8` for `msg` / `code` — nullable NUL-terminated C strings.
+/// Kept as raw `*const c_char` (not `&'static str`) because zlib (`z_stream.msg`)
+/// and zstd (`ZSTD_getErrorString`) hand back runtime C pointers.
 #[derive(Clone, Copy)]
 pub struct Error {
-    pub msg: Option<&'static str>,
+    pub msg: *const c_char,
     pub err: c_int,
-    pub code: Option<&'static str>,
+    pub code: *const c_char,
 }
 
 impl Error {
-    pub const OK: Error = Error { msg: None, err: 0, code: None };
+    pub const OK: Error = Error { msg: core::ptr::null(), err: 0, code: core::ptr::null() };
 
     #[inline]
     pub const fn ok() -> Error {
         Self::OK
     }
 
-    pub const fn init(msg: &'static str, err: c_int, code: &'static str) -> Error {
-        Error { msg: Some(msg), err, code: Some(code) }
+    pub const fn init(msg: *const c_char, err: c_int, code: *const c_char) -> Error {
+        Error { msg, err, code }
     }
 
     pub fn is_error(&self) -> bool {
-        self.msg.is_some()
+        !self.msg.is_null()
     }
 }
 

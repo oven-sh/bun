@@ -405,10 +405,15 @@ pub mod js_bundler {
                 return Err(global_this.throw_invalid_arguments("Expected files to be an object"));
             };
 
-            const ITER_OPTS: jsc::JSPropertyIteratorOptions =
-                jsc::JSPropertyIteratorOptions::new(true, true);
-            let mut files_iter =
-                jsc::JSPropertyIterator::<ITER_OPTS>::init(global_this, files_obj)?;
+            let mut files_iter = jsc::JSPropertyIterator::init(
+                global_this,
+                files_obj,
+                jsc::JSPropertyIteratorOptions {
+                    skip_empty_name: true,
+                    include_value: true,
+                    ..Default::default()
+                },
+            )?;
 
             // PORT NOTE: reshaped for borrowck — extract len before mutating through guard
             guard.map.reserve(files_iter.len);
@@ -1333,12 +1338,17 @@ pub mod js_bundler {
             }
 
             if let Some(define) = get_own_object(config, global_this, "define")? {
-                const DEFINE_OPTS: jsc::JSPropertyIteratorOptions =
-                    jsc::JSPropertyIteratorOptions::new(true, true);
                 // SAFETY: `get_own_object` only returns non-null live JSObject*.
                 let define_ref = unsafe { &*define };
-                let mut define_iter =
-                    jsc::JSPropertyIterator::<DEFINE_OPTS>::init(global_this, define_ref)?;
+                let mut define_iter = jsc::JSPropertyIterator::init(
+                    global_this,
+                    define_ref,
+                    jsc::JSPropertyIteratorOptions {
+                        skip_empty_name: true,
+                        include_value: true,
+                        ..Default::default()
+                    },
+                )?;
 
                 while let Some(prop) = define_iter.next()? {
                     let property_value = define_iter.value;
@@ -1368,12 +1378,17 @@ pub mod js_bundler {
             }
 
             if let Some(loaders) = get_own_object(config, global_this, "loader")? {
-                const LOADER_OPTS: jsc::JSPropertyIteratorOptions =
-                    jsc::JSPropertyIteratorOptions::new(true, true);
                 // SAFETY: `get_own_object` only returns non-null live JSObject*.
                 let loaders_ref = unsafe { &*loaders };
-                let mut loader_iter =
-                    jsc::JSPropertyIterator::<LOADER_OPTS>::init(global_this, loaders_ref)?;
+                let mut loader_iter = jsc::JSPropertyIterator::init(
+                    global_this,
+                    loaders_ref,
+                    jsc::JSPropertyIteratorOptions {
+                        skip_empty_name: true,
+                        include_value: true,
+                        ..Default::default()
+                    },
+                )?;
 
                 // `loader_iter.i` is the property position, not a dense index of yielded
                 // entries. With `skip_empty_name = true` (or a skipped property getter),

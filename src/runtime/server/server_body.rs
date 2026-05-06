@@ -3428,17 +3428,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         ctx.defer_deinit_until_callback_completes = None;
 
-        if should_deinit_context {
-            ctx.deinit();
-            return;
-        }
-
-        if ctx.should_render_missing() {
-            ctx.render_missing();
-            return;
-        }
-
-        ctx.to_async(req, request_object);
+        // TODO(port): ctx.{deinit,should_render_missing,render_missing,to_async}
+        // require `RequestContext<Self, ..>: NativePromiseContextType` and
+        // `Self: server::ServerLike`, which are only impl'd for the
+        // `server::NewServer` monomorphizations in mod.rs — not for this
+        // module's draft `NewServer`. Un-gates with the type-unification pass
+        // (see `server::AnyRoute unification` blocker above).
+        let _ = (should_deinit_context, req, request_object);
+        todo!("blocked_on: server::ServerLike impl for server_body::NewServer (ctx.deinit/render_missing/to_async)");
     }
 
     // https://chromium.googlesource.com/devtools/devtools-frontend/+/main/docs/ecosystem/automatic_workspace_folders.md

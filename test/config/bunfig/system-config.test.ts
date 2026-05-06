@@ -211,56 +211,57 @@ describe("system-wide bunfig.toml", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.skipIf(!isWindows)("BUN_SYSTEM_CONFIG='' does not enable auto-discovery for non-package-manager commands", async () => {
-    // Load-bearing regression test for the `.getNotEmpty()` check at
-    // loadConfig: if BUN_SYSTEM_CONFIG="" were treated as set (i.e.
-    // replacing the check with .get()), the gate `has_explicit_system_config
-    // or readGlobalConfig()` would enable system-config auto-discovery for
-    // commands that should not probe it (AutoCommand, RunCommand, TestCommand).
-    // The loadSystemBunfig call would reach getSystemConfigPath, fall through
-    // to the platform default, and load %ALLUSERSPROFILE%\bunfig.toml.
-    //
-    // To actually detect this regression we need a sentinel the system
-    // config can set and a way to observe it. [install].cache + `bun pm
-    // cache` would be ideal, but pm cache is a PackageManagerCommand which
-    // already probes the system path through the readGlobalConfig() branch.
-    // Instead we use `[define]`, applied during AutoCommand parse, and
-    // run `bun index.ts` which prints the defined value. If "" were
-    // treated as set on AutoCommand, the define from the sentinel bunfig
-    // would apply and stdout would show "sentinel"; with the fix it must
-    // show "undefined".
-    //
-    // Only runs on Windows because ALLUSERSPROFILE is env-overridable there;
-    // POSIX hardcodes /etc/bunfig.toml which isn't writeable from tests.
-    using dir = tempDir("system-bunfig-empty-sentinel", {
-      "allusers/bunfig.toml":
-        `[define]\n"globalThis.SENTINEL_SYSTEM_LOADED" = "'sentinel'"\n`,
-      "project/index.ts":
-        `console.log("SENTINEL=" + (globalThis as any).SENTINEL_SYSTEM_LOADED);`,
-    });
+  test.skipIf(!isWindows)(
+    "BUN_SYSTEM_CONFIG='' does not enable auto-discovery for non-package-manager commands",
+    async () => {
+      // Load-bearing regression test for the `.getNotEmpty()` check at
+      // loadConfig: if BUN_SYSTEM_CONFIG="" were treated as set (i.e.
+      // replacing the check with .get()), the gate `has_explicit_system_config
+      // or readGlobalConfig()` would enable system-config auto-discovery for
+      // commands that should not probe it (AutoCommand, RunCommand, TestCommand).
+      // The loadSystemBunfig call would reach getSystemConfigPath, fall through
+      // to the platform default, and load %ALLUSERSPROFILE%\bunfig.toml.
+      //
+      // To actually detect this regression we need a sentinel the system
+      // config can set and a way to observe it. [install].cache + `bun pm
+      // cache` would be ideal, but pm cache is a PackageManagerCommand which
+      // already probes the system path through the readGlobalConfig() branch.
+      // Instead we use `[define]`, applied during AutoCommand parse, and
+      // run `bun index.ts` which prints the defined value. If "" were
+      // treated as set on AutoCommand, the define from the sentinel bunfig
+      // would apply and stdout would show "sentinel"; with the fix it must
+      // show "undefined".
+      //
+      // Only runs on Windows because ALLUSERSPROFILE is env-overridable there;
+      // POSIX hardcodes /etc/bunfig.toml which isn't writeable from tests.
+      using dir = tempDir("system-bunfig-empty-sentinel", {
+        "allusers/bunfig.toml": `[define]\n"globalThis.SENTINEL_SYSTEM_LOADED" = "'sentinel'"\n`,
+        "project/index.ts": `console.log("SENTINEL=" + (globalThis as any).SENTINEL_SYSTEM_LOADED);`,
+      });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "index.ts"],
-      env: {
-        ...bunEnv,
-        BUN_SYSTEM_CONFIG: "",
-        ALLUSERSPROFILE: join(String(dir), "allusers"),
-        USERPROFILE: join(String(dir), "no-home"),
-        HOME: join(String(dir), "no-home"),
-        XDG_CONFIG_HOME: join(String(dir), "no-home"),
-      },
-      cwd: join(String(dir), "project"),
-      stderr: "pipe",
-    });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.ts"],
+        env: {
+          ...bunEnv,
+          BUN_SYSTEM_CONFIG: "",
+          ALLUSERSPROFILE: join(String(dir), "allusers"),
+          USERPROFILE: join(String(dir), "no-home"),
+          HOME: join(String(dir), "no-home"),
+          XDG_CONFIG_HOME: join(String(dir), "no-home"),
+        },
+        cwd: join(String(dir), "project"),
+        stderr: "pipe",
+      });
 
-    const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    // The sentinel define must NOT have been applied — AutoCommand should
-    // never probe the system bunfig on its own, and BUN_SYSTEM_CONFIG="" is
-    // not an opt-in.
-    expect(stdout.trim()).toBe("SENTINEL=undefined");
-    expect(exitCode).toBe(0);
-  });
+      // The sentinel define must NOT have been applied — AutoCommand should
+      // never probe the system bunfig on its own, and BUN_SYSTEM_CONFIG="" is
+      // not an opt-in.
+      expect(stdout.trim()).toBe("SENTINEL=undefined");
+      expect(exitCode).toBe(0);
+    },
+  );
 
   test("package-manager command merges system + home bunfigs (readGlobalConfig path)", async () => {
     // Package-manager commands (InstallCommand/BunxCommand/etc.) have

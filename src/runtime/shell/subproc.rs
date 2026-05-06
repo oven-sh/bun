@@ -460,17 +460,13 @@ impl ShellSubprocess {
 
         // Until ownership transfers into Writable/Readable, deinit any caller-provided
         // stdio resources (memfd, ArrayBuffer.Strong, Blob) on early return so they
-        // aren't leaked.
-        let mut stdio_consumed = false;
-        let stdio_guard = scopeguard::guard(&mut spawn_args.stdio, |stdio| {
-            if !stdio_consumed {
-                for s in stdio.iter_mut() {
-                    // Stdio's Drop impl handles resource teardown.
-                    *s = Stdio::Ignore;
-                }
+        // aren't leaked. Defused via `ScopeGuard::into_inner` once consumed.
+        let mut stdio_guard = scopeguard::guard(&mut spawn_args.stdio, |stdio| {
+            for s in stdio.iter_mut() {
+                // Stdio's Drop impl handles resource teardown.
+                *s = Stdio::Ignore;
             }
         });
-        // TODO(port): errdefer — scopeguard captures &mut stdio + &stdio_consumed; revisit borrows.
 
         let no_sigpipe = if let Some(iowriter) = &shellio.stdout {
             !iowriter.is_socket()

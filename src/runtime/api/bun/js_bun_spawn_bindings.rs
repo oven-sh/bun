@@ -1059,6 +1059,15 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     // `ManuallyDrop<Arc<Process>>`. Until process.rs settles on a single
     // intrusive RefPtr<Process> shape, wrap the raw pointer in an Arc by
     // assuming it was Box-allocated (process.rs does `Box::into_raw`).
+    //
+    // PORT NOTE: `PosixSpawnResult::to_process` consumes `self` but only reads
+    // `pid`/`pidfd`/`has_exited`. Zig kept using `spawned.stdin/stdout/stderr/
+    // extra_pipes` afterward; in Rust, take those fields out first so the
+    // partial move is explicit.
+    let spawned_stdin = spawned.stdin.take();
+    let spawned_stdout = spawned.stdout.take();
+    let spawned_stderr = spawned.stderr.take();
+    let mut spawned_extra_pipes = core::mem::take(&mut spawned.extra_pipes);
     let process_raw = spawned.to_process(loop_handle, IS_SYNC);
     // SAFETY: `to_process` returns a freshly Box-allocated `Process`; Arc takes
     // ownership of that allocation. TODO(port): switch to RefPtr<Process>.

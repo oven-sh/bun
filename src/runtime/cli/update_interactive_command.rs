@@ -291,7 +291,9 @@ impl UpdateInteractiveCommand {
         }
 
         // Add grouped catalog dependencies
-        let mut iter = catalog_map.into_iter();
+        // PORT NOTE: `StringHashMap` is a Deref newtype over `std::HashMap` with no
+        // owning `IntoIterator`; `.drain()` (via `DerefMut`) yields owned `(K, V)`.
+        let mut iter = catalog_map.drain();
         while let Some((_k, catalog_packages)) = iter.next() {
             if !catalog_packages.is_empty() {
                 let mut catalog_packages = catalog_packages.into_iter();

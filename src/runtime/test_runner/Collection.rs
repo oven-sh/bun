@@ -209,7 +209,7 @@ impl Collection {
             ));
 
             if let Some(cfg_data) = BunTest::run_test_callback(
-                buntest_strong,
+                buntest_strong.clone(),
                 global_this,
                 callback.get(),
                 false,
@@ -217,7 +217,8 @@ impl Collection {
                 &Timespec::EPOCH,
             ) {
                 // the result is available immediately; queue
-                buntest.add_result(cfg_data);
+                // Re-derive after re-entrant call per BunTestCell::get aliasing contract.
+                buntest_strong.get().add_result(cfg_data);
             }
 
             return Ok(StepResult::Waiting { timeout: Timespec::EPOCH });

@@ -690,24 +690,22 @@ impl FileReader {
                     } else {
                         // SAFETY: see `reader_buffer` decl.
                         unsafe { (*reader_buffer).clear() };
-                        self.pending.result = streams::Result::Temporary(
-                            mem::ManuallyDrop::into_inner(unsafe {
-                                ByteList::from_borrowed_slice_dangerous(buf)
-                            }),
-                        );
+                        self.pending.result = streams::Result::Temporary(unsafe {
+                            ByteList::from_borrowed_slice_dangerous(buf)
+                        });
                     }
                     break 'pending !was_done;
                 }
 
                 if !bun_core::is_slice_in_buffer(buf, self.buffered.allocated_slice()) {
                     self.pending.result = if self.reader().is_done() {
-                        streams::Result::TemporaryAndDone(mem::ManuallyDrop::into_inner(unsafe {
+                        streams::Result::TemporaryAndDone(unsafe {
                             ByteList::from_borrowed_slice_dangerous(buf)
-                        }))
+                        })
                     } else {
-                        streams::Result::Temporary(mem::ManuallyDrop::into_inner(unsafe {
+                        streams::Result::Temporary(unsafe {
                             ByteList::from_borrowed_slice_dangerous(buf)
-                        }))
+                        })
                     };
                     break 'pending !was_done;
                 }
@@ -774,12 +772,12 @@ impl FileReader {
                 if self.reader().is_done() {
                     return streams::Result::IntoArrayAndDone(streams::IntoArray {
                         value: array,
-                        len: drained_len,
+                        len: drained_len as u64,
                     });
                 } else {
                     return streams::Result::IntoArray(streams::IntoArray {
                         value: array,
-                        len: drained_len,
+                        len: drained_len as u64,
                     });
                 }
             }
@@ -823,13 +821,13 @@ impl FileReader {
                         if self.reader().is_done() {
                             return streams::Result::IntoArrayAndDone(streams::IntoArray {
                                 value: array,
-                                len: amount_read as u32, // @truncate
+                                len: amount_read as u64, // @truncate
                             });
                         }
 
                         return streams::Result::IntoArray(streams::IntoArray {
                             value: array,
-                            len: amount_read as u32, // @truncate
+                            len: amount_read as u64, // @truncate
                         });
                     }
 

@@ -2859,14 +2859,16 @@ pub mod mock {
         }
     }
 
-    pub struct SuccessfulReturnsFormatter<'a> {
-        pub global_this: &'a JSGlobalObject,
-        pub successful_returns: &'a Vec<JSValue>,
+    // PORT NOTE: split lifetimes — see AllCallsFormatter above for rationale (avoids the
+    // `&'a mut T<'a>` invariance trap that locks the Formatter borrow for its entire life).
+    pub struct SuccessfulReturnsFormatter<'g, 'f> {
+        pub global_this: &'g JSGlobalObject,
+        pub successful_returns: &'f Vec<JSValue>,
         // PORT NOTE: reshaped for borrowck — Display::fmt takes &self but we need &mut Formatter
-        pub formatter: core::cell::RefCell<&'a mut ConsoleObject::Formatter<'a>>,
+        pub formatter: core::cell::RefCell<&'f mut ConsoleObject::Formatter<'g>>,
     }
 
-    impl fmt::Display for SuccessfulReturnsFormatter<'_> {
+    impl fmt::Display for SuccessfulReturnsFormatter<'_, '_> {
         fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
             let mut formatter = self.formatter.borrow_mut();
             let len = self.successful_returns.len();

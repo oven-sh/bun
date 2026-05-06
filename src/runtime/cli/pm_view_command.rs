@@ -4,7 +4,7 @@ use bun_http as http;
 use bun_install::PackageManager;
 use bun_install::npm::{self, PackageManifest};
 use bun_install::Dependency;
-use bun_json as JSON;
+use bun_interchange::json as JSON;
 use bun_logger as logger;
 use bun_paths::PathBuffer;
 use bun_semver as Semver;
@@ -13,7 +13,7 @@ use bun_str::MutableString;
 use bun_sys::File;
 use bun_url::URL;
 use bun_js_parser as ast;
-use bun_js_parser::js_printer as JSPrinter;
+use bun_js_printer as JSPrinter;
 use bstr::BStr;
 
 pub fn view(

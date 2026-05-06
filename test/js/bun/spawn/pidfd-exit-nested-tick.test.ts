@@ -61,15 +61,9 @@ test.skipIf(!isLinux)(
       });
     }
 
-    // Every child must report exit promptly. With the EPOLLONESHOT bug,
-    // the children whose events were dropped never fire onExit and this
-    // await hangs until the 4s fallback — well over the 1000ms threshold.
-    const t0 = Date.now();
-    const ms = await Promise.race([
-      Promise.all(exits).then(() => Date.now() - t0),
-      new Promise<number>(r => setTimeout(() => r(Date.now() - t0), 4000)),
-    ]);
-
-    expect(ms).toBeLessThan(1000);
+    // Every child must report exit. With the EPOLLONESHOT bug, the children
+    // whose events were dropped never fire onExit and this await hangs until
+    // the test's own 5s timeout — there is no other wake source.
+    await Promise.all(exits);
   },
 );

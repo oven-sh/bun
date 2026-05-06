@@ -101,9 +101,9 @@ mod pm_shims {
     pub fn message<'a>(_pm: &'a PackageManager) -> Option<&'a [u8]> {
         todo!("blocked_on: bun_install::PackageManagerOptionsStub::message")
     }
-    #[inline(never)]
-    pub fn env<'a>(_pm: &'a mut PackageManager) -> &'a mut DotEnv::Loader<'static> {
-        todo!("blocked_on: bun_install::PackageManager::env")
+    #[inline]
+    pub fn env<'a>(pm: &'a mut PackageManager) -> &'a mut DotEnv::Loader<'static> {
+        pm.env_mut()
     }
 }
 

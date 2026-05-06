@@ -2724,14 +2724,20 @@ impl DevServer<'_> {
                     // `resolution_failure_entries` keys are `OwnerPacked` (1-bit side + file).
                     let index = owner.file();
                     match owner.side() {
-                        bake::Side::Client => {
-                            let _ = (&self.client_graph, index, log);
-                            todo!("blocked_on: IncrementalGraph::insert_failure")
-                        }
-                        bake::Side::Server => {
-                            let _ = (&self.server_graph, index, log);
-                            todo!("blocked_on: IncrementalGraph::insert_failure")
-                        }
+                        bake::Side::Client => self.client_graph.insert_failure(
+                            incremental_graph::InsertFailureKey::Index(
+                                incremental_graph::BodyFileIndex::init(index.get()),
+                            ),
+                            log,
+                            false,
+                        )?,
+                        bake::Side::Server => self.server_graph.insert_failure(
+                            incremental_graph::InsertFailureKey::Index(
+                                incremental_graph::BodyFileIndex::init(index.get()),
+                            ),
+                            log,
+                            true,
+                        )?,
                     }
                 }
             }
@@ -4713,19 +4719,20 @@ fn send_built_in_not_found<R: ResponseLike>(resp: &mut R) {
 
 impl DevServer<'_> {
     fn print_memory_line(&self) {
-        // TODO(port): bun_alloc::AllocationScope has no `ENABLED`/`stats()` yet.
         if !ALLOCATION_SCOPE_ENABLED {
             return;
         }
         if !bun_output::scope_is_visible!(DevServer) {
             return;
         }
+        let stats = self.allocation_scope.stats();
         Output::pretty_errorln(format_args!(
-            "<d>DevServer tracked {}, process: {}<r>",
+            "<d>DevServer tracked {}, measured: {} ({}), process: {}<r>",
             bun_core::fmt::size(self.memory_cost(), Default::default()),
+            stats.num_allocations,
+            bun_core::fmt::size(stats.total_memory_allocated, Default::default()),
             bun_core::fmt::size(sys::self_process_memory_usage().unwrap_or(0), Default::default()),
         ));
-        todo!("blocked_on: bun_alloc::AllocationScope::stats");
     }
 }
 
@@ -4734,8 +4741,7 @@ impl DevServer<'_> {
 // Phase-A draft body and the keystone struct module agree on identity.
 pub use crate::bake::dev_server::FileKind;
 
-/// Shim for `bun_alloc::AllocationScope::ENABLED` until that const lands upstream.
-pub(crate) const ALLOCATION_SCOPE_ENABLED: bool = false;
+pub(crate) const ALLOCATION_SCOPE_ENABLED: bool = bun_alloc::AllocationScope::ENABLED;
 
 pub use crate::bake::dev_server::IncrementalResult;
 
@@ -4948,7 +4954,7 @@ impl DevServer<'_> {
             assets: 0,
             other: 0,
             devserver_tracked: if ALLOCATION_SCOPE_ENABLED {
-                todo!("blocked_on: bun_alloc::AllocationScope::stats")
+                self.allocation_scope.stats().total_memory_allocated as u32
             } else {
                 0
             },

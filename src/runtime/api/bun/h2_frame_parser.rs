@@ -83,8 +83,34 @@ pub mod abort_signal_shim {
 #[allow(non_snake_case, non_camel_case_types, dead_code)]
 pub mod JSH2FrameParser {
     use super::{JSGlobalObject, JSValue};
-    /// GC-cached value slots on the JS wrapper (Zig: `js.<field>SetCached` /
-    /// `js.<field>GetCached`).
+
+    // Per-slot `${snake}_get_cached` / `${snake}_set_cached` wrappers around the
+    // `H2FrameParserPrototype__${prop}{Get,Set}CachedValue` C++ shims (emitted by
+    // generate-classes.ts for every entry in h2.classes.ts `values: [...]`).
+    bun_jsc::codegen_cached_accessors!(
+        "H2FrameParser";
+        context,
+        onError,
+        onWrite,
+        onStreamStart,
+        onStreamHeaders,
+        onStreamEnd,
+        onStreamData,
+        onStreamError,
+        onRemoteSettings,
+        onLocalSettings,
+        onWantTrailers,
+        onPing,
+        onEnd,
+        onGoAway,
+        onAborted,
+        onAltSvc,
+        onOrigin,
+        onFrameError
+    );
+
+    /// GC-cached value slots on the JS wrapper (Zig: `js.gc.<field>.get/set/clear`
+    /// — see `JSH2FrameParser.gc` in ZigGeneratedClasses.zig).
     #[derive(Clone, Copy)]
     pub enum Gc {
         context,
@@ -107,18 +133,84 @@ pub mod JSH2FrameParser {
         onFrameError,
     }
     impl Gc {
-        pub fn get(self, _this_value: JSValue) -> Option<JSValue> {
-            todo!("blocked_on: bun_jsc::codegen::JSH2FrameParser")
+        /// Read the `WriteBarrier<Unknown>` slot; `None` when never assigned
+        /// (mirrors Zig: `if (result == .zero) return null`).
+        #[inline]
+        pub fn get(self, this_value: JSValue) -> Option<JSValue> {
+            match self {
+                Gc::context => context_get_cached(this_value),
+                Gc::onError => on_error_get_cached(this_value),
+                Gc::onWrite => on_write_get_cached(this_value),
+                Gc::onStreamStart => on_stream_start_get_cached(this_value),
+                Gc::onStreamHeaders => on_stream_headers_get_cached(this_value),
+                Gc::onStreamEnd => on_stream_end_get_cached(this_value),
+                Gc::onStreamData => on_stream_data_get_cached(this_value),
+                Gc::onStreamError => on_stream_error_get_cached(this_value),
+                Gc::onRemoteSettings => on_remote_settings_get_cached(this_value),
+                Gc::onLocalSettings => on_local_settings_get_cached(this_value),
+                Gc::onWantTrailers => on_want_trailers_get_cached(this_value),
+                Gc::onPing => on_ping_get_cached(this_value),
+                Gc::onEnd => on_end_get_cached(this_value),
+                Gc::onGoAway => on_go_away_get_cached(this_value),
+                Gc::onAborted => on_aborted_get_cached(this_value),
+                Gc::onAltSvc => on_alt_svc_get_cached(this_value),
+                Gc::onOrigin => on_origin_get_cached(this_value),
+                Gc::onFrameError => on_frame_error_get_cached(this_value),
+            }
         }
-        pub fn set(self, _this_value: JSValue, _global: &JSGlobalObject, _value: JSValue) {
-            todo!("blocked_on: bun_jsc::codegen::JSH2FrameParser")
+        /// Write the `WriteBarrier<Unknown>` slot (emits a GC write barrier).
+        #[inline]
+        pub fn set(self, this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
+            match self {
+                Gc::context => context_set_cached(this_value, global, value),
+                Gc::onError => on_error_set_cached(this_value, global, value),
+                Gc::onWrite => on_write_set_cached(this_value, global, value),
+                Gc::onStreamStart => on_stream_start_set_cached(this_value, global, value),
+                Gc::onStreamHeaders => on_stream_headers_set_cached(this_value, global, value),
+                Gc::onStreamEnd => on_stream_end_set_cached(this_value, global, value),
+                Gc::onStreamData => on_stream_data_set_cached(this_value, global, value),
+                Gc::onStreamError => on_stream_error_set_cached(this_value, global, value),
+                Gc::onRemoteSettings => on_remote_settings_set_cached(this_value, global, value),
+                Gc::onLocalSettings => on_local_settings_set_cached(this_value, global, value),
+                Gc::onWantTrailers => on_want_trailers_set_cached(this_value, global, value),
+                Gc::onPing => on_ping_set_cached(this_value, global, value),
+                Gc::onEnd => on_end_set_cached(this_value, global, value),
+                Gc::onGoAway => on_go_away_set_cached(this_value, global, value),
+                Gc::onAborted => on_aborted_set_cached(this_value, global, value),
+                Gc::onAltSvc => on_alt_svc_set_cached(this_value, global, value),
+                Gc::onOrigin => on_origin_set_cached(this_value, global, value),
+                Gc::onFrameError => on_frame_error_set_cached(this_value, global, value),
+            }
         }
-        pub fn clear(self, _this_value: JSValue, _global: &JSGlobalObject) {
-            todo!("blocked_on: bun_jsc::codegen::JSH2FrameParser")
+        /// Zig: `field.set(thisValue, globalObject, .zero)`.
+        #[inline]
+        pub fn clear(self, this_value: JSValue, global: &JSGlobalObject) {
+            self.set(this_value, global, JSValue::ZERO);
         }
     }
-    pub fn get_constructor(_global: &JSGlobalObject) -> JSValue {
-        todo!("blocked_on: bun_jsc::codegen::JSH2FrameParser")
+
+    // `H2FrameParser__getConstructor` — emitted by generate-classes.ts
+    // (`symbolName(typeName, "getConstructor")`). `jsc.conv` = sysv64 on
+    // win-x64, C otherwise.
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    unsafe extern "sysv64" {
+        #[link_name = "H2FrameParser__getConstructor"]
+        fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
+    }
+    #[cfg(not(all(windows, target_arch = "x86_64")))]
+    unsafe extern "C" {
+        #[link_name = "H2FrameParser__getConstructor"]
+        fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
+    }
+
+    /// Lazily fetch the JS constructor from `globalObject` (Zig:
+    /// `JSH2FrameParser.getConstructor`).
+    #[inline]
+    pub fn get_constructor(global: &JSGlobalObject) -> JSValue {
+        // SAFETY: `global` is an opaque ZST FFI handle (see
+        // `JSGlobalObject::as_ptr`); the C++ side reads the cached
+        // structure/constructor from `Zig::GlobalObject`.
+        unsafe { __get_constructor(global.as_ptr()) }
     }
 }
 #[allow(non_snake_case)]

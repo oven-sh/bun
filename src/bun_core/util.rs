@@ -1927,10 +1927,16 @@ pub fn free_sensitive(p: *const core::ffi::c_char) {
 
 // ── argv ──────────────────────────────────────────────────────────────────
 // `bun.argv` — process argv as a slice of NUL-terminated byte strings.
-// Zig: `pub var argv: [][:0]const u8`. Exposed as a tiny wrapper so call
-// sites can use it both as a slice (`.get(0)`, `.iter()`, `.len()`) and as
-// an `IntoIterator<Item = &[u8]>` for `for arg in argv()`.
+// Zig: `pub var argv: [][:0]const u8`. The owned `ZBox` backing for the
+// initial OS argv lives in `ARGV_STORAGE`; `ARGV` is the mutable *view*
+// slice that call sites read (and that `set_argv` swaps for the
+// `--compile` exec-argv splicing path in `cli.zig`). Exposed via a tiny
+// `Argv` wrapper so call sites can use it both as a slice (`.get(0)`,
+// `.iter()`, `.len()`, `.as_slice()`) and as an `IntoIterator<Item = &[u8]>`
+// for `for arg in argv()`.
 static ARGV_STORAGE: std::sync::OnceLock<Vec<ZBox>> = std::sync::OnceLock::new();
+static mut ARGV: &'static [&'static ZStr] = &[];
+static ARGV_INIT: std::sync::Once = std::sync::Once::new();
 
 fn argv_storage() -> &'static [ZBox] {
     ARGV_STORAGE.get_or_init(|| {
@@ -1940,38 +1946,71 @@ fn argv_storage() -> &'static [ZBox] {
     })
 }
 
+#[inline]
+fn argv_view() -> &'static [&'static ZStr] {
+    ARGV_INIT.call_once(|| {
+        let storage = argv_storage();
+        let view: Vec<&'static ZStr> = storage
+            .iter()
+            .map(|z| {
+                // SAFETY: ARGV_STORAGE is process-static via OnceLock.
+                unsafe { core::mem::transmute::<&ZStr, &'static ZStr>(z.as_zstr()) }
+            })
+            .collect();
+        // SAFETY: single-threaded lazy init guarded by Once.
+        unsafe { ARGV = Vec::leak(view) };
+    });
+    // SAFETY: ARGV is a Copy fat-pointer; only mutated via `set_argv` during
+    // single-threaded startup or by the Once above.
+    unsafe { ARGV }
+}
+
 #[derive(Clone, Copy)]
-pub struct Argv(&'static [ZBox]);
+pub struct Argv(&'static [&'static ZStr]);
 impl Argv {
     #[inline] pub fn len(&self) -> usize { self.0.len() }
     #[inline] pub fn is_empty(&self) -> bool { self.0.is_empty() }
-    #[inline] pub fn get(&self, i: usize) -> Option<&'static ZStr> {
-        self.0.get(i).map(|z| {
-            // SAFETY: ZBox storage is process-static via OnceLock.
-            unsafe { core::mem::transmute::<&ZStr, &'static ZStr>(z.as_zstr()) }
-        })
-    }
+    #[inline] pub fn get(&self, i: usize) -> Option<&'static ZStr> { self.0.get(i).copied() }
     #[inline] pub fn iter(&self) -> ArgvIter { ArgvIter { inner: self.0, i: 0 } }
+    /// Borrow the underlying `[&ZStr]` view (Zig: `bun.argv[..]`).
+    #[inline] pub fn as_slice(&self) -> &'static [&'static ZStr] { self.0 }
+    /// Owned `Vec` copy of the view — used by call sites that need to append
+    /// (e.g. `--compile` exec-argv splicing) before leaking + `set_argv`.
+    #[inline] pub fn to_vec(&self) -> Vec<&'static ZStr> { self.0.to_vec() }
 }
 impl IntoIterator for Argv {
     type Item = &'static [u8];
     type IntoIter = ArgvIter;
     #[inline] fn into_iter(self) -> ArgvIter { self.iter() }
 }
-pub struct ArgvIter { inner: &'static [ZBox], i: usize }
+pub struct ArgvIter { inner: &'static [&'static ZStr], i: usize }
 impl Iterator for ArgvIter {
     type Item = &'static [u8];
     #[inline]
     fn next(&mut self) -> Option<&'static [u8]> {
-        let z = self.inner.get(self.i)?;
+        let z = *self.inner.get(self.i)?;
         self.i += 1;
-        // SAFETY: storage is 'static (OnceLock).
-        Some(unsafe { core::mem::transmute::<&[u8], &'static [u8]>(z.as_bytes()) })
+        Some(z.as_bytes())
     }
 }
 
 /// `bun.argv` accessor.
-#[inline] pub fn argv() -> Argv { Argv(argv_storage()) }
+#[inline] pub fn argv() -> Argv { Argv(argv_view()) }
+
+/// `bun.argv = slice` — swap the global argv view. Zig assigns the slice
+/// directly (`bun.argv = full_argv[0..n]`); call sites are single-threaded
+/// startup (CLI parsing in the `--compile` path), so this writes the static
+/// without synchronization.
+///
+/// # Safety
+/// Caller must ensure no concurrent reads of `argv()` are in flight.
+#[inline]
+pub unsafe fn set_argv(v: &'static [&'static ZStr]) {
+    // Prevent the lazy OS-argv init from later clobbering a manually-set view.
+    ARGV_INIT.call_once(|| {});
+    // SAFETY: see fn doc — single-threaded startup.
+    unsafe { ARGV = v };
+}
 
 // ── getcwd ────────────────────────────────────────────────────────────────
 /// Port of `bun.getcwd(buf)` → `Maybe([:0]u8)`. Writes into the caller's

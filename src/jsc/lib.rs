@@ -838,8 +838,9 @@ stub_ty!(
     DOMFormData, DeferredError,
     URL,
     ZigStackTrace, ZigStackFrame,
-    AbortSignal, JSBundler,
+    JSBundler,
 );
+pub use abort_signal::AbortSignal;
 
 // ──────────────────────────────────────────────────────────────────────────
 // `VM` / `JSGlobalObject` — opaque FFI handles to C++-owned objects.

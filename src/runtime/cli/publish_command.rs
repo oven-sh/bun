@@ -23,9 +23,10 @@ use bun_simdutf_sys::simdutf as simdutf;
 use bun_sys::dir_iterator as DirIterator;
 use bun_paths::resolve_path::{join_abs_string_buf_z, normalize_buf, normalize_buf_z};
 // `bun_install::package_manager_real` is `#![cfg(any())]`-gated (reconciler-6); pull
-// `LogLevel`/`AuthType` from the stub surface in `bun_install` and re-declare `Access`
-// locally (no stub upstream — see PackageManagerOptions.zig `Access`).
+// `LogLevel`/`AuthType`/`Access` from the stub surface in `bun_install`
+// (see PackageManagerOptions.zig `PublishConfig`).
 use bun_install::{AuthType, LogLevel};
+pub use bun_install::Access;
 use bun_install::dependency;
 use bun_sys::FdExt as _;
 use bun_js_parser::ast::expr::Data as ExprData;
@@ -43,7 +44,7 @@ trait PublishConfigShim {
 }
 impl PublishConfigShim for install::PublishConfigStub {
     fn tag(&self) -> &[u8] { todo!("blocked_on: bun_install::PublishConfigStub::tag") }
-    fn access(&self) -> Option<Access> { todo!("blocked_on: bun_install::PublishConfigStub::access") }
+    fn access(&self) -> Option<Access> { self.access }
     fn otp(&self) -> &[u8] { todo!("blocked_on: bun_install::PublishConfigStub::otp") }
     fn tolerate_republish(&self) -> bool { todo!("blocked_on: bun_install::PublishConfigStub::tolerate_republish") }
 }
@@ -71,26 +72,6 @@ impl core::fmt::Display for HexLower<'_> {
         Ok(())
     }
 }
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum Access {
-    Public,
-    Restricted,
-}
-impl Access {
-    pub fn from_str(str: &[u8]) -> Option<Access> {
-        match str {
-            b"public" => Some(Access::Public),
-            b"restricted" => Some(Access::Restricted),
-            _ => None,
-        }
-    }
-}
-impl From<Access> for &'static str {
-    fn from(a: Access) -> &'static str {
-        match a { Access::Public => "public", Access::Restricted => "restricted" }
-    }
-}
-
 // `json_mod::parse_utf8` returns `bun_logger::js_ast::Expr` (the value-shaped
 // JSON-only `Expr`), not `bun_js_parser::Expr`, so `Expr::get_string_cloned`
 // can't be applied. Mirror the lookup as a free fn over the JSON `Expr` using

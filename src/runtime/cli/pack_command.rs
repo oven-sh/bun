@@ -95,8 +95,8 @@ fn pm_workspace_cache<'a>(
     todo!("blocked_on: bun_install::PackageManager::workspace_package_json_cache")
 }
 #[inline]
-fn pm_env(_m: &PackageManager) -> *mut bun_dotenv::Loader<'static> {
-    todo!("blocked_on: bun_install::PackageManager::env")
+fn pm_env(m: &PackageManager) -> *mut bun_dotenv::Loader<'static> {
+    m.env_ptr()
 }
 #[inline]
 fn pm_run_scripts(_m: &PackageManager) -> bool {
@@ -1602,8 +1602,8 @@ fn opt_pack_gzip_level(_m: &PackageManager) -> Option<&[u8]> {
     todo!("blocked_on: bun_install::PackageManagerOptionsStub::pack_gzip_level")
 }
 #[inline]
-fn manager_env<'a>(_m: &'a PackageManager) -> &'a bun_dotenv::Loader<'a> {
-    todo!("blocked_on: bun_install::PackageManager::env")
+fn manager_env<'a>(m: &'a PackageManager) -> &'a bun_dotenv::Loader<'static> {
+    m.env()
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1660,12 +1660,10 @@ pub fn pack<const FOR_PUBLISH: bool>(
     if FOR_PUBLISH {
         let is_scoped = bun_install::dependency::is_scoped_package_name(package_name)
             .map_err(|_| PackError::InvalidPackageName)?;
-        // PORT NOTE: `publish_config.access` not on stub — see `PublishConfigStub`.
-        let _ = is_scoped;
-        todo!("blocked_on: bun_install::PublishConfigStub::access");
-        #[allow(unreachable_code)]
-        if false && !is_scoped {
-            return Err(PackError::RestrictedUnscopedPackage);
+        if let Some(access) = manager.options.publish_config.access {
+            if access == bun_install::Access::Restricted && !is_scoped {
+                return Err(PackError::RestrictedUnscopedPackage);
+            }
         }
     }
     // defer if (!for_publish) free(package_name) — handled by Drop
@@ -1715,8 +1713,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
     let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
     // SAFETY: `Transpiler::init` always sets `env` (singleton or leaked).
     let transpiler_env: &bun_dotenv::Loader<'_> = unsafe { &*this_transpiler.env };
-    // PORT NOTE: `manager.env` not on stub — defer the npm_command put.
-    let _ = pm_env(manager); // blocked_on: bun_install::PackageManager::env
+    manager.env_mut().map.put(b"npm_command", b"pack")?;
 
     let (postpack_script, publish_script, postpublish_script, ran_scripts): (
         Option<Box<[u8]>>,

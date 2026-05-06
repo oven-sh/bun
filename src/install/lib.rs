@@ -893,6 +893,18 @@ impl ExtractTarball {
 #[derive(Default)] pub struct PackageManager {
     pub options: PackageManagerOptionsStub,
     pub timestamp_for_manifest_cache_control: u32,
+    /// Zig: `lockfile: *Lockfile` (src/install/PackageManager.zig) — owned,
+    /// heap-allocated at `init()`. Stub holds it inline (`Default`-derive
+    /// sentinel) until `package_manager_real` un-gates and the real
+    /// `Box<Lockfile>` shape lands.
+    pub lockfile: Lockfile,
+    /// Zig: `env: *DotEnv.Loader` (src/install/PackageManager.zig:11) — set
+    /// once by `PackageManager.init()` and never null afterward. `Option` is
+    /// only the `Default`-derive sentinel; accessors `env()`/`env_mut()` unwrap
+    /// it. UNKNOWN ownership (mixed: sometimes leaked-heap, sometimes borrowed
+    /// from `Transpiler`), so stored as `NonNull` not `Box`.
+    // TODO(port): lifetime — see `package_manager_real::PackageManager::env`.
+    pub env: Option<core::ptr::NonNull<bun_dotenv::Loader<'static>>>,
     /// Zig: `cache_directory_: ?std.fs.Dir` — lazy-initialised by
     /// `getCacheDirectory`.
     pub cache_directory_: Option<bun_sys::Fd>,
@@ -925,8 +937,13 @@ impl ExtractTarball {
     /// Zig: `Options.publish_config`.
     pub publish_config: PublishConfigStub,
 }
+/// Port of `PublishConfig` (src/install/PackageManager/PackageManagerOptions.zig).
 #[derive(Default)] pub struct PublishConfigStub {
+    pub access: Option<Access>,
+    pub tag: Vec<u8>,
+    pub otp: Vec<u8>,
     pub auth_type: Option<AuthType>,
+    pub tolerate_republish: bool,
 }
 /// Port of `AuthType` (src/install/PackageManager/PackageManagerOptions.zig).
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -934,6 +951,23 @@ pub enum AuthType { Legacy, Web }
 impl From<AuthType> for &'static str {
     fn from(a: AuthType) -> &'static str {
         match a { AuthType::Legacy => "legacy", AuthType::Web => "web" }
+    }
+}
+/// Port of `Access` (src/install/PackageManager/PackageManagerOptions.zig).
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum Access { Public, Restricted }
+impl Access {
+    pub fn from_str(str: &[u8]) -> Option<Access> {
+        match str {
+            b"public" => Some(Access::Public),
+            b"restricted" => Some(Access::Restricted),
+            _ => None,
+        }
+    }
+}
+impl From<Access> for &'static str {
+    fn from(a: Access) -> &'static str {
+        match a { Access::Public => "public", Access::Restricted => "restricted" }
     }
 }
 #[derive(Default)] pub struct PackageManagerEnableStub {
@@ -996,6 +1030,25 @@ static mut PACKAGE_MANAGER_INSTANCE: *mut PackageManager = core::ptr::null_mut()
 impl PackageManager {
     pub fn verbose_install() -> bool { false }
 
+    /// Zig: field access `manager.env` (src/install/PackageManager.zig:11).
+    /// SAFETY: `env` is populated by `init()` before any caller reaches this;
+    /// mirrors Zig's non-optional `*DotEnv.Loader`.
+    #[inline]
+    pub fn env(&self) -> &bun_dotenv::Loader<'static> {
+        unsafe { self.env.unwrap().as_ref() }
+    }
+    /// Mutable variant of [`env`](Self::env).
+    #[inline]
+    pub fn env_mut(&mut self) -> &mut bun_dotenv::Loader<'static> {
+        unsafe { self.env.unwrap().as_mut() }
+    }
+    /// Raw pointer form for FFI-ish out-param plumbing
+    /// (`RunCommand::configure_env_for_run` takes `*mut Loader`).
+    #[inline]
+    pub fn env_ptr(&self) -> *mut bun_dotenv::Loader<'static> {
+        self.env.unwrap().as_ptr()
+    }
+
     /// Zig: `PackageManager.get()` — returns the process-global instance.
     /// SAFETY: callers must ensure `init()` has run (mirrors Zig's
     /// `&instance` which is undefined before init).
@@ -1017,6 +1070,21 @@ impl PackageManager {
     /// Zig: `PackageManager.scopeForPackageName(name)`.
     pub fn scope_for_package_name(&self, _name: &[u8]) -> &npm::registry::Scope {
         &self.options.scope
+    }
+
+    /// Port of `directories.updateLockfileIfNeeded`
+    /// (src/install/PackageManager/PackageManagerDirectories.zig:671). Real
+    /// body iterates `self.lockfile.packages.slice().items(.meta)` and clears
+    /// `has_install_script` when `load_result == .ok` and
+    /// `serializer_result.packages_need_update`. The stub `LoadResult` is a
+    /// unit struct (no `.ok` variant) and `PackageList` has no
+    /// `slice()/items_meta_mut()` columns yet, so the body defers to
+    /// `package_manager_real`.
+    pub fn update_lockfile_if_needed(
+        &mut self,
+        _load_result: &lockfile::LoadResult,
+    ) -> Result<(), bun_core::Error> {
+        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) — LoadResult::Ok / PackageList::items_meta_mut")
     }
 
     /// Port of `directories.getCacheDirectory`

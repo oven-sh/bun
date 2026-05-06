@@ -738,14 +738,13 @@ pub mod command {
                     #[allow(unreachable_code)]
                     if !graph.compile_exec_argv.is_empty() || bun_options_argc > 0 {
                         let original_argv_len = bun::argv().len();
-                        // TODO(port): bun.argv is a mutable global slice of [:0]const u8
-                        let mut argv_list: Vec<&'static ZStr> = todo!("blocked_on: bun_core::argv().to_vec()");
+                        let mut argv_list: Vec<&'static ZStr> = bun::argv().to_vec();
                         if !graph.compile_exec_argv.is_empty() {
                             todo!("blocked_on: bun_core::append_options_env");
                         }
 
                         // Store the full argv including user arguments
-                        let full_argv = argv_list.leak();
+                        let full_argv: &'static [&'static ZStr] = argv_list.leak();
                         let num_exec_argv_options = full_argv.len().saturating_sub(original_argv_len);
 
                         // Calculate offset: skip executable name + all exec argv options + BUN_OPTIONS args
@@ -759,13 +758,17 @@ pub mod command {
                         // Temporarily set bun.argv to only include executable name + exec_argv options + BUN_OPTIONS args.
                         // This prevents user arguments like --version/--help from being intercepted
                         // by Bun's argument parser (they should be passed through to user code).
-                        todo!("blocked_on: bun_core::set_argv");
+                        // SAFETY: single-threaded startup; `full_argv` is a leaked &'static slice.
+                        unsafe {
+                            bun::set_argv(&full_argv[..(1 + num_parsed_options).min(full_argv.len())]);
+                        }
 
                         // Handle actual options to parse.
                         let result = init::<{ Tag::AutoCommand }>(log)?;
 
                         // Restore full argv so passthrough calculation works correctly
-                        todo!("blocked_on: bun_core::set_argv");
+                        // SAFETY: single-threaded startup.
+                        unsafe { bun::set_argv(full_argv) };
 
                         break 'brk result;
                     }

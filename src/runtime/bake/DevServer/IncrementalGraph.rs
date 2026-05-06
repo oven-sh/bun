@@ -20,7 +20,7 @@ use super::source_map_store_body::Entry as SourceMapStoreEntry;
 use crate::bake::dev_server::route_bundle::Index as RouteBundleIndex;
 use crate::bake::dev_server::source_map_store::Key as SourceMapStoreKey;
 use crate::bake::dev_server_body::{self as dev_server_body, DevAllocator, HotUpdateContext, ig_log, debug_log};
-use crate::bake::dev_server::memory_cost_body::{memory_cost_array_hash_map, memory_cost_array_list};
+use crate::bake::dev_server::memory_cost_body::{memory_cost_array_hash_map, memory_cost_array_list, memory_cost_slice};
 use super::packed_map_body::{PackedMap, Shared as PackedMapShared, LineCount};
 use bun_bundler::BundleV2;
 use bun_options_types::ImportRecord;
@@ -2456,13 +2456,44 @@ impl IncrementalGraph<Client> {
         _arena: &bun_alloc::Arena,
         out: &mut SourceMapStoreEntry,
     ) -> Result<(), bun_alloc::AllocError> {
-        let _ = out;
-        // TODO(port): blocked_on: bun_collections::MultiArrayElement for packed_map_body::Shared
-        //   `MultiArrayList<PackedMapShared>` requires `Shared: MultiArrayElement` (a derive
-        //   macro) which is not yet implemented for the body's enum. The keystone
-        //   `source_map_store::Entry` also lacks the `paths`/`dev_allocator` fields.
-        todo!("blocked_on: bun_collections::MultiArrayElement for PackedMap.Shared");
-        #[allow(unreachable_code)]
+        // PORT NOTE: Zig `bun.MultiArrayList(PackedMap.Shared)` → `Vec<PackedMapShared>`; the
+        // SoA tag/data column split buys nothing for a 2-word enum and `MultiArrayElement` is
+        // struct-only. `Entry.files` is already `Vec<Shared>` (see SourceMapStore.rs).
+        let n = self.current_chunk_parts.len();
+        let mut file_paths: Vec<&'static [u8]> = Vec::with_capacity(n);
+        let mut contained_maps: Vec<PackedMapShared> = Vec::with_capacity(n);
+
+        let mut overlapping_memory_cost: usize = 0;
+
+        for file_index in &self.current_chunk_parts {
+            let idx = file_index.get() as usize;
+            // PORT NOTE: `Entry.paths` is `Box<[&'static [u8]]>` (Phase-A lifetime placeholder
+            // for borrows into `bundled_files.keys()`); erase the lifetime here as Zig did by
+            // storing a borrowed slice. Revisit when `Entry.paths` gets a real lifetime param.
+            let key: &[u8] = &self.bundled_files.keys()[idx];
+            file_paths.push(unsafe { core::mem::transmute::<&[u8], &'static [u8]>(key) });
+
+            let source_map = self.bundled_files.values()[idx]
+                .unsafe_packed_data
+                .source_map
+                .clone();
+            if let Some(map) = source_map.get() {
+                overlapping_memory_cost += map.memory_cost();
+            }
+            contained_maps.push(source_map);
+        }
+
+        overlapping_memory_cost +=
+            memory_cost_array_list(&contained_maps) + memory_cost_slice(&file_paths);
+
+        let ref_count = out.ref_count;
+        *out = SourceMapStoreEntry {
+            dev_allocator: self.dev_allocator(),
+            ref_count,
+            paths: file_paths.into_boxed_slice(),
+            files: contained_maps,
+            overlapping_memory_cost: overlapping_memory_cost as u32,
+        };
         Ok(())
     }
 }
@@ -2536,10 +2567,33 @@ impl IncrementalGraph<Server> {
         _arena: &bun_alloc::Arena,
         out: &mut SourceMapStoreEntry,
     ) -> Result<(), bun_alloc::AllocError> {
-        let _ = out;
-        // TODO(port): blocked_on: bun_collections::MultiArrayElement for packed_map_body::Shared
-        todo!("blocked_on: bun_collections::MultiArrayElement for PackedMap.Shared");
-        #[allow(unreachable_code)]
+        // PORT NOTE: Zig `bun.MultiArrayList(PackedMap.Shared)` → `Vec<PackedMapShared>`; see
+        // client-side `take_source_map` for rationale.
+        let n = self.current_chunk_parts.len();
+        let mut file_paths: Vec<&'static [u8]> = Vec::with_capacity(n);
+        let mut contained_maps: Vec<PackedMapShared> = Vec::with_capacity(n);
+
+        let mut overlapping_memory_cost: u32 = 0;
+
+        // For server, we use the tracked file indices to get the correct paths
+        for item in &self.current_chunk_source_maps {
+            let idx = item.file_index.get() as usize;
+            let key: &[u8] = &self.bundled_files.keys()[idx];
+            file_paths.push(unsafe { core::mem::transmute::<&[u8], &'static [u8]>(key) });
+            contained_maps.push(item.source_map.clone());
+            overlapping_memory_cost += item.source_map.memory_cost() as u32;
+        }
+
+        overlapping_memory_cost +=
+            (memory_cost_array_list(&contained_maps) + memory_cost_slice(&file_paths)) as u32;
+
+        *out = SourceMapStoreEntry {
+            dev_allocator: self.dev_allocator(),
+            ref_count: out.ref_count,
+            paths: file_paths.into_boxed_slice(),
+            files: contained_maps,
+            overlapping_memory_cost,
+        };
         Ok(())
     }
 }

@@ -964,13 +964,17 @@ impl BunxCommand {
                     }
 
                     bun_output::scoped_log!(bunx, "running existing binary: {}", BStr::new(destination.as_bytes()));
-                    let _stored = fs.dirname_store.append_slice(out)?;
-                    let _ = (&ctx, destination, top_level_dir, &env_loader, passthrough);
-                    // TODO(port): `run_binary` lives only in run_command's
-                    // `phase_a_draft` impl. Once promoted:
-                    //   Run::run_binary(ctx, _stored, destination, top_level_dir,
-                    //                   env_loader, passthrough, None)?;
-                    todo!("blocked_on: RunCommand::run_binary");
+                    let stored = fs.dirname_store.append_slice(out)?;
+                    Run::run_binary(
+                        &ctx,
+                        stored,
+                        destination,
+                        top_level_dir,
+                        env_loader,
+                        passthrough,
+                        None,
+                    )?;
+                    // run_binary is noreturn
                 }
 
                 // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
@@ -1025,12 +1029,17 @@ impl BunxCommand {
                                 };
                                 if let Some(destination) = dest_or_cache2 {
                                     let out: &[u8] = destination.as_bytes();
-                                    let _stored = fs.dirname_store.append_slice(out)?;
-                                    let _ = (&ctx, destination, top_level_dir, &env_loader, passthrough);
-                                    // TODO(port): see note above re: `run_binary`.
-                                    //   Run::run_binary(ctx, _stored, destination,
-                                    //       top_level_dir, env_loader, passthrough, None)?;
-                                    todo!("blocked_on: RunCommand::run_binary");
+                                    let stored = fs.dirname_store.append_slice(out)?;
+                                    Run::run_binary(
+                                        &ctx,
+                                        stored,
+                                        destination,
+                                        top_level_dir,
+                                        env_loader,
+                                        passthrough,
+                                        None,
+                                    )?;
+                                    // run_binary is noreturn
                                 }
                             }
                         }
@@ -1237,12 +1246,17 @@ impl BunxCommand {
             absolute_in_cache_dir,
         ) {
             let out: &[u8] = destination.as_bytes();
-            let _stored = fs.dirname_store.append_slice(out)?;
-            let _ = (&ctx, destination, top_level_dir, &env_loader, passthrough);
-            // TODO(port): see note above re: `run_binary`.
-            //   Run::run_binary(ctx, _stored, destination, top_level_dir,
-            //                   env_loader, passthrough, None)?;
-            todo!("blocked_on: RunCommand::run_binary");
+            let stored = fs.dirname_store.append_slice(out)?;
+            Run::run_binary(
+                &ctx,
+                stored,
+                destination,
+                top_level_dir,
+                env_loader,
+                passthrough,
+                None,
+            )?;
+            // run_binary is noreturn
         }
 
         // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
@@ -1274,12 +1288,17 @@ impl BunxCommand {
                         absolute_in_cache_dir,
                     ) {
                         let out: &[u8] = destination.as_bytes();
-                        let _stored = fs.dirname_store.append_slice(out)?;
-                        let _ = (&ctx, destination, top_level_dir, &env_loader, passthrough);
-                        // TODO(port): see note above re: `run_binary`.
-                        //   Run::run_binary(ctx, _stored, destination,
-                        //       top_level_dir, env_loader, passthrough, None)?;
-                        todo!("blocked_on: RunCommand::run_binary");
+                        let stored = fs.dirname_store.append_slice(out)?;
+                        Run::run_binary(
+                            &ctx,
+                            stored,
+                            destination,
+                            top_level_dir,
+                            env_loader,
+                            passthrough,
+                            None,
+                        )?;
+                        // run_binary is noreturn
                     }
                 }
             }

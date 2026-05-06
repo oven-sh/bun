@@ -196,7 +196,32 @@ pub struct AllocationScopeIn;
 pub struct LinuxMemFdAllocator;
 // `MimallocArena` already aliased above to `bumpalo::Bump`.
 pub mod mimalloc_arena { pub use crate::MimallocArena; }
-pub mod allocation_scope { pub use super::{AllocationScope, AllocationScopeIn}; }
+pub mod allocation_scope {
+    pub use super::{AllocationScope, AllocationScopeIn};
+
+    // Zig: `pub const Stats = struct { total_memory_allocated: usize, num_allocations: usize };`
+    #[derive(Clone, Copy, Default)]
+    pub struct Stats {
+        pub total_memory_allocated: usize,
+        pub num_allocations: usize,
+    }
+
+    // Zig: `pub const enabled = bun.Environment.enableAllocScopes;`
+    // The real tracker lives in `bun_runtime::allocators::allocation_scope` (CYCLEBREAK above);
+    // this tier-0 stub is the `enabled = false` configuration — a unit struct with no `State`.
+    pub const ENABLED: bool = false;
+
+    impl AllocationScope {
+        pub const ENABLED: bool = ENABLED;
+
+        // Zig: `pub fn stats(self: Self) Stats { if (comptime !enabled) @compileError(...); ... }`
+        // The stub carries no `State`; callers must gate on `ENABLED` (matching the Zig
+        // `comptime` guard). Reaching here means the gate was skipped.
+        pub fn stats(&self) -> Stats {
+            unreachable!("AllocationScope must be enabled");
+        }
+    }
+}
 pub mod linux_mem_fd_allocator { pub use super::LinuxMemFdAllocator; }
 
 // ── stubs ─────────────────────────────────────────────────────────────────

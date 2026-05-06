@@ -535,9 +535,9 @@ fn add_entire_tree(
             negated_excludes.push(exclude.as_positive());
         }
         ignores.push(IgnorePatterns {
-            list: negated_excludes.clone().into_boxed_slice(),
-            // TODO(port): Zig stored a borrowed slice into `negated_excludes`;
-            // here cloned to satisfy ownership. PERF(port): avoid clone.
+            list: negated_excludes.into_boxed_slice(),
+            // PORT NOTE: Zig stored a borrowed slice into `negated_excludes`;
+            // moved here since it isn't reused below.
             kind: IgnorePatternsKind::PackageJson,
             depth: 1,
             // always assume no relative path b/c matching is done from the
@@ -890,8 +890,8 @@ fn add_bundled_dep(
 
                         for dependency_group in [b"dependencies".as_slice(), b"optionalDependencies".as_slice()] {
                             let Some(dependencies_expr) = json.get(dependency_group) else { continue };
-                            let ExprData::EObject(dependencies) = &dependencies_expr.data else { continue };
-                            // TODO(port): Expr.data tagged-union pattern match shape
+                            let bun_logger::js_ast::ExprData::EObject(dependencies) = dependencies_expr.data else { continue };
+                            // PORT NOTE: `json` here is `bun_logger::js_ast::Expr`, not the parser AST.
 
                             'next_dep: for dep in dependencies.properties.slice() {
                                 if dep.key.is_none() {
@@ -1564,7 +1564,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
         }
         WorkspacePackageJSONCache::GetResult::ParseErr(err) => {
             Output::err(err, "failed to parse package.json: {}", format_args!("{}", bstr::BStr::new(abs_package_json_path.as_bytes())));
-            let _ = pm_log(manager).print(Output::error_writer());
+            let _ = pm_log(manager).print(Output::error_writer() as *mut _);
             Global::crash();
         }
         WorkspacePackageJSONCache::GetResult::Entry(entry) => entry,
@@ -1808,7 +1808,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
     for bin in &bins {
         match bin.ty {
             BinType::File => {
-                pack_queue.add(PackQueueItem { path: boxed_zstr_from_bytes(bin.path.as_bytes()), optional: true })?;
+                pack_queue.add(PackQueueItem { path: ZBox::from_bytes(bin.path.as_bytes()), optional: true })?;
                 // TODO(port): Zig pushed a borrowed slice; cloning here
             }
             BinType::Dir => {
@@ -2101,7 +2101,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
             };
 
             pack_list.push(PackListEntry {
-                subpath: boxed_zstr_from_bytes(item.path.as_bytes()),
+                subpath: ZBox::from_bytes(item.path.as_bytes()),
                 size: usize::try_from(stat.st_size).unwrap(),
             });
 
@@ -2140,7 +2140,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
                     Global::crash();
                 }
             };
-            let _close_file = scopeguard::guard((), |_| file.close());
+            let _close_file = scopeguard::guard((), |_| { let _ = file.close(); });
             let stat = match file.stat() {
                 Ok(s) => s,
                 Err(err) => {
@@ -2194,7 +2194,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
                 Global::crash();
             }
         };
-        let _close_tarball = scopeguard::guard((), |_| tarball_file.close());
+        let _close_tarball = scopeguard::guard((), |_| { let _ = tarball_file.close(); });
 
         let mut sha1 = sha::SHA1::init();
         let mut sha512 = sha::SHA512::init();

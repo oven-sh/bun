@@ -98,6 +98,11 @@ pub struct SourceMapStore {
     pub weak_ref_sweep_timer: EventLoopTimer,
 }
 impl SourceMapStore {
+    /// `SourceMapStore.empty` (Zig: `.{}` field-init).
+    pub fn empty() -> Self {
+        todo!("blocked_on: SourceMapStore::empty — LinearFifo/EventLoopTimer field defaults")
+    }
+
     /// Full body in gated `../DevServer/SourceMapStore.rs` draft.
     pub fn add_weak_ref(&mut self, _key: Key) {
         // TODO(port): SourceMapStore.addWeakRef — full body in gated draft.

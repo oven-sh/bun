@@ -1150,11 +1150,12 @@ pub mod get_addr_info_request {
             // Reserve the last byte for the NUL terminator so the index below
             // can never exceed the buffer even if the upstream length guard in
             // `doLookup` is bypassed.
-            let copied = strings::copy(&mut hostname[..hostname.len() - 1], &query_name);
-            hostname[copied.len()] = 0;
+            let cap = hostname.len() - 1;
+            let copied_len = strings::copy(&mut hostname[..cap], &query_name).len();
+            hostname[copied_len] = 0;
             let mut addrinfo: *mut libc::addrinfo = ptr::null_mut();
-            // SAFETY: hostname[copied.len()] == 0
-            let host = unsafe { ZStr::from_raw(hostname.as_ptr(), copied.len()) };
+            // SAFETY: hostname[copied_len] == 0
+            let host = unsafe { ZStr::from_raw(hostname.as_ptr(), copied_len) };
             let debug_timer = Output::DebugTimer::start();
             // SAFETY: FFI; all pointers valid for the call duration
             let err = unsafe {
@@ -4699,10 +4700,10 @@ impl Resolver {
         let options = callframe.argument(0);
         if options.is_object() {
             if let Some(timeout) = options.get_truthy(global_this, "timeout")? {
-                unsafe { (*resolver).options.timeout = timeout.coerce_to_i32(global_this)? };
+                unsafe { (*resolver).options.timeout = Some(timeout.coerce_to_i32(global_this)?) };
             }
             if let Some(tries) = options.get_truthy(global_this, "tries")? {
-                unsafe { (*resolver).options.tries = tries.coerce_to_i32(global_this)? };
+                unsafe { (*resolver).options.tries = Some(tries.coerce_to_i32(global_this)?) };
             }
         }
 

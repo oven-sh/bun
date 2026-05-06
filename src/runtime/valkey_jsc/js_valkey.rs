@@ -1365,7 +1365,7 @@ impl JSValkeyClient {
         debug_assert!(self.this_value.is_strong());
 
         self.ref_();
-        let _d = scopeguard::guard((), |_| self.deref());
+        let _d = deref_guard(self);
 
         let _ = value;
 
@@ -1389,9 +1389,10 @@ impl JSValkeyClient {
         }
 
         let global_object = self.global_object;
-        let event_loop = self.client.vm.event_loop();
-        event_loop.enter();
-        let _exit = scopeguard::guard((), |_| event_loop.exit());
+        let event_loop = self.vm().event_loop();
+        // SAFETY: VM-owned; non-null on the JS thread.
+        unsafe { (*event_loop).enter() };
+        let _exit = scopeguard::guard(event_loop, |el| unsafe { (*el).exit() });
 
         // The message push should be an array with [channel, message]
         if value.len() < 2 {
@@ -1400,11 +1401,11 @@ impl JSValkeyClient {
         }
 
         // Extract channel and message
-        let Ok(channel_value) = value[0].to_js(global_object) else {
+        let Ok(channel_value) = protocol_jsc::resp_value_to_js(&mut value[0], global_object) else {
             debug!("Failed to convert channel to JS");
             return;
         };
-        let Ok(message_value) = value[1].to_js(global_object) else {
+        let Ok(message_value) = protocol_jsc::resp_value_to_js(&mut value[1], global_object) else {
             debug!("Failed to convert message to JS");
             return;
         };

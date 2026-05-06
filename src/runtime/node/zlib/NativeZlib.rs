@@ -21,6 +21,28 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StrongOptional, Work
 use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive};
 use crate::node::util::validators;
 
+// Local extension: `JSValue::withAsyncContextIfNeeded` is not yet on the
+// upstream `bun_jsc::JSValue`; shim it via the C++ FFI symbol like NativeZstd does.
+trait JSValueZlibExt {
+    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue;
+}
+impl JSValueZlibExt for JSValue {
+    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue {
+        unsafe extern "C" {
+            fn AsyncContextFrame__withAsyncContextIfNeeded(
+                global: *mut JSGlobalObject,
+                callback: JSValue,
+            ) -> JSValue;
+        }
+        // SAFETY: FFI into JSC; `global` is live for the call.
+        unsafe { AsyncContextFrame__withAsyncContextIfNeeded(global.as_ptr(), self) }
+    }
+}
+
+/// Placeholder for `WorkPoolTask.callback` — overwritten before scheduling
+/// (see `CompressionStream::write` in node_zlib_binding.rs). Zig: `.callback = undefined`.
+unsafe fn noop_task_callback(_task: *mut WorkPoolTask) {}
+
 // TODO(port): codegen — jsc.Codegen.JSNativeZlib (toJS / fromJS / fromJSDirect /
 // writeCallbackSetCached / dictionarySetCached) is emitted by generate-classes.ts.
 // The #[bun_jsc::JsClass] derive wires the wrapper; cached-property setters are
@@ -68,7 +90,7 @@ impl NativeZlib {
     pub fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<Box<Self>> {
         let arguments = frame.arguments_undef::<4>();
 
-        let mode = arguments[0];
+        let mode = arguments.ptr[0];
         if !mode.is_number() {
             return Err(global.throw_invalid_argument_type_value("mode", "number", mode));
         }
@@ -79,9 +101,10 @@ impl NativeZlib {
         let mode_int: i64 = mode_double as i64;
         if mode_int < 1 || mode_int > 7 {
             return Err(global.throw_range_error(mode_int, bun_jsc::RangeErrorOptions {
-                field_name: "mode",
-                min: Some(1),
-                max: Some(7),
+                field_name: b"mode",
+                min: 1,
+                max: 7,
+                msg: b"",
             }));
         }
 
@@ -100,7 +123,7 @@ impl NativeZlib {
             pending_close: false,
             pending_reset: false,
             closed: false,
-            task: WorkPoolTask { callback: None },
+            task: WorkPoolTask { node: Default::default(), callback: noop_task_callback },
         });
         // SAFETY: mode_int is range-checked to 1..=7 above; NodeMode is #[repr(i64-compatible)].
         ptr.stream.mode = unsafe { mem::transmute::<u8, c::NodeMode>(u8::try_from(mode_int).unwrap()) };
@@ -120,30 +143,32 @@ impl NativeZlib {
         let arguments = frame.arguments_undef::<7>();
         let this_value = frame.this();
 
-        if arguments.len() != 7 {
+        if arguments.len != 7 {
             return Err(global
-                .err(bun_jsc::ErrorCode::MISSING_ARGS)
-                .fmt(format_args!(
-                    "init(windowBits, level, memLevel, strategy, writeResult, writeCallback, dictionary)"
-                ))
+                .err(
+                    bun_jsc::ErrorCode::MISSING_ARGS,
+                    format_args!(
+                        "init(windowBits, level, memLevel, strategy, writeResult, writeCallback, dictionary)"
+                    ),
+                )
                 .throw());
         }
 
-        let window_bits = validators::validate_int32(global, arguments[0], "windowBits", None, None)?;
-        let level = validators::validate_int32(global, arguments[1], "level", None, None)?;
-        let mem_level = validators::validate_int32(global, arguments[2], "memLevel", None, None)?;
-        let strategy = validators::validate_int32(global, arguments[3], "strategy", None, None)?;
+        let window_bits = validators::validate_int32(global, arguments.ptr[0], "windowBits", None, None)?;
+        let level = validators::validate_int32(global, arguments.ptr[1], "level", None, None)?;
+        let mem_level = validators::validate_int32(global, arguments.ptr[2], "memLevel", None, None)?;
+        let strategy = validators::validate_int32(global, arguments.ptr[3], "strategy", None, None)?;
         // this does not get gc'd because it is stored in the JS object's `this._writeState`. and the JS object is tied to the native handle as `_handle[owner_symbol]`.
-        let write_result = arguments[4]
+        let write_result = arguments.ptr[4]
             .as_array_buffer(global)
             .unwrap()
             .as_u32()
             .as_mut_ptr();
-        let write_callback = validators::validate_function(global, "writeCallback", arguments[5])?;
-        let dictionary = if arguments[6].is_undefined() {
+        let write_callback = validators::validate_function(global, "writeCallback", arguments.ptr[5])?;
+        let dictionary = if arguments.ptr[6].is_undefined() {
             None
         } else {
-            Some(arguments[6].as_array_buffer(global).unwrap().byte_slice())
+            Some(arguments.ptr[6].as_array_buffer(global).unwrap().byte_slice())
         };
 
         self.write_result = Some(write_result);
@@ -151,7 +176,7 @@ impl NativeZlib {
 
         // Keep the dictionary alive by keeping a reference to it in the JS object.
         if dictionary.is_some() {
-            js::dictionary_set_cached(this_value, global, arguments[6]);
+            js::dictionary_set_cached(this_value, global, arguments.ptr[6]);
         }
 
         self.stream.init(level, window_bits, mem_level, strategy, dictionary);

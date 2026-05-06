@@ -536,10 +536,10 @@ impl Stdio {
             return Ok(());
         } else if let Some(blob) = value.as_::<jsc::webcore::Blob>() {
             return out_stdio.extract_blob(global, webcore::blob::Any::Blob(blob.dupe()), i);
-        } else if let Some(req) = value.as_::<jsc::webcore::Request>() {
+        } else if let Some(req) = value.as_::<webcore::Request>() {
             // SAFETY: `as_` returns a live `*mut Request` owned by the JS wrapper.
             return Self::extract_body_value(out_stdio, global, i, unsafe { (*req).get_body_value() }, is_sync);
-        } else if let Some(res) = value.as_::<jsc::webcore::Response>() {
+        } else if let Some(res) = value.as_::<webcore::Response>() {
             // SAFETY: `as_` returns a live `*mut Response` owned by the JS wrapper.
             return Self::extract_body_value(out_stdio, global, i, unsafe { (*res).get_body_value() }, is_sync);
         }

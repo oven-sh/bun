@@ -5973,7 +5973,10 @@ fn new_route_params_for_bundle_promise(
     }
     let params_js_value = params.to_js(global);
 
-    let args = dev.compute_arguments_for_framework_request(
+    // SAFETY: `compute_arguments_for_framework_request` does not mutate
+    // `route_bundles` (only reads `router`/graphs and writes JSC-side caches
+    // on `framework_bundle`, which we already hold by `&mut`).
+    let args = unsafe { &mut *dev_ptr }.compute_arguments_for_framework_request(
         route_bundle_index,
         framework_bundle,
         params_js_value,

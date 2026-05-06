@@ -911,7 +911,7 @@ impl CompileC {
             }
         }
 
-        self.error_check()?;
+        self.error_check().map_err(|_| bun_core::err!("DeferredErrors"))?;
 
         for include_dir in self.include_dirs.items.iter() {
             if state.add_sys_include_path(include_dir).is_err() {
@@ -920,17 +920,17 @@ impl CompileC {
             }
         }
 
-        self.error_check()?;
+        self.error_check().map_err(|_| bun_core::err!("DeferredErrors"))?;
 
         CompilerRT::define(state);
 
-        self.error_check()?;
+        self.error_check().map_err(|_| bun_core::err!("DeferredErrors"))?;
 
         for symbol in self.symbols.map.values() {
             if symbol.needs_napi_env() {
                 state
                     .add_symbol(
-                        b"Bun__thisFFIModuleNapiEnv",
+                        zstr!(b"Bun__thisFFIModuleNapiEnv"),
                         global_this.make_napi_env_for_ffi() as *const c_void,
                     )
                     .map_err(|_| bun_core::err!("DeferredErrors"))?;
@@ -940,7 +940,7 @@ impl CompileC {
 
         for define in self.define.iter() {
             state.define_symbol(&define[0], &define[1]);
-            self.error_check()?;
+            self.error_check().map_err(|_| bun_core::err!("DeferredErrors"))?;
         }
 
         if let Err(_) = self
@@ -951,7 +951,7 @@ impl CompileC {
                 return Err(bun_core::err!("DeferredErrors"));
             } else {
                 if !global_this.has_exception() {
-                    return global_this.throw("TinyCC failed to compile", &[]).into();
+                    global_this.throw("TinyCC failed to compile");
                 }
                 return Err(bun_core::err!("JSError"));
             }
@@ -960,7 +960,7 @@ impl CompileC {
         CompilerRT::inject(state);
         stdarg::inject(state);
 
-        self.error_check()?;
+        self.error_check().map_err(|_| bun_core::err!("DeferredErrors"))?;
 
         for library_dir in self.library_dirs.items.iter() {
             // register all, even if some fail. Only fail after all have been registered.
@@ -968,13 +968,13 @@ impl CompileC {
                 bun_output::scoped_log!(TCC, "TinyCC failed to add library path");
             }
         }
-        self.error_check()?;
+        self.error_check().map_err(|_| bun_core::err!("DeferredErrors"))?;
 
         for library in self.libraries.items.iter() {
             // register all, even if some fail.
             let _ = state.add_library(library);
         }
-        self.error_check()?;
+        self.error_check().map_err(|_| bun_core::err!("DeferredErrors"))?;
 
         // TinyCC now manages relocation memory internally
         if dangerously_run_without_jit_protections(|| state.relocate()).is_err() {
@@ -988,28 +988,27 @@ impl CompileC {
         // if errors got added, we would have returned in the relocation catch.
         debug_assert!(self.deferred_errors.is_empty());
 
-        for (symbol, function) in self.symbols.map.iter_mut() {
+        let source_first = ZBox::from_bytes(self.source.first().as_bytes());
+        let mut iter = self.symbols.map.iterator();
+        while let Some(entry) = iter.next() {
+            let symbol: &[u8] = entry.key_ptr;
             // FIXME: why are we duping here? can we at least use a stack
             // fallback allocator?
-            let duped = ZStr::from_bytes(symbol);
+            let duped = ZBox::from_bytes(symbol);
             let Some(sym) = state.get_symbol(&duped) else {
-                return global_this
-                    .throw(
-                        format_args!(
-                            "{} is missing from {}. Was it included in the source code?",
-                            bun_fmt::quote(symbol),
-                            BStr::new(self.source.first().as_bytes())
-                        ),
-                        &[],
-                    )
-                    .into();
+                global_this.throw(format_args!(
+                    "{} is missing from {}. Was it included in the source code?",
+                    bun_fmt::quote(symbol),
+                    BStr::new(source_first.as_bytes())
+                ));
+                return Err(bun_core::err!("JSError"));
             };
-            function.symbol_from_dynamic_library = Some(sym);
+            entry.value_ptr.symbol_from_dynamic_library = Some(sym.as_ptr() as *mut c_void);
         }
 
-        self.error_check()?;
+        self.error_check().map_err(|_| bun_core::err!("DeferredErrors"))?;
 
-        Ok(state)
+        Ok(state_ptr)
     }
 }
 

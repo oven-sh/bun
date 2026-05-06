@@ -832,7 +832,8 @@ fn transpile_source_code_inner(
             // TODO(b2-blocked): `js_ast::ASTMemoryAllocator::Scope` — gated in
             // `bun_js_parser`. Spec :117-119.
             
-            let _ast_scope = bun_js_parser::ASTMemoryAllocator::Scope::enter();
+            let mut _ast_scope = bun_js_parser::ast::ast_memory_allocator::Scope::default();
+            _ast_scope.enter();
 
             // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
             unsafe { (*jsc_vm).transpiled_count += 1 };

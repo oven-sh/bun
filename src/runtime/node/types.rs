@@ -318,9 +318,8 @@ impl Drop for StringOrBuffer {
                 // TODO(port): if SliceWithUnderlyingString gains Drop, this becomes implicit.
                 str.deinit();
             }
-            Self::EncodedSlice(encoded) => {
-                // TODO(port): if ZigStringSlice gains Drop, this becomes implicit.
-                encoded.deinit();
+            Self::EncodedSlice(_encoded) => {
+                // ZigStringSlice has Drop; cleanup is implicit.
             }
             Self::Buffer(_) => {}
         }

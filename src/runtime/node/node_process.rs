@@ -347,7 +347,7 @@ pub fn create_exec_argv(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
         break;
     }
 
-    BunString::to_js_array(global_object, &args)
+    bun_string_to_js_array(global_object, &args)
 }
 
 // ───────────────────────────── argv ─────────────────────────────

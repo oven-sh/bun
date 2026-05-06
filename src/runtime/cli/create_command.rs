@@ -2388,18 +2388,18 @@ impl Example {
     ) -> Result<Box<[Example]>, bun_core::Error> {
         // SAFETY: single-threaded CLI access to static URL_
         unsafe {
-            URL_ = URL::parse(Self::EXAMPLES_URL);
+            URL_ = Some(URL::parse(Self::EXAMPLES_URL));
         }
 
-        // SAFETY: single-threaded CLI access to static URL_
-        let http_proxy: Option<URL> = unsafe { env_loader.get_http_proxy_for(&URL_) };
+        // SAFETY: single-threaded CLI access to static URL_ (set just above)
+        let http_proxy: Option<URL> = env_loader.get_http_proxy_for(unsafe { URL_.as_ref().unwrap() });
 
         let mutable = Box::leak(Box::new(MutableString::init(2048)?));
 
         let async_http: &mut HTTP::AsyncHTTP = Box::leak(Box::new(HTTP::AsyncHTTP::init_sync(
             HTTP::Method::GET,
-            // SAFETY: single-threaded CLI access to static URL_
-            unsafe { URL_.clone() },
+            // SAFETY: single-threaded CLI access to static URL_ (set just above)
+            unsafe { URL_.clone() }.unwrap(),
             Default::default(),
             b"",
             mutable,
@@ -2411,7 +2411,7 @@ impl Example {
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
         if Output::enable_ansi_colors_stdout() {
-            async_http.client.progress_node = progress_node;
+            async_http.client.progress_node = progress_node.map(core::ptr::NonNull::from);
         }
 
         let response = match async_http.send_sync() {
@@ -2420,14 +2420,13 @@ impl Example {
                 if err == bun_core::err!("WouldBlock") {
                     Output::pretty_errorln(
                         "Request timed out while trying to fetch examples list. Please try again",
-                        format_args!(""),
                     );
                     Global::exit(1);
                 } else {
-                    Output::pretty_errorln(
+                    Output::pretty_errorln(format_args!(
                         "<r><red>{}<r> while trying to fetch examples list. Please try again",
-                        format_args!("{}", err.name()),
-                    );
+                        err.name(),
+                    ));
                     Global::exit(1);
                 }
             }

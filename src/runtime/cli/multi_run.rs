@@ -812,13 +812,11 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
 
     if !ctx.filters.is_empty() || ctx.workspaces {
         // Workspace-aware mode: iterate over matching workspace packages
-        let filters_to_use: &[&[u8]] = if ctx.workspaces {
-            &[b"*"]
+        let mut filter_instance = if ctx.workspaces {
+            FilterArg::FilterSet::init::<&[u8]>(&[b"*"], cwd)?
         } else {
-            &ctx.filters
+            FilterArg::FilterSet::init(&ctx.filters, cwd)?
         };
-
-        let mut filter_instance = FilterArg::FilterSet::init(filters_to_use, cwd)?;
         let mut patterns: Vec<Box<[u8]>> = Vec::new();
 
         let mut root_buf = PathBuffer::uninit();

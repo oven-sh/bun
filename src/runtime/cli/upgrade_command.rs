@@ -844,7 +844,7 @@ impl UpgradeCommand {
                     write!(
                         &mut unzip_script,
                         "$global:ProgressPreference='SilentlyContinue';Expand-Archive -Path \"{}\" \"{}\" -Force",
-                        bun_fmt::escape_powershell(bstr::BStr::new(tmpname)),
+                        bun_fmt::escape_powershell(bstr::BStr::new(tmpname.as_bytes())),
                         bun_fmt::escape_powershell(bstr::BStr::new(&tmpdir_path_buf[..tmpdir_path_len])),
                     )
                     .expect("oom");
@@ -869,7 +869,7 @@ impl UpgradeCommand {
                         }
                         Output::pretty_errorln(format_args!(
                             "<r><red>error:<r> Failed to unzip {} due to PowerShell not being installed.",
-                            bstr::BStr::new(tmpname)
+                            bstr::BStr::new(tmpname.as_bytes())
                         ));
                         Global::exit(1);
                     });
@@ -902,7 +902,7 @@ impl UpgradeCommand {
                         Err(err) => {
                             Output::pretty_errorln(format_args!(
                                 "<r><red>error:<r> Failed to spawn Expand-Archive on {} due to error {}",
-                                bstr::BStr::new(tmpname),
+                                bstr::BStr::new(tmpname.as_bytes()),
                                 err.name()
                             ));
                             Global::exit(1);
@@ -911,7 +911,7 @@ impl UpgradeCommand {
                     if let Err(err) = spawn_res.unwrap_result() {
                         Output::pretty_errorln(format_args!(
                             "<r><red>error:<r> Failed to run Expand-Archive on {} due to error {}",
-                            bstr::BStr::new(tmpname),
+                            bstr::BStr::new(tmpname.as_bytes()),
                             err.name()
                         ));
                         Global::exit(1);

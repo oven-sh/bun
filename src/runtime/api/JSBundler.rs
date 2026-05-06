@@ -1404,12 +1404,12 @@ pub mod js_bundler {
                 });
             }
 
-            if let Some(flag) = config.get_boolean_strict(global_this, "throw")? {
+            if let Some(flag) = get_boolean_strict(config, global_this, "throw")? {
                 this.throw_on_error = flag;
             }
 
             // Parse metafile option: boolean | string | { json?: string, markdown?: string }
-            if let Some(metafile_value) = config.get_own(global_this, "metafile")? {
+            if let Some(metafile_value) = get_own_str(config, global_this, "metafile")? {
                 if metafile_value.is_boolean() {
                     this.metafile = metafile_value == JSValue::TRUE;
                 } else if metafile_value.is_string() {

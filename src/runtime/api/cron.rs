@@ -1787,10 +1787,10 @@ pub fn cron_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
 
 /// Trait abstracting over CronRegisterJob/CronRemoveJob for `spawn_cmd_generic`.
 // TODO(port): merge with CronJobBase in Phase B.
-trait SpawnCmdTarget: CronJobBase {
+trait SpawnCmdTarget: CronJobBase + BufferedReaderParent {
     fn set_err(&mut self, args: core::fmt::Arguments<'_>);
     fn finish(this: *mut Self);
-    fn process_slot(&mut self) -> &mut Option<Arc<Process>>;
+    fn process_slot(&mut self) -> &mut Option<*mut Process>;
     fn stdout_reader(&mut self) -> &mut OutputReader;
     fn stderr_reader(&mut self) -> &mut OutputReader;
     fn remaining_fds(&mut self) -> &mut i8;

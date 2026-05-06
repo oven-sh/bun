@@ -1130,7 +1130,7 @@ fn pbkdf2_sync(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult
         // SAFETY: FFI; ERR_get_error / ERR_clear_error have no preconditions.
         let err = create_crypto_error(global_this, unsafe { boringssl::c::ERR_get_error() });
         unsafe { boringssl::c::ERR_clear_error() };
-        return global_this.throw_value(err);
+        return Err(global_this.throw_value(err));
     }
 
     Ok(out_arraybuffer)

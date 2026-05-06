@@ -1648,8 +1648,9 @@ impl TestCommand {
     // PORT NOTE: re-exports moved to top-level `use` per crate map.
 
     pub fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
-        Output::set_is_github_action(Output::is_github_action_detect());
-        // TODO(port): Output.is_github_action is a mutable global; assume setter
+        Output::IS_GITHUB_ACTION.store(Output::is_github_action(), core::sync::atomic::Ordering::Relaxed);
+        // PORT NOTE: Zig `Output.is_github_action = Output.isGithubAction()` — Rust uses an
+        // AtomicBool global; `is_github_action()` performs the env-based detection.
 
         if !ctx.test_options.test_worker {
             // print the version so you know its doing stuff if it takes a sec

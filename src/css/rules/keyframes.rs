@@ -329,11 +329,18 @@ impl KeyframesRule {
 impl KeyframesRule {
     
     pub fn get_fallbacks<T>(&mut self, _targets: &css::targets::Targets) -> &[css::css_rules::CssRule<T>] {
+        // PORT NOTE: Zig spec body is `@compileError(css.todo_stuff.depth)` — the fn is
+        // declared but never instantiated; its sole call site in `rules.zig`
+        // (`CssRuleList.minify` → `.keyframes` arm) is commented out and replaced with
+        // `debug("TODO: KeyframesRule", ...)`. lightningcss upstream computes per-keyframe
+        // *declaration* fallbacks inline in the minify loop rather than emitting whole
+        // `CssRule` fallbacks here, so there is no rule-level fallback list to return.
+        // The faithful port of "compile-time-dead, returns []CssRule(T)" is the empty
+        // slice — matches the Zig program's observable behavior (no fallbacks appended)
+        // without a runtime trap. Phase B wires the declaration-level path in
+        // `CssRuleList::minify` directly and may delete this stub.
         let _ = self;
-        // PORT NOTE: Zig spec is `@compileError(css.todo_stuff.depth)` — never instantiated,
-        // no caller exists. Kept as a runtime trap to mirror the compile-time guard until
-        // the upstream depth-level fallbacks land.
-        unimplemented!("css.todo_stuff.depth")
+        &[]
     }
 
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {

@@ -929,32 +929,31 @@ impl BackgroundHandler {
                     None
                 };
 
-                let mut backgrounds: SmallList<Background, 1> = SmallList::init_capacity(allocator, len);
+                let mut backgrounds: SmallList<Background, 1> = SmallList::init_capacity(len);
                 // PORT NOTE: reshaped for borrowck — Zig zipped 8 slices by value; here we
                 // index by `i` and clone each element to avoid 8 simultaneous borrows.
                 for i in 0..(len as usize) {
-                    backgrounds.push(Background {
+                    backgrounds.append_assume_capacity(Background {
                         color: if i == (len as usize) - 1 {
                             color.deep_clone(allocator)
                         } else {
                             CssColor::default()
                         },
-                        image: images.slice()[i].clone(),
+                        image: images.slice()[i].deep_clone(allocator),
                         position: BackgroundPosition {
                             x: x_positions.slice()[i].clone(),
                             y: y_positions.slice()[i].clone(),
                         },
-                        repeat: repeats.slice()[i].clone(),
+                        repeat: repeats.slice()[i],
                         size: sizes.slice()[i].clone(),
-                        attachment: attachments.slice()[i].clone(),
-                        origin: origins.slice()[i].clone(),
+                        attachment: attachments.slice()[i],
+                        origin: origins.slice()[i],
                         clip: if clip_prefixes == VendorPrefix::NONE {
-                            clips.0.slice()[i].clone()
+                            clips.0.slice()[i]
                         } else {
                             BackgroundClip::default()
                         },
                     });
-                    // PERF(port): was appendAssumeCapacity — profile in Phase B
                 }
                 // Zig: defer { clearRetainingCapacity on each list } — values were moved
                 // by-value into `backgrounds` above, so clearing prevents double-free.
@@ -963,12 +962,13 @@ impl BackgroundHandler {
                 // PERF(port): was arena bulk-free / move-then-clear — profile in Phase B
 
                 if self.flushed_properties.is_empty() {
-                    for fallback in backgrounds.get_fallbacks(allocator, context.targets).slice() {
-                        push_property!(self, allocator, dest, Background, BackgroundProperty::BACKGROUND, fallback.clone());
+                    let fallbacks = backgrounds.get_fallbacks(allocator, context.targets);
+                    for fallback in fallbacks.into_iter() {
+                        push_property!(self, dest, Background, BackgroundProperty::BACKGROUND, fallback);
                     }
                 }
 
-                push_property!(self, allocator, dest, Background, BackgroundProperty::BACKGROUND, backgrounds);
+                push_property!(self, dest, Background, BackgroundProperty::BACKGROUND, backgrounds);
 
                 if let Some(clip) = clip_property {
                     dest.push(clip);
@@ -982,21 +982,22 @@ impl BackgroundHandler {
 
         if let Some(mut color) = maybe_color.take() {
             if !self.flushed_properties.contains(BackgroundProperty::COLOR) {
-                for fallback in color.get_fallbacks(allocator, context.targets).slice() {
-                    push_property!(self, allocator, dest, BackgroundColor, BackgroundProperty::BACKGROUND_COLOR, fallback.clone());
+                let fallbacks = color.get_fallbacks(allocator, context.targets);
+                for fallback in fallbacks.into_iter() {
+                    push_property!(self, dest, BackgroundColor, BackgroundProperty::BACKGROUND_COLOR, fallback);
                 }
             }
-            push_property!(self, allocator, dest, BackgroundColor, BackgroundProperty::BACKGROUND_COLOR, color);
+            push_property!(self, dest, BackgroundColor, BackgroundProperty::BACKGROUND_COLOR, color);
         }
 
         if let Some(mut images) = maybe_images.take() {
             if !self.flushed_properties.contains(BackgroundProperty::IMAGE) {
                 let fallbacks = images.get_fallbacks(allocator, context.targets);
-                for fallback in fallbacks.slice() {
-                    push_property!(self, allocator, dest, BackgroundImage, BackgroundProperty::BACKGROUND_IMAGE, fallback.clone());
+                for fallback in fallbacks.into_iter() {
+                    push_property!(self, dest, BackgroundImage, BackgroundProperty::BACKGROUND_IMAGE, fallback);
                 }
             }
-            push_property!(self, allocator, dest, BackgroundImage, BackgroundProperty::BACKGROUND_IMAGE, images);
+            push_property!(self, dest, BackgroundImage, BackgroundProperty::BACKGROUND_IMAGE, images);
         }
 
         if maybe_x_positions.is_some()
@@ -1005,37 +1006,36 @@ impl BackgroundHandler {
         {
             let xs = maybe_x_positions.take().unwrap();
             let ys = maybe_y_positions.take().unwrap();
-            let mut positions: SmallList<BackgroundPosition, 1> = SmallList::init_capacity(allocator, xs.len());
+            let mut positions: SmallList<BackgroundPosition, 1> = SmallList::init_capacity(xs.len());
             debug_assert_eq!(xs.slice().len(), ys.slice().len());
             for (x, y) in xs.slice().iter().zip(ys.slice().iter()) {
-                positions.push(BackgroundPosition { x: x.clone(), y: y.clone() });
-                // PERF(port): was appendAssumeCapacity — profile in Phase B
+                positions.append_assume_capacity(BackgroundPosition { x: x.clone(), y: y.clone() });
             }
             // Zig: clearRetainingCapacity on xs/ys after moving values out — Drop handles it.
-            push_property!(self, allocator, dest, BackgroundPosition, BackgroundProperty::BACKGROUND_POSITION, positions);
+            push_property!(self, dest, BackgroundPosition, BackgroundProperty::BACKGROUND_POSITION, positions);
         } else {
             if let Some(x) = maybe_x_positions.take() {
-                push_property!(self, allocator, dest, BackgroundPositionX, BackgroundProperty::BACKGROUND_POSITION_X, x);
+                push_property!(self, dest, BackgroundPositionX, BackgroundProperty::BACKGROUND_POSITION_X, x);
             }
             if let Some(y) = maybe_y_positions.take() {
-                push_property!(self, allocator, dest, BackgroundPositionY, BackgroundProperty::BACKGROUND_POSITION_Y, y);
+                push_property!(self, dest, BackgroundPositionY, BackgroundProperty::BACKGROUND_POSITION_Y, y);
             }
         }
 
         if let Some(rep) = maybe_repeats.take() {
-            push_property!(self, allocator, dest, BackgroundRepeat, BackgroundProperty::BACKGROUND_REPEAT, rep);
+            push_property!(self, dest, BackgroundRepeat, BackgroundProperty::BACKGROUND_REPEAT, rep);
         }
 
         if let Some(rep) = maybe_sizes.take() {
-            push_property!(self, allocator, dest, BackgroundSize, BackgroundProperty::BACKGROUND_SIZE, rep);
+            push_property!(self, dest, BackgroundSize, BackgroundProperty::BACKGROUND_SIZE, rep);
         }
 
         if let Some(rep) = maybe_attachments.take() {
-            push_property!(self, allocator, dest, BackgroundAttachment, BackgroundProperty::BACKGROUND_ATTACHMENT, rep);
+            push_property!(self, dest, BackgroundAttachment, BackgroundProperty::BACKGROUND_ATTACHMENT, rep);
         }
 
         if let Some(rep) = maybe_origins.take() {
-            push_property!(self, allocator, dest, BackgroundOrigin, BackgroundProperty::BACKGROUND_ORIGIN, rep);
+            push_property!(self, dest, BackgroundOrigin, BackgroundProperty::BACKGROUND_ORIGIN, rep);
         }
 
         if let Some((clips, vp)) = maybe_clips.take() {

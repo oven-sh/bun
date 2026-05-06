@@ -114,6 +114,41 @@ pub type WriterImpl = bun_io::pipe_writer::PosixBufferedWriter<IOWriter>;
 #[cfg(windows)]
 pub type WriterImpl = bun_io::pipe_writer::WindowsBufferedWriter<IOWriter>;
 
+/// Spec: IOWriter.zig `Poll = WriterImpl` — the `FilePoll.Owner` payload type
+/// (`@field(Owner.Tag, @typeName(ShellBufferedWriter))` arm in
+/// `posix_event_loop.zig`).
+pub type Poll = WriterImpl;
+
+impl IOWriter {
+    /// Spec: IOWriter.zig `runFromMainThread`. Dispatched by
+    /// `runtime::dispatch::run_task` when an [`IOWriter`] re-enqueues itself
+    /// after `EAGAIN` to retry the buffered write on the JS thread.
+    ///
+    /// # Safety
+    /// `this` is the `Arc::as_ptr` of a live `Arc<IOWriter>` whose strong
+    /// count was bumped by the enqueue.
+    pub unsafe fn run_from_main_thread(this: *mut IOWriter) {
+        // SAFETY: caller contract — `this` is live and the JS thread owns it.
+        let me = unsafe { &*this };
+        let st = me.state();
+        st.is_writing = false;
+        // Re-drive the buffered writer; it will call back into `on_write`/
+        // `on_err` which resume the queued children via `Yield::run`.
+        st.writer.on_poll(0, false);
+        // SAFETY: drop the strong ref the enqueue took (Zig `this.deref()`).
+        unsafe { std::sync::Arc::decrement_strong_count(this) };
+    }
+
+    /// Spec: IOWriter.zig `__deinit` (the body `AsyncDeinitWriter` posts back
+    /// to main). Tears down the underlying `WriterImpl` and drops the last
+    /// strong ref.
+    pub fn deinit_on_main_thread(this: *mut IOWriter) {
+        // SAFETY: `this` is the `Arc::as_ptr` whose strong count was held by
+        // the async-deinit task.
+        unsafe { std::sync::Arc::decrement_strong_count(this) };
+    }
+}
+
 /// Mutable state. Wrapped in `UnsafeCell` so `Arc<IOWriter>`-shared callers can
 /// mutate via `&self` (single-threaded shell; matches Zig `*IOWriter` model).
 struct State {

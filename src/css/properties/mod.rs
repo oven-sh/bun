@@ -336,6 +336,6 @@ pub(crate) use generic_registrations::GenericBorderImpl;
 // PORT STATUS
 //   source:     src/css/properties/properties.zig (1886 lines)
 //   confidence: high
-//   todos:      1
-//   notes:      hub + properties_generated un-gated; leaf property modules remain internally gated, surfacing data-only value-type stubs for the Property enum payloads
+//   todos:      0
+//   notes:      hub + properties_generated un-gated; all leaf property value types real (animation un-gated; prop_value_stub! removed)
 // ──────────────────────────────────────────────────────────────────────────

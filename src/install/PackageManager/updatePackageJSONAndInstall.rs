@@ -1019,8 +1019,31 @@ pub fn update_package_json_and_install(
     update_package_json_and_install_and_cli(ctx, subcommand, cli)
 }
 
-struct Analyzer {
-    ctx: Command::Context,
+/// Local mirror of `bun_bundler::bundle_v2::DependenciesScanner` (GENUINE b0).
+/// `bun_bundler` is not yet a dependency of `bun_install` (see Cargo.toml — gated until the
+/// crate is green), and the `--analyze` path already crosses the crate boundary via the
+/// type-erased `BUILD_COMMAND_EXEC_HOOK`. The hook receives `&mut fetcher as *mut ()`, so the
+/// concrete struct only needs to be layout-compatible with the bundler's definition.
+/// TODO(b1): once `bun_bundler` is un-gated, replace with a direct re-export and drop this.
+pub struct DependenciesScanner {
+    pub ctx: *mut (),
+    pub entry_points: &'static [&'static [u8]],
+    pub on_fetch: fn(ctx: *mut (), result: &mut DependenciesScannerResult) -> Result<(), Error>,
+}
+
+/// Local mirror of `bun_bundler::bundle_v2::DependenciesScannerResult` (GENUINE b0).
+/// `on_analyze` only reads `dependencies.keys()`; `reachable_files` / `bundle_v2` are kept as
+/// opaque pointers because their concrete types live in `bun_bundler`. Field order matches
+/// `bundle_v2.rs` so the type-erased `*mut ()` round-trip in `on_analyze_erased` is sound.
+/// TODO(b1): replace with `bun_bundler::bundle_v2::DependenciesScannerResult` once un-gated.
+pub struct DependenciesScannerResult {
+    pub dependencies: bun_collections::StringSet,
+    reachable_files: *const (),
+    bundle_v2: *mut (),
+}
+
+struct Analyzer<'a> {
+    ctx: Command::Context<'a>,
     /// Raw ptr (not `&mut`) to mirror Zig's `*PackageManager.CommandLineArguments`: the
     /// `DependenciesScanner.entry_points` field holds a shared borrow into `cli.positionals`
     /// for the duration of the scan, so storing `&mut CommandLineArguments` here would alias.
@@ -1028,10 +1051,10 @@ struct Analyzer {
     subcommand: Subcommand,
 }
 
-impl Analyzer {
+impl Analyzer<'_> {
     pub fn on_analyze(
         &mut self,
-        result: &mut bun_bundler::bundle_v2::BundleV2::DependenciesScanner::Result,
+        result: &mut DependenciesScannerResult,
     ) -> Result<(), Error> {
         // TODO: add separate argument that makes it so positionals[1..] is not done and instead the positionals are passed
         let keys = result.dependencies.keys();

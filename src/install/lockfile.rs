@@ -118,6 +118,30 @@ impl<'a> Cleaned<'a> {
 // TODO(port): std.io.FixedBufferStream([]u8) — replace with cursor over &mut [u8]
 pub type Stream = bun_io::FixedBufferStream<Vec<u8>>;
 
+/// Duck-typed surface that `Buffers::write_array`/`save` and
+/// `Package::Serializer::save` expect of their `stream` parameter — Zig passes
+/// `anytype` (lockfile/Buffers.zig:142, bun.lockb.zig). Expressed as a trait so
+/// the Rust port can stay generic over the borrowck-reshaped `StreamType` in
+/// `bun.lockb.rs` (which collapses stream + writer into one `&mut`).
+pub trait PositionalStream {
+    /// Zig: `try stream.getPos()` — current write position.
+    fn get_pos(&self) -> Result<usize, BunError>;
+    /// Zig: `stream.pwrite(bytes, index)` — positional write, returns bytes
+    /// written (always `data.len()` for in-memory buffers).
+    fn pwrite(&mut self, data: &[u8], index: usize) -> usize;
+}
+
+impl<'a> PositionalStream for Serializer::StreamType<'a> {
+    #[inline]
+    fn get_pos(&self) -> Result<usize, BunError> {
+        Serializer::StreamType::get_pos(self)
+    }
+    #[inline]
+    fn pwrite(&mut self, data: &[u8], index: usize) -> usize {
+        Serializer::StreamType::pwrite(self, data, index)
+    }
+}
+
 pub const DEFAULT_FILENAME: &str = "bun.lockb";
 
 // ────────────────────────────────────────────────────────────────────────────

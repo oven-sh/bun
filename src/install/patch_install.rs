@@ -99,7 +99,7 @@ pub struct ApplyPatch {
 
 pub struct InstallContext {
     pub dependency_id: DependencyID,
-    pub tree_id: Lockfile::Tree::Id,
+    pub tree_id: crate::lockfile::tree::Id,
     pub path: Vec<u8>,
 }
 
@@ -161,7 +161,7 @@ impl<'a> PatchTask<'a> {
     pub fn run_from_main_thread(
         &mut self,
         manager: &PackageManager,
-        log_level: PackageManager::Options::LogLevel,
+        log_level: LogLevel,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         bun_output::scoped_log!(
@@ -205,7 +205,7 @@ impl<'a> PatchTask<'a> {
     fn run_from_main_thread_calc_hash(
         &mut self,
         manager: &PackageManager,
-        log_level: PackageManager::Options::LogLevel,
+        log_level: LogLevel,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         // TODO only works for npm package
@@ -214,7 +214,7 @@ impl<'a> PatchTask<'a> {
             unreachable!()
         };
         let Some(hash) = calc_hash.result else {
-            if log_level != PackageManager::Options::LogLevel::Silent {
+            if log_level != LogLevel::Silent {
                 if calc_hash.logger.has_errors() {
                     let _ = calc_hash.logger.print(Output::error_writer());
                 } else {
@@ -268,7 +268,7 @@ impl<'a> PatchTask<'a> {
                         BStr::new(pkg.name.slice(&manager.lockfile.buffers.string_bytes))
                     );
 
-                    let task_id = Task::Id::for_npm_package(
+                    let task_id = TaskId::for_npm_package(
                         manager.lockfile.str(&pkg.name),
                         pkg.resolution.value.npm.version,
                     );

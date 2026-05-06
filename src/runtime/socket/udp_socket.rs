@@ -1137,8 +1137,9 @@ impl UDPSocket {
                 }
                 // Phase 1 stored the primitive JSString; `asString()` is a
                 // plain cast (no `toPrimitive`, no user JS).
-                string_slices.push(val.as_string().to_slice(global_this));
-                break 'brk string_slices.last().unwrap().as_bytes();
+                // SAFETY: val is a primitive JSString cell (guaranteed by phase 1).
+                string_slices.push(unsafe { (*val.as_string()).to_slice(global_this) });
+                break 'brk string_slices.last().unwrap().slice();
             };
             payloads[slice_idx] = slice.as_ptr();
             lens[slice_idx] = slice.len();

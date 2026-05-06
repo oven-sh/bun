@@ -383,9 +383,9 @@ unsafe extern "C" {
 // PORT STATUS
 //   source:     src/sourcemap_jsc/JSSourceMap.zig (316 lines)
 //   confidence: medium
-//   todos:      1 narrow re-gate (find_source_map tail) + JsClass/host_fn proc-macros
-//   notes:      find_source_map URL-parsing prefix un-gated and type-checks; tail
-//               (SavedSourceMap lookup + to_js codegen) re-gated. JsClass payload;
-//               Arc<ParsedSourceMap> per LIFETIMES.tsv; arena dropped; verify
+//   todos:      JsClass/host_fn proc-macros only (no body gates)
+//   notes:      find_source_map fully ported; SavedSourceMap::get returns
+//               Arc<ParsedSourceMap> per LIFETIMES.tsv so the +1 ref adopts
+//               directly into the field. JsClass payload; arena dropped; verify
 //               codegen cached-setter + host_fn export name in Phase B.
 // ──────────────────────────────────────────────────────────────────────────

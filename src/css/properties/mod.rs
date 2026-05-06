@@ -66,7 +66,7 @@ macro_rules! handler_stub {
 //
 // B-2 round 8: the leaf property modules below are un-gated — their value
 // *types* (and handler ZSTs) compile for real and replace the former
-// `prop_value_stub!` / `handler_stub!` placeholders. Heavy parse/to_css/
+// `handler_stub!` placeholders. Heavy parse/to_css/
 // handle_property *bodies* that bottom out on still-unported Parser/
 // PropertyHandlerContext surface remain internally ``-gated
 // inside each leaf file (same pattern as `font.rs`).

@@ -33,20 +33,25 @@ use crate::node::node_cluster_binding;
 use crate::timer::{EventLoopTimer, EventLoopTimerState};
 use crate::webcore::{self, AbortSignal, Blob, FileSink};
 
+#[path = "subprocess/ResourceUsage.rs"]
 pub mod resource_usage;
 pub use resource_usage::ResourceUsage;
 
+#[path = "subprocess/SubprocessPipeReader.rs"]
 pub mod subprocess_pipe_reader;
 pub use subprocess_pipe_reader as PipeReader;
 
+#[path = "subprocess/Readable.rs"]
 pub mod readable;
 pub use readable::Readable;
 
+#[path = "subprocess/Writable.rs"]
 pub mod writable;
 pub use writable::Writable;
 
+#[path = "subprocess/StaticPipeWriter.rs"]
 pub mod static_pipe_writer;
-pub use static_pipe_writer::NewStaticPipeWriter;
+pub use static_pipe_writer::StaticPipeWriter as NewStaticPipeWriter;
 
 pub use bun_io::MaxBuf;
 pub use js_bun_spawn_bindings::{spawn, spawn_sync};

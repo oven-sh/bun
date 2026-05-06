@@ -310,8 +310,9 @@ impl EVP {
         // `RareData::boring_engine()` returns `*mut` to bun_jsc's local opaque `ENGINE`
         // stub (bun_jsc has no bun_boringssl_sys dep). Both name the same C `ENGINE`
         // struct, so cast to the real bindgen type for the FFI call.
-        let engine = global
-            .bun_vm()
+        // SAFETY: `bun_vm()` returns the raw `*mut VirtualMachine` for a Bun-owned
+        // global (never null, single-threaded JS heap), so deref-to-&mut is sound here.
+        let engine = unsafe { &mut *global.bun_vm() }
             .rare_data()
             .boring_engine()
             .cast::<boringssl::ENGINE>();

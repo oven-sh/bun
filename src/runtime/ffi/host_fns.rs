@@ -108,7 +108,7 @@ impl FFI {
             unsafe { super::TCC::tcc_delete(state.as_ptr()) };
         }
 
-        self.functions.clear();
+        self.functions.clear_retaining_capacity();
 
         Ok(JSValue::UNDEFINED)
     }

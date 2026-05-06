@@ -338,7 +338,7 @@ impl DeferredPromise {
 }
 
 /// DevServer is stored on the heap, storing its allocator.
-pub fn init(options: Options) JsResult<Box<DevServer>> {
+pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     bun_core::analytics::Features::DEV_SERVER.saturating_inc();
 
     #[cfg(feature = "bake_debugging_features")]

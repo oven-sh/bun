@@ -4625,7 +4625,7 @@ impl H2FrameParser {
         let mut it = StreamResumableIterator::init(this as *mut Self);
         while let Some(stream) = it.next() {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
-            let Some(value) = unsafe { (*stream).js_context.get() } else { continue };
+            let Some(value) = (unsafe { (*stream).js_context.get() }) else { continue };
             this.handlers.vm.event_loop().run_callback(callback, global_object, this_value, &[value]);
             _count += 1;
         }

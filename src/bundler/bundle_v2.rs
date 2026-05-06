@@ -5012,7 +5012,7 @@ impl<'a> BundleV2<'a> {
                 }
 
                 if cfg!(debug_assertions) && this.dev_server.is_some() {
-                    debug_assert!(graph.ast.items_parts()[err.source_index.get() as usize].len == 0);
+                    debug_assert!(this.graph.ast.items_parts()[err.source_index.get() as usize].len == 0);
                 }
             }
         }

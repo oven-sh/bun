@@ -187,12 +187,129 @@ impl Debugger {
     /// Debugger-thread entry: build a second `VirtualMachine`, hold the API
     /// lock, run `start()`.
     ///
-    /// B-2 gated: needs `bun_runtime` / `bun_dotenv` / `MimallocArena` and
-    /// `VirtualMachine::init` taking a full `TransformOptions`.
+    /// Spec `Debugger.zig:143` `startJSDebuggerThread`.
     pub fn start_js_debugger_thread(other_vm: &mut VirtualMachine) {
-        let _ = other_vm;
-        // TODO(b2): full impl gated below.
-        todo!("Debugger::start_js_debugger_thread — RuntimeHooks dispatch")
+        // PORT NOTE: Zig `MimallocArena` + thread-local `DotEnv.Loader` are
+        // dropped per docs/PORTING.md §Allocators — the global allocator is
+        // mimalloc and `InitOptions` no longer carries `allocator`/`env_loader`
+        // (those are wired by `RuntimeHooks::init_runtime_state`).
+        bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Debugger"));
+        bun_core::scoped_log!(debugger, "startJSDebuggerThread");
+        jsc::mark_binding(core::panic::Location::caller());
+
+        let vm_ptr = VirtualMachine::init(crate::virtual_machine::InitOptions {
+            // Spec: `args = std.mem.zeroes(TransformOptions)`, `store_fd = false`.
+            is_main_thread: false,
+            ..Default::default()
+        })
+        .unwrap_or_else(|_| panic!("Failed to create Debugger VM"));
+        // SAFETY: `init` returns the freshly-boxed thread-local VM; this thread
+        // is its sole owner.
+        let vm = unsafe { &mut *vm_ptr };
+
+        vm.transpiler
+            .configure_defines()
+            .unwrap_or_else(|_| panic!("Failed to configure defines"));
+        vm.is_main_thread = false;
+        // SAFETY: `event_loop()` returns the per-thread `EventLoop` slot
+        // initialized by `init()` above.
+        unsafe { (*vm.event_loop()).ensure_waker() };
+
+        // Spec: `vm.global.vm().holdAPILock(other_vm, OpaqueWrap(VM, start))`.
+        extern "C" fn start_trampoline(ctx: *mut c_void) {
+            // SAFETY: `ctx` is the `other_vm` pointer threaded through
+            // `JSC__VM__holdAPILock`; live for process lifetime (see `create`).
+            let other_vm = unsafe { &mut *ctx.cast::<VirtualMachine>() };
+            Debugger::start(other_vm);
+        }
+        // SAFETY: `vm.global` set by `init()` (non-null).
+        #[allow(deprecated)]
+        unsafe { &*vm.global }
+            .vm()
+            .hold_api_lock((other_vm as *mut VirtualMachine).cast(), start_trampoline);
+    }
+
+    /// Spec `Debugger.zig:182` `start` — runs inside `holdAPILock` on the
+    /// debugger thread. Publishes the inspector URL(s), wakes the futex the
+    /// parent VM is blocked on, then spins this thread's event loop forever.
+    fn start(other_vm: &mut VirtualMachine) {
+        jsc::mark_binding(core::panic::Location::caller());
+
+        // SAFETY: `VirtualMachine::get()` returns this thread's VM created in
+        // `start_js_debugger_thread` above.
+        let this = unsafe { &mut *VirtualMachine::get() };
+        // SAFETY: `event_loop()` returns the live per-thread `EventLoop` slot.
+        let loop_ = unsafe { &mut *this.event_loop() };
+
+        {
+            // PORT NOTE: reshaped for borrowck — `Bun__startJSDebuggerThread`
+            // re-enters JS which can touch `other_vm`; copy the four scalars
+            // we need up front so we don't hold a borrow across the FFI call.
+            let debugger = other_vm
+                .debugger
+                .as_ref()
+                .expect("debugger configured by create()");
+            let ctx_id = debugger.script_execution_context_id;
+            let is_connect = debugger.mode == Mode::Connect;
+            let from_env = debugger.from_environment_variable;
+            let path_or_port = debugger.path_or_port;
+
+            if !from_env.is_empty() {
+                let mut url = BunString::clone_utf8(from_env);
+                loop_.enter();
+                // SAFETY: `this.global` non-null (set by `init`); `url` lives
+                // across the call (C++ clones it).
+                unsafe {
+                    Bun__startJSDebuggerThread(this.global, ctx_id, &mut url, 1, is_connect);
+                }
+                loop_.exit();
+            }
+
+            if let Some(path_or_port) = path_or_port {
+                let mut url = BunString::clone_utf8(path_or_port);
+                loop_.enter();
+                // SAFETY: see above.
+                unsafe {
+                    Bun__startJSDebuggerThread(this.global, ctx_id, &mut url, 0, is_connect);
+                }
+                loop_.exit();
+            }
+        }
+
+        // SAFETY: `this.global` non-null.
+        unsafe { &*this.global }.handle_rejected_promises();
+
+        if let Some(log) = this.log {
+            // SAFETY: `log` is the `Box::leak`ed per-VM `logger::Log` from
+            // `VirtualMachine::init`; outlives the VM.
+            let log = unsafe { log.as_ref() };
+            if !log.msgs.is_empty() {
+                let _ = log.print(bun_core::Output::error_writer());
+                bun_core::pretty_errorln!("\n");
+                bun_core::Output::flush();
+            }
+        }
+
+        bun_core::scoped_log!(debugger, "wake");
+        FUTEX_ATOMIC.store(0, Ordering::Relaxed);
+        bun_threading::Futex::wake(&FUTEX_ATOMIC, 1);
+
+        // SAFETY: `other_vm.event_loop()` is the parent VM's event loop; live
+        // for process lifetime.
+        unsafe { (*other_vm.event_loop()).wakeup() };
+        loop_.tick();
+        // SAFETY: see above.
+        unsafe { (*other_vm.event_loop()).wakeup() };
+
+        loop {
+            while this.is_event_loop_alive() {
+                this.tick();
+                // SAFETY: `event_loop()` slot stable for VM lifetime.
+                unsafe { (*this.event_loop()).auto_tick_active() };
+            }
+            // SAFETY: see above.
+            unsafe { (*this.event_loop()).tick_possibly_forever() };
+        }
     }
 }
 

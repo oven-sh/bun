@@ -370,16 +370,8 @@ impl SavedSourceMap {
             Entry::Occupied(mut o) => {
                 let old_value = Value::from(Some(*o.get()));
                 if let Some(parsed_source_map) = old_value.get::<ParsedSourceMap>() {
-                     // TODO(b2-blocked): `ParsedSourceMap: ThreadSafeRefCounted` — wire `ThreadSafeRefCount::deref` once the trait impl lands in bun_sourcemap.
-                    {
-                        // SAFETY: pointer was stored by us and is live until replaced.
-                        unsafe {
-                            bun_ptr::ThreadSafeRefCount::<ParsedSourceMap>::deref(
-                                parsed_source_map,
-                            )
-                        };
-                    }
-                    let _ = parsed_source_map;
+                    // SAFETY: pointer was stored by us and is live until replaced.
+                    unsafe { ParsedSourceMap::deref(parsed_source_map) };
                 } else if let Some(_provider) = old_value.get::<SourceProviderMap>() {
                     // do nothing, we did not hold a ref to ZigSourceProvider
                 } else if let Some(ism) = old_value.get::<InternalSourceMap>() {

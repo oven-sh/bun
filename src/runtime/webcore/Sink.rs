@@ -1,6 +1,6 @@
 use core::ffi::c_void;
 
-use bun_collections::TaggedPtrUnion;
+use bun_collections::{ByteList, TaggedPtrUnion};
 use crate::webcore::streams::{self, Signal};
 use bun_sys::{self as sys, Error as SysError};
 

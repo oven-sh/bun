@@ -135,7 +135,7 @@ impl Protocol {
 pub enum TLS {
     None,
     Enabled,
-    Custom(bun_jsc::api::server_config::SSLConfig),
+    Custom(crate::server::server_config::SSLConfig),
 }
 
 impl TLS {
@@ -312,7 +312,7 @@ impl DeferredFailure {
         // PORT NOTE: Zig `defer { free(message); destroy(this) }` — both handled by Box<Self> drop.
         debug!("running deferred failure");
         let mut this = *self;
-        let err = protocol::valkey_error_to_js(this.global_this, &this.message, this.err);
+        let err = valkey_error_to_js(this.global_this, &this.message, this.err);
         ValkeyClient::reject_all_pending_commands(
             &mut this.in_flight,
             &mut this.queue,

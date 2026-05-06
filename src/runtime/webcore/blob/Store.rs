@@ -294,11 +294,11 @@ impl Store {
         // TODO(port): narrow error set
         match &self.data {
             Data::File(file) => {
-                let pathlike_tag: node::PathOrFileDescriptorSerializeTag =
+                let pathlike_tag: PathOrFileDescriptorSerializeTag =
                     if matches!(file.pathlike, PathOrFileDescriptor::Fd(_)) {
-                        node::PathOrFileDescriptorSerializeTag::Fd
+                        PathOrFileDescriptorSerializeTag::Fd
                     } else {
-                        node::PathOrFileDescriptorSerializeTag::Path
+                        PathOrFileDescriptorSerializeTag::Path
                     };
                 writer.write_int_le::<u8>(pathlike_tag as u8)?;
 
@@ -314,7 +314,7 @@ impl Store {
                 }
             }
             Data::S3(s3) => {
-                let pathlike_tag = node::PathOrFileDescriptorSerializeTag::Path;
+                let pathlike_tag = PathOrFileDescriptorSerializeTag::Path;
                 writer.write_int_le::<u8>(pathlike_tag as u8)?;
 
                 let path_slice = s3.pathlike.slice();

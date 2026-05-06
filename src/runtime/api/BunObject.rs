@@ -1927,27 +1927,26 @@ pub fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
         // SAFETY: buf[path_len] == 0 written above
         let buf_z = unsafe { bun_str::ZStr::from_raw(buf.as_ptr(), path_len) };
 
-        let mut flags = sys::c::MAP {
-            type_: sys::c::MapType::SHARED,
-            ..Default::default()
-        };
+        // PORT NOTE: Zig used `std.c.MAP{ .TYPE = .SHARED }` (a packed bitfield
+        // struct). Rust libc exposes raw `MAP_*` ints; build the flag word
+        // directly.
+        let mut flags: libc::c_int = libc::MAP_SHARED;
 
         // Conforming applications must specify either MAP_PRIVATE or MAP_SHARED.
         let mut offset: usize = 0;
         let mut map_size: Option<usize> = None;
 
         if let Some(opts) = args.next_eat() {
-            flags.type_ = if opts.get_boolean_loose(global_this, "shared")?.unwrap_or(true) {
-                sys::c::MapType::SHARED
+            flags = if opts.get_boolean_loose(global_this, "shared")?.unwrap_or(true) {
+                libc::MAP_SHARED
             } else {
-                sys::c::MapType::PRIVATE
+                libc::MAP_PRIVATE
             };
 
             // TODO(port): @hasField(std.c.MAP, "SYNC") — gated by target_os in Rust.
             #[cfg(target_os = "linux")]
             if opts.get_boolean_loose(global_this, "sync")?.unwrap_or(false) {
-                flags.type_ = sys::c::MapType::SHARED_VALIDATE;
-                flags.sync = true;
+                flags = libc::MAP_SHARED_VALIDATE | libc::MAP_SYNC;
             }
 
             if let Some(value) = opts.get(global_this, "size")? {

@@ -12,7 +12,9 @@ pub struct S3Stat {
 }
 
 impl S3Stat {
-    #[bun_jsc::host_fn]
+    // NOTE: no `#[bun_jsc::host_fn]` here — that macro expands to a shim calling
+    // bare `constructor(..)`, which can't resolve inside an `impl`. The
+    // `#[bun_jsc::JsClass]` derive already emits the `<Self>::constructor` shim.
     pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<Box<Self>> {
         Err(global.throw_invalid_arguments("S3Stat is not constructable", &[]))
     }

@@ -409,7 +409,8 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                     // This is to match 'bunx_command.BunxCommand.exec's logic
                     let mut prefix: Vec<u8> = Vec::new();
                     #[cfg(unix)]
-                    write!(&mut prefix, "bunx-{}-", bun_sys::c::getuid()).expect("unreachable");
+                    // SAFETY: getuid(2) is always successful and has no preconditions.
+                    write!(&mut prefix, "bunx-{}-", unsafe { libc::getuid() }).expect("unreachable");
                     #[cfg(not(unix))]
                     write!(&mut prefix, "bunx-{}-", bun_sys::windows::user_unique_id()).expect("unreachable");
 

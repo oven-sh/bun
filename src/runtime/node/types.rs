@@ -1810,16 +1810,26 @@ impl Dirent {
         global_object: &JSGlobalObject,
         cached_previous_path_jsvalue: Option<&mut Option<*mut jsc::JSString>>,
     ) -> JsResult<JSValue> {
+        // libuv UV_DIRENT_* — `bun_libuv_sys` is not a dep of this crate, so the
+        // ABI constants (uv.h `uv_dirent_type_t`) are inlined verbatim.
+        const UV_DIRENT_UNKNOWN: i32 = 0;
+        const UV_DIRENT_FILE: i32 = 1;
+        const UV_DIRENT_DIR: i32 = 2;
+        const UV_DIRENT_LINK: i32 = 3;
+        const UV_DIRENT_FIFO: i32 = 4;
+        const UV_DIRENT_SOCKET: i32 = 5;
+        const UV_DIRENT_CHAR: i32 = 6;
+        const UV_DIRENT_BLOCK: i32 = 7;
         let kind_int: i32 = match self.kind {
-            DirentKind::File => libuv::UV_DIRENT_FILE,
-            DirentKind::BlockDevice => libuv::UV_DIRENT_BLOCK,
-            DirentKind::CharacterDevice => libuv::UV_DIRENT_CHAR,
-            DirentKind::Directory => libuv::UV_DIRENT_DIR,
+            DirentKind::File => UV_DIRENT_FILE,
+            DirentKind::BlockDevice => UV_DIRENT_BLOCK,
+            DirentKind::CharacterDevice => UV_DIRENT_CHAR,
+            DirentKind::Directory => UV_DIRENT_DIR,
             // event_port is deliberate there.
-            DirentKind::EventPort | DirentKind::NamedPipe => libuv::UV_DIRENT_FIFO,
-            DirentKind::UnixDomainSocket => libuv::UV_DIRENT_SOCKET,
-            DirentKind::SymLink => libuv::UV_DIRENT_LINK,
-            DirentKind::Whiteout | DirentKind::Door | DirentKind::Unknown => libuv::UV_DIRENT_UNKNOWN,
+            DirentKind::EventPort | DirentKind::NamedPipe => UV_DIRENT_FIFO,
+            DirentKind::UnixDomainSocket => UV_DIRENT_SOCKET,
+            DirentKind::SymLink => UV_DIRENT_LINK,
+            DirentKind::Whiteout | DirentKind::Door | DirentKind::Unknown => UV_DIRENT_UNKNOWN,
         };
         let cached_ptr = match cached_previous_path_jsvalue {
             Some(p) => p as *mut Option<*mut jsc::JSString>,

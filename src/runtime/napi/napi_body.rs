@@ -703,7 +703,14 @@ pub extern "C" fn napi_create_string_utf16(
         if !str_.is_null() {
             if NAPI_AUTO_LENGTH == length {
                 // SAFETY: caller guarantees ptr is NUL-terminated when length == NAPI_AUTO_LENGTH.
-                break 'brk unsafe { bun_str::slice_to_nul_u16(str_) };
+                // Port of `bun.strings.span(c.char16_t, str, 0)` — scan to NUL u16.
+                break 'brk unsafe {
+                    let mut len = 0usize;
+                    while *str_.add(len) != 0 {
+                        len += 1;
+                    }
+                    core::slice::from_raw_parts(str_, len)
+                };
             } else if length > i32::MAX as usize {
                 return env.invalid_arg();
             } else {
@@ -724,7 +731,7 @@ pub extern "C" fn napi_create_string_utf16(
             napi,
             "napi_create_string_utf16: {} {}",
             slice.len(),
-            bun_core::fmt::FormatUtf16(&slice[..slice.len().min(512)])
+            bun_core::fmt::utf16(&slice[..slice.len().min(512)])
         );
     }
 

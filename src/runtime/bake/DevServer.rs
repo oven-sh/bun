@@ -5025,10 +5025,13 @@ impl DevServer<'_> {
             return &path[self.root.len() + 1..];
         }
 
-        let rel = paths::relative_platform_buf(relative_path_buf, &self.root, path, paths::Style::Auto, true);
+        let rel = bun_paths::resolve_path::relative_platform_buf::<
+            bun_paths::resolve_path::platform::Auto,
+            true,
+        >(&mut relative_path_buf[..], &self.root, path);
         // SAFETY: `rel` is owned by relative_path_buf, which is mutable
-        paths::platform_to_posix_in_place(unsafe {
-            core::slice::from_raw_parts_mut(rel.as_ptr() as *mut u8, rel.len())
+        bun_paths::resolve_path::platform_to_posix_in_place::<u8>(unsafe {
+            ::core::slice::from_raw_parts_mut(rel.as_ptr() as *mut u8, rel.len())
         });
         rel
     }

@@ -216,16 +216,24 @@ pub fn create_exec_argv(global_object: &JSGlobalObject) -> JsResult<JSValue> {
     // For compiled/standalone executables, execArgv should contain compile_exec_argv and BUN_OPTIONS.
     // Use append_options_env for BUN_OPTIONS to correctly handle quoted values.
     if let Some(graph) = vm.standalone_module_graph() {
-        if !graph.compile_exec_argv().is_empty() || bun_core::bun_options_argc() > 0 {
+        // TODO(blocked_on): `bun_options_argc` / `append_options_env` live in
+        // src/bun.rs which is not yet mounted in any reachable crate (mirrors
+        // the same stub in cli_body.rs). Treat the BUN_OPTIONS-injected count
+        // as 0 until that module lands; compile_exec_argv handling below is
+        // unaffected.
+        let bun_options_argc: usize = 0;
+        if !graph.compile_exec_argv().is_empty() || bun_options_argc > 0 {
             let mut args: Vec<BunString> = Vec::new();
             // `defer args.deinit()` + `defer for args |*a| a.deref()` → Drop on Vec<BunString>
 
             // Process BUN_OPTIONS first using append_options_env for proper quote handling.
             // append_options_env inserts starting at index 1, so we need a placeholder.
-            if bun_core::bun_options_argc() > 0 {
+            if bun_options_argc > 0 {
                 if let Some(opts) = env_var::BUN_OPTIONS.get() {
                     args.push(BunString::empty()); // placeholder for insert-at-1
-                    bun_core::append_options_env(opts, &mut args)?;
+                    let _ = opts;
+                    todo!("blocked_on: bun_core::append_options_env");
+                    #[allow(unreachable_code)]
                     let _ = args.remove(0); // remove placeholder
                 }
             }

@@ -2915,29 +2915,27 @@ impl<AtRule> StyleSheet<AtRule> {
             }
         }
         out.v.reserve(count as usize);
-        // TODO(port): the Zig fn takes `*const @This()` but mutates
-        // `rule.* = .ignored;` — that's `&mut self` in Rust. Phase B reshapes.
-        // blocked_on: CssRule<R>: Clone (rules/mod.rs leaf payloads), BabyList::push,
-        // ImportRecord: Default (bun_options_types). The count-pass above is real;
-        // exec-pass gated.
-         {
+        // PERF(port): was ensureUnusedCapacity — profile in Phase B
+        // PORT NOTE: the Zig fn takes `*const @This()` but writes
+        // `rule.* = .ignored;` through it. Mirrored here via a raw-ptr cast;
+        // Phase B may reshape the receiver to `&mut self`.
+        // SAFETY: Zig mutated through a const ptr; the sole caller (Tailwind
+        // bundling) owns the stylesheet exclusively at this point and no other
+        // borrow of `self.rules` is live across the loop.
+        let rules_mut: &mut Vec<CssRule<AtRule>> =
+            unsafe { &mut *(&self.rules.v as *const Vec<CssRule<AtRule>> as *mut _) };
         let mut saw_imports = false;
-        // SAFETY: Phase A draft — Zig mutated through const ptr.
-        let rules_mut = unsafe {
-            &mut *(self.rules.v.as_ptr() as *mut Vec<CssRule<AtRule>>)
-        };
         for rule in rules_mut.iter_mut() {
             match rule {
+                // TODO: layer, might have imports
                 CssRule::LayerBlock(_) => {}
                 CssRule::Import(import_rule) => {
                     if !saw_imports {
                         saw_imports = true;
                     }
-                    out.v.push(rule.clone());
-                    // PERF(port): was appendAssumeCapacity
-                    let import_record_idx = new_import_records.len();
+                    let import_record_idx = new_import_records.len;
                     import_rule.import_record_idx = import_record_idx;
-                    new_import_records.push(ImportRecord {
+                    bun_core::handle_oom(new_import_records.append(ImportRecord {
                         path: ast::fs::path_init(import_rule.url),
                         kind: if import_rule.supports.is_some() {
                             ImportKind::AtConditional
@@ -2946,8 +2944,14 @@ impl<AtRule> StyleSheet<AtRule> {
                         },
                         range: logger::Range::NONE,
                         ..Default::default()
-                    });
-                    *rule = CssRule::Ignored;
+                    }));
+                    // PORT NOTE: reshaped for borrowck — Zig did
+                    // `out.v.appendAssumeCapacity(rule.*)` (bitwise copy) then
+                    // `rule.* = .ignored`. Rust moves the rule out via
+                    // `mem::replace` (no `Clone` bound needed) and pushes that.
+                    let old = core::mem::replace(rule, CssRule::Ignored);
+                    // PERF(port): was appendAssumeCapacity
+                    out.v.push(old);
                 }
                 CssRule::Unknown(u) => {
                     if u.name == b"tailwind" {
@@ -2959,11 +2963,6 @@ impl<AtRule> StyleSheet<AtRule> {
             if saw_imports {
                 break;
             }
-        }
-        }
-        #[cfg(any())] {
-        let _ = (count, new_import_records);
-        todo!("pluck_imports exec pass");
         }
     }
 }

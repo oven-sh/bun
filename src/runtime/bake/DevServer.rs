@@ -76,11 +76,17 @@ pub struct Options<'a> {
     pub dump_state_on_crash: Option<bool>,
 }
 
-impl<'a> Default for Options<'a> {
-    fn default() -> Self {
-        // TODO(port): Zig field defaults; only dump_sources/dump_state_on_crash had defaults
-        unimplemented!("Options has required fields without defaults")
-    }
+// PORT NOTE: Zig `Options` only had field-level defaults for `dump_sources`
+// (`if (Environment.isDebug) ".bake-debug" else null`) and `dump_state_on_crash`
+// (`null`). The remaining fields (`arena`, `root`, `vm`, `framework`,
+// `bundler_options`, `broadcast_console_log_from_browser_to_server`) are
+// required with no sensible zero value, so `Default` is intentionally NOT
+// implemented. Callers construct `Options` via struct-literal at the call site
+// (see `bake_body.rs::UserOptions::into_dev_server_options`).
+impl<'a> Options<'a> {
+    /// Zig field default: `if (Environment.isDebug) ".bake-debug" else null`.
+    pub const DEFAULT_DUMP_SOURCES: Option<&'static [u8]> =
+        if cfg!(debug_assertions) { Some(b".bake-debug") } else { None };
 }
 
 // The fields `client_graph`, `server_graph`, `directory_watchers`, and `assets`

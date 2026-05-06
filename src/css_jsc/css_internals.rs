@@ -155,7 +155,7 @@ pub fn testing_impl(
             }
 
             let symbols = bun_logger::symbol::Map::init_list(Default::default());
-            let mut local_names = LocalsResultsMap::default();
+            let local_names = LocalsResultsMap::default();
             let result = match stylesheet.to_css(
                 &arena,
                 PrinterOptions {
@@ -170,8 +170,8 @@ pub fn testing_impl(
                     },
                     ..Default::default()
                 },
-                ImportRecordHandler::init_outside_of_bundler(&import_records),
-                &mut local_names,
+                Some(ImportRecordHandler::init_outside_of_bundler(&import_records)),
+                Some(&local_names),
                 &symbols,
             ) {
                 Ok(result) => result,
@@ -349,11 +349,10 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
 
     let mut log = Log::init();
 
-    let parser_options = ParserOptions::default(&arena, &mut log);
+    let parser_options = ParserOptions::default(Some(&mut log));
 
     let mut import_records = BabyList::<ImportRecord>::default();
     match StyleAttribute::parse(
-        &arena,
         source.slice(),
         parser_options,
         &mut import_records,
@@ -363,16 +362,15 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
             let mut stylesheet = stylesheet_;
             let mut minify_options = MinifyOptions::default();
             minify_options.targets = targets;
-            stylesheet.minify(&arena, minify_options);
+            stylesheet.minify(minify_options);
 
             let result = match stylesheet.to_css(
-                &arena,
                 PrinterOptions {
                     minify,
                     targets,
                     ..Default::default()
                 },
-                ImportRecordHandler::init_outside_of_bundler(&import_records),
+                Some(ImportRecordHandler::init_outside_of_bundler(&import_records)),
             ) {
                 Ok(r) => r,
                 Err(_e) => {

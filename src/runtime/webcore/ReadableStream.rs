@@ -342,12 +342,16 @@ impl ReadableStream {
         };
         match &store.data {
             webcore::blob::StoreData::Bytes(_) => {
-                // TODO(port): Zig leaves `context: undefined` then calls `setup()` to initialize.
-                // `MaybeUninit::uninit().assume_init()` is immediate UB in Rust regardless of later
-                // init — reshape to `ByteBlobLoader::new_with_setup(blob, recommended_chunk_size)`
-                // (out-param constructor → returning constructor) in Phase B.
-                let _ = (blob, recommended_chunk_size);
-                todo!("ByteBlobLoader::new_with_setup — Zig used uninit context + setup()")
+                // PORT NOTE: Zig left `context: undefined` then called `setup()` to initialize
+                // in place. Rust constructs with `Default` (no UB) and `setup()` overwrites
+                // the entire struct via `*self = ByteBlobLoader { ... }`.
+                let mut reader = NewSource::<ByteBlobLoader>::new(NewSource {
+                    global_this,
+                    context: ByteBlobLoader::default(),
+                    ..Default::default()
+                });
+                reader.context.setup(blob, recommended_chunk_size);
+                reader.to_readable_stream(global_this)
             }
             webcore::blob::StoreData::File(_) => {
                 let reader = NewSource::<FileReader>::new(NewSource {

@@ -1166,10 +1166,10 @@ impl Run {
                     vm.auto_tick_active();
                 }
                 Run::on_before_exit(vm);
-                // SAFETY: as above.
-                // TODO(b2-cycle): EventLoop::tick_possibly_forever is gated.
-                let _ = vm.event_loop();
-                todo!("blocked_on: bun_jsc::event_loop::EventLoop::tick_possibly_forever");
+                // SAFETY: `event_loop` is a self-pointer into this VM; uniquely
+                // accessed here. Watcher arm keeps the process alive across
+                // reloads (run_command.zig `start` watcher loop).
+                unsafe { (*vm.event_loop()).tick_possibly_forever() };
             }
         } else {
             while vm.is_event_loop_alive() {

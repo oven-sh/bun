@@ -38,12 +38,21 @@ unsafe fn items_mut<'a, T>(p: *mut [T]) -> &'a mut [T] {
     unsafe { &mut *p }
 }
 
-// blocked_on: parser::Runtime::Features::replace_exports is `bool` placeholder (parser.rs:260),
-// not the `StringHashMap(ReplaceableExport)` it is in Zig — `.count()/.get_ptr()/.entries`
-// don't exist yet. All call sites guard on this const so the gated branches are reachable
-// but compile-dead until the real map type lands. Same for `server_components` (bool stub).
-const REPLACE_EXPORTS_REAL: bool = false;
-const SERVER_COMPONENTS_WRAPS_EXPORTS: bool = false;
+// ─── arena slice ↔ BumpVec helpers ──────────────────────────────────────────
+// `StmtNodeList = *mut [Stmt]` (arena-owned). Zig's `ListManaged.fromOwnedSlice`
+// adopts the existing backing storage; bumpalo Vec cannot, so we copy. The arena
+// reclaims both at end-of-parse.
+// PERF(port): was fromOwnedSlice (no copy) — profile in Phase B.
+#[inline]
+fn stmts_to_list<'a>(allocator: &'a bumpalo::Bump, ptr: *mut [Stmt]) -> StmtList<'a> {
+    // SAFETY: arena-owned slice valid for 'a; Stmt is Copy.
+    let slice: &[Stmt] = unsafe { &*ptr };
+    BumpVec::from_iter_in(slice.iter().copied(), allocator)
+}
+#[inline]
+fn list_to_stmts<'a>(list: StmtList<'a>) -> *mut [Stmt] {
+    list.into_bump_slice_mut() as *mut [Stmt]
+}
 
 // Zig: `pub fn VisitStmt(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is

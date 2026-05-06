@@ -171,9 +171,7 @@ impl<'a> MacroContext<'a> {
             ) {
                 Ok(m) => m,
                 Err(e) => {
-                    // TODO(port): Zig stores `Macro{ .resolver = undefined, .disabled = true }`
-                    // here as a sentinel; with `&'a mut Resolver` we cannot leave it undefined.
-                    // Phase B should make resolver/vm Option<> or split into enum { Disabled, Loaded(..) }.
+                    // Zig: `Macro{ .resolver = undefined, .disabled = true }`
                     *macro_entry.value_ptr = Macro::disabled_sentinel();
                     return Err(e);
                 }
@@ -187,15 +185,15 @@ impl<'a> MacroContext<'a> {
         if macro_.disabled {
             return Ok(caller);
         }
-        macro_.vm.enable_macro_mode();
-        let _mode_guard = scopeguard::guard((), |_| macro_.vm.disable_macro_mode());
-        macro_.vm.event_loop().ensure_waker();
+        macro_.vm().enable_macro_mode();
+        let _mode_guard = scopeguard::guard((), |_| macro_.vm().disable_macro_mode());
+        macro_.vm().event_loop().ensure_waker();
 
         // TODO(port): Zig builds a `Wrapper { args: ArgsTuple, ret }` and calls
         // `vm.runWithAPILock(Wrapper, &wrapper, Wrapper.call)`. Model this as a
         // closure passed to `run_with_api_lock` once that API is ported.
         struct Wrapper<'w> {
-            macro_: Macro<'w>,
+            macro_: Macro,
             log: &'w mut Log,
             function_name: &'w [u8],
             caller: Expr,
@@ -229,7 +227,7 @@ impl<'a> MacroContext<'a> {
             ret: Err(MacroError::MacroFailed),
         };
 
-        macro_.vm.run_with_api_lock(&mut wrapper, Wrapper::call);
+        macro_.vm().run_with_api_lock(&mut wrapper, Wrapper::call);
         return Ok(wrapper.ret?);
         // this.macros.getOrPut(key: K)
         }
@@ -439,7 +437,7 @@ impl<'a> Run<'a> {
     // under borrowck. Phase B reviewers: diff against Macro.zig:run_async —
     // semantics identical.
     pub fn run_async(
-        macro_: &Macro<'_>,
+        macro_: &Macro,
         log: &mut Log,
         function_name: &[u8],
         caller: Expr,

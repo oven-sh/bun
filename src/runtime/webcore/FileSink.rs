@@ -203,11 +203,13 @@ pub extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
     _global: *mut JSGlobalObject,
     jsvalue: JSValue,
 ) {
-    // TODO(b2-blocked): `JSSink::<FileSink>::from_js` lives in the gated
-    // `js_sink!` macro (Sink.rs); the generic `JSSink<T>` stub does not yet
-    // expose it.
-    let _ = jsvalue;
-    let this: &mut FileSink = todo!("blocked_on: bun_runtime::webcore::sink::JSSink::from_js");
+    let Some(this_ptr) = JSSink::from_js(jsvalue) else {
+        return;
+    };
+    // SAFETY: `from_js` returned a live `*mut JSSink<FileSink>` (= ThisSink); the
+    // first field is `sink: FileSink`, so `&mut (*this_ptr).sink` recovers the
+    // wrapped `*FileSink` (Zig: `@ptrCast(@alignCast(JSSink.fromJS(...) orelse return))`).
+    let this: &mut FileSink = unsafe { &mut (*this_ptr).sink };
 
     #[cfg(not(windows))]
     {

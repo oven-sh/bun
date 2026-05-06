@@ -251,7 +251,7 @@ impl Expr {
         buf[i..i + mid.len()].copy_from_slice(mid);
         i += mid.len();
         let n = bun_base64::encode(&mut buf[i..], bytes);
-        let data: &[u8] = &buf[..i + n];
+        let data: &'static [u8] = unsafe { arena_str(&buf[..i + n]) };
         Ok(Expr::init(
             E::String { data, ..Default::default() },
             loc,
@@ -454,7 +454,7 @@ impl Expr {
                     if slice.len() > index as usize {
                         return Some(Expr::init(
                             E::String {
-                                data: &slice[index as usize..][..1],
+                                data: unsafe { arena_str(&slice[index as usize..][..1]) },
                                 ..Default::default()
                             },
                             self.loc,

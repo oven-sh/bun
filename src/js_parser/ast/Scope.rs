@@ -10,6 +10,11 @@ use crate::ast::ts::TSNamespaceScope;
 
 pub type MemberHashMap = StringHashMap<Member>;
 
+// PORT NOTE: Zig `Scope` is a value type — `Ast.module_scope` / `BundledAst.module_scope`
+// hold it by value and `toAST` / `init` bitwise-copy it (`this.module_scope`). All field
+// types here are shallow-`Clone` (BabyList/StringHashMap derive Clone as ptr+len copies),
+// so derive `Clone` to mirror Zig's copy semantics.
+#[derive(Clone)]
 pub struct Scope {
     pub id: usize,
     pub kind: Kind,

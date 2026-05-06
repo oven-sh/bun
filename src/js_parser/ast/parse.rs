@@ -1547,8 +1547,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 T::TEqualsGreaterThan => {
                     if level.lte(Level::Assign) {
                         let async_ref = p.store_name_in_ref(b"async")?;
-                        let _arg_binding =
+                        let arg_binding =
                             p.b(B::Identifier { r#ref: async_ref }, async_range.loc);
+                        let args: &'a mut [G::Arg] =
+                            p.allocator.alloc_slice_fill_with(1, |_| G::Arg {
+                                binding: arg_binding,
+                                ..Default::default()
+                            });
                         let _ = p
                             .push_scope_for_parse_pass(
                                 js_ast::scope::Kind::FunctionArgs,
@@ -1559,10 +1564,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             needs_async_loc: async_range.loc,
                             ..Default::default()
                         };
-                        // PORT NOTE: parse_arrow_body's active signature takes ExprNodeList;
-                        // single-arg payload is rebuilt by the callee once the round-D body lands.
-                        let arrow_body =
-                            p.parse_arrow_body(ExprNodeList::default(), &mut data)?;
+                        let arrow_body = p.parse_arrow_body(args, &mut data)?;
                         p.pop_scope();
                         return Ok(p.new_expr(arrow_body, async_range.loc));
                     }
@@ -1574,7 +1576,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                         let ref_ = p.store_name_in_ref(p.lexer.identifier)?;
                         let arg_loc = p.lexer.loc();
-                        let _arg_binding = p.b(B::Identifier { r#ref: ref_ }, arg_loc);
+                        let arg_binding = p.b(B::Identifier { r#ref: ref_ }, arg_loc);
+                        let args: &'a mut [G::Arg] =
+                            p.allocator.alloc_slice_fill_with(1, |_| G::Arg {
+                                binding: arg_binding,
+                                ..Default::default()
+                            });
                         p.lexer.next()?;
 
                         let _ = p.push_scope_for_parse_pass(
@@ -1585,12 +1592,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                         let mut data = FnOrArrowDataParse {
                             allow_await: AwaitOrYield::AllowExpr,
-                            needs_async_loc: arg_loc,
+                            needs_async_loc: args[0].binding.loc,
                             ..Default::default()
                         };
-                        // PORT NOTE: see above re parse_arrow_body signature.
-                        let mut arrow_body =
-                            p.parse_arrow_body(ExprNodeList::default(), &mut data)?;
+                        let mut arrow_body = p.parse_arrow_body(args, &mut data)?;
                         arrow_body.is_async = true;
                         p.pop_scope();
                         return Ok(p.new_expr(arrow_body, async_range.loc));

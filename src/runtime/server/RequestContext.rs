@@ -230,20 +230,24 @@ use bun_http_types::MimeType::MimeType;
 use bun_logger as logger;
 use bun_paths::PathBuffer;
 use bun_collections::ByteList;
-// TODO(b2-blocked): `crate::api::native_promise_context` is not yet declared as
-// a module in api.rs (file exists at src/runtime/api/NativePromiseContext.rs but
-// the `pub mod` is gated). Shim `create`/`take` here so the call sites type-check
-// until the module is wired up.
+// Forward to the real module (now declared in `crate::api`). `take` is reshaped
+// from `Option<NonNull<T>>` to `Option<&'static mut T>` so call sites can invoke
+// methods directly; the borrow is scoped by the caller's `scopeguard` + deref().
 #[allow(non_snake_case)]
 mod NativePromiseContext {
     use super::{JSGlobalObject, JSValue};
-    #[inline(never)]
-    pub fn create<T>(_global: &JSGlobalObject, _ctx: *mut T) -> JSValue {
-        todo!("blocked_on: crate::api::native_promise_context")
+    use crate::api::native_promise_context as npc;
+    pub use npc::NativePromiseContextType;
+
+    #[inline]
+    pub fn create<T: NativePromiseContextType>(global: &JSGlobalObject, ctx: *mut T) -> JSValue {
+        npc::create(global, ctx)
     }
-    #[inline(never)]
-    pub fn take<T>(_cell: JSValue) -> Option<&'static mut T> {
-        todo!("blocked_on: crate::api::native_promise_context")
+    #[inline]
+    pub fn take<T>(cell: JSValue) -> Option<&'static mut T> {
+        // SAFETY: the cell carried a +1 ref on `ctx`; ownership transfers back
+        // to the caller, who immediately scopes it with a deref-on-drop guard.
+        npc::take::<T>(cell).map(|p| unsafe { &mut *p.as_ptr() })
     }
 }
 use crate::server::{AnyRequestContext, FileResponseStream, HTTPStatusText};

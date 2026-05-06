@@ -221,12 +221,18 @@ impl ArrayBuffer {
             return Ok(result);
         }
 
-        // TODO(port): bun_sys mmap flag types (PROT/MAP) — mirror Zig std.posix.PROT / .{ .TYPE = .SHARED }
+        // bun_sys::mmap takes raw i32 prot/flags (mirrors Zig std.posix.PROT / .{ .TYPE = .SHARED }).
+        // Windows impl ignores these and returns ENOTSUP.
+        #[cfg(unix)]
+        let (prot, map_flags) = (libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED);
+        #[cfg(not(unix))]
+        let (prot, map_flags) = (0i32, 0i32);
+        let map_len = usize::try_from(size.max(0)).unwrap();
         let result = bun_sys::mmap(
             ptr::null_mut(),
-            usize::try_from(size.max(0)).unwrap(),
-            bun_sys::PROT::READ | bun_sys::PROT::WRITE,
-            bun_sys::MapFlags { type_: bun_sys::MapType::Shared },
+            map_len,
+            prot,
+            map_flags,
             fd,
             0,
         );
@@ -237,7 +243,7 @@ impl ArrayBuffer {
                 // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); `buf`
                 // is a fresh mmap region whose ownership transfers to JSC.
                 Ok(unsafe {
-                    JSBuffer__fromMmap(global, buf.as_mut_ptr().cast(), buf.len())
+                    JSBuffer__fromMmap(global, buf.cast(), map_len)
                 })
             }
             bun_sys::Result::Err(err) => {
@@ -823,8 +829,11 @@ impl TypedArrayType {
     }
 
     // TODO(port): `napi_typedarray_type` lives in `bun_runtime::api::napi`
-    // (tier-6). Gated until cycle-break.
-    
+    // (tier-6). Gated until cycle-break — `bun_runtime` depends on `bun_jsc`,
+    // so referencing it here is a forward-dep cycle. The inverse mapping
+    // (`napi_typedarray_type::from_js_type`) already lives in
+    // `bun_runtime/napi/napi_body.rs`; this fn should move there.
+    #[cfg(any())]
     pub fn to_napi(self) -> Option<bun_runtime::api::napi::napi_typedarray_type> {
         use bun_runtime::api::napi::napi_typedarray_type::*;
         match self {
@@ -991,17 +1000,18 @@ pub extern "C" fn MarkedArrayBuffer_deallocator(bytes: *mut c_void, _ctx: *mut c
     unsafe { mimalloc::mi_free(bytes) };
 }
 
-// TODO(port): gated — `bun_runtime::webcore::blob::Store` is tier-6 (cycle).
-
+// TODO(port): `bun_runtime::webcore::blob::Store` is tier-6 (cycle). The
+// opaque `crate::webcore::blob::Store` shim has no `deref_()`; the real
+// `Store::deref` lives in `bun_runtime` (forward-dep). Keep the export symbol
+// so C++ links, but body is blocked on a C-ABI trampoline for `Store::deref`.
 #[unsafe(no_mangle)]
 pub extern "C" fn BlobArrayBuffer_deallocator(_bytes: *mut c_void, blob: *mut c_void) {
     // zig's memory allocator interface won't work here
     // mimalloc knows the size of things
     // but we don't
     // SAFETY: blob is a *Blob.Store passed by C++ as the deallocator context.
-    let store = blob.cast::<bun_runtime::webcore::blob::Store>();
-    unsafe { (*store).deref_() };
-    // TODO(port): Blob.Store deref — verify crate path bun_runtime::webcore::blob::Store
+    let _store = blob.cast::<crate::webcore::blob::Store>();
+    todo!("blocked_on: bun_runtime::webcore::blob::Store::deref")
 }
 
 // ──────────────────────────────────────────────────────────────────────────

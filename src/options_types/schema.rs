@@ -100,4 +100,159 @@ pub mod api {
         url = 7,
         internal = 8,
     }
+
+    // ─── peechy batch 2: hand-expanded for downstream wfs ────────────────
+    // Jsx / JsxRuntime / StringMap / EnvConfig / LoadedEnvConfig /
+    // LoadedRouteConfig / RouteConfig / FrameworkEntryPoint{,Type,Map,Message} /
+    // PackagesMode / CssInJsBehavior / LoaderMap / LoadedFramework.
+    //
+    // String mapping (matches Context.rs convention — proc-lifetime borrows
+    // ported as owned heap):
+    //   `[]const u8`          → `Box<[u8]>`
+    //   `[]const []const u8`  → `Vec<Box<[u8]>>`  (or `Box<[Box<[u8]>]>` where
+    //                            downstream `.clone()` target requires it)
+    //
+    // Enum variant names are PascalCase (idiomatic Rust, matches downstream
+    // callers in bundler/options.rs + router/lib.rs); `_none` retained as the
+    // zero-tag default where the Zig schema has it. Full peechy `.rs` emit
+    // will replace this block wholesale.
+
+    /// schema.zig:771 — `enum(u8)` (open). Kept closed.
+    #[repr(u8)]
+    #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+    pub enum JsxRuntime {
+        #[default]
+        _none = 0,
+        Automatic = 1,
+        Classic = 2,
+        Solid = 3,
+    }
+
+    /// schema.zig:789
+    #[derive(Clone, Debug, Default)]
+    pub struct Jsx {
+        pub factory: Box<[u8]>,
+        pub runtime: JsxRuntime,
+        pub fragment: Box<[u8]>,
+        pub development: bool,
+        pub import_source: Box<[u8]>,
+        pub side_effects: bool,
+    }
+
+    /// schema.zig:1130
+    #[derive(Clone, Debug, Default)]
+    pub struct StringMap {
+        pub keys: Vec<Box<[u8]>>,
+        pub values: Vec<Box<[u8]>>,
+    }
+
+    impl StringMap {
+        pub const EMPTY: StringMap = StringMap { keys: Vec::new(), values: Vec::new() };
+    }
+
+    /// schema.zig:1151
+    #[derive(Clone, Debug, Default)]
+    pub struct LoaderMap {
+        pub extensions: Vec<Box<[u8]>>,
+        pub loaders: Vec<Loader>,
+    }
+
+    /// schema.zig:1193 — peechy `message` (all fields optional)
+    #[derive(Clone, Debug, Default)]
+    pub struct EnvConfig {
+        pub prefix: Option<Box<[u8]>>,
+        pub defaults: Option<StringMap>,
+    }
+
+    /// schema.zig:1247
+    #[derive(Clone, Debug, Default)]
+    pub struct LoadedEnvConfig {
+        pub dotenv: DotEnvBehavior,
+        pub defaults: StringMap,
+        pub prefix: Box<[u8]>,
+    }
+
+    /// schema.zig:355 — `enum(u8)` (open). Kept closed.
+    #[repr(u8)]
+    #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+    pub enum FrameworkEntryPointType {
+        #[default]
+        _none = 0,
+        Client = 1,
+        Server = 2,
+        Fallback = 3,
+    }
+
+    /// schema.zig:1365
+    #[derive(Clone, Debug, Default)]
+    pub struct FrameworkEntryPoint {
+        pub kind: FrameworkEntryPointType,
+        pub path: Box<[u8]>,
+        pub env: LoadedEnvConfig,
+    }
+
+    /// schema.zig:1391 — peechy `message` (all fields optional)
+    #[derive(Clone, Debug, Default)]
+    pub struct FrameworkEntryPointMap {
+        pub client: Option<FrameworkEntryPoint>,
+        pub server: Option<FrameworkEntryPoint>,
+        pub fallback: Option<FrameworkEntryPoint>,
+    }
+
+    /// schema.zig:1444 — peechy `message` (all fields optional)
+    #[derive(Clone, Debug, Default)]
+    pub struct FrameworkEntryPointMessage {
+        pub path: Option<Box<[u8]>>,
+        pub env: Option<EnvConfig>,
+    }
+
+    /// schema.zig:1489
+    #[derive(Clone, Debug, Default)]
+    pub struct LoadedFramework {
+        pub package: Box<[u8]>,
+        pub display_name: Box<[u8]>,
+        pub development: bool,
+        pub entry_points: FrameworkEntryPointMap,
+        pub client_css_in_js: CssInJsBehavior,
+        pub override_modules: StringMap,
+    }
+
+    /// schema.zig:1528
+    #[derive(Clone, Debug, Default)]
+    pub struct LoadedRouteConfig {
+        pub dir: Box<[u8]>,
+        pub extensions: Box<[Box<[u8]>]>,
+        pub static_dir: Box<[u8]>,
+        pub asset_prefix: Box<[u8]>,
+    }
+
+    /// schema.zig:1559 — peechy `message` (array fields default empty,
+    /// scalar fields optional)
+    #[derive(Clone, Debug, Default)]
+    pub struct RouteConfig {
+        pub dir: Box<[Box<[u8]>]>,
+        pub extensions: Box<[Box<[u8]>]>,
+        pub static_dir: Option<Box<[u8]>>,
+        pub asset_prefix: Option<Box<[u8]>>,
+    }
+
+    /// schema.zig:753 — `enum(u8)` (open). Kept closed.
+    #[repr(u8)]
+    #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+    pub enum CssInJsBehavior {
+        #[default]
+        _none = 0,
+        Facade = 1,
+        FacadeOnimportcss = 2,
+        AutoOnimportcss = 3,
+    }
+
+    /// schema.zig:1987 — `enum(u8)` (open, no `_none`). Kept closed.
+    #[repr(u8)]
+    #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+    pub enum PackagesMode {
+        #[default]
+        Bundle = 0,
+        External = 1,
+    }
 }

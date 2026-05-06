@@ -666,15 +666,13 @@ impl ExtractTarball {
                     }
                 }
 
-                if let Some(err) = sys::renameat_concurrently(
+                if let Err(err) = sys::renameat_concurrently_a(
                     Fd::from_std_dir(tmpdir),
                     tmpname.as_bytes(),
                     Fd::from_std_dir(cache_dir),
                     folder_name,
                     sys::RenameatConcurrentlyOptions { move_fallback: true },
-                )
-                .as_err()
-                {
+                ) {
                     log.add_error_fmt(
                         None,
                         logger::Loc::EMPTY,
@@ -755,10 +753,9 @@ impl ExtractTarball {
             if needs_json {
                 let read_result = sys::File::read_file_from(
                     Fd::from_std_dir(cache_dir),
-                    path::join_z_buf(
-                        &mut bufs.json_path_buf,
+                    path::resolve_path::join_z_buf::<path::platform::Auto>(
+                        &mut bufs.json_path_buf.0,
                         &[folder_name, b"package.json"],
-                        path::Style::Auto,
                     ),
                 )
                 .unwrap();
@@ -809,7 +806,7 @@ impl ExtractTarball {
                 };
             }
 
-            if !bun_core::feature_flag::BUN_FEATURE_FLAG_DISABLE_INSTALL_INDEX.get() {
+            if !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_INSTALL_INDEX.get() {
                 // create an index storing each version of a package installed
                 if strings::index_of_char(basename, b'/').is_none() {
                     'create_index: {

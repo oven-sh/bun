@@ -1982,7 +1982,7 @@ pub fn init_with_runtime_once(
     ) {
         Ok(d) => d,
         Err(e) => {
-            Output::err_value(
+            Output::err(
                 e,
                 "failed to read root directory: '{s}'",
                 &[&bstr::BStr::new(FileSystem::instance().top_level_dir)],
@@ -2027,8 +2027,9 @@ pub fn init_with_runtime_once(
                 root_dir: root_dir.entries(),
                 env: Some(NonNull::from(env)),
                 cpu_count,
-                thread_pool: ThreadPool::init(ThreadPool::Options {
+                thread_pool: ThreadPool::init(thread_pool::Config {
                     max_threads: cpu_count,
+                    ..Default::default()
                 }),
                 // SAFETY: placeholder — Lockfile is NOT all-zero-valid POD. Zig leaves this
                 // `undefined` and overwrites below.

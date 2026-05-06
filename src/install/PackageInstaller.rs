@@ -1483,15 +1483,14 @@ impl<'a> PackageInstaller<'a> {
                     {
                         // This is a transitive folder dependency. It is installed with a single symlink to the target folder/file,
                         // and is not hoisted.
-                        let dirname = bun_paths::dirname(
-                            self.node_modules.path.as_slice(),
-                            Path::Style::Auto,
-                        )
-                        .unwrap_or(self.node_modules.path.as_slice());
+                        let dir_name = {
+                            let d = dirname::<platform::Auto>(self.node_modules.path.as_slice());
+                            if d.is_empty() { self.node_modules.path.as_slice() } else { d }
+                        };
 
-                        installer.cache_dir = match self.root_node_modules_folder.open_dir(
-                            dirname,
-                            bun_sys::DirOpenOptions { iterate: true, access_sub_paths: true },
+                        installer.cache_dir = match self.root_node_modules_folder.make_open_path(
+                            dir_name,
+                            bun_sys::OpenDirOptions { iterate: true, ..Default::default() },
                         ) {
                             Ok(d) => d,
                             Err(err) => {
@@ -1785,9 +1784,10 @@ impl<'a> PackageInstaller<'a> {
                                     }
                                 };
 
-                                let is_writable = if stat.uid == bun_sys::c::getuid() {
+                                // SAFETY: getuid/getgid are infallible on POSIX.
+                                let is_writable = if stat.uid == unsafe { bun_sys::c::getuid() } {
                                     stat.mode & bun_sys::S::IWUSR > 0
-                                } else if stat.gid == bun_sys::c::getgid() {
+                                } else if stat.gid == unsafe { bun_sys::c::getgid() } {
                                     stat.mode & bun_sys::S::IWGRP > 0
                                 } else {
                                     stat.mode & bun_sys::S::IWOTH > 0
@@ -1981,7 +1981,7 @@ impl<'a> PackageInstaller<'a> {
         optional: bool,
         resolution: &Resolution,
     ) -> bool {
-        let mut scripts: Package::Scripts =
+        let mut scripts: PackageScripts =
             self.lockfile.packages.items_scripts()[package_id as usize];
         let scripts_list = match scripts.get_list(
             &mut self.manager.log,

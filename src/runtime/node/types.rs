@@ -855,7 +855,7 @@ pub fn js_assert_encoding_valid(global: &JSGlobalObject, call_frame: &CallFrame)
 // ──────────────────────────────────────────────────────────────────────────
 
 #[allow(dead_code)]
-enum PathOrBuffer {
+pub enum PathOrBuffer {
     Path(bun_str::PathString),
     Buffer(Buffer),
 }

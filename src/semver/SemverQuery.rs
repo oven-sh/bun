@@ -319,7 +319,7 @@ impl Group {
         None
     }
 
-    pub fn from(version: Version) -> Group<'static> {
+    pub fn from(version: Version) -> Group {
         Group {
             head: List {
                 head: Query {
@@ -357,7 +357,7 @@ impl Group {
     }
 
     #[inline]
-    pub fn eql(&self, rhs: &Group<'_>) -> bool {
+    pub fn eql(&self, rhs: &Group) -> bool {
         self.head.eql(&rhs.head)
     }
 
@@ -682,10 +682,10 @@ impl Token {
 }
 
 #[allow(unused_variables, unused_assignments)] // prev_token is dead in upstream Zig too
-pub fn parse<'a>(input: &'a [u8], sliced: SlicedString) -> Result<Group<'a>, AllocError> {
+pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
     let mut i: usize = 0;
     let mut list = Group {
-        input,
+        input: input as *const [u8],
         head: List::default(),
         tail: None,
         flags: FlagsBitSet::init_empty(),

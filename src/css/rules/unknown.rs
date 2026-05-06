@@ -25,7 +25,7 @@ impl UnknownAtRule {
 
         if !self.prelude.v.is_empty() {
             dest.write_char(b' ')?;
-            token_list_to_css(&self.prelude, dest, false)?;
+            self.prelude.to_css(dest, false)?;
         }
 
         if let Some(block) = &self.block {
@@ -33,7 +33,7 @@ impl UnknownAtRule {
             dest.write_char(b'{')?;
             dest.indent();
             dest.newline()?;
-            token_list_to_css(block, dest, false)?;
+            block.to_css(dest, false)?;
             dest.dedent();
             dest.newline()?;
             dest.write_char(b'}')

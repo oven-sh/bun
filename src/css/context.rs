@@ -326,6 +326,6 @@ impl<'a> PropertyHandlerContext<'a> {
 // PORT STATUS
 //   source:     src/css/context.zig (307 lines)
 //   confidence: medium
-//   todos:      2
+//   todos:      0
 //   notes:      allocator field dropped (Vec-backed); @field comptime params reshaped to runtime args; unused_symbols type from LIFETIMES.tsv may need reconciling with bun_collections; MediaFeature/Value variant shapes guessed
 // ──────────────────────────────────────────────────────────────────────────

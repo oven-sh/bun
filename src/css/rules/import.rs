@@ -341,5 +341,5 @@ use {Arena as _Arena, BabyList as _BabyList, ImportRecord as _ImportRecord};
 //   source:     src/css/rules/import.zig (268 lines)
 //   confidence: medium
 //   todos:      4
-//   notes:      layout-pun conditions()/conditions_mut() needs #[repr(C)] verified; url laundered as &'static [u8] pending crate-wide 'bump; clone_with_import_records / conditions_with_import_records gated on MediaList::clone_with_import_records; ImportDependency hookup in to_css gated on dependencies.rs un-gate; inherent deep_clone real (field-walk port of css.implementDeepClone)
+//   notes:      layout-pun conditions()/conditions_mut() needs #[repr(C)] verified; url laundered as &'static [u8] pending crate-wide 'bump; inherent deep_clone real (field-walk port of css.implementDeepClone)
 // ──────────────────────────────────────────────────────────────────────────

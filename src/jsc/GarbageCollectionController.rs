@@ -208,11 +208,9 @@ impl GarbageCollectionController {
         if self.disabled {
             return;
         }
-         // TODO(b2-blocked): bun_jsc::VM::block_bytes_allocated
-        {
-            let vm = self.bun_vm().jsc_vm;
-            self.process_gc_timer_with_heap_size(vm, vm.block_bytes_allocated());
-        }
+        // SAFETY: jsc_vm is set during VM init and live for the controller's lifetime.
+        let vm = unsafe { &*self.bun_vm().jsc_vm };
+        self.process_gc_timer_with_heap_size(vm, vm.block_bytes_allocated());
     }
 
     fn process_gc_timer_with_heap_size(&mut self, vm: &VM, this_heap_size: usize) {
@@ -254,12 +252,10 @@ impl GarbageCollectionController {
         if self.disabled {
             return;
         }
-         // TODO(b2-blocked): bun_jsc::VM::block_bytes_allocated
-        {
-            let vm = self.bun_vm().jsc_vm;
-            vm.collect_async();
-            self.gc_last_heap_size = vm.block_bytes_allocated();
-        }
+        // SAFETY: jsc_vm is set during VM init and live for the controller's lifetime.
+        let vm = unsafe { &*self.bun_vm().jsc_vm };
+        vm.collect_async();
+        self.gc_last_heap_size = vm.block_bytes_allocated();
     }
 }
 

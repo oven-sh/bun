@@ -1633,6 +1633,7 @@ unsafe extern "C" {
     fn JSC__VM__releaseWeakRefs(vm: *mut VM);
     fn JSC__VM__collectAsync(vm: *mut VM);
     fn JSC__VM__heapSize(vm: *mut VM) -> usize;
+    fn JSC__VM__blockBytesAllocated(vm: *mut VM) -> usize;
     fn JSC__VM__runGC(vm: *mut VM, sync: bool) -> usize;
     fn JSC__VM__notifyNeedTermination(vm: *mut VM);
     fn JSC__JSGlobalObject__handleRejectedPromises(global: *mut JSGlobalObject);
@@ -1667,6 +1668,13 @@ impl VM {
     pub fn heap_size(&self) -> usize {
         // SAFETY: `self` is a live JSC::VM.
         unsafe { JSC__VM__heapSize(self as *const _ as *mut _) }
+    }
+    /// `VM.blockBytesAllocated()` (VM.zig). Requires `RESOURCE_USAGE` build
+    /// option in JavaScriptCore. Faster than checking the heap size.
+    #[inline]
+    pub fn block_bytes_allocated(&self) -> usize {
+        // SAFETY: `self` is a live JSC::VM.
+        unsafe { JSC__VM__blockBytesAllocated(self as *const _ as *mut _) }
     }
     /// `VM.runGC(sync)` (VM.zig:80-82).
     pub fn run_gc(&self, sync: bool) -> usize {

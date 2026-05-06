@@ -140,7 +140,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                                 kind: S::Kind::KVar,
                                 decls: repl_one_decl(
                                     bump,
-                                    self.b(B::Identifier { r#ref: name_ref }, name_loc.loc),
+                                    Binding::alloc(bump, B::Identifier { r#ref: name_ref }, name_loc.loc),
                                 ),
                                 ..Default::default()
                             },
@@ -194,7 +194,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                                 kind: S::Kind::KVar,
                                 decls: repl_one_decl(
                                     bump,
-                                    self.b(B::Identifier { r#ref: name_ref }, name_loc.loc),
+                                    Binding::alloc(bump, B::Identifier { r#ref: name_ref }, name_loc.loc),
                                 ),
                                 ..Default::default()
                             },
@@ -259,7 +259,8 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                                 kind: S::Kind::KVar,
                                 decls: repl_one_decl(
                                     bump,
-                                    self.b(
+                                    Binding::alloc(
+                                        bump,
                                         B::Identifier { r#ref: import_data.namespace_ref },
                                         stmt.loc,
                                     ),
@@ -291,7 +292,8 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                                 kind: S::Kind::KVar,
                                 decls: repl_one_decl(
                                     bump,
-                                    self.b(
+                                    Binding::alloc(
+                                        bump,
                                         B::Identifier { r#ref: default_ref },
                                         default_name.loc,
                                     ),
@@ -474,7 +476,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                 kind: S::Kind::KVar,
                 decls: repl_one_decl(
                     bump,
-                    self.b(B::Identifier { r#ref: import_data.namespace_ref }, loc),
+                    Binding::alloc(bump, B::Identifier { r#ref: import_data.namespace_ref }, loc),
                 ),
                 ..Default::default()
             },
@@ -498,7 +500,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> P<'a, TS, J, SCAN> {
                     kind: S::Kind::KVar,
                     decls: repl_one_decl(
                         bump,
-                        self.b(B::Identifier { r#ref: item_ref }, item.name.loc),
+                        Binding::alloc(bump, B::Identifier { r#ref: item_ref }, item.name.loc),
                     ),
                     ..Default::default()
                 },

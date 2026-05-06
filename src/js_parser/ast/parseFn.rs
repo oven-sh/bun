@@ -195,8 +195,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         // Await and yield are not allowed in function arguments
         // PORT NOTE: Zig used `std.mem.toBytes` / `bytesToValue` to save/restore by value;
-        // in Rust `FnOrArrowDataParse` is `Copy`/`Clone`, so a plain copy is equivalent.
-        let old_fn_or_arrow_data = p.fn_or_arrow_data_parse;
+        // in Rust `FnOrArrowDataParse` is `Clone`, so a clone is equivalent.
+        let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
 
         p.fn_or_arrow_data_parse.allow_await = if opts.allow_await == AwaitOrYield::AllowExpr {
             AwaitOrYield::ForbidAll
@@ -497,9 +497,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         data: &mut FnOrArrowDataParse,
     ) -> Result<G::FnBody, Error> {
         let p = self;
-        let old_fn_or_arrow_data = p.fn_or_arrow_data_parse;
+        let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
         let old_allow_in = p.allow_in;
-        p.fn_or_arrow_data_parse = *data;
+        p.fn_or_arrow_data_parse = data.clone();
         p.allow_in = true;
 
         let loc = p.lexer.loc();
@@ -575,10 +575,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // PORT NOTE: Zig `defer p.popScope();` — moved to explicit call before each return below.
         // TODO(port): consider scopeguard if more early-returns are added.
 
-        // PORT NOTE: Zig used `std.mem.toBytes`/`bytesToValue`; plain copy is equivalent.
-        let old_fn_or_arrow_data = p.fn_or_arrow_data_parse;
+        // PORT NOTE: Zig used `std.mem.toBytes`/`bytesToValue`; clone is equivalent.
+        let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
 
-        p.fn_or_arrow_data_parse = *data;
+        p.fn_or_arrow_data_parse = data.clone();
         let expr = match p.parse_expr(Level::Comma) {
             Ok(e) => e,
             Err(err) => {

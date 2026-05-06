@@ -698,7 +698,6 @@ stub_ty!(
     JSGlobalObject,
     URL, VM,
     ZigStackTrace, ZigStackFrame,
-    ZigException,
     AbortSignal, JSBundler,
 );
 

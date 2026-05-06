@@ -3466,20 +3466,6 @@ impl<'a> LinkerContext<'a> {
         export_aliases: &[&[u8]],
         re_exports_count: usize,
     ) {
-        let _ = (allocator, id, resolved_exports, imports_to_bind, export_aliases, re_exports_count);
-        todo!("phase-c: rung 1 re-gated — create_exports_for_file body has ~12 type errs (Batcher/G::Decl::List/B::Identifier); bundler-linker not on -e/run path")
-    }
-
-     // blocked_on(phase-c): re-gated for rung-1 link — body has type errs; not on -e/run path
-    fn __create_exports_for_file_gated(
-        &mut self,
-        allocator: &Bump,
-        id: u32,
-        resolved_exports: &mut crate::ResolvedExports,
-        imports_to_bind: &[crate::RefImportData],
-        export_aliases: &[&[u8]],
-        re_exports_count: usize,
-    ) {
         // PORT NOTE: Zig toggled `Stmt.Disabler`/`Expr.Disabler` (debug-only
         // re-entrancy guards around the global Store). The Rust port currently
         // exposes only `DebugOnlyDisabler::assert()`; `disable()`/`enable()`

@@ -2511,6 +2511,16 @@ pub mod internal {
     pub extern "C" fn Bun__addrinfo_getRequestResult(req: *mut Request) -> *mut RequestResult {
         get_request_result(req)
     }
+    /// QUIC analogue of `Bun__addrinfo_set` — link-time export so `bun_http`
+    /// (lower-tier crate) can register without a `bun_runtime` dep cycle.
+    /// Called via `bun_dns::internal::register_quic`.
+    #[unsafe(no_mangle)]
+    pub extern "C" fn Bun__addrinfo_registerQuic(
+        request: *mut Request,
+        pc: *mut bun_http::H3::PendingConnect,
+    ) {
+        register_quic(request, pc)
+    }
 }
 
 pub use internal::Request as InternalDNSRequest;

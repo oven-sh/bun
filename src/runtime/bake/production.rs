@@ -515,7 +515,17 @@ pub fn build_with_vm(
         // SAFETY: read_dir_info_ignore_error returns a *const DirInfo into the
         // resolver's cache, which outlives this loop body.
         let entry = unsafe { &*entry };
-        router_types.push(framework_router::Type {
+        // PORT NOTE: `fr::OpaqueFileId` and `framework_router::OpaqueFileId` are
+        // structurally identical newtypes split across the stub/draft; convert
+        // by `.get()` round-trip until Phase B unifies.
+        let server_file = entry_points
+            .get_or_put_entry_point(fsr.entry_server, bake::Side::Server)?;
+        let client_file = if let Some(client) = fsr.entry_client {
+            Some(entry_points.get_or_put_entry_point(client, bake::Side::Client)?)
+        } else {
+            None
+        };
+        router_types.push(fr::Type {
             abs_root: Box::from(strings::without_trailing_slash_windows_path(
                 entry.abs_path.as_bytes(),
             )),
@@ -533,21 +543,13 @@ pub fn build_with_vm(
                 .collect(),
             style: fsr.style,
             allow_layouts: fsr.allow_layouts,
-            server_file: entry_points
-                .get_or_put_entry_point(fsr.entry_server, bake::Side::Server)?,
-            client_file: if let Some(client) = fsr.entry_client {
-                Some(entry_points.get_or_put_entry_point(client, bake::Side::Client)?)
-            } else {
-                None
-            },
+            server_file: fr::OpaqueFileId::init(server_file.get()),
+            client_file: client_file.map(|f| fr::OpaqueFileId::init(f.get())),
             server_file_string: bun_jsc::Strong::empty(),
         });
     }
 
-    let mut router = bake::framework_router_body::FrameworkRouter::init_empty(
-        cwd,
-        router_types.into_boxed_slice(),
-    )?;
+    let mut router = fr::FrameworkRouter::init_empty(cwd, router_types.into_boxed_slice())?;
     router.scan_all(
         &mut server_transpiler.resolver,
         framework_router::InsertionContext::wrap(&mut entry_points),

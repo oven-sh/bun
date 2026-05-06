@@ -49,7 +49,7 @@ use crate::shell::builtins::{cp::ShellCpTask, ls::ShellLsTask, mkdir::ShellMkdir
     mv::{ShellMvBatchedTask, ShellMvCheckTargetTask}, rm::ShellRmTask, touch::ShellTouchTask,
     yes::YesTask as ShellYesTask};
 use crate::shell::states::r#async::Async as ShellAsync;
-use crate::shell::IOWriter as ShellIOWriter;
+use crate::shell::io_writer::{IOWriter as ShellIOWriter, Poll as ShellBufferedWriterPoll};
 use crate::shell::dispatch_tasks::{
     AsyncDeinitReader as ShellIOReaderAsyncDeinit, AsyncDeinitWriter as ShellIOWriterAsyncDeinit,
     ShellAsyncSubprocessDone, ShellCondExprStatTask, ShellGlobTask, ShellRmDirTask,
@@ -632,7 +632,7 @@ pub unsafe fn run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
         }
         poll_tag::SHELL_BUFFERED_WRITER => {
             // `bun.shell.Interpreter.IOWriter.Poll`
-            let h = owner_as!(crate::shell::IOWriter::Poll);
+            let h = owner_as!(ShellBufferedWriterPoll);
             h.on_poll(size_or_offset as isize, hup);
         }
         poll_tag::DNS_RESOLVER => {

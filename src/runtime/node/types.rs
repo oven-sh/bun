@@ -1419,7 +1419,7 @@ pub fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mod
         }
 
         // TODO(port): std.fmt.parseInt over &[u8] — need byte-slice radix parser in bun_core
-        match bun_core::parse_int::<Mode>(slice, 8) {
+        match strings::parse_int::<Mode>(slice, 8) {
             Ok(v) => v as u32,
             Err(_) => {
                 let mut formatter = jsc::console_object::Formatter::new(ctx);
@@ -1616,14 +1616,14 @@ impl FileSystemFlags {
                         // node allows "0o644" as a string :(
                         let slice = str.to_slice();
                         // slice.deinit() on Drop
-                        break 'brk bun_core::parse_int::<Mode>(slice.slice(), 10)
+                        break 'brk strings::parse_int::<Mode>(slice.slice(), 10)
                             .ok()
                             .map(|v| i32::try_from(v).unwrap());
                     }
                 } else {
                     let chars = str.slice();
                     if chars[0].is_ascii_digit() {
-                        break 'brk bun_core::parse_int::<Mode>(chars, 10)
+                        break 'brk strings::parse_int::<Mode>(chars, 10)
                             .ok()
                             .map(|v| i32::try_from(v).unwrap());
                     }

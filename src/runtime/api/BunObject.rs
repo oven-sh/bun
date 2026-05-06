@@ -1909,11 +1909,12 @@ pub fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
                             .throw_invalid_arguments("Path too long", format_args!(""));
                     }
                     let paths = &[path_str.slice()];
-                    break 'brk bun_paths::join_abs_string_buf(
-                        bun_fs::FileSystem::instance().top_level_dir,
+                    break 'brk bun_paths::resolve_path::join_abs_string_buf::<
+                        bun_paths::resolve_path::platform::Auto,
+                    >(
+                        bun_paths::fs::FileSystem::instance().top_level_dir(),
                         &mut buf,
                         paths,
-                        bun_paths::Platform::Auto,
                     );
                 }
             }

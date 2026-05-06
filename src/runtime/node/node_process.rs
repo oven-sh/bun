@@ -178,11 +178,15 @@ pub extern "C" fn set_title(global_object: *const JSGlobalObject, newvalue: *mut
 
     // PORT NOTE: reshaped — Zig `defer newvalue.deref()` inlined; to_owned_slice
     // is now infallible (Vec<u8>) so the OOM-throw path is unreachable here.
-    let new_title = newvalue.to_owned_slice().into_boxed_slice();
+    // The static holds `&'static [u8]` so we leak the box; the previous value
+    // (if heap-backed) is intentionally leaked too — the Zig frees it but the
+    // Rust static's element type cannot distinguish heap from rodata. Process
+    // title changes are rare enough that this is acceptable for now.
+    // TODO(port): switch Bun__Node__ProcessTitle to Option<Box<[u8]>> and free old.
+    let new_title: &'static [u8] = Box::leak(newvalue.to_owned_slice().into_boxed_slice());
 
-    // TODO(port): crate::cli::set_process_title takes ownership; old value (if any) is dropped
-    // SAFETY: TITLE_MUTEX held; set_process_title mutates the static guarded by it
-    unsafe { crate::cli::set_process_title(Some(new_title)) };
+    // SAFETY: TITLE_MUTEX held; Bun__Node__ProcessTitle is the static guarded by it
+    unsafe { crate::cli::Bun__Node__ProcessTitle = Some(new_title) };
     newvalue.deref();
 }
 

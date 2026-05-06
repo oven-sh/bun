@@ -2158,16 +2158,20 @@ impl Function {
         source_code.push(0);
         // defer source_code.deinit();
 
-        let state = match TCC::State::init::<Function>(
-            TCC::InitOptions {
-                options: ZStr::from_static(Self::TCC_OPTIONS.as_bytes()),
-                err: TCC::ErrHandler {
-                    ctx: self,
-                    handler: Self::handle_tcc_error,
+        let state = match TCC::State::init::<Function, false>(TCC::Config {
+            options: Some(NonNull::from(ZStr::from_static(Self::TCC_OPTIONS.as_bytes()))),
+            output_type: TCC::OutputFormat::Memory,
+            err: TCC::ConfigErr {
+                ctx: Some(self as *mut Function),
+                // SAFETY: `Option<&mut T>` is ABI-identical to `*mut T` (NPO).
+                handler: unsafe {
+                    core::mem::transmute::<
+                        extern "C" fn(Option<&mut Function>, *const c_char),
+                        unsafe extern "C" fn(*mut Function, *const c_char),
+                    >(Self::handle_tcc_error)
                 },
             },
-            false,
-        ) {
+        }) {
             Ok(s) => s,
             Err(e) if e == bun_core::err!("OutOfMemory") => {
                 return Err(bun_core::err!("TCCMissing"))
@@ -3028,7 +3032,7 @@ impl CompilerRT {
         state.define_symbols(&[
             (
                 "Bun_FFI_PointerOffsetToArgumentsList",
-                bun_jsc::sizes::Bun_FFI_PointerOffsetToArgumentsList,
+                bun_jsc::sizes::BUN_FFI_POINTER_OFFSET_TO_ARGUMENTS_LIST as i64,
             ),
             (
                 "JSArrayBufferView__offsetOfLength",

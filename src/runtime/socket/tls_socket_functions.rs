@@ -889,7 +889,7 @@ fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue
         }
 
         // SAFETY: ERR_func_error_string accepts any packed error code; returns null if unknown.
-        let func_ptr = unsafe { boringssl::ERR_func_error_string(ssl_error) };
+        let func_ptr = unsafe { ffi::ERR_func_error_string(ssl_error) };
         if !func_ptr.is_null() {
             // SAFETY: ERR_func_error_string returns a static NUL-terminated C string.
             let reason = unsafe { CStr::from_ptr(func_ptr) }.to_bytes();
@@ -903,7 +903,7 @@ fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue
         }
 
         // SAFETY: ERR_lib_error_string accepts any packed error code; returns null if unknown.
-        let lib_ptr = unsafe { boringssl::ERR_lib_error_string(ssl_error) };
+        let lib_ptr = unsafe { ffi::ERR_lib_error_string(ssl_error) };
         if !lib_ptr.is_null() {
             // SAFETY: ERR_lib_error_string returns a static NUL-terminated C string.
             let reason = unsafe { CStr::from_ptr(lib_ptr) }.to_bytes();

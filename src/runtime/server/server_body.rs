@@ -3240,7 +3240,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             body.ref_(),
         ));
         ctx.upgrade_context = Some(upgrade_ctx);
-        ctx.request_weakref = super::request_context::WeakRef::init_ref(request_object);
+        ctx.request_weakref = crate::webcore::request::WeakRef::init_ref(request_object);
         // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
         let global = unsafe { &*self.global_this };
         let args = [

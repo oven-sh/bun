@@ -476,20 +476,20 @@ impl Default for ParseStackEntry {
 // `Renderer` is a `&mut dyn RendererImpl`, so dispatch through the trait and
 // keep the `*_impl(ptr: *mut c_void, ..)` bodies below unchanged.
 impl<'a> md::types::RendererImpl for ParseRenderer<'a> {
-    fn enter_block(&mut self, block_type: md::BlockType, data: u32, flags: u32) -> JsResult<()> {
-        Self::enter_block_impl(self as *mut Self as *mut c_void, block_type, data, flags)
+    fn enter_block(&mut self, block_type: md::BlockType, data: u32, flags: u32) -> md::types::JsResult<()> {
+        Self::enter_block_impl(self as *mut Self as *mut c_void, block_type, data, flags).map_err(js_to_parser_err)
     }
-    fn leave_block(&mut self, block_type: md::BlockType, data: u32) -> JsResult<()> {
-        Self::leave_block_impl(self as *mut Self as *mut c_void, block_type, data)
+    fn leave_block(&mut self, block_type: md::BlockType, data: u32) -> md::types::JsResult<()> {
+        Self::leave_block_impl(self as *mut Self as *mut c_void, block_type, data).map_err(js_to_parser_err)
     }
-    fn enter_span(&mut self, span_type: md::SpanType, detail: md::SpanDetail<'_>) -> JsResult<()> {
-        Self::enter_span_impl(self as *mut Self as *mut c_void, span_type, detail)
+    fn enter_span(&mut self, span_type: md::SpanType, detail: md::SpanDetail<'_>) -> md::types::JsResult<()> {
+        Self::enter_span_impl(self as *mut Self as *mut c_void, span_type, detail).map_err(js_to_parser_err)
     }
-    fn leave_span(&mut self, span_type: md::SpanType) -> JsResult<()> {
-        Self::leave_span_impl(self as *mut Self as *mut c_void, span_type)
+    fn leave_span(&mut self, span_type: md::SpanType) -> md::types::JsResult<()> {
+        Self::leave_span_impl(self as *mut Self as *mut c_void, span_type).map_err(js_to_parser_err)
     }
-    fn text(&mut self, text_type: md::TextType, content: &[u8]) -> JsResult<()> {
-        Self::text_impl(self as *mut Self as *mut c_void, text_type, content)
+    fn text(&mut self, text_type: md::TextType, content: &[u8]) -> md::types::JsResult<()> {
+        Self::text_impl(self as *mut Self as *mut c_void, text_type, content).map_err(js_to_parser_err)
     }
 }
 
@@ -1017,20 +1017,20 @@ impl Default for CallbackStackEntry {
 }
 
 impl<'a> md::types::RendererImpl for JsCallbackRenderer<'a> {
-    fn enter_block(&mut self, block_type: md::BlockType, data: u32, flags: u32) -> JsResult<()> {
-        Self::enter_block_impl(self as *mut Self as *mut c_void, block_type, data, flags)
+    fn enter_block(&mut self, block_type: md::BlockType, data: u32, flags: u32) -> md::types::JsResult<()> {
+        Self::enter_block_impl(self as *mut Self as *mut c_void, block_type, data, flags).map_err(js_to_parser_err)
     }
-    fn leave_block(&mut self, block_type: md::BlockType, data: u32) -> JsResult<()> {
-        Self::leave_block_impl(self as *mut Self as *mut c_void, block_type, data)
+    fn leave_block(&mut self, block_type: md::BlockType, data: u32) -> md::types::JsResult<()> {
+        Self::leave_block_impl(self as *mut Self as *mut c_void, block_type, data).map_err(js_to_parser_err)
     }
-    fn enter_span(&mut self, span_type: md::SpanType, detail: md::SpanDetail<'_>) -> JsResult<()> {
-        Self::enter_span_impl(self as *mut Self as *mut c_void, span_type, detail)
+    fn enter_span(&mut self, span_type: md::SpanType, detail: md::SpanDetail<'_>) -> md::types::JsResult<()> {
+        Self::enter_span_impl(self as *mut Self as *mut c_void, span_type, detail).map_err(js_to_parser_err)
     }
-    fn leave_span(&mut self, span_type: md::SpanType) -> JsResult<()> {
-        Self::leave_span_impl(self as *mut Self as *mut c_void, span_type)
+    fn leave_span(&mut self, span_type: md::SpanType) -> md::types::JsResult<()> {
+        Self::leave_span_impl(self as *mut Self as *mut c_void, span_type).map_err(js_to_parser_err)
     }
-    fn text(&mut self, text_type: md::TextType, content: &[u8]) -> JsResult<()> {
-        Self::text_impl(self as *mut Self as *mut c_void, text_type, content)
+    fn text(&mut self, text_type: md::TextType, content: &[u8]) -> md::types::JsResult<()> {
+        Self::text_impl(self as *mut Self as *mut c_void, text_type, content).map_err(js_to_parser_err)
     }
 }
 

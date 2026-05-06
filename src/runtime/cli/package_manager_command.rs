@@ -292,10 +292,12 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             )?;
             Global::exit(0);
         } else if subcommand == b"bin" {
-            let output_path = Path::join_abs(
+            // PORT NOTE: Zig `Path.joinAbs(cwd, .auto, bun.asByteSlice(bin_path))`.
+            // Rust join_abs takes the platform as a type parameter; bin_path is a
+            // ZStr so `.as_bytes()` replaces `bun.asByteSlice`.
+            let output_path = bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(
                 Fs::FileSystem::instance().top_level_dir,
-                Path::Platform::Auto,
-                bun_core::as_byte_slice(&pm.options.bin_path),
+                pm.options.bin_path.as_bytes(),
             );
             Output::prettyln("{s}", format_args!("{}", bstr::BStr::new(output_path)));
             if Output::stdout_descriptor_type() == Output::DescriptorType::Terminal {

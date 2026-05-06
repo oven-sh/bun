@@ -48,8 +48,8 @@ impl ImmediateObject {
         let immediate = Box::into_raw(Box::new(Self {
             ref_count: Cell::new(1),
             event_loop_timer: EventLoopTimer {
-                next: super::event_loop_timer::Next::EPOCH,
-                tag: super::event_loop_timer::Tag::ImmediateObject,
+                next: ElTimespec::EPOCH,
+                tag: EventLoopTimerTag::ImmediateObject,
                 ..Default::default()
             },
             // Zig wrote `internals = undefined`; every field is overwritten by
@@ -97,9 +97,10 @@ impl ImmediateObject {
         }
     }
 
-    #[bun_jsc::host_fn]
+    // No `#[bun_jsc::host_fn]` here — `#[bun_jsc::JsClass]` already emits the
+    // extern constructor shim that calls `<Self>::constructor(__g, __f)`.
     pub fn constructor(global_object: &JSGlobalObject, _call_frame: &CallFrame) -> JsResult<*mut Self> {
-        global_object.throw("Immediate is not constructible", format_args!(""))
+        Err(global_object.throw("Immediate is not constructible", format_args!("")))
     }
 
     /// returns true if an exception was thrown

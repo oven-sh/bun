@@ -703,23 +703,26 @@ fn get_ast(
     unique_key_for_additional_file: &mut FileLoaderHash,
     has_any_css_locals: &AtomicU32,
 ) -> core::result::Result<JSAst, AnyError> {
-    use std::io::Write as _;
+    use core::fmt::Write as _;
 
     match loader {
         Loader::Jsx | Loader::Tsx | Loader::Js | Loader::Ts => {
             let _trace = perf::trace("Bundler.ParseJS");
-            return if let Some(res) = resolver.caches.js.parse(
+            // PORT NOTE: `ParserOptions` is not `Clone` (holds `&'a mut MacroContext`).
+            // Read what the fallback needs *before* moving `opts` into the parser.
+            let module_type = opts.module_type;
+            return if let Some(res) = (crate::cache::JavaScript {}).parse(
                 bump, // TODO(port): zig passed transpiler.allocator
-                opts.clone(),
+                opts,
                 &transpiler.options.define,
                 log,
                 source,
             )? {
                 Ok(JSAst::init(res.ast))
-            } else if opts.module_type == options::ModuleType::Esm {
-                get_empty_ast::<E::Undefined>(log, transpiler, opts, bump, source)
+            } else if module_type == options::ModuleType::Esm {
+                get_empty_ast::<E::Undefined>(log, transpiler, ParserOptions::default(), bump, source)
             } else {
-                get_empty_ast::<E::Object>(log, transpiler, opts, bump, source)
+                get_empty_ast::<E::Object>(log, transpiler, ParserOptions::default(), bump, source)
             };
             // PERF(port): Zig used `switch (bool) { inline else => |as_undefined| ... }`
             // to monomorphize the RootType. Expanded to two calls.
@@ -727,86 +730,84 @@ fn get_ast(
         Loader::Json | Loader::Jsonc => {
             let _trace = perf::trace("Bundler.ParseJSON");
             let mode = if matches!(loader, Loader::Jsonc) {
-                bun_interchange::json::Mode::Jsonc
+                bun_resolver::tsconfig_json::JsonMode::Jsonc
             } else {
-                bun_interchange::json::Mode::Json
+                bun_resolver::tsconfig_json::JsonMode::Json
             };
-            let root = resolver
+            let root: Expr = resolver
                 .caches
                 .json
-                .parse_json(log, source, bump, mode, true)?
+                .parse_json(log, source, mode, true)?
+                .map(Into::into)
                 .unwrap_or_else(|| Expr::init(E::Object::default(), Loc::EMPTY));
             return Ok(JSAst::init(
-                js_parser::new_lazy_export_ast(bump, &transpiler.options.define, opts, log, root, source, b"")?
+                js_parser::new_lazy_export_ast(bump, &mut transpiler.options.define, opts, log, root, source, b"")?
                     .unwrap(),
             ));
         }
         Loader::Toml => {
             let _trace = perf::trace("Bundler.ParseTOML");
-            let mut temp_log = Log::init(bump);
-            let guard = scopeguard::guard((), |_| {
-                temp_log.clone_to_with_recycled(log, true);
-                temp_log.msgs.clear();
-            });
-            // TODO(port): errdefer/defer reshaped — guard runs on both paths.
-            let root = bun_interchange::toml::TOML::parse(source, &mut temp_log, bump, false)?;
+            let mut temp_log = Log::init();
+            // TODO(port): errdefer/defer reshaped — Zig had `defer { temp_log.cloneToWithRecycled(log) }`.
+            // scopeguard captured `log`/`temp_log` by-ref while both are also borrowed
+            // mutably below (NLL conflict); folded into the linear control flow.
+            let root: Expr = bun_interchange::toml::TOML::parse(source, &mut temp_log, bump, false)?.into();
             let result = JSAst::init(
-                js_parser::new_lazy_export_ast(bump, &transpiler.options.define, opts, &mut temp_log, root, source, b"")?
+                js_parser::new_lazy_export_ast(bump, &mut transpiler.options.define, opts, &mut temp_log, root, source, b"")?
                     .unwrap(),
             );
-            drop(guard);
+            let _ = temp_log.clone_to_with_recycled(log, true);
             return Ok(result);
         }
         Loader::Yaml => {
             let _trace = perf::trace("Bundler.ParseYAML");
-            let mut temp_log = Log::init(bump);
-            let guard = scopeguard::guard((), |_| {
-                temp_log.clone_to_with_recycled(log, true);
-                temp_log.msgs.clear();
-            });
-            let root = bun_interchange::yaml::YAML::parse(source, &mut temp_log, bump)?;
+            let mut temp_log = Log::init();
+            let root: Expr = match bun_interchange::yaml::YAML::parse(source, &mut temp_log, bump) {
+                Ok(r) => r.into(),
+                Err(_) => {
+                    let _ = temp_log.clone_to_with_recycled(log, true);
+                    return Err(err!("ParserError"));
+                }
+            };
             let result = JSAst::init(
-                js_parser::new_lazy_export_ast(bump, &transpiler.options.define, opts, &mut temp_log, root, source, b"")?
+                js_parser::new_lazy_export_ast(bump, &mut transpiler.options.define, opts, &mut temp_log, root, source, b"")?
                     .unwrap(),
             );
-            drop(guard);
+            let _ = temp_log.clone_to_with_recycled(log, true);
             return Ok(result);
         }
         Loader::Json5 => {
             let _trace = perf::trace("Bundler.ParseJSON5");
-            let mut temp_log = Log::init(bump);
-            let guard = scopeguard::guard((), |_| {
-                temp_log.clone_to_with_recycled(log, true);
-                temp_log.msgs.clear();
-            });
-            let root = bun_interchange::json5::JSON5Parser::parse(source, &mut temp_log, bump)?;
+            let mut temp_log = Log::init();
+            let root: Expr = bun_interchange::json5::JSON5Parser::parse(source, &mut temp_log, bump)?.into();
             let result = JSAst::init(
-                js_parser::new_lazy_export_ast(bump, &transpiler.options.define, opts, &mut temp_log, root, source, b"")?
+                js_parser::new_lazy_export_ast(bump, &mut transpiler.options.define, opts, &mut temp_log, root, source, b"")?
                     .unwrap(),
             );
-            drop(guard);
+            let _ = temp_log.clone_to_with_recycled(log, true);
             return Ok(result);
         }
         Loader::Text => {
-            let root = Expr::init(E::String { data: source.contents, ..Default::default() }, Loc { start: 0 });
+            let root = Expr::init(E::String { data: leak_static(&source.contents), ..Default::default() }, Loc { start: 0 });
             let mut ast = JSAst::init(
-                js_parser::new_lazy_export_ast(bump, &transpiler.options.define, opts, log, root, source, b"")?
+                js_parser::new_lazy_export_ast(bump, &mut transpiler.options.define, opts, log, root, source, b"")?
                     .unwrap(),
             );
             ast.add_url_for_css(bump, source, Some(b"text/plain"), None, transpiler.options.compile_to_standalone_html);
             return Ok(ast);
         }
         Loader::Md => {
-            let html = match bun_md::render_to_html(source.contents, bump) {
+            let html = match bun_md::root::render_to_html(&source.contents) {
                 Ok(h) => h,
                 Err(_) => {
                     log.add_error(Some(source), Loc::EMPTY, b"Failed to render markdown to HTML");
                     return Err(err!("ParserError"));
                 }
             };
+            let html: &'static [u8] = leak_static(bump.alloc_slice_copy(&html));
             let root = Expr::init(E::String { data: html, ..Default::default() }, Loc { start: 0 });
             let mut ast = JSAst::init(
-                js_parser::new_lazy_export_ast(bump, &transpiler.options.define, opts, log, root, source, b"")?
+                js_parser::new_lazy_export_ast(bump, &mut transpiler.options.define, opts, log, root, source, b"")?
                     .unwrap(),
             );
             ast.add_url_for_css(bump, source, Some(b"text/html"), None, transpiler.options.compile_to_standalone_html);

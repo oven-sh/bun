@@ -530,9 +530,9 @@ pub fn generate_code_for_lazy_export(
     Ok(())
 }
 
-pub use bun_bundler::DeferredBatchTask;
-pub use bun_bundler::ParseTask;
-pub use bun_bundler::ThreadPool;
+pub use crate::DeferredBatchTask;
+pub use crate::ParseTask;
+pub use crate::ThreadPool;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

@@ -548,21 +548,24 @@ impl<'a> LinkerContext<'a> {
         // Validate top-level await for all files first.
         if bundle.has_any_top_level_await_modules {
             // SAFETY: `parse_graph` is a backref to `BundleV2.graph`, disjoint
-            // from `*self` (= `BundleV2.linker`). Sole live `&mut` into that
-            // allocation here — `validate_tla` receives only the reborrowed
-            // column slices below and does not itself touch `*self.parse_graph`.
-            let parse_graph = unsafe { &mut *self.parse_graph };
-            let import_records_list: &[BabyList<ImportRecord>] = self.graph.ast.items_import_records();
-            let tla_keywords = parse_graph.ast.items_top_level_await_keyword();
-            let tla_checks = parse_graph.ast.items_tla_check_mut();
-            let input_files = parse_graph.input_files.items_source();
-            let flags: &mut [crate::ungate_support::js_meta::Flags] = self.graph.meta.items_flags_mut();
-            let css_asts: &[Option<*mut core::ffi::c_void>] = self.graph.ast.items_css();
+            // from `*self` (= `BundleV2.linker`). The SoA column slices below
+            // are physically disjoint and the underlying slabs do not
+            // reallocate inside `validate_tla`; we cache raw column pointers
+            // and reborrow per call to satisfy borrowck (`&mut self` is held
+            // across the recursion).
+            let parse_graph: *mut Graph = self.parse_graph;
+            let import_records_list: *const [BabyList<ImportRecord>] = self.graph.ast.items_import_records();
+            let tla_keywords: *const [Range] = unsafe { (*parse_graph).ast.items_top_level_await_keyword() };
+            let tla_checks: *mut [TlaCheck] = unsafe { (*parse_graph).ast.items_tla_check_mut() };
+            let input_files: *const [Source] = unsafe { (*parse_graph).input_files.items_source() };
+            let flags: *mut [crate::ungate_support::js_meta::Flags] = self.graph.meta.items_flags_mut();
+            let css_asts: *const [Option<*mut core::ffi::c_void>] = self.graph.ast.items_css();
+            let files_len = self.graph.files.len();
+            let import_records_len = unsafe { (*import_records_list).len() };
 
             // Process all files in source index order, like esbuild does
             let mut source_index: u32 = 0;
-            while (source_index as usize) < self.graph.files.len() {
-                let advance = || source_index += 1;
+            while (source_index as usize) < files_len {
                 // Skip runtime
                 if source_index == Index::RUNTIME.get() {
                     source_index += 1;
@@ -570,30 +573,40 @@ impl<'a> LinkerContext<'a> {
                 }
 
                 // Skip if not a JavaScript AST
-                if source_index as usize >= import_records_list.len() {
+                if source_index as usize >= import_records_len {
                     source_index += 1;
                     continue;
                 }
 
                 // Skip CSS files
-                if css_asts[source_index as usize].is_some() {
+                // SAFETY: bounds-checked by `import_records_len` above; column
+                // slab is stable.
+                if unsafe { (*css_asts)[source_index as usize].is_some() } {
                     source_index += 1;
                     continue;
                 }
 
-                let import_records = import_records_list[source_index as usize].slice();
-
-                let _ = self.validate_tla(source_index, tla_keywords, tla_checks, input_files, import_records, flags, import_records_list)?;
+                // SAFETY: see block comment above — disjoint SoA columns,
+                // stable slabs; reborrow per call.
+                let import_records = unsafe { (*import_records_list)[source_index as usize].slice() };
+                let _ = self.validate_tla(
+                    source_index,
+                    unsafe { &*tla_keywords },
+                    unsafe { &mut *tla_checks },
+                    unsafe { &*input_files },
+                    import_records,
+                    unsafe { &mut *flags },
+                    unsafe { &*import_records_list },
+                )?;
 
                 source_index += 1;
-                let _ = advance; // PORT NOTE: reshaped for borrowck — Zig used `defer source_index += 1` semantics via while-postfix
             }
 
             // after validation propagate async through all importers.
             self.graph.propagate_async_dependencies()?;
         }
 
-        self.scan_imports_and_exports()?;
+        scan_imports_and_exports(self)?;
 
         // Stop now if there were errors
         if self.log.has_errors() {
@@ -610,7 +623,7 @@ impl<'a> LinkerContext<'a> {
             self.check_for_memory_corruption();
         }
 
-        let chunks = self.compute_chunks(bundle.unique_key)?;
+        let mut chunks = compute_chunks(self, bundle.unique_key)?;
 
         if self.log.has_errors() {
             return Err(LinkError::BuildFailed);
@@ -620,7 +633,7 @@ impl<'a> LinkerContext<'a> {
             self.check_for_memory_corruption();
         }
 
-        self.compute_cross_chunk_dependencies(&chunks)?;
+        compute_cross_chunk_dependencies(self, &mut chunks)?;
 
         if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {
             self.check_for_memory_corruption();

@@ -82,7 +82,9 @@ pub fn find_imported_files_in_css_order<'a>(
         css_asts: &'a [Option<*mut BundlerStyleSheet>],
         all_import_records: &'a [BabyList<ImportRecord>],
 
-        graph: *mut LinkerGraph,
+        // PORT NOTE: Zig's `graph: *LinkerGraph` is never read in `visit()`;
+        // dropped here to avoid an aliasing `&mut this.graph` borrow against
+        // `allocator`/`css_asts` (which already borrow `this.graph`).
         parse_graph: *mut Graph,
 
         has_external_import: bool,

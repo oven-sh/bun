@@ -5837,15 +5837,22 @@ impl ExternalFreeFunctionAllocator {
     }
 }
 
+static EXTERNAL_FREE_VTABLE: bun_alloc::AllocatorVTable = bun_alloc::AllocatorVTable {
+    alloc: |_, _, _, _| core::ptr::null_mut(),
+    resize: |_, _, _, _, _| false,
+    remap: |_, _, _, _, _| core::ptr::null_mut(),
+    free: |ctx, buf, a, ra| ExternalFreeFunctionAllocator::free(ctx, buf, a, ra),
+};
+
 /// Returns true if `allocator` definitely has a valid `.ptr`.
 /// May return false even if `.ptr` is valid.
 ///
 /// This function should check whether `allocator` matches any internal allocator types known to
 /// have valid pointers. Allocators defined outside of this file, like `std.heap.ArenaAllocator`,
 /// don't need to be checked.
-pub fn allocator_has_pointer(allocator: &bun_alloc::DynAllocator) -> bool {
-    // TODO(port): vtable comparison — bun_alloc::DynAllocator should expose a type tag
-    allocator.is::<ExternalFreeFunctionAllocator>()
+pub fn allocator_has_pointer(allocator: &bun_alloc::StdAllocator) -> bool {
+    // bundle_v2.zig:4443 — vtable identity check.
+    core::ptr::eq(allocator.vtable, &EXTERNAL_FREE_VTABLE)
 }
 
 pub struct BuildResult {

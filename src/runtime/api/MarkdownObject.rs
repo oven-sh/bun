@@ -114,7 +114,7 @@ pub fn render_to_ansi(
         }
     }
 
-    let result = match md::render_to_ansi(input, md::AnsiTarget::Terminal, theme) {
+    let result = match md::render_to_ansi(input, md::Options::TERMINAL, theme) {
         Ok(Some(r)) => r,
         Ok(None) => {
             // The parser can only return null via JSError / JSTerminated
@@ -122,8 +122,8 @@ pub fn render_to_ansi(
             // path is unreachable but handle it safely.
             return global_this.throw_out_of_memory();
         }
-        Err(err) if err == bun_core::err!("OutOfMemory") => return global_this.throw_out_of_memory(),
-        Err(err) if err == bun_core::err!("StackOverflow") => return global_this.throw_stack_overflow(),
+        Err(ParserError::OutOfMemory) => return global_this.throw_out_of_memory(),
+        Err(ParserError::StackOverflow) => return global_this.throw_stack_overflow(),
         Err(_) => return global_this.throw_out_of_memory(),
     };
 

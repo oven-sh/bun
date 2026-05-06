@@ -341,7 +341,7 @@ pub fn generate_files(
             let file = &files[index];
             let file_name =
                 string_with_replacements(file.name, basename, normalized_name, react_component_export)?;
-            if file.overwrite || !bun_sys::exists(&file_name) {
+            if file.overwrite || !exists(&file_name) {
                 let content = string_with_replacements(
                     file.content,
                     basename,

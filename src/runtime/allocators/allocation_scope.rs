@@ -556,7 +556,7 @@ impl<A: GenericAllocator> AllocationScopeIn<A> {
     where
         A: Default,
     {
-        Self::init(crate::memory::init_default::init_default::<A>())
+        Self::init(bun_alloc::memory::init_default::<A>())
     }
 
     /// Borrows this `AllocationScope`. Use this method instead of copying `self`, as that makes
@@ -580,8 +580,8 @@ impl<A: GenericAllocator> AllocationScopeIn<A> {
     // by Rust's field Drop (`A` drops itself if it owns anything; `Box<State>` drops `State` which
     // runs the leak report). No explicit `impl Drop` needed beyond what fields provide.
 
-    pub fn parent(&self) -> crate::Borrowed<A> {
-        crate::borrow(&self.parent)
+    pub fn parent(&self) -> BorrowedAlloc<A> {
+        borrow_alloc(&self.parent)
     }
 
     pub fn stats(&self) -> Stats {
@@ -623,12 +623,12 @@ impl<A: GenericAllocator> AllocationScopeIn<A> {
     }
 }
 
-// TODO(port): `std.mem.Allocator.VTable` — Phase B defines `crate::AllocatorVTable` matching the
-// Zig allocator interface (alloc/resize/remap/free). `noResize`/`noRemap` are stock no-op impls.
-static VTABLE: crate::AllocatorVTable = crate::AllocatorVTable {
+// `std.mem.Allocator.VTable` — `bun_alloc::AllocatorVTable` matches the Zig allocator
+// interface (alloc/resize/remap/free). `NO_RESIZE`/`NO_REMAP` are stock no-op impls.
+static VTABLE: AllocatorVTable = AllocatorVTable {
     alloc: vtable_alloc,
-    resize: crate::no_resize,
-    remap: crate::no_remap,
+    resize: AllocatorVTable::NO_RESIZE,
+    remap: AllocatorVTable::NO_REMAP,
     free: vtable_free,
 };
 

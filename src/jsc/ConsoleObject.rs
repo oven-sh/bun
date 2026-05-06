@@ -3040,23 +3040,12 @@ pub mod formatter {
                 estimated_line_length: &mut self.estimated_line_length,
             };
             // PORT NOTE: reshaped for borrowck — `writer` borrows
-            // `self.estimated_line_length` mutably while the body also needs
-            // `&mut self`. We drop and re-create `writer` around recursive
-            // calls; on return we copy `writer.failed` into `self.failed`.
-            macro_rules! reseat_writer {
-                () => {{
-                    let failed = writer.failed;
-                    drop(writer);
-                    if failed {
-                        self.failed = true;
-                    }
-                    writer = WrappedWriter {
-                        ctx: writer_,
-                        failed: false,
-                        estimated_line_length: &mut self.estimated_line_length,
-                    };
-                }};
-            }
+            // `self.estimated_line_length` + `writer_` mutably while the body
+            // also needs `&mut self` / `writer_` for recursive calls. Each
+            // recursive call site inlines a `drop(writer); call; recreate`
+            // sequence (a `reseat_writer!()` macro that recreated *before* the
+            // call would re-take both borrows immediately and trip E0499).
+            //
             // Zig: `defer { if (writer.failed) this.failed = true; }`.
             // Capture raw pointers so the body can keep using `writer`/`self`;
             // the guard reads the *current* `writer.failed` at scope exit, so
@@ -3065,9 +3054,9 @@ pub mod formatter {
             // the whole `WrappedWriter<'_>` — a `*const WrappedWriter<'_>` would
             // carry the `'_` lifetime into the guard's closure type, keeping the
             // borrows of `writer_` / `self.estimated_line_length` alive across
-            // every `reseat_writer!()` (E0499). `*const bool` is lifetime-free,
-            // and `writer` is a fixed stack slot so the field address survives
-            // `reseat_writer!()` reassignment.
+            // every drop/recreate (E0499). `*const bool` is lifetime-free, and
+            // `writer` is a fixed stack slot so the field address survives the
+            // `drop(writer); writer = WrappedWriter { .. }` reassignment.
             let writer_failed_ptr: *const bool = core::ptr::addr_of!(writer.failed);
             let self_failed_ptr: *mut bool = &mut self.failed;
             let _writer_failed = scopeguard::guard((), move |_| unsafe {
@@ -3137,15 +3126,23 @@ pub mod formatter {
                 Tag::StringPossiblyFormatted => {
                     let str = value.to_slice(self.global_this)?;
                     let slice = str.slice();
-                    self.add_for_new_line(slice.len());
-                    reseat_writer!();
+                    writer.add_for_new_line(slice.len());
+                    // PORT NOTE: inline `reseat_writer!()` as drop/call/recreate so the
+                    // recursive helper can borrow `&mut self` + `writer_` (E0499).
+                    if writer.failed { self.failed = true; }
+                    drop(writer);
                     self.write_with_formatting::<ENABLE_ANSI_COLORS>(writer_, slice, self.global_this)?;
+                    writer = WrappedWriter {
+                        ctx: writer_,
+                        failed: false,
+                        estimated_line_length: &mut self.estimated_line_length,
+                    };
                 }
                 Tag::String => {
                     // This is called from the '%s' formatter, so it can actually be any value
                     use crate::StringJsc as _;
                     let str: BunString = BunString::from_js(value, self.global_this)?;
-                    self.add_for_new_line(str.length());
+                    writer.add_for_new_line(str.length());
 
                     if self.quote_strings && js_type != jsc::JSType::RegExpObject {
                         if str.is_empty() {
@@ -3156,30 +3153,36 @@ pub mod formatter {
                         if ENABLE_ANSI_COLORS {
                             writer.write_all(pfmt!("<r><green>", true).as_bytes());
                         }
-                        let writer_reset_ptr: *mut WrappedWriter<'_> = &mut writer;
-                        let _reset = scopeguard::guard((), move |_| unsafe {
-                            if ENABLE_ANSI_COLORS {
-                                (*writer_reset_ptr).write_all(pfmt!("<r>", true).as_bytes());
-                            }
-                        });
+                        // PORT NOTE: Zig's `defer writeAll("<r>")` is inlined at each
+                        // exit below. A `scopeguard` capturing `*mut WrappedWriter<'_>`
+                        // carries the `'_` lifetime into the closure type, which keeps
+                        // the `writer_`/`self` borrows alive across the drop/recreate
+                        // dance and trips E0499.
 
                         if str.is_utf16() {
-                            reseat_writer!();
+                            if writer.failed { self.failed = true; }
+                            drop(writer);
                             self.print_as::<{ Tag::JSON }, ENABLE_ANSI_COLORS>(
                                 writer_,
                                 value,
                                 jsc::JSType::StringObject,
                             )?;
+                            if ENABLE_ANSI_COLORS {
+                                let _ = writer_.write_all(pfmt!("<r>", true).as_bytes());
+                            }
                             return Ok(());
                         }
 
                         JSPrinter::write_json_string(
                             str.latin1(),
-                            writer_,
+                            writer.ctx,
                             JSPrinter::Encoding::Latin1,
                         )
                         .expect("unreachable");
 
+                        if ENABLE_ANSI_COLORS {
+                            writer.write_all(pfmt!("<r>", true).as_bytes());
+                        }
                         return Ok(());
                     }
 
@@ -3187,32 +3190,37 @@ pub mod formatter {
                         if ENABLE_ANSI_COLORS {
                             writer.print(format_args!("{}", pf!("<r><green>")));
                         }
-                        let writer_reset_ptr: *mut WrappedWriter<'_> = &mut writer;
-                        let _reset = scopeguard::guard((), move |_| unsafe {
-                            if ENABLE_ANSI_COLORS {
-                                (*writer_reset_ptr).write_all(pfmt!("<r>", true).as_bytes());
-                            }
-                        });
+                        // PORT NOTE: Zig's `defer writeAll("<r>")` inlined at the
+                        // single exit below; see note above re: E0499.
 
                         writer.print(format_args!("[String: "));
 
                         if str.is_utf16() {
-                            reseat_writer!();
+                            if writer.failed { self.failed = true; }
+                            drop(writer);
                             self.print_as::<{ Tag::JSON }, ENABLE_ANSI_COLORS>(
                                 writer_,
                                 value,
                                 jsc::JSType::StringObject,
                             )?;
+                            writer = WrappedWriter {
+                                ctx: writer_,
+                                failed: false,
+                                estimated_line_length: &mut self.estimated_line_length,
+                            };
                         } else {
                             JSPrinter::write_json_string(
                                 str.latin1(),
-                                writer_,
+                                writer.ctx,
                                 JSPrinter::Encoding::Latin1,
                             )
                             .expect("unreachable");
                         }
 
                         writer.print(format_args!("]"));
+                        if ENABLE_ANSI_COLORS {
+                            writer.write_all(pfmt!("<r>", true).as_bytes());
+                        }
                         return Ok(());
                     }
 
@@ -3253,9 +3261,9 @@ pub mod formatter {
                         } else {
                             1
                         };
-                        self.add_for_new_line(digits as usize);
+                        writer.add_for_new_line(digits as usize);
                     } else {
-                        self.add_for_new_line(bun_core::fmt::count_int(int));
+                        writer.add_for_new_line(bun_core::fmt::count_int(int));
                     }
                     writer.print(format_args!(
                         "{}{}{}",
@@ -3265,8 +3273,11 @@ pub mod formatter {
                     ));
                 }
                 Tag::BigInt => {
-                    let out_str = value.get_zig_string(self.global_this)?.slice();
-                    self.add_for_new_line(out_str.len());
+                    // PORT NOTE: bind the `ZigString` so its backing storage outlives
+                    // the borrowed `slice()` (E0716).
+                    let zstr = value.get_zig_string(self.global_this)?;
+                    let out_str = zstr.slice();
+                    writer.add_for_new_line(out_str.len());
                     writer.print(format_args!(
                         "{}{}n{}",
                         pf!("<r><yellow>"),
@@ -3283,7 +3294,7 @@ pub mod formatter {
                         value.to_zig_string(&mut number_value, self.global_this)?;
 
                         if number_name.slice() != b"Number" {
-                            self.add_for_new_line(
+                            writer.add_for_new_line(
                                 number_name.len + number_value.len + "[Number ():]".len(),
                             );
                             writer.print(format_args!(
@@ -3296,7 +3307,7 @@ pub mod formatter {
                             return Ok(());
                         }
 
-                        self.add_for_new_line(number_name.len + number_value.len + 4);
+                        writer.add_for_new_line(number_name.len + number_value.len + 4);
                         writer.print(format_args!(
                             "{}[{}: {}]{}",
                             pf!("<r><yellow>"),
@@ -3310,19 +3321,19 @@ pub mod formatter {
                     let num = value.as_number();
 
                     if num.is_infinite() && num > 0.0 {
-                        self.add_for_new_line("Infinity".len());
+                        writer.add_for_new_line("Infinity".len());
                         writer.print(format_args!("{}Infinity{}", pf!("<r><yellow>"), pf!("<r>")));
                     } else if num.is_infinite() && num < 0.0 {
-                        self.add_for_new_line("-Infinity".len());
+                        writer.add_for_new_line("-Infinity".len());
                         writer.print(format_args!("{}-Infinity{}", pf!("<r><yellow>"), pf!("<r>")));
                     } else if num.is_nan() {
-                        self.add_for_new_line("NaN".len());
+                        writer.add_for_new_line("NaN".len());
                         writer.print(format_args!("{}NaN{}", pf!("<r><yellow>"), pf!("<r>")));
                     } else {
                         let mut buf = [0u8; 124];
                         let formatted =
                             bun_core::fmt::FormatDouble::dtoa_with_negative_zero(&mut buf, num);
-                        self.add_for_new_line(formatted.len());
+                        writer.add_for_new_line(formatted.len());
                         writer.print(format_args!(
                             "{}{}{}",
                             pf!("<r><yellow>"),
@@ -3332,11 +3343,11 @@ pub mod formatter {
                     }
                 }
                 Tag::Undefined => {
-                    self.add_for_new_line(9);
+                    writer.add_for_new_line(9);
                     writer.print(format_args!("{}undefined{}", pf!("<r><d>"), pf!("<r>")));
                 }
                 Tag::Null => {
-                    self.add_for_new_line(4);
+                    writer.add_for_new_line(4);
                     writer.print(format_args!("{}null{}", pf!("<r><yellow>"), pf!("<r>")));
                 }
                 Tag::CustomFormattedObject => {
@@ -3362,21 +3373,29 @@ pub mod formatter {
                     if result.is_string() {
                         writer.print(format_args!("{}", result.fmt_string(self.global_this)));
                     } else {
-                        reseat_writer!();
+                        // PORT NOTE: inline `reseat_writer!()` as drop/call/recreate so the
+                        // recursive helper can borrow `&mut self` + `writer_` (E0499).
+                        if writer.failed { self.failed = true; }
+                        drop(writer);
                         self.format::<ENABLE_ANSI_COLORS>(
                             Tag::get(result, self.global_this)?,
                             writer_,
                             result,
                             self.global_this,
                         )?;
+                        writer = WrappedWriter {
+                            ctx: writer_,
+                            failed: false,
+                            estimated_line_length: &mut self.estimated_line_length,
+                        };
                     }
                 }
                 Tag::Symbol => {
                     let description = value.get_description(self.global_this);
-                    self.add_for_new_line("Symbol".len());
+                    writer.add_for_new_line("Symbol".len());
 
                     if description.len > 0 {
-                        self.add_for_new_line(description.len + "()".len());
+                        writer.add_for_new_line(description.len + "()".len());
                         writer.print(format_args!(
                             "{}Symbol({}){}",
                             pf!("<r><blue>"),
@@ -3403,7 +3422,8 @@ pub mod formatter {
                         }
                     });
 
-                    reseat_writer!();
+                    if writer.failed { self.failed = true; }
+                    drop(writer);
                     // TODO(port): `VirtualMachine::print_errorlike_object` takes
                     // `&mut bun_core::io::Writer`, not `&mut dyn bun_io::Write`;
                     // adapter pending. Suppress unused for now.
@@ -3419,7 +3439,7 @@ pub mod formatter {
                     // "Function". The `.name` property is set to the real class
                     // name on the constructor itself. See #29225.
                     let printable = value.get_name(self.global_this)?;
-                    self.add_for_new_line(printable.length());
+                    writer.add_for_new_line(printable.length());
 
                     // Only report `extends` when the parent is itself a class
                     // (i.e. `class Foo extends Bar`). Built-in and DOM constructors
@@ -3434,7 +3454,7 @@ pub mod formatter {
                     } else {
                         BunString::empty()
                     };
-                    self.add_for_new_line(printable_proto.length());
+                    writer.add_for_new_line(printable_proto.length());
 
                     if printable.is_empty() {
                         if printable_proto.is_empty() {
@@ -3877,7 +3897,7 @@ pub mod formatter {
 
             if len == 0 {
                 writer.write_all(b"[]");
-                self.add_for_new_line(2);
+                writer.add_for_new_line(2);
                 return Ok(());
             }
 

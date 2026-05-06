@@ -3321,8 +3321,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     fn set_routes(&mut self) -> JSValue {
         let mut route_list_value = JSValue::ZERO;
-        // SAFETY: self.app is Some and points to a live uws App; set_routes is only called after init()
-        let app = unsafe { &*self.app.unwrap() };
+        // SAFETY: self.app is Some and points to a live uws App; set_routes is only called after init().
+        // Keep the raw `*mut` (`app_ptr`) for FFI/handler storage that needs write provenance, and
+        // a shared `&` (`app`) for the route-registration helpers below which only need read access.
+        let app_ptr = self.app.unwrap();
+        let app = unsafe { &*app_ptr };
         let any_server = AnyServer::from(self);
         let dev_server = self.dev_server.as_deref_mut();
 

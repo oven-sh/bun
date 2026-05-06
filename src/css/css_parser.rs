@@ -2889,10 +2889,16 @@ impl<AtRule> StyleSheet<AtRule> {
     /// This plucks out the import rules from the Tailwind stylesheet into a
     /// separate rule list, replacing them with `.ignored` rules.
     pub fn pluck_imports(
-        &self,
+        &mut self,
         out: &mut CssRuleList<AtRule>,
         new_import_records: &mut BabyList<ImportRecord>,
     ) {
+        // PORT NOTE: the Zig fn takes `*const @This()` but writes
+        // `rule.* = .ignored;` through it (Zig has no const-transitivity).
+        // Writing through a `*const`-derived pointer is UB in Rust, so the
+        // receiver is reshaped to `&mut self`. The sole caller (Tailwind
+        // bundling) owns the stylesheet exclusively at this point.
+        //
         // Zig used a comptime two-pass `inline for` (count, exec). Unroll.
         let mut count: u32 = 0;
         {
@@ -2920,16 +2926,8 @@ impl<AtRule> StyleSheet<AtRule> {
         }
         out.v.reserve(count as usize);
         // PERF(port): was ensureUnusedCapacity — profile in Phase B
-        // PORT NOTE: the Zig fn takes `*const @This()` but writes
-        // `rule.* = .ignored;` through it. Mirrored here via a raw-ptr cast;
-        // Phase B may reshape the receiver to `&mut self`.
-        // SAFETY: Zig mutated through a const ptr; the sole caller (Tailwind
-        // bundling) owns the stylesheet exclusively at this point and no other
-        // borrow of `self.rules` is live across the loop.
-        let rules_mut: &mut Vec<CssRule<AtRule>> =
-            unsafe { &mut *(&self.rules.v as *const Vec<CssRule<AtRule>> as *mut _) };
         let mut saw_imports = false;
-        for rule in rules_mut.iter_mut() {
+        for rule in self.rules.v.iter_mut() {
             match rule {
                 // TODO: layer, might have imports
                 CssRule::LayerBlock(_) => {}

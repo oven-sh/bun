@@ -387,10 +387,13 @@ unsafe fn load_preloads(
             .expect("resolver Success result has a primary path")
             .text;
         let module_name = bun_string::String::from_bytes(path_text);
-        // SAFETY: `global` is live for the VM lifetime.
+        // PORT NOTE: use `import_ptr` (not `import`) so the `*mut` we store in
+        // `pending_internal_promise` keeps the FFI's mutable provenance instead
+        // of being laundered through `&JSInternalPromise -> *const -> *mut`
+        // (UB to write through under Stacked Borrows).
         let promise: *mut JSInternalPromise =
-            match JSModuleLoader::import(unsafe { &*global }, &module_name) {
-                Ok(p) => p as *const JSInternalPromise as *mut JSInternalPromise,
+            match JSModuleLoader::import_ptr(global, &module_name) {
+                Ok(p) => p.as_ptr(),
                 Err(_) => {
                     // Spec: `try` propagates `error.JSError`. The exception is
                     // already pending on `global`; bubble the tag so

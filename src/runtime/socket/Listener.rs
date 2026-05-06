@@ -682,9 +682,9 @@ impl Listener {
             ListenerType::Uws(socket) => unsafe { &mut *socket }.close(),
             #[cfg(windows)]
             ListenerType::NamedPipe(named_pipe) => {
-                // SAFETY: named_pipe is the unique owner; close_pipe_and_deinit consumes it.
-                unsafe { named_pipe.as_ref() };
-                todo!("blocked_on: WindowsNamedPipeListeningContext::close_pipe_and_deinit")
+                // SAFETY: named_pipe is the unique owner; close_pipe_and_deinit
+                // schedules the libuv close → on_pipe_closed → deinit chain.
+                unsafe { WindowsNamedPipeListeningContext::close_pipe_and_deinit(named_pipe.as_ptr()) };
             }
             #[cfg(not(windows))]
             ListenerType::NamedPipe(_) => {}
@@ -704,8 +704,10 @@ impl Listener {
                 unsafe { &mut *socket }.close();
             }
             #[cfg(windows)]
-            ListenerType::NamedPipe(_named_pipe) => {
-                todo!("blocked_on: WindowsNamedPipeListeningContext::close_pipe_and_deinit")
+            ListenerType::NamedPipe(named_pipe) => {
+                // SAFETY: named_pipe is the unique owner; close_pipe_and_deinit
+                // schedules the libuv close → on_pipe_closed → deinit chain.
+                unsafe { WindowsNamedPipeListeningContext::close_pipe_and_deinit(named_pipe.as_ptr()) };
             }
             #[cfg(not(windows))]
             ListenerType::NamedPipe(_) => {}

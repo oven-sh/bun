@@ -404,7 +404,9 @@ impl Stringifier {
             }
 
             if lockfile.overrides.map.count() > 0 {
-                lockfile.overrides.sort(lockfile);
+                lockfile
+                    .overrides
+                    .sort(lockfile.buffers.string_bytes.as_slice());
 
                 Self::write_indent(writer, indent)?;
                 writer.write_all(b"\"overrides\": {\n")?;

@@ -416,13 +416,9 @@ impl Default for CompileResult {
     }
 }
 
-/// `bundle_v2.zig:genericPathWithPrettyInitialized` — public copy of the body
-/// in `bundle_v2::__phase_a_draft` (private module). This assigns a concise,
+/// `bundle_v2.zig:genericPathWithPrettyInitialized` — assigns a concise,
 /// predictable, and unique `.pretty` attribute to a Path. DevServer relies on
 /// pretty paths for identifying modules, so they must be unique.
-///
-/// PORT NOTE: duplicated here so `LinkerContext::path_with_pretty_initialized`
-/// resolves; collapses to a re-export once `__phase_a_draft` un-gates.
 ///
 /// PORT NOTE: signature uses `bun_logger::fs::Path` (the type stored on
 /// `Logger::Source.path`, which is what every caller passes) rather than
@@ -446,12 +442,18 @@ pub fn generic_path_with_pretty_initialized(
     // `dupe_alloc_fix_pretty` (which interns to `FilenameStore`) is reachable.
     // SAFETY: identical field set (`pretty`/`text`/`namespace`/`name{dir,base,
     // ext,filename}`/`is_disabled`/`is_symlink`); see `bundle_v2::fs_path_to_logger`.
+    // Generic over `'a` so each call site infers a lifetime that admits the
+    // stack-buffer `.pretty` assignment below; the input slices are `'static`
+    // and so outlive any chosen `'a`.
     #[inline]
-    fn to_resolver(p: bun_logger::fs::Path) -> bun_fs::Path<'static> {
-        unsafe { core::mem::transmute::<bun_logger::fs::Path, bun_fs::Path<'static>>(p) }
+    fn to_resolver<'a>(p: bun_logger::fs::Path) -> bun_fs::Path<'a> {
+        // SAFETY: identical layout; lifetime narrowing is sound (input is `'static`).
+        unsafe { core::mem::transmute::<bun_logger::fs::Path, bun_fs::Path<'a>>(p) }
     }
     #[inline]
     fn to_logger(p: bun_fs::Path<'static>) -> bun_logger::fs::Path {
+        // SAFETY: identical layout; `dupe_alloc_fix_pretty` interns into the
+        // process-static `FilenameStore`, so `'static` is genuine.
         unsafe { core::mem::transmute::<bun_fs::Path<'static>, bun_logger::fs::Path>(p) }
     }
 
@@ -627,13 +629,7 @@ pub mod bun_renamer {
             match self {
                 ChunkRenamer::None => unreachable!("ChunkRenamer not initialized"),
                 ChunkRenamer::Number(r) => bun_js_printer::renamer::Renamer::NumberRenamer(r),
-                // PORT NOTE: `Renamer::MinifyRenamer` now owns `Box<MinifyRenamer>`
-                // (renamer.rs), but `ChunkRenamer` is a long-lived owner that
-                // must hand out a *borrowed* view per print call. Can't move
-                // the Box out of `&mut self`.
-                ChunkRenamer::Minify(_r) => {
-                    todo!("blocked_on: Renamer::MinifyRenamer takes Box (owned), need borrowed view")
-                }
+                ChunkRenamer::Minify(r) => bun_js_printer::renamer::Renamer::MinifyRenamer(r),
             }
         }
     }

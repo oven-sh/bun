@@ -404,26 +404,22 @@ impl Glob {
         };
 
         incr_pending_activity_flag(&self.has_pending_activity);
-        let _task = match WalkTask::create(global_this, glob_walker, &self.has_pending_activity) {
-            Ok(t) => t,
-            Err(_) => {
-                decr_pending_activity_flag(&self.has_pending_activity);
-                // TODO(port): Zig also called `globWalker.deinit(true); alloc.destroy(globWalker)` here.
-                // In Rust, `glob_walker` was moved into `WalkTask::create`; if create() fails it must
-                // drop it internally. Verify bun_jsc::ConcurrentPromiseTask::create_on_js_thread.
-                return Err(global_this.throw_out_of_memory());
-            }
-        };
-        // TODO(port): lifetime — WalkTask<'a> borrows &self.has_pending_activity and
-        // global_this but outlives this stack frame (scheduled on thread pool).
-        // Phase B: likely needs raw `*const AtomicUsize` / `*const JSGlobalObject`
-        // despite LIFETIMES.tsv classification, since the task is heap-allocated and
-        // kept alive by hasPendingActivity().
-        //
-        // `bun_jsc::ConcurrentPromiseTask` is currently a non-generic `stub_ty!`
-        // placeholder with no `schedule()` / `.promise` — restore once the real
-        // generic task type is re-exported.
-        todo!("blocked_on: bun_jsc::ConcurrentPromiseTask::schedule / .promise")
+        // PORT NOTE: Zig's `WalkTask.create(...) catch { decr; deinit; throwOOM }`
+        // path is unreachable in Rust — `Box::new` panics on OOM and
+        // `create_on_js_thread` is otherwise infallible.
+        let mut task = WalkTask::create(global_this, glob_walker, &self.has_pending_activity);
+        task.schedule();
+
+        let promise_value = task.promise.value();
+        // SAFETY: ownership of the heap-allocated task transfers to the
+        // thread-pool → event-loop chain. The intrusive `WorkPoolTask` /
+        // `ConcurrentTask` fields keep it reachable until dispatch reclaims it
+        // via `AsyncGlobWalkTask::destroy()` (see `runtime/dispatch.rs`).
+        // The borrowed `&self.has_pending_activity` / `global_this` inside the
+        // task remain valid for that duration because the JS `Glob` wrapper is
+        // held live via `hasPendingActivity()` until `run()` decrements it.
+        let _ = Box::into_raw(task);
+        Ok(promise_value)
     }
 
     #[bun_jsc::host_fn(method)]

@@ -511,10 +511,12 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             // Downgrade the JSRef so the wrapper is GC-eligible, and mark
             // finalized so onReaderDone skips the JS exit callback — the user
             // never received this terminal (spawn threw).
-            if let Some(_info) = terminal_info.take() {
-                // TODO(port): Terminal body is gated; teardown (`this_value.downgrade()`,
-                // `flags.finalized = true`, `close_internal()`) lands once
-                // `bun_terminal_body` is un-gated.
+            if let Some(info) = terminal_info.take() {
+                // SAFETY: `terminal` was produced by `Terminal::create_from_spawn`
+                // and is still live (one strong ref held by the JS wrapper);
+                // mutate via the intrusive ptr.
+                unsafe { (*info.terminal.data.as_ptr()).abandon_from_spawn() };
+                info.terminal.deref();
                 let _ = _info;
             }
         },
@@ -1148,8 +1150,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         stdio_pipes: core::mem::take(&mut spawned_extra_pipes),
         ipc_data: None,
         flags: if IS_SYNC { Subprocess::Flags::IS_SYNC } else { Subprocess::Flags::empty() },
-        // PORT NOTE: `bun_core::SignalCode` (repr(u8) enum) → `bun_sys::SignalCode(u8)`.
-        kill_signal: bun_sys::SignalCode(kill_signal as u8),
+        kill_signal,
         stderr_maxbuf: None,
         stdout_maxbuf: None,
         terminal: existing_terminal

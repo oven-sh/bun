@@ -371,8 +371,7 @@ impl SubscriptionCtx {
         }
 
         if let Some(parent_this) = self.parent().this_value.try_get() {
-            ParentJS::gc_set(
-                ParentJS::SubscriptionCallbackMap,
+            ParentJS::subscription_callback_map_set_cached(
                 parent_this,
                 global_object,
                 JSValue::UNDEFINED,
@@ -405,8 +404,7 @@ pub struct JSValkeyClient {
 }
 
 // Codegen alias: `pub const js = jsc.Codegen.JSRedisClient;`
-// TODO(b2-blocked): swap to `jsc::codegen::JSRedisClient` once generate-classes.ts emits .rs.
-pub type Js = codegen_stub::JSRedisClient;
+pub use js as Js;
 // `toJS`/`fromJS`/`fromJSDirect` are provided by the hand-rolled `JsClass` impl in mod.rs.
 
 // `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` → intrusive refcount.

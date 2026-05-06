@@ -235,23 +235,20 @@ mod static_adapters {
 
     pub fn listener_connect(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         let args = cf.arguments_old::<1>();
-        let _opts = if args.len >= 1 { args.ptr[0] } else { JSValue::UNDEFINED };
-        let _ = g;
-        todo!("blocked_on: crate::socket::Listener::connect")
+        let opts = if args.len >= 1 { args.ptr[0] } else { JSValue::UNDEFINED };
+        crate::socket::Listener::connect(g, opts)
     }
 
     pub fn listener_listen(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         let args = cf.arguments_old::<1>();
-        let _opts = if args.len >= 1 { args.ptr[0] } else { JSValue::UNDEFINED };
-        let _ = g;
-        todo!("blocked_on: crate::socket::Listener::listen")
+        let opts = if args.len >= 1 { args.ptr[0] } else { JSValue::UNDEFINED };
+        crate::socket::Listener::listen(g, opts)
     }
 
     pub fn udp_socket(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         let args = cf.arguments_old::<1>();
-        let _opts = if args.len >= 1 { args.ptr[0] } else { JSValue::UNDEFINED };
-        let _ = g;
-        todo!("blocked_on: crate::socket::udp_socket::UDPSocket::udp_socket")
+        let opts = if args.len >= 1 { args.ptr[0] } else { JSValue::UNDEFINED };
+        crate::socket::udp_socket::UDPSocket::udp_socket(g, opts)
     }
 
     pub fn subprocess_spawn(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
@@ -268,29 +265,33 @@ mod static_adapters {
         crate::api::js_bun_spawn_bindings::spawn_sync(g, a0, a1)
     }
 
-    // Shims for export-table targets whose real bodies live behind private
-    // `_jsc_gated` mods in sibling files.
-    pub fn js_bundler_build(_g: &JSGlobalObject, _cf: &CallFrame) -> JsResult<JSValue> {
-        todo!("blocked_on: crate::api::JSBundler::build_fn (gated under private _jsc_gated)")
-    }
-    pub fn parsed_shell_script_create(_g: &JSGlobalObject, _cf: &CallFrame) -> JsResult<JSValue> {
-        todo!("blocked_on: crate::shell::ParsedShellScript::create_parsed_shell_script")
-    }
-    pub fn shell_interpreter_create(_g: &JSGlobalObject, _cf: &CallFrame) -> JsResult<JSValue> {
-        todo!("blocked_on: crate::shell::Interpreter::create_shell_interpreter")
-    }
-    pub fn static_hasher_getter(_g: &JSGlobalObject, _o: &JSObject) -> JSValue {
-        // `Crypto::{MD4..SHA512_256}::getter` require `StaticHasher` impls for
-        // `bun_sha_hmac::*`, which in turn need `Default` (orphan-rule blocked).
-        todo!("blocked_on: crate::crypto::StaticHasher impls for bun_sha_hmac::*")
+    pub fn js_bundler_build(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+        crate::api::js_bundler::JSBundler::build_fn(g, cf)
     }
 
-    pub fn sha(_g: &JSGlobalObject, _cf: &CallFrame) -> JsResult<JSValue> {
-        // wrapStaticMethod(Crypto.SHA512_256, "hash_", true) decodes
-        // (BlobOrStringOrBuffer, ?StringOrBuffer) with auto-protect; that
-        // decode table lives in the unwritten `#[bun_jsc::host_fn(static)]`
-        // proc-macro.
-        todo!("blocked_on: bun_jsc::host_fn::wrap_static_method (BlobOrStringOrBuffer decode)")
+    /// `Bun.sha(input, output?)` — `wrapStaticMethod(Crypto.SHA512_256, "hash_", true)`
+    /// decodes `(BlobOrStringOrBuffer, ?StringOrBuffer)` with auto-protect.
+    pub fn sha(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+        use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
+        let args = cf.arguments_old::<2>();
+        let a0 = if args.len >= 1 { args.ptr[0] } else { JSValue::UNDEFINED };
+        let a1 = if args.len >= 2 { args.ptr[1] } else { JSValue::UNDEFINED };
+        // auto_protect = true
+        a0.protect();
+        a1.protect();
+        let _unprotect = scopeguard::guard((a0, a1), |(a0, a1)| {
+            a0.unprotect();
+            a1.unprotect();
+        });
+        let Some(input) = BlobOrStringOrBuffer::from_js(g, a0)? else {
+            return Err(g.throw_invalid_arguments("expected blob or string or buffer"));
+        };
+        let output = if a1.is_undefined_or_null() {
+            None
+        } else {
+            StringOrBuffer::from_js(g, a1)?
+        };
+        Crypto::SHA512_256::hash_(g, input, output)
     }
 }
 

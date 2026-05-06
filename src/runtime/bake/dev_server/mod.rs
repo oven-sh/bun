@@ -767,11 +767,76 @@ impl HotReloadEvent {
         // TODO(b2): handle `maybe_sub_path` once `extra_files` consumer is un-gated.
     }
 
-    /// Spec DevServer.zig `HotReloadEvent.run` — main-thread side of the
-    /// watcher → DevServer hand-off. Full body lives in the gated draft
-    /// (calls `DevServer::on_hot_reload_event` which touches the bundler).
-    pub fn run(_this: &mut HotReloadEvent) {
-        todo!("blocked_on: bake::DevServer::on_hot_reload_event")
+    /// `HotReloadEvent.run` — HotReloadEvent.zig:173. Main-thread side of the
+    /// watcher → DevServer hand-off.
+    pub fn run(first: &mut HotReloadEvent) {
+        // SAFETY: `owner` is a BACKREF to the live `Box<DevServer>`.
+        let dev = unsafe { &mut *(first.owner as *mut DevServer) };
+        debug_assert!(dev.magic == Magic::Valid);
+        bun_core::scoped_log!(DevServer, "HMR Task start");
+
+        #[cfg(debug_assertions)]
+        {
+            debug_assert!(first.debug_mutex.try_lock());
+            debug_assert!(first.contention_indicator.load(Ordering::SeqCst) == 0);
+        }
+
+        if dev.current_bundle.is_some() {
+            dev.next_bundle.reload_event = Some(first as *mut HotReloadEvent);
+            return;
+        }
+
+        // PERF(port): was stack-fallback (4096) — `EntryPointList` uses the
+        // global allocator; revisit if profiling shows churn.
+        let mut entry_points = EntryPointList::default();
+
+        first.process_file_list(dev, &mut entry_points);
+
+        let timer = first.timer;
+
+        let mut current = first as *mut HotReloadEvent;
+        loop {
+            // SAFETY: `current` came from either `first` or `recycle_event_from_dev_server`,
+            // both of which yield a live element of `dev.watcher_atomics.events`.
+            unsafe { (*current).process_file_list(dev, &mut entry_points) };
+            match dev.watcher_atomics.recycle_event_from_dev_server(current) {
+                Some(next) => {
+                    current = next;
+                    #[cfg(debug_assertions)]
+                    // SAFETY: `current` is a live element of `events[]`.
+                    unsafe {
+                        debug_assert!((*current).debug_mutex.try_lock());
+                    }
+                }
+                None => break,
+            }
+        }
+
+        if entry_points.set.count() == 0 {
+            bun_core::scoped_log!(DevServer, "HMR Task end");
+            return;
+        }
+
+        match &mut dev.testing_batch_events {
+            TestingBatchEvents::Disabled => {}
+            TestingBatchEvents::Enabled(ev) => {
+                bun_core::handle_oom(ev.append(&entry_points));
+                dev.publish(
+                    HmrTopic::TestingWatchSynchronization,
+                    &[MessageId::TestingWatchSynchronization.char(), 1],
+                    bun_uws::Opcode::BINARY,
+                );
+                bun_core::scoped_log!(DevServer, "HMR Task end");
+                return;
+            }
+            TestingBatchEvents::EnableAfterBundle => debug_assert!(false),
+        }
+
+        if let Err(err) = dev.start_async_bundle(entry_points, true, timer) {
+            // Zig: bun.handleErrorReturnTrace + return
+            let _ = err;
+        }
+        bun_core::scoped_log!(DevServer, "HMR Task end");
     }
 }
 

@@ -1702,7 +1702,9 @@ pub fn init(
 
     env.load_process()?;
     // Zig: `try env.load(entries_option.entries, &[_][]u8{}, .production, false)`.
-    env.load(entries_option, &[], dot_env::DotEnvFileSuffix::Production, false)?;
+    // PORT NOTE: explicit reborrow — `&'static mut` does not auto-reborrow, and
+    // `entries_option` is reused below as `manager.root_dir`.
+    env.load(&mut *entries_option, &[], dot_env::DotEnvFileSuffix::Production, false)?;
 
     initialize_store();
 

@@ -218,26 +218,34 @@ impl Address {
         }
     }
 
-    pub fn connect(
+    /// Spec valkey.zig `Address.connect` — open a TCP/TLS/Unix socket via
+    /// `uws::Socket{TLS,TCP}::connect_*_group`.
+    ///
+    /// `Owner` is the userdata pointer stashed in the socket ext (the
+    /// `JSValkeyClient` parent in practice — that's what `SocketHandler<SSL>`
+    /// pulls back out on event dispatch).
+    pub fn connect<Owner>(
         &self,
-        client: &mut ValkeyClient,
-        group: &mut SocketGroup,
-        ssl_ctx: Option<&mut SslCtx>,
+        client: *mut Owner,
+        group: *mut SocketGroup,
+        ssl_ctx: Option<*mut SslCtx>,
         is_tls: bool,
     ) -> Result<AnySocket, bun_core::Error> {
         // TODO(port): narrow error set
         // PORT NOTE: Zig used `switch (is_tls) { inline else => |tls| ... }` to comptime-dispatch
         // SocketTLS vs SocketTCP. Expanded to runtime if/else.
         // PERF(port): was comptime bool dispatch — profile in Phase B
-        let ssl_ctx_ptr: Option<*mut SslCtx> = ssl_ctx.map(|r| r as *mut SslCtx);
+        // SAFETY: `group` is the per-VM `SocketGroup` from `RareData`, alive
+        // for the connection lifetime; caller obtains it just before this call.
+        let group = unsafe { &mut *group };
         if is_tls {
             let kind = SocketKind::ValkeyTls;
             let sock = match self {
                 Address::Unix(path) => {
-                    uws::SocketTLS::connect_unix_group(group, kind, ssl_ctx_ptr, path, client, false)?
+                    uws::SocketTLS::connect_unix_group(group, kind, ssl_ctx, path, client, false)?
                 }
                 Address::Host { host, port } => {
-                    uws::SocketTLS::connect_group(group, kind, ssl_ctx_ptr, host, i32::from(*port), client, false)?
+                    uws::SocketTLS::connect_group(group, kind, ssl_ctx, host, i32::from(*port), client, false)?
                 }
             };
             Ok(AnySocket::SocketTls(sock))
@@ -245,10 +253,10 @@ impl Address {
             let kind = SocketKind::Valkey;
             let sock = match self {
                 Address::Unix(path) => {
-                    uws::SocketTCP::connect_unix_group(group, kind, ssl_ctx_ptr, path, client, false)?
+                    uws::SocketTCP::connect_unix_group(group, kind, ssl_ctx, path, client, false)?
                 }
                 Address::Host { host, port } => {
-                    uws::SocketTCP::connect_group(group, kind, ssl_ctx_ptr, host, i32::from(*port), client, false)?
+                    uws::SocketTCP::connect_group(group, kind, ssl_ctx, host, i32::from(*port), client, false)?
                 }
             };
             Ok(AnySocket::SocketTcp(sock))

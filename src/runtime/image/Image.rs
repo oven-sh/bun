@@ -1168,9 +1168,21 @@ impl Image {
             // store would otherwise fall through to `pin_for_task`'s `.blob =>
             // unreachable`. (The Strong-held wrapper makes that nominally
             // unreachable, but this path should throw, not abort, when it isn't.)
-            // TODO(port): Blob store/pathlike field access — verify shape.
-            let _ = blob;
-            todo!("blocked_on: webcore::blob::Store data/file/pathlike field shape");
+            if let Some(store) = &blob.store {
+                if let blob_store::Data::File(file) = &store.data {
+                    if let PathOrFileDescriptor::Path(path) = &file.pathlike {
+                        let p = ZBox::from_bytes(path.slice());
+                        // `Source::Blob`'s `Strong` Drop releases the JS ref.
+                        self.source = Source::Path(p);
+                    } else {
+                        return Err(global.throw(REFUSE));
+                    }
+                } else {
+                    return Err(global.throw(REFUSE));
+                }
+            } else {
+                return Err(global.throw(REFUSE));
+            }
         }
         let input = match self.pin_for_task(this_value, global) {
             Ok(i) => i,

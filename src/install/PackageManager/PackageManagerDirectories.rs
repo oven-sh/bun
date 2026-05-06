@@ -936,10 +936,11 @@ pub fn save_lockfile(
     }
 
     if log_level.show_progress() {
-        save_node.unwrap().end();
+        // SAFETY: `save_node` was set in the matching `show_progress()` branch
+        // above and points into `this.progress.root`.
+        unsafe { (*save_node).end() };
         this.progress.refresh();
-        // PORT NOTE: Zig calls `progress.root.end()`; the shim's root is private
-        // and `end()` is a no-op, so dropping via Default reset is equivalent.
+        this.progress.root.end();
         this.progress = Default::default();
     } else if log_level != LogLevel::Silent {
         Output::pretty_errorln(format_args!("Saved lockfile"));

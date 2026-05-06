@@ -48,12 +48,133 @@ pub enum CmdState {
 pub enum Exec {
     None,
     Builtin(Box<Builtin>),
-    // TODO(b2-blocked): Subprocess — bun_spawn / shell::subproc gated.
-    Subproc(*mut ()),
+    Subproc(Box<SubprocExec>),
 }
 
 impl Default for Exec {
     fn default() -> Self { Exec::None }
+}
+
+/// Spec: Cmd.zig `Exec.subproc` anonymous struct.
+pub struct SubprocExec {
+    pub child: *mut ShellSubprocess,
+    pub buffered_closed: BufferedIoClosed,
+    /// NodeId-arena backrefs so the legacy `&mut self` subprocess callbacks
+    /// (`buffered_output_close` / `on_exit`) can hand a [`Yield`] back to the
+    /// trampoline. The Zig version called `this.next().run()` directly; here
+    /// the `Cmd` lives inside `interp.nodes`, so we stash the indices and
+    /// return `Yield::Next(this_id)` for the caller (`PipeReader::run_yield`)
+    /// to drive.
+    pub interp: *mut Interpreter,
+    pub this_id: NodeId,
+}
+
+/// Spec: Cmd.zig `BufferedIoClosed`.
+///
+/// Tracks which subprocess stdio pipes are still open. Each `Option` is `None`
+/// if that fd was *not* piped (e.g. inherited / fd-backed), so it never gates
+/// completion. `Some(state)` means it was piped and must reach `Closed` before
+/// [`Cmd::has_finished`] returns true.
+#[derive(Default)]
+pub struct BufferedIoClosed {
+    pub stdin: Option<bool>,
+    pub stdout: Option<BufferedIoState>,
+    pub stderr: Option<BufferedIoState>,
+}
+
+#[derive(Default)]
+pub enum BufferedIoState {
+    #[default]
+    Open,
+    Closed(ByteList),
+}
+
+impl BufferedIoState {
+    #[inline]
+    pub fn closed(&self) -> bool { matches!(self, BufferedIoState::Closed(_)) }
+}
+
+impl Drop for BufferedIoState {
+    fn drop(&mut self) {
+        // Spec `BufferedIoState.deinit`: the closed buffer was taken via
+        // `PipeReader.take_buffer()`; we own it regardless of the original
+        // stdio variant. `ByteList`'s own Drop frees the storage.
+        if let BufferedIoState::Closed(list) = self {
+            list.clear_and_free();
+        }
+    }
+}
+
+impl BufferedIoClosed {
+    /// Spec: `BufferedIoClosed.fromStdio`.
+    pub fn from_stdio(io: &[Stdio; 3]) -> Self {
+        const STDIN_NO: usize = 0;
+        const STDOUT_NO: usize = 1;
+        const STDERR_NO: usize = 2;
+        Self {
+            stdin: if io[STDIN_NO].is_piped() { Some(false) } else { None },
+            stdout: if io[STDOUT_NO].is_piped() { Some(BufferedIoState::Open) } else { None },
+            stderr: if io[STDERR_NO].is_piped() { Some(BufferedIoState::Open) } else { None },
+        }
+    }
+
+    /// Spec: `BufferedIoClosed.allClosed`.
+    pub fn all_closed(&self) -> bool {
+        let stdin_closed = self.stdin.unwrap_or(true);
+        let stdout_closed = self.stdout.as_ref().map_or(true, BufferedIoState::closed);
+        let stderr_closed = self.stderr.as_ref().map_or(true, BufferedIoState::closed);
+        let ret = stdin_closed && stdout_closed && stderr_closed;
+        log!(
+            "BufferedIOClosed all_closed={} stdin={} stdout={} stderr={}",
+            ret,
+            stdin_closed,
+            stdout_closed,
+            stderr_closed
+        );
+        ret
+    }
+
+    /// Spec: `BufferedIoClosed.close` `.stdin` arm.
+    pub fn close_stdin(&mut self) {
+        self.stdin = Some(true);
+    }
+
+    /// Spec: `BufferedIoClosed.close` `.stdout`/`.stderr` arms.
+    ///
+    /// `readable` is the subprocess's `stdout`/`stderr` `Readable`; if it was
+    /// a pipe its buffered bytes are taken (ownership moves into
+    /// `state.Closed`) and, if the shell-side IO is `.pipe` and the AST
+    /// redirect didn't send this stream elsewhere, also tee'd into the
+    /// command-substitution aggregate buffer.
+    fn close_out(
+        slot: &mut Option<BufferedIoState>,
+        readable: &mut Readable,
+        io_is_pipe: bool,
+        redirects_elsewhere: bool,
+        shell_buf: *mut ByteList,
+    ) {
+        let Some(state) = slot.as_mut() else { return };
+        let Readable::Pipe(pipe) = readable else {
+            // Not a pipe: nothing to capture. Mark closed with an empty
+            // buffer so `all_closed()` is satisfied.
+            *state = BufferedIoState::Closed(ByteList::default());
+            return;
+        };
+        // If the shell state is piped (inside a cmd substitution) aggregate
+        // the output of this command.
+        if io_is_pipe && !redirects_elsewhere && !shell_buf.is_null() {
+            let the_slice = pipe.slice();
+            // SAFETY: `shell_buf` points into `ShellExecEnv::_buffered_*`,
+            // which the owning Cmd's `base.shell` keeps live for the duration
+            // of the command. Single-threaded.
+            bun_core::handle_oom(unsafe { (*shell_buf).append_slice(the_slice) });
+        }
+        // SAFETY: `Arc<PipeReader>` interior mutability — the shell is
+        // single-threaded and this is the same pattern `subproc::on_close_io`
+        // uses to take the done buffer.
+        let buffer = unsafe { &mut *(std::sync::Arc::as_ptr(pipe).cast_mut()) }.take_buffer();
+        *state = BufferedIoState::Closed(ByteList::move_from_list(buffer));
+    }
 }
 
 impl Cmd {
@@ -74,6 +195,7 @@ impl Cmd {
             redirection_fd: None,
             exec: Exec::None,
             exit_code: None,
+            spawn_arena_freed: false,
         }))
     }
 

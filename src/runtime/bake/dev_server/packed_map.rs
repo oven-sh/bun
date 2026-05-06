@@ -1,19 +1,14 @@
 //! `DevServer.PackedMap` — compact source-map slice (VLQ mappings + line
 //! count) shared between `IncrementalGraph` files and `SourceMapStore`
-//! entries. Full body (`from_chunk`, `Shared::ref_/deref_`) lives in the
-//! gated `../DevServer/PackedMap.rs` draft.
+//! entries. Body lives in `../DevServer/PackedMap.rs` (mounted as
+//! `super::packed_map_body`); this module re-exports its types so the
+//! un-gated `incremental_graph` / `source_map_store` agree on `Shared`.
 
-/// Line count newtype (mappings are 1-based; `0` = no mapping).
-#[repr(transparent)]
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Default)]
-pub struct LineCount(pub u32);
+pub use super::packed_map_body::{EndState, LineCount, PackedMap, Shared};
 
-pub struct PackedMap {
-    pub vlq: Box<[u8]>,
-    pub end_state: bun_sourcemap::SourceMapState,
-    pub line_count: LineCount,
+// `Shared` needs `Default` for `incremental_graph::File::default()` (slot is
+// always overwritten on `!found_existing`); the body draft doesn't derive it.
+impl Default for Shared {
+    #[inline]
+    fn default() -> Self { Shared::None }
 }
-
-/// `PackedMap.Shared` — intrusive `Rc<PackedMap>` (Zig used `RefCount(...)`;
-/// non-FFI, so plain `Rc`).
-pub type Shared = Option<std::rc::Rc<PackedMap>>;

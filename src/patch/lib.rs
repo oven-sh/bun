@@ -443,10 +443,18 @@ fn apply_patch(
     sys::Result::Ok(())
 }
 
-fn read_file_alloc(dir: Fd, path: &ZStr, _max: usize) -> sys::Result<Vec<u8>> {
-    // PORT NOTE: Zig used `dir.stdDir().readFileAlloc(alloc, path, max)`. The
-    // `max` cap (4 GiB at the only call site) is not exposed by
-    // `bun_sys::File::read_from`; Phase B can add a capped variant if needed.
+fn read_file_alloc(dir: Fd, path: &ZStr, max: usize) -> sys::Result<Vec<u8>> {
+    // PORT NOTE: Zig's `std.fs.Dir.readFileAlloc` opens, fstats, allocates
+    // `min(size, max)` and errors `error.FileTooBig` past `max`. Enforce the
+    // same cap so a pathological multi-GiB target file errors instead of
+    // allocating unboundedly. (`error.FileTooBig` would surface as `.INVAL` at
+    // the only call site anyway, so we map it to EINVAL here.)
+    let stat = sys::fstatat(dir, path)?;
+    if stat.st_size as u64 > max as u64 {
+        return sys::Result::Err(
+            sys::Error::from_code(sys::E::EINVAL, sys::Tag::read).with_path(path.as_bytes()),
+        );
+    }
     sys::File::read_from(dir, path)
 }
 

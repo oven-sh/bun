@@ -31,14 +31,12 @@ impl JSValueZstdExt for JSValue {
     }
 }
 
-// TODO(port): codegen — jsc.Codegen.JSNativeZstd cached-property setters are
-// emitted by generate-classes.ts. Stubbed here until the .classes.ts codegen
-// path is wired for the Rust port (mirrors NativeZlib.rs / NativeBrotli.rs).
+// `jsc.Codegen.JSNativeZstd` cached-property accessors — wraps the
+// `NativeZstdPrototype__${prop}{Get,Set}CachedValue` C++ symbols emitted by
+// `src/codegen/generate-classes.ts` for `values: [...]` in `zlib.classes.ts`.
+#[allow(unused)]
 mod js {
-    use super::*;
-    pub(super) fn write_callback_set_cached(_this: JSValue, _global: &JSGlobalObject, _cb: JSValue) {
-        // generated: JSNativeZstd.writeCallbackSetCached
-    }
+    bun_jsc::codegen_cached_accessors!("NativeZstd"; writeCallback, errorCallback, dictionary);
 }
 
 /// Placeholder WorkPoolTask callback — overwritten by CompressionStream::write
@@ -521,11 +519,15 @@ impl CompressionStreamImpl for NativeZstd {
     }
 
     // Per-class codegen accessors (`jsc.Codegen.JSNativeZstd.*GetCached/SetCached`).
-    // TODO(port): wire to generated `JSNativeZstd` cached-property storage once
-    // .classes.ts codegen emits Rust shims (mirrors NativeBrotli.rs / NativeZlib.rs).
-    fn write_callback_get_cached(_this_value: JSValue) -> Option<JSValue> { None }
-    fn error_callback_get_cached(_this_value: JSValue) -> Option<JSValue> { None }
-    fn error_callback_set_cached(_this_value: JSValue, _global: &JSGlobalObject, _cb: JSValue) {}
+    fn write_callback_get_cached(this_value: JSValue) -> Option<JSValue> {
+        js::write_callback_get_cached(this_value)
+    }
+    fn error_callback_get_cached(this_value: JSValue) -> Option<JSValue> {
+        js::error_callback_get_cached(this_value)
+    }
+    fn error_callback_set_cached(this_value: JSValue, global: &JSGlobalObject, cb: JSValue) {
+        js::error_callback_set_cached(this_value, global, cb)
+    }
 }
 } // mod _impl
 

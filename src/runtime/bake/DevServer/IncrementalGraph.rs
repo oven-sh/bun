@@ -2184,6 +2184,9 @@ impl<S: GraphSide> IncrementalGraph<S> {
             },
         }
 
+        // PORT NOTE: reshaped for borrowck — clone the interned key before
+        // `owner()` takes a unique borrow of `self`.
+        let key_owned = self.bundled_files.keys()[gop_index].clone();
         let dev = self.owner();
 
         let fail_owner: FailureOwner = match S::SIDE {
@@ -2193,14 +2196,37 @@ impl<S: GraphSide> IncrementalGraph<S> {
         // TODO: DevServer should get a stdio manager which can process
         // the error list as it changes while also supporting a REPL
         let _ = log.print(Output::error_writer() as *mut _);
-        let _ = (dev, fail_owner, gop_index, &log.msgs);
-        // TODO(port): blocked_on: dev_server::DevServer::relative_path / SerializedFailure::init_from_log dispatch
-        //   `init_from_log` exists on `serialized_failure_body::SerializedFailure` but
-        //   takes `&mut dev_server_body::DevServer<'_>`, while `dev` here is the
-        //   keystone `dev_server::DevServer`. Also `bundling_failures.get_or_put`
-        //   requires `SerializedFailure: Default`.
-        todo!("blocked_on: dev_server::DevServer::relative_path");
-        #[allow(unreachable_code)]
+
+        let owner_packed =
+            serialized_failure::OwnerPacked::new(S::SIDE, ig::FileIndex::init(file_index.get()));
+        let failure = {
+            let mut relative_path_buf = path_buffer_pool::get();
+            // this string is just going to be memcpy'd into the log buffer
+            let owner_display_name = dev.relative_path(&mut relative_path_buf, &key_owned);
+            let body = serialized_failure_body::SerializedFailure::init_from_log(
+                dev,
+                fail_owner,
+                owner_display_name,
+                &log.msgs,
+            )?;
+            serialized_failure::SerializedFailure { owner: owner_packed, data: body.data }
+        };
+        // PORT NOTE: keystone `bundling_failures` is keyed by `OwnerPacked` (Zig
+        // keys by `SerializedFailure` with `ArrayHashContextViaOwner`), so the
+        // value slot holds the failure and `get_or_put` looks up by owner.
+        let fail_gop = dev.bundling_failures.get_or_put(owner_packed)?;
+        // PERF(port): Zig shared the slice header between `bundling_failures`
+        // and `failures_added`; deep-clone here — profile in Phase B.
+        let old = if fail_gop.found_existing {
+            Some(core::mem::replace(fail_gop.value_ptr, failure.clone()))
+        } else {
+            *fail_gop.value_ptr = failure.clone();
+            None
+        };
+        dev.incremental_result.failures_added.push(failure);
+        if let Some(old) = old {
+            dev.incremental_result.failures_removed.push(old);
+        }
         Ok(())
     }
 }

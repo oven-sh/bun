@@ -575,17 +575,22 @@ impl SpawnResult {
 /// Port of `spawnProcess` (process.zig:1493). The full body lives in
 /// `bun_runtime::api::bun::process::spawn_process` because it depends on
 /// `PosixSpawn` FFI bindings and the libuv process loop on Windows, both of
-/// which sit above this crate. A weak dispatch slot is provided here so the
-/// mid-tier callers (`bun_install::lifecycle_script_runner`) can link against
-/// the symbol; `bun_runtime` registers the real impl at startup.
+/// which sit above this crate. Dispatched through [`hooks::SPAWN_PROCESS`]
+/// (PORTING.md §Dispatch — one-shot AtomicPtr hook); `bun_runtime` registers
+/// the real impl at startup so mid-tier callers
+/// (`bun_install::lifecycle_script_runner`) link against this symbol without
+/// the cycle.
 pub fn spawn_process(
-    _options: &SpawnOptions<'_>,
-    _argv: *mut *const c_char,
-    _envp: *const *const c_char,
+    options: &SpawnOptions<'_>,
+    argv: *mut *const c_char,
+    envp: *const *const c_char,
 ) -> Result<bun_sys::Maybe<SpawnResult>, bun_core::Error> {
-    // TODO(port): blocked_on bun_runtime::api::bun::process::spawn_process —
-    // dispatch via `bun_core::dispatch` once the runtime registers the impl.
-    todo!("blocked_on: bun_runtime::api::bun::process::spawn_process dispatch (tier inversion)")
+    let f = hooks::load::<hooks::SpawnProcessFn>(&hooks::SPAWN_PROCESS)?;
+    // SAFETY: `f` was registered by `bun_runtime` with exactly this signature;
+    // `options`/`argv`/`envp` uphold the same invariants the Zig
+    // `spawnProcess` documents (null-terminated argv array, envp may be null
+    // to inherit).
+    unsafe { f(options, argv, envp) }
 }
 
 

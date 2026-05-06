@@ -306,13 +306,21 @@ fn construct_s3_file_internal_store(
     // get credentials from env
     // SAFETY: bun_vm() returns the live VM raw ptr; `transpiler.env` is set during init
     // and live for the VM lifetime.
-    let _existing_credentials =
-        unsafe { (*(*global.bun_vm()).transpiler.env).get_s3_credentials() };
-    let _ = (path, options);
-    // `get_s3_credentials()` yields `&S3Credentials` (intrusive-refcounted, not `Clone`);
-    // `construct_s3_file_with_s3_credentials` wants an owned `S3Credentials`. Phase B
-    // must thread `IntrusiveRc<S3Credentials>` through here.
-    todo!("blocked_on: bun_s3_signing::S3Credentials owned-handle from env (IntrusiveRc/dupe)")
+    let env_creds = unsafe { (*(*global.bun_vm()).transpiler.env).get_s3_credentials() };
+    // PORT NOTE: `env_loader::get_s3_credentials()` returns the local POD mirror
+    // (`bun_dotenv::S3Credentials`); rebuild the real `bun_s3_signing::S3Credentials`
+    // here. Zig returned the struct by value directly.
+    let existing_credentials = s3::S3Credentials::new(
+        Box::from(&*env_creds.access_key_id),
+        Box::from(&*env_creds.secret_access_key),
+        Box::from(&*env_creds.region),
+        Box::from(&*env_creds.endpoint),
+        Box::from(&*env_creds.bucket),
+        Box::from(&*env_creds.session_token),
+        env_creds.insecure_http,
+        false,
+    );
+    construct_s3_file_with_s3_credentials(global, path, options, existing_credentials)
 }
 
 /// if the credentials have changed, we need to clone it, if not we can just ref/deref it

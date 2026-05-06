@@ -1045,10 +1045,11 @@ impl Lockfile {
 
         {
             let mut builder = new.string_builder();
-            old.overrides.count(old, &mut builder);
+            let old_string_buf = old.buffers.string_bytes.as_slice();
+            old.overrides.count(old_string_buf, &mut builder);
             old.catalogs.count(old, &mut builder);
             builder.allocate()?;
-            new.overrides = old.overrides.clone(manager, old, new, &mut builder)?;
+            new.overrides = old.overrides.clone(manager, old_string_buf, &mut builder)?;
             new.catalogs = old.catalogs.clone(manager, old, new, &mut builder)?;
         }
 

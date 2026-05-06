@@ -160,6 +160,44 @@ pub mod js_bundler {
         }
     }
 
+    /// `JSValue.toEnumFromMap` — local shim until `bun_jsc` grows it.
+    /// Mirrors JSValue.zig:1703 `toEnumFromMap`: validates `is_string`, looks
+    /// up via the supplied phf map, and throws "must be one of …" on miss.
+    fn to_enum_from_map<E: Copy>(
+        target: JSValue,
+        global: &JSGlobalObject,
+        property_name: &'static str,
+        map: &'static phf::Map<&'static [u8], E>,
+        one_of: &'static str,
+    ) -> JsResult<E> {
+        if !target.is_string() {
+            return Err(global.throw_invalid_arguments(
+                format_args!("{} must be a string", property_name),
+            ));
+        }
+        match jsc::comptime_string_map_jsc::from_js(map, global, target)? {
+            Some(v) => Ok(v),
+            None => Err(global.throw_invalid_arguments(
+                format_args!("{} must be one of {}", property_name, one_of),
+            )),
+        }
+    }
+
+    /// `JSValue.getOptionalEnum` — local shim until `bun_jsc` grows it.
+    /// Zig: `getTruthy` then `toEnum`.
+    fn get_optional_enum_from_map<E: Copy>(
+        target: JSValue,
+        global: &JSGlobalObject,
+        property_name: &'static str,
+        map: &'static phf::Map<&'static [u8], E>,
+        one_of: &'static str,
+    ) -> JsResult<Option<E>> {
+        match target.get_truthy(global, property_name)? {
+            Some(v) => Ok(Some(to_enum_from_map(v, global, property_name, map, one_of)?)),
+            None => Ok(None),
+        }
+    }
+
     /// `JSValue.getBooleanStrict` — local shim until `bun_jsc` grows it.
     fn get_boolean_strict(
         target: JSValue,
@@ -451,7 +489,10 @@ pub mod js_bundler {
                 );
 
                 // PERF(port): was assume_capacity
-                guard.map.insert(key.into_boxed_slice(), blob_or_string);
+                guard.map.insert(
+                    key.into_boxed_slice(),
+                    scopeguard::ScopeGuard::into_inner(blob_or_string),
+                );
             }
 
             drop(files_iter);

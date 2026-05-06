@@ -1346,9 +1346,9 @@ impl AnyPromiseResultExt for jsc::AnyPromise {
         match self {
             // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
             jsc::AnyPromise::Normal(p) => unsafe { (*p).result(vm) },
-            jsc::AnyPromise::Internal(_p) => {
-                todo!("blocked_on: bun_jsc::JSInternalPromise::result")
-            }
+            // `JSInternalPromise` is a transparent re-export of `JSPromise`
+            // (src/jsc/JSInternalPromise.rs) — same `result` impl.
+            jsc::AnyPromise::Internal(p) => unsafe { (*p).result(vm) },
         }
     }
 }

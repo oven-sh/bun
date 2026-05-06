@@ -714,12 +714,14 @@ pub enum Style {
     JavascriptDefined(Strong),
 }
 
-// PORT NOTE: `bake::FileSystemRouterType` derives `Clone` (Zig copied the struct
-// by value), so `Style` must be `Clone` as well. `bun_jsc::Strong` is a unique
-// GC handle with `Drop` and intentionally has no `Clone` — duplicating it would
-// double-free. The built-in styles are trivially copyable; the JS-defined arm
-// defers until upstream grows a safe clone (or we re-create from the held
-// `JSValue`, which needs a `&JSGlobalObject` we don't have here).
+// PORT NOTE: Zig copies `Style` by value (bitwise), which for the
+// `.javascript_defined` arm shallow-copies the `jsc.Strong.Optional` pointer —
+// both copies alias the same C++ StrongRef and only one `deinit()` is ever
+// called. In Rust `Strong` has `Drop`, so a bitwise copy would double-free.
+// The built-in styles are trivially copyable; the JS-defined arm is an
+// unimplemented feature in the Zig source as well (`Style.parse` does
+// `@panic("TODO: customizable Style")`), so cloning it is unreachable today.
+// Mirror the Zig `@panic` message instead of inventing unsafe aliasing.
 impl Clone for Style {
     fn clone(&self) -> Self {
         match self {
@@ -727,7 +729,8 @@ impl Clone for Style {
             Style::NextjsAppUi => Style::NextjsAppUi,
             Style::NextjsAppRoutes => Style::NextjsAppRoutes,
             Style::JavascriptDefined(_) => {
-                todo!("blocked_on: bun_jsc::Strong::clone")
+                // Matches Zig `Style.parse`: `@panic("TODO: customizable Style")`.
+                panic!("TODO: customizable Style")
             }
         }
     }

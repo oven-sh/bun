@@ -89,6 +89,23 @@ pub mod dirent {
 #[path = "node/node_fs.rs"]
 pub mod fs;
 
+// `fs.watch()` / `fs.watchFile()` backends. `node_fs_watcher` pulls in the
+// platform path-watcher (`path_watcher` on POSIX, `win_watcher` on Windows);
+// `node_fs_stat_watcher` is platform-agnostic. Wired so `node_fs.rs` can
+// route `args::Watch` / `args::WatchFile` to the real `Arguments` types.
+#[cfg(not(windows))]
+#[path = "node/path_watcher.rs"]
+pub mod path_watcher;
+#[cfg(windows)]
+#[path = "node/win_watcher.rs"]
+pub mod win_watcher;
+
+#[path = "node/node_fs_watcher.rs"]
+pub mod node_fs_watcher;
+
+#[path = "node/node_fs_stat_watcher.rs"]
+pub mod node_fs_stat_watcher;
+
 // ─── un-gated in B-2 round 3 (net/zlib/buffer; JSC bodies re-gated inside) ───
 // Type defs + non-JSC FFI bodies are live; every `#[bun_jsc::host_fn]` /
 // `#[bun_jsc::JsClass]` item is wrapped in ` mod _impl` inside

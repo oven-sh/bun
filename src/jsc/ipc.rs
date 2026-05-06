@@ -2076,7 +2076,10 @@ fn handle_ipc_message(
                 let vm = unsafe {
                     &mut *(global_this.bun_vm() as *const _ as *mut VirtualMachine)
                 };
-                vm.event_loop().enter();
+                // SAFETY: `event_loop()` returns the VM-owned `*mut EventLoop`;
+                // it stays live for the duration of the VM. Reborrow per use to
+                // avoid holding `&mut EventLoop` across the call below.
+                unsafe { (*vm.event_loop()).enter() };
                 // TODO(port): errdefer — scopeguard for event_loop().exit()
                 // FD.toJS — `uv()` is the user-visible numeric fd on both
                 // platforms (posix == native, windows == uv_file).
@@ -2085,10 +2088,10 @@ fn handle_ipc_message(
                 if let Err(e) = res {
                     // ack written already, that's okay.
                     global_this.report_active_exception_as_unhandled(e);
-                    vm.event_loop().exit();
+                    unsafe { (*vm.event_loop()).exit() };
                     return;
                 }
-                vm.event_loop().exit();
+                unsafe { (*vm.event_loop()).exit() };
 
                 // ipc_parse will call the callback which calls handleIPCMessage()
                 // we have sent the ack already so the next message could arrive at any time. maybe even before

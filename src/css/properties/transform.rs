@@ -2,7 +2,7 @@
 use bun_alloc::Arena as Bump;
 use bun_string::strings;
 
-use crate::css_properties::{Property, PropertyId};
+use crate::css_properties::{Property, PropertyId, PropertyIdTag};
 use crate::css_values::angle::Angle;
 use crate::css_values::length::{LengthPercentage, LengthValue as Length};
 use crate::css_values::number::CSSNumberFns;
@@ -982,36 +982,9 @@ pub struct TransformHandler {
     pub has_any: bool,
 }
 
-impl TransformHandler {
-    // PORT NOTE: these were silent no-op stubs (handle_property returned `false`,
-    // finalize did nothing) which is the forbidden silent-no-op pattern per
-    // PORTING.md §Forbidden — the spec (transform.zig:1196-1292) does real work
-    // (accumulates TransformList across vendor prefixes, OR-merges prefix bits,
-    // folds translate/rotate/scale into the transform list, flushes on finalize).
-    // Replaced with `todo!()` so the divergence is loud rather than passing
-    // properties through unhandled. Real bodies are gated below; un-gate once
-    // `PropertyHandlerContext::allocator` is restored (box_shadow.rs et al. already
-    // depend on it).
-    #[inline]
-    pub fn handle_property(
-        &mut self,
-        _property: &Property,
-        _dest: &mut DeclarationList<'_>,
-        _context: &mut PropertyHandlerContext<'_>,
-    ) -> bool {
-        todo!("blocked_on: PropertyHandlerContext::allocator (see gated impl below; transform.zig:1196-1260)")
-    }
-    #[inline]
-    pub fn finalize(
-        &mut self,
-        _dest: &mut DeclarationList<'_>,
-        _context: &mut PropertyHandlerContext<'_>,
-    ) {
-        todo!("blocked_on: PropertyHandlerContext::allocator (see gated impl below; transform.zig:1262-1292)")
-    }
-}
-
-#[cfg(any())] // blocked_on: PropertyHandlerContext::allocator field (context.rs dropped it; box_shadow.rs et al. need it too)
+// PORT NOTE: un-gated B-2 round 15 — Property variants + prefixes::Feature are
+// real; `context.allocator` was dropped from PropertyHandlerContext, so the
+// arena is recovered via `dest.bump()` (DeclarationList = bumpalo::Vec).
 impl TransformHandler {
     pub fn handle_property(
         &mut self,
@@ -1019,11 +992,11 @@ impl TransformHandler {
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) -> bool {
+        let bump = dest.bump();
         // PORT NOTE: Zig used a local fn with `comptime field: []const u8` + `@field(self, field)`.
         // Rust cannot index struct fields by string at runtime; use a macro to paste the ident.
         macro_rules! individual_property {
             ($field:ident, $val:expr) => {{
-                let bump = context.allocator;
                 if let Some(transform) = &mut self.transform {
                     transform.0.v.push($val.to_transform(bump));
                 } else {
@@ -1033,8 +1006,6 @@ impl TransformHandler {
             }};
         }
 
-        let bump = context.allocator;
-
         match property {
             Property::Transform(val) => {
                 let transform_val = &val.0;
@@ -1042,10 +1013,15 @@ impl TransformHandler {
 
                 // If two vendor prefixes for the same property have different
                 // values, we need to flush what we have immediately to preserve order.
-                if let Some(current) = &self.transform {
-                    if current.0 != *transform_val && !current.1.contains(vp) {
-                        self.flush(bump, dest, context);
-                    }
+                // PORT NOTE: reshaped for borrowck — Zig held &self.transform across
+                // self.flush(); compute the predicate first, then act.
+                let needs_flush = if let Some(current) = &self.transform {
+                    current.0 != *transform_val && !current.1.contains(vp)
+                } else {
+                    false
+                };
+                if needs_flush {
+                    self.flush(dest, context);
                 }
 
                 // Otherwise, update the value and add the prefix.
@@ -1064,20 +1040,24 @@ impl TransformHandler {
             Property::Rotate(val) => individual_property!(rotate, val),
             Property::Scale(val) => individual_property!(scale, val),
             Property::Unparsed(unparsed) => {
-                if unparsed.property_id == PropertyId::Transform
-                    || unparsed.property_id == PropertyId::Translate
-                    || unparsed.property_id == PropertyId::Rotate
-                    || unparsed.property_id == PropertyId::Scale
-                {
-                    self.flush(bump, dest, context);
-                    let prop = if unparsed.property_id == PropertyId::Transform {
+                if matches!(
+                    unparsed.property_id.tag(),
+                    PropertyIdTag::Transform
+                        | PropertyIdTag::Translate
+                        | PropertyIdTag::Rotate
+                        | PropertyIdTag::Scale
+                ) {
+                    self.flush(dest, context);
+                    let prop = if unparsed.property_id.tag() == PropertyIdTag::Transform {
                         Property::Unparsed(unparsed.get_prefixed(
                             bump,
                             context.targets,
                             prefixes::Feature::Transform,
                         ))
                     } else {
-                        property.deep_clone(bump)
+                        // PORT NOTE: Zig pushed `property.deepClone(allocator)`; the
+                        // matched payload is `Unparsed`, so reconstruct directly.
+                        Property::Unparsed(unparsed.deep_clone(bump))
                     };
                     dest.push(prop);
                 } else {
@@ -1091,16 +1071,14 @@ impl TransformHandler {
     }
 
     pub fn finalize(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
-        self.flush(context.allocator, dest, context);
+        self.flush(dest, context);
     }
 
     fn flush(
         &mut self,
-        bump: &Bump,
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) {
-        let _ = bump;
         if !self.has_any {
             return;
         }

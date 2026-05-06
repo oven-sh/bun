@@ -643,6 +643,17 @@ impl PartialEq for PropertyId {
     }
 }
 
+impl Eq for PropertyId {}
+
+// PORT NOTE: Zig `PropertyId.hash()` (properties_generated.zig:9209) hashes only
+// the tag discriminant so PropertyId can key a hash map consistent with `eql`.
+impl core::hash::Hash for PropertyId {
+    #[inline]
+    fn hash<H: core::hash::Hasher>(&self, h: &mut H) {
+        (self.tag() as u16).hash(h);
+    }
+}
+
 impl PropertyId {
     pub const fn tag(&self) -> PropertyIdTag {
         match self {
@@ -1148,7 +1159,7 @@ impl PropertyId {
             PropertyId::MaskBoxImageRepeat(..) => b"mask-box-image-repeat",
             PropertyId::ColorScheme => b"color-scheme",
             PropertyId::All => b"all",
-            PropertyId::Unparsed => b"",
+            PropertyId::Unparsed => b"unparsed",
             PropertyId::Custom(c) => c.as_str(),
         }
     }
@@ -3474,11 +3485,6 @@ impl Property {
     }
 
     /// Serializes the value (right-hand side) of this declaration.
-    #[cfg(not(any()))] // stub while css::generic::{to_css,parse_with_options} are gated (see generics.rs:730)
-    pub fn value_to_css(&self, _dest: &mut css::Printer) -> Result<(), css::PrintErr> {
-        todo!("blocked_on: generics::parse_tocss_numeric_gated — Property::value_to_css")
-    }
-    #[cfg(any())] // blocked_on: generics::parse_tocss_numeric_gated (css::generic::{to_css,ToCss})
     pub fn value_to_css(&self, dest: &mut css::Printer) -> Result<(), css::PrintErr> {
         match self {
             Property::BackgroundColor(v) => css::generic::to_css(v, dest),
@@ -3734,16 +3740,6 @@ impl Property {
     }
 
     /// Parses a CSS property by name.
-    #[cfg(not(any()))] // stub while css::generic::parse_with_options is gated (see generics.rs:730)
-    pub fn parse(
-        property_id: PropertyId,
-        input: &mut css::Parser,
-        options: &css::ParserOptions,
-    ) -> css::Result<Property> {
-        let _ = (property_id, input, options);
-        todo!("blocked_on: generics::parse_tocss_numeric_gated — Property::parse")
-    }
-    #[cfg(any())] // blocked_on: generics::parse_tocss_numeric_gated (css::generic::{parse_with_options,Parse,ParseWithOptions})
     pub fn parse(
         property_id: PropertyId,
         input: &mut css::Parser,

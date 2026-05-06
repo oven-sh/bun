@@ -16,9 +16,10 @@ unsafe fn arena_str(s: &[u8]) -> &'static [u8] {
 
 // ───────────────────────── DashedIdentReference ──────────────────────────
 // `properties::css_modules::Specifier` is real (parse/to_css/eql/hash); the
-// `from` field below uses it directly. `parse_with_options` is real and honors
-// `ParserOptions.css_modules.dashed_idents`. Only `to_css`'s CSS-Modules
-// remapping branch remains gated on `CssModule::reference_dashed`.
+// `from` field below uses it directly. `parse_with_options` honors
+// `ParserOptions.css_modules.dashed_idents`. `to_css` resolves the
+// import-record path up front and hands it to `CssModule::reference_dashed`
+// (borrowck — see PORT NOTE on that method).
 
 /// A CSS [`<dashed-ident>`](https://www.w3.org/TR/css-values-4/#dashed-idents) reference.
 ///
@@ -81,21 +82,39 @@ impl DashedIdentReference {
         Ok(DashedIdentReference { ident, from })
     }
 
-    #[cfg(any())] // blocked_on: CssModule::reference_dashed (css_modules.rs) — Printer::{css_module, write_dashed_ident} are real now
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        if let Some(css_module) = &mut dest.css_module {
-            if css_module.config.dashed_idents {
-                // SAFETY: arena-owned slice; see DashedIdent.v
-                let ident_v = unsafe { &*self.ident.v };
-                if let Some(name) =
-                    css_module.reference_dashed(dest, ident_v, &self.from, dest.loc.source_index)?
-                {
-                    dest.write_str("--")?;
-                    if css::serializer::serialize_name(name, dest).is_err() {
-                        return Err(dest.add_fmt_error());
-                    }
-                    return Ok(());
+        let dashed_idents = match &dest.css_module {
+            Some(m) => m.config.dashed_idents,
+            None => false,
+        };
+        if dashed_idents {
+            // SAFETY: arena-owned slice; see DashedIdent.v
+            let ident_v = unsafe { &*self.ident.v };
+            let source_index = dest.loc.source_index;
+            let bump = dest.allocator;
+            // PORT NOTE: Zig `referenceDashed` took `*Printer` and called
+            // `dest.importRecord()` internally. Rust borrowck forbids handing
+            // `dest` to a method on `dest.css_module`, so resolve the path
+            // here and pass the slice down. The `?` preserves the Zig
+            // `try dest.importRecord(...)` error path.
+            use crate::properties::css_modules::Specifier;
+            let specifier_path: Option<&[u8]> = match &self.from {
+                Some(Specifier::ImportRecordIndex(idx)) => {
+                    Some(dest.import_record(*idx)?.path.text)
                 }
+                _ => None,
+            };
+            let name = dest
+                .css_module
+                .as_mut()
+                .unwrap()
+                .reference_dashed(bump, ident_v, &self.from, specifier_path, source_index);
+            if let Some(name) = name {
+                dest.write_str(b"--")?;
+                if css::serializer::serialize_name(name, dest).is_err() {
+                    return Err(dest.add_fmt_error());
+                }
+                return Ok(());
             }
         }
         dest.write_dashed_ident(&self.ident, false)
@@ -499,5 +518,5 @@ pub type CustomIdentList = SmallList<CustomIdent, 1>;
 //   source:     src/css/values/ident.zig (324 lines)
 //   confidence: medium
 //   todos:      8
-//   notes:      `v: []const u8` fields use raw *const [u8] (arena-owned) pending 'bump threading; IdentOrRef.hash preserves suspicious Zig 2-byte hash; inherent assoc type alias (HashMap<V>) hoisted to free alias; debug_ident is debug-only (no release stub — Rust compile_error! is eager). DashedIdentReference::parse_with_options is real; to_css gated on CssModule::reference_dashed.
+//   notes:      `v: []const u8` fields use raw *const [u8] (arena-owned) pending 'bump threading; IdentOrRef.hash preserves suspicious Zig 2-byte hash; inherent assoc type alias (HashMap<V>) hoisted to free alias; debug_ident is debug-only (no release stub — Rust compile_error! is eager). DashedIdentReference::{parse_with_options,to_css} un-gated; to_css pre-resolves import-record path for reference_dashed (borrowck reshape).
 // ──────────────────────────────────────────────────────────────────────────

@@ -185,6 +185,207 @@ pub enum CSSWideKeyword {
     RevertLayer,
 }
 
+// ─── generic::{Parse,ToCss,ParseWithOptions} leaf-type registrations ───────
+// `Property::parse` / `Property::value_to_css` (properties_generated.rs)
+// dispatch through `css::generic::{parse_with_options,to_css}`, which require
+// every payload type to implement the protocol traits in `crate::generics`.
+// Each leaf already has inherent `parse` / `to_css` (hand-written or via
+// `#[derive(Parse, ToCss)]` / `#[derive(DefineEnumProperty)]`); the
+// `impl_generic_parse_tocss!` macro forwards to those. Shorthand families that
+// generate their own impls inside their declaring macro (border rect/size,
+// margin_padding rect/size) are not re-listed here.
+mod generic_registrations {
+    use super::*;
+    use crate::css_values;
+    use crate::impl_generic_parse_tocss;
+    use crate::properties::border::GenericBorder;
+
+    // ── crate::values::* leaves ──
+    impl_generic_parse_tocss!(
+        css_values::alpha::AlphaValue,
+        css_values::image::Image,
+        css_values::length::LengthPercentageOrAuto,
+        css_values::length::LengthOrNumber,
+        css_values::length::Length,
+        css_values::length::LengthPercentage,
+        css_values::easing::EasingFunction,
+        css_values::time::Time,
+        css_values::position::Position,
+        css_values::position::HorizontalPosition,
+        css_values::position::VerticalPosition,
+        css_values::percentage::NumberOrPercentage,
+    );
+
+    // CssColor already has `impl generics::ToCss` in `values/color.rs`; supply
+    // `Parse` / `ParseWithOptions` only.
+    impl crate::generics::Parse for css_values::color::CssColor {
+        #[inline]
+        fn parse(input: &mut crate::css_parser::Parser) -> crate::css_parser::CssResult<Self> {
+            css_values::color::CssColor::parse(input)
+        }
+    }
+    impl crate::generics::ParseWithOptions for css_values::color::CssColor {
+        #[inline]
+        fn parse_with_options(
+            input: &mut crate::css_parser::Parser,
+            _o: &crate::css_parser::ParserOptions,
+        ) -> crate::css_parser::CssResult<Self> {
+            css_values::color::CssColor::parse(input)
+        }
+    }
+
+    // ── crate::properties::* leaves with inherent parse/to_css ──
+    impl_generic_parse_tocss!(
+        // align
+        align::AlignContent,
+        align::AlignItems,
+        align::AlignSelf,
+        align::Gap,
+        align::GapValue,
+        align::JustifyContent,
+        align::JustifyItems,
+        align::JustifySelf,
+        align::PlaceContent,
+        align::PlaceItems,
+        align::PlaceSelf,
+        // background
+        background::Background,
+        background::BackgroundAttachment,
+        background::BackgroundClip,
+        background::BackgroundOrigin,
+        background::BackgroundPosition,
+        background::BackgroundRepeat,
+        background::BackgroundSize,
+        // border (non-shorthand leaves)
+        border::LineStyle,
+        border::BorderSideWidth,
+        // border_image / border_radius
+        border_image::BorderImage,
+        border_image::BorderImageRepeat,
+        border_image::BorderImageSlice,
+        border_image::BorderImageSideWidth,
+        border_radius::BorderRadius,
+        // box_shadow
+        box_shadow::BoxShadow,
+        // css_modules
+        css_modules::Composes,
+        // display
+        display::Display,
+        display::Visibility,
+        // flex
+        flex::BoxAlign,
+        flex::BoxDirection,
+        flex::BoxLines,
+        flex::BoxOrient,
+        flex::BoxPack,
+        flex::Flex,
+        flex::FlexDirection,
+        flex::FlexFlow,
+        flex::FlexItemAlign,
+        flex::FlexLinePack,
+        flex::FlexPack,
+        flex::FlexWrap,
+        // font
+        font::Font,
+        font::FontFamily,
+        font::FontSize,
+        font::FontStretch,
+        font::FontStyle,
+        font::FontVariantCaps,
+        font::FontWeight,
+        font::LineHeight,
+        // masking
+        masking::GeometryBox,
+        masking::Mask,
+        masking::MaskBorder,
+        masking::MaskBorderMode,
+        masking::MaskClip,
+        masking::MaskComposite,
+        masking::MaskMode,
+        masking::MaskType,
+        masking::WebKitMaskComposite,
+        masking::WebKitMaskSourceType,
+        // outline
+        outline::OutlineStyle,
+        // overflow
+        overflow::Overflow,
+        overflow::OverflowKeyword,
+        overflow::TextOverflow,
+        // position
+        position::Position,
+        // size
+        size::AspectRatio,
+        size::BoxSizing,
+        size::MaxSize,
+        size::Size,
+        // text
+        text::Direction,
+        text::TextShadow,
+        // transform
+        transform::BackfaceVisibility,
+        transform::Perspective,
+        transform::Rotate,
+        transform::Scale,
+        transform::TransformBox,
+        transform::TransformList,
+        transform::TransformStyle,
+        transform::Translate,
+        // transition
+        transition::Transition,
+        // ui
+        ui::ColorScheme,
+        // wide keyword (`all:`)
+        super::CSSWideKeyword,
+        // PropertyId (used as `SmallList<PropertyId, 1>` for `transition-property`)
+        properties_generated::PropertyId,
+    );
+
+    // `GenericBorder<S, P>` covers Border / BorderTop / … / Outline. The
+    // inherent impl block bounds `S` on the protocol traits; mirror here.
+    impl<S, const P: u8> crate::generics::Parse for GenericBorder<S, P>
+    where
+        GenericBorder<S, P>: GenericBorderImpl,
+    {
+        #[inline]
+        fn parse(input: &mut crate::css_parser::Parser) -> crate::css_parser::CssResult<Self> {
+            <Self as GenericBorderImpl>::parse(input)
+        }
+    }
+    impl<S, const P: u8> crate::generics::ParseWithOptions for GenericBorder<S, P>
+    where
+        GenericBorder<S, P>: GenericBorderImpl,
+    {
+        #[inline]
+        fn parse_with_options(
+            input: &mut crate::css_parser::Parser,
+            _o: &crate::css_parser::ParserOptions,
+        ) -> crate::css_parser::CssResult<Self> {
+            <Self as GenericBorderImpl>::parse(input)
+        }
+    }
+    impl<S, const P: u8> crate::generics::ToCss for GenericBorder<S, P>
+    where
+        GenericBorder<S, P>: GenericBorderImpl,
+    {
+        #[inline]
+        fn to_css(
+            &self,
+            dest: &mut crate::printer::Printer,
+        ) -> ::core::result::Result<(), crate::PrintErr> {
+            <Self as GenericBorderImpl>::to_css(self, dest)
+        }
+    }
+
+    /// Indirection so the `generic::{Parse,ToCss}` impls above don't have to
+    /// repeat `GenericBorder`'s `S`-bounds (which name the same protocol
+    /// traits and would otherwise create a coherence cycle).
+    pub trait GenericBorderImpl: Sized {
+        fn parse(input: &mut crate::css_parser::Parser) -> crate::css_parser::CssResult<Self>;
+        fn to_css(&self, dest: &mut crate::printer::Printer) -> ::core::result::Result<(), crate::PrintErr>;
+    }
+}
+pub(crate) use generic_registrations::GenericBorderImpl;
+
 // ─── Dead code (not ported) ────────────────────────────────────────────────
 // The original Zig file contains ~1800 lines of commented-out code (lines 60–1876)
 // implementing the old `DefineProperties(...)` comptime-reflection approach that

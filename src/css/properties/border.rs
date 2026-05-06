@@ -58,12 +58,11 @@ pub struct GenericBorder<S, const P: u8> {
     pub color: CssColor,
 }
 
-#[cfg(any())] // blocked_on: css::{Parse,ToCss,Eql} traits + CssResult::{result,err,as_value} + CssColor::{parse,to_css,get_fallbacks}
-impl<S, const P: u8> GenericBorder<S, P>
+impl<S, const P: u8> super::GenericBorderImpl for GenericBorder<S, P>
 where
-    S: css::Parse + css::ToCss + css::DeepClone + css::Eql + Default,
+    S: css::generic::Parse + css::generic::ToCss + Default + PartialEq,
 {
-    pub fn parse(input: &mut Parser) -> CssResult<Self> {
+    fn parse(input: &mut Parser) -> CssResult<Self> {
         // Order doesn't matter
         let mut color: Option<CssColor> = None;
         let mut style: Option<S> = None;
@@ -72,14 +71,14 @@ where
 
         loop {
             if width.is_none() {
-                if let Some(value) = input.try_parse(BorderSideWidth::parse).as_value() {
+                if let Ok(value) = input.try_parse(BorderSideWidth::parse) {
                     width = Some(value);
                     any = true;
                 }
             }
 
             if style.is_none() {
-                if let Some(value) = input.try_parse(S::parse).as_value() {
+                if let Ok(value) = input.try_parse(<S as css::generic::Parse>::parse) {
                     style = Some(value);
                     any = true;
                     continue;
@@ -87,7 +86,7 @@ where
             }
 
             if color.is_none() {
-                if let Some(value) = input.try_parse(CssColor::parse).as_value() {
+                if let Ok(value) = input.try_parse(CssColor::parse) {
                     color = Some(value);
                     any = true;
                     continue;
@@ -97,37 +96,40 @@ where
         }
 
         if any {
-            return CssResult::result(Self {
+            return Ok(Self {
                 width: width.unwrap_or(BorderSideWidth::Medium),
-                style: style.unwrap_or_else(S::default),
+                style: style.unwrap_or_default(),
                 color: color.unwrap_or(CssColor::CurrentColor),
             });
         }
 
-        CssResult::err(input.new_custom_error(ParserError::InvalidDeclaration))
+        Err(input.new_custom_error(css::ParserError::invalid_declaration()))
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        if self.eql(&Self::default()) {
-            self.style.to_css(dest)?;
-            return Ok(());
+    fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        let default_style = S::default();
+        if self.width == BorderSideWidth::Medium
+            && self.style == default_style
+            && self.color == CssColor::CurrentColor
+        {
+            return self.style.to_css(dest);
         }
 
         let mut needs_space = false;
-        if !self.width.eql(&BorderSideWidth::default()) {
+        if self.width != BorderSideWidth::default() {
             self.width.to_css(dest)?;
             needs_space = true;
         }
-        if !self.style.eql(&S::default()) {
+        if self.style != default_style {
             if needs_space {
-                dest.write_str(" ")?;
+                dest.write_str(b" ")?;
             }
             self.style.to_css(dest)?;
             needs_space = true;
         }
-        if !self.color.eql(&CssColor::CurrentColor) {
+        if self.color != CssColor::CurrentColor {
             if needs_space {
-                dest.write_str(" ")?;
+                dest.write_str(b" ")?;
             }
             self.color.to_css(dest)?;
             #[allow(unused_assignments)]
@@ -137,7 +139,13 @@ where
         }
         Ok(())
     }
+}
 
+#[cfg(any())] // blocked_on: CssColor::get_fallbacks + S: DeepClone — fallback path
+impl<S, const P: u8> GenericBorder<S, P>
+where
+    S: css::generic::Parse + css::generic::ToCss + Default + PartialEq,
+{
     fn get_fallbacks(&mut self, allocator: &Bump, targets: Targets) -> SmallList<Self, 2> {
         let fallbacks = self.color.get_fallbacks(allocator, targets);
         // PERF(port): was arena bulk-free (fallbacks.deinit) — profile in Phase B

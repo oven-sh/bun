@@ -27,7 +27,27 @@ pub struct BoxShadow {
     pub inset: bool,
 }
 
+// PORT NOTE: `SmallList::{deep_clone,eql,is_compatible}` are bounded on the
+// `generics::{DeepClone,CssEql,IsCompatible}` traits. Wire BoxShadow into all
+// three so the handler can use `SmallList<BoxShadow,1>` directly without
+// hand-rolling per-field loops.
+impl<'bump> css::generic::DeepClone<'bump> for BoxShadow {
+    #[inline]
+    fn deep_clone(&self, bump: &'bump Arena) -> Self { BoxShadow::deep_clone(self, bump) }
+}
+impl css::generic::CssEql for BoxShadow {
+    #[inline]
+    fn eql(&self, other: &Self) -> bool { BoxShadow::eql(self, other) }
+}
+impl css::generic::IsCompatible for BoxShadow {
+    #[inline]
+    fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
+        BoxShadow::is_compatible(self, browsers)
+    }
+}
+
 impl BoxShadow {
+    #[cfg(any())] // blocked_on: Parser::expect_ident_matching(&[u8]) ergonomics + BasicParseErrorKind variant naming
     pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
         let mut color: Option<CssColor> = None;
         struct Lengths {
@@ -106,21 +126,21 @@ impl BoxShadow {
         }
 
         self.x_offset.to_css(dest)?;
-        dest.write_char(' ')?;
+        dest.write_char(b' ')?;
         self.y_offset.to_css(dest)?;
 
         if !self.blur.eql(&Length::zero()) || !self.spread.eql(&Length::zero()) {
-            dest.write_char(' ')?;
+            dest.write_char(b' ')?;
             self.blur.to_css(dest)?;
 
             if !self.spread.eql(&Length::zero()) {
-                dest.write_char(' ')?;
+                dest.write_char(b' ')?;
                 self.spread.to_css(dest)?;
             }
         }
 
         if !self.color.eql(&CssColor::CurrentColor) {
-            dest.write_char(' ')?;
+            dest.write_char(b' ')?;
             self.color.to_css(dest)?;
         }
         Ok(())
@@ -128,13 +148,14 @@ impl BoxShadow {
 
     pub fn deep_clone(&self, allocator: &Arena) -> Self {
         // PORT NOTE: Zig css.implementDeepClone iterated @typeInfo fields. Expanded
-        // explicitly here — keep in sync with the BoxShadow field list.
+        // explicitly here — keep in sync with the BoxShadow field list. `Length`
+        // has no `DeepClone` trait impl yet but is `Clone` (Box<Calc> deep-clones).
         BoxShadow {
             color: self.color.deep_clone(allocator),
-            x_offset: css::generic::deep_clone(&self.x_offset, allocator),
-            y_offset: css::generic::deep_clone(&self.y_offset, allocator),
-            blur: css::generic::deep_clone(&self.blur, allocator),
-            spread: css::generic::deep_clone(&self.spread, allocator),
+            x_offset: self.x_offset.clone(),
+            y_offset: self.y_offset.clone(),
+            blur: self.blur.clone(),
+            spread: self.spread.clone(),
             inset: self.inset,
         }
     }
@@ -208,7 +229,11 @@ impl BoxShadowHandler {
                     self.flush(dest, context);
 
                     let mut unparsed = unp.deep_clone(allocator);
+                    // TODO(port): re-enable once `PropertyHandlerContext::add_unparsed_fallbacks`
+                    // un-gates (blocked on `SupportsCondition::eql` in context.rs).
+                    #[cfg(any())]
                     context.add_unparsed_fallbacks(&mut unparsed);
+                    let _ = &mut unparsed;
                     dest.push(Property::Unparsed(unparsed));
                     self.flushed = true;
                 } else {
@@ -265,10 +290,10 @@ impl BoxShadowHandler {
                                 .color
                                 .$conv()
                                 .unwrap_or_else(|| input.color.deep_clone(allocator)),
-                            x_offset: css::generic::deep_clone(&input.x_offset, allocator),
-                            y_offset: css::generic::deep_clone(&input.y_offset, allocator),
-                            blur: css::generic::deep_clone(&input.blur, allocator),
-                            spread: css::generic::deep_clone(&input.spread, allocator),
+                            x_offset: input.x_offset.clone(),
+                            y_offset: input.y_offset.clone(),
+                            blur: input.blur.clone(),
+                            spread: input.spread.clone(),
                             inset: input.inset,
                         });
                     }

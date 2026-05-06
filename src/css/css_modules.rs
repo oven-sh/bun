@@ -173,9 +173,11 @@ impl<'a> CssModule<'a> {
             false,
         );
 
-        // PORT NOTE: std.fmt.allocPrint → write into bump Vec (never `format!`, returns String)
-        let mut k = BumpVec::new_in(bump);
-        write!(&mut k, "--{}", bstr::BStr::new(the_hash)).expect("unreachable");
+        // PORT NOTE: std.fmt.allocPrint(allocator, "--{s}", .{the_hash}) → bump Vec
+        // (bumpalo::Vec<u8> lacks io::Write; the format string was a pure concat anyway).
+        let mut k = BumpVec::with_capacity_in(2 + the_hash.len(), bump);
+        k.extend_from_slice(b"--");
+        k.extend_from_slice(the_hash);
         let _ = self.references.put(k.into_bump_slice(), reference);
 
         Some(the_hash)

@@ -934,8 +934,13 @@ fn is_option_type(ty: &syn::Type) -> bool {
 
 fn expand_derive_to_css(input: DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
-    let data = match &input.data {
-        Data::Enum(data) => data,
+    // Trait-impl generics carry `T: generics::ToCss` for every type parameter
+    // so generic containers (`Foo<T>`) constrain their payload. The inherent
+    // forwarder reuses the same bounds (it calls the trait method).
+    let bounded = with_trait_bounds(&input, quote!(::bun_css::generics::ToCss));
+    let (impl_g, ty_g, where_g) = bounded.split_for_impl();
+
+    let body = match &input.data {
         // ── Struct branch ──────────────────────────────────────────────────
         // Port of the `__generateToCss` auto-serializer in Zig's
         // `DeriveToCss` (`src/css/css_parser.zig:821-843`): for a payload
@@ -948,7 +953,7 @@ fn expand_derive_to_css(input: DeriveInput) -> syn::Result<TokenStream2> {
         // `@typeInfo` reflection on the payload type. Rust proc-macros cannot
         // see through a type name, so the equivalent is deriving `ToCss`
         // directly on the payload struct; the enum arm's
-        // `__inner.to_css(__dest)` then resolves to this generated inherent.
+        // `__inner.to_css(__dest)` then resolves to this generated impl.
         Data::Struct(s) => {
             let Fields::Named(named) = &s.fields else {
                 return Err(syn::Error::new_spanned(
@@ -964,21 +969,37 @@ fn expand_derive_to_css(input: DeriveInput) -> syn::Result<TokenStream2> {
             // printer. The flag exists so the port can record intent at the
             // declaration site without a doc-comment.
             let _ = has_css_flag(&input.attrs, "generate_to_css");
-            let (impl_g, ty_g, where_g) = input.generics.split_for_impl();
-            let body = gen_field_seq_to_css(named.named.iter(), |f| quote! { self.#f });
-            return Ok(quote! {
-                #[automatically_derived]
-                #[allow(dead_code)]
-                impl #impl_g #name #ty_g #where_g {
-                    pub fn to_css(
-                        &self,
-                        __dest: &mut ::bun_css::printer::Printer<'_>,
-                    ) -> ::core::result::Result<(), ::bun_css::PrintErr> {
-                        #body
-                        ::core::result::Result::Ok(())
+            let seq = gen_field_seq_to_css(named.named.iter(), |f| quote! { self.#f });
+            quote! { #seq ::core::result::Result::Ok(()) }
+        }
+        Data::Enum(data) => {
+            let shapes = classify(data)?;
+            let arms = shapes.iter().map(|s| match s {
+                VariantShape::Unit { ident, keyword } => {
+                    let kw = syn::LitByteStr::new(keyword.as_bytes(), ident.span());
+                    quote! { #name::#ident => __dest.write_str(#kw), }
+                }
+                VariantShape::Payload { ident, .. } => {
+                    // The payload type is opaque to a proc-macro, so we delegate. If
+                    // the payload is a ported "anonymous struct" (Zig
+                    // `__generateToCss`), give it `#[derive(ToCss)]` — the struct
+                    // branch above generates the matching field-sequence printer.
+                    quote! { #name::#ident(__inner) => __inner.to_css(__dest), }
+                }
+                VariantShape::NamedFields { ident, fields } => {
+                    // Inline `__generateToCss` path: destructure and emit fields.
+                    let bind: Vec<_> =
+                        fields.named.iter().map(|f| f.ident.clone().unwrap()).collect();
+                    let seq = gen_field_seq_to_css(fields.named.iter(), |f| quote! { #f });
+                    quote! {
+                        #name::#ident { #(#bind),* } => {
+                            #seq
+                            ::core::result::Result::Ok(())
+                        }
                     }
                 }
             });
+            quote! { match self { #(#arms)* } }
         }
         Data::Union(_) => {
             return Err(syn::Error::new_spanned(
@@ -987,43 +1008,37 @@ fn expand_derive_to_css(input: DeriveInput) -> syn::Result<TokenStream2> {
             ));
         }
     };
-    let shapes = classify(data)?;
-    let (impl_g, ty_g, where_g) = input.generics.split_for_impl();
 
-    let arms = shapes.iter().map(|s| match s {
-        VariantShape::Unit { ident, keyword } => {
-            let kw = syn::LitByteStr::new(keyword.as_bytes(), ident.span());
-            quote! { #name::#ident => __dest.write_str(#kw), }
-        }
-        VariantShape::Payload { ident, .. } => {
-            // The payload type is opaque to a proc-macro, so we delegate. If
-            // the payload is a ported "anonymous struct" (Zig
-            // `__generateToCss`), give it `#[derive(ToCss)]` — the struct
-            // branch above generates the matching field-sequence printer.
-            quote! { #name::#ident(__inner) => __inner.to_css(__dest), }
-        }
-        VariantShape::NamedFields { ident, fields } => {
-            // Inline `__generateToCss` path: destructure and emit fields.
-            let bind: Vec<_> = fields.named.iter().map(|f| f.ident.clone().unwrap()).collect();
-            let body = gen_field_seq_to_css(fields.named.iter(), |f| quote! { #f });
-            quote! {
-                #name::#ident { #(#bind),* } => {
-                    #body
-                    ::core::result::Result::Ok(())
-                }
+    // Emit the body in the **trait** impl so `css::generic::to_css(v, dest)`
+    // (bounded on `T: generics::ToCss`) resolves. An inherent `to_css` is kept
+    // as a thin forwarder so call sites that don't import the trait (the
+    // majority of the ported leaves) keep compiling unchanged. The body uses
+    // method-syntax dispatch with the trait brought into scope, so a field /
+    // payload type may satisfy the recursion with either an inherent
+    // `pub fn to_css` *or* a `generics::ToCss` impl (`f32`, `Option<T>`, …).
+    Ok(quote! {
+        #[automatically_derived]
+        impl #impl_g ::bun_css::generics::ToCss for #name #ty_g #where_g {
+            #[allow(unused_variables)]
+            fn to_css(
+                &self,
+                __dest: &mut ::bun_css::printer::Printer<'_>,
+            ) -> ::core::result::Result<(), ::bun_css::PrintErr> {
+                #[allow(unused_imports)]
+                use ::bun_css::generics::ToCss as _;
+                #body
             }
         }
-    });
 
-    Ok(quote! {
         #[automatically_derived]
         #[allow(dead_code)]
         impl #impl_g #name #ty_g #where_g {
+            #[inline]
             pub fn to_css(
                 &self,
                 __dest: &mut ::bun_css::printer::Printer<'_>,
             ) -> ::core::result::Result<(), ::bun_css::PrintErr> {
-                match self { #(#arms)* }
+                <Self as ::bun_css::generics::ToCss>::to_css(self, __dest)
             }
         }
     })
@@ -1035,7 +1050,7 @@ fn expand_derive_parse(input: DeriveInput) -> syn::Result<TokenStream2> {
         return Err(syn::Error::new_spanned(name, "#[derive(Parse)] is only valid on enums"));
     };
     let shapes = classify(data)?;
-    let (impl_g, ty_g, where_g) = input.generics.split_for_impl();
+    let (_, ty_g, _) = input.generics.split_for_impl();
 
     // Zig `DeriveParse` requires void variants and payload variants to each be
     // contiguous, and tries them in declaration-block order. We honour the same
@@ -1154,14 +1169,46 @@ fn expand_derive_parse(input: DeriveInput) -> syn::Result<TokenStream2> {
         }
     };
 
+    // Emit the body in the **trait** impl so `css::generic::parse[_with_options]`
+    // (bounded on `T: generics::Parse[WithOptions]`) resolves. An inherent
+    // `parse` is kept as a thin forwarder for call sites that don't import the
+    // trait. `ParseWithOptions` ignores options (Zig fallthrough) — types that
+    // genuinely consume options hand-write their own impl instead of deriving.
+    let bounded = with_trait_bounds(&input, quote!(::bun_css::generics::Parse));
+    let (b_impl_g, _, b_where_g) = bounded.split_for_impl();
+
     Ok(quote! {
         #[automatically_derived]
+        impl #b_impl_g ::bun_css::generics::Parse for #name #ty_g #b_where_g {
+            #[allow(unreachable_code)]
+            fn parse(
+                __input: &mut ::bun_css::css_parser::Parser<'_>,
+            ) -> ::bun_css::Result<Self> {
+                #[allow(unused_imports)]
+                use ::bun_css::generics::Parse as _;
+                #body
+            }
+        }
+
+        #[automatically_derived]
+        impl #b_impl_g ::bun_css::generics::ParseWithOptions for #name #ty_g #b_where_g {
+            #[inline]
+            fn parse_with_options(
+                __input: &mut ::bun_css::css_parser::Parser<'_>,
+                _: &::bun_css::css_parser::ParserOptions,
+            ) -> ::bun_css::Result<Self> {
+                <Self as ::bun_css::generics::Parse>::parse(__input)
+            }
+        }
+
+        #[automatically_derived]
         #[allow(dead_code)]
-        impl #impl_g #name #ty_g #where_g {
+        impl #b_impl_g #name #ty_g #b_where_g {
+            #[inline]
             pub fn parse(
                 __input: &mut ::bun_css::css_parser::Parser<'_>,
             ) -> ::bun_css::Result<Self> {
-                #body
+                <Self as ::bun_css::generics::Parse>::parse(__input)
             }
         }
     })

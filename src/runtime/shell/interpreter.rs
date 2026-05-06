@@ -1268,12 +1268,34 @@ impl ShellExecEnv {
         drop(boxed);
     }
 
+    /// Spec: interpreter.zig `ShellExecEnv.changePrevCwd` — `cd -`.
+    #[inline]
+    pub fn change_prev_cwd(&mut self) -> bun_sys::Result<()> {
+        // PORT NOTE: reshaped for borrowck — `prev_cwd()` borrows `self`, so
+        // copy into a stack buffer before the `&mut self` call. Bounded by the
+        // ENAMETOOLONG check inside `change_cwd_impl` (same 4 KiB).
+        let mut buf = bun_paths::PathBuffer::uninit();
+        let prev = self.prev_cwd();
+        let n = prev.len();
+        buf[..n].copy_from_slice(prev);
+        self.change_cwd_impl(&buf[..n], false)
+    }
+
+    /// Spec: interpreter.zig `ShellExecEnv.changeCwd` — thin `in_init = false`
+    /// wrapper. The Zig version is `anytype` over `[:0]const u8` / `[]const u8`;
+    /// we accept the un-terminated slice and let `change_cwd_impl` re-NUL into
+    /// its join buffer (the sentinel fast-path is a memcpy either way).
+    #[inline]
+    pub fn change_cwd(&mut self, new_cwd: &[u8]) -> bun_sys::Result<()> {
+        self.change_cwd_impl(new_cwd, false)
+    }
+
     /// Spec: interpreter.zig `ShellExecEnv.changeCwdImpl`.
     ///
     /// Resolves `new_cwd_` (absolute, or relative to current `cwd()`), opens it
     /// with `O_DIRECTORY`, and on success rotates `__cwd`/`__prev_cwd`/`cwd_fd`.
-    /// When `in_init` is true, also writes `PWD`/`OLDPWD` into `export_env`
-    /// — skipped here (spec does that only when `!in_init`, see tail below).
+    /// Always writes `PWD` into `export_env`; `OLDPWD` is written only when
+    /// `!in_init` (the very first cwd has no meaningful "previous").
     pub fn change_cwd_impl(
         &mut self,
         new_cwd_: &[u8],
@@ -1353,17 +1375,19 @@ impl ShellExecEnv {
 
         self.cwd_fd = new_cwd_fd;
 
+        // Spec interpreter.zig:685-688: only `OLDPWD` is gated on `!in_init`;
+        // `PWD` is written unconditionally so the very first env (built during
+        // `init()` with `in_init = true`) still exports the resolved cwd.
+        // PORT NOTE: reshaped for borrowck — materialize the EnvStr (which
+        // erases the slice lifetime into a packed ptr) before taking
+        // `&mut self.export_env`.
+        use crate::shell::env_str::EnvStr;
         if !in_init {
-            // Spec: `export_env.put("PWD", EnvStr.initSlice(cwd()))` etc.
-            use crate::shell::env_str::EnvStr;
-            // PORT NOTE: reshaped for borrowck — materialize the EnvStr (which
-            // erases the slice lifetime into a packed ptr) before taking
-            // `&mut self.export_env`.
-            let pwd = EnvStr::init_slice(self.cwd());
             let oldpwd = EnvStr::init_slice(self.prev_cwd());
-            self.export_env.insert(EnvStr::init_slice(b"PWD"), pwd);
             self.export_env.insert(EnvStr::init_slice(b"OLDPWD"), oldpwd);
         }
+        let pwd = EnvStr::init_slice(self.cwd());
+        self.export_env.insert(EnvStr::init_slice(b"PWD"), pwd);
 
         Ok(())
     }
@@ -1436,24 +1460,28 @@ pub use crate::shell::builtin::Builtin;
 pub use crate::shell::io_reader::IOReader;
 pub use crate::shell::io_writer::IOWriter;
 
-/// Spec: `bun.sys.openNullDevice()` — open `/dev/null` (POSIX) / `NUL`
-/// (Windows) read-only. Used when a stdio stream was closed at process start
-/// so we have *something* to dup into the shell's root IO.
+/// Spec: `bun.sys.openNullDevice()` (sys.zig:3865) — open `/dev/null` `O_RDWR`
+/// on POSIX, `nul` on Windows. Used when a stdio stream was closed at process
+/// start so we have *something* to dup into the shell's root IO. Must be
+/// writable: `setup_io_before_run` installs the result as the stdout/stderr
+/// `IOWriter` target (and `init` uses it for stdin), so `RDWR` covers both.
 fn open_null_device() -> bun_sys::Result<Fd> {
     #[cfg(unix)]
     {
         bun_sys::open(
             // SAFETY: static C string with NUL.
             unsafe { bun_core::ZStr::from_raw(b"/dev/null\0".as_ptr(), 9) },
-            bun_sys::O::RDONLY,
+            bun_sys::O::RDWR,
             0,
         )
     }
     #[cfg(windows)]
     {
+        // Spec uses `sys_uv.open("nul", 0, 0)` — flags `0` is `O_RDONLY` in
+        // libuv's encoding, but Windows NUL is bidirectional regardless.
         bun_sys::open(
-            unsafe { bun_core::ZStr::from_raw(b"NUL\0".as_ptr(), 3) },
-            bun_sys::O::RDONLY,
+            unsafe { bun_core::ZStr::from_raw(b"nul\0".as_ptr(), 3) },
+            bun_sys::O::RDWR,
             0,
         )
     }

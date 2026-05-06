@@ -5488,6 +5488,31 @@ pub mod fs {
         #[inline] pub fn get_default_temp_dir() -> &'static [u8] {
             (vtable().get_default_temp_dir)()
         }
+        /// Zig: `fs.fs.readDirectory(dir, null, generation, store_fd)`
+        /// (fs.zig:872). Routes to `bun_resolver::fs::RealFS::read_directory`
+        /// via the vtable. The returned `EntriesOption::Entries` carries an
+        /// erased `*DirEntry` into the resolver's process-static BSSMap; the
+        /// caller may rebind it as `&'static mut fs::DirEntry` (matching Zig's
+        /// `*Fs.FileSystem.DirEntry`) provided no other live `&mut` to the same
+        /// slot exists (single-threaded init in PackageManager).
+        #[inline]
+        pub fn read_directory(
+            &self,
+            dir: &[u8],
+            generation: u16,
+            store_fd: bool,
+        ) -> core::result::Result<EntriesOption, bun_core::Error> {
+            // SAFETY: `self` is the resolver's process-static singleton.
+            unsafe { (vtable().read_directory)(self, dir, generation, store_fd) }
+        }
+        /// Zig: `f.top_level_dir = slice`. `slice` must be `'static` (interned
+        /// in `DirnameStore` or a process-lifetime buffer like `cwd_buf`).
+        #[inline]
+        pub fn set_top_level_dir(&self, dir: &'static [u8]) {
+            // SAFETY: `self` is the resolver's process-static singleton; only
+            // called during single-threaded CLI init.
+            unsafe { (vtable().set_top_level_dir)(self, dir) }
+        }
     }
 
     // ── RealFS.Tmpfile ─────────────────────────────────────────────────────

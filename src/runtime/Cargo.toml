@@ -10,6 +10,10 @@ path = "lib.rs"
 rust-argon2.workspace = true
 bcrypt.workspace = true
 getrandom.workspace = true
+# Pure-Zig stdlib hash backends (std.crypto.hash.{sha3,blake2}) — per
+# docs/PORTING.md, prefer a vetted crates.io impl over hand-porting Keccak/Blake2.
+sha3 = { version = "0.10", default-features = false }
+blake2 = { version = "0.10", default-features = false }
 parking_lot.workspace = true
 thiserror.workspace = true
 strum.workspace = true

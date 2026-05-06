@@ -904,9 +904,12 @@ impl BufferedReaderParent for CronRemoveJob {
     unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
         <Self as CronJobBase>::loop_(unsafe { &*this }).cast()
     }
-    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        let _ = this;
-        todo!("blocked_on: bun_io::EventLoopHandle from jsc::EventLoopHandle")
+    unsafe fn event_loop(_this: *mut Self) -> bun_io::EventLoopHandle {
+        // CYCLEBREAK: bun_io::EventLoopHandle is an opaque `*mut c_void`; pass
+        // the raw `*mut jsc::EventLoop` through. The FilePoll vtable (registered
+        // by bun_runtime::init) knows how to interpret it.
+        // SAFETY: per-thread VM singleton; `event_loop()` returns a live `*mut`.
+        bun_io::EventLoopHandle(unsafe { vm_mut() }.event_loop() as *mut core::ffi::c_void)
     }
 }
 

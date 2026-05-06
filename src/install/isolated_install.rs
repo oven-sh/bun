@@ -1944,8 +1944,11 @@ pub fn install_isolated_packages(
 
         // PORT NOTE: reshaped for borrowck — Zig writes `installer: &installer`
         // into `installer.tasks[i]`; in Rust the back-pointer is taken before
-        // the `tasks` borrow.
-        let installer_ptr: *mut store::Installer<'_> = &mut installer;
+        // the `tasks` borrow. `Task.installer` is typed `*mut Installer<'static>`
+        // (raw back-ref, no real `'static` data), so erase the lifetime via a
+        // void-pointer cast — `*mut T` is invariant and won't coerce on its own.
+        let installer_ptr: *mut store::Installer<'static> =
+            (&mut installer as *mut store::Installer<'_>).cast::<()>().cast();
         for (_entry_id, task) in installer.tasks.iter_mut().enumerate() {
             let entry_id = store::entry::Id::from(u32::try_from(_entry_id).unwrap());
             *task = installer::Task {

@@ -2127,8 +2127,12 @@ impl<'a> BundleV2<'a> {
                 }
             }
         }
-        // TODO(port): allocator field assignments — Transpiler/Resolver/Linker
-        // store `&Arena` in Rust; lifetime threading deferred.
+        // PORT NOTE: Zig wired `heap.allocator()` into `transpiler.allocator` /
+        // `resolver.allocator` / `linker.allocator` / `log.msgs.allocator`. The
+        // Rust `Transpiler<'a>`/`Resolver<'a>` store `&'a Arena` and `Log.msgs`
+        // is a `Vec` (global alloc), so only `linker.graph.bump` needs the
+        // backref into the now-stable `this.graph.heap` slot.
+        this.linker.graph.bump = &this.graph.heap as *const bun_alloc::Arena;
         unsafe { (*this.transpiler.log).clone_line_text = true };
 
         // We don't expose an option to disable this. Bake forbids tree-shaking

@@ -2004,32 +2004,37 @@ impl TestCommand {
             };
             let filter_names: &[&[u8]] = &filter_names_owned;
 
-            #[cfg(not(windows))]
-            let filter_names_normalized = filter_names;
+            // PORT NOTE: on Windows the Zig duped+mutated each filter to swap
+            // `/`→`\` and stored the dup; on POSIX it borrowed straight from
+            // `ctx.positionals`. Rust unifies on a `Vec<&[u8]>` view either
+            // way (already built above as `filter_names_owned`); the Windows
+            // branch additionally needs an owned backing `Vec<Box<[u8]>>` for
+            // the rewritten bytes plus a second view vec over those boxes.
             #[cfg(windows)]
-            let filter_names_normalized: Vec<Box<[u8]>> = {
+            let filter_names_normalized_storage: Vec<Box<[u8]>> = {
                 let mut normalized = Vec::with_capacity(filter_names.len());
                 for in_ in filter_names {
                     let mut to_normalize = in_.to_vec();
-                    bun_path::posix_to_platform_in_place(&mut to_normalize);
+                    bun_path::resolve_path::posix_to_platform_in_place::<u8>(&mut to_normalize);
                     normalized.push(to_normalize.into_boxed_slice());
                 }
                 normalized
             };
-            // PORT NOTE: defer free on Windows handled by Drop of Vec<Box<[u8]>>.
-            // SAFETY: lifetime-erase; `filter_names_owned` lives in this never-returning frame.
-            #[cfg(not(windows))]
-            {
-                scanner.filter_names = unsafe {
-                    core::mem::transmute::<&[&[u8]], &'static [&'static [u8]]>(filter_names_normalized)
-                };
-            }
             #[cfg(windows)]
-            {
-                // TODO(port): type mismatch on Windows (Vec<Box<[u8]>> vs &[&[u8]]) — Phase B unify
-                let _ = filter_names_normalized;
-                todo!("blocked_on: scanner.filter_names windows path normalization");
-            }
+            let filter_names_normalized: Vec<&[u8]> = filter_names_normalized_storage
+                .iter()
+                .map(|b| &**b)
+                .collect();
+            #[cfg(not(windows))]
+            let filter_names_normalized = filter_names;
+            // PORT NOTE: defer free on Windows handled by Drop of Vec<Box<[u8]>>.
+            // SAFETY: lifetime-erase; the view vec and (on Windows) its
+            // backing storage live in this never-returning frame, and the
+            // underlying bytes are either in `ctx` (process-lifetime) or in
+            // `filter_names_normalized_storage` above.
+            scanner.filter_names = unsafe {
+                core::mem::transmute::<&[&[u8]], &'static [&'static [u8]]>(&filter_names_normalized[..])
+            };
 
             // PORT NOTE: Zig used `vm.allocator.dupe` (arena-scoped). PORTING.md
             // §Forbidden bans `Box::leak` to satisfy a borrow — own the joined

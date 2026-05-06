@@ -1336,8 +1336,8 @@ pub mod webcore_encoding {
     // Real impls live in `src/runtime/webcore/encoding.rs` (forward-dep on
     // bun_jsc). Same hook pattern as `encode_into_from*` above.
     // ──────────────────────────────────────────────────────────────────────
-    pub type ConstructFromU8 = unsafe fn(*const u8, usize, Encoding) -> alloc::vec::Vec<u8>;
-    pub type ConstructFromU16 = unsafe fn(*const u16, usize, Encoding) -> alloc::vec::Vec<u8>;
+    pub type ConstructFromU8 = unsafe fn(*const u8, usize, Encoding) -> Vec<u8>;
+    pub type ConstructFromU16 = unsafe fn(*const u16, usize, Encoding) -> Vec<u8>;
 
     pub static CONSTRUCT_FROM_U8_HOOK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
     pub static CONSTRUCT_FROM_U16_HOOK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
@@ -1348,7 +1348,7 @@ pub mod webcore_encoding {
     }
 
     #[inline]
-    pub fn construct_from_u8(input: &[u8], enc: Encoding) -> alloc::vec::Vec<u8> {
+    pub fn construct_from_u8(input: &[u8], enc: Encoding) -> Vec<u8> {
         let f = CONSTRUCT_FROM_U8_HOOK.load(Ordering::Acquire);
         debug_assert!(!f.is_null(), "webcore_encoding construct hooks not installed");
         // SAFETY: hook installed by runtime init; input describes a valid slice.
@@ -1358,7 +1358,7 @@ pub mod webcore_encoding {
     }
 
     #[inline]
-    pub fn construct_from_u16(input: &[u16], enc: Encoding) -> alloc::vec::Vec<u8> {
+    pub fn construct_from_u16(input: &[u16], enc: Encoding) -> Vec<u8> {
         let f = CONSTRUCT_FROM_U16_HOOK.load(Ordering::Acquire);
         debug_assert!(!f.is_null(), "webcore_encoding construct hooks not installed");
         // SAFETY: hook installed by runtime init; input describes a valid slice.

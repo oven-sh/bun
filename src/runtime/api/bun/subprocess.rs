@@ -635,8 +635,11 @@ impl Subprocess<'_> {
         // PORT NOTE: `host_fn(getter)` only hands us `&Self`, but the Zig getter
         // mutates `observable_getters` and the Readable. Cast through raw — the
         // wrapper holds the only live borrow on the JS mutator thread.
-        // SAFETY: single JS-thread access; no aliasing &mut exists.
-        let this = unsafe { &mut *(this as *const Self as *mut Self) };
+        // SAFETY: single JS-thread access; no aliasing &mut exists. The shim
+        // forwards `*mut Self` from the C++ wrapper's `m_ctx`, so the underlying
+        // allocation is not behind a true shared borrow.
+        #[allow(invalid_reference_casting)]
+        let this = unsafe { &mut *(core::ptr::from_ref(this) as *mut Self) };
         this.observable_getters.insert(ObservableGetter::Stderr);
         let exited = this.has_exited();
         this.stderr.to_js(global_this, exited)
@@ -651,12 +654,13 @@ impl Subprocess<'_> {
         // PORT NOTE: reshaped for borrowck — Writable::to_js needs &mut stdin and
         // &mut Subprocess simultaneously (Zig passed two aliasing pointers). Go
         // through raw for both projections.
-        let self_ptr = this as *const Self as *mut Self;
+        let self_ptr = core::ptr::from_ref(this) as *mut Self;
         // SAFETY: single JS-thread access; see get_stderr note.
         unsafe { (*self_ptr).observable_getters.insert(ObservableGetter::Stdin) };
         // SAFETY: `stdin` and the whole `Subprocess` are accessed disjointly inside
         // `Writable::to_js` (it only reads/writes non-stdin fields via `subprocess`).
         let stdin = unsafe { &mut (*self_ptr).stdin };
+        #[allow(invalid_reference_casting)]
         let sub = unsafe { &mut *self_ptr };
         Ok(stdin.to_js(global_this, sub))
     }
@@ -668,7 +672,8 @@ impl Subprocess<'_> {
             return Ok(JSValue::NULL);
         }
         // SAFETY: single JS-thread access; see get_stderr note.
-        let this = unsafe { &mut *(this as *const Self as *mut Self) };
+        #[allow(invalid_reference_casting)]
+        let this = unsafe { &mut *(core::ptr::from_ref(this) as *mut Self) };
         this.observable_getters.insert(ObservableGetter::Stdout);
         // NOTE: ownership of internal buffers is transferred to the JSValue, which
         // gets cached on JSSubprocess (created via bindgen). This makes it

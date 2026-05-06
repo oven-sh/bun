@@ -522,8 +522,8 @@ impl Image {
         let raw: i64 = coerce_int!(i64, args[0].as_number(), -1e15, 1e15);
         let deg: u32 = u32::try_from(((raw % 360) + 360) % 360).unwrap();
         if deg != 0 && deg != 90 && deg != 180 && deg != 270 {
-            return global
-                .throw_invalid_arguments("rotate: only multiples of 90 are supported");
+            return Err(global
+                .throw_invalid_arguments("rotate: only multiples of 90 are supported"));
         }
         self.pipeline.rotate = u16::try_from(deg).unwrap();
         Ok(callframe.this())

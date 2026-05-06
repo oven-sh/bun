@@ -176,7 +176,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64, hint: codecs::DecodeHint) -> Result
         });
     }
     // PERF(port): was uninitialized `allocator.alloc(u8, n)` — zero-init here; profile in Phase B
-    let mut out = vec![0u8; w as usize * ht as usize * 4].into_boxed_slice();
+    let mut out = vec![0u8; w as usize * ht as usize * 4];
     // SAFETY: `h` is live; src ptr/len come from a valid `&[u8]`; dst is the
     // exclusive `out` buffer sized `w*ht*4` and the explicit pitch + cropping
     // region above bound libjpeg-turbo's writes to that allocation.

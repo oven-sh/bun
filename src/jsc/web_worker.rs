@@ -530,6 +530,18 @@ impl WebWorker {
         let _ = this;
     }
 
+    /// Raw parent-VM pointer. See field doc for validity (`parent_poll_ref`
+    /// keeps the parent loop alive until the close task runs).
+    #[inline]
+    pub fn parent_vm(&self) -> *mut VirtualMachine {
+        self.parent
+    }
+
+    #[inline]
+    pub fn execution_context_id(&self) -> u32 {
+        self.execution_context_id
+    }
+
     // =========================================================================
     // Worker thread
     // =========================================================================

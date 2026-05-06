@@ -2,6 +2,7 @@
 
 use core::ffi::c_void;
 use core::ptr;
+use std::sync::Arc;
 
 use bun_collections::{HashMap, TaggedPtrUnion};
 use bun_core::{Ordinal, Output};

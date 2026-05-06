@@ -399,6 +399,83 @@ mod ident_eql {
     ident_eql_impl!(CustomIdent, DashedIdent, Ident);
 }
 
+// ───────────────────────────────────────────────────────────────────────────────
+// Bridge inherent eql/hash/deep_clone → trait impls
+//
+// Many CSS value types carry hand-rolled inherent `eql`/`hash`/`deep_clone`
+// (ported verbatim from the Zig `implementEql`/`implementHash`/
+// `implementDeepClone` bodies — usually because a field is a raw `*const [u8]`
+// arena slice that the derive can't see through). The `#[derive(CssEql/…)]`
+// expansion on *containing* types dispatches via UFCS trait paths, so those
+// inherent methods alone don't satisfy the bound. These thin forwarding impls
+// close the gap without duplicating logic.
+mod inherent_bridge {
+    use super::{Arena, CssEql, CssHash, DeepClone, Wyhash};
+
+    macro_rules! bridge_eql {
+        ($($t:ty),* $(,)?) => {$(
+            impl CssEql for $t {
+                #[inline]
+                fn eql(&self, other: &Self) -> bool { <$t>::eql(self, other) }
+            }
+        )*};
+    }
+    macro_rules! bridge_hash {
+        ($($t:ty),* $(,)?) => {$(
+            impl CssHash for $t {
+                #[inline]
+                fn hash(&self, hasher: &mut Wyhash) { <$t>::hash(self, hasher) }
+            }
+        )*};
+    }
+    macro_rules! bridge_deep_clone {
+        ($($t:ty),* $(,)?) => {$(
+            impl<'bump> DeepClone<'bump> for $t {
+                #[inline]
+                fn deep_clone(&self, bump: &'bump Arena) -> Self { <$t>::deep_clone(self, bump) }
+            }
+        )*};
+    }
+    macro_rules! bridge_deep_clone_copy {
+        ($($t:ty),* $(,)?) => {$(
+            impl<'bump> DeepClone<'bump> for $t {
+                #[inline]
+                fn deep_clone(&self, _bump: &'bump Arena) -> Self { Clone::clone(self) }
+            }
+        )*};
+    }
+
+    use crate::values::ident::{CustomIdent, DashedIdent, DashedIdentReference, Ident};
+    bridge_hash!(CustomIdent, DashedIdent, Ident, DashedIdentReference);
+    bridge_eql!(DashedIdentReference);
+    bridge_deep_clone!(CustomIdent, DashedIdent, Ident, DashedIdentReference);
+
+    use crate::values::color::CssColor;
+    bridge_eql!(CssColor);
+    bridge_hash!(CssColor);
+    bridge_deep_clone!(CssColor);
+
+    use crate::values::url::Url;
+    bridge_eql!(Url);
+    bridge_hash!(Url);
+    bridge_deep_clone!(Url);
+
+    use crate::properties::animation::AnimationName;
+    bridge_eql!(AnimationName);
+    bridge_hash!(AnimationName);
+    bridge_deep_clone!(AnimationName);
+
+    use crate::properties::custom::UAEnvironmentVariable;
+    bridge_eql!(UAEnvironmentVariable);
+    bridge_hash!(UAEnvironmentVariable);
+    bridge_deep_clone!(UAEnvironmentVariable);
+
+    use crate::selectors::parser::{Direction, ViewTransitionPartName, WebKitScrollbarPseudoElement};
+    bridge_eql!(Direction, WebKitScrollbarPseudoElement, ViewTransitionPartName);
+    bridge_hash!(Direction, WebKitScrollbarPseudoElement, ViewTransitionPartName);
+    bridge_deep_clone_copy!(Direction, WebKitScrollbarPseudoElement, ViewTransitionPartName);
+}
+
 // TODO(port): Zig also special-cases `@typeInfo(T).struct.layout == .packed` →
 // bitwise `==`. In Rust those are `bitflags!` types implementing `PartialEq`;
 // add `impl<T: BitFlags> CssEql for T` or per-type impls in Phase B.

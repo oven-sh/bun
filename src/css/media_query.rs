@@ -10,14 +10,10 @@
 //! real so `rules::{media,import,custom_media}` and
 //! `css_parser::AtRulePrelude` can hold them. `to_css` and arena-aware
 //! `deep_clone` are real; the `rules::dc::{media_list,query_feature}`
-//! bridges now route through them. The `parse` impl bodies — which
-//! compile against
-//! `values::{length,number,resolution,ratio}` (calc lattice, gated),
-//! `IdentFns`/`CSSNumberFns` associated-fn namespaces (gated), and
-//! `compat::Feature::Media{Range,Interval}Syntax` (not yet emitted by the
-//! prefix table generator) — stay `#[cfg(any())]`-gated below. The full
-//! 1500-line port body is preserved in git history (rev 8b7b16543a) and
-//! re-lands when `values/` un-gates.
+//! bridges now route through them. `QueryFeature::parse` and the
+//! `MediaFeatureName`/`MediaFeatureValue` leaf parsers are real — the
+//! `values::{length,number,resolution,ratio}` calc lattice has un-gated, so
+//! `@media`/`@container` parse end-to-end.
 
 use crate as css;
 use crate::css_properties::custom::EnvironmentVariable;
@@ -585,11 +581,6 @@ impl FeatureIdTrait for MediaFeatureId {
 }
 
 // ───────────────────────── to_css / matching ─────────────────────────
-// Un-gated this round so `rules::media::MediaRule::{minify,to_css}` can call
-// `MediaList::{always_matches,never_matches,to_css}`. The serialization tree
-// bottoms out at `MediaFeatureValue::to_css`; the `Length`/`Resolution`/`Ratio`
-// arms there remain `todo!()`-loud until the local `value_shims` are replaced
-// by the real `crate::css_values::{length,resolution,ratio}` types.
 
 impl MediaList {
     /// Returns whether the media query list always matches.
@@ -1137,8 +1128,7 @@ fn write_min_max<FeatureId: FeatureIdTrait>(
     dest.delim(b':', false)?;
 
     // PORT NOTE: Zig deepCloned `value` into `dest.allocator` then mutated; here
-    // `MediaFeatureValue: Clone` so we clone-by-value. The `Length`/`Resolution`/
-    // `Ratio` arms of `add_f32` remain `todo!()` until the value-shims are real.
+    // `MediaFeatureValue: Clone` so we clone-by-value.
     let adjusted: Option<MediaFeatureValue> = match operator {
         MediaFeatureComparison::GreaterThan => Some(value.clone().add_f32(0.001)),
         MediaFeatureComparison::LessThan => Some(value.clone().add_f32(-0.001)),

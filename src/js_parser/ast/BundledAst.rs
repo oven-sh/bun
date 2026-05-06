@@ -28,6 +28,16 @@ pub type NamedExports = ast::NamedExports;
 pub type NamedImports = ast::NamedImports;
 pub type TopLevelSymbolToParts = ast::TopLevelSymbolToParts;
 
+// PORT NOTE: Zig stores `MultiArrayList(BundledAst)` on `Graph.ast` /
+// `LinkerGraph.ast` and the bundler indexes columns via `.items(.field)`
+// (see `linker_context/scanImportsAndExports.zig`, `LinkerContext.zig`).
+// `#[derive(MultiArrayElement)]` generates the `BundledAstField` enum +
+// `BundledAstSliceExt`/`BundledAstListExt` (`items_named_imports()`,
+// `items_named_exports()`, …) that those callers expect at
+// `bun_js_parser::ast::bundled_ast::*`.
+//
+// 26 fields ≤ `multi_array_list::MAX_FIELDS` (32).
+#[derive(bun_collections::MultiArrayElement)]
 pub struct BundledAst<'arena> {
     pub approximate_newline_count: u32,
     pub nested_scope_slot_counts: SlotCounts,

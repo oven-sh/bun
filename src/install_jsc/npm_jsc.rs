@@ -142,28 +142,39 @@ impl ManifestBindings {
         // `defer manifest_file.close()` — closed at fn return.
         let manifest_file = scopeguard::guard(manifest_file, |f| { let _ = bun_sys::close(f.handle); });
 
-        // PORT NOTE: stub `npm::registry::{Scope, Url}` borrow from `registry` slice;
-        // when the gated `npm.rs` un-gates, `Scope::url` becomes `bun_url::URL` and
-        // these field literals will need to switch types.
+        // PORT NOTE: `npm::registry::Scope.url` is `bun_url::URL<'static>` (the
+        // Rust port hard-codes `'static` pending an `OwnedURL` — see TODO(b2) in
+        // npm.rs). Zig's `bun.URL` has no lifetime parameter, and `load_by_file`
+        // / `read_all` only read `scope.url_hash` and `scope.url.href.len()` and
+        // do not retain the slice past the call. Extend the borrow lifetime to
+        // satisfy the field type; `scope` is stack-local and dropped before
+        // `registry` (the borrowee).
+        #[inline(always)]
+        unsafe fn extend<'a>(url: bun_url::URL<'a>) -> bun_url::URL<'static> {
+            unsafe { core::mem::transmute(url) }
+        }
         let scope = npm::registry::Scope {
             url_hash: npm::registry::Scope::hash(strings::without_trailing_slash(registry.slice())),
-            url: npm::registry::Url {
-                host: strings::without_trailing_slash(strings::without_prefix(
-                    registry.slice(),
-                    b"http://",
-                )),
-                hostname: strings::without_trailing_slash(strings::without_prefix(
-                    registry.slice(),
-                    b"http://",
-                )),
-                href: registry.slice(),
-                origin: strings::without_trailing_slash(registry.slice()),
-                protocol: if let Some(colon) = strings::index_of_char(registry.slice(), b':') {
-                    &registry.slice()[..colon as usize]
-                } else {
-                    b""
-                },
-                ..Default::default()
+            // SAFETY: see PORT NOTE above — slices outlive `scope`, callee does not retain.
+            url: unsafe {
+                extend(bun_url::URL {
+                    host: strings::without_trailing_slash(strings::without_prefix(
+                        registry.slice(),
+                        b"http://",
+                    )),
+                    hostname: strings::without_trailing_slash(strings::without_prefix(
+                        registry.slice(),
+                        b"http://",
+                    )),
+                    href: registry.slice(),
+                    origin: strings::without_trailing_slash(registry.slice()),
+                    protocol: if let Some(colon) = strings::index_of_char(registry.slice(), b':') {
+                        &registry.slice()[..colon as usize]
+                    } else {
+                        b""
+                    },
+                    ..Default::default()
+                })
             },
             ..Default::default()
         };

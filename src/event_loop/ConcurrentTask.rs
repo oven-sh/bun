@@ -334,7 +334,9 @@ impl ConcurrentTask {
     }
 
     pub fn create_from<T>(task: T) -> *mut ConcurrentTask {
-        bun_core::mark_binding!();
+        // TODO(port): re-enable once `mark_binding!` macro arity matches
+        // `ScopedLogger::log` (concurrent bun_core edit changed it to 1-arg).
+        // bun_core::mark_binding!();
         Self::create(Task::init(task))
     }
 
@@ -348,12 +350,16 @@ impl ConcurrentTask {
         ptr: *mut T,
         callback: fn(*mut T) -> crate::JsResult<()>,
     ) -> *mut ConcurrentTask {
-        bun_core::mark_binding!();
+        // TODO(port): re-enable once `mark_binding!` macro arity matches
+        // `ScopedLogger::log` (concurrent bun_core edit changed it to 1-arg).
+        // bun_core::mark_binding!();
         Self::create(ManagedTask::ManagedTask::new(ptr, callback))
     }
 
     pub fn from<T>(&mut self, of: T, auto_deinit: AutoDeinit) -> &mut ConcurrentTask {
-        bun_core::mark_binding!();
+        // TODO(port): re-enable once `mark_binding!` macro arity matches
+        // `ScopedLogger::log` (concurrent bun_core edit changed it to 1-arg).
+        // bun_core::mark_binding!();
         *self = ConcurrentTask {
             task: Task::init(of),
             next: if auto_deinit == AutoDeinit::AutoDeinit {

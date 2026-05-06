@@ -554,7 +554,7 @@ pub mod dispatch {
     pub struct DevServerVTable {
         /// `dev.isFileCached(abs_path, side)` — DevServer.zig:2128.
         pub is_file_cached:
-            unsafe fn(*mut (), &[u8], super::bake_types::Side) -> Option<super::bake_types::CacheEntry>,
+            unsafe fn(*mut (), &[u8], super::bake_types::Graph) -> Option<super::bake_types::CacheEntry>,
         /// `dev.allocator().dupe(u8, ..)` — DevServer-owned bump for barrel keys.
         /// Returns an owned `Box<[u8]>` (caller stores it in the barrel map);
         /// previously `&'static [u8]` via `Box::leak`, which leaked on every
@@ -572,7 +572,7 @@ pub mod dispatch {
         pub fn is_file_cached(
             &self,
             abs_path: &[u8],
-            side: super::bake_types::Side,
+            side: super::bake_types::Graph,
         ) -> Option<super::bake_types::CacheEntry> {
             // SAFETY: owner is a live *mut DevServer per handle invariant.
             unsafe { (self.vtable.is_file_cached)(self.owner, abs_path, side) }

@@ -1583,8 +1583,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         &mut self,
         parts: &mut ListManaged<'a, js_ast::Part>,
     ) -> Result<(), bun_core::Error> {
-        debug_assert!(!self.response_ref.is_null());
-        debug_assert!(!self.bun_app_namespace_ref.is_null());
+        debug_assert!(!self.response_ref.is_empty());
+        debug_assert!(!self.bun_app_namespace_ref.is_empty());
         let allocator = self.allocator;
 
         let import_path: &'static [u8] = b"bun:app";
@@ -6245,15 +6245,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     // One statement could potentially expand to several statements
     pub fn stmts_to_single_stmt(&mut self, loc: logger::Loc, stmts: &'a mut [Stmt]) -> Stmt {
         if stmts.is_empty() {
-            return Stmt { data: Prefill::data::S_EMPTY, loc };
+            return Stmt { data: js_ast::StmtData::SEmpty(S::Empty {}), loc };
         }
 
-        if stmts.len() == 1 && !statement_cares_about_scope(stmts[0]) {
+        if stmts.len() == 1 && !statement_cares_about_scope(&stmts[0]) {
             // "let" and "const" must be put in a block when in a single-statement context
             return stmts[0];
         }
 
-        self.s(S::Block { stmts, ..Default::default() }, loc)
+        self.s(S::Block { stmts: stmts as *mut [Stmt], ..Default::default() }, loc)
     }
 
     pub fn find_label_symbol(&mut self, loc: logger::Loc, name: &[u8]) -> FindLabelSymbolResult {
@@ -6326,11 +6326,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
     #[inline]
     pub fn module_exports(&mut self, loc: logger::Loc) -> Expr {
+        let target = self.new_expr(E::Identifier { ref_: self.module_ref, ..Default::default() }, loc);
         self.new_expr(
             E::Dot {
-                name: exports_string_name(),
+                name: exports_string_name,
                 name_loc: loc,
-                target: self.new_expr(E::Identifier { r#ref: self.module_ref, ..Default::default() }, loc),
+                target,
                 ..Default::default()
             },
             loc,
@@ -7377,10 +7378,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
         this.unwrap_all_requires = 'brk: {
             if this.options.bundle && this.options.output_format != options::Format::Cjs {
-                // Zig: `source.path.packageName()` — the resolver `Path` method
-                // is not available from this crate, so use the local free fn
-                // `path_package_name` (mirrors `src/resolver/fs.rs::Path::packageName`).
-                if let Some(pkg) = path_package_name(&source.path) {
+                // Zig: `source.path.packageName()` — `logger::fs::Path` is the
+                // crate-local minimal stub (no `pretty`, no `package_name()`),
+                // so reuse the free `path_package_name` body via a borrowed
+                // `bun_paths::fs::Path` view over the same `text`. `pretty`
+                // is irrelevant once `node_modules/` is found in `text`; when
+                // it isn't, the result won't match any `unwrap_commonjs_packages`
+                // entry anyway. // TODO(b2-blocked): unify logger::fs::Path → bun_paths::fs::Path
+                let path_view = fs::Path { text: source.path.text, pretty: source.path.text, ..Default::default() };
+                if let Some(pkg) = path_package_name(&path_view) {
                     if this.options.features.should_unwrap_require(pkg) {
                         if pkg == b"react" || pkg == b"react-dom" {
                             let version = this.options.package_version;

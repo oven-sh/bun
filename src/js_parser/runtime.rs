@@ -1,3 +1,5 @@
+#![allow(unexpected_cfgs)] // `feature = "codegen_embed"` is wired by build.rs in Phase C; not yet a declared cargo feature.
+
 use core::fmt;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
@@ -5,19 +7,17 @@ use bun_collections::{StringArrayHashMap, StringSet};
 use bun_core::Output;
 // TODO(b0): RuntimeTranspilerCache arrives from move-in (was bun_jsc::RuntimeTranspilerCache → js_parser)
 use crate::RuntimeTranspilerCache;
-// TODO(port): confirm crate path for `bun.schema` (likely `bun_schema` or `bun_interchange::schema`)
-use bun_interchange::schema;
-use bun_interchange::schema::api;
+use bun_options_types::schema;
+use bun_options_types::schema::api;
 use bun_string::strings;
 use bun_wyhash::{Wyhash, Wyhash11};
 
 use crate::ast::{Expr, Ref};
 
-fn embed_debug_fallback(msg: &'static [u8], code: &'static [u8]) -> &'static [u8] {
+fn embed_debug_fallback(msg: &'static str, code: &'static [u8]) -> &'static [u8] {
     static HAS_PRINTED: AtomicBool = AtomicBool::new(false);
     if !HAS_PRINTED.swap(true, Ordering::Relaxed) {
-        // TODO(port): exact `bun.Output.debug` mapping in bun_core
-        Output::debug(msg);
+        Output::debug(msg, ());
     }
     code
 }

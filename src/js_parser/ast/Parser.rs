@@ -657,7 +657,7 @@ impl<'a> Parser<'a> {
 
         // Detect a leading "// @bun" pragma
         if p.options.features.dont_bundle_twice {
-            if let Some(pragma) = Self::has_bun_pragma(source.contents, !hashbang.is_empty()) {
+            if let Some(pragma) = Self::has_bun_pragma(&source.contents, !hashbang.is_empty()) {
                 return Ok(js_ast::Result::AlreadyBundled(pragma));
             }
         }

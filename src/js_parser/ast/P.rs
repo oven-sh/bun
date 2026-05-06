@@ -5644,25 +5644,27 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // Make sure to only emit a variable once for a given namespace, since there
         // can be multiple namespace blocks for the same namespace
         if (symbol.kind == js_ast::symbol::Kind::TsNamespace || symbol.kind == js_ast::symbol::Kind::TsEnum)
-            && !self.emitted_namespace_vars.contains(&name_ref)
+            && !self.emitted_namespace_vars.contains_key(&name_ref)
         {
-            self.emitted_namespace_vars.put_no_clobber(allocator, name_ref, ()).expect("oom");
+            self.emitted_namespace_vars.put_no_clobber(name_ref, ()).expect("oom");
 
-            let decls = allocator.alloc_slice_copy(&[G::Decl {
+            let decls = js_ast::g::DeclList::from_slice(&[G::Decl {
                 binding: self.b(B::Identifier { r#ref: name_ref }, name_loc),
                 value: None,
-            }]);
+            }])
+            .expect("oom");
+            let _ = allocator;
 
             if self.enclosing_namespace_arg_ref.is_none() {
                 // Top-level namespace: "var"
                 stmts.push(self.s(
-                    S::Local { kind: js_ast::s::Kind::KVar, decls: js_ast::g::DeclList::from_owned_slice(decls), is_export, ..Default::default() },
+                    S::Local { kind: js_ast::s::Kind::KVar, decls, is_export, ..Default::default() },
                     stmt_loc,
                 ));
             } else {
                 // Nested namespace: "let"
                 stmts.push(self.s(
-                    S::Local { kind: js_ast::s::Kind::KLet, decls: js_ast::g::DeclList::from_owned_slice(decls), ..Default::default() },
+                    S::Local { kind: js_ast::s::Kind::KLet, decls, ..Default::default() },
                     stmt_loc,
                 ));
             }

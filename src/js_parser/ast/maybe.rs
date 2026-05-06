@@ -1,7 +1,9 @@
-#![allow(unused_imports, unused_variables, dead_code, unused_mut)]
+#![allow(unused_imports, unused_variables, dead_code, unused_mut, unreachable_code)]
+use bun_core::feature_flags as FeatureFlags;
 use bun_logger as logger;
 use bun_string::strings;
 
+use crate::ast::ast::CommonJSNamedExport;
 use crate::ast::{self as js_ast, B, Binding, E, Expr, Flags, G, LocRef, S, Stmt, Symbol};
 use crate::ast::G::{Decl, Property};
 use crate::ast::p::P;

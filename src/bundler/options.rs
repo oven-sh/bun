@@ -1405,12 +1405,14 @@ impl ESMConditions {
 pub mod jsx {
     use super::*;
 
-    // Local mirror of `api::JsxRuntime` (sans `_none`) — kept distinct so
-    // `Pragma.runtime` is closed over the three real runtimes and Default is
+    // Local mirror of `api::JsxRuntime` — 4-state including `_None` so
+    // `Pragma.runtime` preserves the zero-value when an `api.Jsx` arrives with
+    // `runtime == _none` (Zig options.zig:1344 assigns it directly). Default is
     // `Automatic` (Zig: `runtime: api.Api.JsxRuntime = .automatic`).
     #[repr(u8)]
     #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
     pub enum Runtime {
+        _None,
         #[default]
         Automatic,
         Classic,
@@ -1420,9 +1422,10 @@ pub mod jsx {
     impl From<api::JsxRuntime> for Runtime {
         fn from(r: api::JsxRuntime) -> Self {
             match r {
+                api::JsxRuntime::_none => Runtime::_None,
                 api::JsxRuntime::Classic => Runtime::Classic,
                 api::JsxRuntime::Solid => Runtime::Solid,
-                api::JsxRuntime::Automatic | api::JsxRuntime::_none => Runtime::Automatic,
+                api::JsxRuntime::Automatic => Runtime::Automatic,
             }
         }
     }

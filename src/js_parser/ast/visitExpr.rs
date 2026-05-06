@@ -458,6 +458,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             "e_jsx_element: jsx_strings_to_member_expression(factory) — Pragma shape"
                         )
                     } else {
+                        // Spec (visitExpr.zig:257) calls jsxStringsToMemberExpression(factory)
+                        // unconditionally before the runtime check; that has the side-effect of
+                        // findSymbol(loc, factory[0]) which records usage of the factory ident.
+                        // The full helper is Pragma-shape-blocked, so replicate the side-effect
+                        // for the Automatic + key-after-spread path and discard the result.
+                        if let Some(first) = p.options.jsx.factory.first() {
+                            let name: &'a [u8] = p.allocator.alloc_slice_copy(first);
+                            let _ = p.find_symbol(expr.loc, name).expect("unreachable");
+                        }
                         p.jsx_import(JSXImport::CreateElement, expr.loc)
                     };
 

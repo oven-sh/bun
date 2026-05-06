@@ -333,6 +333,146 @@ fn expand_css_hash(input: DeriveInput) -> syn::Result<TokenStream2> {
     })
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// `IsCompatible`
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Port of `isCompatible` in `src/css/generics.zig`. The Zig dispatches via
+// `@hasDecl(T, "isCompatible")` for leaf types, dereferences pointers, and
+// iterates list containers — anything else is a `@compileError`. The trait
+// blanket impls in `bun_css::generics` cover refs/containers; this derive
+// handles the *compound* shapes the Zig leaves to per-type `isCompatible`
+// methods:
+//
+//   * structs → AND of every (non-`#[css(skip)]`) field's `.is_compatible(b)`
+//     (the hand-written pattern in e.g. `BorderImageRepeat`, `Rect<T>`,
+//     `Size2D<T>`).
+//   * enums   → unit variants are always compatible; payload variants delegate
+//     to the payload's `.is_compatible(b)` (the hand-written pattern in e.g.
+//     `FontWeight`, `BorderSideWidth`, `FontFamily`).
+//
+// As with `CssEql`/`CssHash`, the body uses **method-syntax** dispatch so a
+// payload type may satisfy the recursion with either an inherent
+// `pub fn is_compatible(&self, Browsers) -> bool` *or* an `IsCompatible` impl.
+
+#[proc_macro_derive(IsCompatible, attributes(css))]
+pub fn derive_is_compatible(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    expand_is_compatible(input)
+        .unwrap_or_else(|e| e.to_compile_error())
+        .into()
+}
+
+fn expand_is_compatible(input: DeriveInput) -> syn::Result<TokenStream2> {
+    let name = &input.ident;
+    let generics = with_trait_bounds(&input, quote!(::bun_css::generics::IsCompatible));
+    let (impl_g, ty_g, where_g) = generics.split_for_impl();
+
+    let body = match &input.data {
+        Data::Struct(s) => match &s.fields {
+            Fields::Unit => quote! { true },
+            Fields::Unnamed(fs) => {
+                let idx: Vec<_> = fs
+                    .unnamed
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, f)| !has_css_skip(&f.attrs))
+                    .map(|(i, _)| syn::Index::from(i))
+                    .collect();
+                if idx.is_empty() {
+                    quote! { true }
+                } else {
+                    quote! { #( self.#idx.is_compatible(__browsers) )&&* }
+                }
+            }
+            Fields::Named(fs) => {
+                let names: Vec<_> = fs
+                    .named
+                    .iter()
+                    .filter(|f| !has_css_skip(&f.attrs))
+                    .map(|f| f.ident.clone().unwrap())
+                    .collect();
+                if names.is_empty() {
+                    quote! { true }
+                } else {
+                    quote! { #( self.#names.is_compatible(__browsers) )&&* }
+                }
+            }
+        },
+        Data::Enum(e) => {
+            let arms = e.variants.iter().map(|v| {
+                let vname = &v.ident;
+                // `#[css(skip)]` on a variant → always compatible (used for
+                // keyword-only variants that map to no `Feature`).
+                if has_css_skip(&v.attrs) {
+                    return quote! { Self::#vname { .. } => true, };
+                }
+                match &v.fields {
+                    Fields::Unit => quote! { Self::#vname => true, },
+                    Fields::Unnamed(fs) => {
+                        let binds: Vec<_> = (0..fs.unnamed.len())
+                            .map(|j| format_ident!("__f{}", j))
+                            .collect();
+                        let kept: Vec<_> = fs
+                            .unnamed
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, f)| !has_css_skip(&f.attrs))
+                            .map(|(j, _)| binds[j].clone())
+                            .collect();
+                        let body = if kept.is_empty() {
+                            quote! { true }
+                        } else {
+                            quote! { #( #kept.is_compatible(__browsers) )&&* }
+                        };
+                        quote! { Self::#vname( #(#binds),* ) => #body, }
+                    }
+                    Fields::Named(fs) => {
+                        let fnames: Vec<_> =
+                            fs.named.iter().map(|f| f.ident.clone().unwrap()).collect();
+                        let kept: Vec<_> = fs
+                            .named
+                            .iter()
+                            .filter(|f| !has_css_skip(&f.attrs))
+                            .map(|f| f.ident.clone().unwrap())
+                            .collect();
+                        let body = if kept.is_empty() {
+                            quote! { true }
+                        } else {
+                            quote! { #( #kept.is_compatible(__browsers) )&&* }
+                        };
+                        quote! { Self::#vname { #(#fnames),* } => #body, }
+                    }
+                }
+            });
+            quote! {
+                match self {
+                    #(#arms)*
+                }
+            }
+        }
+        Data::Union(_) => {
+            return Err(syn::Error::new_spanned(
+                name,
+                "#[derive(IsCompatible)] is not supported on `union`s",
+            ));
+        }
+    };
+
+    Ok(quote! {
+        #[automatically_derived]
+        impl #impl_g ::bun_css::generics::IsCompatible for #name #ty_g #where_g {
+            #[inline]
+            #[allow(unused_variables)]
+            fn is_compatible(&self, __browsers: ::bun_css::targets::Browsers) -> bool {
+                #[allow(unused_imports)]
+                use ::bun_css::generics::IsCompatible as _;
+                #body
+            }
+        }
+    })
+}
+
 fn expand_deep_clone(input: DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
 

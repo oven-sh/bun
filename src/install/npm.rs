@@ -2396,7 +2396,7 @@ impl PackageManifest {
                     }
                 }
 
-                bundled_deps_set.map.clear();
+                bundled_deps_set.map.clear_retaining_capacity();
                 bundle_all_deps = false;
                 if let Some(bundled_deps_expr) = prop
                     .value
@@ -2607,7 +2607,7 @@ impl PackageManifest {
                     continue;
                 }
 
-                bundled_deps_set.map.clear();
+                bundled_deps_set.map.clear_retaining_capacity();
                 bundle_all_deps = false;
                 if let Some(bundled_deps_expr) = prop
                     .value

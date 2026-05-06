@@ -1,7 +1,6 @@
 //! Port of `src/bun_alloc/bun_alloc.zig`.
 #![feature(sync_unsafe_cell)]
 
-use core::cell::SyncUnsafeCell;
 use core::fmt::Write as _;
 use core::mem::{size_of, MaybeUninit};
 use core::ptr::{addr_of_mut, NonNull};
@@ -918,6 +917,7 @@ type HashKeyType = u64;
 pub type IndexMap = HashMap<HashKeyType, IndexType>;
 pub type IndexMapManaged = HashMap<HashKeyType, IndexType>;
 
+#[derive(Clone, Copy)]
 pub struct Result {
     pub hash: HashKeyType,
     pub index: IndexType,
@@ -1181,13 +1181,16 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
     /// for `'static`. `backing_buf` and `tail.data` are intentionally left
     /// uninitialized (Zig leaves them `undefined`); only `[0..used]` is read.
     pub unsafe fn init_at(slot: *mut Self) {
-        addr_of_mut!((*slot).mutex).write(Mutex::new());
-        addr_of_mut!((*slot).used).write(0);
-        addr_of_mut!((*slot).tail.used).write(AtomicU16::new(0));
-        addr_of_mut!((*slot).tail.prev).write(None);
-        // Zig: `instance.head = &instance.tail` — self-referential; raw NonNull.
-        let tail_ptr = addr_of_mut!((*slot).tail);
-        addr_of_mut!((*slot).head).write(Some(NonNull::new_unchecked(tail_ptr)));
+        // SAFETY: caller contract — `slot` is a valid, exclusive, aligned `*mut Self`.
+        unsafe {
+            addr_of_mut!((*slot).mutex).write(Mutex::new());
+            addr_of_mut!((*slot).used).write(0);
+            addr_of_mut!((*slot).tail.used).write(AtomicU16::new(0));
+            addr_of_mut!((*slot).tail.prev).write(None);
+            // Zig: `instance.head = &instance.tail` — self-referential; raw NonNull.
+            let tail_ptr = addr_of_mut!((*slot).tail);
+            addr_of_mut!((*slot).head).write(Some(NonNull::new_unchecked(tail_ptr)));
+        }
     }
 
     /// Heap-allocate and initialize a fresh instance. The once-guard (Zig's

@@ -27,9 +27,203 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         );
         self.visit_expr_in_out(expr, ExprIn::default())
     }
+
     pub fn visit_expr_in_out(&mut self, expr: Expr, in_: ExprIn) -> Expr {
-        let _ = (expr, in_);
-        todo!("b2-ast-E: visit_expr_in_out body")
+        if in_.assign_target != js_ast::AssignTarget::None && !self.is_valid_assignment_target(expr) {
+            self.log
+                .add_error(Some(self.source), expr.loc, b"Invalid assignment target")
+                .expect("unreachable");
+        }
+
+        // Zig dispatches via `inline else => |tag| if (comptime @hasDecl(visitors, @tagName(tag)))`.
+        // Rust has no struct-decl reflection; expand to an explicit match over the tags that have
+        // a visitor defined below. Any tag without a visitor returns `expr` unchanged.
+        use js_ast::ExprTag as Tag;
+        match expr.data.tag() {
+            Tag::ENewTarget => Self::e_new_target(self, expr, in_),
+            Tag::EString => Self::e_string(self, expr, in_),
+            Tag::ENumber => Self::e_number(self, expr, in_),
+            Tag::EThis => Self::e_this(self, expr, in_),
+            Tag::EImportMeta => Self::e_import_meta(self, expr, in_),
+            Tag::ESpread => Self::e_spread(self, expr, in_),
+            Tag::EIdentifier => Self::e_identifier(self, expr, in_),
+            Tag::EJsxElement => Self::e_jsx_element(self, expr, in_),
+            Tag::ETemplate => Self::e_template(self, expr, in_),
+            Tag::EBinary => Self::e_binary(self, expr, in_),
+            Tag::EIndex => Self::e_index(self, expr, in_),
+            Tag::EUnary => Self::e_unary(self, expr, in_),
+            Tag::EDot => Self::e_dot(self, expr, in_),
+            Tag::EIf => Self::e_if(self, expr, in_),
+            Tag::EAwait => Self::e_await(self, expr, in_),
+            Tag::EYield => Self::e_yield(self, expr, in_),
+            Tag::EArray => Self::e_array(self, expr, in_),
+            Tag::EObject => Self::e_object(self, expr, in_),
+            Tag::EImport => Self::e_import(self, expr, in_),
+            Tag::ECall => Self::e_call(self, expr, in_),
+            Tag::ENew => Self::e_new(self, expr, in_),
+            Tag::EArrow => Self::e_arrow(self, expr, in_),
+            Tag::EFunction => Self::e_function(self, expr, in_),
+            Tag::EClass => Self::e_class(self, expr, in_),
+            _ => expr,
+        }
+    }
+
+    // ─── visitors ───────────────────────────────────────────────────────────
+    // In Zig these live on a nested `const visitors = struct { ... }`; in Rust they are private
+    // associated fns on this impl so they can see the const-generic feature params. Round-G
+    // un-gated the trivial bodies; heavy bodies remain `todo!()` with full draft preserved in
+    // `#[cfg(any())] mod _draft` below until the matching expr::Data accessors / P helpers land.
+
+    fn e_new_target(_: &mut Self, expr: Expr, _: ExprIn) -> Expr {
+        // this error is not necessary and it is causing breakages
+        // if (!p.fn_only_data_visit.is_new_target_allowed) {
+        //     p.log.addRangeError(p.source, target.range, "Cannot use \"new.target\" here") catch unreachable;
+        // }
+        expr
+    }
+
+    fn e_string(_: &mut Self, expr: Expr, _: ExprIn) -> Expr {
+        // If you're using this, you're probably not using 0-prefixed legacy octal notation
+        // if e.LegacyOctalLoc.Start > 0 {
+        expr
+    }
+
+    fn e_number(_: &mut Self, expr: Expr, _: ExprIn) -> Expr {
+        // idc about legacy octal loc
+        expr
+    }
+
+    fn e_this(p: &mut Self, expr: Expr, _: ExprIn) -> Expr {
+        if let Some(exp) = p.value_for_this(expr.loc) {
+            return exp;
+        }
+
+        //                 // Capture "this" inside arrow functions that will be lowered into normal
+        // // function expressions for older language environments
+        // if p.fnOrArrowDataVisit.isArrow && p.options.unsupportedJSFeatures.Has(compat.Arrow) && p.fnOnlyDataVisit.isThisNested {
+        //     return js_ast.Expr{Loc: expr.Loc, Data: &js_ast.EIdentifier{Ref: p.captureThis()}}, exprOut{}
+        // }
+        expr
+    }
+
+    fn e_spread(p: &mut Self, expr: Expr, _: ExprIn) -> Expr {
+        if let js_ast::ExprData::ESpread(mut exp) = expr.data {
+            exp.value = p.visit_expr(exp.value);
+        }
+        expr
+    }
+
+    fn e_await(p: &mut Self, expr: Expr, _: ExprIn) -> Expr {
+        if let js_ast::ExprData::EAwait(mut e_) = expr.data {
+            p.await_target = Some(e_.value.data);
+            e_.value = p.visit_expr(e_.value);
+        }
+        expr
+    }
+
+    fn e_yield(p: &mut Self, expr: Expr, _: ExprIn) -> Expr {
+        if let js_ast::ExprData::EYield(mut e_) = expr.data {
+            if let Some(val) = e_.value {
+                e_.value = Some(p.visit_expr(val));
+            }
+        }
+        expr
+    }
+
+    // ─── heavy visitors (bodies still gated) ────────────────────────────────
+    // blocked_on: expr::Data field-style accessors (e_dot/e_index/e_if/e_unary/e_binary/
+    //   e_call/e_template/e_jsx_element/e_identifier — only e_string/e_object/e_array exist);
+    //   P::{find_symbol, maybe_rewrite_property_access, maybe_comma_spread_error,
+    //   jsx_import, jsx_import_automatic, transpose_import, transpose_require,
+    //   call_runtime, handle_import_meta_hot_accept_call, handle_react_refresh_hook_call};
+    //   BinaryExpressionVisitor::{check_and_prepare, visit_right_and_finish};
+    //   SideEffects::{simplify_boolean, to_boolean, simplify_unused_expr} on &mut P.
+    //   Full draft bodies preserved verbatim under `#[cfg(any())] mod _draft` below.
+
+    fn e_import_meta(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
+        let _ = (p, in_);
+        todo!("G-round-4: e_import_meta body — see _draft");
+        #[allow(unreachable_code)] expr
+    }
+    fn e_identifier(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
+        let _ = (p, in_);
+        todo!("G-round-4: e_identifier body — see _draft");
+        #[allow(unreachable_code)] expr
+    }
+    fn e_jsx_element(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
+        let _ = (p, in_);
+        todo!("G-round-4: e_jsx_element body — see _draft");
+        #[allow(unreachable_code)] expr
+    }
+    fn e_template(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
+        let _ = (p, in_);
+        todo!("G-round-4: e_template body — see _draft");
+        #[allow(unreachable_code)] expr
+    }
+    fn e_binary(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
+        let _ = (p, in_);
+        todo!("G-round-4: e_binary body — see _draft");
+        #[allow(unreachable_code)] expr
+    }
+    fn e_index(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
+        let _ = (p, in_);
+        todo!("G-round-4: e_index body — see _draft");
+        #[allow(unreachable_code)] expr
+    }
+    fn e_unary(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
+        let _ = (p, in_);
+        todo!("G-round-4: e_unary body — see _draft");
+        #[allow(unreachable_code)] expr
+    }
+    fn e_dot(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
+        let _ = (p, in_);
+        todo!("G-round-4: e_dot body — see _draft");
+        #[allow(unreachable_code)] expr
+    }
+    fn e_if(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
+        let _ = (p, in_);
+        todo!("G-round-4: e_if body — see _draft");
+        #[allow(unreachable_code)] expr
+    }
+    fn e_array(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
+        let _ = (p, in_);
+        todo!("G-round-4: e_array body — see _draft");
+        #[allow(unreachable_code)] expr
+    }
+    fn e_object(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
+        let _ = (p, in_);
+        todo!("G-round-4: e_object body — see _draft");
+        #[allow(unreachable_code)] expr
+    }
+    fn e_import(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
+        let _ = (p, in_);
+        todo!("G-round-4: e_import body — see _draft");
+        #[allow(unreachable_code)] expr
+    }
+    fn e_call(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
+        let _ = (p, in_);
+        todo!("G-round-4: e_call body — see _draft");
+        #[allow(unreachable_code)] expr
+    }
+    fn e_new(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
+        let _ = (p, in_);
+        todo!("G-round-4: e_new body — see _draft");
+        #[allow(unreachable_code)] expr
+    }
+    fn e_arrow(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
+        let _ = (p, in_);
+        todo!("G-round-4: e_arrow body — see _draft");
+        #[allow(unreachable_code)] expr
+    }
+    fn e_function(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
+        let _ = (p, in_);
+        todo!("G-round-4: e_function body — see _draft");
+        #[allow(unreachable_code)] expr
+    }
+    fn e_class(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
+        let _ = (p, in_);
+        todo!("G-round-4: e_class body — see _draft");
+        #[allow(unreachable_code)] expr
     }
 }
 

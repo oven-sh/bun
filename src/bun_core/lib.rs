@@ -7,6 +7,7 @@ pub mod util;
 pub mod Global;
 
 pub mod env;
+pub mod wtf;
 pub mod feature_flags;
 pub mod env_var;
 pub mod deprecated;

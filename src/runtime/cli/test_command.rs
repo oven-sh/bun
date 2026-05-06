@@ -651,9 +651,9 @@ impl JunitReporter {
 
 pub struct CommandLineReporter {
     // TODO(port): `TestRunner<'a>` borrows `TestOptions`/regex from the CLI
-    // ctx; the reporter is `Box::leak`ed for the process lifetime in
-    // `TestCommand::exec`, so `'static` is sound here. Revisit if the
-    // reporter ever becomes scoped.
+    // ctx; the reporter is held in a `Box` local to `TestCommand::exec` which
+    // never returns before process exit, so `'static` is sound here. Revisit
+    // if the reporter ever becomes scoped.
     pub jest: TestRunner<'static>,
     pub last_dot: u32,
     pub prev_file: u64,

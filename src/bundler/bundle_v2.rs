@@ -125,6 +125,496 @@ pub struct BundleV2<'a> {
     pub requested_exports: ArrayHashMap<u32, RequestedExports>,
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// B-2 un-gated impl: lifecycle entry points (`init` skeleton, scan-counter
+// machinery, `on_parse_task_complete`, `deinit_without_freeing_arena`). Method
+// bodies are real where lower-tier surfaces exist; sub-regions that touch
+// still-gated modules (`ThreadPool`, full `dispatch::DevServerVTable`,
+// `ServerComponentParseTask`, `Watcher`) are `#[cfg(any())]`-gated inline so
+// the call shape is preserved verbatim and un-gates by deletion once those
+// land. See `__phase_a_draft` below for the full reference bodies.
+// ──────────────────────────────────────────────────────────────────────────
+
+bun_core::declare_scope!(Bundle, visible);
+bun_core::declare_scope!(scan_counter, visible);
+
+/// `bundle_v2.zig` `ResolveQueue = std.StringArrayHashMap(*ParseTask)`.
+/// Values are raw `*mut ParseTask` (arena-owned by `graph.heap`); the map only
+/// dedups by path during a single `on_parse_task_complete` pass.
+pub type ResolveQueue = StringHashMap<*mut ParseTask>;
+
+/// `bundle_v2.zig:BakeOptions`.
+pub struct BakeOptions<'a> {
+    pub framework: bake::Framework,
+    pub client_transpiler: NonNull<Transpiler<'a>>,
+    pub ssr_transpiler: NonNull<Transpiler<'a>>,
+    pub plugins: Option<NonNull<JSBundlerPlugin>>,
+}
+
+/// Argument struct for `patch_import_record_source_indices` — pulled out so the
+/// borrow of `import_records` (a column of `graph.ast`) doesn't overlap the
+/// `&mut self` the body needs for `path_to_source_index_map`.
+pub struct PatchImportRecordsCtx<'s> {
+    pub source_index: Index,
+    pub source_path: &'s [u8],
+    pub loader: Loader,
+    pub target: options::Target,
+    pub redirect_import_record_index: Option<u32>,
+    pub force_save: bool,
+}
+
+impl<'a> BundleV2<'a> {
+    // ── raw-ptr accessors ─────────────────────────────────────────────────
+    // PORT NOTE: `transpiler`/`ssr_transpiler` are `*mut` because Zig stored
+    // aliased `*Transpiler` (same pointer in both slots when no SSR graph).
+    // Callers go through these accessors so the unsafe deref is centralized.
+    #[inline]
+    pub fn transpiler(&self) -> &Transpiler<'a> {
+        // SAFETY: `transpiler` is set in `init` from a live `&mut Transpiler`
+        // and outlives `BundleV2` (`'a` bound on the field type).
+        unsafe { &*self.transpiler }
+    }
+    #[inline]
+    pub fn transpiler_mut(&mut self) -> &mut Transpiler<'a> {
+        // SAFETY: see `transpiler()`; `&mut self` enforces exclusive access.
+        unsafe { &mut *self.transpiler }
+    }
+
+    #[inline]
+    pub fn r#loop(&mut self) -> &mut EventLoop {
+        &mut self.linker.r#loop
+    }
+
+    #[inline]
+    pub fn allocator(&self) -> &bun_alloc::Arena {
+        &self.graph.heap
+    }
+
+    #[inline]
+    pub fn dev_server_handle(&self) -> Option<&dispatch::DevServerHandle> {
+        self.dev_server.as_ref()
+    }
+
+    #[inline]
+    pub fn path_to_source_index_map(&mut self, target: options::Target) -> &mut PathToSourceIndexMap {
+        self.graph.path_to_source_index_map(target)
+    }
+
+    pub fn transpiler_for_target(&mut self, target: options::Target) -> &mut Transpiler<'a> {
+        // SAFETY: all three pointers are live for `'a` (set in `init`); the
+        // `client_transpiler` arm is only reached when bake populated it.
+        unsafe {
+            match target {
+                Target::Browser => match self.client_transpiler {
+                    Some(mut p) => p.as_mut(),
+                    None => &mut *self.transpiler,
+                },
+                Target::BakeServerComponentsSsr => &mut *self.ssr_transpiler,
+                _ => &mut *self.transpiler,
+            }
+        }
+    }
+
+    pub fn is_barrel_optimization_enabled(&self) -> bool {
+        // Barrel optimization is on when either an explicit `optimize_imports`
+        // list is set or tree-shaking is enabled (mirrors gated body).
+        #[cfg(any())]
+        {
+            return self.transpiler().options.optimize_imports.is_some()
+                || self.transpiler().options.tree_shaking;
+        }
+        // TODO(b2-blocked): `BundleOptions.optimize_imports` field — not yet on
+        // the un-gated `options_impl::BundleOptions`. Conservative `false` keeps
+        // `on_parse_task_complete` from entering the gated barrel path.
+        false
+    }
+
+    // ── scan-counter machinery (`bundle_v2.zig:{increment,decrement}ScanCounter`) ──
+    pub fn increment_scan_counter(&mut self) {
+        self.thread_lock.assert_locked();
+        self.graph.pending_items += 1;
+        bun_core::scoped_log!(scan_counter, ".pending_items + 1 = {}", self.graph.pending_items);
+    }
+
+    pub fn decrement_scan_counter(&mut self) {
+        self.thread_lock.assert_locked();
+        self.graph.pending_items -= 1;
+        bun_core::scoped_log!(scan_counter, ".pending_items - 1 = {}", self.graph.pending_items);
+        self.on_after_decrement_scan_counter();
+    }
+
+    pub fn on_after_decrement_scan_counter(&mut self) {
+        if self.asynchronous && self.is_done() {
+            let _dev = self
+                .dev_server
+                .unwrap_or_else(|| panic!("No dev server attached in asynchronous bundle job"));
+            #[cfg(any())]
+            {
+                // TODO(b2-blocked): `finish_from_bake_dev_server` — full body
+                // gated below (needs full `DevServerVTable` slot set).
+                self.finish_from_bake_dev_server(_dev).expect("oom");
+            }
+        }
+    }
+
+    fn is_done(&mut self) -> bool {
+        self.thread_lock.assert_locked();
+        if self.graph.pending_items == 0 {
+            // PORT NOTE: reshaped — Zig called `self.graph.drain_deferred_tasks(self)`
+            // (aliased `&mut self.graph` + `&mut self`). Body inlined here to
+            // satisfy borrowck; `Graph::drain_deferred_tasks` stays as a thin
+            // forwarder for callers that already split the borrow.
+            if self.graph.deferred_pending > 0 {
+                self.graph.pending_items += self.graph.deferred_pending;
+                self.graph.deferred_pending = 0;
+                self.drain_defer_task.init();
+                self.drain_defer_task.schedule();
+                return false;
+            }
+            return true;
+        }
+        false
+    }
+
+    pub fn on_notify_defer(&mut self) {
+        self.thread_lock.assert_locked();
+        self.graph.deferred_pending += 1;
+        self.decrement_scan_counter();
+    }
+
+    // ── on_parse_task_complete (`bundle_v2.zig:onParseTaskComplete`) ──────
+    //
+    // Runs on the bundle thread when a `ParseTask` worker finishes. Folds the
+    // parsed AST into `graph`, kicks resolution for its imports, and updates
+    // `pending_items`. Free function in Zig (took `*BundleV2` as 2nd arg) so
+    // the `ParseTask::Result` callback can name it without a method receiver;
+    // kept as an associated fn here for the same reason.
+    pub fn on_parse_task_complete(parse_result: &mut parse_task::Result, this: &mut BundleV2<'_>) {
+        let _trace = bun_core::perf::trace("Bundler.onParseTaskComplete");
+        if parse_result.external.function.is_some() {
+            let source = match &parse_result.value {
+                ParseResultValue::Empty { source_index } => source_index.get(),
+                ParseResultValue::Err(data) => data.source_index.get(),
+                ParseResultValue::Success(val) => val.source.index.get(),
+            };
+            let loader: Loader = this.graph.input_files.items_loader()[source as usize];
+            if !loader.should_copy_for_bundling() {
+                this.finalizers.push(core::mem::take(&mut parse_result.external));
+            } else {
+                #[cfg(any())]
+                {
+                    // TODO(b2-blocked): `InputFile.allocator` column was dropped
+                    // in the Rust port (PORT NOTE in Graph.rs); revisit once the
+                    // copy-file path needs to free plugin-owned bytes.
+                    this.graph.input_files.items_allocator_mut()[source as usize] =
+                        ExternalFreeFunctionAllocator::create(
+                            parse_result.external.function.unwrap(),
+                            parse_result.external.ctx,
+                        );
+                }
+            }
+        }
+
+        // `defer bun.default_allocator.destroy(parse_result)` — caller owns the
+        // Box and drops at end of `parse_task::on_complete`.
+
+        let mut diff: i32 = -1;
+        let mut resolve_queue = ResolveQueue::default();
+        let mut process_log = true;
+
+        if matches!(parse_result.value, ParseResultValue::Success(_)) {
+            #[cfg(any())]
+            {
+                // TODO(b2-blocked): `barrel_imports::apply_barrel_optimization`
+                // body is gated (reads `transpiler.options.optimize_imports` +
+                // `Graph::ast` SoA columns not yet exposed).
+                barrel_imports::apply_barrel_optimization(this, parse_result);
+                resolve_queue = Self::run_resolution_for_parse_task(parse_result, this);
+            }
+            if matches!(parse_result.value, ParseResultValue::Err(_)) {
+                process_log = false;
+            }
+        }
+
+        // To minimize contention, watchers are appended on the bundle thread.
+        #[cfg(any())]
+        if let Some(watcher) = this.bun_watcher {
+            // TODO(b2-blocked): `bun_core::Watcher` opaque — `add_file` lives in
+            // T6 (`bun_runtime::hot_reloader`). Slot is `Option<NonNull<()>>`
+            // here; un-gates once a `dispatch::WatcherVTable` lands.
+            if parse_result.watcher_data.fd != bun_sys::Fd::INVALID {
+                let source = match &parse_result.value {
+                    ParseResultValue::Empty { source_index } => {
+                        &this.graph.input_files.items_source()[source_index.get() as usize]
+                    }
+                    ParseResultValue::Err(data) => {
+                        &this.graph.input_files.items_source()[data.source_index.get() as usize]
+                    }
+                    ParseResultValue::Success(val) => &val.source,
+                };
+                if this.should_add_watcher(&source.path.text) {
+                    let _ = unsafe { watcher.as_ref() }.add_file(
+                        parse_result.watcher_data.fd,
+                        &source.path.text,
+                        bun_wyhash::hash32(&source.path.text),
+                        this.graph.input_files.items_loader()[source.index.get() as usize],
+                        parse_result.watcher_data.dir_fd,
+                        None,
+                        cfg!(windows),
+                    );
+                }
+            }
+        }
+
+        match &mut parse_result.value {
+            ParseResultValue::Empty { source_index } => {
+                let idx = source_index.get() as usize;
+                this.graph.input_files.items_side_effects_mut()[idx] =
+                    SideEffects::NoSideEffectsEmptyAst;
+                if cfg!(debug_assertions) {
+                    bun_core::scoped_log!(
+                        Bundle,
+                        "onParse({}, {}) = empty",
+                        source_index.get(),
+                        bstr::BStr::new(&this.graph.input_files.items_source()[idx].path.text)
+                    );
+                }
+            }
+            ParseResultValue::Success(result) => {
+                // SAFETY: `transpiler.log` is a `*mut Log` set from the owning
+                // CLI/JS bundler; live for the duration of the build.
+                result
+                    .log
+                    .clone_to_with_recycled(unsafe { &mut *this.transpiler().log }, true)
+                    .expect("unreachable");
+
+                this.has_any_top_level_await_modules = this.has_any_top_level_await_modules
+                    || !result.ast.top_level_await_keyword.is_empty();
+
+                let idx = result.source.index.get() as usize;
+                // Warning: `input_files` and `ast` arrays may resize in this
+                // function call. It is not safe to cache slices from them.
+                this.graph.input_files.items_source_mut()[idx] = result.source.clone();
+                this.source_code_length += if !result.source.index.is_runtime() {
+                    result.source.contents.len()
+                } else {
+                    0
+                };
+
+                this.graph.input_files.items_unique_key_for_additional_file_mut()[idx] =
+                    result.unique_key_for_additional_file.into();
+                this.graph.input_files.items_content_hash_for_additional_file_mut()[idx] =
+                    result.content_hash_for_additional_file;
+                #[cfg(any())]
+                if !result.unique_key_for_additional_file.is_empty()
+                    && result.loader.should_copy_for_bundling()
+                {
+                    // TODO(b2-blocked): `dispatch::DevServerHandle::put_or_overwrite_asset`
+                    // — slot is in the gated full vtable below.
+                    if let Some(dev) = this.dev_server {
+                        dev.put_or_overwrite_asset(
+                            &result.source.path,
+                            &result.source.contents,
+                            result.content_hash_for_additional_file,
+                        )
+                        .expect("oom");
+                    }
+                }
+
+                // Record which loader we used for this file.
+                this.graph.input_files.items_loader_mut()[idx] = result.loader;
+
+                bun_core::scoped_log!(
+                    Bundle,
+                    "onParse({}, {}) = {} imports, {} exports",
+                    result.source.index.get(),
+                    bstr::BStr::new(&result.source.path.text),
+                    result.ast.import_records.len(),
+                    result.ast.named_exports.count()
+                );
+
+                if result.ast.css.is_some() {
+                    this.graph.css_file_count += 1;
+                }
+
+                #[cfg(any())]
+                {
+                    // TODO(b2-blocked): `process_resolve_queue` /
+                    // `patch_import_record_source_indices` /
+                    // `schedule_barrel_deferred_imports` /
+                    // server-component boundary handling — gated below; depend
+                    // on `Graph::ast` SoA accessors + `ServerComponentParseTask`.
+                    diff += this.process_resolve_queue(
+                        core::mem::take(&mut resolve_queue),
+                        result.ast.target,
+                        result.source.index.get(),
+                    );
+
+                    let mut import_records = result.ast.import_records.clone();
+                    this.patch_import_record_source_indices(
+                        &mut import_records,
+                        PatchImportRecordsCtx {
+                            source_index: result.source.index,
+                            source_path: &result.source.path.text,
+                            loader: result.loader,
+                            target: result.ast.target,
+                            redirect_import_record_index: result.ast.redirect_import_record_index,
+                            force_save: false,
+                        },
+                    );
+                    result.ast.import_records = import_records;
+
+                    let path_to_source_index_map = this.path_to_source_index_map(result.ast.target);
+                    for star_record_idx in result.ast.export_star_import_records.iter() {
+                        if (*star_record_idx as usize) < import_records.len() {
+                            let star_ir = &import_records.slice()[*star_record_idx as usize];
+                            let resolved_index = if star_ir.source_index.is_valid() {
+                                star_ir.source_index.get()
+                            } else if let Some(idx) = path_to_source_index_map.get_path(&star_ir.path) {
+                                idx
+                            } else {
+                                continue;
+                            };
+                            this.graph.input_files.items_flags_mut()[resolved_index as usize] |=
+                                crate::Graph::InputFileFlags::IS_EXPORT_STAR_TARGET;
+                        }
+                    }
+
+                    this.graph.ast.set(result.source.index.get() as usize, result.ast.clone());
+
+                    if this.is_barrel_optimization_enabled() {
+                        diff += barrel_imports::schedule_barrel_deferred_imports(this, result)
+                            .expect("oom");
+                    }
+
+                    // For files with use directives, index and prepare the other side.
+                    if result.use_directive != UseDirective::None {
+                        // … server-component boundary handling — see
+                        // `__phase_a_draft` for the full body.
+                    }
+                }
+                let _ = &mut resolve_queue;
+            }
+            ParseResultValue::Err(err) => {
+                bun_core::scoped_log!(Bundle, "onParse() = err");
+
+                if process_log {
+                    #[cfg(any())]
+                    if let Some(dev_server) = this.dev_server {
+                        // TODO(b2-blocked): `handle_parse_task_failure` slot is
+                        // in the gated full vtable below.
+                        dev_server
+                            .handle_parse_task_failure(
+                                err.err,
+                                err.target.bake_graph(),
+                                &this.graph.input_files.items_source()
+                                    [err.source_index.get() as usize]
+                                    .path
+                                    .text,
+                                &err.log,
+                                this,
+                            )
+                            .expect("oom");
+                    }
+                    if this.dev_server.is_none() {
+                        // SAFETY: see `Success` arm above.
+                        let log = unsafe { &mut *this.transpiler().log };
+                        if !err.log.msgs.is_empty() {
+                            err.log.clone_to_with_recycled(log, true).expect("unreachable");
+                        } else {
+                            log.add_error_fmt(
+                                None,
+                                Logger::Loc::EMPTY,
+                                format_args!(
+                                    "{} while {}",
+                                    err.err.name(),
+                                    parse_task::step_name(err.step)
+                                ),
+                            )
+                            .expect("unreachable");
+                        }
+                    }
+                }
+            }
+        }
+
+        // `defer { graph.pending_items += diff; if diff < 0 on_after_decrement }`
+        // — hoisted to tail position (no early returns above).
+        bun_core::scoped_log!(
+            scan_counter,
+            "in parse task .pending_items += {} = {}",
+            diff,
+            i32::try_from(this.graph.pending_items).unwrap() + diff
+        );
+        this.graph.pending_items =
+            u32::try_from(i32::try_from(this.graph.pending_items).unwrap() + diff).unwrap();
+        if diff < 0 {
+            this.on_after_decrement_scan_counter();
+        }
+    }
+
+    // ── deinit_without_freeing_arena (`bundle_v2.zig:deinitWithoutFreeingArena`) ──
+    //
+    // Called from `BundleThread`/CLI teardown. The arena (`graph.heap`) is freed
+    // by the caller; this only releases out-of-arena resources.
+    pub fn deinit_without_freeing_arena(&mut self) {
+        {
+            // We do this first to make it harder for any dangling pointers to
+            // data to be used in there.
+            let on_parse_finalizers = core::mem::take(&mut self.finalizers);
+            for finalizer in &on_parse_finalizers {
+                finalizer.call();
+            }
+            drop(on_parse_finalizers);
+        }
+
+        // PORT NOTE: graph.ast / input_files / entry_points /
+        // entry_point_original_names are owned `Vec`/`MultiArrayList` and drop
+        // automatically; arena-backed slices are bulk-freed by the caller.
+
+        #[cfg(any())]
+        {
+            // TODO(b2-blocked): `crate::ThreadPool` is the unit stub in lib.rs
+            // (real `ThreadPool.rs` gated). Worker-assignment teardown un-gates
+            // with that module.
+            let pool = unsafe { self.graph.pool.as_mut() };
+            if pool.workers_assignments.count() > 0 {
+                pool.workers_assignments_lock.lock();
+                for worker in pool.workers_assignments.values() {
+                    worker.deinit_soon();
+                }
+                pool.workers_assignments.clear();
+                pool.workers_assignments_lock.unlock();
+                pool.worker_pool.wake_for_idle_events();
+            }
+            pool.deinit();
+        }
+
+        for free in self.free_list.drain(..) {
+            drop(free);
+        }
+    }
+}
+
+/// `Step` → human-readable name for `add_error_fmt` (Zig used `@tagName`).
+/// Lives here (not on `parse_task::Step`) because `ParseTask.rs` is
+/// out-of-scope for this edit pass.
+#[inline]
+fn parse_task_step_name(step: parse_task::Step) -> &'static str {
+    match step {
+        parse_task::Step::Pending => "pending",
+        parse_task::Step::ReadFile => "reading file",
+        parse_task::Step::Parse => "parsing",
+        parse_task::Step::Resolve => "resolving",
+    }
+}
+// Re-export under the path the body above uses (keeps the diff vs. the gated
+// draft minimal — `<&'static str>::from(err.step)` in Zig was `@tagName`).
+pub(crate) use parse_task_step_name as step_name_for_err;
+mod parse_task_step {
+    pub use super::parse_task_step_name as name;
+}
+
 // ══════════════════════════════════════════════════════════════════════════
 // Phase-A draft body — gated until lower-tier crate surfaces solidify.
 // (`bun_fs`/`bun_str`/`bun_node_fallbacks` crate aliases, full `dispatch`

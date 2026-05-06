@@ -827,6 +827,7 @@ dependencies = [
  "bitflags",
  "bstr",
  "bun_alloc",
+ "bun_api",
  "bun_base64",
  "bun_collections",
  "bun_core",

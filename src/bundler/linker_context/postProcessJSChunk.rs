@@ -200,7 +200,7 @@ pub fn post_process_js_chunk(
         {
             let all_ast_flags = c.graph.ast.items_flags();
             for part_range in chunk.content.javascript().parts_in_chunk_in_order.iter() {
-                if all_ast_flags[part_range.source_index.get() as usize].has_import_meta {
+                if all_ast_flags[part_range.source_index.get() as usize].contains(js_ast::bundled_ast::Flags::HAS_IMPORT_META) {
                     mi.flags.contains_import_meta = true;
                     break;
                 }
@@ -475,7 +475,7 @@ pub fn post_process_js_chunk(
     if chunk.is_entry_point() && !output_format.is_always_strict_mode() {
         let flags = c.graph.ast.items_flags()[chunk.entry_point.source_index() as usize];
 
-        if flags.has_explicit_use_strict_directive {
+        if flags.contains(js_ast::bundled_ast::Flags::HAS_EXPLICIT_USE_STRICT_DIRECTIVE) {
             j.push_static(b"\"use strict\";\n");
             line_offset.advance(b"\"use strict\";\n");
             newline_before_comment = true;
@@ -797,17 +797,21 @@ fn add_binding_vars_to_module_info(
     }
 }
 
-pub fn generate_entry_point_tail_js(
-    c: &mut LinkerContext,
+// PORT NOTE: `js_printer::print` ties bump/Options/import_records/renamer to a
+// single `'a`, and `Renamer<'r, 'src>` is invariant in `'src` — so the caller's
+// renamer lifetime fixes `'a`. All by-ref params that flow into `print` must
+// share that lifetime.
+pub fn generate_entry_point_tail_js<'a>(
+    c: &'a mut LinkerContext,
     to_common_js_ref: Ref,
     to_esm_ref: Ref,
     source_index: IndexInt,
     // bundler is an AST crate: std.mem.Allocator param → &'bump Bump (Arena)
     // TODO(port): thread &'bump Bump from worker.allocator end-to-end in Phase B
-    allocator: &Arena,
+    allocator: &'a Arena,
     temp_allocator: &Arena,
-    r: js_printer::renamer::Renamer,
-    mut module_info: Option<&mut ModuleInfo>,
+    r: js_printer::renamer::Renamer<'a, 'a>,
+    mut module_info: Option<&'a mut ModuleInfo>,
 ) -> CompileResult {
     let flags: crate::js_meta::Flags = c.graph.meta.items_flags()[source_index as usize];
     // PERF(port): was arena-backed ArrayList(Stmt) — profile in Phase B
@@ -883,13 +887,13 @@ pub fn generate_entry_point_tail_js(
                     }
 
                     let sorted_and_filtered_export_aliases =
-                        c.graph.meta.items_sorted_and_filtered_export_aliases()[source_index as usize];
+                        &c.graph.meta.items_sorted_and_filtered_export_aliases()[source_index as usize];
 
                     if !sorted_and_filtered_export_aliases.is_empty() {
-                        let resolved_exports: ResolvedExports =
-                            c.graph.meta.items_resolved_exports()[source_index as usize];
-                        let imports_to_bind: RefImportData =
-                            c.graph.meta.items_imports_to_bind()[source_index as usize];
+                        let resolved_exports: &ResolvedExports =
+                            &c.graph.meta.items_resolved_exports()[source_index as usize];
+                        let imports_to_bind: &RefImportData =
+                            &c.graph.meta.items_imports_to_bind()[source_index as usize];
 
                         // If the output format is ES6 modules and we're an entry point, generate an
                         // ES6 export statement containing all exports. Except don't do that if this
@@ -899,12 +903,15 @@ pub fn generate_entry_point_tail_js(
                         // PERF(port): was arena-backed ArrayList(ClauseItem) — profile in Phase B
                         let mut items: Vec<js_ast::ClauseItem> = Vec::new();
                         let cjs_export_copies =
-                            c.graph.meta.items_cjs_export_copies()[source_index as usize];
+                            &c.graph.meta.items_cjs_export_copies()[source_index as usize];
 
                         let mut had_default_export = false;
 
                         for (i, alias) in sorted_and_filtered_export_aliases.iter().enumerate() {
-                            let mut resolved_export = resolved_exports.get(alias).unwrap();
+                            // PORT NOTE: Zig `resolved_exports.get(alias).?` returns a by-value
+                            // copy of `ExportData`; only `.data` (an `ImportTracker`, `Copy`) is
+                            // read/mutated below, so copy that field instead of the whole struct.
+                            let mut resolved_export_data = resolved_exports.get(alias).unwrap().data;
 
                             had_default_export = had_default_export || **alias == *b"default";
 
@@ -912,9 +919,9 @@ pub fn generate_entry_point_tail_js(
                             // was eventually resolved to. We need to do this because imports have
                             // already been resolved by this point, so we can't generate a new import
                             // and have that be resolved later.
-                            if let Some(import_data) = imports_to_bind.get(&resolved_export.data.import_ref) {
-                                resolved_export.data.import_ref = import_data.data.import_ref;
-                                resolved_export.data.source_index = import_data.data.source_index;
+                            if let Some(import_data) = imports_to_bind.get(&resolved_export_data.import_ref) {
+                                resolved_export_data.import_ref = import_data.data.import_ref;
+                                resolved_export_data.source_index = import_data.data.source_index;
                             }
 
                             // Exports of imports need EImportIdentifier in case they need to be re-
@@ -923,7 +930,7 @@ pub fn generate_entry_point_tail_js(
                             if unsafe {
                                 (*c.graph
                                     .symbols
-                                    .get(resolved_export.data.import_ref)
+                                    .get(resolved_export_data.import_ref)
                                     .unwrap())
                                 .namespace_alias
                                 .is_some()
@@ -976,7 +983,7 @@ pub fn generate_entry_point_tail_js(
                                                 ),
                                                 value: Some(Expr::init(
                                                     E::ImportIdentifier {
-                                                        ref_: resolved_export.data.import_ref,
+                                                        ref_: resolved_export_data.import_ref,
                                                         ..Default::default()
                                                     },
                                                     Logger::Loc::EMPTY,
@@ -1024,11 +1031,11 @@ pub fn generate_entry_point_tail_js(
                                 //
                                 items.push(js_ast::ClauseItem {
                                     name: js_ast::LocRef {
-                                        ref_: Some(resolved_export.data.import_ref),
-                                        loc: resolved_export.data.name_loc,
+                                        ref_: Some(resolved_export_data.import_ref),
+                                        loc: resolved_export_data.name_loc,
                                     },
                                     alias: &**alias as *const [u8],
-                                    alias_loc: resolved_export.data.name_loc,
+                                    alias_loc: resolved_export_data.name_loc,
                                     ..Default::default()
                                 });
                             }
@@ -1236,6 +1243,11 @@ pub fn generate_entry_point_tail_js(
     };
 
     let ast_view = ast.to_ast();
+    // SAFETY: `import_records` is a `BabyList` pointing into the bundler arena,
+    // which outlives `'a` (the chunk-processing scope). Detach the borrow from
+    // the local `ast_view` so it can satisfy `print`'s `&'a [ImportRecord]`.
+    let import_records: &'a [ImportRecord] =
+        unsafe { &*(ast_view.import_records.slice() as *const [ImportRecord]) };
 
     CompileResult::Javascript {
         result: js_printer::print::<false>(
@@ -1244,7 +1256,7 @@ pub fn generate_entry_point_tail_js(
             &ast_view,
             c.get_source(source_index),
             print_options,
-            ast_view.import_records.slice(),
+            import_records,
             &[Part {
                 stmts: stmts.as_mut_slice() as *mut [Stmt],
                 ..Default::default()

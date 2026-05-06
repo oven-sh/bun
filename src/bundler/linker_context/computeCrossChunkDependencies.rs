@@ -129,7 +129,9 @@ pub fn compute_cross_chunk_dependencies(
 
 pub struct CrossChunkDependencies<'a> {
     chunk_meta: &'a mut [ChunkMeta],
-    chunks: &'a [Chunk],
+    // PORT NOTE: raw — also passed as `&mut [Chunk]` to `each_ptr`; `walk` only reads
+    // `chunks[other].unique_key` (disjoint from the per-index `*mut Chunk` it mutates).
+    chunks: *const [Chunk],
     parts: &'a [BabyList<Part>],
     import_records: &'a mut [BabyList<ImportRecord>],
     flags: &'a [js_meta::Flags],
@@ -140,8 +142,11 @@ pub struct CrossChunkDependencies<'a> {
     // Zig: []const []const string → SoA column type is Box<[Box<[u8]>]>
     sorted_and_filtered_export_aliases: &'a [Box<[Box<[u8]>]>],
     resolved_exports: &'a [ResolvedExports],
-    ctx: &'a LinkerContext<'a>,
-    symbols: &'a mut js_ast::ast::symbol::Map,
+    // PORT NOTE: raw — Zig stores `*LinkerContext` / `*Symbol.Map` and freely aliases
+    // `c.graph` columns alongside; borrowck cannot express that split, so opt out here
+    // and reborrow at each use site in `walk`.
+    ctx: *const LinkerContext<'a>,
+    symbols: *mut js_ast::ast::symbol::Map,
 }
 
 // SAFETY: `CrossChunkDependencies` is shared across worker threads via
@@ -153,6 +158,12 @@ unsafe impl Sync for CrossChunkDependencies<'_> {}
 impl<'a> CrossChunkDependencies<'a> {
     pub fn walk(&mut self, chunk: &mut Chunk, chunk_index: usize) {
         let deps = self;
+        // SAFETY: `ctx` / `symbols` are backrefs into `LinkerContext` valid for the link
+        // pass; `walk` runs under `each_ptr` with per-chunk partitioning (see PORT NOTE on
+        // the struct fields). `chunks` aliases the `each_ptr` slice but is only read here.
+        let ctx: &LinkerContext<'_> = unsafe { &*deps.ctx };
+        let symbols: &mut js_ast::ast::symbol::Map = unsafe { &mut *deps.symbols };
+        let _chunks: &[Chunk] = unsafe { &*deps.chunks };
         let chunk_meta = &mut deps.chunk_meta[chunk_index];
         // PORT NOTE: reshaped for borrowck — Zig held `&chunk_meta` and `&chunk_meta.imports`
         // simultaneously; here we go through `chunk_meta.imports` / `chunk_meta.dynamic_imports`.
@@ -174,7 +185,6 @@ impl<'a> CrossChunkDependencies<'a> {
             let imports_to_bind = &deps.imports_to_bind[source_index as usize];
             let wrap = deps.flags[source_index as usize].wrap;
             let wrapper_ref = deps.wrapper_refs[source_index as usize];
-            let _chunks = deps.chunks;
 
             for part in parts.iter() {
                 if !part.is_live {
@@ -185,9 +195,7 @@ impl<'a> CrossChunkDependencies<'a> {
                 for &import_record_id in part.import_record_indices.slice() {
                     let import_record = &mut import_records[import_record_id as usize];
                     if import_record.source_index.is_valid()
-                        && deps
-                            .ctx
-                            .is_external_dynamic_import(import_record, source_index)
+                        && ctx.is_external_dynamic_import(import_record, source_index)
                     {
                         let other_chunk_index =
                             entry_point_chunk_indices[import_record.source_index.get() as usize];
@@ -211,8 +219,7 @@ impl<'a> CrossChunkDependencies<'a> {
                 // the same name should already be marked as all being in a single
                 // chunk. In that case this will overwrite the same value below which
                 // is fine.
-                deps.symbols
-                    .assign_chunk_index(&part.declared_symbols, chunk_index as u32);
+                symbols.assign_chunk_index(&part.declared_symbols, chunk_index as u32);
 
                 let used_refs = part.symbol_uses.keys();
 
@@ -222,7 +229,7 @@ impl<'a> CrossChunkDependencies<'a> {
                 'refs: for &ref_ in used_refs {
                     let ref_to_use = {
                         let mut ref_to_use = ref_;
-                        let mut symbol = deps.symbols.get_const(ref_to_use).unwrap();
+                        let mut symbol = symbols.get_const(ref_to_use).unwrap();
 
                         // Ignore unbound symbols
                         if symbol.kind == js_ast::ast::symbol::Kind::Unbound {
@@ -238,7 +245,7 @@ impl<'a> CrossChunkDependencies<'a> {
                         // reference and reference the symbol in that file instead
                         if let Some(import_data) = imports_to_bind.get(&ref_to_use) {
                             ref_to_use = import_data.data.import_ref;
-                            symbol = deps.symbols.get_const(ref_to_use).unwrap();
+                            symbol = symbols.get_const(ref_to_use).unwrap();
                         } else if wrap == WrapKind::Cjs && ref_to_use.eql(wrapper_ref) {
                             // The only internal symbol that wrapped CommonJS files export
                             // is the wrapper itself.
@@ -257,7 +264,7 @@ impl<'a> CrossChunkDependencies<'a> {
 
                     if cfg!(debug_assertions) {
                         // SAFETY: `original_name` is an arena slice valid for the link pass.
-                        let name = unsafe { &*deps.symbols.get_const(ref_to_use).unwrap().original_name };
+                        let name = unsafe { &*symbols.get_const(ref_to_use).unwrap().original_name };
                         debug!(
                             "Cross-chunk import: {} {:?}",
                             bstr::BStr::new(name),
@@ -302,14 +309,14 @@ impl<'a> CrossChunkDependencies<'a> {
                         // identifier. In that case we want to pull in the namespace symbol
                         // instead. The namespace symbol stores the result of "require()".
                         if let Some(namespace_alias) =
-                            &deps.symbols.get_const(target_ref).unwrap().namespace_alias
+                            &symbols.get_const(target_ref).unwrap().namespace_alias
                         {
                             target_ref = namespace_alias.namespace_ref;
                         }
 
                         if cfg!(debug_assertions) {
                             // SAFETY: arena slice valid for the link pass.
-                            let name = unsafe { &*deps.symbols.get_const(target_ref).unwrap().original_name };
+                            let name = unsafe { &*symbols.get_const(target_ref).unwrap().original_name };
                             debug!(
                                 "Cross-chunk export: {}",
                                 bstr::BStr::new(name),
@@ -558,25 +565,34 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
         type CrossChunkImportD = crate::bundle_v2::__phase_a_draft::CrossChunkImport;
         let mut list: Vec<CrossChunkImportD> = Vec::new();
         // defer list.deinit() — handled by Drop
-        for chunk in chunks.iter_mut() {
-            if !matches!(chunk.content, chunk::Content::Javascript(_)) {
+        // PORT NOTE: reshaped for borrowck — Zig's `for (chunks) |*chunk|` aliases the same
+        // slice it passes to `sortedCrossChunkImports`. We move the per-chunk fields we
+        // mutate (`imports_from_other_chunks`, `cross_chunk_imports`) out via `take`, drop
+        // the `chunk` borrow, hand the whole `chunks` slice to `sorted_cross_chunk_imports`
+        // (which only reads `chunks[other].exports_to_other_chunks` — disjoint), then write
+        // the fields back at loop end.
+        for chunk_index in 0..chunks.len() {
+            if !matches!(chunks[chunk_index].content, chunk::Content::Javascript(_)) {
                 continue;
             }
-            let repr = chunk.content.javascript_mut();
+            let mut imports_from_other_chunks = core::mem::take(
+                &mut chunks[chunk_index]
+                    .content
+                    .javascript_mut()
+                    .imports_from_other_chunks,
+            );
+            let mut cross_chunk_imports = core::mem::take(&mut chunks[chunk_index].cross_chunk_imports);
+            // PORT NOTE: reshaped for borrowck — Zig copies the BabyList by value, mutates,
+            // then writes back; we `take` to express the same move-out/move-in.
             let mut cross_chunk_prefix_stmts = BabyList::<js_ast::Stmt>::default();
 
             CrossChunkImportD::sorted_cross_chunk_imports(
                 &mut list,
                 chunks,
-                &mut repr.imports_from_other_chunks,
+                &mut imports_from_other_chunks,
             )
             .expect("unreachable");
-            // TODO(port): borrowck — `chunks` is borrowed mutably by the outer loop and
-            // immutably here; Phase B may need to pass a read-only view or index.
             let cross_chunk_imports_input: &[CrossChunkImportD] = list.as_slice();
-            let mut cross_chunk_imports = core::mem::take(&mut chunk.cross_chunk_imports);
-            // PORT NOTE: reshaped for borrowck — Zig copies the BabyList by value, mutates,
-            // then writes back; we `take` to express the same move-out/move-in.
             for cross_chunk_import in cross_chunk_imports_input {
                 match c.options.output_format {
                     OutputFormat::Esm => {
@@ -620,8 +636,10 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                 }
             }
 
+            let repr = chunks[chunk_index].content.javascript_mut();
             repr.cross_chunk_prefix_stmts = cross_chunk_prefix_stmts;
-            chunk.cross_chunk_imports = cross_chunk_imports;
+            repr.imports_from_other_chunks = imports_from_other_chunks;
+            chunks[chunk_index].cross_chunk_imports = cross_chunk_imports;
         }
     }
 

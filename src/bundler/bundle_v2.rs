@@ -1140,8 +1140,8 @@ pub fn generic_path_with_pretty_initialized<'a>(
             "{}{}:{}",
             if target == Target::BakeServerComponentsSsr { "ssr:" } else { "" },
             // make sure that a namespace including a colon wont collide with anything
-            EscapedNamespace(&path.namespace),
-            bstr::BStr::new(&path.text),
+            EscapedNamespace(&path_clone.namespace),
+            bstr::BStr::new(&path_clone.text),
         );
         let written = buf_len - cursor.len();
         path_clone.pretty = &buf.0[..written];
@@ -1338,13 +1338,17 @@ impl<'a> ReachableFileVisitor<'a> {
                 if other_source.is_valid() {
                     let mut redirect_count: usize = 0;
                     while let Some(redirect_id) = get_redirect_id(self.redirects[other_source.get() as usize]) {
-                        let other_import_records = self.all_import_records[other_source.get() as usize].slice();
-                        let other_import_record = &other_import_records[redirect_id as usize];
-                        // PORT NOTE: reshaped for borrowck — re-borrow import_record
+                        // PORT NOTE: reshaped for borrowck — copy out the redirect target's
+                        // (source_index, path) before re-borrowing `all_import_records` mutably.
+                        let (other_src_idx, other_path) = {
+                            let other_import_records = self.all_import_records[other_source.get() as usize].slice();
+                            let other_import_record = &other_import_records[redirect_id as usize];
+                            (other_import_record.source_index, other_import_record.path.clone())
+                        };
                         let import_record = &mut self.all_import_records[import_record_list_id.get() as usize].slice_mut()[ir_idx];
-                        import_record.source_index = other_import_record.source_index;
-                        import_record.path = other_import_record.path.clone();
-                        other_source = other_import_record.source_index;
+                        import_record.source_index = other_src_idx;
+                        import_record.path = other_path;
+                        other_source = other_src_idx;
                         if redirect_count == Self::MAX_REDIRECTS {
                             import_record.path.is_disabled = true;
                             import_record.source_index = Index::INVALID;
@@ -3790,7 +3794,8 @@ impl<'a> BundleV2<'a> {
         unsafe {
             let bundle_ptr: *mut BundleV2 = self;
             let ep_len = (*bundle_ptr).graph.entry_points.len();
-            let ep = (*bundle_ptr).graph.entry_points.as_ptr();
+            // Both Index newtypes are `#[repr(transparent)]` u32 — see `generate_from_cli`.
+            let ep = (*bundle_ptr).graph.entry_points.as_ptr().cast::<Index>();
             let scbs = core::mem::take(&mut (*bundle_ptr).graph.server_component_boundaries);
             self.linker.load(
                 &mut *bundle_ptr,
@@ -4012,7 +4017,7 @@ impl<'a> BundleV2<'a> {
         false
     }
 
-    fn path_with_pretty_initialized(&self, path: Fs::Path, target: options::Target) -> Result<Fs::Path, Error> {
+    fn path_with_pretty_initialized<'a>(&'a self, path: Fs::Path<'a>, target: options::Target) -> Result<Fs::Path<'a>, Error> {
         generic_path_with_pretty_initialized(path, target, unsafe { &(*self.transpiler.fs).top_level_dir }, self.allocator())
     }
 

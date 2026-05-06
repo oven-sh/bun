@@ -1384,9 +1384,9 @@ impl ServerWebSocket {
             break 'brk args.ptr(0).coerce_i32(global_this)?;
         };
 
-        let message_value: ZigString::Slice = 'brk: {
+        let message_value: ZigStringSlice = 'brk: {
             if args.ptr(1).is_empty() || args.ptr(1).is_undefined() {
-                break 'brk ZigString::Slice::empty();
+                break 'brk ZigStringSlice::empty();
             }
             break 'brk args.ptr(1).to_slice_or_null(global_this)?;
         };

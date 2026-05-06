@@ -37,9 +37,10 @@ mod _jsc_gated {
 use core::cell::RefCell;
 use std::sync::Arc;
 
-use bun_alloc::ArenaAllocator;
+use bun_alloc::Arena as ArenaAllocator;
 use bun_core::Environment;
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSObject, JSValue, JsResult, ZigString};
+use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSObject, JSValue, JsResult};
+use bun_str::{ZigString, ZigStringSlice};
 use bun_logger as Log;
 use bun_paths::{self as path, PathBuffer, MAX_PATH_BYTES};
 use bun_str::strings;

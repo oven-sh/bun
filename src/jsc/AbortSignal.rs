@@ -13,14 +13,16 @@ use crate::CommonAbortReason;
 
 /// Opaque FFI handle to WebCore::AbortSignal (C++ side owns layout & refcount).
 ///
-/// `UnsafeCell` marker makes this `!Freeze`: every method takes `&self` but the
-/// C++ side mutates internal state (refcount, listener list, abort flag), so
-/// `&AbortSignal` must not carry a `noalias readonly` assumption when lowered
-/// to `*mut AbortSignal` for FFI.
+/// The `UnsafeCell` field makes this `!Freeze`: every method takes `&self` but
+/// the C++ side mutates internal state (refcount, listener list, abort flag),
+/// so `&AbortSignal` must not carry a `noalias readonly` assumption when
+/// lowered to `*mut AbortSignal` for FFI. A real `UnsafeCell` (not just
+/// `PhantomData<UnsafeCell<_>>`, which is still `Freeze`) is required so that
+/// `as_mut_ptr` can soundly derive a write-capable pointer from `&self`.
 #[repr(C)]
 pub struct AbortSignal {
-    _p: [u8; 0],
-    _m: PhantomData<(UnsafeCell<()>, *mut u8, PhantomPinned)>,
+    _p: UnsafeCell<[u8; 0]>,
+    _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
 // TODO(port): move to jsc_sys

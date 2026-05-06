@@ -135,12 +135,11 @@ impl PosixSignalTask {
     }
 
     pub fn run_from_js_thread(number: u8, global_object: &JSGlobalObject) {
-        // SAFETY: FFI call into C++; global_object is a valid live reference.
+        // SAFETY: FFI call into C++; `global_object` is a valid live reference.
+        // `JSGlobalObject` wraps `UnsafeCell`, so `as_ptr()` yields a `*mut`
+        // with write provenance from `&self` — sound for a callee that mutates.
         unsafe {
-            Bun__onSignalForJS(
-                i32::from(number),
-                global_object as *const JSGlobalObject as *mut JSGlobalObject,
-            );
+            Bun__onSignalForJS(i32::from(number), global_object.as_ptr());
         }
     }
 }

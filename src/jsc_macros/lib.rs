@@ -324,7 +324,10 @@ pub fn codegen_cached_accessors(input: TokenStream) -> TokenStream {
                 value: ::bun_jsc::JSValue,
             ) {
                 // SAFETY: `global` is live; FFI does `m_${prop}.set(vm, this, value)`.
-                unsafe { #set_ext(this_value, global as *const _ as *mut _, value) }
+                // `as_mut_ptr` derives `*mut` via the `UnsafeCell` interior, so the
+                // C++ write barrier mutating VM/heap state is sound under Stacked
+                // Borrows (a `&T as *const T as *mut T` cast would not be).
+                unsafe { #set_ext(this_value, global.as_mut_ptr(), value) }
             }
         });
     }
@@ -601,8 +604,11 @@ fn js_class_hooks(args: &JsClassArgs, strukt: &ItemStruct) -> TokenStream2 {
                 fn to_js(self, global: &::bun_jsc::JSGlobalObject) -> ::bun_jsc::JSValue {
                     let ptr = ::std::boxed::Box::into_raw(::std::boxed::Box::new(self));
                     // SAFETY: `global` is live; `ptr` ownership transfers to the
-                    // C++ wrapper (freed via `${T}Class__finalize`).
-                    unsafe { __create(global as *const _ as *mut _, ptr) }
+                    // C++ wrapper (freed via `${T}Class__finalize`). `as_mut_ptr`
+                    // derives `*mut` via `UnsafeCell` so C++ allocating on the
+                    // GC heap through this pointer is sound (no read-only
+                    // provenance from `&JSGlobalObject`).
+                    unsafe { __create(global.as_mut_ptr(), ptr) }
                 }
                 fn from_js(value: ::bun_jsc::JSValue) -> ::core::option::Option<*mut Self> {
                     // SAFETY: pure FFI downcast; returns null on type mismatch.
@@ -617,7 +623,9 @@ fn js_class_hooks(args: &JsClassArgs, strukt: &ItemStruct) -> TokenStream2 {
                 fn get_constructor(global: &::bun_jsc::JSGlobalObject) -> ::bun_jsc::JSValue {
                     // SAFETY: `global` is live; C++ side returns the cached
                     // constructor (`WebCore::clientSubspaceFor*`-registered).
-                    unsafe { __get_constructor(global as *const _ as *mut _) }
+                    // `as_mut_ptr` derives `*mut` via `UnsafeCell` — the lazy
+                    // init may mutate the global's constructor cache.
+                    unsafe { __get_constructor(global.as_mut_ptr()) }
                 }
             }
         };

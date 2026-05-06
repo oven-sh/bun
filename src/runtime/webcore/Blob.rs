@@ -1343,7 +1343,7 @@ impl Blob {
             match store.data_mut() {
                 store::Data::S3(s3) => {
                     S3File::write_format::<F, W, ENABLE_ANSI_COLORS>(
-                        s3, formatter, writer, content_type, offset as usize,
+                        s3, formatter, writer, content_type, offset as u64,
                     )
                     .map_err(|_| core::fmt::Error)?;
                 }

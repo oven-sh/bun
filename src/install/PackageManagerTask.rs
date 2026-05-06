@@ -129,8 +129,11 @@ impl<'a> Task<'a> {
                 .sub(core::mem::offset_of!(Task, threadpool_task))
                 .cast::<Task>()
         };
-        // SAFETY: BACKREF — package_manager outlives all tasks it owns
-        let manager: &PackageManager = unsafe { &*(*this).package_manager };
+        // SAFETY: BACKREF — package_manager outlives all tasks it owns. Taken
+        // as `&mut` because `get_cache_directory` lazily initialises the cache
+        // dir on first call (Zig used a `var instance: PackageManager`).
+        let manager: &mut PackageManager =
+            unsafe { &mut *((*this).package_manager as *mut PackageManager) };
         // SAFETY: exclusive access — task runs on exactly one worker thread
         let this: &mut Task<'a> = unsafe { &mut *this };
 
@@ -172,13 +175,16 @@ impl<'a> Task<'a> {
                         break 'body;
                     };
 
+                    let scope = manager.scope_for_package_name(manifest.name.slice()) as *const _;
                     let package_manifest = match npm::Registry::get_package_metadata(
-                        manager.scope_for_package_name(manifest.name.slice()),
-                        &metadata.response,
+                        // SAFETY: scope is borrowed from manager.options which is not
+                        // touched by get_package_metadata (only the cache-dir fields are).
+                        unsafe { &*scope },
+                        metadata.response.clone(),
                         body.slice(),
                         &mut this.log,
                         manifest.name.slice(),
-                        &manifest.network.callback.package_manifest.loaded_manifest,
+                        manifest.network.callback.package_manifest.loaded_manifest.clone(),
                         manager,
                         manifest.network.callback.package_manifest.is_extended_manifest,
                     ) {
@@ -337,7 +343,7 @@ impl<'a> Task<'a> {
 
                     this.err = None;
                     this.data = Data {
-                        git_clone: ManuallyDrop::new(Fd::from_std_dir(dir)),
+                        git_clone: ManuallyDrop::new(Fd::from_std_dir(&dir)),
                     };
                     this.status = Status::Success;
                 }
@@ -348,7 +354,7 @@ impl<'a> Task<'a> {
                         &git_checkout.env,
                         &mut this.log,
                         manager.get_cache_directory(),
-                        git_checkout.repo_dir.std_dir(),
+                        bun_sys::Dir::from_fd(git_checkout.repo_dir),
                         git_checkout.name.slice(),
                         git_checkout.url.slice(),
                         git_checkout.resolved.slice(),

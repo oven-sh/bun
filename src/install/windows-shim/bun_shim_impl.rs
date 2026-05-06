@@ -1082,8 +1082,9 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         cbReserved2: 0,
         lpReserved2: core::ptr::null_mut(),
         // The standard handles outside of standalone may be tampered with.
+        // SAFETY: process_parameters is valid for the process lifetime; raw read of HANDLE.
         hStdInput: if IS_STANDALONE {
-            process_parameters.hStdInput
+            unsafe { (*process_parameters).hStdInput }
         } else {
             #[cfg(not(feature = "shim_standalone"))]
             { bun_sys::Fd::stdin().native() }
@@ -1091,7 +1092,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             { unreachable!() }
         },
         hStdOutput: if IS_STANDALONE {
-            process_parameters.hStdOutput
+            unsafe { (*process_parameters).hStdOutput }
         } else {
             #[cfg(not(feature = "shim_standalone"))]
             { bun_sys::Fd::stdout().native() }
@@ -1099,7 +1100,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             { unreachable!() }
         },
         hStdError: if IS_STANDALONE {
-            process_parameters.hStdError
+            unsafe { (*process_parameters).hStdError }
         } else {
             #[cfg(not(feature = "shim_standalone"))]
             { bun_sys::Fd::stderr().native() }

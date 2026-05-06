@@ -108,12 +108,18 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                         composes: Default::default(),
                     };
                     wrap_rules_with_conditions(&mut ast, bump, &entry.conditions);
-                    chunk.content.css.asts[i] = ast;
+                    css.asts[i] = ast;
                 }
                 css::CssEntryKind::ExternalPath(p) => {
-                    let mut conditions: Option<&mut ImportConditions> = None;
-                    if entry.conditions.len() > 0 {
-                        conditions = Some(entry.conditions.get_mut(0));
+                    // PORT NOTE: Zig keeps `conditions: ?*ImportConditions` as a raw
+                    // pointer to index 0 while the `while j != 1` loop reads
+                    // `entry.conditions.len` / `.at(j)`. Taking `&mut` at index 0 here
+                    // would exclusively borrow the whole `entry.conditions` BabyList for
+                    // the duration, aliasing those reads. The pointer is not actually
+                    // dereferenced until after the loop (.zig:119), so defer acquiring
+                    // the index-0 borrow until `actual_conditions` is built below.
+                    let had_conditions = entry.conditions.len() > 0;
+                    if had_conditions {
                         entry.condition_import_records.push(
                             bump,
                             ImportRecord {

@@ -1,5 +1,6 @@
 use bun_alloc::Arena as Bump; // bumpalo::Bump re-export (AST crate: arenas are load-bearing)
 use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
+use bun_js_parser::ast::bundled_ast::Flags as AstFlags;
 use crate::ungate_support::js_meta::JSMetaListExt as _;
 use crate::Graph::InputFileListExt as _;
 use crate::linker_graph::FileListExt as _;
@@ -121,7 +122,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 ..Default::default()
             });
 
-            if ast.flags.uses_module_ref || ast.flags.uses_exports_ref {
+            if ast.flags.intersects(AstFlags::USES_MODULE_REF | AstFlags::USES_EXPORTS_REF) {
                 clousure_args.append_assume_capacity(G::Arg {
                     binding: Binding::alloc(
                         temp_allocator,
@@ -174,7 +175,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 .all_stmts
                 .extend_from_slice(stmts.outside_wrapper_prefix.as_slice());
 
-            ast.flags.uses_module_ref = true;
+            ast.flags.insert(AstFlags::USES_MODULE_REF);
 
             // TODO: there is a weird edge case where the pretty path is not computed
             // it does not reproduce when debugging.
@@ -213,7 +214,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     stmts.reset();
 
     let part_index_for_lazy_default_export: u32 = 'brk: {
-        if ast.flags.has_lazy_export {
+        if ast.flags.contains(AstFlags::HAS_LAZY_EXPORT) {
             if let Some(default) =
                 c.graph.meta.items_resolved_exports()[source_index].get(b"default")
             {
@@ -230,7 +231,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     // The top-level directive must come first (the non-wrapped case is handled
     // by the chunk generation code, although only for the entry point)
     if flags.wrap != WrapKind::None
-        && ast.flags.has_explicit_use_strict_directive
+        && ast.flags.contains(AstFlags::HAS_EXPLICIT_USE_STRICT_DIRECTIVE)
         && !chunk.is_entry_point()
         && !output_format.is_always_strict_mode()
     {
@@ -474,7 +475,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 // Only include the arguments that are actually used
                 let mut args: bumpalo::collections::Vec<'_, G::Arg> =
                     bumpalo::collections::Vec::with_capacity_in(
-                        if ast.flags.uses_module_ref || ast.flags.uses_exports_ref {
+                        if ast.flags.intersects(AstFlags::USES_MODULE_REF | AstFlags::USES_EXPORTS_REF) {
                             2
                         } else {
                             0
@@ -482,7 +483,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         temp_allocator,
                     );
 
-                if ast.flags.uses_module_ref || ast.flags.uses_exports_ref {
+                if ast.flags.intersects(AstFlags::USES_MODULE_REF | AstFlags::USES_EXPORTS_REF) {
                     // PERF(port): was appendAssumeCapacity
                     args.push(G::Arg {
                         binding: Binding::alloc(
@@ -493,7 +494,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         ..Default::default()
                     });
 
-                    if ast.flags.uses_module_ref {
+                    if ast.flags.contains(AstFlags::USES_MODULE_REF) {
                         // PERF(port): was appendAssumeCapacity
                         args.push(G::Arg {
                             binding: Binding::alloc(

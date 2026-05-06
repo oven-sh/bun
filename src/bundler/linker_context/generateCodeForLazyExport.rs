@@ -22,9 +22,9 @@ pub fn generate_code_for_lazy_export(
     this: &mut LinkerContext,
     source_index: Index::Int,
 ) -> Result<(), AllocError> {
-    let exports_kind = this.graph.ast.items().exports_kind[source_index as usize];
-    let all_sources = this.parse_graph.input_files.items().source;
-    let all_css_asts = this.graph.ast.items().css;
+    let exports_kind = this.graph.ast.items_exports_kind()[source_index as usize];
+    let all_sources = this.parse_graph.input_files.items_source();
+    let all_css_asts = this.graph.ast.items_css();
     let maybe_css_ast: Option<&BundlerStyleSheet> = all_css_asts[source_index as usize];
     // PORT NOTE: reshaped for borrowck — `parts` re-borrowed below after other graph borrows drop.
     let parts = &mut this.graph.ast.items_mut().parts[source_index as usize];
@@ -40,7 +40,7 @@ pub fn generate_code_for_lazy_export(
         panic!("Internal error: expected at least one statement in the lazy export");
     }
 
-    let module_ref = this.graph.ast.items().module_ref[source_index as usize];
+    let module_ref = this.graph.ast.items_module_ref()[source_index as usize];
 
     // Handle css modules
     //
@@ -59,9 +59,9 @@ pub fn generate_code_for_lazy_export(
             }
             let mut exports = E::Object::default();
 
-            let symbols: &SymbolList = &this.graph.ast.items().symbols[source_index as usize];
+            let symbols: &SymbolList = &this.graph.ast.items_symbols()[source_index as usize];
             let all_import_records: &[BabyList<bun_css::ImportRecord>] =
-                this.graph.ast.items().import_records;
+                this.graph.ast.items_import_records();
 
             let values = css_ast.local_scope.values();
             if values.len() == 0 {
@@ -296,7 +296,7 @@ pub fn generate_code_for_lazy_export(
 
             // TODO(port): `parts: undefined` — Rust forbids uninit refs; rebound per-iteration below.
             // PORT NOTE: reshaped for borrowck — Visitor constructed inside the loop with fresh `parts` borrow.
-            let all_symbols = this.graph.ast.items().symbols;
+            let all_symbols = this.graph.ast.items_symbols();
 
             for entry in values {
                 let ref_ = entry.ref_;
@@ -503,7 +503,7 @@ pub fn generate_code_for_lazy_export(
                 write!(
                     &mut name_buf,
                     "{}_default",
-                    this.parse_graph.input_files.items().source[source_index as usize]
+                    this.parse_graph.input_files.items_source()[source_index as usize]
                         .fmt_identifier()
                 )
                 .expect("write to Vec<u8> cannot fail");

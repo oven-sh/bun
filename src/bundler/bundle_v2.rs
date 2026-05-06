@@ -1876,7 +1876,7 @@ impl<'a> BundleV2<'a> {
 
                     let record: &mut ImportRecord = &mut self.graph.ast.items_import_records_mut()[import_record.importer_source_index as usize].slice_mut()[import_record.import_record_index as usize];
                     source = Some(&self.graph.input_files.items_source()[import_record.importer_source_index as usize]);
-                    handles_import_errors = record.flags.handles_import_errors;
+                    handles_import_errors = record.flags.contains(bun_options_types::import_record::Flags::HANDLES_IMPORT_ERRORS);
 
                     // Disable failing packages from being printed.
                     // This may cause broken code to write.
@@ -4153,7 +4153,7 @@ impl<'a> BundleV2<'a> {
         let source_dir = source.path.source_dir();
         let mut estimated_resolve_queue_count: usize = 0;
         for import_record in ctx.import_records.slice_mut() {
-            if import_record.flags.is_internal {
+            if import_record.flags.contains(bun_options_types::import_record::Flags::IS_INTERNAL) {
                 import_record.tag = bun_options_types::import_record::Tag::Runtime;
                 import_record.source_index = Index::RUNTIME;
             }
@@ -4163,11 +4163,11 @@ impl<'a> BundleV2<'a> {
             // skip this — is_unused is also set by ConvertESMExportsForHmr
             // deduplication, and clearing those source_indices breaks module
             // identity (e.g., __esModule on ESM namespace objects).
-            if import_record.flags.is_unused && self.dev_server.is_none() {
+            if import_record.flags.contains(bun_options_types::import_record::Flags::IS_UNUSED) && self.dev_server.is_none() {
                 import_record.source_index = Index::INVALID;
             }
 
-            estimated_resolve_queue_count += (!(import_record.flags.is_internal || import_record.flags.is_unused || import_record.source_index.is_valid())) as usize;
+            estimated_resolve_queue_count += (!(import_record.flags.contains(bun_options_types::import_record::Flags::IS_INTERNAL) || import_record.flags.contains(bun_options_types::import_record::Flags::IS_UNUSED) || import_record.source_index.is_valid())) as usize;
         }
         let mut resolve_queue = ResolveQueue::default();
         resolve_queue.reserve(estimated_resolve_queue_count);
@@ -4182,9 +4182,9 @@ impl<'a> BundleV2<'a> {
 
             if
             // Don't resolve TypeScript types
-            import_record.flags.is_unused
+            import_record.flags.contains(bun_options_types::import_record::Flags::IS_UNUSED)
                 // Don't resolve the runtime
-                || import_record.flags.is_internal
+                || import_record.flags.contains(bun_options_types::import_record::Flags::IS_INTERNAL)
                 // Don't resolve pre-resolved imports
                 || import_record.source_index.is_valid()
             {
@@ -4198,7 +4198,7 @@ impl<'a> BundleV2<'a> {
                     let src = if is_server { &bake::SERVER_VIRTUAL_SOURCE } else { &bake::CLIENT_VIRTUAL_SOURCE };
                     if import_record.path.text == src.path.pretty {
                         if self.dev_server.is_some() {
-                            import_record.flags.is_external_without_side_effects = true;
+                            import_record.flags.insert(bun_options_types::import_record::Flags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
                             import_record.source_index = Index::INVALID;
                         } else {
                             if is_server {
@@ -4239,7 +4239,7 @@ impl<'a> BundleV2<'a> {
                     };
                     import_record.tag = replacement.tag;
                     import_record.source_index = Index::INVALID;
-                    import_record.flags.is_external_without_side_effects = true;
+                    import_record.flags.insert(bun_options_types::import_record::Flags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
                     continue;
                 }
 
@@ -4247,7 +4247,7 @@ impl<'a> BundleV2<'a> {
                     import_record.path = Fs::Path::init(import_record.path.text[b"bun:".len()..].into());
                     import_record.path.namespace = b"bun";
                     import_record.source_index = Index::INVALID;
-                    import_record.flags.is_external_without_side_effects = true;
+                    import_record.flags.insert(bun_options_types::import_record::Flags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
 
                     // don't link bun
                     continue;
@@ -4256,12 +4256,12 @@ impl<'a> BundleV2<'a> {
 
             // By default, we treat .sqlite files as external.
             if import_record.loader == Some(Loader::Sqlite) {
-                import_record.flags.is_external_without_side_effects = true;
+                import_record.flags.insert(bun_options_types::import_record::Flags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
                 continue;
             }
 
             if import_record.loader == Some(Loader::SqliteEmbedded) {
-                import_record.flags.is_external_without_side_effects = true;
+                import_record.flags.insert(bun_options_types::import_record::Flags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
             }
 
             if self.enqueue_on_resolve_plugin_if_needed(source.index.0, import_record, &source.path.text, i as u32, ctx.target) {
@@ -4387,7 +4387,7 @@ impl<'a> BundleV2<'a> {
                         if err == bun_core::err!("ModuleNotFound") {
                             let add_error = Logger::Log::add_resolve_error_with_text_dupe;
 
-                            if !import_record.flags.handles_import_errors && !self.transpiler.options.ignore_module_resolution_errors {
+                            if !import_record.flags.contains(bun_options_types::import_record::Flags::HANDLES_IMPORT_ERRORS) && !self.transpiler.options.ignore_module_resolution_errors {
                                 last_error = Some(err);
                                 if is_package_path(&import_record.path.text) {
                                     if ctx.target == Target::Browser && options::ExternalModules::is_node_builtin(&import_record.path.text) {

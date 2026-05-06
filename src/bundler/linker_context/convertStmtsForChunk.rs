@@ -56,9 +56,9 @@ pub fn convert_stmts_for_chunk(
     let _ = bump;
     let should_extract_esm_stmts_for_wrap = wrap != WrapKind::None;
     let should_strip_exports = c.options.mode != LinkerOptionsMode::Passthrough
-        || c.graph.files.items().entry_point_kind[source_index as usize] != EntryPoint::Kind::None;
+        || c.graph.files.items_entry_point_kind()[source_index as usize] != EntryPoint::Kind::None;
 
-    let flags = c.graph.meta.items().flags;
+    let flags = c.graph.meta.items_flags();
     let output_format = c.options.output_format;
 
     // If this file is a CommonJS entry point, double-write re-exports to the
@@ -236,7 +236,7 @@ pub fn convert_stmts_for_chunk(
                     } else {
                         if record.source_index.is_valid() {
                             let flag = flags[record.source_index.get() as usize];
-                            let wrapper_ref = c.graph.ast.items().wrapper_ref[record.source_index.get() as usize];
+                            let wrapper_ref = c.graph.ast.items_wrapper_ref()[record.source_index.get() as usize];
                             if flag.wrap == WrapKind::Esm && wrapper_ref.is_valid() {
                                 stmts.inside_wrapper_prefix.append_non_dependency(
                                     Stmt::alloc(
@@ -265,12 +265,12 @@ pub fn convert_stmts_for_chunk(
                         if record.flags.contains(ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN) {
                             let target: Expr = 'brk: {
                                 if record.source_index.is_valid()
-                                    && c.graph.ast.items().exports_kind[record.source_index.get() as usize]
+                                    && c.graph.ast.items_exports_kind()[record.source_index.get() as usize]
                                         .is_esm_with_dynamic_fallback()
                                 {
                                     // Prefix this module with "__reExport(exports, otherExports, module.exports)"
                                     break 'brk Expr::init_identifier(
-                                        c.graph.ast.items().exports_ref[record.source_index.get() as usize],
+                                        c.graph.ast.items_exports_ref()[record.source_index.get() as usize],
                                         stmt.loc,
                                     );
                                 }

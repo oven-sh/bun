@@ -90,7 +90,7 @@ impl crate::jsc::JsClass for JSMySQLConnection {
 // TODO(port): once `bun_jsc::JSGlobalObject::queue_microtask` is un-gated,
 // drop this and call it directly.
 fn queue_microtask(global: &JSGlobalObject, function: JSValue, args: &[JSValue]) {
-    extern "C" {
+    unsafe extern "C" {
         fn JSC__JSGlobalObject__queueMicrotaskJob(
             global: *const JSGlobalObject,
             function: JSValue,
@@ -447,8 +447,10 @@ impl JSMySQLConnection {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM via raw ptr,
-        // no other live borrow in this scope.
-        let vm = unsafe { &mut *global_object.bun_vm() };
+        // no other live borrow in this scope. Cast through the local opaque
+        // [`VirtualMachine`] view so `rare_data()` exposes the SQL-side accessors
+        // (`ssl_ctx_cache`, `mysql_group`) instead of `bun_jsc`'s placeholder.
+        let vm = unsafe { &mut *(global_object.bun_vm() as *mut VirtualMachine) };
         let arguments = callframe.arguments();
         let hostname_str = arguments[0].to_bun_string(global_object)?;
         // defer hostname_str.deref() — Drop on bun_str::String

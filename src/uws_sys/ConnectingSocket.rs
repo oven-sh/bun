@@ -18,11 +18,15 @@ impl ConnectingSocket {
         unsafe { us_connecting_socket_close(self) }
     }
 
-    pub fn group(&mut self) -> &mut SocketGroup {
+    /// Returns the owning `SocketGroup`. Raw pointer because the group is
+    /// shared by every socket it owns (Zig `*SocketGroup` freely aliases);
+    /// materializing `&mut SocketGroup` here would alias with other sockets'
+    /// borrows of the same group.
+    pub fn group(&mut self) -> *mut SocketGroup {
         // SAFETY: self is a valid handle; uSockets guarantees a non-null group
-        unsafe { &mut *us_connecting_socket_group(self) }
+        unsafe { us_connecting_socket_group(self) }
     }
-    pub fn raw_group(&mut self) -> &mut SocketGroup {
+    pub fn raw_group(&mut self) -> *mut SocketGroup {
         self.group()
     }
 

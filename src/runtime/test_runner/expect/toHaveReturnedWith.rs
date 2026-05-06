@@ -127,46 +127,21 @@ pub fn to_have_returned_with(
             returns,
             formatter: &mut formatter,
         };
-        const FMT: &str = "Some calls errored:\n\
-            \n\
-            \x20   Expected: {}\n\
-            \x20   Received:\n\
-            {}\n\
-            \n\
-            \x20   Number of returns: {}\n\
-            \x20   Number of calls:   {}";
-
-        // switch (Output.enable_ansi_colors_stderr) { inline else => |colors| ... }
-        if Output::enable_ansi_colors_stderr() {
-            return this.throw(
-                global,
-                signature,
-                Output::pretty_fmt_true(const_format::concatcp!("\n\n", FMT, "\n")),
-                // TODO(port): pretty_fmt is comptime ANSI-tag expansion in Zig; Rust needs a macro (`bun_core::pretty_fmt!`).
-                // TODO(port): Expect::throw fmt-arg plumbing — args below must map to template `{}`s, not concatenate.
-                format_args!(
-                    "{}{}{}{}",
-                    expected.to_fmt(&mut formatter),
-                    list_formatter,
-                    successful_returns_count,
-                    calls_count,
-                ),
-            );
-        } else {
-            return this.throw(
-                global,
-                signature,
-                Output::pretty_fmt_false(const_format::concatcp!("\n\n", FMT, "\n")),
-                // TODO(port): Expect::throw fmt-arg plumbing — args below must map to template `{}`s, not concatenate.
-                format_args!(
-                    "{}{}{}{}",
-                    expected.to_fmt(&mut formatter),
-                    list_formatter,
-                    successful_returns_count,
-                    calls_count,
-                ),
-            );
-        }
+        // TODO(port): Output.prettyFmt comptime color dispatch — Zig branches on
+        // `Output.enable_ansi_colors_stderr` to substitute/strip `<green>`/`<r>` tags at comptime.
+        // `Expect::throw` → `throw_pretty` handles tag substitution at runtime, so collapse both arms.
+        // PERF(port): was comptime bool dispatch (`switch inline else`) — profile in Phase B
+        return this.throw(
+            global,
+            signature,
+            format_args!(
+                "\n\nSome calls errored:\n\n    Expected: {}\n    Received:\n{}\n\n    Number of returns: {}\n    Number of calls:   {}\n",
+                expected.to_fmt(&mut formatter),
+                list_formatter,
+                successful_returns_count,
+                calls_count,
+            ),
+        );
     } else {
         // Case: No errors, but no match (and multiple returns)
         let list_formatter = mock::SuccessfulReturnsFormatter {

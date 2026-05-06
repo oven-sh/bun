@@ -230,7 +230,7 @@ impl Collection {
 
     pub fn handle_uncaught_exception(
         &mut self,
-        _: bun_test::bun_test_ref_data_value::RefDataValue,
+        _: RefDataValue,
     ) -> HandleUncaughtExceptionResult {
         group::begin();
         let _g = scopeguard::guard((), |_| group::end());

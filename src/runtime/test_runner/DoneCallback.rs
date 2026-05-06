@@ -3,8 +3,8 @@ use std::rc::Rc;
 use bun_jsc::{JSFunction, JSGlobalObject, JSValue, JsResult};
 use bun_str::String as BunString;
 
-use crate::test_runner::bun_test::{self, BunTest, RefData};
-use crate::test_runner::bun_test::debug::group as group_log;
+use crate::test_runner::bun_test::{group_begin, BunTest, RefData};
+use crate::test_runner::debug;
 
 #[bun_jsc::JsClass] // codegen wires to_js / from_js (Zig: jsc.Codegen.JSDoneCallback)
 pub struct DoneCallback {

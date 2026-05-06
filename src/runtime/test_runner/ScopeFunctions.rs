@@ -433,14 +433,14 @@ impl ScopeFunctions {
                 let _ = bun_test.collection.active_scope.append_test(
                     description,
                     if matches_filter { callback } else { None },
-                    bun_test::TestCfg {
+                    bun_test::ExecutionEntryCfg {
                         has_done_parameter,
                         timeout: options.timeout,
                         retry_count: options.retry.unwrap_or(0),
                         repeat_count: options.repeats,
                     },
                     base,
-                    bun_test::AppendPhase::Collection,
+                    bun_test::AddedInPhase::Collection,
                 )?;
             }
         }

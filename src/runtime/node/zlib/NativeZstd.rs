@@ -341,8 +341,8 @@ impl Context {
                     self.state_ptr().cast(),
                     &mut self.output,
                     &mut self.input,
-                    // TODO(port): @intCast c_int → ZSTD_EndDirective (c_uint); verify signedness
-                    c_uint::try_from(self.flush).unwrap(),
+                    // @intCast c_int → ZSTD_EndDirective (c_uint)
+                    self.flush as c_uint,
                 )
             },
             // SAFETY: state is a valid DCtx.
@@ -350,7 +350,7 @@ impl Context {
                 c::ZSTD_decompressStream(self.state_ptr().cast(), &mut self.output, &mut self.input)
             },
             _ => unreachable!(),
-        };
+        } as u64;
     }
 
     pub fn update_write_result(&self, avail_in: &mut u32, avail_out: &mut u32) {

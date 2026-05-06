@@ -517,7 +517,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                         let timeout_int = global_this.validate_integer_range::<u64>(
                             timeout_value,
                             0,
-                            jsc::IntegerRangeOptions { min: 0, field_name: "timeout" },
+                            jsc::IntegerRange { min: 0, field_name: b"timeout", ..Default::default() },
                         )?;
                         if timeout_int > 0 {
                             timeout = Some(i32::try_from((timeout_int as u32) & 0x7FFF_FFFF).unwrap());

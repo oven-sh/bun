@@ -85,6 +85,17 @@ pub trait RawMutex {
     fn unlock(&self);
 }
 
+impl RawMutex for Mutex {
+    #[inline]
+    fn lock(&self) {
+        Mutex::lock(self)
+    }
+    #[inline]
+    fn unlock(&self) {
+        Mutex::unlock(self)
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/threading/guarded.zig (72 lines)

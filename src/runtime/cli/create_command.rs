@@ -1492,18 +1492,19 @@ impl CreateCommand {
             // SAFETY: single-threaded CLI access to module-level static path buffer
             let bun_path_buf = unsafe { &mut BUN_PATH_BUF };
             if let Some(bin) = which(bun_path_buf, path_env, destination, b"bun") {
-                let argv: [&[u8]; 1] = [bun_core::as_byte_slice(bin)];
-                // TODO(port): std.process.Child — replace with bun_core::spawn_sync in Phase B
-                let mut child = bun_core::process::Child::init(&argv);
-                child.cwd = destination;
-                child.stdin_behavior = bun_core::process::Stdio::Inherit;
-                child.stdout_behavior = bun_core::process::Stdio::Inherit;
-                child.stderr_behavior = bun_core::process::Stdio::Inherit;
+                let argv: [&[u8]; 1] = [bin.as_bytes()];
+                // Zig used `std.process.Child`; PORTING.md bans std::process — route through
+                // bun.spawnSync (`crate::api::bun_process::sync::spawn`).
+                crate::cli::open::open_url(bun_str::ZStr::from_bytes_with_nul(b"http://localhost:3000/\0").unwrap());
 
-                crate::open::open_url(b"http://localhost:3000/");
-
-                child.spawn()?;
-                let _ = child.wait();
+                let _ = spawn_sync::spawn(&spawn_sync::Options {
+                    argv: argv.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
+                    cwd: Box::from(destination),
+                    stdin: spawn_sync::SyncStdio::Inherit,
+                    stdout: spawn_sync::SyncStdio::Inherit,
+                    stderr: spawn_sync::SyncStdio::Inherit,
+                    ..Default::default()
+                })?;
             }
         }
 
@@ -1543,7 +1544,7 @@ impl CreateCommand {
                 home_dir_buf[len] = 0;
                 // SAFETY: home_dir_buf[len] == 0 written above
                 let outdir_path_ = unsafe { bun_str::ZStr::from_raw(home_dir_buf.as_ptr(), len) };
-                if bun_paths::has_any_illegal_chars(outdir_path_.as_bytes()) {
+                if bun_paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes()) {
                     break 'outer;
                 }
 
@@ -1575,7 +1576,7 @@ impl CreateCommand {
                         home_dir_buf[len] = 0;
                         // SAFETY: home_dir_buf[len] == 0 written above
                         let outdir_path_ = unsafe { bun_str::ZStr::from_raw(home_dir_buf.as_ptr(), len) };
-                        if bun_paths::has_any_illegal_chars(outdir_path_.as_bytes()) {
+                        if bun_paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes()) {
                             break 'outer;
                         }
                         if bun_sys::Fd::cwd().directory_exists_at(outdir_path_).is_true() {
@@ -1592,7 +1593,7 @@ impl CreateCommand {
                     home_dir_buf[len] = 0;
                     // SAFETY: home_dir_buf[len] == 0 written above
                     let outdir_path_ = unsafe { bun_str::ZStr::from_raw(home_dir_buf.as_ptr(), len) };
-                    if bun_paths::has_any_illegal_chars(outdir_path_.as_bytes()) {
+                    if bun_paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes()) {
                         break 'outer;
                     }
                     if bun_sys::Fd::cwd().directory_exists_at(outdir_path_).is_true() {
@@ -1609,7 +1610,7 @@ impl CreateCommand {
                         home_dir_buf[len] = 0;
                         // SAFETY: home_dir_buf[len] == 0 written above
                         let outdir_path_ = unsafe { bun_str::ZStr::from_raw(home_dir_buf.as_ptr(), len) };
-                        if bun_paths::has_any_illegal_chars(outdir_path_.as_bytes()) {
+                        if bun_paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes()) {
                             break 'outer;
                         }
                         if bun_sys::Fd::cwd().directory_exists_at(outdir_path_).is_true() {

@@ -158,7 +158,7 @@ pub mod group {
         print_indent(&mut buf);
         let _ = write!(&mut buf, "\x1b[32m++ \x1b[0m");
         let _ = write!(&mut buf, "{}\n", args);
-        bun_core::Output::write_stdout(buf.as_slice());
+        let _ = std::io::stdout().write_all(buf.as_slice());
 
         INDENT.fetch_add(1, Ordering::Relaxed);
         LAST_WAS_START.store(true, Ordering::Relaxed);
@@ -183,7 +183,7 @@ pub mod group {
             "\x1b[32m{}\x1b[m\n",
             if last_was_start { "+-" } else { "--" },
         );
-        bun_core::Output::write_stdout(buf.as_slice());
+        let _ = std::io::stdout().write_all(buf.as_slice());
     }
 
     pub fn log(args: fmt::Arguments<'_>) {
@@ -193,7 +193,7 @@ pub mod group {
         let mut buf: Vec<u8> = Vec::new();
         print_indent(&mut buf);
         let _ = write!(&mut buf, "{}\n", args);
-        bun_core::Output::write_stdout(buf.as_slice());
+        let _ = std::io::stdout().write_all(buf.as_slice());
         LAST_WAS_START.store(false, Ordering::Relaxed);
     }
 }

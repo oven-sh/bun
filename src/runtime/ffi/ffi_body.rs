@@ -628,16 +628,22 @@ impl CompileC {
         };
 
         // TODO: correctly handle invalid user-provided options
-        let state = match TCC::State::init::<CompileC>(
-            TCC::InitOptions {
-                options: compile_options,
-                err: TCC::ErrHandler {
-                    ctx: self,
-                    handler: Self::handle_compilation_error,
+        let state = match TCC::State::init::<CompileC, true>(TCC::Config {
+            options: Some(NonNull::from(compile_options)),
+            output_type: TCC::OutputFormat::Memory,
+            err: TCC::ConfigErr {
+                ctx: Some(self as *mut CompileC),
+                // SAFETY: `Option<&mut T>` / `Option<NonNull<c_char>>` are
+                // ABI-identical to `*mut T` / `*const c_char` (NPO); the
+                // handler is only ever invoked by TinyCC via the C ABI.
+                handler: unsafe {
+                    core::mem::transmute::<
+                        extern "C" fn(Option<&mut CompileC>, Option<NonNull<c_char>>),
+                        unsafe extern "C" fn(*mut CompileC, *const c_char),
+                    >(Self::handle_compilation_error)
                 },
             },
-            true,
-        ) {
+        }) {
             Ok(s) => s,
             Err(e) if e == bun_core::err!("OutOfMemory") => {
                 return Err(bun_core::err!("OutOfMemory"))

@@ -1739,7 +1739,7 @@ where
 
                         this.handle_resolve_stream();
                     }
-                    jsc::PromiseStatus::Rejected => {
+                    jsc::js_promise::Status::Rejected => {
                         stream_log!("promise Rejected");
                         let mut response_body_readable_stream_ref =
                             core::mem::take(&mut this.response_body_readable_stream_ref);
@@ -2495,8 +2495,8 @@ where
                         readable_stream::Source::Blob(_)
                         | readable_stream::Source::File(_)
                         // These are the common scenario:
-                        | readable_stream::Source::JavaScript(_)
-                        | readable_stream::Source::Direct(_) => {
+                        | readable_stream::Source::JavaScript
+                        | readable_stream::Source::Direct => {
                             if let Some(resp) = this.resp {
                                 let mut pair = StreamPair { stream, this };
                                 // SAFETY: FFI handle

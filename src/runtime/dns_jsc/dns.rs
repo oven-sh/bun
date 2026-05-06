@@ -3003,7 +3003,7 @@ impl Resolver {
         }
 
         self.ref_();
-        let now_ts = now.copied().unwrap_or_else(|| bun::timespec::now(bun::TimeSource::AllowMockedTime));
+        let now_ts = now.copied().unwrap_or_else(|| bun::timespec::now(bun::TimespecMockMode::AllowMockedTime));
         self.event_loop_timer.next = now_ts.add_ms(1000);
         self.vm().timer.increment_timer_ref(1);
         self.vm().timer.insert(&mut self.event_loop_timer);

@@ -414,13 +414,13 @@ impl<'a> Snapshots<'a> {
             // PORT NOTE: avoid `Jest::runner()` (would alias `&mut TestRunner` over the live
             // `&mut self` / `ils_info` borrow of `runner.snapshots`). See comment in `parse_file`.
             // SAFETY: see `parse_file` — raw-pointer projection to disjoint `.files` field.
-            let test_file = unsafe {
+            let test_file_source = unsafe {
                 let p = Jest::RUNNER.expect("Jest runner not set").as_ptr();
-                (*p).files.get(file_id)
+                &(*p).files.items_source()[file_id as usize]
             };
             // TODO(port): arena.dupeZ — using owned Vec<u8> with trailing NUL.
             let test_filename: Box<[u8]> = {
-                let mut v = test_file.source.path.text.to_vec();
+                let mut v = test_file_source.path.text.to_vec();
                 v.push(0);
                 v.into_boxed_slice()
             };

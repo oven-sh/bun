@@ -141,7 +141,8 @@ pub mod node_types {
         pub fn estimated_size(&self) -> usize { self.slice().len() }
         pub fn is_string(&self) -> bool { matches!(self, Self::String(_)) }
         /// Null-terminate into `buf`. Mirrors `node::PathLike::sliceZ`.
-        pub fn slice_z<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a ZStr {
+        /// Returned `&ZStr` borrows only from `buf`, not `self`.
+        pub fn slice_z<'a>(&self, buf: &'a mut PathBuffer) -> &'a ZStr {
             let s = self.slice();
             let n = s.len().min(buf.len() - 1);
             buf[..n].copy_from_slice(&s[..n]);

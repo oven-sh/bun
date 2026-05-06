@@ -1367,7 +1367,7 @@ impl UDPSocket {
 
     #[bun_jsc::host_fn(method)]
     pub fn reload(this: &mut Self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args = callframe.arguments_old(1);
+        let args = callframe.arguments_old::<1>();
 
         if args.len < 1 {
             return Err(global_this.throw_invalid_arguments(format_args!("Expected 1 argument")));

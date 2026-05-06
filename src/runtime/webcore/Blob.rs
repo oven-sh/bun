@@ -781,7 +781,7 @@ impl FormDataContext {
                 joiner.push_owned(filename.to_slice().into_vec().into_boxed_slice());
                 joiner.push_static(b"\"\r\n");
 
-                let content_type = if !blob.content_type_slice().is_empty() {
+                let content_type: &[u8] = if !blob.content_type_slice().is_empty() {
                     blob.content_type_slice()
                 } else {
                     b"application/octet-stream"

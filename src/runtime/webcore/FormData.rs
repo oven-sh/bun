@@ -287,10 +287,13 @@ pub fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
     }
     let mut input_slice = ZigStringSlice::default();
     // PORT NOTE: `defer input_slice.deinit()` — handled by `Drop`.
+    // Keep the `ArrayBuffer` view alive for the duration of `input`'s borrow.
+    let input_array_buffer;
     let input: &[u8];
 
     if let Some(array_buffer) = input_value.as_array_buffer(global) {
-        input = array_buffer.byte_slice();
+        input_array_buffer = array_buffer;
+        input = input_array_buffer.byte_slice();
     } else if input_value.is_string() {
         input_slice = input_value.to_slice_or_null(global)?;
         input = input_slice.slice();

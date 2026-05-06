@@ -749,7 +749,7 @@ pub struct UVFSRequest<R, A, const F: NodeFSFunctionEnum> {
 }
 
 #[cfg(windows)]
-impl<R, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, F> {
+impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, F> {
     // TODO(port): heap_label = "Async" ++ typeBaseName(A) ++ "UvTask" — needs proc-macro
     pub const HEAP_LABEL: &'static str = "AsyncUvTask";
 

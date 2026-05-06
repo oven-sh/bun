@@ -1141,7 +1141,7 @@ impl<'a, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
     }
 
     pub extern "C" fn for_each(
-        global_this: *mut JSGlobalObject,
+        global_this: &JSGlobalObject,
         ctx_ptr: *mut c_void,
         key_: *mut ZigString,
         value: JSValue,
@@ -1160,35 +1160,28 @@ impl<'a, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
 
         // SAFETY: ctx_ptr was passed as `&mut Self as *mut c_void` by the caller of for_each.
         let Some(ctx) = (unsafe { (ctx_ptr as *mut Self).as_mut() }) else { return };
-        // SAFETY: global_this is non-null per JSC contract.
-        let global_this = unsafe { &*global_this };
-        let this = &mut *ctx.formatter;
-        let writer_ = &mut *ctx.writer;
-        if this.failed {
+        if ctx.formatter.failed {
             return;
         }
-
-        // PORT NOTE: reshaped for borrowck — WrappedWriter borrows writer_ exclusively;
-        // we re-borrow writer_ directly for nested calls below.
-        let mut writer = WrappedWriter::new(writer_);
 
         let Ok(tag) = Tag::get(value, global_this) else { return };
 
         if tag.cell.is_hidden() {
             return;
         }
+        // PORT NOTE: reshaped for borrowck — `handle_first_property` needs `&mut *ctx`,
+        // so the split borrows of `ctx.formatter`/`ctx.writer` are taken *after* it.
         if ctx.i == 0 {
-            // PORT NOTE: re-borrow ctx; drop `writer` first.
-            drop(writer);
-            if Self::handle_first_property(ctx, global_this, ctx.parent).is_err() {
+            let parent = ctx.parent;
+            if Self::handle_first_property(ctx, global_this, parent).is_err() {
                 return;
             }
-            writer = WrappedWriter::new(&mut *ctx.writer);
-        } else {
-            if this.print_comma::<W, ENABLE_ANSI_COLORS>(writer.ctx).is_err() {
-                return;
-            }
+        } else if ctx.formatter.print_comma::<W, ENABLE_ANSI_COLORS>(&mut *ctx.writer).is_err() {
+            return;
         }
+
+        let this = &mut *ctx.formatter;
+        let mut writer = WrappedWriter::new(&mut *ctx.writer);
 
         // PORT NOTE: defer ctx.i += 1 — incremented at end of fn.
         if ctx.i > 0 {

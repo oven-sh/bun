@@ -1566,7 +1566,7 @@ impl CapturedWriter {
         self.written += amount;
         if let Some(e) = err {
             log!(
-                "CapturedWriter(0x{:x}, {}) onWrite errno={} errmsg={:?} errfd={:?} syscall={:?}",
+                "CapturedWriter(0x{:x}, {}) onWrite errno={} errmsg={} errfd={} syscall={}",
                 self as *mut _ as usize,
                 out_kind_str(self.parent().out_type),
                 e.errno,

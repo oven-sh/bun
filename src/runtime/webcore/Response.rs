@@ -992,7 +992,7 @@ impl Response {
         let headers = response.get_or_create_headers(global_this)?;
         // PORT NOTE: reshaped for borrowck — Zig assigned response.init.headers = ...
         // then re-borrowed; here get_or_create_headers already populated init.headers.
-        headers.put(FetchHeaders::HTTPHeaderName::Location, url_string_slice.slice(), global_this)?;
+        headers.put(HTTPHeaderName::Location, url_string_slice.slice(), global_this)?;
         Ok(response)
     }
 

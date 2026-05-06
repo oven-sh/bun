@@ -1017,10 +1017,10 @@ impl TaskContext for BlobContext {
                 // self.result already replaced with Uncompressed above — ownership transferred
                 Ok(PromiseResult::Resolve(match self.output_type {
                     BlobOutputType::Blob => {
-                        let _blob_ptr =
+                        let blob_ptr =
                             Blob::new(Blob::create_with_bytes_and_allocator(data, global, false));
-                        // TODO(port): `Blob::to_js` has duplicate inherent defs (E0034).
-                        todo!("blocked_on: webcore::Blob::to_js duplicate definition")
+                        // SAFETY: blob_ptr is the heap allocation just produced by Blob::new.
+                        unsafe { (*blob_ptr).to_js(global) }
                     }
                     BlobOutputType::Bytes => {
                         // Ownership transfers to JSC's deallocator.
@@ -1030,10 +1030,12 @@ impl TaskContext for BlobContext {
             }
             BlobResult::Uncompressed => Ok(match self.output_type {
                 BlobOutputType::Blob => {
-                    let _store = self.store.clone();
-                    // TODO(port): `Blob::init_with_store` / `Blob::to_js` have
-                    // duplicate inherent defs in webcore/Blob.rs (E0034).
-                    todo!("blocked_on: webcore::Blob::init_with_store duplicate definition")
+                    // Zig: `this.store.ref()` — clone bumps the refcount; ownership of
+                    // the new ref transfers into the Blob via init_with_store.
+                    let store = self.store.clone();
+                    let blob_ptr = Blob::new(Blob::init_with_store(store, global));
+                    // SAFETY: blob_ptr is the heap allocation just produced by Blob::new.
+                    PromiseResult::Resolve(unsafe { (*blob_ptr).to_js(global) })
                 }
                 BlobOutputType::Bytes => {
                     let dup = self.store.shared_view().to_vec();
@@ -1334,10 +1336,7 @@ impl TaskContext for FilesContext {
                     blob.last_modified = (entry.mtime * 1000) as f64;
 
                     let name_js = blob.name.to_js(global)?;
-                    // TODO(port): `Blob::to_js` has duplicate inherent defs (E0034).
-                    let _ = blob;
-                    let blob_js: JSValue =
-                        todo!("blocked_on: webcore::Blob::to_js duplicate definition");
+                    let blob_js = blob.to_js(global);
                     // SAFETY: map_ptr came from JSMap::from_js on a live value.
                     unsafe { map_ptr.as_mut() }.set(global, name_js, blob_js)?;
                 }

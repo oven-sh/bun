@@ -73,16 +73,42 @@ impl jsc::JsClass for PostgresSQLConnection {
     }
 }
 
-/// Local stand-in for `uws_jsc::verify_error_to_js` (lives in `bun_runtime`,
-/// which is gated out of this crate's deps for now).
-// TODO(port): blocked_on bun_runtime::socket::uws_jsc::verify_error_to_js — once
-// `bun_runtime` is re-enabled in Cargo.toml, replace this stub with a call to it
-// (or the `VerifyErrorJsc` extension trait).
+/// Local port of `uws_jsc::verify_error_to_js` (the canonical impl lives in
+/// `bun_runtime::socket::uws_jsc`, but `bun_runtime` *depends on* this crate,
+/// so we can't import it without a cycle). The body is small and ABI-stable —
+/// build a `jsc.SystemError { code, message }` from the C-string fields and
+/// hand it to `toErrorInstance`. Matches `src/runtime/socket/uws_jsc.zig`.
 fn verify_error_to_js(
-    _err: &uws::us_bun_verify_error_t,
-    _global: &JSGlobalObject,
+    err: &uws::us_bun_verify_error_t,
+    global: &JSGlobalObject,
 ) -> JsResult<JSValue> {
-    todo!("blocked_on: bun_runtime::socket::uws_jsc::verify_error_to_js")
+    let code: &[u8] = if err.code.is_null() {
+        b""
+    } else {
+        // SAFETY: non-null `code` is a NUL-terminated C string owned by uSockets
+        // for the duration of the handshake callback.
+        unsafe { core::ffi::CStr::from_ptr(err.code) }.to_bytes()
+    };
+    let reason: &[u8] = if err.reason.is_null() {
+        b""
+    } else {
+        // SAFETY: non-null `reason` is a NUL-terminated C string owned by
+        // uSockets for the duration of the handshake callback.
+        unsafe { core::ffi::CStr::from_ptr(err.reason) }.to_bytes()
+    };
+
+    let fallback = bun_jsc::SystemError {
+        errno: 0,
+        code: BunString::clone_utf8(code),
+        message: BunString::clone_utf8(reason),
+        path: BunString::empty(),
+        syscall: BunString::empty(),
+        hostname: BunString::empty(),
+        fd: core::ffi::c_int::MIN,
+        dest: BunString::empty(),
+    };
+
+    Ok(fallback.to_error_instance(global))
 }
 
 /// Local FFI shim for `JSGlobalObject.queueMicrotask` — `bun_jsc` only exposes

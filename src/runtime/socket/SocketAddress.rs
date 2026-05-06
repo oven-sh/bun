@@ -945,15 +945,15 @@ mod WellKnownAddress {
     }
     #[inline]
     pub fn loopback_v4() -> BunString {
-        // SAFETY: INET_LOOPBACK is a static StringImpl initialized at load time
-        let _ = unsafe { INET_LOOPBACK };
-        todo!("blocked_on: bun_str::String::from_wtf_string_impl")
+        // SAFETY: INET_LOOPBACK is a static WTF::StaticStringImpl pointer initialized at
+        // load time by C++; static string impls have immortal refcount so adopt is fine.
+        BunString::adopt_wtf_impl(unsafe { INET_LOOPBACK })
     }
     #[inline]
     pub fn any_v6() -> BunString {
-        // SAFETY: INET6_ANY is a static StringImpl initialized at load time
-        let _ = unsafe { INET6_ANY };
-        todo!("blocked_on: bun_str::String::from_wtf_string_impl")
+        // SAFETY: INET6_ANY is a static WTF::StaticStringImpl pointer initialized at
+        // load time by C++; static string impls have immortal refcount so adopt is fine.
+        BunString::adopt_wtf_impl(unsafe { INET6_ANY })
     }
 }
 

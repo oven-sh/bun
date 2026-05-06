@@ -500,6 +500,15 @@ pub mod E {
             }
             Ok(())
         }
+        /// Zig: `E.Object.putString` — `put(key, Expr.init(E.String, value, Loc.Empty))`.
+        pub fn put_string(
+            &mut self,
+            bump: &Bump,
+            key: &[u8],
+            value: &[u8],
+        ) -> Result<(), AllocError> {
+            self.put(bump, key, Expr::init(EString::init(value), Loc::EMPTY))
+        }
 
         /// Walks `rope` segments, creating nested objects as needed, and
         /// returns the leaf `E.Object` expression (Zig: `getOrPutObject`).

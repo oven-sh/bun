@@ -241,33 +241,6 @@ impl<const SSL: bool, const HTTP3: bool> HasAutoFlusher
     }
 }
 
-// TODO(b2-blocked): cookie_map gated; opaque placeholder for Request field.
-#[derive(Debug, Default)]
-pub struct CookieMap;
-
-impl CookieMap {
-    /// Intrusive-refcount increment (Zig: `ref()`).
-    pub fn ref_(&mut self) {
-        todo!("blocked_on: webcore::cookie_map::CookieMap::ref")
-    }
-    /// Intrusive-refcount decrement (Zig: `deref()`).
-    pub fn deref(&mut self) {
-        todo!("blocked_on: webcore::cookie_map::CookieMap::deref")
-    }
-    /// Serialize Set-Cookie headers onto the response handle.
-    // PORT NOTE: generic over the response kind/handle so this opaque shim
-    // does not pull in bun_uws; the real cookie_map::CookieMap::write takes
-    // (ctx, ssl_enabled: bool, resp: *uws.AnyResponse).
-    pub fn write<K, R>(
-        &mut self,
-        _global: &bun_jsc::JSGlobalObject,
-        _kind: K,
-        _resp: R,
-    ) -> bun_jsc::JsResult<()> {
-        todo!("blocked_on: webcore::cookie_map::CookieMap::write")
-    }
-}
-
 // ─── un-gated core types (cycle-5: Body/Blob/Response/Request real) ──────────
 #[path = "webcore/Blob.rs"]
 pub mod blob;

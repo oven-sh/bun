@@ -556,14 +556,14 @@ pub fn homedir(global: &JSGlobalObject) -> Result<BunString, bun_core::Error> {
         let mut using_heap = false;
 
         // SAFETY: zeroed POD
-        let mut pw: c::passwd = unsafe { core::mem::zeroed() };
-        let mut result: *mut c::passwd = core::ptr::null_mut();
+        let mut pw: libc::passwd = unsafe { core::mem::zeroed() };
+        let mut result: *mut libc::passwd = core::ptr::null_mut();
 
         let ret: c_int = loop {
             // SAFETY: valid buffers and out-pointer
             let ret = unsafe {
-                c::getpwuid_r(
-                    c::geteuid(),
+                libc::getpwuid_r(
+                    libc::geteuid(),
                     &mut pw,
                     string_bytes.as_mut_ptr() as *mut c_char,
                     string_bytes.len(),

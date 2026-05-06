@@ -4315,7 +4315,7 @@ pub fn dump_bundle(
             bufw,
             "// Bundled at {}, Bun {}\n",
             bun_core::time::nano_timestamp(),
-            bun_core::Global::PACKAGE_JSON_VERSION_WITH_CANARY,
+            bun_core::Global::package_json_version_with_canary,
         )?;
     }
 

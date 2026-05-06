@@ -284,10 +284,14 @@ impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<'a, J
         bun_jsc::mark_binding!();
         let args = callframe.arguments();
         if args.len() > 0 && args[0].is_object() {
-            if let Some(high_water_mark) =
-                args[0].get_optional_int::<i64>(global_this, "highWaterMark")?
-            {
-                this.high_water_mark = high_water_mark;
+            // PORT NOTE: Zig `getOptionalInt(i64)` = `get` + `validateIntegerRange`.
+            // `bun_jsc::JSValue::get_optional_int` and
+            // `JSGlobalObject::validate_integer_range` are still gated upstream,
+            // so inline the lookup and fall back to plain i64 coercion.
+            // TODO(port): blocked_on: bun_jsc::JSValue::get_optional_int — restore
+            // proper `validateIntegerRange` (throws ERR_OUT_OF_RANGE) once ungated.
+            if let Some(value) = args[0].get(global_this, "highWaterMark")? {
+                this.high_water_mark = value.coerce_to_int64(global_this)?;
             }
         }
 

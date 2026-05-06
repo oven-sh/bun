@@ -1243,8 +1243,8 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         // SAFETY: offset <= len <= cap; ptr is valid for cap bytes
         unsafe {
             core::slice::from_raw_parts(
-                self.buffer.ptr.add(self.offset as usize),
-                (self.buffer.len - self.offset) as usize,
+                self.buffer.ptr.as_ptr().add(self.offset as usize),
+                (self.buffer.len as u64 - self.offset) as usize,
             )
         }
         // TODO(port): Zig `this.buffer.ptr[this.offset..this.buffer.len]` — verify ByteList field access

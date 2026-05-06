@@ -1587,6 +1587,10 @@ mod __css_validation {
                                 if record.source_index.is_invalid() {
                                     continue;
                                 }
+                                // SAFETY: see `col_ptr!` invariants on `all_css_asts`;
+                                // `*mut c_void` is a leaked `Box<BundlerStyleSheet>`.
+                                // Read-only deref — recursion may revisit the same
+                                // allocation as `ast`, so bind shared.
                                 let Some(other_ast) = col_ref!(self.all_css_asts)
                                     [record.source_index.get() as usize]
                                     .map(|p| unsafe {

@@ -451,11 +451,18 @@ impl HardLinkWindowsInstallTask {
 
     fn run(&mut self) -> Option<bun_core::Error> {
         use bun_sys::windows;
-        // SAFETY: src/dest point into self.bytes which lives for self's lifetime.
-        let src = unsafe { &mut *self.src };
-        let dest = unsafe { &mut *self.dest };
+        // Read scalar fields before borrowing `bytes` so no `&mut self` reborrow
+        // overlaps the slice borrows below.
+        let src_len = self.src_len;
+        let basename = usize::from(self.basename);
+        // Disjoint borrows into the single backing buffer: `src` is read-only,
+        // `dest` is mutated in place (temporary NUL for the dirpath).
+        let (src, dest) = self.bytes.split_at_mut(src_len + 1);
+        let src: &[u16] = &src[..src_len];
+        let dest_len = dest.len() - 1;
+        debug_assert_eq!(dest[dest_len], 0);
 
-        // SAFETY: FFI — src/dest are valid NUL-terminated WStr buffers backed by self.bytes.
+        // SAFETY: FFI — src/dest are valid NUL-terminated u16 buffers backed by self.bytes.
         if unsafe { windows::CreateHardLinkW(dest.as_ptr(), src.as_ptr(), core::ptr::null_mut()) } != 0 {
             return None;
         }
@@ -469,12 +476,12 @@ impl HardLinkWindowsInstallTask {
                     bun_output::scoped_log!(
                         install,
                         "CreateHardLinkW returned EEXIST, this shouldn't happen: {}",
-                        bun_core::fmt::fmt_path_u16(dest.as_slice())
+                        bun_core::fmt::fmt_path_u16(&dest[..dest_len])
                     );
                 }
-                // SAFETY: FFI — dest is a valid NUL-terminated WStr buffer.
+                // SAFETY: FFI — dest is a valid NUL-terminated u16 buffer.
                 unsafe { windows::DeleteFileW(dest.as_ptr()) };
-                // SAFETY: FFI — src/dest are valid NUL-terminated WStr buffers.
+                // SAFETY: FFI — src/dest are valid NUL-terminated u16 buffers.
                 if unsafe { windows::CreateHardLinkW(dest.as_ptr(), src.as_ptr(), core::ptr::null_mut()) } != 0 {
                     return None;
                 }
@@ -482,15 +489,14 @@ impl HardLinkWindowsInstallTask {
             _ => {}
         }
 
-        let dest_bytes = dest.as_mut_slice_with_nul();
-        let dirpath_len = dest.len() - usize::from(self.basename) - 1;
-        dest_bytes[dirpath_len] = 0;
-        // SAFETY: NUL written at [dirpath_len].
-        let dirpath = unsafe { bun_str::WStr::from_raw(dest_bytes.as_ptr(), dirpath_len) };
+        let dirpath_len = dest_len - basename - 1;
+        dest[dirpath_len] = 0;
+        // SAFETY: NUL written at dest[dirpath_len]; dest[..dirpath_len] is readable.
+        let dirpath = unsafe { bun_str::WStr::from_raw(dest.as_ptr(), dirpath_len) };
         let _ = mkdir_recursive_os_path(dirpath);
-        dest_bytes[dirpath_len] = bun_paths::SEP_WINDOWS as u16;
+        dest[dirpath_len] = bun_paths::SEP_WINDOWS as u16;
 
-        // SAFETY: FFI — src/dest are valid NUL-terminated WStr buffers.
+        // SAFETY: FFI — src/dest are valid NUL-terminated u16 buffers.
         if unsafe { windows::CreateHardLinkW(dest.as_ptr(), src.as_ptr(), core::ptr::null_mut()) } != 0 {
             return None;
         }
@@ -500,13 +506,13 @@ impl HardLinkWindowsInstallTask {
             if !ONCE.swap(true, Ordering::Relaxed) {
                 Output::warn(format_args!(
                     "CreateHardLinkW failed, falling back to CopyFileW: {} -> {}\n",
-                    bun_core::fmt::fmt_os_path(src.as_slice(), Default::default()),
-                    bun_core::fmt::fmt_os_path(dest.as_slice(), Default::default()),
+                    bun_core::fmt::fmt_os_path(src, Default::default()),
+                    bun_core::fmt::fmt_os_path(&dest[..dest_len], Default::default()),
                 ));
             }
         }
 
-        // SAFETY: FFI — src/dest are valid NUL-terminated WStr buffers.
+        // SAFETY: FFI — src/dest are valid NUL-terminated u16 buffers.
         if unsafe { windows::CopyFileW(src.as_ptr(), dest.as_ptr(), 0) } != 0 {
             return None;
         }

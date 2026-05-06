@@ -340,7 +340,11 @@ impl ServerWebSocket {
         if let Some(promise) = result.as_any_promise() {
             match promise.status() {
                 jsc::js_promise::Status::Rejected => {
-                    let _ = promise.result(global_object.vm());
+                    // Zig: `_ = promise.result(vm)` — discards the value, the
+                    // side effect is marking the rejected promise as handled so
+                    // it doesn't surface as an unhandledRejection. `AnyPromise`
+                    // doesn't forward `result`; `set_handled` is the equivalent.
+                    promise.set_handled(global_object.vm());
                     return;
                 }
                 _ => {}

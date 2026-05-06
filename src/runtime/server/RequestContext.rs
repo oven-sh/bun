@@ -3182,7 +3182,7 @@ where
             headers.fast_remove(jsc::HTTPHeaderName::Upgrade);
         }
         if let Some(resp) = self.resp {
-            headers.to_uws_response(Self::RESP_KIND, resp);
+            headers.to_uws_response(Self::RESP_KIND, any_response_as_ptr(resp));
         }
     }
 

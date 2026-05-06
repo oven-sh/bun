@@ -164,8 +164,7 @@ impl TimeoutObject {
     // `#[host_fn]` here — its `Free`-kind expansion calls `constructor(..)` as
     // a bare path, which fails to resolve inside an `impl` block.
     pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Self> {
-        // TODO(port): narrow error set
-        Err(global.throw("Timeout is not constructible", format_args!("")))
+        Err(global.throw("Timeout is not constructible"))
     }
 
     #[bun_jsc::host_fn(method)]

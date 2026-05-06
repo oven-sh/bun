@@ -520,13 +520,15 @@ impl Blob {
     {
         debug!("doReadFromS3");
         // TODO(port): WrappedFn struct that calls jsc::to_js_host_call(g, F, (b, g, by, Lifetime::Clone)).
-        fn wrapped<F>(b: &mut Blob, g: *const JSGlobalObject, by: &mut [u8]) -> JSValue
+        fn wrapped<F>(_b: &mut Blob, _g: *const JSGlobalObject, _by: &mut [u8]) -> JSValue
         where
             F: Fn(&mut Blob, &JSGlobalObject, &mut [u8], Lifetime) -> JSValue + 'static,
         {
-            // SAFETY: g is a valid JSGlobalObject pointer for the duration of the call.
-            let g = unsafe { &*g };
-            jsc::to_js_host_call(g, F::call, (b, g, by, Lifetime::Clone))
+            // Zig passed a `comptime Function` value; Rust has no value of `F`
+            // here (only the type), so the original `F::call(...)` requires
+            // `fn_traits`. Re-shape `do_read_from_s3` to take a fn pointer
+            // when `S3BlobDownloadTask::init` un-gates.
+            todo!("blocked_on: Blob::do_read_from_s3 wrapped fn — comptime Function value")
         }
         S3BlobDownloadTask::init(global, self, wrapped::<F>)
     }

@@ -1334,10 +1334,18 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             debug_assert!(self.pooled_buffer.is_none());
             if FeatureFlags::HTTP_BUFFER_POOLING {
                 if let Some(pooled_node) = ByteListPool::get_if_exists() {
+                    // SAFETY: `get_if_exists` returns a live heap node when Some.
+                    let pooled_node = unsafe { NonNull::new_unchecked(pooled_node) };
                     self.pooled_buffer = Some(pooled_node);
-                    // SAFETY: pooled_node is a valid pool checkout
-                    self.buffer = unsafe { pooled_node.as_ref() }.data;
-                    // TODO(port): ByteListPool::Node.data field access
+                    // SAFETY: pooled_node is a valid pool checkout; `data` was
+                    // written by `ByteListPool::push` (or zero-initialized).
+                    // Move the ByteList out by bitwise read and reset the slot.
+                    self.buffer = unsafe {
+                        core::mem::replace(
+                            (*pooled_node.as_ptr()).data.assume_init_mut(),
+                            ByteList::default(),
+                        )
+                    };
                 }
             }
         }

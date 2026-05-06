@@ -64,48 +64,11 @@ pub mod valkey_command {
     // reached this scope through the private `use super::*` glob).
     pub use super::ValkeyCommand;
 
-    bitflags::bitflags! {
-        #[repr(transparent)]
-        #[derive(Clone, Copy, PartialEq, Eq)]
-        pub struct Meta: u8 {
-            const RETURN_AS_BOOL           = 1 << 0;
-            const SUPPORTS_AUTO_PIPELINING = 1 << 1;
-            const RETURN_AS_BUFFER         = 1 << 2;
-            const SUBSCRIPTION_REQUEST     = 1 << 3;
-        }
-    }
-    impl Default for Meta {
-        fn default() -> Self {
-            Meta::SUPPORTS_AUTO_PIPELINING
-        }
-    }
-
-    /// Promise for a Valkey command.
-    pub struct Promise {
-        pub meta: Meta,
-        // TODO(b2-blocked): jsc.JSPromise.Strong — erased until un-gated.
-        pub promise: crate::jsc::Strong,
-    }
-
-    /// Command stored in offline queue when disconnected.
-    pub struct Entry {
-        pub serialized_data: Box<[u8]>,
-        pub meta: Meta,
-        pub promise: Promise,
-    }
-
-    pub struct PromisePair {
-        pub meta: Meta,
-        pub promise: Promise,
-    }
-
-    pub mod entry {
-        pub type Queue = super::LinearFifo<super::Entry, super::DynamicBuffer<super::Entry>>;
-    }
-    pub mod promise_pair {
-        pub type Queue =
-            super::LinearFifo<super::PromisePair, super::DynamicBuffer<super::PromisePair>>;
-    }
+    // The Phase-A draft in `ValkeyCommand.rs` (mounted as `valkey_command_body`)
+    // is now the source of truth for these types — re-export instead of
+    // duplicating so `Command.meta` (a `valkey_command_body::Meta`) unifies
+    // with `command::PromisePair.meta` etc.
+    pub use super::valkey_command_body::{Entry, Meta, Promise, PromisePair, entry, promise_pair};
 }
 pub use valkey_command as ValkeyCommand;
 

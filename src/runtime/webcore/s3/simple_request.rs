@@ -135,6 +135,35 @@ pub struct S3HttpSimpleTask {
     pub poll_ref: KeepAlive,
 }
 
+impl Taskable for S3HttpSimpleTask {
+    const TAG: TaskTag = task_tag::S3HttpSimpleTask;
+}
+
+// PORT NOTE: Zig only defaults `response_buffer`/`result`/`concurrent_task`; Rust's
+// `..Default::default()` requires the whole struct to be Default, so the remaining fields get
+// inert placeholders that callers always overwrite (see client.rs / execute_simple_s3_request).
+impl Default for S3HttpSimpleTask {
+    fn default() -> Self {
+        fn unset_callback(_: S3UploadResult<'_>, _: *mut c_void) -> JsTerminatedResult<()> {
+            unreachable!("S3HttpSimpleTask.callback used before being set")
+        }
+        Self {
+            http: core::mem::MaybeUninit::uninit(),
+            vm: core::ptr::null_mut(),
+            sign_result: SignResult::default(),
+            headers: Headers::default(),
+            callback_context: core::ptr::null_mut(),
+            callback: Callback::Upload(unset_callback),
+            response_buffer: MutableString::default(),
+            result: HTTPClientResult::default(),
+            concurrent_task: ConcurrentTask::default(),
+            range: None,
+            proxy_url: Box::default(),
+            poll_ref: KeepAlive::default(),
+        }
+    }
+}
+
 // Re-export the canonical alias so sibling modules that imported it from here keep compiling.
 pub use bun_jsc::JsTerminatedResult;
 

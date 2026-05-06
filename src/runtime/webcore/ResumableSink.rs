@@ -369,12 +369,17 @@ impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<'a, J
 
             if let Some(ondrain) = Self::get_drain(js_this) {
                 self.status = Status::Started;
-                global_object.bun_vm().event_loop().run_callback(
-                    ondrain,
-                    global_object,
-                    JSValue::UNDEFINED,
-                    &[JSValue::UNDEFINED, JSValue::UNDEFINED],
-                );
+                // SAFETY: `bun_vm()` returns a live `*mut VirtualMachine` owned by
+                // the global; `event_loop()` returns its self-referential
+                // `*mut EventLoop`. Both outlive this call.
+                unsafe {
+                    (*(*global_object.bun_vm()).event_loop()).run_callback(
+                        ondrain,
+                        global_object,
+                        JSValue::UNDEFINED,
+                        &[JSValue::UNDEFINED, JSValue::UNDEFINED],
+                    );
+                }
             }
         }
     }

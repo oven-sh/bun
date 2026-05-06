@@ -21,6 +21,10 @@ pub struct Layer {
 }
 
 impl Layer {
+    pub fn deep_clone(&self, bump: &Arena) -> Self {
+        Self { v: self.v.as_ref().map(|n| n.deep_clone(bump)) }
+    }
+
     pub fn eql(&self, other: &Self) -> bool {
         match (&self.v, &other.v) {
             (None, None) => true,

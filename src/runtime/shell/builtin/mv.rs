@@ -402,6 +402,18 @@ impl Mv {
     }
 }
 
+impl Drop for Mv {
+    /// Spec: mv.zig `deinit` — close the directory fd opened by
+    /// `ShellMvCheckTargetTask` (`openat(target, O_RDONLY|O_DIRECTORY)`).
+    /// `bun_sys::Fd` is `Copy` with no `Drop`, so without this every
+    /// `mv srcs... dir/` leaks one open fd.
+    fn drop(&mut self) {
+        if let Some(fd) = self.args.target_fd.take() {
+            closefd(fd);
+        }
+    }
+}
+
 enum MvFlag {
     ContinueParsing,
     Done,
@@ -443,6 +455,10 @@ impl ShellMvCheckTargetTask {
 /// Spec: mv.zig `ShellMvBatchedTask`. renameat() each source into the target.
 pub struct ShellMvBatchedTask {
     pub cmd: NodeId,
+    /// Index into `MvState::Executing::tasks` so the main-thread completion
+    /// can route to `Mv::batched_move_task_done` (Zig used `*ShellMvBatchedTask`
+    /// directly via `@fieldParentPtr`).
+    pub idx: usize,
     pub sources: Vec<Vec<u8>>,
     pub target: Vec<u8>,
     pub target_fd: Option<bun_sys::Fd>,
@@ -480,10 +496,10 @@ impl ShellMvBatchedTask {
         this.task.on_finish();
     }
 
-    pub fn run_from_main_thread(_this: *mut ShellMvBatchedTask, _interp: &mut Interpreter) {
-        // TODO(port): Mv::batched_move_task_done needs the task's index in
-        // `MvState::Executing::tasks`; either store the index on the task or
-        // look it up by pointer once `on_finish` is wired.
+    pub fn run_from_main_thread(this: *mut ShellMvBatchedTask, interp: &mut Interpreter) {
+        // SAFETY: `this` is a live boxed task held in `MvState::Executing::tasks`.
+        let (cmd, idx) = unsafe { ((*this).cmd, (*this).idx) };
+        Mv::batched_move_task_done(interp, cmd, idx);
     }
 }
 

@@ -877,8 +877,217 @@ impl<'a> Transpiler<'a> {
 
                 let mut jsx = this_parse.jsx;
                 jsx.parse = loader.is_jsx();
-                let _ = (allocator, file_hash, target, &jsx, &this_parse.macro_remappings);
+                let _ = &this_parse.macro_remappings;
 
+                // PORT NOTE: `ParserOptions::init` is hard-typed
+                // `-> Options<'static>` and `Options<'a>` is *invariant* in
+                // `'a` (it holds `Option<&'a mut MacroContext>`), so an
+                // `Options<'static>` cannot be passed to
+                // `cache::JavaScript::parse::<'x>` alongside a non-`'static`
+                // `bump`/`source`/`define`. Construct the struct literal
+                // directly (mirroring the body of `Options::init`,
+                // ast/Parser.rs:144-180) so `'x` is inferred from the borrows
+                // below instead of pinned to `'static`.
+                use js_ast::parser::options as p_opts;
+                let mut opts = js_ast::ParserOptions::<'_> {
+                    ts: loader.is_typescript(),
+                    jsx: to_parser_jsx_pragma(jsx),
+                    keep_names: true,
+                    ignore_dce_annotations: self.options.ignore_dce_annotations,
+                    preserve_unused_imports_ts: false,
+                    use_define_for_class_fields: false,
+                    suppress_warnings_about_weird_code: true,
+                    filepath_hash_for_hmr: file_hash.unwrap_or(0),
+                    features: js_ast::RuntimeFeatures::default(),
+                    tree_shaking: self.options.tree_shaking,
+                    bundle: false,
+                    code_splitting: false,
+                    package_version: b"",
+                    macro_context: None,
+                    warn_about_unbundled_modules: !target.is_bun(),
+                    allow_unresolved: &p_opts::AllowUnresolved::DEFAULT,
+                    module_type: to_parser_module_type(this_parse.module_type),
+                    output_format: p_opts::Format::Esm,
+                    transform_only: self.options.transform_only,
+                    import_meta_main_value: None,
+                    lower_import_meta_main_for_node_js: false,
+                    framework: None,
+                    repl_mode: self.options.repl_mode,
+                };
+
+                opts.features.emit_decorator_metadata = this_parse.emit_decorator_metadata;
+                // emitDecoratorMetadata implies legacy/experimental decorators, as it only
+                // makes sense with TypeScript's legacy decorator system (reflect-metadata).
+                // TC39 standard decorators have their own metadata mechanism.
+                opts.features.standard_decorators = !loader.is_typescript()
+                    || !(this_parse.experimental_decorators
+                        || this_parse.emit_decorator_metadata);
+                opts.features.allow_runtime = self.options.allow_runtime;
+                opts.features.set_breakpoint_on_first_line =
+                    this_parse.set_breakpoint_on_first_line;
+                opts.features.trim_unused_imports = self
+                    .options
+                    .trim_unused_imports
+                    .unwrap_or(loader.is_typescript());
+                opts.features.no_macros = self.options.no_macros;
+                // TODO(port): type unification — `Features.runtime_transpiler_cache`
+                // is `Option<*mut bun_js_parser::RuntimeTranspilerCache>`, but
+                // `this_parse.runtime_transpiler_cache` is
+                // `Option<&mut crate::cache::RuntimeTranspilerCache>`. The two
+                // structs are CYCLEBREAK duplicates with different layouts;
+                // pointer-casting is unsound. Thread the real pointer once B-3
+                // collapses them. Until then the parser sees `None` (cache miss).
+                opts.features.runtime_transpiler_cache = None;
+
+                // @bun annotation
+                opts.features.dont_bundle_twice = this_parse.dont_bundle_twice;
+
+                opts.features.commonjs_at_runtime = this_parse.allow_commonjs;
+
+                opts.features.inlining = self.options.inlining;
+                opts.features.auto_import_jsx = self.options.auto_import_jsx;
+                // JavaScriptCore implements `using` / `await using` natively, so
+                // when targeting Bun there is no need to lower them.
+                opts.features.lower_using = !target.is_bun();
+
+                opts.features.inject_jest_globals = this_parse.inject_jest_globals;
+                opts.features.minify_syntax = self.options.minify_syntax;
+                opts.features.minify_identifiers = self.options.minify_identifiers;
+                opts.features.dead_code_elimination = self.options.dead_code_elimination;
+                opts.features.remove_cjs_module_wrapper =
+                    this_parse.remove_cjs_module_wrapper;
+                // TODO(port): `Features.bundler_feature_flags` is
+                // `Option<Box<StringSet>>` (owned). Zig stored a `*const`
+                // alias of `transpiler.options.bundler_feature_flags`; Rust
+                // would have to move/clone it. `StringSet` isn't `Clone` and
+                // moving it out of `BundleOptions` would break the next parse
+                // call. Change the parser-side field to `Option<&'a StringSet>`
+                // (matches the Zig `*const` semantics) in B-3, then thread it.
+                opts.features.bundler_feature_flags = None;
+                opts.features.repl_mode = self.options.repl_mode;
+
+                // we'll just always enable top-level await
+                // this is incorrect for Node.js files which are CommonJS modules
+                opts.features.top_level_await = true;
+
+                opts.features.is_macro_runtime =
+                    target == crate::options_impl::Target::BunMacro;
+                // TODO(port): type unification — `Features.replace_exports` is
+                // `parser::Runtime::ReplaceableExportMap` (newtype over
+                // `StringArrayHashMap<parser::Runtime::ReplaceableExport>`),
+                // but `this_parse.replace_exports` carries
+                // `runtime_full::ReplaceableExport` values. Convert once the
+                // two `ReplaceableExport` enums collapse (B-3).
+                let _ = this_parse.replace_exports;
+
+                if self.macro_context.is_none() {
+                    // PORT NOTE: `MacroContext::init(transpiler)` is a
+                    // `todo!()` stub (the real body lives in
+                    // `bun_js_parser_jsc`). The parser-side `MacroContext` is
+                    // currently a fieldless unit struct, so `Default` is
+                    // semantically equivalent to Zig's `init` for now.
+                    self.macro_context =
+                        Some(js_ast::Macro::MacroContext::default());
+                }
+                opts.macro_context = self.macro_context.as_mut();
+                // TODO(port): Zig wrote `opts.macro_context.javascript_object =
+                // this_parse.macro_js_ctx` when `target != .bun_macro`. The
+                // CYCLEBREAK `MacroContext` stub has no `javascript_object`
+                // field yet; thread it once `bun_js_parser_jsc` lands the real
+                // struct.
+                let _ = this_parse.macro_js_ctx;
+
+                // Capture the cache pointer for the returned `ParseResult`
+                // before `this_parse` is otherwise consumed.
+                let rtc_ptr: Option<core::ptr::NonNull<RuntimeTranspilerCache>> =
+                    this_parse
+                        .runtime_transpiler_cache
+                        .map(core::ptr::NonNull::from);
+
+                // TODO(port): type unification — `cache::JavaScript::parse`
+                // takes `&'a bun_js_parser::defines::Define`, but
+                // `self.options.define` is `Box<crate::defines::Define>`
+                // (richer struct, extra `drop_debugger` field, different
+                // `DefineData` shape). Until B-3 collapses the two `Define`
+                // tables, hand the parser an empty one so user `--define`
+                // values are ignored at this layer (they are still applied by
+                // the bundler-side visitor that reads `self.options.define`).
+                // PERF(port): one bump alloc per parse; cheap, but lift to a
+                // `OnceCell<Define>` on `Transpiler` once the type unifies.
+                let define: &js_ast::defines::Define =
+                    allocator.alloc(js_ast::defines::Define::default());
+
+                // PORT NOTE: spec calls `transpiler.resolver.caches.js.parse`.
+                // The resolver-side `cache::JavaScript` is a fieldless
+                // CYCLEBREAK shell with no `parse` body (resolver/lib.rs:1664);
+                // the real `parse` lives on `crate::cache::JavaScript`. Both
+                // are stateless unit structs, so calling the bundler-crate one
+                // directly is equivalent.
+                let parsed = match crate::cache::JavaScript::init()
+                    .parse(allocator, opts, define, log, source)
+                {
+                    Ok(Some(r)) => r,
+                    Ok(None) | Err(_) => return None,
+                };
+                return Some(match parsed {
+                    js_ast::Result::Ast(value) => ParseResult {
+                        ast: value,
+                        source: dup_source(source),
+                        loader,
+                        input_fd,
+                        runtime_transpiler_cache: rtc_ptr,
+                        already_bundled: AlreadyBundled::None,
+                        pending_imports: Default::default(),
+                        empty: false,
+                    },
+                    js_ast::Result::Cached => ParseResult {
+                        // TODO(port): Zig used `undefined` for ast here.
+                        ast: js_ast::Ast::empty(),
+                        runtime_transpiler_cache: rtc_ptr,
+                        source: dup_source(source),
+                        loader,
+                        input_fd,
+                        already_bundled: AlreadyBundled::None,
+                        pending_imports: Default::default(),
+                        empty: false,
+                    },
+                    js_ast::Result::AlreadyBundled(already_bundled) => ParseResult {
+                        // TODO(port): Zig used `undefined` for ast here.
+                        ast: js_ast::Ast::empty(),
+                        // TODO(port): spec transpiler.zig:973-991 reads
+                        // `<path>.jsc` from disk via `bun.sys.File.toSourceAt`
+                        // for the `.bytecode{,_cjs}` variants when
+                        // `virtual_source.is_none() && allow_bytecode_cache`.
+                        // `bun_sys::File::to_source_at` is not yet on the live
+                        // surface; fall back to the same `default_value` the
+                        // Zig path uses on read failure. Full body preserved in
+                        // `__phase_a_draft` below.
+                        already_bundled: match already_bundled {
+                            js_ast::AlreadyBundled::Bun => AlreadyBundled::SourceCode,
+                            js_ast::AlreadyBundled::BunCjs => {
+                                AlreadyBundled::SourceCodeCjs
+                            }
+                            js_ast::AlreadyBundled::BytecodeCjs => {
+                                let _ = (
+                                    this_parse.virtual_source,
+                                    this_parse.allow_bytecode_cache,
+                                    dirname_fd,
+                                );
+                                AlreadyBundled::SourceCodeCjs
+                            }
+                            js_ast::AlreadyBundled::Bytecode => {
+                                AlreadyBundled::SourceCode
+                            }
+                        },
+                        source: dup_source(source),
+                        loader,
+                        input_fd,
+                        pending_imports: Default::default(),
+                        runtime_transpiler_cache: None,
+                        empty: false,
+                    },
+                });
+                // ── stale gated draft (superseded by the un-gated body above) ─
                 // TODO(b2-blocked): `js_parser::ParserOptions::init` is gated
                 // (b2-ast-round-D) and the live `Options` has a non-defaultable
                 // `&mut MacroContext` field plus a different `JSX::Pragma`

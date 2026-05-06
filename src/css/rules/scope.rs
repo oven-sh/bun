@@ -76,13 +76,20 @@ impl<R> ScopeRule<R> {
     }
 }
 
-// blocked_on: DeepClone derive.
-#[cfg(any())]
 impl<R> ScopeRule<R> {
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // TODO(port): css.implementDeepClone uses @typeInfo field reflection — replace with a
-        // DeepClone trait/derive in Phase B.
-        crate::implement_deep_clone(self, bump)
+    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+    where
+        R: crate::generics::DeepClone<'bump>,
+    {
+        // PORT NOTE: `css.implementDeepClone` field-walk. `SelectorList::
+        // deep_clone()` intentionally drops the `&Arena` (selectors/parser.rs
+        // — every payload is arena-static); routed via `dc::selector_list`.
+        Self {
+            scope_start: self.scope_start.as_ref().map(|s| super::dc::selector_list(s, bump)),
+            scope_end: self.scope_end.as_ref().map(|s| super::dc::selector_list(s, bump)),
+            rules: self.rules.deep_clone(bump),
+            loc: self.loc,
+        }
     }
 }
 

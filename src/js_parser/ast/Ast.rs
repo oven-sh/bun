@@ -197,13 +197,13 @@ impl Ast {
         Ast::default()
     }
 
+    // TODO(port): Zig used `std.json.stringify(self.parts, opts, stream)` with whitespace.separator = true.
+    // Phase B: pick a JSON serializer for `parts` (serde or hand-rolled). Gated `#[cfg(any())]`
+    // until then so it cannot silently succeed with an empty stream (PORTING.md §Forbidden:
+    // silent-no-op). No live callers.
+    #[cfg(any())]
     pub fn to_json<W: std::io::Write>(&self, stream: &mut W) -> Result<(), bun_core::Error> {
-        // TODO(port): Zig used `std.json.stringify(self.parts, opts, stream)` with whitespace.separator = true.
-        // Phase B: pick a JSON serializer for `parts` (serde or hand-rolled). Stubbed for now.
-        // TODO(port): narrow error set
-        let _ = stream;
-        let _ = &self.parts;
-        Ok(())
+        todo!("port: std.json.stringify(self.parts, opts, stream)")
     }
 
     // Zig `deinit` only freed `parts`, `symbols`, `import_records` via `bun.default_allocator`,

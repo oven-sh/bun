@@ -1226,11 +1226,14 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> AtRuleParser for TopLevelRuleParser<
         // phf-style dispatch on at-rule name (case-insensitive).
         // TODO(port): Zig used `bun.ComptimeEnumMap(PreludeEnum)`; Phase B
         // wires `phf::Map` or `match_ignore_ascii_case!`.
-        if strings::eql_case_insensitive_ascii(name, b"import", true) {
+        if strings::eql_case_insensitive_ascii::<true>(name, b"import") {
             if (this.state as u8) > (TopLevelState::Imports as u8) {
-                return Err(input.new_custom_error(ParserError::UnexpectedImportRule));
+                return Err(input.new_custom_error(ParserError::unexpected_import_rule));
             }
-            let url_str = input.expect_url_or_string()?;
+            // TODO(port): lifetime — arena-owned slice; same `'static` erasure
+            // as `Token` payloads.
+            let url_str: &'static [u8] =
+                unsafe { &*(input.expect_url_or_string()? as *const [u8]) };
 
             let layer: Option<Option<LayerName>> =
                 if input.try_parse(|p| p.expect_ident_matching(b"layer")).is_ok() {
@@ -1254,19 +1257,23 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> AtRuleParser for TopLevelRuleParser<
                 None
             };
 
-            let media = MediaList::parse(input)?;
+            let media = parse_media_list(input)?;
 
             return Ok(AtRulePrelude::Import { url: url_str, media, supports, layer });
         }
-        if strings::eql_case_insensitive_ascii(name, b"namespace", true) {
+        if strings::eql_case_insensitive_ascii::<true>(name, b"namespace") {
             if (this.state as u8) > (TopLevelState::Namespaces as u8) {
-                return Err(input.new_custom_error(ParserError::UnexpectedNamespaceRule));
+                return Err(input.new_custom_error(ParserError::unexpected_namespace_rule));
             }
-            let prefix = input.try_parse(Parser::expect_ident).ok();
-            let namespace = input.expect_url_or_string()?;
+            let prefix = input
+                .try_parse(Parser::expect_ident)
+                .ok()
+                .map(|s| -> &'static [u8] { unsafe { &*(s as *const [u8]) } });
+            let namespace: &'static [u8] =
+                unsafe { &*(input.expect_url_or_string()? as *const [u8]) };
             return Ok(AtRulePrelude::Namespace { prefix, url: namespace });
         }
-        if strings::eql_case_insensitive_ascii(name, b"charset", true) {
+        if strings::eql_case_insensitive_ascii::<true>(name, b"charset") {
             // @charset is removed by rust-cssparser if it's the first rule in
             // the stylesheet. Anything left is technically invalid, however,
             // users often concatenate CSS files together, so we are more
@@ -1274,12 +1281,12 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> AtRuleParser for TopLevelRuleParser<
             input.expect_string()?;
             return Ok(AtRulePrelude::Charset);
         }
-        if strings::eql_case_insensitive_ascii(name, b"custom-media", true) {
+        if strings::eql_case_insensitive_ascii::<true>(name, b"custom-media") {
             let custom_media_name = DashedIdentFns::parse(input)?;
-            let media = MediaList::parse(input)?;
+            let media = parse_media_list(input)?;
             return Ok(AtRulePrelude::CustomMedia { name: custom_media_name, media });
         }
-        if strings::eql_case_insensitive_ascii(name, b"property", true) {
+        if strings::eql_case_insensitive_ascii::<true>(name, b"property") {
             let property_name = DashedIdentFns::parse(input)?;
             return Ok(AtRulePrelude::Property { name: property_name });
         }
@@ -1343,7 +1350,7 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> AtRuleParser for TopLevelRuleParser<
             AtRulePrelude::Namespace { prefix, url } => {
                 this.state = TopLevelState::Namespaces;
                 this.rules.v.push(CssRule::Namespace(NamespaceRule {
-                    prefix: prefix.map(|p| Ident { v: p }),
+                    prefix: prefix.map(|p| Ident { v: p as *const [u8] }),
                     url,
                     loc,
                 }));
@@ -1356,7 +1363,7 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> AtRuleParser for TopLevelRuleParser<
                 ));
                 Ok(())
             }
-            AtRulePrelude::Layer(_) => {
+            layer @ AtRulePrelude::Layer(_) => {
                 if (this.state as u8) <= (TopLevelState::Layers as u8) {
                     this.state = TopLevelState::Layers;
                 } else {
@@ -1365,7 +1372,7 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> AtRuleParser for TopLevelRuleParser<
                 let mut nested_parser = this.nested();
                 <NestedRuleParser<'_, AtRuleParserT> as AtRuleParser>::rule_without_block(
                     &mut nested_parser,
-                    prelude,
+                    layer,
                     start,
                 )
             }
@@ -1379,12 +1386,12 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> AtRuleParser for TopLevelRuleParser<
                 }));
                 Ok(())
             }
-            AtRulePrelude::Custom(_) => {
+            custom @ AtRulePrelude::Custom(_) => {
                 this.state = TopLevelState::Body;
                 let mut nested_parser = this.nested();
                 <NestedRuleParser<'_, AtRuleParserT> as AtRuleParser>::rule_without_block(
                     &mut nested_parser,
-                    prelude,
+                    custom,
                     start,
                 )
             }

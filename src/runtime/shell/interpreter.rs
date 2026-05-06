@@ -1033,6 +1033,11 @@ impl Interpreter {
 
     pub fn finish(&mut self, exit_code: ExitCode) -> Yield {
         log!("Interpreter(0x{:x}) finish {}", self as *const _ as usize, exit_code);
+        // Spec interpreter.zig:1287-1289 — `defer decrPendingActivityFlag(...)`
+        // unconditionally (both JS and mini paths). Paired with the increment
+        // in `runFromJS`; harmless wrap on the mini path (flag is only ever
+        // read from the JS GC `hasPendingActivity()` hook).
+        self.has_pending_activity.fetch_sub(1, Ordering::SeqCst);
         self.exit_code = Some(exit_code);
         self.flags.set_done(true);
         // TODO(b2-blocked): JS resolve/reject + keep_alive.disable() — see

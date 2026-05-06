@@ -376,16 +376,19 @@ impl<R> StyleRule<R> {
 }
 
 // ─── deep_clone ───────────────────────────────────────────────────────────
-// blocked_on: DeclarationBlock::deep_clone (declaration.rs `#[cfg(any())]`
-// behavior block — bottoms out on css::implement_deep_clone for Property).
-#[cfg(any())]
 impl<R> StyleRule<R> {
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+    where
+        R: crate::generics::DeepClone<'bump>,
+    {
         // css is an AST crate (PORTING.md §Allocators): std.mem.Allocator → &'bump Bump, threaded.
+        // PORT NOTE: `css.implementDeepClone` field-walk. `declarations` routes
+        // through `dc::decl_block` until `DeclarationBlock::deep_clone` un-gates
+        // (declaration.rs — bottoms out on `Property: DeepClone`).
         Self {
             selectors: self.selectors.deep_clone(),
             vendor_prefix: self.vendor_prefix,
-            declarations: self.declarations.deep_clone(bump),
+            declarations: super::dc::decl_block(&self.declarations, bump),
             rules: self.rules.deep_clone(bump),
             loc: self.loc,
         }

@@ -1335,7 +1335,8 @@ pub mod fs {
                 Err(err) => {
                     if let Some(existing) = in_place {
                         // SAFETY: see above.
-                        unsafe { (*existing).data.clear_and_free() };
+                        // PORT NOTE: Zig `clear_and_free`; bun_collections::StringHashMap exposes `clear`.
+                        unsafe { (*existing).data.clear() };
                     }
                     return Ok(self.read_directory_error(dir, err)?);
                 }
@@ -1352,7 +1353,8 @@ pub mod fs {
                 };
                 if let Some(original) = in_place {
                     // SAFETY: BSSMap-owned; entries_mutex held.
-                    unsafe { (*original).data.clear_and_free() };
+                    // PORT NOTE: Zig `clear_and_free`; bun_collections::StringHashMap exposes `clear`.
+                    unsafe { (*original).data.clear() };
                 }
                 if store_fd && !entries.fd.is_valid() {
                     entries.fd = handle;

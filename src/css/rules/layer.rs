@@ -111,6 +111,13 @@ impl LayerName {
         }
         Ok(())
     }
+
+    pub fn deep_clone(&self, _bump: &Arena) -> Self {
+        // PORT NOTE: `css.implementDeepClone` — `[]const u8` segments are
+        // arena-owned (identity copy per generics.zig "const strings"). Same
+        // body as `clone_with_import_records` above.
+        LayerName { v: self.v.clone() }
+    }
 }
 
 impl css::generics::ToCss for LayerName {
@@ -149,6 +156,18 @@ pub struct LayerBlockRule<R> {
 }
 
 impl<R> LayerBlockRule<R> {
+    pub fn deep_clone<'bump>(&self, bump: &'bump Arena) -> Self
+    where
+        R: css::generics::DeepClone<'bump>,
+    {
+        // PORT NOTE: `css.implementDeepClone` field-walk.
+        Self {
+            name: self.name.as_ref().map(|n| n.deep_clone(bump)),
+            rules: self.rules.deep_clone(bump),
+            loc: self.loc,
+        }
+    }
+
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
@@ -181,6 +200,15 @@ pub struct LayerStatementRule {
 }
 
 impl LayerStatementRule {
+    pub fn deep_clone(&self, bump: &Arena) -> Self {
+        // PORT NOTE: `css.implementDeepClone` field-walk.
+        let mut names = SmallList::<LayerName, 1>::default();
+        for n in self.names.slice() {
+            names.append(n.deep_clone(bump));
+        }
+        Self { names, loc: self.loc }
+    }
+
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
@@ -199,5 +227,5 @@ impl LayerStatementRule {
 //   source:     src/css/rules/layer.zig (210 lines)
 //   confidence: medium
 //   todos:      3
-//   notes:      'bump arena lifetime dropped to match lifetime-free CssRuleList hub (restored when crate-wide thread lands); LayerName::parse stays #[cfg(any())] alongside its only caller (rule_parsers); inherent deep_clone provided by deep_clone_shim! in mod.rs until DeepClone derive lands
+//   notes:      'bump arena lifetime dropped to match lifetime-free CssRuleList hub (restored when crate-wide thread lands); LayerName::parse stays #[cfg(any())] alongside its only caller (rule_parsers); inherent deep_clone real (field-walk port of css.implementDeepClone)
 // ──────────────────────────────────────────────────────────────────────────

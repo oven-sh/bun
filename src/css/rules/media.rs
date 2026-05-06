@@ -39,13 +39,17 @@ impl<R> MediaRule<R> {
     }
 }
 
-// blocked_on: generics::DeepClone derive for MediaRule<R> (Phase B).
-#[cfg(any())]
 impl<R> MediaRule<R> {
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // TODO(port): css.implementDeepClone uses @typeInfo field reflection — replace with
-        // a DeepClone trait/derive in Phase B.
-        crate::implement_deep_clone(self, bump)
+    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+    where
+        R: crate::generics::DeepClone<'bump>,
+    {
+        // PORT NOTE: `css.implementDeepClone` field-walk.
+        Self {
+            query: super::dc::media_list(&self.query, bump),
+            rules: self.rules.deep_clone(bump),
+            loc: self.loc,
+        }
     }
 }
 

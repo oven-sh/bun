@@ -961,34 +961,48 @@ impl UnresolvedColor {
     }
 
     pub fn parse(input: &mut Parser, f: &[u8], options: &ParserOptions) -> Result<UnresolvedColor> {
-        use css_values::color::{parse_hsl_hwb_components, parse_rgb_components, ComponentParser, HSL, SRGB};
-        let mut parser = ComponentParser::new(false);
         // css.todo_stuff.match_ignore_ascii_case
-        if strings::eql_case_insensitive_ascii_check_length(f, b"rgb") {
-            return input.parse_nested_block(|input2| {
-                parser.parse_relative::<SRGB, UnresolvedColor, _>(input2, |i, p| {
-                    let (r, g, b, is_legacy) = parse_rgb_components(i, p)?;
-                    if is_legacy {
-                        return Err(i.new_custom_error(ParserError::invalid_value));
-                    }
-                    i.expect_delim(b'/')?;
-                    let alpha = TokenListFns::parse(i, options, 0)?;
-                    Ok(UnresolvedColor::RGB { r, g, b, alpha })
-                })
-            });
-        } else if strings::eql_case_insensitive_ascii_check_length(f, b"hsl") {
-            return input.parse_nested_block(|input2| {
-                parser.parse_relative::<HSL, UnresolvedColor, _>(input2, |i, p| {
-                    let (h, s, l, is_legacy) = parse_hsl_hwb_components::<HSL>(i, p, false)?;
-                    if is_legacy {
-                        return Err(i.new_custom_error(ParserError::invalid_value));
-                    }
-                    i.expect_delim(b'/')?;
-                    let alpha = TokenListFns::parse(i, options, 0)?;
-                    Ok(UnresolvedColor::HSL { h, s, l, alpha })
-                })
-            });
-        } else if strings::eql_case_insensitive_ascii_check_length(f, b"light-dark") {
+        // blocked_on: values::color::gated_full_impl::{ComponentParser,
+        // parse_rgb_components, parse_hsl_hwb_components} un-gate (color.rs:873).
+        // The `rgb()`/`hsl()` arms need ComponentParser; while gated, they
+        // bail with `invalid_value` so the caller's `try_parse` falls through
+        // to `try_parse_color_token` / generic `Function` handling in
+        // `TokenList::parse_into` (round-trips correctly, just without the
+        // unresolved-alpha specialization). `light-dark()` needs no
+        // ComponentParser and is handled in full below.
+        #[cfg(any())]
+        {
+            use css_values::color::{
+                parse_hsl_hwb_components, parse_rgb_components, ComponentParser, HSL, SRGB,
+            };
+            let mut parser = ComponentParser::new(false);
+            if strings::eql_case_insensitive_ascii_check_length(f, b"rgb") {
+                return input.parse_nested_block(|input2| {
+                    parser.parse_relative::<SRGB, UnresolvedColor, _>(input2, |i, p| {
+                        let (r, g, b, is_legacy) = parse_rgb_components(i, p)?;
+                        if is_legacy {
+                            return Err(i.new_custom_error(ParserError::invalid_value));
+                        }
+                        i.expect_delim(b'/')?;
+                        let alpha = TokenListFns::parse(i, options, 0)?;
+                        Ok(UnresolvedColor::RGB { r, g, b, alpha })
+                    })
+                });
+            } else if strings::eql_case_insensitive_ascii_check_length(f, b"hsl") {
+                return input.parse_nested_block(|input2| {
+                    parser.parse_relative::<HSL, UnresolvedColor, _>(input2, |i, p| {
+                        let (h, s, l, is_legacy) = parse_hsl_hwb_components::<HSL>(i, p, false)?;
+                        if is_legacy {
+                            return Err(i.new_custom_error(ParserError::invalid_value));
+                        }
+                        i.expect_delim(b'/')?;
+                        let alpha = TokenListFns::parse(i, options, 0)?;
+                        Ok(UnresolvedColor::HSL { h, s, l, alpha })
+                    })
+                });
+            }
+        }
+        if strings::eql_case_insensitive_ascii_check_length(f, b"light-dark") {
             return input.parse_nested_block(|input2| {
                 // errdefer doesn't fire on `return .{ .err = ... }` in Zig — but in Rust,
                 // `?` drops `light` automatically on the error path.
@@ -1030,7 +1044,7 @@ impl Variable {
     pub fn parse(input: &mut Parser, options: &ParserOptions, depth: usize) -> Result<Self> {
         let name = ext::dashed_ident_ref_parse(input, options)?;
 
-        let fallback = if input.try_parse(Parser::expect_comma).is_ok() {
+        let fallback = if input.try_parse(|i| i.expect_comma()).is_ok() {
             Some(TokenList::parse(input, options, depth)?)
         } else {
             None
@@ -1091,7 +1105,7 @@ impl EnvironmentVariable {
             indices.push(idx);
         }
 
-        let fallback = if input.try_parse(Parser::expect_comma).is_ok() {
+        let fallback = if input.try_parse(|i| i.expect_comma()).is_ok() {
             Some(TokenListFns::parse(input, options, depth + 1)?)
         } else {
             None

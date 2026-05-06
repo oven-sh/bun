@@ -31,7 +31,22 @@ pub use bun_resolver::node_fallbacks as bun_node_fallbacks;
 pub use bun_core as bun_output;
 /// `bun.perf.trace(...)` lives in `bun_perf`; the drafts wrote
 /// `bun_core::perf::…`, so re-export under that name.
-pub use bun_perf as perf;
+///
+/// `bun_perf::trace` now takes the generated `PerfEvent` enum (Zig used a
+/// `comptime [:0]const u8` and `@field(PerfEvent, name)`). The Rust generator
+/// hasn't emitted real variants yet (`PerfEvent::_Stub` only), so the bundler
+/// drafts that pass string literals would all be dead names. Shim a
+/// string-taking `trace` here that routes through `_Stub` so call sites stay
+/// 1:1 with the `.zig` literals.
+/// TODO(b1): drop once `scripts/generate-perf-trace-events.sh` emits Rust.
+pub mod perf {
+    pub use bun_perf::{Ctx, PerfEvent};
+
+    #[inline]
+    pub fn trace(_name: &'static str) -> Ctx {
+        bun_perf::trace(PerfEvent::_Stub)
+    }
+}
 
 /// Type-surface shim for `bun_css` as seen by the bundler. The real crate's
 /// `BundlerStyleSheet` is itself gated (`css_parser.rs: #[cfg(any())]`) and

@@ -23,13 +23,13 @@ impl<R> NestingRule<R> {
     }
 }
 
-// blocked_on: DeepClone derive.
-#[cfg(any())]
 impl<R> NestingRule<R> {
-    pub fn deep_clone(&self, allocator: &bun_alloc::Arena) -> Self {
-        // TODO(port): css.implementDeepClone uses @typeInfo field reflection; Phase B should
-        // replace with a #[derive(DeepClone)] or hand-written per-field clone into the arena.
-        crate::implement_deep_clone(self, allocator)
+    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+    where
+        R: crate::generics::DeepClone<'bump>,
+    {
+        // PORT NOTE: `css.implementDeepClone` field-walk.
+        Self { style: self.style.deep_clone(bump), loc: self.loc }
     }
 }
 

@@ -41,7 +41,16 @@ pub struct Declaration {
     pub value: &'static [u8],
 }
 
-// blocked_on: generics::{CssEql,CssHash,DeepClone} impls for SupportsCondition/
+impl Declaration {
+    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+        // PORT NOTE: `css.implementDeepClone` field-walk. `PropertyId` is `Copy`;
+        // `value: &'static [u8]` is an arena-owned slice → identity copy
+        // (generics.zig "const strings" rule).
+        Self { property_id: self.property_id, value: self.value }
+    }
+}
+
+// blocked_on: generics::{CssEql,CssHash} impls for SupportsCondition/
 // Declaration. Zig's `css.implement*` helpers were @typeInfo reflection; the
 // Rust port requires per-type trait impls (or a derive macro). Phase B: derive.
 #[cfg(any())]
@@ -50,14 +59,8 @@ impl Declaration {
         // TODO(port): css.implementEql is comptime-reflection equality — replace with #[derive(PartialEq)] in Phase B
         css::implement_eql(self, other)
     }
-
-    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self {
-        // TODO(port): css.implementDeepClone is comptime-reflection clone — replace with derive/trait in Phase B
-        css::implement_deep_clone(self, bump)
-    }
 }
 
-#[cfg(any())]
 impl SupportsCondition {
     pub fn clone_with_import_records(
         &self,
@@ -67,6 +70,24 @@ impl SupportsCondition {
         self.deep_clone(bump)
     }
 
+    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> SupportsCondition {
+        // PORT NOTE: `css.implementDeepClone` variant-walk (hand-rolled —
+        // `#[derive(DeepClone)]` can't be used while `Selector`/`Unknown`
+        // carry `&'static [u8]`; the blanket `&'bump [u8]` impl doesn't unify
+        // with a fresh `'__bump`).
+        match self {
+            Self::Not(c) => Self::Not(Box::new(c.deep_clone(bump))),
+            Self::And(v) => Self::And(v.iter().map(|c| c.deep_clone(bump)).collect()),
+            Self::Or(v) => Self::Or(v.iter().map(|c| c.deep_clone(bump)).collect()),
+            Self::Declaration(d) => Self::Declaration(d.deep_clone(bump)),
+            Self::Selector(s) => Self::Selector(s),
+            Self::Unknown(s) => Self::Unknown(s),
+        }
+    }
+}
+
+#[cfg(any())]
+impl SupportsCondition {
     pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
         // TODO(port): css.implementHash is comptime-reflection — replace with #[derive(Hash)] in Phase B
         css::implement_hash(self, hasher)
@@ -75,11 +96,6 @@ impl SupportsCondition {
     pub fn eql(&self, other: &SupportsCondition) -> bool {
         // TODO(port): css.implementEql is comptime-reflection — replace with #[derive(PartialEq)] in Phase B
         css::implement_eql(self, other)
-    }
-
-    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> SupportsCondition {
-        // TODO(port): css.implementDeepClone is comptime-reflection — replace with derive/trait in Phase B
-        css::implement_deep_clone(self, bump)
     }
 }
 
@@ -476,12 +492,17 @@ impl<R> SupportsRule<R> {
     }
 }
 
-// blocked_on: generics::DeepClone derive for SupportsRule<R> (Phase B).
-#[cfg(any())]
 impl<R> SupportsRule<R> {
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // TODO(port): css.implementDeepClone is comptime-reflection — replace with derive/trait in Phase B
-        css::implement_deep_clone(self, bump)
+    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+    where
+        R: css::generics::DeepClone<'bump>,
+    {
+        // PORT NOTE: `css.implementDeepClone` field-walk.
+        Self {
+            condition: self.condition.deep_clone(bump),
+            rules: self.rules.deep_clone(bump),
+            loc: self.loc,
+        }
     }
 }
 

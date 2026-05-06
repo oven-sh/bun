@@ -654,8 +654,15 @@ impl ZigString {
     #[inline]
     pub fn untagged(ptr: *const u8) -> *const u8 {
         // this can be null ptr, so long as it's also a 0 length string
-        ((ptr as usize) & ((1usize << 53) - 1)) as *const u8
         // PORT NOTE: Zig used @truncate to u53; mask low 53 bits explicitly.
+        // Rust `slice::from_raw_parts` requires non-null even for len==0, so
+        // map a null masked address to a dangling (non-null, aligned) pointer.
+        let addr = (ptr as usize) & ((1usize << 53) - 1);
+        if addr == 0 {
+            core::ptr::NonNull::<u8>::dangling().as_ptr()
+        } else {
+            addr as *const u8
+        }
     }
 
     pub fn slice(&self) -> &[u8] {

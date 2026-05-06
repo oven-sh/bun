@@ -547,16 +547,19 @@ fn transpile_source_code_inner(
                 |(jsc_vm, mut arena, give_back, flags)| {
                     if !give_back {
                         // Spec :146-165 — when `give_back_arena == false` the
-                        // Zig `defer` is a no-op: the arena is NOT freed (it
-                        // was either handed to the AsyncModule queue, or is
-                        // intentionally kept alive past `processFetchLog` so
-                        // log span data pointing into it stays valid). Dropping
-                        // the `Box` here would free it → UAF. Forget instead.
-                        // PORT NOTE: this is an ownership hand-off, not a
-                        // `'static`-lifetime hack (PORTING.md §Forbidden does
-                        // not apply). The AsyncModule path will move the arena
-                        // out via `ScopeGuard::into_inner` once it un-gates.
-                        core::mem::forget(arena);
+                        // Zig `defer` is a no-op because ownership was already
+                        // transferred (to the AsyncModule queue, or held past
+                        // `processFetchLog` so log spans pointing into it stay
+                        // valid). In this port the hand-off paths are
+                        // `#[cfg(any())]`-gated, so no transfer happens and
+                        // `mem::forget` would be a pure leak (PORTING.md
+                        // §Forbidden). Drop (free) instead.
+                        // TODO(b2-cycle): once AsyncModule / processFetchLog
+                        // un-gate, the hand-off sites must call
+                        // `scopeguard::ScopeGuard::into_inner(arena_guard)` and
+                        // move the `Box<Arena>` to the consumer instead of
+                        // flipping `give_back` and reaching here.
+                        drop(arena);
                         return;
                     }
                     // SAFETY: `jsc_vm` is the live per-thread VM (closure runs

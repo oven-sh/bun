@@ -247,7 +247,7 @@ impl NapiHandleScope {
 pub type napi_handle_scope = *mut NapiHandleScope;
 pub type napi_escapable_handle_scope = *mut NapiHandleScope;
 pub type napi_callback_info = *mut CallFrame;
-pub type napi_deferred = *mut JSPromise::Strong;
+pub type napi_deferred = *mut JSPromiseStrong;
 
 // ──────────────────────────────────────────────────────────────────────────
 // napi_value

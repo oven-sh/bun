@@ -85,10 +85,14 @@ impl From<AllocError> for FromTarballError {
     }
 }
 
+// TODO(port): Zig defined this as a nested type alias on the Context struct;
+// inherent associated types are unstable (rust#8995) so hoist to module scope.
+pub type FromWorkspaceError = pack::PackError<true>;
+
 impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
     /// Retrieve information for publishing from a tarball path, `bun publish path/to/tarball.tgz`
     pub fn from_tarball_path(
-        ctx: Command::Context,
+        ctx: Command::Context<'a>,
         manager: &'a mut PackageManager,
         tarball_path: &[u8],
     ) -> Result<Context<'a, DIRECTORY_PUBLISH>, FromTarballError> {

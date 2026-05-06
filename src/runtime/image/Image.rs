@@ -1120,7 +1120,7 @@ impl<'a> BlobReadChain<'a> {
     }
 
     /// JS thread — `read_bytes_to_handler` guarantees this. `r.ok` is owned by us.
-    pub fn on_read_bytes(self: Box<Self>, r: Blob::ReadBytesResult) {
+    pub fn on_read_bytes(self: Box<Self>, r: ReadBytesResult) {
         let global = self.global;
         // SAFETY: `image` is a BACKREF kept alive by the Strong `this_ref`
         // bump in `start()`; we are on the JS thread.
@@ -1137,7 +1137,7 @@ impl<'a> BlobReadChain<'a> {
         // `defer outer.deinit()` — `JSPromiseStrong` Drop handles this.
 
         match r {
-            Blob::ReadBytesResult::Ok(bytes) => {
+            ReadBytesResult::Ok(bytes) => {
                 // Concurrent terminals can have started multiple BlobReadChains
                 // (no in-flight serialisation — `start()` re-enters every time
                 // it sees `.blob`). The FIRST resolver wins and swaps to

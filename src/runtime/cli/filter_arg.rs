@@ -119,7 +119,7 @@ pub fn get_candidate_package_patterns<'a>(
                         out_patterns.push(pattern);
                     }
                     _ => {
-                        output::pretty_errorln!(
+                        bun_core::pretty_errorln!(
                             "<r><red>error<r>: Failed to parse \"workspaces\" property: all items must be strings"
                         );
                         Global::exit(1);

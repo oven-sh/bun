@@ -47,15 +47,29 @@ pub fn initialize_store() {
     js_ast::Stmt::Data::Store::create();
 }
 
-// TODO(port): bun.OSPathLiteral — use bun_paths::os_path_literal! macro for cross-platform u8/u16 literals
-const SKIP_DIRS: &[OSPathSlice] = &[
-    bun_paths::os_path_literal!("node_modules"),
-    bun_paths::os_path_literal!(".git"),
+// PORT NOTE: bun.OSPathLiteral — `bun_paths` does not (yet) export an
+// `os_path_literal!` macro from this crate's POV. `OSPathSlice` is `[u8]` on
+// POSIX, so byte-string literals coerce directly; the Windows `[u16]` form will
+// need the macro once it lands in `bun_paths` (see src/bun.rs).
+// Elements must be `&OSPathSlice` because `OSPathSlice` itself is unsized.
+#[cfg(not(windows))]
+const SKIP_DIRS: &[&OSPathSlice] = &[b"node_modules", b".git"];
+#[cfg(not(windows))]
+const SKIP_FILES: &[&OSPathSlice] = &[
+    b"package-lock.json",
+    b"yarn.lock",
+    b"pnpm-lock.yaml",
 ];
-const SKIP_FILES: &[OSPathSlice] = &[
-    bun_paths::os_path_literal!("package-lock.json"),
-    bun_paths::os_path_literal!("yarn.lock"),
-    bun_paths::os_path_literal!("pnpm-lock.yaml"),
+#[cfg(windows)]
+const SKIP_DIRS: &[&OSPathSlice] = &[
+    bun_str::w!("node_modules"),
+    bun_str::w!(".git"),
+];
+#[cfg(windows)]
+const SKIP_FILES: &[&OSPathSlice] = &[
+    bun_str::w!("package-lock.json"),
+    bun_str::w!("yarn.lock"),
+    bun_str::w!("pnpm-lock.yaml"),
 ];
 
 const NEVER_CONFLICT: &[&[u8]] = &[

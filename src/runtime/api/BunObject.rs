@@ -434,7 +434,7 @@ pub extern "C" fn BunObject_setter_main(g: *mut JSGlobalObject, v: JSValue) -> b
 // (FFIObject/Subprocess/webcore::Blob/jsc::api::*). bun_jsc itself is
 // un-gated now — remaining blockers are the fan-out targets.
 
-#[allow(dead_code)]
+#[allow(dead_code, deprecated)]
 mod _jsc_gated {
 use core::ffi::{c_char, c_int, c_void};
 use std::io::Write as _;
@@ -449,27 +449,85 @@ use bun_paths::{self as path, PathBuffer, WPathBuffer, MAX_PATH_BYTES};
 use bun_str::{self, strings, String as BunString};
 use bun_sys::{self as sys, Fd};
 use bun_aio::{self as Async, KeepAlive};
-use bun_threading::WorkPool;
+use bun_threading::work_pool::WorkPool;
 
 use bun_shell_parser::braces as Braces;
-use bun_which::Which;
 use bun_zlib as zlib;
 use crate::cli::open::Editor;
 use bun_url::URL;
-use bun_semver::SemverObject;
-use bun_gen::bun_object as r#gen;
 
 use crate::api::{
     self, FFIObject, HashObject, JSON5Object, JSONCObject, MarkdownObject, TOMLObject,
     UnsafeObject, YAMLObject,
 };
 use crate::node;
-use crate::crypto::Crypto;
+use crate::crypto as Crypto;
 use crate::api::cron;
 use crate::api::csrf_jsc;
 use crate::valkey_jsc::js_valkey::SubscriptionCtx;
 use crate::test_runner::jest::Jest;
-use bun_bundler::api::JSBundler;
+use crate::api::JSBundler;
+
+// PORT NOTE: `bun_gen::bun_object::BracesOptions` is codegen output from
+// BunObject.bind.ts. The `bun_gen` crate is not yet wired, so define the
+// generated shape locally per the `.bind.ts` schema:
+//   `t.dictionary({ tokenize: t.boolean.default(false), parse: t.boolean.default(false) })`
+mod r#gen {
+    #[derive(Default, Clone, Copy)]
+    pub struct BracesOptions {
+        pub tokenize: bool,
+        pub parse: bool,
+    }
+}
+
+// ─── wrap_static_method adapters ───────────────────────────────────────────
+// Zig's `host_fn.wrapStaticMethod(T, "name", auto_protect)` reflects on the
+// target fn's parameter types and decodes each from the CallFrame. The Rust
+// proc-macro replacement (`#[bun_jsc::host_fn(static)]`) is not yet emitted,
+// so hand-roll the arg-extraction shims for the six call sites below.
+mod static_adapters {
+    use super::*;
+
+    pub fn listener_connect(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+        let args = cf.arguments_old(1);
+        let opts = if args.len() >= 1 { args.ptr[0] } else { JSValue::UNDEFINED };
+        api::Listener::connect(g, opts)
+    }
+
+    pub fn listener_listen(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+        let args = cf.arguments_old(1);
+        let opts = if args.len() >= 1 { args.ptr[0] } else { JSValue::UNDEFINED };
+        api::Listener::listen(g, opts)
+    }
+
+    pub fn udp_socket(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+        let args = cf.arguments_old(1);
+        let opts = if args.len() >= 1 { args.ptr[0] } else { JSValue::UNDEFINED };
+        api::UDPSocket::udp_socket(g, opts)
+    }
+
+    pub fn subprocess_spawn(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+        let args = cf.arguments_old(2);
+        let a0 = if args.len() >= 1 { args.ptr[0] } else { JSValue::UNDEFINED };
+        let a1 = if args.len() >= 2 { Some(args.ptr[1]) } else { None };
+        crate::api::js_bun_spawn_bindings::spawn(g, a0, a1)
+    }
+
+    pub fn subprocess_spawn_sync(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+        let args = cf.arguments_old(2);
+        let a0 = if args.len() >= 1 { args.ptr[0] } else { JSValue::UNDEFINED };
+        let a1 = if args.len() >= 2 { Some(args.ptr[1]) } else { None };
+        crate::api::js_bun_spawn_bindings::spawn_sync(g, a0, a1)
+    }
+
+    pub fn sha(_g: &JSGlobalObject, _cf: &CallFrame) -> JsResult<JSValue> {
+        // wrapStaticMethod(Crypto.SHA512_256, "hash_", true) decodes
+        // (BlobOrStringOrBuffer, ?StringOrBuffer) with auto-protect; that
+        // decode table lives in the unwritten `#[bun_jsc::host_fn(static)]`
+        // proc-macro.
+        todo!("blocked_on: bun_jsc::host_fn::wrap_static_method (BlobOrStringOrBuffer decode)")
+    }
+}
 
 /// How to add a new function or property to the Bun global
 ///

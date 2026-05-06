@@ -1785,11 +1785,22 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             let promise = jsc::JSPromiseStrong::init(global_this);
             let promise_value = promise.value();
 
+            // PORT NOTE: `S3StreamWrapper.url` borrows `url_proxy_buffer`; box
+            // the buffer first (stable heap address) and re-parse so the
+            // detached-lifetime slices remain valid after the Vec → Box move.
+            let owned_buffer: Box<[u8]> =
+                core::mem::take(&mut url_proxy_buffer).into_boxed_slice();
+            let url_len = url.href.len();
+            // SAFETY: `owned_buffer` is moved into `s3_stream` alongside the
+            // re-parsed URL; the slices stay valid for the buffer's lifetime.
+            let url_static = ZigURL::parse(unsafe {
+                core::slice::from_raw_parts(owned_buffer.as_ptr(), url_len)
+            });
+            let s3_path = url_static.s3_path();
+
             let s3_stream = Box::new(S3StreamWrapper {
-                url,
-                url_proxy_buffer: url_proxy_buffer.into_boxed_slice(),
-                // TODO(port): JSPromiseStrong has no clone_ref(); the original Zig
-                // moved the strong ref into the wrapper after grabbing `.value()`.
+                url: url_static,
+                url_proxy_buffer: owned_buffer,
                 promise,
                 global: global_this,
             });
@@ -1809,7 +1820,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
             let _ = s3::upload_stream(
                 &mut credentials_with_options.credentials,
-                url.s3_path(),
+                s3_path,
                 readable_stream.get(global_this).unwrap(),
                 global_this,
                 credentials_with_options.options,

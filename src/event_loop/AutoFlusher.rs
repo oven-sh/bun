@@ -131,7 +131,7 @@ impl AutoFlusher {
 //   confidence: high
 //   todos:      0
 //   notes:      duck-typed `this.auto_flusher`/`Type.onAutoFlush` modeled as
-//               HasAutoFlusher trait; callback ABI confirmed
-//               `fn(*mut c_void) -> bool` (DeferredRepeatingTask). Higher-tier
+//               HasAutoFlusher trait; callback erased via extern "C"
+//               trampoline (DeferredRepeatingTask is C-ABI). Higher-tier
 //               `vm`-taking wrapper lives in bun_runtime::webcore::AutoFlusher.
 // ──────────────────────────────────────────────────────────────────────────

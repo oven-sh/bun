@@ -126,13 +126,24 @@ impl PostgresSQLQuery {
     pub fn ref_(&self) {
         self.ref_count.set(self.ref_count.get() + 1);
     }
-    pub fn deref_(&self) {
-        let n = self.ref_count.get() - 1;
-        self.ref_count.set(n);
+    /// Intrusive refcount decrement. Takes a raw `*mut Self` (mirroring Zig's
+    /// `*@This()`) rather than `&self`/`&mut self` because reaching zero frees the
+    /// allocation — holding a live reference across that drop, or deriving the
+    /// `*mut` for `Box::from_raw` from a `&self` (read-only provenance), is UB.
+    ///
+    /// # Safety
+    /// `this` must point to a live `PostgresSQLQuery` produced by `Box::into_raw`
+    /// in `call`. If this call drops the count to zero, no `&`/`&mut` borrows of
+    /// `*this` may outlive it.
+    pub unsafe fn deref_(this: *mut Self) {
+        // SAFETY: `this` is valid per contract; `ref_count` is `Cell<u32>` so a
+        // shared borrow of just that field is sound regardless of other access.
+        let rc = unsafe { &(*this).ref_count };
+        let n = rc.get() - 1;
+        rc.set(n);
         if n == 0 {
-            // SAFETY: self was Box::into_raw'd in `call`; last ref drops the box.
-            // TODO(port): lifetime — self is &Self here; IntrusiveRc handles this with NonNull.
-            unsafe { drop(Box::from_raw(self as *const Self as *mut Self)) };
+            // SAFETY: last reference; `this` originated from `Box::into_raw` in `call`.
+            drop(unsafe { Box::from_raw(this) });
         }
     }
 

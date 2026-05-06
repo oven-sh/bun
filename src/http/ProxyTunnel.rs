@@ -401,28 +401,35 @@ fn on_handshake(ctx: *mut HTTPClient, handshake_success: bool, ssl_error: uws::u
 }
 
 pub fn write_encrypted(ctx: *mut HTTPClient, encoded_data: &[u8]) {
-    // SAFETY: see on_open.
-    let this = unsafe { &mut *ctx };
-    let Some(proxy_nn) = this.proxy_tunnel else { return };
-    // SAFETY: live intrusive-refcounted tunnel.
-    let proxy = unsafe { &mut *proxy_nn.as_ptr() };
+    // SAFETY: see on_open. Read `proxy_tunnel` (a Copy `Option<NonNull>`) via
+    // raw place so we never hold `&mut HTTPClient` here — write_encrypted is
+    // fired from inside SSLWrapper::flush/handle_traffic whose caller may
+    // already hold `&mut HTTPClient` (e.g. on_handshake → on_writable).
+    let Some(proxy_nn) = (unsafe { (*ctx).proxy_tunnel }) else { return };
+    let proxy_ptr = proxy_nn.as_ptr();
+    // SAFETY: live intrusive-refcounted tunnel. Access `write_buffer` and
+    // `socket` via raw field projection only — never form `&mut ProxyTunnel`,
+    // because the caller (flush/handle_traffic) holds `&mut SSLWrapper` which
+    // IS `(*proxy_ptr).wrapper`; a whole-struct `&mut` would overlap it.
+    let write_buffer = unsafe { &mut *addr_of_mut!((*proxy_ptr).write_buffer) };
     // Preserve TLS record ordering: if any encrypted bytes are buffered,
     // enqueue new bytes and flush them in FIFO via onWritable.
-    if proxy.write_buffer.is_not_empty() {
-        if proxy.write_buffer.write(encoded_data).is_err() {
+    if write_buffer.is_not_empty() {
+        if write_buffer.write(encoded_data).is_err() {
             bun_core::out_of_memory();
         }
         return;
     }
-    let written = match proxy.socket {
-        Socket::Ssl(socket) => socket.write(encoded_data),
-        Socket::Tcp(socket) => socket.write(encoded_data),
+    // SAFETY: shared borrow of `socket` only — disjoint from `wrapper`.
+    let written = match unsafe { &*addr_of!((*proxy_ptr).socket) } {
+        &Socket::Ssl(socket) => socket.write(encoded_data),
+        &Socket::Tcp(socket) => socket.write(encoded_data),
         Socket::None => 0,
     };
     let pending = &encoded_data[usize::try_from(written).unwrap()..];
     if !pending.is_empty() {
         // lets flush when we are truly writable
-        if proxy.write_buffer.write(pending).is_err() {
+        if write_buffer.write(pending).is_err() {
             bun_core::out_of_memory();
         }
     }

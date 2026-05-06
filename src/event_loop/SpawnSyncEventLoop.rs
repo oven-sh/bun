@@ -253,10 +253,15 @@ impl SpawnSyncEventLoop {
 extern "C" fn on_uv_timer(timer_: *mut libuv::Timer) {
     // SAFETY: `data` was set to `self` in `prepare_timer_on_windows`; the SpawnSyncEventLoop
     // outlives the timer (timer is stopped/closed in `cleanup`/`Drop`).
-    let this: &mut SpawnSyncEventLoop = unsafe { &mut *((*timer_).data.cast::<SpawnSyncEventLoop>()) };
-    this.did_timeout = true;
-    // SAFETY: uws_loop is valid for the lifetime of `this`.
-    unsafe { (*(*this.uws_loop.as_ptr()).uv_loop).stop() };
+    // ALIASING: this callback fires re-entrantly from inside `tick_with_timeout`'s uws tick
+    // (uv_run) while that frame still holds `&mut self`. Zig's `*T` freely aliases, but in
+    // Rust materializing a second `&mut SpawnSyncEventLoop` here would violate noalias — so
+    // operate through the raw pointer only (no `&mut *this`).
+    unsafe {
+        let this: *mut SpawnSyncEventLoop = (*timer_).data.cast::<SpawnSyncEventLoop>();
+        (*this).did_timeout = true;
+        (*(*(*this).uws_loop.as_ptr()).uv_loop).stop();
+    }
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]

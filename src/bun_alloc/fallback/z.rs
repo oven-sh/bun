@@ -34,7 +34,7 @@ impl Z {
         Some(result)
     }
 
-    fn resize(
+    pub fn resize(
         &self, // Zig: `_: *anyopaque`
         buf: &mut [u8],
         alignment: Alignment,
@@ -47,15 +47,19 @@ impl Z {
         // PORT NOTE: reshaped for borrowck — capture len before re-deriving the
         // tail pointer (Zig: `buf.ptr[buf.len..new_len]`).
         let old_len = buf.len();
-        // SAFETY: `raw_resize` succeeded in-place, so `buf.ptr[old_len..new_len]`
-        // is now valid uninitialized memory owned by this allocation.
-        unsafe { ptr::write_bytes(buf.as_mut_ptr().add(old_len), 0, new_len - old_len) };
+        // Only zero on grow. On shrink (`new_len < old_len`), `new_len - old_len`
+        // would underflow to ~usize::MAX and `write_bytes` would corrupt the heap.
+        // Zig's slice safety check panics in Debug here; preserve that guard.
+        if new_len > old_len {
+            // SAFETY: `raw_resize` succeeded in-place, so `buf.ptr[old_len..new_len]`
+            // is now valid uninitialized memory owned by this allocation.
+            unsafe { ptr::write_bytes(buf.as_mut_ptr().add(old_len), 0, new_len - old_len) };
+        }
         true
     }
 
     // `.remap = Allocator.noRemap` — the mimalloc z_allocator doesn't support remap.
-    // Use the trait's default `no_remap` impl.
-    fn remap(
+    pub fn remap(
         &self,
         _buf: &mut [u8],
         _alignment: Alignment,
@@ -65,7 +69,7 @@ impl Z {
         None
     }
 
-    fn free(
+    pub fn free(
         &self, // Zig: `_: *anyopaque`
         buf: &mut [u8],
         alignment: Alignment,

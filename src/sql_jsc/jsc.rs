@@ -735,13 +735,17 @@ unsafe extern "C" {
 }
 
 impl JSFunction {
-    pub fn create(
+    /// Accepts either a raw [`JSHostFn`] (C-ABI) or a safe Rust
+    /// `fn(&JSGlobalObject, &CallFrame) -> JSValue` / `-> JsResult<JSValue>`
+    /// via [`IntoJSHostFn`] (Zig: `jsc.toJSHostFn(fn)`).
+    pub fn create<M, F: IntoJSHostFn<M>>(
         global: &JSGlobalObject,
         name: &str,
-        implementation: JSHostFn,
+        implementation: F,
         arg_count: u32,
         opts: CreateJSFunctionOptions,
     ) -> JSValue {
+        let implementation: JSHostFn = implementation.into_js_host_fn();
         let fn_name = bun_string::String::init(name);
         // SAFETY: `global` is live; `implementation` is a valid C-ABI fn ptr.
         unsafe {
@@ -772,9 +776,12 @@ pub mod call_frame {
     }
     impl<'a> ArgumentsSlice<'a> {
         /// Generic over the VM handle so it accepts both the local
-        /// [`VirtualMachine`] and `bun_jsc`'s (callers pass `global.bun_vm()`).
-        pub fn init<V: ?Sized>(vm: &'a V, slice: &'a [JSValue]) -> Self {
-            Self { remaining: slice, _vm: vm as *const V as *const c_void }
+        /// [`VirtualMachine`] and `bun_jsc`'s (callers pass `global.bun_vm()`,
+        /// which returns a raw `*mut VirtualMachineRef`). The VM is not
+        /// dereferenced — it's only carried for API parity with the Zig
+        /// `Node.ArgumentsSlice` shape — so it's accepted by-value and dropped.
+        pub fn init<V>(_vm: V, slice: &'a [JSValue]) -> Self {
+            Self { remaining: slice, _vm: core::ptr::null() }
         }
         #[allow(dead_code)]
         pub fn next(&mut self) -> Option<JSValue> {

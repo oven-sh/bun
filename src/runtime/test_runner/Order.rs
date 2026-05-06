@@ -124,13 +124,13 @@ impl Order {
         // dereferences the raw pointer locally.
         debug_assert!(unsafe { (*current).base.has_callback == (*current).callback.is_some() });
         let use_each_hooks = unsafe { (*current).base.has_callback };
-        let first_parent: Option<*const DescribeScope> = unsafe { (*current).base.parent };
+        let first_parent: Option<*mut DescribeScope> = unsafe { (*current).base.parent };
 
         let mut list = EntryList::default();
 
         // gather beforeEach (alternatively, this could be implemented recursively to make it less complicated)
         if use_each_hooks {
-            let mut parent: Option<*const DescribeScope> = first_parent;
+            let mut parent: Option<*mut DescribeScope> = first_parent;
             while let Some(p_ptr) = parent {
                 // SAFETY: parent chain consists of live DescribeScope nodes.
                 let p = unsafe { &*p_ptr };
@@ -156,7 +156,7 @@ impl Order {
 
         // gather afterEach
         if use_each_hooks {
-            let mut parent: Option<*const DescribeScope> = first_parent;
+            let mut parent: Option<*mut DescribeScope> = first_parent;
             while let Some(p_ptr) = parent {
                 // SAFETY: parent chain consists of live DescribeScope nodes.
                 let p = unsafe { &*p_ptr };

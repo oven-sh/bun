@@ -395,15 +395,15 @@ impl StaticRoute {
     pub unsafe fn on_head_request(this: *mut Self, req: AnyRequest, resp: AnyResponse) {
         // SAFETY: caller contract.
         unsafe {
+            let mut req = req;
             // Check If-None-Match for HEAD requests with 200 status
             if (*this).status_code == 200 {
-                if Self::render_304_not_modified_if_none_match(this, &req, resp) {
+                if Self::render_304_not_modified_if_none_match(this, &mut req, resp) {
                     return;
                 }
             }
 
             // Continue with normal HEAD request handling
-            let mut req = req;
             req.set_yield(false);
             Self::on_head(this, resp);
         }

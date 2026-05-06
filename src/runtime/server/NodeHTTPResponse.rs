@@ -1929,7 +1929,7 @@ pub extern "C" fn NodeHTTPResponse__createForJS(
     let has_body = unsafe { &mut *has_body };
     let request_ref = unsafe { &*request };
 
-    let vm = global_object.bun_vm();
+    let vm = bun_vm_mut(global_object);
     let method = HttpMethod::which(request_ref.method()).unwrap_or(HttpMethod::OPTIONS);
     // GET in node.js can have a body
     if method.has_request_body() || method == HttpMethod::GET {

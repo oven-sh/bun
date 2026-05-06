@@ -2852,7 +2852,7 @@ impl<'a> HotUpdateContext<'a> {
 pub fn finalize_bundle(
     dev: &mut DevServer,
     bv2: &mut BundleV2,
-    result: &bundler::bundle_v2::DevServerOutput,
+    result: &mut bundler::bundle_v2::DevServerOutput,
 ) -> JsResult<()> {
     debug_assert!(dev.magic == Magic::Valid);
     let mut had_sent_hmr_event = false;
@@ -3096,15 +3096,16 @@ pub fn finalize_bundle(
         let route_bundle_index = dev.client_graph.html_route_bundle_index(client_index);
         let route_bundle = dev.route_bundle_ptr(route_bundle_index);
         debug_assert!(route_bundle.data.html().bundled_file == client_index);
+        // PORT NOTE: split borrow — `invalidate_client_bundle` needs `&mut RouteBundle`
+        // so the `cached_response` take is done before the long-lived `html` borrow.
+        if route_bundle.data.html_mut().cached_response.take().is_some() {
+            // Arc<StaticRoute> drop releases the ref.
+            route_bundle.invalidate_client_bundle(dev_ptr.cast());
+        }
         let html = match &mut route_bundle.data {
             route_bundle::Data::Html(h) => h,
             _ => unreachable!(),
         };
-
-        if let Some(_blob) = html.cached_response.take() {
-            // Arc<StaticRoute> drop releases the ref.
-            route_bundle.invalidate_client_bundle(dev_ptr.cast());
-        }
         if let Some(_slice) = html.bundled_html_text.take() {
             // freed by Drop
         }

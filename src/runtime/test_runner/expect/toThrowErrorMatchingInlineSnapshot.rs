@@ -37,8 +37,7 @@ pub fn to_throw_error_matching_inline_snapshot(
         1 => {
             if arguments[0].is_string() {
                 has_expected = true;
-                // TODO(port): Zig uses out-param `toZigString(&expected_string, globalThis)`; reshaped to return value.
-                expected_string = arguments[0].to_zig_string(global)?;
+                arguments[0].to_zig_string(&mut expected_string, global)?;
             } else {
                 return this.throw(
                     global,
@@ -79,7 +78,8 @@ pub fn to_throw_error_matching_inline_snapshot(
         );
     };
 
-    this.inline_snapshot(
+    Expect::inline_snapshot(
+        &mut **this,
         global,
         frame,
         value,

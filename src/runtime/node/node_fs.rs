@@ -1480,7 +1480,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
     }
 
     // returns boolean `should_continue`
-    fn _cp_async_directory(
+    pub(super) fn _cp_async_directory(
         nodefs: &mut NodeFS,
         args: args::CpFlags,
         this: *mut Self,
@@ -5980,7 +5980,7 @@ impl NodeFS {
             return Maybe::Err(sys::Error {
                 errno: E::EISDIR as _,
                 syscall: sys::Tag::copyfile,
-                path: self.os_path_into_sync_error_buf(src.as_slice()).into(),
+                path: self.os_path_into_sync_error_buf(&src_buf[..sd]).into(),
                 ..Default::default()
             });
         }
@@ -6009,7 +6009,7 @@ impl NodeFS {
         }
 
         let fd = match openat_os_path(FD::cwd(), src, sys::O::DIRECTORY | sys::O::RDONLY, 0) {
-            Maybe::Err(err) => return Maybe::Err(err.with_path(self.os_path_into_sync_error_buf(src.as_slice()))),
+            Maybe::Err(err) => return Maybe::Err(err.with_path(self.os_path_into_sync_error_buf(&src_buf[..sd]))),
             Maybe::Ok(fd_) => fd_,
         };
         let _close = scopeguard::guard(fd, |fd| fd.close());
@@ -6030,7 +6030,7 @@ impl NodeFS {
 
         loop {
             let current = match iterator.next() {
-                Err(err) => return Maybe::Err(err.with_path(self.os_path_into_sync_error_buf(src.as_slice()))),
+                Err(err) => return Maybe::Err(err.with_path(self.os_path_into_sync_error_buf(&src_buf[..sd]))),
                 Ok(None) => break,
                 Ok(Some(ent)) => ent,
             };
@@ -6118,32 +6118,41 @@ impl NodeFS {
 
     fn _cp_symlink(&mut self, src: &ZStr, dest: &ZStr) -> Maybe<ret::CopyFile> {
         let mut target_buf = PathBuffer::uninit();
-        let link_target = match Syscall::readlink(src, &mut target_buf) {
+        // PORT NOTE: Rust `Syscall::readlink` returns the byte length, not the
+        // slice — reconstruct the `[:0]const u8` view from `target_buf`.
+        let link_len = match Syscall::readlink(src, &mut target_buf[..]) {
             Maybe::Ok(result) => result,
             Maybe::Err(err) => {
                 self.sync_error_buf[..src.len()].copy_from_slice(src.as_bytes());
                 return Maybe::Err(err.with_path(&self.sync_error_buf[..src.len()]));
             }
         };
-        if paths::is_absolute(link_target) {
+        target_buf[link_len] = 0;
+        // SAFETY: NUL written at `target_buf[link_len]`.
+        let link_target = unsafe { ZStr::from_raw(target_buf.as_ptr(), link_len) };
+        if paths::is_absolute(link_target.as_bytes()) {
             return Syscall::symlink(link_target, dest);
         }
         let mut cwd_buf = PathBuffer::uninit();
         let mut resolved_buf = PathBuffer::uninit();
-        let src_dir = paths::resolve_path::dirname(src.as_bytes(), paths::Platform::Posix);
-        let Ok(cwd) = sys::getcwd(&mut cwd_buf) else {
+        let src_dir = paths::resolve_path::dirname::<paths::platform::Posix>(src.as_bytes());
+        let Ok(cwd_len) = sys::getcwd(&mut cwd_buf[..]) else {
             // If we can't resolve cwd, preserve the link target as-is rather
             // than pointing the copied link back at the source path.
             return Syscall::symlink(link_target, dest);
         };
-        let Some(resolved) = paths::resolve_path::join_abs_string_buf_checked(
-            cwd, &mut resolved_buf[..resolved_buf.len() - 1], &[src_dir, link_target], paths::Platform::Posix,
+        let cwd = &cwd_buf[..cwd_len];
+        let resolved_buf_len = resolved_buf.len();
+        let Some(resolved) = paths::resolve_path::join_abs_string_buf_checked::<paths::platform::Posix>(
+            cwd, &mut resolved_buf[..resolved_buf_len - 1], &[src_dir, link_target.as_bytes()],
         ) else {
             self.sync_error_buf[..src.len()].copy_from_slice(src.as_bytes());
             return Maybe::Err(sys::Error { errno: E::ENAMETOOLONG as _, syscall: sys::Tag::symlink, path: self.sync_error_buf[..src.len()].into(), ..Default::default() });
         };
-        resolved_buf[resolved.len()] = 0;
-        Syscall::symlink(unsafe { ZStr::from_raw(resolved_buf.as_ptr(), resolved.len()) }, dest)
+        let resolved_len = resolved.len();
+        resolved_buf[resolved_len] = 0;
+        // SAFETY: NUL written at `resolved_buf[resolved_len]`.
+        Syscall::symlink(unsafe { ZStr::from_raw(resolved_buf.as_ptr(), resolved_len) }, dest)
     }
 
     /// This is `copyFile`, but it copies symlinks as-is
@@ -6274,7 +6283,7 @@ impl NodeFS {
             let src_fd = match Syscall::open(src, sys::O::RDONLY | sys::O::NOFOLLOW, 0o644) {
                 Maybe::Ok(result) => result,
                 Maybe::Err(err) => {
-                    if err.get_errno() == E::LOOP {
+                    if err.get_errno() == E::ELOOP {
                         // ELOOP is returned when you open a symlink with NOFOLLOW.
                         // as in, it does not actually let you open it.
                         return self._cp_symlink(src, dest);
@@ -6551,7 +6560,7 @@ impl NodeFS {
     /// Tries `open(dest, flags, default_permission)`; on ENOENT creates the
     /// parent directory and retries once. Any other error is annotated with
     /// `dest` copied into `sync_error_buf`.
-    fn _cp_open_dest_with_mkdir(&mut self, dest: OSPathSliceZ, flags: i32) -> Maybe<FD> {
+    fn _cp_open_dest_with_mkdir(&mut self, dest: &OSPathSliceZ, flags: i32) -> Maybe<FD> {
         match Syscall::open(dest, flags, DEFAULT_PERMISSION) {
             Maybe::Ok(result) => Maybe::Ok(result),
             Maybe::Err(err) => {

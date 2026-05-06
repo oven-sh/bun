@@ -1388,6 +1388,20 @@ impl AnyServer {
         })
     }
 
+    pub fn publish(
+        &self,
+        topic: &[u8],
+        message: &[u8],
+        opcode: bun_uws_sys::Opcode,
+        compress: bool,
+    ) -> bool {
+        any_server_dispatch!(self, |s| match s.app {
+            // SAFETY: app handle is live while AnyServer is held.
+            Some(app) => unsafe { (*app).publish(topic, message, opcode, compress) },
+            None => false,
+        })
+    }
+
     pub fn web_socket_handler(&mut self) -> Option<&mut WebSocketServerHandler> {
         any_server_dispatch_mut!(self, |s| s.config.websocket.as_mut().map(|ws| &mut ws.handler))
     }

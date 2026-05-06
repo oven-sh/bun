@@ -744,7 +744,7 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
     let mut scripts: Vec<ScriptConfig> = Vec::new();
     // var scripts = std.ArrayHashMap([]const u8, ScriptConfig).init(ctx.allocator);
     while let Some(package_json_path) = package_json_iter.next()? {
-        let dirpath = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(package_json_path);
+        let dirpath = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(&package_json_path);
         let path = strings::without_trailing_slash(dirpath);
 
         // When using --workspaces, skip the root package to prevent recursion

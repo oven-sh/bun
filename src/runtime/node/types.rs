@@ -1454,16 +1454,19 @@ pub fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mod
         match strings::parse_int::<Mode>(slice, 8) {
             Ok(v) => v as u32,
             Err(_) => {
+                use crate::test_runner::expect::JSValueTestExt as _;
                 let mut formatter = jsc::console_object::Formatter::new(ctx);
                 // formatter.deinit() on Drop
-                return ctx.throw_value(
-                    ctx.err(jsc::ErrorCode::INVALID_ARG_VALUE)
-                        .fmt(format_args!(
+                return Err(ctx.throw_value(
+                    ctx.err(
+                        jsc::ErrorCode::INVALID_ARG_VALUE,
+                        format_args!(
                             "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received {}",
                             value.to_fmt(&mut formatter)
-                        ))
-                        .to_js(),
-                );
+                        ),
+                    )
+                    .to_js(),
+                ));
             }
         }
     };

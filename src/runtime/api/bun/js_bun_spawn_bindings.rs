@@ -1478,9 +1478,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             } else if has_user_timespec {
                 absolute_timespec = user_timespec;
             } else {
-                absolute_timespec = bun_core::timespec::EPOCH;
+                absolute_timespec = Timespec::EPOCH;
             }
-            let has_timespec = !absolute_timespec.eql(&bun_core::timespec::EPOCH);
+            let has_timespec = !absolute_timespec.eql(&Timespec::EPOCH);
 
             if let Writable::Buffer(buffer) = &mut subprocess.stdin {
                 buffer.watch();

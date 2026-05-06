@@ -442,16 +442,19 @@ impl FileReader {
 
             let r = self.reader();
             if let Some(poll) = r.handle.get_poll() {
+                // CYCLEBREAK: `bun_io::FilePoll` is an opaque vtable wrapper; flag
+                // mutation goes through `set_flag(FilePollFlag)` instead of the
+                // direct `aio::FilePoll.flags.insert(...)` field write in Zig.
                 if file_type == FileType::Socket || r.flags.contains(PosixFlags::SOCKET) {
-                    poll.flags.insert(aio::PollFlag::Socket);
+                    poll.set_flag(bun_io::FilePollFlag::Socket);
                 } else {
                     // if it's a TTY, we report it as a fifo
                     // we want the behavior to be as though it were a blocking pipe.
-                    poll.flags.insert(aio::PollFlag::Fifo);
+                    poll.set_flag(bun_io::FilePollFlag::Fifo);
                 }
 
                 if r.flags.contains(PosixFlags::NONBLOCKING) {
-                    poll.flags.insert(aio::PollFlag::Nonblocking);
+                    poll.set_flag(bun_io::FilePollFlag::Nonblocking);
                 }
             }
         }

@@ -178,31 +178,34 @@ impl JscSubprocess::static_pipe_writer::StaticPipeWriterProcess for ShellSubproc
 
 pub type WatchFd = Fd;
 
-/// `ProcessExitHandler` vtable for [`ShellSubprocess`]. Mirrors the Zig
-/// `TaggedPointerUnion` arm `ShellSubprocess => onProcessExit(...)`.
-static SHELL_SUBPROCESS_EXIT_VTABLE: bun_process::ProcessExitVTable =
-    bun_process::ProcessExitVTable {
-        on_process_exit: shell_subprocess_on_process_exit,
-    };
-
-unsafe fn shell_subprocess_on_process_exit(
-    owner: *mut (),
-    process: *mut Process,
-    status: bun_process::Status,
-    rusage: *const Rusage,
-) {
-    let _ = (process, status, rusage);
-    // SAFETY: `owner` is the `*mut ShellSubprocess` registered via
-    // `set_exit_handler`; it outlives the Process (holds the Arc).
-    let _this = unsafe { &mut *(owner as *mut ShellSubprocess) };
-    // PORT NOTE: ShellSubprocess::on_process_exit currently takes
-    // `bun_spawn::Status`; until the two `Status` enums are unified the thunk
-    // cannot forward losslessly.
-    todo!("blocked_on: bun_spawn::Status <-> bun_process::Status unification");
+impl ProcessExitOwner for ShellSubprocess {
+    unsafe fn on_process_exit_dyn(
+        this: *mut Self,
+        _process: *mut Process,
+        _status: bun_process::Status,
+        _rusage: &Rusage,
+    ) {
+        // SAFETY: `this` was registered via `set_exit_handler(self_ptr)` and the
+        // owning Cmd outlives the Process exit callback.
+        let _this = unsafe { &mut *this };
+        // PORT NOTE: ShellSubprocess::on_process_exit currently takes
+        // `bun_spawn::Status`; until the two `Status` enums are unified the thunk
+        // cannot forward losslessly.
+        todo!("blocked_on: bun_spawn::Status <-> bun_process::Status unification");
+    }
 }
 
 impl ShellSubprocess {
     pub const DEFAULT_MAX_BUFFER_SIZE: u32 = DEFAULT_MAX_BUFFER_SIZE;
+
+    /// Borrow the intrusively ref-counted Process mutably.
+    /// SAFETY-internal: shell is single-threaded; `self.process` is non-null
+    /// for the lifetime of `ShellSubprocess` (set in `spawn_maybe_sync_impl`).
+    #[inline]
+    fn proc(&self) -> &mut Process {
+        // SAFETY: see doc comment.
+        unsafe { &mut *self.process }
+    }
 
     pub fn on_static_pipe_writer_done(&mut self) {
         log!(

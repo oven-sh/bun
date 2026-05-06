@@ -615,14 +615,14 @@ pub mod random {
         if !args.is_empty() {
             let options = args[0];
             if !options.is_undefined() {
-                validators::validate_object(global, options, "options", Default::default())?;
+                validators::validate_object(global, options, format_args!("options"), Default::default())?;
                 if let Some(disable_entropy_cache_value) =
                     options.get(global, "disableEntropyCache")?
                 {
                     disable_entropy_cache = validators::validate_boolean(
                         global,
                         disable_entropy_cache_value,
-                        "options.disableEntropyCache",
+                        format_args!("options.disableEntropyCache"),
                     )?;
                 }
             }
@@ -633,10 +633,11 @@ pub mod random {
         let uuid = if disable_entropy_cache {
             UUID::init()
         } else {
-            global.bun_vm().rare_data().next_uuid()
+            // SAFETY: `bun_vm()` returns the singleton JS VM; mutably borrowed only here.
+            unsafe { (*global.bun_vm()).rare_data() }.next_uuid()
         };
 
-        uuid.print(&mut bytes[0..36]);
+        uuid.print((&mut bytes[..36]).try_into().unwrap());
         Ok(str.transfer_to_js(global))
     }
 

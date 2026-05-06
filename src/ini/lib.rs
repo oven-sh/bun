@@ -1585,7 +1585,7 @@ pub fn load_npmrc(
     'out: {
         let count = {
             let mut count: usize = configs.len();
-            for prop in parser.out.data.e_object().properties.slice() {
+            for prop in out_obj.properties.slice() {
                 if let Some(keyexpr) = &prop.key {
                     if let Some(key) = keyexpr.as_utf8_string_literal() {
                         if strings::has_prefix(key, b"//") {

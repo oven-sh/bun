@@ -10,18 +10,19 @@ use core::mem::offset_of;
 
 use bun_alloc::Arena as Bump; // bumpalo::Bump re-export
 use bun_collections::{ArrayHashMap, MultiArrayList};
-use bun_core::{Output, StringJoiner};
+use bun_collections::linear_fifo::StaticBuffer;
+use bun_core::Output;
+use bun_str::string_joiner::StringJoiner;
 use bun_sourcemap::{self as source_map, SourceMapState};
 
 use crate::bake::{self as bake, Side};
-use crate::bake::dev_server::{
-    self, ChunkKind, DevAllocator, DevServer, dump_bundle, packed_map,
-};
-use crate::api::timer::EventLoopTimer;
+use crate::bake::dev_server::{self, ChunkKind, DevServer, packed_map};
+use crate::bake::dev_server_body::{DevAllocator, dump_bundle};
+use crate::timer::EventLoopTimer;
 
 // PORT NOTE: Zig `mapLog = DevServer.mapLog` — reuse DevServer's existing scope so
 // `BUN_DEBUG_<scope>=1` enables both call sites; do NOT re-declare a new scope here.
-use crate::bake::dev_server::map_log;
+use crate::bake::dev_server_body::map_log;
 
 /// See `SourceId` for what the content of u64 is.
 #[repr(transparent)]

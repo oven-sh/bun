@@ -407,34 +407,34 @@ pub mod Jest {
         let restore_all_mocks = jsc::JSFunction::create(global_object, "restoreAllMocks", JSMock__jsRestoreAllMocks, 2, Default::default());
         let clear_all_mocks = jsc::JSFunction::create(global_object, "clearAllMocks", JSMock__jsClearAllMocks, 2, Default::default());
         let mock_module_fn = jsc::JSFunction::create(global_object, "module", JSMock__jsModuleMock, 2, Default::default());
-        module.put(global_object, ZigString::static_str("mock"), mock_fn);
-        mock_fn.put(global_object, ZigString::static_str("module"), mock_module_fn);
-        mock_fn.put(global_object, ZigString::static_str("restore"), restore_all_mocks);
-        mock_fn.put(global_object, ZigString::static_str("clearAllMocks"), clear_all_mocks);
+        module.put(global_object, b"mock", mock_fn);
+        mock_fn.put(global_object, b"module", mock_module_fn);
+        mock_fn.put(global_object, b"restore", restore_all_mocks);
+        mock_fn.put(global_object, b"clearAllMocks", clear_all_mocks);
 
         let jest = JSValue::create_empty_object(global_object, 9 + fake_timers::TIMER_FNS_COUNT);
-        jest.put(global_object, ZigString::static_str("fn"), mock_fn);
-        jest.put(global_object, ZigString::static_str("mock"), mock_module_fn);
-        jest.put(global_object, ZigString::static_str("spyOn"), spy_on);
-        jest.put(global_object, ZigString::static_str("restoreAllMocks"), restore_all_mocks);
-        jest.put(global_object, ZigString::static_str("clearAllMocks"), clear_all_mocks);
-        jest.put(global_object, ZigString::static_str("resetAllMocks"), clear_all_mocks);
-        jest.put(global_object, ZigString::static_str("setSystemTime"), set_system_time);
-        jest.put(global_object, ZigString::static_str("now"), jsc::JSFunction::create(global_object, "now", JSMock__jsNow, 0, Default::default()));
-        jest.put(global_object, ZigString::static_str("setTimeout"), jsc::JSFunction::create(global_object, "setTimeout", js_set_default_timeout, 1, Default::default()));
+        jest.put(global_object, b"fn", mock_fn);
+        jest.put(global_object, b"mock", mock_module_fn);
+        jest.put(global_object, b"spyOn", spy_on);
+        jest.put(global_object, b"restoreAllMocks", restore_all_mocks);
+        jest.put(global_object, b"clearAllMocks", clear_all_mocks);
+        jest.put(global_object, b"resetAllMocks", clear_all_mocks);
+        jest.put(global_object, b"setSystemTime", set_system_time);
+        jest.put(global_object, b"now", jsc::JSFunction::create(global_object, "now", JSMock__jsNow, 0, Default::default()));
+        jest.put(global_object, b"setTimeout", jsc::JSFunction::create(global_object, "setTimeout", js_set_default_timeout, 1, Default::default()));
 
-        module.put(global_object, ZigString::static_str("jest"), jest);
-        module.put(global_object, ZigString::static_str("spyOn"), spy_on);
-        module.put(global_object, ZigString::static_str("expect"), Expect::js::get_constructor(global_object));
+        module.put(global_object, b"jest", jest);
+        module.put(global_object, b"spyOn", spy_on);
+        module.put(global_object, b"expect", Expect::js::get_constructor(global_object));
 
         let vi = JSValue::create_empty_object(global_object, 6 + fake_timers::TIMER_FNS_COUNT);
-        vi.put(global_object, ZigString::static_str("fn"), mock_fn);
-        vi.put(global_object, ZigString::static_str("mock"), mock_module_fn);
-        vi.put(global_object, ZigString::static_str("spyOn"), spy_on);
-        vi.put(global_object, ZigString::static_str("restoreAllMocks"), restore_all_mocks);
-        vi.put(global_object, ZigString::static_str("resetAllMocks"), clear_all_mocks);
-        vi.put(global_object, ZigString::static_str("clearAllMocks"), clear_all_mocks);
-        module.put(global_object, ZigString::static_str("vi"), vi);
+        vi.put(global_object, b"fn", mock_fn);
+        vi.put(global_object, b"mock", mock_module_fn);
+        vi.put(global_object, b"spyOn", spy_on);
+        vi.put(global_object, b"restoreAllMocks", restore_all_mocks);
+        vi.put(global_object, b"resetAllMocks", clear_all_mocks);
+        vi.put(global_object, b"clearAllMocks", clear_all_mocks);
+        module.put(global_object, b"vi", vi);
 
         fake_timers::put_timers_fns(global_object, jest, vi);
     }

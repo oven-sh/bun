@@ -2132,9 +2132,9 @@ impl DevServer {
     }
 }
 
-pub enum DevResponse {
+pub enum DevResponse<'a> {
     Http(AnyResponse),
-    Promise(PromiseResponse),
+    Promise(PromiseResponse<'a>),
 }
 
 /// When requests are waiting on a bundle, the relevant request information is

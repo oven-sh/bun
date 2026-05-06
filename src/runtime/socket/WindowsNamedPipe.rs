@@ -729,7 +729,9 @@ impl WindowsNamedPipe {
     /// alias the same `&mut AsyncLoop`. Caller must not hold another live
     /// `&mut` to it.
     pub unsafe fn loop_(&self) -> &mut AsyncLoop {
-        self.vm.uv_loop()
+        // SAFETY: see fn-level safety comment — process-wide libuv loop, caller
+        // promises no aliasing `&mut`.
+        unsafe { &mut *self.vm.uv_loop() }
     }
 
     pub fn encode_and_write(&mut self, data: &[u8]) -> i32 {

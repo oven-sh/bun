@@ -54,10 +54,51 @@ impl PathChar for u16 {
         self as u32
     }
     #[inline]
-    fn lit(_s: &'static [u8]) -> &'static [u16] {
-        // TODO(port): const widening to u16 (Zig: bun.strings.literal(u16, "..")).
-        // No u16 callsite reaches `l()` in un-gated code yet.
-        unimplemented!("PathChar<u16>::lit — needs const widening")
+    fn lit(s: &'static [u8]) -> &'static [u16] {
+        // Zig: `bun.strings.literal(u16, str)` → `std.unicode.utf8ToUtf16LeStringLiteral(str)`,
+        // which produces a comptime-static widened slice per call site. Rust can't widen a
+        // generic `&'static [u8]` at const time, so emulate the comptime `Holder.value` by
+        // matching the closed set of ASCII literals this module passes through `l::<T>()`
+        // (each gets one static, exactly as Zig emits). The fallback leaks once for any
+        // unrecognized literal — same lifetime semantics as a Zig comptime static.
+        // PERF(port): was comptime monomorphization — profile in Phase B.
+        match s {
+            b"." => {
+                static W: [u16; 1] = [b'.' as u16];
+                &W
+            }
+            b"/" => {
+                static W: [u16; 1] = [b'/' as u16];
+                &W
+            }
+            b"\\" => {
+                static W: [u16; 1] = [b'\\' as u16];
+                &W
+            }
+            b".." => {
+                static W: [u16; 2] = [b'.' as u16, b'.' as u16];
+                &W
+            }
+            b"./" => {
+                static W: [u16; 2] = [b'.' as u16, b'/' as u16];
+                &W
+            }
+            b"//" => {
+                static W: [u16; 2] = [b'/' as u16, b'/' as u16];
+                &W
+            }
+            b"" => &[],
+            _ => {
+                // Cold path: unknown literal. Widen ASCII byte-by-byte and leak to obtain
+                // `&'static` (one allocation per distinct literal, same as Zig's static).
+                debug_assert!(
+                    s.iter().all(|b| *b < 0x80),
+                    "PathChar<u16>::lit expects ASCII"
+                );
+                let widened: Vec<u16> = s.iter().map(|&b| b as u16).collect();
+                Box::leak(widened.into_boxed_slice())
+            }
+        }
     }
 }
 

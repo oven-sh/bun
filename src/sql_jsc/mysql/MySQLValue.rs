@@ -4,7 +4,7 @@
 
 use core::ffi::c_int;
 
-use crate::jsc::{self, bun_string_jsc, JSGlobalObject, JSType, JSValue, JsError, JsResult, MarkedArgumentBuffer};
+use crate::jsc::{self, bun_string_jsc, IntegerRange, JSGlobalObject, JSType, JSValue, JsError, JsResult, MarkedArgumentBuffer, StringJsc as _};
 use bun_string::{String as BunString, ZigString};
 use bun_string::zig_string::Slice as ZigStringSlice;
 
@@ -12,7 +12,7 @@ use bun_sql::mysql::mysql_types::FieldType;
 use bun_sql::mysql::protocol::any_mysql_error;
 use bun_sql::shared::Data;
 
-use bun_runtime::webcore::Blob;
+use crate::jsc::webcore::Blob;
 
 pub fn field_type_from_js(
     global_object: &JSGlobalObject,

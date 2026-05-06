@@ -84,6 +84,14 @@ pub struct Buffer {
 }
 impl Buffer {
     #[inline] pub fn slice(&self) -> &[u8] { &[] }
+
+    /// `MarkedArrayBuffer.toNodeBuffer` — wrap the backing bytes in a Node
+    /// `Buffer` (Uint8Array subclass). Ownership of the byte storage transfers
+    /// to JSC via the buffer deallocator.
+    pub fn to_node_buffer(&self, ctx: &JSGlobalObject) -> JSValue {
+        let mut buf = self.buffer;
+        JSValue::create_buffer(ctx, buf.byte_slice_mut())
+    }
 }
 
 // `jsc.ArgumentsSlice` — cursor over CallFrame args. Mirrors the Zig API

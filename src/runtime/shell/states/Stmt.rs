@@ -93,7 +93,7 @@ impl Stmt {
     fn expr_count(me: &Stmt) -> usize {
         // SAFETY: `node` points into the AST arena which outlives every state
         // node.
-        unsafe { (*(*me.node).exprs).len() }
+        unsafe { (&*(*me.node).exprs).len() }
     }
 }
 

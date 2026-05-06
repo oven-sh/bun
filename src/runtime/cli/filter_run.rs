@@ -385,7 +385,7 @@ impl<'a> State<'a> {
                 handle.buffer.clear();
             }
             // print exit status
-            match handle.process.as_ref().unwrap().status {
+            match &handle.process.as_ref().unwrap().status {
                 Status::Exited(exited) => {
                     write!(
                         &mut self.draw_buf,
@@ -401,7 +401,7 @@ impl<'a> State<'a> {
                         "{} {}: Signaled with code {}\n",
                         bstr::BStr::new(&handle.config.package_name),
                         bstr::BStr::new(&handle.config.script_name),
-                        <&'static str>::from(signal),
+                        bun_sys::SignalCode(*signal).name().unwrap_or("UNKNOWN"),
                     )?;
                 }
                 _ => {}

@@ -694,8 +694,7 @@ impl Linux {
             }
         }
         owners.push(WdOwner {
-            // SAFETY: watcher outlives its wd entries (removed in remove_watch before destroy).
-            watcher: unsafe { &*(watcher as *const PathWatcher) },
+            watcher: watcher as *mut PathWatcher,
             subpath: ZStr::from_bytes(subpath),
         });
         watcher.platform.wds.push(wd);

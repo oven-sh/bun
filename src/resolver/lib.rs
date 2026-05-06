@@ -5963,7 +5963,7 @@ impl<'a> Resolver<'a> {
                 // check the global cache directory for a package.json file.
                 let manager = self.get_package_manager();
                 let mut dependency_version = Dependency::Version::default();
-                let mut dependency_behavior = Dependency::Behavior { prod: true, ..Default::default() };
+                let mut dependency_behavior = Dependency::Behavior::PROD;
                 let mut string_buf: &[u8] = esm.version;
 
                 // const initial_pending_tasks = manager.pending_tasks;

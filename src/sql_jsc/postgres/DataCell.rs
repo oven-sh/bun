@@ -14,7 +14,9 @@ use bun_sql::shared::data::Data;
 use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode as PostgresSQLQueryResultMode;
 
 pub use crate::shared::sql_data_cell::SQLDataCell;
-pub use crate::shared::sql_data_cell::{Flags, Tag, Value};
+// Zig nested-type style (`SQLDataCell.Tag.Bytea`) → flat re-exports; see sed
+// rewrite below replacing `SQLDataCell::X` with bare `X`.
+pub use crate::shared::sql_data_cell::{Array, Flags, Raw, Tag, TypedArray, Value};
 use bun_sql::shared::column_identifier::ColumnIdentifier;
 
 // TODO(port): narrow error set — Zig used inferred error sets that flow into

@@ -175,9 +175,7 @@ pub struct ShutdownMessage {
 }
 
 pub struct LibdeflateState {
-    // TODO(port): `*mut bun_libdeflate_sys::Decompressor` — libdeflate exports
-    // raw `libdeflate_alloc_decompressor`; wrap once a typed handle exists.
-    pub decompressor: *mut c_void,
+    pub decompressor: *mut bun_libdeflate_sys::libdeflate::Decompressor,
     pub shared_buffer: [u8; 512 * 1024],
 }
 
@@ -959,22 +957,27 @@ mod _event_loop_draft {
 
     impl HttpThread {
         fn process_events(&mut self) -> ! {
+            // SAFETY: uws_loop is set in on_start before this is called and
+            // outlives the thread.
+            let uws_loop = unsafe { &mut *self.uws_loop };
             #[cfg(unix)]
             {
-                self.loop_.loop_.num_polls = self.loop_.loop_.num_polls.max(2);
+                uws_loop.num_polls = uws_loop.num_polls.max(2);
             }
             #[cfg(windows)]
             {
-                self.loop_.loop_.inc();
+                uws_loop.inc();
             }
 
             loop {
                 self.drain_events();
                 Output::flush();
 
-                self.loop_.loop_.inc();
-                self.loop_.loop_.tick();
-                self.loop_.loop_.dec();
+                // SAFETY: uws_loop is the live HTTP-thread loop set in on_start.
+                let uws_loop = unsafe { &mut *self.uws_loop };
+                uws_loop.inc();
+                uws_loop.tick();
+                uws_loop.dec();
 
                 if cfg!(debug_assertions) {
                     Output::flush();
@@ -991,10 +994,8 @@ mod _event_loop_draft {
 /// `_event_loop_draft` below (depends on `bun_event_loop::MiniEventLoop`,
 /// which is outside this crate's dep set). Call sites in AsyncHTTP.rs hit
 /// this until that tier boundary is resolved.
-// TODO(b2-blocked): replace with `_event_loop_draft::init` once
-// bun_event_loop is in bun_http's deps.
-pub fn init(_opts: &InitOpts) {
-    todo!("HTTPThread::init — gated in _event_loop_draft (bun_event_loop dep)")
+pub fn init(opts: &InitOpts) {
+    _event_loop_draft::init(opts)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

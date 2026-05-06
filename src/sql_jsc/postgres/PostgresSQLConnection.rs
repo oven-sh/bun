@@ -1001,7 +1001,7 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
         tls_config = if tls_object.is_boolean() && tls_object.to_boolean() {
             Default::default()
         } else if tls_object.is_object() {
-            match jsc::api::ServerConfig::SSLConfig::from_js(vm, global_object, tls_object) {
+            match jsc::api::ServerConfig::SSLConfig::from_js(&mut *vm, global_object, tls_object) {
                 Ok(opt) => opt.unwrap_or_default(),
                 Err(_) => return Ok(JSValue::ZERO),
             }
@@ -1048,11 +1048,17 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
         }
     });
 
-    let mut username: &[u8] = b"";
-    let mut password: &[u8] = b"";
-    let mut database: &[u8] = b"";
-    let mut options: &[u8] = b"";
-    let mut path: &[u8] = b"";
+    // PORT NOTE: `StringBuilder::append` takes `&mut self` and returns a borrow
+    // of the backing buffer, so successive appends can't keep their `&[u8]`
+    // results live across each other. The buffer is allocated once and never
+    // moved (`move_to_slice` hands back the same allocation), so detach each
+    // result to a raw `*const [u8]` immediately — the struct stores them as
+    // raw pointers anyway (self-referential into `options_buf`).
+    let mut username: *const [u8] = b"";
+    let mut password: *const [u8] = b"";
+    let mut database: *const [u8] = b"";
+    let mut options: *const [u8] = b"";
+    let mut path: *const [u8] = b"";
 
     let options_str = arguments[7].to_bun_string(global_object)?;
 
@@ -1068,29 +1074,27 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
 
         let _ = b.allocate();
         let u = username_str.to_utf8_without_ref();
-        username = b.append(u.slice());
+        username = b.append(u.slice()) as *const [u8];
         drop(u);
 
         let p = password_str.to_utf8_without_ref();
-        password = b.append(p.slice());
+        password = b.append(p.slice()) as *const [u8];
         drop(p);
 
         let d = database_str.to_utf8_without_ref();
-        database = b.append(d.slice());
+        database = b.append(d.slice()) as *const [u8];
         drop(d);
 
         let o = options_str.to_utf8_without_ref();
-        options = b.append(o.slice());
+        options = b.append(o.slice()) as *const [u8];
         drop(o);
 
         let _path = path_str.to_utf8_without_ref();
-        path = b.append(_path.slice());
+        path = b.append(_path.slice()) as *const [u8];
         drop(_path);
 
         break 'brk b.move_to_slice();
     };
-    // TODO(port): username/password/database/options/path now borrow from `options_buf`;
-    // when stored in the struct below they become raw `*const [u8]` (self-referential).
 
     // Reject null bytes in connection parameters to prevent Postgres startup
     // message parameter injection (null bytes act as field terminators in the
@@ -1101,6 +1105,9 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
         (database, b"database"),
         (path, b"path"),
     ] {
+        // SAFETY: each ptr is either `b""` (static) or points into `options_buf`,
+        // which is live for this scope.
+        let entry = unsafe { &*entry };
         if !entry.is_empty() && entry.iter().any(|&c| c == 0) {
             drop(options_buf);
             // tls_config / secure released by the errdefer above.
@@ -1148,11 +1155,11 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
         js_value: crate::jsc::JsRef::init_weak(JSValue::UNDEFINED),
         backend_parameters: StringMap::init(true),
         backend_key_data: protocol::BackendKeyData::default(),
-        database: database as *const [u8],
-        user: username as *const [u8],
-        password: password as *const [u8],
-        path: path as *const [u8],
-        options: options as *const [u8],
+        database,
+        user: username,
+        password,
+        path,
+        options,
         options_buf,
         authentication_state: AuthenticationState::Pending,
         secure,

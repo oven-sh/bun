@@ -859,7 +859,6 @@ mod _gated_from_js {
             Err(ReadFromBlobError::Js(e)) => Err(e),
             Err(ReadFromBlobError::EmptyFile) => Err(global.throw_invalid_arguments(
                 format_args!("TLSOptions.{} is an empty file", field),
-                (),
             )),
             Err(ReadFromBlobError::NullStore) | Err(ReadFromBlobError::NotAFile) => {
                 Err(global.throw_invalid_arguments(
@@ -867,7 +866,6 @@ mod _gated_from_js {
                         "TLSOptions.{} is not a valid BunFile (non-BunFile `Blob`s are not supported)",
                         field
                     ),
-                    (),
                 ))
             }
         }

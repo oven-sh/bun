@@ -266,7 +266,7 @@ impl<'a> CopyFile<'a> {
             remain = 4096;
         }
 
-        let mut total_written: usize = 0;
+        let mut total_written: u64 = 0;
         let src_fd = self.source_fd;
         let dest_fd = self.destination_fd;
 
@@ -285,8 +285,8 @@ impl<'a> CopyFile<'a> {
         // use sendfile() or splice()
         if !bun_sys::copy_file::can_use_copy_file_range_syscall() {
             match node_fs::NodeFS::copy_file_using_read_write_loop(
-                b"",
-                b"",
+                bun_core::ZStr::EMPTY,
+                bun_core::ZStr::EMPTY,
                 src_fd,
                 dest_fd,
                 if unknown_size { 0 } else { remain },
@@ -350,8 +350,8 @@ impl<'a> CopyFile<'a> {
                 bun_sys::E::NOSYS | bun_sys::E::XDEV | bun_sys::E::OPNOTSUPP => {
                     // TODO: this should use non-blocking I/O.
                     match node_fs::NodeFS::copy_file_using_read_write_loop(
-                        b"",
-                        b"",
+                bun_core::ZStr::EMPTY,
+                bun_core::ZStr::EMPTY,
                         src_fd,
                         dest_fd,
                         if unknown_size { 0 } else { remain },
@@ -403,8 +403,8 @@ impl<'a> CopyFile<'a> {
                     if total_written == 0 {
                         // TODO: this should use non-blocking I/O.
                         match node_fs::NodeFS::copy_file_using_read_write_loop(
-                            b"",
-                            b"",
+                bun_core::ZStr::EMPTY,
+                bun_core::ZStr::EMPTY,
                             src_fd,
                             dest_fd,
                             if unknown_size { 0 } else { remain },
@@ -480,8 +480,8 @@ impl<'a> CopyFile<'a> {
 
                         // TODO: this should use non-blocking I/O.
                         match node_fs::NodeFS::copy_file_using_read_write_loop(
-                            b"",
-                            b"",
+                bun_core::ZStr::EMPTY,
+                bun_core::ZStr::EMPTY,
                             self.source_fd,
                             self.destination_fd,
                             0,
@@ -799,8 +799,8 @@ impl<'a> CopyFile<'a> {
             {
                 let mut total_written: u64 = 0;
                 match node_fs::NodeFS::copy_file_using_read_write_loop(
-                    b"",
-                    b"",
+                bun_core::ZStr::EMPTY,
+                bun_core::ZStr::EMPTY,
                     self.source_fd,
                     self.destination_fd,
                     0,

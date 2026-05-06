@@ -1450,7 +1450,7 @@ impl CommandLineReporter {
             'brk: {
                 // Ensure the directory exists
                 let mut fs = crate::node::fs::NodeFS::default();
-                let _ = fs.mkdir_recursive(crate::node::fs::args::Mkdir {
+                let _ = fs.mkdir_recursive(&crate::node::fs::args::Mkdir {
                     path: crate::node::PathLike::EncodedSlice(
                         ZigStringSlice::from_utf8_never_free(&opts.reports_directory),
                     ),

@@ -4462,8 +4462,13 @@ impl CmdEnvKey<'_> {
 }
 
 impl<'a> CmdEnvIter<'a> {
-    pub fn from_env(env: &'a bun_collections::StringArrayHashMap<Box<ZStr>>) -> Self {
-        let iter = env.iterator();
+    pub fn from_env(env: &'a mut bun_collections::StringArrayHashMap<Box<ZStr>>) -> Self {
+        // PORT NOTE: `iterator()` borrows `&mut self`; rebind through a raw ptr so the
+        // struct can hold both the map ref and the iterator (Zig had no aliasing rules).
+        // SAFETY: `env` outlives `'a` and is not mutated through `self.env` while `iter`
+        // walks the backing arrays.
+        let env_ptr: *mut _ = env;
+        let iter = unsafe { (*env_ptr).iterator() };
         Self { env, iter }
     }
 
@@ -4475,8 +4480,8 @@ impl<'a> CmdEnvIter<'a> {
         // TODO(port): narrow error set — Zig sig is `!?Entry` but body never errors.
         let Some(entry) = self.iter.next() else { return Ok(None) };
         Ok(Some(CmdEnvEntry {
-            key: CmdEnvKey { val: entry.key() },
-            value: CmdEnvValue { val: entry.value() },
+            key: CmdEnvKey { val: &**entry.key_ptr },
+            value: CmdEnvValue { val: &**entry.value_ptr },
         }))
     }
 }
@@ -4578,7 +4583,7 @@ pub fn shell_cmd_from_js(
 
     let mut string_iter = string_args.array_iterator(global)?;
     let mut i: u32 = 0;
-    let last = string_iter.len().saturating_sub(1);
+    let last = string_iter.len.saturating_sub(1);
     while let Some(js_value) = string_iter.next()? {
         if !builder.append_js_value_str::<false>(js_value)? {
             return Err(global.throw(format_args!(

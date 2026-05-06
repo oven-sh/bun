@@ -1968,13 +1968,17 @@ impl<S: GraphSide> IncrementalGraph<S> {
     ) -> Result<InsertEmptyResult, bun_alloc::AllocError> {
         self.owner().graph_safety_lock.assert_locked();
         let gop = self.bundled_files.get_or_put(Box::<[u8]>::from(abs_path))?;
-        if !gop.found_existing {
+        let gop_index = gop.index;
+        let found_existing = gop.found_existing;
+        drop(gop);
+        if !found_existing {
             // TODO(port): side-specific value initialization; we can't write `S::FilePacked`
             // generically without a constructor trait. Phase B: add `GraphSide::empty_file(kind)`.
+            let value_ptr = &mut self.bundled_files.values_mut()[gop_index] as *mut S::FilePacked;
             match S::SIDE {
                 // SAFETY: S == Client here; S::FilePacked is layout-compatible with ClientFilePacked.
                 Side::Client => unsafe {
-                    *(gop.value_ptr as *mut S::FilePacked as *mut ClientFilePacked) =
+                    *(value_ptr as *mut ClientFilePacked) =
                         ClientFile {
                             content: match kind {
                                 FileKind::Unknown => Content::Unknown,
@@ -1988,7 +1992,7 @@ impl<S: GraphSide> IncrementalGraph<S> {
                 },
                 // SAFETY: S == Server here; S::FilePacked is layout-compatible with ServerFile.
                 Side::Server => unsafe {
-                    *(gop.value_ptr as *mut S::FilePacked as *mut ServerFile) = ServerFile {
+                    *(value_ptr as *mut ServerFile) = ServerFile {
                         is_rsc: false,
                         is_ssr: false,
                         is_route: false,
@@ -2003,8 +2007,8 @@ impl<S: GraphSide> IncrementalGraph<S> {
             self.ensure_stale_bit_capacity(true)?;
         }
         Ok(InsertEmptyResult {
-            index: FileIndex::init(u32::try_from(gop.index).unwrap()),
-            key: &**gop.key_ptr as *const [u8],
+            index: FileIndex::init(u32::try_from(gop_index).unwrap()),
+            key: &*self.bundled_files.keys()[gop_index] as *const [u8],
         })
     }
 }

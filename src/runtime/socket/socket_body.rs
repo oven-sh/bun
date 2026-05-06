@@ -1657,10 +1657,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(JSValue::FALSE);
         }
 
-        let args = callframe.arguments_undef(2);
+        let args = callframe.arguments_undef::<2>();
         this.ref_();
         // PORT NOTE: reshaped for borrowck — explicit deref at end.
-        let result = match this.write_or_end_buffered::<true>(global, args.ptr()[0], args.ptr()[1]) {
+        let result = match this.write_or_end_buffered::<true>(global, args.ptr[0], args.ptr[1]) {
             WriteResult::Fail => JSValue::ZERO,
             WriteResult::Success { wrote, total } => {
                 if wrote >= 0 && usize::try_from(wrote).unwrap() == total {

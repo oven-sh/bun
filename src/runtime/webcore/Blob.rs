@@ -3600,26 +3600,6 @@ impl Blob {
         Ok(())
     }
 
-    pub fn get_file_name(&self) -> Option<&[u8]> {
-        if let Some(store) = &self.store {
-            match &store.data {
-                Store::Data::File(file) => {
-                    if let node::PathLike::Path(p) = &file.pathlike {
-                        return Some(p.slice());
-                    }
-                    // we shouldn't return Number here.
-                }
-                Store::Data::Bytes(bytes) => {
-                    if !bytes.stored_name.slice().is_empty() {
-                        return Some(bytes.stored_name.slice());
-                    }
-                }
-                Store::Data::S3(s3) => return Some(s3.path()),
-            }
-        }
-        None
-    }
-
     pub fn get_loader(&self, jsc_vm: &VirtualMachine) -> Option<bun_bundler::options::Loader> {
         if let Some(filename) = self.get_file_name() {
             let current_path = bun_resolver::fs::Path::init(filename);

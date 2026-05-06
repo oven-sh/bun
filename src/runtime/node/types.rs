@@ -678,7 +678,7 @@ impl Encoding {
         if str.is_empty() {
             return Ok(Some(default));
         }
-        Ok(str.in_map_case_insensitive(&ENCODING_MAP))
+        Ok(Self::from(str.to_utf8().slice()))
     }
 
     pub fn throw_encoding_error(global_object: &JSGlobalObject, value: JSValue) -> jsc::JsError {

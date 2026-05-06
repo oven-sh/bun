@@ -225,9 +225,9 @@ impl Handlers {
                 let value = generated.$field;
                 if value.is_undefined_or_null() {
                 } else if !value.is_callable() {
-                    return global_object.throw_invalid_arguments(
+                    return Err(global_object.throw_invalid_arguments(
                         format_args!("Expected \"{}\" callback to be a function", $name),
-                    );
+                    ));
                 } else {
                     result.$field = value;
                 }
@@ -244,9 +244,9 @@ impl Handlers {
         assign_callback!(on_handshake, "onHandshake");
 
         if result.on_data.is_empty() && result.on_writable.is_empty() {
-            return global_object.throw_invalid_arguments(
+            return Err(global_object.throw_invalid_arguments(
                 format_args!("Expected at least \"data\" or \"drain\" callback"),
-            );
+            ));
         }
         result.with_async_context_if_needed(global_object);
         result.protect();

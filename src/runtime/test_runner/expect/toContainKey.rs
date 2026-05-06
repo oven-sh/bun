@@ -11,9 +11,9 @@ impl Expect {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        // TODO(port): `defer this.postMatch(global)` — scopeguard would hold &mut self across the
-        // whole body; Phase B should reshape (e.g. RAII guard on Expect or explicit calls per path).
-        let _post = scopeguard::guard((), |_| this.post_match(global));
+        // PORT NOTE: reshaped for borrowck — Zig `defer this.postMatch(global)` becomes a
+        // scopeguard that owns the &mut and DerefMut's it for the body.
+        let mut this = scopeguard::guard(this, |this| this.post_match(global));
 
         let this_value = frame.this();
         let arguments_ = frame.arguments_old::<1>();

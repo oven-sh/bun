@@ -2143,14 +2143,14 @@ impl AttributeIterator {
 
     #[bun_jsc::host_fn(method)]
     pub fn next(&mut self, global_object: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        let done_label = ZigString::static_("done");
-        let value_label = ZigString::static_("value");
+        let done_label = ZigString::init(b"done");
+        let value_label = ZigString::init(b"value");
 
         if self.iterator.is_null() {
-            return Ok(JSValue::create_object2(
+            return Ok(create_object2(
                 global_object,
-                done_label,
-                value_label,
+                &done_label,
+                &value_label,
                 JSValue::TRUE,
                 JSValue::UNDEFINED,
             ));
@@ -2160,12 +2160,12 @@ impl AttributeIterator {
         // detached by Element::invalidate or exhausted below.
         let Some(attribute) = (unsafe { lolhtml::AttributeIterator::next(self.iterator) }) else {
             // SAFETY: iterator non-null (checked above); freed once here.
-            unsafe { lolhtml::AttributeIterator::deinit(self.iterator) };
+            unsafe { lolhtml::AttributeIterator::destroy(self.iterator) };
             self.iterator = core::ptr::null_mut();
-            return Ok(JSValue::create_object2(
+            return Ok(create_object2(
                 global_object,
-                done_label,
-                value_label,
+                &done_label,
+                &value_label,
                 JSValue::TRUE,
                 JSValue::UNDEFINED,
             ));
@@ -2174,12 +2174,15 @@ impl AttributeIterator {
         let value = attribute.value();
         let name = attribute.name();
 
-        Ok(JSValue::create_object2(
+        Ok(create_object2(
             global_object,
-            done_label,
-            value_label,
+            &done_label,
+            &value_label,
             JSValue::FALSE,
-            BunString::to_js_array(global_object, &[name.to_string(), value.to_string()])?,
+            bun_string_jsc::to_js_array(
+                global_object,
+                &[html_string_to_bun_string(name), html_string_to_bun_string(value)],
+            )?,
         ))
     }
 
@@ -2191,7 +2194,7 @@ impl AttributeIterator {
 
 // ──────────────────────────── Element ────────────────────────────────────
 
-#[bun_jsc::JsClass]
+#[bun_jsc::JsClass(no_construct, no_finalize)]
 pub struct Element {
     // TODO(port): replace hand-rolled ref_/deref with bun_ptr::IntrusiveRc<Self>
     // per PORTING.md (intrusive RefCount; *Self is the JS wrapper m_ctx).

@@ -2472,22 +2472,42 @@ impl ExpectMatcherUtils {
         let _ = (comment, promise, second_argument);
 
         let diff_formatter = DiffFormatter {
+            received_string: None,
+            expected_string: None,
             received: Some(received),
             expected: Some(expected),
             global_this,
             not: is_not,
-            ..Default::default()
         };
 
         if is_not {
             let signature = Expect::get_signature("{f}", "<green>expected<r>", true);
             // TODO(port): comptime string concatenation signature ++ "\n\n{f}\n"
-            JSValue::print_string_pretty(global_this, 2048, signature, format_args!("{}\n\n{}\n", matcher_name, diff_formatter))
+            print_string_pretty(global_this, signature, format_args!("{}\n\n{}\n", matcher_name, diff_formatter))
         } else {
             let signature = Expect::get_signature("{f}", "<green>expected<r>", false);
-            JSValue::print_string_pretty(global_this, 2048, signature, format_args!("{}\n\n{}\n", matcher_name, diff_formatter))
+            print_string_pretty(global_this, signature, format_args!("{}\n\n{}\n", matcher_name, diff_formatter))
         }
     }
+}
+
+/// Local port of `JSValue.printStringPretty` (JSValue.zig:743). Upstream
+/// `bun_jsc::JSValue` does not expose this; the Zig version performs comptime
+/// `Output.prettyFmt` rewriting on the format string, which needs a macro in
+/// Rust. For now we concatenate `signature` and `args` as-is, matching the
+/// Phase-A behaviour of `JSGlobalObject::throw_pretty`.
+fn print_string_pretty(
+    global_this: &JSGlobalObject,
+    signature: &str,
+    args: fmt::Arguments<'_>,
+) -> JsResult<JSValue> {
+    use std::io::Write;
+    let mut buf = bun_str::MutableString::init_2048()?;
+    let mut writer = buf.writer();
+    // TODO(port): Output.prettyFmt comptime color rewriting on `signature ++ "\n\n{f}\n"`.
+    writer.write_all(signature.as_bytes())?;
+    write!(writer, "{}", args)?;
+    bun_str::String::create_utf8_for_js(global_this, buf.slice())
 }
 
 #[bun_jsc::JsClass]

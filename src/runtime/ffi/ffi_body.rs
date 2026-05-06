@@ -2211,7 +2211,7 @@ impl Function {
         CompilerRT::inject(state);
         if state
             .add_symbol(
-                self.base_name.as_ref().unwrap().as_bytes(),
+                self.base_name.as_ref().unwrap(),
                 self.symbol_from_dynamic_library.unwrap(),
             )
             .is_err()

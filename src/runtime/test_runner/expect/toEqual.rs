@@ -41,8 +41,10 @@ impl Expect {
 
         // handle failure
         let diff_formatter = DiffFormatter {
-            received: value,
-            expected,
+            received: Some(value),
+            expected: Some(expected),
+            received_string: None,
+            expected_string: None,
             global_this: global,
             not,
         };

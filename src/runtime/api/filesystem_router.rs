@@ -446,7 +446,7 @@ impl FileSystemRouter {
             path = ZigStringSlice::init_dupe(URL::parse(prev_path.slice()).pathname)?;
         }
 
-        let url_path = match bun_http_types::url_path::parse(path.slice()) {
+        let url_path = match URLPath::parse(path.slice()) {
             Ok(v) => v,
             Err(err) => {
                 return Err(global_this.throw(format_args!(
@@ -501,7 +501,7 @@ impl FileSystemRouter {
     pub fn get_routes(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         let paths = this.router.get_entry_points();
         let names = this.router.get_names();
-        let mut name_strings: Vec<ZigString> = vec![ZigString::default(); names.len() * 2];
+        let mut name_strings: Vec<ZigString> = vec![ZigString::EMPTY; names.len() * 2];
         // `defer free(name_strings)` → Drop
         let (name_strings_slice, paths_strings) = name_strings.split_at_mut(names.len());
         for (i, name) in names.iter().enumerate() {

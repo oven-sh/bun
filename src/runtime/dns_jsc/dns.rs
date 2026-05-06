@@ -3409,7 +3409,7 @@ impl Resolver {
         // `get_or_put_into_resolve_pending_cache` + `*Request::init`.
         // `PendingCacheKey` is POD; reading by value then unsetting the bit hands
         // ownership of the slot back to the HiveArray (Zig's `= undefined`).
-        let key = unsafe { core::ptr::read(&cache.buffer[index as usize]) };
+        let key = unsafe { core::ptr::read(cache.buffer[index as usize].as_ptr()) };
         cache.used.unset(index as usize);
 
         let Some(addr) = result else {
@@ -3484,7 +3484,7 @@ impl Resolver {
         unsafe {
             let mut pending = (*key.lookup).head.next;
             let mut prev_global = (*key.lookup).head.global_this;
-            let mut array = (*addr).to_js_array(&*prev_global).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+            let mut array = super::cares_jsc::addr_info_to_js_array(&mut *addr, &*prev_global).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
             // SAFETY: addr is the c-ares-allocated AddrInfo; freed once after all consumers run.
             let _free_addr = scopeguard::guard((), |_| c_ares::AddrInfo::destroy(addr));
             array.ensure_still_alive();
@@ -3497,7 +3497,7 @@ impl Resolver {
             while let Some(value) = pending {
                 let new_global = (*value.as_ptr()).global_this;
                 if !core::ptr::eq(prev_global, new_global) {
-                    array = (*addr).to_js_array(&*new_global).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+                    array = super::cares_jsc::addr_info_to_js_array(&mut *addr, &*new_global).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
                     prev_global = new_global;
                 }
                 pending = (*value.as_ptr()).next;
@@ -3524,7 +3524,7 @@ impl Resolver {
         // SAFETY: `this` derived from `&mut self`; paired with `ref_()` above so count stays > 0.
         let _g = scopeguard::guard((), move |_| unsafe { Self::deref(this) });
 
-        let mut array = match result.to_js(global_object).unwrap_or(JSValue::ZERO) { // TODO: properly propagate exception upwards
+        let mut array: JSValue = match super::options_jsc::result_any_to_js(&result, global_object).unwrap_or(None) { // TODO: properly propagate exception upwards
             Some(a) => a,
             None => {
                 unsafe {
@@ -3560,7 +3560,7 @@ impl Resolver {
                 let new_global = (*value.as_ptr()).global_this;
                 pending = (*value.as_ptr()).next;
                 if !core::ptr::eq(prev_global, new_global) {
-                    array = result.to_js(&*new_global).unwrap_or(JSValue::ZERO).unwrap(); // TODO: properly propagate exception upwards
+                    array = super::options_jsc::result_any_to_js(&result, &*new_global).unwrap_or(None).unwrap(); // TODO: properly propagate exception upwards
                     prev_global = new_global;
                 }
 
@@ -3605,7 +3605,7 @@ impl Resolver {
             //  The callback need not and should not attempt to free the memory
             //  pointed to by hostent; the ares library will free it when the
             //  callback returns.
-            let mut array = (*addr).to_js_response(&*prev_global, "").unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+            let mut array = super::cares_jsc::hostent_to_js_response(&mut *addr, &*prev_global, b"").unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
             array.ensure_still_alive();
             CAresReverse::on_complete(ptr::addr_of_mut!((*key.lookup).head), array);
             drop(Box::from_raw(key.lookup));
@@ -3615,7 +3615,7 @@ impl Resolver {
             while let Some(value) = pending {
                 let new_global = (*value.as_ptr()).global_this;
                 if !core::ptr::eq(prev_global, new_global) {
-                    array = (*addr).to_js_response(&*new_global, "").unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+                    array = super::cares_jsc::hostent_to_js_response(&mut *addr, &*new_global, b"").unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
                     prev_global = new_global;
                 }
                 pending = (*value.as_ptr()).next;
@@ -3659,7 +3659,7 @@ impl Resolver {
             let mut pending = (*key.lookup).head.next;
             let mut prev_global = (*key.lookup).head.global_this;
 
-            let mut array = name_info.to_js_response(&*prev_global).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+            let mut array = super::cares_jsc::nameinfo_to_js_response(&mut name_info, &*prev_global).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
             array.ensure_still_alive();
             CAresNameInfo::on_complete(ptr::addr_of_mut!((*key.lookup).head), array);
             drop(Box::from_raw(key.lookup));
@@ -3669,7 +3669,7 @@ impl Resolver {
             while let Some(value) = pending {
                 let new_global = (*value.as_ptr()).global_this;
                 if !core::ptr::eq(prev_global, new_global) {
-                    array = name_info.to_js_response(&*new_global).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+                    array = super::cares_jsc::nameinfo_to_js_response(&mut name_info, &*new_global).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
                     prev_global = new_global;
                 }
                 pending = (*value.as_ptr()).next;
@@ -3718,16 +3718,20 @@ impl Resolver {
         let mut inflight_iter = cache.used.iter_set();
 
         while let Some(index) = inflight_iter.next() {
-            let entry = &mut cache.buffer[index];
+            // SAFETY: `used` bit is set ⇒ slot was initialized.
+            let entry = unsafe { &mut *cache.buffer[index].as_mut_ptr() };
             if entry.hash == key.hash && entry.len == key.len {
                 return CacheHit::Inflight(entry as *mut _);
             }
         }
 
         if let Some(new) = cache.get() {
-            new.hash = key.hash;
-            new.len = key.len;
-            return CacheHit::New(new as *mut _);
+            // SAFETY: `new` is a freshly-claimed slot inside `cache.buffer`.
+            unsafe {
+                (*new).hash = key.hash;
+                (*new).len = key.len;
+            }
+            return CacheHit::New(new);
         }
 
         CacheHit::Disabled
@@ -3735,7 +3739,8 @@ impl Resolver {
 
     pub fn get_channel(&mut self) -> ChannelResult<'_> {
         if self.channel.is_none() {
-            if let Some(err) = c_ares::Channel::init(self, &self.options) {
+            let opts = self.options;
+            if let Some(err) = c_ares::Channel::init(self, opts) {
                 return ChannelResult::Err(err);
             }
         }
@@ -3744,9 +3749,7 @@ impl Resolver {
     }
 
     fn get_channel_from_vm(global_this: &JSGlobalObject) -> JsResult<*mut c_ares::Channel> {
-        let vm = global_this.bun_vm();
-        let resolver = vm.rare_data().global_dns_resolver(vm);
-        resolver.get_channel_or_error(global_this)
+        global_resolver_mut(global_this).get_channel_or_error(global_this)
     }
 
     pub fn get_channel_or_error(&mut self, global_this: &JSGlobalObject) -> JsResult<*mut c_ares::Channel> {
@@ -3757,9 +3760,13 @@ impl Resolver {
                     errno: -1,
                     code: bun_str::String::static_(err.code()),
                     message: bun_str::String::static_(err.label()),
-                    ..Default::default()
+                    path: bun_str::String::default(),
+                    syscall: bun_str::String::default(),
+                    hostname: bun_str::String::default(),
+                    fd: -1,
+                    dest: bun_str::String::default(),
                 };
-                global_this.throw_value(system_error.to_error_instance(global_this))
+                Err(global_this.throw_value(system_error.to_error_instance(global_this)))
             }
         }
     }
@@ -3777,8 +3784,8 @@ impl Resolver {
         unsafe {
             let parent: *mut Resolver = (*poll).parent;
             let vm = &*(*parent).vm;
-            vm.event_loop().enter();
-            let _exit = scopeguard::guard((), |_| vm.event_loop().exit());
+            (*vm.event_loop()).enter();
+            let _exit = scopeguard::guard((), |_| (*vm.event_loop()).exit());
             (*parent).ref_();
             // SAFETY: `parent` is the live heap-allocated Resolver back-ptr; paired with `ref_()` above.
             let _deref = scopeguard::guard((), move |_| Self::deref(parent));
@@ -3812,11 +3819,12 @@ impl Resolver {
         // SAFETY: VirtualMachine outlives the Resolver (BACKREF). Read the raw
         // back-ptr directly so the borrow isn't tied to `&self`'s lifetime.
         let vm = unsafe { &*(*this).vm };
-        vm.event_loop().enter();
-        let _exit = scopeguard::guard((), |_| vm.event_loop().exit());
+        // SAFETY: vm.event_loop() returns the live *mut EventLoop owned by vm.
+        unsafe { (*vm.event_loop()).enter() };
+        let _exit = scopeguard::guard((), |_| unsafe { (*vm.event_loop()).exit() });
         // SAFETY: `this` is live for the duration of this callback (caller holds it).
         let Some(channel) = (unsafe { (*this).channel }) else {
-            unsafe { let _ = (*this).polls.ordered_remove(&poll.fd.native()); }
+            unsafe { let _ = (*this).polls.remove(&poll.fd.native()); }
             poll.deinit();
             return;
         };
@@ -3866,22 +3874,24 @@ impl Resolver {
         }
         #[cfg(not(windows))]
         {
-            let vm = self.vm();
+            let ctx = js_event_loop_ctx();
 
             if !readable && !writable {
                 // read == 0 and write == 0 this is c-ares's way of notifying us that
                 // the socket is now closed. We must free the data associated with
                 // socket.
-                if let Some(entry) = self.polls.fetch_ordered_remove(&fd) {
-                    unsafe { (*entry.value).deinit_with_vm(vm) };
+                if let Some(value) = self.polls.remove(&fd) {
+                    // SAFETY: `value` is the heap-allocated FilePoll for this fd.
+                    unsafe { (*value).deinit_with_vm(ctx) };
                 }
                 return;
             }
 
+            let owner = Async::Owner::new(Async::poll_tag::DNS_RESOLVER, self as *mut Self as *mut ());
             let poll_entry = self.polls.get_or_put(fd).expect("unreachable");
 
             if !poll_entry.found_existing {
-                *poll_entry.value_ptr = FilePoll::init(vm, sys::Fd::from_native(fd), Default::default(), self);
+                *poll_entry.value_ptr = FilePoll::init(ctx, sys::Fd::from_native(fd), Default::default(), owner);
                 // TODO(port): FilePoll generic owner type Resolver
             }
 
@@ -3892,7 +3902,8 @@ impl Resolver {
             // both directions on one poll (epoll: combined mask via CTL_MOD;
             // kqueue: two filters on the same ident, both EV_DELETEd on
             // unregister).
-            let loop_ = vm.event_loop_handle.unwrap();
+            // SAFETY: `event_loop_handle` is set once VM is initialized; live for VM lifetime.
+            let loop_ = unsafe { &mut *self.vm().event_loop_handle.unwrap() };
             let have_readable = poll.flags.contains(Async::PollFlag::PollReadable);
             let have_writable = poll.flags.contains(Async::PollFlag::PollWritable);
 
@@ -3923,19 +3934,18 @@ impl Resolver {
     // module scope; `#[host_fn]` cannot be used here because its Free expansion
     // calls the function by bare name, which doesn't resolve inside `impl`.
     pub fn global_resolve(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let vm = global_this.bun_vm();
-        let resolver = vm.rare_data().global_dns_resolver(vm);
+        let resolver = global_resolver_mut(global_this);
         Self::resolve(resolver, global_this, callframe)
     }
 
     #[host_fn(method)]
     pub fn resolve(this: &mut Self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old(3);
-        if arguments.len() < 1 {
-            return global_this.throw_not_enough_arguments("resolve", 3, arguments.len());
+        let arguments = callframe.arguments_old::<3>();
+        if arguments.len < 1 {
+            return global_this.throw_not_enough_arguments("resolve", 3, arguments.len);
         }
 
-        let record_type: RecordType = if arguments.len() <= 1 {
+        let record_type: RecordType = if arguments.len <= 1 {
             RecordType::DEFAULT
         } else {
             'brk: {
@@ -3943,7 +3953,8 @@ impl Resolver {
                 if record_type_value.is_empty_or_undefined_or_null() || !record_type_value.is_string() {
                     break 'brk RecordType::DEFAULT;
                 }
-                let record_type_str = record_type_value.to_js_string(global_this)?;
+                // SAFETY: `to_js_string` returns a live *mut JSString rooted by `record_type_value`.
+                let record_type_str = unsafe { &*record_type_value.to_js_string(global_this)? };
                 if record_type_str.length() == 0 {
                     break 'brk RecordType::DEFAULT;
                 }
@@ -3963,21 +3974,22 @@ impl Resolver {
         if name_value.is_empty_or_undefined_or_null() || !name_value.is_string() {
             return global_this.throw_invalid_argument_type("resolve", "name", "string");
         }
-        let name_str = name_value.to_js_string(global_this)?;
+        // SAFETY: `to_js_string` returns a live *mut JSString rooted by `name_value`.
+        let name_str = unsafe { &*name_value.to_js_string(global_this)? };
         if name_str.length() == 0 {
-            return global_this.throw_invalid_argument_type("resolve", "name", "non-empty string");
+            return Err(global_this.throw_invalid_argument_type("resolve", "name", "non-empty string"));
         }
         let name = name_str.to_slice_clone(global_this)?;
 
         match record_type {
-            RecordType::A => this.do_resolve_cares::<c_ares::AHostentWithTtls>(name.slice(), global_this),
-            RecordType::AAAA => this.do_resolve_cares::<c_ares::AaaaHostentWithTtls>(name.slice(), global_this),
+            RecordType::A => this.do_resolve_cares::<AHostentWithTtls>(name.slice(), global_this),
+            RecordType::AAAA => this.do_resolve_cares::<AaaaHostentWithTtls>(name.slice(), global_this),
             RecordType::ANY => this.do_resolve_cares::<c_ares::struct_any_reply>(name.slice(), global_this),
             RecordType::CAA => this.do_resolve_cares::<c_ares::struct_ares_caa_reply>(name.slice(), global_this),
-            RecordType::CNAME => this.do_resolve_cares::<c_ares::CnameHostent>(name.slice(), global_this),
+            RecordType::CNAME => this.do_resolve_cares::<CnameHostent>(name.slice(), global_this),
             RecordType::MX => this.do_resolve_cares::<c_ares::struct_ares_mx_reply>(name.slice(), global_this),
-            RecordType::NS => this.do_resolve_cares::<c_ares::NsHostent>(name.slice(), global_this),
-            RecordType::PTR => this.do_resolve_cares::<c_ares::PtrHostent>(name.slice(), global_this),
+            RecordType::NS => this.do_resolve_cares::<NsHostent>(name.slice(), global_this),
+            RecordType::PTR => this.do_resolve_cares::<PtrHostent>(name.slice(), global_this),
             RecordType::SOA => this.do_resolve_cares::<c_ares::struct_ares_soa_reply>(name.slice(), global_this),
             RecordType::SRV => this.do_resolve_cares::<c_ares::struct_ares_srv_reply>(name.slice(), global_this),
             RecordType::TXT => this.do_resolve_cares::<c_ares::struct_ares_txt_reply>(name.slice(), global_this),
@@ -3986,25 +3998,25 @@ impl Resolver {
 
     // JSC-ABI shim emitted by `export_host_fn!` at module scope (see `global_resolve`).
     pub fn global_reverse(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let vm = global_this.bun_vm();
-        let resolver = vm.rare_data().global_dns_resolver(vm);
+        let resolver = global_resolver_mut(global_this);
         Self::reverse(resolver, global_this, callframe)
     }
 
     #[host_fn(method)]
     pub fn reverse(this: &mut Self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old(2);
-        if arguments.len() < 1 {
-            return global_this.throw_not_enough_arguments("reverse", 1, arguments.len());
+        let arguments = callframe.arguments_old::<2>();
+        if arguments.len < 1 {
+            return global_this.throw_not_enough_arguments("reverse", 1, arguments.len);
         }
 
         let ip_value = arguments.ptr[0];
         if ip_value.is_empty_or_undefined_or_null() || !ip_value.is_string() {
             return global_this.throw_invalid_argument_type("reverse", "ip", "string");
         }
-        let ip_str = ip_value.to_js_string(global_this)?;
+        // SAFETY: `to_js_string` returns a live *mut JSString rooted by `ip_value`.
+        let ip_str = unsafe { &*ip_value.to_js_string(global_this)? };
         if ip_str.length() == 0 {
-            return global_this.throw_invalid_argument_type("reverse", "ip", "non-empty string");
+            return Err(global_this.throw_invalid_argument_type("reverse", "ip", "non-empty string"));
         }
 
         let ip_slice = ip_str.to_slice_clone(global_this)?;
@@ -4012,7 +4024,7 @@ impl Resolver {
         let channel: *mut c_ares::Channel = match this.get_channel() {
             ChannelResult::Result(res) => res,
             ChannelResult::Err(err) => {
-                return global_this.throw_value(err.to_js_with_syscall_and_hostname(global_this, "getHostByAddr", ip)?);
+                return Err(global_this.throw_value(super::cares_jsc::error_to_js_with_syscall_and_hostname(err, global_this, b"getHostByAddr", ip)?));
             }
         };
 
@@ -4032,64 +4044,66 @@ impl Resolver {
         );
 
         let promise = unsafe { (*(*request).tail).promise.value() };
+        // SAFETY: `request` is the heap-allocated GetHostByAddrInfoRequest; channel
+        // stores it as the c-ares ctx and calls back via HostentHandler::on_hostent.
         unsafe {
-            (*channel).get_host_by_addr(ip, request, GetHostByAddrInfoRequest::on_cares_complete);
+            (*channel).get_host_by_addr(ip, &mut *request);
         }
 
-        this.request_sent(global_this.bun_vm());
+        // SAFETY: `bun_vm()` returns the live VM back-ptr.
+        this.request_sent(unsafe { &*global_this.bun_vm() });
         Ok(promise)
     }
 
     // JSC-ABI shim emitted by `export_host_fn!` at module scope (see `global_resolve`).
     pub fn global_lookup(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old(2);
-        if arguments.len() < 1 {
-            return global_this.throw_not_enough_arguments("lookup", 2, arguments.len());
+        let arguments = callframe.arguments_old::<2>();
+        if arguments.len < 1 {
+            return global_this.throw_not_enough_arguments("lookup", 2, arguments.len);
         }
 
         let name_value = arguments.ptr[0];
         if name_value.is_empty_or_undefined_or_null() || !name_value.is_string() {
-            return global_this.throw_invalid_argument_type("lookup", "hostname", "string");
+            return Err(global_this.throw_invalid_argument_type("lookup", "hostname", "string"));
         }
-        let name_str = name_value.to_js_string(global_this)?;
+        // SAFETY: `to_js_string` returns a live *mut JSString rooted by `name_value`.
+        let name_str = unsafe { &*name_value.to_js_string(global_this)? };
         if name_str.length() == 0 {
-            return global_this.throw_invalid_argument_type("lookup", "hostname", "non-empty string");
+            return Err(global_this.throw_invalid_argument_type("lookup", "hostname", "non-empty string"));
         }
 
         let mut options = GetAddrInfoOptions::default();
         let mut port: u16 = 0;
 
-        if arguments.len() > 1 && arguments.ptr[1].is_object() {
+        if arguments.len > 1 && arguments.ptr[1].is_object() {
             let options_object = arguments.ptr[1];
 
             if let Some(port_value) = options_object.get_truthy(global_this, "port")? {
                 port = port_value.to_port_number(global_this)?;
             }
 
-            options = match GetAddrInfoOptions::from_js(options_object, global_this) {
+            options = match super::options_jsc::options_from_js(options_object, global_this) {
                 Ok(o) => o,
                 Err(err) => {
+                    use bun_dns::OptionsFromJsError as E;
                     return match err {
-                        e if e == bun_core::err!(InvalidFlags) => global_this.throw_invalid_argument_value(
+                        E::InvalidFlags => global_this.throw_invalid_argument_value(
                             "flags",
                             options_object.get_truthy(global_this, "flags")?.unwrap_or(JSValue::UNDEFINED),
                         ),
-                        e if e.is_js_error() => Err(e.into()),
-                        e if e == bun_core::err!(OutOfMemory) => Err(jsc::JsError::OutOfMemory),
-                        e if e.is_js_terminated() => Err(jsc::JsError::Terminated),
+                        E::JSError => Err(jsc::JsError::Thrown),
                         // more information with these errors
-                        _ => global_this.throw(format_args!(
+                        _ => Err(global_this.throw(format_args!(
                             "Invalid options passed to lookup(): {}",
-                            err.name()
-                        )),
+                            <&'static str>::from(&err)
+                        ))),
                     };
                 }
             };
         }
 
         let name = name_str.to_slice(global_this);
-        let vm = global_this.bun_vm();
-        let resolver = vm.rare_data().global_dns_resolver(vm);
+        let resolver = global_resolver_mut(global_this);
 
         resolver.do_lookup(name.slice(), port, options, global_this)
     }
@@ -4142,24 +4156,24 @@ macro_rules! resolve_record_fn {
     ($global:ident, $method:ident, $jsname:literal, $ty:ty, $allow_empty:expr) => {
         // JSC-ABI shim emitted by `export_host_fn!` at module scope (see `global_resolve`).
         pub fn $global(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-            let vm = global_this.bun_vm();
-            let resolver = vm.rare_data().global_dns_resolver(vm);
+            let resolver = global_resolver_mut(global_this);
             Self::$method(resolver, global_this, callframe)
         }
 
         #[host_fn(method)]
         pub fn $method(this: &mut Self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-            let arguments = callframe.arguments_old(2);
-            if arguments.len() < 1 {
-                return global_this.throw_not_enough_arguments($jsname, 1, arguments.len());
+            let arguments = callframe.arguments_old::<2>();
+            if arguments.len < 1 {
+                return global_this.throw_not_enough_arguments($jsname, 1, arguments.len);
             }
             let name_value = arguments.ptr[0];
             if name_value.is_empty_or_undefined_or_null() || !name_value.is_string() {
-                return global_this.throw_invalid_argument_type($jsname, "hostname", "string");
+                return Err(global_this.throw_invalid_argument_type($jsname, "hostname", "string"));
             }
-            let name_str = name_value.to_js_string(global_this)?;
+            // SAFETY: `to_js_string` returns a live *mut JSString rooted by `name_value`.
+            let name_str = unsafe { &*name_value.to_js_string(global_this)? };
             if !$allow_empty && name_str.length() == 0 {
-                return global_this.throw_invalid_argument_type($jsname, "hostname", "non-empty string");
+                return Err(global_this.throw_invalid_argument_type($jsname, "hostname", "non-empty string"));
             }
             let name = name_str.to_slice_clone(global_this)?;
             this.do_resolve_cares::<$ty>(name.slice(), global_this)
@@ -4171,9 +4185,9 @@ impl Resolver {
     resolve_record_fn!(global_resolve_srv, resolve_srv, "resolveSrv", c_ares::struct_ares_srv_reply, false);
     resolve_record_fn!(global_resolve_soa, resolve_soa, "resolveSoa", c_ares::struct_ares_soa_reply, true);
     resolve_record_fn!(global_resolve_caa, resolve_caa, "resolveCaa", c_ares::struct_ares_caa_reply, false);
-    resolve_record_fn!(global_resolve_ns, resolve_ns, "resolveNs", c_ares::NsHostent, true);
-    resolve_record_fn!(global_resolve_ptr, resolve_ptr, "resolvePtr", c_ares::PtrHostent, false);
-    resolve_record_fn!(global_resolve_cname, resolve_cname, "resolveCname", c_ares::CnameHostent, false);
+    resolve_record_fn!(global_resolve_ns, resolve_ns, "resolveNs", NsHostent, true);
+    resolve_record_fn!(global_resolve_ptr, resolve_ptr, "resolvePtr", PtrHostent, false);
+    resolve_record_fn!(global_resolve_cname, resolve_cname, "resolveCname", CnameHostent, false);
     resolve_record_fn!(global_resolve_mx, resolve_mx, "resolveMx", c_ares::struct_ares_mx_reply, false);
     resolve_record_fn!(global_resolve_naptr, resolve_naptr, "resolveNaptr", c_ares::struct_ares_naptr_reply, false);
     resolve_record_fn!(global_resolve_txt, resolve_txt, "resolveTxt", c_ares::struct_ares_txt_reply, false);

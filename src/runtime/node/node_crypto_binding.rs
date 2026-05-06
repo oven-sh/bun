@@ -145,7 +145,7 @@ macro_rules! extern_crypto_job {
 
             #[repr(C)]
             pub struct Job {
-                vm: &'static VirtualMachine,
+                vm: *mut VirtualMachine,
                 task: WorkPoolTask,
                 any_task: AnyTask,
                 poll: KeepAlive,

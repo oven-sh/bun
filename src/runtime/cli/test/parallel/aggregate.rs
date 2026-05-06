@@ -199,7 +199,7 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
 
     if opts.reporters.lcov {
         let mut fs = NodeFS::default();
-        let _ = fs.mkdir_recursive(fs_args::Mkdir {
+        let _ = fs.mkdir_recursive(&fs_args::Mkdir {
             path: PathLike::EncodedSlice(bun_str::zig_string::Slice::from_utf8_never_free(&opts.reports_directory)),
             always_return_none: true,
             ..Default::default()

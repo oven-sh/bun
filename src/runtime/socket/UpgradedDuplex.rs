@@ -449,8 +449,17 @@ impl<'a> UpgradedDuplex<'a> {
     }
 
     pub fn set_timeout_in_milliseconds(&mut self, ms: c_uint) {
-        if self.event_loop_timer.state == EventLoopTimer::State::ACTIVE {
-            self.vm.timer.remove(&mut self.event_loop_timer);
+        // PORT NOTE (b2-cycle): `vm.timer` is a `()` placeholder in the
+        // low-tier `VirtualMachine`; the real `timer::All` lives in
+        // `RuntimeState` (see jsc_hooks.rs). Reach it via the thread-local.
+        let state = crate::jsc_hooks::runtime_state();
+        let timer_ptr: *mut EventLoopTimer = &mut self.event_loop_timer;
+        if self.event_loop_timer.state == EventLoopTimerState::ACTIVE {
+            // SAFETY: `state` is non-null after `init_runtime_state` (always run
+            // before sockets exist); `timer_ptr` points into `self`.
+            if !state.is_null() {
+                unsafe { (*state).timer.remove(timer_ptr) };
+            }
         }
         self.current_timeout = ms;
 
@@ -460,9 +469,17 @@ impl<'a> UpgradedDuplex<'a> {
         }
 
         // reschedule the timer
-        self.event_loop_timer.next =
-            bun_core::timespec::ms_from_now(bun_core::timespec::Mock::AllowMockedTime, ms);
-        self.vm.timer.insert(&mut self.event_loop_timer);
+        // TODO(b2-blocked): `EventLoopTimer.next` is the local `ElTimespec` stub,
+        // not `bun_core::Timespec`; same `{sec,nsec}` shape — convert by field.
+        let next = bun_core::Timespec::ms_from_now(
+            bun_core::TimespecMockMode::AllowMockedTime,
+            i64::from(ms),
+        );
+        self.event_loop_timer.next = ElTimespec { sec: next.sec, nsec: next.nsec };
+        // SAFETY: see above.
+        if !state.is_null() {
+            unsafe { (*state).timer.insert(timer_ptr) };
+        }
     }
 
     pub fn set_timeout(&mut self, seconds: c_uint) {

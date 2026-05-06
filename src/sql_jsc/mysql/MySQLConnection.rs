@@ -819,19 +819,19 @@ impl MySQLConnection {
                         _ => {
                             bun_core::scoped_log!(
                                 MySQLConnection,
-                                "Unexpected auth continuation for plugin: {}",
-                                <&'static str>::from(plugin)
+                                "Unexpected auth continuation for plugin: {:?}",
+                                plugin
                             );
                             return Err(AnyMySQLError::UnexpectedPacket);
                         }
                     }
-                } else if first_byte == PacketType::LOCAL_INFILE as u8 {
+                } else if first_byte == PacketType::LOCAL_INFILE.0 {
                     // Handle LOCAL INFILE request
                     let mut infile = LocalInfileRequest {
                         packet_size: header_length,
                         ..Default::default()
                     };
-                    infile.decode(reader)?;
+                    infile.decode_internal(reader)?;
 
                     // We don't support LOCAL INFILE for security reasons
                     return Err(AnyMySQLError::LocalInfileNotSupported);

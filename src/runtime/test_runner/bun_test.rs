@@ -165,7 +165,7 @@ pub mod js_fns {
             };
 
             let Some(bun_test) = bun_test_root.get_active_file_unless_in_preload(global_this.bun_vm()) else {
-                if TAG == GenericHookTag::OnTestFinished {
+                if tag == GenericHookTag::OnTestFinished {
                     return Err(global_this.throw(format_args!(
                         "Cannot call {}() in preload. It can only be called inside a test.",
                         tag_name
@@ -174,7 +174,7 @@ pub mod js_fns {
                 bun_core::scoped_log!(bun_test_group, "genericHook in preload");
 
                 let _ = bun_test_root.hook_scope.append_hook(
-                    TAG.as_hook_tag().unwrap(),
+                    tag.as_hook_tag().unwrap(),
                     args.callback,
                     cfg,
                     BaseScopeCfg::default(),
@@ -185,14 +185,14 @@ pub mod js_fns {
 
             match bun_test.phase {
                 Phase::Collection => {
-                    if TAG == GenericHookTag::OnTestFinished {
+                    if tag == GenericHookTag::OnTestFinished {
                         return Err(global_this.throw(format_args!(
                             "Cannot call {}() outside of a test. It can only be called inside a test.",
                             tag_name
                         )));
                     }
                     let _ = bun_test.collection.active_scope.append_hook(
-                        TAG.as_hook_tag().unwrap(),
+                        tag.as_hook_tag().unwrap(),
                         args.callback,
                         cfg,
                         BaseScopeCfg::default(),
@@ -203,7 +203,7 @@ pub mod js_fns {
                 Phase::Execution => {
                     let active = bun_test.get_current_state_data();
                     let Some((sequence, _)) = bun_test.execution.get_current_and_valid_execution_sequence(&active) else {
-                        return Err(if TAG == GenericHookTag::OnTestFinished {
+                        return Err(if tag == GenericHookTag::OnTestFinished {
                             global_this.throw(format_args!(
                                 "Cannot call {}() here. It cannot be called inside a concurrent test. Use test.serial or remove test.concurrent.",
                                 tag_name
@@ -216,7 +216,7 @@ pub mod js_fns {
                         });
                     };
 
-                    let append_point: *mut ExecutionEntry = match TAG {
+                    let append_point: *mut ExecutionEntry = match tag {
                         GenericHookTag::AfterAll | GenericHookTag::AfterEach => 'blk: {
                             let mut iter = sequence.active_entry;
                             while let Some(entry) = iter {
@@ -287,16 +287,41 @@ pub mod js_fns {
             }
         }
     }
+
+    /// Per-tag `#[host_fn]` entry points (one fn per JS function so
+    /// `JSFunction::create` gets a distinct address). Replaces Zig's
+    /// `genericHook(comptime tag).hookFn` type-generator.
+    pub mod generic_hook {
+        use super::*;
+        macro_rules! hook {
+            ($name:ident, $tag:ident) => {
+                #[bun_jsc::host_fn]
+                pub fn $name(
+                    global_this: &JSGlobalObject,
+                    call_frame: &CallFrame,
+                ) -> JsResult<JSValue> {
+                    super::generic_hook_impl(GenericHookTag::$tag, global_this, call_frame)
+                }
+            };
+        }
+        hook!(before_all, BeforeAll);
+        hook!(before_each, BeforeEach);
+        hook!(after_each, AfterEach);
+        hook!(after_all, AfterAll);
+        hook!(on_test_finished, OnTestFinished);
+    }
 }
+/// Compat alias for sibling drafts (jest.rs) that referenced `bun_test::HookKind`.
+pub use js_fns::GenericHookTag as HookKind;
 
 /// `bun.ptr.shared.WithOptions(*BunTest, .{ .allow_weak = true, .Allocator = bun.DefaultAllocator })`
 /// → `Rc<BunTest>` (single-thread, weak-capable).
 // TODO(port): BunTest is mutated through this handle pervasively. Phase B must
 // pick between `Rc<RefCell<BunTest>>` and an intrusive shared ptr that hands
 // out `&mut`. For now type aliases keep call sites readable.
-pub type BunTestPtr = Rc<BunTest>;
-pub type BunTestPtrWeak = Weak<BunTest>;
-pub type BunTestPtrOptional = Option<Rc<BunTest>>;
+pub type BunTestPtr = Rc<BunTest<'static>>;
+pub type BunTestPtrWeak = Weak<BunTest<'static>>;
+pub type BunTestPtrOptional = Option<Rc<BunTest<'static>>>;
 
 pub struct BunTestRoot {
     // gpa dropped — global mimalloc
@@ -341,7 +366,7 @@ impl BunTestRoot {
 
     pub fn enter_file(
         &mut self,
-        file_id: TestRunner::FileId,
+        file_id: FileId,
         reporter: &mut CommandLineReporter,
         default_concurrent: bool,
         first_last: FirstLast,
@@ -400,7 +425,7 @@ impl BunTestRoot {
                 let reporter = unsafe { &mut *(reporter as *const CommandLineReporter as *mut CommandLineReporter) };
                 // TODO(port): reporter is Option<&'a CommandLineReporter> per LIFETIMES; mutation needs reshaping
                 if reporter.reporters.dots && reporter.last_printed_dot {
-                    Output::pretty_error("<r>\n");
+                    bun_core::pretty_error!("<r>\n");
                     Output::flush();
                     reporter.last_printed_dot = false;
                 }
@@ -442,7 +467,7 @@ pub struct BunTest<'a> {
     pub allocation_scope: AllocationScope,
     // gpa / arena_allocator / arena dropped — see §Allocators (non-AST crate)
     // PERF(port): was arena bulk-free for per-file scratch
-    pub file_id: TestRunner::FileId,
+    pub file_id: FileId,
     /// null if the runner has moved on to the next file but a strong reference to BunTest is still keeping it alive
     pub reporter: Option<&'a CommandLineReporter>,
     // TODO(port): mutation through &'a CommandLineReporter (on_before_print writes last_printed_dot) — reshape to Cell/&mut in Phase B
@@ -462,7 +487,7 @@ pub struct BunTest<'a> {
 impl<'a> BunTest<'a> {
     pub fn init(
         bun_test_root: *const BunTestRoot,
-        file_id: TestRunner::FileId,
+        file_id: FileId,
         reporter: Option<&'a CommandLineReporter>,
         default_concurrent: bool,
         first_last: FirstLast,
@@ -793,13 +818,13 @@ impl<'a> BunTest<'a> {
                 // seed — not on which worker ran it or what files preceded it
                 // on that worker. This is what makes --parallel --randomize
                 // reproducible via --seed=N.
-                let mut per_file_prng: Option<bun_core::random::DefaultPrng> = if let Some(reporter) = self.reporter {
+                let mut per_file_prng: Option<bun_core::rand::DefaultPrng> = if let Some(reporter) = self.reporter {
                     'blk: {
                         let Some(seed) = reporter.jest.randomize_seed else { break 'blk None };
                         let path = reporter.jest.files.items_source()[self.file_id as usize].path.text;
                         // Basename only so the hash is platform-independent (path
                         // separators and absolute prefixes differ on Windows).
-                        Some(bun_core::random::DefaultPrng::init(
+                        Some(bun_core::rand::DefaultPrng::init(
                             bun_wyhash::hash(bun_paths::basename(path)).wrapping_add(seed),
                         ))
                     }
@@ -900,7 +925,7 @@ impl<'a> BunTest<'a> {
             // Prevent the user's Promise rejection from going into the uncaught promise rejection queue.
             if !result.is_empty() {
                 if let Some(promise) = result.as_promise() {
-                    if promise.status() == jsc::PromiseStatus::Rejected {
+                    if promise.status() == PromiseStatus::Rejected {
                         promise.set_handled();
                     }
                 }
@@ -936,7 +961,7 @@ impl<'a> BunTest<'a> {
                 bun_core::scoped_log!(bun_test_group, "callTestCallback -> promise: data {}", cfg_data);
 
                 match promise.status() {
-                    jsc::PromiseStatus::Pending => {
+                    PromiseStatus::Pending => {
                         // not immediately resolved; register 'then' to handle the result when it becomes available
                         let this_ref: RefDataPtr = if let Some(dcb_ref_value) = &dcb_ref {
                             dcb_ref_value.clone()
@@ -947,11 +972,11 @@ impl<'a> BunTest<'a> {
                         // TODO: properly propagate exception upwards
                         return None;
                     }
-                    jsc::PromiseStatus::Fulfilled => {
+                    PromiseStatus::Fulfilled => {
                         // Do not register a then callback when it's already fulfilled.
                         return Some(cfg_data);
                     }
-                    jsc::PromiseStatus::Rejected => {
+                    PromiseStatus::Rejected => {
                         let value = promise.result(global_this.vm());
                         this.on_uncaught_exception(global_this, Some(value), true, cfg_data.clone());
 
@@ -1011,7 +1036,7 @@ impl<'a> BunTest<'a> {
             // TODO(port): reporter is Option<&'a> but mutated here; needs reshaping
             self.reporter.unwrap().jest.unhandled_errors_between_tests += 1;
             // TODO(port): the line above mutates through &; cast away in Phase B or make field Cell
-            Output::pretty_errorln(
+            bun_core::pretty_errorln!(
                 "<r>\n<b><d>#<r> <red><b>Unhandled error<r><d> between tests<r>\n<d>-------------------------------<r>\n",
             );
             Output::flush();
@@ -1024,7 +1049,7 @@ impl<'a> BunTest<'a> {
             HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests
                 | HandleUncaughtExceptionResult::ShowUnhandledErrorInDescribe
         ) {
-            Output::pretty_error("<r><d>-------------------------------<r>\n\n");
+            bun_core::pretty_error!("<r><d>-------------------------------<r>\n\n");
         }
 
         Output::flush();

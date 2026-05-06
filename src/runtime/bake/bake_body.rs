@@ -36,6 +36,18 @@ use super::{dev_server, framework_router};
 pub use dev_server as DevServer;
 pub use framework_router as FrameworkRouter;
 
+/// Erase the `'bump` lifetime of an arena-backed slice. Phase-A convention
+/// (see file-level TODO(port)): `UserOptions.arena` outlives every borrower,
+/// so the bytes are valid for the program-relevant lifetime; Phase B threads
+/// a real `'bump` parameter through `Framework`/`FileSystemRouterType`.
+#[inline(always)]
+fn arena_erase<T: ?Sized>(r: &T) -> &'static T {
+    // SAFETY: arena-backed; UserOptions owns the bump and is dropped last.
+    // PORTING.md sanctions this only inside the bake `from_js` self-referential
+    // pattern — do NOT generalize.
+    unsafe { core::mem::transmute::<&T, &'static T>(r) }
+}
+
 /// `bun.getcwdAlloc(arena)` — write cwd into a stack `PathBuffer`, then dupe
 /// into the arena as a NUL-terminated slice.
 fn getcwd_alloc(arena: &Arena) -> Result<&'static ZStr, bun_core::Error> {
@@ -48,16 +60,12 @@ fn getcwd_alloc(arena: &Arena) -> Result<&'static ZStr, bun_core::Error> {
 /// Returns `&'static ZStr` per the file-level Phase-A `'static` convention
 /// (arena-backed; lifetime erased — see TODO(port) at top of file).
 fn arena_dupe_z(arena: &Arena, bytes: &[u8]) -> &'static ZStr {
-    let buf = arena.alloc_slice_fill_default(bytes.len() + 1);
+    let buf: &mut [u8] = arena.alloc_slice_fill_default(bytes.len() + 1);
     buf[..bytes.len()].copy_from_slice(bytes);
     buf[bytes.len()] = 0;
     // SAFETY: buf is NUL-terminated; arena outlives all borrowers per the
     // self-referential UserOptions pattern. Phase B threads `'bump`.
-    unsafe {
-        core::mem::transmute::<&ZStr, &'static ZStr>(ZStr::from_bytes_unchecked(
-            &buf[..bytes.len()],
-        ))
-    }
+    unsafe { ZStr::from_raw(buf.as_ptr(), bytes.len()) }
 }
 
 /// export default { app: ... };
@@ -853,7 +861,7 @@ impl Framework {
                     .get_boolean_strict(global, "layouts")?
                     .unwrap_or(false);
 
-                let style = framework_router::Style::from_js(
+                let style = style_from_js(
                     match fsr_opts.get(global, "style")? {
                         Some(s) => s,
                         None => {
@@ -877,10 +885,11 @@ impl Framework {
                                 }
                             } else if exts_js.is_array() {
                                 let mut it_2 = exts_js.array_iterator(global)?;
-                                let mut extensions = bun_alloc::ArenaVec::with_capacity_in(
-                                    exts_js.get_length(global)?,
-                                    arena,
-                                );
+                                let mut extensions =
+                                    bun_alloc::ArenaVec::<&'static [u8]>::with_capacity_in(
+                                        exts_js.get_length(global)?,
+                                        arena,
+                                    );
                                 while let Some(array_item) = it_2.next()? {
                                     let slice = refs.track(array_item.to_slice(global, arena)?);
                                     if slice == b"*" {
@@ -899,16 +908,16 @@ impl Framework {
                                         slice
                                     } else {
                                         // PERF(port): std.mem.concat into arena
-                                        let mut v = bun_alloc::ArenaVec::with_capacity_in(
+                                        let mut v = bun_alloc::ArenaVec::<u8>::with_capacity_in(
                                             1 + slice.len(),
                                             arena,
                                         );
                                         v.push(b'.');
                                         v.extend_from_slice(slice);
-                                        &*v.into_bump_slice()
+                                        arena_erase(v.into_bump_slice())
                                     });
                                 }
-                                break 'exts &*extensions.into_bump_slice();
+                                break 'exts arena_erase(extensions.into_bump_slice());
                             }
 
                             return Err(global.throw_invalid_arguments(format_args!(
@@ -927,11 +936,13 @@ impl Framework {
                             if exts_js.is_array() {
                                 let mut it_2 = array.array_iterator(global)?;
                                 let mut dirs =
-                                    bun_alloc::ArenaVec::with_capacity_in(len, arena);
+                                    bun_alloc::ArenaVec::<&'static [u8]>::with_capacity_in(
+                                        len, arena,
+                                    );
                                 while let Some(array_item) = it_2.next()? {
                                     dirs.push(refs.track(array_item.to_slice(global, arena)?));
                                 }
-                                break 'exts &*dirs.into_bump_slice();
+                                break 'exts arena_erase(dirs.into_bump_slice());
                             }
 
                             return Err(global.throw_invalid_arguments(format_args!(
@@ -1044,7 +1055,7 @@ impl Framework {
             Graph::Server | Graph::Ssr => bun_bundler::options::Target::Bun,
         };
         out.options.public_path = match renderer {
-            Graph::Client => dev_server::CLIENT_PREFIX,
+            Graph::Client => dev_server::CLIENT_PREFIX.as_bytes(),
             Graph::Server | Graph::Ssr => b"",
         };
         out.options.entry_points = &[];
@@ -1225,6 +1236,35 @@ fn resolve_or_null(r: &mut bun_resolver::Resolver, path: &[u8]) -> Option<&'stat
     }
 }
 
+/// `FrameworkRouter.Style.fromJS` (FrameworkRouter.zig:159-181). Free function
+/// here because the `Style` enum is owned by the parent's inline
+/// `framework_router` mod (which has no inherent impl for it) and the full
+/// `FrameworkRouter.rs` draft is still `#[cfg(any())]`-gated.
+fn style_from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<framework_router::Style> {
+    if value.is_string() {
+        let str = value.to_bun_string(global)?;
+        if str.eql_comptime("nextjs-pages") {
+            return Ok(framework_router::Style::NextjsPages);
+        }
+        if str.eql_comptime("nextjs-app-ui") {
+            return Ok(framework_router::Style::NextjsAppUi);
+        }
+        if str.eql_comptime("nextjs-app-routes") {
+            return Ok(framework_router::Style::NextjsAppRoutes);
+        }
+        return Err(global.throw_invalid_arguments(format_args!(
+            "Unknown router style: {}",
+            str
+        )));
+    }
+    // TODO(b2-blocked): super::framework_router::Style::JavaScriptDefined —
+    // the JS-callback variant needs `jsc::Strong`; until that lands, only the
+    // built-in string styles are accepted.
+    Err(global.throw_invalid_arguments(format_args!(
+        "'style' must be a string or function"
+    )))
+}
+
 fn get_optional_string(
     target: JSValue,
     global: &JSGlobalObject,
@@ -1294,7 +1334,8 @@ pub fn get_hmr_runtime(side: Side) -> HmrRuntime {
             v.extend_from_slice(s.as_bytes());
             v.push(0);
             let leaked: &'static [u8] = Box::leak(v.into_boxed_slice());
-            unsafe { ZStr::from_bytes_unchecked(&leaked[..leaked.len() - 1]) }
+            // SAFETY: leaked[len-1] == 0; pass length excluding sentinel.
+            unsafe { ZStr::from_raw(leaked.as_ptr(), leaked.len() - 1) }
         }
         HmrRuntime::init(match side {
             Side::Client => intern_z(bun_core::runtime_embed_file!(

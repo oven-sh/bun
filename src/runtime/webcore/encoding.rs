@@ -490,17 +490,21 @@ pub fn write_u8<const ENCODING: u8>(
                 // SAFETY: alignment checked above; to_ptr[..to_len] valid.
                 let output =
                     unsafe { slice::from_raw_parts_mut(to_ptr.cast::<u16>(), to_len / 2) };
-                let written = strings::copy_latin1_into_utf16(output, buf).written;
+                let written = strings::copy_latin1_into_utf16(output, buf).written as usize;
                 Ok(written * 2)
             } else {
                 let buf = input_slice;
-                // TODO(port): Zig used `[]align(1) u16` here. Rust slices require natural
-                // alignment, so route through an unaligned helper in bun_str.
-                // SAFETY: to_ptr[..to_len] valid; helper writes u16s with unaligned stores.
+                // PORT NOTE: Zig used `[]align(1) u16` and a generic Buffer type. Rust
+                // `&mut [u16]` requires natural alignment, so inline the (trivial) widen
+                // loop with `write_unaligned` for the misaligned-dest case — matches
+                // `copyLatin1IntoUTF16` body 1:1 (each Latin-1 byte → one u16).
+                let out_units = to_len / 2;
+                let written = buf.len().min(out_units);
                 let output_ptr = to_ptr.cast::<u16>();
-                let written =
-                    unsafe { strings::copy_latin1_into_utf16_unaligned(output_ptr, to_len / 2, buf) }
-                        .written;
+                // SAFETY: to_ptr[..to_len] valid for `written * 2` bytes; unaligned stores.
+                for i in 0..written {
+                    unsafe { output_ptr.add(i).write_unaligned(buf[i] as u16) };
+                }
                 Ok(written * 2)
             }
         }
@@ -567,12 +571,11 @@ pub fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
     let to_slice = unsafe { slice::from_raw_parts_mut(to, to_len) };
 
     match encoding_from_u8(ENCODING) {
-        Encoding::Utf8 => Ok(strings::copy_utf16_into_utf8_impl(
+        Encoding::Utf8 => Ok(strings::copy_utf16_into_utf8_impl::<ALLOW_PARTIAL_WRITE>(
             to_slice,
             input_slice,
-            ALLOW_PARTIAL_WRITE,
         )
-        .written),
+        .written as usize),
         Encoding::Latin1 | Encoding::Ascii | Encoding::Buffer => {
             let out = len.min(to_len);
             strings::copy_u16_into_u8(to_slice, &input_slice[..out]);

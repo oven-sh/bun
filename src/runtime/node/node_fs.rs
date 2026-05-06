@@ -908,10 +908,15 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         // the enqueue (which will eventually call `run_from_js_thread(&mut self)`).
         let this_mut = self as *const Self as *mut Self;
         if matches!(self.evtloop, EventLoopHandle::Js(_)) {
-            self.evtloop.enqueue_task_concurrent(ConcurrentTask::from_callback(this_mut, Self::run_from_js_thread));
+            // PORT NOTE: `ConcurrentTask::from_callback` expects `fn(*mut T) -> JsResult<()>`;
+            // Zig accepted `fn(*T) JSError!void` directly. Adapt the signature inline.
+            self.evtloop.enqueue_task_concurrent(ConcurrentTask::from_callback(
+                this_mut,
+                |p| unsafe { (&mut *p).run_from_js_thread().map_err(Into::into) },
+            ));
         } else {
             self.evtloop.enqueue_task_concurrent(
-                bun_jsc::AnyTaskWithExtraContext::from_callback_auto_deinit(this_mut, Self::run_from_js_thread_mini),
+                AnyTaskWithExtraContext::from_callback_auto_deinit(this_mut, Self::run_from_js_thread_mini),
             );
         }
     }
@@ -1156,7 +1161,14 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
             Maybe::Ok(_) => { this.on_copy(src, normdest); }
         }
 
-        let mut iterator = DirIterator::iterate(fd, if cfg!(windows) { DirIterator::Kind::U16 } else { DirIterator::Kind::U8 });
+        // PORT NOTE: `DirIterator.iterate(dir, kind)` (Zig runtime arg) maps to a
+        // const-generic `PathType` in the Rust port. On POSIX directory entries
+        // are always UTF-8, so monomorphise on `PathType::U8` and let the
+        // Windows branch (gated above) handle the wide path.
+        #[cfg(windows)]
+        let mut iterator = DirIterator::iterate::<{ DirIterator::PathType::U16 }>(fd);
+        #[cfg(not(windows))]
+        let mut iterator = DirIterator::iterate::<{ DirIterator::PathType::U8 }>(fd);
         let mut entry = iterator.next();
         loop {
             let current = match entry {
@@ -1187,7 +1199,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
             }
 
             match current.kind {
-                DirIterator::Kind::Directory => {
+                super::dirent::Kind::Directory => {
                     let sd = src_dir_len as usize;
                     let dd = dest_dir_len as usize;
                     src_buf[sd + 1..sd + 1 + cname.len()].copy_from_slice(cname);
@@ -1848,10 +1860,13 @@ pub mod args {
         }
     }
 
-    fn wrap_to<T: TryFrom<i64> + num_traits::Bounded + num_traits::Unsigned>(in_: i64) -> T
-    where T::Error: core::fmt::Debug {
-        // TODO(port): @typeInfo(T).int.signedness == .unsigned — enforced by trait bound
-        T::try_from(in_.rem_euclid(T::max_value().try_into().unwrap_or(i64::MAX))).unwrap()
+    /// Zig: `fn wrapTo(comptime T: type, in: i64) T` where `T` is unsigned.
+    /// Only ever instantiated with `uid_t`/`gid_t` (= `u32`), so drop the
+    /// `num_traits` dependency and hard-code the wrap.
+    #[inline]
+    fn wrap_to<T: From<u32>>(in_: i64) -> T {
+        // -1 → wrap to MAX (matches `@as(u32, @bitCast(@as(i32, -1)))`).
+        T::from(in_.rem_euclid(1i64 << 32) as u32)
     }
 
     pub type LChown = Chown;
@@ -2456,11 +2471,11 @@ pub mod args {
                         let buf_len = args.buffer.buffer().slice().len();
                         let max_offset = (buf_len as i64).min(i64::MAX);
                         if args.offset as i64 > max_offset {
-                            return Err(ctx.throw_range_error(args.offset as f64, bun_jsc::RangeErrorOptions { field_name: "offset", max: Some(max_offset), ..Default::default() }));
+                            return Err(ctx.throw_range_error(args.offset as f64, bun_jsc::RangeErrorOptions { field_name: b"offset", max: max_offset, ..Default::default() }));
                         }
                         let max_len = ((buf_len as u64 - args.offset) as i64).min(i32::MAX as i64);
                         if length > max_len || length < 0 {
-                            return Err(ctx.throw_range_error(length as f64, bun_jsc::RangeErrorOptions { field_name: "length", min: Some(0), max: Some(max_len), ..Default::default() }));
+                            return Err(ctx.throw_range_error(length as f64, bun_jsc::RangeErrorOptions { field_name: b"length", min: 0, max: max_len, ..Default::default() }));
                         }
                         args.length = u64::try_from(length).unwrap();
                         arguments.eat();
@@ -2544,17 +2559,17 @@ pub mod args {
             }
             // validateOffsetLengthRead(offset, length, buffer.byteLength);
             if length_float % 1.0 != 0.0 {
-                return Err(ctx.throw_range_error(length_float, bun_jsc::RangeErrorOptions { field_name: "length", msg: Some("an integer"), ..Default::default() }));
+                return Err(ctx.throw_range_error(length_float, bun_jsc::RangeErrorOptions { field_name: b"length", msg: b"an integer", ..Default::default() }));
             }
             let length_int: i64 = length_float as i64;
             if length_int as usize > buf_len {
-                return Err(ctx.throw_range_error(length_float, bun_jsc::RangeErrorOptions { field_name: "length", max: Some((buf_len as i64).min(i64::MAX)), ..Default::default() }));
+                return Err(ctx.throw_range_error(length_float, bun_jsc::RangeErrorOptions { field_name: b"length", max: (buf_len as i64).min(i64::MAX), ..Default::default() }));
             }
             if i64::try_from(offset).unwrap().saturating_add(length_int) > buf_len as i64 {
-                return Err(ctx.throw_range_error(length_float, bun_jsc::RangeErrorOptions { field_name: "length", max: Some((buf_len as u64).saturating_sub(offset) as i64), ..Default::default() }));
+                return Err(ctx.throw_range_error(length_float, bun_jsc::RangeErrorOptions { field_name: b"length", max: (buf_len as u64).saturating_sub(offset) as i64, ..Default::default() }));
             }
             if length_int < 0 {
-                return Err(ctx.throw_range_error(length_float, bun_jsc::RangeErrorOptions { field_name: "length", min: Some(0), ..Default::default() }));
+                return Err(ctx.throw_range_error(length_float, bun_jsc::RangeErrorOptions { field_name: b"length", min: 0, ..Default::default() }));
             }
             let length: u64 = length_int as u64;
 
@@ -2573,7 +2588,7 @@ pub mod args {
                 let max_position = i64::MAX - length_int;
                 if position.order(-1i64) == core::cmp::Ordering::Less || position.order(max_position) == core::cmp::Ordering::Greater {
                     let position_str = position.to_string(ctx)?;
-                    let r = Err(ctx.throw_range_error(position_str, bun_jsc::RangeErrorOptions { field_name: "position", min: Some(-1), max: Some(max_position), ..Default::default() }));
+                    let r = Err(ctx.throw_range_error(position_str, bun_jsc::RangeErrorOptions { field_name: b"position", min: -1, max: max_position, ..Default::default() }));
                     position_str.deref();
                     return r;
                 }
@@ -3115,9 +3130,13 @@ impl Default for NodeFS {
     fn default() -> Self { Self { sync_error_buf: PathBuffer::uninit(), vm: None } }
 }
 
-impl NodeFS {
-    pub type ReturnType = ret;
+// `pub type ReturnType = ret;` (Zig: `pub const ReturnType = Return;`) — Rust
+// inherent `type` aliases can't name a module. Expose it as a `pub use` at the
+// containing module level instead so `NodeFS::ReturnType::Foo` callers (none
+// yet in-tree) keep working via `node::fs::ReturnType::Foo`.
+pub use ret as ReturnType;
 
+impl NodeFS {
     pub fn access(&mut self, args: &args::Access, _: Flavor) -> Maybe<ret::Access> {
         let path: OSPathSliceZ = if args.path.slice().is_empty() {
             os_path_literal_empty()

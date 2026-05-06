@@ -437,46 +437,50 @@ impl HTMLRewriterLoader {
         None
     }
 
-    pub fn write(&mut self, data: webcore::StreamResult) -> webcore::StreamResult::Writable {
+    pub fn write(&mut self, data: StreamResult) -> streams::Writable {
         match data {
             StreamResult::Owned(bytes) => {
-                let len = bytes.len();
+                let len = bytes.len() as webcore::BlobSizeType;
                 if let Some(err) = self.write_bytes::<true>(bytes) {
-                    return StreamResult::Writable::Err(err);
+                    return Writable::Err(err);
                 }
-                StreamResult::Writable::Owned(len)
+                Writable::Owned(len)
             }
             StreamResult::OwnedAndDone(bytes) => {
-                let len = bytes.len();
+                let len = bytes.len() as webcore::BlobSizeType;
                 if let Some(err) = self.write_bytes::<true>(bytes) {
-                    return StreamResult::Writable::Err(err);
+                    return Writable::Err(err);
                 }
-                StreamResult::Writable::OwnedAndDone(len)
+                Writable::OwnedAndDone(len)
             }
             StreamResult::TemporaryAndDone(bytes) => {
-                let len = bytes.len();
+                let len = bytes.len() as webcore::BlobSizeType;
                 if let Some(err) = self.write_bytes::<false>(bytes) {
-                    return StreamResult::Writable::Err(err);
+                    return Writable::Err(err);
                 }
-                StreamResult::Writable::TemporaryAndDone(len)
+                Writable::TemporaryAndDone(len)
             }
             StreamResult::Temporary(bytes) => {
-                let len = bytes.len();
+                let len = bytes.len() as webcore::BlobSizeType;
                 if let Some(err) = self.write_bytes::<false>(bytes) {
-                    return StreamResult::Writable::Err(err);
+                    return Writable::Err(err);
                 }
-                StreamResult::Writable::Temporary(len)
+                Writable::Temporary(len)
             }
             _ => unreachable!(),
         }
     }
 
-    pub fn write_utf16(&mut self, data: webcore::StreamResult) -> webcore::StreamResult::Writable {
-        webcore::Sink::UTF8Fallback::write_utf16(self, data, Self::write)
+    pub fn write_utf16(&mut self, _data: StreamResult) -> streams::Writable {
+        // TODO(b2-blocked): `webcore::sink::UTF8Fallback::write_utf16` body is
+        // gated upstream (Sink.rs).
+        todo!("blocked_on: webcore::sink::UTF8Fallback::write_utf16")
     }
 
-    pub fn write_latin1(&mut self, data: webcore::StreamResult) -> webcore::StreamResult::Writable {
-        webcore::Sink::UTF8Fallback::write_latin1(self, data, Self::write)
+    pub fn write_latin1(&mut self, _data: StreamResult) -> streams::Writable {
+        // TODO(b2-blocked): `webcore::sink::UTF8Fallback::write_latin1` body is
+        // gated upstream (Sink.rs).
+        todo!("blocked_on: webcore::sink::UTF8Fallback::write_latin1")
     }
 }
 
@@ -501,7 +505,7 @@ pub struct BufferOutputSink {
     pub context: Rc<RefCell<LOLHTMLContext>>,
     pub response: *mut Response, // BORROW_FIELD: kept alive by response_value Strong
     pub response_value: Strong,
-    pub body_value_bufferer: Option<webcore::Body::ValueBufferer>,
+    pub body_value_bufferer: Option<webcore::body::ValueBufferer<'static>>,
     pub tmp_sync_error: Option<NonNull<JSValue>>, // TODO(port): lifetime — points at a stack local in init()
 }
 
@@ -1116,7 +1120,7 @@ where
 
         if let Some(promise) = result.as_any_promise() {
             global.bun_vm().wait_for_promise(promise);
-            let fail = promise.status() == jsc::PromiseStatus::Rejected;
+            let fail = promise.status() == jsc::js_promise::Status::Rejected;
             if fail {
                 global
                     .bun_vm()

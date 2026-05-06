@@ -1,18 +1,18 @@
 use core::fmt;
 
-use bun_core::{Output, deprecated};
+use bun_core::Output;
 use bun_jsc::{
     CallFrame, JSGlobalObject, JSValue, JsError, JsResult, ZigString,
     ConsoleObject, JSFunction, JSPropertyIterator, JSArrayIterator, JSString,
 };
 use bun_jsc::js_promise;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_str::{self as bun_string, strings};
+use bun_str::strings;
 
 use super::bun_test::{self, DescribeScope};
 use super::diff_format::DiffFormatter;
 use super::execution::ExpectAssertions;
-use super::jest::{self, Jest, TestRunner};
+use super::jest::Jest;
 
 // `bun_core::deprecated::js_error_to_write_error` is `#[cfg(any())]`-gated
 // (tier-0 cannot depend on bun_jsc). Inlined here at the use-site tier instead.
@@ -559,7 +559,7 @@ impl Expect {
         // SAFETY: called by codegen finalize on mutator thread; `this` is the m_ctx Box payload
         unsafe {
             (*this).custom_label.deref_();
-            // parent: Option<Arc<RefData>> — drop will deref
+            // parent: Option<RefDataPtr> — drop will deref the IntrusiveRc
             drop(Box::from_raw(this));
         }
     }

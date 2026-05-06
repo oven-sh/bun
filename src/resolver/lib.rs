@@ -198,6 +198,48 @@ pub mod fs {
             unsafe { (*(&raw mut INSTANCE)).assume_init_mut() }
         }
 
+        /// Port of `FileSystem.init` (fs.zig:90-108). First call writes the
+        /// global `INSTANCE`; subsequent calls return it untouched. Delegates
+        /// `Implementation` construction to `RealFS::init` so the process
+        /// RLIMIT_NOFILE is raised and `file_limit`/`file_quota` carry the
+        /// real fd budget — `need_to_close_files` depends on that to enable
+        /// directory-fd caching.
+        pub fn init(
+            top_level_dir: Option<&'static [u8]>,
+        ) -> core::result::Result<*mut FileSystem, bun_core::Error> {
+            // SAFETY: matches Zig global singleton init pattern; called from
+            // `Transpiler::init` before any worker spawn.
+            unsafe {
+                if *(&raw const INSTANCE_LOADED) {
+                    return Ok((*(&raw mut INSTANCE)).as_mut_ptr());
+                }
+            }
+            let cwd: &'static [u8] = match top_level_dir {
+                Some(d) => d,
+                None => {
+                    // Spec fs.zig:161 — `bun.getcwdAlloc(allocator)`.
+                    let mut buf = bun_paths::PathBuffer::default();
+                    let n = bun_sys::getcwd(&mut buf[..])?;
+                    DirnameStore::instance().append_slice(&buf[..n])?
+                }
+            };
+            // SAFETY: see above.
+            unsafe {
+                (*(&raw mut INSTANCE)).write(FileSystem {
+                    top_level_dir: cwd,
+                    fs: Implementation::init(cwd),
+                    dirname_store: DirnameStore::instance(),
+                    filename_store: FilenameStore::instance(),
+                });
+                *(&raw mut INSTANCE_LOADED) = true;
+                // Spec `Implementation.init` calls `DirEntry.EntryStore.init`;
+                // touch the singleton so it's initialized before any resolver
+                // worker hits it.
+                let _ = super::dir_entry::EntryStore::instance();
+                Ok((*(&raw mut INSTANCE)).as_mut_ptr())
+            }
+        }
+
         /// Port of `FileSystem.setMaxFd` in `fs.zig`.
         #[inline]
         pub fn set_max_fd(_fd: bun_sys::RawFd) {

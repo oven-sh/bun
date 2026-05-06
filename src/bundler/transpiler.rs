@@ -619,11 +619,15 @@ fn init_file_system(
 /// CYCLEBREAK: project this crate's `options::BundleOptions<'a>` into the
 /// resolver-crate FORWARD_DECL subset (`bun_resolver::options::BundleOptions`).
 /// The two are nominally distinct until MOVE_DOWN to `bun_options_types`
-/// unifies them (resolver/lib.rs `mod options` note). Fields whose types are
-/// shared (`Target`, `GlobalCache`, `ForceNodeEnv`, bools, `Option<Box<[u8]>>`)
-/// copy through; fields whose resolver-side type is a `&'static [&'static [u8]]`
-/// FORWARD_DECL keep the resolver `Default` (the bundler side stores owned
-/// `Box<[Box<[u8]>]>`, which can't be borrowed as `&'static` without leaking).
+/// unifies them (resolver/lib.rs `mod options` note).
+///
+/// Spec transpiler.zig:214 passes the SAME `bundle_options` value to
+/// `Resolver.init1`, so `resolver.opts` must carry user-configured
+/// `--external`, `--conditions`, `--main-fields`, and the extension order.
+/// Every field the resolver reads is now projected (clone of owned data, no
+/// `Box::leak`); the resolver-side FORWARD_DECL types were widened to owned
+/// `Box<[Box<[u8]>]>`/`StringSet`/`StringArrayHashMap` so this is a faithful
+/// value copy rather than a `Default` stub.
 ///
 /// TODO(b3): drop this once `bun_options_types::BundleOptions` exists and both
 /// crates re-export it — `Resolver::init1` will then take the canonical type
@@ -659,17 +663,60 @@ fn resolver_bundle_options_subset(
             package_name: src.jsx.package_name.clone(),
             development: src.jsx.development,
         },
+        // Spec `options.ResolveFileExtensions` — clone all four owned slices so
+        // the resolver honours user `--extension-order` and the per-target
+        // `.node` augmentation `from_api` applied.
+        extension_order: ropts::ExtensionOrder {
+            default: ropts::ExtensionOrderGroup {
+                default: src.extension_order.default.default.clone(),
+                esm: src.extension_order.default.esm.clone(),
+            },
+            node_modules: ropts::ExtensionOrderGroup {
+                default: src.extension_order.node_modules.default.clone(),
+                esm: src.extension_order.node_modules.esm.clone(),
+            },
+            css: ropts::owned_string_list(
+                ropts::bundle_options::defaults::CSS_EXTENSION_ORDER,
+            ),
+        },
+        conditions: ropts::Conditions {
+            import: src.conditions.import.clone().expect("oom"),
+            require: src.conditions.require.clone().expect("oom"),
+            style: src.conditions.style.clone().expect("oom"),
+        },
+        external: ropts::ExternalModules {
+            patterns: src
+                .external
+                .patterns
+                .iter()
+                .map(|p| ropts::WildcardPattern {
+                    prefix: p.prefix.clone(),
+                    suffix: p.suffix.clone(),
+                })
+                .collect(),
+            abs_paths: src.external.abs_paths.clone().expect("oom"),
+            node_modules: src.external.node_modules.clone().expect("oom"),
+        },
+        extra_cjs_extensions: src.extra_cjs_extensions.clone(),
+        framework: src.framework.map(|f| ropts::Framework {
+            built_in_modules: f.built_in_modules.clone().expect("oom"),
+        }),
         global_cache: src.global_cache,
+        install: src
+            .install
+            .map(|p| p as *const _ as *mut ())
+            .unwrap_or(core::ptr::null_mut()),
         load_package_json: src.load_package_json,
         load_tsconfig_json: src.load_tsconfig_json,
-        main_field_extension_order: src.main_field_extension_order,
-        // Resolver compares this slice's *pointer* against
-        // `DEFAULT_MAIN_FIELDS.get(target)` to detect "user did not set
-        // --main-fields" (resolver/lib.rs `auto_main` note). Bundler stores an
-        // owned `Box<[Box<[u8]>]>` whose pointer can never match, so route to
-        // the resolver-side per-target default to preserve the heuristic.
-        // TODO(b3): thread user-provided `--main-fields` once the type unifies.
-        main_fields: ropts::DEFAULT_MAIN_FIELDS.get(src.target),
+        main_field_extension_order: ropts::owned_string_list(src.main_field_extension_order),
+        // Spec resolver.zig `auto_main` compares the pointer of
+        // `opts.main_fields` against the per-target default; with owned
+        // storage that pointer test can't hold, so project the predicate as a
+        // bool: it's "default" iff the user did not pass `--main-fields`
+        // (`from_api` overwrites `main_fields` only when
+        // `transform.main_fields` is non-empty — options.rs:2231).
+        main_fields: src.main_fields.clone(),
+        main_fields_is_default: src.transform_options.main_fields.is_empty(),
         mark_builtins_as_external: src.mark_builtins_as_external,
         polyfill_node_globals: src.polyfill_node_globals,
         prefer_offline_install: src.prefer_offline_install,
@@ -678,10 +725,6 @@ fn resolver_bundle_options_subset(
         tsconfig_override: src.tsconfig_override.clone(),
         production: src.production,
         force_node_env: src.force_node_env,
-        // FORWARD_DECL types differ from bundler's; keep resolver Default.
-        // TODO(b3): map `extension_order` / `external` / `conditions` /
-        // `extra_cjs_extensions` / `framework` / `install` once MOVE_DOWN lands.
-        ..ropts::BundleOptions::default()
     }
 }
 

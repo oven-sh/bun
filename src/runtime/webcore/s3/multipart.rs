@@ -91,7 +91,6 @@
 
 use core::cell::Cell;
 use core::ffi::c_void;
-use core::marker::ConstParamTy;
 use std::io::Write as _;
 use std::sync::Arc;
 
@@ -100,17 +99,21 @@ use bstr::BStr;
 use bun_aio::KeepAlive;
 use bun_alloc::AllocError;
 use bun_collections::IntegerBitSet;
+use bun_core::{declare_scope, scoped_log};
 use bun_io::StreamBuffer;
-use bun_jsc::{JSGlobalObject, JsResult, VirtualMachine};
-use bun_output::{declare_scope, scoped_log};
-use bun_s3_signing::acl::Acl;
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::{JSGlobalObject, JsResult};
+use bun_s3_signing::acl::ACL;
 use bun_s3_signing::credentials::S3Credentials;
 use bun_s3_signing::error::S3Error;
 use bun_s3_signing::storage_class::StorageClass;
 use bun_str::{strings, MutableString};
 
-use super::multipart_options::MultiPartUploadOptions;
-use super::simple_request::{
+// PORT NOTE: file-level mods are declared flat in `webcore.rs` via `#[path]`, so
+// `super` here is `crate::webcore`, not the `s3` directory. Route through the
+// `s3` re-export hub instead.
+use crate::webcore::s3::multipart_options::MultiPartUploadOptions;
+use crate::webcore::s3::simple_request::{
     self as s3_simple_request, execute_simple_s3_request, S3CommitResult, S3DownloadResult,
     S3PartResult, S3UploadResult,
 };
@@ -130,7 +133,7 @@ pub struct MultiPartUpload {
     pub ended: bool,
 
     pub options: MultiPartUploadOptions,
-    pub acl: Option<Acl>,
+    pub acl: Option<ACL>,
     pub storage_class: Option<StorageClass>,
     pub request_payer: bool,
     pub credentials: Arc<S3Credentials>,
@@ -182,8 +185,9 @@ impl MultiPartUpload {
     // `const AWS = S3Credentials;` — type alias unused in this file; dropped.
 
     // bun.ptr.RefCount(Self, "ref_count", deinit, .{}) — intrusive refcount.
-    pub type Ref = bun_ptr::IntrusiveRc<MultiPartUpload>;
-    // TODO(port): replace inherent ref_/deref_ with bun_ptr::IntrusiveRefCounted impl and use Self::Ref at call sites.
+    // PORT NOTE: inherent associated types (`pub type Ref = ...` inside `impl`) are
+    // unstable; the alias lives at module scope as `MultiPartUploadRef` instead.
+    // TODO(port): replace inherent ref_/deref_ with bun_ptr::IntrusiveRefCounted impl and use MultiPartUploadRef at call sites.
     pub fn ref_(&self) {
         self.ref_count.set(self.ref_count.get() + 1);
     }
@@ -200,6 +204,9 @@ impl MultiPartUpload {
         }
     }
 }
+
+/// Intrusive-refcount handle alias (Zig: `bun.ptr.RefCount(MultiPartUpload, ...)`).
+pub type MultiPartUploadRef = bun_ptr::IntrusiveRc<MultiPartUpload>;
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1017,8 +1024,13 @@ impl MultiPartUpload {
         self.available.mask() == IntegerBitSet::<{ Self::MAX_QUEUE_SIZE }>::full().mask()
     }
 
-    fn write<const ENCODING: WriteEncoding>(
+    // PORT NOTE: Zig used `comptime encoding: enum {bytes, latin1, utf16}`. Rust's
+    // adt_const_params (enum-valued const generics) is unstable, so take it as a
+    // plain runtime arg — the three thin wrappers below pass a constant, so the
+    // optimizer still specializes each branch.
+    fn write(
         &mut self,
+        encoding: WriteEncoding,
         chunk: &[u8],
         is_last: bool,
     ) -> Result<ResumableSinkBackpressure, AllocError> {
@@ -1044,7 +1056,7 @@ impl MultiPartUpload {
         if is_last {
             self.ended = true;
             if !chunk.is_empty() {
-                match ENCODING {
+                match encoding {
                     WriteEncoding::Bytes => self.buffered.write(chunk)?,
                     WriteEncoding::Latin1 => self.buffered.write_latin1(chunk, true)?,
                     WriteEncoding::Utf16 => {
@@ -1069,7 +1081,7 @@ impl MultiPartUpload {
                     ResumableSinkBackpressure::WantMore
                 });
             }
-            match ENCODING {
+            match encoding {
                 WriteEncoding::Bytes => self.buffered.write(chunk)?,
                 WriteEncoding::Latin1 => self.buffered.write_latin1(chunk, true)?,
                 WriteEncoding::Utf16 => {
@@ -1100,7 +1112,7 @@ impl MultiPartUpload {
         chunk: &[u8],
         is_last: bool,
     ) -> Result<ResumableSinkBackpressure, AllocError> {
-        self.write::<{ WriteEncoding::Latin1 }>(chunk, is_last)
+        self.write(WriteEncoding::Latin1, chunk, is_last)
     }
 
     pub fn write_utf16(
@@ -1108,7 +1120,7 @@ impl MultiPartUpload {
         chunk: &[u8],
         is_last: bool,
     ) -> Result<ResumableSinkBackpressure, AllocError> {
-        self.write::<{ WriteEncoding::Utf16 }>(chunk, is_last)
+        self.write(WriteEncoding::Utf16, chunk, is_last)
     }
 
     pub fn write_bytes(
@@ -1116,11 +1128,11 @@ impl MultiPartUpload {
         chunk: &[u8],
         is_last: bool,
     ) -> Result<ResumableSinkBackpressure, AllocError> {
-        self.write::<{ WriteEncoding::Bytes }>(chunk, is_last)
+        self.write(WriteEncoding::Bytes, chunk, is_last)
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, ConstParamTy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum WriteEncoding {
     Bytes,
     Latin1,

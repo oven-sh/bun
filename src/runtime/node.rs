@@ -56,11 +56,20 @@ pub mod dir_iterator;
 pub mod node_fs_constant;
 
 #[path = "node/util/validators.rs"]
-mod validators_impl;
+pub mod validators_impl;
 pub mod util {
     pub use super::validators_impl as validators;
 }
 pub use util::validators;
+
+// `crate::node::dirent::Kind` shim for dir_iterator.rs / node_fs.rs — the
+// Zig spec exports `Dirent = types.Dirent` and callers reach `.Kind` through
+// it. Rust can't hang an associated module off a struct re-export, so expose
+// a tiny module mirroring that shape.
+pub mod dirent {
+    pub use super::types::Dirent;
+    pub use super::types::DirentKind as Kind;
+}
 
 // node_fs.rs (~4.7kL): async task machinery (AsyncFSTask/UVFSRequest/cp/
 // readdir-recursive) is JSC-dense and re-gated *inside* the file with
@@ -83,17 +92,17 @@ pub mod node_net_binding;
 pub mod node_zlib_binding;
 
 #[path = "node/net/BlockList.rs"]
-mod block_list_impl;
+pub mod block_list_impl;
 pub mod net {
     pub use super::block_list_impl as block_list;
 }
 
 #[path = "node/zlib/NativeZlib.rs"]
-mod native_zlib_impl;
+pub mod native_zlib_impl;
 #[path = "node/zlib/NativeBrotli.rs"]
-mod native_brotli_impl;
+pub mod native_brotli_impl;
 #[path = "node/zlib/NativeZstd.rs"]
-mod native_zstd_impl;
+pub mod native_zstd_impl;
 pub mod zlib {
     // Re-export so `super::NodeMode` resolves inside the gated NativeZstd body.
     pub use bun_zlib::NodeMode;

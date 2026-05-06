@@ -343,10 +343,12 @@ impl JSMySQLConnection {
 
     pub fn finalize(this: *mut Self) {
         bun_core::scoped_log!(MySQLConnection, "finalize");
-        // SAFETY: called on mutator thread during lazy sweep; `this` is the m_ctx ptr.
+        // SAFETY: called on mutator thread during lazy sweep; `this` is the
+        // m_ctx ptr from `Box::into_raw`. Stays raw-pointer-shaped end-to-end
+        // so no `&mut Self` dangles past the potential free in `deref()`.
         unsafe {
             (*this).js_value.finalize();
-            (*this).deref();
+            Self::deref(this);
         }
     }
 

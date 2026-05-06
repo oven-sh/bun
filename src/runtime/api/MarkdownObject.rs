@@ -42,6 +42,8 @@ use bun_core::StackCheck;
 // thin mod-decl shim, so alias the `root` module (which re-exports BlockType,
 // SpanType, TextType, SpanDetail, Renderer, helpers, types, ansi, …) as `md`.
 use bun_md::root as md;
+use bun_md::parser::ParserError;
+use crate::node::StringOrBuffer;
 
 pub fn create(global_this: &JSGlobalObject) -> JSValue {
     let object = JSValue::create_empty_object(global_this, 4);

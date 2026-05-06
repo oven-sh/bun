@@ -770,7 +770,7 @@ fn iterate_bundled_deps(
             };
             let _close_scoped = scopeguard::guard((), |_| scoped_dir.close());
 
-            let mut scoped_iter = DirIterator::iterate(Fd::from_std_dir(&scoped_dir), DirIterator::Encoding::U8);
+            let mut scoped_iter = DirIterator::iterate(Fd::from_std_dir(&scoped_dir));
             while let Some(sub_entry) = scoped_iter.next().unwrap().ok().flatten() {
                 let entry_name = entry_subpath(_entry_name, sub_entry.name.slice())?;
 

@@ -1358,7 +1358,7 @@ impl PublishCommand {
                                 if key.is_string() && key.data.as_e_string().len() != 0 {
                                     break 'key Some(ZStr::from_bytes(
                                         strings::without_prefix(
-                                            path::normalize_buf(
+                                            normalize_buf(
                                                 &key.data.as_e_string().string()?,
                                                 &mut path_buf,
                                                 path::Platform::Posix,

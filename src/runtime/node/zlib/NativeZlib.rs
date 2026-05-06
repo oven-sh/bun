@@ -57,13 +57,14 @@ pub struct NativeZlib {
 
 // `const impl = CompressionStream(@This())` — Zig comptime mixin that injects
 // write / runFromJSThread / writeSync / reset / close / setOnError / getOnError /
-// finalize onto this type. In Rust these are blanket-provided by
-// `impl CompressionStream for NativeZlib` in node_zlib_binding.rs.
-// TODO(port): verify CompressionStream trait surface matches the Zig mixin re-exports.
-impl CompressionStream for NativeZlib {}
+// finalize onto this type. In Rust these are provided as inherent methods on
+// `CompressionStream::<NativeZlib>` in node_zlib_binding.rs (a generic mixin
+// struct, not a trait).
+// TODO(port): verify CompressionStream<T> surface matches the Zig mixin re-exports.
 
 impl NativeZlib {
-    #[bun_jsc::host_fn]
+    // NB: no `#[bun_jsc::host_fn]` here — the `#[bun_jsc::JsClass]` derive emits
+    // the constructor shim that calls `<NativeZlib>::constructor(g, f)` directly.
     pub fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<Box<Self>> {
         let arguments = frame.arguments_undef::<4>();
 

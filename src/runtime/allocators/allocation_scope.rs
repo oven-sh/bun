@@ -479,11 +479,13 @@ impl<'a, A: GenericAllocator> Borrowed<'a, A> {
             unsafe { core::mem::transmute_copy(&current_std_parent) }
         });
 
-        let new_std_parent = crate::as_std(&new_parent);
-        // TODO(port): `bun.safety.alloc.assertEqFmt` — debug-only allocator-equality check.
-        bun_safety::alloc::assert_eq_fmt::alloc::assert_eq_fmt(
-            current_std_parent,
-            new_std_parent,
+        let new_std_parent = as_std(&new_parent);
+        // Zig: `bun.safety.alloc.assertEqFmt` — debug-only allocator-equality check.
+        // `bun_safety::alloc` was dropped (OBSOLETE per PORTING.md §Allocators); inline the
+        // vtable+ptr identity check directly against the `StdAllocator` handles.
+        debug_assert!(
+            core::ptr::eq(current_std_parent.vtable, new_std_parent.vtable)
+                && current_std_parent.ptr == new_std_parent.ptr,
             "tried to downcast allocation scope with wrong parent allocator",
         );
         Self {
@@ -506,7 +508,7 @@ impl<'a, A: GenericAllocator> Borrowed<'a, A> {
     /// * `parent_alloc` must be equivalent to the (borrowed) parent allocator of the original
     ///   allocation scope (that is, the return value of `AllocationScopeIn<A>::parent`).
     ///   In particular, `bun_alloc::as_std` must return the same value for each allocator.
-    pub fn downcast_in(std_alloc: StdAllocator, parent_alloc: crate::Borrowed<A>) -> Self {
+    pub fn downcast_in(std_alloc: StdAllocator, parent_alloc: BorrowedAlloc<A>) -> Self {
         Self::downcast_impl(std_alloc, Some(parent_alloc))
     }
 

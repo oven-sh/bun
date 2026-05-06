@@ -224,8 +224,9 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             "StaticPipeWriter(0x{:x}) start()",
             self as *const _ as usize
         );
-        // TODO(port): `self.ref_()` — intrusive-refcount increment (Zig `this.ref()`).
-        bun_ptr::intrusive_ref(self);
+        // Zig `this.ref()` — intrusive-refcount increment.
+        // SAFETY: `self` is a live `Self` (created via `create()`/`Box::into_raw`).
+        unsafe { RefCount::<Self>::ref_(self as *mut Self) };
         // TODO(port): self-borrow — see `buffer` field note.
         self.buffer = self.source.slice() as *const [u8];
         #[cfg(windows)]

@@ -3374,11 +3374,7 @@ impl<'a> LinkerContext<'a> {
 
                                 // SAFETY: `properties` points into `part.import_symbol_property_uses`
                                 // which is not mutated for the lifetime of this borrow.
-                                let mut it = unsafe { (*properties).iterator() };
-                                while let Some(next) = it.next() {
-                                    let name = next.key_ptr;
-                                    let prop_use = next.value_ptr;
-
+                                for (name, prop_use) in unsafe { (*properties).iter() } {
                                     if enum_data.get(name).is_none() {
                                         found_non_inlined_enum = true;
                                         use_.count_estimate += prop_use.count_estimate;
@@ -3428,7 +3424,7 @@ impl<'a> LinkerContext<'a> {
                         // note: if we crash on append, it is due to threadlocal heaps in mimalloc
                         part.dependencies
                             .append(Dependency {
-                                source_index: Index::source(source_index),
+                                source_index: Index::init(source_index),
                                 part_index: other_part_index,
                             })
                             .expect("unreachable");
@@ -3460,10 +3456,10 @@ impl<'a> LinkerContext<'a> {
         export_aliases: &[&[u8]],
         re_exports_count: usize,
     ) {
-        Stmt::Disabler::disable();
-        let _stmt_guard = scopeguard::guard((), |_| Stmt::Disabler::enable());
-        Expr::Disabler::disable();
-        let _expr_guard = scopeguard::guard((), |_| Expr::Disabler::enable());
+        bun_js_parser::ast::stmt::Disabler::disable();
+        let _stmt_guard = scopeguard::guard((), |_| bun_js_parser::ast::stmt::Disabler::enable());
+        bun_js_parser::ast::expr::Disabler::disable();
+        let _expr_guard = scopeguard::guard((), |_| bun_js_parser::ast::expr::Disabler::enable());
 
         // 1 property per export
         let mut properties =
@@ -3622,7 +3618,7 @@ impl<'a> LinkerContext<'a> {
             );
             remaining_stmts = &mut remaining_stmts[1..];
             declared_symbols
-                .append(DeclaredSymbol { r#ref: exports_ref, is_top_level: true })
+                .append(DeclaredSymbol { ref_: exports_ref, is_top_level: true })
                 .expect("unreachable");
         }
 
@@ -3952,13 +3948,13 @@ impl<'a> LinkerContext<'a> {
         let r#ref = self.graph.generate_new_symbol(source_index, bun_js_parser::ast::symbol::Kind::Other, name);
         let part_index = self.graph.add_part_to_file(source_index, Part {
             declared_symbols: DeclaredSymbolList::from_slice(
-                &[DeclaredSymbol { r#ref, is_top_level: true }],
+                &[DeclaredSymbol { ref_: r#ref, is_top_level: true }],
             )?,
             can_be_removed_if_unused: true,
             ..Default::default()
         })?;
 
-        self.graph.generate_symbol_import_and_use(source_index, part_index, module_ref, 1, Index::init(source_index))?;
+        self.graph.generate_symbol_import_and_use(source_index, part_index, module_ref, 1, crate::Index::init(source_index))?;
         let top_level = &mut self.graph.meta.items_top_level_symbol_to_parts_overlay_mut()[source_index as usize];
         top_level.put(r#ref, BabyList::<u32>::from_slice(&[part_index])?)?;
 

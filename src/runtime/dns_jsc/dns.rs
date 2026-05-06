@@ -752,7 +752,8 @@ impl CAresNameInfo {
 
 impl Drop for CAresNameInfo {
     fn drop(&mut self) {
-        self.poll_ref.unref(self.global_this.bun_vm());
+        // SAFETY: JSGlobalObject outlives the request.
+        self.poll_ref.unref(unsafe { &*self.global_this }.bun_vm());
         // self.name freed by Box<[u8]> Drop
     }
 }
@@ -1335,7 +1336,8 @@ impl CAresReverse {
 
 impl Drop for CAresReverse {
     fn drop(&mut self) {
-        self.poll_ref.unref(self.global_this.bun_vm());
+        // SAFETY: JSGlobalObject outlives the request.
+        self.poll_ref.unref(unsafe { &*self.global_this }.bun_vm());
         // self.name / self.resolver freed by field Drop (Box / IntrusiveRc deref)
     }
 }
@@ -1441,7 +1443,8 @@ impl<T: CAresRecordType> CAresLookup<T> {
 
 impl<T: CAresRecordType> Drop for CAresLookup<T> {
     fn drop(&mut self) {
-        self.poll_ref.unref(self.global_this.bun_vm());
+        // SAFETY: JSGlobalObject outlives the request.
+        self.poll_ref.unref(unsafe { &*self.global_this }.bun_vm());
         // self.name / self.resolver freed by field Drop (Box / IntrusiveRc deref)
     }
 }
@@ -1580,7 +1583,8 @@ impl DNSLookup {
 impl Drop for DNSLookup {
     fn drop(&mut self) {
         bun_output::scoped_log!(DNSLookup, "deinit");
-        self.poll_ref.unref(self.global_this.bun_vm());
+        // SAFETY: JSGlobalObject outlives the request.
+        self.poll_ref.unref(unsafe { &*self.global_this }.bun_vm());
         // self.resolver freed by IntrusiveRc Drop → deref
     }
 }

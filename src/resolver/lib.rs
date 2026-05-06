@@ -7140,8 +7140,9 @@ impl<'a> Resolver<'a> {
             // SAFETY: ARENA — DirInfo ptr is a BSSMap slot; narrow re-borrow ends
             // before `browser_scope` (which may alias `dir_info`) is held.
             if let Some(browser_scope) = unsafe { (*dir_info).get_enclosing_browser_scope() } {
-                if let Some(browser_json) = browser_scope.package_json {
-                    if let Some(remap) = self.check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(browser_scope, field_rel_path) {
+                // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver.
+                if let Some(browser_json) = unsafe { &*browser_scope }.package_json {
+                    if let Some(remap) = self.check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(unsafe { &*browser_scope }, field_rel_path) {
                         // Is the path disabled?
                         if remap.is_empty() {
                             let paths = [path, field_rel_path];
@@ -7310,8 +7311,9 @@ impl<'a> Resolver<'a> {
             if let Some(browser_scope) = unsafe { (*dir_info).get_enclosing_browser_scope() } {
                 const FIELD_REL_PATH: &[u8] = b"index";
 
-                if let Some(browser_json) = browser_scope.package_json {
-                    if let Some(remap) = self.check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(browser_scope, FIELD_REL_PATH) {
+                // SAFETY: ARENA — DirInfo ptr is a BSSMap slot and outlives the resolver.
+                if let Some(browser_json) = unsafe { &*browser_scope }.package_json {
+                    if let Some(remap) = self.check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(unsafe { &*browser_scope }, FIELD_REL_PATH) {
                         // Is the path disabled?
                         if remap.is_empty() {
                             let paths = [path, FIELD_REL_PATH];

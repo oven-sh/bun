@@ -1186,7 +1186,16 @@ fn transpile_source_code_inner(
                             bun_string::String::clone_utf8(source.contents)
                         }
                         FetchFlags::PrintSource => {
-                            bun_string::String::borrow_utf8(source.contents)
+                            // PORT NOTE: spec ModuleLoader.zig:358 borrows
+                            // (`bun.String.init`) because the bytes live in the
+                            // per-call arena, which is intentionally not reset
+                            // for `.print_source` (ModuleLoader.zig:151). The
+                            // Rust port stores file contents in a Drop-carrying
+                            // `source_contents_backing` on `parse_result`, so a
+                            // borrow would dangle once `parse_result` drops on
+                            // return. Clone instead — matches the
+                            // `PrintSourceAndClone` arm.
+                            bun_string::String::clone_utf8(source.contents)
                         }
                         FetchFlags::Transpile => unreachable!(),
                     };

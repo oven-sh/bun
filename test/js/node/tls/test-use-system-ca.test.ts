@@ -85,8 +85,9 @@ async function defaultCertCount(args: string[], extraEnv: Record<string, string 
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
+  const count = parseInt(stdout.trim(), 10);
   expect(exitCode).toBe(0);
-  return parseInt(stdout.trim(), 10);
+  return count;
 }
 
 describe("bunfig.toml CA", () => {
@@ -131,9 +132,9 @@ describe("bunfig.toml CA", () => {
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(exitCode).toBe(0);
     expect(stdout.trim()).toBe("OK");
     expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 
   test(`CLI --use-bundled-ca overrides bunfig CA = "system"`, async () => {
@@ -175,22 +176,19 @@ describe("bunfig.toml CA", () => {
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(exitCode).not.toBe(0);
     expect(stdout).not.toContain("should not run");
     expect(stderr).toContain("Invalid CA value");
+    expect(exitCode).not.toBe(0);
   });
 
-  test("bun test reads bunfig.toml CA", async () => {
+  test(`bun test honors CA = "system" in bunfig.toml`, async () => {
     const dir = tempDirWithFiles("bunfig-ca-test", {
       "bunfig.toml": `CA = "system"\n`,
       "probe.test.ts": `
-        import { test, expect } from "bun:test";
+        import { test } from "bun:test";
         import { getCACertificates } from "tls";
-        test("system store selected via bunfig", () => {
-          // The count under "bundled" is fixed; "system" is >= bundled.
-          // Just check the test command honored the bunfig value by
-          // reading it back through the Zig->JS getter exposed via tls.
-          expect(Array.isArray(getCACertificates("default"))).toBe(true);
+        test("print cert count", () => {
+          console.log("CERT_COUNT:" + getCACertificates("default").length);
         });
       `,
     });
@@ -204,8 +202,16 @@ describe("bunfig.toml CA", () => {
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // `bun test` reports via stderr; the log from the test body lands on stdout.
+    const output = stdout + stderr;
+    const match = output.match(/CERT_COUNT:(\d+)/);
+    expect(match).not.toBeNull();
+    const bunTestCount = parseInt(match![1], 10);
+
+    // Must match what `--use-system-ca` produces (and exceed the bundled-only
+    // baseline whenever the machine has system certs at all).
+    const flagCount = await defaultCertCount(["--use-system-ca"]);
+    expect(bunTestCount).toBe(flagCount);
     expect(exitCode).toBe(0);
-    expect(stderr).not.toContain("Invalid");
-    expect(stderr).not.toContain("error:");
   });
 });

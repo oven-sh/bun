@@ -3,14 +3,7 @@ use crate::webcore::EncodingLabel;
 use bun_str::strings;
 use bun_core::AllocError;
 
-// `strings::u16_is_lead`/`u16_is_trail` are not yet in `bun_str::immutable`.
-// Trivial UTF-16 surrogate predicates (mirror of Zig `strings.u16IsLead` /
-// `strings.u16IsTrail`); inlined here to keep `decode_utf16` un-gated.
-// TODO(port): move into `bun_str::strings` and delete these.
-#[inline]
-const fn u16_is_lead(c: u16) -> bool { (c & 0xFC00) == 0xD800 }
-#[inline]
-const fn u16_is_trail(c: u16) -> bool { (c & 0xFC00) == 0xDC00 }
+use strings::{u16_is_lead, u16_is_trail};
 const UNICODE_REPLACEMENT_U16: u16 = strings::UNICODE_REPLACEMENT as u16;
 
 #[derive(Default)]

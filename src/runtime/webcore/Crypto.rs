@@ -88,14 +88,14 @@ impl Crypto {
         let arguments = callframe.arguments();
         if arguments.is_empty() {
             return global.throw_dom_exception(
-                bun_jsc::DomExceptionCode::TypeMismatchError,
+                bun_jsc::DOMExceptionCode::TypeMismatchError,
                 format_args!("The data argument must be an integer-type TypedArray"),
             );
         }
 
         let Some(mut array_buffer) = arguments[0].as_array_buffer(global) else {
             return global.throw_dom_exception(
-                bun_jsc::DomExceptionCode::TypeMismatchError,
+                bun_jsc::DOMExceptionCode::TypeMismatchError,
                 format_args!("The data argument must be an integer-type TypedArray"),
             );
         };
@@ -224,7 +224,11 @@ pub fn bun_random_uuid_v7(global: &JSGlobalObject, callframe: &CallFrame) -> JsR
                 break 'brk date.max(0.0) as u64;
             }
             break 'brk u64::try_from(
-                global.validate_integer_range::<i64>(timestamp_value, 0, bun_jsc::IntegerRange { min: 0, field_name: "timestamp" })?,
+                global.validate_integer_range::<i64>(
+                    timestamp_value,
+                    0,
+                    bun_jsc::IntegerRange { min: 0, field_name: b"timestamp", ..Default::default() },
+                )?,
             )
             .unwrap();
         }
@@ -292,8 +296,8 @@ pub fn bun_random_uuid_v5(global: &JSGlobalObject, callframe: &CallFrame) -> JsR
     let name_value = arguments[0];
     let namespace_value = arguments[1];
 
-    // `name` is a ZigString.Slice in Zig (borrow-or-own UTF-8). Port as bun_str::Utf8Slice.
-    let name: bun_str::Utf8Slice<'_> = 'brk: {
+    // `name` is a ZigString.Slice in Zig (borrow-or-own UTF-8). Port as bun_str::ZigStringSlice.
+    let name: bun_str::ZigStringSlice = 'brk: {
         if name_value.is_string() {
             let name_str = name_value.to_bun_string(global)?;
             // `defer name_str.deref()` — BunString's Drop handles the deref.
@@ -301,7 +305,7 @@ pub fn bun_random_uuid_v5(global: &JSGlobalObject, callframe: &CallFrame) -> JsR
 
             break 'brk result;
         } else if let Some(array_buffer) = name_value.as_array_buffer(global) {
-            break 'brk bun_str::Utf8Slice::from_utf8_never_free(array_buffer.byte_slice());
+            break 'brk bun_str::ZigStringSlice::from_utf8_never_free(array_buffer.byte_slice());
         } else {
             return Err(global
                 .ERR(
@@ -320,8 +324,8 @@ pub fn bun_random_uuid_v5(global: &JSGlobalObject, callframe: &CallFrame) -> JsR
             let namespace_slice = namespace_str.to_utf8();
             // `defer namespace_slice.deinit()` — Drop handles it.
 
-            if namespace_slice.as_bytes().len() != 36 {
-                if let Some(namespace) = UUID5::namespaces().get(namespace_slice.as_bytes()) {
+            if namespace_slice.slice().len() != 36 {
+                if let Some(namespace) = UUID5::namespaces().get(namespace_slice.slice()) {
                     break 'brk *namespace;
                 }
 
@@ -333,7 +337,7 @@ pub fn bun_random_uuid_v5(global: &JSGlobalObject, callframe: &CallFrame) -> JsR
                     .throw());
             }
 
-            let Ok(parsed_uuid) = UUID::parse(namespace_slice.as_bytes()) else {
+            let Ok(parsed_uuid) = UUID::parse(namespace_slice.slice()) else {
                 return Err(global
                     .ERR(
                         bun_jsc::ErrorCode::INVALID_ARG_VALUE,

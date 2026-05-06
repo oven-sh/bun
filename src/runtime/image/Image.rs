@@ -738,26 +738,34 @@ pub fn set_backend(_: JSValue, global: &JSGlobalObject, value: JSValue) -> bool 
 
 #[bun_jsc::host_fn]
 pub fn from_clipboard(global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-    // TODO(port): `comptime codecs.system_backend` — Phase B exposes this as a
-    // `cfg`-gated `Option<&'static dyn SystemBackend>` or per-platform module.
-    if let Some(sb) = codecs::SYSTEM_BACKEND {
-        let bytes = match sb.clipboard() {
+    // `comptime codecs.system_backend` → cfg-gated module re-export.
+    #[cfg(any(target_os = "macos", windows))]
+    {
+        use codecs::system_backend;
+        let bytes = match system_backend::clipboard() {
             Ok(Some(b)) => b,
             Ok(None) => return Ok(JSValue::NULL),
-            Err(codecs::ClipboardError::OutOfMemory) => return global.throw_out_of_memory(),
-            Err(codecs::ClipboardError::BackendUnavailable) => return Ok(JSValue::NULL),
+            Err(system_backend::BackendError::OutOfMemory) => return global.throw_out_of_memory(),
+            // BackendUnavailable (and any other backend error) ⇔ no image present.
+            Err(_) => return Ok(JSValue::NULL),
         };
         let img = Box::new(Image { source: Source::Owned(bytes), ..Default::default() });
         return Ok(img.to_js(global));
     }
-    Ok(JSValue::NULL)
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        let _ = global;
+        Ok(JSValue::NULL)
+    }
 }
 
 #[bun_jsc::host_fn]
 pub fn has_clipboard_image(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-    if let Some(sb) = codecs::SYSTEM_BACKEND {
-        return Ok(JSValue::from(sb.has_clipboard_image()));
+    #[cfg(any(target_os = "macos", windows))]
+    {
+        return Ok(JSValue::from(codecs::system_backend::has_clipboard_image()));
     }
+    #[cfg(not(any(target_os = "macos", windows)))]
     Ok(JSValue::FALSE)
 }
 
@@ -768,9 +776,11 @@ pub fn has_clipboard_image(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValu
 /// `-1` on Linux.
 #[bun_jsc::host_fn]
 pub fn clipboard_change_count(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-    if let Some(sb) = codecs::SYSTEM_BACKEND {
-        return Ok(JSValue::js_number(sb.clipboard_change_count()));
+    #[cfg(any(target_os = "macos", windows))]
+    {
+        return Ok(JSValue::js_number(codecs::system_backend::clipboard_change_count()));
     }
+    #[cfg(not(any(target_os = "macos", windows)))]
     Ok(JSValue::js_number(-1i64))
 }
 

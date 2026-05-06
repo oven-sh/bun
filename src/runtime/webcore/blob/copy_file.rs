@@ -713,9 +713,9 @@ impl<'a> CopyFile<'a> {
                     return;
                 }
 
-                if bun_sys::PREALLOCATE_SUPPORTED
+                if PREALLOCATE_SUPPORTED
                     && bun_sys::S::ISREG(stat.mode)
-                    && self.max_length > bun_sys::PREALLOCATE_LENGTH
+                    && self.max_length > PREALLOCATE_LENGTH
                     && self.max_length != Blob::MAX_SIZE
                 {
                     let _ = bun_sys::preallocate_file(
@@ -855,6 +855,11 @@ impl Drop for CopyFile<'_> {
         // bun.destroy(this) — Box drop is automatic
     }
 }
+
+// Port of `bun.sys.preallocate_supported` / `bun.sys.preallocate_length` (sys.zig).
+// Kept local until bun_sys exports them; values match crate::node::fs.
+const PREALLOCATE_SUPPORTED: bool = cfg!(target_os = "linux");
+const PREALLOCATE_LENGTH: SizeType = 2048 * 1024;
 
 const OPEN_DESTINATION_FLAGS: i32 =
     bun_sys::O::CLOEXEC | bun_sys::O::CREAT | bun_sys::O::WRONLY | bun_sys::O::TRUNC;

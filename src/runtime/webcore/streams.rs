@@ -7,6 +7,8 @@ use crate::webcore::jsc::{
     JSType, JSValue, JsError, JsResult, SysErrorJsc, VirtualMachine,
 };
 use bun_sys::{self as sys, Error as SysError, Fd};
+use bun_uws as uws;
+use bun_core::{strings, FeatureFlags};
 
 use crate::webcore::blob::{Any as AnyBlob, Blob};
 use crate::webcore::sink::{Sink, SinkHandler};

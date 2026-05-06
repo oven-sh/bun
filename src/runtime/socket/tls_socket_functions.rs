@@ -632,7 +632,7 @@ pub fn get_ephemeral_key_info(this: &mut This, global: &JSGlobalObject, _frame: 
             result.put(global, ZigString::static_("type"), BunString::static_("DH").to_js(global)?);
             result.put(global, ZigString::static_("size"), JSValue::js_number(bits));
         }
-        ffi::EVP_PKEY_EC | boringssl::EVP_PKEY_X25519 | boringssl::EVP_PKEY_X448 => {
+        ffi::EVP_PKEY_EC | ffi::EVP_PKEY_X25519 | ffi::EVP_PKEY_X448 => {
             let curve_name: &[u8];
             if kid == ffi::EVP_PKEY_EC {
                 // SAFETY: raw_key is a non-null EVP_PKEY of type EVP_PKEY_EC (checked just above).

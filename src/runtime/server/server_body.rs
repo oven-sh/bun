@@ -2326,7 +2326,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 ServerH3RequestContext::<SSL, DEBUG>::pool_get_or_init()
             },
             all_closed_promise: jsc::JSPromiseStrong::default(),
-            listen_callback: jsc::AnyTask::default(),
+            listen_callback: jsc::AnyTask::AnyTask::default(),
             poll_ref: KeepAlive::default(),
             flags: ServerFlags::default(),
             plugins: None,
@@ -3915,12 +3915,24 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
 
                 if self.config.h1 {
+                    extern "C" fn on_listen_cb<const SSL: bool, const DEBUG: bool>(
+                        socket: *mut uws_sys::ListenSocket,
+                        user_data: *mut c_void,
+                    ) {
+                        // SAFETY: user_data is the `*mut NewServer<..>` passed to listen_with_config.
+                        let server = unsafe { &mut *(user_data as *mut NewServer<SSL, DEBUG>) };
+                        server.on_listen(if socket.is_null() { None } else { Some(socket) });
+                    }
                     // SAFETY: app is a live uws App FFI handle owned by this server
-                    unsafe { &*app }.listen_with_config(self, Self::on_listen, uws::ListenConfig {
-                        port: tcp.port,
-                        host,
-                        options: self.config.get_usockets_options(),
-                    });
+                    unsafe { &mut *app }.listen_with_config(
+                        Some(on_listen_cb::<SSL, DEBUG>),
+                        self as *mut Self as *mut c_void,
+                        uws_sys::app::c::uws_app_listen_config_t {
+                            port: tcp.port as c_int,
+                            host: host.unwrap_or(core::ptr::null()),
+                            options: self.config.get_usockets_options(),
+                        },
+                    );
                 }
 
                 if Self::HAS_H3 {
@@ -3932,12 +3944,19 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         } else {
                             tcp.port
                         };
+                        let h3_options = self.config.get_usockets_options();
                         // SAFETY: h3_app is a live H3::App FFI handle owned by this server
-                        unsafe { &*h3_app }.listen_with_config(self, Self::on_h3_listen, uws::ListenConfig {
-                            port: h3_port,
-                            host,
-                            options: self.config.get_usockets_options(),
-                        });
+                        unsafe { &mut *h3_app }.listen_with_config(
+                            self as *mut Self,
+                            |s: &mut Self, ls: Option<&mut uws::H3::ListenSocket>| {
+                                s.on_h3_listen(ls.map(|l| l as *mut _));
+                            },
+                            uws::H3::ListenConfig {
+                                port: h3_port,
+                                host: host.unwrap_or(core::ptr::null()),
+                                options: h3_options,
+                            },
+                        );
                         if self.h3_listener.is_none() {
                             if !global.has_exception() {
                                 let _ = global.throw(format_args!("Failed to listen on UDP port {} for HTTP/3", h3_port));

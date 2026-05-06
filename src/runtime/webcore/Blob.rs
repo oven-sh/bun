@@ -2427,7 +2427,7 @@ impl Blob {
                             if !matches!(path_or_fd.path(), node::PathLike::String(_)) {
                                 path_or_fd.deinit();
                                 *path_or_fd = PathOrFileDescriptor::Path(node::PathLike::String(
-                                    bun_core::PathString::empty(),
+                                    bun_str::PathString::empty(),
                                 ));
                             }
                             return result;
@@ -2437,16 +2437,16 @@ impl Blob {
                     path_or_fd.to_thread_safe();
                     let copy = core::mem::replace(
                         path_or_fd,
-                        PathOrFileDescriptor::Path(node::PathLike::String(bun_core::PathString::empty())),
+                        PathOrFileDescriptor::Path(node::PathLike::String(bun_str::PathString::empty())),
                     );
                     break 'brk copy;
                 }
                 PathOrFileDescriptor::Fd(fd) => {
                     if let Some(tag) = fd.stdio_tag() {
                         let store = match tag {
-                            bun_sys::StdioTag::StdIn => vm.rare_data().stdin(),
-                            bun_sys::StdioTag::StdErr => vm.rare_data().stderr(),
-                            bun_sys::StdioTag::StdOut => vm.rare_data().stdout(),
+                            bun_sys::Stdio::StdIn => vm.rare_data().stdin(),
+                            bun_sys::Stdio::StdErr => vm.rare_data().stderr(),
+                            bun_sys::Stdio::StdOut => vm.rare_data().stdout(),
                         };
                         return Blob::init_with_store(store, global_this);
                     }
@@ -2471,7 +2471,7 @@ impl Blob {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let this_value = callframe.this();
-        if let Some(cached) = js::stream_get_cached(this_value) {
+        if let Some(cached) = bun_jsc::generated::JSBlob::stream_get_cached(this_value) {
             return Ok(cached);
         }
         let mut recommended_chunk_size: SizeType = 0;
@@ -2494,7 +2494,7 @@ impl Blob {
                     // in the case we have a file descriptor store, we want to de-duplicate
                     // readable streams. in every other case we want `.stream()` to be its
                     // own stream.
-                    js::stream_set_cached(this_value, global_this, stream);
+                    bun_jsc::generated::JSBlob::stream_set_cached(this_value, global_this, stream);
                 }
             }
         }
@@ -2536,7 +2536,7 @@ impl Blob {
         self.get_text_clone(global_this)
     }
 
-    pub fn get_text_clone(&mut self, global_object: &JSGlobalObject) -> jsc::JsTerminatedResult<JSValue> {
+    pub fn get_text_clone(&mut self, global_object: &JSGlobalObject) -> Result<JSValue, jsc::JsTerminated> {
         let _store = self.store.clone(); // hold a ref across the call
         Ok(JSPromise::wrap(
             global_object,
@@ -2559,7 +2559,7 @@ impl Blob {
         self.get_json_share(global_this)
     }
 
-    pub fn get_json_share(&mut self, global_object: &JSGlobalObject) -> jsc::JsTerminatedResult<JSValue> {
+    pub fn get_json_share(&mut self, global_object: &JSGlobalObject) -> Result<JSValue, jsc::JsTerminated> {
         let _store = self.store.clone();
         Ok(JSPromise::wrap(
             global_object,
@@ -2577,7 +2577,7 @@ impl Blob {
         )
     }
 
-    pub fn get_array_buffer_clone(&mut self, global_this: &JSGlobalObject) -> jsc::JsTerminatedResult<JSValue> {
+    pub fn get_array_buffer_clone(&mut self, global_this: &JSGlobalObject) -> Result<JSValue, jsc::JsTerminated> {
         let _store = self.store.clone();
         Ok(JSPromise::wrap(
             global_this,
@@ -2591,7 +2591,7 @@ impl Blob {
         self.get_array_buffer_clone(global_this)
     }
 
-    pub fn get_bytes_clone(&mut self, global_this: &JSGlobalObject) -> jsc::JsTerminatedResult<JSValue> {
+    pub fn get_bytes_clone(&mut self, global_this: &JSGlobalObject) -> Result<JSValue, jsc::JsTerminated> {
         let _store = self.store.clone();
         Ok(JSPromise::wrap(
             global_this,
@@ -2639,7 +2639,7 @@ impl Blob {
 
         // We say regular files and pipes exist.
         let file = store.data.as_file();
-        JSValue::from(bun_sys::is_regular_file(file.mode) || bun_sys::S::isfifo(file.mode))
+        JSValue::from(bun_sys::S::ISREG(file.mode) || bun_sys::S::ISFIFO(file.mode))
     }
 
     pub fn is_s3(&self) -> bool {
@@ -2670,9 +2670,9 @@ impl S3BlobDownloadTask {
     }
 
     pub fn on_s3_download_resolved(
-        result: S3::S3DownloadResult,
+        result: crate::webcore::__s3_client::S3DownloadResult,
         this: *mut S3BlobDownloadTask,
-    ) -> jsc::JsTerminatedResult<()> {
+    ) -> Result<(), jsc::JsTerminated> {
         // SAFETY: `this` was Box::into_raw'd in init() and is consumed here.
         let this = unsafe { &mut *this };
         let _drop = scopeguard::guard(this as *mut S3BlobDownloadTask, |p| unsafe {
@@ -2680,7 +2680,7 @@ impl S3BlobDownloadTask {
         });
         let global = unsafe { &*this.global_this };
         match result {
-            S3::S3DownloadResult::Success(response) => {
+            crate::webcore::__s3_client::S3DownloadResult::Success(response) => {
                 let bytes = response.body.list.items;
                 if this.blob.size == MAX_SIZE {
                     this.blob.size = bytes.len() as SizeType;
@@ -2692,7 +2692,7 @@ impl S3BlobDownloadTask {
                     (this, bytes),
                 )?;
             }
-            S3::S3DownloadResult::NotFound(err) | S3::S3DownloadResult::Failure(err) => {
+            crate::webcore::__s3_client::S3DownloadResult::NotFound(err) | crate::webcore::__s3_client::S3DownloadResult::Failure(err) => {
                 this.promise.reject(
                     global,
                     err.to_js_with_async_stack(
@@ -2711,7 +2711,7 @@ impl S3BlobDownloadTask {
         global_this: &JSGlobalObject,
         blob: &mut Blob,
         handler: S3ReadHandler,
-    ) -> jsc::JsTerminatedResult<JSValue> {
+    ) -> Result<JSValue, jsc::JsTerminated> {
         // The callback may read this.blob.content_type, which is heap-owned by the
         // source JS Blob and freed on finalize(). Take an owning dupe so the task
         // outliving the source can't dangle.
@@ -2736,13 +2736,13 @@ impl S3BlobDownloadTask {
         if blob.offset > 0 {
             let len: Option<usize> = if blob.size != MAX_SIZE { Some(usize::try_from(blob.size).unwrap()) } else { None };
             let offset: usize = usize::try_from(blob.offset).unwrap();
-            S3::download_slice(
+            crate::webcore::__s3_client::download_slice(
                 credentials, path, offset, len,
                 Self::on_s3_download_resolved as _, this as *mut c_void,
                 proxy, s3_store.request_payer,
             )?;
         } else if blob.size == MAX_SIZE {
-            S3::download(
+            crate::webcore::__s3_client::download(
                 credentials, path,
                 Self::on_s3_download_resolved as _, this as *mut c_void,
                 proxy, s3_store.request_payer,
@@ -2750,7 +2750,7 @@ impl S3BlobDownloadTask {
         } else {
             let len: usize = usize::try_from(blob.size).unwrap();
             let offset: usize = usize::try_from(blob.offset).unwrap();
-            S3::download_slice(
+            crate::webcore::__s3_client::download_slice(
                 credentials, path, offset, Some(len),
                 Self::on_s3_download_resolved as _, this as *mut c_void,
                 proxy, s3_store.request_payer,
@@ -2858,7 +2858,7 @@ impl Blob {
     // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     pub fn get_exists(&mut self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         if self.is_s3() {
-            return Ok(S3File::S3BlobStatTask::exists(global_this, self));
+            return Ok(crate::webcore::s3_file::S3BlobStatTask::exists(global_this, self));
         }
         Ok(JSPromise::resolved_promise_value(global_this, self.get_exists_sync()))
     }
@@ -2870,7 +2870,7 @@ impl Blob {
 
 pub struct FileStreamWrapper {
     pub promise: jsc::JSPromiseStrong,
-    pub readable_stream_ref: webcore::ReadableStreamStrong,
+    pub readable_stream_ref: webcore::readable_stream::ReadableStreamStrong,
     // LIFETIMES.tsv: SHARED — but FileSink uses an intrusive single-thread refcount
     // (`ref_`/`deref`) and crosses FFI as a raw pointer, so this stays `*mut`
     // rather than `Arc<T>` (matches Zig `sink: *jsc.WebCore.FileSink`).
@@ -2960,7 +2960,7 @@ impl Blob {
             let proxy = global_this.bun_vm().transpiler.env.get_http_proxy(true, None, None);
             let proxy_url = proxy.map(|p| p.href);
 
-            return Ok(S3::upload_stream(
+            return Ok(crate::webcore::__s3_client::upload_stream(
                 if extra_options.is_some() { aws_options.credentials.dupe() } else { s3.get_credentials() },
                 path,
                 readable_stream,
@@ -3024,7 +3024,7 @@ impl Blob {
                     }
 
                     if let Some(tag) = fd.stdio_tag() {
-                        matches!(tag, bun_sys::StdioTag::StdOut | bun_sys::StdioTag::StdErr)
+                        matches!(tag, bun_sys::Stdio::StdOut | bun_sys::Stdio::StdErr)
                     } else {
                         false
                     }
@@ -3063,7 +3063,7 @@ impl Blob {
             #[cfg(not(windows))]
             {
                 let sink = webcore::FileSink::init(
-                    bun_sys::INVALID_FD,
+                    Fd::INVALID,
                     // SAFETY: self.global_this stored from a live &JSGlobalObject; VM outlives this task.
                     unsafe { (*self.global_this).bun_vm() }.event_loop(),
                 );
@@ -3129,10 +3129,10 @@ impl Blob {
             // it returns a Promise when it goes through ReadableStreamDefaultReader
             if let Some(promise) = assignment_result.as_any_promise() {
                 match promise.status() {
-                    jsc::PromiseStatus::Pending => {
+                    jsc::js_promise::Status::Pending => {
                         let wrapper = Box::into_raw(Box::new(FileStreamWrapper {
                             promise: jsc::JSPromiseStrong::init(global_this),
-                            readable_stream_ref: webcore::ReadableStreamStrong::init(readable_stream, global_this),
+                            readable_stream_ref: webcore::readable_stream::ReadableStreamStrong::init(readable_stream, global_this),
                             sink: file_sink,
                         }));
                         // SAFETY: wrapper was just produced by Box::into_raw; sole owner here.
@@ -3145,13 +3145,13 @@ impl Blob {
                         )?;
                         return Ok(promise_value);
                     }
-                    jsc::PromiseStatus::Fulfilled => {
+                    jsc::js_promise::Status::Fulfilled => {
                         // SAFETY: release our +1 ref on the sink.
                         unsafe { webcore::FileSink::deref(file_sink) };
                         readable_stream.done(global_this);
                         return Ok(JSPromise::resolved_promise_value(global_this, JSValue::js_number(0)));
                     }
-                    jsc::PromiseStatus::Rejected => {
+                    jsc::js_promise::Status::Rejected => {
                         // SAFETY: release our +1 ref on the sink.
                         unsafe { webcore::FileSink::deref(file_sink) };
                         readable_stream.cancel(global_this);
@@ -5567,7 +5567,7 @@ impl Internal {
     // TODO(b2-blocked): bun_jsc::* — ZigString::to_json_object.
     
     pub fn to_json(&mut self, global_this: &JSGlobalObject) -> JSValue {
-        let str_bytes = ZigString::init(strings::without_utf8_bom(&self.bytes)).with_encoding();
+        let str_bytes = ZigString::init(strings::unicode::without_utf8_bom(&self.bytes)).with_encoding();
         let json = str_bytes.to_json_object(global_this);
         self.bytes = Vec::new();
         json

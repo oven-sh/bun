@@ -1991,7 +1991,13 @@ impl<'a> ValueBufferer<'a> {
         Ok(())
     }
 
-    fn on_finished_loading_file(&mut self, bytes: blob::read_file::ReadFileResultType) {
+    // TODO(blocked_on: blob::read_file): `blob::read_file` is `#![cfg(any())]`-gated;
+    // restore the real `ReadFileResultType` parameter once that module is ungated.
+    #[allow(dead_code)]
+    fn on_finished_loading_file(&mut self /*, bytes: blob::read_file::ReadFileResultType */) {
+        todo!("blocked_on: blob::read_file::ReadFileResultType");
+        #[allow(unreachable_code)]
+        #[cfg(any())]
         match bytes {
             blob::read_file::ReadFileResultType::Err(err) => {
                 bun_core::scoped_log!(BodyValueBufferer, "onFinishedLoadingFile Error");

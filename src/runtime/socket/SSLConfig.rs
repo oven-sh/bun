@@ -645,6 +645,7 @@ impl SSLConfig {
 mod _gated_from_js {
     use super::*;
     use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult};
+    use bun_jsc::virtual_machine::VirtualMachine;
     use bun_str::WTFStringImpl;
 
     // ── ReadFromBlobError ────────────────────────────────────────────────

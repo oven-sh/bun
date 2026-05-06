@@ -3,17 +3,23 @@ use core::mem::MaybeUninit;
 
 use bun_aio::KeepAlive;
 use bun_jsc::array_buffer::BinaryType;
+use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    CallFrame, Codegen, JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer,
-    Ref as JscRef, SystemError, VirtualMachine,
+    CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer,
+    Ref as JscRef, SystemError,
 };
 use bun_str::{self as bun_string, String as BunString, ZigString, ZigStringSlice};
 
 use crate::node::validators;
+use bun_cares_sys::c_ares_draft as c_ares;
 use bun_sys::{self, posix, SystemErrno};
 use bun_uws as uws;
+use libc::sockaddr_storage;
+#[cfg(not(windows))]
+use libc::{if_indextoname, if_nametoindex, IF_NAMESIZE};
 
 use crate::api::SocketAddress;
+use crate::socket::socket_address::inet::{self, sockaddr_in, sockaddr_in6};
 
 bun_output::declare_scope!(UdpSocket, visible);
 

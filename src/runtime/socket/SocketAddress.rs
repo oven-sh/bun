@@ -238,7 +238,7 @@ impl SocketAddress {
     ///
     /// ## References
     /// - [Node docs](https://nodejs.org/api/net.html#new-netsocketaddressoptions)
-    #[bun_jsc::host_fn]
+    // PORT NOTE: no `#[bun_jsc::host_fn]` — free-fn arm emits bare ident; see `parse`.
     pub fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<Box<SocketAddress>> {
         let options_obj = frame.argument(0);
         if options_obj.is_undefined() {

@@ -9,6 +9,68 @@ use crate::{
     PackageManager, PackageNameHash, Resolution,
 };
 
+// ──────────────────────────────────────────────────────────────────────────
+// Free-function re-export surface — Zig declares these at file scope with an
+// explicit `*PackageManager` first param. Thin shims over the
+// `impl PackageManager` bodies below so `pub use resolution::{...}` in
+// `PackageManager.rs` resolves (matching the directories/enqueue pattern).
+// ──────────────────────────────────────────────────────────────────────────
+
+#[inline]
+pub fn format_later_version_in_cache(
+    this: &mut PackageManager,
+    package_name: &[u8],
+    name_hash: PackageNameHash,
+    resolution: Resolution,
+) -> Option<semver::version::Formatter> {
+    this.format_later_version_in_cache(package_name, name_hash, resolution)
+}
+
+#[inline]
+pub fn scope_for_package_name<'a>(
+    this: &'a PackageManager,
+    name: &[u8],
+) -> &'a Npm::Registry::Scope {
+    this.scope_for_package_name(name)
+}
+
+#[inline]
+pub fn get_installed_versions_from_disk_cache(
+    this: &mut PackageManager,
+    tags_buf: &mut Vec<u8>,
+    package_name: &[u8],
+) -> Result<Vec<semver::Version>, bun_core::Error> {
+    this.get_installed_versions_from_disk_cache(tags_buf, package_name)
+}
+
+#[inline]
+pub fn resolve_from_disk_cache(
+    this: &mut PackageManager,
+    package_name: &[u8],
+    version: Dependency::Version,
+) -> Option<PackageID> {
+    this.resolve_from_disk_cache(package_name, version)
+}
+
+#[inline]
+pub fn assign_resolution(this: &mut PackageManager, dependency_id: DependencyID, package_id: PackageID) {
+    this.assign_resolution(dependency_id, package_id)
+}
+
+#[inline]
+pub fn assign_root_resolution(
+    this: &mut PackageManager,
+    dependency_id: DependencyID,
+    package_id: PackageID,
+) {
+    this.assign_root_resolution(dependency_id, package_id)
+}
+
+#[inline]
+pub fn verify_resolutions(this: &mut PackageManager, log_level: crate::package_manager::Options::LogLevel) {
+    this.verify_resolutions(log_level)
+}
+
 impl PackageManager {
     pub fn format_later_version_in_cache(
         &mut self,

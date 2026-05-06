@@ -617,7 +617,7 @@ impl NetworkTask {
         );
         self.unsafe_http_client.client.flags.reject_unauthorized = pm.tls_reject_unauthorized();
         if PackageManager::verbose_install() {
-            self.unsafe_http_client.client.verbose = http::Verbose::Headers;
+            self.unsafe_http_client.client.verbose = HTTPVerboseLevel::Headers;
         }
 
         Ok(())

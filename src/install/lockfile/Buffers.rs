@@ -382,7 +382,7 @@ impl Buffers {
         package_id: PackageID,
     ) -> Result<DependencyID, bun_core::Error> {
         match package_id {
-            0 => return Ok(Tree::ROOT_DEP_ID),
+            0 => return Ok(tree::ROOT_DEP_ID),
             id if id == invalid_package_id => return Ok(invalid_package_id),
             _ => {
                 // PORT NOTE: reshaped for borrowck — `dependency_visited` is
@@ -440,8 +440,8 @@ pub fn load(
         #[cfg(debug_assertions)]
         let _pos: usize = stream.get_pos().unwrap_or(0);
 
-        let tree_list: Vec<Tree::External> = read_array(stream)?;
-        this.trees = Tree::List::with_capacity(tree_list.len());
+        let tree_list: Vec<tree::External> = read_array(stream)?;
+        this.trees = tree::List::with_capacity(tree_list.len());
         // SAFETY: capacity == tree_list.len() reserved above; every slot is
         // written in the loop below before any read. Matches Zig
         // `this.trees.items.len = tree_list.items.len;`.
@@ -516,7 +516,7 @@ pub fn load(
     }
 
     // Legacy tree structure stores package IDs instead of dependency IDs
-    if !this.trees.is_empty() && this.trees[0].dependency_id != Tree::ROOT_DEP_ID {
+    if !this.trees.is_empty() && this.trees[0].dependency_id != tree::ROOT_DEP_ID {
         let mut visited = Bitset::init_empty(this.dependencies.len())?;
         // PORT NOTE: reshaped for borrowck — iterate by index so
         // `legacy_package_to_dependency_id` can borrow `&self` while we hold

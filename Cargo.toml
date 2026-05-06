@@ -109,6 +109,9 @@ version = "0.0.0"
 edition = "2024"
 
 [workspace.dependencies]
+rust-argon2 = "3.0"
+bcrypt = "0.19"
+getrandom = "0.4"
 parking_lot = "0.12"
 strum = { version = "0.26", features = ["derive"] }
 phf = { version = "0.11", features = ["macros"] }

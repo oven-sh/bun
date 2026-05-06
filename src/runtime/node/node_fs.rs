@@ -34,7 +34,10 @@ mod ConcurrentTask {
     pub use bun_event_loop::ConcurrentTask::ConcurrentTask;
     #[inline] pub fn create(task: bun_jsc::Task) -> *mut ConcurrentTask { ConcurrentTask::create(task) }
     #[inline] pub fn create_from<T>(task: T) -> *mut ConcurrentTask { ConcurrentTask::create_from(task) }
-    #[inline] pub fn from_callback<T>(ptr: *mut T, cb: fn(*mut T) -> bun_jsc::JsResult<()>) -> *mut ConcurrentTask {
+    #[inline] pub fn from_callback<T>(
+        ptr: *mut T,
+        cb: fn(*mut T) -> core::result::Result<(), *mut ()>,
+    ) -> *mut ConcurrentTask {
         ConcurrentTask::from_callback(ptr, cb)
     }
 }
@@ -44,9 +47,12 @@ mod ConcurrentTask {
 /// is not an associated type in the Rust port.
 type BlobSizeType = u64;
 
-/// `webcore.RefPtr<AbortSignal>` — JSC's intrusive ref-counted pointer.
-/// `bun_string::wtf::RefPtr` is the canonical alias for `bun_ptr::ExternalShared`.
-type AbortSignalRef = bun_string::wtf::RefPtr<AbortSignal>;
+/// `webcore.RefPtr<AbortSignal>` — JSC's intrusive ref-counted pointer. Zig
+/// stored this as `?*AbortSignal` and called `.ref()`/`.unref()` manually; the
+/// generic `bun_ptr::RefPtr<T>` requires `T: AnyRefCounted` which `AbortSignal`
+/// (an opaque FFI struct) does not implement, so model it as the raw pointer
+/// shape and keep the manual ref-counting at the call sites (matches the .zig).
+type AbortSignalRef = NonNull<AbortSignal>;
 
 // PORT NOTE: Zig referenced these via `bun.api.node.*`. The Phase-A draft
 // pulled them through `bun_jsc::node` (a re-export shim that no longer exists
@@ -158,13 +164,14 @@ fn without_nt_prefix<T: bun_string::strings::paths::Ch>(path: &[T]) -> &[T] {
 }
 
 /// `bun.paths.OSPathLiteral("")` — Zig comptime string→`[:0]const OSPathChar`.
-/// Only the empty-string case is used in this file.
+/// Only the empty-string case is used in this file. `OSPathSliceZ` is a DST
+/// (`ZStr`/`WStr`), so callers borrow it.
 #[inline]
-fn os_path_literal_empty() -> OSPathSliceZ {
+fn os_path_literal_empty() -> &'static OSPathSliceZ {
     #[cfg(windows)]
-    { static EMPTY: [u16; 1] = [0]; unsafe { OSPathSliceZ::from_raw_parts(EMPTY.as_ptr(), 0) } }
+    { static EMPTY: [u16; 1] = [0]; unsafe { core::mem::transmute::<&[u16], &OSPathSliceZ>(&EMPTY[..0]) } }
     #[cfg(not(windows))]
-    { ZStr::from_static(b"\0") }
+    { ZStr::from_bytes_with_nul(b"\0") }
 }
 
 /// `bun.StandaloneModuleGraph::get()` — singleton accessor. The graph type
@@ -198,15 +205,16 @@ fn get_total_memory_size() -> u64 {
 /// `bun.sys.PosixStat` — uv-shaped stat struct (`src/sys/PosixStat.rs`). The
 /// `bun_sys` crate hasn't declared the `PosixStat` module yet (sibling owns
 /// `sys/lib.rs`), and the sibling `Stat.rs` import of it is itself unresolved.
-/// We only need it as an *adapter type* for `Stats::init(&PosixStat, big)`.
-/// Mirror the conversion locally so this file compiles independently; the
-/// shape is exactly `uv_stat_t` (all `u64` + 4× timespec) and the `init` body
-/// is the field-wise widen from `libc::stat`.
-mod posix_stat_shim {
-    pub use bun_sys::PosixStat;
+/// We only need it to bridge `libc::stat → Stats::init`. Until the upstream
+/// export lands, the bridge is a typed stub so `fstat`/`lstat`/`stat` keep
+/// their full bodies (only the final conversion is `todo!`).
+struct PosixStat;
+impl PosixStat {
+    #[inline]
+    fn init(_stat: &sys::Stat) -> ! {
+        todo!("blocked_on: bun_sys::PosixStat")
+    }
 }
-#[allow(unused)]
-type PosixStat = posix_stat_shim::PosixStat;
 
 /// Node `fs.rm` mapping helper — `bun_core::err!("Name")` produces a
 /// `bun_core::Error` from a static error-set name; the *reverse* (name →
@@ -234,21 +242,21 @@ type PathInt = u32;
 /// branches at the call sites).
 #[cfg(not(windows))]
 #[inline]
-fn mkdir_os_path(path: OSPathSliceZ, mode: Mode) -> Maybe<()> {
+fn mkdir_os_path(path: &OSPathSliceZ, mode: Mode) -> Maybe<()> {
     Syscall::mkdir(path, mode)
 }
 #[cfg(not(windows))]
 #[inline]
-fn openat_os_path(dirfd: FD, path: OSPathSliceZ, flags: i32, mode: Mode) -> Maybe<FD> {
+fn openat_os_path(dirfd: FD, path: &OSPathSliceZ, flags: i32, mode: Mode) -> Maybe<FD> {
     Syscall::openat(dirfd, path, flags, mode)
 }
 #[cfg(windows)]
 #[inline]
-fn mkdir_os_path(path: OSPathSliceZ, mode: Mode) -> Maybe<()> { mkdir_os_path(path, mode) }
+fn mkdir_os_path(path: &OSPathSliceZ, mode: Mode) -> Maybe<()> { Syscall::mkdir_os_path(path, mode) }
 #[cfg(windows)]
 #[inline]
-fn openat_os_path(dirfd: FD, path: OSPathSliceZ, flags: i32, mode: Mode) -> Maybe<FD> {
-    openat_os_path(dirfd, path, flags, mode)
+fn openat_os_path(dirfd: FD, path: &OSPathSliceZ, flags: i32, mode: Mode) -> Maybe<FD> {
+    Syscall::openat_os_path(dirfd, path, flags, mode)
 }
 
 type ReadPosition = i64;
@@ -5201,7 +5209,9 @@ impl NodeFS {
             // empirically, it seems to return AccessDenied when the
             // file is actually a directory on macOS.
             if args.recursive && matches!(e1, E::ISDIR | E::NOTDIR | E::ACCES | E::PERM) {
-                if let Maybe::Err(err2) = sys::rmdir(dest) {
+                // SAFETY: `dest` is NUL-terminated by `slice_z`; rmdir(2) is the libc FFI.
+                if let Some(err2) = Maybe::<()>::errno_sys_p(unsafe { libc::rmdir(dest.as_ptr().cast()) }, sys::Tag::rmdir, args.path.slice()) {
+                    let Maybe::Err(err2) = err2 else { return Maybe::SUCCESS };
                     if err2.get_errno() == E::NOENT && args.force { return Maybe::SUCCESS; }
                     return Maybe::Err(err2.with_path_and_syscall(args.path.slice(), sys::Tag::rm));
                 }

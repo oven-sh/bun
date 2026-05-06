@@ -279,6 +279,89 @@ impl TimerObjectInternals {
         result
     }
 
+    /// Spec TimerObjectInternals.zig `init` — out-param constructor; `self` is
+    /// the embedded `internals` field of a freshly `Box::into_raw`'d
+    /// `ImmediateObject`/`TimeoutObject` (Zig: `@fieldParentPtr`). Cannot be
+    /// reshaped to `-> Self` because the body needs the parent pointer to
+    /// enqueue/reschedule before returning.
+    ///
+    /// PORT NOTE (b2-cycle): `vm.timer.epoch` resolved via `runtime_state()`
+    /// (low-tier `VirtualMachine.timer` is `()`).
+    // TODO(port): in-place init — see ImmediateObject::init / TimeoutObject::init.
+    pub fn init(
+        &mut self,
+        timer: JSValue,
+        global: &JSGlobalObject,
+        id: i32,
+        kind: Kind,
+        interval: u32, // Zig: u31
+        callback: JSValue,
+        arguments: JSValue,
+    ) {
+        let vm = VirtualMachine::get();
+        let state = crate::jsc_hooks::runtime_state();
+        debug_assert!(!state.is_null(), "RuntimeState not installed");
+
+        *self = Self {
+            id,
+            flags: {
+                let mut f = Flags::default();
+                f.set_kind(kind);
+                // SAFETY: `state` is the boxed per-thread `RuntimeState`;
+                // single-threaded JS heap so no concurrent `&mut` to `.timer`.
+                f.set_epoch(unsafe { (*state).timer.epoch });
+                f
+            },
+            interval,
+            // SAFETY: `vm` is the live per-thread VM; field read only.
+            generation: unsafe { (*vm).test_isolation_generation },
+            this_value: JsRef::empty(),
+        };
+
+        if kind == Kind::SetImmediate {
+            JSImmediate::arguments_set_cached(timer, global, arguments);
+            JSImmediate::callback_set_cached(timer, global, callback);
+            // SAFETY: `kind == SetImmediate` ⇒ `self` is the `internals` field
+            // of a live `ImmediateObject` (caller contract — see
+            // `ImmediateObject::init`).
+            let parent = unsafe {
+                (self as *mut Self as *mut u8)
+                    .sub(offset_of!(ImmediateObject, internals))
+                    .cast::<ImmediateObject>()
+            };
+            // SAFETY: `vm` is the live per-thread VM. The low-tier
+            // `bun_jsc::event_loop::ImmediateObject` is an opaque forward-decl
+            // for this crate's `ImmediateObject`; `.cast()` is the identity
+            // (consumed by `run_immediate_task_hook` which casts it back).
+            unsafe { (*vm).enqueue_immediate_task(parent.cast()) };
+            self.set_enable_keeping_event_loop_alive(vm, true);
+            // ref'd by event loop
+            self.ref_();
+        } else {
+            JSTimeout::arguments_set_cached(timer, global, arguments);
+            JSTimeout::callback_set_cached(timer, global, callback);
+            JSTimeout::idle_timeout_set_cached(
+                timer,
+                global,
+                JSValue::js_number(f64::from(interval)),
+            );
+            JSTimeout::repeat_set_cached(
+                timer,
+                global,
+                if kind == Kind::SetInterval {
+                    JSValue::js_number(f64::from(interval))
+                } else {
+                    JSValue::NULL
+                },
+            );
+
+            // this increments the refcount and sets _idleStart
+            self.reschedule(timer, vm, global.as_ptr());
+        }
+
+        self.this_value.set_strong(timer, global);
+    }
+
     /// Spec TimerObjectInternals.zig `runImmediateTask`. Returns `true` if an
     /// exception was thrown.
     ///

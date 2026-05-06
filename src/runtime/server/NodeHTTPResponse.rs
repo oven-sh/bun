@@ -2023,7 +2023,7 @@ pub extern "C" fn NodeHTTPResponse__setTimeout(
     }
 
     // PERF(port): @intCast — bounded by min(255).
-    let secs = u8::try_from(seconds.to::<c_uint>().min(255)).unwrap();
+    let secs = (seconds.to_int32().max(0) as c_uint).min(255) as u8;
     this.raw_response.as_ref().unwrap().timeout(secs);
     true
 }

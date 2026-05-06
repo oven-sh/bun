@@ -730,13 +730,14 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
     // `configureEnvForRun` writes through it. Per PORTING.md this should be reshaped to
     // `RunCommand::configure_env_for_run(...) -> Result<Transpiler, _>` in Phase B; until then
     // pass `&mut MaybeUninit<Transpiler>` (zeroed() is invalid: Transpiler is not #[repr(C)] POD).
-    let mut this_transpiler = core::mem::MaybeUninit::<bun_bundler::Transpiler>::uninit();
-    let _ = RunCommand::configure_env_for_run(&ctx, &mut this_transpiler, None, true, false)?;
+    let mut this_transpiler = core::mem::MaybeUninit::<bun_bundler::Transpiler<'static>>::uninit();
+    let _ = RunCommand::configure_env_for_run(&mut *ctx, &mut this_transpiler, None, true, false)?;
     // SAFETY: configure_env_for_run fully initializes the out-param on Ok.
     let mut this_transpiler = unsafe { this_transpiler.assume_init() };
 
+    let pattern_refs: Vec<&[u8]> = patterns.iter().map(|p| p.as_ref()).collect();
     let mut package_json_iter =
-        FilterArg::PackageFilterIterator::init(&patterns, resolve_root)?;
+        FilterArg::PackageFilterIterator::init(&pattern_refs, resolve_root)?;
     // defer package_json_iter.deinit() — handled by Drop
 
     // Get list of packages that match the configuration

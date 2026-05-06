@@ -3252,8 +3252,11 @@ impl<'a> LinkerContext<'a> {
                 .cast::<BundleV2>())
         };
         let worker = ThreadPool::Worker::get(bundle_v2);
-        // PORT NOTE: `defer worker.unget()` — Worker::get returns an RAII guard
-        // that ungets on Drop.
+        // `defer worker.unget()` — `Worker::get` pushes onto the thread-local
+        // AST memory allocator stack (ThreadPool.rs:512); `unget()` pops it.
+        // `Worker::get` returns `&'static mut Worker`, NOT an RAII guard, so we
+        // must balance it explicitly here.
+        let mut worker = scopeguard::guard(worker, |w| w.unget());
 
         // we must use this allocator here
         // SAFETY: `Worker::create` initializes `allocator` to point at

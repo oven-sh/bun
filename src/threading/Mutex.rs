@@ -36,6 +36,11 @@ pub struct Mutex {
 }
 
 impl Mutex {
+    /// Const-init an unlocked mutex (Zig: `.{}`). Required for `static` items.
+    pub const fn new() -> Self {
+        Self { impl_: Impl::new() }
+    }
+
     /// Tries to acquire the mutex without blocking the caller's thread.
     /// Returns `false` if the calling thread would have to block to acquire it.
     /// Otherwise, returns `true` and the caller should `unlock()` the Mutex to release it.
@@ -94,6 +99,10 @@ pub struct DebugImpl {
 }
 
 impl DebugImpl {
+    pub const fn new() -> Self {
+        Self { locking_thread: AtomicU64::new(0), impl_: ReleaseImpl::new() }
+    }
+
     #[inline]
     fn try_lock(&self) -> bool {
         let locking = self.impl_.try_lock();
@@ -138,6 +147,10 @@ unsafe impl Send for WindowsImpl {}
 
 #[cfg(windows)]
 impl WindowsImpl {
+    pub const fn new() -> Self {
+        Self { srwlock: core::cell::UnsafeCell::new(bun_sys::windows::SRWLOCK_INIT) }
+    }
+
     fn try_lock(&self) -> bool {
         // SAFETY: SRWLOCK is internally synchronized; pointer is valid for the call.
         unsafe {
@@ -186,6 +199,10 @@ unsafe extern "C" {
 
 #[cfg(target_vendor = "apple")]
 impl DarwinImpl {
+    pub const fn new() -> Self {
+        Self { oul: core::cell::UnsafeCell::new(OsUnfairLock { _opaque: 0 }) }
+    }
+
     fn try_lock(&self) -> bool {
         // SAFETY: os_unfair_lock is internally synchronized; pointer is valid for the call.
         unsafe { os_unfair_lock_trylock(self.oul.get()) }

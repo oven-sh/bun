@@ -237,7 +237,7 @@ pub fn set_max_send_fragment(this: &mut This, global: &JSGlobalObject, frame: &C
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::FALSE) };
     Ok(JSValue::from(
         // SAFETY: ssl_ptr is a live *mut SSL; size is range-checked to [1, 16384] above.
-        unsafe { boringssl::SSL_set_max_send_fragment(ssl_ptr, usize::try_from(size).unwrap()) } == 1,
+        unsafe { ffi::SSL_set_max_send_fragment(ssl_ptr, usize::try_from(size).unwrap()) } == 1,
     ))
 }
 

@@ -294,13 +294,13 @@ impl<'a> CopyFile<'a> {
             ) {
                 bun_sys::Result::Err(err) => {
                     self.system_error = Some(err.to_system_error());
-                    return Err(bun_sys::errno_to_error(err.errno));
+                    return Err(bun_core::errno_to_zig_err(err.errno as i32));
                 }
                 bun_sys::Result::Ok(()) => {
-                    let _ = linux::ftruncate(
-                        dest_fd.cast(),
-                        i64::try_from(total_written).unwrap(),
-                    );
+                    // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
+                    let _ = unsafe {
+                        libc::ftruncate(dest_fd.cast(), i64::try_from(total_written).unwrap())
+                    };
                     return Ok(());
                 }
             }
@@ -308,13 +308,36 @@ impl<'a> CopyFile<'a> {
 
         loop {
             // TODO: this should use non-blocking I/O.
-            let written = match USE {
+            let written: isize = match USE {
                 TryWith::CopyFileRange => {
-                    linux::copy_file_range(src_fd.cast(), None, dest_fd.cast(), None, remain, 0)
+                    // SAFETY: raw copy_file_range(2); both fds owned by caller, null offsets.
+                    unsafe {
+                        linux::copy_file_range(
+                            src_fd.cast(),
+                            core::ptr::null_mut(),
+                            dest_fd.cast(),
+                            core::ptr::null_mut(),
+                            remain,
+                            0,
+                        )
+                    }
                 }
-                TryWith::Sendfile => linux::sendfile(dest_fd.cast(), src_fd.cast(), None, remain),
+                TryWith::Sendfile => {
+                    // SAFETY: raw sendfile(2); both fds owned by caller, null offset.
+                    unsafe { linux::sendfile(dest_fd.cast(), src_fd.cast(), core::ptr::null_mut(), remain) }
+                }
                 TryWith::Splice => {
-                    bun_sys::linux::splice(src_fd.cast(), None, dest_fd.cast(), None, remain, 0)
+                    // SAFETY: raw splice(2); both fds owned by caller, null offsets.
+                    unsafe {
+                        libc::splice(
+                            src_fd.cast(),
+                            core::ptr::null_mut(),
+                            dest_fd.cast(),
+                            core::ptr::null_mut(),
+                            remain,
+                            0,
+                        )
+                    }
                 }
             };
 

@@ -93,8 +93,7 @@ pub enum Source {
     /// and decoded data: URLs.
     Owned(Vec<u8>),
     /// Owned, NUL-terminated. Read on the worker thread.
-    // TODO(port): owned `[:0]u8` field — verify `bun_str` owned-ZStr type name.
-    Path(bun_str::ZString),
+    Path(ZBox),
     /// `Bun.file()`, `Bun.s3()`, an fd-backed Blob — anything whose bytes
     /// don't exist until read. We hold a Strong on the JS Blob and, at
     /// terminal time, just call its own `.bytes()` (whatever that means for
@@ -208,7 +207,9 @@ const MAX_INPUT_FILE_BYTES: u64 = 256 << 20;
 // ───────────────────────────── lifecycle ────────────────────────────────────
 
 impl Image {
-    #[bun_jsc::host_fn]
+    // PORT NOTE: no `#[bun_jsc::host_fn]` here — `#[bun_jsc::JsClass]` on the
+    // struct emits the constructor C-ABI shim; the bare attribute would expand
+    // to a free-fn call (`constructor(__g, __f)`) that can't resolve in `impl`.
     pub fn constructor(
         global: &JSGlobalObject,
         callframe: &CallFrame,

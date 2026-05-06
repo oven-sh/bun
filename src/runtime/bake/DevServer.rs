@@ -922,15 +922,17 @@ impl Drop for DevServer<'_> {
 
 // TODO(port): AllocationScope = bun.allocators.AllocationScopeIn(bun.DefaultAllocator)
 pub type AllocationScope = bun_alloc::AllocationScope;
-pub type DevAllocator = bun_alloc::AllocationScopeBorrowed;
+// TODO(port): `AllocationScopeBorrowed` not yet in bun_alloc; alias to the
+// scope itself until the borrow-handle type lands.
+pub type DevAllocator = bun_alloc::AllocationScope;
 
 impl DevServer<'_> {
     pub fn allocator(&self) -> &dyn bun_alloc::Allocator {
-        self.allocation_scope.allocator()
+        todo!("blocked_on: bun_alloc::AllocationScope::allocator()")
     }
 
     pub fn dev_allocator(&self) -> DevAllocator {
-        self.allocation_scope.borrow()
+        todo!("blocked_on: bun_alloc::AllocationScope::borrow()")
     }
 }
 
@@ -997,17 +999,21 @@ impl DevServer<'_> {
     }
 
     /// Returns true if a catch-all handler was attached.
-    pub fn set_routes<S>(&mut self, server: &mut S) -> Result<bool, bun_core::Error>
-    where
-        S: uws::ServerLike, // TODO(port): `server: anytype` â bound by methods called below
-    {
+    // TODO(port): `server: anytype` -- monomorphized over NewServer<SSL,DEBUG> so
+    // the SSL flag is a real const-generic (associated consts can't appear in
+    // const-generic position on stable).
+    pub fn set_routes<const SSL: bool, const DEBUG: bool>(
+        &mut self,
+        server: &mut crate::server::NewServer<SSL, DEBUG>,
+    ) -> Result<bool, bun_core::Error> {
         // TODO: all paths here must be prefixed with publicPath if set.
         self.server = Some(AnyServer::from(server));
-        let app = server.app().unwrap();
+        // SAFETY: app is set before set_routes is called (server init path)
+        let app = unsafe { &mut *server.app.unwrap() };
         // TODO(port): `is_ssl` was extracted via @typeInfo(@TypeOf(app)).pointer.child.is_ssl
         macro_rules! route {
             ($method:ident, $path:expr, $handler:expr) => {
-                app.$method($path, self as *mut _, wrap_generic_request_handler::<_, { S::IS_SSL }>($handler));
+                app.$method($path, self as *mut _, wrap_generic_request_handler::<_, SSL>($handler));
             };
         }
         // TODO(port): comptime string concat â const_format::concatcp!
@@ -1023,7 +1029,7 @@ impl DevServer<'_> {
             const_format::concatcp!(INTERNAL_PREFIX, "/hmr"),
             self as *mut _,
             0,
-            WebSocketBehavior::wrap::<DevServer, HmrSocket, { S::IS_SSL }>(Default::default()),
+            WebSocketBehavior::wrap::<DevServer, HmrSocket, SSL>(Default::default()),
         );
 
         #[cfg(feature = "bake_debugging_features")]
@@ -1081,8 +1087,8 @@ fn on_outdated_js_corked(resp: AnyResponse) {
 
 fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
     let route_id = req.parameter(0);
-    let is_map = strings::has_suffix(route_id, b".js.map");
-    if !is_map && !strings::has_suffix(route_id, b".js") {
+    let is_map = strings::has_suffix_comptime(route_id, b".js.map");
+    if !is_map && !strings::has_suffix_comptime(route_id, b".js") {
         return not_found(resp);
     }
     let min_len = b"00000000FFFFFFFF.js".len() + if is_map { b".map".len() } else { 0 };
@@ -1178,7 +1184,7 @@ where
 #[inline]
 fn wrap_generic_request_handler<H, const IS_SSL: bool>(
     handler: H,
-) -> impl Fn(&mut DevServer, &mut Request, *mut uws::NewAppResponse<IS_SSL>)
+) -> impl Fn(&mut DevServer, &mut Request, *mut bun_uws_sys::NewAppResponse<IS_SSL>)
 where
     H: Fn(&mut DevServer, &mut Request, AnyResponse),
 {
@@ -1192,7 +1198,7 @@ where
 #[inline]
 fn redirect_handler<const IS_SSL: bool>(
     path: &'static [u8],
-) -> impl Fn(&mut DevServer, &mut Request, *mut uws::NewAppResponse<IS_SSL>) {
+) -> impl Fn(&mut DevServer, &mut Request, *mut bun_uws_sys::NewAppResponse<IS_SSL>) {
     move |_dev, _req, resp| {
         // SAFETY: resp is valid for the duration of the callback
         let resp = unsafe { &mut *resp };
@@ -1281,7 +1287,7 @@ impl<'a> RequestEnsureRouteBundledCtx<'a> {
             .evaluate_failure
             .as_ref()
             .unwrap();
-        let failures = core::slice::from_ref(failure);
+        let failures = ::core::slice::from_ref(failure);
         self.dev
             .send_serialized_failures(DevResponse::Http(self.resp), failures, ErrorPageKind::Evaluation, None)
     }
@@ -1362,21 +1368,23 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
                                     .server
                                     .as_ref()
                                     .unwrap()
-                                    .get_or_load_plugins(jsc::PluginTarget::DevServer(dev))
+                                    .get_or_load_plugins(
+                                        crate::server::server_body::ServePluginsCallback::DevServer(dev),
+                                    )
                                 {
-                                    jsc::PluginResult::Pending => {
+                                    crate::server::server_body::GetOrStartLoadResult::Pending => {
                                         dev.plugin_state = PluginState::Pending;
                                         plugin = PluginState::Pending;
                                         continue 'plugin;
                                     }
-                                    jsc::PluginResult::Err => {
+                                    crate::server::server_body::GetOrStartLoadResult::Err => {
                                         dev.plugin_state = PluginState::Err;
                                         plugin = PluginState::Err;
                                         continue 'plugin;
                                     }
-                                    jsc::PluginResult::Ready(ready) => {
+                                    crate::server::server_body::GetOrStartLoadResult::Ready(ready) => {
                                         dev.plugin_state = PluginState::Loaded;
-                                        dev.bundler_options.plugin = Some(ready);
+                                        dev.bundler_options.plugin = ready;
                                     }
                                 }
                             }
@@ -1542,7 +1550,7 @@ impl DevServer<'_> {
                     };
                     server_handler.ctx.ref_();
                     server_handler.ctx.set_additional_on_abort_callback(
-                        jsc::AdditionalOnAbortCallback {
+                        crate::server::any_request_context::AdditionalOnAbortCallback {
                             cb: DeferredRequest::on_abort_wrapper,
                             data: &mut deferred.data as *mut _ as *mut c_void,
                             deref_fn: {
@@ -5447,7 +5455,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
             .evaluate_failure
             .as_ref()
             .unwrap();
-        let failures = core::slice::from_ref(failure);
+        let failures = ::core::slice::from_ref(failure);
         self.dev.send_serialized_failures(
             DevResponse::Promise(promise_response),
             failures,

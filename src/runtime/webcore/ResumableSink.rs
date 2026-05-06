@@ -530,10 +530,50 @@ pub enum ResumableSinkBackpressure {
     Done,
 }
 
-pub type ResumableFetchSink<'a> =
-    ResumableSink<'a, bun_jsc::codegen::JSResumableFetchSink, FetchTasklet>;
-pub type ResumableS3UploadSink<'a> =
-    ResumableSink<'a, bun_jsc::codegen::JSResumableS3UploadSink, S3UploadStreamWrapper>;
+// TODO(b2-blocked): bun_jsc::codegen — `generate-classes.ts` has not yet emitted
+// the per-class Rust accessor modules (`JSResumableFetchSink` /
+// `JSResumableS3UploadSink`). Until it does, define zero-sized markers that
+// satisfy `ResumableSinkJs` so downstream type aliases (`ResumableFetchSink`,
+// `ResumableS3UploadSink`) and their callers type-check. All bodies panic if
+// reached at runtime.
+macro_rules! resumable_sink_js_stub {
+    ($($name:ident),* $(,)?) => {$(
+        pub enum $name {}
+        impl ResumableSinkJs for $name {
+            fn to_js(_this: *mut (), _global: &JSGlobalObject) -> JSValue {
+                todo!(concat!("blocked_on: bun_jsc::codegen::", stringify!($name)))
+            }
+            fn from_js(_value: JSValue) -> Option<*mut ()> {
+                todo!(concat!("blocked_on: bun_jsc::codegen::", stringify!($name)))
+            }
+            fn from_js_direct(_value: JSValue) -> Option<*mut ()> {
+                todo!(concat!("blocked_on: bun_jsc::codegen::", stringify!($name)))
+            }
+            fn oncancel_set_cached(_this: JSValue, _global: &JSGlobalObject, _v: JSValue) {
+                todo!(concat!("blocked_on: bun_jsc::codegen::", stringify!($name)))
+            }
+            fn oncancel_get_cached(_this: JSValue) -> Option<JSValue> {
+                todo!(concat!("blocked_on: bun_jsc::codegen::", stringify!($name)))
+            }
+            fn ondrain_set_cached(_this: JSValue, _global: &JSGlobalObject, _v: JSValue) {
+                todo!(concat!("blocked_on: bun_jsc::codegen::", stringify!($name)))
+            }
+            fn ondrain_get_cached(_this: JSValue) -> Option<JSValue> {
+                todo!(concat!("blocked_on: bun_jsc::codegen::", stringify!($name)))
+            }
+            fn stream_set_cached(_this: JSValue, _global: &JSGlobalObject, _v: JSValue) {
+                todo!(concat!("blocked_on: bun_jsc::codegen::", stringify!($name)))
+            }
+            fn stream_get_cached(_this: JSValue) -> Option<JSValue> {
+                todo!(concat!("blocked_on: bun_jsc::codegen::", stringify!($name)))
+            }
+        }
+    )*};
+}
+resumable_sink_js_stub!(JSResumableFetchSink, JSResumableS3UploadSink);
+
+pub type ResumableFetchSink<'a> = ResumableSink<'a, JSResumableFetchSink, FetchTasklet>;
+pub type ResumableS3UploadSink<'a> = ResumableSink<'a, JSResumableS3UploadSink, S3UploadStreamWrapper>;
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {

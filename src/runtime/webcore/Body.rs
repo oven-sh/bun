@@ -302,10 +302,10 @@ impl PendingValue {
                             let fd = form_data.take().unwrap();
                             // defer: form_data already taken; action.getFormData = None handled by take()
                             let encoding_js = match &fd.encoding {
-                                bun_core::FormDataEncoding::Multipart(multipart) => {
+                                bun_core::form_data::Encoding::Multipart(multipart) => {
                                     BunString::init(multipart).to_js(global_this)?
                                 }
-                                bun_core::FormDataEncoding::URLEncoded => JSValue::UNDEFINED,
+                                bun_core::form_data::Encoding::URLEncoded => JSValue::UNDEFINED,
                             };
                             // fd dropped at end of scope (Box<AsyncFormData> -> Drop)
                             break 'brk global_this
@@ -768,7 +768,7 @@ impl Value {
 
                 locked.readable = webcore::readable_stream::Strong::init(
                     ReadableStream {
-                        ptr: webcore::readable_stream::Ptr::Bytes(&mut reader.context),
+                        ptr: webcore::readable_stream::Source::Bytes(&mut reader.context),
                         value: reader.to_readable_stream(global_this)?,
                     },
                     global_this,
@@ -881,7 +881,7 @@ impl Value {
             }
 
             match &readable.ptr {
-                webcore::readable_stream::Ptr::Blob(blob) => {
+                webcore::readable_stream::Source::Blob(blob) => {
                     let result = if let Some(any_blob) = blob.to_any_blob(global_this) {
                         match any_blob {
                             AnyBlob::Blob(b) => Value::Blob(b),
@@ -1177,7 +1177,7 @@ impl Value {
         any_blob
     }
 
-    // TODO(b2-blocked): webcore::readable_stream::Ptr::Bytes + ByteStream::on_data.
+    // TODO(b2-blocked): webcore::readable_stream::Source::Bytes + ByteStream::on_data.
     
     pub fn to_error_instance(
         &mut self,
@@ -1214,7 +1214,7 @@ impl Value {
             // The Promise version goes before the ReadableStream version incase the Promise version is used too.
             // Avoid creating unnecessary duplicate JSValue.
             if let Some(readable) = strong_readable.get(global) {
-                if let webcore::readable_stream::Ptr::Bytes(bytes) = &readable.ptr {
+                if let webcore::readable_stream::Source::Bytes(bytes) = &readable.ptr {
                     bytes.on_data(streams::Result::Err(err_ref.to_stream_error(global)))?;
                 } else {
                     readable.abort(global);
@@ -1364,7 +1364,7 @@ impl Value {
 
         locked.readable = webcore::readable_stream::Strong::init(
             ReadableStream {
-                ptr: webcore::readable_stream::Ptr::Bytes(&mut reader.context),
+                ptr: webcore::readable_stream::Source::Bytes(&mut reader.context),
                 value: reader.to_readable_stream(global_this)?,
             },
             global_this,
@@ -2188,19 +2188,19 @@ impl<'a> ValueBufferer<'a> {
             }
 
             match stream.ptr {
-                webcore::readable_stream::Ptr::Invalid => {
+                webcore::readable_stream::Source::Invalid => {
                     return Err(bun_core::err!("InvalidStream"));
                 }
                 // toBlobIfPossible should've caught this
-                webcore::readable_stream::Ptr::Blob(_)
-                | webcore::readable_stream::Ptr::File(_) => unreachable!(),
-                webcore::readable_stream::Ptr::JavaScript(_)
-                | webcore::readable_stream::Ptr::Direct(_) => {
+                webcore::readable_stream::Source::Blob(_)
+                | webcore::readable_stream::Source::File(_) => unreachable!(),
+                webcore::readable_stream::Source::JavaScript(_)
+                | webcore::readable_stream::Source::Direct(_) => {
                     // this is broken right now
                     // return self.create_js_sink(stream);
                     return Err(bun_core::err!("UnsupportedStreamType"));
                 }
-                webcore::readable_stream::Ptr::Bytes(byte_stream) => {
+                webcore::readable_stream::Source::Bytes(byte_stream) => {
                     debug_assert!(byte_stream.pipe.ctx.is_null());
                     debug_assert!(self.byte_stream.is_none());
 

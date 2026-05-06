@@ -1964,7 +1964,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     }
                 }
                 break 'blk bun_fmt::URLFormatter {
-                    proto: if SSL { bun_fmt::Proto::Https } else { bun_fmt::Proto::Http },
+                    proto: if SSL { bun_fmt::URLProto::Https } else { bun_fmt::URLProto::Http },
                     hostname: tcp.hostname.as_ref().map(|h| bstr::slice_to_nul(h)),
                     port: Some(port),
                 };

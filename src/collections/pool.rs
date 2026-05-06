@@ -46,7 +46,8 @@ impl<T> Node<T> {
     /// or the node was created via `push(value)`.
     #[inline]
     pub unsafe fn data_ref(&self) -> &T {
-        self.data.assume_init_ref()
+        // SAFETY: caller guarantees `data` is initialized.
+        unsafe { self.data.assume_init_ref() }
     }
 
     /// See [`Node::data_ref`] for safety requirements.

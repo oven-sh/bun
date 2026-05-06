@@ -913,6 +913,60 @@ impl_fs_argument_stub!(
     args::Access, args::FdataSync, args::CopyFile, args::Fsync,
 );
 
+/// Convert an async-FS result payload to a `JSValue`. Mirrors Zig's
+/// `globalObject.toJS(res)` (a generic `anytype` dispatcher that calls
+/// `res.toJS(globalObject)`). Each `ret::*` type implements this; the default
+/// body is a porting stub.
+pub trait FsReturn {
+    fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue>;
+}
+macro_rules! impl_fs_return_stub {
+    ( $( $ty:ty ),+ $(,)? ) => {
+        $( impl FsReturn for $ty {
+            #[inline]
+            fn fs_to_js(&mut self, _global: &JSGlobalObject) -> JsResult<JSValue> {
+                // TODO(port): forward to inherent `to_js` once all `ret::*`
+                // grow uniform signatures; until then this keeps the generic
+                // `AsyncFSTask::run_from_js_thread` body type-correct.
+                let _ = _global;
+                todo!("blocked_on: ret::{}::to_js", core::any::type_name::<$ty>())
+            }
+        } )+
+    };
+}
+impl FsReturn for () {
+    #[inline]
+    fn fs_to_js(&mut self, _global: &JSGlobalObject) -> JsResult<JSValue> { Ok(JSValue::UNDEFINED) }
+}
+impl FsReturn for bool {
+    #[inline]
+    fn fs_to_js(&mut self, _global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(JSValue::js_boolean(*self))
+    }
+}
+impl FsReturn for Null {
+    #[inline]
+    fn fs_to_js(&mut self, _global: &JSGlobalObject) -> JsResult<JSValue> { Ok(JSValue::NULL) }
+}
+impl_fs_return_stub!(
+    Stats, FD, ZigString, StringOrBuffer, ret::StringOrUndefined,
+    ret::Read, ret::Write, node::StatFS, ret::Readdir, ret::StatOrNotFound,
+    ret::Watch, ret::Cp,
+);
+
+/// `Taskable` glue so `ConcurrentTask::create_from(this)` resolves on the
+/// generic `AsyncFSTask<R, A, F>`. The Zig source mapped each instantiation to
+/// a distinct `task_tag::*` via the comptime type-name lookup; the const-
+/// generic `F` carries that information but Rust can't compute the tag from it
+/// in a `const` context yet, so use a placeholder and rely on
+/// `bun_runtime::dispatch::run_task` (which keys on the explicit per-`F`
+/// `task_tag::*` arm) for routing.
+// TODO(port): replace with per-`async_::*` Taskable impls (or a const-fn
+// `NodeFSFunctionEnum -> TaskTag` map) once dispatch.rs's exhaustiveness
+// assert is wired.
+impl<R, A, const F: NodeFSFunctionEnum> bun_event_loop::Taskable for AsyncFSTask<R, A, F> {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ManagedTask;
+}
 
 pub struct AsyncFSTask<R, A, const F: NodeFSFunctionEnum> {
     pub promise: JSPromiseStrong,

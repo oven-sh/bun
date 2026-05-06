@@ -516,6 +516,8 @@ impl FetchTasklet {
         }
 
         if let Some(response) = self.get_current_response() {
+            // SAFETY: response is alive (native ref or weak hit)
+            let response = unsafe { &mut *response };
             bun_output::scoped_log!(FetchTasklet, "onBodyReceived Current Response");
             let size_hint = self.get_size_hint();
             response.set_size_hint(size_hint);
@@ -527,15 +529,15 @@ impl FetchTasklet {
                     let chunk = self.scheduled_response_buffer.list.as_slice();
 
                     if self.result.has_more {
-                        bytes.on_data(StreamResult::Temporary(
+                        bytes.on_data(StreamResult::Temporary(ManuallyDrop::into_inner(
                             bun_collections::ByteList::from_borrowed_slice_dangerous(chunk),
-                        ))?;
+                        )))?;
                     } else {
                         readable.value.ensure_still_alive();
                         response.detach_readable_stream(global_this);
-                        bytes.on_data(StreamResult::TemporaryAndDone(
+                        bytes.on_data(StreamResult::TemporaryAndDone(ManuallyDrop::into_inner(
                             bun_collections::ByteList::from_borrowed_slice_dangerous(chunk),
-                        ))?;
+                        )))?;
                     }
 
                     return Ok(());

@@ -240,7 +240,11 @@ impl S3Client {
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = unsafe { &*global.bun_vm() };
         let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
-        let env_creds = vm.transpiler.env.get_s3_credentials().clone();
+        // `Loader::get_s3_credentials` takes `&mut self`; reaching it through
+        // `&VirtualMachine` would require interior mutability that isn't wired
+        // up yet on the Rust side.
+        let env_creds: S3Credentials =
+            todo!("blocked_on: bun_jsc::VirtualMachine::transpiler.env.get_s3_credentials() (mutable env access)");
         let aws_options = <S3Credentials as S3CredentialsExt>::get_credentials_with_options(
             env_creds,
             MultiPartUploadOptions::default(),

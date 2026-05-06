@@ -325,9 +325,10 @@ impl<'a> GlobalJS<'a> {
     #[inline]
     pub fn enqueue_task_concurrent_wait_pid<T>(self, task: T) {
         // TODO(port): jsc::ConcurrentTask::create + jsc::Task::init are FFI helpers
+        // `ConcurrentTask` is a *module* re-export in bun_jsc; the type lives inside it.
         self.global_this
             .bun_vm_concurrently()
-            .enqueue_task_concurrent(jsc::ConcurrentTask::create(jsc::Task::init(task)));
+            .enqueue_task_concurrent(jsc::ConcurrentTask::ConcurrentTask::create(jsc::Task::init(task)));
     }
 
     #[inline]

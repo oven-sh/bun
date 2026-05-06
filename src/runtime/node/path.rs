@@ -319,17 +319,17 @@ fn without_trailing_slash(s: &[u8]) -> &[u8] {
 pub fn get_cwd_windows_u16(buf: &mut [u16]) -> MaybeBuf<'_, u16> {
     let len: u32 = strings::convert_utf8_to_utf16_in_buffer(
         buf,
-        without_trailing_slash(bun_fs::FileSystem::instance().top_level_dir()),
+        without_trailing_slash(bun_paths::fs::FileSystem::instance().top_level_dir()),
     );
     if len == 0 {
         // Indirectly calls std.os.windows.kernel32.GetLastError().
-        return Err(bun_sys::Error::errno_sys(0, Syscall::Tag::Getcwd).unwrap());
+        return Err(bun_sys::Error::from_code_int(0, bun_sys::Tag::getcwd));
     }
     Ok(&mut buf[0..len as usize])
 }
 
 pub fn get_cwd_u8(buf: &mut [u8]) -> MaybeBuf<'_, u8> {
-    let cached_cwd = without_trailing_slash(bun_fs::FileSystem::instance().top_level_dir());
+    let cached_cwd = without_trailing_slash(bun_paths::fs::FileSystem::instance().top_level_dir());
     buf[0..cached_cwd.len()].copy_from_slice(cached_cwd);
     Ok(&mut buf[0..cached_cwd.len()])
 }
@@ -337,7 +337,7 @@ pub fn get_cwd_u8(buf: &mut [u8]) -> MaybeBuf<'_, u8> {
 pub fn get_cwd_u16(buf: &mut [u16]) -> MaybeBuf<'_, u16> {
     let result = strings::convert_utf8_to_utf16_in_buffer(
         buf,
-        without_trailing_slash(bun_fs::FileSystem::instance().top_level_dir()),
+        without_trailing_slash(bun_paths::fs::FileSystem::instance().top_level_dir()),
     );
     Ok(result)
 }

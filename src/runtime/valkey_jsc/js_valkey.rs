@@ -362,7 +362,8 @@ pub struct JSValkeyClient {
 }
 
 // Codegen alias: `pub const js = jsc.Codegen.JSRedisClient;`
-pub type Js = jsc::codegen::JSRedisClient;
+// TODO(b2-blocked): swap to `jsc::codegen::JSRedisClient` once generate-classes.ts emits .rs.
+pub type Js = codegen_stub::JSRedisClient;
 // `toJS`/`fromJS`/`fromJSDirect` are provided by #[bun_jsc::JsClass] codegen.
 
 // `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` → intrusive refcount.

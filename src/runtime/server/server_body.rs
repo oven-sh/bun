@@ -46,6 +46,14 @@ macro_rules! ctx_log {
     ($($arg:tt)*) => { bun_output::scoped_log!(RequestContext, $($arg)*) };
 }
 
+// Local BoringSSL ERR_* string accessors (not yet surfaced in bun_boringssl_sys).
+// Each returns a NUL-terminated static string, or NULL if unknown.
+unsafe extern "C" {
+    fn ERR_reason_error_string(packed_error: u32) -> *const c_char;
+    fn ERR_func_error_string(packed_error: u32) -> *const c_char;
+    fn ERR_lib_error_string(packed_error: u32) -> *const c_char;
+}
+
 // ─── Re-exports ──────────────────────────────────────────────────────────────
 pub use super::web_socket_server_context::WebSocketServerContext;
 pub use super::http_status_text as HTTPStatusText;

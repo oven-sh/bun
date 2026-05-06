@@ -1467,7 +1467,7 @@ impl UDPSocket {
         Ok(JSValue::UNDEFINED)
     }
 
-    #[bun_jsc::host_fn]
+    // TODO(port): see `js_connect` — #[bun_jsc::host_fn] removed pending macro support.
     pub fn js_disconnect(global_object: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let Some(this) = call_frame.this().as_::<UDPSocket>() else {
             return global_object.throw_invalid_arguments(format_args!("Expected UDPSocket as 'this'"));

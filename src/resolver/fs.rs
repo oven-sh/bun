@@ -400,6 +400,10 @@ impl FileSystem {
 
                 // Touch the EntryStore singleton so it's initialized.
                 let _ = entry_store_backing();
+
+                // Install the cross-crate vtable so `bun_sys::fs` accessors
+                // resolve to this crate's concrete types (CYCLEBREAK §Dispatch).
+                install_sys_fs_vtable();
             }
 
             Ok((*(&raw mut INSTANCE)).as_mut_ptr())
@@ -3028,6 +3032,110 @@ impl core::fmt::Display for PrintHandle<Fd> {
 }
 // TODO(port): FmtHandleFnGenerator used @TypeOf reflection — replaced with per-type Display impls
 
+
+// ──────────────────────────────────────────────────────────────────────────
+// `bun_sys::fs` vtable provider (CYCLEBREAK §Dispatch — cold path).
+//
+// `bun_sys::fs::{FileSystem, Entry, DirEntry, DirnameStore}` are `#[repr(C)]`
+// opaque ZSTs whose every method dispatches through `FS_VTABLE`. This is the
+// high-tier static instance: each fn-ptr down-casts the erased pointer back to
+// the concrete `bun_resolver::fs` type and reads the real field.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Re-erase a slice that lives in a process-static `BSSStringList` /
+/// `DirnameStore` to `'static`. The borrow tied to `&Entry` is artificially
+/// short — see `string_store_impl!` PORT NOTE above.
+#[inline]
+unsafe fn launder_static(s: &[u8]) -> &'static [u8] {
+    // SAFETY: see fn doc — backing storage is a process-lifetime singleton.
+    unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) }
+}
+
+static SYS_FS_VTABLE: bun_sys::fs::FsVTable = bun_sys::fs::FsVTable {
+    instance: || FileSystem::instance() as *const bun_sys::fs::FileSystem,
+    entry_base: |p| {
+        // SAFETY: `p` is an erased `&bun_resolver::fs::Entry` (EntryStore-owned).
+        let e = unsafe { &*(p as *const Entry) };
+        // SAFETY: `base_` is interned in `FilenameStore` (process-static).
+        unsafe { launder_static(e.base_.slice()) }
+    },
+    entry_base_lowercase: |p| {
+        // SAFETY: see `entry_base`.
+        let e = unsafe { &*(p as *const Entry) };
+        // SAFETY: `base_lowercase_` is interned in `FilenameStore`.
+        unsafe { launder_static(e.base_lowercase_.slice()) }
+    },
+    entry_dir: |p| {
+        // SAFETY: see `entry_base`.
+        unsafe { &*(p as *const Entry) }.dir
+    },
+    entry_abs_path: |p| {
+        // SAFETY: see `entry_base`. `PathString` is `Copy`.
+        unsafe { &*(p as *const Entry) }.abs_path
+    },
+    entry_set_abs_path: |p, v| {
+        // SAFETY: `p` is an erased `&mut bun_resolver::fs::Entry`.
+        unsafe { &mut *(p as *mut Entry) }.abs_path = v;
+    },
+    entry_cache: |p| {
+        // SAFETY: see `entry_base`.
+        let c = unsafe { &*(p as *const Entry) }.cache;
+        // PORT NOTE: map `EntryKind::{Dir,File}` onto the wide `FileKind` the
+        // sys-side mirror uses; router matches on `FileKind::Directory`.
+        bun_sys::fs::EntryCache {
+            symlink: c.symlink,
+            fd: c.fd,
+            kind: match c.kind {
+                EntryKind::Dir => bun_sys::FileKind::Directory,
+                EntryKind::File => bun_sys::FileKind::File,
+            },
+        }
+    },
+    entry_kind: |p, fs, store_fd| {
+        // SAFETY: `p` is an erased `&mut Entry`; `fs` is `&mut Implementation`
+        // per the `ResolverLike::fs_impl` contract (router threads it through).
+        let e = unsafe { &mut *(p as *mut Entry) };
+        let fs = unsafe { &mut *(fs as *mut Implementation) };
+        match e.kind(fs, store_fd) {
+            EntryKind::Dir => bun_sys::FileKind::Directory,
+            EntryKind::File => bun_sys::FileKind::File,
+        }
+    },
+    dir_entry_has_comptime_query: |p, q| {
+        // SAFETY: `p` is an erased `&bun_resolver::fs::DirEntry`.
+        unsafe { &*(p as *const DirEntry) }.has_comptime_query(q)
+    },
+    dir_entry_data: |p| {
+        // SAFETY: see above.
+        let d = unsafe { &*(p as *const DirEntry) };
+        &d.data as *const dir_entry::EntryMap as *const ()
+    },
+    dir_entry_collect: |p, out| {
+        // SAFETY: `p` is an erased `&DirEntry`; `out` points to a live `Vec`
+        // owned by the `DirEntryIter` constructor on the sys side.
+        let d = unsafe { &*(p as *const DirEntry) };
+        let out = unsafe { &mut *out };
+        out.reserve(d.data.len());
+        for &v in d.data.values() {
+            out.push(v as *mut bun_sys::fs::Entry);
+        }
+    },
+    dirname_store_append: |v| DirnameStore::instance().append(v),
+    dirname_store_append_lower_case: |v| {
+        use strings::Appender as _;
+        let mut s: &'static DirnameStore = DirnameStore::instance();
+        let r = s.append_lower_case(v)?;
+        // SAFETY: re-erase to `'static`; storage owned by the process-lifetime
+        // `DirnameStore` singleton (see `string_store_impl!` PORT NOTE).
+        Ok(unsafe { launder_static(r) })
+    },
+};
+
+/// One-shot registration; called from `FileSystem::init_with_force`. Idempotent.
+#[inline]
+pub fn install_sys_fs_vtable() {
+    bun_sys::fs::install_fs_vtable(&SYS_FS_VTABLE);
+}
 
 #[path = "fs/stat_hash.rs"]
 pub mod stat_hash;

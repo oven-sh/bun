@@ -2553,8 +2553,8 @@ impl std::io::Write for FileWriter {
 
 // ──────────────────────────────────────────────────────────────────────────
 // B-2 Track A — additional surface unblocked for dependents.
-// Symbols are real posix wrappers (sys.zig posix arms 1:1); Windows arms stay
-// `todo!()` until the NT/kernel32/libuv triad in `lib_draft_b1.rs` lands.
+// Symbols are real posix wrappers (sys.zig posix arms 1:1); Windows arms route
+// through the libuv/kernel32 layer in `windows_impl` above.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// `bun.sys.Error.Int` — backing integer for `errno`.
@@ -4730,10 +4730,11 @@ pub mod fs {
     #[inline]
     fn vtable() -> &'static FsVTable {
         let p = FS_VTABLE.load(Ordering::Acquire);
-        bun_core::debug_assert!(
-            !p.is_null(),
-            "bun_sys::fs accessed before bun_resolver::fs::install_sys_fs_vtable()"
-        );
+        if p.is_null() {
+            // Surfaces mis-ordered init the same way the old `panic!` stubs did,
+            // but with a single actionable message instead of per-method noise.
+            panic!("bun_sys::fs accessed before bun_resolver::fs::install_sys_fs_vtable()");
+        }
         // SAFETY: written exactly once at startup with a `&'static FsVTable`;
         // ordering guarantees the pointee is fully visible.
         unsafe { &*p }
@@ -4798,37 +4799,52 @@ pub mod fs {
     pub struct Entry { _opaque: [u8; 0] }
     impl Entry {
         // CYCLEBREAK: real fields/body live in `bun_resolver::fs::Entry`. These
-        // accessor stubs let dependents type-check against the `bun_sys::fs`
-        // path until MOVE_DOWN lands; bodies panic to surface mis-routing.
+        // accessors dispatch through `FS_VTABLE` so dependents type-check
+        // against the `bun_sys::fs` path without an upward dep.
         // PORT NOTE: return `&'static` (not `&'_ self`) — the real backing
         // strings are interned in `DirnameStore`/`FilenameStore` and outlive
         // the `Entry`; tying them to `&self` over-constrains borrowck at the
         // call sites (e.g. `bun_router` holds `entry.base()` across a
         // `&mut entry` reborrow).
         #[inline] pub fn base(&self) -> &'static [u8] {
-            todo!("b2-blocked: bun_resolver::fs::Entry::base (MOVE_DOWN pending)")
+            // SAFETY: `self` is an erased `&bun_resolver::fs::Entry`; vtable
+            // re-erases the FilenameStore-interned slice to `'static`.
+            unsafe { (vtable().entry_base)(self) }
         }
         #[inline] pub fn base_lowercase(&self) -> &'static [u8] {
-            todo!("b2-blocked: bun_resolver::fs::Entry::base_lowercase (MOVE_DOWN pending)")
+            // SAFETY: see `base()`.
+            unsafe { (vtable().entry_base_lowercase)(self) }
         }
         #[inline] pub fn dir(&self) -> &'static [u8] {
-            todo!("b2-blocked: bun_resolver::fs::Entry::dir (MOVE_DOWN pending)")
+            // SAFETY: `dir` field is a `&'static [u8]` interned in DirnameStore.
+            unsafe { (vtable().entry_dir)(self) }
         }
         #[inline] pub fn abs_path(&self) -> bun_string::PathString {
-            todo!("b2-blocked: bun_resolver::fs::Entry::abs_path (MOVE_DOWN pending)")
+            // SAFETY: `PathString` is `Copy`; vtable reads the field.
+            unsafe { (vtable().entry_abs_path)(self) }
         }
         /// Zig: `entry.abs_path = PathString.init(...)`.
-        #[inline] pub fn set_abs_path(&mut self, _p: bun_string::PathString) {
-            todo!("b2-blocked: bun_resolver::fs::Entry::abs_path setter (MOVE_DOWN pending)")
+        #[inline] pub fn set_abs_path(&mut self, p: bun_string::PathString) {
+            // SAFETY: `self` is an erased `&mut bun_resolver::fs::Entry`.
+            unsafe { (vtable().entry_set_abs_path)(self, p) }
         }
-        #[inline] pub fn cache(&self) -> &EntryCache {
-            todo!("b2-blocked: bun_resolver::fs::Entry::cache (MOVE_DOWN pending)")
+        #[inline] pub fn cache(&self) -> EntryCache {
+            // PORT NOTE: returns by-value (was `&EntryCache`) — the real
+            // `bun_resolver::fs::EntryCache` and this mirror struct have
+            // identical fields but distinct identity; copying through the
+            // vtable seam avoids an unsound cross-crate `&` cast. All callers
+            // (`router`) only read `.fd`/`.kind`/`.symlink`.
+            // SAFETY: `EntryCache` is `Copy`; vtable reads and converts.
+            unsafe { (vtable().entry_cache)(self) }
         }
         /// Zig: `Entry.kind(fs, store_fd)`. The `fs` arg is the resolver's
         /// `Implementation` (higher-tier); accepted as `*mut c_void` here so
-        /// the stub stays tier-clean.
-        #[inline] pub fn kind(&mut self, _fs: *mut core::ffi::c_void, _store_fd: bool) -> super::EntryKind {
-            todo!("b2-blocked: bun_resolver::fs::Entry::kind (MOVE_DOWN pending)")
+        /// the dispatch stays tier-clean.
+        #[inline] pub fn kind(&mut self, fs: *mut core::ffi::c_void, store_fd: bool) -> super::EntryKind {
+            // SAFETY: `self` is an erased `&mut bun_resolver::fs::Entry`; `fs`
+            // is `&mut bun_resolver::fs::Implementation` per the caller contract
+            // (router threads `resolver.fs_impl()`).
+            unsafe { (vtable().entry_kind)(self, fs, store_fd) }
         }
     }
     /// `bun.fs.Entry.Cache` — cached stat result for an `Entry`.
@@ -4844,19 +4860,53 @@ pub mod fs {
     impl DirEntry {
         /// Zig: `DirEntry.hasComptimeQuery(comptime query)` — fast O(1) lookup
         /// of a known-at-compile-time filename in this directory's entry map.
-        #[inline] pub fn has_comptime_query(&self, _query_lower: &'static [u8]) -> bool {
-            todo!("b2-blocked: bun_resolver::fs::DirEntry::has_comptime_query (MOVE_DOWN pending)")
+        #[inline] pub fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool {
+            // SAFETY: `self` is an erased `&bun_resolver::fs::DirEntry`.
+            unsafe { (vtable().dir_entry_has_comptime_query)(self, query_lower) }
         }
         /// Accessor for the underlying `EntryMap`. Real field is
         /// `bun_resolver::fs::DirEntry.data`; opaque here.
-        #[inline] pub fn data(&self) -> &() {
-            todo!("b2-blocked: bun_resolver::fs::DirEntry::data (MOVE_DOWN pending)")
+        #[inline] pub fn data(&self) -> *const () {
+            // SAFETY: `self` is an erased `&bun_resolver::fs::DirEntry`.
+            unsafe { (vtable().dir_entry_data)(self) }
         }
         /// Zig: `dir_entry.data.iterator()`. Yields `&mut Entry` for each file
         /// in the cached directory listing.
-        #[inline] pub fn iter(&self) -> core::slice::IterMut<'_, Entry> {
-            todo!("b2-blocked: bun_resolver::fs::DirEntry iterator (MOVE_DOWN pending)")
+        #[inline] pub fn iter(&self) -> DirEntryIter<'_> {
+            let mut buf = Vec::new();
+            // SAFETY: `self` is an erased `&bun_resolver::fs::DirEntry`; `buf`
+            // is a fresh local the vtable fills with EntryStore-owned pointers.
+            unsafe { (vtable().dir_entry_collect)(self, &mut buf) };
+            DirEntryIter { buf, i: 0, _marker: core::marker::PhantomData }
         }
+    }
+    /// Iterator over the cached entries in a `DirEntry`.
+    /// PERF(port): was `data.iterator()` over the StringHashMap; collecting the
+    /// value pointers up-front is the cost of erasing the std iterator type
+    /// across the crate seam (cold path — route loading runs once per dir).
+    pub struct DirEntryIter<'a> {
+        buf: Vec<*mut Entry>,
+        i: usize,
+        _marker: core::marker::PhantomData<&'a DirEntry>,
+    }
+    impl<'a> DirEntryIter<'a> {
+        /// Hand-rolled `next` (router calls `iter.next()` directly).
+        #[allow(clippy::should_implement_trait)]
+        #[inline]
+        pub fn next(&mut self) -> Option<&'a mut Entry> {
+            let p = *self.buf.get(self.i)?;
+            self.i += 1;
+            // SAFETY: `p` is an EntryStore-owned `*mut bun_resolver::fs::Entry`
+            // valid for the process lifetime; the router holds at most one live
+            // `&mut` per element. The `'a` ties the borrow to the `DirEntry`
+            // scan, matching Zig's `data.iterator()` lifetime.
+            Some(unsafe { &mut *p })
+        }
+    }
+    impl<'a> Iterator for DirEntryIter<'a> {
+        type Item = &'a mut Entry;
+        #[inline]
+        fn next(&mut self) -> Option<&'a mut Entry> { DirEntryIter::next(self) }
     }
     /// `bun.fs.FileSystem.DirnameStore` — interned-dirname arena.
     #[repr(C)]
@@ -4864,13 +4914,13 @@ pub mod fs {
     impl DirnameStore {
         /// Intern `value` into the dirname arena, returning a `&'static` slice.
         /// Zig: `DirnameStore.append(allocator, value)`.
-        pub fn append(&self, _value: &[u8]) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
-            todo!("b2-blocked: bun_resolver::fs::DirnameStore::append (MOVE_DOWN pending)")
+        pub fn append(&self, value: &[u8]) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
+            (vtable().dirname_store_append)(value)
         }
         /// Intern the ASCII-lowercased form of `value`.
         /// Zig: `DirnameStore.appendLowerCase(allocator, value)`.
-        pub fn append_lower_case(&self, _value: &[u8]) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
-            todo!("b2-blocked: bun_resolver::fs::DirnameStore::append_lower_case (MOVE_DOWN pending)")
+        pub fn append_lower_case(&self, value: &[u8]) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
+            (vtable().dirname_store_append_lower_case)(value)
         }
     }
     /// `bun.fs.EntriesOption` — `Ok(DirEntry)` / `Err(err)`.

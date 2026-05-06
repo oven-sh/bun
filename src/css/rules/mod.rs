@@ -496,8 +496,7 @@ impl<R> CssRuleList<R> {
         // is_equivalent,Selector::from_component}, SelectorList::deep_clone,
         // DeclarationBlock::deep_clone — all `` in their leaves.
         
-        let mut style_rules: std::collections::HashMap<StyleRuleKey<R>, usize> =
-            std::collections::HashMap::new();
+        let mut style_rules = StyleRuleKeyMap::default();
         let mut rules: Vec<CssRule<R>> = Vec::new();
 
         for rule in self.v.iter_mut() {
@@ -661,7 +660,7 @@ impl<R> CssRule<R> {
 fn minify_style_arm<R>(
     rule: &mut CssRule<R>,
     rules: &mut Vec<CssRule<R>>,
-    style_rules: &mut std::collections::HashMap<StyleRuleKey<R>, usize>,
+    style_rules: &mut StyleRuleKeyMap,
     context: &mut MinifyContext<'_>,
     parent_is_unused: bool,
 ) -> Result<(), MinifyErr> {
@@ -797,14 +796,14 @@ fn minify_style_arm<R>(
         if has_no_rules {
             let key = StyleRuleKey::new(rules, idx);
             if idx > 0
-                && let Some(i) = style_rules.remove(&key)
+                && let Some(i) = style_rules.remove_duplicate(rules, &key)
                 && i < rules.len()
                 && let CssRule::Style(other) = &rules[i]
                 && (!context.css_modules || source_index == other.loc.source_index)
             {
                 rules[i] = CssRule::Ignored;
             }
-            style_rules.insert(key, idx);
+            style_rules.insert(key);
         }
     }
 

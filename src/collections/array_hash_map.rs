@@ -311,6 +311,18 @@ impl<K, V, C> ArrayHashMap<K, V, C> {
         self.hashes.reserve(additional);
     }
 
+    /// Zig: `shrinkAndFree(new_len)` — truncate to `new_len` entries (dropping
+    /// any tail) and release excess capacity. Insertion order is preserved, so
+    /// no rehash of the surviving prefix is needed.
+    pub fn shrink_and_free(&mut self, new_len: usize) {
+        self.keys.truncate(new_len);
+        self.values.truncate(new_len);
+        self.hashes.truncate(new_len);
+        self.keys.shrink_to_fit();
+        self.values.shrink_to_fit();
+        self.hashes.shrink_to_fit();
+    }
+
     /// Debug-only: assert no in-flight `GetOrPutResult` borrows when an
     /// operation that may reallocate runs. No-op in release.
     #[inline]

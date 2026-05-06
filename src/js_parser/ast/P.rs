@@ -804,11 +804,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     /// Template literals: static parts joined by \x00 placeholders.
     /// Everything else: empty string.
      // blocked_on: E::Template::Head enum (TemplateContents in E.rs differs); options.allow_unresolved
-    fn extract_dynamic_specifier_shape(
+    fn extract_dynamic_specifier_shape<'b>(
         &mut self,
         arg: Expr,
-        buf: &mut BumpVec<'a, u8>,
-    ) -> Result<&'a [u8], bun_core::Error> {
+        buf: &'b mut BumpVec<'a, u8>,
+    ) -> Result<&'b [u8], bun_core::Error> {
         if let Some(tmpl) = arg.data.e_template() {
             if tmpl.tag.is_some() {
                 return Ok(b""); // tagged template — opaque
@@ -1423,7 +1423,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             if first_none_part < parts_.len() {
                 let stmts_list = self
                     .allocator
-                    .alloc_slice_fill_with::<Stmt>(stmts_count, |_| Stmt::empty());
+                    .alloc_slice_fill_with::<Stmt, _>(stmts_count, |_| Stmt::empty());
                 let mut stmts_remain = &mut stmts_list[..];
 
                 for part in parts_.iter() {
@@ -3288,7 +3288,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     expr.loc,
                 ));
             }
-            js_ast::ExprData::EObject(ex) => {
+            js_ast::ExprData::EObject(mut ex) => {
                 if let Some(sp) = ex.comma_after_spread {
                     invalid_loc.push(InvalidLoc { loc: sp, kind: crate::parser::InvalidLocTag::Spread });
                 }
@@ -3359,7 +3359,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let mut initializer: Option<ExprNodeIndex> = None;
         let mut expr = _expr;
         // zig syntax is sometimes painful
-        if let js_ast::ExprData::EBinary(bin) = &mut expr.data {
+        if let js_ast::ExprData::EBinary(mut bin) = expr.data {
             if bin.op == js_ast::op::Code::BinAssign {
                 initializer = Some(bin.right);
                 expr = &mut bin.left;
@@ -5511,11 +5511,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 // `ReplaceableExport::Inject` boxes it, so copy into the bump
                 // arena to satisfy `declare_symbol`'s `&'a [u8]`.
                 let name: &'a [u8] = self.allocator.alloc_slice_copy(name);
+                let inject_ref =
+                    self.declare_symbol(js_ast::symbol::Kind::Other, loc, name).expect("unreachable");
                 let decls = js_ast::g::DeclList::from_slice(&[G::Decl {
-                    binding: self.b(
-                        B::Identifier { r#ref: self.declare_symbol(js_ast::symbol::Kind::Other, loc, name).expect("unreachable") },
-                        loc,
-                    ),
+                    binding: self.b(B::Identifier { r#ref: inject_ref }, loc),
                     value: Some(*value),
                 }])
                 .expect("oom");
@@ -5640,17 +5639,19 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let mut name_ref = original_name_ref;
 
         // Follow the link chain in case symbols were merged
-        let mut symbol = self.symbols[name_ref.inner_index() as usize];
+        let mut symbol = &self.symbols[name_ref.inner_index() as usize];
         while symbol.has_link() {
             let link = symbol.link;
             name_ref = link;
-            symbol = self.symbols[name_ref.inner_index() as usize];
+            symbol = &self.symbols[name_ref.inner_index() as usize];
         }
+        let symbol_kind = symbol.kind;
+        let _ = symbol;
         let allocator = self.allocator;
 
         // Make sure to only emit a variable once for a given namespace, since there
         // can be multiple namespace blocks for the same namespace
-        if (symbol.kind == js_ast::symbol::Kind::TsNamespace || symbol.kind == js_ast::symbol::Kind::TsEnum)
+        if (symbol_kind == js_ast::symbol::Kind::TsNamespace || symbol_kind == js_ast::symbol::Kind::TsEnum)
             && !self.emitted_namespace_vars.contains_key(&name_ref)
         {
             self.emitted_namespace_vars.put_no_clobber(name_ref, ()).expect("oom");
@@ -5687,22 +5688,24 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     // "name = (enclosing.name ||= {})"
                     self.record_usage(namespace);
                     self.record_usage(name_ref);
+                    let left = self.new_expr(
+                        E::Dot {
+                            target: Expr::init_identifier(namespace, name_loc),
+                            // SAFETY: Symbol.original_name is `*const [u8]` arena-owned for 'a.
+                            name: unsafe { &*name },
+                            name_loc,
+                            ..Default::default()
+                        },
+                        name_loc,
+                    );
+                    let right = self.new_expr(E::Object::default(), name_loc);
                     break 'arg_expr Expr::assign(
                         Expr::init_identifier(name_ref, name_loc),
                         self.new_expr(
                             E::Binary {
                                 op: js_ast::op::Code::BinLogicalOrAssign,
-                                left: self.new_expr(
-                                    E::Dot {
-                                        target: Expr::init_identifier(namespace, name_loc),
-                                        // SAFETY: Symbol.original_name is `*const [u8]` arena-owned for 'a.
-                                        name: unsafe { &*name },
-                                        name_loc,
-                                        ..Default::default()
-                                    },
-                                    name_loc,
-                                ),
-                                right: self.new_expr(E::Object::default(), name_loc),
+                                left,
+                                right,
                             },
                             name_loc,
                         ),
@@ -5712,11 +5715,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 
             // "name ||= {}"
             self.record_usage(name_ref);
+            let right = self.new_expr(E::Object::default(), name_loc);
             self.new_expr(
                 E::Binary {
                     op: js_ast::op::Code::BinLogicalOrAssign,
                     left: Expr::init_identifier(name_ref, name_loc),
-                    right: self.new_expr(E::Object::default(), name_loc),
+                    right,
                 },
                 name_loc,
             )

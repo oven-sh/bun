@@ -122,19 +122,45 @@ impl CachedBytecode {
 // CachedBytecode refcount. This is a Zig-specific ownership-tracking idiom.
 // In Rust the equivalent is an owning smart-pointer type; Phase B should
 // replace call sites with that.
+//
+// PORT NOTE: the Zig `VTable.free` slot called `CachedBytecode__deref(ctx)` and
+// `VTable.alloc` panicked. The Rust `bun_alloc::Allocator` marker trait has no
+// `alloc`/`free` methods to dispatch through — so the "free → deref" semantics
+// cannot ride the trait object. Call sites that would have freed through this
+// allocator must instead drop the owning `NonNull<CachedBytecode>` handle and
+// call `deref()` directly. `is_instance` is preserved for the vtable-identity
+// check in `bun_safety::alloc::has_ptr`.
 // ──────────────────────────────────────────────────────────────────────────
 
+impl bun_alloc::Allocator for CachedBytecode {}
+
+// Zero-sized probe used to obtain this impl's trait-object vtable pointer for
+// identity comparison (mirrors Zig's static `VTable` address).
+static PROBE: CachedBytecode = CachedBytecode {
+    _p: [],
+    _m: core::marker::PhantomData,
+};
+
+#[inline]
+fn vtable_of(a: &dyn bun_alloc::Allocator) -> *const () {
+    let raw: *const dyn bun_alloc::Allocator = a;
+    // SAFETY: `*const dyn Trait` is a two-word fat pointer (data, vtable); the
+    // layout is guaranteed by the Rust trait-object ABI.
+    unsafe { core::mem::transmute::<*const dyn bun_alloc::Allocator, [*const (); 2]>(raw)[1] }
+}
+
 impl CachedBytecode {
-    // TODO(port): Zig allocator-vtable ownership shim — replace call sites
-    // with an owning slice type whose Drop calls deref().
-    pub fn allocator(&mut self) -> &dyn bun_alloc::Allocator {
-        todo!("CachedBytecode.allocator: Zig allocator-vtable shim; use owning slice type in Phase B")
+    /// Zig: `.{ .ptr = this, .vtable = VTable }`. The returned `&dyn Allocator`
+    /// fat pointer carries both halves: data = `self`, vtable = the
+    /// `<CachedBytecode as Allocator>` vtable.
+    pub fn allocator(&self) -> &dyn bun_alloc::Allocator {
+        self
     }
 
-    // TODO(port): Zig allocator-vtable ownership shim — replace call sites
-    // with an owning slice type whose Drop calls deref().
-    pub fn is_instance(_allocator: &dyn bun_alloc::Allocator) -> bool {
-        todo!("CachedBytecode.is_instance: Zig vtable-identity check; use owning slice type in Phase B")
+    /// Zig: `allocator_.vtable == VTable`. Compares the vtable half of the
+    /// `&dyn Allocator` fat pointer against this type's vtable.
+    pub fn is_instance(allocator: &dyn bun_alloc::Allocator) -> bool {
+        core::ptr::eq(vtable_of(allocator), vtable_of(&PROBE))
     }
 }
 

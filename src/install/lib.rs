@@ -1521,14 +1521,6 @@ impl RunCommand {
             let _ = optional_bun_path;
             Ok(())
         }
-        #[cfg(windows)]
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_windows::{GetTempPathW,CreateHardLinkW,exe_path_w}
-            // TODO(b2-blocked): bun_string::strings::w / to_utf8_append_to_list
-            let _ = (path, optional_bun_path);
-            todo!("b2-blocked: create_fake_temporary_node_executable (windows)")
-        }
     }
 }
 

@@ -67,17 +67,14 @@ impl AllocScope {
         // TODO(port): under the global-mimalloc model (`#[global_allocator]`), callers
         // use `Box`/`Vec` directly and this accessor may be obsolete. Kept for structural
         // parity; Phase B should decide whether `AllocScope` survives at all.
-        
+        #[cfg(debug_assertions)]
         {
-            #[cfg(debug_assertions)]
-            {
-                // TODO(b2-blocked): bun_alloc::AllocationScope::allocator
-                return self.__scope.allocator();
-            }
-            // TODO(b2-blocked): bun_alloc::default_allocator
+            return self.__scope.allocator();
+        }
+        #[cfg(not(debug_assertions))]
+        {
             bun_alloc::default_allocator()
         }
-        unimplemented!("AllocScope::allocator: blocked on bun_alloc::AllocationScope::allocator")
     }
 }
 

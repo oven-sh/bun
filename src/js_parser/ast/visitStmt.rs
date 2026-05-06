@@ -404,9 +404,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let mut mark_for_replace: bool = false;
 
         let orig_dead = p.is_control_flow_dead;
-        if REPLACE_EXPORTS_REAL {
-            // blocked_on: replace_exports.get_ptr(b"default") + ReplaceableExport::is_replace
-            todo!("s_export_default: replace_exports prologue");
+        if p.options.features.replace_exports.count() > 0 {
+            if let Some(entry) = p.options.features.replace_exports.get_ptr(b"default") {
+                p.is_control_flow_dead =
+                    p.options.features.dead_code_elimination && !entry.is_replace();
+                mark_for_replace = true;
+            }
         }
 
         // Zig: defer { p.is_control_flow_dead = orig_dead; }
@@ -414,10 +417,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             () => { p.is_control_flow_dead = orig_dead; };
         }
 
-        // blocked_on: the .stmt branch needs hook_ctx_storage (Option<&'a mut _> can't hold a
-        //   stack local), visit_class 3-arg form, lower_class data flow, server_components.
-        //   Full body preserved verbatim in ` mod _draft::s_export_default`.
-        //   Round-H ports the .expr branch only; .stmt re-enters via todo!().
         match &mut data.value {
             js_ast::StmtOrExpr::Expr(expr) => {
                 let was_anonymous_named_expr = expr.is_anonymous_named();

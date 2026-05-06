@@ -1197,7 +1197,7 @@ impl FileSink {
         global_this: &JSGlobalObject,
     ) -> JSValue {
         let signal = &mut self.signal;
-        *signal = JSSink::SinkSignal::init(JSValue::ZERO);
+        *signal = SinkSignal::init(JSValue::ZERO);
         self.ref_();
         let this_ptr = self as *mut FileSink;
         let _guard = scopeguard::guard((), move |_| unsafe { (*this_ptr).deref() });

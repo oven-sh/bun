@@ -106,7 +106,7 @@ pub fn download(
 }
 
 pub fn download_slice(
-    this: &mut S3Credentials,
+    this: &S3Credentials,
     path: &[u8],
     offset: usize,
     size: Option<usize>,

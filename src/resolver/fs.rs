@@ -508,7 +508,7 @@ impl Default for Entry {
             dir: b"",
             base_: strings::StringOrTinyString::default(),
             base_lowercase_: strings::StringOrTinyString::default(),
-            mutex: Mutex::new(),
+            mutex: Mutex::default(),
             need_stat: true,
             abs_path: PathString::EMPTY,
         }

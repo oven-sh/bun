@@ -135,7 +135,7 @@ impl BunSelectorImpl for impl_::Selectors {}
 pub mod attrs {
     use super::*;
 
-    #[derive(Clone, PartialEq, Eq)]
+    #[derive(Clone)]
     pub struct NamespaceUrl<Impl: SelectorImpl> {
         pub prefix: Impl::NamespacePrefix,
         pub url: Impl::NamespaceUrl,
@@ -153,7 +153,7 @@ pub mod attrs {
         }
     }
 
-    #[derive(Clone, PartialEq)]
+    #[derive(Clone)]
     pub struct AttrSelectorWithOptionalNamespace<Impl: SelectorImpl> {
         pub namespace: Option<NamespaceConstraint<NamespaceUrl<Impl>>>,
         pub local_name: Impl::LocalName,
@@ -798,7 +798,10 @@ impl Direction {
 }
 
 /// A pseudo class.
-#[derive(Clone, PartialEq)]
+// PORT NOTE: `PartialEq` derive dropped — `Local`/`Global` carry
+// `Box<Selector>` and `CustomFunction` carries `TokenList`, neither of which
+// implements `PartialEq`. Equality goes through `eql()` (CssEql protocol).
+#[derive(Clone)]
 pub enum PseudoClass {
     /// https://drafts.csswg.org/selectors-4/#linguistic-pseudos
     /// The [:lang()](https://drafts.csswg.org/selectors-4/#the-lang-pseudo) pseudo class.

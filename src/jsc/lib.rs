@@ -569,8 +569,12 @@ impl JSValue {
         Ok(self.to_bun_string(global)?.to_utf8())
     }
     pub fn to_slice_clone(self, global: &JSGlobalObject) -> JsResult<bun_string::ZigStringSlice> {
-        // TODO(b2): clone semantics differ from to_slice — gated.
-        self.to_slice(global)
+        let _ = global;
+        // Spec (JSValue.zig `toSliceClone`) returns an owned/cloned slice
+        // independent of the backing WTFStringImpl; `to_slice` returns a
+        // possibly-borrowed view. Silently aliasing them is wrong — fail loudly
+        // until the clone path is ported.
+        todo!("JSValue::to_slice_clone")
     }
     pub fn to_slice_or_null(self, global: &JSGlobalObject) -> JsResult<bun_string::ZigStringSlice> {
         let _ = global;
@@ -1214,7 +1218,7 @@ impl JSValue {
     #[inline]
     pub fn from_cell<T>(cell: *const T) -> JSValue {
         debug_assert!(!cell.is_null());
-        JSValue(cell as usize)
+        JSValue(cell as usize, PhantomData)
     }
 
     /// Protects a JSValue from garbage collection (refcounted). The is_cell

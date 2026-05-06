@@ -950,7 +950,7 @@ impl PackageJSON {
                         // Remap all files in the browser field
                         for prop in obj.properties.slice() {
                             let Some(key_expr) = prop.key.as_ref() else { continue };
-                            let Some(_key_str) = key_expr.as_string() else { continue };
+                            let Some(_key_str) = key_expr.as_utf8_string_literal() else { continue };
                             let Some(value) = prop.value.as_ref() else { continue };
 
                             // Normalize the path so we can compare against it without getting
@@ -962,29 +962,30 @@ impl PackageJSON {
                             // import of "foo", but that's actually not a bug. Or arguably it's a
                             // bug in Browserify but we have to replicate this bug because packages
                             // do this in the wild.
-                            let key: Box<[u8]> = Box::from(r.fs.normalize(&_key_str));
+                            let key: Box<[u8]> = Box::from(r.fs.normalize(_key_str));
 
                             match &value.data {
                                 js_ast::ExprData::EString(str) => {
                                     // If this is a string, it's a replacement package
                                     package_json
                                         .browser_map
-                                        .put(key, str.string().expect("unreachable"))
+                                        .put(&key, Box::from(str.data))
                                         .expect("unreachable");
                                 }
                                 js_ast::ExprData::EBoolean(boolean) => {
                                     if !boolean.value {
-                                        package_json.browser_map.put(key, b"").expect("unreachable");
+                                        package_json.browser_map.put(&key, Box::default()).expect("unreachable");
                                     }
                                 }
                                 _ => {
                                     // Only print this warning if its not inside node_modules, since node_modules/ is not actionable.
-                                    if !json_source.path.is_node_module() {
+                                    // PORT NOTE: `logger::fs::Path` has no `is_node_module`; inline the check.
+                                    if !strings::contains(json_source.path.text, NODE_MODULES_PATH.as_bytes()) {
                                         r.log
                                             .add_warning(
                                                 Some(json_source),
                                                 value.loc,
-                                                "Each \"browser\" mapping must be a string or boolean",
+                                                b"Each \"browser\" mapping must be a string or boolean",
                                             )
                                             .expect("unreachable");
                                     }

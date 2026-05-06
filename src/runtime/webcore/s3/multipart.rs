@@ -426,6 +426,7 @@ impl MultiPartUpload {
                         this.options.retry
                     );
                     this.options.retry -= 1;
+                    let callback_context: *mut c_void = this as *mut Self as *mut c_void;
                     execute_simple_s3_request(
                         &this.credentials,
                         s3_simple_request::S3RequestOptions {
@@ -442,7 +443,7 @@ impl MultiPartUpload {
                             ..Default::default()
                         },
                         s3_simple_request::S3Callback::Upload(Self::single_send_upload_response),
-                        this as *mut Self as *mut c_void,
+                        callback_context,
                     )?;
 
                     Ok(())
@@ -781,6 +782,7 @@ impl MultiPartUpload {
         };
         let search_params = &params_buffer[..written];
 
+        let callback_context: *mut c_void = self as *mut Self as *mut c_void;
         execute_simple_s3_request(
             &self.credentials,
             s3_simple_request::S3RequestOptions {
@@ -793,7 +795,7 @@ impl MultiPartUpload {
                 ..Default::default()
             },
             s3_simple_request::S3Callback::Commit(Self::on_commit_multi_part_request),
-            self as *mut Self as *mut c_void,
+            callback_context,
         )
     }
 
@@ -811,6 +813,7 @@ impl MultiPartUpload {
         };
         let search_params = &params_buffer[..written];
 
+        let callback_context: *mut c_void = self as *mut Self as *mut c_void;
         execute_simple_s3_request(
             &self.credentials,
             s3_simple_request::S3RequestOptions {
@@ -823,7 +826,7 @@ impl MultiPartUpload {
                 ..Default::default()
             },
             s3_simple_request::S3Callback::Upload(Self::on_rollback_multi_part_request),
-            self as *mut Self as *mut c_void,
+            callback_context,
         )
     }
 
@@ -841,6 +844,7 @@ impl MultiPartUpload {
             // will auto start later
             self.state = State::MultipartStarted;
             self.ref_();
+            let callback_context: *mut c_void = self as *mut Self as *mut c_void;
             execute_simple_s3_request(
                 &self.credentials,
                 s3_simple_request::S3RequestOptions {
@@ -858,7 +862,7 @@ impl MultiPartUpload {
                     ..Default::default()
                 },
                 s3_simple_request::S3Callback::Download(Self::start_multi_part_request_result),
-                self as *mut Self as *mut c_void,
+                callback_context,
             )?;
         } else if self.state == State::MultipartCompleted {
             // SAFETY: part points into self.queue which is live; reborrow disjoint from self fields used above
@@ -984,6 +988,7 @@ impl MultiPartUpload {
             );
             self.state = State::SinglefileStarted;
             // we can do only 1 request
+            let callback_context: *mut c_void = self as *mut Self as *mut c_void;
             let _ = execute_simple_s3_request(
                 &self.credentials,
                 s3_simple_request::S3RequestOptions {
@@ -1000,7 +1005,7 @@ impl MultiPartUpload {
                     ..Default::default()
                 },
                 s3_simple_request::S3Callback::Upload(Self::single_send_upload_response),
-                self as *mut Self as *mut c_void,
+                callback_context,
             ); // TODO: properly propagate exception upwards
         } else {
             // we need to split

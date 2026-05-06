@@ -25,6 +25,10 @@ use crate::api::bun_process::{
 use crate::api::bun_spawn::stdio::{self, Stdio};
 use crate::api::bun_subprocess::{self as Subprocess, Readable, Subprocess as SubprocessT, Writable};
 use crate::api::bun::terminal::Terminal;
+use crate::api::bun_terminal_body::{
+    self as terminal_body, InitError as TerminalInitError, Options as TerminalOptions,
+    Terminal as TerminalImpl,
+};
 use crate::webcore as WebCore;
 
 // ── local shims for upstream-crate methods not yet available ────────────────
@@ -62,8 +66,8 @@ impl BunStringSpawnExt for BunString {
 }
 
 // ── AbortSignal local extension ─────────────────────────────────────────────
-// `bun_jsc::AbortSignal` is an opaque `stub_ty!` (the real impl in
-// directly so call sites keep the Zig-spec spelling.
+// `WebCore::AbortSignal` is a C++-owned type; wrap the FFI accessors directly
+// so call sites keep the Zig-spec spelling.
 unsafe extern "C" {
     fn WebCore__AbortSignal__fromJS(value: JSValue) -> *mut WebCore::AbortSignal;
     fn WebCore__AbortSignal__ref(this: *mut WebCore::AbortSignal) -> *mut WebCore::AbortSignal;
@@ -137,12 +141,11 @@ impl AbortSignalSpawnExt for WebCore::AbortSignal {
     }
 }
 
-/// `SignalCode.fromJS` lives in `bun_sys_jsc`; wrap as a free fn here so the
-/// call sites stay shape-compatible with the Zig spec.
+/// `SignalCode.fromJS` — `bun_sys_jsc` is not a dependency of `bun_runtime`;
+/// route through the crate-local port in `bun_subprocess`.
 #[inline]
 fn signal_code_from_js(val: JSValue, global: &JSGlobalObject) -> JsResult<SignalCode> {
-    let _ = (val, global);
-    todo!("blocked_on: bun_sys_jsc::signal_code_jsc::from_js")
+    Subprocess::signal_code_from_js(val, global)
 }
 
 /// `bun.timespec.orderIgnoreEpoch` — not yet on `bun_core::Timespec`; local port.

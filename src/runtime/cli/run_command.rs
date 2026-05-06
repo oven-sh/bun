@@ -26,9 +26,8 @@ use bun_paths::{self as paths, DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP};
 use bun_paths::WPathBuffer;
 use bun_resolver::dir_info::DirInfo;
 use bun_resolver::package_json::PackageJSON;
-use bun_string::{strings, MutableString};
+use bun_string::strings;
 use bun_sys::{self as sys, Fd};
-use bun_threading::Channel;
 use bun_which::which;
 
 use crate::cli;
@@ -38,8 +37,6 @@ use crate::cli::Command;
 use crate::cli::command::{ContextData, Tag as CommandTag};
 
 bun_core::declare_scope!(RUN_LOG, visible);
-#[cfg(windows)]
-bun_core::declare_scope!(BunXFastPathLog, visible);
 
 /// Local extension trait providing `.unwrap_or_oom()` on `Result<T, E>`.
 /// Zig: `catch bun.outOfMemory()` / `bun.handleOom(expr)`. No shared
@@ -2112,7 +2109,7 @@ impl RunCommand {
     }
 
     pub fn exec_with_cfg(ctx: &mut ContextData, cfg: ExecCfg) -> Result<bool, bun_core::Error> {
-        let _bin_dirs_only = cfg.bin_dirs_only;
+        let bin_dirs_only = cfg.bin_dirs_only;
         let log_errors = cfg.log_errors;
 
         // ── find what to run ────────────────────────────────────────────────
@@ -2317,6 +2314,8 @@ impl RunCommand {
         // Zig: run_command.zig:1890-1912 — search the prepended `.bin` dirs
         // (PATH minus ORIGINAL_PATH) unless `--bun` was passed, in which case
         // search the whole stitched PATH.
+        // TODO(b2-blocked): Windows `BunXFastPath::try_launch` precedes this
+        // in the .zig spec; preserved in phase_a_draft.
         {
             // SAFETY: `Transpiler::init` always sets `fs`; resolver-cache lifetime.
             let fs = unsafe { &mut *this_transpiler.fs };
@@ -2337,20 +2336,17 @@ impl RunCommand {
                     which(&mut path_buf, path_for_which, top_level_dir, target_name)
                 {
                     let out = destination.as_bytes();
-                    let stored = fs.dirname_store.append_slice(out)?;
-                    let dest_z = destination.as_ptr() as *const c_char;
-                    // PORT NOTE: borrowck reshape — `ctx.passthrough` is a
-                    // `Vec<Box<[u8]>>`; clone it so `&mut ctx` is unburdened.
-                    let passthrough: Vec<Box<[u8]>> = ctx.passthrough.clone();
-                    Self::run_binary_without_bunx_path(
-                        ctx,
-                        stored,
-                        dest_z,
-                        top_level_dir,
-                        env_loader,
-                        &passthrough,
-                        Some(target_name),
-                    )?;
+                    let _stored = fs.dirname_store.append_slice(out)?;
+                    let _ = (top_level_dir, target_name);
+                    // TODO(b2-blocked): `run_binary_without_bunx_path` lives in
+                    // `phase_a_draft` only (needs `bun_core::spawn_sync` wiring).
+                    // Once ported to the active `impl RunCommand`:
+                    //   Self::run_binary_without_bunx_path(
+                    //       ctx, stored, destination.as_ptr() as *const c_char,
+                    //       top_level_dir, env_loader, &passthrough,
+                    //       Some(target_name),
+                    //   )?;
+                    todo!("blocked_on: RunCommand::run_binary_without_bunx_path");
                 }
             }
         }
@@ -2360,17 +2356,11 @@ impl RunCommand {
             return Ok(true);
         }
 
-        // `bun feedback` — when no filters/workspaces, the `auto` command, and
-        // the literal target `feedback`, drop into the embedded feedback
-        // script (run_command.zig:1921-1925).
-        if ctx.filters.is_empty()
-            && !ctx.workspaces
-            // SAFETY: `CMD` is set once during single-threaded CLI startup.
-            && unsafe { cli::CMD } == Some(CommandTag::AutoCommand)
-            && target_name == b"feedback"
-        {
-            Self::bun_feedback(ctx)?;
-        }
+        // TODO(b2-blocked): `bun feedback` — when `ctx.filters.is_empty() &&
+        // !ctx.workspaces && Cli::cmd() == AutoCommand && target_name ==
+        // b"feedback"`, dispatch to `Self::bun_feedback(ctx)` (run_command.zig
+        // :1921-1925). Blocked on `cli::Cli::cmd()` being available in this
+        // tier; the impl is preserved in `phase_a_draft::bun_feedback`.
 
         if log_errors {
             let default_loader = Self::default_loader_for(target_name);

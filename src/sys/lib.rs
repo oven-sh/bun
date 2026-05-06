@@ -4816,6 +4816,50 @@ pub struct CreateFlags {
 }
 
 impl Dir {
+    /// `std.fs.Dir.makeDir` — single-level `mkdirat` (mode 0o755) relative to
+    /// this dir. Unlike `make_path`, does NOT create intermediate directories
+    /// and surfaces `error.PathAlreadyExists` for callers to branch on.
+    pub fn make_dir(&self, sub_path: &[u8]) -> core::result::Result<(), bun_core::Error> {
+        let mut buf = bun_paths::PathBuffer::default();
+        let len = sub_path.len().min(buf.0.len() - 1);
+        buf.0[..len].copy_from_slice(&sub_path[..len]);
+        buf.0[len] = 0;
+        // SAFETY: NUL-terminated above.
+        let z = unsafe { ZStr::from_raw(buf.0.as_ptr(), len) };
+        match mkdirat(self.fd, z, 0o755) {
+            Ok(()) => Ok(()),
+            Err(e) if e.get_errno() == E::EXIST => Err(bun_core::err!("PathAlreadyExists")),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// `std.fs.Dir.symLink` — `symlinkat(target, self.fd, link)`. The
+    /// `is_directory` flag is a no-op on POSIX (kept for parity with Zig's
+    /// `SymLinkFlags`); on Windows it selects junction vs. file-symlink and
+    /// callers route through `sys_uv::symlink_uv` instead.
+    pub fn sym_link(
+        &self,
+        target: &[u8],
+        link_name: &[u8],
+        _is_directory: bool,
+    ) -> core::result::Result<(), bun_core::Error> {
+        let mut tbuf = bun_paths::PathBuffer::default();
+        let tlen = target.len().min(tbuf.0.len() - 1);
+        tbuf.0[..tlen].copy_from_slice(&target[..tlen]);
+        tbuf.0[tlen] = 0;
+        // SAFETY: NUL-terminated above.
+        let tz = unsafe { ZStr::from_raw(tbuf.0.as_ptr(), tlen) };
+
+        let mut lbuf = bun_paths::PathBuffer::default();
+        let llen = link_name.len().min(lbuf.0.len() - 1);
+        lbuf.0[..llen].copy_from_slice(&link_name[..llen]);
+        lbuf.0[llen] = 0;
+        // SAFETY: NUL-terminated above.
+        let lz = unsafe { ZStr::from_raw(lbuf.0.as_ptr(), llen) };
+
+        symlinkat(tz, self.fd, lz).map_err(Into::into)
+    }
+
     /// `std.fs.Dir.createFileZ` — create (or truncate) `sub_path` relative to
     /// this dir and return a `File` handle. Zig stdlib semantics: `O_CREAT`,
     /// `O_WRONLY` (or `O_RDWR` if `flags.read`), `O_TRUNC` if `flags.truncate`.

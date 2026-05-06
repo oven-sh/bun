@@ -33,9 +33,108 @@ pub use store::{Store, StoreRef};
 // name in the Phase-A draft. Alias the module form so `Store::Data` resolves.
 pub use store as Store_;
 
+// blob/{read_file,write_file}.rs un-gated (heavy bodies re-gated inside each
+// file). copy_file.rs remains gated — depends on `ConstParamTy` adt const
+// generics + node_fs/NodeFS surface not yet wired.
 #[path = "blob/read_file.rs"]  pub mod read_file;
 #[path = "blob/write_file.rs"] pub mod write_file;
-#[path = "blob/copy_file.rs"]  pub mod copy_file;
+ #[path = "blob/copy_file.rs"]  pub mod copy_file;
+
+// deps), which cfg's out the `mod` *item itself* — so `read_file::` is an
+// unresolved path everywhere. Body.rs / Image.rs / this file only need the
+// public result types, so re-declare a thin module with those until the real
+// `#[path]`-decl above win and this becomes a duplicate to delete).
+#[allow(dead_code)]
+pub mod read_file {
+    use super::SizeType;
+    use bun_jsc::SystemError;
+
+    /// Zig: `ReadFile.Read` payload handed to the on-read callback.
+    pub struct ReadFileRead {
+        // TODO(port): Zig `[]u8` owned-if-`is_temporary`; modeled as Vec for
+        // uniform ownership on the Rust side.
+        pub buf: Vec<u8>,
+        pub is_temporary: bool,
+        pub total_size: SizeType,
+    }
+
+    /// Zig: `SystemError.Maybe(ReadFileRead)`
+    pub enum ReadFileResultType {
+        Result(ReadFileRead),
+        Err(SystemError),
+    }
+}
+
+// + WorkTask deps), which cfg's out the `mod` *item itself* — so
+// `super::write_file` resolves to the *function* `write_file` below instead of
+// the module. `_jsc_gated` only needs the public façade types
+// (`WriteFilePromise`, `WriteFileWaitFromLockedValueTask`, `WriteFile{,Task}`),
+// so re-declare a thin module with `todo!()` bodies until the real body
+#[allow(dead_code, unused_variables)]
+pub mod write_file {
+    use super::{jsc, Blob, JSGlobalObject, SizeType};
+    use core::ffi::c_void;
+
+    /// Zig: `SystemError.Maybe(SizeType)`
+    pub enum WriteFileResultType {
+        Result(SizeType),
+        Err(bun_jsc::SystemError),
+    }
+
+    pub type WriteFileOnWriteFileCallback<C> =
+        fn(ctx: *mut C, count: WriteFileResultType) -> Result<(), bun_jsc::JsTerminated>;
+
+    pub struct WriteFilePromise<'a> {
+        pub promise: jsc::JSPromiseStrong,
+        pub global_this: &'a JSGlobalObject,
+    }
+    impl<'a> WriteFilePromise<'a> {
+        pub fn run(
+            _handler: *mut Self,
+            _count: WriteFileResultType,
+        ) -> Result<(), bun_jsc::JsTerminated> {
+            todo!("blocked_on: write_file::WriteFilePromise::run")
+        }
+    }
+
+    pub struct WriteFileWaitFromLockedValueTask<'a> {
+        pub file_blob: Blob,
+        pub global_this: &'a JSGlobalObject,
+        pub promise: jsc::JSPromiseStrong,
+        pub mkdirp_if_not_exists: bool,
+    }
+    impl<'a> WriteFileWaitFromLockedValueTask<'a> {
+        pub fn then_wrap(_this: *mut c_void, _value: &mut crate::webcore::body::Value) {
+            todo!("blocked_on: write_file::WriteFileWaitFromLockedValueTask::then_wrap")
+        }
+    }
+
+    pub struct WriteFile;
+    impl WriteFile {
+        pub fn create<C>(
+            _dest: Blob,
+            _src: Blob,
+            _ctx: *mut C,
+            _cb: WriteFileOnWriteFileCallback<C>,
+            _mkdirp: bool,
+        ) -> Result<Box<WriteFile>, bun_core::Error> {
+            todo!("blocked_on: write_file::WriteFile::create")
+        }
+    }
+
+    pub struct WriteFileTask;
+    impl WriteFileTask {
+        pub fn create_on_js_thread(
+            _global: &JSGlobalObject,
+            _wf: Box<WriteFile>,
+        ) -> Box<WriteFileTask> {
+            todo!("blocked_on: write_file::WriteFileTask::create_on_js_thread")
+        }
+        pub fn schedule(&self) {
+            todo!("blocked_on: write_file::WriteFileTask::schedule")
+        }
+    }
+}
 
 /// Deallocator for `ArrayBuffer`s backed by a `Blob::Store` ref. Passed as a C
 /// callback to `ArrayBuffer::to_js_with_context`; the `ctx` is a raw `Store*`
@@ -414,51 +513,41 @@ use bun_bundler::options_impl::LoaderExt as _;
 #[allow(unused_imports)]
 use bun_jsc::zig_string::ZigString as JscZigString;
 
-/// Re-export of `bun_jsc::dom_form_data::FormDataEntry` with the `blob`
-/// payload reinterpreted as the runtime `Blob` (the bun_jsc copy is the
-/// layout-identical lower-tier forward-decl). `FormDataContext::on_entry`
-/// pointer-casts at the boundary; see `from_dom_form_data` below.
-pub use bun_jsc::dom_form_data::FormDataEntry;
+/// Local mirror of `jsc.DOMFormData.FormDataEntry` (`union(enum) { string, file }`).
+/// `bun_jsc::dom_form_data::FormDataEntry` carries `&Blob` (immutable) but
+/// `FormDataContext::on_entry` needs `&mut Blob` to call `resolve_size()`, so
+/// we drive the C++ `DOMFormData__forEach` directly with this mutable variant.
+pub enum FormDataEntry<'a> {
+    String(ZigString),
+    File { blob: &'a mut Blob, filename: ZigString },
+}
 
 impl Blob {
-    /// `comptime Function` (Zig) → `F: ReadFileToJs` trait dispatch (Rust).
-    /// The wrapper adapts the trait fn to the `S3ReadHandler` ABI and uses
-    /// `to_js_host_call` to map `JsResult` → `JSValue|.zero` exactly as
-    /// Zig's `jsc.toJSHostCall` does.
+    /// `Function` is the comptime `*WithBytes` callback (Zig: `comptime Function: anytype`).
+    /// Modeled as a [`read_file::ReadFileToJs`] impl so the wrapped fn-pointer
+    /// monomorphizes per call site without `fn_traits`.
     pub fn do_read_from_s3<F: read_file::ReadFileToJs>(
         &mut self,
         global: &JSGlobalObject,
     ) -> JsTerminatedResult<JSValue> {
         debug!("doReadFromS3");
+        // Zig: `WrappedFn.wrapped` — adapt `(b, g, bytes)` → `(b, g, bytes, .clone)`
+        // and route through `to_js_host_call` so the exception scope is asserted.
         fn wrapped<F: read_file::ReadFileToJs>(
             b: &mut Blob,
             g: *const JSGlobalObject,
             by: &mut [u8],
         ) -> JSValue {
-            // SAFETY: `g` is the live `&JSGlobalObject` stashed in the
-            // S3BlobDownloadTask at `init` time; the VM outlives the task.
+            // SAFETY: `g` is the `&JSGlobalObject` stored on the task in `init`.
             let g = unsafe { &*g };
-            // PORT NOTE: reshaped for borrowck — Zig captured `by` once and
-            // passed it through `toJSHostCall(..., .{b, g, by, .clone})`.
-            // The Rust `to_js_host_call` takes a `FnOnce` closure, which
-            // would require moving `b`/`by` (`&mut` reborrows don't escape
-            // a closure cleanly here). Round-trip through raw pointers to
-            // satisfy the closure-capture rules; same observable effect.
-            let b_ptr = b as *mut Blob;
-            let by_ptr = by as *mut [u8];
-            jsc::host_fn::to_js_host_call(g, core::panic::Location::caller(), move || {
-                // SAFETY: `b_ptr`/`by_ptr` are live unique borrows for the
-                // duration of this synchronous callback.
-                F::call(unsafe { &mut *b_ptr }, g, unsafe { &mut *by_ptr }, Lifetime::Clone)
+            jsc::host_fn::to_js_host_call(g, core::panic::Location::caller(), || {
+                F::call(b, g, by, Lifetime::Clone)
             })
         }
         S3BlobDownloadTask::init(global, self, wrapped::<F>)
     }
 
-    pub fn do_read_file<F: read_file::ReadFileToJs + 'static>(
-        &mut self,
-        global: &JSGlobalObject,
-    ) -> JSValue {
+    pub fn do_read_file<F: read_file::ReadFileToJs>(&mut self, global: &JSGlobalObject) -> JSValue {
         debug!("doReadFile");
 
         type Handler<'a, F> = read_file::NewReadFileHandler<'a, F>;
@@ -466,49 +555,36 @@ impl Blob {
         // The callback may read context.content_type (e.g. to_form_data_with_bytes),
         // which is heap-owned by the source JS Blob and freed on finalize(). Take
         // an owning dupe so the handler outliving the source can't dangle.
-        // PORT NOTE: `global_this: &'a JSGlobalObject` on the handler is stored
-        // across an async hop; the pointer is stable (JSC heap), so erase the
-        // borrow to `'static` here. Mirrors Zig `*JSGlobalObject` raw-ptr field.
-        // SAFETY: the `JSGlobalObject` outlives every task scheduled on it.
-        let global_static: &'static JSGlobalObject = unsafe { &*(global as *const _) };
-        let handler: *mut Handler<'static, F> = Box::into_raw(Box::new(Handler::<'static, F> {
-            context: self.dupe(),
-            promise: jsc::JSPromiseStrong::default(),
-            global_this: global_static,
-            _f: core::marker::PhantomData,
-        }));
+        let handler = Box::into_raw(Box::new(Handler::<'_, F>::new(self.dupe(), global)));
 
         #[cfg(windows)]
         {
-            let promise = JSPromise::create(global);
-            let promise_value = promise.to_js();
-            promise_value.ensure_still_alive();
-            // SAFETY: handler was just boxed
+            // SAFETY: handler was just boxed; sole owner.
             unsafe { (*handler).promise = jsc::JSPromiseStrong::init(global) };
-            // SAFETY: handler is live until ReadFileUV consumes it.
             let promise_value = unsafe { (*handler).promise.value() };
+            promise_value.ensure_still_alive();
 
             read_file::ReadFileUV::start(
-                // SAFETY: `bun_vm()` returns the live per-global VM pointer.
+                // SAFETY: `bun_vm()` returns the live VM for this global.
                 unsafe { &*global.bun_vm() }.event_loop(),
                 self.store.as_ref().unwrap().clone(),
                 self.offset,
                 self.size,
                 handler,
             );
-
             return promise_value;
         }
 
         #[cfg(not(windows))]
         {
-            let file_read = bun_core::handle_oom(read_file::ReadFile::create(
+            let file_read = read_file::ReadFile::create(
                 self.store.as_ref().unwrap().clone(),
                 self.offset,
                 self.size,
                 handler,
-                Handler::<'static, F>::run,
-            ));
+                Handler::<'_, F>::run,
+            )
+            .unwrap_or_else(|e| bun_core::handle_oom(Err(e)));
             let read_file_task =
                 read_file::ReadFileTask::create_on_js_thread(global, Box::into_raw(file_read));
 
@@ -516,14 +592,14 @@ impl Blob {
             // The garbage collector runs on memory allocations
             // The JSPromise is the next GC'd memory allocation.
             // This shouldn't really fix anything, but it's a little safer.
-            // SAFETY: handler was just boxed
+            // PORT NOTE: `JSPromiseStrong.strong` is private; `init` creates the
+            // JSPromise *and* the strong handle in one step, matching the Zig.
+            // SAFETY: handler was just boxed; sole owner.
             unsafe { (*handler).promise = jsc::JSPromiseStrong::init(global) };
-            // SAFETY: handler is live until ReadFile::then consumes it.
             let promise_value = unsafe { (*handler).promise.value() };
             promise_value.ensure_still_alive();
 
-            // SAFETY: `read_file_task` was Box::into_raw'd by `create_on_js_thread`.
-            unsafe { read_file::ReadFileTask::schedule(read_file_task) };
+            read_file::ReadFileTask::schedule(read_file_task);
 
             debug!("doReadFile: read_file_task scheduled");
             promise_value
@@ -623,41 +699,39 @@ impl Blob {
         Image::from_blob_js(global, cf.this(), cf.argument(0))
     }
 
-    pub fn do_read_file_internal<H, F>(
+    pub fn do_read_file_internal<H>(
         &mut self,
-        ctx: *mut H,
+        ctx: H,
+        function: fn(H, read_file::ReadFileResultType),
         global: &JSGlobalObject,
-    )
-    where
-        F: InternalReadFileFn<H>,
-    {
+    ) {
+        let _ = (ctx, function, global);
+        todo!("blocked_on: read_file::ReadFile / ReadFileTask / ReadFileUV (gated in blob/read_file.rs)");
+        {
         #[cfg(windows)]
         {
-            // SAFETY: `bun_vm()` returns the live per-global VM pointer.
-            let vm = unsafe { &*global.bun_vm() };
-            read_file::ReadFileUV::start(
-                vm.event_loop(),
+            return read_file::ReadFileUV::start(
+                global.bun_vm().event_loop(),
                 self.store.as_ref().unwrap().clone(),
                 self.offset,
                 self.size,
-                ctx.cast::<c_void>(),
-                NewInternalReadFileHandler::<H, F>::run,
+                // TODO(port): NewInternalReadFileHandler<H, function>
+                ctx,
             );
         }
         #[cfg(not(windows))]
         {
-            let file_read = bun_core::handle_oom(read_file::ReadFile::create_with_ctx(
+            let file_read = read_file::ReadFile::create_with_ctx(
                 self.store.as_ref().unwrap().clone(),
-                ctx.cast::<c_void>(),
-                NewInternalReadFileHandler::<H, F>::run,
+                ctx,
+                function,
                 self.offset,
                 self.size,
-            ));
-            let read_file_task =
-                read_file::ReadFileTask::create_on_js_thread(global, Box::into_raw(file_read));
-            // SAFETY: `read_file_task` was Box::into_raw'd by `create_on_js_thread`.
-            unsafe { read_file::ReadFileTask::schedule(read_file_task) };
+            );
+            let read_file_task = read_file::ReadFileTask::create_on_js_thread(global, file_read);
+            read_file_task.schedule();
         }
+        } // end cfg(any())
     }
 }
 

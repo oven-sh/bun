@@ -100,6 +100,32 @@ impl JSGlobalObjectDnsExt for JSGlobalObject {
     }
 }
 
+/// `JSValue::to_port_number` — local trait extension (the inherent method
+/// has not yet landed on `bun_jsc::JSValue`; ported here from
+/// `JSValue.zig::toPortNumber`).
+pub(crate) trait JSValueDnsExt {
+    fn to_port_number(self, global: &JSGlobalObject) -> JsResult<u16>;
+}
+impl JSValueDnsExt for JSValue {
+    fn to_port_number(self, global: &JSGlobalObject) -> JsResult<u16> {
+        if self.is_number() {
+            let double = self.to_number(global)?;
+            if double.is_nan() {
+                return Err(jsc::ErrorCode::SOCKET_BAD_PORT
+                    .throw(global, format_args!("Invalid port number")));
+            }
+            let port = self.to_int64();
+            if (0..=65535).contains(&port) {
+                return Ok(port.max(0) as u16);
+            }
+            return Err(jsc::ErrorCode::SOCKET_BAD_PORT
+                .throw(global, format_args!("Port number out of range: {port}")));
+        }
+        Err(jsc::ErrorCode::SOCKET_BAD_PORT
+            .throw(global, format_args!("Invalid port number")))
+    }
+}
+
 /// Helper: fetch the per-VM global DNS resolver (port of
 /// `RareData::globalDNSResolver`). The slot itself lives in `bun_jsc::RareData`
 /// as a type-erased `Option<NonNull<c_void>>` to break the
@@ -1047,6 +1073,21 @@ impl GetNameInfoRequest {
             let mut head = owned.head;
             CAresNameInfo::process_resolve(&mut head, err_, timeout, result);
         }
+    }
+}
+
+impl c_ares::NameinfoHandler for GetNameInfoRequest {
+    #[inline]
+    fn on_nameinfo(
+        &mut self,
+        status: Option<c_ares::Error>,
+        timeouts: i32,
+        info: Option<c_ares::struct_nameinfo>,
+    ) {
+        // SAFETY: `self` is the `Box::into_raw`'d heap request registered with
+        // c-ares; `on_cares_complete` consumes it (Box::from_raw) on every path.
+        // The c-ares callback wrapper does not touch `self` after this returns.
+        GetNameInfoRequest::on_cares_complete(self as *mut Self, status, timeouts, info);
     }
 }
 
@@ -4861,11 +4902,15 @@ impl Resolver {
         );
 
         let promise = unsafe { (*(*request).tail).promise.value() };
-        // TODO(port): blocked_on bun_cares_sys::c_ares_draft::Channel::get_name_info —
-        // upstream is `get_name_info<T: NameinfoHandler>(&mut self, sa: &mut sockaddr,
-        // ctx: &mut T)` (trait-based callback). `GetNameInfoRequest` does not yet impl
-        // `NameinfoHandler`; Zig passed `(sa, ctx, callback)` directly.
-        let _ = (channel, &mut sa, request);
+        // SAFETY: `channel` is the live c-ares channel; `sa` is a valid
+        // sockaddr_storage reborrowed as sockaddr; `request` was just
+        // `Box::into_raw`'d and is owned by c-ares until the callback fires.
+        unsafe {
+            (*channel).get_name_info(
+                &mut *(&mut sa as *mut _ as *mut libc::sockaddr),
+                &mut *request,
+            );
+        }
 
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
         resolver.request_sent(unsafe { &*global_this.bun_vm() });

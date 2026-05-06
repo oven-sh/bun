@@ -231,10 +231,9 @@ pub fn run_task(
         }
         task_tag::CppTask => {
             // Zig: `any.run(global) catch |err| reportErrorOrTerminate(global, err)`.
-            // `bun_jsc::CppTask` is currently the event_loop stub re-export; the
-            // real `bun_jsc::cpp_task::CppTask::run` lives in the gated block.
-            let _ = cast!(CppTask);
-            todo!("blocked_on: bun_jsc::cpp_task::CppTask::run");
+            if let Err(err) = cast!(CppTask).run(global) {
+                report_error_or_terminate(global, err)?;
+            }
         }
 
         // ── archive ──────────────────────────────────────────────────────

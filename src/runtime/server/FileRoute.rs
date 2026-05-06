@@ -14,11 +14,10 @@ use bun_uws::{AnyRequest, AnyResponse};
 
 use crate::server::file_response_stream::StartOptions as FileResponseStreamOptions;
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
-use crate::server::static_route::{any_blob_ref, fetch_headers_ref};
 use crate::server::{write_status, AnyServer, FileResponseStream, RangeRequest};
 use crate::webcore::blob::store::Data as StoreData;
 use crate::webcore::node_types::PathOrFileDescriptor;
-use crate::webcore::{body, AnyBlob, Blob, FetchHeaders, Response};
+use crate::webcore::{body, Blob, FetchHeaders, Response};
 
 pub struct FileRoute {
     // PORT NOTE: intrusive RefCount — `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`.

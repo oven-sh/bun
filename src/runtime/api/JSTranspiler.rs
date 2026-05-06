@@ -1145,45 +1145,6 @@ impl Drop for JSTranspiler {
     }
 }
 
-/// Check if code looks like an object literal that would be misinterpreted as a block
-/// Returns true if code starts with { (after whitespace) and doesn't end with ;
-/// This matches Node.js REPL behavior for object literal disambiguation
-fn is_likely_object_literal(code: &[u8]) -> bool {
-    // Skip leading whitespace
-    let mut start: usize = 0;
-    while start < code.len()
-        && (code[start] == b' '
-            || code[start] == b'\t'
-            || code[start] == b'\n'
-            || code[start] == b'\r')
-    {
-        start += 1;
-    }
-
-    // Check if starts with {
-    if start >= code.len() || code[start] != b'{' {
-        return false;
-    }
-
-    // Skip trailing whitespace
-    let mut end: usize = code.len();
-    while end > 0
-        && (code[end - 1] == b' '
-            || code[end - 1] == b'\t'
-            || code[end - 1] == b'\n'
-            || code[end - 1] == b'\r')
-    {
-        end -= 1;
-    }
-
-    // Check if ends with semicolon - if so, it's likely a block statement
-    if end > 0 && code[end - 1] == b';' {
-        return false;
-    }
-
-    true
-}
-
 impl JSTranspiler {
     fn get_parse_result(
         &mut self,

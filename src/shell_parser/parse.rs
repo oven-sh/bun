@@ -113,6 +113,9 @@ pub mod ast {
     }
 
     #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
+    // PORT NOTE: must match Zig `@tagName(AST.Expr.Tag)` exactly — used in
+    // user-visible parser errors (see add_error_expected_pipeline_item).
+    #[strum(serialize_all = "snake_case")]
     pub enum ExprTag {
         Assign,
         Binary,
@@ -120,6 +123,7 @@ pub mod ast {
         Cmd,
         Subshell,
         If,
+        #[strum(serialize = "condexpr")]
         CondExpr,
         Async,
     }
@@ -420,7 +424,8 @@ pub mod ast {
             match self {
                 PipelineItem::Cmd(cmd) => cost += cmd.memory_cost(),
                 PipelineItem::Assigns(assigns) => {
-                    for assign in assigns.iter() {
+                    // SAFETY: arena slice is live for 'arena
+                    for assign in unsafe { &**assigns }.iter() {
                         cost += assign.memory_cost();
                     }
                 }
@@ -3325,13 +3330,10 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         }
         let prev_quote_state = self.chars.state;
         let mut sublexer = self.make_sublexer(kind);
-        // PORT NOTE: make_sublexer moves strpool/tokens/errors/string_refs into the
-        // sublexer; if lex() errors we must restore them before bubbling up so the
-        // parent lexer's accumulated state (errors, tokens) isn't lost.
-        let result = sublexer.lex();
+        sublexer.lex()?;
         self.continue_from_sublexer(&mut sublexer);
         self.chars.state = prev_quote_state;
-        result
+        Ok(())
     }
 
     fn append_string_to_str_pool(&mut self, bunstr: BunString) -> Result<(), LexerError> {

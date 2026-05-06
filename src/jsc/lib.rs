@@ -1135,6 +1135,15 @@ impl AnyPromise {
             Self::Internal(p) => JSValue::from_cell(p),
         }
     }
+    /// `AnyPromise.result` (AnyPromise.zig:31) — settled value (fulfilled or
+    /// rejected). Undefined while pending.
+    #[inline] pub fn result(self, vm: &VM) -> JSValue {
+        // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
+        match self {
+            Self::Normal(p) => unsafe { (*p).result(vm) },
+            Self::Internal(p) => unsafe { (*p).result(vm) },
+        }
+    }
     /// `AnyPromise.status` (AnyPromise.zig:24).
     #[inline] pub fn status(self) -> self::js_promise::Status {
         // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.

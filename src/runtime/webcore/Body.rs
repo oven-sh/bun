@@ -624,7 +624,7 @@ impl ValueError {
             // with their Drop deref). Zig did `var v = this.*; v.ref();` (bitwise copy
             // + one bump) — `.clone()` alone is the Rust equivalent. An extra `.ref_()`
             // here would leak +1 per dupe.
-            ValueError::SystemError(e) => ValueError::SystemError(e.clone()),
+            ValueError::SystemError(e) => ValueError::SystemError(e.dupe()),
             ValueError::Message(m) => ValueError::Message(m.clone()),
             ValueError::TypeError(m) => ValueError::TypeError(m.clone()),
             ValueError::JSValue(js_ref) => {

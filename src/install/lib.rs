@@ -490,139 +490,17 @@ pub mod repository {
         }
     }
 }
-/// Stub: `bin.rs` — `Bin` struct + Value union read by `npm.rs` parse.
+/// `bin` — re-export of the file-backed `bin_real` module (src/install/bin.rs).
+/// LAYERING FIX (reconciler-6): the earlier inline stub duplicated `Bin`/
+/// `Value`/`Tag`/`NamesIterator` with divergent shapes (struct `Value` vs the
+/// real `union Value`; placeholder `to_json`/`parse_append`). Stub and real
+/// live in the same crate with no dep cycle — the split was purely historical
+/// gating. Unify by re-exporting the real types: every caller (`npm.rs`,
+/// `migration.rs`, `lockfile/Package.rs`, `pnpm.rs`, `yarn.rs`,
+/// `tree_printer.rs`) already uses the union-safe `Value::init_*`
+/// constructors and `unsafe { value.<field> }` reads, so this is drop-in.
 pub mod bin {
-    /// Port of `Bin.Linker` (src/install/bin.zig). Real body lives in
-    /// `bin_real::Linker`; re-exported here so `bin::Linker { .. }` call sites
-    /// (isolated/hoisted installers) resolve against the stub `bin` path until
-    /// the stub/real `Bin` structs unify (reconciler-6).
-    pub use crate::bin_real::Linker;
-    #[derive(Default, Clone, Copy)]
-    pub struct Bin {
-        pub tag: Tag,
-        pub value: Value,
-        pub _padding_tag: [u8; 3],
-    }
-    impl Bin {
-        pub fn init() -> Self { Self::default() }
-
-        /// Port of `Bin.toJson` (src/install/bin.zig). Real body lives in
-        /// `bin_real::Bin::to_json`; this stub bridges the type until the
-        /// stub/real `Bin` structs unify (reconciler-6).
-        pub fn to_json<W: core::fmt::Write, const STYLE: crate::bin_real::ToJsonStyle>(
-            &self,
-            _indent: Option<&mut u32>,
-            _buf: &[u8],
-            _extern_strings: &[bun_semver::ExternalString],
-            _writer: &mut W,
-            _write_indent: fn(&mut W, &mut u32) -> core::fmt::Result,
-        ) -> core::fmt::Result {
-            todo!("blocked_on: bin stub/real unify (reconciler-6)")
-        }
-
-        /// Port of `Bin.parseAppend` (src/install/bin.zig).
-        pub fn parse_append(
-            _bin_expr: bun_logger::js_ast::Expr,
-            _buf: &mut bun_semver::semver_string::Buf,
-            _extern_strings: &mut Vec<bun_semver::ExternalString>,
-        ) -> Result<Bin, bun_alloc::AllocError> {
-            todo!("blocked_on: bin stub/real unify (reconciler-6)")
-        }
-
-        /// Port of `Bin.parseAppendFromDirectories` (src/install/bin.zig).
-        pub fn parse_append_from_directories(
-            _bin_expr: bun_logger::js_ast::Expr,
-            _buf: &mut bun_semver::semver_string::Buf,
-        ) -> Result<Bin, bun_alloc::AllocError> {
-            todo!("blocked_on: bin stub/real unify (reconciler-6)")
-        }
-    }
-    #[derive(Default, Clone, Copy)]
-    pub struct Value {
-        pub file: bun_semver::String,
-        pub named_file: [bun_semver::String; 2],
-        pub dir: bun_semver::String,
-        pub map: crate::ExternalStringList,
-    }
-    impl Value {
-        pub fn init(_v: impl core::any::Any) -> Self { Self::default() }
-        pub fn init_file(_v: bun_semver::String) -> Self { Self::default() }
-        pub fn init_named_file(_v: [bun_semver::String; 2]) -> Self { Self::default() }
-        pub fn init_dir(_v: bun_semver::String) -> Self { Self::default() }
-        pub fn init_map(_v: crate::ExternalStringList) -> Self { Self::default() }
-    }
-    #[derive(Default, Clone, Copy, PartialEq, Eq)]
-    #[repr(u8)]
-    pub enum Tag { #[default] None, File, NamedFile, Dir, Map }
-
-    /// Port of `Bin.NamesIterator` (src/install/bin.zig). Stub-mod copy that
-    /// types against the inline `Bin`/`Value` above (`bin_real::NamesIterator`
-    /// can't be reused — it takes `bin_real::Bin`, a distinct type). Only the
-    /// `File`/`NamedFile`/`Map` paths are exercised by the tree printer; the
-    /// `Dir` path needs a node_modules dir handle the printer never sets.
-    pub struct NamesIterator<'a> {
-        pub bin: Bin,
-        pub i: usize,
-        pub done: bool,
-        pub package_name: bun_semver::String,
-        pub buf: bun_paths::PathBuffer,
-        pub string_buffer: &'a [u8],
-        pub extern_string_buf: &'a [bun_semver::ExternalString],
-    }
-
-    impl<'a> NamesIterator<'a> {
-        /// next filename, e.g. "babel" instead of "cli.js"
-        pub fn next(&mut self) -> Result<Option<&[u8]>, bun_core::Error> {
-            use bun_paths as path;
-            use bun_str::strings;
-            match self.bin.tag {
-                Tag::File => {
-                    if self.i > 0 {
-                        return Ok(None);
-                    }
-                    self.i += 1;
-                    self.done = true;
-                    let base = path::basename(self.package_name.slice(self.string_buffer));
-                    if strings::has_prefix(base, b"./") || strings::has_prefix(base, b".\\") {
-                        return Ok(Some(strings::copy(&mut self.buf.0[..], &base[2..])));
-                    }
-                    Ok(Some(strings::copy(&mut self.buf.0[..], base)))
-                }
-                Tag::NamedFile => {
-                    if self.i > 0 {
-                        return Ok(None);
-                    }
-                    self.i += 1;
-                    self.done = true;
-                    let base =
-                        path::basename(self.bin.value.named_file[0].slice(self.string_buffer));
-                    if strings::has_prefix(base, b"./") || strings::has_prefix(base, b".\\") {
-                        return Ok(Some(strings::copy(&mut self.buf.0[..], &base[2..])));
-                    }
-                    Ok(Some(strings::copy(&mut self.buf.0[..], base)))
-                }
-                Tag::Map => {
-                    let map = self.bin.value.map;
-                    if self.i >= map.len as usize {
-                        return Ok(None);
-                    }
-                    let index = self.i;
-                    self.i += 2;
-                    self.done = self.i >= map.len as usize;
-                    let current_string = map.get(self.extern_string_buf)[index];
-                    let base = path::basename(current_string.slice(self.string_buffer));
-                    if strings::has_prefix(base, b"./") || strings::has_prefix(base, b".\\") {
-                        return Ok(Some(strings::copy(&mut self.buf.0[..], &base[2..])));
-                    }
-                    Ok(Some(strings::copy(&mut self.buf.0[..], base)))
-                }
-                // `.dir` requires a `node_modules` directory handle the tree
-                // printer never sets; matches `bin_real::NamesIterator` shape
-                // but the printer's `match` arms route Dir/None elsewhere.
-                Tag::Dir | Tag::None => Ok(None),
-            }
-        }
-    }
+    pub use crate::bin_real::*;
 }
 /// Stub: `lockfile.rs` — type surface for `dependency.rs` / `npm.rs`.
 pub mod lockfile {
@@ -1792,26 +1670,6 @@ impl PackageManifestMap {
     ) -> Option<&mut npm::PackageManifest> {
         None
     }
-
-    /// Stub: `PackageManifestMap.byNameAllowExpired`
-    /// (src/install/PackageManifestMap.zig). Real body lives in
-    /// `package_manifest_map::PackageManifestMap::by_name_allow_expired`; the
-    /// stub always cache-misses. `pm` is a raw pointer so callers can pass the
-    /// aliased `*mut PackageManager` while holding field-disjoint borrows on
-    /// `manager.lockfile` / `manager.options` (Zig passes `*PackageManager`
-    /// freely without aliasing rules).
-    // TODO(port): blocked_on package_manifest_map / PackageManager type unification (reconciler-6)
-    pub fn by_name_allow_expired<PM>(
-        &mut self,
-        _pm: *mut PM,
-        _scope: &npm::registry::Scope,
-        _name: &[u8],
-        _is_expired: Option<&mut bool>,
-        _cache_behavior: package_manager::ManifestLoad,
-        _needs_extended_manifest: bool,
-    ) -> Option<&npm::PackageManifest> {
-        None
-    }
 }
 #[derive(Default)] pub struct PostinstallOptimizer;
 pub type Task = ();
@@ -2130,14 +1988,6 @@ impl RootPackageId {
     pub trusted_deps_to_add_to_package_json: Vec<Box<[u8]>>,
     /// Zig: `global_link_dir_path: stringZ = ""` (src/install/PackageManager.zig).
     pub global_link_dir_path: Box<[u8]>,
-    /// Zig: `global_dir: ?std.fs.Dir = null` (src/install/PackageManager.zig).
-    /// Populated by `Options.openGlobalDir` in `link`/`unlink`; the stub keeps
-    /// it so CLI commands can write through before `setup_global_dir` reads it
-    /// once the stub/real `PackageManager` unify.
-    pub global_dir: Option<bun_sys::Dir>,
-    /// Zig: `original_package_json_path: stringZ` (src/install/PackageManager.zig).
-    /// Set once by `init()` to the cwd-anchored `package.json` path.
-    pub original_package_json_path: bun_core::ZBox,
     /// Zig: `async_network_task_queue: AsyncNetworkTaskQueue` -- see stub type below.
     pub async_network_task_queue: AsyncNetworkTaskQueueStub,
     /// Zig: `preallocated_resolve_tasks: PreallocatedTaskStore` (HiveArray.Fallback) -- see stub.
@@ -2675,11 +2525,6 @@ pub struct CommandLineArguments {
     pub positionals: Vec<Box<[u8]>>,
     pub top_only: bool,
     pub depth: Option<usize>,
-    /// Zig: `CommandLineArguments.silent` — `--silent`; surfaced on the stub so
-    /// `bun_runtime::cli::{outdated,update_interactive}_command` can gate
-    /// `init()` failure diagnostics until the stub/real types unify
-    /// (reconciler-6).
-    pub silent: bool,
 }
 impl CommandLineArguments {
     /// Port of `CommandLineArguments.parse`
@@ -2693,21 +2538,6 @@ impl CommandLineArguments {
 
 impl PackageManager {
     pub fn verbose_install() -> bool { false }
-
-    /// Port of `PackageManager.populateManifestCache`
-    /// (src/install/PackageManager/PopulateManifestCache.zig). Real body lives
-    /// in `package_manager_real::populate_manifest_cache`; the stub
-    /// `PackageManager` lacks the network/task plumbing so this defers until
-    /// the stub/real types unify (reconciler-6). Surfaced so
-    /// `bun_runtime::cli::outdated_command` can drive the manifest pre-fetch
-    /// path against the stub.
-    pub fn populate_manifest_cache(
-        &mut self,
-        _opts: package_manager::ManifestCacheOptions<'_>,
-    ) -> Result<(), bun_core::Error> {
-        // TODO(port): blocked_on package_manager_real::populate_manifest_cache un-gate (reconciler-6)
-        Ok(())
-    }
 
     /// Port of `PackageManager.init` (src/install/PackageManager.zig:568).
     /// Real body in `package_manager_real::init`; that impl returns

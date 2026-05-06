@@ -276,30 +276,28 @@ impl LinuxMemFdAllocator {
                 }
             }
 
-            let linux_memfd_allocator = Self::new(fd, bytes.len());
+            // PORT NOTE: Zig's `Self.new` returns a raw `*Self` (refcount=1).
+            // `into_raw()` extracts the `Box::into_raw` pointer and transfers
+            // the +1 to us (RefPtr has no `Drop`); on `Ok` that ref moves into
+            // `res.allocator`, on `Err` we `deref` it explicitly — exactly the
+            // Zig flow.
+            let linux_memfd_allocator: *mut Self = Self::new(fd, bytes.len()).into_raw();
 
-            // SAFETY: `IntrusiveArc::as_ptr` yields the `Box::into_raw` pointer
-            // (full provenance) — required by `Self::alloc`/`Self::allocator`.
+            // SAFETY: `linux_memfd_allocator` is the `Box::into_raw` pointer
+            // (full provenance) with one live ref — required by `Self::alloc`.
             match unsafe {
                 Self::alloc(
-                    linux_memfd_allocator.as_ptr(),
+                    linux_memfd_allocator,
                     bytes.len(),
                     0,
                     libc::MAP_SHARED, // Zig: `.{ .TYPE = .SHARED }`
                 )
             } {
-                Ok(res) => {
-                    // PORT NOTE: Zig's `Self.new` returns a raw `*Self` (refcount=1) which
-                    // is transferred into `res.allocator` on success. `IntrusiveArc<Self>`
-                    // has a `Drop` that would decrement here and free the allocator whose
-                    // pointer is now stored in `res` (UAF). `forget` hands the +1 to `res`.
-                    core::mem::forget(linux_memfd_allocator);
-                    Ok(res)
-                }
+                Ok(res) => Ok(res),
                 Err(err) => {
-                    // PORT NOTE: Zig calls `.deref()` manually; in Rust, `IntrusiveArc`'s
-                    // `Drop` performs that decrement at scope exit. An explicit `.deref()`
-                    // here would double-decrement.
+                    // SAFETY: we still own the +1 from `into_raw()`; release it
+                    // (closes the fd and frees the Box on hitting zero).
+                    unsafe { Self::deref(linux_memfd_allocator) };
                     Err(err)
                 }
             }

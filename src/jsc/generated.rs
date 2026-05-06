@@ -688,6 +688,9 @@ js_class_module!(JSImmediate = "Immediate" { callback, arguments });
 js_class_module!(JSBlob      = "Blob"      { name, stream });
 js_class_module!(JSResponse  = "Response"  { body, headers, url, statusText, stream });
 js_class_module!(JSRequest   = "Request"   { body, headers, url, signal, stream });
+// `values: ["ondrain", "oncancel", "stream"]` in src/runtime/api/ResumableSink.classes.ts.
+js_class_module!(JSResumableFetchSink    = "ResumableFetchSink"    { ondrain, oncancel, stream });
+js_class_module!(JSResumableS3UploadSink = "ResumableS3UploadSink" { ondrain, oncancel, stream });
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

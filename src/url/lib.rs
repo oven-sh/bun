@@ -66,7 +66,7 @@ fn range_of_slice_in_buffer(slice: &[u8], buffer: &[u8]) -> Option<(u32, u32)> {
     }
     let off = (slice.as_ptr() as usize).saturating_sub(buffer.as_ptr() as usize) as u32;
     let len = slice.len() as u32;
-    debug_assert!(strings::eql_long::<false>(slice, &buffer[off as usize..][..len as usize]));
+    debug_assert!(strings::eql_long(slice, &buffer[off as usize..][..len as usize], false));
     Some((off, len))
 }
 
@@ -1417,7 +1417,7 @@ fn string_pointer_from_strings(parent: &[u8], in_: &[u8]) -> api::StringPointer 
         return api::StringPointer { offset, length };
     } else {
         if let Some(i) = strings::index_of(parent, in_) {
-            debug_assert!(strings::eql_long::<false>(&parent[i..][..in_.len()], in_));
+            debug_assert!(strings::eql_long(&parent[i..][..in_.len()], in_, false));
 
             return api::StringPointer {
                 offset: i as u32,

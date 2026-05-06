@@ -437,8 +437,12 @@ impl ShellSubprocess {
 
         if !spawn_args.override_env && spawn_args.env_array.is_empty() {
             // spawn_args.env_array.items = jsc_vm.transpiler.env.map.createNullDelimitedEnvMap(allocator);
-            spawn_args.env_array = event_loop.create_null_delimited_env_map();
-            // capacity == len after assignment
+            // TODO(port): EventLoopHandle::create_null_delimited_env_map returns a
+            // `NullDelimitedEnvMap` (boxed `[?*const c_char]`) shaped differently
+            // from `Vec<*const c_char>`. The shell always populates `env_array`
+            // via `fill_env` (override_env=true) before reaching here, so this
+            // branch is dead in practice.
+            todo!("blocked_on: bun_jsc::EventLoopHandle::create_null_delimited_env_map shape");
         }
 
         // Until ownership transfers into Writable/Readable, deinit any caller-provided
@@ -448,14 +452,15 @@ impl ShellSubprocess {
         let stdio_guard = scopeguard::guard(&mut spawn_args.stdio, |stdio| {
             if !stdio_consumed {
                 for s in stdio.iter_mut() {
-                    s.deinit();
+                    // Stdio's Drop impl handles resource teardown.
+                    *s = Stdio::Ignore;
                 }
             }
         });
         // TODO(port): errdefer — scopeguard captures &mut stdio + &stdio_consumed; revisit borrows.
 
         let no_sigpipe = if let Some(iowriter) = &shellio.stdout {
-            !iowriter.flags.is_socket
+            !iowriter.is_socket()
         } else {
             true
         };
@@ -463,22 +468,22 @@ impl ShellSubprocess {
         // Hoist asSpawnOption results so a later one failing doesn't strand an earlier
         // Windows *uv.Pipe in an unbound temporary inside the struct initializer.
         let stdin_opt = match stdio_guard[0].as_spawn_option(0) {
-            Ok(opt) => opt,
-            Err(e) => {
+            stdio::ResultT::Result(opt) => opt,
+            stdio::ResultT::Err(e) => {
                 return Err(ShError::Custom(Box::<[u8]>::from(e.to_str())));
             }
         };
         let stdout_opt = match stdio_guard[1].as_spawn_option(1) {
-            Ok(opt) => opt,
-            Err(e) => {
+            stdio::ResultT::Result(opt) => opt,
+            stdio::ResultT::Err(e) => {
                 #[cfg(windows)]
                 stdin_opt.deinit();
                 return Err(ShError::Custom(Box::<[u8]>::from(e.to_str())));
             }
         };
         let stderr_opt = match stdio_guard[2].as_spawn_option(2) {
-            Ok(opt) => opt,
-            Err(e) => {
+            stdio::ResultT::Result(opt) => opt,
+            stdio::ResultT::Err(e) => {
                 #[cfg(windows)]
                 {
                     stdin_opt.deinit();
@@ -489,7 +494,7 @@ impl ShellSubprocess {
         };
 
         let mut spawn_options = SpawnOptions {
-            cwd: spawn_args.cwd,
+            cwd: spawn_args.cwd.into(),
             stdin: stdin_opt,
             stdout: stdout_opt,
             stderr: stderr_opt,

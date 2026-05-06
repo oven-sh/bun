@@ -900,7 +900,7 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
         },
         shell_bin,
         aborted: false,
-        env: this_transpiler.env,
+        env: env_ptr,
     };
 
     // initialize the handles

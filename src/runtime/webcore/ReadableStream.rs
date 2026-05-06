@@ -422,23 +422,27 @@ impl ReadableStream {
     }
 
     
-    pub fn from_pipe<P, R>(
+    pub fn from_pipe<P>(
         global_this: &JSGlobalObject,
         _parent: P,
-        buffered_reader: R,
+        buffered_reader: &mut bun_aio::PosixBufferedReader,
     ) -> JsResult<JSValue> {
-        // TODO(port): `buffered_reader: anytype` — bound by whatever FileReader.reader.from() requires
+        // TODO(port): Zig's `buffered_reader: anytype` — only ever instantiated with the
+        // platform `PipeReader`/`PosixBufferedReader`.
         let mut source = NewSource::<FileReader>::new(NewSource {
             global_this,
             context: FileReader {
-                event_loop: jsc::EventLoopHandle::init(global_this.bun_vm().event_loop()),
+                // SAFETY: bun_vm()/event_loop() return non-null ptrs that outlive this call.
+                event_loop: jsc::EventLoopHandle::init(unsafe {
+                    &*(*global_this.bun_vm()).event_loop()
+                }),
                 ..Default::default()
             },
             ..Default::default()
         });
         // PORT NOTE: reshaped for borrowck — Zig passed `&source.context` as both reader-parent and self.
         let ctx_ptr: *mut FileReader = &mut source.context;
-        source.context.reader().from(buffered_reader, ctx_ptr);
+        source.context.reader().from(buffered_reader, ctx_ptr.cast::<c_void>());
 
         source.to_readable_stream(global_this)
     }

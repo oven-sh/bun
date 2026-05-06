@@ -168,7 +168,7 @@ pub fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
     let _g = group_log::begin();
 
     let Some(this) = ScopeFunctions::from_js(frame.this()) else {
-        return global.throw(format_args!("Expected callee to be ScopeFunctions"));
+        return Err(global.throw(format_args!("Expected callee to be ScopeFunctions")));
     };
     let line_no = jest::capture_test_line_number(frame, global);
 

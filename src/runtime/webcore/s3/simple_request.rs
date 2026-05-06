@@ -2,6 +2,7 @@ use core::ffi::c_void;
 
 use bun_aio::KeepAlive;
 use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
+use bun_event_loop::{task_tag, TaskTag, Taskable};
 use bun_http::async_http::Options as HttpOptions;
 use bun_http::{AsyncHTTP, FetchRedirect, HTTPClientResult, HTTPClientResultCallback, HTTPThread, Headers, Method};
 use bun_jsc::virtual_machine::VirtualMachine;

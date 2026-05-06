@@ -195,7 +195,7 @@ extern "C" fn on_data(socket: *mut uws::udp::Socket, buf: *mut uws::udp::PacketB
 
         // SAFETY: inet_ntop returned non-null NUL-terminated string into addr_buf.
         let span = unsafe { core::ffi::CStr::from_ptr(hostname) }.to_bytes();
-        let hostname_string = if let Some(id) = scope_id {
+        let mut hostname_string = if let Some(id) = scope_id {
             'blk: {
                 #[cfg(not(windows))]
                 {

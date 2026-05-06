@@ -37,7 +37,7 @@ pub const DEFAULT_SCALE_UP_AFTER_MS: i64 = 5;
 /// this to decide whether to run the serial coverage/JUnit reporters.
 pub fn run_as_coordinator(
     reporter: &mut CommandLineReporter,
-    vm: &VirtualMachine,
+    vm: &mut VirtualMachine,
     files: &[PathString],
     ctx: Command::Context,
     coverage_opts: &mut CodeCoverageOptions,
@@ -530,7 +530,7 @@ impl<'a> WorkerLoop<'a> {
 /// run each file with isolation, stream per-test events back. Never returns.
 pub fn run_as_worker(
     reporter: &mut CommandLineReporter,
-    vm: &VirtualMachine,
+    vm: &mut VirtualMachine,
     ctx: Command::Context,
 ) -> ! {
     vm.test_isolation_enabled = true;

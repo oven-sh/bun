@@ -153,22 +153,27 @@ impl JscSubprocess::static_pipe_writer::StaticPipeWriterProcess for ShellSubproc
 
 pub type WatchFd = Fd;
 
-impl bun_process::ProcessExitOwner for ShellSubprocess {
-    unsafe fn on_process_exit_dyn(
-        this: *mut Self,
-        process: *mut Process,
-        status: bun_process::Status,
-        rusage: &Rusage,
-    ) {
-        let _ = (process, rusage);
-        // SAFETY: `this` was registered via `set_exit_handler` and outlives the
-        // Process (it holds the Arc).
-        // PORT NOTE: shell::Subprocess::on_process_exit currently takes
-        // `bun_spawn::Status`; until those crates' Status types are unified,
-        // re-dispatch is left to the inherent method via a manual conversion.
-        let _ = status;
-        todo!("blocked_on: bun_spawn::Status <-> bun_process::Status unification");
-    }
+/// `ProcessExitHandler` vtable for [`ShellSubprocess`]. Mirrors the Zig
+/// `TaggedPointerUnion` arm `ShellSubprocess => onProcessExit(...)`.
+static SHELL_SUBPROCESS_EXIT_VTABLE: bun_process::ProcessExitVTable =
+    bun_process::ProcessExitVTable {
+        on_process_exit: shell_subprocess_on_process_exit,
+    };
+
+unsafe fn shell_subprocess_on_process_exit(
+    owner: *mut (),
+    process: *mut Process,
+    status: bun_process::Status,
+    rusage: *const Rusage,
+) {
+    let _ = (process, status, rusage);
+    // SAFETY: `owner` is the `*mut ShellSubprocess` registered via
+    // `set_exit_handler`; it outlives the Process (holds the Arc).
+    let _this = unsafe { &mut *(owner as *mut ShellSubprocess) };
+    // PORT NOTE: ShellSubprocess::on_process_exit currently takes
+    // `bun_spawn::Status`; until the two `Status` enums are unified the thunk
+    // cannot forward losslessly.
+    todo!("blocked_on: bun_spawn::Status <-> bun_process::Status unification");
 }
 
 impl ShellSubprocess {

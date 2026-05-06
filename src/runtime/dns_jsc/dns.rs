@@ -1624,7 +1624,10 @@ impl DNSLookup {
     pub unsafe fn on_complete_native(this: *mut Self, result: GetAddrInfoResultAny) {
         bun_output::scoped_log!(DNSLookup, "onCompleteNative");
         // SAFETY: JSGlobalObject outlives the request.
-        let array = result.to_js(&*(*this).global_this).unwrap_or(JSValue::ZERO).unwrap(); // TODO: properly propagate exception upwards
+        let array = super::options_jsc::result_any_to_js(&result, &*(*this).global_this)
+            .ok()
+            .flatten()
+            .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
         Self::on_complete_with_array(this, array);
     }
 

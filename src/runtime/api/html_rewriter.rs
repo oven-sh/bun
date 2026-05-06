@@ -1432,7 +1432,7 @@ fn create_lolhtml_string_error() -> BunString {
 }
 
 fn html_string_value(input: lolhtml::HTMLString, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-    input.to_js(global_object)
+    html_string_to_js(input, global_object)
 }
 
 // ─────────────────────────── TextChunk ───────────────────────────────────

@@ -95,7 +95,10 @@ mod server_body;
 pub use server_body::{GetOrStartLoadResult, ServePluginsCallback};
 
 // ─── write_status ────────────────────────────────────────────────────────────
-pub fn write_status<const SSL: bool>(resp: &mut uws_sys::NewAppResponse<SSL>, status: u16) {
+pub fn write_status<const SSL: bool>(resp: *mut uws_sys::NewAppResponse<SSL>, status: u16) {
+    // SAFETY: resp is a live uws response handle for the duration of the
+    // request callback (callers hold it from `AnyResponse::{SSL,TCP}`).
+    let resp = unsafe { &mut *resp };
     if let Some(text) = HTTPStatusText::get(status) {
         resp.write_status(text);
     } else {
@@ -106,6 +109,21 @@ pub fn write_status<const SSL: bool>(resp: &mut uws_sys::NewAppResponse<SSL>, st
         let written = 48 - cursor.len();
         resp.write_status(&buf[..written]);
     }
+}
+
+/// `bun_uws::SocketContext::BunSocketContextOptions` and
+/// `bun_uws_sys::BunSocketContextOptions` are field-identical `#[repr(C)]`
+/// duplicates (the former is a higher-level re-declaration). `SSLConfig::
+/// as_usockets()` produces the `bun_uws` flavour while the `bun_uws_sys`
+/// constructors consume the `_sys` flavour — bridge by bit-copy until the
+/// upstream crates unify on a single definition.
+#[inline]
+fn to_sys_socket_options(
+    opts: uws::SocketContext::BunSocketContextOptions,
+) -> uws_sys::BunSocketContextOptions {
+    // SAFETY: both are `#[repr(C)]`, `Copy`, and have an identical field
+    // layout (see uws/lib.rs:1452 vs uws_sys/SocketContext.rs:22).
+    unsafe { core::mem::transmute(opts) }
 }
 
 // ─── AnyRoute ────────────────────────────────────────────────────────────────

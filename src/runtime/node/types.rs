@@ -516,10 +516,10 @@ impl StringOrBuffer {
                 return Self::from_js_maybe_async(global, value, is_async, allow_string_object);
             }
 
-            let out = str.to_zig_string().encode(encoding.into());
-            vm_report_extra_memory(global, out.len());
-
-            return Ok(Some(Self::EncodedSlice(ZigStringSlice::init_owned(out))));
+            // TODO(b2-blocked): `bun_str::String::encode(Encoding)` not yet
+            // implemented upstream (jsc ZigString::encode is itself a todo!).
+            let _ = (&str, encoding);
+            todo!("blocked_on: bun_str::String::encode");
         }
 
         Ok(None)

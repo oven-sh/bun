@@ -461,7 +461,7 @@ impl NodeHTTPResponse {
         };
 
         let sec_websocket_extensions_value: &[u8] = 'brk: {
-            if sec_websocket_extensions.is_empty() {
+            if sec_websocket_extensions.len == 0 {
                 if !self.upgrade_context.request.is_null() {
                     // SAFETY: see above.
                     let request = unsafe { &*self.upgrade_context.request };

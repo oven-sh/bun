@@ -170,11 +170,7 @@ impl PBKDF2 {
             }
 
             'invalid: {
-                match bun_jsc::comptime_string_map_jsc::from_js_case_insensitive(
-                    evp::Algorithm::map(),
-                    global_this,
-                    arg4,
-                )? {
+                match algorithm_from_js_case_insensitive(global_this, arg4)? {
                     Some(alg) => match alg {
                         Algorithm::Shake128 | Algorithm::Shake256 => break 'invalid,
                         other => break 'brk other,

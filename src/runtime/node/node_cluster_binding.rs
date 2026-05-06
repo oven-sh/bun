@@ -204,12 +204,14 @@ impl InternalMsgHolder {
         if let Some(p) = message.get(global, "ack")? {
             if !p.is_undefined() {
                 let ack = p.to_int32();
-                // PORT NOTE: reshaped for borrowck — Zig copied the Strong out of the entry,
-                // then conditionally deinit+swapRemove. Here we peek then swap_remove.
-                if let Some(cbstrong_ref) = self.callbacks.get(&ack) {
-                    if let Some(callback) = cbstrong_ref.get() {
-                        let _cbstrong = self.callbacks.swap_remove(&ack);
-                        // _cbstrong drops at end of scope (== `defer cbstrong.deinit()`)
+                // PORT NOTE: reshaped for borrowck — Zig copied the Strong out of the
+                // entry, then conditionally deinit+swapRemove. Here we peek the JSValue
+                // first (ending the immutable borrow), then swap_remove (which drops the
+                // Strong == `defer cbstrong.deinit()`).
+                let entry = self.callbacks.get(&ack).map(|s| s.get());
+                if let Some(callback_opt) = entry {
+                    if let Some(callback) = callback_opt {
+                        self.callbacks.swap_remove(&ack);
                         event_loop.run_callback(
                             callback,
                             global,
@@ -219,7 +221,6 @@ impl InternalMsgHolder {
                                 JSValue::NULL, // handle
                             ],
                         );
-                        return Ok(());
                     }
                     return Ok(());
                 }

@@ -1079,8 +1079,8 @@ impl UpgradeCommand {
                     }
                 };
 
-                if target_stat.size == dest_stat.size && target_stat.size > 0 {
-                    let mut input_buf = vec![0u8; target_stat.size as usize];
+                if target_stat.st_size == dest_stat.st_size && target_stat.st_size > 0 {
+                    let mut input_buf = vec![0u8; target_stat.st_size as usize];
 
                     // PORT NOTE: `Dir::read_file` (Zig std.fs.Dir.readFile) is open + read_all + close.
                     let target_hash = hash(match sys::File::openat(

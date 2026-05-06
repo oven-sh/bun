@@ -314,6 +314,10 @@ pub struct NewSocket<const SSL: bool> {
     pub this_value: JSValue,
     pub poll_ref: KeepAlive,
     pub flags: SocketFlags,
+    /// `socket.upgradeTLS()` returns `[raw, tls]`; the encrypted half stores a
+    /// pointer back to the raw twin so the ciphertext tap can forward bytes
+    /// before decryption. `None` for ordinary sockets and on the raw half itself.
+    pub twin: Option<*mut NewSocket<SSL>>,
     /// SNI server name for client connect (owned, NUL-free bytes).
     pub server_name: Option<Box<[u8]>>,
 }

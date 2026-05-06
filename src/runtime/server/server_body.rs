@@ -1204,19 +1204,19 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         compress_value: Option<JSValue>,
     ) -> JsResult<JSValue> {
         if self.config.websocket.is_none() {
-            return Ok(JSValue::js_number(0));
+            return Ok(JSValue::js_number(0.0));
         }
 
-        let app = self.app.unwrap();
+        let app = self.app.unwrap() as *mut c_void;
 
-        if topic.len() == 0 {
+        if topic.len == 0 {
             httplog!("publish() topic invalid");
-            return global.throw(format_args!("publish requires a topic string"));
+            return Err(global.throw(format_args!("publish requires a topic string")));
         }
 
         let topic_slice = topic.to_slice();
-        if topic_slice.len() == 0 {
-            return global.throw(format_args!("publish requires a non-empty topic"));
+        if topic_slice.slice().is_empty() {
+            return Err(global.throw(format_args!("publish requires a non-empty topic")));
         }
 
         // https://github.com/ziglang/zig/issues/24563
@@ -1224,27 +1224,28 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let compress = compress_js.to_boolean();
 
         if let Some(buffer) = message_value.as_array_buffer(global) {
-            return Ok(JSValue::js_number(
+            return Ok(JSValue::js_number(f64::from(
                 // if 0, return 0
                 // else return number of bytes sent
-                (AnyWebSocket::publish_with_options(SSL, app, topic_slice.slice(), buffer.slice(), Opcode::Binary, compress) as i32)
-                    * ((buffer.len() as u32 & 0x7FFF_FFFF) as i32), // @intCast(@as(u31, @truncate(buffer.len)))
-            ));
+                (AnyWebSocket::publish_with_options(SSL, app, topic_slice.slice(), buffer.slice(), uws_sys::Opcode::Binary, compress) as i32)
+                    * ((buffer.len as u32 & 0x7FFF_FFFF) as i32), // @intCast(@as(u31, @truncate(buffer.len)))
+            )));
         }
 
         {
-            let mut js_string = message_value.to_js_string(global)?;
-            let view = js_string.view(global);
+            let js_string = message_value.to_js_string(global)?;
+            // SAFETY: to_js_string returns a non-null *mut JSString on Ok
+            let view = unsafe { &*js_string }.view(global);
             let slice = view.to_slice();
-            let _keep = jsc::EnsureStillAlive(js_string);
+            let _keep = jsc::EnsureStillAlive(message_value);
 
             let buffer = slice.slice();
-            return Ok(JSValue::js_number(
+            return Ok(JSValue::js_number(f64::from(
                 // if 0, return 0
                 // else return number of bytes sent
-                (AnyWebSocket::publish_with_options(SSL, app, topic_slice.slice(), buffer, Opcode::Text, compress) as i32)
+                (AnyWebSocket::publish_with_options(SSL, app, topic_slice.slice(), buffer, uws_sys::Opcode::Text, compress) as i32)
                     * ((buffer.len() as u32 & 0x7FFF_FFFF) as i32),
-            ));
+            )));
         }
     }
 

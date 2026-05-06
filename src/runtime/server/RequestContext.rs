@@ -1,5 +1,6 @@
 use core::ffi::{c_uint, c_void};
 use core::ptr::NonNull;
+#[allow(unused_imports)]
 use std::rc::Rc;
 use std::sync::Arc;
 

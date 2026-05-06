@@ -22,7 +22,29 @@ use crate::cli::ci_info as ci;
 use bun_simdutf_sys::simdutf as simdutf;
 use bun_sys::dir_iterator as DirIterator;
 use bun_paths::resolve_path::{join_abs_string_buf_z, normalize_buf, normalize_buf_z};
-use bun_install::package_manager_real::options::{Access, AuthType, LogLevel};
+// `bun_install::package_manager_real` is `#![cfg(any())]`-gated (reconciler-6); pull
+// `LogLevel`/`AuthType` from the stub surface in `bun_install` and re-declare `Access`
+// locally (no stub upstream — see PackageManagerOptions.zig `Access`).
+use bun_install::{AuthType, LogLevel};
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum Access {
+    Public,
+    Restricted,
+}
+impl Access {
+    pub fn from_str(str: &[u8]) -> Option<Access> {
+        match str {
+            b"public" => Some(Access::Public),
+            b"restricted" => Some(Access::Restricted),
+            _ => None,
+        }
+    }
+}
+impl From<Access> for &'static str {
+    fn from(a: Access) -> &'static str {
+        match a { Access::Public => "public", Access::Restricted => "restricted" }
+    }
+}
 
 use crate::Command;
 use crate::cli::pack_command::{self as pack, PackCommand as Pack};

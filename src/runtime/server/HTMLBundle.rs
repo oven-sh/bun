@@ -15,9 +15,12 @@ use bun_uws::{AnyRequest, AnyResponse};
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult};
 use crate::server::{AnyServer, StaticRoute};
 
-// `bun.Output.scoped(.HTMLBundle, .hidden)` — the static lives in the value
-// namespace, so it does not collide with `struct HTMLBundle` (type namespace).
-bun_output::declare_scope!(HTMLBundle, hidden);
+// `bun.Output.scoped(.HTMLBundle, .hidden)` — wrapped in a sub-module so the
+// `pub static HTMLBundle` doesn't leak alongside the `pub struct HTMLBundle`
+// re-export from `crate::server`.
+mod debug_scope {
+    bun_output::declare_scope!(HTMLBundle, hidden);
+}
 
 // .classes.ts codegen wires toJS/fromJS/fromJSDirect via #[bun_jsc::JsClass].
 // HTMLBundle can be owned by JavaScript as well as any number of Server instances,
@@ -214,6 +217,10 @@ impl State {
 
 mod _gated {
     use super::*;
+    // Value-namespace import of the scoped logger; `use super::*` already
+    // brings in the type-namespace `struct HTMLBundle`, and Rust keeps the
+    // two namespaces distinct.
+    use super::debug_scope::HTMLBundle;
     use crate::api::js_bundler as JSBundler;
     use bun_bundler::bundle_v2::JSBundleCompletionTask;
 
@@ -293,8 +300,8 @@ mod _gated {
                 // is removed exactly once (here, or via on_aborted which removes without freeing).
                 let mut pending_response = unsafe { Box::from_raw(pending_response_ptr) };
 
-                let _resp = pending_response.resp;
-                let _method = pending_response.method;
+                let _resp = &pending_response.resp;
+                let _method = &pending_response.method;
                 if !pending_response.is_response_pending {
                     // Aborted
                     continue;

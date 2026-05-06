@@ -4404,44 +4404,20 @@ impl Blob {
                 #[cfg(target_os = "linux")]
                 {
                     // If we can use a copy-on-write clone of the buffer, do so.
-                    if let Some(store) = &self.store {
-                        if let Store::Data::Bytes(bytes) = &store.data {
-                            let allocated_slice = bytes.allocated_slice();
-                            // SAFETY: read-only inspection of `buf`; see top of fn.
-                            let buf_ro = unsafe { &*buf };
-                            if bun_core::is_slice_in_buffer(buf_ro, allocated_slice) {
-                                if let Some(allocator) = bun_sys::linux::MemFdAllocator::from(bytes.allocator) {
-                                    let _hold = allocator.clone();
-                                    let byte_offset = (buf_ro.as_ptr() as usize)
-                                        .saturating_sub(allocated_slice.as_ptr() as usize);
-                                    let byte_length = buf_len;
-                                    let result = jsc::ArrayBuffer::to_array_buffer_from_shared_memfd(
-                                        allocator.fd.cast(),
-                                        global,
-                                        byte_offset,
-                                        byte_length,
-                                        allocated_slice.len(),
-                                        TYPED_ARRAY_VIEW,
-                                    );
-                                    debug!(
-                                        "toArrayBuffer COW clone({}, {}) = {}",
-                                        byte_offset,
-                                        byte_length,
-                                        (!result.is_empty()) as u8
-                                    );
-                                    if !result.is_empty() {
-                                        return Ok(result);
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    // TODO(port): blocked_on: store::Bytes.allocator —
+                    // ByteStore collapsed `ptr+len+cap+allocator` into `Vec<u8>`
+                    // (see Store.rs PORT NOTE), so there is no allocator handle to
+                    // downcast via `LinuxMemFdAllocator::from`. The COW-memfd fast
+                    // path is a perf optimization; fall through to the copying path
+                    // below until Phase B re-threads memfd identity (likely a tag on
+                    // `store::Bytes` set by `LinuxMemFdAllocator::create`).
+                    let _ = &self.store;
                 }
                 // SAFETY: `Clone` copies into a new JSC allocation; `buf` is only read.
                 Ok(jsc::ArrayBuffer::create(global, unsafe { &*buf }, TYPED_ARRAY_VIEW))
             }
             Lifetime::Share => {
-                if buf_len > jsc::SYNTHETIC_ALLOCATION_LIMIT && TYPED_ARRAY_VIEW != jsc::JSType::ArrayBuffer {
+                if buf_len > VirtualMachine::SYNTHETIC_ALLOCATION_LIMIT && TYPED_ARRAY_VIEW != jsc::JSType::ArrayBuffer {
                     return global.throw_out_of_memory();
                 }
                 let store = self.store.as_ref().unwrap().clone();
@@ -4452,8 +4428,7 @@ impl Blob {
                 Ok(jsc::ArrayBuffer::from_bytes(unsafe { &mut *buf }, TYPED_ARRAY_VIEW).to_js_with_context(
                     global,
                     store.into_raw() as *mut c_void,
-                    jsc::BlobArrayBuffer_deallocator,
-                    None,
+                    Some(jsc::array_buffer::BlobArrayBuffer_deallocator),
                 ))
             }
             Lifetime::Transfer => {
@@ -4470,7 +4445,7 @@ impl Blob {
                 Ok(jsc::ArrayBuffer::from_bytes(unsafe { &mut *buf }, TYPED_ARRAY_VIEW).to_js_with_context(
                     global,
                     store.into_raw() as *mut c_void,
-                    jsc::array_buffer::BlobArrayBuffer_deallocator,
+                    Some(jsc::array_buffer::BlobArrayBuffer_deallocator),
                 ))
             }
             Lifetime::Temporary => {
@@ -4537,7 +4512,7 @@ impl Blob {
         }
     }
 
-    pub fn to_form_data(&mut self, global: &JSGlobalObject, _lifetime: Lifetime) -> jsc::JsTerminatedResult<JSValue> {
+    pub fn to_form_data(&mut self, global: &JSGlobalObject, _lifetime: Lifetime) -> Result<JSValue, jsc::JsTerminated> {
         if self.needs_to_read_file() {
             return Ok(self.do_read_file::<ToFormDataWithBytesFn>(global));
         }
@@ -4720,11 +4695,11 @@ impl Blob {
             }
         }
 
-        // PERF(port): was stack-fallback(1024) alloc — ArrayVec keeps JSValues on the
-        // conservatively-scanned stack (heap Vec<JSValue> is NOT GC-safe). Zig spilled
-        // to heap past 128 entries; Phase B may need a rooted overflow path.
-        let mut stack: arrayvec::ArrayVec<JSValue, 128> = arrayvec::ArrayVec::new();
-        let mut joiner = bun_core::StringJoiner::default();
+        // PERF(port): was stack-fallback(1024) alloc — BoundedArray keeps JSValues on
+        // the conservatively-scanned stack (heap Vec<JSValue> is NOT GC-safe). Zig
+        // spilled to heap past 128 entries; Phase B may need a rooted overflow path.
+        let mut stack: bun_collections::BoundedArray<JSValue, 128> = bun_collections::BoundedArray::default();
+        let mut joiner = bun_string::string_joiner::StringJoiner::default();
         let mut could_have_non_ascii = false;
 
         loop {

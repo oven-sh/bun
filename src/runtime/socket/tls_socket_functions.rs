@@ -324,8 +324,9 @@ pub fn get_certificate(this: &mut This, global: &JSGlobalObject, _frame: &CallFr
     // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
     let cert = unsafe { ffi::SSL_get_certificate(ssl_ptr) };
 
-    if let Some(x509) = cert {
-        return X509::to_js(x509, global);
+    if !cert.is_null() {
+        // SAFETY: cert is a non-null *mut X509 (null-checked above).
+        return X509::to_js(unsafe { &mut *cert }, global);
     }
     Ok(JSValue::UNDEFINED)
 }
@@ -701,9 +702,10 @@ pub fn get_alpn_protocol(this: &This, global: &JSGlobalObject) -> JsResult<JSVal
 pub fn get_session(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::UNDEFINED) };
     // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
-    let Some(session) = (unsafe { ffi::SSL_get_session(ssl_ptr) }) else {
+    let session = unsafe { ffi::SSL_get_session(ssl_ptr) };
+    if session.is_null() {
         return Ok(JSValue::UNDEFINED);
-    };
+    }
     // SAFETY: session is a non-null *mut SSL_SESSION; null out-param requests only the encoded size.
     let size = unsafe { ffi::i2d_SSL_SESSION(session, core::ptr::null_mut()) };
     if size <= 0 {
@@ -736,14 +738,15 @@ pub fn set_session(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) 
 
     if let Some(sb) = StringOrBuffer::from_js(global, session_arg)? {
         let session_slice = sb.slice();
-        let ssl_ptr = this.socket.ssl();
+        let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::UNDEFINED) };
         let mut tmp: *const u8 = session_slice.as_ptr();
         // SAFETY: tmp/session_slice.len() describe a valid readable buffer borrowed from `sb` for the duration of this call.
-        let Some(session) = (unsafe {
+        let session = unsafe {
             ffi::d2i_SSL_SESSION(core::ptr::null_mut(), &mut tmp, c_long::try_from(session_slice.len()).unwrap())
-        }) else {
-            return Ok(JSValue::UNDEFINED);
         };
+        if session.is_null() {
+            return Ok(JSValue::UNDEFINED);
+        }
         // SSL_set_session takes its own reference ("the caller retains ownership of |session|"),
         // so we must release the one returned by d2i_SSL_SESSION on every path.
         // SAFETY: `s` is the +1 SSL_SESSION reference returned by d2i_SSL_SESSION; we own it.

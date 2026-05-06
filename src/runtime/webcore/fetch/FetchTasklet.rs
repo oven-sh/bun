@@ -1046,9 +1046,9 @@ impl FetchTasklet {
         }
     }
 
-    fn on_stream_cancelled_callback(ctx: *mut c_void) {
+    fn on_stream_cancelled_callback(ctx: Option<*mut c_void>) {
         // SAFETY: ctx is a *mut FetchTasklet stored by the caller (non-null)
-        let this = unsafe { &mut *(ctx as *mut FetchTasklet) };
+        let this = unsafe { &mut *(ctx.expect("ctx") as *mut FetchTasklet) };
         if this.ignore_data {
             return;
         }
@@ -1620,7 +1620,7 @@ impl FetchTasklet {
         task_ref
             .javascript_vm
             .event_loop()
-            .enqueue_task_concurrent(task_ref.concurrent_task.from(task, jsc::ConcurrentTaskDeinit::Manual));
+            .enqueue_task_concurrent(task_ref.concurrent_task.from(task, AutoDeinit::ManualDeinit));
 
         task_ref.mutex.unlock();
         // we are done with the http client so we can deref our side
@@ -1647,7 +1647,7 @@ pub extern "C" fn Bun__FetchResponse_finalize(this: *mut FetchTasklet) {
         // 3. We never started buffering, in which case we should ignore the body.
         //
         // Note: We cannot call .get() on the ReadableStreamRef. This is called inside a finalizer.
-        if !matches!(body, BodyValue::Locked(_)) || this.readable_stream_ref.held.has() {
+        if !matches!(body, BodyValue::Locked(_)) || this.readable_stream_ref.has() {
             // Scenario 1 or 3.
             return;
         }

@@ -2913,12 +2913,12 @@ impl SocketMode {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct DuplexUpgradeContext {
-    pub upgrade: uws::UpgradedDuplex,
+    pub upgrade: UpgradedDuplex<'static>,
     // We only us a tls and not a raw socket when upgrading a Duplex, Duplex dont support socketpairs
     pub tls: Option<IntrusiveRc<TLSSocket>>,
     // task used to deinit the context in the next tick, vm is used to enqueue the task
     pub vm: &'static VirtualMachine,
-    pub task: jsc::AnyTask,
+    pub task: AnyTask,
     pub task_event: EventState,
     /// Config to build a fresh `SSL_CTX` from (legacy `{ca,cert,key}` callers).
     /// Mutually exclusive with `owned_ctx` — `runEvent` prefers `owned_ctx`.
@@ -3338,23 +3338,32 @@ pub fn js_upgrade_duplex_to_tls(
     let _ = ssl_opts;
     tls_ref.ref_();
 
-    dc.task = jsc::AnyTask::new::<DuplexUpgradeContext>(
-        DuplexUpgradeContext::run_event,
-        duplex_context,
-    );
-    dc.upgrade = uws::UpgradedDuplex::from(
+    // Zig: `jsc.AnyTask.New(DuplexUpgradeContext, runEvent).init(ctx)`. Rust's
+    // `AnyTask::New` can't take a comptime callback (see AnyTask.rs PORT NOTE),
+    // so we hand-write the `*mut c_void → run_event` shim and fill the struct.
+    dc.task = AnyTask {
+        ctx: NonNull::new(duplex_context as *mut c_void),
+        callback: |p| {
+            // SAFETY: `p` is the `*mut DuplexUpgradeContext` stored in `ctx`.
+            unsafe { (&mut *(p as *mut DuplexUpgradeContext)).run_event() };
+            Ok(())
+        },
+    };
+    dc.upgrade = UpgradedDuplex::from(
         global,
         duplex,
-        uws::UpgradedDuplexCallbacks {
-            on_open: DuplexUpgradeContext::on_open as *const _,
-            on_data: DuplexUpgradeContext::on_data as *const _,
-            on_handshake: DuplexUpgradeContext::on_handshake as *const _,
-            on_close: DuplexUpgradeContext::on_close as *const _,
-            on_end: DuplexUpgradeContext::on_end as *const _,
-            on_writable: DuplexUpgradeContext::on_writable as *const _,
-            on_error: DuplexUpgradeContext::on_error as *const _,
-            on_timeout: DuplexUpgradeContext::on_timeout as *const _,
-            ctx: duplex_context as *mut c_void,
+        UpgradedDuplexHandlers {
+            on_open: |c| unsafe { (&mut *(c as *mut DuplexUpgradeContext)).on_open() },
+            on_data: |c, d| unsafe { (&mut *(c as *mut DuplexUpgradeContext)).on_data(d) },
+            on_handshake: |c, ok, err| unsafe {
+                (&mut *(c as *mut DuplexUpgradeContext)).on_handshake(ok, err)
+            },
+            on_close: |c| unsafe { (&mut *(c as *mut DuplexUpgradeContext)).on_close() },
+            on_end: |c| unsafe { (&mut *(c as *mut DuplexUpgradeContext)).on_end() },
+            on_writable: |c| unsafe { (&mut *(c as *mut DuplexUpgradeContext)).on_writable() },
+            on_error: |c, e| unsafe { (&mut *(c as *mut DuplexUpgradeContext)).on_error(e) },
+            on_timeout: |c| unsafe { (&mut *(c as *mut DuplexUpgradeContext)).on_timeout() },
+            ctx: duplex_context as *mut (),
         },
     );
 
@@ -3417,18 +3426,13 @@ pub fn js_create_socket_pair(global: &JSGlobalObject, _frame: &CallFrame) -> JsR
 
     #[cfg(not(windows))]
     {
-        let mut fds_: [sys::c::fd_t; 2] = [0, 0];
+        let mut fds_: [libc::c_int; 2] = [0, 0];
         // SAFETY: libc FFI.
         let rc = unsafe {
-            sys::c::socketpair(
-                sys::posix::AF_UNIX,
-                sys::posix::SOCK_STREAM,
-                0,
-                fds_.as_mut_ptr(),
-            )
+            libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds_.as_mut_ptr())
         };
         if rc != 0 {
-            let err = sys::Error::from_code(sys::get_errno(rc), sys::Tag::Socketpair);
+            let err = sys::Error::from_code(sys::get_errno(rc), sys::Tag::socketpair);
             return global.throw_value(err.to_js(global)?);
         }
 

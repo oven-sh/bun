@@ -102,7 +102,7 @@ pub fn to_match_snapshot(
         "<green>properties<r><d>, <r>hint",
     )?;
 
-    this.snapshot(global, value, property_matchers, hint.slice(), "toMatchSnapshot")
+    Expect::snapshot(&mut **this, global, value, property_matchers, hint.slice(), "toMatchSnapshot")
 }
 
 // ──────────────────────────────────────────────────────────────────────────

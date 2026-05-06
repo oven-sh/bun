@@ -794,17 +794,25 @@ impl WindowsNamedPipe {
 
     pub fn ssl(&self) -> Option<*mut boringssl::SSL> {
         if let Some(wrapper) = &self.wrapper {
-            return Some(wrapper.ssl);
+            return wrapper.ssl.map(|p| p.as_ptr());
         }
         None
     }
 
     pub fn ssl_error(&self) -> us_bun_verify_error_t {
         us_bun_verify_error_t {
-            error_no: self.ssl_error.error_no,
-            // SAFETY: CertError.code/.reason are NUL-terminated owned slices; ptr cast to *const c_char
-            code: self.ssl_error.code.as_ptr().cast(),
-            reason: self.ssl_error.reason.as_ptr().cast(),
+            error: self.ssl_error.error_no,
+            // CertError.code/.reason are owned `Box<CStr>`s; fall back to "" when absent.
+            code: self
+                .ssl_error
+                .code
+                .as_deref()
+                .map_or(b"\0".as_ptr().cast(), |c| c.as_ptr()),
+            reason: self
+                .ssl_error
+                .reason
+                .as_deref()
+                .map_or(b"\0".as_ptr().cast(), |c| c.as_ptr()),
         }
     }
 

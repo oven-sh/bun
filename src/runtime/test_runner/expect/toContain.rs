@@ -57,12 +57,12 @@ impl Expect {
             let value_string = value.to_slice(global)?;
             let expected_string = expected.to_slice(global)?;
 
-            if expected_string.len() == 0 {
+            if expected_string.slice().is_empty() {
                 // edge case empty string is always contained
                 pass = true;
             } else if strings::contains(value_string.slice(), expected_string.slice()) {
                 pass = true;
-            } else if value_string.len() == 0 && expected_string.len() == 0 {
+            } else if value_string.slice().is_empty() && expected_string.slice().is_empty() {
                 // edge case two empty strings are true
                 pass = true;
             }

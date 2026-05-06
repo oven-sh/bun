@@ -1616,13 +1616,37 @@ impl PackageJSON {
         }
 
         // used by `bun run`
-        // TODO(b2-blocked): bun_js_parser `Expr::as_property_string_map` (gated round-C).
-        
+        // PORT NOTE: `Expr::as_property_string_map` returns
+        // `ArrayHashMap<&'bump [u8], &'bump [u8]>` (bump-tied lifetimes), but
+        // `ScriptsMap` stores `&'static [u8]` borrowing the package.json source
+        // bytes (`contents_static`, see SAFETY note above). Inline the
+        // string-map walk so values borrow the source buffer, not a temp bump.
         if include_scripts {
-            if let Some(scripts) = json.as_property_string_map(b"scripts") {
+            // Local: build a `StringArrayHashMap<&'static [u8]>` for the named
+            // top-level object property. Values are JSON string literals, so
+            // `as_utf8_string_literal()` (no bump) returns slices into
+            // `contents_static`.
+            let property_string_map = |name: &[u8]| -> Option<Box<StringArrayHashMap<&'static [u8]>>> {
+                let prop = json.as_property(name)?;
+                let js_ast::ExprData::EObject(obj) = &prop.expr.data else { return None };
+                if obj.properties.len == 0 { return None }
+                let mut map = StringArrayHashMap::<&'static [u8]>::default();
+                map.ensure_total_capacity(obj.properties.len as usize).ok()?;
+                for p in obj.properties.slice() {
+                    let Some(key) = p.key.as_ref().and_then(|k| k.as_utf8_string_literal()) else { continue };
+                    let Some(value) = p.value.as_ref().and_then(|v| v.as_utf8_string_literal()) else { continue };
+                    if key.is_empty() { continue }
+                    // SAFETY: `key`/`value` borrow `contents_static`; see SAFETY note
+                    // on `contents_static` above (owned by the returned PackageJSON).
+                    let value: &'static [u8] = unsafe { core::slice::from_raw_parts(value.as_ptr(), value.len()) };
+                    map.put_assume_capacity(key, value);
+                }
+                Some(Box::new(map))
+            };
+            if let Some(scripts) = property_string_map(b"scripts") {
                 package_json.scripts = Some(scripts);
             }
-            if let Some(config) = json.as_property_string_map(b"config") {
+            if let Some(config) = property_string_map(b"config") {
                 package_json.config = Some(config);
             }
         }
@@ -1651,8 +1675,10 @@ impl PackageJSON {
 impl PackageJSON {
     pub fn hash_module(&self, module: &[u8]) -> u32 {
         let mut hasher = Wyhash::init(0);
-        // TODO(port): `this.hash` field referenced in Zig but not declared on PackageJSON; preserving call shape
-        hasher.update(bytes_of(&self.hash));
+        // PORT NOTE: Zig referenced `this.hash`, which is not a declared field on
+        // `PackageJSON` in either tree (dead body). Hash the package name as the
+        // stable per-package seed instead so `hash_module` is deterministic.
+        hasher.update(&self.name);
         hasher.update(module);
 
         hasher.final_() as u32

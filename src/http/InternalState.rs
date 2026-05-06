@@ -386,10 +386,10 @@ impl InternalState {
                 if !body_out_str.owns(buffer.list.as_slice()) {
                     if let Err(err) = body_out_str.append(buffer.list.as_slice()) {
                         let err: Error = err.into();
-                        Output::pretty_errorln(
+                        Output::pretty_errorln(&format_args!(
                             "<r><red>Failed to append to body buffer: {}<r>",
-                            (bstr::BStr::new(err.name()),),
-                        );
+                            bstr::BStr::new(err.name()),
+                        ));
                         Output::flush();
                         return Err(err.into());
                     }

@@ -3630,7 +3630,8 @@ impl<'a> BundleV2<'a> {
 
         /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
-        crate::linker_context_mod::generate_chunks_in_parallel::<true>(&mut self.linker, chunks)?;
+        crate::linker_context_mod::generate_chunks_in_parallel::<true>(&mut self.linker, chunks)
+            .map_err(|_| AllocError)?;
         // TODO(port): errdefer { bun.outOfMemory() } — caller cannot recover
 
         /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
@@ -3639,7 +3640,7 @@ impl<'a> BundleV2<'a> {
             chunks,
             css_file_list: core::mem::take(&mut start.css_entry_points),
             html_files,
-        })
+        }).map_err(|_| AllocError)
     }
 
     pub fn enqueue_on_resolve_plugin_if_needed(
@@ -3650,7 +3651,8 @@ impl<'a> BundleV2<'a> {
         import_record_index: u32,
         original_target: options::Target,
     ) -> bool {
-        if let Some(plugins) = self.plugins.as_deref_mut() {
+        if let Some(mut plugins_ptr) = self.plugins {
+            let plugins = unsafe { plugins_ptr.as_mut() };
             if plugins.has_any_matches(&import_record.path, false) {
                 // This is where onResolve plugins are enqueued
                 let resolve = Box::new(jsc_api::JSBundler::Resolve::default());
@@ -3663,9 +3665,9 @@ impl<'a> BundleV2<'a> {
                 *resolve = jsc_api::JSBundler::Resolve::init(self, jsc_api::JSBundler::MiniImportRecord {
                     kind: import_record.kind,
                     source_file: source_file.into(),
-                    namespace: import_record.path.namespace.clone(),
+                    namespace: import_record.path.namespace.into(),
                     specifier: import_record.path.text.to_vec().into_boxed_slice(),
-                    importer_source_index: bun_logger::Index(source_index.get()),
+                    importer_source_index: source_index,
                     import_record_index,
                     range: import_record.range,
                     original_target,
@@ -3684,7 +3686,8 @@ impl<'a> BundleV2<'a> {
         entry_point: &[u8],
         target: options::Target,
     ) -> bool {
-        if let Some(plugins) = self.plugins.as_deref_mut() {
+        if let Some(mut plugins_ptr) = self.plugins {
+            let plugins = unsafe { plugins_ptr.as_mut() };
             let mut temp_path = Fs::Path::init(entry_point.into());
             temp_path.namespace = b"file";
             if plugins.has_any_matches(&temp_path, false) {
@@ -3695,8 +3698,8 @@ impl<'a> BundleV2<'a> {
 
                 *resolve = jsc_api::JSBundler::Resolve::init(self, jsc_api::JSBundler::MiniImportRecord {
                     kind: ImportKind::EntryPointBuild,
-                    source_file: b"".into(), // No importer for entry points
-                    namespace: b"file".into(),
+                    source_file: Box::default(), // No importer for entry points
+                    namespace: (&b"file"[..]).into(),
                     specifier: entry_point.into(),
                     importer_source_index: u32::MAX, // Sentinel value for entry points
                     import_record_index: 0,
@@ -3721,12 +3724,13 @@ impl<'a> BundleV2<'a> {
             let Ok(maybe_data_url) = DataURL::parse(&parse.path.text) else { return false };
             let Some(data_url) = maybe_data_url else { return false };
             let Ok(maybe_decoded) = data_url.decode_data() else { return false };
-            self.free_list.push(maybe_decoded.clone());
-            parse.contents_or_fd = parse_task::ContentsOrFd::Contents(maybe_decoded);
+            self.free_list.push(maybe_decoded.clone().into_boxed_slice());
+            // TODO(port): lifetime — leaked for &'static [u8]; tracked in free_list above.
+            parse.contents_or_fd = parse_task::ContentsOrFd::Contents(Box::leak(maybe_decoded.into_boxed_slice()));
             parse.loader = Some(match data_url.decode_mime_type().category {
-                bun_http_types::mime_type::MimeType::Category::Javascript => Loader::Js,
-                bun_http_types::mime_type::MimeType::Category::Css => Loader::Css,
-                bun_http_types::mime_type::MimeType::Category::Json => Loader::Json,
+                bun_http_types::MimeType::Category::Javascript => Loader::Js,
+                bun_http_types::MimeType::Category::Css => Loader::Css,
+                bun_http_types::MimeType::Category::Json => Loader::Json,
                 _ => parse.loader.unwrap_or(Loader::File),
             });
         }
@@ -3735,7 +3739,8 @@ impl<'a> BundleV2<'a> {
     }
 
     pub fn enqueue_on_load_plugin_if_needed_impl(&mut self, parse: &mut ParseTask) -> bool {
-        if let Some(plugins) = self.plugins.as_deref_mut() {
+        if let Some(mut plugins_ptr) = self.plugins {
+            let plugins = unsafe { plugins_ptr.as_mut() };
             if plugins.has_any_matches(&parse.path, true) {
                 // This is where onLoad plugins are enqueued
                 bun_core::scoped_log!(Bundle, "enqueue onLoad: {}:{}",
@@ -3751,7 +3756,7 @@ impl<'a> BundleV2<'a> {
     }
 
     fn path_with_pretty_initialized(&self, path: Fs::Path, target: options::Target) -> Result<Fs::Path, Error> {
-        generic_path_with_pretty_initialized(path, target, &self.transpiler.fs.top_level_dir, self.allocator())
+        generic_path_with_pretty_initialized(path, target, unsafe { &(*self.transpiler.fs).top_level_dir }, self.allocator())
     }
 
     fn reserve_source_indexes_for_bake(&mut self) -> Result<(), Error> {

@@ -353,11 +353,22 @@ impl<'a> LinkerContext<'a> {
             // PORT NOTE: reshaped for borrowck — `items_*_mut()` columns are
             // physically disjoint SoA slabs but Rust can't see that through
             // `&mut MultiArrayList`. Route through raw column pointers.
-            let ast_slice = self.graph.ast.slice_mut();
+            let ast_len = self.graph.ast.len();
+            let ast_slice = self.graph.ast.slice();
             // SAFETY: SoA columns are disjoint; the underlying slab does not
             // reallocate for the duration of this loop.
-            let exports_kind: &mut [ExportsKind] = unsafe { &mut *ast_slice.items_raw_mut(js_ast::ast::bundled_ast::BundledAstField::exports_kind) };
-            let ast_flags_list: &mut [AstFlags] = unsafe { &mut *ast_slice.items_raw_mut(js_ast::ast::bundled_ast::BundledAstField::flags) };
+            let exports_kind: &mut [ExportsKind] = unsafe {
+                core::slice::from_raw_parts_mut(
+                    ast_slice.items_raw::<ExportsKind>(js_ast::ast::bundled_ast::BundledAstField::exports_kind),
+                    ast_len,
+                )
+            };
+            let ast_flags_list: &mut [AstFlags] = unsafe {
+                core::slice::from_raw_parts_mut(
+                    ast_slice.items_raw::<AstFlags>(js_ast::ast::bundled_ast::BundledAstField::flags),
+                    ast_len,
+                )
+            };
             let meta_flags_list = self.graph.meta.items_flags_mut();
 
             for entry_point in entry_points.iter() {
@@ -463,7 +474,7 @@ impl<'a> LinkerContext<'a> {
                 let path_text =
                     unsafe { &(*parse_graph).input_files.items_source()[html_import as usize].path.text };
                 // SAFETY: sole `&mut` into the per-target map for this lookup.
-                let source_index: u32 = *unsafe { (*parse_graph).path_to_source_index_map(Target::Browser) }
+                let source_index: u32 = unsafe { (*parse_graph).path_to_source_index_map(Target::Browser) }
                     .get(path_text)
                     .unwrap_or_else(|| {
                         panic!("Assertion failed: HTML import file not found in pathToSourceIndexMap");
@@ -512,9 +523,9 @@ impl<'a> LinkerContext<'a> {
     pub fn link(
         &mut self,
         bundle: &mut BundleV2,
-        entry_points: &mut [Index],
-        server_component_boundaries: js_ast::server_component_boundary::List,
-        reachable: &mut [Index],
+        entry_points: &[js_ast::Index],
+        server_component_boundaries: js_ast::ast::server_component_boundary::List,
+        reachable: &[Index],
     ) -> Result<Box<[Chunk]>, LinkError> {
         self.load(bundle, entry_points, server_component_boundaries, reachable)?;
 
@@ -593,7 +604,7 @@ impl<'a> LinkerContext<'a> {
             self.graph.propagate_async_dependencies()?;
         }
 
-        scan_imports_and_exports(self)?;
+        scan_imports_and_exports(self).map_err(BunError::from)?;
 
         // Stop now if there were errors
         if self.log.has_errors() {
@@ -643,7 +654,7 @@ impl<'a> LinkerContext<'a> {
         let css_reprs: *const [Option<*mut core::ffi::c_void>] = self.graph.ast.items_css();
         // SAFETY: parse_graph backref
         let side_effects: *const [SideEffects] = unsafe { (*self.parse_graph).input_files.items_side_effects() };
-        let entry_point_kinds: *const [EntryPoint::Kind] = self.graph.files.items_entry_point_kind();
+        let entry_point_kinds: *const [EntryPoint::Kind] = self.graph.files.items_entry_point_kind() as *const _;
         let entry_points: *const [crate::IndexInt] = self.graph.entry_points.items_source_index();
         let distances: *mut [u32] = self.graph.files.items_distance_from_entry_point_mut();
         let entry_points_len = unsafe { (*entry_points).len() };
@@ -705,42 +716,45 @@ impl<'a> LinkerContext<'a> {
         Ok(())
     }
 
-    pub fn generate_chunk(ctx: GenerateChunkCtx, chunk: &mut Chunk, chunk_index: usize) {
-        // SAFETY: ctx.c points into BundleV2.linker; container_of pattern.
-        // `Worker::get` only reads `bundle.graph.pool` (shared), so a `&` is
-        // sufficient and avoids aliasing the `&mut LinkerContext` in `ctx.c`.
+    pub fn generate_chunk(ctx: &GenerateChunkCtx, chunk: *mut Chunk, chunk_index: usize) {
+        // SAFETY: `each_ptr` hands us a unique `*mut Chunk` per task; deref for
+        // the duration of this body. ctx.c points into BundleV2.linker;
+        // container_of pattern. `Worker::get` only reads `bundle.graph.pool`
+        // (shared), so a `&` is sufficient and avoids aliasing.
+        let chunk: &mut Chunk = unsafe { &mut *chunk };
         let bundle: *const BundleV2 = unsafe {
             (ctx.c as *const LinkerContext as *const u8)
                 .sub(offset_of!(BundleV2, linker))
                 .cast::<BundleV2>()
         };
         let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
-        let worker = scopeguard::guard(worker, |w| w.unget());
-        let worker: &mut crate::thread_pool::Worker = scopeguard::ScopeGuard::into_inner_mut(&mut *worker);
+        let mut worker = scopeguard::guard(worker, |w| w.unget());
+        let worker: &mut crate::thread_pool::Worker = &mut **worker;
         // PORT NOTE: dispatch on a discriminant copy so `chunk` isn't borrowed
         // across the post-process call (which takes `&mut Chunk`).
         let result = match chunk.content {
-            crate::chunk::Content::Javascript(_) => post_process_js_chunk(ctx, worker, chunk, chunk_index),
-            crate::chunk::Content::Css(_) => post_process_css_chunk(ctx, worker, chunk),
-            crate::chunk::Content::Html(_) => post_process_html_chunk(ctx, worker, chunk),
+            crate::chunk::Content::Javascript(_) => post_process_js_chunk(*ctx, worker, chunk, chunk_index),
+            crate::chunk::Content::Css(_) => post_process_css_chunk(*ctx, worker, chunk),
+            crate::chunk::Content::Html => post_process_html_chunk(*ctx, worker, chunk),
         };
         if let Err(err) = result {
             Output::panic(format_args!("TODO: handle error: {}", err.name()));
         }
     }
 
-    pub fn generate_js_renamer(ctx: GenerateChunkCtx, chunk: &mut Chunk, chunk_index: usize) {
-        // SAFETY: container_of pattern, ctx.c is &mut BundleV2.linker; see
-        // `generate_chunk` above for the aliasing discipline.
+    pub fn generate_js_renamer(ctx: &GenerateChunkCtx, chunk: *mut Chunk, chunk_index: usize) {
+        // SAFETY: `each_ptr` hands us a unique `*mut Chunk` per task; deref for
+        // the body. container_of pattern — see `generate_chunk` above.
+        let chunk: &mut Chunk = unsafe { &mut *chunk };
         let bundle: *const BundleV2 = unsafe {
             (ctx.c as *const LinkerContext as *const u8)
                 .sub(offset_of!(BundleV2, linker))
                 .cast::<BundleV2>()
         };
         let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
-        let worker = scopeguard::guard(worker, |w| w.unget());
+        let mut worker = scopeguard::guard(worker, |w| w.unget());
         if let crate::chunk::Content::Javascript(_) = chunk.content {
-            Self::generate_js_renamer_(ctx, &mut *worker, chunk, chunk_index);
+            Self::generate_js_renamer_(*ctx, &mut **worker, chunk, chunk_index);
         }
     }
 
@@ -751,7 +765,7 @@ impl<'a> LinkerContext<'a> {
         // simultaneously; cache the files slice via raw pointer (it lives in
         // the chunk arena, address-stable for the renamer pass).
         let files: *const [u32] = match &chunk.content {
-            crate::chunk::Content::Javascript(js) => js.files_in_chunk_order.slice() as *const [u32],
+            crate::chunk::Content::Javascript(js) => &*js.files_in_chunk_order as *const [u32],
             _ => unreachable!(),
         };
         // SAFETY: `files` points into `chunk.content.javascript`; `rename_symbols_in_chunk`

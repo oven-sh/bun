@@ -342,6 +342,22 @@ impl CompileResult {
     }
 }
 
+// PORT NOTE: `Default` so `CompileResult::Javascript { .., ..Default::default() }`
+// FRU sites in `postProcessJSChunk.rs` compile. Returns the `Javascript`
+// variant (the only one those FRU sites construct).
+impl Default for CompileResult {
+    fn default() -> Self {
+        CompileResult::Javascript {
+            source_index: 0,
+            result: bun_js_printer::PrintResult::Result(bun_js_printer::PrintResultSuccess {
+                code: Box::new([]),
+                source_map: None,
+            }),
+            decls: Box::new([]),
+        }
+    }
+}
+
 /// `bundle_v2.zig:genericPathWithPrettyInitialized` — public copy of the body
 /// in `bundle_v2::__phase_a_draft` (private module). This assigns a concise,
 /// predictable, and unique `.pretty` attribute to a Path. DevServer relies on

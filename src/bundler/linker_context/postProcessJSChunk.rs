@@ -86,74 +86,77 @@ pub fn post_process_js_chunk(
     // Zig: ModuleInfo.create(bun.default_allocator, ...) returns heap-allocated *ModuleInfo,
     // later stored on chunk.content.javascript.module_info — OWNED → Box<ModuleInfo>.
     let mut module_info: Option<Box<ModuleInfo>> = if generate_module_info {
-        ModuleInfo::create(is_typescript).ok()
+        Some(ModuleInfo::create(is_typescript))
     } else {
         None
     };
 
+    // SAFETY: worker.allocator is set in Worker::init() before any task runs.
+    let worker_allocator: &Arena = unsafe { &*worker.allocator };
+
     {
-        let print_options = js_printer::Options {
+        // PORT NOTE: Zig builds one `print_options` and passes it by-value twice.
+        // Rust `Options` is not `Copy` (holds `&mut ModuleInfo`), so we use a
+        // closure to construct fresh options per call.
+        let make_print_options = |mi: Option<&mut ModuleInfo>| js_printer::Options {
             bundling: true,
             indent: Default::default(),
             has_run_symbol_renamer: true,
 
-            // TODO(port): allocator field — AST crate; thread &'bump Bump or drop
-            allocator: worker.allocator,
             require_ref: runtime_require_ref,
             minify_whitespace: c.options.minify_whitespace,
             minify_identifiers: c.options.minify_identifiers,
             minify_syntax: c.options.minify_syntax,
             target: c.options.target,
             print_dce_annotations: c.options.emit_dce_annotations,
-            mangled_props: &c.mangled_props,
-            module_info: module_info.as_deref_mut(),
+            mangled_props: Some(&c.mangled_props),
+            module_info: mi,
             // .const_values = c.graph.const_values,
             ..Default::default()
         };
 
-        let mut cross_chunk_import_records =
-            ImportRecord::List::with_capacity(chunk.cross_chunk_imports.len());
+        let mut cross_chunk_import_records: Vec<ImportRecord> =
+            Vec::with_capacity(chunk.cross_chunk_imports.len as usize);
         // PERF(port): was initCapacity catch unreachable
         for import_record in chunk.cross_chunk_imports.slice() {
             // PERF(port): was appendAssumeCapacity
-            cross_chunk_import_records.push(ImportRecord {
-                kind: import_record.import_kind,
-                path: Fs::Path::init(ctx.chunks[import_record.chunk_index as usize].unique_key),
-                range: Logger::Range::NONE,
-                ..Default::default()
-            });
+            // TODO(port): ImportRecord has no Default — fill remaining fields explicitly
+            // once the cross-chunk-import path is exercised in Phase B.
+            let _ = import_record;
+            let _ = &ctx.chunks;
+            todo!("blocked_on: ImportRecord struct-init (no Default impl)");
         }
 
-        let ast = c.graph.ast.get(chunk.entry_point.source_index());
+        let ast = c.graph.ast.get(chunk.entry_point.source_index() as usize);
+        let ast_view = ast.to_ast();
+        let source = c.get_source(chunk.entry_point.source_index() as usize);
+        let target = unsafe { &(*c.resolver).opts }.target;
 
-        cross_chunk_prefix = js_printer::print(
-            // TODO(port): allocator param — AST crate; thread &'bump Bump or drop
-            worker.allocator,
-            unsafe { &(*c.resolver).opts }.target,
-            ast.to_ast(),
-            c.get_source(chunk.entry_point.source_index()),
-            print_options,
-            cross_chunk_import_records.slice(),
+        cross_chunk_prefix = js_printer::print::<false>(
+            worker_allocator,
+            target,
+            &ast_view,
+            source,
+            make_print_options(module_info.as_deref_mut()),
+            cross_chunk_import_records.as_slice(),
             &[Part {
-                stmts: chunk.content.javascript().cross_chunk_prefix_stmts.slice(),
+                stmts: chunk.content.javascript_mut().cross_chunk_prefix_stmts.slice_mut() as *mut [Stmt],
                 ..Default::default()
             }],
-            chunk.renamer,
-            false,
+            chunk.renamer.as_renamer(),
         );
-        cross_chunk_suffix = js_printer::print(
-            worker.allocator,
-            unsafe { &(*c.resolver).opts }.target,
-            ast.to_ast(),
-            c.get_source(chunk.entry_point.source_index()),
-            print_options,
+        cross_chunk_suffix = js_printer::print::<false>(
+            worker_allocator,
+            target,
+            &ast_view,
+            source,
+            make_print_options(module_info.as_deref_mut()),
             &[],
             &[Part {
-                stmts: chunk.content.javascript().cross_chunk_suffix_stmts.slice(),
+                stmts: chunk.content.javascript_mut().cross_chunk_suffix_stmts.slice_mut() as *mut [Stmt],
                 ..Default::default()
             }],
-            chunk.renamer,
-            false,
+            chunk.renamer.as_renamer(),
         );
     }
 
@@ -165,19 +168,16 @@ pub fn post_process_js_chunk(
         // export default → var, strips exports, etc.), so they match what's actually printed.
         for cr in chunk.compile_results_for_chunk.iter() {
             let decls = match cr {
-                CompileResult::Javascript(js) => &js.decls,
+                CompileResult::Javascript { decls, .. } => decls,
                 _ => continue,
             };
             for decl in decls.iter() {
                 let var_kind: analyze_transpiled_module::VarKind = match decl.kind {
-                    DeclKind::Declared => analyze_transpiled_module::VarKind::Declared,
-                    DeclKind::Lexical => analyze_transpiled_module::VarKind::Lexical,
+                    DeclInfoKind::Declared => analyze_transpiled_module::VarKind::Declared,
+                    DeclInfoKind::Lexical => analyze_transpiled_module::VarKind::Lexical,
                 };
-                // TODO(port): DeclKind enum path — verify exact module path in Phase B
-                let Ok(string_id) = mi.str(&decl.name) else { continue };
-                if mi.add_var(string_id, var_kind).is_err() {
-                    continue;
-                }
+                let string_id = mi.str(&decl.name);
+                mi.add_var(string_id, var_kind);
             }
         }
 
@@ -189,7 +189,7 @@ pub fn post_process_js_chunk(
         {
             let all_ast_flags = c.graph.ast.items_flags();
             for part_range in chunk.content.javascript().parts_in_chunk_in_order.iter() {
-                if all_ast_flags[part_range.source_index.get()].has_import_meta {
+                if all_ast_flags[part_range.source_index.get() as usize].has_import_meta {
                     mi.flags.contains_import_meta = true;
                     break;
                 }
@@ -207,7 +207,7 @@ pub fn post_process_js_chunk(
             let tla_keywords = unsafe { &(*c.parse_graph).ast }.items_top_level_await_keyword();
             let wraps = c.graph.meta.items_flags();
             for part_range in chunk.content.javascript().parts_in_chunk_in_order.iter() {
-                let idx = part_range.source_index.get();
+                let idx = part_range.source_index.get() as usize;
                 if idx >= tla_keywords.len() {
                     continue;
                 }

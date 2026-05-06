@@ -66,7 +66,8 @@ pub fn generate_code_for_lazy_export(
     // disabled `items_css()` is always `None` so this branch is unreachable.
     #[cfg(feature = "css")]
     if let Some(css_ast) = maybe_css_ast {
-        let stmt: Stmt = part.stmts[0];
+        // SAFETY: `part.stmts` is a non-empty arena slice (checked above).
+        let stmt: Stmt = unsafe { (*part.stmts)[0] };
         if !matches!(stmt.data, StmtData::SLazyExport(_)) {
             panic!("Internal error: expected top-level lazy export statement");
         }
@@ -373,14 +374,16 @@ pub fn generate_code_for_lazy_export(
                 exports.put(this.allocator(), key, value)?;
             }
 
-            if let StmtData::SLazyExport(mut slot) = part.stmts[0].data {
+            // SAFETY: `part.stmts` non-empty (checked above).
+            if let StmtData::SLazyExport(mut slot) = unsafe { (*part.stmts)[0] }.data {
                 // `StoreRef<ExprData>` is a Copy `NonNull` — write through the pointer.
                 *slot = Expr::init(exports, stmt.loc).data;
             }
         }
     }
 
-    let stmt: Stmt = part.stmts[0];
+    // SAFETY: `part.stmts` is a non-empty arena slice (checked above).
+    let stmt: Stmt = unsafe { (*part.stmts)[0] };
     if !matches!(stmt.data, StmtData::SLazyExport(_)) {
         panic!("Internal error: expected top-level lazy export statement");
     }
@@ -395,7 +398,8 @@ pub fn generate_code_for_lazy_export(
 
     match exports_kind {
         js_ast::ExportsKind::Cjs => {
-            part.stmts[0] = Stmt::assign(
+            // SAFETY: `part.stmts` non-empty arena slice.
+            unsafe { &mut *part.stmts }[0] = Stmt::assign(
                 Expr::init(
                     E::Dot {
                         target: Expr::init_identifier(module_ref, stmt.loc),
@@ -432,8 +436,8 @@ pub fn generate_code_for_lazy_export(
         _ => {
             // Otherwise, generate ES6 export statements. These are added as additional
             // parts so they can be tree shaken individually.
-            part.stmts.len = 0;
-            // TODO(port): `part.stmts.len = 0` — BabyList field write; use `.clear()`/`.set_len(0)`.
+            // PORT NOTE: Zig `part.stmts.len = 0` truncates the slice.
+            part.stmts = &mut [];
 
             if let ExprData::EObject(e_object) = &expr.data {
                 for property_ in e_object.properties.slice() {
@@ -491,28 +495,28 @@ pub fn generate_code_for_lazy_export(
                     // happened yet). So we need to wait until after tree shaking happens.
                     let generated =
                         this.generate_named_export_in_file(source_index, module_ref, name, name)?;
-                    // TODO(port): `parts.ptr[generated[1]]` raw-ptr indexing; re-borrow `parts` here for borrowck.
-                    let parts = &mut this.graph.ast.items_parts_mut()[source_index as usize];
-                    // PERF(port): was `this.allocator().alloc(Stmt, 1)` (arena) — use bump.alloc_slice in Phase B.
-                    parts[generated.1 as usize].stmts =
-                        this.allocator().alloc_slice_fill_default(1).into();
-                    parts[generated.1 as usize].stmts[0] = Stmt::alloc(
-                        S::Local {
-                            is_export: true,
-                            decls: G::DeclList::from_slice(
-                                &[G::Decl {
+                    // PERF(port): was `this.allocator().alloc(Stmt, 1)` (arena).
+                    let alloc = this.allocator();
+                    let new_stmts: *mut [Stmt] = alloc.alloc_slice_fill_iter(core::iter::once(
+                        Stmt::alloc(
+                            S::Local {
+                                is_export: true,
+                                decls: G::DeclList::from_slice(&[G::Decl {
                                     binding: Binding::alloc(
-                                        this.allocator(),
+                                        alloc,
                                         B::Identifier { r#ref: generated.0 },
                                         expr.loc,
                                     ),
                                     value: property.value,
-                                }],
-                            )?,
-                            ..Default::default()
-                        },
-                        property.key.as_ref().unwrap().loc,
-                    );
+                                }])?,
+                                ..Default::default()
+                            },
+                            property.key.as_ref().unwrap().loc,
+                        ),
+                    ));
+                    // PORT NOTE: `parts.ptr[generated[1]]` — re-borrow `parts` here for borrowck.
+                    let parts = this.graph.ast.items_parts_mut()[source_index as usize].slice_mut();
+                    parts[generated.1 as usize].stmts = new_stmts;
                 }
             }
 
@@ -534,19 +538,21 @@ pub fn generate_code_for_lazy_export(
                     name,
                     b"default",
                 )?;
-                let parts = &mut this.graph.ast.items_parts_mut()[source_index as usize];
-                parts[generated.1 as usize].stmts =
-                    this.allocator().alloc_slice_fill_default(1).into();
-                parts[generated.1 as usize].stmts[0] = Stmt::alloc(
-                    S::ExportDefault {
-                        default_name: js_ast::LocRef {
-                            ref_: Some(generated.0),
-                            loc: stmt.loc,
+                let alloc = this.allocator();
+                let new_stmts: *mut [Stmt] = alloc.alloc_slice_fill_iter(core::iter::once(
+                    Stmt::alloc(
+                        S::ExportDefault {
+                            default_name: js_ast::LocRef {
+                                ref_: Some(generated.0),
+                                loc: stmt.loc,
+                            },
+                            value: js_ast::StmtOrExpr::Expr(expr),
                         },
-                        value: js_ast::StmtOrExpr::Expr(expr),
-                    },
-                    stmt.loc,
-                );
+                        stmt.loc,
+                    ),
+                ));
+                let parts = this.graph.ast.items_parts_mut()[source_index as usize].slice_mut();
+                parts[generated.1 as usize].stmts = new_stmts;
             }
         }
     }

@@ -15,11 +15,17 @@ use bun_bundler::Transpiler;
 use bun_collections::BoundedArray;
 use bun_core::{self, Global, Output};
 use bun_resolver::fs::RealFS;
-use bun_install::package_manager_real::update_request::{self, UpdateRequest};
+use bun_install::update_request::{self, UpdateRequest};
+use bun_install::dependency::VersionTag;
+use bun_interchange::json;
 use bun_paths::{self, PathBuffer, DELIMITER};
 use bun_str::{strings, ZStr};
-use bun_sys::{self, Fd, O};
+use bun_sys::{self, Fd, FdDirExt as _, O};
 use bun_wyhash::hash;
+use std::env::consts::EXE_SUFFIX;
+
+use crate::api::bun::process::sync as proc_sync;
+use crate::api::bun::process::Status as SpawnStatus;
 
 bun_output::declare_scope!(bunx, visible);
 
@@ -278,7 +284,7 @@ impl BunxCommand {
         bun_js_parser::Expr::Data::Store::create();
         bun_js_parser::Stmt::Data::Store::create();
 
-        let expr = bun_json::parse_package_json_utf8(&source, &mut transpiler.log)?;
+        let expr = json::parse_package_json_utf8(&source, &mut transpiler.log)?;
         // TODO(port): allocator param dropped from parse_package_json_utf8
 
         // choose the first package that fits

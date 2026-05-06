@@ -1104,8 +1104,9 @@ pub fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
         #[cfg(all(not(target_os = "macos"), not(windows)))]
         job_ref.start_linux();
         Ok(promise_value)
-    }
+}
 
+impl CronRemoveJob {
     fn start_windows(&mut self) {
         self.state = RemoveState::InstallingCrontab;
         let task_name = match alloc_print_z(format_args!(
@@ -1575,8 +1576,8 @@ fn on_promise_reject(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
 // ============================================================================
 
 pub fn get_cron_object(global_this: &JSGlobalObject, _obj: &JSObject) -> JSValue {
-    let cron_fn = JSFunction::create(global_this, "cron", CronRegisterJob::cron_register, 3, Default::default());
-    let remove_fn = JSFunction::create(global_this, "remove", CronRemoveJob::cron_remove, 1, Default::default());
+    let cron_fn = JSFunction::create(global_this, "cron", cron_register, 3, Default::default());
+    let remove_fn = JSFunction::create(global_this, "remove", cron_remove, 1, Default::default());
     let parse_fn = JSFunction::create(global_this, "parse", cron_parse, 1, Default::default());
     cron_fn.put(global_this, bun_str::String::static_("remove"), remove_fn);
     cron_fn.put(global_this, bun_str::String::static_("parse"), parse_fn);

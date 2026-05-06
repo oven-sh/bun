@@ -78,10 +78,10 @@ impl UntrustedCommand {
             return Ok(());
         }
 
-        let mut untrusted_deps: ArrayHashMap<DependencyID, Lockfile::Package::Scripts::List> =
+        let mut untrusted_deps: ArrayHashMap<DependencyID, lockfile::package::scripts::List> =
             ArrayHashMap::default();
 
-        let mut tree_iterator = Lockfile::Tree::Iterator::<{ Lockfile::Tree::IterKind::NodeModules }>::init(&pm.lockfile);
+        let mut tree_iterator = lockfile::tree::Iterator::<{ lockfile::tree::IteratorPathStyle::NodeModules }>::init(&pm.lockfile);
         // TODO(port): Lockfile.Tree.Iterator(.node_modules) const-generic enum param
 
         let mut node_modules_path = bun_paths::AbsPath::init_top_level_dir();
@@ -143,7 +143,7 @@ impl UntrustedCommand {
             let package_id = pm.lockfile.buffers.resolutions.as_slice()[dep_id as usize];
             let resolution = pm.lockfile.packages.items_resolution()[package_id as usize];
 
-            scripts_list.print_scripts(&resolution, buf, Lockfile::Package::Scripts::PrintKind::Untrusted);
+            scripts_list.print_scripts(&resolution, buf, lockfile::package::scripts::PrintFormat::Untrusted);
             Output::pretty(format_args!("\n"));
         }
 
@@ -248,7 +248,7 @@ impl TrustCommand {
         let buf = pm.lockfile.buffers.string_bytes.as_slice();
         let packages = pm.lockfile.packages.slice();
         let resolutions: &[Resolution] = packages.items_resolution();
-        let scripts: &[Lockfile::Package::Scripts] = packages.items_scripts();
+        let scripts: &[lockfile::package::scripts::Scripts] = packages.items_scripts();
 
         let mut untrusted_dep_ids: DepIdSet = DepIdSet::default();
 
@@ -285,7 +285,7 @@ impl TrustCommand {
         // Instead of running them right away, we group scripts by depth in the node_modules
         // file structure, then run them starting at max depth. This ensures lifecycle scripts are run
         // in the correct order as they would during a normal install
-        let mut tree_iter = Lockfile::Tree::Iterator::<{ Lockfile::Tree::IterKind::NodeModules }>::init(&pm.lockfile);
+        let mut tree_iter = lockfile::tree::Iterator::<{ lockfile::tree::IteratorPathStyle::NodeModules }>::init(&pm.lockfile);
         // TODO(port): Lockfile.Tree.Iterator(.node_modules) const-generic enum param
 
         let mut node_modules_path = bun_paths::AbsPath::init_top_level_dir();

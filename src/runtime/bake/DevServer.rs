@@ -153,7 +153,7 @@ pub enum TestingBatchEvents {
 pub struct CurrentBundle<'a> {
     pub bv2: Box<BundleV2<'a>>,
     /// Information BundleV2 needs to finalize the bundle
-    pub start_data: bundler::DevServerInput,
+    pub start_data: bundler::bundle_v2::__phase_a_draft::DevServerInput,
     /// Started when the bundle was queued
     pub timer: Instant, // TODO(port): std.time.Timer → Instant; .read() becomes .elapsed()
     /// If any files in this bundle were due to hot-reloading, some extra work
@@ -217,8 +217,8 @@ pub struct DevServer<'a> {
     /// only a debug assertion as contention to this is always a bug; If a bundle is
     /// active and a file is changed, that change is placed into the next bundle.
     pub graph_safety_lock: ThreadLock,
-    pub client_graph: IncrementalGraph<{ bake::Side::Client }>,
-    pub server_graph: IncrementalGraph<{ bake::Side::Server }>,
+    pub client_graph: IncrementalGraph,
+    pub server_graph: IncrementalGraph,
     /// Barrel files with deferred (is_unused) import records. These files must
     /// be re-parsed on every incremental build because the set of needed exports
     /// may have changed. Populated by applyBarrelOptimization.
@@ -430,7 +430,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
             cfg!(feature = "bake_debugging_features")
                 && options
                     .dump_state_on_crash
-                    .unwrap_or_else(|| bun_core::feature_flag::BUN_DUMP_STATE_ON_CRASH.get())
+                    .unwrap_or_else(|| bun_core::env_var::feature_flag::BUN_DUMP_STATE_ON_CRASH.get())
         );
         // `dev.frontend_only = dev.framework.file_system_router_types.len == 0`
         w!(
@@ -472,7 +472,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         w!(bundling_failures, Default::default());
         w!(
             assume_perfect_incremental_bundling,
-            bun_core::feature_flag::BUN_ASSUME_PERFECT_INCREMENTAL
+            bun_core::env_var::feature_flag::BUN_ASSUME_PERFECT_INCREMENTAL
                 .get()
                 .unwrap_or(cfg!(debug_assertions))
         );

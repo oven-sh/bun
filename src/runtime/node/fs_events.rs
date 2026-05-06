@@ -1,11 +1,60 @@
 use core::ffi::{c_char, c_int, c_long, c_uint, c_void};
 use core::ptr::{self, NonNull};
+use core::sync::atomic::{AtomicPtr, Ordering};
 
 use bun_collections::BabyList;
-use bun_threading::{Mutex, Semaphore, Thread, UnboundedQueue};
-// TODO(port): confirm exact module paths for these sibling types
-use super::path_watcher::EventType;
-use crate::node::fs::watcher::Event;
+use bun_core::zstr;
+use bun_threading::{Mutex, UnboundedQueue};
+
+// PORT NOTE: `path_watcher` / `node_fs_watcher` are not yet wired into the
+// `crate::node` module tree, so the `Event`/`EventType` shapes the Zig spec
+// borrows from them are mirrored locally here until those siblings are gated in.
+// TODO(port): replace with `use super::path_watcher::{Event, EventType}` once wired.
+
+#[derive(Clone)]
+pub enum Event {
+    Rename(Box<[u8]>),
+    Change(Box<[u8]>),
+}
+
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum EventType {
+    Rename,
+    Change,
+}
+
+impl EventType {
+    pub fn to_event(self, path: &[u8]) -> Event {
+        match self {
+            EventType::Rename => Event::Rename(Box::<[u8]>::from(path)),
+            EventType::Change => Event::Change(Box::<[u8]>::from(path)),
+        }
+    }
+}
+
+/// Minimal port of `std.Thread.Semaphore` (Zig) — `bun_threading` has no
+/// semaphore yet. Only `post`/`wait` are used (once each, to sync CF thread
+/// startup), so a Mutex+Condvar pair is sufficient.
+#[derive(Default)]
+struct Semaphore {
+    inner: std::sync::Mutex<u32>,
+    cond: std::sync::Condvar,
+}
+
+impl Semaphore {
+    fn post(&self) {
+        let mut n = self.inner.lock().unwrap();
+        *n += 1;
+        self.cond.notify_one();
+    }
+    fn wait(&self) {
+        let mut n = self.inner.lock().unwrap();
+        while *n == 0 {
+            n = self.cond.wait(n).unwrap();
+        }
+        *n -= 1;
+    }
+}
 
 pub type CFAbsoluteTime = f64;
 pub type CFTimeInterval = f64;

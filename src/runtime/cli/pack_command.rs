@@ -2245,7 +2245,7 @@ fn run_lifecycle_script<const FOR_PUBLISH: bool>(
     script: &[u8],
     name: &[u8],
     abs_workspace_path: &[u8],
-    env: &bun_env::Loader,
+    env: &bun_dotenv::Loader,
     silent: bool,
 ) -> Result<(), PackError<FOR_PUBLISH>> {
     match RunCommand::run_package_script_foreground(
@@ -2319,11 +2319,10 @@ fn tarball_destination<'a>(
             0,
         );
     } else {
-        let tarball_destination_dir = path::join_abs_string_buf(
+        let tarball_destination_dir = resolve_path::join_abs_string_buf::<resolve_path::platform::Auto>(
             abs_workspace_path,
             dest_buf,
             &[pack_destination],
-            path::Style::Auto,
         );
         let dir_len_trimmed = strings::without_trailing_slash(tarball_destination_dir).len();
         let dir_len_full = tarball_destination_dir.len();
@@ -2535,7 +2534,7 @@ fn add_archive_entry(
 /// returns the printed json
 fn edit_root_package_json(
     maybe_lockfile: Option<&Lockfile>,
-    json: &mut bun_install::WorkspacePackageJSONCache::MapEntry,
+    json: &mut WorkspacePackageJSONCache::MapEntry,
 ) -> Result<Box<[u8]>, AllocError> {
     for dependency_group in [
         b"dependencies".as_slice(),
@@ -2556,7 +2555,7 @@ fn edit_root_package_json(
 
                     let Some(package_spec) = dependency.value.as_ref().unwrap().as_string() else { continue };
                     if let Some(without_workspace_protocol) =
-                        strings::without_prefix_if_possible(package_spec, b"workspace:")
+                        strings::without_prefix_if_possible_comptime(package_spec, b"workspace:")
                     {
                         // TODO: make semver parsing more strict. `^`, `~` are not valid
                         // (see Zig source for commented-out parsed/valid block)

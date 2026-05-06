@@ -92,33 +92,18 @@ impl LinuxMemFdAllocator {
         }
     }
 
-    pub fn allocator(&self) -> &dyn crate::Allocator {
+    pub fn allocator(&self) -> &dyn Allocator {
         // Zig returned `std.mem.Allocator{ .ptr = self, .vtable = AllocatorInterface.VTable }`.
         // The trait impl below is the vtable; `self` is the data pointer.
         self
     }
 
-    pub fn from<'a>(allocator: &'a dyn crate::Allocator) -> Option<&'a Self> {
-        // Zig compared vtable pointer identity. Rust `&dyn Trait` does not expose
-        // vtable identity portably.
-        // TODO(port): use `core::any::Any` downcast or a `crate::Allocator::type_id()`
-        // method to recover `&Self`. Placeholder uses raw vtable-ptr compare.
-        let (_data, vtable) = {
-            // SAFETY: `&dyn Trait` is a (data, vtable) fat pointer; transmute to read vtable addr.
-            let raw: [*const c_void; 2] =
-                unsafe { core::mem::transmute::<&dyn crate::Allocator, _>(allocator) };
-            (raw[0], raw[1])
-        };
-        let self_vtable: *const c_void = {
-            let probe: &dyn crate::Allocator = &PROBE;
-            // SAFETY: same as above.
-            let raw: [*const c_void; 2] =
-                unsafe { core::mem::transmute::<&dyn crate::Allocator, _>(probe) };
-            raw[1]
-        };
-        if core::ptr::eq(vtable, self_vtable) {
-            // SAFETY: vtable matched our impl, so the data pointer is `*const Self`.
-            Some(unsafe { &*(_data as *const Self) })
+    pub fn from<'a>(allocator: &'a dyn Allocator) -> Option<&'a Self> {
+        // Zig compared vtable pointer identity. `bun_alloc::Allocator` exposes
+        // `type_id()` for exactly this — concrete-type identity on the trait object.
+        if Allocator::type_id(allocator) == core::any::TypeId::of::<Self>() {
+            // SAFETY: type_id matched our impl, so the data pointer is `*const Self`.
+            Some(unsafe { &*(allocator as *const dyn Allocator as *const Self) })
         } else {
             None
         }
@@ -128,32 +113,40 @@ impl LinuxMemFdAllocator {
         &self,
         len: usize,
         offset: usize,
-        flags: sys::posix::MapFlags, // TODO(port): exact type for `std.posix.MAP`
+        // Zig: `std.posix.MAP` bitset. `sys::mmap` takes raw `i32` flags; callers
+        // pass `libc::MAP_*` directly. `.TYPE = .SHARED` is forced below.
+        flags: i32,
     ) -> sys::Result<BlobStoreBytes> {
         let mut size = len;
 
         // size rounded up to nearest page
-        // TODO(b0): `page_size` arrives from move-in (bun_sys → bun_alloc).
-        let page = crate::page_size();
+        let page = bun_alloc::page_size();
         size = (size + page - 1) & !(page - 1);
 
-        let mut flags_mut = flags;
-        flags_mut.set_type(sys::posix::MapType::Shared); // TODO(port): exact API for `.TYPE = .SHARED`
+        // Zig: `flags_mut.TYPE = .SHARED;`
+        let flags_mut = flags | libc::MAP_SHARED;
 
+        let map_len = size.min(self.size);
         match sys::mmap(
             core::ptr::null_mut(),
-            size.min(self.size),
-            sys::posix::PROT_READ | sys::posix::PROT_WRITE,
+            map_len,
+            libc::PROT_READ | libc::PROT_WRITE,
             flags_mut,
             self.fd,
-            offset,
+            offset as i64,
         ) {
-            Ok(slice) => Ok(BlobStoreBytes {
-                cap: slice.len() as u32,       // @truncate
-                ptr: slice.as_mut_ptr(),
-                len: len as u32,               // @truncate
-                allocator: self.allocator(),   // TODO(port): Bytes.allocator field type
-            }),
+            Ok(ptr) => {
+                // Zig: `Blob.Store.Bytes{ .cap = @truncate(slice.len), .ptr = slice.ptr,
+                //                          .len = @truncate(len), .allocator = self.allocator() }`
+                // PORT NOTE: `webcore::blob::store::Bytes` was reshaped to wrap a
+                // `Vec<u8>` (private `data` field) and no longer exposes raw
+                // ptr/len/cap/allocator construction. mmap'd memory cannot be
+                // placed into a `Vec<u8>` (its `Drop` would `free()` the mapping).
+                // This requires a `Bytes::from_raw_parts(ptr, len, cap, allocator)`
+                // constructor on the upstream type before this path is usable.
+                let _ = (ptr, map_len, len);
+                todo!("blocked_on: webcore::blob::store::Bytes raw ptr/len/cap/allocator constructor")
+            }
             Err(errno) => Err(errno),
         }
     }

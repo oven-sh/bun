@@ -349,6 +349,10 @@ unsafe extern "C" {
     pub fn EVP_DigestFinal(ctx: *mut EVP_MD_CTX, md_out: *mut u8, out_size: *mut c_uint) -> c_int;
     pub fn EVP_DigestFinal_ex(ctx: *mut EVP_MD_CTX, md_out: *mut u8, out_size: *mut c_uint) -> c_int;
     pub fn EVP_get_digestbyname(name: *const c_char) -> *const EVP_MD;
+    pub fn EVP_MD_do_all_sorted(
+        callback: extern "C" fn(*const EVP_MD, *const c_char, *const c_char, *mut c_void),
+        arg: *mut c_void,
+    );
     pub fn EVP_Digest(
         data: *const c_void,
         len: usize,
@@ -683,6 +687,32 @@ unsafe extern "C" {
     pub fn HMAC_Update(ctx: *mut HMAC_CTX, data: *const u8, data_len: usize) -> c_int;
     pub fn HMAC_Final(ctx: *mut HMAC_CTX, out: *mut u8, out_len: *mut c_uint) -> c_int;
     pub fn HMAC_size(ctx: *const HMAC_CTX) -> usize;
+
+    // ── scrypt ───────────────────────────────────────────────────────────
+    pub fn EVP_PBE_validate_scrypt_params(
+        password: *const u8,
+        password_len: usize,
+        salt: *const u8,
+        salt_len: usize,
+        N: u64,
+        r: u64,
+        p: u64,
+        max_mem: usize,
+        out_key: *mut u8,
+        key_len: usize,
+    ) -> c_int;
+    pub fn EVP_PBE_scrypt(
+        password: *const u8,
+        password_len: usize,
+        salt: *const u8,
+        salt_len: usize,
+        N: u64,
+        r: u64,
+        p: u64,
+        max_mem: usize,
+        out_key: *mut u8,
+        key_len: usize,
+    ) -> c_int;
 
     // ── PBKDF2 ───────────────────────────────────────────────────────────
     pub fn PKCS5_PBKDF2_HMAC(

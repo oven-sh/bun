@@ -649,7 +649,7 @@ pub const FREE_TRACE_LIMITS: WriteStackTraceLimits = WriteStackTraceLimits {
     skip_function_patterns: &[],
 };
 
-extern "C" fn vtable_alloc(ctx: *mut c_void, len: usize, alignment: usize, ret_addr: usize) -> *mut u8 {
+unsafe fn vtable_alloc(ctx: *mut c_void, len: usize, alignment: Alignment, ret_addr: usize) -> *mut u8 {
     // SAFETY: `ctx` is the `*State` we stored in `Borrowed::allocator()`; vtable is only ever
     // paired with that pointer.
     let raw_state: &State = unsafe { &*(ctx as *const State) };
@@ -658,20 +658,17 @@ extern "C" fn vtable_alloc(ctx: *mut c_void, len: usize, alignment: usize, ret_a
     state.alloc(len, alignment, ret_addr).unwrap_or(core::ptr::null_mut())
 }
 
-extern "C" fn vtable_free(ctx: *mut c_void, buf_ptr: *mut u8, buf_len: usize, alignment: usize, ret_addr: usize) {
+unsafe fn vtable_free(ctx: *mut c_void, buf: &mut [u8], alignment: Alignment, ret_addr: usize) {
     // SAFETY: see `vtable_alloc`.
     let raw_state: &State = unsafe { &*(ctx as *const State) };
     let mut state = raw_state.lock();
     let _g = scopeguard::guard((), |_| raw_state.unlock());
-    // SAFETY: caller (allocator interface) guarantees `buf_ptr[..buf_len]` was returned by
-    // `vtable_alloc` and is being freed exactly once.
-    let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr, buf_len) };
     state.free(buf, alignment, ret_addr);
 }
 
 #[inline]
 pub fn is_instance(allocator: StdAllocator) -> bool {
-    ENABLED && core::ptr::eq(allocator.vtable(), &VTABLE)
+    ENABLED && core::ptr::eq(allocator.vtable, &VTABLE)
 }
 
 #[inline]

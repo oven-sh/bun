@@ -66,7 +66,7 @@ impl EnvMap {
 
     pub fn init_with_capacity(cap: usize) -> EnvMap {
         EnvMap {
-            map: MapType::with_capacity(cap),
+            map: EnvMapInner::with_capacity(cap),
         }
     }
 

@@ -186,7 +186,7 @@ impl BuildCommand {
                     break 'brk false;
                 }
                 for entry_point in this_transpiler.options.entry_points.iter() {
-                    if !strings::has_suffix(entry_point, b".html") {
+                    if !strings::has_suffix_comptime(entry_point, b".html") {
                         break 'brk false;
                     }
                 }
@@ -225,11 +225,7 @@ impl BuildCommand {
                     Global::exit(1);
                 }
 
-                let base_public_path =
-                    bun_standalone_module_graph::StandaloneModuleGraph::target_base_public_path(
-                        compile_target.os,
-                        b"root/",
-                    );
+                let base_public_path = target_base_public_path_root(compile_target.os);
 
                 this_transpiler.options.public_path = base_public_path.into();
 
@@ -270,7 +266,7 @@ impl BuildCommand {
         if ctx.bundler_options.transform_only {
             // Check if any entry point is an HTML file
             for entry_point in this_transpiler.options.entry_points.iter() {
-                if strings::has_suffix(entry_point, b".html") {
+                if strings::has_suffix_comptime(entry_point, b".html") {
                     Output::pretty_errorln(
                         "<r><red>error<r><d>:<r> HTML imports are only supported when bundling",
                         format_args!(""),
@@ -729,7 +725,7 @@ impl BuildCommand {
                 // TODO(port): outfile may need owned storage when reassigned to allocated buffer below
                 let mut outfile_owned: Vec<u8>;
                 if compile_target.os == OperatingSystem::Windows
-                    && !strings::has_suffix(outfile, b".exe")
+                    && !strings::has_suffix_comptime(outfile, b".exe")
                 {
                     outfile_owned = Vec::new();
                     write!(&mut outfile_owned, "{}.exe", bstr::BStr::new(outfile))
@@ -815,7 +811,7 @@ impl BuildCommand {
                                 let exe_base = bun_paths::basename(outfile);
                                 map_basename_owned = Vec::new();
                                 if compile_target.os == OperatingSystem::Windows
-                                    && !strings::has_suffix(exe_base, b".exe")
+                                    && !strings::has_suffix_comptime(exe_base, b".exe")
                                 {
                                     write!(
                                         &mut map_basename_owned,
@@ -896,7 +892,7 @@ impl BuildCommand {
                         "{}{}",
                         bstr::BStr::new(outfile),
                         if compile_target.os == OperatingSystem::Windows
-                            && !strings::has_suffix(outfile, b".exe")
+                            && !strings::has_suffix_comptime(outfile, b".exe")
                         {
                             ".exe"
                         } else {

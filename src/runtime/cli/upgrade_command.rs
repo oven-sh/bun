@@ -53,11 +53,11 @@ impl Version {
             if &*self.tag == b"canary" {
                 use crate::cli as Cli;
                 let mut out = Vec::new();
-                // SAFETY: start_time is a plain i128/i64 — viewing its bytes is sound
+                // SAFETY: START_TIME is a plain i128/i64 — viewing its bytes is sound
                 let bytes = unsafe {
                     core::slice::from_raw_parts(
-                        (&Cli::start_time as *const _) as *const u8,
-                        core::mem::size_of_val(&Cli::start_time),
+                        core::ptr::addr_of!(Cli::START_TIME) as *const u8,
+                        core::mem::size_of::<i128>(),
                     )
                 };
                 write!(
@@ -124,11 +124,11 @@ impl Version {
         const_format::concatcp!(Version::PROFILE_FOLDER_NAME, ".zip");
 
     const CURRENT_VERSION: &'static str =
-        const_format::concatcp!("bun-v", Global::PACKAGE_JSON_VERSION);
+        const_format::concatcp!("bun-v", Global::package_json_version);
 
     pub const BUN__GITHUB_BASELINE_URL: &'static ZStr = ZStr::from_static(const_format::concatcp!(
         "https://github.com/oven-sh/bun/releases/download/bun-v",
-        Global::PACKAGE_JSON_VERSION,
+        Global::package_json_version,
         "/",
         Version::BASELINE_ZIP_FILENAME,
         "\0"
@@ -152,7 +152,7 @@ impl Version {
 pub static Bun__githubURL: SyncCStr = SyncCStr(
     const_format::concatcp!(
         "https://github.com/oven-sh/bun/releases/download/bun-v",
-        Global::PACKAGE_JSON_VERSION,
+        Global::package_json_version,
         "/",
         Version::ZIP_FILENAME,
         "\0"
@@ -176,7 +176,7 @@ impl UpgradeCommand {
 
     pub fn get_latest_version<const SILENT: bool>(
         env_loader: &mut DotEnv::Loader,
-        refresher: Option<&mut Progress>,
+        refresher: Option<&mut Progress::Progress>,
         progress: Option<&mut Progress::Node>,
         use_profile: bool,
     ) -> Result<Option<Version>, bun_core::Error> {
@@ -550,7 +550,7 @@ impl UpgradeCommand {
         let use_profile = strings::contains_any(bun_core::argv(), b"--profile");
 
         let mut version: Version = if !use_canary {
-            let mut refresher = Progress::default();
+            let mut refresher = Progress::Progress::default();
             let mut progress = refresher.start("Fetching version tags", 0);
 
             let Some(version) = Self::get_latest_version::<false>(
@@ -587,12 +587,12 @@ impl UpgradeCommand {
                 Output::pretty_errorln(format_args!(
                     "<r><b>Bun <cyan>v{}<r> is out<r>! You're on <blue>v{}<r>\n",
                     bstr::BStr::new(&version.name().unwrap()),
-                    Global::PACKAGE_JSON_VERSION
+                    Global::package_json_version
                 ));
             } else {
                 Output::pretty_errorln(format_args!(
                     "<r><b>Downgrading from Bun <blue>{}-canary<r> to Bun <cyan>v{}<r><r>\n",
-                    Global::PACKAGE_JSON_VERSION,
+                    Global::package_json_version,
                     bstr::BStr::new(&version.name().unwrap())
                 ));
             }
@@ -617,7 +617,7 @@ impl UpgradeCommand {
         let http_proxy: Option<URL> = env_loader.get_http_proxy_for(&zip_url);
 
         {
-            let mut refresher = Progress::default();
+            let mut refresher = Progress::Progress::default();
             let mut progress = refresher.start("Downloading", version.size);
             progress.unit = Progress::Unit::Bytes;
             refresher.refresh();
@@ -1186,7 +1186,7 @@ impl UpgradeCommand {
                     bstr::BStr::new(&*version.tag)
                 ));
             } else {
-                let bun_v = const_format::concatcp!("bun-v", Global::PACKAGE_JSON_VERSION);
+                let bun_v = const_format::concatcp!("bun-v", Global::package_json_version);
 
                 Output::pretty_errorln(format_args!(
                     "<r> Upgraded.\n\n<b><green>Welcome to Bun v{}!<r>\n\nWhat's new in Bun v{}:\n\n    <cyan>https://bun.com/blog/release-notes/{}<r>\n\nReport any bugs:\n\n    https://github.com/oven-sh/bun/issues\n\nCommit log:\n\n    https://github.com/oven-sh/bun/compare/{}...{}\n",

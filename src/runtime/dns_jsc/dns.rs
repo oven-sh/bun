@@ -3657,11 +3657,13 @@ impl Resolver {
 
     // ───────────── JS host fns: resolve* family ─────────────
 
-    #[host_fn]
+    // JSC-ABI shim for this associated fn is emitted by `export_host_fn!` at
+    // module scope; `#[host_fn]` cannot be used here because its Free expansion
+    // calls the function by bare name, which doesn't resolve inside `impl`.
     pub fn global_resolve(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let vm = global_this.bun_vm();
         let resolver = vm.rare_data().global_dns_resolver(vm);
-        resolver.resolve(global_this, callframe)
+        Self::resolve(resolver, global_this, callframe)
     }
 
     #[host_fn(method)]

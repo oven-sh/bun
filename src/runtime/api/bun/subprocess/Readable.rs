@@ -178,9 +178,11 @@ impl Readable {
                 let Readable::Pipe(pipe) = mem::replace(self, Readable::Closed) else {
                     unreachable!()
                 };
-                // TODO(port): detach() must NOT deref under Rc — PipeReader.rs must drop the self.deref() line
-                // (Zig detach() = `process = null; deref()`; Rc Drop now owns the deref half).
-                pipe.detach();
+                // `into_raw` transfers our owned ref to the raw ptr; `detach` clears `process`
+                // and performs the matching `deref()` (Zig: `process = null; deref()`).
+                let raw = pipe.into_raw();
+                // SAFETY: `raw` is live and we own one ref (just leaked from IntrusiveRc).
+                unsafe { PipeReader::detach(raw) };
             }
             Readable::Buffer(_) => {
                 // PORT NOTE: Zig calls `buf.deinit(default_allocator)` without resetting the tag.

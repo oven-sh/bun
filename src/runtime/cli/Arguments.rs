@@ -1168,7 +1168,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
     if let Some(cwd_arg) = args.option("--cwd") {
         cwd = 'brk: {
             let mut outbuf = PathBuffer::uninit();
-            let out = bun_paths::join_abs(bun_sys::getcwd(&mut outbuf)?, bun_paths::Platform::Loose, cwd_arg);
+            let out = resolve_path::join_abs::<platform::Loose>(bun_sys::getcwd(&mut outbuf)?, cwd_arg);
             match bun_sys::chdir(b"", out) {
                 bun_sys::Result::Ok(()) => {}
                 bun_sys::Result::Err(err) => {
@@ -1179,7 +1179,9 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             break 'brk bun_str::ZStr::from_bytes(out)?;
         };
     } else {
-        cwd = bun_sys::getcwd_alloc()?;
+        let mut temp = PathBuffer::uninit();
+        let temp_slice = bun_sys::getcwd(&mut temp)?;
+        cwd = bun_str::ZStr::from_bytes(temp_slice);
     }
 
     // Not gated on .BunxCommand: bunx skips Arguments.parse entirely
@@ -1187,7 +1189,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
     // BUN_FEATURE_FLAG_NO_ORPHANS env var in main()→install() instead.
     if matches!(CMD, Command::Tag::RunCommand | Command::Tag::AutoCommand | Command::Tag::TestCommand) {
         if args.flag("--no-orphans") {
-            bun_core::ParentDeathWatchdog::enable();
+            bun_aio::parent_death_watchdog::ParentDeathWatchdog::enable();
         }
     }
 
@@ -1201,7 +1203,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
 
         if let Some(elide_lines) = args.option("--elide-lines") {
             if !elide_lines.is_empty() {
-                ctx.bundler_options.elide_lines = match bun_str::parse_int::<usize>(elide_lines, 10) {
+                ctx.bundler_options.elide_lines = match strings::parse_int::<usize>(elide_lines, 10) {
                     Ok(v) => v,
                     Err(_) => {
                         Output::pretty_errorln(format_args!("<r><red>error<r>: Invalid elide-lines: \"{}\"", BStr::new(elide_lines)));
@@ -1215,7 +1217,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
     if CMD == Command::Tag::TestCommand {
         if let Some(timeout_ms) = args.option("--timeout") {
             if !timeout_ms.is_empty() {
-                ctx.test_options.default_timeout_ms = match bun_str::parse_int::<u32>(timeout_ms, 10) {
+                ctx.test_options.default_timeout_ms = match strings::parse_int::<u32>(timeout_ms, 10) {
                     Ok(v) => v,
                     Err(_) => {
                         Output::pretty_errorln(format_args!("<r><red>error<r>: Invalid timeout: \"{}\"", BStr::new(timeout_ms)));
@@ -1228,7 +1230,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
 
         if let Some(max_concurrency) = args.option("--max-concurrency") {
             if !max_concurrency.is_empty() {
-                ctx.test_options.max_concurrency = match bun_str::parse_int::<u32>(max_concurrency, 10) {
+                ctx.test_options.max_concurrency = match strings::parse_int::<u32>(max_concurrency, 10) {
                     Ok(v) => v,
                     Err(_) => {
                         Output::pretty_errorln(format_args!("<r><red>error<r>: Invalid max-concurrency: \"{}\"", BStr::new(max_concurrency)));
@@ -1298,7 +1300,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
 
         if let Some(bail) = args.option("--bail") {
             if !bail.is_empty() {
-                ctx.test_options.bail = match bun_str::parse_int::<u32>(bail, 10) {
+                ctx.test_options.bail = match strings::parse_int::<u32>(bail, 10) {
                     Ok(v) => v,
                     Err(e) => {
                         Output::pretty_errorln(format_args!("<r><red>error<r>: --bail expects a number: {}", e.name()));
@@ -1318,7 +1320,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
         }
         if let Some(repeat_count) = args.option("--rerun-each") {
             if !repeat_count.is_empty() {
-                ctx.test_options.repeat_count = match bun_str::parse_int::<u32>(repeat_count, 10) {
+                ctx.test_options.repeat_count = match strings::parse_int::<u32>(repeat_count, 10) {
                     Ok(v) => v,
                     Err(e) => {
                         Output::pretty_errorln(format_args!("<r><red>error<r>: --rerun-each expects a number: {}", e.name()));
@@ -1329,7 +1331,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
         }
         if let Some(retry_count) = args.option("--retry") {
             if !retry_count.is_empty() {
-                ctx.test_options.retry = match bun_str::parse_int::<u32>(retry_count, 10) {
+                ctx.test_options.retry = match strings::parse_int::<u32>(retry_count, 10) {
                     Ok(v) => v,
                     Err(e) => {
                         Output::pretty_errorln(format_args!("<r><red>error<r>: --retry expects a number: {}", e.name()));
@@ -1368,14 +1370,14 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             let sep = sep as usize;
             let index_str = &shard[..sep];
             let count_str = &shard[sep + 1..];
-            let index = match bun_str::parse_int::<u32>(index_str, 10) {
+            let index = match strings::parse_int::<u32>(index_str, 10) {
                 Ok(v) => v,
                 Err(_) => {
                     Output::pretty_errorln(format_args!("<r><red>error<r>: --shard index must be a positive integer, got \"{}\"", BStr::new(index_str)));
                     Global::exit(1);
                 }
             };
-            let count = match bun_str::parse_int::<u32>(count_str, 10) {
+            let count = match strings::parse_int::<u32>(count_str, 10) {
                 Ok(v) => v,
                 Err(_) => {
                     Output::pretty_errorln(format_args!("<r><red>error<r>: --shard count must be a positive integer, got \"{}\"", BStr::new(count_str)));
@@ -1403,7 +1405,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
 
         if let Some(parallel_str) = args.option("--parallel") {
             let parsed: u32 = if !parallel_str.is_empty() {
-                match bun_str::parse_int::<u32>(parallel_str, 10) {
+                match strings::parse_int::<u32>(parallel_str, 10) {
                     Ok(v) => v,
                     Err(_) => {
                         Output::pretty_errorln(format_args!("<red>error<r>: --parallel expects a positive integer, received \"{}\"", BStr::new(parallel_str)));
@@ -1423,7 +1425,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
         }
 
         if let Some(delay_str) = args.option("--parallel-delay") {
-            ctx.test_options.parallel_delay_ms = match bun_str::parse_int::<u32>(delay_str, 10) {
+            ctx.test_options.parallel_delay_ms = match strings::parse_int::<u32>(delay_str, 10) {
                 Ok(v) => v,
                 Err(_) => {
                     Output::pretty_errorln(format_args!("<red>error<r>: --parallel-delay expects a non-negative integer (milliseconds), received \"{}\"", BStr::new(delay_str)));
@@ -1434,7 +1436,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
 
         if let Some(seed_str) = args.option("--seed") {
             ctx.test_options.randomize = true;
-            ctx.test_options.seed = match bun_str::parse_int::<u32>(seed_str, 10) {
+            ctx.test_options.seed = match strings::parse_int::<u32>(seed_str, 10) {
                 Ok(v) => v,
                 Err(_) => {
                     Output::pretty_errorln(format_args!("<red>error<r>: Invalid seed value: {}", BStr::new(seed_str)));
@@ -1586,7 +1588,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                 ctx.runtime_options.eval.script = port_str;
                 ctx.runtime_options.eval.eval_and_print = true;
             } else {
-                opts.port = match bun_str::parse_int::<u16>(port_str, 10) {
+                opts.port = match strings::parse_int::<u16>(port_str, 10) {
                     Ok(v) => Some(v),
                     Err(_) => {
                         Output::err_fmt(bun_core::fmt::out_of_range(port_str, bun_core::fmt::OutOfRangeOpts {
@@ -1602,7 +1604,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
         }
 
         if let Some(size_str) = args.option("--max-http-header-size") {
-            let size = match bun_str::parse_int::<usize>(size_str, 10) {
+            let size = match strings::parse_int::<usize>(size_str, 10) {
                 Ok(v) => v,
                 Err(_) => {
                     Output::err_generic("Invalid value for --max-http-header-size: \"{}\". Must be a positive integer\n", format_args!("{}", BStr::new(size_str)));
@@ -1659,7 +1661,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
         ctx.runtime_options.expose_gc = args.flag("--expose-gc");
 
         if let Some(depth_str) = args.option("--console-depth") {
-            let depth = match bun_str::parse_int::<u16>(depth_str, 10) {
+            let depth = match strings::parse_int::<u16>(depth_str, 10) {
                 Ok(v) => v,
                 Err(_) => {
                     Output::err_generic("Invalid value for --console-depth: \"{}\". Must be a positive integer\n", format_args!("{}", BStr::new(depth_str)));
@@ -1749,7 +1751,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             // json_format is true if --cpu-prof is passed (regardless of --cpu-prof-md)
             ctx.runtime_options.cpu_prof.json_format = cpu_prof_flag;
             if let Some(interval_str) = args.option("--cpu-prof-interval") {
-                ctx.runtime_options.cpu_prof.interval = bun_str::parse_int::<u32>(interval_str, 10).unwrap_or(1000);
+                ctx.runtime_options.cpu_prof.interval = strings::parse_int::<u32>(interval_str, 10).unwrap_or(1000);
             }
         } else {
             // Warn if --cpu-prof-name or --cpu-prof-dir is used without a profiler flag
@@ -2372,7 +2374,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
 
         if let Some(elide_lines) = args.option("--elide-lines") {
             if !elide_lines.is_empty() {
-                ctx.bundler_options.elide_lines = match bun_str::parse_int::<usize>(elide_lines, 10) {
+                ctx.bundler_options.elide_lines = match strings::parse_int::<usize>(elide_lines, 10) {
                     Ok(v) => v,
                     Err(_) => {
                         Output::pretty_errorln(format_args!("<r><red>error<r>: Invalid elide-lines: \"{}\"", BStr::new(elide_lines)));

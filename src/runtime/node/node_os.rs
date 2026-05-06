@@ -747,32 +747,32 @@ pub fn network_interfaces_posix(global_this: &JSGlobalObject) -> JsResult<JSValu
     }
     let _free = scopeguard::guard((), |_| {
         // SAFETY: returned by getifaddrs
-        unsafe { c::freeifaddrs(interface_start) };
+        unsafe { libc::freeifaddrs(interface_start) };
     });
 
     // We'll skip interfaces that aren't actually available
-    fn skip(iface: &c::ifaddrs) -> bool {
+    fn skip(iface: &libc::ifaddrs) -> bool {
         // Skip interfaces that aren't actually available
-        if iface.ifa_flags & c::IFF_RUNNING as c_uint == 0 { return true; }
-        if iface.ifa_flags & c::IFF_UP as c_uint == 0 { return true; }
+        if iface.ifa_flags & libc::IFF_RUNNING as c_uint == 0 { return true; }
+        if iface.ifa_flags & libc::IFF_UP as c_uint == 0 { return true; }
         if iface.ifa_addr.is_null() { return true; }
         false
     }
 
     // We won't actually return link-layer interfaces but we need them for
     //  extracting the MAC address
-    fn is_link_layer(iface: &c::ifaddrs) -> bool {
+    fn is_link_layer(iface: &libc::ifaddrs) -> bool {
         if iface.ifa_addr.is_null() { return false; }
         #[cfg(target_os = "linux")]
         // SAFETY: ifa_addr is non-null per check above
-        return unsafe { (*iface.ifa_addr).sa_family } as c_int == bun_sys::posix::AF::PACKET;
+        return unsafe { (*iface.ifa_addr).sa_family } as c_int == libc::AF_PACKET;
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         // SAFETY: ifa_addr is non-null per check above
-        return unsafe { (*iface.ifa_addr).sa_family } as c_int == bun_sys::posix::AF::LINK;
+        return unsafe { (*iface.ifa_addr).sa_family } as c_int == libc::AF_LINK;
     }
 
-    fn is_loopback(iface: &c::ifaddrs) -> bool {
-        iface.ifa_flags & c::IFF_LOOPBACK as c_uint == c::IFF_LOOPBACK as c_uint
+    fn is_loopback(iface: &libc::ifaddrs) -> bool {
+        iface.ifa_flags & libc::IFF_LOOPBACK as c_uint == libc::IFF_LOOPBACK as c_uint
     }
 
     // The list currently contains entries for link-layer interfaces
@@ -809,8 +809,8 @@ pub fn network_interfaces_posix(global_this: &JSGlobalObject) -> JsResult<JSValu
         let interface_name = unsafe { core::ffi::CStr::from_ptr(iface.ifa_name) }.to_bytes();
         // TODO(port): std.net.Address — using bun_sys::net::Address (no std::net)
         // SAFETY: ifa_addr/ifa_netmask are valid sockaddr* (skip() ensures ifa_addr non-null)
-        let addr = unsafe { bun_sys::net::Address::init_posix(iface.ifa_addr as *const bun_sys::posix::sockaddr) };
-        let netmask = unsafe { bun_sys::net::Address::init_posix(iface.ifa_netmask as *const bun_sys::posix::sockaddr) };
+        let addr = unsafe { bun_sys::net::Address::init_posix(iface.ifa_addr as *const libc::sockaddr) };
+        let netmask = unsafe { bun_sys::net::Address::init_posix(iface.ifa_netmask as *const libc::sockaddr) };
 
         let interface = JSValue::create_empty_object(global_this, 0);
 
@@ -820,8 +820,13 @@ pub fn network_interfaces_posix(global_this: &JSGlobalObject) -> JsResult<JSValu
             // Compute the CIDR suffix; returns null if the netmask cannot
             //  be converted to a CIDR suffix
             let maybe_suffix: Option<u8> = match addr.family() as c_int {
-                bun_sys::posix::AF::INET => netmask_to_cidr_suffix(netmask.in_().sa.addr),
-                bun_sys::posix::AF::INET6 => netmask_to_cidr_suffix(u128::from_ne_bytes(netmask.in6().sa.addr)),
+                // SAFETY: family checked; storage is sockaddr_in/sockaddr_in6-sized
+                libc::AF_INET => netmask_to_cidr_suffix(unsafe {
+                    (*(netmask.as_sockaddr() as *const libc::sockaddr_in)).sin_addr.s_addr
+                }),
+                libc::AF_INET6 => netmask_to_cidr_suffix(u128::from_ne_bytes(unsafe {
+                    (*(netmask.as_sockaddr() as *const libc::sockaddr_in6)).sin6_addr.s6_addr
+                })),
                 _ => None,
             };
 

@@ -197,18 +197,18 @@ fn parse_options(global_this: &JSGlobalObject, opts_value: JSValue) -> JsResult<
             // skip the compound-only fields
             if matches!(
                 *snake,
-                b"permissive_autolinks"
-                    | b"permissive_url_autolinks"
-                    | b"permissive_www_autolinks"
-                    | b"permissive_email_autolinks"
-                    | b"heading_ids"
-                    | b"autolink_headings"
+                "permissive_autolinks"
+                    | "permissive_url_autolinks"
+                    | "permissive_www_autolinks"
+                    | "permissive_email_autolinks"
+                    | "heading_ids"
+                    | "autolink_headings"
             ) {
                 continue;
             }
             if let Some(val) = opts_value.get_boolean_loose(global_this, camel)? {
                 set(&mut options, val);
-            } else if camel != snake {
+            } else if *camel != *snake {
                 if let Some(val) = opts_value.get_boolean_loose(global_this, snake)? {
                     set(&mut options, val);
                 }

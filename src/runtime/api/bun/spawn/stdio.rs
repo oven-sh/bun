@@ -599,45 +599,62 @@ impl Stdio {
     pub fn extract_blob(
         &mut self,
         global: &JSGlobalObject,
-        blob: jsc::webcore::blob::Any,
+        blob: webcore::blob::Any,
         i: i32,
     ) -> JsResult<()> {
         let fd = FdStdio::from_int(i).unwrap().fd();
 
         if blob.needs_to_read_file() {
             if let Some(store) = blob.store() {
-                if let jsc::node::PathOrFd::Fd(store_fd) = store.data.file.pathlike {
-                    if store_fd == fd {
-                        *self = Stdio::Inherit;
-                    } else {
-                        // TODO: is this supposed to be `store.data.file.pathlike.fd`?
-                        if let Some(tag) = FdStdio::from_int(i) {
-                            match tag {
-                                FdStdio::StdIn => {
-                                    if i == 1 || i == 2 {
-                                        return Err(global.throw_invalid_arguments(format_args!(
-                                            "stdin cannot be used for stdout or stderr"
-                                        )));
+                // Zig accesses `store.data.file` directly (union payload);
+                // in Rust `data` is an enum so match the `File` arm.
+                if let StoreData::File(ref file) = store.data {
+                    match file.pathlike {
+                        PathOrFileDescriptor::Fd(store_fd) => {
+                            if store_fd == fd {
+                                *self = Stdio::Inherit;
+                            } else {
+                                // TODO: is this supposed to be `store.data.file.pathlike.fd`?
+                                if let Some(tag) = FdStdio::from_int(i) {
+                                    match tag {
+                                        FdStdio::StdIn => {
+                                            if i == 1 || i == 2 {
+                                                return Err(global.throw_invalid_arguments(
+                                                    format_args!(
+                                                        "stdin cannot be used for stdout or stderr"
+                                                    ),
+                                                ));
+                                            }
+                                        }
+                                        FdStdio::StdOut | FdStdio::StdErr => {
+                                            if i == 0 {
+                                                return Err(global.throw_invalid_arguments(
+                                                    format_args!(
+                                                        "stdout and stderr cannot be used for stdin"
+                                                    ),
+                                                ));
+                                            }
+                                        }
                                     }
                                 }
-                                FdStdio::StdOut | FdStdio::StdErr => {
-                                    if i == 0 {
-                                        return Err(global.throw_invalid_arguments(format_args!(
-                                            "stdout and stderr cannot be used for stdin"
-                                        )));
-                                    }
-                                }
+
+                                *self = Stdio::Fd(store_fd);
                             }
+
+                            return Ok(());
                         }
-
-                        *self = Stdio::Fd(store_fd);
+                        PathOrFileDescriptor::Path(ref path) => {
+                            // PORT NOTE: `webcore::node_types::PathLike` has no
+                            // `Clone` derive yet; reconstruct by variant.
+                            let cloned = match path {
+                                PathLike::String(s) => PathLike::String(*s),
+                                PathLike::Buffer(b) => PathLike::Buffer(b.clone()),
+                            };
+                            *self = Stdio::Path(cloned);
+                            return Ok(());
+                        }
                     }
-
-                    return Ok(());
                 }
-
-                *self = Stdio::Path(store.data.file.pathlike.path().clone());
-                return Ok(());
             }
         }
 

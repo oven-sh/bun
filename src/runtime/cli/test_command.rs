@@ -1254,11 +1254,13 @@ impl CommandLineReporter {
         }
 
         let Some(map) = ByteRangeMapping::map() else { return Ok(()); };
-        let mut iter = map.value_iterator();
-        let mut byte_ranges: Vec<ByteRangeMapping> = Vec::with_capacity(map.count());
-
-        while let Some(entry) = iter.next() {
-            byte_ranges.push(*entry);
+        // PORT NOTE: Zig bitwise-copied each `ByteRangeMapping` out of the map
+        // (`entry.*`). The Rust struct owns a `MultiArrayList` and is not
+        // `Copy`, so collect mutable borrows into the thread-local map instead
+        // — same observable behaviour, no double-free risk.
+        let mut byte_ranges: Vec<&mut ByteRangeMapping> = Vec::with_capacity(map.len());
+        for entry in map.values_mut() {
+            byte_ranges.push(entry);
             // PERF(port): was assume_capacity
         }
 
@@ -1266,8 +1268,7 @@ impl CommandLineReporter {
             return Ok(());
         }
 
-        byte_ranges.sort_by(ByteRangeMapping::is_less_than_cmp);
-        // TODO(port): std.sort.pdq with isLessThan → sort_by; provide cmp adapter in Phase B
+        byte_ranges.sort_by(coverage::is_less_than_cmp);
 
         self.print_code_coverage::<REPORTERS_TEXT, REPORTERS_LCOV, ENABLE_ANSI_COLORS>(vm, opts, &mut byte_ranges)
     }

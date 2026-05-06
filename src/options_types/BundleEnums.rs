@@ -573,6 +573,17 @@ impl Loader {
         matches!(self, Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx)
     }
 
+    // PORT NOTE: spelling-aliases for the canonical `is_typescript` /
+    // `is_javascript_like*` (acronym-collapsing rule). Hoisted from
+    // `bun_bundler::options::LoaderExt` so cross-crate callers (bun_jsc,
+    // bun_runtime) resolve them as inherent methods without a trait import.
+    #[inline]
+    pub fn is_type_script(self) -> bool { self.is_typescript() }
+    #[inline]
+    pub fn is_java_script_like(self) -> bool { self.is_javascript_like() }
+    #[inline]
+    pub fn is_java_script_like_or_json(self) -> bool { self.is_javascript_like_or_json() }
+
     pub fn is_javascript_like_or_json(self) -> bool {
         matches!(
             self,

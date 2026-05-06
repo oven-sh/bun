@@ -2098,9 +2098,8 @@ impl VirtualMachine {
                 .and_then(|v| crate::ipc::Mode::from_string(&v.value))
                 .unwrap_or(crate::ipc::Mode::Json);
             // PORT NOTE: Zig `IPC.log()` debug-only; the `IPC` scope static
-            // lives in `crate::ipc` and `scoped_log!` requires a bare ident
-            // — log dropped to keep the ipc module's macro local.
-            let _ = mode;
+            // lives in `crate::ipc` and `scoped_log!` requires a bare ident,
+            // so the log line is dropped here.
             match core::str::from_utf8(&fd_s)
                 .ok()
                 .and_then(|s| s.parse::<u32>().ok())

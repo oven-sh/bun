@@ -765,12 +765,28 @@ where
                                     if self.main.is_waiting_for_dir_change
                                         && self.main.dir_hash == current_hash
                                     {
-                                        if bun_sys::faccessat(
-                                            file_descriptors[event.index as usize],
-                                            bun_paths::basename(self.main.file),
-                                        )
-                                        .is_ok()
-                                        {
+                                        // TODO(port): bun_sys::faccessat takes &ZStr but
+                                        // basename() returns &[u8]; build a stack ZStr.
+                                        let mut name_buf = [0u8; 256];
+                                        let basename = bun_paths::basename(self.main.file);
+                                        let exists = if basename.len() < name_buf.len() {
+                                            name_buf[..basename.len()].copy_from_slice(basename);
+                                            name_buf[basename.len()] = 0;
+                                            // SAFETY: name_buf[..=basename.len()] is NUL-terminated.
+                                            let z = unsafe {
+                                                ZStr::from_raw(name_buf.as_ptr(), basename.len())
+                                            };
+                                            matches!(
+                                                bun_sys::faccessat(
+                                                    file_descriptors[event.index as usize],
+                                                    z,
+                                                ),
+                                                Ok(true)
+                                            )
+                                        } else {
+                                            false
+                                        };
+                                        if exists {
                                             self.main.is_waiting_for_dir_change = false;
                                             record_changed_path(self.main.file);
                                             current_task.append(self.main.hash);
@@ -781,21 +797,30 @@ where
                                 let mut affected_i: usize = 0;
 
                                 // if a file descriptor is stale, we need to close it
-                                if event.op.delete && entries_option.is_some() {
+                                if event.op.contains(WatchOp::DELETE) && entries_option.is_some() {
                                     for (entry_id, parent_hash) in parents.iter().enumerate() {
                                         if *parent_hash == current_hash {
-                                            let affected_path = file_paths[entry_id];
-                                            let was_deleted = 'check: {
-                                                // TODO(port): std.posix.access → bun_sys::access
-                                                if bun_sys::access(
-                                                    affected_path,
-                                                    libc::F_OK,
-                                                )
-                                                .is_err()
-                                                {
-                                                    break 'check true;
+                                            let affected_path: &[u8] = &file_paths[entry_id];
+                                            // TODO(port): std.posix.access → bun_sys::access
+                                            // wants &ZStr; affected_path is &[u8]. Build a
+                                            // PathBuffer-backed ZStr.
+                                            let was_deleted = {
+                                                let mut zbuf = PathBuffer::uninit();
+                                                if affected_path.len() >= zbuf.len() {
+                                                    false
+                                                } else {
+                                                    zbuf[..affected_path.len()]
+                                                        .copy_from_slice(affected_path);
+                                                    zbuf[affected_path.len()] = 0;
+                                                    // SAFETY: zbuf is NUL-terminated at len.
+                                                    let z = unsafe {
+                                                        ZStr::from_raw(
+                                                            zbuf.as_ptr(),
+                                                            affected_path.len(),
+                                                        )
+                                                    };
+                                                    bun_sys::access(z, libc::F_OK).is_err()
                                                 }
-                                                break 'check false;
                                             };
                                             if !was_deleted {
                                                 continue;

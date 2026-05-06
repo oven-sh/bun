@@ -134,7 +134,8 @@ fn create_file(filename: &[u8], contents: &[u8]) -> bun_sys::Result<bool> {
     }
 
     // Create parent directories if needed
-    if let Some(dirname) = path::dirname(filename) {
+    let dirname = resolve_path::dirname::<path::platform::Auto>(filename);
+    if !dirname.is_empty() {
         let _ = bun_sys::make_path(Fd::cwd(), dirname);
     }
 

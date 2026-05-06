@@ -4010,7 +4010,7 @@ impl DevServer<'_> {
         let to_write_into = &mut buf.spare_capacity_mut()[..len];
         // SAFETY: to_write_into is valid uninit memory of length `len`
         let written = bun_base64::encode(
-            unsafe { core::slice::from_raw_parts_mut(to_write_into.as_mut_ptr() as *mut u8, len) },
+            unsafe { ::core::slice::from_raw_parts_mut(to_write_into.as_mut_ptr() as *mut u8, len) },
             &all_failures,
         );
         // SAFETY: `written` bytes of spare_capacity were initialized by encode() above

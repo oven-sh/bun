@@ -730,6 +730,11 @@ pub mod bun_object {
     // --- Setters ---
 }
 
+pub fn get_cron_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+    let _ = global_this;
+    todo!("blocked_on: crate::api::cron::get_cron_object (gated under private _jsc_gated)")
+}
+
 #[bun_jsc::host_fn]
 pub fn shell_escape(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments = callframe.arguments_old(1);

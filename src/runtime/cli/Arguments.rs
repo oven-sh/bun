@@ -469,14 +469,16 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
     {
         let cwd: Box<ZStr> = if let Some(cwd_arg) = args.option(b"--cwd") {
             let mut outbuf = bun_paths::PathBuffer::uninit();
-            let out = bun_paths::join_abs(bun_sys::getcwd(&mut outbuf)?, bun_paths::Platform::Loose, cwd_arg);
+            let out = resolve_path::join_abs::<platform::Loose>(bun_sys::getcwd(&mut outbuf)?, cwd_arg);
             if let bun_sys::Result::Err(err) = bun_sys::chdir(b"", out) {
                 Output::err(err, "Could not change directory to \"{}\"\n", format_args!("{}", BStr::new(cwd_arg)));
                 Global::exit(1);
             }
             bun_str::ZStr::from_bytes(out)?
         } else {
-            bun_sys::getcwd_alloc()?
+            let mut temp = bun_paths::PathBuffer::uninit();
+            let temp_slice = bun_sys::getcwd(&mut temp)?;
+            bun_str::ZStr::from_bytes(temp_slice)
         };
         ctx.args.absolute_working_dir = Some(cwd);
     }

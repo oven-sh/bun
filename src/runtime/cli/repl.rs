@@ -763,9 +763,11 @@ impl<'a> Repl<'a> {
         self.use_colors = !env_var::NO_COLOR.get();
 
         // Get terminal size
-        if Output::terminal_size().col > 0 {
-            self.terminal_width = Output::terminal_size().col;
-            self.terminal_height = Output::terminal_size().row;
+        // SAFETY: TERMINAL_SIZE is a process-global populated once during Output init.
+        let ts = unsafe { Output::TERMINAL_SIZE };
+        if ts.col > 0 {
+            self.terminal_width = ts.col;
+            self.terminal_height = ts.row;
         }
 
         // Enable raw mode
@@ -1038,7 +1040,7 @@ impl<'a> Repl<'a> {
         let writer = Output::writer();
         let highlighter = fmt::QuickAndDirtyJavaScriptSyntaxHighlighter {
             text,
-            opts: fmt::HighlighterOpts {
+            opts: fmt::HighlighterOptions {
                 enable_colors: true,
                 check_for_unhighlighted_write: false,
             },
@@ -1114,10 +1116,10 @@ impl<'a> Repl<'a> {
 
             // Check promise status after waiting
             match promise.status() {
-                jsc::PromiseStatus::Fulfilled => {
+                PromiseStatus::Fulfilled => {
                     resolved_result = promise.result(vm.jsc_vm);
                 }
-                jsc::PromiseStatus::Rejected => {
+                PromiseStatus::Rejected => {
                     let rejection = promise.result(vm.jsc_vm);
                     self.set_last_error(rejection);
                     // Set _error on the global object
@@ -1127,7 +1129,7 @@ impl<'a> Repl<'a> {
                     self.disable_signals_during_wait();
                     return;
                 }
-                jsc::PromiseStatus::Pending => {
+                PromiseStatus::Pending => {
                     // Interrupted by signal or timed out
                     self.print(format_args!("\n"));
                     self.disable_signals_during_wait();
@@ -1254,13 +1256,13 @@ impl<'a> Repl<'a> {
             promise.set_handled();
             vm.wait_for_promise(jsc::AnyPromise::Normal(promise));
             match promise.status() {
-                jsc::PromiseStatus::Fulfilled => resolved_result = promise.result(vm.jsc_vm),
-                jsc::PromiseStatus::Rejected => {
+                PromiseStatus::Fulfilled => resolved_result = promise.result(vm.jsc_vm),
+                PromiseStatus::Rejected => {
                     let rejection = promise.result(vm.jsc_vm);
                     self.print_js_error_to(rejection, Output::error_writer(), stderr_colors);
                     return true;
                 }
-                jsc::PromiseStatus::Pending => return true,
+                PromiseStatus::Pending => return true,
             }
         }
 
@@ -1395,15 +1397,15 @@ impl<'a> Repl<'a> {
                 return;
             }
             match promise.status() {
-                jsc::PromiseStatus::Fulfilled => resolved_result = promise.result(vm.jsc_vm),
-                jsc::PromiseStatus::Rejected => {
+                PromiseStatus::Fulfilled => resolved_result = promise.result(vm.jsc_vm),
+                PromiseStatus::Rejected => {
                     let rejection = promise.result(vm.jsc_vm);
                     self.set_last_error(rejection);
                     self.print_js_error(rejection);
                     self.disable_signals_during_wait();
                     return;
                 }
-                jsc::PromiseStatus::Pending => {
+                PromiseStatus::Pending => {
                     self.disable_signals_during_wait();
                     return;
                 }

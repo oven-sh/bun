@@ -1760,6 +1760,75 @@ mod posix_impl {
         check!(unsafe { libc::munmap(ptr.cast(), len) }, Tag::munmap); Ok(())
     }
 
+    // ── memfd (Linux only) — sys.zig:3237-3296 ──
+    /// `bun.sys.MemfdFlags` (Zig: `enum(u32)`).
+    #[cfg(target_os = "linux")]
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    #[repr(u32)]
+    pub enum MemfdFlags {
+        /// `MFD_EXEC | MFD_ALLOW_SEALING | MFD_CLOEXEC`
+        Executable = 0x0010 | libc::MFD_ALLOW_SEALING | libc::MFD_CLOEXEC,
+        /// `MFD_NOEXEC_SEAL | MFD_ALLOW_SEALING | MFD_CLOEXEC`
+        NonExecutable = 0x0008 | libc::MFD_ALLOW_SEALING | libc::MFD_CLOEXEC,
+        /// `MFD_NOEXEC_SEAL`
+        CrossProcess = 0x0008,
+    }
+    #[cfg(target_os = "linux")]
+    impl MemfdFlags {
+        #[inline]
+        fn older_kernel_flag(self) -> u32 {
+            match self {
+                MemfdFlags::NonExecutable | MemfdFlags::Executable => libc::MFD_CLOEXEC,
+                MemfdFlags::CrossProcess => 0,
+            }
+        }
+    }
+
+    /// `memfd_create` requires kernel ≥ 3.17. Latched true on first ENOSYS so
+    /// callers can take their existing fallback (heap buffer / pipe / socketpair)
+    /// without retrying the syscall on every Blob/spawn.
+    #[cfg(target_os = "linux")]
+    static MEMFD_ENOSYS: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+    /// `bun.sys.canUseMemfd()` — false on non-Linux; on Linux, false once
+    /// `memfd_create` has returned ENOSYS/EPERM/EACCES.
+    #[cfg(target_os = "linux")]
+    #[inline]
+    pub fn can_use_memfd() -> bool {
+        // TODO(port): also gate on `BUN_FEATURE_FLAG_DISABLE_MEMFD`.
+        !MEMFD_ENOSYS.load(core::sync::atomic::Ordering::Relaxed)
+    }
+    #[cfg(not(target_os = "linux"))]
+    #[inline]
+    pub fn can_use_memfd() -> bool { false }
+
+    /// `bun.sys.memfd_create(name, flags)` — Linux only.
+    /// Retries on EINTR; on EINVAL retries once with the pre-6.3 flag set
+    /// (drops `MFD_EXEC`/`MFD_NOEXEC_SEAL`); on ENOSYS/EPERM/EACCES latches
+    /// [`can_use_memfd`] to false.
+    #[cfg(target_os = "linux")]
+    pub fn memfd_create(name: &core::ffi::CStr, flags_: MemfdFlags) -> Maybe<Fd> {
+        let mut flags: u32 = flags_ as u32;
+        loop {
+            // SAFETY: `name` is a valid NUL-terminated C string.
+            let rc = unsafe { libc::memfd_create(name.as_ptr(), flags) };
+            if rc < 0 {
+                let e = last_errno();
+                if e == libc::EINTR { continue; }
+                if e == libc::EINVAL && flags == flags_ as u32 {
+                    // MFD_EXEC / MFD_NOEXEC_SEAL require Linux 6.3.
+                    flags = flags_.older_kernel_flag();
+                    continue;
+                }
+                if e == libc::ENOSYS || e == libc::EPERM || e == libc::EACCES {
+                    MEMFD_ENOSYS.store(true, core::sync::atomic::Ordering::Relaxed);
+                }
+                return Err(Error::from_code_int(e, Tag::memfd_create));
+            }
+            return Ok(Fd::from_native(rc));
+        }
+    }
+
     /// sys.zig:504 — `sendfile(src, dest, len)`. Clamps `len` (avoid EINVAL on
     /// >2GB), EINTR-retries, and attaches the *source* fd to the error
     /// (sys.zig:513 `errnoSysFd(rc, .sendfile, src)`).

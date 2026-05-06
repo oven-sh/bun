@@ -612,19 +612,19 @@ fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
     argv.push(b"core.quotePath=off");
     argv.extend_from_slice(args);
 
-    // TODO(port): bun.spawnSync — confirm crate::spawn_sync signature & SpawnOptions shape
-    let proc = match crate::spawn_sync(&crate::SpawnSyncOptions {
-        argv: &argv,
-        cwd,
-        stdout: crate::Stdio::Buffer,
-        stderr: crate::Stdio::Buffer,
-        stdin: crate::Stdio::Ignore,
+    let proc = match spawn_sync::spawn(&spawn_sync::Options {
+        argv: argv.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
+        cwd: Box::<[u8]>::from(cwd),
+        stdout: spawn_sync::SyncStdio::Buffer,
+        stderr: spawn_sync::SyncStdio::Buffer,
+        stdin: spawn_sync::SyncStdio::Ignore,
         envp: None,
         // The test command has a JSC VM running; reuse its event loop on
         // Windows rather than spinning up a MiniEventLoop.
         #[cfg(windows)]
-        windows: crate::WindowsSpawnOptions {
+        windows: spawn_sync::WindowsOptions {
             loop_: EventLoopHandle::init(VirtualMachine::get()),
+            ..Default::default()
         },
         ..Default::default()
     }) {

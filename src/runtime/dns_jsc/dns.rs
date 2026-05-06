@@ -2393,7 +2393,7 @@ pub mod internal {
 
         #[cfg(target_os = "macos")]
         {
-            if !feature_flag::BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO.get() {
+            if !env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO.get() {
                 let res = lookup_libinfo(req, unsafe { (*loop_).internal_loop_data.get_parent() });
                 bun_output::scoped_log!(dns, "getaddrinfo({}) = cache miss (libinfo)", bstr::BStr::new(host.map(|h| h.as_bytes()).unwrap_or(b"")));
                 if res { return Some(req); }

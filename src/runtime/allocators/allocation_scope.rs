@@ -128,10 +128,10 @@ struct LockedState<'a> {
 }
 
 impl<'a> LockedState<'a> {
-    fn alloc(&mut self, len: usize, alignment: usize, ret_addr: usize) -> Result<*mut u8, crate::AllocError> {
+    fn alloc(&mut self, len: usize, alignment: Alignment, ret_addr: usize) -> Result<*mut u8, AllocError> {
         // TODO(port): `self.parent.rawAlloc/rawFree` — call through the bun_alloc dynamic-allocator
         // vtable (`StdAllocator::raw_alloc` / `raw_free`).
-        let result = self.parent.raw_alloc(len, alignment, ret_addr).ok_or(crate::AllocError)?;
+        let result = self.parent.raw_alloc(len, alignment, ret_addr).ok_or(AllocError)?;
         // PORT NOTE: reshaped for borrowck — copy `parent` out so the errdefer guard doesn't hold
         // `&self` across the `&mut self` call to `track_allocation`.
         let parent = self.parent;
@@ -145,7 +145,7 @@ impl<'a> LockedState<'a> {
         Ok(result)
     }
 
-    fn free(&mut self, buf: &mut [u8], alignment: usize, ret_addr: usize) {
+    fn free(&mut self, buf: &mut [u8], alignment: Alignment, ret_addr: usize) {
         let success = match self.track_free(buf, ret_addr) {
             Ok(()) => true,
             Err(FreeError::NotAllocated) => false,

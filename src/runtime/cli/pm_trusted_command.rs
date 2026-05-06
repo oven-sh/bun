@@ -3,8 +3,8 @@ use core::sync::atomic::Ordering;
 use bun_collections::ArrayHashMap;
 use bun_core::{Global, Output, Progress};
 use bun_install::{
-    self as install, DependencyID, LifecycleScriptSubprocess, Lockfile, PackageID, PackageManager,
-    Resolution,
+    self as install, lockfile, DependencyID, LifecycleScriptSubprocess, Lockfile, PackageID,
+    PackageManager, Resolution,
 };
 use bun_logger as logger;
 use bun_semver::String as SemverString;

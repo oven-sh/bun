@@ -663,7 +663,7 @@ impl PublishCommand {
             b"",
             None,
             None,
-            http::Redirect::Follow,
+            http::FetchRedirect::Follow,
         );
 
         let Ok(res) = req.send_sync() else {
@@ -776,7 +776,7 @@ impl PublishCommand {
             &publish_req_body,
             None,
             None,
-            http::Redirect::Follow,
+            http::FetchRedirect::Follow,
         );
 
         let res = match req.send_sync() {
@@ -868,7 +868,7 @@ impl PublishCommand {
                     &publish_req_body,
                     None,
                     None,
-                    http::Redirect::Follow,
+                    http::FetchRedirect::Follow,
                 );
 
                 let otp_res = match otp_req.send_sync() {
@@ -1050,7 +1050,7 @@ impl PublishCommand {
                         b"",
                         None,
                         None,
-                        http::Redirect::Follow,
+                        http::FetchRedirect::Follow,
                     );
 
                     let res = match req.send_sync() {

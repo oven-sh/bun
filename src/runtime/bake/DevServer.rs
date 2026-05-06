@@ -4033,22 +4033,23 @@ impl DevServer<'_> {
                     route_bundle::Data::Framework(route_bundle::Framework {
                         route_index,
                         evaluate_failure: None,
-                        cached_module_list: jsc::StrongOptional::EMPTY,
-                        cached_client_bundle_url: jsc::StrongOptional::EMPTY,
-                        cached_css_file_array: jsc::StrongOptional::EMPTY,
+                        cached_module_list: jsc::StrongOptional::empty(),
+                        cached_client_bundle_url: jsc::StrongOptional::empty(),
+                        cached_css_file_array: jsc::StrongOptional::empty(),
                     })
                 }
                 route_bundle::UnresolvedIndex::Html(html) => 'brk: {
                     let incremental_graph_index = self
                         .client_graph
-                        .insert_stale_extra(&html.bundle.data.path, false, true)?;
-                    let packed_file =
+                        .insert_stale_extra(&html.bundle.path, false, true)?;
+                    let file =
                         &mut self.client_graph.bundled_files.values_mut()[incremental_graph_index.get() as usize];
-                    let mut file = packed_file.unpack();
+                    // PORT NOTE: Zig packs/unpacks; the un-gated `incremental_graph::File`
+                    // is unpacked already.
                     file.html_route_bundle_index = Some(bundle_index);
-                    *packed_file = file.pack();
                     break 'brk route_bundle::Data::Html(route_bundle::Html {
-                        html_bundle: HTMLBundleRoute::Ref::init_ref(html),
+                        // TODO(b2-blocked): bun_ptr::RefPtr<HTMLBundleRoute>::init_ref once RefCounted impl is real.
+                        html_bundle: html as *const HTMLBundleRoute as *mut HTMLBundleRoute,
                         bundled_file: incremental_graph_index,
                         script_injection_offset: None,
                         cached_response: None,

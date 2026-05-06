@@ -261,9 +261,9 @@ impl Context {
                     unsafe { c::BrotliEncoderCreateInstance(Some(alloc), Some(free), ptr::null_mut()) };
                 if state.is_null() {
                     return Error::init(
-                        "Could not initialize Brotli instance",
+                        c"Could not initialize Brotli instance".as_ptr(),
                         -1,
-                        "ERR_ZLIB_INITIALIZATION_FAILED",
+                        c"ERR_ZLIB_INITIALIZATION_FAILED".as_ptr(),
                     );
                 }
                 self.state = NonNull::new(state.cast::<c_void>());
@@ -277,9 +277,9 @@ impl Context {
                     unsafe { c::BrotliDecoderCreateInstance(Some(alloc), Some(free), ptr::null_mut()) };
                 if state.is_null() {
                     return Error::init(
-                        "Could not initialize Brotli instance",
+                        c"Could not initialize Brotli instance".as_ptr(),
                         -1,
-                        "ERR_ZLIB_INITIALIZATION_FAILED",
+                        c"ERR_ZLIB_INITIALIZATION_FAILED".as_ptr(),
                     );
                 }
                 self.state = NonNull::new(state.cast::<c_void>());

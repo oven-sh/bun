@@ -200,7 +200,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64, hint: codecs::DecodeHint) -> Result
     // exact bug #30197 is about.
     let mut icc_ptr: *mut u8 = core::ptr::null_mut();
     let mut icc_size: usize = 0;
-    let icc: Option<Box<[u8]>> = 'blk: {
+    let icc: Option<Vec<u8>> = 'blk: {
         // SAFETY: `h` is live; out-params are valid `&mut` locals.
         if unsafe { tj3GetICCProfile(h, &mut icc_ptr, &mut icc_size) } != 0 || icc_size == 0 {
             break 'blk None;
@@ -217,7 +217,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64, hint: codecs::DecodeHint) -> Result
         }
         // SAFETY: tj3GetICCProfile wrote `icc_size` bytes at `icc_ptr`.
         let src = unsafe { core::slice::from_raw_parts(icc_ptr, icc_size) };
-        break 'blk Some(Box::<[u8]>::from(src));
+        break 'blk Some(src.to_vec());
     };
     Ok(codecs::Decoded { rgba: out, width: w, height: ht, icc_profile: icc })
 }
@@ -284,11 +284,10 @@ pub fn encode(rgba: &[u8], w: u32, ht: u32, quality: u8, progressive: bool, icc_
     }
     // tj3Compress8 allocates via libjpeg-turbo's allocator; hand it to JS
     // with `tj3Free` as the finalizer instead of duping.
-    // TODO(port): codecs::Encoded layout — bytes is a foreign-allocator slice (ptr+len) freed via `free` fn pointer
     Ok(codecs::Encoded {
         // SAFETY: tj3Compress8 succeeded; out_ptr is non-null and owns `out_len` bytes.
-        bytes: unsafe { core::slice::from_raw_parts_mut(out_ptr, out_len) },
-        free: codecs::Encoded::wrap(tj3Free),
+        bytes: unsafe { NonNull::new_unchecked(core::ptr::slice_from_raw_parts_mut(out_ptr, out_len)) },
+        free: encoded_wrap_free!(tj3Free),
     })
 }
 

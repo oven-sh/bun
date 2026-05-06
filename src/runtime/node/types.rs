@@ -1446,6 +1446,10 @@ pub enum PathOrFileDescriptor {
     Path(PathLike),
 }
 
+impl Default for PathOrFileDescriptor {
+    fn default() -> Self { Self::Fd(Fd::INVALID) }
+}
+
 #[repr(u8)]
 pub enum PathOrFileDescriptorSerializeTag {
     Fd,
@@ -1492,7 +1496,12 @@ impl PathOrFileDescriptor {
         }
     }
 
-    pub fn deinit_and_unprotect(self) {
+    /// Zig: `deinit()` — only the `.path` arm owns memory; fds are not closed.
+    pub fn deinit(&self) {
+        if let Self::Path(path) = self { path.deinit(); }
+    }
+
+    pub fn deinit_and_unprotect(&self) {
         match self {
             Self::Path(path) => path.deinit_and_unprotect(),
             Self::Fd(_) => {}

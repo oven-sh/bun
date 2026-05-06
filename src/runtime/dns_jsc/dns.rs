@@ -568,14 +568,14 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
     ) -> *mut Self {
         let hash = wyhash(name);
         let mut poll_ref = KeepAlive::init();
-        poll_ref.ref_(global_this.bun_vm());
+        poll_ref.ref_(js_event_loop_ctx());
         let request = Box::into_raw(Box::new(Self {
             resolver_for_caching: resolver,
             hash,
             cache: CacheConfig::default(),
             head: CAresLookup {
-                // SAFETY: resolver is a live intrusive-RC m_ctx; clone_from_raw bumps the embedded ref_count.
-                resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::clone_from_raw(r) }),
+                // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
+                resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::init_ref(r) }),
                 global_this: global_this as *const JSGlobalObject,
                 promise: JSPromiseStrong::init(global_this),
                 poll_ref,
@@ -678,14 +678,14 @@ impl GetHostByAddrInfoRequest {
     ) -> *mut Self {
         let hash = wyhash(name);
         let mut poll_ref = KeepAlive::init();
-        poll_ref.ref_(global_this.bun_vm());
+        poll_ref.ref_(js_event_loop_ctx());
         let request = Box::into_raw(Box::new(Self {
             resolver_for_caching: resolver,
             hash,
             cache: CacheConfig::default(),
             head: CAresReverse {
-                // SAFETY: resolver is a live intrusive-RC m_ctx; clone_from_raw bumps the embedded ref_count.
-                resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::clone_from_raw(r) }),
+                // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
+                resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::init_ref(r) }),
                 global_this: global_this as *const JSGlobalObject,
                 promise: JSPromiseStrong::init(global_this),
                 poll_ref,

@@ -546,6 +546,17 @@ impl HotReloadEvent {
         (self.files.count() + self.dirs.count()) == 0
     }
 
+    /// `HotReloadEvent.processFileList` — full body in gated
+    /// `../DevServer/HotReloadEvent.rs` draft (depends on `IncrementalGraph`
+    /// invalidate + `DirectoryWatchStore` walk).
+    pub fn process_file_list(
+        &mut self,
+        _dev: *mut DevServer,
+        _entry_points: &mut EntryPointList,
+    ) {
+        todo!("blocked_on: dev_server::HotReloadEvent::process_file_list body un-gate")
+    }
+
     pub fn reset(&mut self) {
         #[cfg(debug_assertions)]
         self.debug_mutex.unlock();

@@ -1380,8 +1380,16 @@ impl CronJob {
     }
 
     fn remove_from_list(this: *mut Self, vm: &VirtualMachine) {
-        if let Some(rare) = vm.rare_data.as_ref() {
-            if let Some(i) = rare.cron_jobs.iter().position(|&j| j == this) {
+        // PORT NOTE: `RareData::cron_jobs` stores the opaque
+        // `rare_data::high_tier::CronJob`; cast through `*mut ()` for compare.
+        // SAFETY: address-equality only.
+        let needle = this as *mut ();
+        // SAFETY: single JS thread; mutation of the per-VM Vec.
+        let rare = unsafe { &mut *(vm as *const VirtualMachine as *mut VirtualMachine) }
+            .rare_data
+            .as_mut();
+        if let Some(rare) = rare {
+            if let Some(i) = rare.cron_jobs.iter().position(|&j| j as *mut () == needle) {
                 rare.cron_jobs.swap_remove(i);
                 Self::deref(this);
             }

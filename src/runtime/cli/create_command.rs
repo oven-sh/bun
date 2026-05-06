@@ -760,13 +760,15 @@ impl CreateCommand {
                     break 'process_package_json;
                 }
 
-                if let Some(mut name_expr) = package_json_expr.as_property(b"name") {
-                    if name_expr.expr.data.is_e_string() {
+                if let Some(name_expr) = package_json_expr.as_property(b"name") {
+                    if let Some(mut s) = name_expr.expr.data.e_string() {
                         let basename = bun_paths::basename(destination);
-                        // SAFETY: casting away const to match Zig's @ptrFromInt(@intFromPtr(...))
-                        // pattern; the string is never mutated through this pointer.
-                        name_expr.expr.data.e_string_mut().unwrap().data = unsafe {
-                            core::slice::from_raw_parts_mut(basename.as_ptr() as *mut u8, basename.len())
+                        // SAFETY: `destination` is interned in the process-global DirnameStore
+                        // (`append_slice` returns `&'static [u8]`); re-erase the borrow lifetime
+                        // to `'static` to match `EString.data: &'static [u8]`. Mirrors Zig's
+                        // `@ptrFromInt(@intFromPtr(...))` cast.
+                        s.data = unsafe {
+                            core::slice::from_raw_parts(basename.as_ptr(), basename.len())
                         };
                     }
                 }

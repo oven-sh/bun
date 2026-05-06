@@ -941,32 +941,27 @@ pub mod command {
                 return Ok(());
             }
             Tag::RunCommand => {
-                let ctx = init::<{ Tag::RunCommand }>(log)?;
-                ctx.args.target = api::Target::Bun;
+                let mut ctx = init::<{ Tag::RunCommand }>(log)?;
+                ctx.args.target = Some(api::Target::Bun);
 
                 if ctx.parallel || ctx.sequential {
-                    if let Err(err) = multi_run::run(ctx) {
-                        Output::pretty_errorln("<r><red>error<r>: {}", format_args!("{}", err.name()));
+                    if let Err(err) = multi_run::run(&mut ctx) {
+                        Output::pretty_errorln(format_args!("<r><red>error<r>: {}", err.name()));
                         Global::exit(1);
                     }
                 }
 
                 if !ctx.filters.is_empty() || ctx.workspaces {
                     if let Err(err) = filter_run::run_scripts_with_filter(ctx) {
-                        Output::pretty_errorln("<r><red>error<r>: {}", format_args!("{}", err.name()));
+                        Output::pretty_errorln(format_args!("<r><red>error<r>: {}", err.name()));
                         Global::exit(1);
                     }
                 }
 
                 if !ctx.positionals.is_empty() {
-                    if RunCommand::exec(
-                        ctx,
-                        RunCommand::ExecOptions {
-                            bin_dirs_only: false,
-                            log_errors: true,
-                            allow_fast_run_for_extensions: false,
-                        },
-                    )? {
+                    // TODO(port): RunCommand::ExecOptions { log_errors, allow_fast_run_for_extensions }
+                    // collapsed to `bin_dirs_only` until run_command::exec grows the full struct.
+                    if RunCommand::exec(ctx, /* bin_dirs_only */ false)? {
                         return Ok(());
                     }
 

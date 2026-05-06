@@ -515,13 +515,13 @@ impl<Owner> Drop for Channel<Owner> {
 
 // -- platform callbacks ------------------------------------------------------
 
-/// `vtable::make()` shape: `(ext: &mut *mut Channel<Owner>, *mut us_socket_t, …)`.
-// PORT NOTE: `PhantomData<fn() -> *mut Owner>` instead of `PhantomData<Owner>`
-// so the marker type itself carries no lifetime obligations from `Owner` —
-// `vtable::Handler` requires `Self: 'static` and one owner
-// (`WorkerCommands<'a>`) is non-`'static`.
+/// `vtable.make()` shape: `(ext: **Self, *us_socket_t, …)`. Hand-rolled here
+/// instead of `uws::vtable::make::<PosixHandlers<Owner>>()` because the
+/// upstream `bun_uws_sys::vtable::Handler` trait is `'static`-bounded and one
+/// owner (`WorkerCommands<'a>`) carries a lifetime. The trampolines below are
+/// the exact shape `vtable::make` would have produced.
 #[cfg(not(windows))]
-pub struct PosixHandlers<Owner: ChannelOwner>(PhantomData<fn() -> *mut Owner>);
+pub struct PosixHandlers<Owner: ChannelOwner>(PhantomData<Owner>);
 
 /// Ext slot type for the usockets vtable: the slot holds a `*mut Channel<Owner>`.
 // PORT NOTE: was an inherent `type Ext` on the impl in the Zig-shaped draft;
@@ -530,38 +530,68 @@ pub struct PosixHandlers<Owner: ChannelOwner>(PhantomData<fn() -> *mut Owner>);
 pub type PosixExt<Owner> = *mut Channel<Owner>;
 
 #[cfg(not(windows))]
-impl<Owner: ChannelOwner> VHandler for PosixHandlers<Owner>
-where
-    PosixHandlers<Owner>: 'static,
-    PosixExt<Owner>: 'static,
-{
-    /// `*Self` — the slot lives in C-allocated (`calloc`) ext memory; the
-    /// trampoline hands it to us by `&mut`.
-    type Ext = PosixExt<Owner>;
+impl<Owner: ChannelOwner> PosixHandlers<Owner> {
+    /// Per-Owner static vtable. `&Self::VTABLE` const-promotes to
+    /// `&'static SocketGroupVTable` (all fields are `Option<fn>`; no Drop).
+    pub const VTABLE: uws::SocketGroupVTable = uws::SocketGroupVTable {
+        on_open: None,
+        on_data: Some(Self::raw_on_data),
+        on_fd: None,
+        on_writable: Some(Self::raw_on_writable),
+        on_close: Some(Self::raw_on_close),
+        on_timeout: None,
+        on_long_timeout: None,
+        on_end: Some(Self::raw_on_end),
+        on_connect_error: None,
+        on_connecting_error: None,
+        on_handshake: None,
+    };
 
-    const HAS_ON_DATA: bool = true;
-    const HAS_ON_WRITABLE: bool = true;
-    const HAS_ON_CLOSE: bool = true;
-    const HAS_ON_END: bool = true;
+    /// Recover `&mut Channel<Owner>` from the socket ext slot.
+    ///
+    /// # Safety
+    /// `s` is a live us_socket_t whose ext was sized for and stamped with
+    /// `*mut Channel<Owner>` in `adopt()`; the owner outlives all usockets
+    /// callbacks (see module doc).
+    #[inline(always)]
+    unsafe fn chan<'a>(s: *mut uws::us_socket_t) -> &'a mut Channel<Owner> {
+        unsafe { &mut **(*s).ext::<PosixExt<Owner>>() }
+    }
 
-    fn on_data(ext: &mut Self::Ext, _s: *mut uws::us_socket_t, data: &[u8]) {
-        // SAFETY: ext slot was set to `self as *mut Channel<_>` in `adopt()`;
-        // the owner outlives all usockets callbacks (see module doc).
-        unsafe { &mut **ext }.ingest(data);
+    unsafe extern "C" fn raw_on_data(
+        s: *mut uws::us_socket_t,
+        data: *mut u8,
+        len: core::ffi::c_int,
+    ) -> *mut uws::us_socket_t {
+        // SAFETY: usockets guarantees `data[0..len]` is valid for the call.
+        let slice = unsafe { core::slice::from_raw_parts(data, len as usize) };
+        // SAFETY: see `chan` doc.
+        unsafe { Self::chan(s) }.ingest(slice);
+        s
     }
-    fn on_writable(ext: &mut Self::Ext, _s: *mut uws::us_socket_t) {
-        // SAFETY: see on_data.
-        unsafe { &mut **ext }.flush();
+
+    unsafe extern "C" fn raw_on_writable(s: *mut uws::us_socket_t) -> *mut uws::us_socket_t {
+        // SAFETY: see `chan` doc.
+        unsafe { Self::chan(s) }.flush();
+        s
     }
-    fn on_close(ext: &mut Self::Ext, _s: *mut uws::us_socket_t, _code: i32, _reason: Option<*mut c_void>) {
-        // SAFETY: see on_data.
-        let chan = unsafe { &mut **ext };
+
+    unsafe extern "C" fn raw_on_close(
+        s: *mut uws::us_socket_t,
+        _code: core::ffi::c_int,
+        _reason: *mut c_void,
+    ) -> *mut uws::us_socket_t {
+        // SAFETY: see `chan` doc.
+        let chan = unsafe { Self::chan(s) };
         chan.backend.socket = Socket::DETACHED;
         chan.mark_done();
+        s
     }
-    fn on_end(_ext: &mut Self::Ext, s: *mut uws::us_socket_t) {
+
+    unsafe extern "C" fn raw_on_end(s: *mut uws::us_socket_t) -> *mut uws::us_socket_t {
         // SAFETY: `s` is a live us_socket_t passed by usockets.
         unsafe { (*s).close(bun_uws_sys::CloseCode::normal) };
+        s
     }
 }
 

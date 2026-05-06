@@ -1016,8 +1016,8 @@ impl Subprocess<'_> {
                 if existing_value.is_cell() {
                     if stdin.is_none() {
                         // TODO: review this cast
-                        stdin = FileSink::JSSink::from_js(existing_value)
-                            .map(|p| NonNull::from(p));
+                        stdin = crate::webcore::file_sink::JSSink::from_js(existing_value)
+                            .and_then(|p| NonNull::new(p.cast::<FileSink>()));
                     }
 
                     if !self.flags.contains(Flags::IS_STDIN_A_READABLE_STREAM) {
@@ -1033,7 +1033,7 @@ impl Subprocess<'_> {
         }
 
         if !existing_stdin_value.is_empty() {
-            FileSink::JSSink::set_destroy_callback(existing_stdin_value, 0);
+            crate::webcore::file_sink::JSSink::set_destroy_callback(existing_stdin_value, 0);
         }
 
         if self.flags.contains(Flags::IS_SYNC) {
@@ -1077,11 +1077,15 @@ impl Subprocess<'_> {
             // `onStdinDestroyed()` deref ourselves instead; this also leaves
             // `self.stdin` as `.pipe` so reading `.stdin` after exit still
             // returns the sink.
-            if core::ptr::eq(
-                pipe.signal.ptr() as *const c_void,
-                &self.stdin as *const Writable<'_> as *const c_void,
-            ) {
-                pipe.signal.clear();
+            if pipe
+                .signal
+                .ptr
+                .map(|p| p.as_ptr() as *const c_void)
+                == Some(&self.stdin as *const Writable<'_> as *const c_void)
+            {
+                // SAFETY: `pipe_ptr` is unique on the mutator thread; Zig mutates
+                // through `*FileSink` here.
+                unsafe { (*pipe_ptr.as_ptr()).signal.clear() };
             }
             let must_deref = self.flags.contains(Flags::DEREF_ON_STDIN_DESTROYED);
             self.flags.remove(Flags::DEREF_ON_STDIN_DESTROYED);
@@ -1095,7 +1099,8 @@ impl Subprocess<'_> {
 
         let mut did_update_has_pending_activity = false;
 
-        let event_loop = jsc_vm.event_loop();
+        // SAFETY: `jsc_vm` is the live VM; `event_loop()` returns its owned EventLoop.
+        let event_loop = unsafe { &mut *(*jsc_vm).event_loop() };
 
         if !is_sync {
             if !this_jsvalue.is_empty() {

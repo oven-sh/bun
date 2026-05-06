@@ -189,30 +189,31 @@ impl<'a> ProcessHandle<'a> {
 
         #[cfg(unix)]
         {
-            if let Some(stdout_fd) = spawned.stdout {
+            if let Some(stdout_fd) = stdout_fd {
                 let _ = bun_sys::set_nonblocking(stdout_fd);
-                self.stdout_reader.reader.start(stdout_fd, true).unwrap()?;
+                self.stdout_reader.reader.start(stdout_fd, true).map_err(Error::from)?;
             }
-            if let Some(stderr_fd) = spawned.stderr {
+            if let Some(stderr_fd) = stderr_fd {
                 let _ = bun_sys::set_nonblocking(stderr_fd);
-                self.stderr_reader.reader.start(stderr_fd, true).unwrap()?;
+                self.stderr_reader.reader.start(stderr_fd, true).map_err(Error::from)?;
             }
         }
         #[cfg(not(unix))]
         {
-            self.stdout_reader.reader.start_with_current_pipe().unwrap()?;
-            self.stderr_reader.reader.start_with_current_pipe().unwrap()?;
+            let _ = (stdout_fd, stderr_fd);
+            self.stdout_reader.reader.start_with_current_pipe().map_err(Error::from)?;
+            self.stderr_reader.reader.start_with_current_pipe().map_err(Error::from)?;
         }
 
-        self.process = Some(ProcessSlot {
-            ptr: process.clone(),
-            status: Status::Running,
-        });
-        process.set_exit_handler(self);
+        self.process = Some(ProcessSlot { ptr: process, status: Status::Running });
+        // SAFETY: `process` was just allocated by `to_process` (Box::into_raw);
+        // owner backref set before any reap callback can fire.
+        let process = unsafe { &mut *process };
+        process.set_exit_handler(self as *mut Self as *mut (), &PROCESS_HANDLE_EXIT_VTABLE);
 
         match process.watch_or_reap() {
-            bun_sys::Result::Ok(()) => {}
-            bun_sys::Result::Err(err) => {
+            Ok(_) => {}
+            Err(err) => {
                 if !process.has_exited() {
                     // SAFETY: all-zero is a valid Rusage (POD C struct)
                     let rusage = unsafe { core::mem::zeroed::<Rusage>() };
@@ -223,32 +224,26 @@ impl<'a> ProcessHandle<'a> {
 
         Ok(())
     }
+}
 
-    pub fn on_process_exit(&mut self, _proc: &Process, status: Status, _rusage: &Rusage) {
-        self.process.as_mut().unwrap().status = status;
-        self.end_time = Instant::now().into();
-        // SAFETY: state backref; see start()
-        let state = unsafe { &mut *(self.state as *mut State) };
-        let _ = state.process_exit(self);
-    }
+static PROCESS_HANDLE_EXIT_VTABLE: ProcessExitVTable = ProcessExitVTable {
+    on_process_exit: process_handle_on_process_exit,
+};
 
-    pub fn event_loop(&self) -> &'static MiniEventLoop<'static> {
-        // SAFETY: state backref
-        unsafe { (*self.state).event_loop }
-    }
-
-    pub fn r#loop(&self) -> &bun_aio::Loop {
-        #[cfg(windows)]
-        {
-            // SAFETY: state backref
-            unsafe { (*self.state).event_loop.loop_.uv_loop }
-        }
-        #[cfg(not(windows))]
-        {
-            // SAFETY: state backref
-            unsafe { (*self.state).event_loop.loop_ }
-        }
-    }
+unsafe fn process_handle_on_process_exit(
+    owner: *mut (),
+    _process: *mut Process,
+    status: Status,
+    _rusage: *const Rusage,
+) {
+    // SAFETY: owner is the `*mut ProcessHandle` registered in `start()`; it
+    // lives in `State.handles` for the whole event loop.
+    let this = unsafe { &mut *(owner as *mut ProcessHandle) };
+    this.process.as_mut().unwrap().status = status;
+    this.end_time = Instant::now().into();
+    // SAFETY: state backref; see start()
+    let state = unsafe { &mut *(this.state as *mut State) };
+    let _ = state.process_exit(this);
 }
 
 const COLORS: [&[u8]; 6] = [

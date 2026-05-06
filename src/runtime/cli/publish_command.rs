@@ -153,8 +153,8 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         );
 
         let tarball_bytes = match File::read_from(Fd::cwd(), abs_tarball_path) {
-            bun_sys::Result::Ok(b) => b,
-            bun_sys::Result::Err(e) => {
+            Ok(b) => b,
+            Err(e) => {
                 Output::err(e, "failed to read tarball: '{}'", (bstr::BStr::new(tarball_path),));
                 Global::crash();
             }
@@ -165,7 +165,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         // wrapper has no Rust port. The package.json-extraction loop below
         // (publish_command.zig:fromTarballPath) is gated until that surface
         // lands.
-        let _ = (&ctx, &tarball_bytes, &abs_tarball_path, manager);
+        let _ = (&ctx, &tarball_bytes, manager);
         todo!("blocked_on: bun_libarchive::lib::Archive::Iterator + bun_install::PackageManager::log/publish_config (reconciler-6)")
     }
 

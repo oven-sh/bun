@@ -47,15 +47,35 @@ use super::*;
 use core::cmp::Ordering;
 use core::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
-use bun_jsc::{CallFrame, JSArray, JSGlobalObject, JSValue, JsResult, StringJsc as _};
-use bun_str::String as BunString;
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _};
+use bun_str::{String as BunString, ZStr};
 use bun_threading::Mutex;
 
 use crate::socket::socket_address::{self, sockaddr, SocketAddress};
 use crate::node::util::validators;
 
 // TODO(port): move to <area>_sys — AF_* constants come from translated-c-headers
-use crate::socket::socket_address::inet::{AF_INET, AF_INET6};
+use crate::socket::socket_address::inet::{self, AF_INET, AF_INET6};
+
+// ─── local shims for upstream-gated APIs ──────────────────────────────────
+// `JSGlobalObject::clear_exception` lives in the `#[cfg(any())]`-gated
+// `JSGlobalObject.rs` module; bind the FFI symbol locally.
+#[inline]
+fn clear_exception(global: &JSGlobalObject) {
+    extern "C" {
+        fn JSGlobalObject__clearException(global: *const JSGlobalObject);
+    }
+    // SAFETY: FFI — `global` is a valid JSGlobalObject*; C++ side has no extra preconditions.
+    unsafe { JSGlobalObject__clearException(global) }
+}
+
+/// `&ZStr` → `&str` for `format_args!`. IP presentation strings and AF family
+/// names are ASCII by construction (`inet_ntop` output / static literals).
+#[inline]
+fn z(s: &ZStr) -> &str {
+    // SAFETY: callers pass ASCII-only `ZStr`s (see above).
+    unsafe { core::str::from_utf8_unchecked(s.as_bytes()) }
+}
 
 /// `.classes.ts`-backed payload (`m_ctx`) for `JSBlockList`.
 /// `fromJS` / `toJS` are provided by the codegen via `#[bun_jsc::JsClass]`.

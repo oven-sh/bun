@@ -822,7 +822,13 @@ impl BunxCommand {
 
         bun_output::scoped_log!(bunx, "bunx_cache_dir: {}", BStr::new(bunx_cache_dir));
 
+        // PORT NOTE: Zig's module-level `var path_buf` is a stack local here so
+        // `bun_core::which`'s returned slice can borrow it for the rest of exec().
+        let mut path_buf = PathBuffer::uninit();
+        let top_level_dir: &[u8] = fs.top_level_dir;
+
         let mut absolute_in_cache_dir_buf = PathBuffer::uninit();
+        let buf_total = absolute_in_cache_dir_buf.len();
         let mut absolute_in_cache_dir: &[u8] = {
             let mut cursor: &mut [u8] = &mut absolute_in_cache_dir_buf[..];
             write!(
@@ -834,7 +840,7 @@ impl BunxCommand {
                 exe = EXE_SUFFIX,
             )
             .map_err(|_| bun_core::err!("PathTooLong"))?;
-            let written = absolute_in_cache_dir_buf.len() - cursor.len();
+            let written = buf_total - cursor.len();
             // PORT NOTE: reshaped for borrowck — re-slice from buffer
             // SAFETY: `written` bytes were just initialized above
             unsafe { core::slice::from_raw_parts(absolute_in_cache_dir_buf.as_ptr(), written) }

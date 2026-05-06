@@ -281,13 +281,17 @@ impl Job {
                 .sub(offset_of!(Job, task))
                 .cast::<Job>()
         };
-        let _enqueue = scopeguard::guard((), |_| {
-            job.vm
-                .enqueue_task_concurrent(ConcurrentTask::create(job.any_task.task()));
+        let job_ptr: *mut Job = job;
+        let _enqueue = scopeguard::guard((), move |_| {
+            // SAFETY: `job_ptr` points to the heap-allocated Job (alive until run_from_js drops it);
+            // `vm` is the per-thread VirtualMachine, valid for the program lifetime.
+            unsafe {
+                (*(*job_ptr).vm)
+                    .enqueue_task_concurrent(ConcurrentTask::create((*job_ptr).any_task.task()));
+            }
         });
-        // PORT NOTE: reshaped for borrowck — scopeguard above borrows `job`; in Phase B this may
-        // need raw-pointer access since `enqueue_task_concurrent` runs after the body mutates `job`.
-        // TODO(port): verify borrow ordering once WorkPoolTask/AnyTask shapes are finalized.
+        // PORT NOTE: reshaped for borrowck — Zig used `defer vm.enqueueTaskConcurrent(...)`;
+        // raw-ptr access in the guard avoids holding a `&mut Job` across the body below.
 
         let len = usize::try_from(job.pbkdf2.length).unwrap();
         // Zig: `bun.default_allocator.alloc(u8, len) catch { ... }`

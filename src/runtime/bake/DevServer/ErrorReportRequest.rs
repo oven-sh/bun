@@ -197,6 +197,7 @@ fn parse_hex_to_int<T: Copy>(slice: &[u8]) -> Option<T> {
 }
 
 /// Instead of decoding the entire file, just decode the desired section.
+#[allow(dead_code)] // caller (`run_with_body`) is stubbed pending jsc::ZigStackFrame un-gate
 fn extract_json_encoded_source_code<'a, const N: usize>(
     contents: &'a [u8],
     target_line: u32,

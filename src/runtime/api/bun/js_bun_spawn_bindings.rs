@@ -501,14 +501,14 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             if let Some(env_arg) = args.get_truthy(global_this, "env")? {
                 env_arg.ensure_still_alive();
                 let Some(object) = env_arg.get_object() else {
-                    return global_this
-                        .throw_invalid_arguments("env must be an object", format_args!(""));
+                    return Err(global_this.throw_invalid_arguments("env must be an object"));
                 };
 
                 override_env = true;
                 // If the env object does not include a $PATH, it must disable path lookup for argv[0]
                 let mut new_path: &[u8] = b"";
-                append_envp_from_js(global_this, object, &mut env_array, &mut new_path)?;
+                // SAFETY: get_object() returns a non-null *mut JSObject when Some.
+                append_envp_from_js(global_this, unsafe { &*object }, &mut env_array, &mut new_path)?;
                 path = new_path;
             }
 

@@ -3624,8 +3624,8 @@ impl<'a> WireWriter for DirectWriterStruct<'a> {
 impl H2FrameParser {
     #[bun_jsc::host_fn(method)]
     pub fn set_encoding(this: &mut Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args_list = callframe.arguments_old(1);
-        if args_list.len() < 1 {
+        let args_list = callframe.arguments_old::<1>();
+        if args_list.len < 1 {
             return global_object.throw("Expected encoding argument");
         }
         this.handlers.binary_type = match BinaryType::from_js_value(global_object, args_list.ptr[0])? {
@@ -3739,8 +3739,8 @@ impl H2FrameParser {
 
     #[bun_jsc::host_fn(method)]
     pub fn update_settings(this: &mut Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args_list = callframe.arguments_old(1);
-        if args_list.len() < 1 {
+        let args_list = callframe.arguments_old::<1>();
+        if args_list.len < 1 {
             return global_object.throw("Expected settings argument");
         }
 
@@ -3753,15 +3753,15 @@ impl H2FrameParser {
 
     #[bun_jsc::host_fn(method)]
     pub fn set_local_window_size(this: &mut Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args_list = callframe.arguments_old(1);
-        if args_list.len() < 1 {
+        let args_list = callframe.arguments_old::<1>();
+        if args_list.len < 1 {
             return global_object.throw_invalid_arguments("Expected windowSize argument");
         }
         let window_size = args_list.ptr[0];
         if !window_size.is_number() {
             return global_object.throw_invalid_arguments("Expected windowSize to be a number");
         }
-        let window_size_value: u32 = window_size.to::<u32>();
+        let window_size_value: u32 = window_size.to_u32();
         if this.used_window_size > window_size_value as u64 {
             return global_object.throw_invalid_arguments("Expected windowSize to be greater than usedWindowSize");
         }
@@ -3791,7 +3791,7 @@ impl H2FrameParser {
         result.put(global_object, ZigString::static_("effectiveLocalWindowSize"), JSValue::js_number(this.window_size));
         result.put(global_object, ZigString::static_("effectiveRecvDataLength"), JSValue::js_number(this.window_size - this.used_window_size));
         result.put(global_object, ZigString::static_("nextStreamID"), JSValue::js_number(this.get_next_stream_id()));
-        result.put(global_object, ZigString::static_("lastProcStreamID"), JSValue::js_number(this.last_stream_id));
+        result.put(global_object, ZigString::static_("lastProcStreamID"), JSValue::js_number(this.last_stream_id as f64));
 
         let settings = this.remote_settings.unwrap_or_default();
         result.put(global_object, ZigString::static_("remoteWindowSize"), JSValue::js_number(settings.initial_window_size));
@@ -3805,7 +3805,7 @@ impl H2FrameParser {
     #[bun_jsc::host_fn(method)]
     pub fn goaway(this: &mut Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let args_list = callframe.arguments_old(3);
-        if args_list.len() < 1 {
+        if args_list.len < 1 {
             return global_object.throw("Expected errorCode argument");
         }
 
@@ -3820,7 +3820,7 @@ impl H2FrameParser {
         }
 
         let mut last_stream_id = this.last_stream_id;
-        if args_list.len() >= 2 {
+        if args_list.len >= 2 {
             let last_stream_arg = args_list.ptr[1];
             if !last_stream_arg.is_empty_or_undefined_or_null() {
                 if !last_stream_arg.is_number() {
@@ -3832,7 +3832,7 @@ impl H2FrameParser {
                 }
                 last_stream_id = u32::try_from(id).unwrap();
             }
-            if args_list.len() >= 3 {
+            if args_list.len >= 3 {
                 let opaque_data_arg = args_list.ptr[2];
                 if !opaque_data_arg.is_empty_or_undefined_or_null() {
                     if let Some(array_buffer) = opaque_data_arg.as_array_buffer(global_object) {
@@ -3850,8 +3850,8 @@ impl H2FrameParser {
 
     #[bun_jsc::host_fn(method)]
     pub fn ping(this: &mut Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args_list = callframe.arguments_old(1);
-        if args_list.len() < 1 {
+        let args_list = callframe.arguments_old::<1>();
+        if args_list.len < 1 {
             return global_object.throw("Expected payload argument");
         }
 
@@ -3996,8 +3996,8 @@ impl H2FrameParser {
 
     #[bun_jsc::host_fn(method)]
     pub fn get_end_after_headers(this: &mut Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args_list = callframe.arguments_old(1);
-        if args_list.len() < 1 {
+        let args_list = callframe.arguments_old::<1>();
+        if args_list.len < 1 {
             return global_object.throw("Expected stream argument");
         }
         let stream_arg = args_list.ptr[0];
@@ -4021,8 +4021,8 @@ impl H2FrameParser {
 
     #[bun_jsc::host_fn(method)]
     pub fn is_stream_aborted(this: &mut Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args_list = callframe.arguments_old(1);
-        if args_list.len() < 1 {
+        let args_list = callframe.arguments_old::<1>();
+        if args_list.len < 1 {
             return global_object.throw("Expected stream argument");
         }
         let stream_arg = args_list.ptr[0];
@@ -4051,8 +4051,8 @@ impl H2FrameParser {
 
     #[bun_jsc::host_fn(method)]
     pub fn get_stream_state(this: &mut Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args_list = callframe.arguments_old(1);
-        if args_list.len() < 1 {
+        let args_list = callframe.arguments_old::<1>();
+        if args_list.len < 1 {
             return global_object.throw("Expected stream argument");
         }
         let stream_arg = args_list.ptr[0];
@@ -4087,7 +4087,7 @@ impl H2FrameParser {
     #[bun_jsc::host_fn(method)]
     pub fn set_stream_priority(this: &mut Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let args_list = callframe.arguments_old(2);
-        if args_list.len() < 2 {
+        if args_list.len < 2 {
             return global_object.throw("Expected stream and options arguments");
         }
         let stream_arg = args_list.ptr[0];
@@ -4365,24 +4365,24 @@ impl H2FrameParser {
 
     #[bun_jsc::host_fn(method)]
     pub fn no_trailers(this: &mut Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args_list = callframe.arguments_old(1);
-        if args_list.len() < 1 {
-            return global_object.throw("Expected stream, headers and sensitiveHeaders arguments");
+        let args_list = callframe.arguments_old::<1>();
+        if args_list.len < 1 {
+            return Err(global_object.throw("Expected stream, headers and sensitiveHeaders arguments"));
         }
 
         let stream_arg = args_list.ptr[0];
 
         if !stream_arg.is_number() {
-            return global_object.throw("Expected stream to be a number");
+            return Err(global_object.throw("Expected stream to be a number"));
         }
 
-        let stream_id = stream_arg.to_u32();
+        let stream_id = stream_arg.to_int32() as u32;
         if stream_id == 0 || stream_id > MAX_STREAM_ID {
-            return global_object.throw("Invalid stream id");
+            return Err(global_object.throw("Invalid stream id"));
         }
 
         let Some(stream) = this.streams.get(&stream_id).copied() else {
-            return global_object.throw("Invalid stream id");
+            return Err(global_object.throw("Invalid stream id"));
         };
         // SAFETY: stream is a *mut Stream from self.streams (Box::into_raw); valid while the map entry exists
         let stream = unsafe { &mut *stream };
@@ -4439,7 +4439,7 @@ impl H2FrameParser {
     #[bun_jsc::host_fn(method)]
     pub fn send_trailers(this: &mut Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let args_list = callframe.arguments_old(3);
-        if args_list.len() < 3 {
+        if args_list.len < 3 {
             return global_object.throw("Expected stream, headers and sensitiveHeaders arguments");
         }
 
@@ -4496,19 +4496,19 @@ impl H2FrameParser {
             let name = name_slice.slice();
 
             if header_name.char_at(0) == b':' as u16 {
-                let exception = global_object.to_type_error_fmt(bun_jsc::ErrorCode::HTTP2_INVALID_PSEUDOHEADER, format_args!("\"{}\" is an invalid pseudoheader or is used incorrectly", BStr::new(name)));
+                let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_INVALID_PSEUDOHEADER, format_args!("\"{}\" is an invalid pseudoheader or is used incorrectly", BStr::new(name)));
                 return global_object.throw_value(exception);
             }
 
             let js_value = iter.value;
             if js_value.is_undefined_or_null() {
-                let exception = global_object.to_type_error_fmt(bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(name)));
+                let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(name)));
                 return global_object.throw_value(exception);
             }
             let validated_name = match Self::to_valid_header_name(name, &mut name_buffer[0..name.len()]) {
                 Ok(n) => n,
                 Err(_) => {
-                    let exception = global_object.to_type_error_fmt(bun_jsc::ErrorCode::INVALID_HTTP_TOKEN, format_args!("The arguments Header name is invalid. Received {}", BStr::new(name)));
+                    let exception = global_object.to_type_error(bun_jsc::ErrorCode::INVALID_HTTP_TOKEN, format_args!("The arguments Header name is invalid. Received {}", BStr::new(name)));
                     return global_object.throw_value(exception);
                 }
             };
@@ -4530,10 +4530,10 @@ impl H2FrameParser {
                         this.dispatch_with_2_extra(
                             JSH2FrameParser::Gc::onFrameError,
                             identifier,
-                            JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8),
-                            JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0),
+                            JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8 as f64),
+                            JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
                         );
-                        this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, identifier, JSValue::js_number(stream.rst_code));
+                        this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, identifier, JSValue::js_number(stream.rst_code as f64));
                         Ok(Some(JSValue::UNDEFINED))
                     }
                 }
@@ -4544,7 +4544,7 @@ impl H2FrameParser {
 
                 if let Some(idx) = single_value_headers_index_of(validated_name) {
                     if value_iter.len > 1 || single_value_headers[idx] {
-                        let exception = global_object.to_type_error_fmt(bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE, format_args!("Header field \"{}\" must only have a single value", BStr::new(validated_name)));
+                        let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE, format_args!("Header field \"{}\" must only have a single value", BStr::new(validated_name)));
                         return global_object.throw_value(exception);
                     }
                     single_value_headers[idx] = true;
@@ -4552,7 +4552,7 @@ impl H2FrameParser {
 
                 while let Some(item) = value_iter.next()? {
                     if item.is_empty_or_undefined_or_null() {
-                        let exception = global_object.to_type_error_fmt(bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(validated_name)));
+                        let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(validated_name)));
                         return global_object.throw_value(exception);
                     }
 
@@ -4560,13 +4560,13 @@ impl H2FrameParser {
                         Ok(s) => s,
                         Err(_) => {
                             global_object.clear_exception();
-                            let exception = global_object.to_type_error_fmt(bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(validated_name)));
+                            let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(validated_name)));
                             return global_object.throw_value(exception);
                         }
                     };
 
-                    let never_index = sensitive_arg.get_truthy_property_value(global_object, validated_name)?
-                        .or(sensitive_arg.get_truthy_property_value(global_object, name)?)
+                    let never_index = sensitive_arg.get_truthy(global_object, validated_name)?
+                        .or(sensitive_arg.get_truthy(global_object, name)?)
                         .is_some();
 
                     let value_slice = value_str.to_slice(global_object);
@@ -4579,7 +4579,7 @@ impl H2FrameParser {
             } else {
                 if let Some(idx) = single_value_headers_index_of(validated_name) {
                     if single_value_headers[idx] {
-                        let exception = global_object.to_type_error_fmt(bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE, format_args!("Header field \"{}\" must only have a single value", BStr::new(validated_name)));
+                        let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE, format_args!("Header field \"{}\" must only have a single value", BStr::new(validated_name)));
                         return global_object.throw_value(exception);
                     }
                     single_value_headers[idx] = true;
@@ -4588,13 +4588,13 @@ impl H2FrameParser {
                     Ok(s) => s,
                     Err(_) => {
                         global_object.clear_exception();
-                        let exception = global_object.to_type_error_fmt(bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(validated_name)));
+                        let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(validated_name)));
                         return global_object.throw_value(exception);
                     }
                 };
 
-                let never_index = sensitive_arg.get_truthy_property_value(global_object, validated_name)?
-                    .or(sensitive_arg.get_truthy_property_value(global_object, name)?)
+                let never_index = sensitive_arg.get_truthy(global_object, validated_name)?
+                    .or(sensitive_arg.get_truthy(global_object, name)?)
                     .is_some();
 
                 let value_slice = value_str.to_slice(global_object);
@@ -4747,10 +4747,10 @@ impl H2FrameParser {
     #[bun_jsc::host_fn(method)]
     pub fn set_next_stream_id(this: &mut Self, _global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let args_list = callframe.arguments();
-        debug_assert!(args_list.len() >= 1);
+        debug_assert!(args_list.len >= 1);
         let stream_id_arg = args_list[0];
         debug_assert!(stream_id_arg.is_number());
-        this.last_stream_id = stream_id_arg.to::<u32>();
+        this.last_stream_id = stream_id_arg.to_u32();
         if this.is_server {
             if this.last_stream_id % 2 == 0 {
                 this.last_stream_id -= 2;
@@ -4778,18 +4778,18 @@ impl H2FrameParser {
     pub fn get_next_stream(this: &mut Self, _global_object: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
         let id = this.get_next_stream_id();
         if id > MAX_STREAM_ID {
-            return Ok(JSValue::js_number(-1));
+            return Ok(JSValue::js_number(-1.0));
         }
         if this.handle_received_stream_id(id).is_none() {
-            return Ok(JSValue::js_number(-1));
+            return Ok(JSValue::js_number(-1.0));
         }
         Ok(JSValue::js_number(id))
     }
 
     #[bun_jsc::host_fn(method)]
     pub fn get_stream_context(this: &mut Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args_list = callframe.arguments_old(1);
-        if args_list.len() < 1 {
+        let args_list = callframe.arguments_old::<1>();
+        if args_list.len < 1 {
             return global_object.throw("Expected stream_id argument");
         }
 
@@ -4798,7 +4798,7 @@ impl H2FrameParser {
             return global_object.throw("Expected stream_id to be a number");
         }
 
-        let Some(stream) = this.streams.get(&stream_id_arg.to::<u32>()).copied() else {
+        let Some(stream) = this.streams.get(&stream_id_arg.to_u32()).copied() else {
             return global_object.throw("Invalid stream id");
         };
 
@@ -4809,7 +4809,7 @@ impl H2FrameParser {
     #[bun_jsc::host_fn(method)]
     pub fn set_stream_context(this: &mut Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let args_list = callframe.arguments_old(2);
-        if args_list.len() < 2 {
+        if args_list.len < 2 {
             return global_object.throw("Expected stream_id and context arguments");
         }
 
@@ -4817,7 +4817,7 @@ impl H2FrameParser {
         if !stream_id_arg.is_number() {
             return global_object.throw("Expected stream_id to be a number");
         }
-        let Some(stream) = this.streams.get(&stream_id_arg.to::<u32>()).copied() else {
+        let Some(stream) = this.streams.get(&stream_id_arg.to_u32()).copied() else {
             return global_object.throw("Invalid stream id");
         };
         let context_arg = args_list.ptr[1];
@@ -4888,8 +4888,8 @@ impl H2FrameParser {
 
     #[bun_jsc::host_fn(method)]
     pub fn emit_error_to_all_streams(this: &mut Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args_list = callframe.arguments_old(1);
-        if args_list.len() < 1 {
+        let args_list = callframe.arguments_old::<1>();
+        if args_list.len < 1 {
             return global_object.throw("Expected error argument");
         }
 
@@ -4905,7 +4905,7 @@ impl H2FrameParser {
             let stream = unsafe { &mut *stream_ptr };
             if stream.state != StreamState::CLOSED {
                 stream.state = StreamState::CLOSED;
-                stream.rst_code = args_list.ptr[0].to::<u32>();
+                stream.rst_code = args_list.ptr[0].to_u32();
                 let identifier = stream.get_identifier();
                 identifier.ensure_still_alive();
                 // SAFETY: this_ptr derived from `this` above; iterator holds only a raw pointer (no
@@ -4929,7 +4929,7 @@ impl H2FrameParser {
         bun_output::scoped_log!(H2FrameParser, "request");
 
         let args_list = callframe.arguments_old(5);
-        if args_list.len() < 4 {
+        if args_list.len < 4 {
             return global_object.throw("Expected stream_id, stream_ctx, headers and sensitiveHeaders arguments");
         }
 
@@ -4953,12 +4953,12 @@ impl H2FrameParser {
         // max header name length for lshpack
         let mut name_buffer = [0u8; 4096];
         let stream_id: u32 = if !stream_id_arg.is_empty_or_undefined_or_null() && stream_id_arg.is_number() {
-            stream_id_arg.to::<u32>()
+            stream_id_arg.to_u32()
         } else {
             this.get_next_stream_id()
         };
         if stream_id > MAX_STREAM_ID {
-            return Ok(JSValue::js_number(-1));
+            return Ok(JSValue::js_number(-1.0));
         }
 
         // we iterate twice, because pseudo headers must be sent first, but can appear anywhere in the headers object
@@ -4983,7 +4983,7 @@ impl H2FrameParser {
                 let validated_name = match Self::to_valid_header_name(name, &mut name_buffer[0..name.len()]) {
                     Ok(n) => n,
                     Err(_) => {
-                        let exception = global_object.to_type_error_fmt(bun_jsc::ErrorCode::INVALID_HTTP_TOKEN, format_args!("The arguments Header name is invalid. Received \"{}\"", BStr::new(name)));
+                        let exception = global_object.to_type_error(bun_jsc::ErrorCode::INVALID_HTTP_TOKEN, format_args!("The arguments Header name is invalid. Received \"{}\"", BStr::new(name)));
                         return global_object.throw_value(exception);
                     }
                 };
@@ -5014,7 +5014,7 @@ impl H2FrameParser {
 
                 let js_value = iter.value;
                 if js_value.is_undefined_or_null() {
-                    let exception = global_object.to_type_error_fmt(bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(name)));
+                    let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(name)));
                     return global_object.throw_value(exception);
                 }
 
@@ -5025,7 +5025,7 @@ impl H2FrameParser {
                     if let Some(idx) = single_value_headers_index_of(validated_name) {
                         if value_iter.len > 1 || single_value_headers[idx] {
                             if !global_object.has_exception() {
-                                let exception = global_object.to_type_error_fmt(bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE, format_args!("Header field \"{}\" must only have a single value", BStr::new(validated_name)));
+                                let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE, format_args!("Header field \"{}\" must only have a single value", BStr::new(validated_name)));
                                 return global_object.throw_value(exception);
                             }
                             return Ok(JSValue::ZERO);
@@ -5049,8 +5049,8 @@ impl H2FrameParser {
                             }
                         };
 
-                        let never_index = sensitive_arg.get_truthy_property_value(global_object, validated_name)?
-                            .or(sensitive_arg.get_truthy_property_value(global_object, name)?)
+                        let never_index = sensitive_arg.get_truthy(global_object, validated_name)?
+                            .or(sensitive_arg.get_truthy(global_object, name)?)
                             .is_some();
 
                         let value_slice = value_str.to_slice(global_object);
@@ -5062,7 +5062,7 @@ impl H2FrameParser {
                                 return global_object.throw("Failed to allocate header buffer");
                             }
                             let Some(stream) = this.handle_received_stream_id(stream_id) else {
-                                return Ok(JSValue::js_number(-1));
+                                return Ok(JSValue::js_number(-1.0));
                             };
                             // SAFETY: stream is a *mut Stream from self.streams (Box::into_raw); valid while the map entry exists
                             let stream = unsafe { &mut *stream };
@@ -5071,7 +5071,7 @@ impl H2FrameParser {
                             }
                             stream.state = StreamState::CLOSED;
                             stream.rst_code = ErrorCode::COMPRESSION_ERROR.0;
-                            this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, stream.get_identifier(), JSValue::js_number(stream.rst_code));
+                            this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, stream.get_identifier(), JSValue::js_number(stream.rst_code as f64));
                             return Ok(JSValue::UNDEFINED);
                         }
                     }
@@ -5079,7 +5079,7 @@ impl H2FrameParser {
                     bun_output::scoped_log!(H2FrameParser, "single header {}", BStr::new(name));
                     if let Some(idx) = single_value_headers_index_of(validated_name) {
                         if single_value_headers[idx] {
-                            let exception = global_object.to_type_error_fmt(bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE, format_args!("Header field \"{}\" must only have a single value", BStr::new(validated_name)));
+                            let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE, format_args!("Header field \"{}\" must only have a single value", BStr::new(validated_name)));
                             return global_object.throw_value(exception);
                         }
                         single_value_headers[idx] = true;
@@ -5092,8 +5092,8 @@ impl H2FrameParser {
                         }
                     };
 
-                    let never_index = sensitive_arg.get_truthy_property_value(global_object, validated_name)?
-                        .or(sensitive_arg.get_truthy_property_value(global_object, name)?)
+                    let never_index = sensitive_arg.get_truthy(global_object, validated_name)?
+                        .or(sensitive_arg.get_truthy(global_object, name)?)
                         .is_some();
 
                     let value_slice = value_str.to_slice(global_object);
@@ -5105,7 +5105,7 @@ impl H2FrameParser {
                             return global_object.throw("Failed to allocate header buffer");
                         }
                         let Some(stream) = this.handle_received_stream_id(stream_id) else {
-                            return Ok(JSValue::js_number(-1));
+                            return Ok(JSValue::js_number(-1.0));
                         };
                         // SAFETY: stream is a *mut Stream from self.streams (Box::into_raw); valid while the map entry exists
                         let stream = unsafe { &mut *stream };
@@ -5114,8 +5114,8 @@ impl H2FrameParser {
                             stream.set_context(stream_ctx_arg, global_object);
                         }
                         stream.rst_code = ErrorCode::COMPRESSION_ERROR.0;
-                        this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, stream.get_identifier(), JSValue::js_number(stream.rst_code));
-                        return Ok(JSValue::js_number(stream_id));
+                        this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, stream.get_identifier(), JSValue::js_number(stream.rst_code as f64));
+                        return Ok(JSValue::js_number(stream_id as f64));
                     }
                 }
             }
@@ -5123,7 +5123,7 @@ impl H2FrameParser {
         let encoded_size = encoded_headers.len();
 
         let Some(stream_ptr) = this.handle_received_stream_id(stream_id) else {
-            return Ok(JSValue::js_number(-1));
+            return Ok(JSValue::js_number(-1.0));
         };
         // SAFETY: stream_ptr is a *mut Stream stored in self.streams (Box::into_raw); valid for the lifetime of the entry, exclusive access reshaped for borrowck
         let stream = unsafe { &mut *stream_ptr };
@@ -5138,18 +5138,18 @@ impl H2FrameParser {
         let mut silent: bool = false;
         let mut wait_for_trailers: bool = false;
         let mut end_stream: bool = false;
-        if args_list.len() > 4 && !args_list.ptr[4].is_empty_or_undefined_or_null() {
+        if args_list.len > 4 && !args_list.ptr[4].is_empty_or_undefined_or_null() {
             let options = args_list.ptr[4];
             if !options.is_object() {
                 stream.state = StreamState::CLOSED;
                 stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
-                this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, stream.get_identifier(), JSValue::js_number(stream.rst_code));
-                return Ok(JSValue::js_number(stream_id));
+                this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, stream.get_identifier(), JSValue::js_number(stream.rst_code as f64));
+                return Ok(JSValue::js_number(stream_id as f64));
             }
 
             if let Some(padding_js) = options.get(global_object, "paddingStrategy")? {
                 if padding_js.is_number() {
-                    stream.padding_strategy = match padding_js.to::<u32>() {
+                    stream.padding_strategy = match padding_js.to_u32() {
                         1 => PaddingStrategy::Aligned,
                         2 => PaddingStrategy::Max,
                         _ => PaddingStrategy::None,
@@ -5205,8 +5205,8 @@ impl H2FrameParser {
                     if parent <= 0 || parent as u32 > MAX_STREAM_ID {
                         stream.state = StreamState::CLOSED;
                         stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
-                        this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, stream.get_identifier(), JSValue::js_number(stream.rst_code));
-                        return Ok(JSValue::js_number(stream.id));
+                        this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, stream.get_identifier(), JSValue::js_number(stream.rst_code as f64));
+                        return Ok(JSValue::js_number(stream.id as f64));
                     }
                     stream.stream_dependency = u32::try_from(parent).unwrap();
                 } else {
@@ -5221,8 +5221,8 @@ impl H2FrameParser {
                     if weight < 1 || weight > u8::MAX as i32 {
                         stream.state = StreamState::CLOSED;
                         stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
-                        this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, stream.get_identifier(), JSValue::js_number(stream.rst_code));
-                        return Ok(JSValue::js_number(stream_id));
+                        this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, stream.get_identifier(), JSValue::js_number(stream.rst_code as f64));
+                        return Ok(JSValue::js_number(stream_id as f64));
                     }
                     stream.weight = u16::try_from(weight).unwrap();
                 } else {
@@ -5232,8 +5232,8 @@ impl H2FrameParser {
                 if weight < 1 || weight > u8::MAX as i32 {
                     stream.state = StreamState::CLOSED;
                     stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
-                    this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, stream.get_identifier(), JSValue::js_number(stream.rst_code));
-                    return Ok(JSValue::js_number(stream_id));
+                    this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, stream.get_identifier(), JSValue::js_number(stream.rst_code as f64));
+                    return Ok(JSValue::js_number(stream_id as f64));
                 }
 
                 stream.weight = u16::try_from(weight).unwrap();
@@ -5246,7 +5246,7 @@ impl H2FrameParser {
                         // SAFETY: FFI call; global_object is a valid &JSGlobalObject and reason/abort_reason() is rooted on the stack
                         let wrapped = unsafe { Bun__wrapAbortError(global_object, signal_.abort_reason()) };
                         this.abort_stream(stream, wrapped);
-                        return Ok(JSValue::js_number(stream_id));
+                        return Ok(JSValue::js_number(stream_id as f64));
                     }
                     stream.attach_signal(this, signal_);
                 } else {
@@ -5260,14 +5260,14 @@ impl H2FrameParser {
             stream.state = StreamState::CLOSED;
             stream.rst_code = ErrorCode::ENHANCE_YOUR_CALM.0;
             this.rejected_streams += 1;
-            this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, stream.get_identifier(), JSValue::js_number(stream.rst_code));
+            this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, stream.get_identifier(), JSValue::js_number(stream.rst_code as f64));
             if this.rejected_streams >= this.max_rejected_streams {
                 // SAFETY: handlers.global_object is JSC_BORROW; outlives self, never null
                 let global = unsafe { &*this.handlers.global_object };
                 let chunk = this.handlers.binary_type.to_js(b"ENHANCE_YOUR_CALM", global)?;
-                this.dispatch_with_2_extra(JSH2FrameParser::Gc::onError, JSValue::js_number(ErrorCode::ENHANCE_YOUR_CALM.0), JSValue::js_number(this.last_stream_id), chunk);
+                this.dispatch_with_2_extra(JSH2FrameParser::Gc::onError, JSValue::js_number(ErrorCode::ENHANCE_YOUR_CALM.0 as f64), JSValue::js_number(this.last_stream_id as f64), chunk);
             }
-            return Ok(JSValue::js_number(stream_id));
+            return Ok(JSValue::js_number(stream_id as f64));
         }
         let mut length: usize = encoded_size;
         if has_priority {
@@ -5285,12 +5285,12 @@ impl H2FrameParser {
             this.dispatch_with_2_extra(
                 JSH2FrameParser::Gc::onFrameError,
                 stream.get_identifier(),
-                JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8),
-                JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0),
+                JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8 as f64),
+                JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
             );
 
-            this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, stream.get_identifier(), JSValue::js_number(stream.rst_code));
-            return Ok(JSValue::js_number(stream_id));
+            this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, stream.get_identifier(), JSValue::js_number(stream.rst_code as f64));
+            return Ok(JSValue::js_number(stream_id as f64));
         }
 
         let actual_max_frame_size = this.remote_settings.unwrap_or(this.local_settings).max_frame_size as usize;
@@ -5401,7 +5401,7 @@ impl H2FrameParser {
 
             if wait_for_trailers {
                 this.dispatch(JSH2FrameParser::Gc::onWantTrailers, stream.get_identifier());
-                return Ok(JSValue::js_number(stream_id));
+                return Ok(JSValue::js_number(stream_id as f64));
             }
         } else {
             stream.wait_for_trailers = wait_for_trailers;
@@ -5412,13 +5412,13 @@ impl H2FrameParser {
         }
 
         let _ = length;
-        Ok(JSValue::js_number(stream_id))
+        Ok(JSValue::js_number(stream_id as f64))
     }
 
     #[bun_jsc::host_fn(method)]
     pub fn read(this: &mut Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args_list = callframe.arguments_old(1);
-        if args_list.len() < 1 {
+        let args_list = callframe.arguments_old::<1>();
+        if args_list.len < 1 {
             return global_object.throw("Expected 1 argument");
         }
         let buffer = args_list.ptr[0];
@@ -5466,8 +5466,8 @@ impl H2FrameParser {
 
     #[bun_jsc::host_fn(method)]
     pub fn set_native_socket_from_js(this: &mut Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args_list = callframe.arguments_old(1);
-        if args_list.len() < 1 {
+        let args_list = callframe.arguments_old::<1>();
+        if args_list.len < 1 {
             return global_object.throw("Expected socket argument");
         }
 
@@ -5518,8 +5518,8 @@ impl H2FrameParser {
         callframe: &CallFrame,
         this_value: JSValue,
     ) -> JsResult<*mut H2FrameParser> {
-        let args_list = callframe.arguments_old(1);
-        if args_list.len() < 1 {
+        let args_list = callframe.arguments_old::<1>();
+        if args_list.len < 1 {
             return global_object.throw("Expected 1 argument");
         }
 
@@ -5609,12 +5609,12 @@ impl H2FrameParser {
 
                 if let Some(max_pings) = settings_js.get(global_object, "maxOutstandingPings")? {
                     if max_pings.is_number() {
-                        this_ref.max_outstanding_pings = max_pings.to::<u64>();
+                        this_ref.max_outstanding_pings = max_pings.to_u64();
                     }
                 }
                 if let Some(max_memory) = settings_js.get(global_object, "maxSessionMemory")? {
                     if max_memory.is_number() {
-                        this_ref.max_session_memory = max_memory.to::<u64>() as u32;
+                        this_ref.max_session_memory = max_memory.to_u64() as u32;
                         if this_ref.max_session_memory < 1 {
                             this_ref.max_session_memory = 1;
                         }
@@ -5622,7 +5622,7 @@ impl H2FrameParser {
                 }
                 if let Some(max_header_list_pairs) = settings_js.get(global_object, "maxHeaderListPairs")? {
                     if max_header_list_pairs.is_number() {
-                        this_ref.max_header_list_pairs = max_header_list_pairs.to::<u64>() as u32;
+                        this_ref.max_header_list_pairs = max_header_list_pairs.to_u64() as u32;
                         if this_ref.max_header_list_pairs < 4 {
                             this_ref.max_header_list_pairs = 4;
                         }
@@ -5630,12 +5630,12 @@ impl H2FrameParser {
                 }
                 if let Some(max_rejected_streams) = settings_js.get(global_object, "maxSessionRejectedStreams")? {
                     if max_rejected_streams.is_number() {
-                        this_ref.max_rejected_streams = max_rejected_streams.to::<u64>() as u32;
+                        this_ref.max_rejected_streams = max_rejected_streams.to_u64() as u32;
                     }
                 }
                 if let Some(max_outstanding_settings) = settings_js.get(global_object, "maxOutstandingSettings")? {
                     if max_outstanding_settings.is_number() {
-                        this_ref.max_outstanding_settings = (max_outstanding_settings.to::<u64>() as u32).max(1);
+                        this_ref.max_outstanding_settings = (max_outstanding_settings.to_u64() as u32).max(1);
                     }
                 }
                 if let Some(max_send_header_block_length) = settings_js.get(global_object, "maxSendHeaderBlockLength")? {
@@ -5646,7 +5646,7 @@ impl H2FrameParser {
                 }
                 if let Some(padding_strategy) = settings_js.get(global_object, "paddingStrategy")? {
                     if padding_strategy.is_number() {
-                        this_ref.padding_strategy = match padding_strategy.to::<u32>() {
+                        this_ref.padding_strategy = match padding_strategy.to_u32() {
                             1 => PaddingStrategy::Aligned,
                             2 => PaddingStrategy::Max,
                             _ => PaddingStrategy::None,
@@ -5657,7 +5657,7 @@ impl H2FrameParser {
         }
         let mut is_server = false;
         if let Some(type_js) = options.get(global_object, "type")? {
-            is_server = type_js.is_number() && type_js.to::<u32>() == 0;
+            is_server = type_js.is_number() && type_js.to_u32() == 0;
         }
 
         this_ref.is_server = is_server;

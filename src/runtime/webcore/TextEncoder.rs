@@ -191,9 +191,9 @@ impl<'a> RopeStringEncoder<'a> {
         unsafe { (*it).stop = 1 };
     }
 
-    pub extern "C" fn write8(it: *mut JSString::Iterator, ptr: *const u8, len: u32, offset: u32) {
+    pub unsafe extern "C" fn write8(it: *mut JSStringIterator, ptr: *const u8, len: u32, offset: u32) {
         // SAFETY: it.data was set to &mut RopeStringEncoder in iter()
-        let this = unsafe { &mut *((*it).data.unwrap().as_ptr() as *mut RopeStringEncoder) };
+        let this = unsafe { &mut *((*it).data as *mut RopeStringEncoder) };
         // SAFETY: ptr[0..len] is provided by JSC rope iteration
         let src = unsafe { core::slice::from_raw_parts(ptr, len as usize) };
         let result = strings::copy_latin1_into_utf8_stop_on_non_ascii(

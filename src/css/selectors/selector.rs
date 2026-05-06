@@ -1,13 +1,14 @@
 use crate::css_parser as css;
-use crate::css_parser::{CSSString, CSSStringFns, Printer, PrintErr, StyleContext, SymbolList, VendorPrefix};
+use crate::css_parser::{CSSString, Printer, PrintErr, StyleContext, SymbolList, VendorPrefix};
 use crate::css_parser::targets::Targets;
 use crate::css_parser::compat::Feature;
+use crate::{CSSStringFns, IdentFns};
 
 use bun_alloc::Arena as Bump;
 use bun_collections::ArrayHashMap;
 use bun_core::Output;
 
-bun_output::declare_scope!(CSS_SELECTORS, visible);
+bun_core::declare_scope!(CSS_SELECTORS, visible);
 
 pub use css::Printer as _Printer; // re-export alias parity
 pub use css::PrintErr as _PrintErr;
@@ -18,8 +19,12 @@ pub use parser::Component;
 pub use parser::PseudoClass;
 pub use parser::PseudoElement;
 
-/// Our implementation of the `SelectorImpl` interface
-///
+/// Our implementation of the `SelectorImpl` interface — the trait-based
+/// `impl_::Selectors` marker lives in the hub (`super::impl_`) so the
+/// parser↔selector cycle has a single anchor. This module is the literal
+/// Zig-shaped namespace (`selector.impl.Selectors.SelectorImpl.*` type
+/// aliases) kept for diff parity with `selector.zig`.
+pub use super::impl_;
 // TODO(port): `impl` is a Rust keyword; using raw identifier `r#impl` for module name parity.
 pub mod r#impl {
     use super::*;
@@ -30,14 +35,14 @@ pub mod r#impl {
         pub mod selector_impl {
             use super::*;
 
-            pub type AttrValue = css::css_values::string::CSSString;
+            pub type AttrValue = css::css_values::string::CssString;
             pub type Identifier = css::css_values::ident::Ident;
             /// An identifier which could be a local name for use in CSS modules
             pub type LocalIdentifier = css::css_values::ident::IdentOrRef;
             pub type LocalName = css::css_values::ident::Ident;
             pub type NamespacePrefix = css::css_values::ident::Ident;
-            pub type NamespaceUrl = &'static [u8]; // TODO(port): lifetime — Zig `[]const u8` type alias
-            pub type BorrowedNamespaceUrl = &'static [u8]; // TODO(port): lifetime
+            pub type NamespaceUrl = *const [u8]; // TODO(port): lifetime — Zig `[]const u8` type alias
+            pub type BorrowedNamespaceUrl = *const [u8]; // TODO(port): lifetime
             pub type BorrowedLocalName = css::css_values::ident::Ident;
 
             pub type NonTSPseudoClass = parser::PseudoClass;
@@ -50,7 +55,7 @@ pub mod r#impl {
             use super::*;
 
             pub fn from_ident(ident: css::css_values::ident::Ident) -> selector_impl::LocalIdentifier {
-                css::css_values::ident::IdentOrRef { v: ident }
+                css::css_values::ident::IdentOrRef::from_ident(ident)
             }
         }
     }
@@ -608,19 +613,19 @@ pub mod serialize {
 
         #[cfg(debug_assertions)]
         {
-            bun_output::scoped_log!(CSS_SELECTORS, "Selector components:\n");
+            bun_core::scoped_log!(CSS_SELECTORS, "Selector components:\n");
             for comp in selector.components.iter() {
-                bun_output::scoped_log!(CSS_SELECTORS, " {:?}\n", comp);
+                bun_core::scoped_log!(CSS_SELECTORS, " {:?}\n", comp);
             }
 
-            bun_output::scoped_log!(CSS_SELECTORS, "Compound selector iter\n");
+            bun_core::scoped_log!(CSS_SELECTORS, "Compound selector iter\n");
             let mut compound_selectors = CompoundSelectorIter { sel: selector, i: 0 };
             while let Some(comp) = compound_selectors.next() {
                 for c in comp {
-                    bun_output::scoped_log!(CSS_SELECTORS, "  {:?}, ", c);
+                    bun_core::scoped_log!(CSS_SELECTORS, "  {:?}, ", c);
                 }
             }
-            bun_output::scoped_log!(CSS_SELECTORS, "\n");
+            bun_core::scoped_log!(CSS_SELECTORS, "\n");
         }
 
         // Compound selectors invert the order of their contents, so we need to
@@ -1128,7 +1133,7 @@ pub mod serialize {
 
             // https://webkit.org/blog/363/styling-scrollbars/
             PseudoClass::WebkitScrollbar(s) => {
-                use parser::WebkitScrollbarPseudoClass as S;
+                use parser::WebKitScrollbarPseudoClass as S;
                 dest.write_str(match s {
                     S::Horizontal => b":horizontal",
                     S::Vertical => b":vertical",
@@ -1175,7 +1180,7 @@ pub mod serialize {
                 prefix
             };
             vp.to_css(d)?;
-            bun_output::scoped_log!(
+            bun_core::scoped_log!(
                 CSS_SELECTORS,
                 "VENDOR PREFIX {} OVERRIDE {}",
                 vp.as_bits(),
@@ -1247,7 +1252,7 @@ pub mod serialize {
                 }
             }
             PseudoElement::WebkitScrollbar(s) => {
-                use parser::WebkitScrollbarPseudoElement as S;
+                use parser::WebKitScrollbarPseudoElement as S;
                 dest.write_str(match s {
                     S::Scrollbar => b"::-webkit-scrollbar",
                     S::Button => b"::-webkit-scrollbar-button",
@@ -1487,7 +1492,7 @@ pub mod tocss_servo {
                     if i != 0 {
                         dest.write_char(b' ')?;
                     }
-                    css::IdentFns::to_css(name, dest)?;
+                    IdentFns::to_css(name, dest)?;
                 }
                 dest.write_char(b')')?;
             }
@@ -1519,17 +1524,17 @@ pub mod tocss_servo {
                 dest.write_str(b"*|")?;
             }
             Component::Namespace(ns) => {
-                css::IdentFns::to_css(&ns.prefix, dest)?;
+                IdentFns::to_css(&ns.prefix, dest)?;
                 dest.write_char(b'|')?;
             }
             Component::AttributeInNoNamespaceExists(v) => {
                 dest.write_char(b'[')?;
-                css::IdentFns::to_css(&v.local_name, dest)?;
+                IdentFns::to_css(&v.local_name, dest)?;
                 dest.write_char(b']')?;
             }
             Component::AttributeInNoNamespace(v) => {
                 dest.write_char(b'[')?;
-                css::IdentFns::to_css(&v.local_name, dest)?;
+                IdentFns::to_css(&v.local_name, dest)?;
                 v.operator.to_css(dest)?;
                 CSSStringFns::to_css(&v.value, dest)?;
                 match v.case_sensitivity {

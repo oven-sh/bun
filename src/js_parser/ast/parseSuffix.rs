@@ -468,7 +468,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         // condition ? yes : no
         //             ^
-        e_if.yes = p.parse_expr_with_flags(Level::Comma, EFlags::None)?;
+        p.parse_expr_with_flags(Level::Comma, EFlags::None, &mut e_if.yes)?;
 
         p.allow_in = old_allow_in;
 
@@ -478,7 +478,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         // condition ? yes : no
         //                   ^
-        e_if.no = p.parse_expr_with_flags(Level::Comma, EFlags::None)?;
+        p.parse_expr_with_flags(Level::Comma, EFlags::None, &mut e_if.no)?;
 
         // condition ? yes : no
         //                     ^

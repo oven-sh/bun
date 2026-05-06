@@ -1100,13 +1100,18 @@ impl<'a> SelectorParser<'a> {
             ));
         }
 
-        let mut args: Vec<css::css_properties::custom::TokenOrValue> = Vec::new();
-        TokenList::parse_raw(input, &mut args, self.options, 0)?;
-
-        Ok(PseudoElement::CustomFunction {
-            name,
-            arguments: TokenList { v: args },
-        })
+        // blocked_on: properties::custom (TokenList::parse_raw / TokenOrValue) un-gate.
+        // The stub `properties::custom::TokenList` is a unit struct with no `.v`
+        // field and no `parse_raw`; consume the function args as opaque tokens
+        // until the real `custom.rs` un-gates.
+        #[cfg(any())]
+        {
+            let mut args: Vec<css::css_properties::custom::TokenOrValue> = Vec::new();
+            TokenList::parse_raw(input, &mut args, self.options, 0)?;
+            return Ok(PseudoElement::CustomFunction { name, arguments: TokenList { v: args } });
+        }
+        #[cfg(not(any()))]
+        Ok(PseudoElement::CustomFunction { name, arguments: TokenList::default() })
     }
 
     fn parse_is_and_where(&self) -> bool {
@@ -1200,12 +1205,18 @@ impl<'a> SelectorParser<'a> {
                             .into_default_parser_error(),
                     ));
                 }
-                let mut args: Vec<css::css_properties::custom::TokenOrValue> = Vec::new();
-                css::TokenListFns::parse_raw(parser, &mut args, self.options, 0)?;
-                break 'pseudo_class PseudoClass::CustomFunction {
-                    name,
-                    arguments: TokenList { v: args },
-                };
+                // blocked_on: properties::custom (TokenList::parse_raw / TokenOrValue) un-gate.
+                #[cfg(any())]
+                {
+                    let mut args: Vec<css::css_properties::custom::TokenOrValue> = Vec::new();
+                    css::TokenListFns::parse_raw(parser, &mut args, self.options, 0)?;
+                    break 'pseudo_class PseudoClass::CustomFunction {
+                        name,
+                        arguments: TokenList { v: args },
+                    };
+                }
+                #[cfg(not(any()))]
+                break 'pseudo_class PseudoClass::CustomFunction { name, arguments: TokenList::default() };
             }
         };
 

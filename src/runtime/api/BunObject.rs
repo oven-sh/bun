@@ -287,7 +287,14 @@ pub fn get_origin(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
 }
 
 pub fn get_argv(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    crate::node::process::get_argv(global_this)
+    // PORT NOTE: Zig forwards to `node.process.getArgv`, which is itself a
+    // shim over the C++ `Bun__Process__getArgv` (BunProcess.cpp). That Rust
+    // module is still body-gated, so call the C symbol directly.
+    unsafe extern "C" {
+        fn Bun__Process__getArgv(global: *const JSGlobalObject) -> JSValue;
+    }
+    // SAFETY: `global_this` is a live borrow; C++ reads it without retaining.
+    unsafe { Bun__Process__getArgv(global_this) }
 }
 
 lazy_prop! {

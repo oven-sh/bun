@@ -185,12 +185,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // written exactly once here on the main thread before the API-lock
         // trampoline reads it, never freed (`global_exit` ends the process).
         unsafe {
-            RUN = Run {
+            (&raw mut RUN).write(Run {
                 vm: vm_ptr,
                 entry_path,
                 any_unhandled: false,
                 eval_and_print: ctx.runtime_options.eval.eval_and_print,
-            };
+            });
         }
         // PORT NOTE: `ctx.debug.hot_reload` → `vm.hot_reload` (a `u8` until the
         // b2-cycle widens it to `cli::HotReload`); the watcher run-loop arm in

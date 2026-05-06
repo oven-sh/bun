@@ -15,7 +15,7 @@ use crate::{
 };
 use crate::lockfile::{self, Lockfile, Package};
 use crate::PackageManager;
-use crate::package_manager::{Options, WorkspaceFilter};
+use crate::package_manager::{Command, Options, WorkspaceFilter};
 use crate::hoisted_install::install_hoisted_packages;
 use crate::isolated_install::install_isolated_packages;
 

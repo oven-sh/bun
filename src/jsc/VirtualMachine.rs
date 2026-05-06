@@ -433,20 +433,25 @@ pub const ORIGIN_RELATIVE_EPOCH: i128 = 946_684_800 * 1_000_000_000;
 // ──────────────────────────────────────────────────────────────────────────
 
 impl VirtualMachine {
+    /// Spec VirtualMachine.zig:357-366 returns a raw `*VirtualMachine`.
+    /// Returning `&'static mut` would let any two overlapping calls (e.g. a JS
+    /// callback fired from inside `vm.tick()` that itself calls `get()`) hold
+    /// two live `&'static mut` to the same allocation — UB. Callers form a
+    /// short-lived `&mut *p` at the use site instead.
     #[inline]
-    pub fn get() -> &'static mut VirtualMachine {
+    pub fn get() -> *mut VirtualMachine {
         Self::get_or_null().expect("VirtualMachine.get() called with no VM on this thread")
     }
 
     #[inline]
-    pub fn get_or_null() -> Option<&'static mut VirtualMachine> {
-        // SAFETY: thread-local set by init() on this thread; one VM per thread
-        VMHolder::VM.get().map(|p| unsafe { &mut *p })
+    pub fn get_or_null() -> Option<*mut VirtualMachine> {
+        // thread-local set by init() on this thread; one VM per thread
+        VMHolder::VM.get()
     }
 
-    pub fn get_main_thread_vm() -> Option<&'static mut VirtualMachine> {
+    pub fn get_main_thread_vm() -> Option<*mut VirtualMachine> {
         // SAFETY: written once during main-thread init
-        unsafe { MAIN_THREAD_VM.map(|p| &mut *p) }
+        unsafe { MAIN_THREAD_VM }
     }
 
     #[inline]
@@ -465,8 +470,11 @@ impl VirtualMachine {
         unsafe { &*self.global }
     }
 
+    /// Spec returns a raw `*EventLoop` (no aliasing guarantee). Taking `&mut
+    /// self` lets borrowck enforce uniqueness so a caller cannot mint two
+    /// aliased `&mut EventLoop` from one shared borrow.
     #[inline]
-    pub fn event_loop(&self) -> &mut EventLoop {
+    pub fn event_loop(&mut self) -> &mut EventLoop {
         // SAFETY: event_loop is a self-pointer to regular_event_loop or macro_event_loop
         unsafe { &mut *self.event_loop }
     }
@@ -665,15 +673,22 @@ impl VirtualMachine {
     /// `runWithAPILock(comptime Context, ctx, comptime fn)` — acquires the JSC
     /// API lock around `f(ctx)`. Rust collapses the comptime params into a closure.
     pub fn run_with_api_lock<R>(&self, f: impl FnOnce() -> R) -> R {
-        // TODO(b2): JSLock acquire/release FFI — gated.
-        f()
+        let _ = f;
+        // Spec VirtualMachine.zig:2629-2631: `this.global.vm().holdAPILock(ctx, ...)`.
+        // Running `f()` without the lock is the entire bug this fn exists to
+        // prevent (data races / heap corruption from non-JS threads). Fail
+        // loudly until the FFI trampoline is wired.
+        // TODO(b2): route `f` through `JSC__VM__holdAPILock(self.jsc_vm, ctx, cb)`
+        // via an `OpaqueWrap`-style trampoline.
+        todo!("VirtualMachine::run_with_api_lock — JSC__VM__holdAPILock FFI not bound")
     }
 
     pub fn run_error_handler(&mut self, result: JSValue, exception_list: Option<&mut ExceptionList>) {
         let _ = (result, exception_list);
         // TODO(b2-cycle): full impl walks ZigException + ConsoleObject formatter
-        // (gated siblings) and calls into bun_runtime::node::process. Stub: count.
-        self.unhandled_error_counter += 1;
+        // (gated siblings). Spec `runErrorHandler` (VirtualMachine.zig:2156-2180)
+        // does NOT touch `unhandled_error_counter` — that is bumped only by
+        // `unhandledRejection`/`uncaughtException`. No side-effect here.
     }
 
     pub fn load_macro_entry_point(
@@ -896,7 +911,10 @@ impl VirtualMachine {
         // see `vm.global`/`vm.jsc_vm` populated. PERF(port): was inline switch.
         if let Some(hooks) = runtime_hooks() {
             // SAFETY: hook contract — `vm` is the unique live VM on this thread.
-            vm_ref.runtime_state = unsafe { (hooks.init_runtime_state)(vm, &opts) };
+            // Write through the raw `vm` ptr (not `vm_ref`) so no `&mut
+            // VirtualMachine` is held live across the hook call — the hook
+            // body may itself dereference `vm`.
+            unsafe { (*vm).runtime_state = (hooks.init_runtime_state)(vm, &opts) };
         }
 
         if opts.smol {

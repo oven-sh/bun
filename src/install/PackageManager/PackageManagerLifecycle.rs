@@ -19,6 +19,7 @@ use bun_install::{
     invalid_package_id, LifecycleScriptSubprocess, PackageID, PackageManager, PreinstallState,
     TruncatedPackageNameHash,
 };
+use crate::package_manager::Command;
 
 pub struct LifecycleScriptTimeLog {
     mutex: Mutex,

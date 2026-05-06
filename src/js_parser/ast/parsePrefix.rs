@@ -297,6 +297,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // Check if TemplateLiteral is unsupported. We don't care for this product.`
         // if ()
 
+        // TODO(port): `E::Template::parts` is `&'static [TemplatePart]` (arena-owned slice
+        // placeholder); Phase B threads `'a` through E.* — until then, erase the lifetime.
+        // SAFETY: the slice is bump-arena-allocated and outlives every AST node from this parse.
+        let parts: &'static [E::TemplatePart] = unsafe { core::mem::transmute(parts) };
         Ok(p.new_expr(
             E::Template {
                 tag: None,
@@ -317,7 +321,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
     fn pfx_t_big_integer_literal(p: &mut Self) -> PResult<Expr> {
         let loc = p.lexer.loc();
-        let value = p.lexer.identifier;
+        // TODO(port): `E::BigInt::value` is `&'static [u8]` (arena slice placeholder);
+        // Phase B threads `'a` through E.* — until then, erase the lifetime.
+        // SAFETY: identifier borrows source text, which outlives every AST node.
+        let value: &'static [u8] =
+            unsafe { core::mem::transmute::<&[u8], &'static [u8]>(p.lexer.identifier) };
         // markSyntaxFeature bigInt
         p.lexer.next()?;
         Ok(p.new_expr(E::BigInt { value }, loc))
@@ -330,7 +338,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // PORT NOTE: Zig `defer p.lexer.regex_flags_start = null` — reset after both success and
         // the `next()?` error path. Reshaped: capture, advance, then unconditionally reset before
         // propagating any error from `next()`.
-        let value = p.lexer.raw();
+        // TODO(port): `E::RegExp::value` is `&'static [u8]` (arena slice placeholder);
+        // Phase B threads `'a` through E.* — until then, erase the lifetime.
+        // SAFETY: raw() borrows source text, which outlives every AST node.
+        let value: &'static [u8] =
+            unsafe { core::mem::transmute::<&[u8], &'static [u8]>(p.lexer.raw()) };
         let next_result = p.lexer.next();
         let flags_offset = p.lexer.regex_flags_start;
         p.lexer.regex_flags_start = None;
@@ -391,7 +403,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         range,
                         format_args!(
                             "Deleting the private name \"{}\" is forbidden",
-                            bun_string::strings::QuotedFormatter(name),
+                            bstr::BStr::new(name),
                         ),
                     )
                     .expect("unreachable");
@@ -520,9 +532,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                 name = Some(js_ast::LocRef {
                     loc: p.lexer.loc(),
-                    ref_: p
-                        .new_symbol(symbol::Kind::Other, name_text)
-                        .expect("unreachable"),
+                    ref_: Some(
+                        p.new_symbol(symbol::Kind::Other, name_text)
+                            .expect("unreachable"),
+                    ),
                 });
                 p.lexer.next()?;
             }
@@ -587,9 +600,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                 name = Some(js_ast::LocRef {
                     loc: p.lexer.loc(),
-                    ref_: p
-                        .new_symbol(symbol::Kind::Other, name_text)
-                        .expect("unreachable"),
+                    ref_: Some(
+                        p.new_symbol(symbol::Kind::Other, name_text)
+                            .expect("unreachable"),
+                    ),
                 });
                 p.lexer.next()?;
             }
@@ -758,9 +772,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             // In this case, we can't distinguish between the two yet
             self_errors.merge_into(errors.unwrap());
         }
+        // PORT NOTE: BumpVec → BabyList. `into_bump_slice()` leaks into the arena (freed at
+        // arena reset, matching Zig's ListManaged on `p.allocator`).
+        // SAFETY: arena slice; no growth methods will be called on the resulting list.
+        let items_list = unsafe { ExprNodeList::from_bump_slice(items.into_bump_slice_mut()) };
         Ok(p.new_expr(
             E::Array {
-                items: ExprNodeList::move_from_list(items.into_vec()),
+                items: items_list,
                 comma_after_spread: comma_after_spread.to_nullable(),
                 is_single_line,
                 close_bracket_loc,
@@ -850,9 +868,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             self_errors.merge_into(errors.unwrap());
         }
 
+        // PORT NOTE: BumpVec → BabyList via arena slice; see pfx_t_open_bracket.
+        // SAFETY: arena slice; no growth methods will be called on the resulting list.
+        let properties_list =
+            unsafe { G::PropertyList::from_bump_slice(properties.into_bump_slice_mut()) };
         Ok(p.new_expr(
             E::Object {
-                properties: G::PropertyList::move_from_list(properties.into_vec()),
+                properties: properties_list,
                 comma_after_spread: if comma_after_spread.start > 0 {
                     Some(comma_after_spread)
                 } else {

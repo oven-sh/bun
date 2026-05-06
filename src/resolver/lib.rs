@@ -3864,7 +3864,10 @@ impl<'a> Resolver<'a> {
                                         _ => self.opts.conditions.import.clone().expect("oom"),
                                     },
                                     // allocator dropped
-                                    debug_logs: self.debug_logs.as_mut(),
+                                    // SAFETY: PORT — detach the `&mut DebugLogs` borrow from `self`
+                                    // so `self.handle_esm_resolution` can re-borrow `*self` between
+                                    // `esmodule.resolve` calls (Zig held both as raw `*DebugLogs`).
+                                    debug_logs: self.debug_logs.as_mut().map(|d| unsafe { &mut *(d as *mut _) }),
                                     module_type: &mut module_type,
                                 };
 
@@ -4209,7 +4212,8 @@ impl<'a> Resolver<'a> {
                                             _ => self.opts.conditions.import.clone(),
                                         },
                                         module_type: &mut module_type,
-                                        debug_logs: self.debug_logs.as_mut().map(|d| d as *mut _),
+                                        // SAFETY: PORT — detach `&mut DebugLogs` from `self`; see same note above.
+                                        debug_logs: self.debug_logs.as_mut().map(|d| unsafe { &mut *(d as *mut _) }),
                                     };
 
                                     // Resolve against the path "/", then join it with the absolute
@@ -6659,9 +6663,10 @@ impl<'b> BrowserMapPath<'b> {
         let cleaned = self.cleaned;
         // Check for equality
         if let Some(result) = map.get(path_to_check) {
-            // SAFETY: BrowserMap values are interned in DirnameStore (see PackageJSON::parse);
-            // the `'b` borrow on `map` artificially shortens what is a `'static` slice.
-            self.remapped = unsafe { &*(result as *const [u8]) };
+            // SAFETY: ARENA — `BrowserMap` values are `Box<[u8]>` owned by a `'static`
+            // PackageJSON (allocated in `parse_package_json`); the `'b` borrow on `map`
+            // artificially shortens what is process-lifetime storage.
+            self.remapped = unsafe { core::slice::from_raw_parts(result.as_ptr(), result.len()) };
             // SAFETY: TODO(port): lifetime — extending borrow of caller-owned slice; consumed before checker is dropped.
             self.input_path = unsafe { &*(path_to_check as *const [u8]) };
             return true;
@@ -6683,7 +6688,8 @@ impl<'b> BrowserMapPath<'b> {
                 //     debug.add_note_fmt(format_args!("Checking for \"{}\" ", bstr::BStr::new(new_path)));
                 // }
                 if let Some(_remapped) = map.get(new_path) {
-                    self.remapped = _remapped;
+                    // SAFETY: ARENA — see `result` note above.
+                    self.remapped = unsafe { core::slice::from_raw_parts(_remapped.as_ptr(), _remapped.len()) };
                     // SAFETY: TODO(port): lifetime — `new_path` borrows the threadlocal `extension_path` buf; consumed before next overwrite.
                     self.cleaned = unsafe { &*(new_path as *const [u8]) };
                     // SAFETY: same as above.
@@ -6702,7 +6708,8 @@ impl<'b> BrowserMapPath<'b> {
         };
 
         if let Some(_remapped) = map.get(index_path) {
-            self.remapped = _remapped;
+            // SAFETY: ARENA — see `result` note above.
+            self.remapped = unsafe { core::slice::from_raw_parts(_remapped.as_ptr(), _remapped.len()) };
             // SAFETY: TODO(port): lifetime — `index_path` borrows the threadlocal `extension_path` buf; consumed before next overwrite.
             self.input_path = unsafe { &*(index_path as *const [u8]) };
             return true;

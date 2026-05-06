@@ -13,7 +13,7 @@ use bun_semver::{self as Semver, String as SemverString};
 use bun_str::{strings, ZStr};
 use bun_sys::{self as sys, Dir, Fd, File};
 
-use super::{Options, PackageManager, ProgressStrings};
+use super::{Command, Options, PackageManager, ProgressStrings};
 
 // ───────────────────────────── cache directory ────────────────────────────────
 

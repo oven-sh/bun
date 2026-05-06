@@ -32,6 +32,30 @@ use crate::bun_bunfig::Arguments as BunArguments;
 // TODO(b0): RunCommand arrives from move-in (bun_runtime::cli::RunCommand → install).
 use crate::RunCommand;
 
+/// `Command::Context` shim — Zig's `Command.Context` (= `*ContextData`) lives in
+/// `bun_runtime::cli::Command`; the option-carrying `ContextData` shape was lifted
+/// into `bun_options_types::Context` so install can reference it without the CLI
+/// tier. Re-export under the Zig path so `init()` / `install_with_manager()` /
+/// `setup_global_dir()` etc. keep their `Command::Context` signatures.
+#[allow(non_snake_case)]
+pub mod Command {
+    pub use bun_options_types::Context::{Context, ContextData};
+
+    /// Hook (GENUINE b0): `bun_runtime::cli::Command::get()` returns the
+    /// process-global `&'static mut ContextData`. The static itself lives in
+    /// tier-6 (`cli.rs`); install only needs a pointer for the bundler hook in
+    /// `update_package_json_and_install`. Registered once at startup by bun_cli.
+    pub static GLOBAL_CTX: core::sync::atomic::AtomicPtr<ContextData> =
+        core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
+    #[inline]
+    pub fn get() -> &'static mut ContextData {
+        // SAFETY: `GLOBAL_CTX` is set exactly once during single-threaded CLI
+        // startup (before any install entry point runs) and never cleared.
+        unsafe { &mut *GLOBAL_CTX.load(core::sync::atomic::Ordering::Relaxed) }
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Sub-module declarations — Zig basenames preserved per PORTING.md, hence
 // explicit #[path] attrs for PascalCase / camelCase file names.

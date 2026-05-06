@@ -343,8 +343,9 @@ impl ZigString {
             return self.len * 2;
         }
         // Latin-1 → UTF-16 byte length (encoding.zig:byteLengthU8(.utf16le)
-        // returns `simdutf.length.utf16.from.latin1(input) * 2`).
-        simdutf::length::utf16::from::latin1(self.slice()) * 2
+        // returns `strings.elementLengthUTF8IntoUTF16(input) * 2`, which is
+        // `simdutf.length.utf16.from.utf8(input) * 2`).
+        simdutf::length::utf16::from::utf8(self.slice()) * 2
     }
 
     pub fn latin1_byte_length(&self) -> usize {
@@ -495,10 +496,8 @@ impl ZigString {
     }
 
     pub fn sort_desc(slice_: &mut [ZigString]) {
-        slice_.sort_by(|a, b| {
-            if Self::cmp_desc(a, b) { core::cmp::Ordering::Less } else { core::cmp::Ordering::Greater }
-        });
-        // TODO(port): std.sort.block is stable; sort_by is unstable-order — verify Phase B
+        // PORT NOTE: std.sort.block is stable; slice::sort_by is also stable.
+        slice_.sort_by(|a, b| b.slice().cmp(a.slice()));
     }
 
     pub fn cmp_desc(a: &ZigString, b: &ZigString) -> bool {
@@ -506,9 +505,7 @@ impl ZigString {
     }
 
     pub fn sort_asc(slice_: &mut [ZigString]) {
-        slice_.sort_by(|a, b| {
-            if Self::cmp_asc(a, b) { core::cmp::Ordering::Less } else { core::cmp::Ordering::Greater }
-        });
+        slice_.sort_by(|a, b| a.slice().cmp(b.slice()));
     }
 
     pub fn cmp_asc(a: &ZigString, b: &ZigString) -> bool {

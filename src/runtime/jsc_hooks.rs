@@ -171,6 +171,13 @@ unsafe fn init_runtime_state(
     let _ = log;
 
     // TODO(b2-cycle): `webcore::Body::Value::HiveAllocator::init()` — gated.
+    // TODO(b2-cycle): `ParentDeathWatchdog::install_on_event_loop` — spec
+    // VirtualMachine.zig:1316 `if (opts.is_main_thread)
+    // bun.ParentDeathWatchdog.installOnEventLoop(jsc.EventLoopHandle.init(vm))`.
+    // The low-tier `VirtualMachine::init` doc-comment delegates this here; not
+    // arming it means a child Bun process won't exit when its parent dies.
+    // Gate on `_opts.is_main_thread` once `bun_aio::parent_death_watchdog`
+    // un-gates.
     // TODO(b2-cycle): `Debugger::configure(vm, opts.debugger)` — `Debugger.rs`
     // gated; spec VirtualMachine.zig:1321 `vm.configureDebugger(opts.debugger)`.
 
@@ -238,9 +245,17 @@ unsafe fn load_preloads(_vm: *mut VirtualMachine) -> *mut JSInternalPromise {
 ///
 /// # Safety
 /// `vm` is the live per-thread VM.
-unsafe fn ensure_debugger(_vm: *mut VirtualMachine, _block_until_connected: bool) {
-    // TODO(b2-cycle): `Debugger.rs` is gated; real body is
-    // `vm.debugger.?.ensure(block_until_connected)`.
+unsafe fn ensure_debugger(vm: *mut VirtualMachine, _block_until_connected: bool) {
+    // Spec VirtualMachine.zig:2283-2290: when `vm.debugger != null`, call
+    // `jsc.Debugger.create(this, this.global)` and (if `block_until_connected`)
+    // `Debugger.waitForDebuggerIfNecessary(this)`. Silently continuing when a
+    // debugger IS configured would let execution proceed without ever attaching
+    // (PORTING.md §Forbidden: silent-no-op). Fail loudly on the
+    // debugger-present branch until `Debugger.rs` un-gates.
+    // SAFETY: `vm` is the live per-thread VM.
+    if unsafe { (*vm).debugger.is_some() } {
+        todo!("jsc_hooks: ensure_debugger")
+    }
 }
 
 /// `eventLoop().autoTick()` — port of the `_auto_tick_body` preserved in

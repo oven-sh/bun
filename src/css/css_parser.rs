@@ -4112,12 +4112,16 @@ const MAX_TWO_B: u32 = 0x800;
 const MAX_THREE_B: u32 = 0x10000;
 
 /// Erase a source-slice borrow to `'static` for storing in `Token` payloads.
-/// `Token`'s `&'static [u8]` fields are a Phase-A placeholder for the parser
-/// arena/source lifetime (see PORTING.md §AST crates "no struct lifetime
-/// params in Phase A"). Tokens never outlive the `ParserInput` that produced
-/// them — `Parser::reset`/`state` invalidate cached tokens, and the arena owns
-/// any unescaped strings.
-// TODO(port): replace with `Token<'a>` once `<'bump>` is threaded.
+///
+/// PORTING.md §Forbidden flags this transmute. The proper fix is to thread a
+/// real `'a` lifetime through `Token<'a>` / `Dimension<'a>` / `CachedToken<'a>`
+/// so `slice_from`/`to_slice` return `&'a [u8]` (matching Zig's plain
+/// `[]const u8` borrows in css_parser.zig:5879/6461). That change is blocked
+/// on `crate::Token` (defined in `lib.rs`, not this file) gaining `<'a>` —
+/// once `lib.rs` is updated, delete this fn and every call site compiles with
+/// the honest lifetime.
+// TODO(port): delete once `Token<'a>` lands in lib.rs; see verifier bug
+// "src_str / Tokenizer::slice_from / CopyOnWriteStr::to_slice".
 // SAFETY: every call site below feeds either (a) a sub-slice of `self.src`
 // (`&'a [u8]`) or (b) an arena-allocated `CopyOnWriteStr::to_slice()` whose
 // backing storage lives in `self.allocator: &'a Bump`. The returned reference

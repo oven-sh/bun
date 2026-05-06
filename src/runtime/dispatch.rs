@@ -214,20 +214,19 @@ pub fn run_task(task: Task) {
         // ── timer wrappers (declared in the union but never dispatched
         //    here in Zig either — see Task.zig trailing `else`) ───────────
         task_tag::ImmediateObject | task_tag::TimeoutObject => {
-            if cfg!(debug_assertions) {
-                unreachable!("Timer tasks dispatch via TimerObject, not Task");
-            }
-            // SAFETY: Zig hits `bun.Output.panic("Unexpected Task tag")` here.
-            unsafe { core::hint::unreachable_unchecked() }
+            // Spec Task.zig:529-535: `bun.Output.panic("Unexpected Task tag: {d}")`.
+            // This is a *reachable* producer bug (timer object enqueued as Task),
+            // not provable-unreachable — `unreachable_unchecked()` here would be
+            // release-build UB. PORTING.md §Dispatch only sanctions UB for the
+            // truly-unreachable wildcard.
+            panic!("Unexpected Task tag: {}", task.tag.0);
         }
 
         _ => {
-            if cfg!(debug_assertions) {
-                unreachable!("Unexpected Task tag: {}", task.tag.0);
-            }
-            // SAFETY: `task_tag::COUNT` is exhaustive (asserted below); any
-            // value outside the table is a producer bug.
-            unsafe { core::hint::unreachable_unchecked() }
+            // Spec Task.zig:529-535: controlled `bun.Output.panic` with
+            // diagnostic. A value outside `task_tag::COUNT` is a producer bug,
+            // but the spec treats it as a recoverable crash, not UB.
+            panic!("Unexpected Task tag: {}", task.tag.0);
         }
     }
 }
@@ -514,6 +513,12 @@ pub fn install_dispatch_hooks() {
 
     // EventLoop::run_imminent_gc_timer → WTFTimer::run.
     bun_jsc::event_loop::set_run_wtf_timer_hook(run_wtf_timer_hook);
+
+    // EventLoopTimer::fire → fire_timer (tag→@fieldParentPtr match).
+    FIRE_TIMER.store(
+        fire_timer as unsafe fn(*mut EventLoopTimer, *const ElTimespec, *mut ()) as *mut (),
+        Ordering::Release,
+    );
 
     // bun_jsc::RUN_TASK_HOOK / TICK_QUEUE_HOOK → tick_queue_with_count.
     // Gated: `tick_queue_with_count` itself is `#[cfg(any())]` above (its

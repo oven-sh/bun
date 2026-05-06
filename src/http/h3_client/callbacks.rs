@@ -17,9 +17,8 @@ use super::client_context::ClientContext;
 use super::client_session::ClientSession;
 use super::encode;
 use super::stream::Stream;
-// TODO(port): `H3Client.zig` (src/http/H3Client.zig) snake_cases to the same
-// module name as this directory; Phase B resolves the actual path.
-use crate::H3Client as H3;
+use crate::h3_client as H3;
+use bun_picohttp as picohttp;
 
 bun_core::declare_scope!(h3_client, hidden);
 
@@ -34,12 +33,12 @@ pub fn register(qctx: &mut quic::Context) {
     qctx.on_stream_close(on_stream_close);
 }
 
-extern "C" fn on_hsk_done(qs: *mut quic::Socket, ok: c_int) {
+unsafe extern "C" fn on_hsk_done(qs: *mut quic::Socket, ok: c_int) {
     // SAFETY: lsquic passes a live socket for the duration of the callback.
     let qs = unsafe { &mut *qs };
-    let Some(mut session) = *qs.ext::<ClientSession>() else { return };
-    // SAFETY: ext slot was set by ClientSession on connect; live until on_conn_close clears it.
-    let session = unsafe { session.as_mut() };
+    let Some(session) = *qs.ext::<ClientSession>() else { return };
+    // SAFETY: ext slot was set by ClientContext::connect; live until on_conn_close clears it.
+    let session = unsafe { &mut *session.as_ptr() };
     bun_core::scoped_log!(h3_client, "hsk_done ok={} pending={}", ok, session.pending.len());
     if ok == 0 {
         session.closed = true;
@@ -56,27 +55,27 @@ extern "C" fn on_hsk_done(qs: *mut quic::Socket, ok: c_int) {
 /// one instead of waiting for `on_conn_close`, which only fires after lsquic's
 /// draining period. Stay in the registry so abort/body-chunk lookups still
 /// reach in-flight streams; `on_conn_close` does the actual unregister/deref.
-extern "C" fn on_goaway(qs: *mut quic::Socket) {
+unsafe extern "C" fn on_goaway(qs: *mut quic::Socket) {
     // SAFETY: lsquic passes a live socket for the duration of the callback.
     let qs = unsafe { &mut *qs };
-    let Some(mut session) = *qs.ext::<ClientSession>() else { return };
+    let Some(session) = *qs.ext::<ClientSession>() else { return };
     // SAFETY: ext slot is live until on_conn_close clears it.
-    let session = unsafe { session.as_mut() };
+    let session = unsafe { &mut *session.as_ptr() };
     bun_core::scoped_log!(
         h3_client,
         "goaway {}:{}",
         BStr::new(&session.hostname),
-        session.port
+        session.port,
     );
     session.closed = true;
 }
 
-extern "C" fn on_conn_close(qs: *mut quic::Socket) {
+unsafe extern "C" fn on_conn_close(qs: *mut quic::Socket) {
     // SAFETY: lsquic passes a live socket for the duration of the callback.
     let qs = unsafe { &mut *qs };
-    let Some(mut session) = *qs.ext::<ClientSession>() else { return };
+    let Some(session) = *qs.ext::<ClientSession>() else { return };
     // SAFETY: ext slot is live; this callback is the one that tears it down.
-    let session = unsafe { session.as_mut() };
+    let session = unsafe { &mut *session.as_ptr() };
     session.closed = true;
     session.qsocket = None;
     let mut buf = [0u8; 256];
@@ -85,7 +84,7 @@ extern "C" fn on_conn_close(qs: *mut quic::Socket) {
         h3_client,
         "conn_close status={} '{}'",
         st,
-        BStr::new(bun_string::slice_to_nul(&buf))
+        BStr::new(bun_string::slice_to_nul(&buf)),
     );
     if let Some(ctx) = ClientContext::get() {
         ctx.unregister(session);
@@ -95,22 +94,21 @@ extern "C" fn on_conn_close(qs: *mut quic::Socket) {
         // on_conn_closed, so anything still here never got a qstream.
         let stream = session.pending[0];
         // SAFETY: pending holds live Stream pointers owned by the session.
-        debug_assert!(unsafe { (*stream.as_ptr()).qstream.is_none() });
+        debug_assert!(unsafe { (*stream).qstream.is_none() });
         session.retry_or_fail(
-            // SAFETY: same as above.
-            unsafe { &mut *stream.as_ptr() },
+            stream,
             if session.handshake_done {
-                err!("ConnectionClosed")
+                err!(ConnectionClosed)
             } else {
-                err!("HTTP3HandshakeFailed")
+                err!(HTTP3HandshakeFailed)
             },
         );
     }
-    let _ = H3::LIVE_SESSIONS.fetch_sub(1, Ordering::Relaxed);
+    let _ = H3::live_sessions.fetch_sub(1, Ordering::Relaxed);
     session.deref();
 }
 
-extern "C" fn on_stream_open(s: *mut quic::Stream, is_client: c_int) {
+unsafe extern "C" fn on_stream_open(s: *mut quic::Stream, is_client: c_int) {
     // SAFETY: lsquic passes a live stream for the duration of the callback.
     let s = unsafe { &mut *s };
     *s.ext::<Stream>() = None;
@@ -118,44 +116,45 @@ extern "C" fn on_stream_open(s: *mut quic::Stream, is_client: c_int) {
         return;
     }
     let Some(qs) = s.socket() else { return };
-    let Some(mut session) = *qs.ext::<ClientSession>() else {
+    let Some(session) = *qs.ext::<ClientSession>() else {
         s.close();
         return;
     };
     // SAFETY: ext slot is live until on_conn_close clears it.
-    let session = unsafe { session.as_mut() };
+    let session = unsafe { &mut *session.as_ptr() };
     // Bind the next pending request to this stream.
-    let stream: &mut Stream = 'find: {
-        for st in session.pending.as_slice() {
+    let stream: *mut Stream = 'find: {
+        for &st in session.pending.iter() {
             // SAFETY: pending holds live Stream pointers owned by the session.
-            let st = unsafe { &mut *st.as_ptr() };
-            if st.qstream.is_none() {
+            if unsafe { (*st).qstream.is_none() } {
                 break 'find st;
             }
         }
         s.close();
         return;
     };
-    stream.qstream = Some(NonNull::from(&mut *s));
-    *s.ext::<Stream>() = Some(NonNull::from(&mut *stream));
+    // SAFETY: stream is a live element of session.pending.
+    unsafe {
+        (*stream).qstream = Some(NonNull::from(&mut *s));
+        *s.ext::<Stream>() = NonNull::new(stream);
+    }
     bun_core::scoped_log!(h3_client, "stream_open");
-    if let Err(e) = encode::write_request(session, stream, s) {
+    // SAFETY: stream is live (in session.pending).
+    if let Err(e) = encode::write_request(session, unsafe { &mut *stream }, s) {
         session.fail(stream, e);
     }
 }
 
-extern "C" fn on_stream_headers(s: *mut quic::Stream) {
+unsafe extern "C" fn on_stream_headers(s: *mut quic::Stream) {
     // SAFETY: lsquic passes a live stream for the duration of the callback.
     let s = unsafe { &mut *s };
-    let Some(mut stream) = *s.ext::<Stream>() else { return };
+    let Some(stream) = *s.ext::<Stream>() else { return };
     // SAFETY: ext slot was set in on_stream_open; live until on_stream_close clears it.
-    let stream = unsafe { stream.as_mut() };
+    let stream = unsafe { &mut *stream.as_ptr() };
     let n = s.header_count();
 
     stream.decoded_headers.clear();
-    stream
-        .decoded_headers
-        .reserve((n as usize).saturating_sub(stream.decoded_headers.len()));
+    stream.decoded_headers.reserve(n as usize);
     let mut status: u16 = 0;
     let mut i: c_uint = 0;
     while i < n {
@@ -167,9 +166,8 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
         // valid for the duration of this callback.
         let name = unsafe { core::slice::from_raw_parts(h.name, h.name_len as usize) };
         let value = unsafe { core::slice::from_raw_parts(h.value, h.value_len as usize) };
-        if name.starts_with(b":") {
+        if name.first() == Some(&b':') {
             if name == b":status" {
-                // TODO(port): byte-slice parseInt helper (value is ASCII digits per RFC 9114).
                 status = core::str::from_utf8(value)
                     .ok()
                     .and_then(|v| v.parse().ok())
@@ -178,11 +176,8 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
             i += 1;
             continue;
         }
-        // PERF(port): was appendAssumeCapacity — profile in Phase B
-        stream.decoded_headers.push(super::stream::DecodedHeader {
-            name,
-            value,
-        });
+        // PERF(port): was appendAssumeCapacity — Vec::push amortizes.
+        stream.decoded_headers.push(picohttp::Header::new(name, value));
         i += 1;
     }
     if status == 0 {
@@ -192,60 +187,64 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
         if stream.status_code != 0 {
             return;
         }
-        stream.session.fail(stream, err!("HTTP3ProtocolError"));
+        // SAFETY: stream.session is the live owning session.
+        unsafe { (*stream.session).fail(stream, err!(HTTP3ProtocolError)) };
         return;
     }
     if status >= 100 && status < 200 {
         return;
     }
     stream.status_code = status;
-    stream.session.deliver(stream, false);
+    // SAFETY: stream.session is the live owning session.
+    unsafe { (*stream.session).deliver(stream, false) };
 }
 
-extern "C" fn on_stream_data(s: *mut quic::Stream, data: *const u8, len: c_uint, fin: c_int) {
+unsafe extern "C" fn on_stream_data(s: *mut quic::Stream, data: *const u8, len: c_uint, fin: c_int) {
     // SAFETY: lsquic passes a live stream for the duration of the callback.
     let s = unsafe { &mut *s };
-    let Some(mut stream) = *s.ext::<Stream>() else { return };
+    let Some(stream) = *s.ext::<Stream>() else { return };
     // SAFETY: ext slot was set in on_stream_open; live until on_stream_close clears it.
-    let stream = unsafe { stream.as_mut() };
+    let stream = unsafe { &mut *stream.as_ptr() };
     if len > 0 {
         // SAFETY: lsquic guarantees `data` points to `len` valid bytes.
         let slice = unsafe { core::slice::from_raw_parts(data, len as usize) };
         stream.body_buffer.extend_from_slice(slice);
     }
-    stream.session.deliver(stream, fin != 0);
+    // SAFETY: stream.session is the live owning session.
+    unsafe { (*stream.session).deliver(stream, fin != 0) };
 }
 
-extern "C" fn on_stream_writable(s: *mut quic::Stream) {
+unsafe extern "C" fn on_stream_writable(s: *mut quic::Stream) {
     // SAFETY: lsquic passes a live stream for the duration of the callback.
     let s = unsafe { &mut *s };
-    let Some(mut stream) = *s.ext::<Stream>() else { return };
+    let Some(stream) = *s.ext::<Stream>() else { return };
     // SAFETY: ext slot was set in on_stream_open; live until on_stream_close clears it.
-    let stream = unsafe { stream.as_mut() };
+    let stream = unsafe { &mut *stream.as_ptr() };
     encode::drain_send_body(stream, s);
 }
 
-extern "C" fn on_stream_close(s: *mut quic::Stream) {
+unsafe extern "C" fn on_stream_close(s: *mut quic::Stream) {
     // SAFETY: lsquic passes a live stream for the duration of the callback.
     let s = unsafe { &mut *s };
-    let Some(mut stream) = *s.ext::<Stream>() else { return };
+    let Some(stream) = *s.ext::<Stream>() else { return };
     // SAFETY: ext slot was set in on_stream_open; this callback clears it.
-    let stream = unsafe { stream.as_mut() };
+    let stream = unsafe { &mut *stream.as_ptr() };
     *s.ext::<Stream>() = None;
     stream.qstream = None;
     bun_core::scoped_log!(
         h3_client,
         "stream_close status={} delivered={}",
         stream.status_code,
-        stream.headers_delivered
+        stream.headers_delivered,
     );
-    stream.session.deliver(stream, true);
+    // SAFETY: stream.session is the live owning session.
+    unsafe { (*stream.session).deliver(stream, true) };
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/http/h3_client/callbacks.zig (151 lines)
 //   confidence: medium
-//   todos:      2
-//   notes:      ext<T>() modeled as &mut Option<NonNull<T>>; pending items as NonNull<Stream>; stream.session.fail/deliver will need borrowck reshaping in Phase B; H3Client.zig vs h3_client/ dir name collision needs resolving.
+//   todos:      0
+//   notes:      ext<T>() is &mut Option<NonNull<T>>; pending items are *mut Stream.
 // ──────────────────────────────────────────────────────────────────────────

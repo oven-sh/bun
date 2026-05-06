@@ -1265,15 +1265,37 @@ impl VirtualMachine {
         let _ = vm_ref.regular_event_loop.tasks.ensure_unused_capacity(64);
         vm_ref.event_loop = &mut vm_ref.regular_event_loop;
 
+        // Capture inputs and end `vm_ref`'s last use BEFORE the hook/FFI
+        // below: both re-enter Rust via the thread-local raw `vm` stored
+        // above — a parent provenance of `vm_ref` — so any access during the
+        // call invalidates `vm_ref`'s Unique tag under Stacked Borrows.
+        let context_id = vm_ref.initial_script_execution_context_identifier;
+
+        // High-tier per-VM state — Transpiler / Timer::All / entry_point.
+        // PORT NOTE (init order): spec VirtualMachine.zig:1241/1259 builds
+        // `Transpiler.init` and `.timer = bun.api.Timer.All.init()` as part of
+        // the struct initializer BEFORE `JSGlobalObject.create`. The C++ body
+        // of `Zig__GlobalObject__create` re-enters via `WTFTimer__create`/
+        // `WTFTimer__update` (JSC's GC scheduler), which dereferences
+        // `runtime_state().timer` — so this hook MUST run first or that path
+        // null-derefs. The post-global tail (`configureDebugger`,
+        // `Body.Value.HiveAllocator.init`, spec :1321-1322) is gated TODO in
+        // the hook body and will need a separate post-global hook when
+        // un-gated. PERF(port): was inline switch.
+        if let Some(hooks) = runtime_hooks() {
+            // SAFETY: hook contract — `vm` is the unique live VM on this
+            // thread. Write through the raw `vm` ptr (not `vm_ref`) so no
+            // `&mut VirtualMachine` is held live across the hook call — the
+            // hook body itself dereferences `vm`.
+            unsafe { (*vm).runtime_state = (hooks.init_runtime_state)(vm, &opts) };
+        }
+
         // JSGlobalObject creation. Spec JSGlobalObject.zig:875 — the wrapper
         // calls `vm.eventLoop().ensureWaker()` before the 5-arg FFI.
-        // Capture inputs and end `vm_ref`'s last use BEFORE the FFI: the C++
-        // body re-enters Rust via `Bun__getVM()` (ZigGlobalObject.cpp:473/961)
-        // through the thread-local raw `vm` stored above — a parent provenance
-        // of `vm_ref` — so any access during the call invalidates `vm_ref`'s
-        // Unique tag under Stacked Borrows.
-        let context_id = vm_ref.initial_script_execution_context_identifier;
-        vm_ref.regular_event_loop.ensure_waker();
+        // SAFETY: `vm` is the unique live VM on this thread; raw-ptr deref so
+        // no `&mut` is held across the FFI re-entry (`Bun__getVM()` —
+        // ZigGlobalObject.cpp:473/961).
+        unsafe { (*vm).regular_event_loop.ensure_waker() };
         // SAFETY: extern "C" FFI; `console` valid.
         let global = unsafe {
             Zig__GlobalObject__create(
@@ -1288,7 +1310,7 @@ impl VirtualMachine {
         bun_core::StackCheck::configure_thread();
         // SAFETY: write through the raw `vm` ptr (not `vm_ref`) so no
         // `&mut VirtualMachine` is held live across the FFI call above; same
-        // pattern as the `init_runtime_state` hook below. `global` is freshly
+        // pattern as the `init_runtime_state` hook above. `global` is freshly
         // created and live for VM lifetime; `vm_ptr()` returns the FFI
         // `*mut VM` directly (no `&VM` reborrow), preserving mutable provenance.
         let jsc_vm = unsafe {
@@ -1306,18 +1328,6 @@ impl VirtualMachine {
         // SAFETY: `uws::Loop::get()` returns the live per-thread uws loop.
         unsafe {
             (*uws::Loop::get()).internal_loop_data.jsc_vm = jsc_vm.cast();
-        }
-
-        // High-tier finishes Transpiler / Timer::All / debugger / body-hive.
-        // PORT NOTE: spec VirtualMachine.zig:1321-1322 runs configureDebugger
-        // / Body.Value.HiveAllocator.init AFTER global creation; the hook must
-        // see `vm.global`/`vm.jsc_vm` populated. PERF(port): was inline switch.
-        if let Some(hooks) = runtime_hooks() {
-            // SAFETY: hook contract — `vm` is the unique live VM on this thread.
-            // Write through the raw `vm` ptr (not `vm_ref`) so no `&mut
-            // VirtualMachine` is held live across the hook call — the hook
-            // body may itself dereference `vm`.
-            unsafe { (*vm).runtime_state = (hooks.init_runtime_state)(vm, &opts) };
         }
 
         if opts.smol {

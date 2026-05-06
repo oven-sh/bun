@@ -1808,7 +1808,8 @@ pub extern "C" fn Bun__escapeHTML16(
     // SAFETY: caller passes a valid global and a valid [ptr, len) UTF-16 slice.
     let global_object = unsafe { &*global_object };
     let input_slice = unsafe { core::slice::from_raw_parts(ptr, len) };
-    let escaped = match strings::escape_html_for_utf16_input(input_slice) {
+    use bun_str::immutable::escape_html::{escape_html_for_utf16_input, Escaped};
+    let escaped = match escape_html_for_utf16_input(input_slice) {
         Ok(v) => v,
         Err(_) => {
             let _ = global_object
@@ -1818,9 +1819,9 @@ pub extern "C" fn Bun__escapeHTML16(
     };
 
     match escaped {
-        strings::EscapedHTML::Static(val) => ZigString::init(val).to_js(global_object),
-        strings::EscapedHTML::Original => input_value,
-        strings::EscapedHTML::Allocated(escaped_html) => {
+        Escaped::Static(val) => ZigString::init(val).to_js(global_object),
+        Escaped::Original => input_value,
+        Escaped::Allocated(escaped_html) => {
             ZigString::from16(escaped_html.as_ptr(), escaped_html.len())
                 .to_external_value(global_object)
         }

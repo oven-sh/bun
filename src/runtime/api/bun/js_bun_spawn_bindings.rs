@@ -1116,8 +1116,10 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             ) {
                 subprocess.ipc_data = Some(IPC::SendQueue::init(
                     mode,
-                    IPC::Owner::Subprocess(subprocess),
-                    IPC::Socket::Uninitialized,
+                    // Zig: `.{ .subprocess = subprocess }` — Rust port routes owner
+                    // dispatch through a vtable supplied by bun_runtime; not yet wired.
+                    todo!("blocked_on: ipc::SendQueueOwner vtable for Subprocess"),
+                    IPC::SocketUnion::Uninitialized,
                 ));
                 posix_ipc_info = Some(IPC::Socket::from(socket));
             }

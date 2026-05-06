@@ -1992,8 +1992,9 @@ impl Example {
                         match entry.kind {
                             bun_sys::FileKind::Directory => {
                                 for skip_dir in SKIP_DIRS {
-                                    // TODO(port): bun.pathLiteral wraps OSPathSlice; here entry.name is &[u8]
-                                    if entry.name == bun_paths::path_literal(skip_dir) {
+                                    // PORT NOTE: `bun.pathLiteral` is a comptime cast to OSPathSlice
+                                    // already applied in the `SKIP_DIRS` literal table; compare directly.
+                                    if entry.name == *skip_dir {
                                         continue 'loop_;
                                     }
                                 }

@@ -21,8 +21,17 @@ use crate::cli::pm_why_command::PmWhyCommand;
 pub use crate::cli::pack_command::PackCommand;
 pub use crate::cli::scan_command::ScanCommand;
 
-// TODO(port): `Lockfile.Tree.Iterator(.node_modules).Next` — exact module path may differ in bun_install
-type NodeModulesFolder = lockfile::tree::NodeModulesIteratorNext;
+// PORT NOTE: Owned snapshot of `Lockfile.Tree.Iterator(.node_modules).Next`.
+// The real iterator (`lockfile_real::tree::IteratorNext`) yields borrowed
+// slices into its own path_buf; we copy into owned storage so the directories
+// Vec can outlive each `next()` call. Real type is gated behind reconciler-6.
+#[allow(dead_code)]
+struct NodeModulesFolder {
+    relative_path: bun_core::ZBox,
+    dependencies: Box<[DependencyID]>,
+    tree_id: lockfile::tree::Id,
+    depth: usize,
+}
 
 // PORT NOTE: transient sort-comparator context; lifetime is fn-local (BORROW_PARAM).
 struct ByName<'a> {

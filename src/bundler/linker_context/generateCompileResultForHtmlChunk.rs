@@ -450,7 +450,11 @@ unsafe fn generate_compile_result_for_html_chunk_impl(
     // TODO(port): Zig used `dev.allocator()` vs `worker.allocator` to control output ownership.
     // In Rust with global mimalloc this distinction collapses; verify DevServer ownership in Phase B.
 
-    let log: *mut Log = c.log as *mut Log;
+    // SAFETY: `c.log` is `&mut Log` behind `&LinkerContext`; read its pointer
+    // bits directly (`&mut T` and `*mut T` share layout) so we don't reborrow
+    // through `&` and lose mutability. The HTMLLoader.log field is currently
+    // dead_code, so no write actually occurs through this pointer today.
+    let log: *mut Log = unsafe { *(core::ptr::addr_of!(c.log) as *const *mut Log) };
     let minify_whitespace = c.options.minify_whitespace;
     let compile_to_standalone_html = c.options.compile_to_standalone_html;
     let has_dev_server = c.dev_server.is_some();

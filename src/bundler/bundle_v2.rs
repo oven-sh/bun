@@ -4801,14 +4801,16 @@ impl<'a> BundleV2<'a> {
 
     pub fn on_parse_task_complete(parse_result: &mut parse_task::Result, this: &mut BundleV2) {
         let _trace = crate::ungate_support::perf::trace("Bundler.onParseTaskComplete");
-        let graph = &mut this.graph;
+        // PORT NOTE: Zig aliased `const graph = &this.graph;`. Borrowck rejects
+        // holding that across the `this.*` method calls below (each takes
+        // `&mut BundleV2`), so re-borrow `this.graph` at each use site instead.
         if parse_result.external.function.is_some() {
             let source = match &parse_result.value {
                 parse_task::ResultValue::Empty { source_index } => source_index.get(),
                 parse_task::ResultValue::Err(data) => data.source_index.get(),
                 parse_task::ResultValue::Success(val) => val.source.index.0,
             };
-            let loader: Loader = graph.input_files.items_loader()[source as usize];
+            let loader: Loader = this.graph.input_files.items_loader()[source as usize];
             // PORT NOTE: `InputFile.allocator` column dropped in the Rust port;
             // stash the finalizer regardless so plugin-owned bytes are freed.
             let _ = loader;
@@ -4845,11 +4847,11 @@ impl<'a> BundleV2<'a> {
         match &mut parse_result.value {
             parse_task::ResultValue::Empty { source_index: empty_source_index } => {
                 let empty_idx = (*empty_source_index).get() as usize;
-                graph.input_files.items_side_effects_mut()[empty_idx] = _resolver::SideEffects::NoSideEffectsEmptyAst;
+                this.graph.input_files.items_side_effects_mut()[empty_idx] = _resolver::SideEffects::NoSideEffectsEmptyAst;
                 if cfg!(debug_assertions) {
                     bun_core::scoped_log!(Bundle, "onParse({}, {}) = empty",
                         empty_idx,
-                        bstr::BStr::new(&graph.input_files.items_source()[empty_idx].path.text));
+                        bstr::BStr::new(&this.graph.input_files.items_source()[empty_idx].path.text));
                 }
             }
             parse_task::ResultValue::Success(result) => {
@@ -4862,20 +4864,27 @@ impl<'a> BundleV2<'a> {
                 // It is not safe to cache slices from them.
                 let result_source_index = result.source.index.0 as usize;
                 core::mem::swap(
-                    &mut graph.input_files.items_source_mut()[result_source_index],
+                    &mut this.graph.input_files.items_source_mut()[result_source_index],
                     &mut result.source,
                 );
-                let source = &graph.input_files.items_source()[result_source_index];
-                this.source_code_length += if source.index.0 != 0 {
-                    source.contents.len()
+                // PORT NOTE: Zig kept `source` as a stable pointer into the SoA.
+                // Borrowck forbids holding `&input_files.source[i]` while writing
+                // other `input_files` columns through the MultiArrayList accessor
+                // methods (each takes `&mut input_files`), so copy out the
+                // `'static` path text now and re-borrow `source` per-use below.
+                let source_path_text: &'static [u8] =
+                    this.graph.input_files.items_source()[result_source_index].path.text;
+                this.source_code_length += if result_source_index != 0 {
+                    this.graph.input_files.items_source()[result_source_index].contents.len()
                 } else {
                     0
                 };
 
-                graph.input_files.items_unique_key_for_additional_file_mut()[result_source_index] = result.unique_key_for_additional_file.into();
-                graph.input_files.items_content_hash_for_additional_file_mut()[result_source_index] = result.content_hash_for_additional_file;
+                this.graph.input_files.items_unique_key_for_additional_file_mut()[result_source_index] = result.unique_key_for_additional_file.into();
+                this.graph.input_files.items_content_hash_for_additional_file_mut()[result_source_index] = result.content_hash_for_additional_file;
                 if !result.unique_key_for_additional_file.is_empty() && result.loader.should_copy_for_bundling() {
                     if let Some(dev) = this.dev_server {
+                        let source = &this.graph.input_files.items_source()[result_source_index];
                         dev.put_or_overwrite_asset(
                             &source.path,
                             // SAFETY: when shouldCopyForBundling is true, the
@@ -4887,22 +4896,22 @@ impl<'a> BundleV2<'a> {
                 }
 
                 // Record which loader we used for this file
-                graph.input_files.items_loader_mut()[result_source_index] = result.loader;
+                this.graph.input_files.items_loader_mut()[result_source_index] = result.loader;
 
                 bun_core::scoped_log!(Bundle, "onParse({}, {}) = {} imports, {} exports",
                     result_source_index,
-                    bstr::BStr::new(&source.path.text),
+                    bstr::BStr::new(source_path_text),
                     result.ast.import_records.len as usize,
                     result.ast.named_exports.count());
 
                 if result.ast.css.is_some() {
-                    graph.css_file_count += 1;
+                    this.graph.css_file_count += 1;
                 }
 
-                diff += this.process_resolve_queue(core::mem::replace(&mut resolve_queue, ResolveQueue::default()), result.ast.target, result_source_index as IndexInt);
+                diff += this.process_resolve_queue(core::mem::take(&mut resolve_queue), result.ast.target, result_source_index as IndexInt);
 
                 let mut import_records = core::mem::take(&mut result.ast.import_records);
-                let source_path_owned = source.path.text.to_vec().into_boxed_slice();
+                let source_path_owned: Box<[u8]> = source_path_text.into();
                 this.patch_import_record_source_indices(&mut import_records, PatchImportRecordsCtx {
                     source_index: Index::init(result_source_index as IndexInt),
                     source_path: &source_path_owned,
@@ -4915,25 +4924,27 @@ impl<'a> BundleV2<'a> {
                 // Set is_export_star_target for barrel optimization.
                 // In dev server mode, source_index is not saved on JS import
                 // records, so fall back to resolving via the path map.
-                let path_to_source_index_map = this.path_to_source_index_map(result.ast.target);
+                // PORT NOTE: split-borrow `Graph` fields directly so the
+                // `&build_graphs[target]` lookup doesn't lock out
+                // `input_files.items_flags_mut()` (disjoint columns).
+                let result_ast_target = result.ast.target;
                 for star_record_idx in result.ast.export_star_import_records.iter() {
                     if (*star_record_idx as usize) < import_records.len as usize {
                         let star_ir = &import_records.slice()[*star_record_idx as usize];
                         let resolved_index = if star_ir.source_index.is_valid() {
                             star_ir.source_index.get()
-                        } else if let Some(idx) = path_to_source_index_map.get_path(&star_ir.path) {
+                        } else if let Some(idx) = this.graph.build_graphs[result_ast_target].get_path(&star_ir.path) {
                             idx
                         } else {
                             continue;
                         };
-                        graph.input_files.items_flags_mut()[resolved_index as usize] |=
+                        this.graph.input_files.items_flags_mut()[resolved_index as usize] |=
                             crate::Graph::InputFileFlags::IS_EXPORT_STAR_TARGET;
                     }
                 }
                 result.ast.import_records = import_records;
 
-                let result_ast_target = result.ast.target;
-                graph.ast.set(result_source_index, core::mem::replace(&mut result.ast, JSAst::empty()));
+                this.graph.ast.set(result_source_index, core::mem::replace(&mut result.ast, JSAst::empty()));
 
                 // Barrel optimization: eagerly record import requests and
                 // un-defer barrel records that are now needed.

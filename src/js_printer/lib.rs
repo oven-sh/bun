@@ -6177,9 +6177,10 @@ where
         self.indent();
         self.print_indent();
 
-        self.print_string_literal_utf8(&source.path.pretty, false);
+        self.print_string_literal_utf8(source.path.pretty, false);
 
-        let func = &part.stmts[0].data.as_s_expr().unwrap().value.data.as_e_function().unwrap().func;
+        let stmts = slice_of(part.stmts);
+        let func = &stmts[0].data.as_s_expr().unwrap().value.data.as_e_function().unwrap().func;
 
         // Special-case lazy-export AST
         if ast.has_lazy_export {
@@ -6205,10 +6206,10 @@ where
         else if ast.exports_kind == js_ast::ExportsKind::Esm {
             self.print(b": [ [");
             // Print the dependencies.
-            if part.stmts.len() > 1 {
+            if stmts.len() > 1 {
                 self.indent();
                 self.print(b"\n");
-                for stmt in &part.stmts[1..] {
+                for stmt in &stmts[1..] {
                     self.print_indent();
                     let import = stmt.data.as_s_import().unwrap();
                     let record = self.import_record(import.import_record_index as usize);

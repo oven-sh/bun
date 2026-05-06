@@ -2495,7 +2495,7 @@ where
 
                         // Create error message for the stream rejection
                         // SAFETY: vm/transpiler/fs are live raw pointers.
-                        let cwd = unsafe { (*server.vm().transpiler.fs).top_level_dir.clone() };
+                        let cwd = unsafe { (*server.vm().transpiler.fs).top_level_dir };
                         let fallback_container = Box::new(Api::FallbackMessageContainer {
                             message: Some(
                                 b"Stream error during server-side rendering"
@@ -2504,7 +2504,7 @@ where
                             ),
                             router: None,
                             reason: Some(Api::FallbackStep::fetch_event_handler),
-                            cwd,
+                            cwd: Some(cwd.to_vec().into_boxed_slice()),
                             problems: Some(Api::Problems {
                                 code: 500,
                                 name: b"StreamError".to_vec().into_boxed_slice(),

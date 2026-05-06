@@ -527,18 +527,11 @@ impl SourceMapStore {
     fn unref_at_index(&mut self, index: usize, count: u32) {
         let e = &mut self.entries.values_mut()[index];
         e.ref_count -= count;
-        if cfg!(feature = "debug_logs") {
+        if cfg!(debug_assertions) {
             // PORT NOTE: reshaped for borrowck — read key after mutable borrow ends.
             let rc = e.ref_count;
             let key = self.entries.keys()[index].get();
-            bun_output::scoped_log!(
-                map_log,
-                "dec {:x}, {} | {} -> {}",
-                key,
-                count,
-                rc + count,
-                rc
-            );
+            map_log!("dec {:x}, {} | {} -> {}", key, count, rc + count, rc);
         }
         if self.entries.values()[index].ref_count == 0 {
             // Drop runs Entry::drop (was e.deinit()).

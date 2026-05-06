@@ -665,7 +665,10 @@ impl Default for IntegerRange {
 }
 
 impl JSGlobalObject {
-    pub fn validate_integer_range<T: bun_core::Integer>(
+    // TODO(port): real bound is `T: bun_core::Integer` (see
+    // src/jsc/JSGlobalObject.rs:1064); that trait isn't defined yet, so the
+    // shim leaves `T` unbounded — bodies are stubbed regardless.
+    pub fn validate_integer_range<T>(
         &self,
         _value: JSValue,
         _default: T,
@@ -673,7 +676,7 @@ impl JSGlobalObject {
     ) -> JsResult<T> {
         unimplemented!("b2-blocked: bun_jsc::JSGlobalObject::validate_integer_range")
     }
-    pub fn validate_big_int_range<T: bun_core::Integer>(
+    pub fn validate_big_int_range<T>(
         &self,
         _value: JSValue,
         _default: T,

@@ -1057,14 +1057,12 @@ impl<'a, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
 {
     pub extern "C" fn for_each(
         _: *mut VM,
-        global_object: *mut JSGlobalObject,
+        global_object: &JSGlobalObject,
         ctx: *mut c_void,
         next_value: JSValue,
     ) {
         // SAFETY: ctx was passed as `&mut Self as *mut c_void` by the caller of for_each.
         let Some(ctx) = (unsafe { (ctx as *mut Self).as_mut() }) else { return };
-        // SAFETY: global_object is non-null per JSC contract.
-        let global_object = unsafe { &*global_object };
         if ctx.formatter.failed {
             return;
         }

@@ -127,7 +127,12 @@ use crate::node::StringOrBuffer;
 // In Zig this file is a mixin of free functions over `jsc.API.TLSSocket`.
 // The `#[bun_jsc::host_fn]` shims live on `NewSocket<SSL>` in `socket_body.rs`
 // and forward into these free helpers — keep them as plain `fn`s.
-type This = crate::api::TLSSocket;
+// PORT NOTE: this file is `mod`-included from BOTH `socket/mod.rs` and
+// `socket/socket_body.rs`; `super::TLSSocket` resolves to the parent's
+// `NewSocket<true>` in either compilation, whereas the absolute path
+// `crate::api::TLSSocket` always picked the `mod.rs` shape and broke the
+// `socket_body` instance.
+type This = super::TLSSocket;
 
 pub fn get_servername(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::UNDEFINED) };

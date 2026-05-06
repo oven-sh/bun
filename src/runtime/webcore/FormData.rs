@@ -4,10 +4,13 @@
 use bun_collections::{ArrayHashMap, BabyList};
 use bun_core::{self, declare_scope, err, scoped_log};
 use bun_jsc::{
-    AnyPromise, CallFrame, DOMFormData, JSGlobalObject, JSValue, JsError, JsResult, ZigStringJsc as _,
+    AnyPromise, CallFrame, DOMFormData, JSGlobalObject, JSValue, JsError, JsResult,
+    ZigStringJsc as _,
 };
 use bun_semver::{self, SlicedString};
 use bun_str::{strings, ZigString, ZigStringSlice};
+#[allow(unused_imports)]
+use core::ffi::c_void;
 
 use crate::webcore::Blob;
 
@@ -402,7 +405,7 @@ pub fn to_js_from_multipart_data(
                     // > `charset` parameter.
                     strings::without_utf8_bom(value_str),
                 );
-                wrap.form.append(&mut key, &mut value);
+                dom_form_data_shim::append(wrap.form, &key, &value);
             }
         }
     }

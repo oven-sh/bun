@@ -345,7 +345,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     let mut lazy = false;
     let mut on_exit_callback = JSValue::ZERO;
     let mut on_disconnect_callback = JSValue::ZERO;
-    let mut path: &[u8] = jsc_vm.transpiler.env.get(b"PATH").unwrap_or(b"");
+    // SAFETY: `transpiler.env` is the per-VM DotEnv loader, valid for VM lifetime.
+    let mut path: &[u8] = unsafe { (*jsc_vm.transpiler.env).get(b"PATH") }.unwrap_or(b"");
     let mut argv: Vec<Option<*const c_char>> = Vec::new();
     let mut cmd_value = JSValue::ZERO;
     let mut detached = false;

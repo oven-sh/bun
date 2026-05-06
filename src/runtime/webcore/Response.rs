@@ -850,14 +850,14 @@ impl Response {
         if !json_value.is_empty() {
             // Validate top-level values that are not JSON serializable (Node.js compatibility)
             if json_value.is_undefined() || json_value.is_symbol() || json_value.js_type() == bun_jsc::JSType::JSFunction {
-                let err = global_this.create_type_error_instance("Value is not JSON serializable", &[]);
-                return global_this.throw_value(err);
+                let err = global_this.create_type_error_instance("Value is not JSON serializable");
+                return Err(global_this.throw_value(err));
             }
 
             // BigInt has a different error message to match Node.js exactly
             if json_value.is_big_int() {
-                let err = global_this.create_type_error_instance("Do not know how to serialize a BigInt", &[]);
-                return global_this.throw_value(err);
+                let err = global_this.create_type_error_instance("Do not know how to serialize a BigInt");
+                return Err(global_this.throw_value(err));
             }
 
             let mut str = BunString::empty();

@@ -837,11 +837,11 @@ impl<R, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, F> {
         let result = match &mut self.result {
             Maybe::Err(err) => match err.to_js_with_async_stack(global_object, promise) {
                 Ok(v) => v,
-                Err(e) => return promise.reject(global_object, global_object.take_exception(e)),
+                Err(e) => return promise.reject(global_object, Ok(global_object.take_exception(e))),
             },
-            Maybe::Ok(res) => match global_object.to_js(res) {
+            Maybe::Ok(res) => match FsReturn::fs_to_js(res, global_object) {
                 Ok(v) => v,
-                Err(e) => return promise.reject(global_object, global_object.take_exception(e)),
+                Err(e) => return promise.reject(global_object, Ok(global_object.take_exception(e))),
             },
         };
         promise_value.ensure_still_alive();
@@ -865,8 +865,9 @@ impl<R, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, F> {
         if let Maybe::Err(err) = &mut this_ref.result {
             err.deinit();
         }
-        // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv
-        this_ref.r#ref.unref(unsafe { &*this_ref.global_object }.bun_vm());
+        // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv.
+        // Zig passed `*VirtualMachine`; Rust's KeepAlive takes `EventLoopCtx`.
+        this_ref.r#ref.unref(js_event_loop_ctx());
         this_ref.args.deinit_and_unprotect();
         this_ref.promise = JSPromiseStrong::default();
         // SAFETY: paired with Box::leak in create()
@@ -1061,11 +1062,11 @@ impl<R, A: FsArgument, const F: NodeFSFunctionEnum> AsyncFSTask<R, A, F> {
         let result = match &mut self.result {
             Maybe::Err(err) => match err.to_js_with_async_stack(global_object, promise) {
                 Ok(v) => v,
-                Err(e) => return promise.reject(global_object, global_object.take_exception(e)),
+                Err(e) => return promise.reject(global_object, Ok(global_object.take_exception(e))),
             },
-            Maybe::Ok(res) => match global_object.to_js(res) {
+            Maybe::Ok(res) => match FsReturn::fs_to_js(res, global_object) {
                 Ok(v) => v,
-                Err(e) => return promise.reject(global_object, global_object.take_exception(e)),
+                Err(e) => return promise.reject(global_object, Ok(global_object.take_exception(e))),
             },
         };
         promise_value.ensure_still_alive();
@@ -1093,8 +1094,9 @@ impl<R, A: FsArgument, const F: NodeFSFunctionEnum> AsyncFSTask<R, A, F> {
         if let Maybe::Err(err) = &mut this_ref.result {
             err.deinit();
         }
-        // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv
-        this_ref.r#ref.unref(unsafe { &*this_ref.global_object }.bun_vm());
+        // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv.
+        // Zig passed `*VirtualMachine`; Rust's KeepAlive takes `EventLoopCtx`.
+        this_ref.r#ref.unref(js_event_loop_ctx());
         this_ref.args.deinit_and_unprotect();
         this_ref.promise = JSPromiseStrong::default();
         // SAFETY: paired with Box::leak in create()
@@ -1426,11 +1428,11 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         let result = match self.result.get_mut() {
             Maybe::Err(err) => match err.to_js_with_async_stack(global_object, promise) {
                 Ok(v) => v,
-                Err(e) => return promise.reject(global_object, global_object.take_exception(e)),
+                Err(e) => return promise.reject(global_object, Ok(global_object.take_exception(e))),
             },
-            Maybe::Ok(res) => match global_object.to_js(res) {
+            Maybe::Ok(res) => match FsReturn::fs_to_js(res, global_object) {
                 Ok(v) => v,
-                Err(e) => return promise.reject(global_object, global_object.take_exception(e)),
+                Err(e) => return promise.reject(global_object, Ok(global_object.take_exception(e))),
             },
         };
         promise_value.ensure_still_alive();

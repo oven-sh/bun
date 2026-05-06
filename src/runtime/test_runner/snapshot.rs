@@ -284,29 +284,33 @@ impl<'a> Snapshots<'a> {
 
         // TODO: when common js transform changes, keep this updated or add flag to support this version
 
-        for part in ast.parts.slice() {
-            for stmt in part.stmts {
-                match &stmt.data {
+        for part in ast.parts.slice_mut() {
+            // SAFETY: `part.stmts` is a `*mut [Stmt]` into the parser arena (`TODO(port): &'bump mut`).
+            // Arena outlives this loop; unique access — `ast` is owned here.
+            for stmt in unsafe { &mut *part.stmts } {
+                match &mut stmt.data {
                     js_ast::StmtData::SExpr(expr) => {
-                        if let js_ast::ExprData::EBinary(e_binary) = &expr.value.data {
+                        if let js_ast::ExprData::EBinary(e_binary) = &mut expr.value.data {
                             if e_binary.op == js_ast::Op::Code::BinAssign {
-                                let left = &e_binary.left;
-                                if let js_ast::ExprData::EIndex(e_index) = &left.data {
-                                    if let (
-                                        js_ast::ExprData::EString(index),
-                                        js_ast::ExprData::EIdentifier(target),
-                                    ) = (&e_index.index.data, &e_index.target.data)
-                                    {
-                                        if target.ref_.eql(exports_ref) {
+                                if let js_ast::ExprData::EIndex(e_index) = &mut e_binary.left.data {
+                                    // PORT NOTE: split-borrow `index`/`target` so we can take
+                                    // `&mut` on `index` (EString::slice needs &mut) while reading
+                                    // `target` immutably.
+                                    let target_is_exports = matches!(
+                                        &e_index.target.data,
+                                        js_ast::ExprData::EIdentifier(target) if target.ref_.eql(exports_ref)
+                                    );
+                                    if target_is_exports {
+                                        if let js_ast::ExprData::EString(index) = &mut e_index.index.data {
                                             if let js_ast::ExprData::EString(value_string) =
-                                                &e_binary.right.data
+                                                &mut e_binary.right.data
                                             {
-                                                let key = index.slice();
-                                                let value = value_string.slice();
-                                                // defer { if !isUTF8 free } → Drop on the slice guards
+                                                let key = index.slice(&arena);
+                                                let value = value_string.slice(&arena);
+                                                // defer { if !isUTF8 free } → arena drop
                                                 let value_clone: Box<[u8]> =
-                                                    Box::<[u8]>::from(value.as_ref());
-                                                let name_hash: u64 = hash(key.as_ref());
+                                                    Box::<[u8]>::from(value);
+                                                let name_hash: u64 = hash(key);
                                                 self.values.insert(name_hash, value_clone);
                                             }
                                         }
@@ -369,10 +373,16 @@ impl<'a> Snapshots<'a> {
         let success = core::cell::Cell::new(true);
         // SAFETY: see `parse_file` — thread-local VM singleton, short-lived reborrow.
         let vm = unsafe { &mut *VirtualMachine::get() };
-        let opts = js_parser::Parser::Options::init(vm.transpiler.options.jsx, js_parser::options::Loader::Js);
+        let opts = js_parser::ParserOptions::init(
+            vm.transpiler.options.jsx.clone().into(),
+            js_parser::options::Loader::Js,
+        );
+
+        // PERF(port): was arena bulk-free per iteration — reset() inside the loop.
+        let mut arena = bun_alloc::Arena::new();
 
         // PORT NOTE: reshaped for borrowck — iterate by index to allow &mut access to values while reading keys.
-        let file_ids: Vec<FileId> = self.inline_snapshots_to_write.keys().cloned().collect();
+        let file_ids: Vec<FileId> = self.inline_snapshots_to_write.keys().to_vec();
         for file_id in file_ids {
             let ils_info = self
                 .inline_snapshots_to_write

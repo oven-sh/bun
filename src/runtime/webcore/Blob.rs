@@ -1730,7 +1730,7 @@ pub fn write_file_with_source_destination(
         }
     }
     // If this is file <> file, we can just copy the file
-    else if destination_type == Store::DataTag::File && source_type == Store::DataTag::File {
+    else if destination_type == store::DataTag::File && source_type == store::DataTag::File {
         #[cfg(windows)]
         {
             return copy_file::CopyFileWindows::init(

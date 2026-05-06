@@ -463,7 +463,7 @@ impl JSValkeyClient {
         let promise = match this.send(global, frame.this(), &cmd) {
             Ok(p) => p,
             Err(err) => {
-                return protocol::valkey_error_to_js(global, "Failed to send command", err);
+                return send_err_to_js(global, "Failed to send command", err);
             }
         };
         Ok(promise_to_js(promise))
@@ -489,7 +489,7 @@ impl JSValkeyClient {
         ) {
             Ok(p) => p,
             Err(err) => {
-                return protocol::valkey_error_to_js(global, "Failed to send GET command", err)
+                return send_err_to_js(global, "Failed to send GET command", err);
             }
         };
         Ok(promise_to_js(promise))
@@ -521,7 +521,7 @@ impl JSValkeyClient {
         ) {
             Ok(p) => p,
             Err(err) => {
-                return protocol::valkey_error_to_js(global, "Failed to send GET command", err)
+                return send_err_to_js(global, "Failed to send GET command", err);
             }
         };
         Ok(promise_to_js(promise))
@@ -580,7 +580,7 @@ impl JSValkeyClient {
         ) {
             Ok(p) => p,
             Err(err) => {
-                return protocol::valkey_error_to_js(global, "Failed to send SET command", err)
+                return send_err_to_js(global, "Failed to send SET command", err);
             }
         };
 
@@ -607,7 +607,7 @@ impl JSValkeyClient {
         ) {
             Ok(p) => p,
             Err(err) => {
-                return protocol::valkey_error_to_js(global, "Failed to send INCR command", err)
+                return send_err_to_js(global, "Failed to send INCR command", err);
             }
         };
         Ok(promise_to_js(promise))
@@ -633,7 +633,7 @@ impl JSValkeyClient {
         ) {
             Ok(p) => p,
             Err(err) => {
-                return protocol::valkey_error_to_js(global, "Failed to send DECR command", err)
+                return send_err_to_js(global, "Failed to send DECR command", err);
             }
         };
         Ok(promise_to_js(promise))
@@ -666,7 +666,7 @@ impl JSValkeyClient {
         ) {
             Ok(p) => p,
             Err(err) => {
-                return protocol::valkey_error_to_js(global, "Failed to send EXISTS command", err)
+                return send_err_to_js(global, "Failed to send EXISTS command", err);
             }
         };
         Ok(promise_to_js(promise))
@@ -713,7 +713,7 @@ impl JSValkeyClient {
         ) {
             Ok(p) => p,
             Err(err) => {
-                return protocol::valkey_error_to_js(global, "Failed to send EXPIRE command", err)
+                return send_err_to_js(global, "Failed to send EXPIRE command", err);
             }
         };
         Ok(promise_to_js(promise))
@@ -739,7 +739,7 @@ impl JSValkeyClient {
         ) {
             Ok(p) => p,
             Err(err) => {
-                return protocol::valkey_error_to_js(global, "Failed to send TTL command", err)
+                return send_err_to_js(global, "Failed to send TTL command", err);
             }
         };
         Ok(promise_to_js(promise))
@@ -787,7 +787,7 @@ impl JSValkeyClient {
         ) {
             Ok(p) => p,
             Err(err) => {
-                return protocol::valkey_error_to_js(global, "Failed to send SREM command", err)
+                return send_err_to_js(global, "Failed to send SREM command", err);
             }
         };
         Ok(promise_to_js(promise))
@@ -807,7 +807,7 @@ impl JSValkeyClient {
         let mut args: Vec<JSArgument> = Vec::with_capacity(args_view.len());
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return global.throw_invalid_argument_type("srandmember", "key", "string or buffer");
+            return Err(global.throw_invalid_argument_type("srandmember", "key", "string or buffer"));
         };
         // PERF(port): was assume_capacity
         args.push(key);
@@ -815,11 +815,11 @@ impl JSValkeyClient {
         // Optional count argument
         if args_view.len() > 1 && !frame.argument(1).is_undefined_or_null() {
             let Some(count_arg) = from_js(global, frame.argument(1))? else {
-                return global.throw_invalid_argument_type(
+                return Err(global.throw_invalid_argument_type(
                     "srandmember",
                     "count",
                     "number or string",
-                );
+                ));
             };
             // PERF(port): was assume_capacity
             args.push(count_arg);
@@ -837,11 +837,7 @@ impl JSValkeyClient {
         ) {
             Ok(p) => p,
             Err(err) => {
-                return protocol::valkey_error_to_js(
-                    global,
-                    "Failed to send SRANDMEMBER command",
-                    err,
-                )
+                return send_err_to_js(global, "Failed to send SRANDMEMBER command", err);
             }
         };
         Ok(promise_to_js(promise))
@@ -857,7 +853,7 @@ impl JSValkeyClient {
         require_not_subscriber(this, b"smembers")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return global.throw_invalid_argument_type("smembers", "key", "string or buffer");
+            return Err(global.throw_invalid_argument_type("smembers", "key", "string or buffer"));
         };
 
         // Send SMEMBERS command
@@ -872,11 +868,7 @@ impl JSValkeyClient {
         ) {
             Ok(p) => p,
             Err(err) => {
-                return protocol::valkey_error_to_js(
-                    global,
-                    "Failed to send SMEMBERS command",
-                    err,
-                )
+                return send_err_to_js(global, "Failed to send SMEMBERS command", err);
             }
         };
         Ok(promise_to_js(promise))
@@ -892,7 +884,7 @@ impl JSValkeyClient {
         let mut args: Vec<JSArgument> = Vec::with_capacity(args_view.len());
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return global.throw_invalid_argument_type("spop", "key", "string or buffer");
+            return Err(global.throw_invalid_argument_type("spop", "key", "string or buffer"));
         };
         // PERF(port): was assume_capacity
         args.push(key);
@@ -900,7 +892,7 @@ impl JSValkeyClient {
         // Optional count argument
         if args_view.len() > 1 && !frame.argument(1).is_undefined_or_null() {
             let Some(count_arg) = from_js(global, frame.argument(1))? else {
-                return global.throw_invalid_argument_type("spop", "count", "number or string");
+                return Err(global.throw_invalid_argument_type("spop", "count", "number or string"));
             };
             // PERF(port): was assume_capacity
             args.push(count_arg);
@@ -918,7 +910,7 @@ impl JSValkeyClient {
         ) {
             Ok(p) => p,
             Err(err) => {
-                return protocol::valkey_error_to_js(global, "Failed to send SPOP command", err)
+                return Ok(protocol::valkey_error_to_js(global, Some(b"Failed to send SPOP command"), err))
             }
         };
         Ok(promise_to_js(promise))
@@ -931,14 +923,14 @@ impl JSValkeyClient {
 
         let args_view = frame.arguments();
         if args_view.len() < 2 {
-            return global.throw(format_args!("SADD requires at least a key and one member"));
+            return Err(global.throw(format_args!("SADD requires at least a key and one member")));
         }
 
         // PERF(port): was stack-fallback
         let mut args: Vec<JSArgument> = Vec::with_capacity(args_view.len());
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return global.throw_invalid_argument_type("sadd", "key", "string or buffer");
+            return Err(global.throw_invalid_argument_type("sadd", "key", "string or buffer"));
         };
         // PERF(port): was assume_capacity
         args.push(key);
@@ -948,7 +940,7 @@ impl JSValkeyClient {
                 break;
             }
             let Some(value) = from_js(global, *arg)? else {
-                return global.throw_invalid_argument_type("sadd", "member", "string or buffer");
+                return Err(global.throw_invalid_argument_type("sadd", "member", "string or buffer"));
             };
             // PERF(port): was assume_capacity
             args.push(value);
@@ -966,7 +958,7 @@ impl JSValkeyClient {
         ) {
             Ok(p) => p,
             Err(err) => {
-                return protocol::valkey_error_to_js(global, "Failed to send SADD command", err)
+                return Ok(protocol::valkey_error_to_js(global, Some(b"Failed to send SADD command"), err))
             }
         };
         Ok(promise_to_js(promise))
@@ -982,10 +974,10 @@ impl JSValkeyClient {
         require_not_subscriber(this, b"sismember")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return global.throw_invalid_argument_type("sismember", "key", "string or buffer");
+            return Err(global.throw_invalid_argument_type("sismember", "key", "string or buffer"));
         };
         let Some(value) = from_js(global, frame.argument(1))? else {
-            return global.throw_invalid_argument_type("sismember", "value", "string or buffer");
+            return Err(global.throw_invalid_argument_type("sismember", "value", "string or buffer"));
         };
 
         // Send SISMEMBER command
@@ -995,19 +987,12 @@ impl JSValkeyClient {
             &Command {
                 command: b"SISMEMBER",
                 args: CommandArgs::Args(&[key, value]),
-                meta: CommandMeta {
-                    return_as_bool: true,
-                    ..Default::default()
-                },
+                meta: CommandMeta::RETURN_AS_BOOL | CommandMeta::SUPPORTS_AUTO_PIPELINING,
             },
         ) {
             Ok(p) => p,
             Err(err) => {
-                return protocol::valkey_error_to_js(
-                    global,
-                    "Failed to send SISMEMBER command",
-                    err,
-                )
+                return send_err_to_js(global, "Failed to send SISMEMBER command", err);
             }
         };
         Ok(promise_to_js(promise))
@@ -1024,14 +1009,14 @@ impl JSValkeyClient {
 
         let args_view = frame.arguments();
         if args_view.len() < 2 {
-            return global.throw(format_args!("HMGET requires at least a key and one field"));
+            return Err(global.throw(format_args!("HMGET requires at least a key and one field")));
         }
 
         // PERF(port): was stack-fallback
         let mut args: Vec<JSArgument> = Vec::with_capacity(args_view.len());
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return global.throw_invalid_argument_type("hmget", "key", "string or buffer");
+            return Err(global.throw_invalid_argument_type("hmget", "key", "string or buffer"));
         };
         // PERF(port): was assume_capacity
         args.push(key);
@@ -1040,17 +1025,17 @@ impl JSValkeyClient {
         if second_arg.is_array() {
             let array_len = second_arg.get_length(global)?;
             if array_len == 0 {
-                return global.throw(format_args!("HMGET requires at least one field"));
+                return Err(global.throw(format_args!("HMGET requires at least one field")));
             }
 
             let mut array_iter = second_arg.array_iterator(global)?;
             while let Some(element) = array_iter.next()? {
                 let Some(field) = from_js(global, element)? else {
-                    return global.throw_invalid_argument_type(
+                    return Err(global.throw_invalid_argument_type(
                         "hmget",
                         "field",
                         "string or buffer",
-                    );
+                    ));
                 };
                 args.push(field);
             }
@@ -1060,11 +1045,11 @@ impl JSValkeyClient {
                     break;
                 }
                 let Some(field) = from_js(global, *arg)? else {
-                    return global.throw_invalid_argument_type(
+                    return Err(global.throw_invalid_argument_type(
                         "hmget",
                         "field",
                         "string or buffer",
-                    );
+                    ));
                 };
                 args.push(field);
             }
@@ -1082,7 +1067,7 @@ impl JSValkeyClient {
         ) {
             Ok(p) => p,
             Err(err) => {
-                return protocol::valkey_error_to_js(global, "Failed to send HMGET command", err)
+                return Ok(protocol::valkey_error_to_js(global, Some(b"Failed to send HMGET command"), err))
             }
         };
         Ok(promise_to_js(promise))
@@ -1117,7 +1102,7 @@ impl JSValkeyClient {
         ) {
             Ok(p) => p,
             Err(err) => {
-                return protocol::valkey_error_to_js(global, "Failed to send HINCRBY command", err)
+                return Ok(protocol::valkey_error_to_js(global, Some(b"Failed to send HINCRBY command"), err))
             }
         };
         Ok(promise_to_js(promise))
@@ -1152,11 +1137,7 @@ impl JSValkeyClient {
         ) {
             Ok(p) => p,
             Err(err) => {
-                return protocol::valkey_error_to_js(
-                    global,
-                    "Failed to send HINCRBYFLOAT command",
-                    err,
-                )
+                return send_err_to_js(global, "Failed to send HINCRBYFLOAT command", err);
             }
         };
         Ok(promise_to_js(promise))
@@ -1182,12 +1163,12 @@ impl JSValkeyClient {
         if second_arg.is_object() && !second_arg.is_array() {
             // Pattern 1: Object/Record - hset(key, {field: value, ...})
             let Some(obj) = second_arg.get_object() else {
-                return global.throw_invalid_argument_type(
+                return Err(global.throw_invalid_argument_type(
                     // TODO(port): command is bytes; throw_invalid_argument_type expects &str
-                    core::str::from_utf8(command).unwrap_or("hset"),
+                    bname(command),
                     "fields",
                     "object",
-                );
+                ));
             };
 
             // TODO(port): JSPropertyIterator comptime config struct → options arg
@@ -1217,9 +1198,9 @@ impl JSValkeyClient {
             // Pattern 3: Array - hmset(key, [field, value, ...])
             let mut iter = second_arg.array_iterator(global)?;
             if iter.len % 2 != 0 {
-                return global.throw(format_args!(
+                return Err(global.throw(format_args!(
                     "Array must have an even number of elements (field-value pairs)"
-                ));
+                )));
             }
 
             args.reserve((1 + iter.len as usize).saturating_sub(args.len()));
@@ -1231,9 +1212,9 @@ impl JSValkeyClient {
                 drop(field_str);
 
                 let Some(value_js) = iter.next()? else {
-                    return global.throw(format_args!(
+                    return Err(global.throw(format_args!(
                         "Array must have an even number of elements (field-value pairs)"
-                    ));
+                    )));
                 };
                 let value_str = value_js.to_bun_string(global)?;
                 // PERF(port): was assume_capacity
@@ -1244,23 +1225,23 @@ impl JSValkeyClient {
             // Pattern 2: Variadic - hset(key, field, value, ...)
             let args_count = frame.arguments_count();
             if args_count < 3 {
-                return global.throw(format_args!(
+                return Err(global.throw(format_args!(
                     "HSET requires at least key, field, and value arguments"
-                ));
+                )));
             }
 
             let field_value_count = args_count - 1; // Exclude key
             if field_value_count % 2 != 0 {
-                return global.throw(format_args!(
+                return Err(global.throw(format_args!(
                     "HSET requires field-value pairs (even number of arguments after key)"
-                ));
+                )));
             }
 
             args.reserve((args_count as usize).saturating_sub(args.len()));
 
             let mut i: u32 = 1;
             while i < args_count {
-                let arg_str = frame.argument(i).to_bun_string(global)?;
+                let arg_str = frame.argument(i as usize).to_bun_string(global)?;
                 // PERF(port): was assume_capacity
                 args.push(arg_str.to_utf8());
                 drop(arg_str);
@@ -1269,7 +1250,7 @@ impl JSValkeyClient {
         }
 
         if args.len() == 1 {
-            return global.throw(format_args!("HSET requires at least one field-value pair"));
+            return Err(global.throw(format_args!("HSET requires at least one field-value pair")));
         }
 
         let promise = match this.send(
@@ -1288,7 +1269,7 @@ impl JSValkeyClient {
                 } else {
                     "Failed to send HMSET command"
                 };
-                return protocol::valkey_error_to_js(global, msg, err);
+                return Ok(protocol::valkey_error_to_js(global, Some(msg.as_bytes()), err));
             }
         };
 
@@ -1334,13 +1315,13 @@ impl JSValkeyClient {
         require_not_subscriber(this, b"hsetnx")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return global.throw_invalid_argument_type("hsetnx", "key", "string or buffer");
+            return Err(global.throw_invalid_argument_type("hsetnx", "key", "string or buffer"));
         };
         let Some(field) = from_js(global, frame.argument(1))? else {
-            return global.throw_invalid_argument_type("hsetnx", "field", "string or buffer");
+            return Err(global.throw_invalid_argument_type("hsetnx", "field", "string or buffer"));
         };
         let Some(value) = from_js(global, frame.argument(2))? else {
-            return global.throw_invalid_argument_type("hsetnx", "value", "string or buffer");
+            return Err(global.throw_invalid_argument_type("hsetnx", "value", "string or buffer"));
         };
 
         let promise = match this.send(
@@ -1349,15 +1330,12 @@ impl JSValkeyClient {
             &Command {
                 command: b"HSETNX",
                 args: CommandArgs::Args(&[key, field, value]),
-                meta: CommandMeta {
-                    return_as_bool: true,
-                    ..Default::default()
-                },
+                meta: CommandMeta::RETURN_AS_BOOL | CommandMeta::SUPPORTS_AUTO_PIPELINING,
             },
         ) {
             Ok(p) => p,
             Err(err) => {
-                return protocol::valkey_error_to_js(global, "Failed to send HSETNX command", err)
+                return Ok(protocol::valkey_error_to_js(global, Some(b"Failed to send HSETNX command"), err))
             }
         };
         Ok(promise_to_js(promise))
@@ -1372,11 +1350,11 @@ impl JSValkeyClient {
         require_not_subscriber(this, b"hexists")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return global.throw_invalid_argument_type("hexists", "key", "string or buffer");
+            return Err(global.throw_invalid_argument_type("hexists", "key", "string or buffer"));
         };
 
         let Some(field) = from_js(global, frame.argument(1))? else {
-            return global.throw_invalid_argument_type("hexists", "field", "string or buffer");
+            return Err(global.throw_invalid_argument_type("hexists", "field", "string or buffer"));
         };
 
         let promise = match this.send(
@@ -1385,15 +1363,12 @@ impl JSValkeyClient {
             &Command {
                 command: b"HEXISTS",
                 args: CommandArgs::Args(&[key, field]),
-                meta: CommandMeta {
-                    return_as_bool: true,
-                    ..Default::default()
-                },
+                meta: CommandMeta::RETURN_AS_BOOL | CommandMeta::SUPPORTS_AUTO_PIPELINING,
             },
         ) {
             Ok(p) => p,
             Err(err) => {
-                return protocol::valkey_error_to_js(global, "Failed to send HEXISTS command", err)
+                return Ok(protocol::valkey_error_to_js(global, Some(b"Failed to send HEXISTS command"), err))
             }
         };
         Ok(promise_to_js(promise))
@@ -1406,7 +1381,7 @@ impl JSValkeyClient {
         let message: Option<JSArgument> = if !frame.argument(0).is_undefined_or_null() {
             // Only use the first argument if provided, ignore any additional arguments
             let Some(m) = from_js(global, frame.argument(0))? else {
-                return global.throw_invalid_argument_type("ping", "message", "string or buffer");
+                return Err(global.throw_invalid_argument_type("ping", "message", "string or buffer"));
             };
             Some(m)
         } else {
@@ -1428,7 +1403,7 @@ impl JSValkeyClient {
         ) {
             Ok(p) => p,
             Err(err) => {
-                return protocol::valkey_error_to_js(global, "Failed to send PING command", err)
+                return Ok(protocol::valkey_error_to_js(global, Some(b"Failed to send PING command"), err))
             }
         };
         Ok(promise_to_js(promise))
@@ -1545,13 +1520,13 @@ impl JSValkeyClient {
         require_not_subscriber(this, b"smove")?;
 
         let Some(source) = from_js(global, frame.argument(0))? else {
-            return global.throw_invalid_argument_type("smove", "source", "string or buffer");
+            return Err(global.throw_invalid_argument_type("smove", "source", "string or buffer"));
         };
         let Some(destination) = from_js(global, frame.argument(1))? else {
-            return global.throw_invalid_argument_type("smove", "destination", "string or buffer");
+            return Err(global.throw_invalid_argument_type("smove", "destination", "string or buffer"));
         };
         let Some(member) = from_js(global, frame.argument(2))? else {
-            return global.throw_invalid_argument_type("smove", "member", "string or buffer");
+            return Err(global.throw_invalid_argument_type("smove", "member", "string or buffer"));
         };
 
         let promise = match this.send(
@@ -1560,15 +1535,12 @@ impl JSValkeyClient {
             &Command {
                 command: b"SMOVE",
                 args: CommandArgs::Args(&[source, destination, member]),
-                meta: CommandMeta {
-                    return_as_bool: true,
-                    ..Default::default()
-                },
+                meta: CommandMeta::RETURN_AS_BOOL | CommandMeta::SUPPORTS_AUTO_PIPELINING,
             },
         ) {
             Ok(p) => p,
             Err(err) => {
-                return protocol::valkey_error_to_js(global, "Failed to send SMOVE command", err)
+                return Ok(protocol::valkey_error_to_js(global, Some(b"Failed to send SMOVE command"), err))
             }
         };
         Ok(promise_to_js(promise))
@@ -1632,11 +1604,7 @@ impl JSValkeyClient {
         ) {
             Ok(p) => p,
             Err(err) => {
-                return Ok(protocol::valkey_error_to_js(
-                    global,
-                    Some(b"Failed to send PUBLISH command"),
-                    err,
-                ));
+                return send_err_to_js(global, "Failed to send PUBLISH command", err);
             }
         };
 
@@ -1660,8 +1628,8 @@ impl JSValkeyClient {
         // The first argument given is the channel or may be an array of channels.
         if channel_or_many.is_array() {
             if channel_or_many.get_length(global)? == 0 {
-                return global
-                    .throw_invalid_arguments(format_args!("subscribe requires at least one channel"));
+                return Err(global
+                    .throw_invalid_arguments(format_args!("subscribe requires at least one channel")));
             }
             redis_channels
                 .reserve((channel_or_many.get_length(global)? as usize).saturating_sub(redis_channels.len()));
@@ -1707,11 +1675,7 @@ impl JSValkeyClient {
             Err(err) => {
                 // If we catch an error, we need to clean up any handlers we may have added and fall out of subscription mode
                 this._subscription_ctx.clear_all_receive_handlers(global)?;
-                return Ok(protocol::valkey_error_to_js(
-                    global,
-                    Some(b"Failed to send SUBSCRIBE command"),
-                    err,
-                ));
+                return send_err_to_js(global, "Failed to send SUBSCRIBE command", err);
             }
         };
 
@@ -1737,11 +1701,7 @@ impl JSValkeyClient {
         let promise = match this.send(global, this_js, &command) {
             Ok(p) => p,
             Err(err) => {
-                return Ok(protocol::valkey_error_to_js(
-                    global,
-                    Some(b"Failed to send UNSUBSCRIBE command"),
-                    err,
-                ));
+                return send_err_to_js(global, "Failed to send UNSUBSCRIBE command", err);
             }
         };
 
@@ -1842,9 +1802,9 @@ impl JSValkeyClient {
 
         if channel_or_many.is_array() {
             if channel_or_many.get_length(global)? == 0 {
-                return global.throw_invalid_arguments(format_args!(
+                return Err(global.throw_invalid_arguments(format_args!(
                     "unsubscribe requires at least one channel"
-                ));
+                )));
             }
 
             redis_channels.reserve(
@@ -1888,7 +1848,10 @@ impl JSValkeyClient {
     ) -> JsResult<JSValue> {
         let _ = frame;
 
-        let new_client: &mut JSValkeyClient = this.clone_without_connecting(global)?;
+        let new_client_ptr = this.clone_without_connecting(global)?;
+        // SAFETY: clone_without_connecting returns a freshly allocated, leaked
+        // JSValkeyClient (Box::into_raw); valid for the rest of this scope.
+        let new_client: &mut JSValkeyClient = unsafe { &mut *new_client_ptr };
 
         let new_client_js = new_client.to_js(global);
         new_client.this_value = JsRef::init_weak(new_client_js);

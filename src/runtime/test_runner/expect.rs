@@ -1278,10 +1278,10 @@ impl Expect {
         }
 
         // SAFETY: FFI call with valid &JSGlobalObject
-        let mut expect_proto = unsafe { Expect__getPrototype(global_this) };
-        let mut expect_constructor = <Self as bun_jsc::JsClass>::get_constructor(global_this);
+        let expect_proto = unsafe { Expect__getPrototype(global_this) };
+        let expect_constructor = <Self as bun_jsc::JsClass>::get_constructor(global_this);
         // SAFETY: FFI call with valid &JSGlobalObject
-        let mut expect_static_proto = unsafe { ExpectStatic__getPrototype(global_this) };
+        let expect_static_proto = unsafe { ExpectStatic__getPrototype(global_this) };
 
         // SAFETY: already checked that args[0] is an object
         let matchers_to_register = args[0].get_object().expect("unreachable");
@@ -1404,7 +1404,8 @@ impl Expect {
             let vm = global_this.vm();
             promise.set_handled(vm);
 
-            global_this.bun_vm().wait_for_promise(promise);
+            // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
+            unsafe { (*global_this.bun_vm()).wait_for_promise(promise) };
 
             // PORT NOTE: bun_jsc::AnyPromise has no `result()`; use status()+unwrap() instead.
             let _ = vm;

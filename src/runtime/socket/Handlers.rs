@@ -426,7 +426,7 @@ impl SocketConfig {
             }
         } else if let Some(hostname) = generated.hostname.get() {
             if hostname.length() == 0 {
-                return global.throw_invalid_arguments(format_args!("Expected a non-empty \"hostname\""));
+                return Err(global.throw_invalid_arguments(format_args!("Expected a non-empty \"hostname\"")));
             }
             result.hostname_or_unix = hostname.to_utf8();
             let slice = result.hostname_or_unix.slice();

@@ -309,8 +309,6 @@ pub fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding) -> Bun
                 return str;
             }
 
-            // SAFETY: chars is a writable buffer of `input.len() * 2` bytes.
-            let chars = unsafe { slice::from_raw_parts_mut(chars, input.len() * 2) };
             let wrote = strings::encode_bytes_to_hex(chars, &input);
 
             // Return an empty string in this case, just like node.

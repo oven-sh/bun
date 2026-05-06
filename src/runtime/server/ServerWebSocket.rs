@@ -1252,14 +1252,14 @@ impl ServerWebSocket {
         name: &'static str,
         opcode: Opcode,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old(2);
+        let args = callframe.arguments_old::<2>();
 
         if self.is_closed() {
-            return Ok(JSValue::js_number(0));
+            return Ok(JSValue::js_number(0.0));
         }
 
-        if args.len() > 0 {
-            let value = args.ptr(0);
+        if args.len > 0 {
+            let value = args.ptr[0];
             if !value.is_empty_or_undefined_or_null() {
                 if let Some(data) = value.as_array_buffer(global_this) {
                     let buffer = data.slice();

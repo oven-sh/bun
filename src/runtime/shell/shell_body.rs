@@ -4725,7 +4725,7 @@ pub fn handle_template_value(
 
         if template_value.js_type().is_array() {
             let mut array = template_value.array_iterator(global)?;
-            let last = array.len().saturating_sub(1);
+            let last = array.len.saturating_sub(1);
             let mut i: u32 = 0;
             drop(builder);
             while let Some(arr) = array.next()? {

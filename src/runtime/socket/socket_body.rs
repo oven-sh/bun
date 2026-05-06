@@ -1956,9 +1956,10 @@ impl<const SSL: bool> NewSocket<SSL> {
                 let _ = global.throw_range_error(
                     l,
                     jsc::RangeErrorOptions {
-                        field_name: "byteLength",
+                        field_name: b"byteLength",
                         min: 0,
                         max: jsc::MAX_SAFE_INTEGER,
+                        msg: b"",
                     },
                 );
                 return WriteResult::Fail;

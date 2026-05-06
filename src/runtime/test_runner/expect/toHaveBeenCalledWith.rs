@@ -110,8 +110,10 @@ pub fn to_have_been_called_with(
     if calls_count == 1 {
         let received_call_args = calls.get_index(global, 0)?;
         let diff_format = DiffFormatter {
-            expected: expected_args_js_array,
-            received: received_call_args,
+            received_string: None,
+            expected_string: None,
+            expected: Some(expected_args_js_array),
+            received: Some(received_call_args),
             global_this: global,
             not: false,
         };

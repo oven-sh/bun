@@ -667,7 +667,7 @@ impl MatchedRoute {
                         let mut iter = self.query.iter();
                         while let Some(entry) = iter.next(values_buf) {
                             let entry_name = entry.name;
-                            let mut str = ZigString::init(entry_name).with_encoding();
+                            let str = ZigString::init(entry_name).with_encoding();
 
                             debug_assert!(!entry.values.is_empty());
                             if entry.values.len() > 1 {
@@ -675,11 +675,15 @@ impl MatchedRoute {
                                 for (i, value) in entry.values.iter().enumerate() {
                                     values[i] = ZigString::init(value).with_encoding();
                                 }
-                                obj.put_record(global, &mut str, values)?;
+                                let _ = (&mut *obj, global, &str, &mut *values);
                             } else {
                                 refs_buf[0] = ZigString::init(entry.values[0]).with_encoding();
-                                obj.put_record(global, &mut str, &mut refs_buf[0..1])?;
+                                let _ = (&mut *obj, global, &str, &mut refs_buf[0..1]);
                             }
+                            // `JSObject::put_record` is typed against
+                            // `bun_string::ZigString`, but the encoding-aware
+                            // constructor lives on `bun_jsc::zig_string::ZigString`.
+                            todo!("blocked_on: bun_jsc::JSObject::put_record ZigString unification");
                         }
                         Ok(())
                     })

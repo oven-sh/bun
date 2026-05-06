@@ -4142,42 +4142,6 @@ impl Blob {
         js::to_js_unchecked(global_object, self as *mut Blob as *mut ())
     }
 
-    /// Tear down owned resources. If heap-allocated, also frees the heap box.
-    // PORT NOTE: kept as an explicit method (not Drop) because Blob is the m_ctx
-    // payload of a .classes.ts class — finalize() owns teardown, and many
-    // call-sites tear down stack copies explicitly.
-    pub fn deinit(&mut self) {
-        self.detach();
-        self.name.deref();
-        self.name = BunString::dead();
-
-        if self.content_type_allocated {
-            // SAFETY: content_type_allocated implies content_type is a leaked Box<[u8]>.
-            unsafe { drop(Box::from_raw(self.content_type as *mut [u8])) };
-            self.content_type = b"" as &'static [u8] as *const [u8];
-            self.content_type_allocated = false;
-        }
-
-        if self.is_heap_allocated() {
-            // SAFETY: self is the *mut Blob originally produced by Blob::new (Box::into_raw).
-            unsafe { drop(Box::from_raw(self as *mut Blob)) };
-        }
-    }
-
-    pub fn shared_view(&self) -> &[u8] {
-        if self.size == 0 || self.store.is_none() {
-            return b"";
-        }
-        let mut slice_ = self.store.as_ref().unwrap().shared_view();
-        if slice_.is_empty() {
-            return b"";
-        }
-        // Defensive: `offset` may originate from untrusted structured-clone data.
-        let off = (self.offset as usize).min(slice_.len());
-        slice_ = &slice_[off..];
-        &slice_[..slice_.len().min(self.size as usize)]
-    }
-
     /// Raw-pointer counterpart of [`shared_view`]: returns a `*mut [u8]` into
     /// the Store's byte buffer with **mutable provenance** (derived through
     /// `StoreRef::as_ptr()` → the original `Box::into_raw` tag), suitable for

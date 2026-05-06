@@ -20,16 +20,20 @@ use std::borrow::Cow;
 // FrameworkRouter/production drafts stay gated — they need BundleV2 field
 // access and the full IncrementalGraph surface.
 #[path = "bake_body.rs"]
-mod bake_body;
+pub(crate) mod bake_body;
 
 #[path = "DevServer.rs"]
 mod dev_server_body;
 
 #[path = "FrameworkRouter.rs"]
-mod framework_router_body;
+pub(crate) mod framework_router_body;
 
 #[path = "production.rs"]
 mod production_body;
+
+// Re-exports from the full Phase-A drafts so `production.rs` can name them
+// without going through the keystone stubs below.
+pub use bake_body::{print_warning, PatternBuffer, UserOptions};
 
 /// All bake JSC references go through this re-export of `bun_jsc`.
 pub(crate) mod jsc {

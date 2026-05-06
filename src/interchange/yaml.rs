@@ -387,6 +387,40 @@ pub enum EncodingKind {
     Utf16,
 }
 
+/// Stack buffer for an ASCII literal widened to `Enc::Unit`. Replaces Zig's
+/// `enc.literal("...")` (a `comptime` utf8→utf16 transcode via
+/// `std.unicode.utf8ToUtf16LeStringLiteral`). Rust cannot do const transcoding
+/// behind a trait method, so the literal is widened at the call site into this
+/// inline buffer instead. All call sites in this file pass ≤4-byte ASCII; the
+/// cap of 8 leaves headroom for new literals.
+#[derive(Clone, Copy)]
+pub struct EncLit<U: Copy + Default> {
+    buf: [U; 8],
+    len: u8,
+}
+
+impl<U: Copy + Default> EncLit<U> {
+    #[inline]
+    fn as_slice(&self) -> &[U] {
+        &self.buf[..self.len as usize]
+    }
+}
+
+impl<U: Copy + Default> core::ops::Deref for EncLit<U> {
+    type Target = [U];
+    #[inline]
+    fn deref(&self) -> &[U] {
+        self.as_slice()
+    }
+}
+
+impl<U: Copy + Default> AsRef<[U]> for EncLit<U> {
+    #[inline]
+    fn as_ref(&self) -> &[U] {
+        self.as_slice()
+    }
+}
+
 /// Trait modeling Zig's `Encoding` comptime enum where `unit()` returns a type.
 pub trait Encoding: Copy + 'static {
     type Unit: Copy + Eq + Ord + Default + fmt::Debug + Into<u32> + 'static;

@@ -42,6 +42,24 @@ unsafe fn items_mut<'a, T>(p: *mut [T]) -> &'a mut [T] {
     unsafe { &mut *p }
 }
 
+// Helper: visit a `*mut [Stmt]` arena slice in-place. Mirrors the
+// `ListManaged.fromOwnedSlice` → `visitStmts` → `.items` pattern from Zig: copy the
+// slice into a fresh arena-backed Vec, visit (which may grow/shrink it), then
+// leak the result back into the bump arena and return the new fat pointer.
+#[inline]
+fn visit_stmt_slice<'a, const TS: bool, J: JsxT, const SO: bool>(
+    p: &mut P<'a, TS, J, SO>,
+    slice: *mut [Stmt],
+    kind: StmtsKind,
+) -> *mut [Stmt] {
+    // SAFETY: arena-owned slice valid for 'a.
+    let src: &[Stmt] = unsafe { &*slice };
+    let mut list: StmtList<'a> = BumpVec::with_capacity_in(src.len(), p.allocator);
+    list.extend_from_slice(src);
+    p.visit_stmts(&mut list, kind).expect("unreachable");
+    list.into_bump_slice_mut() as *mut [Stmt]
+}
+
 // ─── arena slice ↔ BumpVec helpers ──────────────────────────────────────────
 // `StmtNodeList = *mut [Stmt]` (arena-owned). Zig's `ListManaged.fromOwnedSlice`
 // adopts the existing backing storage; bumpalo Vec cannot, so we copy. The arena

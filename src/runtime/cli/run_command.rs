@@ -512,7 +512,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 Output::flush();
                 return Ok(());
             }
-            Ok(bun_sys::Result::Err(err)) => {
+            Ok(Err(err)) => {
                 if !silent {
                     pretty_errorln!(
                         "<r><red>error<r>: Failed to run script <b>{}<r> due to error:\n{}",
@@ -523,7 +523,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 Output::flush();
                 return Ok(());
             }
-            Ok(bun_sys::Result::Ok(result)) => result,
+            Ok(Ok(result)) => result,
         };
 
         match spawn_result.status {

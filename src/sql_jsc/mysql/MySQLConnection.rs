@@ -846,7 +846,7 @@ impl MySQLConnection {
                     packet_size: header_length,
                     ..Default::default()
                 };
-                auth_switch.decode(reader)?;
+                auth_switch.decode_internal(reader)?;
 
                 // Update auth plugin and data
                 let auth_method = AuthMethod::from_string(auth_switch.plugin_name.slice())
@@ -957,8 +957,8 @@ impl MySQLConnection {
             capability_flags: self.capabilities,
             max_packet_size: 0, // 16777216,
             character_set: CharacterSet::default(),
-            username: Data::Temporary(&self.user),
-            database: Data::Temporary(&self.database),
+            username: Data::Temporary(&*self.user as *const [u8]),
+            database: Data::Temporary(&*self.database as *const [u8]),
             auth_plugin_name: Data::Temporary(if let Some(plugin) = self.auth_plugin {
                 match plugin {
                     AuthMethod::MysqlNativePassword => b"mysql_native_password",
@@ -970,7 +970,7 @@ impl MySQLConnection {
             }),
             auth_response: Data::Empty,
             sequence_id: self.sequence_id,
-            ..Default::default()
+            connect_attrs: Default::default(),
         };
 
         // Add some basic connect attributes like mysql2
@@ -1014,7 +1014,7 @@ impl MySQLConnection {
 
         let response_writer = self.writer();
         let mut packet = response_writer.start(self.sequence_id)?;
-        response.write(response_writer)?;
+        response.write_internal(response_writer)?;
         packet.end()?;
         self.flush_data();
         Ok(())
@@ -1058,7 +1058,7 @@ impl MySQLConnection {
     
     pub fn handle_prepared_statement<C: ReaderContext>(
         &mut self,
-        reader: NewReader<C>,
+        mut reader: NewReader<C>,
         header_length: u32, // u24 in Zig
     ) -> Result<(), AnyMySQLError> {
         debug!("handlePreparedStatement");
@@ -1092,38 +1092,38 @@ impl MySQLConnection {
             // Disambiguation from a 0xFE length-prefixed row: any 0xFE packet below
             // the 16 MB max-packet marker (0xFFFFFF) is an EOF. See handleResultSet
             // for the full rationale.
-            if !self.capabilities.client_deprecate_eof()
+            if !self.capabilities.CLIENT_DEPRECATE_EOF
                 && header_length < 0xFFFFFF
-                && PacketType::from_raw(first_byte) == PacketType::EOF
+                && PacketType(first_byte) == PacketType::EOF
             {
                 let mut eof = EOFPacket::default();
-                eof.decode(reader)?;
+                eof.decode_internal(reader)?;
                 self.check_if_prepared_statement_is_done(statement);
                 return Ok(());
             }
             if (statement.params_received as usize) < statement.params.len() {
                 let mut column = ColumnDefinition41::default();
-                column.decode(reader)?;
+                column.decode(&mut reader)?;
                 statement.params[statement.params_received as usize] = Param {
                     r#type: column.column_type,
                     flags: column.flags,
                 };
                 statement.params_received += 1;
             } else if (statement.columns_received as usize) < statement.columns.len() {
-                statement.columns[statement.columns_received as usize].decode(reader)?;
+                statement.columns[statement.columns_received as usize].decode(&mut reader)?;
                 statement.columns_received += 1;
             }
             // In CLIENT_DEPRECATE_EOF mode, there are no trailing EOF packets, so
             // we check completion after each column/param definition. In legacy mode,
             // completion is deferred to the EOF handler above to avoid marking the
             // statement as prepared before the trailing EOF is consumed.
-            if self.capabilities.client_deprecate_eof() {
+            if self.capabilities.CLIENT_DEPRECATE_EOF {
                 self.check_if_prepared_statement_is_done(statement);
             }
             return Ok(());
         }
 
-        match PacketType::from_raw(first_byte) {
+        match PacketType(first_byte) {
             PacketType::OK => {
                 let mut ok = StmtPrepareOKPacket {
                     packet_length: header_length,

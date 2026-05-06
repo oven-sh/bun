@@ -70,8 +70,17 @@ pub struct JSMySQLConnection {
 }
 
 impl crate::jsc::JsClass for JSMySQLConnection {
+    fn to_js(self, global: &JSGlobalObject) -> JSValue {
+        js::to_js(Box::into_raw(Box::new(self)), global)
+    }
     fn from_js(value: JSValue) -> Option<*mut Self> {
         js::from_js(value)
+    }
+    fn from_js_direct(value: JSValue) -> Option<*mut Self> {
+        js::from_js_direct(value)
+    }
+    fn get_constructor(global: &JSGlobalObject) -> JSValue {
+        js::get_constructor(global)
     }
 }
 
@@ -392,7 +401,7 @@ impl JSMySQLConnection {
     fn update_reference_type(&mut self) {
         if self.connection.is_active() {
             bun_core::scoped_log!(MySQLConnection, "connection is active");
-            if self.js_value.is_not_empty() && self.js_value.is_weak() {
+            if self.js_value.is_not_empty() && !self.js_value.is_strong() {
                 bun_core::scoped_log!(MySQLConnection, "strong ref until connection is closed");
                 self.js_value.upgrade(self.global_object);
             }
@@ -419,7 +428,7 @@ impl JSMySQLConnection {
     ) -> JsResult<JSValue> {
         // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM via raw ptr,
         // no other live borrow in this scope.
-        let vm = unsafe { &mut *global_object.bun_vm_ptr() };
+        let vm = unsafe { &mut *global_object.bun_vm() };
         let arguments = callframe.arguments();
         let hostname_str = arguments[0].to_bun_string(global_object)?;
         // defer hostname_str.deref() — Drop on bun_str::String
@@ -602,7 +611,7 @@ impl JSMySQLConnection {
                     // reference outlives the `Box::from_raw` inside `deinit`.
                     let _ = this;
                     unsafe { Self::deref(ptr) };
-                    return global_object.throw_error(e, "failed to connect to mysql");
+                    return Err(global_object.throw_error(e.into(), "failed to connect to mysql"));
                 }
             };
             this.connection.set_socket(AnySocket::SocketTcp(socket));
@@ -865,7 +874,7 @@ impl JSMySQLConnection {
         let js_value = self.js_value.try_get().unwrap_or(JSValue::UNDEFINED);
         js_value.ensure_still_alive();
         self.global_object
-            .queue_microtask(on_connect, &[JSValue::NULL, js_value]);
+            .queue_microtask_callback(on_connect, &[JSValue::NULL, js_value]);
     }
 
     pub fn on_query_result(&mut self, request: &mut JSMySQLQuery, result: MySQLQueryResult) {

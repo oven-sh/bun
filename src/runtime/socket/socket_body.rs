@@ -2218,7 +2218,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         if this.socket.is_detached() {
             return Ok(JSValue::UNDEFINED);
         }
-        this.poll_ref.ref_(global.bun_vm());
+        let _ = global;
+        this.poll_ref
+            .ref_(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
         Ok(JSValue::UNDEFINED)
     }
 

@@ -2552,7 +2552,7 @@ impl Function {
             let ptr = global_object
                 .map(|g| g as *const _ as usize)
                 .unwrap_or(0);
-            let fmt = bun_fmt::hex_int_upper(ptr);
+            let fmt = bun_fmt::hex_int_upper(ptr as u64);
             write!(writer, "#define JS_GLOBAL_OBJECT (void*)0x{}ULL\n", fmt)?;
         }
 
@@ -2623,7 +2623,7 @@ impl Function {
 
         {
             let ptr = context_ptr.map(|p| p as usize).unwrap_or(0);
-            let fmt = bun_fmt::hex_int_upper(ptr);
+            let fmt = bun_fmt::hex_int_upper(ptr as u64);
 
             // TODO(port): std.fmt.bufPrint → write!-into-slice
             let written = if !self.arg_types.is_empty() {

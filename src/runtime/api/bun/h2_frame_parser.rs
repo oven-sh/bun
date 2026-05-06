@@ -5337,7 +5337,9 @@ impl H2FrameParser {
             }
 
             if let Some(signal_arg) = options.get(global_object, "signal")? {
-                if let Some(signal_) = signal_arg.as_::<AbortSignal>() {
+                if let Some(signal_ptr) = AbortSignal::from_js(signal_arg) {
+                    // SAFETY: `from_js` returns a live *mut AbortSignal owned by JSC; rooted via `signal_arg` on the stack.
+                    let signal_ = unsafe { &mut *signal_ptr };
                     if signal_.aborted() {
                         stream.state = StreamState::IDLE;
                         // SAFETY: FFI call; global_object is a valid &JSGlobalObject and reason/abort_reason() is rooted on the stack

@@ -2883,7 +2883,7 @@ where
         };
 
         let (content_type, needs_content_type, content_type_needs_free) =
-            get_content_type(response.get_init_headers(), &self.blob);
+            get_content_type(response.get_init_headers_mut(), &self.blob);
         let _ct_guard = scopeguard::guard((), |_| {
             if content_type_needs_free {
                 content_type.deinit();

@@ -1548,8 +1548,8 @@ impl<'a> PerThread<'a> {
 
     // Must be run at the top of the event loop
     pub fn load_bundled_module(&self, id: OpaqueFileId) -> Result<JSValue, bun_core::Error> {
-        // SAFETY: vm.global is a live *mut JSGlobalObject for the VM's lifetime.
-        let global = unsafe { &*self.vm.global };
+        // SAFETY: self.vm is the live per-thread VM; vm.global is live for VM lifetime.
+        let global = unsafe { &*(*self.vm).global };
         load_module(
             self.vm,
             global,

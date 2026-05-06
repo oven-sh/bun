@@ -666,10 +666,10 @@ pub enum ItemStatus {
 
 // ──────────────────────────────────────────────────────────────────────────
 // BSSList / BSSStringList / BSSMapInner — real method bodies follow below.
-// `init()` remains a Phase-B `unimplemented!()` (per-monomorphization
-// statics aren't expressible on stable Rust); all other methods are live so
-// dependents (`resolver::dir_info`, `bundler::linker`) can call
-// `get_or_put` / `put` / `mark_not_found` / `append` against real storage.
+// Per-monomorphization statics are emitted at the declare site via the
+// `bss_list!` / `bss_string_list!` / `bss_map_inner!` / `bss_map!` macros
+// (`SyncUnsafeCell<MaybeUninit<Self>>` + `Once` + `init_at`). `init()` is a
+// thin heap-allocating wrapper for callers that manage their own once-guard.
 // ──────────────────────────────────────────────────────────────────────────
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -682,6 +682,76 @@ pub enum ItemStatus {
 // ──────────────────────────────────────────────────────────────────────────
 pub mod allocators {
     pub use super::*;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Per-monomorphization singleton macros
+//
+// Zig defines `pub var instance: *Self = undefined; pub var loaded = false;`
+// *inside* the generic type, giving one static per instantiation. Rust forbids
+// generic statics, so the storage is emitted at the *declare site* instead:
+//
+//   bss_string_list! { pub dirname_store: 4096, 129 }
+//   // → static STORAGE: SyncUnsafeCell<MaybeUninit<BSSStringList<4096,129>>>
+//   //   pub fn dirname_store() -> &'static mut BSSStringList<4096,129>
+//
+// The accessor lazily field-initializes via `init_at` under `std::sync::Once`.
+// Returning `&'static mut` is the same aliasing contract as Zig's global
+// `instance` pointer — callers must not hold overlapping unique borrows.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Emit a `'static`-storage singleton accessor for any type with an
+/// `unsafe fn init_at(*mut Self)` in-place initializer.
+#[macro_export]
+macro_rules! bss_singleton {
+    ($(#[$m:meta])* $vis:vis fn $name:ident() -> $ty:ty) => {
+        $(#[$m])*
+        $vis fn $name() -> &'static mut $ty {
+            static STORAGE: ::core::cell::SyncUnsafeCell<::core::mem::MaybeUninit<$ty>> =
+                ::core::cell::SyncUnsafeCell::new(::core::mem::MaybeUninit::uninit());
+            static ONCE: ::std::sync::Once = ::std::sync::Once::new();
+            // SAFETY: STORAGE is private to this fn; ONCE ensures single init before any
+            // read; matches Zig's `var instance / var loaded` lazy-singleton pattern.
+            // Callers must not hold overlapping `&mut` (same contract as Zig's raw `*Self`).
+            unsafe {
+                let slot = (*STORAGE.get()).as_mut_ptr();
+                ONCE.call_once(|| <$ty>::init_at(slot));
+                &mut *slot
+            }
+        }
+    };
+}
+
+/// Declare a `BSSList<T, COUNT>` singleton accessor.
+#[macro_export]
+macro_rules! bss_list {
+    ($(#[$m:meta])* $vis:vis $name:ident : $value_ty:ty, $count:expr) => {
+        $crate::bss_singleton!($(#[$m])* $vis fn $name() -> $crate::BSSList<$value_ty, { $count }>);
+    };
+}
+
+/// Declare a `BSSStringList<COUNT, ITEM_LENGTH>` singleton accessor.
+#[macro_export]
+macro_rules! bss_string_list {
+    ($(#[$m:meta])* $vis:vis $name:ident : $count:expr, $item_len:expr) => {
+        $crate::bss_singleton!($(#[$m])* $vis fn $name() -> $crate::BSSStringList<{ $count }, { $item_len }>);
+    };
+}
+
+/// Declare a `BSSMapInner<T, COUNT, RM_SLASH>` (`store_keys=false`) singleton accessor.
+#[macro_export]
+macro_rules! bss_map_inner {
+    ($(#[$m:meta])* $vis:vis $name:ident : $value_ty:ty, $count:expr, $rm_slash:expr) => {
+        $crate::bss_singleton!($(#[$m])* $vis fn $name() -> $crate::BSSMapInner<$value_ty, { $count }, { $rm_slash }>);
+    };
+}
+
+/// Declare a `BSSMap<T, COUNT, EST_KEY_LEN, RM_SLASH>` (`store_keys=true`) singleton accessor.
+#[macro_export]
+macro_rules! bss_map {
+    ($(#[$m:meta])* $vis:vis $name:ident : $value_ty:ty, $count:expr, $est_key_len:expr, $rm_slash:expr) => {
+        $crate::bss_singleton!($(#[$m])* $vis fn $name() -> $crate::BSSMap<$value_ty, { $count }, { $est_key_len }, { $rm_slash }>);
+    };
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1092,19 +1162,45 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
     const MAX_INDEX: usize = COUNT - 1;
 
     // Zig: `pub var instance: *Self = undefined; pub var loaded = false;`
-    // TODO(port): Rust cannot define generic statics. Phase B: per-instantiation
-    // `static INSTANCE: SyncUnsafeCell<*mut BSSList<..>>` at each monomorphization site,
-    // or a `OnceLock`-backed registry keyed by `TypeId`.
+    // Rust cannot define generic statics, so the per-monomorphization storage is
+    // emitted at the *declare site* via `bss_list! { name: T, N }` (see macro
+    // below), which owns a `SyncUnsafeCell<MaybeUninit<Self>>` + `Once` and
+    // calls `init_at` on first access. `init()` is kept for callers that manage
+    // their own once-guard (e.g. `dir_info::hash_map_instance`); it heap-allocs
+    // a fresh instance each call.
 
     #[inline]
     pub fn block_index(index: u32 /* u31 */) -> usize {
         index as usize / BSS_LIST_CHUNK_SIZE
     }
 
+    /// In-place field initialization into uninitialized storage.
+    ///
+    /// SAFETY: `slot` must point to writable, properly-aligned, uninitialized
+    /// (or droppable-as-uninit) storage of `size_of::<Self>()` bytes that lives
+    /// for `'static`. `backing_buf` and `tail.data` are intentionally left
+    /// uninitialized (Zig leaves them `undefined`); only `[0..used]` is read.
+    pub unsafe fn init_at(slot: *mut Self) {
+        addr_of_mut!((*slot).mutex).write(Mutex::new());
+        addr_of_mut!((*slot).used).write(0);
+        addr_of_mut!((*slot).tail.used).write(AtomicU16::new(0));
+        addr_of_mut!((*slot).tail.prev).write(None);
+        // Zig: `instance.head = &instance.tail` — self-referential; raw NonNull.
+        let tail_ptr = addr_of_mut!((*slot).tail);
+        addr_of_mut!((*slot).head).write(Some(NonNull::new_unchecked(tail_ptr)));
+    }
+
+    /// Heap-allocate and initialize a fresh instance. The once-guard (Zig's
+    /// `loaded` flag) is the *caller's* responsibility — use `bss_list!` for
+    /// the canonical per-monomorphization singleton.
     pub fn init() -> &'static mut Self {
-        // TODO(port): per-monomorphization singleton; see note above.
-        // Zig: if !loaded { instance = create(Self); ...; loaded = true; } return instance;
-        unimplemented!("BSSList::init requires per-type static storage (Phase B)")
+        // Zig: `default_allocator.create(Self)` — route through mimalloc.
+        // SAFETY: FFI — mi_malloc returns null on OOM or a writable, suitably-aligned region.
+        let ptr = unsafe { mimalloc::mi_malloc_aligned(size_of::<Self>(), core::mem::align_of::<Self>()) } as *mut Self;
+        assert!(!ptr.is_null(), "OOM");
+        // SAFETY: ptr is a fresh, exclusively-owned, properly-aligned allocation; lives for
+        // process lifetime (singleton; never freed, matching Zig).
+        unsafe { Self::init_at(ptr); &mut *ptr }
     }
 
     // Zig `deinit` → `impl Drop for BSSList` below (PORTING.md: never expose `pub fn deinit`).
@@ -1268,13 +1364,44 @@ impl<const N: usize> BSSAppendable for [&[u8]; N] {
         }
     }
 }
+impl BSSAppendable for &[&[u8]] {
+    fn total_len(&self) -> usize { self.iter().map(|s| s.len()).sum() }
+    fn copy_into(&self, dst: &mut [u8]) {
+        let mut remainder = dst;
+        for val in *self {
+            remainder[..val.len()].copy_from_slice(val);
+            remainder = &mut remainder[val.len()..];
+        }
+    }
+}
 
 impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LENGTH> {
     const MAX_INDEX: usize = COUNT - 1;
 
+    /// In-place field initialization into uninitialized storage.
+    ///
+    /// SAFETY: `slot` must point to writable, properly-aligned, uninitialized
+    /// storage of `size_of::<Self>()` bytes that lives for `'static`.
+    pub unsafe fn init_at(slot: *mut Self) {
+        addr_of_mut!((*slot).mutex).write(Mutex::new());
+        addr_of_mut!((*slot).backing_buf).write(vec![0u8; COUNT * ITEM_LENGTH].into_boxed_slice());
+        addr_of_mut!((*slot).backing_buf_used).write(0);
+        addr_of_mut!((*slot).slice_buf).write(vec![&[][..]; COUNT].into_boxed_slice());
+        addr_of_mut!((*slot).slice_buf_used).write(0);
+        // SAFETY: `OverflowList` is `{ count: u32, list: { used,allocated: u16, ptrs: [Option<Box<_>>; N] } }`.
+        // `Option<Box<_>>` is null-niche-optimized → all-zeros is `[None; N]`; integers zero is valid.
+        core::ptr::write_bytes(addr_of_mut!((*slot).overflow_list), 0u8, 1);
+    }
+
+    /// Heap-allocate and initialize a fresh instance. Once-guard is the caller's
+    /// responsibility — use `bss_string_list!` for the canonical singleton.
     pub fn init() -> &'static mut Self {
-        // TODO(port): per-monomorphization singleton (see BSSList note).
-        unimplemented!("BSSStringList::init requires per-type static storage (Phase B)")
+        // SAFETY: FFI — mi_malloc_aligned returns null on OOM or a writable, suitably-aligned region.
+        let ptr = unsafe { mimalloc::mi_malloc_aligned(size_of::<Self>(), core::mem::align_of::<Self>()) } as *mut Self;
+        assert!(!ptr.is_null(), "OOM");
+        // SAFETY: ptr is a fresh, exclusively-owned, properly-aligned allocation; lives for
+        // process lifetime (singleton; never freed, matching Zig).
+        unsafe { Self::init_at(ptr); &mut *ptr }
     }
 
     // Zig `deinit`: just frees `instance`. Handled by dropping the singleton Box in Phase B.
@@ -1448,9 +1575,28 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
 {
     const MAX_INDEX: usize = COUNT - 1;
 
+    /// In-place field initialization into uninitialized storage.
+    ///
+    /// SAFETY: `slot` must point to writable, properly-aligned, uninitialized
+    /// storage of `size_of::<Self>()` bytes that lives for `'static`.
+    /// `backing_buf` is intentionally left uninitialized; only `[0..used]` is read.
+    pub unsafe fn init_at(slot: *mut Self) {
+        addr_of_mut!((*slot).mutex).write(Mutex::new());
+        addr_of_mut!((*slot).index).write(IndexMap::default());
+        addr_of_mut!((*slot).backing_buf_used).write(0);
+        // SAFETY: `OverflowList` is all-zeros-valid (see BSSStringList::init_at note).
+        core::ptr::write_bytes(addr_of_mut!((*slot).overflow_list), 0u8, 1);
+    }
+
+    /// Heap-allocate and initialize a fresh instance. Once-guard is the caller's
+    /// responsibility — use `bss_map_inner!` for the canonical singleton.
     pub fn init() -> &'static mut Self {
-        // TODO(port): per-monomorphization singleton (see BSSList note).
-        unimplemented!("BSSMapInner::init requires per-type static storage (Phase B)")
+        // SAFETY: FFI — mi_malloc_aligned returns null on OOM or a writable, suitably-aligned region.
+        let ptr = unsafe { mimalloc::mi_malloc_aligned(size_of::<Self>(), core::mem::align_of::<Self>()) } as *mut Self;
+        assert!(!ptr.is_null(), "OOM");
+        // SAFETY: ptr is a fresh, exclusively-owned, properly-aligned allocation; lives for
+        // process lifetime (singleton; never freed, matching Zig).
+        unsafe { Self::init_at(ptr); &mut *ptr }
     }
 
     // Zig `deinit`: `self.index.deinit(allocator)` then free instance.
@@ -1620,9 +1766,32 @@ pub struct BSSMap<
 impl<ValueType, const COUNT: usize, const ESTIMATED_KEY_LENGTH: usize, const REMOVE_TRAILING_SLASHES: bool>
     BSSMap<ValueType, COUNT, ESTIMATED_KEY_LENGTH, REMOVE_TRAILING_SLASHES>
 {
+    /// In-place field initialization into uninitialized storage.
+    ///
+    /// SAFETY: `slot` must point to writable, properly-aligned, uninitialized
+    /// storage of `size_of::<Self>()` bytes that lives for `'static`.
+    pub unsafe fn init_at(slot: *mut Self) {
+        // Inner map: heap via Box<MaybeUninit> + init_at (backing_buf left uninit).
+        let mut inner: Box<MaybeUninit<BSSMapInner<ValueType, COUNT, REMOVE_TRAILING_SLASHES>>> =
+            Box::new_uninit();
+        BSSMapInner::init_at(inner.as_mut_ptr());
+        addr_of_mut!((*slot).map).write(inner.assume_init());
+        addr_of_mut!((*slot).key_list_buffer)
+            .write(vec![0u8; COUNT * ESTIMATED_KEY_LENGTH].into_boxed_slice());
+        addr_of_mut!((*slot).key_list_buffer_used).write(0);
+        addr_of_mut!((*slot).key_list_slices).write(vec![&[][..]; COUNT].into_boxed_slice());
+        addr_of_mut!((*slot).key_list_overflow).write(Vec::new());
+    }
+
+    /// Heap-allocate and initialize a fresh instance. Once-guard is the caller's
+    /// responsibility — use `bss_map!` for the canonical singleton.
     pub fn init() -> &'static mut Self {
-        // TODO(port): per-monomorphization singleton.
-        unimplemented!("BSSMap::init requires per-type static storage (Phase B)")
+        // SAFETY: FFI — mi_malloc_aligned returns null on OOM or a writable, suitably-aligned region.
+        let ptr = unsafe { mimalloc::mi_malloc_aligned(size_of::<Self>(), core::mem::align_of::<Self>()) } as *mut Self;
+        assert!(!ptr.is_null(), "OOM");
+        // SAFETY: ptr is a fresh, exclusively-owned, properly-aligned allocation; lives for
+        // process lifetime (singleton; never freed, matching Zig).
+        unsafe { Self::init_at(ptr); &mut *ptr }
     }
 
     // Zig `deinit`: `self.map.deinit()` then free instance — both handled by Drop.

@@ -5,7 +5,8 @@
 //! (`print_expr`, `print_stmt`, `print_binding`, `print_property`, …) now
 //! compile against the real `bun_js_parser::ast::{e,s,b,g,op,expr,stmt}`
 //! types. The top-level `print` / `print_with_writer{,_and_platform}` /
-//! `print_common_js` / `get_source_map_builder` driver fns are live. Remaining
+//! `print_common_js` / `get_source_map_builder` driver fns are live at crate
+//! root (the `__gated_entry_points` wrapper has been flattened). Remaining
 //! `#[cfg(any())]` islands are leaf optimizations blocked on lower-tier surface
 //! (see TODO(b2-blocked) markers below): the template-inlining fold, the
 //! ESM-to-CJS __export emission path, `print_dev_server_module`, the source-map

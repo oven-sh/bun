@@ -198,25 +198,22 @@ impl From<FromExprError> for bun_core::Error {
 }
 
 impl PnpmMatcher {
-    // B-2 UN-GATED (signature): `bun_logger::ast::Expr` / `Log` / `Source` now
-    // resolve, so the fn is part of the public surface and downstream
-    // `ini`/`bunfig` callers can name it.
-    //
-    // TODO(b2-blocked): bun_logger::ast::ExprData — currently an opaque
-    // `struct ExprData(())` stub, not the real tagged enum. The body pattern-
-    // matches on `ExprData::EString` / `ExprData::EArray` and calls
-    // `E::String::slice` / `Expr::as_string_cloned` (both `todo!()` in the T2
-    // stub and with divergent arena-taking signatures). Body stays gated until
-    // the value-shaped AST MOVE_DOWN (bun_js_parser→bun_logger) lands the real
-    // variant set; un-gating then only needs the `match` arms reconciled.
+    // B-2 UN-GATED: bun_logger::ast::ExprData now exposes the real value-shaped
+    // enum (`EString`/`EArray` via `StoreRef<E::*>`). `match` arms reconciled
+    // against the arena-taking `E::String::slice` / `Expr::as_string_cloned`
+    // signatures — Zig's `allocator` param maps to a local `bun_alloc::Arena`
+    // (PORTING.md §Allocators: AST=bumpalo) used only for transient UTF-16→UTF-8
+    // transcoding inside `slice`/`string_cloned`.
     pub fn from_expr(
         expr: &ast::Expr,
         log: &mut logger::Log,
         source: &logger::Source,
     ) -> Result<PnpmMatcher, FromExprError> {
-        #[cfg(any())]
-        {
         let mut buf: Vec<u8> = Vec::new();
+        // Scratch arena for `E::String::slice` / `as_string_cloned` (Zig passed
+        // `allocator`). Freed on return; the patterns are consumed by
+        // `create_matcher` before then.
+        let arena = Arena::new();
 
         // bun.jsc.initialize(false) is now performed lazily inside
         // REGEX_VTABLE.compile (tier-6 owns it).
@@ -225,9 +222,9 @@ impl PnpmMatcher {
         let mut has_include = false;
         let mut has_exclude = false;
 
-        match &expr.data {
-            ast::ExprData::EString(s) => {
-                let pattern = s.slice();
+        match expr.data {
+            ast::ExprData::EString(mut s) => {
+                let pattern = s.slice(&arena);
                 let matcher = match create_matcher(pattern, &mut buf) {
                     Ok(m) => m,
                     Err(CreateMatcherError::OutOfMemory) => {
@@ -252,8 +249,7 @@ impl PnpmMatcher {
             }
             ast::ExprData::EArray(patterns) => {
                 for pattern_expr in patterns.slice() {
-                    if let Some(pattern) = pattern_expr.as_string_cloned()? {
-                        let pattern: &[u8] = pattern.as_ref();
+                    if let Some(pattern) = pattern_expr.as_string_cloned(&arena)? {
                         let matcher = match create_matcher(pattern, &mut buf) {
                             Ok(m) => m,
                             Err(CreateMatcherError::OutOfMemory) => {
@@ -314,13 +310,10 @@ impl PnpmMatcher {
             Behavior::HasExcludeAndIncludeMatchers
         };
 
-        return Ok(PnpmMatcher {
+        Ok(PnpmMatcher {
             matchers: matchers.into_boxed_slice(),
             behavior,
-        });
-        } // end #[cfg(any())] body
-        let _ = (expr, log, source);
-        todo!("PnpmMatcher::from_expr — blocked on bun_logger::ast::ExprData enum variants (MOVE_DOWN pending from bun_js_parser)")
+        })
     }
 
     pub fn is_match(&self, name: &[u8]) -> bool {
@@ -444,5 +437,5 @@ pub fn create_matcher(raw: &[u8], buf: &mut Vec<u8>) -> Result<Matcher, CreateMa
 //   todos:      2
 //   notes:      jsc::RegularExpression erased behind REGEX_VTABLE hook
 //               (tier-6 registers in bun_runtime::init — Pass C).
-//               from_expr() re-gated on bun_logger::ast (CYCLEBREAK pending).
+//               from_expr() un-gated (B-2): bun_logger::ast::ExprData landed.
 // ──────────────────────────────────────────────────────────────────────────

@@ -1,66 +1,67 @@
 use crate as css;
-use crate::css_rules::Location;
-use crate::{PrintErr, Printer, Result};
-
-use bun_collections::{ArrayHashMap, BabyList};
-use bun_options_types::ImportRecord;
-use bun_str::strings;
+use crate::css_rules::{CssRuleList, Location, MinifyContext};
+use crate::error::MinifyErr;
+use crate::properties::PropertyId;
+use crate::{PrintErr, Printer};
 
 /// A [`<supports-condition>`](https://drafts.csswg.org/css-conditional-3/#typedef-supports-condition),
 /// as used in the `@supports` and `@import` rules.
-pub enum SupportsCondition<'i> {
+// PORT NOTE: Zig threaded the parser-input lifetime (`[]const u8` slices borrow
+// the source). Phase A keeps `&'static [u8]` per PORTING.md §AST crates; Phase
+// B re-threads `'i` once `PropertyId<'i>` and the parser arena are real.
+pub enum SupportsCondition {
     /// A `not` expression.
-    Not(Box<SupportsCondition<'i>>),
+    Not(Box<SupportsCondition>),
 
     /// An `and` expression.
-    And(Vec<SupportsCondition<'i>>),
+    And(Vec<SupportsCondition>),
 
     /// An `or` expression.
-    Or(Vec<SupportsCondition<'i>>),
+    Or(Vec<SupportsCondition>),
 
     /// A declaration to evaluate.
-    Declaration(Declaration<'i>),
+    Declaration(Declaration),
 
     /// A selector to evaluate.
-    Selector(&'i [u8]),
+    Selector(&'static [u8]),
 
     /// An unknown condition.
-    Unknown(&'i [u8]),
+    Unknown(&'static [u8]),
 }
 
 // PORT NOTE: Zig used an anonymous inline struct for the `.declaration` payload;
 // hoisted to a named type because Rust enum variants cannot carry inherent methods.
-pub struct Declaration<'i> {
+pub struct Declaration {
     /// The property id for the declaration.
-    pub property_id: css::PropertyId<'i>,
+    pub property_id: PropertyId,
     /// The raw value of the declaration.
     ///
     /// What happens if the value is a URL? A URL in this context does nothing
     /// e.g. `@supports (background-image: url('example.png'))`
-    pub value: &'i [u8],
+    pub value: &'static [u8],
 }
 
-impl<'i> Declaration<'i> {
+impl Declaration {
     pub fn eql(&self, other: &Self) -> bool {
         // TODO(port): css.implementEql is comptime-reflection equality — replace with #[derive(PartialEq)] in Phase B
         css::implement_eql(self, other)
     }
 
-    pub fn deep_clone(&self, bump: &'i bun_alloc::Arena) -> Self {
+    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self {
         // TODO(port): css.implementDeepClone is comptime-reflection clone — replace with derive/trait in Phase B
         css::implement_deep_clone(self, bump)
     }
 }
 
-impl<'i> SupportsCondition<'i> {
+impl SupportsCondition {
     // PORT NOTE: `pub fn deinit` dropped — body only freed Box/Vec payloads which Rust
     // drops automatically. Input-slice variants (`Declaration`/`Selector`/`Unknown`)
     // were no-ops in Zig as well (arena/input-owned).
 
     pub fn clone_with_import_records(
         &self,
-        bump: &'i bun_alloc::Arena,
-        _: &mut BabyList<ImportRecord>,
+        bump: &bun_alloc::Arena,
+        _: &mut bun_collections::BabyList<bun_options_types::ImportRecord>,
     ) -> Self {
         self.deep_clone(bump)
     }
@@ -70,17 +71,17 @@ impl<'i> SupportsCondition<'i> {
         css::implement_hash(self, hasher)
     }
 
-    pub fn eql(&self, other: &SupportsCondition<'i>) -> bool {
+    pub fn eql(&self, other: &SupportsCondition) -> bool {
         // TODO(port): css.implementEql is comptime-reflection — replace with #[derive(PartialEq)] in Phase B
         css::implement_eql(self, other)
     }
 
-    pub fn deep_clone(&self, bump: &'i bun_alloc::Arena) -> SupportsCondition<'i> {
+    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> SupportsCondition {
         // TODO(port): css.implementDeepClone is comptime-reflection — replace with derive/trait in Phase B
         css::implement_deep_clone(self, bump)
     }
 
-    fn needs_parens(&self, parent: &SupportsCondition<'i>) -> bool {
+    fn needs_parens(&self, parent: &SupportsCondition) -> bool {
         match self {
             SupportsCondition::Not(_) => true,
             SupportsCondition::And(_) => !matches!(parent, SupportsCondition::And(_)),
@@ -89,7 +90,130 @@ impl<'i> SupportsCondition<'i> {
         }
     }
 
-    pub fn parse(input: &mut css::Parser<'i, '_>) -> Result<SupportsCondition<'i>> {
+    pub fn to_css_with_parens_if_needed(
+        &self,
+        dest: &mut Printer,
+        needs_parens: bool,
+    ) -> core::result::Result<(), PrintErr> {
+        if needs_parens {
+            dest.write_str(b"(")?;
+        }
+        self.to_css(dest)?;
+        if needs_parens {
+            dest.write_str(b")")?;
+        }
+        Ok(())
+    }
+
+    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        match self {
+            SupportsCondition::Not(condition) => {
+                dest.write_str(b" not ")?;
+                condition.to_css_with_parens_if_needed(dest, condition.needs_parens(self))?;
+            }
+            SupportsCondition::And(conditions) => {
+                let mut first = true;
+                for cond in conditions.iter() {
+                    if first {
+                        first = false;
+                    } else {
+                        dest.write_str(b" and ")?;
+                    }
+                    cond.to_css_with_parens_if_needed(dest, cond.needs_parens(self))?;
+                }
+            }
+            SupportsCondition::Or(conditions) => {
+                let mut first = true;
+                for cond in conditions.iter() {
+                    if first {
+                        first = false;
+                    } else {
+                        dest.write_str(b" or ")?;
+                    }
+                    cond.to_css_with_parens_if_needed(dest, cond.needs_parens(self))?;
+                }
+            }
+            SupportsCondition::Declaration(decl) => {
+                Self::declaration_to_css(decl, dest)?;
+            }
+            SupportsCondition::Selector(sel) => {
+                dest.write_str(b"selector(")?;
+                dest.write_str(sel)?;
+                dest.write_char(b')')?;
+            }
+            SupportsCondition::Unknown(unk) => {
+                dest.write_str(unk)?;
+            }
+        }
+        Ok(())
+    }
+
+    // blocked_on: properties::PropertyId::{prefix,name,with_prefix,add_prefix} —
+    // PropertyId is the data-only `()` stub until properties_generated.rs un-gates.
+    #[cfg(any())]
+    fn declaration_to_css(decl: &Declaration, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        let property_id = &decl.property_id;
+        let value = decl.value;
+
+        dest.write_char(b'(')?;
+
+        let prefix: css::VendorPrefix = property_id.prefix().or_none();
+        if prefix != css::VendorPrefix::NONE {
+            dest.write_char(b'(')?;
+        }
+
+        let name = property_id.name();
+        let mut first = true;
+        // TODO(port): `inline for (css.VendorPrefix.FIELDS) |field| { if @field(prefix, field) ... }`
+        // iterates the packed-struct bool fields at comptime. VendorPrefix ports to
+        // bitflags!; iterate the per-flag constants here. Phase B: confirm
+        // css::VendorPrefix exposes a FIELDS/iter() that matches Zig field order.
+        for &flag in css::VendorPrefix::FIELDS {
+            if prefix.contains(flag) {
+                if first {
+                    first = false;
+                } else {
+                    dest.write_str(b") or (")?;
+                }
+
+                let mut p = css::VendorPrefix::empty();
+                p |= flag;
+                // TODO(port): `p` is constructed but unused in the Zig source as well —
+                // likely intended to feed a prefixed-name serializer. Ported faithfully.
+                let _ = p;
+                css::serializer::serialize_name(name, dest)
+                    .map_err(|_| dest.add_fmt_error())?;
+                dest.delim(b':', false)?;
+                dest.write_str(value)?;
+            }
+        }
+
+        if prefix != css::VendorPrefix::NONE {
+            dest.write_char(b')')?;
+        }
+        dest.write_char(b')')?;
+        Ok(())
+    }
+    #[cfg(not(any()))]
+    fn declaration_to_css(_decl: &Declaration, _dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        // unreachable until properties_generated un-gates and the parse() body
+        // below starts producing Declaration variants.
+        todo!("bun_css::SupportsCondition::Declaration::to_css — gated on properties::PropertyId un-gate")
+    }
+}
+
+// ─── parse bodies ─────────────────────────────────────────────────────────
+// blocked_on: css_parser::Parser::{try_parse,expect_ident,expect_ident_matching,
+// expect_colon,expect_no_error_token,skip_whitespace,position,slice_from,next,
+// parse_nested_block,allocator,current_source_location} signatures and
+// PropertyId::{parse,with_prefix,prefix,add_prefix}. The grammar body below is
+// the full port of supports.zig:73-244 and re-lands when those siblings un-gate.
+#[cfg(any())]
+impl SupportsCondition {
+    pub fn parse<'i>(input: &mut css::Parser<'i, '_>) -> css::Result<SupportsCondition> {
+        use bun_collections::ArrayHashMap;
+        use bun_string::strings;
+
         if input
             .try_parse(|i| i.expect_ident_matching(b"not"))
             .is_ok()
@@ -107,16 +231,16 @@ impl<'i> SupportsCondition<'i> {
         };
         let mut expected_type: Option<i32> = None;
         // PERF(port): was arena-backed ArrayListUnmanaged — profile in Phase B
-        let mut conditions: Vec<SupportsCondition<'i>> = Vec::new();
+        let mut conditions: Vec<SupportsCondition> = Vec::new();
         // PORT NOTE: Zig used std.ArrayHashMap with an inline custom hash/eql context;
         // SeenDeclKey below carries equivalent Hash/Eq impls.
-        let mut seen_declarations: ArrayHashMap<SeenDeclKey<'i>, usize> = ArrayHashMap::new();
+        let mut seen_declarations: ArrayHashMap<SeenDeclKey, usize> = ArrayHashMap::new();
 
         loop {
             // PORT NOTE: reshaped for borrowck — Zig threaded `*?i32` through a
             // local `Closure` struct (LIFETIMES.tsv: BORROW_PARAM); a Rust closure
             // capturing `&mut expected_type` is the direct equivalent.
-            let _condition = input.try_parse(|i: &mut css::Parser<'i, '_>| -> Result<SupportsCondition<'i>> {
+            let _condition = input.try_parse(|i: &mut css::Parser<'i, '_>| -> css::Result<SupportsCondition> {
                 let location = i.current_source_location();
                 let s = match i.expect_ident() {
                     Ok(vv) => vv,
@@ -203,8 +327,8 @@ impl<'i> SupportsCondition<'i> {
         Ok(in_parens)
     }
 
-    pub fn parse_declaration(input: &mut css::Parser<'i, '_>) -> Result<SupportsCondition<'i>> {
-        let property_id = match css::PropertyId::parse(input) {
+    pub fn parse_declaration<'i>(input: &mut css::Parser<'i, '_>) -> css::Result<SupportsCondition> {
+        let property_id = match PropertyId::parse(input) {
             Ok(v) => v,
             Err(e) => return Err(e),
         };
@@ -222,7 +346,8 @@ impl<'i> SupportsCondition<'i> {
         }))
     }
 
-    fn parse_in_parens(input: &mut css::Parser<'i, '_>) -> Result<SupportsCondition<'i>> {
+    fn parse_in_parens<'i>(input: &mut css::Parser<'i, '_>) -> css::Result<SupportsCondition> {
+        use bun_string::strings;
         input.skip_whitespace();
         let location = input.current_source_location();
         let pos = input.position();
@@ -236,7 +361,7 @@ impl<'i> SupportsCondition<'i> {
                     fn parse_nested_block_fn<'i>(
                         _: (),
                         i: &mut css::Parser<'i, '_>,
-                    ) -> Result<SupportsCondition<'i>> {
+                    ) -> css::Result<SupportsCondition> {
                         let p = i.position();
                         if let Some(e) = i.expect_no_error_token().err() {
                             return Err(e);
@@ -273,111 +398,16 @@ impl<'i> SupportsCondition<'i> {
 
         Ok(SupportsCondition::Unknown(input.slice_from(pos)))
     }
-
-    pub fn to_css(&self, dest: &mut css::Printer) -> core::result::Result<(), PrintErr> {
-        match self {
-            SupportsCondition::Not(condition) => {
-                dest.write_str(b" not ")?;
-                condition.to_css_with_parens_if_needed(dest, condition.needs_parens(self))?;
-            }
-            SupportsCondition::And(conditions) => {
-                let mut first = true;
-                for cond in conditions.iter() {
-                    if first {
-                        first = false;
-                    } else {
-                        dest.write_str(b" and ")?;
-                    }
-                    cond.to_css_with_parens_if_needed(dest, cond.needs_parens(self))?;
-                }
-            }
-            SupportsCondition::Or(conditions) => {
-                let mut first = true;
-                for cond in conditions.iter() {
-                    if first {
-                        first = false;
-                    } else {
-                        dest.write_str(b" or ")?;
-                    }
-                    cond.to_css_with_parens_if_needed(dest, cond.needs_parens(self))?;
-                }
-            }
-            SupportsCondition::Declaration(decl) => {
-                let property_id = &decl.property_id;
-                let value = decl.value;
-
-                dest.write_char(b'(')?;
-
-                let prefix: css::VendorPrefix = property_id.prefix().or_none();
-                if prefix != css::VendorPrefix::NONE {
-                    dest.write_char(b'(')?;
-                }
-
-                let name = property_id.name();
-                let mut first = true;
-                // TODO(port): `inline for (css.VendorPrefix.FIELDS) |field| { if @field(prefix, field) ... }`
-                // iterates the packed-struct bool fields at comptime. VendorPrefix ports to
-                // bitflags!; iterate the per-flag constants here. Phase B: confirm
-                // css::VendorPrefix exposes a FIELDS/iter() that matches Zig field order.
-                for &flag in css::VendorPrefix::FIELDS {
-                    if prefix.contains(flag) {
-                        if first {
-                            first = false;
-                        } else {
-                            dest.write_str(b") or (")?;
-                        }
-
-                        let mut p = css::VendorPrefix::empty();
-                        p |= flag;
-                        // TODO(port): `p` is constructed but unused in the Zig source as well —
-                        // likely intended to feed a prefixed-name serializer. Ported faithfully.
-                        let _ = p;
-                        css::serializer::serialize_name(name, dest)
-                            .map_err(|_| dest.add_fmt_error())?;
-                        dest.delim(b':', false)?;
-                        dest.write_str(value)?;
-                    }
-                }
-
-                if prefix != css::VendorPrefix::NONE {
-                    dest.write_char(b')')?;
-                }
-                dest.write_char(b')')?;
-            }
-            SupportsCondition::Selector(sel) => {
-                dest.write_str(b"selector(")?;
-                dest.write_str(sel)?;
-                dest.write_char(b')')?;
-            }
-            SupportsCondition::Unknown(unk) => {
-                dest.write_str(unk)?;
-            }
-        }
-        Ok(())
-    }
-
-    pub fn to_css_with_parens_if_needed(
-        &self,
-        dest: &mut css::Printer,
-        needs_parens: bool,
-    ) -> core::result::Result<(), PrintErr> {
-        if needs_parens {
-            dest.write_str(b"(")?;
-        }
-        self.to_css(dest)?;
-        if needs_parens {
-            dest.write_str(b")")?;
-        }
-        Ok(())
-    }
 }
 
 // PORT NOTE: Zig `SeenDeclKey` was a tuple struct with an inline hash-map context
 // providing custom hash/eql. Ported as a tuple struct with manual Hash/PartialEq
 // matching the Zig context exactly (wrapping_add of string hash and enum int).
-struct SeenDeclKey<'i>(css::PropertyId<'i>, &'i [u8]);
+#[cfg(any())]
+struct SeenDeclKey(PropertyId, &'static [u8]);
 
-impl<'i> core::hash::Hash for SeenDeclKey<'i> {
+#[cfg(any())]
+impl core::hash::Hash for SeenDeclKey {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         // TODO(port): Zig used std.array_hash_map.hashString (wyhash, 32-bit) +% @intFromEnum.
         // bun_collections::ArrayHashMap is wyhash-backed; confirm hasher parity in Phase B.
@@ -387,24 +417,42 @@ impl<'i> core::hash::Hash for SeenDeclKey<'i> {
     }
 }
 
-impl<'i> PartialEq for SeenDeclKey<'i> {
+#[cfg(any())]
+impl PartialEq for SeenDeclKey {
     fn eq(&self, other: &Self) -> bool {
         (self.0 as u32) == (other.0 as u32) && self.1 == other.1
     }
 }
-impl<'i> Eq for SeenDeclKey<'i> {}
+#[cfg(any())]
+impl Eq for SeenDeclKey {}
 
 /// A [@supports](https://drafts.csswg.org/css-conditional-3/#at-supports) rule.
-pub struct SupportsRule<'i, R> {
+pub struct SupportsRule<R> {
     /// The supports condition.
-    pub condition: SupportsCondition<'i>,
+    pub condition: SupportsCondition,
     /// The rules within the `@supports` rule.
-    pub rules: css::CssRuleList<'i, R>,
+    pub rules: CssRuleList<R>,
     /// The location of the rule in the source file.
     pub loc: Location,
 }
 
-impl<'i, R> SupportsRule<'i, R> {
+impl<R> SupportsRule<R> {
+    pub fn minify(
+        &mut self,
+        context: &mut MinifyContext,
+        parent_is_unused: bool,
+    ) -> core::result::Result<(), MinifyErr> {
+        let _ = self;
+        let _ = context;
+        let _ = parent_is_unused;
+        // TODO: Implement this
+        Ok(())
+    }
+}
+
+// blocked_on: CssRuleList::to_css (gated in rules/mod.rs).
+#[cfg(any())]
+impl<R> SupportsRule<R> {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
@@ -422,19 +470,7 @@ impl<'i, R> SupportsRule<'i, R> {
         Ok(())
     }
 
-    pub fn minify(
-        &mut self,
-        context: &mut css::MinifyContext,
-        parent_is_unused: bool,
-    ) -> core::result::Result<(), css::MinifyErr> {
-        let _ = self;
-        let _ = context;
-        let _ = parent_is_unused;
-        // TODO: Implement this
-        Ok(())
-    }
-
-    pub fn deep_clone(&self, bump: &'i bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // TODO(port): css.implementDeepClone is comptime-reflection — replace with derive/trait in Phase B
         css::implement_deep_clone(self, bump)
     }
@@ -445,5 +481,5 @@ impl<'i, R> SupportsRule<'i, R> {
 //   source:     src/css/rules/supports.zig (419 lines)
 //   confidence: medium
 //   todos:      9
-//   notes:      'i lifetime threads input-slice borrows; css::implement_{eql,hash,deep_clone} are reflection helpers needing derive/trait in Phase B; VendorPrefix::FIELDS iteration needs bitflags iter; `p` in to_css is dead in Zig source too
+//   notes:      data types un-gated; SupportsCondition::to_css real (Declaration arm gated on PropertyId methods); parse/parse_declaration/parse_in_parens + SeenDeclKey gated on Parser API surface + PropertyId; SupportsRule::to_css/deep_clone gated on CssRuleList::to_css; 'i lifetime dropped until PropertyId<'i> threads
 // ──────────────────────────────────────────────────────────────────────────

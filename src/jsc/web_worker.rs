@@ -81,7 +81,8 @@ use bun_alloc::MimallocArena;
 use bun_string::{String as BunString, WTFStringImpl};
 use bun_threading::{Futex, Mutex};
 
-use crate::{self as jsc, JSGlobalObject, JSValue, VirtualMachine};
+use crate::virtual_machine::VirtualMachine;
+use crate::{self as jsc, JSGlobalObject, JSValue};
 
 bun_core::declare_scope!(Worker, hidden);
 

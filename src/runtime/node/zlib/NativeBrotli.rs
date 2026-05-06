@@ -1,6 +1,62 @@
-use core::cell::Cell;
-use core::ffi::{c_int, c_uint, c_void};
+use core::ffi::{c_int, c_void};
 use core::ptr::{self, NonNull};
+
+use bun_brotli::c;
+type Op = c::BrotliEncoderOperation;
+// TODO(port): exact path — Zig: bun.brotli.c.BrotliEncoder.Operation
+
+// ─── type defs (real) ─────────────────────────────────────────────────────
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union LastResult {
+    pub e: c_int,
+    pub d: c::BrotliDecoderResult,
+}
+
+pub struct Context {
+    pub mode: bun_zlib::NodeMode,
+    pub state: Option<NonNull<c_void>>,
+
+    pub next_in: *const u8,
+    pub next_out: *mut u8,
+    pub avail_in: usize,
+    pub avail_out: usize,
+
+    pub flush: Op,
+
+    pub last_result: LastResult,
+    pub error_: c::BrotliDecoderErrorCode2,
+}
+
+impl Default for Context {
+    fn default() -> Self {
+        Self {
+            mode: bun_zlib::NodeMode::NONE,
+            state: None,
+            next_in: ptr::null(),
+            next_out: ptr::null_mut(),
+            avail_in: 0,
+            avail_out: 0,
+            flush: Op::process,
+            // SAFETY: all-zero is a valid LastResult (c_int 0 / enum 0).
+            last_result: unsafe { core::mem::zeroed() },
+            error_: c::BrotliDecoderErrorCode2::NO_ERROR,
+        }
+    }
+}
+
+// ─── gated: JsClass payload + host fns + Context method bodies ────────────
+// `NativeBrotli` carries `#[bun_jsc::JsClass]`; `impl Context` calls
+// `Error::init(&str, ..)` and uses brotli-C variant names that diverge from
+// `bun_brotli_sys` (e.g. `BrotliDecoderResult::Error` vs `::err`). Unblocking
+// requires aligning those signatures — Phase B.
+// TODO(b2-blocked): un-gate once bun_jsc JsClass + Error::init str overload + brotli_c variant names settle.
+#[cfg(any())]
+mod _impl {
+use super::*;
+use core::cell::Cell;
+use core::ffi::c_uint;
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, Strong};
 use bun_str::ZStr;
@@ -184,49 +240,6 @@ impl<'a> NativeBrotli<'a> {
         // bun.destroy(this) — freeing self is handled by IntrusiveRc / Box::from_raw.
     }
 }
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub union LastResult {
-    pub e: c_int,
-    pub d: c::BrotliDecoderResult,
-}
-
-pub struct Context {
-    pub mode: bun_zlib::NodeMode,
-    pub state: Option<NonNull<c_void>>,
-
-    pub next_in: *const u8,
-    pub next_out: *mut u8,
-    pub avail_in: usize,
-    pub avail_out: usize,
-
-    pub flush: Op,
-
-    pub last_result: LastResult,
-    pub error_: c::BrotliDecoderErrorCode2,
-}
-
-impl Default for Context {
-    fn default() -> Self {
-        Self {
-            mode: bun_zlib::NodeMode::NONE,
-            state: None,
-            next_in: ptr::null(),
-            next_out: ptr::null_mut(),
-            avail_in: 0,
-            avail_out: 0,
-            flush: Op::Process,
-            // SAFETY: all-zero is a valid LastResult (c_int 0 / enum 0).
-            last_result: unsafe { core::mem::zeroed() },
-            error_: c::BrotliDecoderErrorCode2::NO_ERROR,
-        }
-    }
-}
-
-use bun_brotli::c;
-type Op = c::BrotliEncoderOperation;
-// TODO(port): exact path — Zig: bun.brotli.c.BrotliEncoder.Operation
 
 impl Context {
     pub fn init(&mut self) -> Error {
@@ -472,6 +485,7 @@ mod js {
 
 // TODO(port): ErrorCode enum location (globalThis.ERR namespace).
 use bun_jsc::ErrorCode;
+} // mod _impl
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

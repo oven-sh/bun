@@ -988,11 +988,70 @@ pub struct HTTPServerWritable<const SSL: bool, const HTTP3: bool> {
     pub auto_flusher: AutoFlusher,
 }
 
+impl<const SSL: bool, const HTTP3: bool> Default for HTTPServerWritable<SSL, HTTP3> {
+    fn default() -> Self {
+        Self {
+            res: None,
+            buffer: ByteList::default(),
+            pooled_buffer: None,
+            offset: 0,
+            is_listening_for_abort: false,
+            wrote: 0,
+            done: false,
+            signal: Signal::default(),
+            pending_flush: None,
+            wrote_at_start_of_flush: 0,
+            global_this: core::ptr::null(),
+            high_water_mark: 2048,
+            requested_end: false,
+            has_backpressure: false,
+            end_len: 0,
+            aborted: false,
+            on_first_write: None,
+            ctx: None,
+            auto_flusher: AutoFlusher::default(),
+        }
+    }
+}
+
 impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     pub fn connect(&mut self, signal: Signal) {
         self.signal = signal;
     }
 
+    /// Don't include @sizeOf(This) because it's already included in the memoryCost of the sink
+    pub fn memory_cost(&self) -> usize {
+        // TODO: include Socket send buffer size. We can't here because we
+        // don't track if it's still accessible.
+        // Since this is a JSSink, the NewJSSink function does @sizeOf(JSSink) which includes @sizeOf(ArrayBufferSink).
+        self.buffer.cap as usize
+    }
+
+    // TODO(port): const-generic string selection — Rust cannot branch on const bool to produce &'static str at type level
+    pub const NAME: &'static str = if HTTP3 {
+        "H3ResponseSink"
+    } else if SSL {
+        "HTTPSResponseSink"
+    } else {
+        "HTTPResponseSink"
+    };
+    // PORT NOTE: associated const with const-generic if — requires `#![feature(generic_const_exprs)]` or Phase B trait
+
+    // TODO(port): `pub const JSSink = Sink.JSSink(@This(), name)` — type generator; needs macro/codegen
+}
+
+/// Per-monomorphization JSSink wrapper alias. Mirrors
+/// `pub const JSSink = Sink.JSSink(@This(), name)`.
+pub type HTTPServerWritableJSSink<const SSL: bool, const HTTP3: bool> =
+    crate::webcore::sink::JSSink<HTTPServerWritable<SSL, HTTP3>>;
+
+// TODO(b2-blocked): full impl depends on `bun_uws::Response<SSL>`
+// const-generic dispatch (the body casts `res` to `*mut uws::Response` without
+// the SSL/H3 parameter), `bun_event_loop::AutoFlusher` free-fns (the local
+// `crate::webcore::AutoFlusher` is a fieldless stub), and `ByteListPool::Node`
+// data access. Un-gate once the UwsResponse type-dispatch trait lands.
+#[cfg(any())]
+impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     /// Don't include @sizeOf(This) because it's already included in the memoryCost of the sink
     pub fn memory_cost(&self) -> usize {
         // TODO: include Socket send buffer size. We can't here because we
@@ -1011,7 +1070,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             self.buffer.len = 0;
         }
         bun_core::scoped_log!(
-            HTTPServerWritable,
+            HTTPServerWritableLog,
             "handleWrote: {} offset: {}, {}",
             amount1,
             self.offset,
@@ -1086,7 +1145,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         }
         self.handle_wrote(buf.len());
         bun_core::scoped_log!(
-            HTTPServerWritable,
+            HTTPServerWritableLog,
             "send: {} bytes (backpressure: {})",
             buf.len(),
             self.has_backpressure
@@ -1112,7 +1171,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
     pub fn on_writable(&mut self, write_offset: u64, _res: *mut UwsResponse<SSL, HTTP3>) -> bool {
         // write_offset is the amount of data that was written not how much we need to write
-        bun_core::scoped_log!(HTTPServerWritable, "onWritable ({})", write_offset);
+        bun_core::scoped_log!(HTTPServerWritableLog, "onWritable ({})", write_offset);
         // onWritable reset backpressure state to allow flushing
         self.has_backpressure = false;
         if self.aborted {
@@ -1223,12 +1282,12 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
         self.done = false;
         self.signal.start();
-        bun_core::scoped_log!(HTTPServerWritable, "start({})", self.high_water_mark);
+        bun_core::scoped_log!(HTTPServerWritableLog, "start({})", self.high_water_mark);
         bun_sys::Result::Ok(())
     }
 
     fn flush_from_js_no_wait(&mut self) -> bun_sys::Result<JSValue> {
-        bun_core::scoped_log!(HTTPServerWritable, "flushFromJSNoWait");
+        bun_core::scoped_log!(HTTPServerWritableLog, "flushFromJSNoWait");
         bun_sys::Result::Ok(JSValue::js_number(self.flush_no_wait() as f64))
     }
 
@@ -1259,7 +1318,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         global_this: &JSGlobalObject,
         wait: bool,
     ) -> bun_sys::Result<JSValue> {
-        bun_core::scoped_log!(HTTPServerWritable, "flushFromJS({})", wait);
+        bun_core::scoped_log!(HTTPServerWritableLog, "flushFromJS({})", wait);
         self.unregister_auto_flusher();
 
         if !wait {
@@ -1304,7 +1363,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     }
 
     pub fn flush(&mut self) -> bun_sys::Result<()> {
-        bun_core::scoped_log!(HTTPServerWritable, "flush()");
+        bun_core::scoped_log!(HTTPServerWritableLog, "flush()");
         self.unregister_auto_flusher();
 
         if !self.has_backpressure() || self.done {
@@ -1329,7 +1388,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
         let bytes = data.slice();
         let len = bytes.len() as BlobSizeType;
-        bun_core::scoped_log!(HTTPServerWritable, "write({})", bytes.len());
+        bun_core::scoped_log!(HTTPServerWritableLog, "write({})", bytes.len());
 
         if self.buffer.len == 0 && len >= self.high_water_mark {
             // fast path:
@@ -1387,7 +1446,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
         let bytes = data.slice();
         let len = bytes.len() as BlobSizeType;
-        bun_core::scoped_log!(HTTPServerWritable, "writeLatin1({})", bytes.len());
+        bun_core::scoped_log!(HTTPServerWritableLog, "writeLatin1({})", bytes.len());
 
         if self.buffer.len == 0 && len >= self.high_water_mark {
             let mut do_send = true;
@@ -1458,7 +1517,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
         let bytes = data.slice();
 
-        bun_core::scoped_log!(HTTPServerWritable, "writeUTF16({})", bytes.len());
+        bun_core::scoped_log!(HTTPServerWritableLog, "writeUTF16({})", bytes.len());
 
         // we must always buffer UTF-16
         // we assume the case of all-ascii UTF-16 string is pretty uncommon
@@ -1495,7 +1554,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
     /// In this case, it's always an error
     pub fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
-        bun_core::scoped_log!(HTTPServerWritable, "end({:?})", err);
+        bun_core::scoped_log!(HTTPServerWritableLog, "end({:?})", err);
 
         if self.requested_end {
             return bun_sys::Result::Ok(());
@@ -1528,7 +1587,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     }
 
     pub fn end_from_js(&mut self, global_this: &JSGlobalObject) -> bun_sys::Result<JSValue> {
-        bun_core::scoped_log!(HTTPServerWritable, "endFromJS()");
+        bun_core::scoped_log!(HTTPServerWritableLog, "endFromJS()");
 
         if self.requested_end {
             return bun_sys::Result::Ok(JSValue::js_number(0.0));
@@ -1583,7 +1642,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     }
 
     pub fn abort(&mut self) {
-        bun_core::scoped_log!(HTTPServerWritable, "onAborted()");
+        bun_core::scoped_log!(HTTPServerWritableLog, "onAborted()");
         self.done = true;
         self.res = None;
         self.unregister_auto_flusher();
@@ -1617,7 +1676,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     }
 
     pub fn on_auto_flush(&mut self) -> bool {
-        bun_core::scoped_log!(HTTPServerWritable, "onAutoFlush()");
+        bun_core::scoped_log!(HTTPServerWritableLog, "onAutoFlush()");
         if self.done {
             self.auto_flusher.registered = false;
             return false;
@@ -1643,7 +1702,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     }
 
     pub fn destroy(this: *mut Self) {
-        bun_core::scoped_log!(HTTPServerWritable, "destroy()");
+        bun_core::scoped_log!(HTTPServerWritableLog, "destroy()");
         // SAFETY: this is Box-allocated; destroy takes ownership
         let this_ref = unsafe { &mut *this };
         // Callers may tear this sink down without routing through
@@ -1662,7 +1721,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     /// This can be called _many_ times for the same instance
     /// so it must zero out state instead of make it
     pub fn finalize(&mut self) {
-        bun_core::scoped_log!(HTTPServerWritable, "finalize()");
+        bun_core::scoped_log!(HTTPServerWritableLog, "finalize()");
         if !self.done {
             self.unregister_auto_flusher();
             if let Some(res) = self.res {
@@ -1714,7 +1773,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     pub fn flush_promise(&mut self) -> JsResult<()> {
         // TODO(port): narrow error set — Zig: bun.JSTerminated!void
         if let Some(prom) = self.pending_flush.take() {
-            bun_core::scoped_log!(HTTPServerWritable, "flushPromise()");
+            bun_core::scoped_log!(HTTPServerWritableLog, "flushPromise()");
 
             // SAFETY: global_this set when pending_flush was created
             let global_this = unsafe { &*self.global_this };
@@ -1854,7 +1913,7 @@ impl NetworkSink {
     ) -> JsResult<()> {
         // TODO(port): narrow error set — Zig: bun.JSTerminated!void
         bun_core::scoped_log!(
-            NetworkSink,
+            NetworkSinkLog,
             "onWritable flushed: {} state: {}",
             flushed,
             <&'static str>::from(task.state)

@@ -38,9 +38,13 @@ pub trait ResumableSinkJs {
 
 /// Trait capturing the per-`Context` callbacks the sink invokes.
 /// In Zig these are `Context.writeRequestData` / `Context.writeEndRequest`.
+// Spec ResumableSink.zig:35 stores `context: *Context` (mutable). The only
+// in-tree impls (FetchTasklet / S3UploadStreamWrapper) mutate self in both
+// callbacks (e.g. `detachSink`, `deref`, clearing `endPromise`), so these
+// MUST be `&mut self`.
 pub trait ResumableSinkContext {
-    fn write_request_data(&self, bytes: &[u8]) -> ResumableSinkBackpressure;
-    fn write_end_request(&self, err: Option<JSValue>);
+    fn write_request_data(&mut self, bytes: &[u8]) -> ResumableSinkBackpressure;
+    fn write_end_request(&mut self, err: Option<JSValue>);
 }
 
 #[repr(u8)]
@@ -58,7 +62,7 @@ pub struct ResumableSink<'a, Js: ResumableSinkJs, Context: ResumableSinkContext>
     /// We can have a detached self, and still have a strong reference to the stream
     stream: crate::webcore::readable_stream::Strong,
     global_this: &'a JSGlobalObject,
-    context: *const Context,
+    context: *mut Context,
     high_water_mark: i64,
     status: Status,
     _js: core::marker::PhantomData<Js>,
@@ -95,13 +99,14 @@ impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<'a, J
     }
 
     #[inline]
-    fn on_write(ctx: *const Context, bytes: &[u8]) -> ResumableSinkBackpressure {
+    fn on_write(ctx: *mut Context, bytes: &[u8]) -> ResumableSinkBackpressure {
         // SAFETY: `context` is a BACKREF to the owning Context (FetchTasklet /
         // S3UploadStreamWrapper) which outlives this sink — see LIFETIMES.tsv.
+        // Dereferenced as `&mut` because impls mutate (detachSink, deref, etc.).
         unsafe { (*ctx).write_request_data(bytes) }
     }
     #[inline]
-    fn on_end(ctx: *const Context, err: Option<JSValue>) {
+    fn on_end(ctx: *mut Context, err: Option<JSValue>) {
         // SAFETY: see on_write.
         unsafe { (*ctx).write_end_request(err) }
     }

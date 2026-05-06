@@ -1189,14 +1189,46 @@ impl From<logger::js_ast::expr::Data> for Data {
                 .into_data_store()
             }
             V::EObject(obj) => {
+                use logger::js_ast::G::{PropertyFlags as T2Flags, PropertyKind as T2Kind};
                 let mut properties: G::PropertyList =
                     BabyList::init_capacity(obj.properties.len as usize).expect("OOM");
                 for p in obj.properties.slice() {
+                    // T2 and T4 `PropertyKind` are both `#[repr(u8)]` with
+                    // identical variant order — map 1:1.
+                    let kind = match p.kind {
+                        T2Kind::Normal => G::PropertyKind::Normal,
+                        T2Kind::Get => G::PropertyKind::Get,
+                        T2Kind::Set => G::PropertyKind::Set,
+                        T2Kind::Spread => G::PropertyKind::Spread,
+                        T2Kind::Declare => G::PropertyKind::Declare,
+                        T2Kind::Abstract => G::PropertyKind::Abstract,
+                        T2Kind::ClassStaticBlock => G::PropertyKind::ClassStaticBlock,
+                        T2Kind::AutoAccessor => G::PropertyKind::AutoAccessor,
+                    };
+                    // Translate T2 `bitflags` bits → T4 `EnumSet<flags::Property>`.
+                    let mut flags = crate::flags::PROPERTY_NONE;
+                    if p.flags.contains(T2Flags::IS_COMPUTED) {
+                        flags |= crate::flags::Property::IsComputed;
+                    }
+                    if p.flags.contains(T2Flags::IS_METHOD) {
+                        flags |= crate::flags::Property::IsMethod;
+                    }
+                    if p.flags.contains(T2Flags::IS_STATIC) {
+                        flags |= crate::flags::Property::IsStatic;
+                    }
+                    if p.flags.contains(T2Flags::WAS_SHORTHAND) {
+                        flags |= crate::flags::Property::WasShorthand;
+                    }
+                    if p.flags.contains(T2Flags::IS_SPREAD) {
+                        flags |= crate::flags::Property::IsSpread;
+                    }
                     properties
                         .append(G::Property {
                             key: p.key.map(Expr::from),
                             value: p.value.map(Expr::from),
                             initializer: p.initializer.map(Expr::from),
+                            kind,
+                            flags,
                             ..G::Property::default()
                         })
                         .expect("OOM");
@@ -1276,6 +1308,7 @@ impl Expr {
 // ───────────────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, strum::IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
 #[repr(u8)]
 pub enum Tag {
     EArray,

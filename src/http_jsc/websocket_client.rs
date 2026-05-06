@@ -415,22 +415,30 @@ impl<const SSL: bool> WebSocket<SSL> {
                 let ssl_ptr: *mut boringssl::c::SSL = socket
                     .get_native_handle()
                     .map_or(core::ptr::null_mut(), |p| p.cast());
-                #[cfg(any())]
-                {
-                    // TODO(b2-blocked): bun_boringssl::c::SSL_get_servername — not
-                    // exported from bun_boringssl_sys yet.
-                    // SAFETY: ssl_ptr is valid for the lifetime of the socket
-                    if let Some(servername) = unsafe { boringssl::c::SSL_get_servername(ssl_ptr, 0).as_ref() } {
-                        // SAFETY: servername is a NUL-terminated C string
-                        let hostname = unsafe { core::ffi::CStr::from_ptr(servername as *const _ as *const core::ffi::c_char) }.to_bytes();
-                        // SAFETY: ssl_ptr is non-null (Connected SSL socket).
-                        if !boringssl::check_server_identity(unsafe { &mut *ssl_ptr }, hostname) {
-                            self.outgoing_websocket = None;
-                            ws_ref.did_abrupt_close(ErrorCode::FailedToConnect);
-                        }
+                // PORT NOTE: `SSL_get_servername` isn't in `bun_boringssl_sys`'s
+                // hand-rolled FFI surface yet. BoringSSL exports it as plain C ABI,
+                // so declare the symbol locally rather than gate the whole check.
+                // `TLSEXT_NAMETYPE_host_name` is 0 per RFC 6066 / `<openssl/tls1.h>`.
+                unsafe extern "C" {
+                    fn SSL_get_servername(
+                        ssl: *const boringssl::c::SSL,
+                        type_: core::ffi::c_int,
+                    ) -> *const core::ffi::c_char;
+                }
+                // SAFETY: ssl_ptr is valid for the lifetime of the socket; passing
+                // null is well-defined (BoringSSL returns null).
+                let servername = unsafe { SSL_get_servername(ssl_ptr, 0) };
+                if !servername.is_null() {
+                    // SAFETY: servername is a NUL-terminated C string owned by the SSL session.
+                    let hostname = unsafe { core::ffi::CStr::from_ptr(servername) }.to_bytes();
+                    // SAFETY: ssl_ptr is non-null (connected SSL socket on the handshake path).
+                    if !ssl_ptr.is_null()
+                        && !boringssl::check_server_identity(unsafe { &mut *ssl_ptr }, hostname)
+                    {
+                        self.outgoing_websocket = None;
+                        ws_ref.did_abrupt_close(ErrorCode::FailedToConnect);
                     }
                 }
-                let _ = ssl_ptr;
             }
             // If reject_unauthorized is false, we accept the connection regardless of SSL errors
         }
@@ -1709,25 +1717,25 @@ impl<const SSL: bool> WebSocket<SSL> {
         // SAFETY: reason is null or a valid *const ZigString from C++
         if let Some(str) = unsafe { reason.as_ref() } {
             'inner: {
-                // Zig: FixedBufferAllocator + allocPrint → write into fixed buf
+                // Zig: FixedBufferAllocator + allocPrint("{f}", .{str}) — the
+                // `{f}` formatter writes the string in UTF-8 regardless of
+                // backing encoding. `ZigString` has no `Display` impl yet, so
+                // replicate the encoding switch directly: 8-bit copies bytes,
+                // 16-bit transcodes via `to_owned_slice()` (UTF-16 → UTF-8).
                 use std::io::Write;
                 let mut cursor = std::io::Cursor::new(&mut close_reason_buf[..]);
-                #[cfg(any())]
-                {
-                    // TODO(b2-blocked): bun_string::ZigString: core::fmt::Display
-                    // — Zig's `{f}` formatter handles 8-bit/16-bit/UTF-8; the
-                    // Rust `ZigString` has no `Display` impl yet.
-                    if write!(cursor, "{}", str).is_err() {
-                        break 'inner;
-                    }
-                }
-                // Fallback: 8-bit path only (covers the common close-reason case).
-                // 16-bit reasons fall through to the no-body close below.
                 if str.is_16bit() {
-                    let _ = cursor;
-                    break 'inner;
-                }
-                if cursor.write_all(str.slice()).is_err() {
+                    // Allocates; close-reason is bounded ≤125 bytes and this
+                    // path is cold (close handshake).
+                    match str.to_owned_slice() {
+                        Ok(utf8) => {
+                            if cursor.write_all(&utf8).is_err() {
+                                break 'inner;
+                            }
+                        }
+                        Err(_) => break 'inner,
+                    }
+                } else if cursor.write_all(str.slice()).is_err() {
                     break 'inner;
                 }
                 let wrote_len = cursor.position() as usize;
@@ -2071,84 +2079,114 @@ impl<const SSL: bool> WebSocket<SSL> {
 // comptime string concat cannot be expressed generically in Rust (no_mangle
 // requires a literal). Emit two monomorphized #[no_mangle] shims per fn via macro.
 
+// PORT NOTE: avoids the `paste` crate by passing the nine fully-qualified
+// `#[no_mangle]` idents at the call site (declare-site macro). Zig's
+// comptime `++` concat has no Rust equivalent for `#[no_mangle]` literals.
 macro_rules! export_websocket_client {
-    ($ssl:expr, $prefix:literal) => {
-        ::paste::paste! {
-            #[unsafe(no_mangle)]
-            pub extern "C" fn [<Bun__ $prefix __cancel>](this: *mut WebSocket<$ssl>) {
-                WebSocket::<$ssl>::cancel(this)
-            }
-            #[unsafe(no_mangle)]
-            pub extern "C" fn [<Bun__ $prefix __close>](
-                this: *mut WebSocket<$ssl>, code: u16, reason: *const ZigString,
-            ) {
-                WebSocket::<$ssl>::close(this, code, reason)
-            }
-            #[unsafe(no_mangle)]
-            pub extern "C" fn [<Bun__ $prefix __finalize>](this: *mut WebSocket<$ssl>) {
-                WebSocket::<$ssl>::finalize(this)
-            }
-            #[unsafe(no_mangle)]
-            pub extern "C" fn [<Bun__ $prefix __init>](
-                outgoing: *mut CppWebSocket,
-                input_socket: *mut c_void,
-                global_this: &'static JSGlobalObject,
-                buffered_data: *mut u8,
-                buffered_data_len: usize,
-                deflate_params: Option<&websocket_deflate::Params>,
-                secure_ptr: *mut c_void,
-            ) -> *mut c_void {
-                WebSocket::<$ssl>::init(
-                    outgoing, input_socket, global_this, buffered_data,
-                    buffered_data_len, deflate_params, secure_ptr,
-                )
-            }
-            #[unsafe(no_mangle)]
-            pub extern "C" fn [<Bun__ $prefix __initWithTunnel>](
-                outgoing: *mut CppWebSocket,
-                tunnel_ptr: *mut c_void,
-                global_this: &'static JSGlobalObject,
-                buffered_data: *mut u8,
-                buffered_data_len: usize,
-                deflate_params: Option<&websocket_deflate::Params>,
-            ) -> *mut c_void {
-                WebSocket::<$ssl>::init_with_tunnel(
-                    outgoing, tunnel_ptr, global_this, buffered_data,
-                    buffered_data_len, deflate_params,
-                )
-            }
-            #[unsafe(no_mangle)]
-            pub extern "C" fn [<Bun__ $prefix __memoryCost>](this: *const WebSocket<$ssl>) -> usize {
-                WebSocket::<$ssl>::memory_cost(this)
-            }
-            #[unsafe(no_mangle)]
-            pub extern "C" fn [<Bun__ $prefix __writeBinaryData>](
-                this: *mut WebSocket<$ssl>, ptr: *const u8, len: usize, op: u8,
-            ) {
-                WebSocket::<$ssl>::write_binary_data(this, ptr, len, op)
-            }
-            #[unsafe(no_mangle)]
-            pub extern "C" fn [<Bun__ $prefix __writeBlob>](
-                this: *mut WebSocket<$ssl>, blob_value: JSValue, op: u8,
-            ) {
-                WebSocket::<$ssl>::write_blob(this, blob_value, op)
-            }
-            #[unsafe(no_mangle)]
-            pub extern "C" fn [<Bun__ $prefix __writeString>](
-                this: *mut WebSocket<$ssl>, str_: *const ZigString, op: u8,
-            ) {
-                WebSocket::<$ssl>::write_string(this, str_, op)
-            }
+    (
+        $ssl:expr,
+        cancel = $cancel:ident,
+        close = $close:ident,
+        finalize = $finalize:ident,
+        init = $init:ident,
+        init_with_tunnel = $init_with_tunnel:ident,
+        memory_cost = $memory_cost:ident,
+        write_binary_data = $write_binary_data:ident,
+        write_blob = $write_blob:ident,
+        write_string = $write_string:ident $(,)?
+    ) => {
+        #[unsafe(no_mangle)]
+        pub extern "C" fn $cancel(this: *mut WebSocket<$ssl>) {
+            WebSocket::<$ssl>::cancel(this)
+        }
+        #[unsafe(no_mangle)]
+        pub extern "C" fn $close(
+            this: *mut WebSocket<$ssl>, code: u16, reason: *const ZigString,
+        ) {
+            WebSocket::<$ssl>::close(this, code, reason)
+        }
+        #[unsafe(no_mangle)]
+        pub extern "C" fn $finalize(this: *mut WebSocket<$ssl>) {
+            WebSocket::<$ssl>::finalize(this)
+        }
+        #[unsafe(no_mangle)]
+        pub extern "C" fn $init(
+            outgoing: *mut CppWebSocket,
+            input_socket: *mut c_void,
+            global_this: &'static JSGlobalObject,
+            buffered_data: *mut u8,
+            buffered_data_len: usize,
+            deflate_params: Option<&websocket_deflate::Params>,
+            secure_ptr: *mut c_void,
+        ) -> *mut c_void {
+            WebSocket::<$ssl>::init(
+                outgoing, input_socket, global_this, buffered_data,
+                buffered_data_len, deflate_params, secure_ptr,
+            )
+        }
+        #[unsafe(no_mangle)]
+        pub extern "C" fn $init_with_tunnel(
+            outgoing: *mut CppWebSocket,
+            tunnel_ptr: *mut c_void,
+            global_this: &'static JSGlobalObject,
+            buffered_data: *mut u8,
+            buffered_data_len: usize,
+            deflate_params: Option<&websocket_deflate::Params>,
+        ) -> *mut c_void {
+            WebSocket::<$ssl>::init_with_tunnel(
+                outgoing, tunnel_ptr, global_this, buffered_data,
+                buffered_data_len, deflate_params,
+            )
+        }
+        #[unsafe(no_mangle)]
+        pub extern "C" fn $memory_cost(this: *const WebSocket<$ssl>) -> usize {
+            WebSocket::<$ssl>::memory_cost(this)
+        }
+        #[unsafe(no_mangle)]
+        pub extern "C" fn $write_binary_data(
+            this: *mut WebSocket<$ssl>, ptr: *const u8, len: usize, op: u8,
+        ) {
+            WebSocket::<$ssl>::write_binary_data(this, ptr, len, op)
+        }
+        #[unsafe(no_mangle)]
+        pub extern "C" fn $write_blob(
+            this: *mut WebSocket<$ssl>, blob_value: JSValue, op: u8,
+        ) {
+            WebSocket::<$ssl>::write_blob(this, blob_value, op)
+        }
+        #[unsafe(no_mangle)]
+        pub extern "C" fn $write_string(
+            this: *mut WebSocket<$ssl>, str_: *const ZigString, op: u8,
+        ) {
+            WebSocket::<$ssl>::write_string(this, str_, op)
         }
     };
 }
 
-// TODO(b2-blocked): `paste` crate — `#[no_mangle]` ident concat needs
-// `paste::paste!`, which is not in the workspace dependency set yet. The
-// underlying `WebSocket::<SSL>::*` fns the shims forward to are un-gated and
-// compile; only the C-ABI symbol names are pending.
-#[cfg(any())] export_websocket_client!(false, "WebSocketClient");
-#[cfg(any())] export_websocket_client!(true, "WebSocketClientTLS");
+export_websocket_client!(
+    false,
+    cancel            = Bun__WebSocketClient__cancel,
+    close             = Bun__WebSocketClient__close,
+    finalize          = Bun__WebSocketClient__finalize,
+    init              = Bun__WebSocketClient__init,
+    init_with_tunnel  = Bun__WebSocketClient__initWithTunnel,
+    memory_cost       = Bun__WebSocketClient__memoryCost,
+    write_binary_data = Bun__WebSocketClient__writeBinaryData,
+    write_blob        = Bun__WebSocketClient__writeBlob,
+    write_string      = Bun__WebSocketClient__writeString,
+);
+export_websocket_client!(
+    true,
+    cancel            = Bun__WebSocketClientTLS__cancel,
+    close             = Bun__WebSocketClientTLS__close,
+    finalize          = Bun__WebSocketClientTLS__finalize,
+    init              = Bun__WebSocketClientTLS__init,
+    init_with_tunnel  = Bun__WebSocketClientTLS__initWithTunnel,
+    memory_cost       = Bun__WebSocketClientTLS__memoryCost,
+    write_binary_data = Bun__WebSocketClientTLS__writeBinaryData,
+    write_blob        = Bun__WebSocketClientTLS__writeBlob,
+    write_string      = Bun__WebSocketClientTLS__writeString,
+);
 
 // ──────────────────────────────────────────────────────────────────────────
 // InitialDataHandler

@@ -53,7 +53,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         p.parse_typescript_enum_stmt(loc, opts)
     }
 
-    fn t_at(p: &mut Self, opts: &mut ParseStatementOptions) -> Result<Stmt> {
+    fn t_at(p: &mut Self, opts: &mut ParseStatementOptions<'a>) -> Result<Stmt> {
         // Parse decorators before class statements, which are potentially exported
         if Self::IS_TYPESCRIPT_ENABLED || p.options.features.standard_decorators {
             let scope_index = p.scopes_in_order.len();
@@ -384,7 +384,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             S::Switch {
                 test_,
                 body_loc,
-                cases: cases.into_bump_slice(),
+                cases: cases.into_bump_slice_mut(),
             },
             loc,
         ))
@@ -428,7 +428,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
                 // Bare identifiers are a special case
                 let kind = match value.data {
-                    js_ast::binding::B::BIdentifier(_) => js_ast::symbol::Kind::CatchIdentifier,
+                    js_ast::b::B::BIdentifier(_) => js_ast::symbol::Kind::CatchIdentifier,
                     _ => js_ast::symbol::Kind::Other,
                 };
                 p.declare_binding(kind, &mut value, &mut stmt_opts)?;
@@ -445,7 +445,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             catch_ = Some(js_ast::Catch {
                 loc: catch_loc,
                 binding,
-                body: stmts.into_bump_slice(),
+                body: stmts.into_bump_slice_mut(),
                 body_loc: catch_body_loc,
             });
             p.pop_scope();
@@ -460,7 +460,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             p.lexer.next()?;
             finally = Some(js_ast::Finally {
                 loc: finally_loc,
-                stmts: stmts.into_bump_slice(),
+                stmts: stmts.into_bump_slice_mut(),
             });
             p.pop_scope();
         }
@@ -468,7 +468,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         Ok(p.s(
             S::Try {
                 body_loc,
-                body: body.into_bump_slice(),
+                body: body.into_bump_slice_mut(),
                 catch_,
                 finally,
             },
@@ -492,9 +492,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             let await_range = p.lexer.range();
             if p.fn_or_arrow_data_parse.allow_await != AwaitOrYield::AllowExpr {
                 p.log.add_range_error(
-                    p.source,
+                    Some(p.source),
                     await_range,
-                    "Cannot use \"await\" outside an async function",
+                    b"Cannot use \"await\" outside an async function",
                 )?;
                 is_for_await = false;
             } else {
@@ -522,7 +522,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             bad_let_range = Some(p.lexer.range());
         }
 
-        let mut decls: G::DeclList = Default::default();
+        // Track the decl slice separately so we can reference it after `decls` is moved into
+        // an arena-backed S::Local. SAFETY: arena outlives this fn; ptr stays valid.
+        let mut decls_ptr: *const [G::Decl] = &[][..];
         let init_loc = p.lexer.loc();
         let mut is_var = false;
         match p.lexer.token {
@@ -531,7 +533,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 is_var = true;
                 p.lexer.next()?;
                 let mut stmt_opts = ParseStatementOptions::default();
-                decls = p.parse_and_declare_decls(js_ast::symbol::Kind::Hoisted, &mut stmt_opts)?;
+                let decls = p.parse_and_declare_decls(js_ast::symbol::Kind::Hoisted, &mut stmt_opts)?;
+                decls_ptr = decls.slice() as *const _;
                 init_ = Some(p.s(
                     S::Local {
                         kind: js_ast::s::Kind::KVar,
@@ -545,7 +548,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             T::TConst => {
                 p.lexer.next()?;
                 let mut stmt_opts = ParseStatementOptions::default();
-                decls = p.parse_and_declare_decls(js_ast::symbol::Kind::Constant, &mut stmt_opts)?;
+                let decls = p.parse_and_declare_decls(js_ast::symbol::Kind::Constant, &mut stmt_opts)?;
+                decls_ptr = decls.slice() as *const _;
                 init_ = Some(p.s(
                     S::Local {
                         kind: js_ast::s::Kind::KConst,
@@ -584,9 +588,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         if p.lexer.is_contextual_keyword(b"of") || is_for_await {
             if let Some(r) = bad_let_range {
                 p.log.add_range_error(
-                    p.source,
+                    Some(p.source),
                     r,
-                    "\"let\" must be wrapped in parentheses to be used as an expression here",
+                    b"\"let\" must be wrapped in parentheses to be used as an expression here",
                 )?;
                 p.pop_scope();
                 return Err(err!("SyntaxError"));
@@ -602,7 +606,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
             }
 
-            p.forbid_initializers(decls.slice(), b"of", false)?;
+            p.forbid_initializers(unsafe { &*decls_ptr }, "of", false)?;
             p.lexer.next()?;
             let value = p.parse_expr(Level::Comma)?;
             p.lexer.expect(T::TCloseParen)?;
@@ -622,7 +626,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         // Detect for-in loops
         if p.lexer.token == T::TIn {
-            p.forbid_initializers(decls.slice(), b"in", is_var)?;
+            p.forbid_initializers(unsafe { &*decls_ptr }, "in", is_var)?;
             p.lexer.next()?;
             let value = p.parse_expr(Level::Lowest)?;
             p.lexer.expect(T::TCloseParen)?;
@@ -644,7 +648,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             match &init_stmt.data {
                 js_ast::StmtData::SLocal(local) => {
                     if local.kind == js_ast::s::Kind::KConst {
-                        p.require_initializers(js_ast::s::Kind::KConst, decls.slice())?;
+                        p.require_initializers(js_ast::s::Kind::KConst, unsafe { &*decls_ptr })?;
                     }
                 }
                 _ => {}
@@ -706,9 +710,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     ) -> Result<Stmt> {
         if p.fn_or_arrow_data_parse.is_return_disallowed {
             p.log.add_range_error(
-                p.source,
+                Some(p.source),
                 p.lexer.range(),
-                "A return statement cannot be used here",
+                b"A return statement cannot be used here",
             )?;
         }
         p.lexer.next()?;
@@ -734,9 +738,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         p.lexer.next()?;
         if p.lexer.has_newline_before {
             p.log.add_error(
-                p.source,
+                Some(p.source),
                 logger::Loc { start: loc.start + 5 },
-                "Unexpected newline after \"throw\"",
+                b"Unexpected newline after \"throw\"",
             )?;
             return Err(err!("SyntaxError"));
         }
@@ -770,7 +774,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         p.pop_scope();
         Ok(p.s(
             S::Block {
-                stmts: stmts.into_bump_slice(),
+                stmts: stmts.into_bump_slice_mut(),
                 close_brace_loc,
             },
             loc,
@@ -811,9 +815,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         todo!("G-round-4: parse_stmt_fallthrough body — see _draft_heavy")
     }
 
-    pub fn parse_stmt(&mut self, opts: &mut ParseStatementOptions) -> Result<Stmt> {
+    pub fn parse_stmt(&mut self, opts: &mut ParseStatementOptions<'a>) -> Result<Stmt> {
         if !self.stack_check.is_safe_to_recurse() {
-            bun_core::throw_stack_overflow()?;
+            // TODO(port): bun_core::throw_stack_overflow() not yet exported; map to a SyntaxError
+            // until the StackOverflow error variant lands.
+            return Err(err!("StackOverflow"));
         }
 
         // Zig used `inline ... => |function| @field(@This(), @tagName(function))(...)` to dispatch

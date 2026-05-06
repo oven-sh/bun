@@ -301,48 +301,41 @@ impl<'a> TOML<'a> {
     }
 
     // ── AST-producing methods ──────────────────────────────────────────────
-    // TODO(b2-blocked): bun_logger::js_ast::{E::*, e::object::Rope, ExprData}
-    //   Everything below constructs `E::String { data }` / `E::Number { value }`
-    //   / `E::Object` / `E::Array` payloads and threads `Rope`. The T2 stub
-    //   shapes are field-less `(())` newtypes, so these bodies stay gated until
-    //   the real `E` namespace lands in `bun_logger::js_ast`.
 
-    #[cfg(any())]
     pub fn parse_key_segment(&mut self) -> Result<Option<Expr>, bun_core::Error> {
         let loc = self.lexer.loc();
 
         match self.lexer.token {
-            T::TStringLiteral => {
+            T::t_string_literal => {
                 let str = self.lexer.to_string(loc);
                 self.lexer.next()?;
                 Ok(Some(str))
             }
-            T::TIdentifier => {
-                let str = E::String { data: self.lexer.identifier };
+            T::t_identifier => {
+                let str = E::String::init(self.lexer.identifier);
                 self.lexer.next()?;
                 Ok(Some(self.e(str, loc)))
             }
-            T::TFalse => {
+            T::t_false => {
                 self.lexer.next()?;
-                Ok(Some(self.e(E::String { data: b"false" }, loc)))
+                Ok(Some(self.e(E::String::init(b"false"), loc)))
             }
-            T::TTrue => {
+            T::t_true => {
                 self.lexer.next()?;
-                Ok(Some(self.e(E::String { data: b"true" }, loc)))
+                Ok(Some(self.e(E::String::init(b"true"), loc)))
             }
             // what we see as a number here could actually be a string
-            T::TNumericLiteral => {
+            T::t_numeric_literal => {
                 let literal = self.lexer.raw();
                 self.lexer.next()?;
-                Ok(Some(self.e(E::String { data: literal }, loc)))
+                Ok(Some(self.e(E::String::init(literal), loc)))
             }
 
             _ => Ok(None),
         }
     }
 
-    #[cfg(any())]
-    pub fn parse_key(&mut self, bump: &Bump) -> Result<&mut Rope, bun_core::Error> {
+    pub fn parse_key(&mut self, bump: &'a Bump) -> Result<&'a mut Rope, bun_core::Error> {
         // TODO(port): lifetime — Zig returns `*Rope` allocated from `allocator`
         // (a stack-fallback arena reset per-iteration). Here we allocate from the
         // caller-provided bump and return `&mut Rope` borrowed from it.
@@ -350,16 +343,16 @@ impl<'a> TOML<'a> {
             head: match self.parse_key_segment()? {
                 Some(seg) => seg,
                 None => {
-                    self.lexer.expected_string("key")?;
+                    self.lexer.expected_string(b"key")?;
                     return Err(bun_core::err!("SyntaxError"));
                 }
             },
-            next: None,
+            next: core::ptr::null_mut(),
         });
         let head: *mut Rope = rope;
         let mut rope: *mut Rope = rope;
 
-        while self.lexer.token == T::TDot {
+        while self.lexer.token == T::t_dot {
             self.lexer.next()?;
 
             let Some(seg) = self.parse_key_segment()? else { break };
@@ -376,19 +369,8 @@ impl<'a> TOML<'a> {
     }
 
     fn run_parser(&mut self) -> Result<Expr, bun_core::Error> {
-        // TODO(b2-blocked): bun_logger::js_ast::{E, ExprData, e::object::Rope}
-        #[cfg(any())]
-        return self.run_parser_impl();
-        #[allow(unreachable_code)]
-        {
-            todo!("b2-blocked: bun_logger::js_ast::E (run_parser)")
-        }
-    }
-
-    #[cfg(any())]
-    fn run_parser_impl(&mut self) -> Result<Expr, bun_core::Error> {
-        let mut root = self.e(E::Object::default(), self.lexer.loc());
-        let mut head: *mut E::Object = root.data.e_object();
+        let root = self.e(E::Object::default(), self.lexer.loc());
+        let mut head: *mut E::Object = root.data.e_object().unwrap().as_ptr();
         // TODO(port): `head` aliases into `root.data`; using raw pointer to mirror
         // the Zig `*E.Object` and sidestep overlapping &mut on `root`.
 
@@ -399,54 +381,63 @@ impl<'a> TOML<'a> {
         loop {
             let loc = self.lexer.loc();
             match self.lexer.token {
-                T::TEndOfFile => {
+                T::t_end_of_file => {
                     return Ok(root);
                 }
                 // child table
-                T::TOpenBracket => {
+                T::t_open_bracket => {
                     self.lexer.next()?;
                     let key = self.parse_key(key_allocator)?;
 
-                    self.lexer.expect(T::TCloseBracket)?;
+                    self.lexer.expect(T::t_close_bracket)?;
                     if !self.lexer.has_newline_before {
-                        self.lexer.expected_string("line break")?;
+                        self.lexer.expected_string(b"line break")?;
                     }
 
-                    let parent_object = match root.data.e_object().get_or_put_object(key, self.bump)
+                    let parent_object = match root
+                        .data
+                        .e_object()
+                        .unwrap()
+                        .get_or_put_object(key, self.bump)
                     {
                         Ok(v) => v,
-                        Err(e) if e == bun_core::err!("Clobber") => {
-                            self.lexer.add_default_error("Table already defined")?;
+                        Err(SetError::Clobber) => {
+                            self.lexer.add_default_error(b"Table already defined")?;
                             return Err(bun_core::err!("SyntaxError"));
                         }
-                        Err(e) => return Err(e),
+                        Err(e) => return Err(e.into()),
                     };
-                    head = parent_object.data.e_object();
+                    head = parent_object.data.e_object().unwrap().as_ptr();
                     // PERF(port): was `stack.fixed_buffer_allocator.reset()` — profile in Phase B
                 }
                 // child table array
-                T::TOpenBracketDouble => {
+                T::t_open_bracket_double => {
                     self.lexer.next()?;
 
                     let key = self.parse_key(key_allocator)?;
 
-                    self.lexer.expect(T::TCloseBracketDouble)?;
+                    self.lexer.expect(T::t_close_bracket_double)?;
                     if !self.lexer.has_newline_before {
-                        self.lexer.expected_string("line break")?;
+                        self.lexer.expected_string(b"line break")?;
                     }
 
-                    let array = match root.data.e_object().get_or_put_array(key, self.bump) {
+                    let array = match root
+                        .data
+                        .e_object()
+                        .unwrap()
+                        .get_or_put_array(key, self.bump)
+                    {
                         Ok(v) => v,
-                        Err(e) if e == bun_core::err!("Clobber") => {
+                        Err(SetError::Clobber) => {
                             self.lexer
-                                .add_default_error("Cannot overwrite table array")?;
+                                .add_default_error(b"Cannot overwrite table array")?;
                             return Err(bun_core::err!("SyntaxError"));
                         }
-                        Err(e) => return Err(e),
+                        Err(e) => return Err(e.into()),
                     };
                     let new_head = self.e(E::Object::default(), loc);
-                    array.data.e_array().push(self.bump, new_head)?;
-                    head = new_head.data.e_object();
+                    array.data.e_array().unwrap().push(self.bump, new_head)?;
+                    head = new_head.data.e_object().unwrap().as_ptr();
                     // PERF(port): was `stack.fixed_buffer_allocator.reset()` — profile in Phase B
                 }
                 _ => {
@@ -461,17 +452,16 @@ impl<'a> TOML<'a> {
         }
     }
 
-    #[cfg(any())]
     pub fn parse_assignment(
         &mut self,
         obj: &mut E::Object,
-        bump: &Bump,
+        bump: &'a Bump,
     ) -> Result<(), bun_core::Error> {
         self.lexer.allow_double_bracket = false;
         let rope = self.parse_key(bump)?;
         let rope_end = self.lexer.start;
 
-        let is_array = self.lexer.token == T::TEmptyArray;
+        let is_array = self.lexer.token == T::t_empty_array;
         if is_array {
             self.lexer.next()?;
         }
@@ -481,7 +471,7 @@ impl<'a> TOML<'a> {
             let value = self.parse_value()?;
             match obj.set_rope(rope, self.bump, value) {
                 Ok(()) => {}
-                Err(e) if e == bun_core::err!("Clobber") => {
+                Err(SetError::Clobber) => {
                     let loc = rope.head.loc;
                     debug_assert!(loc.start > 0);
                     let start: u32 = u32::try_from(loc.start).unwrap();
@@ -491,22 +481,22 @@ impl<'a> TOML<'a> {
                         b" \t\n\r\x0B\x0C",
                     );
                     self.lexer.add_error(
-                        start,
+                        start as usize,
                         format_args!("Cannot redefine key '{}'", bstr::BStr::new(key_name)),
                     );
                     return Err(bun_core::err!("SyntaxError"));
                 }
-                Err(e) => return Err(e),
+                Err(e) => return Err(e.into()),
             }
         }
         self.lexer.allow_double_bracket = true;
         Ok(())
     }
 
-    #[cfg(any())]
     pub fn parse_value(&mut self) -> Result<Expr, bun_core::Error> {
         if !self.stack_check.is_safe_to_recurse() {
-            bun_core::throw_stack_overflow()?;
+            // Zig: `bun.throwStackOverflow()`.
+            return Err(bun_core::err!("StackOverflow"));
         }
 
         let loc = self.lexer.loc();
@@ -514,62 +504,62 @@ impl<'a> TOML<'a> {
         self.lexer.allow_double_bracket = true;
 
         match self.lexer.token {
-            T::TFalse => {
+            T::t_false => {
                 self.lexer.next()?;
 
                 Ok(self.e(E::Boolean { value: false }, loc))
             }
-            T::TTrue => {
+            T::t_true => {
                 self.lexer.next()?;
                 Ok(self.e(E::Boolean { value: true }, loc))
             }
-            T::TStringLiteral => {
+            T::t_string_literal => {
                 let result = self.lexer.to_string(loc);
                 self.lexer.next()?;
                 Ok(result)
             }
-            T::TIdentifier => {
-                let str = E::String { data: self.lexer.identifier };
+            T::t_identifier => {
+                let str = E::String::init(self.lexer.identifier);
 
                 self.lexer.next()?;
                 Ok(self.e(str, loc))
             }
-            T::TNumericLiteral => {
+            T::t_numeric_literal => {
                 let value = self.lexer.number;
                 self.lexer.next()?;
                 Ok(self.e(E::Number { value }, loc))
             }
-            T::TMinus => {
+            T::t_minus => {
                 self.lexer.next()?;
                 let value = self.lexer.number;
 
-                self.lexer.expect(T::TNumericLiteral)?;
+                self.lexer.expect(T::t_numeric_literal)?;
                 Ok(self.e(E::Number { value: -value }, loc))
             }
-            T::TPlus => {
+            T::t_plus => {
                 self.lexer.next()?;
                 let value = self.lexer.number;
 
-                self.lexer.expect(T::TNumericLiteral)?;
+                self.lexer.expect(T::t_numeric_literal)?;
                 Ok(self.e(E::Number { value }, loc))
             }
-            T::TOpenBrace => {
+            T::t_open_brace => {
                 self.lexer.next()?;
                 let mut is_single_line = !self.lexer.has_newline_before;
                 // PERF(port): was stack-fallback (std.heap.stackFallback(@sizeOf(Rope)*6)) —
                 // profile in Phase B
                 let key_allocator = self.bump;
                 let expr = self.e(E::Object::default(), loc);
-                let obj: *mut E::Object = expr.data.e_object();
+                let obj: *mut E::Object = expr.data.e_object().unwrap().as_ptr();
                 // TODO(port): `obj` aliases into `expr.data`; raw pointer mirrors Zig.
 
-                while self.lexer.token != T::TCloseBrace {
+                while self.lexer.token != T::t_close_brace {
                     // SAFETY: `obj` points into the AST store and is live here.
-                    if unsafe { (*obj).properties.len() } > 0 {
+                    if unsafe { (*obj).properties.slice().len() } > 0 {
                         if self.lexer.has_newline_before {
                             is_single_line = false;
                         }
-                        if !self.parse_maybe_trailing_comma(T::TCloseBrace)? {
+                        if !self.parse_maybe_trailing_comma(T::t_close_brace)? {
                             break;
                         }
                         if self.lexer.has_newline_before {
@@ -589,31 +579,31 @@ impl<'a> TOML<'a> {
                 }
                 let _ = is_single_line;
                 self.lexer.allow_double_bracket = true;
-                self.lexer.expect(T::TCloseBrace)?;
+                self.lexer.expect(T::t_close_brace)?;
                 Ok(expr)
             }
-            T::TEmptyArray => {
+            T::t_empty_array => {
                 self.lexer.next()?;
                 self.lexer.allow_double_bracket = true;
                 Ok(self.e(E::Array::default(), loc))
             }
-            T::TOpenBracket => {
+            T::t_open_bracket => {
                 self.lexer.next()?;
                 let mut is_single_line = !self.lexer.has_newline_before;
                 let array_ = self.e(E::Array::default(), loc);
-                let array: *mut E::Array = array_.data.e_array();
+                let array: *mut E::Array = array_.data.e_array().unwrap().as_ptr();
                 // TODO(port): `array` aliases into `array_.data`; raw pointer mirrors Zig.
                 let bump = self.bump;
                 self.lexer.allow_double_bracket = false;
 
-                while self.lexer.token != T::TCloseBracket {
+                while self.lexer.token != T::t_close_bracket {
                     // SAFETY: `array` points into the AST store and is live here.
-                    if unsafe { (*array).items.len() } > 0 {
+                    if unsafe { (*array).items.slice().len() } > 0 {
                         if self.lexer.has_newline_before {
                             is_single_line = false;
                         }
 
-                        if !self.parse_maybe_trailing_comma(T::TCloseBracket)? {
+                        if !self.parse_maybe_trailing_comma(T::t_close_bracket)? {
                             break;
                         }
 
@@ -634,7 +624,7 @@ impl<'a> TOML<'a> {
                 }
                 let _ = is_single_line;
                 self.lexer.allow_double_bracket = true;
-                self.lexer.expect(T::TCloseBracket)?;
+                self.lexer.expect(T::t_close_bracket)?;
                 Ok(array_)
             }
             _ => {

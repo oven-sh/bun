@@ -819,6 +819,7 @@ pub use expr::Data as ExprData;
 
 /// `std.meta.Tag(Expr.Data)` — value subset.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, strum::IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
 #[repr(u8)]
 pub enum ExprTag {
     EArray,

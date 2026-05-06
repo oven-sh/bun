@@ -1,38 +1,48 @@
 //! JSC bridges for `bun.http.{Headers,H2Client,H3Client}`. Keeps `src/http/`
 //! free of JSC types.
 
+use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
 use bun_http::Headers;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_string::ZigString;
+use bun_http_types::ETag::{HeaderEntryField, StringPointer as HeaderStringPointer};
+use bun_jsc::{CallFrame, FetchHeaders, JSGlobalObject, JSValue, JsResult};
+use bun_string::{StringPointer, ZigString};
 
-// TODO(b2-blocked): bun_runtime::webcore::FetchHeaders
-// `bun_runtime` is a higher-tier crate (would create a dep cycle: runtime → http_jsc).
-// FetchHeaders is an opaque C++ type; the bridge type needs to live in `bun_jsc` or a
-// lower-tier `*_sys` crate before this fn signature can be expressed here. Whole fn
-// stays gated.
-#[cfg(any())]
+/// Build a `WebCore::FetchHeaders` from `bun.http.Headers` storage.
+///
+/// PORT NOTE: `FetchHeaders` (opaque C++ handle) was moved into `bun_jsc`, so
+/// the prior dep-cycle on `bun_runtime` no longer applies. The C++ side
+/// receives raw `StringPointer` column pointers; `bun_http_types` and
+/// `bun_string` define the same `#[repr(C)] {u32 offset; u32 length}` layout,
+/// asserted below.
 pub fn to_fetch_headers(
     this: &Headers,
     global: &JSGlobalObject,
-) -> bun_jsc::JsResult<*mut bun_runtime::webcore::FetchHeaders> {
+) -> JsResult<NonNull<FetchHeaders>> {
     use bun_jsc::JsError;
-    use bun_runtime::webcore::FetchHeaders;
-    // TODO(port): return type — FetchHeaders is an opaque C++ object; ownership semantics TBD in Phase B
     if this.entries.len() == 0 {
         return Ok(FetchHeaders::create_empty());
     }
-    // TODO(port): MultiArrayList SoA column accessors (`.items(.name)` / `.items(.value)`)
-    let headers = FetchHeaders::create(
+    // Layout parity between the two `StringPointer` newtypes (both `u32×2`).
+    const _: () = assert!(
+        core::mem::size_of::<HeaderStringPointer>() == core::mem::size_of::<StringPointer>()
+            && core::mem::align_of::<HeaderStringPointer>() == core::mem::align_of::<StringPointer>()
+    );
+    // SAFETY: column type for both fields is `HeaderStringPointer` (see
+    // `HeaderEntry::FIELD_SIZES`); `items` returns `&mut [F]` over live storage.
+    let names: &mut [HeaderStringPointer] =
+        unsafe { this.entries.items::<HeaderStringPointer>(HeaderEntryField::Name) };
+    let values: &mut [HeaderStringPointer] =
+        unsafe { this.entries.items::<HeaderStringPointer>(HeaderEntryField::Value) };
+    FetchHeaders::create(
         global,
-        this.entries.items_name().as_ptr(),
-        this.entries.items_value().as_ptr(),
+        names.as_mut_ptr().cast::<StringPointer>(),
+        values.as_mut_ptr().cast::<StringPointer>(),
         &ZigString::init(this.buf.as_slice()),
         this.entries.len() as u32,
     )
-    .ok_or(JsError::Thrown)?;
-    Ok(headers)
+    .ok_or(JsError::Thrown)
 }
 
 pub struct H2TestingAPIs;

@@ -19,7 +19,8 @@ use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use bun_aio::KeepAlive;
 use bun_string::String as BunString;
 
-use crate::{self as jsc, CallFrame, JSGlobalObject, VirtualMachine, ZigException};
+use crate::virtual_machine::VirtualMachine;
+use crate::{self as jsc, CallFrame, JSGlobalObject, ZigException};
 
 bun_core::declare_scope!(debugger, visible);
 bun_core::declare_scope!(TestReporterAgent, visible);

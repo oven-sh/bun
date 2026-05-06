@@ -368,13 +368,14 @@ impl Context {
     pub fn reset(&mut self) -> Error {
         use c::NodeMode::*;
         self.err = c::ReturnCode::Ok;
+        // SAFETY: FFI — state is an initialized stream for the given mode.
         match self.mode {
-            DEFLATE | DEFLATERAW | GZIP => {
+            DEFLATE | DEFLATERAW | GZIP => unsafe {
                 self.err = c::deflateReset(&mut self.state);
-            }
-            INFLATE | INFLATERAW | GUNZIP => {
+            },
+            INFLATE | INFLATERAW | GUNZIP => unsafe {
                 self.err = c::inflateReset(&mut self.state);
-            }
+            },
             _ => {}
         }
         if self.err != c::ReturnCode::Ok {
@@ -389,8 +390,8 @@ impl Context {
             None => 0,
         };
         self.state.next_in = match in_ {
-            Some(p) => p.as_ptr() as *mut u8,
-            None => core::ptr::null_mut(),
+            Some(p) => p.as_ptr(),
+            None => core::ptr::null(),
         };
         self.state.avail_out = match &out {
             Some(p) => u32::try_from(p.len()).unwrap(),
@@ -467,25 +468,31 @@ impl Context {
     }
 
     fn do_work_deflate(&mut self) {
-        self.err = c::deflate(&mut self.state, self.flush);
+        // SAFETY: FFI — state is an initialized deflate stream.
+        self.err = unsafe { c::deflate(&mut self.state, self.flush) };
     }
 
     fn do_work_inflate(&mut self) {
-        self.err = c::inflate(&mut self.state, self.flush);
+        // SAFETY: FFI — state is an initialized inflate stream.
+        self.err = unsafe { c::inflate(&mut self.state, self.flush) };
 
         if self.mode != c::NodeMode::INFLATERAW
             && self.err == c::ReturnCode::NeedDict
             && !self.dictionary().is_empty()
         {
             let dict = self.dictionary();
-            self.err = c::inflateSetDictionary(
-                &mut self.state,
-                dict.as_ptr(),
-                u32::try_from(dict.len()).unwrap(),
-            );
+            // SAFETY: FFI — state is an initialized inflate stream; dict is rooted.
+            self.err = unsafe {
+                c::inflateSetDictionary(
+                    &mut self.state,
+                    dict.as_ptr(),
+                    u32::try_from(dict.len()).unwrap(),
+                )
+            };
 
             if self.err == c::ReturnCode::Ok {
-                self.err = c::inflate(&mut self.state, self.flush);
+                // SAFETY: FFI — state is an initialized inflate stream.
+                self.err = unsafe { c::inflate(&mut self.state, self.flush) };
             } else if self.err == c::ReturnCode::DataError {
                 self.err = c::ReturnCode::NeedDict;
             }
@@ -499,7 +506,8 @@ impl Context {
             // Bytes remain in input buffer. Perhaps this is another compressed member in the same archive, or just trailing garbage.
             // Trailing zero bytes are okay, though, since they are frequently used for padding.
             let _ = self.reset();
-            self.err = c::inflate(&mut self.state, self.flush);
+            // SAFETY: FFI — state was just re-initialized by reset().
+            self.err = unsafe { c::inflate(&mut self.state, self.flush) };
         }
     }
 
@@ -533,13 +541,14 @@ impl Context {
     pub fn close(&mut self) {
         use c::NodeMode::*;
         let mut status = c::ReturnCode::Ok;
+        // SAFETY: FFI — state is an initialized stream for the given mode.
         match self.mode {
-            DEFLATE | DEFLATERAW | GZIP => {
+            DEFLATE | DEFLATERAW | GZIP => unsafe {
                 status = c::deflateEnd(&mut self.state);
-            }
-            INFLATE | INFLATERAW | GUNZIP | UNZIP => {
+            },
+            INFLATE | INFLATERAW | GUNZIP | UNZIP => unsafe {
                 status = c::inflateEnd(&mut self.state);
-            }
+            },
             NONE => {}
             BROTLI_ENCODE | BROTLI_DECODE => {}
             ZSTD_COMPRESS | ZSTD_DECOMPRESS => {}

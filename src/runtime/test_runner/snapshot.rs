@@ -260,13 +260,14 @@ impl<'a> Snapshots<'a> {
         // SAFETY: buf[pos] == 0 written above
         let snapshot_file_path = unsafe { ZStr::from_raw(buf.as_ptr(), pos) };
 
-        let source = logger::Source::init_path_string(snapshot_file_path.as_bytes(), self.file_buf);
+        let source = logger::Source::init_path_string(snapshot_file_path.as_bytes(), self.file_buf.as_slice());
 
-        let mut parser = js_parser::Parser::init(
+        let parser = js_parser::Parser::init(
             opts,
             &mut temp_log,
             &source,
-            vm.transpiler.options.define,
+            &vm.transpiler.options.define,
+            &arena,
         )?;
 
         let parse_result = parser.parse()?;

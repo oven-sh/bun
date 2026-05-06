@@ -602,7 +602,8 @@ impl FetchTasklet {
             // if we are not done we wait until the next call
             if is_done {
                 let mut poll_ref = core::mem::take(&mut this.poll_ref);
-                poll_ref.unref(vm);
+                let _ = vm;
+                poll_ref.unref(vm_ctx());
                 FetchTasklet::deref(this as *mut _);
             }
         };
@@ -663,7 +664,7 @@ impl FetchTasklet {
 
         if promise_value.is_empty_or_undefined_or_null() {
             bun_output::scoped_log!(FetchTasklet, "onProgressUpdate: promise_value is null");
-            self.promise.deinit();
+            self.promise = jsc::JSPromiseStrong::empty();
             cleanup(self);
             return Ok(());
         }
@@ -680,10 +681,10 @@ impl FetchTasklet {
 
                 promise_value.ensure_still_alive();
                 let r = promise.reject_with_async_stack(global_this, result.to_js(global_this));
-                result.deinit();
+                result.reset();
 
                 tracker.did_dispatch(global_this);
-                self.promise.deinit();
+                self.promise = jsc::JSPromiseStrong::empty();
                 cleanup(self);
                 return r;
             }

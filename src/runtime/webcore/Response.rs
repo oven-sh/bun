@@ -754,7 +754,7 @@ impl Response {
                 if let Some(stream) = js::stream_get_cached(js_ref) {
                     let mut readable = ReadableStream::from_js(stream, global_this)?;
                     if let Some(readable) = readable.as_mut() {
-                        break 'brk self.body.clone_with_readable_stream(global_this, readable)?;
+                        break 'brk self.body.clone_with_readable_stream(global_this, Some(readable))?;
                     }
                 }
             }
@@ -830,9 +830,11 @@ impl Response {
 
     // TODO(b2-blocked): #[bun_jsc::host_fn]
     pub fn construct_json(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args_list = callframe.arguments_old(2);
+        let args_list = callframe.arguments_old::<2>();
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
-        let mut args = bun_jsc::ArgumentsSlice::init(global_this.bun_vm(), &args_list.ptr[0..args_list.len]);
+        // SAFETY: `bun_vm()` returns a raw `*mut VirtualMachine` (PORTING.md
+        // §raw-ptr) — borrow it for the duration of args parsing.
+        let mut args = bun_jsc::ArgumentsSlice::init(unsafe { &*global_this.bun_vm() }, &args_list.ptr[0..args_list.len]);
 
         let mut response = Response {
             body: Body { value: BodyValue::Empty },

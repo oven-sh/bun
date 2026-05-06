@@ -770,7 +770,10 @@ impl<R, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, F> {
             r#ref: KeepAlive::default(),
             tracker: AsyncTaskTracker::init(vm),
         });
-        task.r#ref.ref_(vm);
+        // KeepAlive::ref_ now takes the type-erased aio EventLoopCtx; the JS
+        // event loop is the only one that owns AsyncFSTask/UVFSRequest.
+        task.r#ref.ref_(js_event_loop_ctx());
+        let _ = vm;
         task.args.to_thread_safe();
         task.tracker.did_schedule(global_object);
 
@@ -1003,7 +1006,10 @@ impl<R, A: FsArgument, const F: NodeFSFunctionEnum> AsyncFSTask<R, A, F> {
             r#ref: KeepAlive::default(),
             tracker: AsyncTaskTracker::init(vm),
         });
-        task.r#ref.ref_(vm);
+        // KeepAlive::ref_ now takes the type-erased aio EventLoopCtx; the JS
+        // event loop is the only one that owns AsyncFSTask/UVFSRequest.
+        task.r#ref.ref_(js_event_loop_ctx());
+        let _ = vm;
         task.args.to_thread_safe();
         task.tracker.did_schedule(global_object);
         let promise = task.promise.value();

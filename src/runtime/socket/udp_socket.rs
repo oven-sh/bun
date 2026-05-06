@@ -1161,7 +1161,7 @@ impl UDPSocket {
         if this.closed {
             return Err(global_this.throw(format_args!("Socket is closed")));
         }
-        let arguments = callframe.arguments_old(3);
+        let arguments = callframe.arguments_old::<3>();
         let dst: Option<Destination> = 'brk: {
             if this.connect_info.is_some() {
                 if arguments.len == 1 {
@@ -1218,7 +1218,8 @@ impl UDPSocket {
                 // `toPrimitive` cannot invalidate an earlier captured pointer,
                 // and `this.socket orelse throw` below handles a
                 // close-during-`toPrimitive`.
-                payload_str = payload_arg.to_js_string(global_this)?.to_slice(global_this);
+                // SAFETY: to_js_string returned non-null on success path.
+                payload_str = unsafe { (*payload_arg.to_js_string(global_this)?).to_slice(global_this) };
                 break 'brk payload_str.slice();
             } else {
                 return Err(global_this.throw_invalid_arguments(format_args!(

@@ -33,7 +33,10 @@ pub mod bun_s3 {
 }
 
 /// `Blob.SizeType` is `u52` in Zig; the Rust port uses `u64` (see `webcore::blob::SizeType`).
-type BlobSizeType = u64;
+// PORT NOTE: alias the canonical `webcore::BlobSizeType` so `SignalVTable.ready`'s
+// fn-pointer signature is structurally identical to callers that name the public
+// re-export (e.g. `sink::SinkSignal::init`).
+type BlobSizeType = crate::webcore::BlobSizeType;
 type ByteList = BabyList<u8>;
 
 // Compat: `webcore::Pipe` and Body refer to `streams::Result` / `streams::result::StreamError`.

@@ -336,51 +336,63 @@ pub fn to_js_from_multipart_data(
 
                 // PORT NOTE: dropped `bun.default_allocator` arg.
                 let mut blob = Blob::create(value_str, wrap.global, false);
-                let mut filename = ZigString::init_utf8(filename_str);
-                let content_type: &[u8] = 'brk: {
-                    if !field.content_type.is_empty() {
-                        break 'brk field.content_type.slice(buf);
-                    }
-                    if !filename_str.is_empty() {
-                        let extension = bun_paths::extension(filename_str);
-                        if !extension.is_empty() {
-                            if let Some(mime) =
-                                bun_http::MimeType::by_extension_no_default(&extension[1..])
-                            {
-                                break 'brk mime.value;
+                let filename = ZigString::init_utf8(filename_str);
+
+                // PORT NOTE: Zig used a labeled `:brk` block returning a borrowed
+                // `[]const u8`. `MimeType.value` is now `Cow<'static,[u8]>`, so
+                // split the two ownership cases instead of unifying through a
+                // single `&[u8]` (avoids borrowing a temporary).
+                if !field.content_type.is_empty() {
+                    let ct = field.content_type.slice(buf);
+                    blob.content_type_allocated = true;
+                    blob.content_type =
+                        Box::into_raw(Box::<[u8]>::from(ct)) as *const [u8];
+                    blob.content_type_was_set = true;
+                } else {
+                    let mime = 'brk: {
+                        if !filename_str.is_empty() {
+                            let extension = bun_paths::extension(filename_str);
+                            if !extension.is_empty() {
+                                if let Some(m) =
+                                    bun_http::MimeType::by_extension_no_default(&extension[1..])
+                                {
+                                    break 'brk Some(m);
+                                }
+                            }
+                        }
+                        bun_http::MimeType::sniff(value_str)
+                    };
+                    if let Some(mime) = mime {
+                        match mime.value {
+                            std::borrow::Cow::Borrowed(s) => {
+                                blob.content_type = s as *const [u8];
+                                blob.content_type_was_set = false;
+                                blob.content_type_allocated = false;
+                            }
+                            std::borrow::Cow::Owned(v) => {
+                                // by_extension/sniff currently always yield Borrowed,
+                                // but handle Owned defensively to avoid a dangling ptr.
+                                blob.content_type =
+                                    Box::into_raw(v.into_boxed_slice()) as *const [u8];
+                                blob.content_type_was_set = false;
+                                blob.content_type_allocated = true;
                             }
                         }
                     }
-
-                    if let Some(mime) = bun_http::MimeType::sniff(value_str) {
-                        break 'brk mime.value;
-                    }
-
-                    break 'brk b"";
-                };
-
-                if !content_type.is_empty() {
-                    // TODO(port): `Blob.content_type*` field types — Zig stored
-                    // `[]const u8` + `bool` flags; assuming Rust `Blob` exposes
-                    // matching public fields. Revisit once `webcore::Blob` is ported.
-                    if !field.content_type.is_empty() {
-                        blob.content_type_allocated = true;
-                        blob.content_type = Box::<[u8]>::from(content_type);
-                        blob.content_type_was_set = true;
-                    } else {
-                        blob.content_type = content_type;
-                        blob.content_type_was_set = false;
-                        blob.content_type_allocated = false;
-                    }
                 }
 
-                wrap.form
-                    .append_blob(wrap.global, &mut key, &mut blob, &mut filename);
+                dom_form_data_shim::append_blob(
+                    wrap.form,
+                    wrap.global,
+                    &key,
+                    &mut blob as *mut Blob as *mut core::ffi::c_void,
+                    &filename,
+                );
                 // PORT NOTE: Zig `defer blob.detach()` — no early returns in
                 // this branch, so call explicitly at scope end.
                 blob.detach();
             } else {
-                let mut value = ZigString::init_utf8(
+                let value = ZigString::init_utf8(
                     // > Each part whose `Content-Disposition` header does not
                     // > contain a `filename` parameter must be parsed into an
                     // > entry whose value is the UTF-8 decoded without BOM

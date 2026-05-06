@@ -462,7 +462,9 @@ impl ByteStream {
         if let Some(action) = self.buffer_action.as_mut() {
             action.deinit();
         }
-        self.parent().deinit();
+        // SAFETY: `self` is the `context` field of a heap-allocated `NewSource<ByteStream>`
+        // (via `Source::new` → `Box::new`); this is the GC-finalizer teardown path.
+        unsafe { self.parent().deinit() };
     }
 
     pub fn drain(&mut self) -> ByteList {

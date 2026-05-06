@@ -3382,7 +3382,7 @@ pub fn js_upgrade_duplex_to_tls(
             ));
         };
         // SAFETY: `from_js` returns a live `*mut SecureContext`.
-        *owned_ctx = Some(unsafe { (*sc).borrow() });
+        *owned_ctx = Some(unsafe { (*sc).borrow() } as *mut SSL_CTX);
     }
 
     // Still parse SSLConfig for servername/ALPN (those live on the JS-side
@@ -3466,7 +3466,7 @@ pub fn js_upgrade_duplex_to_tls(
         // SAFETY: `tls` came from `TLSSocket::new` (Box::into_raw); intrusive +1 held.
         tls: Some(unsafe { IntrusiveRc::from_raw(tls) }),
         // SAFETY: `bun_vm()` returns the live per-global VM; lives for the program.
-        vm: unsafe { &*global.bun_vm() },
+        vm: VirtualMachine::get(),
         // TODO(port): in-place init — Zig `undefined`, assigned below after we
         // have `duplex_context`. `zeroed()` is UB if `AnyTask` has fn-ptr fields;
         // Phase B: same MaybeUninit two-phase init as `upgrade`.

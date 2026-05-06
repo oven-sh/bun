@@ -1422,13 +1422,13 @@ impl BufferedOutput {
             }
             BufferedOutput::ArrayBuffer { buf, i } => {
                 let array_buf_slice = buf.slice_mut();
+                let idx = *i as usize;
                 // TODO: We should probably throw error here?
-                if usize::from(*i) >= array_buf_slice.len() {
+                if idx >= array_buf_slice.len() {
                     return;
                 }
-                let length = (array_buf_slice.len() - usize::from(*i)).min(bytes.len());
-                array_buf_slice[usize::from(*i)..usize::from(*i) + length]
-                    .copy_from_slice(&bytes[..length]);
+                let length = (array_buf_slice.len() - idx).min(bytes.len());
+                array_buf_slice[idx..idx + length].copy_from_slice(&bytes[..length]);
                 *i += u32::try_from(length).unwrap();
             }
         }
@@ -1477,7 +1477,7 @@ impl CapturedWriter {
         log!(
             "CapturedWriter(0x{:x}, {}) doWrite len={} parent_amount={}",
             self as *mut _ as usize,
-            <&'static str>::from(self.parent().out_type),
+            out_kind_str(self.parent().out_type),
             chunk.len(),
             self.parent().buffered_output.len()
         );
@@ -1532,7 +1532,7 @@ impl CapturedWriter {
         log!(
             "CapturedWriter(0x{:x}, {}) isDone(has_err={}, parent_state={}, written={}, parent_amount={})",
             self as *const _ as usize,
-            <&'static str>::from(self.parent().out_type),
+            out_kind_str(self.parent().out_type),
             self.err.is_some(),
             <&'static str>::from(&self.parent().state),
             self.written,
@@ -1552,7 +1552,7 @@ impl CapturedWriter {
         log!(
             "CapturedWriter({:x}, {}) onWrite({}, has_err={}) total_written={} total_to_write={}",
             self as *mut _ as usize,
-            <&'static str>::from(self.parent().out_type),
+            out_kind_str(self.parent().out_type),
             amount,
             err.is_some(),
             self.written + amount,
@@ -1563,7 +1563,7 @@ impl CapturedWriter {
             log!(
                 "CapturedWriter(0x{:x}, {}) onWrite errno={} errmsg={:?} errfd={:?} syscall={:?}",
                 self as *mut _ as usize,
-                <&'static str>::from(self.parent().out_type),
+                out_kind_str(self.parent().out_type),
                 e.errno,
                 e.message,
                 e.fd,
@@ -1589,7 +1589,7 @@ impl CapturedWriter {
         log!(
             "CapturedWriter({:x}, {}) onClose()",
             self as *mut _ as usize,
-            <&'static str>::from(self.parent().out_type)
+            out_kind_str(self.parent().out_type)
         );
         self.parent_mut().on_captured_writer_done();
     }
@@ -1610,7 +1610,7 @@ impl PipeReader {
         log!(
             "PipeReader(0x{:x}, {}) detach()",
             Arc::as_ptr(self) as usize,
-            <&'static str>::from(self.out_type)
+            out_kind_str(self.out_type)
         );
         // self.process = None;  // needs Cell<Option<*mut _>>
         // drop(self) — caller drops the Arc.
@@ -1620,7 +1620,7 @@ impl PipeReader {
         log!(
             "PipeReader(0x{:x}, {}) isDone() state={} captured_writer_done={}",
             self as *const _ as usize,
-            <&'static str>::from(self.out_type),
+            out_kind_str(self.out_type),
             <&'static str>::from(&self.state),
             self.captured_writer.is_done(0)
         );
@@ -1677,7 +1677,7 @@ impl PipeReader {
         log!(
             "PipeReader(0x{:x}, {}) create()",
             &*this as *const _ as usize,
-            <&'static str>::from(this.out_type)
+            out_kind_str(this.out_type)
         );
 
         if let Some(cap) = capture {
@@ -1750,7 +1750,7 @@ impl PipeReader {
         log!(
             "PipeReader(0x{:x}, {}) onReadChunk(chunk_len={}, has_more={})",
             this as *mut _ as usize,
-            <&'static str>::from(this.out_type),
+            out_kind_str(this.out_type),
             chunk.len(),
             <&'static str>::from(has_more)
         );
@@ -1783,7 +1783,7 @@ impl PipeReader {
         log!(
             "onReaderDone(0x{:x}, {})",
             self as *mut _ as usize,
-            <&'static str>::from(self.out_type)
+            out_kind_str(self.out_type)
         );
         let owned = self.to_owned_slice();
         self.state = PipeReaderState::Done(owned);
@@ -1812,7 +1812,7 @@ impl PipeReader {
         log!(
             "signalDoneToCmd ({:x}: {}) isDone={}",
             self as *mut _ as usize,
-            <&'static str>::from(self.out_type),
+            out_kind_str(self.out_type),
             self.is_done()
         );
         if cfg!(debug_assertions) {
@@ -2041,7 +2041,7 @@ impl Drop for PipeReader {
         log!(
             "PipeReader(0x{:x}, {}) deinit()",
             self as *mut _ as usize,
-            <&'static str>::from(self.out_type)
+            out_kind_str(self.out_type)
         );
         #[cfg(unix)]
         {

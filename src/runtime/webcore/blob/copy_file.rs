@@ -1673,19 +1673,19 @@ pub enum IOWhich {
 
 fn unsupported_directory_error() -> SystemError {
     SystemError {
-        errno: bun_sys::SystemErrno::EISDIR as c_int,
+        errno: bun_sys::SystemErrno::EISDIR as i32,
         message: bun_str::String::static_("That doesn't work on folders"),
         syscall: bun_str::String::static_("fstat"),
-        ..Default::default()
+        ..SystemError::default()
     }
 }
 
 fn unsupported_non_regular_file_error() -> SystemError {
     SystemError {
-        errno: bun_sys::SystemErrno::ENOTSUP as c_int,
+        errno: bun_sys::SystemErrno::ENOTSUP as i32,
         message: bun_str::String::static_("Non-regular files aren't supported yet"),
         syscall: bun_str::String::static_("fstat"),
-        ..Default::default()
+        ..SystemError::default()
     }
 }
 // TODO(port): Zig had these as `const` values; SystemError contains bun.String which

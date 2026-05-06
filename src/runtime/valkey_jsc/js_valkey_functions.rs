@@ -163,14 +163,10 @@ macro_rules! cmd_noargs {
             ) {
                 Ok(p) => p,
                 Err(err) => {
-                    return Ok(protocol::valkey_error_to_js(
-                        global,
-                        Some(concat!("Failed to send ", $command).as_bytes()),
-                        err,
-                    ))
+                    return send_err_to_js(global, concat!("Failed to send ", $command), err)
                 }
             };
-            Ok(promise.to_js())
+            Ok(promise_to_js(promise))
         }
     };
 }
@@ -200,14 +196,10 @@ macro_rules! cmd_key {
             ) {
                 Ok(p) => p,
                 Err(err) => {
-                    return Ok(protocol::valkey_error_to_js(
-                        global,
-                        Some(concat!("Failed to send ", $command).as_bytes()),
-                        err,
-                    ))
+                    return send_err_to_js(global, concat!("Failed to send ", $command), err)
                 }
             };
-            Ok(promise.to_js())
+            Ok(promise_to_js(promise))
         }
     };
 }
@@ -255,14 +247,10 @@ macro_rules! cmd_key_varargs {
             ) {
                 Ok(p) => p,
                 Err(err) => {
-                    return Ok(protocol::valkey_error_to_js(
-                        global,
-                        Some(concat!("Failed to send ", $command).as_bytes()),
-                        err,
-                    ))
+                    return send_err_to_js(global, concat!("Failed to send ", $command), err)
                 }
             };
-            Ok(promise.to_js())
+            Ok(promise_to_js(promise))
         }
     };
 }
@@ -295,14 +283,10 @@ macro_rules! cmd_key_value {
             ) {
                 Ok(p) => p,
                 Err(err) => {
-                    return Ok(protocol::valkey_error_to_js(
-                        global,
-                        Some(concat!("Failed to send ", $command).as_bytes()),
-                        err,
-                    ))
+                    return send_err_to_js(global, concat!("Failed to send ", $command), err)
                 }
             };
-            Ok(promise.to_js())
+            Ok(promise_to_js(promise))
         }
     };
 }
@@ -338,14 +322,10 @@ macro_rules! cmd_key_value_value2 {
             ) {
                 Ok(p) => p,
                 Err(err) => {
-                    return Ok(protocol::valkey_error_to_js(
-                        global,
-                        Some(concat!("Failed to send ", $command).as_bytes()),
-                        err,
-                    ))
+                    return send_err_to_js(global, concat!("Failed to send ", $command), err)
                 }
             };
-            Ok(promise.to_js())
+            Ok(promise_to_js(promise))
         }
     };
 }
@@ -384,14 +364,10 @@ macro_rules! cmd_strings_varargs {
             ) {
                 Ok(p) => p,
                 Err(err) => {
-                    return Ok(protocol::valkey_error_to_js(
-                        global,
-                        Some(concat!("Failed to send ", $command).as_bytes()),
-                        err,
-                    ))
+                    return send_err_to_js(global, concat!("Failed to send ", $command), err)
                 }
             };
-            Ok(promise.to_js())
+            Ok(promise_to_js(promise))
         }
     };
 }
@@ -434,14 +410,10 @@ macro_rules! cmd_key_value_varargs {
             ) {
                 Ok(p) => p,
                 Err(err) => {
-                    return Ok(protocol::valkey_error_to_js(
-                        global,
-                        Some(concat!("Failed to send ", $command).as_bytes()),
-                        err,
-                    ))
+                    return send_err_to_js(global, concat!("Failed to send ", $command), err)
                 }
             };
-            Ok(promise.to_js())
+            Ok(promise_to_js(promise))
         }
     };
 }
@@ -494,7 +466,7 @@ impl JSValkeyClient {
                 return protocol::valkey_error_to_js(global, "Failed to send command", err);
             }
         };
-        Ok(promise.to_js())
+        Ok(promise_to_js(promise))
     }
 
     #[bun_jsc::host_fn(method)]
@@ -520,7 +492,7 @@ impl JSValkeyClient {
                 return protocol::valkey_error_to_js(global, "Failed to send GET command", err)
             }
         };
-        Ok(promise.to_js())
+        Ok(promise_to_js(promise))
     }
 
     #[bun_jsc::host_fn(method)]
@@ -552,7 +524,7 @@ impl JSValkeyClient {
                 return protocol::valkey_error_to_js(global, "Failed to send GET command", err)
             }
         };
-        Ok(promise.to_js())
+        Ok(promise_to_js(promise))
     }
 
     #[bun_jsc::host_fn(method)]
@@ -612,7 +584,7 @@ impl JSValkeyClient {
             }
         };
 
-        Ok(promise.to_js())
+        Ok(promise_to_js(promise))
     }
 
     #[bun_jsc::host_fn(method)]
@@ -638,7 +610,7 @@ impl JSValkeyClient {
                 return protocol::valkey_error_to_js(global, "Failed to send INCR command", err)
             }
         };
-        Ok(promise.to_js())
+        Ok(promise_to_js(promise))
     }
 
     #[bun_jsc::host_fn(method)]
@@ -664,7 +636,7 @@ impl JSValkeyClient {
                 return protocol::valkey_error_to_js(global, "Failed to send DECR command", err)
             }
         };
-        Ok(promise.to_js())
+        Ok(promise_to_js(promise))
     }
 
     #[bun_jsc::host_fn(method)]
@@ -697,7 +669,7 @@ impl JSValkeyClient {
                 return protocol::valkey_error_to_js(global, "Failed to send EXISTS command", err)
             }
         };
-        Ok(promise.to_js())
+        Ok(promise_to_js(promise))
     }
 
     #[bun_jsc::host_fn(method)]
@@ -744,7 +716,7 @@ impl JSValkeyClient {
                 return protocol::valkey_error_to_js(global, "Failed to send EXPIRE command", err)
             }
         };
-        Ok(promise.to_js())
+        Ok(promise_to_js(promise))
     }
 
     #[bun_jsc::host_fn(method)]
@@ -770,7 +742,7 @@ impl JSValkeyClient {
                 return protocol::valkey_error_to_js(global, "Failed to send TTL command", err)
             }
         };
-        Ok(promise.to_js())
+        Ok(promise_to_js(promise))
     }
 
     // Implement srem (remove value from a set)
@@ -818,7 +790,7 @@ impl JSValkeyClient {
                 return protocol::valkey_error_to_js(global, "Failed to send SREM command", err)
             }
         };
-        Ok(promise.to_js())
+        Ok(promise_to_js(promise))
     }
 
     // Implement srandmember (get random member from set)
@@ -872,7 +844,7 @@ impl JSValkeyClient {
                 )
             }
         };
-        Ok(promise.to_js())
+        Ok(promise_to_js(promise))
     }
 
     // Implement smembers (get all members of a set)
@@ -907,7 +879,7 @@ impl JSValkeyClient {
                 )
             }
         };
-        Ok(promise.to_js())
+        Ok(promise_to_js(promise))
     }
 
     // Implement spop (pop a random member from a set)
@@ -949,7 +921,7 @@ impl JSValkeyClient {
                 return protocol::valkey_error_to_js(global, "Failed to send SPOP command", err)
             }
         };
-        Ok(promise.to_js())
+        Ok(promise_to_js(promise))
     }
 
     // Implement sadd (add member to a set)
@@ -997,7 +969,7 @@ impl JSValkeyClient {
                 return protocol::valkey_error_to_js(global, "Failed to send SADD command", err)
             }
         };
-        Ok(promise.to_js())
+        Ok(promise_to_js(promise))
     }
 
     // Implement sismember (check if value is member of a set)
@@ -1038,7 +1010,7 @@ impl JSValkeyClient {
                 )
             }
         };
-        Ok(promise.to_js())
+        Ok(promise_to_js(promise))
     }
 
     // Implement hmget (get multiple values from hash)
@@ -1113,7 +1085,7 @@ impl JSValkeyClient {
                 return protocol::valkey_error_to_js(global, "Failed to send HMGET command", err)
             }
         };
-        Ok(promise.to_js())
+        Ok(promise_to_js(promise))
     }
 
     // Implement hincrby (increment hash field by integer value)
@@ -1148,7 +1120,7 @@ impl JSValkeyClient {
                 return protocol::valkey_error_to_js(global, "Failed to send HINCRBY command", err)
             }
         };
-        Ok(promise.to_js())
+        Ok(promise_to_js(promise))
     }
 
     // Implement hincrbyfloat (increment hash field by float value)
@@ -1187,7 +1159,7 @@ impl JSValkeyClient {
                 )
             }
         };
-        Ok(promise.to_js())
+        Ok(promise_to_js(promise))
     }
 
     // PERF(port): `command` was a comptime []const u8 — demoted to runtime &'static [u8]
@@ -1320,7 +1292,7 @@ impl JSValkeyClient {
             }
         };
 
-        Ok(promise.to_js())
+        Ok(promise_to_js(promise))
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1388,7 +1360,7 @@ impl JSValkeyClient {
                 return protocol::valkey_error_to_js(global, "Failed to send HSETNX command", err)
             }
         };
-        Ok(promise.to_js())
+        Ok(promise_to_js(promise))
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1424,7 +1396,7 @@ impl JSValkeyClient {
                 return protocol::valkey_error_to_js(global, "Failed to send HEXISTS command", err)
             }
         };
-        Ok(promise.to_js())
+        Ok(promise_to_js(promise))
     }
 
     // Implement ping (send a PING command with an optional message)
@@ -1459,7 +1431,7 @@ impl JSValkeyClient {
                 return protocol::valkey_error_to_js(global, "Failed to send PING command", err)
             }
         };
-        Ok(promise.to_js())
+        Ok(promise_to_js(promise))
     }
 
     cmd_key!(bitcount, b"bitcount", "BITCOUNT", "key", NotSubscriber);
@@ -1599,7 +1571,7 @@ impl JSValkeyClient {
                 return protocol::valkey_error_to_js(global, "Failed to send SMOVE command", err)
             }
         };
-        Ok(promise.to_js())
+        Ok(promise_to_js(promise))
     }
 
     cmd_key_value_value2!(substr, b"substr", "SUBSTR", "key", "start", "end", NotSubscriber);
@@ -1668,7 +1640,7 @@ impl JSValkeyClient {
             }
         };
 
-        Ok(promise.to_js())
+        Ok(promise_to_js(promise))
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1743,7 +1715,7 @@ impl JSValkeyClient {
             }
         };
 
-        Ok(promise.to_js())
+        Ok(promise_to_js(promise))
     }
 
     /// Send redis the UNSUBSCRIBE RESP command and clean up anything necessary after the unsubscribe commoand.
@@ -1773,7 +1745,7 @@ impl JSValkeyClient {
             }
         };
 
-        Ok(promise.to_js())
+        Ok(promise_to_js(promise))
     }
 
     #[bun_jsc::host_fn(method)]

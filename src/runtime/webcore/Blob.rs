@@ -1662,13 +1662,13 @@ pub fn write_file_with_source_destination(
     let destination_store = destination_blob
         .store
         .clone()
-        .unwrap_or_else(|| Output::panic("Destination blob is detached"));
+        .unwrap_or_else(|| Output::panic(format_args!("Destination blob is detached")));
     let destination_type = destination_store.data.tag();
 
     // TODO: make sure this invariant isn't being broken elsewhere, then upgrade to allow_assert
     if cfg!(debug_assertions) {
         debug_assert!(
-            destination_type != Store::DataTag::Bytes,
+            destination_type != store::DataTag::Bytes,
             "Cannot write to a Blob backed by a Buffer or TypedArray. This is a bug in the caller."
         );
     }
@@ -1678,7 +1678,7 @@ pub fn write_file_with_source_destination(
     };
     let source_type = source_store.data.tag();
 
-    if destination_type == Store::DataTag::File && source_type == Store::DataTag::Bytes {
+    if destination_type == store::DataTag::File && source_type == store::DataTag::Bytes {
         let write_file_promise = Box::into_raw(Box::new(WriteFilePromise {
             promise: jsc::JSPromiseStrong::default(),
             global_this: ctx,
@@ -3862,7 +3862,8 @@ impl Blob {
         let len = bytes.len();
         if len > 0 {
             let s = Store::init(bytes);
-            s.is_all_ascii = Some(is_all_ascii);
+            // SAFETY: freshly-minted Store with refcount==1; no other alias.
+            unsafe { (*s.as_ptr()).is_all_ascii = Some(is_all_ascii) };
             store = Some(s);
         }
         Blob {
@@ -3870,13 +3871,14 @@ impl Blob {
             store,
             content_type: b"" as &'static [u8] as *const [u8],
             global_this: global_this,
-            charset: strings::AsciiStatus::from_bool(is_all_ascii),
+            charset: strings::AsciiStatus::from_bool(Some(is_all_ascii)),
             ..Default::default()
         }
     }
 
     /// Takes ownership of `bytes`.
-    pub fn init(bytes: Vec<u8>, global_this: &JSGlobalObject) -> Blob {
+    pub fn init(bytes: impl Into<Vec<u8>>, global_this: &JSGlobalObject) -> Blob {
+        let bytes: Vec<u8> = bytes.into();
         let len = bytes.len();
         Blob {
             size: len as SizeType,
@@ -3897,7 +3899,7 @@ impl Blob {
             size: len as SizeType,
             store: if len > 0 { Some(Store::init(bytes)) } else { None },
             content_type: if was_string {
-                bun_http_types::MimeType::TEXT.value as *const [u8]
+                bun_http_types::MimeType::TEXT.value.as_ref() as *const [u8]
             } else {
                 b"" as &'static [u8] as *const [u8]
             },
@@ -3922,7 +3924,7 @@ impl Blob {
                     }));
                     let mut blob = Blob::init_with_store(store, global_this);
                     if was_string && blob.content_type_slice().is_empty() {
-                        blob.content_type = bun_http_types::MimeType::TEXT.value as *const [u8];
+                        blob.content_type = bun_http_types::MimeType::TEXT.value.as_ref() as *const [u8];
                     }
                     return Ok(blob);
                 }
@@ -3967,18 +3969,7 @@ impl Blob {
         self.store = None;
     }
 
-    // dupe / dupe_with_content_type: defined once below (top-level impl); duplicate removed to fix E0034.
-
-    pub fn to_js(&mut self, global_object: &JSGlobalObject) -> JSValue {
-        // if cfg!(debug_assertions) { debug_assert!(self.is_heap_allocated()); }
-        self.calculate_estimated_byte_size();
-
-        if self.is_s3() {
-            return crate::webcore::s3_file::to_js_unchecked(global_object, self as *mut Blob);
-        }
-
-        js::to_js_unchecked(global_object, self as *mut Blob as *mut ())
-    }
+    // dupe / dupe_with_content_type / to_js: defined once below (top-level impl); duplicates removed (E0592).
 
     /// Raw-pointer counterpart of [`shared_view`]: returns a `*mut [u8]` into
     /// the Store's byte buffer with **mutable provenance** (derived through
@@ -4011,7 +4002,7 @@ impl Blob {
         // long-lived `&Store`; JS execution is single-threaded).
         let (base, len) = unsafe {
             match &mut (*store).data {
-                Store::Data::Bytes(bytes) => {
+                store::Data::Bytes(bytes) => {
                     let v = bytes.as_array_list_leak();
                     (v.as_mut_ptr(), v.len())
                 }
@@ -4030,15 +4021,30 @@ impl Blob {
     }
 
     pub fn set_is_ascii_flag(&mut self, is_all_ascii: bool) {
-        self.charset = strings::AsciiStatus::from_bool(is_all_ascii);
+        self.charset = strings::AsciiStatus::from_bool(Some(is_all_ascii));
         // if this Blob represents the entire binary data
         // we can update the store's is_all_ascii flag
         if self.size > 0 && self.offset == 0 {
-            if let Some(store) = &self.store {
-                if matches!(store.data, Store::Data::Bytes(_)) {
-                    store.is_all_ascii = Some(is_all_ascii);
+            if let Some(store_ref) = self.store.as_ref() {
+                let store = store_ref.as_ptr();
+                // SAFETY: `store` is live (we hold a `StoreRef`); single-threaded
+                // JS execution means no concurrent &Store borrow is outstanding.
+                unsafe {
+                    if matches!((*store).data, store::Data::Bytes(_)) {
+                        (*store).is_all_ascii = Some(is_all_ascii);
+                    }
                 }
             }
+        }
+    }
+
+    /// `Option<bool>` view of `self.charset` for the `*_with_bytes` ASCII fast-paths.
+    #[inline]
+    fn is_all_ascii(&self) -> Option<bool> {
+        match self.charset {
+            strings::AsciiStatus::Unknown => None,
+            strings::AsciiStatus::AllAscii => Some(true),
+            strings::AsciiStatus::NonAscii => Some(false),
         }
     }
 

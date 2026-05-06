@@ -3,16 +3,15 @@
 use core::ffi::{c_int, c_void};
 use core::marker::ConstParamTy;
 use core::mem::offset_of;
-use std::sync::Arc;
 
 use bun_aio as aio;
-use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, JsResult, SystemError};
+use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, JsResult};
 use bun_paths::PathBuffer;
 use crate::node::fs as node_fs;
-use crate::webcore::Blob;
-use crate::webcore::blob::{SizeType, Store, store};
+use crate::webcore::blob::{self, SizeType, Store, StoreRef, store, MkdirpTarget, Retry, MAX_SIZE};
+use crate::webcore::node_types::PathOrFileDescriptor;
 use bun_str as strings;
-use bun_sys::{self, Fd, Mode, Stat};
+use bun_sys::{self, Fd, FdExt, Mode, Stat, SystemError};
 #[cfg(windows)]
 use bun_sys::windows::libuv;
 
@@ -24,8 +23,8 @@ pub struct CopyFile<'a> {
     pub destination_file_store: store::File,
     pub source_file_store: store::File,
     // TODO(port): lifetime — heap-allocated across threads; Arc vs raw needs Phase B review
-    pub store: Option<Arc<Store>>,
-    pub source_store: Option<Arc<Store>>,
+    pub store: Option<StoreRef>,
+    pub source_store: Option<StoreRef>,
     pub offset: SizeType,
     pub size: SizeType,
     pub max_length: SizeType,

@@ -633,9 +633,8 @@ impl UDPSocket {
     ) -> JsResult<JSValue> {
         if this.closed {
             return Err(global_this.throw_value(
-                bun_sys::Result::<()>::errno_sys(posix::E::BADF as i32, bun_sys::Tag::setsockopt)
-                    .unwrap()
-                    .to_js(global_this)?,
+                bun_sys::Error::from_code_int(SystemErrno::EBADF as c_int, bun_sys::Tag::setsockopt)
+                    .to_js(global_this),
             ));
         }
 
@@ -663,9 +662,8 @@ impl UDPSocket {
     ) -> JsResult<JSValue> {
         if this.closed {
             return Err(global_this.throw_value(
-                bun_sys::Result::<()>::errno_sys(posix::E::BADF as i32, bun_sys::Tag::setsockopt)
-                    .unwrap()
-                    .to_js(global_this)?,
+                bun_sys::Error::from_code_int(SystemErrno::EBADF as c_int, bun_sys::Tag::setsockopt)
+                    .to_js(global_this),
             ));
         }
 
@@ -693,9 +691,8 @@ impl UDPSocket {
     ) -> JsResult<JSValue> {
         if this.closed {
             return Err(global_this.throw_value(
-                bun_sys::Result::<()>::errno_sys(posix::E::BADF as i32, bun_sys::Tag::setsockopt)
-                    .unwrap()
-                    .to_js(global_this)?,
+                bun_sys::Error::from_code_int(SystemErrno::EBADF as c_int, bun_sys::Tag::setsockopt)
+                    .to_js(global_this),
             ));
         }
 
@@ -708,9 +705,8 @@ impl UDPSocket {
         let mut addr: sockaddr_storage = unsafe { core::mem::zeroed() };
         if !this.parse_addr(global_this, JSValue::js_number(0.0), arguments[0], &mut addr)? {
             return Err(global_this.throw_value(
-                bun_sys::Result::<()>::errno_sys(posix::E::INVAL as i32, bun_sys::Tag::setsockopt)
-                    .unwrap()
-                    .to_js(global_this)?,
+                bun_sys::Error::from_code_int(SystemErrno::EINVAL as c_int, bun_sys::Tag::setsockopt)
+                    .to_js(global_this),
             ));
         }
 
@@ -769,9 +765,8 @@ impl UDPSocket {
     ) -> JsResult<JSValue> {
         if this.closed {
             return Err(global_this.throw_value(
-                bun_sys::Result::<()>::errno_sys(posix::E::BADF as i32, bun_sys::Tag::setsockopt)
-                    .unwrap()
-                    .to_js(global_this)?,
+                bun_sys::Error::from_code_int(SystemErrno::EBADF as c_int, bun_sys::Tag::setsockopt)
+                    .to_js(global_this),
             ));
         }
 
@@ -786,9 +781,8 @@ impl UDPSocket {
             &mut *source_addr.as_mut_ptr()
         })? {
             return Err(global_this.throw_value(
-                bun_sys::Result::<()>::errno_sys(posix::E::INVAL as i32, bun_sys::Tag::setsockopt)
-                    .unwrap()
-                    .to_js(global_this)?,
+                bun_sys::Error::from_code_int(SystemErrno::EINVAL as c_int, bun_sys::Tag::setsockopt)
+                    .to_js(global_this),
             ));
         }
         // SAFETY: initialized by parse_addr above.
@@ -800,9 +794,8 @@ impl UDPSocket {
             &mut *group_addr.as_mut_ptr()
         })? {
             return Err(global_this.throw_value(
-                bun_sys::Result::<()>::errno_sys(posix::E::INVAL as i32, bun_sys::Tag::setsockopt)
-                    .unwrap()
-                    .to_js(global_this)?,
+                bun_sys::Error::from_code_int(SystemErrno::EINVAL as c_int, bun_sys::Tag::setsockopt)
+                    .to_js(global_this),
             ));
         }
         // SAFETY: initialized by parse_addr above.
@@ -872,9 +865,8 @@ impl UDPSocket {
     ) -> JsResult<JSValue> {
         if this.closed {
             return Err(global_this.throw_value(
-                bun_sys::Result::<()>::errno_sys(posix::E::BADF as i32, bun_sys::Tag::setsockopt)
-                    .unwrap()
-                    .to_js(global_this)?,
+                bun_sys::Error::from_code_int(SystemErrno::EBADF as c_int, bun_sys::Tag::setsockopt)
+                    .to_js(global_this),
             ));
         }
 
@@ -935,9 +927,8 @@ impl UDPSocket {
         // PERF(port): was comptime monomorphization — profile in Phase B.
         if this.closed {
             return Err(global_this.throw_value(
-                bun_sys::Result::<()>::errno_sys(posix::E::BADF as i32, bun_sys::Tag::setsockopt)
-                    .unwrap()
-                    .to_js(global_this)?,
+                bun_sys::Error::from_code_int(SystemErrno::EBADF as c_int, bun_sys::Tag::setsockopt)
+                    .to_js(global_this),
             ));
         }
 

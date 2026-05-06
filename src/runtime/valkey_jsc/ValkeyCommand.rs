@@ -34,12 +34,20 @@ impl BlobOrStringOrBufferExt for BlobOrStringOrBuffer {
 // TODO(port): borrow-view struct — `<'a>` on a struct is disallowed in Phase A (no
 // LIFETIMES.tsv entry for ValkeyCommand.Command/Args); revisit in Phase B and either
 // add a TSV row or retype as raw `*const [u8]` per the UNKNOWN class.
+#[derive(Copy, Clone)]
 pub struct Command<'a> {
     pub command: &'a [u8],
     pub args: Args<'a>,
     pub meta: Meta,
 }
 
+impl<'a> Default for Command<'a> {
+    fn default() -> Self {
+        Self { command: b"", args: Args::default(), meta: Meta::default() }
+    }
+}
+
+#[derive(Copy, Clone)]
 pub enum Args<'a> {
     Slices(&'a [Slice]),
     Args(&'a [BlobOrStringOrBuffer]),

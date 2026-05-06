@@ -385,7 +385,9 @@ impl Response {
     pub fn set_size_hint(&mut self, size_hint: super::blob::SizeType) {
         if let BodyValue::Locked(locked) = &mut self.body.value {
             locked.size_hint = size_hint;
-            if let Some(readable) = locked.readable.get(locked.global) {
+            // SAFETY: `locked.global` is set from a live `&JSGlobalObject` and is non-null
+            // for the lifetime of a Locked body.
+            if let Some(readable) = locked.readable.get(unsafe { &*locked.global }) {
                 if let super::readable_stream::Source::Bytes(bytes) = &readable.ptr {
                     // TODO(port): lifetime — readable.ptr.Bytes is a back-pointer; verify mutability
                     // SAFETY: `bytes` is a live `*mut ByteStream` back-pointer owned by the

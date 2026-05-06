@@ -2296,11 +2296,11 @@ impl BufferAction {
     
     pub fn fulfill(&mut self, global: &JSGlobalObject, blob: &mut AnyBlob) -> JsResult<()> {
         // TODO(port): narrow error set — Zig: bun.JSTerminated!void
-        blob.wrap(
+        Ok(blob.wrap(
             jsc::AnyPromise::Normal(self.swap()),
             global,
             self.tag(),
-        )
+        )?)
         // TODO(port): Zig passed `this.*` (full enum) as 3rd arg; using tag()
     }
 

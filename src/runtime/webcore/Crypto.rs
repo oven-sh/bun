@@ -212,7 +212,8 @@ fn random_data(global: &JSGlobalObject, ptr: *mut u8, len: usize) {
         0 => {}
         // 512 bytes or less we reuse from the same cache as UUID generation.
         1..=ENTROPY_CACHE_FAST_PATH_MAX => {
-            let src = global.bun_vm().rare_data().entropy_slice(slice.len());
+            // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
+            let src = unsafe { &mut *global.bun_vm() }.rare_data().entropy_slice(slice.len());
             slice[..src.len()].copy_from_slice(src);
         }
         _ => {

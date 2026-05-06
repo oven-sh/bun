@@ -334,7 +334,7 @@ pub mod Jest {
             ScopeKind::Test,
             JSValue::ZERO,
             BaseScopeCfg::default(),
-            scope_strings::TEST.clone(),
+            scope_strings::TEST(),
         )?;
         module.put(global_object, b"test", test_scope_functions);
         module.put(global_object, b"it", test_scope_functions);
@@ -344,7 +344,7 @@ pub mod Jest {
             ScopeKind::Test,
             JSValue::ZERO,
             BaseScopeCfg { self_mode: ScopeMode::Skip, ..Default::default() },
-            scope_strings::XTEST.clone(),
+            scope_strings::XTEST(),
         )?;
         module.put(global_object, b"xtest", xtest_scope_functions);
         module.put(global_object, b"xit", xtest_scope_functions);
@@ -354,7 +354,7 @@ pub mod Jest {
             ScopeKind::Describe,
             JSValue::ZERO,
             BaseScopeCfg::default(),
-            scope_strings::DESCRIBE.clone(),
+            scope_strings::DESCRIBE(),
         )?;
         module.put(global_object, b"describe", describe_scope_functions);
 
@@ -363,7 +363,7 @@ pub mod Jest {
             ScopeKind::Describe,
             JSValue::ZERO,
             BaseScopeCfg { self_mode: ScopeMode::Skip, ..Default::default() },
-            scope_strings::XDESCRIBE.clone(),
+            scope_strings::XDESCRIBE(),
         ) {
             Ok(v) => v,
             Err(_) => return Ok(JSValue::ZERO),

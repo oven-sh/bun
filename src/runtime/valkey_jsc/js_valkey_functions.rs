@@ -163,25 +163,25 @@ macro_rules! cmd_key {
             compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(this, $name)?;
 
             let Some(key) = from_js(global, frame.argument(0))? else {
-                return global.throw_invalid_argument_type($name, $arg0_name, "string or buffer");
+                return Err(global.throw_invalid_argument_type(bname($name), $arg0_name, "string or buffer"));
             };
 
             let promise = match this.send(
                 global,
                 frame.this(),
                 &Command {
-                    command: $command,
+                    command: $command.as_bytes(),
                     args: CommandArgs::Args(&[key]),
                     meta: CommandMeta::default(),
                 },
             ) {
                 Ok(p) => p,
                 Err(err) => {
-                    return protocol::valkey_error_to_js(
+                    return Ok(protocol::valkey_error_to_js(
                         global,
-                        concat!("Failed to send ", $command),
+                        Some(concat!("Failed to send ", $command).as_bytes()),
                         err,
-                    )
+                    ))
                 }
             };
             Ok(promise.to_js())

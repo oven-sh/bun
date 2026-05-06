@@ -905,8 +905,10 @@ impl Writable {
                 if subprocess.proc().has_exited()
                 /* && !subprocess.flags.has_stdin_destructor_called */
                 {
-                    pipe.on_attached_process_exit(&subprocess.process.status);
-                    pipe.to_js(global_this)
+                    let _ = (pipe, &subprocess.proc().status);
+                    // TODO(port): Arc<FileSink> mut access for
+                    // on_attached_process_exit/to_js — dead under shell.
+                    todo!("blocked_on: webcore::FileSink::on_attached_process_exit via Arc")
                 } else {
                     // subprocess.flags.has_stdin_destructor_called = false;
                     // subprocess.weak_file_sink_stdin_ptr = pipe;

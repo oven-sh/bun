@@ -5092,15 +5092,15 @@ impl NodeFS {
             Maybe::Ok(result) => match result {
                 ret::ReadFileWithOptions::Buffer(buffer) => Maybe::Ok(StringOrBuffer::Buffer(buffer)),
                 ret::ReadFileWithOptions::TranscodedString(str) => {
-                    if str.tag == BunString::Tag::Dead {
-                        return Maybe::Err(sys::Error::from_code(E::NOMEM, sys::Tag::read).with_path_like(&args.path));
+                    if str.is_dead() {
+                        return Maybe::Err(with_path_like(sys::Error::from_code(E::ENOMEM, sys::Tag::read), &args.path));
                     }
                     Maybe::Ok(StringOrBuffer::String(node::SliceWithUnderlyingString { underlying: str, ..Default::default() }))
                 }
                 ret::ReadFileWithOptions::String(s) => {
                     let str = node::SliceWithUnderlyingString::transcode_from_owned_slice(s, args.encoding);
-                    if str.underlying.tag == BunString::Tag::Dead && str.utf8.is_empty() {
-                        return Maybe::Err(sys::Error::from_code(E::NOMEM, sys::Tag::read).with_path_like(&args.path));
+                    if str.underlying.is_dead() && str.utf8.slice().is_empty() {
+                        return Maybe::Err(with_path_like(sys::Error::from_code(E::ENOMEM, sys::Tag::read), &args.path));
                     }
                     Maybe::Ok(StringOrBuffer::String(str))
                 }

@@ -552,7 +552,7 @@ impl HotReloadEvent {
     pub fn process_file_list(
         &mut self,
         _dev: *mut DevServer,
-        _entry_points: &mut EntryPointList,
+        _entry_points: &mut crate::bake::dev_server_body::EntryPointList,
     ) {
         todo!("blocked_on: dev_server::HotReloadEvent::process_file_list body un-gate")
     }

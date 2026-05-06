@@ -776,7 +776,8 @@ impl Expect {
         global_this: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<(Option<JSValue>, JSValue)> {
-        let vm = global_this.bun_vm();
+        // SAFETY: bun_vm() returns the live thread-local VirtualMachine; valid for this call.
+        let vm = unsafe { &mut *global_this.bun_vm() };
 
         let mut return_value_from_function: JSValue = JSValue::ZERO;
 
@@ -790,7 +791,8 @@ impl Expect {
         let mut return_value: JSValue = JSValue::ZERO;
 
         // Drain existing unhandled rejections
-        vm.global.handle_rejected_promises();
+        // SAFETY: vm.global is the live JSGlobalObject pointer.
+        unsafe { (*vm.global).handle_rejected_promises() };
 
         let mut scope = vm.unhandled_rejection_scope();
         let prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
@@ -802,7 +804,8 @@ impl Expect {
         };
         vm.unhandled_pending_rejection_to_capture = prev_unhandled_pending_rejection_to_capture;
 
-        vm.global.handle_rejected_promises();
+        // SAFETY: vm.global is the live JSGlobalObject pointer.
+        unsafe { (*vm.global).handle_rejected_promises() };
 
         if return_value.is_empty() {
             return_value = return_value_from_function;
@@ -847,7 +850,7 @@ impl Expect {
         let Some(mut err_value_res) = err_value else { return Ok(None) };
         if err_value_res.is_any_error() {
             let message: JSValue = err_value_res
-                .get_truthy_comptime(global_this, "message")?
+                .get_truthy(global_this, "message")?
                 .unwrap_or(JSValue::UNDEFINED);
             err_value_res = message;
         } else {
@@ -956,7 +959,7 @@ impl Expect {
     }
 
     pub fn inline_snapshot(
-        this: &mut Self,
+        &mut self,
         global_this: &JSGlobalObject,
         call_frame: &CallFrame,
         value: JSValue,
@@ -964,6 +967,7 @@ impl Expect {
         result: Option<&[u8]>,
         fn_name: &'static str,
     ) -> JsResult<JSValue> {
+        let this = self;
         // jest counts inline snapshots towards the snapshot counter for some reason
         let Some(runner) = Jest::runner() else {
             let signature = Self::get_signature(fn_name, "", false);
@@ -1043,9 +1047,11 @@ impl Expect {
             // every exit path (including the early returns below).
             let _srcloc_str_guard = bun_str::OwnedString::new(srcloc.str);
             let file_id = buntest.file_id;
-            let fget = runner.files.get(file_id);
+            // PORT NOTE: MultiArrayList::get requires MultiArrayElement (derive pending);
+            // use the column accessor which already compiles in jest.rs.
+            let fget_source_path_text = runner.files.items_source()[file_id as usize].path.text;
 
-            if !srcloc.str.eql_utf8(fget.source.path.text) {
+            if !srcloc.str.eql_utf8(fget_source_path_text) {
                 let signature = Self::get_signature(fn_name, "", false);
                 return this.throw_fmt(
                     global_this,
@@ -1053,7 +1059,7 @@ impl Expect {
                     "",
                     format_args!(
                         "\n\n<b>Matcher error<r>: Inline snapshot matchers must be called from the test file:\n  Expected to be called from file: <green>{:?}<r>\n  {} called from file: <red>{:?}<r>\n",
-                        bstr::BStr::new(fget.source.path.text),
+                        bstr::BStr::new(fget_source_path_text),
                         fn_name,
                         // TODO(port): std.zig.fmtString — escaped string display
                         bstr::BStr::new(srcloc.str.to_utf8().slice()),
@@ -1063,12 +1069,12 @@ impl Expect {
 
             // 2. save to write later
             runner.snapshots.add_inline_snapshot_to_write(file_id, super::snapshot::InlineSnapshotToWrite {
-                line: srcloc.line,
-                col: srcloc.column,
+                line: srcloc.line as u64,
+                col: srcloc.column as u64,
                 value: core::mem::take(&mut pretty_value).into_boxed_slice(),
                 has_matchers: property_matchers.is_some(),
                 is_added: result.is_none(),
-                kind: fn_name,
+                kind: fn_name.as_bytes(),
                 start_indent,
                 end_indent,
             })?;
@@ -1088,7 +1094,7 @@ impl Expect {
         if let Some(_prop_matchers) = property_matchers {
             if !value.is_object() {
                 let signature = Self::get_signature(fn_name, "<green>properties<r><d>, <r>hint", false);
-                return self.throw_fmt(global_this, signature, "", format_args!("\n\n<b>Matcher error: <red>received<r> values must be an object when the matcher has <green>properties<r>\n"));
+                return self.throw_fmt(global_this, signature, "", format_args!("\n\n<b>Matcher error: <red>received<r> values must be an object when the matcher has <green>properties<r>\n")).map(drop);
             }
 
             let prop_matchers = _prop_matchers;
@@ -1119,13 +1125,14 @@ impl Expect {
     }
 
     pub fn snapshot(
-        this: &mut Self,
+        &mut self,
         global_this: &JSGlobalObject,
         value: JSValue,
         property_matchers: Option<JSValue>,
         hint: &[u8],
         fn_name: &'static str,
     ) -> JsResult<JSValue> {
+        let this = self;
         let mut pretty_value: Vec<u8> = Vec::new();
         this.match_and_fmt_snapshot(global_this, value, property_matchers, &mut pretty_value, fn_name)?;
 
@@ -1137,7 +1144,8 @@ impl Expect {
                     return Err(global_this.throw(format_args!("Snapshot matchers cannot be used outside of a test")));
                 };
                 let buntest = buntest_strong.get();
-                let test_file_path = runner.files.get(buntest.file_id).source.path.text;
+                // PORT NOTE: MultiArrayList::get requires MultiArrayElement (derive pending); use column accessor.
+                let test_file_path = runner.files.items_source()[buntest.file_id as usize].path.text;
                 return Err(match err {
                     e if e == bun_core::err!("FailedToOpenSnapshotFile") => {
                         global_this.throw2("Failed to open snapshot file for test file: {s}", format_args!("{}", bstr::BStr::new(test_file_path)))
@@ -1154,7 +1162,7 @@ impl Expect {
                     e if e == bun_core::err!("SnapshotCreationNotAllowedInCI") => {
                         let snapshot_name = runner.snapshots.last_error_snapshot_name.take();
                         if let Some(name) = snapshot_name {
-                            global_this.throw(
+                            global_this.throw2(
                                 "Snapshot creation is disabled in CI environments unless --update-snapshots is used\nTo override, set the environment variable CI=false.\n\nSnapshot name: \"{s}\"\nReceived: {s}",
                                 format_args!("{} {}", bstr::BStr::new(&name), bstr::BStr::new(&pretty_value)),
                             )
@@ -1200,21 +1208,21 @@ impl Expect {
         Ok(JSValue::UNDEFINED)
     }
 
-    #[bun_jsc::host_fn(getter)]
+    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen; static getter has no `&self`.
     pub fn get_static_not(global_this: &JSGlobalObject, _: JSValue, _: JSValue) -> JsResult<JSValue> {
         let mut f = Flags::default();
         f.set_not(true);
         ExpectStatic::create(global_this, f)
     }
 
-    #[bun_jsc::host_fn(getter)]
+    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen; static getter has no `&self`.
     pub fn get_static_resolves_to(global_this: &JSGlobalObject, _: JSValue, _: JSValue) -> JsResult<JSValue> {
         let mut f = Flags::default();
         f.set_promise(Promise::Resolves);
         ExpectStatic::create(global_this, f)
     }
 
-    #[bun_jsc::host_fn(getter)]
+    // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen; static getter has no `&self`.
     pub fn get_static_rejects_to(global_this: &JSGlobalObject, _: JSValue, _: JSValue) -> JsResult<JSValue> {
         let mut f = Flags::default();
         f.set_promise(Promise::Rejects);
@@ -1270,7 +1278,7 @@ impl Expect {
 
         // SAFETY: FFI call with valid &JSGlobalObject
         let mut expect_proto = unsafe { Expect__getPrototype(global_this) };
-        let mut expect_constructor = Self::js::get_constructor(global_this);
+        let mut expect_constructor = <Self as bun_jsc::JsClass>::get_constructor(global_this);
         // SAFETY: FFI call with valid &JSGlobalObject
         let mut expect_static_proto = unsafe { ExpectStatic__getPrototype(global_this) };
 
@@ -1284,6 +1292,8 @@ impl Expect {
                     skip_empty_name: false,
                     include_value: true,
                     own_properties_only: false,
+                    observable: true,
+                    only_non_index_properties: false,
                 },
             )?;
 
@@ -1296,7 +1306,7 @@ impl Expect {
                     } else {
                         bun_str::String::init(matcher_fn.js_type_string(global_this).get_zig_string(global_this))
                     };
-                    return Err(global_this.throw_invalid_arguments(
+                    return Err(global_this.throw_invalid_arguments2(
                         "expect.extend: `{f}` is not a valid matcher. Must be a function, is \"{f}\"",
                         format_args!("{} {}", matcher_name, type_name),
                     ));
@@ -1323,7 +1333,8 @@ impl Expect {
             }
         }
 
-        global_this.bun_vm().auto_garbage_collect();
+        // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
+        unsafe { (*global_this.bun_vm()).auto_garbage_collect() };
 
         Ok(JSValue::UNDEFINED)
     }
@@ -1471,7 +1482,7 @@ impl Expect {
     /// and we can known which case it is based on if the `callFrame.this()` value is an instance of Expect
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn apply_custom_matcher(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let _gc = scopeguard::guard((), |_| global_this.bun_vm().auto_garbage_collect());
+        let _gc = scopeguard::guard((), |_| unsafe { (*global_this.bun_vm()).auto_garbage_collect() });
 
         // retrieve the user-provided matcher function (matcher_fn)
         let func: JSValue = call_frame.callee();
@@ -1542,7 +1553,7 @@ impl Expect {
 
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn has_assertions(global_this: &JSGlobalObject, _call_frame: &CallFrame) -> JsResult<JSValue> {
-        let _gc = scopeguard::guard((), |_| global_this.bun_vm().auto_garbage_collect());
+        let _gc = scopeguard::guard((), |_| unsafe { (*global_this.bun_vm()).auto_garbage_collect() });
 
         let Some(mut buntest_strong) = bun_test::clone_active_strong() else {
             return Err(global_this.throw(format_args!("expect.assertions() must be called within a test")));
@@ -1561,7 +1572,7 @@ impl Expect {
 
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn assertions(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let _gc = scopeguard::guard((), |_| global_this.bun_vm().auto_garbage_collect());
+        let _gc = scopeguard::guard((), |_| unsafe { (*global_this.bun_vm()).auto_garbage_collect() });
 
         let arguments_ = call_frame.arguments_old::<1>();
         let arguments = arguments_.slice();

@@ -1103,7 +1103,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                 }
             }
             subprocess.finalize_streams();
-            subprocess.process.detach();
+            // SAFETY: see `process_mut` doc.
+            unsafe { process_mut(&subprocess.process) }.detach();
             // Zig: `subprocess.process.deref()` releases the intrusive ref. The
             // field is `ManuallyDrop<Arc<Process>>`; release the Arc strong ref
             // explicitly here (finalize() won't run on this error path).

@@ -3513,7 +3513,7 @@ where
     ) {
         // SAFETY: ptr is a *RequestContext
         let this = unsafe { &mut *(ptr as *mut Self) };
-        debug_assert!(this.request_body_readable_stream_ref.held.impl_.is_none());
+        debug_assert!(!this.request_body_readable_stream_ref.has());
         this.request_body_readable_stream_ref =
             readable_stream::Strong::init(readable, global_this);
     }
@@ -3528,21 +3528,24 @@ where
         unsafe { &mut *(this as *mut Self) }.on_start_streaming_request_body()
     }
 
-    pub fn get_remote_socket_info(&self) -> Option<SocketAddress> {
+    pub fn get_remote_socket_info(&self) -> Option<uws::SocketAddress> {
         let resp = self.resp?;
+        // `AnyResponse::get_remote_socket_info` returns the uws_sys
+        // borrowed-slice variant; convert to the owned `bun_uws::SocketAddress`.
         // SAFETY: FFI handle
-        unsafe { resp.get_remote_socket_info() }
+        let _ = resp;
+        todo!("blocked_on: bun_uws_sys::SocketAddress -> bun_uws::SocketAddress conversion")
     }
 
     pub fn set_timeout(&mut self, seconds: c_uint) -> bool {
         if let Some(resp) = self.resp {
             // SAFETY: FFI handle
-            unsafe { resp.timeout(seconds.min(255)) };
+            unsafe { resp.timeout(seconds.min(255) as u8) };
             if seconds > 0 {
                 // we only set the timeout callback if we wanna the timeout event to be triggered
                 // the connection will be closed so the abort handler will be called after the timeout
                 if let Some(req) = self.request_weakref.get() {
-                    if req.internal_event_callback.has_callback() {
+                    if shim::iec_has_callback(&req.internal_event_callback) {
                         self.set_timeout_handler();
                     }
                 }
@@ -3716,7 +3719,7 @@ fn get_content_type(
                 let content_slice = content.to_slice();
                 // Zig: `if (content_slice.allocator.isNull()) null else allocator` —
                 // i.e. dupe only when the latin1/utf16 slice was heap-converted.
-                let dupe = content_slice.is_allocated();
+                let dupe = matches!(content_slice, bun_str::ZigStringSlice::Owned(_));
                 let mt = MimeType::init(
                     content_slice.slice(),
                     dupe,

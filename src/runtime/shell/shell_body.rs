@@ -25,10 +25,12 @@ pub mod subproc; // ./subproc.zig → crate::shell::subproc
 pub use super::alloc_scope; // ./AllocScope.zig
 pub use alloc_scope as AllocScope;
 
-pub use interpret::{EnvMap, EnvStr, ExitCode, Interpreter, ParsedShellScript, unreachable_state};
+pub use interpret::{ExitCode, Interpreter, unreachable_state};
+pub use super::{EnvMap, EnvStr, ParsedShellScript};
 pub use subproc::ShellSubprocess as Subprocess;
-pub type IOWriter = interpret::Interpreter::IOWriter; // TODO(port): associated-type path
-pub type IOReader = interpret::Interpreter::IOReader; // TODO(port): associated-type path
+// In Zig these hang off `Interpreter` as namespaced decls; in Rust they are
+// sibling modules re-exported through `interpret`.
+pub use interpret::{IOReader, IOWriter};
 
 pub use super::yield_; // ./Yield.zig
 pub use yield_::Yield;

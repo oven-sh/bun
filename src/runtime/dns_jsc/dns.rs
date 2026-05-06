@@ -2613,6 +2613,19 @@ pub struct Resolver {
     pub pending_nameinfo_cache_cares: NameInfoPendingCache,
 }
 
+// `pub const ref/deref` from RefCount mixin → provided by `bun_ptr::IntrusiveRc<Self>`.
+impl bun_ptr::RefCounted for Resolver {
+    type DestructorCtx = ();
+    unsafe fn get_ref_count(this: *mut Self) -> *mut bun_ptr::RefCount<Self> {
+        // SAFETY: caller contract — `this` points to a live Self.
+        unsafe { &raw mut (*this).ref_count }
+    }
+    unsafe fn destructor(this: *mut Self, _ctx: ()) {
+        // SAFETY: last ref dropped; allocated via Box in `init()`.
+        unsafe { Self::deinit(this) };
+    }
+}
+
 pub struct UvDnsPoll {
     // BACKREF — Zig: `parent: *Resolver` (mutable). Stored mut because the poll
     // callback hands it to `Resolver::deref`, which may write/free `*this`.

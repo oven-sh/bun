@@ -1143,9 +1143,9 @@ impl PathLike {
         let Some(arg) = arguments.next() else {
             return Ok(None);
         };
-        use jsc::JSType::*;
+        use jsc::JSType;
         match arg.js_type() {
-            Uint8Array | DataView => {
+            JSType::Uint8Array | JSType::DataView => {
                 let buffer = Buffer::from_typed_array(ctx, arg);
                 Valid::path_buffer(&buffer, ctx)?;
                 Valid::path_null_bytes(buffer.slice(), ctx)?;
@@ -1154,7 +1154,7 @@ impl PathLike {
                 Ok(Some(Self::Buffer(buffer)))
             }
 
-            ArrayBuffer => {
+            JSType::ArrayBuffer => {
                 let buffer = Buffer::from_array_buffer(ctx, arg);
                 Valid::path_buffer(&buffer, ctx)?;
                 Valid::path_null_bytes(buffer.slice(), ctx)?;
@@ -1163,7 +1163,7 @@ impl PathLike {
                 Ok(Some(Self::Buffer(buffer)))
             }
 
-            String | StringObject | DerivedStringObject => {
+            JSType::String | JSType::StringObject | JSType::DerivedStringObject => {
                 let str = arg.to_bun_string(ctx)?;
                 // str.deref() on Drop
 

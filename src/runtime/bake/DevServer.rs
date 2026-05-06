@@ -2190,7 +2190,7 @@ pub mod deferred_request {
 }
 use deferred_request::{Handler, PromiseResponse};
 
-impl DeferredRequest {
+impl DeferredRequest<'_> {
     pub const MAX_PREALLOCATED: usize = deferred_request::MAX_PREALLOCATED;
 
     pub fn is_alive(&self) -> bool {
@@ -5029,7 +5029,7 @@ impl DevServer<'_> {
 }
 
 fn dump_state_due_to_crash(dev: &mut DevServer) -> Result<(), bun_core::Error> {
-    const _: () = assert!(cfg!(feature = "bake_debugging_features"));
+    debug_assert!(cfg!(feature = "bake_debugging_features"));
 
     // being conservative about how much stuff is put on the stack.
     let mut filepath_buf = [0u8; if 4096 < MAX_PATH_BYTES { 4096 } else { MAX_PATH_BYTES }];

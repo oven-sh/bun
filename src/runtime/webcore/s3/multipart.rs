@@ -181,7 +181,7 @@ impl MultiPartUpload {
     const MAX_SINGLE_UPLOAD_SIZE: usize = MultiPartUploadOptions::MAX_SINGLE_UPLOAD_SIZE; // we limit to 5 GiB
     const MIN_SINGLE_UPLOAD_SIZE: usize = MultiPartUploadOptions::MIN_SINGLE_UPLOAD_SIZE;
     const DEFAULT_PART_SIZE: usize = MultiPartUploadOptions::DEFAULT_PART_SIZE;
-    const MAX_QUEUE_SIZE: usize = MultiPartUploadOptions::MAX_QUEUE_SIZE;
+    const MAX_QUEUE_SIZE: usize = MultiPartUploadOptions::MAX_QUEUE_SIZE as usize;
     // `const AWS = S3Credentials;` — type alias unused in this file; dropped.
 
     // bun.ptr.RefCount(Self, "ref_count", deinit, .{}) — intrusive refcount.

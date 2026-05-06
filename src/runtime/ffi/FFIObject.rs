@@ -651,17 +651,28 @@ pub fn getter(global_object: &JSGlobalObject, _: &JSObject) -> JSValue {
 // Zig `fields` is an anonymous struct of `jsc.host_fn.wrapStaticMethod(...)` values
 // iterated via comptime reflection in `toJS`. `wrapStaticMethod` is a comptime
 // type-level wrapper that adapts a Zig fn into the JSHostFnZig signature.
-// TODO(port): proc-macro — `#[bun_jsc::wrap_static_method]` to adapt these fns.
+// TODO(port): proc-macro — `#[bun_jsc::host_fn(static)]` replaces `wrapStaticMethod`;
+// the per-param decode table (see src/jsc/host_fn.rs) is not yet implemented in the
+// proc-macro crate. Until it lands, the wrapper is a runtime stub so the static
+// `FIELDS` table type-checks. The wrapped paths are preserved verbatim in the macro
+// invocations for the eventual proc-macro pass.
+fn wrap_static_method_stub(_: &jsc::JSGlobalObject, _: &jsc::CallFrame) -> jsc::JsResult<jsc::JSValue> {
+    todo!("blocked_on: bun_jsc::host_fn::wrap_static_method proc-macro")
+}
+macro_rules! wrap_static_method {
+    ($($path:tt)*) => { wrap_static_method_stub };
+}
+
 // Represented here as a const slice of (name, host_fn) so `to_js` can iterate.
 const FIELDS: &[(&str, jsc::JSHostFnZig)] = &[
-    ("viewSource", jsc::host_fn::wrap_static_method!(FFI::print)),
-    ("dlopen", jsc::host_fn::wrap_static_method!(FFI::open)),
-    ("callback", jsc::host_fn::wrap_static_method!(FFI::callback)),
-    ("linkSymbols", jsc::host_fn::wrap_static_method!(FFI::link_symbols)),
-    ("toBuffer", jsc::host_fn::wrap_static_method!(to_buffer)),
-    ("toArrayBuffer", jsc::host_fn::wrap_static_method!(to_array_buffer)),
-    ("closeCallback", jsc::host_fn::wrap_static_method!(FFI::close_callback)),
-    ("CString", jsc::host_fn::wrap_static_method!(new_cstring)),
+    ("viewSource", wrap_static_method!(FFI::print)),
+    ("dlopen", wrap_static_method!(FFI::open)),
+    ("callback", wrap_static_method!(FFI::callback)),
+    ("linkSymbols", wrap_static_method!(FFI::link_symbols)),
+    ("toBuffer", wrap_static_method!(to_buffer)),
+    ("toArrayBuffer", wrap_static_method!(to_array_buffer)),
+    ("closeCallback", wrap_static_method!(FFI::close_callback)),
+    ("CString", wrap_static_method!(new_cstring)),
 ];
 
 const MAX_ADDRESSABLE_MEMORY: usize = u56_max();

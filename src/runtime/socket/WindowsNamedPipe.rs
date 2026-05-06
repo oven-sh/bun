@@ -26,15 +26,15 @@ use bun_collections::BabyList;
 use bun_core::timespec;
 use bun_io::{StreamingWriter, WriteStatus};
 use bun_jsc::VirtualMachine;
+#[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 use bun_sys::{self, Fd};
 use bun_uws::UpgradedDuplex;
 use bun_uws_sys::us_bun_verify_error_t;
 
-use crate::api::timer::EventLoopTimer;
-// TODO(port): verify path — `bun.jsc.API.ServerConfig.SSLConfig` lives under src/runtime/api/server/
-use crate::api::server_config::SslConfig;
-use crate::socket::ssl_wrapper::SslWrapper;
+use crate::timer::EventLoopTimer;
+use crate::socket::SSLConfig;
+use crate::socket::ssl_wrapper::SSLWrapper;
 
 bun_output::declare_scope!(WindowsNamedPipe, visible);
 
@@ -46,7 +46,7 @@ pub trait UpgradedDuplexCertError {
     type CertError;
 }
 
-type WrapperType = SslWrapper<*mut WindowsNamedPipe>;
+type WrapperType = SSLWrapper<*mut WindowsNamedPipe>;
 
 pub struct WindowsNamedPipe {
     pub wrapper: Option<WrapperType>,

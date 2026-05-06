@@ -1603,26 +1603,14 @@ impl JSValkeyClient {
     }
 }
 
-// Re-export all command host fns from js_valkey_functions.
-// (Zig: `pub const X = fns.X;` × ~160)
-pub use fns::{
-    append, bitcount, blmove, blmpop, blpop, brpop, brpoplpush, bzmpop, bzpopmax, bzpopmin, copy,
-    decr, decrby, del, dump, duplicate, exists, expire, expireat, expiretime, get, get_buffer,
-    getbit, getdel, getex, getrange, getset, hdel, hexists, hexpire, hexpireat, hexpiretime, hget,
-    hgetall, hgetdel, hgetex, hincrby, hincrbyfloat, hkeys, hlen, hmget, hmset, hpersist, hpexpire,
-    hpexpireat, hpexpiretime, hpttl, hrandfield, hscan, hset, hsetex, hsetnx, hstrlen, httl,
-    hvals, incr, incrby, incrbyfloat, js_send, keys, lindex, linsert, llen, lmove, lmpop, lpop,
-    lpos, lpush, lpushx, lrange, lrem, lset, ltrim, mget, mset, msetnx, persist, pexpire,
-    pexpireat, pexpiretime, pfadd, ping, psetex, psubscribe, pttl, publish, pubsub, punsubscribe,
-    randomkey, rename, renamenx, rpop, rpoplpush, rpush, rpushx, sadd, scan, scard, script, sdiff,
-    sdiffstore, select, set, setbit, setex, setnx, setrange, sinter, sintercard, sinterstore,
-    sismember, smembers, smismember, smove, spop, spublish, srandmember, srem, sscan, strlen,
-    subscribe, substr, sunion, sunionstore, touch, ttl, r#type, unlink, unsubscribe, zadd, zcard,
-    zcount, zdiff, zdiffstore, zincrby, zinter, zintercard, zinterstore, zlexcount, zmpop, zmscore,
-    zpopmax, zpopmin, zrandmember, zrange, zrangebylex, zrangebyscore, zrangestore, zrank, zrem,
-    zremrangebylex, zremrangebyrank, zremrangebyscore, zrevrange, zrevrangebylex, zrevrangebyscore,
-    zrevrank, zscan, zscore, zunion, zunionstore,
-};
+// PORT NOTE: Zig's `pub const X = fns.X;` × ~160 binds each command host-fn
+// into the JSValkeyClient namespace. In Rust those are already inherent
+// methods on `JSValkeyClient` via the `impl JSValkeyClient` block in
+// `js_valkey_functions.rs`, so no re-export is needed (and `pub use` of impl
+// methods is not legal Rust). Keep `fns` referenced so the sibling module is
+// linked into the build.
+#[allow(unused_imports)]
+use fns as _fns_anchor;
 
 // ───────────────────────────────────────────────────────────────────────────
 // SocketHandler

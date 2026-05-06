@@ -1490,11 +1490,24 @@ impl ValkeyClient {
 }
 
 // Auto-pipelining
-// TODO(port): jsc.WebCore.AutoFlusher — confirm crate path.
-use bun_jsc::webcore::AutoFlusher;
+use crate::webcore::AutoFlusher;
 
-// TODO(port): trait providing `.unwrap_or_oom()` on Result<T, AllocError> — assumed in bun_alloc.
-use bun_alloc::UnwrapOrOom;
+// Local extension trait providing `.unwrap_or_oom()` on `Result<T, E>`.
+// Zig: `catch bun.outOfMemory()` / `bun.handleOom(expr)`. No shared `UnwrapOrOom`
+// trait exists yet (bun_alloc has none); delegate to `bun_core::handle_oom` so
+// every call site keeps its method-chain shape.
+trait UnwrapOrOom {
+    type Output;
+    fn unwrap_or_oom(self) -> Self::Output;
+}
+impl<T, E> UnwrapOrOom for core::result::Result<T, E> {
+    type Output = T;
+    #[inline]
+    #[track_caller]
+    fn unwrap_or_oom(self) -> T {
+        bun_core::handle_oom(self)
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

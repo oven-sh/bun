@@ -82,9 +82,10 @@ impl ObjectURLRegistry {
         let Some(uuid) = uuid_from_pathname(pathname) else {
             return;
         };
-        let mut map = self.map.lock();
+        let map = self.map.lock();
         let _ = map.remove(&uuid);
         // Box<Entry> dropped here (was `entry.value.deinit()` in Zig)
+        self.map.unlock();
     }
 
     pub fn has(&self, pathname: &[u8]) -> bool {
@@ -92,7 +93,9 @@ impl ObjectURLRegistry {
             return false;
         };
         let map = self.map.lock();
-        map.contains_key(&uuid)
+        let result = map.contains_key(&uuid);
+        self.map.unlock();
+        result
     }
 }
 

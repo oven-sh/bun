@@ -478,6 +478,8 @@ pub mod js_valkey {
     // ── JsClass wiring (codegen name = "RedisClient", see valkey.classes.ts) ──
     // Hand-roll the externs the `.classes.ts` generator emits so
     // `jsc::codegen::js::get_constructor::<JSValkeyClient>()` resolves.
+    // Pointee types lack #[repr(C)] but are only ever passed by pointer across FFI.
+    #[allow(improper_ctypes)]
     unsafe extern "C" {
         fn RedisClient__fromJS(value: JSValue) -> Option<core::ptr::NonNull<JSValkeyClient>>;
         fn RedisClient__fromJSDirect(value: JSValue) -> Option<core::ptr::NonNull<JSValkeyClient>>;

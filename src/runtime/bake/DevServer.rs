@@ -159,6 +159,14 @@ pub use crate::bake::dev_server::incremental_graph::IncrementalGraph;
 impl DevServer<'_> {
     fn memory_cost(&self) -> usize { todo!("blocked_on: memory_cost") }
     fn memory_cost_detailed(&self) -> () { todo!("blocked_on: memory_cost_detailed") }
+
+    /// Recover `&mut VirtualMachine` from the JSC_BORROW `vm` field.
+    /// SAFETY: single JS thread; caller must not hold an aliasing `&mut`.
+    /// Routed through `ptr::from_ref` to sidestep `invalid_reference_casting`.
+    #[inline]
+    pub(crate) fn vm_mut(&self) -> &mut VirtualMachine {
+        unsafe { &mut *::core::ptr::from_ref(self.vm).cast_mut() }
+    }
 }
 pub use crate::bake::dev_server::packed_map::PackedMap;
 pub use crate::bake::dev_server::route_bundle::RouteBundle;
@@ -1138,7 +1146,7 @@ impl DevServer<'_> {
                 // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime;
                 // `print_error_like_object_to_console` needs `&mut VM`, so cast
                 // the shared borrow through a raw pointer (single-threaded JS).
-                unsafe { &mut *(self.vm as *const VirtualMachine as *mut VirtualMachine) }
+                self.vm_mut()
                     .print_error_like_object_to_console(global.take_exception(err));
                 panic!("Server runtime failed to start. The above error is always a bug in Bun");
             }
@@ -1492,7 +1500,7 @@ impl<'a> RequestEnsureRouteBundledCtx<'a> {
         Ok(())
     }
 
-    fn to_dev_response(&mut self) -> DevResponse {
+    fn to_dev_response(&mut self) -> DevResponse<'_> {
         DevResponse::Http(self.resp)
     }
 }
@@ -1502,11 +1510,11 @@ impl<'a> EnsureRouteCtx for RequestEnsureRouteBundledCtx<'a> {
     fn on_loaded(&mut self) -> JsResult<()> { Self::on_loaded(self) }
     fn on_failure(&mut self) -> JsResult<()> { Self::on_failure(self) }
     fn on_plugin_error(&mut self) -> JsResult<()> { Self::on_plugin_error(self) }
-    fn to_dev_response(&mut self) -> DevResponse { Self::to_dev_response(self) }
+    fn to_dev_response(&mut self) -> DevResponse<'_> { Self::to_dev_response(self) }
     // SAFETY: `self.dev` is set from a live `&mut DevServer` at ctx
     // construction and outlives the ctx (the ctx is stack-local in the request
     // handler scope). Lifetime erased to satisfy the trait's invariant signature.
-    fn dev(&mut self) -> &mut DevServer {
+    fn dev(&mut self) -> &mut DevServer<'_> {
         unsafe { ::core::mem::transmute::<&mut DevServer<'a>, &mut DevServer<'_>>(&mut *self.dev) }
     }
     fn route_bundle_index(&self) -> route_bundle::Index { self.route_bundle_index }
@@ -1525,8 +1533,8 @@ trait EnsureRouteCtx {
     fn on_loaded(&mut self) -> JsResult<()>;
     fn on_failure(&mut self) -> JsResult<()>;
     fn on_plugin_error(&mut self) -> JsResult<()>;
-    fn to_dev_response(&mut self) -> DevResponse;
-    fn dev(&mut self) -> &mut DevServer;
+    fn to_dev_response(&mut self) -> DevResponse<'_>;
+    fn dev(&mut self) -> &mut DevServer<'_>;
     fn route_bundle_index(&self) -> route_bundle::Index;
 }
 
@@ -3540,7 +3548,7 @@ pub fn finalize_bundle(
                 Err(err) => {
                     // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime;
                     // `print_error_like_object_to_console` needs `&mut`.
-                    unsafe { &mut *(dev.vm as *const VirtualMachine as *mut VirtualMachine) }
+                    dev.vm_mut()
                         .print_error_like_object_to_console(global.take_exception(err));
                     panic!("Error thrown while evaluating server code. This is always a bug in the bundler.");
                 }
@@ -3551,7 +3559,7 @@ pub fn finalize_bundle(
                 Err(err) => {
                     // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime;
                     // `print_error_like_object_to_console` needs `&mut`.
-                    unsafe { &mut *(dev.vm as *const VirtualMachine as *mut VirtualMachine) }
+                    dev.vm_mut()
                         .print_error_like_object_to_console(global.take_exception(err));
                     panic!("Error thrown while evaluating server code. This is always a bug in the bundler.");
                 }
@@ -5854,7 +5862,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
         // SAFETY: p was set by ensure_promise
         unsafe { &mut *self.p.unwrap() }.resolve(self.global, JSValue::TRUE)?;
         // SAFETY: dev.vm is JSC_BORROW — valid for DevServer lifetime
-        unsafe { &mut *(self.dev.vm as *const VirtualMachine as *mut VirtualMachine) }.drain_microtasks();
+        self.dev.vm_mut().drain_microtasks();
         Ok(())
     }
 
@@ -5892,7 +5900,7 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
         unsafe { &mut *self.p.unwrap() }
             .reject(self.global, BunString::static_("Plugin error").to_js(self.global))?;
         // SAFETY: dev.vm is JSC_BORROW — valid for DevServer lifetime
-        unsafe { &mut *(self.dev.vm as *const VirtualMachine as *mut VirtualMachine) }.drain_microtasks();
+        self.dev.vm_mut().drain_microtasks();
         Ok(())
     }
 

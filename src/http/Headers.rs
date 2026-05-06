@@ -3,7 +3,9 @@ use bun_core::strings;
 
 // `bun.schema.api.StringPointer` lives in bun_http_types (inlined there to
 // avoid a cross-tier dep on options_types). Same #[repr(C)] u32×2 layout.
-pub(crate) mod api {
+// Public: downstream crates (e.g. bun_install::NetworkTask) build raw `Entry`
+// records and need the field type — mirrors `bun.schema.api.StringPointer`.
+pub mod api {
     pub use bun_http_types::ETag::StringPointer;
 }
 

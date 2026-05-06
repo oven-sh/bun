@@ -349,63 +349,28 @@ impl CompileResult {
 ///
 /// PORT NOTE: duplicated here so `LinkerContext::path_with_pretty_initialized`
 /// resolves; collapses to a re-export once `__phase_a_draft` un-gates.
+///
+/// PORT NOTE: signature uses `bun_logger::fs::Path` (the type stored on
+/// `Logger::Source.path`, which is what every caller passes) rather than
+/// `bun_resolver::fs::Path<'a>`. The Zig body assigns a stack-buffer
+/// `.pretty` then interns via `dupeAllocFixPretty`, but that method lives on
+/// the resolver-side `fs_full::Path<'a>` and the logger `Path` pins its
+/// fields to `'static`. Body is stubbed until the two `Path` types unify.
 pub fn generic_path_with_pretty_initialized(
-    path: bun_fs::Path,
-    target: options::Target,
-    top_level_dir: &[u8],
+    path: bun_logger::fs::Path,
+    _target: options::Target,
+    _top_level_dir: &[u8],
     _bump: &bun_alloc::Arena,
-) -> Result<bun_fs::Path, bun_core::Error> {
-    use std::io::Write;
-    let mut buf = bun_paths::path_buffer_pool::get();
-
+) -> Result<bun_logger::fs::Path, bun_core::Error> {
     let is_node = path.namespace == b"node";
     if is_node
-        && (strings::has_prefix(&path.text, bun_node_fallbacks::IMPORT_PATH)
-            || !bun_paths::is_absolute(&path.text))
+        && (strings::has_prefix(path.text, bun_node_fallbacks::IMPORT_PATH)
+            || !bun_paths::is_absolute(path.text))
     {
         return Ok(path);
     }
-
-    // "file" namespace should use the relative file path for its display name.
-    // the "node" namespace is also put through this code path so that the
-    // "node:" prefix is not emitted.
-    if path.is_file() || is_node {
-        let mut buf2 = bun_paths::path_buffer_pool::get();
-        let rel = bun_paths::resolve_path::relative_platform_buf::<
-            bun_paths::resolve_path::platform::Loose,
-            false,
-        >(&mut **buf2, top_level_dir, &path.text);
-        let mut path_clone = path;
-        // stack-allocated temporary is not leaked because dupeAlloc on the path will
-        // move .pretty into the heap. that function also fixes some slash issues.
-        if target == options::Target::BakeServerComponentsSsr {
-            // the SSR graph needs different pretty names or else HMR mode will
-            // confuse the two modules.
-            let mut cursor = &mut buf.0[..];
-            let buf_len = cursor.len();
-            let _ = write!(cursor, "ssr:{}", bstr::BStr::new(rel));
-            let written = buf_len - cursor.len();
-            path_clone.pretty = &buf.0[..written];
-        } else {
-            path_clone.pretty = rel;
-        }
-        Ok(path_clone.dupe_alloc_fix_pretty()?)
-    } else {
-        // in non-file namespaces, standard filesystem rules do not apply.
-        let mut path_clone = path;
-        let mut cursor = &mut buf.0[..];
-        let buf_len = cursor.len();
-        let _ = write!(
-            cursor,
-            "{}{}:{}",
-            if target == options::Target::BakeServerComponentsSsr { "ssr:" } else { "" },
-            EscapedNamespace(&path.namespace),
-            bstr::BStr::new(&path.text),
-        );
-        let written = buf_len - cursor.len();
-        path_clone.pretty = &buf.0[..written];
-        Ok(path_clone.dupe_alloc_fix_pretty()?)
-    }
+    let _ = &path;
+    todo!("blocked_on: bun_logger::fs::Path::dupe_alloc_fix_pretty")
 }
 
 struct EscapedNamespace<'a>(&'a [u8]);
@@ -522,11 +487,17 @@ pub mod bun_renamer {
                 ChunkRenamer::Minify(r) => r.name_for_symbol(ref_),
             }
         }
-        pub fn as_renamer(&mut self) -> bun_js_printer::renamer::Renamer<'_> {
+        pub fn as_renamer(&mut self) -> bun_js_printer::renamer::Renamer<'_, '_> {
             match self {
                 ChunkRenamer::None => unreachable!("ChunkRenamer not initialized"),
                 ChunkRenamer::Number(r) => bun_js_printer::renamer::Renamer::NumberRenamer(r),
-                ChunkRenamer::Minify(r) => bun_js_printer::renamer::Renamer::MinifyRenamer(r),
+                // PORT NOTE: `Renamer::MinifyRenamer` now owns `Box<MinifyRenamer>`
+                // (renamer.rs), but `ChunkRenamer` is a long-lived owner that
+                // must hand out a *borrowed* view per print call. Can't move
+                // the Box out of `&mut self`.
+                ChunkRenamer::Minify(_r) => {
+                    todo!("blocked_on: Renamer::MinifyRenamer takes Box (owned), need borrowed view")
+                }
             }
         }
     }

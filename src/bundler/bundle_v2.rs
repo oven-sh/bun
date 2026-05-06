@@ -380,6 +380,7 @@ pub mod bake_types {
     pub struct ServerComponents {
         pub separate_ssr_graph: bool,
         pub server_runtime_import: Box<[u8]>,
+        pub server_register_client_reference: Box<[u8]>,
     }
 
     /// Mirrors src/bake/bake.zig:840 `HmrRuntime`. TYPE_ONLY moved down so the
@@ -5114,14 +5115,14 @@ impl CrossChunkImport {
             let import_items = &mut imports_from_other_chunks.values_mut()[i];
             // TODO: do we need to clone this array?
             for item in import_items.slice_mut() {
-                item.export_alias = exports_to_other_chunks.get(&item.r#ref).unwrap().clone();
+                item.export_alias = (*exports_to_other_chunks.get(&item.r#ref).unwrap()).into();
                 debug_assert!(!item.export_alias.is_empty());
             }
             import_items.slice_mut().sort_by(|a, b| strings::order(&a.export_alias, &b.export_alias));
 
             list.push(CrossChunkImport {
                 chunk_index,
-                sorted_import_items: import_items.clone(),
+                sorted_import_items: core::mem::take(import_items),
             });
         }
 
@@ -5166,7 +5167,10 @@ impl CompileResult {
     pub fn empty() -> CompileResult {
         CompileResult::Javascript {
             source_index: 0,
-            result: bun_js_printer::PrintResult::Result(Default::default()),
+            result: bun_js_printer::PrintResult::Result(bun_js_printer::PrintResultSuccess {
+                code: Box::new([]),
+                source_map: None,
+            }),
             decls: Box::new([]),
         }
     }
@@ -5340,9 +5344,12 @@ pub fn generate_unique_key() -> u64 {
     // with a number forces that optimization off.
     if cfg!(debug_assertions) {
         let mut buf = [0u8; 16];
-        let mut cursor = &mut buf[..];
-        write!(cursor, "{:016x}", key).expect("unreachable");
-        let hex = &buf[..16 - cursor.len()];
+        let written = {
+            let mut cursor = &mut buf[..];
+            write!(cursor, "{:016x}", key).expect("unreachable");
+            16 - cursor.len()
+        };
+        let hex = &buf[..written];
         match hex[0] {
             b'0'..=b'9' => {}
             _ => Output::panic(format_args!("unique key is a valid identifier: {}", bstr::BStr::new(hex))),

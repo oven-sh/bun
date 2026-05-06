@@ -374,7 +374,8 @@ impl Value {
                             // duration of this call; init_dupe copies immediately.
                             slice: ZigStringSlice::init_dupe(unsafe {
                                 core::slice::from_raw_parts(ptr, len)
-                            })?,
+                            })
+                            .map_err(|_| any_mysql_error::Error::OutOfMemory)?,
                             pinned: JSValue::ZERO,
                         })),
                         // Oversize/Wasteful/DataView/JSArrayBuffer — pinned

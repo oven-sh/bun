@@ -1453,7 +1453,7 @@ pub struct HTTPClient<'a> {
     pub async_http_id: u32,
     // TODO(port): lifetime — set by AsyncHTTP, not freed here (Zig deinit never frees `hostname`)
     pub hostname: Option<&'static [u8]>,
-    pub unix_socket_path: ZigString::Slice,
+    pub unix_socket_path: ZigStringSlice,
 }
 
 impl<'a> Drop for HTTPClient<'a> {

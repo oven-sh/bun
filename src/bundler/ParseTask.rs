@@ -1813,7 +1813,7 @@ impl<'a> OnBeforeParsePlugin<'a> {
                 let mut msg = Msg {
                     data: logger::Data {
                         location: None,
-                        text: Box::<[u8]>::from(
+                        text: std::borrow::Cow::Borrowed(
                             &b"Native plugin set the `free_plugin_source_code_context` field without setting the `plugin_source_code_context` field."[..],
                         ),
                         ..Default::default()

@@ -707,7 +707,6 @@ pub extern "C" fn transform(opts_array: u64) -> u64 {
         // Reset the printer *after* encode so taking `&mut writer.ctx` cannot invalidate
         // the shared borrow stored in OUTPUT_FILES[0].data under stacked borrows.
         if matches!(result, js_parser::ParseResult::Ast(_)) && log.errors == 0 {
-            let writer = WRITER.assume_init_mut();
             writer.ctx.reset();
             writer.written = 0;
             BUFFER_WRITER.write(core::ptr::read(&writer.ctx));

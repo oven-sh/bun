@@ -1360,12 +1360,11 @@ impl ExportStarContext {
 // the Phase-A draft; un-gates with `feature = "css"` once `BundlerStyleSheet`
 // is real.
 // ──────────────────────────────────────────────────────────────────────────
- // blocked_on(phase-c): body has ~10 type errors (DefaultArrayHashContext, MsgKind, ComposeFrom, *const [u8] BStr); not on -e/run critical path — re-gated for rung-1 link
 mod __css_validation {
     use super::*;
     use bun_collections::{ArrayHashMap, StringArrayHashMap};
-    use bun_css::css_properties::css_modules::Specifier;
-    use bun_css::{BundlerStyleSheet, PropertyIdTag};
+    use crate::bun_css::css_properties::css_modules::Specifier;
+    use crate::bun_css::{BundlerStyleSheet, PropertyIdTag};
     use bun_logger::{self as Logger, Log};
 
     // Zig: `?*bun.css.BundlerStyleSheet` — keep the column element as a raw

@@ -91,22 +91,28 @@ impl<'a> Borrowed<'a> {
             }
             DBG.with(|slot| {
                 let cell: *mut Option<DebugHeap> = slot.get();
-                // SAFETY: thread-local; no other access to `*cell` is live during this
-                // one-time init. `get_or_insert` writes the Some variant in place exactly
-                // once and returns a pointer into the UnsafeCell's storage. The Option is
-                // never reset to None and the thread_local is never dropped before thread
-                // exit, so the pointer remains valid for the thread's lifetime. Its
-                // provenance is rooted at the UnsafeCell, so subsequent `get_default()`
-                // calls (which re-derive from the same `slot.get()`) do not invalidate it.
-                let p: *mut DebugHeap = unsafe {
-                    (*cell).get_or_insert(DebugHeap {
-                        // SAFETY: mi_heap_main() never returns null.
-                        inner: NonNull::new_unchecked(heap),
-                        thread_lock: crate::stubs::ThreadLock::init_locked(),
-                    }) as *mut DebugHeap
-                };
-                // SAFETY: `p` is non-null (points into the Some payload just ensured above).
-                Borrowed { heap: unsafe { NonNull::new_unchecked(p) }, _lt: PhantomData }
+                // SAFETY: thread-local; we are the only accessor of `*cell` on this thread
+                // right now. The write happens at most once (guarded by `is_none()`), before
+                // any pointer has been escaped, so it cannot invalidate prior borrows.
+                unsafe {
+                    if (*cell).is_none() {
+                        *cell = Some(DebugHeap {
+                            // SAFETY: mi_heap_main() never returns null.
+                            inner: NonNull::new_unchecked(heap),
+                            thread_lock: crate::stubs::ThreadLock::init_locked(),
+                        });
+                    }
+                }
+                // SAFETY: `*cell` is `Some` (just ensured above) and is never reset to None
+                // for the thread's lifetime. We form a *shared* `&DebugHeap` rooted at the
+                // UnsafeCell's SharedReadWrite provenance — never an intermediate `&mut` —
+                // so repeated `get_default()` calls yield pointers that coexist under
+                // Stacked Borrows, matching Zig's `&S.dbg.?`. `Borrowed` only ever reads
+                // DebugHeap's fields (`.inner`, `.thread_lock`), so shared provenance is
+                // sufficient.
+                let p: NonNull<DebugHeap> =
+                    unsafe { NonNull::from((*cell).as_ref().unwrap_unchecked()) };
+                Borrowed { heap: p, _lt: PhantomData }
             })
         }
     }

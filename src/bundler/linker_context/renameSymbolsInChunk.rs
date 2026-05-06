@@ -214,9 +214,11 @@ pub fn rename_symbols_in_chunk(
 
         top_level_symbols.clear();
         for stable_ref in &sorted_imports_from_other_chunks {
+            // PORT NOTE: `StableRef` is `repr(packed)`; copy the field to avoid an unaligned ref.
+            let ref_ = { stable_ref.r#ref };
             minify_renamer.accumulate_symbol_use_count(
                 &mut top_level_symbols,
-                stable_ref.r#ref,
+                ref_,
                 1,
                 stable_source_indices,
             )?;
@@ -233,7 +235,8 @@ pub fn rename_symbols_in_chunk(
 
     let mut r = NumberRenamer::init(make_symbols_view(), reserved_names)?;
     for stable_ref in &sorted_imports_from_other_chunks {
-        r.add_top_level_symbol(stable_ref.r#ref);
+        // PORT NOTE: `StableRef` is `repr(packed)`; copy the field to avoid an unaligned ref.
+        r.add_top_level_symbol({ stable_ref.r#ref });
     }
 
     // PORT NOTE: Zig used `r.temp_allocator` for this list; allocator param dropped

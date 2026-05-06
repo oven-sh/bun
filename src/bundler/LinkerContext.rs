@@ -3561,7 +3561,9 @@ impl<'a> LinkerContext<'a> {
         // PORT NOTE: Zig had `errdefer j.deinit()` around the initCapacity — Drop handles it.
         let mut pieces: Vec<OutputPiece> = Vec::with_capacity(count as usize);
         // errdefer pieces.deinit() — Drop handles it
-        let complete_output = j.done(alloc)?;
+        // PERF(port): Zig used `j.done(alloc)` (worker arena); the Rust
+        // StringJoiner port uses global mimalloc, no allocator param.
+        let complete_output = j.done()?;
         let mut output: &[u8] = &complete_output;
 
         let prefix = &self.unique_key_prefix;
@@ -3636,10 +3638,12 @@ impl<'a> LinkerContext<'a> {
                 _ => unreachable!(),
             }
 
-            pieces.push(OutputPiece::init(&output[0..boundary], crate::chunk::Query {
-                kind,
-                index: u32::try_from(index).unwrap(),
-            }));
+            // PORT NOTE: `Query` is a packed `u32` (`index: u29`, `kind: u3`);
+            // construct via `new` rather than field-init.
+            pieces.push(OutputPiece::init(
+                &output[0..boundary],
+                crate::chunk::Query::new(u32::try_from(index).unwrap(), kind),
+            ));
             output = &output[boundary + prefix.len() + 9..];
         }
 

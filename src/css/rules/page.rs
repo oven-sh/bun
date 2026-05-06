@@ -328,7 +328,7 @@ impl PageMarginBox {
 pub struct PageRuleParser<'a> {
     pub declarations: &'a mut DeclarationBlock<'static>,
     pub rules: &'a mut ArrayList<PageMarginRule>,
-    pub options: &'a css::ParserOptions,
+    pub options: &'a css::ParserOptions<'a>,
 }
 
 // PORT NOTE: Zig modeled DeclarationParser/AtRuleParser/QualifiedRuleParser/

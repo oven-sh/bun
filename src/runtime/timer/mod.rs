@@ -55,77 +55,59 @@ mod event_loop_delay_monitor_draft;
 // ─── TimerHeap ───────────────────────────────────────────────────────────────
 // Zig: `heap.Intrusive(EventLoopTimer, void, EventLoopTimer.less)`.
 //
-// `bun_io::heap::Intrusive<T, C>` requires `T: HeapNode` (trait in `bun_io`).
-// `EventLoopTimer` lives in `bun_event_loop` and embeds a *local* stub
-// `IntrusiveField`, not `bun_io::heap::IntrusiveField`, so we cannot
-// `impl HeapNode for EventLoopTimer` here (orphan rule) nor would the field
-// type line up. Until the lower tier wires that, `TimerHeap` is a thin
-// pairing-heap header that delegates to `EventLoopTimer::less` directly.
-//
-// TODO(b2-blocked): replace with `bun_io::heap::Intrusive<EventLoopTimer, TimerHeapCtx>`
-// once `bun_event_loop` re-exports `bun_io::heap::IntrusiveField` and impls
-// `HeapNode`. The body below is a faithful subset (insert/remove/peek/
-// delete_min) of `src/io/heap.rs` over raw `*mut EventLoopTimer`.
+// Real intrusive pairing-heap (meld/remove/combine_siblings) ported in
+// `bun_io::heap::Intrusive`. `EventLoopTimer` now embeds the real
+// `bun_io::heap::IntrusiveField` and impls `HeapNode` in its defining crate
+// (`bun_event_loop`), so the orphan-rule block is gone. `TimerHeap` is a thin
+// newtype that adapts `*mut T` ↔ `Option<*mut T>` for the existing call-sites
+// (`All::insert/remove/next/get_timeout`).
+
+/// `void` context for the heap comparator — Zig passes `{}`.
 #[derive(Default)]
-pub struct TimerHeap {
-    root: *mut EventLoopTimer,
+pub struct TimerHeapCtx;
+
+impl bun_io::heap::HeapContext<EventLoopTimer> for TimerHeapCtx {
+    #[inline]
+    fn less(&self, a: *mut EventLoopTimer, b: *mut EventLoopTimer) -> bool {
+        // SAFETY: `Intrusive` only ever calls `less` with non-null nodes that
+        // are live members of the heap (caller invariant on insert/meld).
+        EventLoopTimer::less((), unsafe { &*a }, unsafe { &*b })
+    }
 }
+
+#[derive(Default)]
+pub struct TimerHeap(bun_io::heap::Intrusive<EventLoopTimer, TimerHeapCtx>);
 
 impl TimerHeap {
     #[inline]
     pub fn peek(&self) -> Option<*mut EventLoopTimer> {
-        if self.root.is_null() { None } else { Some(self.root) }
+        let r = self.0.peek();
+        if r.is_null() { None } else { Some(r) }
     }
 
-    /// SAFETY: `v` is a valid, exclusively-owned node not in any heap.
+    /// # Safety
+    /// `v` is a valid, exclusively-owned node not currently in any heap
+    /// (its `IntrusiveField` links are null).
+    #[inline]
     pub unsafe fn insert(&mut self, v: *mut EventLoopTimer) {
-        // TODO(b2-blocked): bun_io::heap::Intrusive::insert — see header note.
-        // Minimal pairing-heap meld stubbed via the lower-tier hook once wired.
-        // For now record the root so `peek()`/`delete_min()` are non-panicking
-        // for the single-timer path EventLoop::auto_tick exercises at boot.
-        if self.root.is_null() {
-            self.root = v;
-        } else {
-            // PORT NOTE (§Forbidden silent-no-op): the previous "newest-wins"
-            // degenerate path **dropped** whichever node lost the comparison —
-            // the discarded timer never fires and its refcount leaks. We cannot
-            // implement the real meld without `bun_io::heap::IntrusiveField`
-            // pointers on `EventLoopTimer.heap` (orphan-rule blocked; the
-            // lower-tier field is a zero-sized stub). Fail loudly instead of
-            // silently losing timers.
-            // TODO(b2-blocked): bun_event_loop::EventLoopTimer::heap field type
-            // — replace with `bun_io::heap::Intrusive::insert` (full meld).
-            todo!(
-                "TimerHeap::insert: pairing-heap meld blocked on \
-                 bun_event_loop::EventLoopTimer re-exporting bun_io::heap::IntrusiveField"
-            );
-        }
+        // SAFETY: forwarded — see fn contract.
+        unsafe { self.0.insert(v) };
     }
 
-    /// SAFETY: `v` is a node currently in this heap.
+    /// # Safety
+    /// `v` is a node currently in *this* heap.
+    #[inline]
     pub unsafe fn remove(&mut self, v: *mut EventLoopTimer) {
-        if core::ptr::eq(self.root, v) {
-            self.root = core::ptr::null_mut();
-        } else {
-            // PORT NOTE (§Forbidden silent-no-op): removing a non-root node
-            // was previously a silent no-op, leaving `v` reachable from the
-            // heap after the caller assumed it was unlinked. Fail loudly.
-            // TODO(b2-blocked): full intrusive remove — see header note.
-            todo!(
-                "TimerHeap::remove: non-root removal blocked on \
-                 bun_event_loop::EventLoopTimer re-exporting bun_io::heap::IntrusiveField"
-            );
-        }
+        // SAFETY: forwarded — see fn contract.
+        unsafe { self.0.remove(v) };
     }
 
+    #[inline]
     pub fn delete_min(&mut self) -> Option<*mut EventLoopTimer> {
-        let r = self.root;
-        if r.is_null() {
-            return None;
-        }
-        self.root = core::ptr::null_mut();
-        // TODO(b2-blocked): combine_siblings — see header note.
-        Some(r)
+        // SAFETY: all reachable nodes were inserted via `insert()` and remain
+        // live until popped (intrusive invariant maintained by `All`).
+        let r = unsafe { self.0.delete_min() };
+        if r.is_null() { None } else { Some(r) }
     }
 }
 
@@ -273,31 +255,17 @@ macro_rules! impl_timer_refcount {
                 if n == 1 {
                     // Zig `deinit`: `self.internals.deinit(); bun.destroy(self)`.
                     //
-                    // TODO(b2-blocked): `TimerObjectInternals::deinit` is in
-                    // the gated draft. Spec TimerObjectInternals.zig:498-528
-                    // performs FOUR obligations before free — enumerate so
-                    // none are forgotten when `TimeoutObject` is un-gated:
-                    //   (a) `this_value.deinit()` — handled by `JsRef: Drop`
-                    //       when the Box is reclaimed below.
-                    //   (b) `vm.timer.remove(eventLoopTimer())` if
-                    //       `event_loop_timer.state == .ACTIVE` — NOT done.
-                    //       Freeing a still-ACTIVE TimeoutObject leaves a
-                    //       dangling `*mut EventLoopTimer` in `All.timers`.
-                    //   (c) `vm.timer.maps.get(kind).remove(id)` if
-                    //       `flags.has_accessed_primitive` — NOT done.
-                    //   (d) `setEnableKeepingEventLoopAlive(vm, false)` —
-                    //       NOT done. Leaks `active_timer_count` /
-                    //       `immediate_ref_count` and can hang the process.
-                    // For the currently-live `ImmediateObject` path the state
-                    // is always FIRED and keep-alive already cleared by
-                    // `run_immediate_task`, so only (c) is observable today;
-                    // (b)/(d) become live the moment `TimeoutObject` fires.
-                    // Wire a real `TimerObjectInternals::deinit(vm)` (needs
-                    // `*mut VirtualMachine` plumbed through `deref`) before
-                    // un-gating `TimeoutObject::fire`.
-                    //
-                    // SAFETY: refcount hit 0 ⇒ unique ownership; `bun.new` ↔
-                    // `Box::into_raw`, so `Box::from_raw` is the paired free.
+                    // SAFETY: refcount hit 0 ⇒ unique ownership of the parent;
+                    // `internals` is an embedded field of a still-live
+                    // allocation. `deinit` unlinks from `All.timers` (if
+                    // ACTIVE), drops the id→ptr map entry (if
+                    // `has_accessed_primitive`), and releases the event-loop
+                    // keep-alive — see `TimerObjectInternals::deinit` for the
+                    // full obligation list. `this_value.deinit()` is handled by
+                    // `JsRef: Drop` when the Box is reclaimed immediately after.
+                    unsafe { (*this).internals.deinit() };
+                    // SAFETY: `bun.new` ↔ `Box::into_raw`, so `Box::from_raw`
+                    // is the paired free.
                     drop(unsafe { Box::from_raw(this) });
                 }
             }
@@ -765,7 +733,7 @@ const NS_PER_US: i64 = 1_000;
 //   confidence: medium (B-2 struct/state un-gate)
 //   notes:      All/Maps/Kind/ID/TimerHeap/FakeTimers real; insert/remove/
 //               update/get_timeout/drain_timers real (vm erased per §Dispatch).
-//               TimerHeap is a degenerate single-node header until
-//               bun_event_loop::EventLoopTimer.heap uses bun_io::heap::IntrusiveField
-//               (orphan-rule blocked). JS host fns gated on bun_jsc.
+//               TimerHeap is the real bun_io::heap::Intrusive pairing-heap
+//               (meld/remove/combine_siblings) — multi-timer setTimeout works.
+//               JS host fns gated on bun_jsc.
 // ──────────────────────────────────────────────────────────────────────────

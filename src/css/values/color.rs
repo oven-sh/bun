@@ -172,25 +172,118 @@ impl CssColor {
                 LABColor::Lab(_) | LABColor::Lch(_) => Feature::LabColors.is_compatible(browsers),
                 LABColor::Oklab(_) | LABColor::Oklch(_) => Feature::OklabColors.is_compatible(browsers),
             },
-            CssColor::Predefined(_) => Feature::ColorFunction.is_compatible(browsers),
-            CssColor::LightDark { .. } => Feature::LightDark.is_compatible(browsers),
+            CssColor::Predefined(predefined) => match **predefined {
+                PredefinedColor::DisplayP3(_) => Feature::P3Colors.is_compatible(browsers),
+                _ => Feature::ColorFunction.is_compatible(browsers),
+            },
+            CssColor::LightDark { light, dark } => {
+                Feature::LightDark.is_compatible(browsers)
+                    && light.is_compatible(browsers)
+                    && dark.is_compatible(browsers)
+            }
             CssColor::System(_) => true,
         }
     }
 
-    /// Project this color into the given fallback colorspace. Conversion
-    /// chains live in `gated_full_impl`; until those un-gate this clones
-    /// (callers only invoke this when `get_necessary_fallbacks` returned a
-    /// non-empty set, which the stub never does).
-    pub fn get_fallback(&self, _allocator: &Arena, _kind: ColorFallbackKind) -> CssColor {
-        // blocked_on: gated_full_impl::CssColor::{to_rgb,to_p3,to_lab}
-        self.clone()
+    /// Project this color into the given fallback colorspace.
+    pub fn get_fallback(&self, _allocator: &Arena, kind: ColorFallbackKind) -> CssColor {
+        if matches!(self, CssColor::Rgba(_)) {
+            return self.clone();
+        }
+        let _ = kind;
+        // blocked_on: gated_full_impl::CssColor::{to_rgb,to_p3,to_lab} — the
+        // `try_from_css_color` bridge from `CssColor` into the un-gated
+        // `From<…>` colorspace lattice still lives inside `gated_full_impl`.
+        // Per PORTING.md §Forbidden (silent-no-op), fail loudly instead of
+        // returning `self.clone()` (which would emit the original unsupported
+        // colorspace as if it were a fallback).
+        todo!("CssColor::get_fallback — blocked on gated_full_impl to_rgb/to_p3/to_lab un-gate")
     }
 
     /// Returns the color fallback types needed for the given browser targets.
-    pub fn get_necessary_fallbacks(&self, _targets: targets::Targets) -> ColorFallbackKind {
-        // blocked_on: gated_full_impl::CssColor::get_possible_fallbacks
-        ColorFallbackKind::empty()
+    pub fn get_necessary_fallbacks(&self, targets: targets::Targets) -> ColorFallbackKind {
+        // Get the full set of possible fallbacks, and remove the highest one, which
+        // will replace the original declaration. The remaining fallbacks need to be added.
+        let fallbacks = self.get_possible_fallbacks(targets);
+        fallbacks.difference(fallbacks.highest())
+    }
+
+    pub fn get_possible_fallbacks(&self, targets: targets::Targets) -> ColorFallbackKind {
+        use crate::compat::Feature;
+        // Fallbacks occur in levels: Oklab -> Lab -> P3 -> RGB. We start with all levels
+        // below and including the authored color space, and remove the ones that aren't
+        // compatible with our browser targets.
+        let mut fallbacks: ColorFallbackKind = match self {
+            CssColor::CurrentColor | CssColor::Rgba(_) | CssColor::Float(_) | CssColor::System(_) => {
+                return ColorFallbackKind::empty();
+            }
+            CssColor::Lab(lab) => 'brk: {
+                // PORT NOTE: Zig `or`/`and` precedence preserved verbatim:
+                // `lab == .lab or (lab == .lch and shouldCompileSame(.lab_colors))`.
+                if matches!(**lab, LABColor::Lab(_))
+                    || matches!(**lab, LABColor::Lch(_))
+                        && targets.should_compile_same(Feature::LabColors)
+                {
+                    break 'brk ColorFallbackKind::LAB.and_below();
+                }
+                if matches!(**lab, LABColor::Oklab(_))
+                    || matches!(**lab, LABColor::Oklch(_))
+                        && targets.should_compile_same(Feature::OklabColors)
+                {
+                    break 'brk ColorFallbackKind::OKLAB.and_below();
+                }
+                return ColorFallbackKind::empty();
+            }
+            CssColor::Predefined(predefined) => 'brk: {
+                if matches!(**predefined, PredefinedColor::DisplayP3(_))
+                    && targets.should_compile_same(Feature::P3Colors)
+                {
+                    break 'brk ColorFallbackKind::P3.and_below();
+                }
+                if targets.should_compile_same(Feature::ColorFunction) {
+                    break 'brk ColorFallbackKind::LAB.and_below();
+                }
+                return ColorFallbackKind::empty();
+            }
+            CssColor::LightDark { light, dark } => {
+                return light.get_possible_fallbacks(targets) | dark.get_possible_fallbacks(targets);
+            }
+        };
+
+        if fallbacks.contains(ColorFallbackKind::OKLAB) {
+            if !targets.should_compile_same(Feature::OklabColors) {
+                fallbacks = fallbacks.difference(ColorFallbackKind::LAB.and_below());
+            }
+        }
+
+        if fallbacks.contains(ColorFallbackKind::LAB) {
+            if !targets.should_compile_same(Feature::LabColors) {
+                fallbacks = fallbacks.difference(ColorFallbackKind::P3.and_below());
+            } else if targets
+                .browsers
+                .map_or(false, |b| Feature::LabColors.is_partially_compatible(b))
+            {
+                // We don't need P3 if Lab is supported by some of our targets.
+                // No browser implements Lab but not P3.
+                fallbacks.remove(ColorFallbackKind::P3);
+            }
+        }
+
+        if fallbacks.contains(ColorFallbackKind::P3) {
+            if !targets.should_compile_same(Feature::P3Colors) {
+                fallbacks.remove(ColorFallbackKind::RGB);
+            } else if fallbacks.highest() != ColorFallbackKind::P3
+                && targets
+                    .browsers
+                    .map_or(true, |b| !Feature::P3Colors.is_partially_compatible(b))
+            {
+                // Remove P3 if it isn't supported by any targets, and wasn't the
+                // original authored color.
+                fallbacks.remove(ColorFallbackKind::P3);
+            }
+        }
+
+        fallbacks
     }
 
     #[inline]

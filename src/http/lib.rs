@@ -2576,7 +2576,7 @@ impl HTTPClient {
                 if let Some(alt_port) =
                     h3::AltSvc::lookup(self.url.hostname, self.url.get_port_auto())
                 {
-                    if let Some(ctx) = h3::ClientContext::get_or_create(http_thread().loop_) {
+                    if let Some(ctx) = h3::ClientContext::get_or_create(http_thread().uws_loop) {
                         if !ctx.connect(self, self.url.hostname, alt_port) {
                             self.fail(err!(ConnectionRefused));
                         }
@@ -2599,7 +2599,7 @@ impl HTTPClient {
                 self.complete_connecting_process();
                 return;
             }
-            let Some(ctx) = h3::ClientContext::get_or_create(http_thread().loop_) else {
+            let Some(ctx) = h3::ClientContext::get_or_create(http_thread().uws_loop) else {
                 self.fail(err!(HTTP3Unsupported));
                 self.complete_connecting_process();
                 return;

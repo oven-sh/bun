@@ -59,14 +59,24 @@ pub type OOM = AllocError;
 
 // Real `declare_scope!`/`scoped_log!`/`pretty*!`/`warn!`/`note!` are
 // `#[macro_export]`ed from output.rs.
-// `err!(Name)` / `err!("Name")` — Phase-A drafts use both forms.
-// Real impl: NonZeroU16 interning table populated at link time. B-1 stub
-// returns a placeholder so type-checking passes; actual codes wired in B-2.
+// `err!(Name)` / `err!("Name")` — Zig `error.Name` literal.
+//
+// Expands to a per-site `OnceLock<Error>` that interns the stringified name
+// on first hit, then hands back the cached `NonZeroU16` forever after. Two
+// `err!(Foo)` at different sites resolve to the *same* code (the table is
+// process-global), so `e == err!(Foo)` is a plain u16 compare — the property
+// h2 `error_code_for`, install retry loops, etc. were blocked on.
 #[macro_export] macro_rules! err {
-    ($name:ident) => { $crate::Error::TODO };
-    ($name:literal) => { $crate::Error::TODO };
+    ($name:ident) => {{
+        static __E: ::std::sync::OnceLock<$crate::Error> = ::std::sync::OnceLock::new();
+        *__E.get_or_init(|| $crate::Error::intern(::core::stringify!($name)))
+    }};
+    ($name:literal) => {{
+        static __E: ::std::sync::OnceLock<$crate::Error> = ::std::sync::OnceLock::new();
+        *__E.get_or_init(|| $crate::Error::intern($name))
+    }};
     // `err!(from e)` — convert a strum::IntoStaticStr enum error to bun_core::Error.
-    (from $e:expr) => { $crate::Error::from_name(<&'static str>::from(&$e)) };
+    (from $e:expr) => { $crate::Error::intern(<&'static str>::from(&$e)) };
 }
 // `mark_binding!` and `zstr!` are defined in Global.rs / util.rs respectively.
 

@@ -92,7 +92,7 @@ pub struct RuntimeTranspilerCacheEntry {
 
 /// Mirrors `RuntimeTranspilerCache.Metadata` — fixed-width LE header.
 #[repr(C)]
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct RuntimeTranspilerCacheMetadata {
     pub cache_version: u32,
     pub output_encoding: u8, // Encoding
@@ -109,6 +109,32 @@ pub struct RuntimeTranspilerCacheMetadata {
     pub esm_record_byte_offset: u64,
     pub esm_record_byte_length: u64,
     pub esm_record_hash: u64,
+}
+
+impl Default for RuntimeTranspilerCacheMetadata {
+    /// Spec (src/jsc/RuntimeTranspilerCache.zig:42) defaults
+    /// `cache_version: u32 = expected_version` — derived `Default` would zero it,
+    /// causing every freshly-written entry to be rejected as `error.StaleCache`
+    /// on first read.
+    fn default() -> Self {
+        Self {
+            cache_version: RUNTIME_TRANSPILER_CACHE_VERSION,
+            output_encoding: 0, // Encoding::none
+            module_type: 0,     // ModuleType::none
+            features_hash: 0,
+            input_byte_length: 0,
+            input_hash: 0,
+            output_byte_offset: 0,
+            output_byte_length: 0,
+            output_hash: 0,
+            sourcemap_byte_offset: 0,
+            sourcemap_byte_length: 0,
+            sourcemap_hash: 0,
+            esm_record_byte_offset: 0,
+            esm_record_byte_length: 0,
+            esm_record_hash: 0,
+        }
+    }
 }
 
 pub struct Set {

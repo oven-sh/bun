@@ -320,7 +320,9 @@ impl Stdio {
         }
     }
 
-    /// On windows this function allocates a `Box<uv::Pipe>`; ensure it is dropped or ownership is passed.
+    /// On windows this function allocates a `*mut uv::Pipe` (via `Box::into_raw`);
+    /// the caller must transfer ownership (e.g. into `WindowsStdioResult::Buffer`
+    /// via `Box::from_raw`) or free it with `close_and_destroy`.
     pub fn as_spawn_option(&mut self, i: i32) -> Result {
         #[cfg(windows)]
         {
@@ -654,13 +656,14 @@ impl Drop for Stdio {
 /// for pipes that never reach `uv_pipe_init`, so `closeAndDestroy` can tell
 /// whether `uv_close` is needed.
 #[cfg(windows)]
-fn create_zeroed_pipe() -> Box<uv::Pipe> {
-    // `bun.new` → Box::new. LIFETIMES.tsv rows 1335-1336: WindowsSpawnOptions
-    // .Stdio.{buffer,ipc} are OWNED → Box<uv::Pipe>; the pointer is stored in a
-    // Rust enum variant, not handed straight to C, so no into_raw here.
+fn create_zeroed_pipe() -> *mut uv::Pipe {
+    // `bun.new` → Box::into_raw(Box::new(..)). WindowsSpawnOptions.Stdio.{buffer,ipc}
+    // store the pipe as a raw FFI-owned `*mut uv::Pipe` so `spawn_process_windows`
+    // can transfer sole ownership into `WindowsStdioResult::Buffer` via
+    // `Box::from_raw` without aliasing a live `Box` (which would double-free).
     // SAFETY: all-zero is a valid uv::Pipe (#[repr(C)] POD; libuv treats a
     // zeroed pipe as "uninitialized" and `pipe.loop == null` is the sentinel).
-    Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() })
+    Box::into_raw(Box::new(unsafe { core::mem::zeroed::<uv::Pipe>() }))
 }
 
 // ──────────────────────────────────────────────────────────────────────────

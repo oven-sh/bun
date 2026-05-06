@@ -1306,13 +1306,12 @@ pub fn get_thread_count() -> u16 {
 
 // ── errno_to_zig_err ──────────────────────────────────────────────────────
 // Port of `bun.errnoToZigErr` (bun.zig:2854). Zig indexes into a comptime
-// `errno_map: [N]anyerror`; the Rust `bun_core::Error` already carries the raw
-// errno, so the mapping is identity (and `Error::name()` recovers the tag).
+// `errno_map: [N]anyerror`; the Rust intern table reproduces that mapping in
+// `Error::from_errno` (errno → tag name → interned code).
 #[inline]
 pub fn errno_to_zig_err(errno: i32) -> crate::Error {
-    let n = if cfg!(windows) { errno.unsigned_abs() as i32 } else { errno };
-    debug_assert!(n != 0);
-    crate::Error::from_errno(n)
+    debug_assert!(errno != 0);
+    crate::Error::from_errno(errno)
 }
 
 // ── time ──────────────────────────────────────────────────────────────────
@@ -1921,10 +1920,10 @@ pub fn getcwd(buf: &mut PathBuffer) -> Result<&ZStr, crate::Error> {
     {
         // TODO(port): GetCurrentDirectoryW → WTF-8. Phase B via bun_sys.
         let _ = buf;
-        Err(crate::Error::TODO)
+        Err(crate::err!(Unexpected))
     }
     #[cfg(not(any(unix, windows)))]
-    { let _ = buf; Err(crate::Error::TODO) }
+    { let _ = buf; Err(crate::err!(Unexpected)) }
 }
 
 // ── which ─────────────────────────────────────────────────────────────────
@@ -2150,7 +2149,7 @@ pub fn spawn_sync_inherit(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crat
     {
         // TODO(port): Windows path via CreateProcessW in bun_spawn.
         let _ = argv;
-        Err(crate::Error::TODO)
+        Err(crate::err!(Unexpected))
     }
 }
 

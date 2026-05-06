@@ -27,17 +27,28 @@ pub fn write_request(
     };
     // SAFETY: stream.client is a live backref while the stream is attached.
     let client: &mut HTTPClient = unsafe { &mut *client_ptr.as_ptr() };
-    let request = client.build_request(client.state.original_request_body.len());
-    if client.verbose != HTTPVerboseLevel::None {
+    // PORT NOTE: reshaped for borrowck — `build_request` returns a `Request<'_>`
+    // that mutably borrows `client`; capture every field we need first.
+    let verbose = client.verbose;
+    let href: &[u8] = client.url.href;
+    let host: &[u8] = client.url.host;
+    let reject_unauthorized = client.flags.reject_unauthorized;
+    let req_body_ptr: *const [u8] = client.state.request_body;
+    let body_len = client.state.original_request_body.len();
+    let is_streaming = client.state.original_request_body.is_stream();
+    let is_bytes = matches!(client.state.original_request_body, HTTPRequestBody::Bytes(_));
+
+    let request = client.build_request(body_len);
+    if verbose != HTTPVerboseLevel::None {
         // SAFETY: request_body is set from a live owned slice (Zig: `[]const u8`).
-        let body = unsafe { &*client.state.request_body };
+        let body = unsafe { &*req_body_ptr };
         crate::print_request(
             Protocol::Http3,
             &request,
-            client.url.href,
-            !client.flags.reject_unauthorized,
+            href,
+            !reject_unauthorized,
             body,
-            client.verbose == HTTPVerboseLevel::Curl,
+            verbose == HTTPVerboseLevel::Curl,
         );
     }
 
@@ -54,7 +65,7 @@ pub fn write_request(
     let lower_base = lower.as_mut_ptr();
     let mut lower_len: usize = 0;
 
-    let mut authority: &[u8] = client.url.host;
+    let mut authority: &[u8] = host;
     // SAFETY: capacity for `request.headers.len() + 4` was reserved above; slots
     // 0..4 are fully written below (the four pseudo-headers) before `headers`
     // is read by `send_headers`. quic::Header has no Drop.
@@ -95,10 +106,8 @@ pub fn write_request(
     );
 
     // SAFETY: request_body is set from a live owned slice.
-    let body: &[u8] = unsafe { &*client.state.request_body };
-    let has_inline_body =
-        matches!(client.state.original_request_body, HTTPRequestBody::Bytes(_)) && !body.is_empty();
-    let is_streaming = client.state.original_request_body.is_stream();
+    let body: &[u8] = unsafe { &*req_body_ptr };
+    let has_inline_body = is_bytes && !body.is_empty();
 
     let end_stream = !has_inline_body && !is_streaming;
     if qs.send_headers(&headers, end_stream) != 0 {
@@ -110,7 +119,7 @@ pub fn write_request(
     drop(headers);
 
     if has_inline_body {
-        stream.pending_body = client.state.request_body;
+        stream.pending_body = req_body_ptr;
         drain_send_body(stream, qs);
     } else if is_streaming {
         stream.is_streaming_body = true;

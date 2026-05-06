@@ -525,6 +525,16 @@ impl<const SSL: bool> HTTPContext<SSL> {
             return None;
         }
 
+        // TODO(b2-blocked): ProxyTunnel::adopt is gated in ProxyTunnel.rs.
+        // Until it un-gates, never match a pooled CONNECT tunnel — returning
+        // one would (a) leak the transferred strong ref (caller has nowhere
+        // to attach it without `adopt`) and (b) drive the request as a fresh
+        // direct connection on an established TLS tunnel, corrupting the
+        // stream. Forcing a fresh connect is the only safe degradation.
+        if want_tunnel {
+            return None;
+        }
+
         let mut iter = self.pending_sockets.used.iterator::<true, true>();
 
         while let Some(pending_socket_index) = iter.next() {

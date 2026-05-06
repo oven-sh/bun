@@ -1380,17 +1380,18 @@ impl<'a> PackageInstall<'a> {
         }
 
         #[cfg(windows)]
-        // SAFETY: to_copy_buf/to_copy_buf2 are raw slices into state.buf/state.buf2 set by
-        // init_install_dir; they alias the head buffers but `copy` only writes the
-        // non-overlapping suffix region (mirrors Zig's overlapping slice usage).
-        let result = unsafe {
+        let result = {
+            // SAFETY: deref of raw slice ptrs only to read .len(); init_install_dir set them
+            // to non-null suffixes of buf/buf2 on the success path that reaches here.
+            let to_copy1_off = state.buf.len() - unsafe { (*state.to_copy_buf).len() };
+            let to_copy2_off = state.buf2.len() - unsafe { (*state.to_copy_buf2).len() };
             copy(
                 state.subdir,
-                state.walker(),
+                state.walker.as_mut().unwrap(),
                 self.progress.as_deref_mut(),
-                &mut *state.to_copy_buf,
+                to_copy1_off,
                 &mut state.buf[..],
-                &mut *state.to_copy_buf2,
+                to_copy2_off,
                 &mut state.buf2[..],
             )
         };
@@ -1424,13 +1425,21 @@ impl<'a> PackageInstall<'a> {
         type WinSlice<'b> = &'b mut [u16];
         #[cfg(not(windows))]
         type WinSlice<'b> = ();
+        #[cfg(windows)]
+        type WinOffset = usize;
+        #[cfg(not(windows))]
+        type WinOffset = ();
 
+        // PORT NOTE: reshaped for borrowck — Zig passed two overlapping slices into the
+        // same buffer (`head` is the whole buffer, `to_copy_into` is its tail). Creating
+        // two live `&mut [u16]` that alias is UB in Rust, so pass head buffer + tail
+        // offset and reslice inside.
         fn copy(
             destination_dir: Dir,
             walker: &mut Walker,
-            #[allow(unused)] to_copy_into1: WinSlice<'_>,
+            #[allow(unused)] to_copy_into1_offset: WinOffset,
             #[allow(unused)] head1: WinSlice<'_>,
-            #[allow(unused)] to_copy_into2: WinSlice<'_>,
+            #[allow(unused)] to_copy_into2_offset: WinOffset,
             #[allow(unused)] head2: WinSlice<'_>,
         ) -> Result<u32, bun_core::Error> {
             // TODO(port): narrow error set
@@ -1490,29 +1499,23 @@ impl<'a> PackageInstall<'a> {
                         _ => continue,
                     }
 
-                    if entry.path.len() > to_copy_into1.len() || entry.path.len() > to_copy_into2.len() {
+                    if entry.path.len() > head1.len() - to_copy_into1_offset
+                        || entry.path.len() > head2.len() - to_copy_into2_offset
+                    {
                         return Err(bun_core::err!("NameTooLong"));
                     }
 
-                    to_copy_into1[..entry.path.len()].copy_from_slice(entry.path.as_slice());
-                    head1[entry.path.len() + (head1.len() - to_copy_into1.len())] = 0;
-                    // SAFETY: head1[len] == 0 written immediately above.
-                    let dest = unsafe {
-                        bun_str::WStr::from_raw(
-                            head1.as_ptr(),
-                            entry.path.len() + head1.len() - to_copy_into1.len(),
-                        )
-                    };
+                    let dest_len = to_copy_into1_offset + entry.path.len();
+                    head1[to_copy_into1_offset..dest_len].copy_from_slice(entry.path.as_slice());
+                    head1[dest_len] = 0;
+                    // SAFETY: head1[dest_len] == 0 written immediately above.
+                    let dest = unsafe { bun_str::WStr::from_raw(head1.as_ptr(), dest_len) };
 
-                    to_copy_into2[..entry.path.len()].copy_from_slice(entry.path.as_slice());
-                    head2[entry.path.len() + (head1.len() - to_copy_into2.len())] = 0;
-                    // SAFETY: head2[len] == 0 written immediately above.
-                    let src = unsafe {
-                        bun_str::WStr::from_raw(
-                            head2.as_ptr(),
-                            entry.path.len() + head2.len() - to_copy_into2.len(),
-                        )
-                    };
+                    let src_len = to_copy_into2_offset + entry.path.len();
+                    head2[to_copy_into2_offset..src_len].copy_from_slice(entry.path.as_slice());
+                    head2[src_len] = 0;
+                    // SAFETY: head2[src_len] == 0 written immediately above.
+                    let src = unsafe { bun_str::WStr::from_raw(head2.as_ptr(), src_len) };
 
                     queue.push(HardLinkWindowsInstallTask::init(
                         src.as_slice(),
@@ -1541,16 +1544,17 @@ impl<'a> PackageInstall<'a> {
         }
 
         #[cfg(windows)]
-        // SAFETY: to_copy_buf/to_copy_buf2 are raw slices into state.buf/state.buf2 set by
-        // init_install_dir; they alias the head buffers but `copy` only writes the
-        // non-overlapping suffix region (mirrors Zig's overlapping slice usage).
-        let result = unsafe {
+        let result = {
+            // SAFETY: deref of raw slice ptrs only to read .len(); init_install_dir set them
+            // to non-null suffixes of buf/buf2 on the success path that reaches here.
+            let to_copy1_off = state.buf.len() - unsafe { (*state.to_copy_buf).len() };
+            let to_copy2_off = state.buf2.len() - unsafe { (*state.to_copy_buf2).len() };
             copy(
                 state.subdir,
-                state.walker(),
-                &mut *state.to_copy_buf,
+                state.walker.as_mut().unwrap(),
+                to_copy1_off,
                 &mut state.buf[..],
-                &mut *state.to_copy_buf2,
+                to_copy2_off,
                 &mut state.buf2[..],
             )
         };
@@ -1609,17 +1613,22 @@ impl<'a> PackageInstall<'a> {
         #[cfg(not(windows))]
         type WinSlice<'b> = ();
         #[cfg(windows)]
+        type WinOffset = usize;
+        #[cfg(not(windows))]
+        type WinOffset = ();
+        #[cfg(windows)]
         type Head2Char = u16;
         #[cfg(not(windows))]
         type Head2Char = u8;
 
         // PORT NOTE: reshaped for borrowck — Zig passed two overlapping slices into the
-        // same buffer (`head2` is the whole buffer, `to_copy_into2` is its tail). Pass
-        // the head buffer + the tail offset instead so we never hold two `&mut` into it.
+        // same buffer (`head` is the whole buffer, `to_copy_into` is its tail). Creating
+        // two live `&mut` that alias is UB in Rust, so pass head buffer + tail offset
+        // and reslice inside.
         fn copy(
             destination_dir: Dir,
             walker: &mut Walker,
-            #[allow(unused)] to_copy_into1: WinSlice<'_>,
+            #[allow(unused)] to_copy_into1_offset: WinOffset,
             #[allow(unused)] head1: WinSlice<'_>,
             #[allow(unused)] to_copy_into2_offset: usize,
             head2: &mut [Head2Char],
@@ -1669,21 +1678,17 @@ impl<'a> PackageInstall<'a> {
                         _ => continue,
                     }
 
-                    if entry.path.len() > to_copy_into1.len()
+                    if entry.path.len() > head1.len() - to_copy_into1_offset
                         || entry.path.len() > head2.len() - to_copy_into2_offset
                     {
                         return Err(bun_core::err!("NameTooLong"));
                     }
 
-                    to_copy_into1[..entry.path.len()].copy_from_slice(entry.path.as_slice());
-                    head1[entry.path.len() + (head1.len() - to_copy_into1.len())] = 0;
-                    // SAFETY: head1[len] == 0 written immediately above.
-                    let dest = unsafe {
-                        bun_str::WStr::from_raw(
-                            head1.as_ptr(),
-                            entry.path.len() + head1.len() - to_copy_into1.len(),
-                        )
-                    };
+                    let dest_len = to_copy_into1_offset + entry.path.len();
+                    head1[to_copy_into1_offset..dest_len].copy_from_slice(entry.path.as_slice());
+                    head1[dest_len] = 0;
+                    // SAFETY: head1[dest_len] == 0 written immediately above.
+                    let dest = unsafe { bun_str::WStr::from_raw(head1.as_ptr(), dest_len) };
 
                     let src_len = to_copy_into2_offset + entry.path.len();
                     head2[to_copy_into2_offset..src_len].copy_from_slice(entry.path.as_slice());
@@ -1743,15 +1748,15 @@ impl<'a> PackageInstall<'a> {
         }
 
         #[cfg(windows)]
-        // SAFETY: to_copy_buf is a raw slice into state.buf set by init_install_dir; it
-        // aliases head1 but `copy` only writes the non-overlapping suffix region
-        // (mirrors Zig's overlapping slice usage).
-        let result = unsafe {
-            let to_copy2_off = state.buf2.len() - (*state.to_copy_buf2).len();
+        let result = {
+            // SAFETY: deref of raw slice ptrs only to read .len(); init_install_dir set them
+            // to non-null suffixes of buf/buf2 on the success path that reaches here.
+            let to_copy1_off = state.buf.len() - unsafe { (*state.to_copy_buf).len() };
+            let to_copy2_off = state.buf2.len() - unsafe { (*state.to_copy_buf2).len() };
             copy(
                 state.subdir,
-                state.walker(),
-                &mut *state.to_copy_buf,
+                state.walker.as_mut().unwrap(),
+                to_copy1_off,
                 &mut state.buf[..],
                 to_copy2_off,
                 &mut state.buf2[..],

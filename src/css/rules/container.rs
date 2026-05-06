@@ -65,10 +65,16 @@ pub enum ContainerSizeFeatureId {
     Orientation,
 }
 
-impl ContainerSizeFeatureId {
+// `QueryFeature<FeatureId>` requires `FeatureId: FeatureIdTrait` at the type
+// level, so this impl must be present for `ContainerSizeFeature` to resolve.
+// `value_type` is real (Zig DeriveValueType inlined); `to_css`/`from_str`
+// delegate to enum_property_util which needs an EnumProperty derive (Phase B)
+// — until then they `unimplemented!()`. All callers of those two methods are
+// in the `#[cfg(any())]`-gated behavior bodies below.
+impl crate::media_query::FeatureIdTrait for ContainerSizeFeatureId {
     // Zig: pub const valueType = css.DeriveValueType(@This(), ValueTypeMap).valueType;
     // PORT NOTE: DeriveValueType is comptime reflection over ValueTypeMap; expanded inline.
-    pub fn value_type(&self) -> MediaFeatureType {
+    fn value_type(&self) -> MediaFeatureType {
         match self {
             Self::Width => MediaFeatureType::Length,
             Self::Height => MediaFeatureType::Length,
@@ -77,6 +83,16 @@ impl ContainerSizeFeatureId {
             Self::AspectRatio => MediaFeatureType::Ratio,
             Self::Orientation => MediaFeatureType::Ident,
         }
+    }
+
+    fn to_css(&self, _dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        // TODO(port): css::enum_property_util::to_css — needs EnumProperty derive (Phase B)
+        unimplemented!("ContainerSizeFeatureId::to_css — enum_property_util EnumProperty derive")
+    }
+
+    fn from_str(_s: &[u8]) -> Option<Self> {
+        // TODO(port): css::enum_property_util::from_str — needs EnumProperty derive (Phase B)
+        unimplemented!("ContainerSizeFeatureId::from_str — enum_property_util EnumProperty derive")
     }
 }
 

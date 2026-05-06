@@ -118,7 +118,7 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
             // *kind* only — `bun_core::Error`'s derived `PartialEq` compares all
             // fields (syscall/fd/path), and `err!("OutOfMemory")` is currently a
             // TODO sentinel, so a full-struct compare would invert the branch.
-            Err(e) if e.errno == bun_core::Error::OUT_OF_MEMORY.errno => Self::on_oom(wrap, any),
+            Err(e) if e == bun_core::Error::OUT_OF_MEMORY => Self::on_oom(wrap, any),
             Err(_) => Self::on_invalid(wrap, any),
         }
     }

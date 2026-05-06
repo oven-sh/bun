@@ -340,6 +340,63 @@ impl TimerObjectInternals {
 
         exception_thrown
     }
+
+    /// Spec TimerObjectInternals.zig `deinit` — final teardown invoked by the
+    /// parent container's intrusive-refcount destructor (`{Timeout,Immediate}
+    /// Object::deref` when the count hits zero). Unlinks the parent from every
+    /// `Timer::All` data structure it may still be reachable from so the
+    /// imminent `Box::from_raw` free cannot leave a dangling
+    /// `*mut EventLoopTimer` in the heap or a leaked keep-alive count.
+    ///
+    /// PORT NOTE: `this_value.deinit()` (Zig line 499) is intentionally NOT
+    /// called here — `JsRef: Drop` runs when the parent `Box` is reclaimed
+    /// immediately after this returns, performing the same release.
+    /// `ref_count.assertNoRefs()` is likewise omitted: the only caller is the
+    /// `n == 1` branch of `deref`, so the count is provably zero.
+    ///
+    /// # Safety
+    /// `self` is the `internals` field of a live heap-allocated
+    /// `TimeoutObject`/`ImmediateObject` whose refcount has just reached zero.
+    /// The per-thread `RuntimeState` and `VirtualMachine` are installed (always
+    /// true on the JS thread by the time a timer can be dropped).
+    pub unsafe fn deinit(&mut self) {
+        let vm = VirtualMachine::get();
+        let kind = self.flags.kind();
+
+        let state = crate::jsc_hooks::runtime_state();
+        debug_assert!(!state.is_null(), "RuntimeState not installed");
+
+        // (b) `vm.timer.remove(eventLoopTimer())` if state == .ACTIVE — without
+        //     this the freed parent stays linked into `All.timers` and the next
+        //     `delete_min`/`drain_timers` dereferences freed memory.
+        let elt = self.event_loop_timer();
+        // SAFETY: `elt` derived from the live parent (see fn contract).
+        if unsafe { (*elt).state } == EventLoopTimerState::ACTIVE {
+            // SAFETY: `state` is the boxed per-thread `RuntimeState`;
+            // single-threaded JS heap so no concurrent `&mut` to `.timer`.
+            unsafe { (*state).timer.remove(elt) };
+        }
+
+        // (c) `vm.timer.maps.get(kind).orderedRemove(id)` if
+        //     `has_accessed_primitive` — drops the i32→*mut EventLoopTimer
+        //     entry minted by `toPrimitive`.
+        if self.flags.has_accessed_primitive() {
+            // SAFETY: as above — fresh `&mut` to `.timer.maps` for this call.
+            let map = unsafe { (*state).timer.maps.get(kind) };
+            // PORT NOTE: Zig follows up with a shrink-and-free heuristic
+            // (>256 KiB slack ⇒ `shrinkAndFree`); `bun_collections::ArrayHashMap`
+            // exposes neither `capacity()` nor `shrink_and_free()`, so the
+            // reclamation is omitted. Correctness is unaffected — the entry is
+            // gone — only the high-watermark capacity lingers.
+            // TODO(port): plumb a `shrink_to_fit` once `ArrayHashMap` grows one.
+            let _ = map.remove(&self.id);
+        }
+
+        // (d) `setEnableKeepingEventLoopAlive(vm, false)` — without this a
+        //     dropped-while-ref'd timer leaks `active_timer_count` /
+        //     `immediate_ref_count` and the process hangs at exit.
+        self.set_enable_keeping_event_loop_alive(vm, false);
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

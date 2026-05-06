@@ -1,8 +1,18 @@
 use crate as css;
 use crate::css_rules::Location;
 use crate::css_values::ident::DashedIdent;
-use crate::css_values::syntax::{ParsedComponent, SyntaxString};
+use crate::css_values::syntax::SyntaxString;
 use crate::{PrintErr, Printer};
+
+// `ParsedComponent` is `#[cfg(any())]`-gated in values/syntax.rs (its variant
+// payloads need the gated `properties::{transform,custom}` + `values::{image,
+// color}` un-gates). Re-export when available; otherwise unit-stub so the
+// `initial_value: Option<ParsedComponent>` field compiles. The `to_css`/`parse`
+// bodies that touch its variants are gated below.
+#[cfg(any())]
+use crate::css_values::syntax::ParsedComponent;
+#[cfg(not(any()))]
+type ParsedComponent = ();
 
 pub struct PropertyRule {
     pub name: DashedIdent,

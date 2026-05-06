@@ -2088,7 +2088,7 @@ impl ErrName for &[u8] {
 }
 impl ErrName for crate::Error {
     fn name(&self) -> &[u8] {
-        (*self).name()
+        (*self).name().as_bytes()
     }
 }
 // TODO(b0): `impl ErrName for bun_sys::Error` and `bun_sys::SystemErrno` arrive
@@ -2301,7 +2301,7 @@ impl BufferedStdin {
         }
         let mut one = [0u8; 1];
         match self.read(&mut one)? {
-            0 => Err(crate::Error::TODO), // EndOfStream
+            0 => Err(crate::err!(EndOfStream)),
             _ => Ok(one[0]),
         }
     }
@@ -2318,7 +2318,7 @@ impl BufferedStdin {
         out.clear();
         loop {
             if out.len() >= max_size {
-                return Err(crate::Error::TODO); // StreamTooLong
+                return Err(crate::err!(StreamTooLong));
             }
             let b = self.read_byte()?;
             if b == delimiter {
@@ -2342,7 +2342,7 @@ impl StdinReader {
         let mut one = [0u8; 1];
         // SAFETY: vtable installed at startup; fd is the process stdin.
         match unsafe { (output_sink().read)(self.fd, &mut one) }? {
-            0 => Err(crate::Error::TODO), // EndOfStream
+            0 => Err(crate::err!(EndOfStream)),
             _ => Ok(one[0]),
         }
     }

@@ -977,6 +977,16 @@ mod _event_loop_draft {
 // dispatch_deps bridge removed — real impls now live in
 // h3_client/ClientContext.rs (abort_by_http_id / stream_body_by_http_id).
 
+/// Module-level bridge for `HTTPThread::init`. The real body lives in
+/// `_event_loop_draft` below (depends on `bun_event_loop::MiniEventLoop`,
+/// which is outside this crate's dep set). Call sites in AsyncHTTP.rs hit
+/// this until that tier boundary is resolved.
+// TODO(b2-blocked): replace with `_event_loop_draft::init` once
+// bun_event_loop is in bun_http's deps.
+pub fn init(_opts: &InitOpts) {
+    todo!("HTTPThread::init — gated in _event_loop_draft (bun_event_loop dep)")
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/http/HTTPThread.zig (741 lines)

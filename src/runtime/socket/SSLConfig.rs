@@ -413,6 +413,10 @@ pub mod GlobalRegistry {
         use super::*;
         use bun_collections::ArrayHashMap;
 
+        // bun_threading::Mutex has no `const fn new()`; use parking_lot here
+        // (already a workspace dep) until a const constructor lands.
+        static MUTEX: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
         struct MapContext;
         impl MapContext {
             fn hash(key: *mut SSLConfig) -> u32 {
@@ -450,8 +454,7 @@ pub mod GlobalRegistry {
             // the mutex, then ran `defer`s. We compute `result` in a labeled block,
             // drop the guard, then dispose deferred values.
             let result = 'locked: {
-                MUTEX.lock();
-                let _guard = scopeguard::guard((), |()| MUTEX.unlock());
+                let _guard = MUTEX.lock();
                 let configs = configs();
 
                 // TODO(port): get_or_put_context with MapContext (content hash/eq)
@@ -484,8 +487,7 @@ pub mod GlobalRegistry {
         }
 
         pub(in super::super) fn remove(config: *mut SSLConfig) {
-            MUTEX.lock();
-            let _guard = scopeguard::guard((), |()| MUTEX.unlock());
+            let _guard = MUTEX.lock();
             let configs = configs();
             if configs.count() == 0 {
                 return;

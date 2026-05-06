@@ -29,7 +29,7 @@ use bun_event_loop::ManagedTask::ManagedTask;
 use bun_aio::posix_event_loop::{poll_tag, FilePoll, Flags as PollFlag, ON_POLL_DISPATCH};
 
 use bun_event_loop::EventLoopTimer::{
-    EventLoopTimer, Tag as EventLoopTimerTag, Timespec as ElTimespec, FIRE_TIMER,
+    EventLoopTimer, Tag as EventLoopTimerTag, Timespec as ElTimespec, FIRE_TIMER, JS_TIMER_EPOCH,
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -499,6 +499,43 @@ unsafe fn fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, vm: *mut ()
     }
 }
 
+/// `JS_TIMER_EPOCH` body — the tag→`@fieldParentPtr` read for
+/// [`EventLoopTimer::js_timer_epoch`]. Spec EventLoopTimer.zig
+/// `jsTimerInternalsFlags` (returns `internals.flags.epoch` for the three
+/// JS-timer container types, else null). Sits on the heap-compare hot path
+/// (`EventLoopTimer::less` → `TimerHeap` meld), so without this hook
+/// equal-deadline JS timers lose their stable insertion order.
+///
+/// # Safety
+/// `t` points at a live [`EventLoopTimer`] currently linked into a `TimerHeap`.
+unsafe fn js_timer_epoch(tag: EventLoopTimerTag, t: *const EventLoopTimer) -> Option<u32> {
+    use core::mem::offset_of;
+    use crate::timer::{AbortSignalTimeout, ImmediateObject, TimeoutObject};
+    // SAFETY: tag invariant — when `tag` matches, `t` is the `event_loop_timer`
+    // field of the named container (set at construction; never re-tagged).
+    match tag {
+        EventLoopTimerTag::TimeoutObject => unsafe {
+            let parent = (t as *const u8)
+                .sub(offset_of!(TimeoutObject, event_loop_timer))
+                .cast::<TimeoutObject>();
+            Some((*parent).internals.flags.epoch())
+        },
+        EventLoopTimerTag::ImmediateObject => unsafe {
+            let parent = (t as *const u8)
+                .sub(offset_of!(ImmediateObject, event_loop_timer))
+                .cast::<ImmediateObject>();
+            Some((*parent).internals.flags.epoch())
+        },
+        EventLoopTimerTag::AbortSignalTimeout => unsafe {
+            let parent = (t as *const u8)
+                .sub(offset_of!(AbortSignalTimeout, event_loop_timer))
+                .cast::<AbortSignalTimeout>();
+            Some((*parent).flags.epoch())
+        },
+        _ => None,
+    }
+}
+
 /// Wire the high-tier dispatchers into the low-tier hooks. Called once from
 /// `main.rs` before the first event-loop tick.
 pub fn install_dispatch_hooks() {
@@ -517,6 +554,13 @@ pub fn install_dispatch_hooks() {
     // EventLoopTimer::fire → fire_timer (tag→@fieldParentPtr match).
     FIRE_TIMER.store(
         fire_timer as unsafe fn(*mut EventLoopTimer, *const ElTimespec, *mut ()) as *mut (),
+        Ordering::Release,
+    );
+
+    // EventLoopTimer::less → js_timer_epoch (heap-compare stable-order hook).
+    JS_TIMER_EPOCH.store(
+        js_timer_epoch as unsafe fn(EventLoopTimerTag, *const EventLoopTimer) -> Option<u32>
+            as *mut (),
         Ordering::Release,
     );
 

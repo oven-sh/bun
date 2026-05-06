@@ -1509,8 +1509,13 @@ pub enum PosixStdio {
 }
 
 pub struct WindowsSpawnResult {
-    // TODO(port): IntrusiveArc vs Arc<Process> — LIFETIMES.tsv says Arc but Process is intrusive (ref_count field + container_of recovery)
-    pub process_: Option<Arc<Process>>,
+    // Raw intrusive pointer (mirrors Zig `?*Process`). `Process` is intrusively
+    // ref-counted via `bun_ptr::ThreadSafeRefCount` and recovered via
+    // `@fieldParentPtr` from libuv callbacks; allocation is `Box::into_raw` and
+    // destruction is `Box::from_raw` (see `ThreadSafeRefCounted::destructor`).
+    // Wrapping a `Box`-allocated pointer in `std::sync::Arc::from_raw` is UB —
+    // `Arc` expects an `ArcInner` header before the data — so this stays raw.
+    pub process_: Option<*mut Process>,
     pub stdin: WindowsStdioResult,
     pub stdout: WindowsStdioResult,
     pub stderr: WindowsStdioResult,
@@ -1540,29 +1545,27 @@ pub enum WindowsStdioResult {
     BufferFd(Fd),
 }
 
-// TODO(b2-blocked): Arc<Process> interior mutability — Process is intrusively
-// ref-counted; switch process_ to RefPtr<Process> and drop the unsafe casts.
+// TODO(b2-blocked): Process is intrusively ref-counted; wire RefPtr<Process>
+// once bun_ptr exposes a smart-pointer wrapper. For now process_ is *mut.
 #[cfg(any())]
 impl WindowsSpawnResult {
-    pub fn to_process(&mut self, _event_loop: impl Sized, sync_: bool) -> Arc<Process> {
+    pub fn to_process(&mut self, _event_loop: impl Sized, sync_: bool) -> *mut Process {
         let process = self.process_.take().unwrap();
-        // TODO(port): Arc<Process> interior mutability — Process.sync is set here in Zig
         // SAFETY: caller has unique ownership at this point (just spawned)
         unsafe {
-            (*(Arc::as_ptr(&process) as *mut Process)).sync = sync_;
+            (*process).sync = sync_;
         }
         process
     }
 
     pub fn close(&mut self) {
         if let Some(proc) = self.process_.take() {
-            // SAFETY: see to_process note above
+            // SAFETY: proc is a live intrusive-refcounted Process
             unsafe {
-                let p = &mut *(Arc::as_ptr(&proc) as *mut Process);
-                p.close();
-                p.detach();
+                (*proc).close();
+                (*proc).detach();
+                bun_ptr::ThreadSafeRefCount::<Process>::deref_(proc);
             }
-            // proc.deref() — Arc drop
         }
     }
 }
@@ -1616,8 +1619,13 @@ pub enum WindowsStdio {
     Path(Box<[u8]>),
     Inherit,
     Ignore,
-    Buffer(Box<uv::Pipe>),
-    Ipc(Box<uv::Pipe>),
+    /// FFI-owned `uv::Pipe` (allocated via `Box::into_raw` in
+    /// `create_zeroed_pipe`). Stored as a raw pointer so `spawn_process_windows`
+    /// can transfer sole ownership into `WindowsStdioResult::Buffer` via
+    /// `Box::from_raw` without double-freeing when `WindowsSpawnOptions` drops.
+    Buffer(*mut uv::Pipe),
+    /// See `Buffer` — same FFI ownership model.
+    Ipc(*mut uv::Pipe),
     Pipe(Fd),
     Dup2(Dup2),
 }
@@ -1626,12 +1634,17 @@ pub enum WindowsStdio {
 #[cfg(any())]
 impl Drop for WindowsStdio {
     fn drop(&mut self) {
-        // TODO(port): close_and_destroy consumes the pipe in Zig (frees the heap
-        // allocation). With Box<uv::Pipe> ownership this Drop runs the FFI close;
-        // revisit ownership model in Phase B.
+        // close_and_destroy consumes the pipe in Zig (frees the heap allocation).
+        // The raw pointer may already have been transferred to a
+        // `WindowsStdioResult`; callers that transfer ownership must replace the
+        // variant (e.g. with `Ignore`) or null the pointer first.
         match self {
-            WindowsStdio::Buffer(pipe) => pipe.close_and_destroy(),
-            WindowsStdio::Ipc(pipe) => pipe.close_and_destroy(),
+            WindowsStdio::Buffer(pipe) | WindowsStdio::Ipc(pipe) => {
+                if !pipe.is_null() {
+                    // SAFETY: non-null heap allocation from create_zeroed_pipe.
+                    unsafe { (**pipe).close_and_destroy() };
+                }
+            }
             _ => {}
         }
     }
@@ -2554,9 +2567,11 @@ pub fn spawn_process_windows(
                     stdio.data.fd = fd;
                 }
                 WindowsStdio::Buffer(my_pipe) => {
-                    my_pipe.init(loop_, false).unwrap()?;
+                    // SAFETY: `my_pipe` is a non-null heap allocation from
+                    // create_zeroed_pipe (Box::into_raw).
+                    unsafe { (&mut **my_pipe).init(loop_, false) }.unwrap()?;
                     stdio.flags = pipe_flags;
-                    stdio.data.stream = my_pipe.as_ref() as *const _ as *mut uv::uv_stream_t;
+                    stdio.data.stream = *my_pipe as *mut uv::uv_stream_t;
                 }
                 WindowsStdio::Pipe(fd) => {
                     stdio.flags = uv::UV_INHERIT_FD;
@@ -2613,20 +2628,22 @@ pub fn spawn_process_windows(
                 stdio.data.fd = fd;
             }
             WindowsStdio::Ipc(my_pipe) => {
-                my_pipe.init(loop_, true).unwrap()?;
+                // SAFETY: non-null heap allocation from create_zeroed_pipe.
+                unsafe { (&mut **my_pipe).init(loop_, true) }.unwrap()?;
                 stdio.flags = uv::UV_CREATE_PIPE
                     | uv::UV_WRITABLE_PIPE
                     | uv::UV_READABLE_PIPE
                     | uv::UV_OVERLAPPED_PIPE;
-                stdio.data.stream = my_pipe.as_ref() as *const _ as *mut uv::uv_stream_t;
+                stdio.data.stream = *my_pipe as *mut uv::uv_stream_t;
             }
             WindowsStdio::Buffer(my_pipe) => {
-                my_pipe.init(loop_, false).unwrap()?;
+                // SAFETY: non-null heap allocation from create_zeroed_pipe.
+                unsafe { (&mut **my_pipe).init(loop_, false) }.unwrap()?;
                 stdio.flags = uv::UV_CREATE_PIPE
                     | uv::UV_WRITABLE_PIPE
                     | uv::UV_READABLE_PIPE
                     | uv::UV_OVERLAPPED_PIPE;
-                stdio.data.stream = my_pipe.as_ref() as *const _ as *mut uv::uv_stream_t;
+                stdio.data.stream = *my_pipe as *mut uv::uv_stream_t;
             }
             WindowsStdio::Pipe(fd) => {
                 stdio.flags = uv::StdioFlags::INHERIT_FD;
@@ -2698,8 +2715,8 @@ pub fn spawn_process_windows(
     }
 
     let mut result = WindowsSpawnResult {
-        // TODO(port): IntrusiveArc<Process> wrapping raw ptr
-        process_: Some(unsafe { Arc::from_raw(process) }),
+        // Intrusive raw pointer; refcount lives inside `Process` (see field comment).
+        process_: Some(process),
         extra_pipes: Vec::with_capacity(options.extra_fds.len()),
         ..Default::default()
     };
@@ -2720,13 +2737,14 @@ pub fn spawn_process_windows(
         } else {
             match stdio_options[i] {
                 WindowsStdio::Buffer(_) => {
-                    // SAFETY: stdio.data.stream points to the Box<uv::Pipe> we set above
+                    // SAFETY: stdio.data.stream is the same `*mut uv::Pipe`
+                    // produced by `Box::into_raw` in create_zeroed_pipe and
+                    // stored in `options.{stdin,stdout,stderr}`. WindowsStdio
+                    // holds it as a raw pointer with no Drop, so reconstructing
+                    // the Box here is the *sole* ownership transfer.
                     *result_stdio = WindowsStdioResult::Buffer(unsafe {
                         Box::from_raw(stdio.data.stream as *mut uv::Pipe)
                     });
-                    // TODO(port): ownership transfer — the Box was held by
-                    // options.{stdin,stdout,stderr}; here we're aliasing. Phase B:
-                    // change WindowsStdio::Buffer to *mut uv::Pipe (FFI-owned).
                 }
                 _ => {
                     *result_stdio = WindowsStdioResult::Unavailable;
@@ -2739,7 +2757,8 @@ pub fn spawn_process_windows(
         match input {
             WindowsStdio::Ipc(_) | WindowsStdio::Buffer(_) => {
                 // PERF(port): was assume_capacity
-                // SAFETY: see ownership note above
+                // SAFETY: sole ownership transfer of the Box::into_raw'd
+                // uv::Pipe; WindowsStdio holds it as raw `*mut` with no Drop.
                 result.extra_pipes.push(WindowsStdioResult::Buffer(unsafe {
                     Box::from_raw(stdio_containers[3 + i].data.stream as *mut uv::Pipe)
                 }));
@@ -2807,9 +2826,9 @@ pub mod sync {
                     #[cfg(windows)]
                     {
                         // SAFETY: all-zero is valid uv::Pipe
-                        SpawnOptionsStdio::buffer(Box::new(unsafe {
+                        SpawnOptionsStdio::buffer(Box::into_raw(Box::new(unsafe {
                             core::mem::zeroed::<uv::Pipe>()
-                        }))
+                        })))
                     }
                     #[cfg(not(windows))]
                     {
@@ -2837,7 +2856,7 @@ pub mod sync {
     impl WindowsStdio {
         fn inherit() -> Self { WindowsStdio::Inherit }
         fn ignore() -> Self { WindowsStdio::Ignore }
-        fn buffer(p: Box<uv::Pipe>) -> Self { WindowsStdio::Buffer(p) }
+        fn buffer(p: *mut uv::Pipe) -> Self { WindowsStdio::Buffer(p) }
     }
 
     impl Options {

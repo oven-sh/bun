@@ -3,6 +3,7 @@
 
 use core::fmt;
 
+use bun_alloc::Arena as Bump;
 use bun_css as css;
 use bun_css::css_values::ident::{CustomIdent, Ident};
 use bun_css::selector::serialize;
@@ -79,16 +80,19 @@ fn small_list_into_box<T, const N: usize>(mut sl: SmallList<T, N>) -> Box<[T]> {
     v.into_boxed_slice()
 }
 
-/// Phase-A arena placeholder: leak a lowercased copy so the resulting `Str`
-/// outlives the local `Vec`. Zig used `parser.allocator().alloc(u8, n)` (the
-/// bump arena owns the buffer for the parse session). Phase B re-threads
-/// `&'bump Bump` and switches to `bumpalo::collections::Vec<'bump, u8>` —
-/// every callsite is annotated `// PERF(port): was arena alloc`.
+/// Allocate an ASCII-lowercased copy of `name` in the parse-session bump arena.
+/// Zig used `parser.allocator().alloc(u8, n)` (the bump arena owns the buffer
+/// for the parse session and frees it on arena reset). Returns a raw arena
+/// pointer (`*const [u8]`) — `Ident.v`'s field type — so we don't fabricate a
+/// `'static` lifetime (PORTING.md §Forbidden: never `Box::leak` to satisfy
+/// `&'static`). Phase B re-threads `&'bump Bump` and widens `Ident.v` to
+/// `&'bump [u8]`.
+// PERF(port): was arena alloc — profile in Phase B.
 #[inline]
-fn leak_lowercase(name: &[u8]) -> Str {
-    let mut buf = vec![0u8; name.len()];
-    let _ = strings::copy_lowercase(name, &mut buf[..]);
-    Box::leak(buf.into_boxed_slice())
+fn arena_lowercase(bump: &Bump, name: &[u8]) -> *const [u8] {
+    let buf = bump.alloc_slice_fill_copy(name.len(), 0u8);
+    let _ = strings::copy_lowercase(name, buf);
+    buf as *const [u8]
 }
 
 /// Instantiation of generic selector structs using our implementation of the `SelectorImpl` trait.
@@ -1166,9 +1170,11 @@ impl<'a> SelectorParser<'a> {
         name: Str,
         input: &mut CssParser,
     ) -> CResult<PseudoElement> {
-        // Zig's `ComptimeEnumMap.get` is ASCII-case-insensitive; lower into a stack
-        // buffer before the phf lookup so `::CUE(...)` etc. still match.
-        // TODO(port): phf custom hasher — replace stack-lowercase with a case-folded phf in Phase B.
+        // Spec parity: parser.zig:1054 uses `ComptimeEnumMap.get(name)` which is
+        // CASE-SENSITIVE (`ComptimeStringMap.get`, not `getAnyCase`/`getASCIIICaseInsensitive`).
+        // `::CUE(..)` / `::View-Transition-Group(..)` therefore fall through to
+        // `CustomFunction` in the spec — match that here by looking up `name`
+        // verbatim with no case folding.
         static MAP: phf::Map<&'static [u8], u8> = phf::phf_map! {
             b"cue" => 0,
             b"cue-region" => 1,
@@ -1177,16 +1183,7 @@ impl<'a> SelectorParser<'a> {
             b"view-transition-old" => 4,
             b"view-transition-new" => 5,
         };
-        let mut lower_buf = [0u8; 32];
-        let lookup = if name.len() <= lower_buf.len() {
-            for (i, b) in name.iter().enumerate() {
-                lower_buf[i] = b.to_ascii_lowercase();
-            }
-            MAP.get(&lower_buf[..name.len()])
-        } else {
-            None
-        };
-        if let Some(v) = lookup {
+        if let Some(v) = MAP.get(name) {
             return match v {
                 0 => Ok(PseudoElement::CueFunction {
                     selector: Box::new(Selector::parse(self, input)?),
@@ -2801,8 +2798,8 @@ pub fn parse_type_selector<Impl: BunSelectorImpl>(
         sink.push_simple_selector(GenericComponent::LocalName(LocalName {
             lower_name: {
                 // PERF: check if it's already lowercase
-                // PERF(port): was arena alloc — profile in Phase B (see `leak_lowercase`).
-                Ident { v: leak_lowercase(name) as *const [u8] }
+                // PERF(port): was arena alloc — profile in Phase B (see `arena_lowercase`).
+                Ident { v: arena_lowercase(input.allocator(), name) }
             },
             name: Ident { v: name as *const [u8] },
         }));
@@ -3019,8 +3016,8 @@ pub fn parse_attribute_selector<Impl: BunSelectorImpl>(
             Ok(v) => v.clone(),
             Err(_) => {
                 // [foo]
-                // PERF(port): was arena alloc — profile in Phase B (see `leak_lowercase`).
-                let local_name_lower: Str = leak_lowercase(local_name);
+                // PERF(port): was arena alloc — profile in Phase B (see `arena_lowercase`).
+                let local_name_lower: *const [u8] = arena_lowercase(input.allocator(), local_name);
                 if let Some(ns) = namespace {
                     let x = attrs::AttrSelectorWithOptionalNamespace::<Impl> {
                         namespace: Some(ns),
@@ -3099,9 +3096,9 @@ pub fn parse_attribute_selector<Impl: BunSelectorImpl>(
         };
         if let Some(first_uppercase) = first_uppercase {
             let str_ = &local_name[first_uppercase..];
-            // PERF(port): was arena alloc — profile in Phase B (see `leak_lowercase`).
-            let lowered: Str = leak_lowercase(str_);
-            break 'brk (Ident { v: lowered as *const [u8] }, false);
+            // PERF(port): was arena alloc — profile in Phase B (see `arena_lowercase`).
+            let lowered: *const [u8] = arena_lowercase(input.allocator(), str_);
+            break 'brk (Ident { v: lowered }, false);
         } else {
             break 'brk (Ident { v: local_name as *const [u8] }, true);
         }

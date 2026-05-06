@@ -285,6 +285,49 @@ impl<T, E> Result<T, E> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn intern_identity() {
+        let a = Error::intern("HTTP2ProtocolError");
+        let b = Error::intern("HTTP2ProtocolError");
+        let c = Error::intern("HTTP2FrameSizeError");
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+        assert_eq!(a.name(), "HTTP2ProtocolError");
+        assert_eq!(c.name(), "HTTP2FrameSizeError");
+    }
+
+    #[test]
+    fn seed_consts() {
+        assert_eq!(Error::UNEXPECTED.name(), "Unexpected");
+        assert_eq!(Error::OUT_OF_MEMORY.name(), "OutOfMemory");
+        assert_eq!(Error::intern("OutOfMemory"), Error::OUT_OF_MEMORY);
+        assert_eq!(Error::from_raw(Error::OUT_OF_MEMORY.as_u16()), Error::OUT_OF_MEMORY);
+    }
+
+    #[test]
+    fn errno_mapping() {
+        assert_eq!(Error::from_errno(2).name(), "ENOENT");
+        assert_eq!(Error::from_errno(2), Error::intern("ENOENT"));
+        assert_eq!(Error::from_errno(12), Error::intern("ENOMEM"));
+        assert_eq!(Error::from_errno(0), Error::UNEXPECTED);
+        assert_eq!(Error::from_errno(9999), Error::UNEXPECTED);
+    }
+
+    #[test]
+    fn err_macro_distinct() {
+        let a = crate::err!(DistTagNotFound);
+        let b = crate::err!("DistTagNotFound");
+        let c = crate::err!(NoMatchingVersion);
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+        assert_ne!(a, Error::TODO);
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/bun.zig (anyerror / errno_map / errnoToZigErr)

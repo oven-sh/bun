@@ -2142,7 +2142,7 @@ impl Log {
 
         self.add_msg(Msg {
             kind: Kind::Err,
-            data: range_data(None, Range::NONE, err.name()),
+            data: range_data(None, Range::NONE, err.name().as_bytes()),
             notes,
             ..Default::default()
         })

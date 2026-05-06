@@ -226,7 +226,14 @@ impl Blob {
     }
 
     pub fn detach(&mut self) {
-        self.store = None; // Arc::drop decrements
+        if let Some(store) = self.store.take() {
+            // Keep the intrusive `Store::ref_count` in sync with Blob ownership so
+            // `Store::has_one_ref()` reflects actual sharing (see dupe_with_content_type).
+            // Do NOT call `Store::deref()` — it would `Box::from_raw` on zero, but this
+            // Store lives inside an Arc whose Drop owns deallocation.
+            store.ref_count.fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
+            // Arc::drop decrements the strong count and frees on zero.
+        }
     }
 
     pub fn shared_view(&self) -> &[u8] {
@@ -3772,7 +3779,14 @@ impl Blob {
     }
 
     pub fn detach(&mut self) {
-        self.store = None; // Arc::drop decrements
+        if let Some(store) = self.store.take() {
+            // Keep the intrusive `Store::ref_count` in sync with Blob ownership so
+            // `Store::has_one_ref()` reflects actual sharing (see dupe_with_content_type).
+            // Do NOT call `Store::deref()` — it would `Box::from_raw` on zero, but this
+            // Store lives inside an Arc whose Drop owns deallocation.
+            store.ref_count.fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
+            // Arc::drop decrements the strong count and frees on zero.
+        }
     }
 
     /// This does not duplicate
@@ -3784,7 +3798,12 @@ impl Blob {
 
     pub fn dupe_with_content_type(&self, _include_content_type: bool) -> Blob {
         // PORT NOTE: Zig does `this.store.?.ref()` then bitwise-copies the struct.
-        // With Arc, cloning the Option<Arc<Store>> achieves the ref bump.
+        // Cloning the Option<Arc<Store>> bumps the Arc strong count, but
+        // `Store::has_one_ref()` reads the *intrusive* `ref_count` field — so we
+        // must also bump that to keep it in sync with the number of Blob views.
+        if let Some(s) = self.store.as_ref() {
+            s.ref_();
+        }
         let mut duped = Blob {
             reported_estimated_size: self.reported_estimated_size,
             size: self.size,
@@ -4634,7 +4653,12 @@ impl Blob {
 
     pub fn dupe_with_content_type(&self, _include_content_type: bool) -> Blob {
         // PORT NOTE: Zig does `this.store.?.ref()` then bitwise-copies the struct.
-        // With Arc, cloning the Option<Arc<Store>> achieves the ref bump.
+        // Cloning the Option<Arc<Store>> bumps the Arc strong count, but
+        // `Store::has_one_ref()` reads the *intrusive* `ref_count` field — so we
+        // must also bump that to keep it in sync with the number of Blob views.
+        if let Some(s) = self.store.as_ref() {
+            s.ref_();
+        }
         let mut duped = Blob {
             reported_estimated_size: self.reported_estimated_size,
             size: self.size,
@@ -5188,9 +5212,12 @@ impl Any {
 }
 
 impl Any {
-    pub fn store(&self) -> Option<Arc<Store>> {
+    pub fn store(&self) -> Option<&Arc<Store>> {
+        // Spec (Blob.zig:4651-4657) returns a borrow with no refcount change.
+        // Cloning the Arc here would bump the strong count for the temporary,
+        // diverging from spec semantics.
         if let Any::Blob(b) = self {
-            return b.store.clone();
+            return b.store.as_ref();
         }
         None
     }
@@ -5657,17 +5684,8 @@ impl Blob {
     }
 
     pub fn is_heap_allocated(&self) -> bool {
-        // TODO(port): RawRefCount has no public `raw_value()` accessor; round-trip
-        // increment/decrement to read without net mutation. Phase B should add
-        // `RawRefCount::is_zero()` to bun_ptr.
-        // PERF(port): was direct field read.
-        // SAFETY: ref_count is single-threaded and we have &self exclusively for the
-        // duration of this read; net effect is zero change.
-        let rc = &self.ref_count as *const _ as *mut bun_ptr::RawRefCount;
-        unsafe {
-            (*rc).increment();
-            !matches!((*rc).decrement(), bun_ptr::raw_ref_count::DecrementResult::ShouldDestroy)
-        }
+        // Spec (Blob.zig:5092-5094): single read of `self.#ref_count.raw_value != 0`.
+        self.ref_count.unsafe_get_value() != 0
     }
 
     fn set_not_heap_allocated(&mut self) {

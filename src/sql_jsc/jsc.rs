@@ -426,6 +426,7 @@ impl VirtualMachine {
 }
 
 /// Mirrors `bun_jsc::rare_data::RareData` — only SQL fields surfaced.
+#[repr(C)]
 pub struct RareData {
     pub mysql_context: crate::mysql::MySQLContext,
     pub postgresql_context: crate::postgres::PostgresSQLContext,
@@ -486,6 +487,7 @@ impl TimerHeap {
     }
 }
 
+#[repr(C)]
 pub struct EventLoopTimer {
     pub next: bun_core::Timespec,
     pub state: EventLoopTimerState,

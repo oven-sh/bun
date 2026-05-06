@@ -38,7 +38,7 @@ impl InstallCompletionsCommand {
         // first try installing the symlink into the same directory as the bun executable
         let exe = bun_core::self_exe_path()?;
         let mut target_buf = PathBuffer::uninit();
-        let target = buf_print(
+        let target = buf_print_z(
             &mut target_buf,
             format_args!(
                 "{}/{}",
@@ -52,7 +52,7 @@ impl InstallCompletionsCommand {
 
         'outer: {
             if let Some(install_dir) = env_var::BUN_INSTALL.get() {
-                let target = buf_print(
+                let target = buf_print_z(
                     &mut target_buf,
                     format_args!("{}/bin/{}", bstr::BStr::new(install_dir), Self::BUNX_NAME),
                 );
@@ -66,7 +66,7 @@ impl InstallCompletionsCommand {
         // if that fails, try $HOME/.bun/bin
         'outer: {
             if let Some(home_dir) = env_var::HOME.get() {
-                let target = buf_print(
+                let target = buf_print_z(
                     &mut target_buf,
                     format_args!("{}/.bun/bin/{}", bstr::BStr::new(home_dir), Self::BUNX_NAME),
                 );
@@ -80,7 +80,7 @@ impl InstallCompletionsCommand {
         // if that fails, try $HOME/.local/bin
         'outer: {
             if let Some(home_dir) = env_var::HOME.get() {
-                let target = buf_print(
+                let target = buf_print_z(
                     &mut target_buf,
                     format_args!("{}/.local/bin/{}", bstr::BStr::new(home_dir), Self::BUNX_NAME),
                 );

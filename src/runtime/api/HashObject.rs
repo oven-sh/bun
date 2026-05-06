@@ -312,15 +312,19 @@ pub fn create(global: &JSGlobalObject) -> JSValue {
 }
 
 fn hash_wrap<H: HashAlgorithm>(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let arguments = frame.arguments_old(2);
-    let mut args = jsc::ArgumentsSlice::init(global.bun_vm(), arguments.slice());
+    let arguments = frame.arguments_old::<2>();
+    // SAFETY: `bun_vm()` never returns null for a Bun-owned global
+    // (see JSGlobalObject.zig:620); ArgumentsSlice borrows it for the call.
+    let mut args = jsc::ArgumentsSlice::init(unsafe { &*global.bun_vm() }, arguments.slice());
 
     let mut input: &[u8] = b"";
     let mut input_slice = ZigStringSlice::empty();
     if let Some(arg) = args.next_eat() {
         if let Some(blob) = arg.as_::<Blob>() {
             // TODO: files
-            input = blob.shared_view();
+            // SAFETY: `as_::<Blob>()` returns a non-null `*mut Blob` owned by
+            // the live JS wrapper; valid for the duration of this call.
+            input = unsafe { (*blob).shared_view() };
         } else {
             match arg.js_type_loose() {
                 jsc::JSType::ArrayBuffer
@@ -338,7 +342,7 @@ fn hash_wrap<H: HashAlgorithm>(global: &JSGlobalObject, frame: &CallFrame) -> Js
                 | jsc::JSType::BigUint64Array
                 | jsc::JSType::DataView => {
                     let Some(array_buffer) = arg.as_array_buffer(global) else {
-                        return global.throw_invalid_arguments("ArrayBuffer conversion error", &[]);
+                        return Err(global.throw_invalid_arguments("ArrayBuffer conversion error"));
                     };
                     input = array_buffer.byte_slice();
                 }

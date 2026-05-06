@@ -1044,21 +1044,24 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
     };
 
+    // PORT NOTE: Zig passed `allocator` (unused/autofix) — dropped in Rust port of Readable::init.
+    // SAFETY: subprocess_ptr is a live Box-allocated Subprocess; erase the borrow lifetime to
+    // 'static for the intrusive back-pointer (PipeReader stores it as a raw NonNull).
+    let subprocess_nn: core::ptr::NonNull<SubprocessT<'static>> =
+        unsafe { core::ptr::NonNull::new_unchecked((subprocess as *mut SubprocessT).cast()) };
     subprocess.stdout = Readable::init(
         stdio[1],
         event_loop,
-        subprocess,
+        subprocess_nn,
         spawned.stdout,
-        jsc_vm.allocator,
         subprocess.stdout_maxbuf,
         IS_SYNC,
     );
     subprocess.stderr = Readable::init(
         stdio[2],
         event_loop,
-        subprocess,
+        subprocess_nn,
         spawned.stderr,
-        jsc_vm.allocator,
         subprocess.stderr_maxbuf,
         IS_SYNC,
     );

@@ -273,11 +273,11 @@ impl DirectoryWatchStore {
             (Fd::INVALID, false)
         };
         let fd_guard = scopeguard::guard(fd, |fd| {
-            if Watcher::REQUIRES_FILE_DESCRIPTORS && owned_fd {
+            if bun_watcher::REQUIRES_FILE_DESCRIPTORS && owned_fd {
                 fd.close();
             }
         });
-        if Watcher::REQUIRES_FILE_DESCRIPTORS {
+        if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
             bun_output::scoped_log!(
                 DevServer,
                 "-> fd: {} ({})",
@@ -299,7 +299,7 @@ impl DirectoryWatchStore {
 
         let watch_index = match dev
             .bun_watcher
-            .add_directory(fd, &dir_name, Watcher::get_hash(&dir_name), false)
+            .add_directory::<false>(fd, &dir_name, Watcher::get_hash(&dir_name))
         {
             bun_sys::Result::Err(_) => return Err(InsertError::Ignore),
             bun_sys::Result::Ok(id) => id,
@@ -371,7 +371,7 @@ impl DirectoryWatchStore {
 
         self.owner()
             .bun_watcher
-            .remove_at_index(entry.watch_index, 0, &[], bun_watcher::Kind::File);
+            .remove_at_index(bun_watcher::Kind::File, entry.watch_index, 0, &[]);
 
         // defer if (entry.dir_fd_owned) entry.dir.close();
         let _close_guard = scopeguard::guard((), |_| {
@@ -450,6 +450,8 @@ impl DirectoryWatchStore {
 
 #[derive(Clone, Copy)]
 pub struct Entry {
+    // NOTE: Default impl below is only for ArrayHashMap::get_or_put's
+    // slot-init contract; never observed as a real entry.
     /// The directory handle the watch is placed on
     pub dir: Fd,
     pub dir_fd_owned: bool,

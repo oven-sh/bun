@@ -14,11 +14,40 @@
 //! in JS.
 
 use bun_boringssl_sys as boringssl;
+use bun_jsc::JsClass as _;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use crate::crypto::boringssl_jsc::err_to_js;
 use crate::socket::SSLConfig;
+use crate::socket::uws_jsc::create_bun_socket_error_to_js;
 use bun_str::strings;
 use bun_uws as uws;
+
+/// Local shim: `digest()`/`approx_cert_bytes()` live on
+/// `bun_uws_sys::socket_context::BunSocketContextOptions`, but `as_usockets()`
+/// returns the (layout-identical, `#[repr(C)]`) `bun_uws::SocketContext`
+/// duplicate. Bridge here so call sites match the .zig spec without touching
+/// upstream crates.
+trait BunSocketContextOptionsExt {
+    fn digest(&self) -> [u8; 32];
+    fn approx_cert_bytes(&self) -> usize;
+}
+impl BunSocketContextOptionsExt for uws::SocketContext::BunSocketContextOptions {
+    #[inline]
+    fn digest(&self) -> [u8; 32] {
+        // SAFETY: both structs are `#[repr(C)]` with identical field order and
+        // types (see src/uws/lib.rs:1452 and src/uws_sys/SocketContext.rs:22).
+        let sys: &bun_uws_sys::socket_context::BunSocketContextOptions =
+            unsafe { core::mem::transmute(self) };
+        sys.digest()
+    }
+    #[inline]
+    fn approx_cert_bytes(&self) -> usize {
+        // SAFETY: see `digest` above — identical `#[repr(C)]` layouts.
+        let sys: &bun_uws_sys::socket_context::BunSocketContextOptions =
+            unsafe { core::mem::transmute(self) };
+        sys.approx_cert_bytes()
+    }
+}
 
 // Codegen (`.classes.ts`) wires `to_js`/`from_js`/`from_js_direct` via this derive.
 #[bun_jsc::JsClass]

@@ -4,22 +4,29 @@
  // TODO(b2-blocked): bun_jsc + #[bun_jsc::host_fn] proc-macro
 mod _jsc_gated {
 use bun_alloc::Arena; // bumpalo::Bump re-export
-use bun_core::err;
 use bun_interchange::json;
-use bun_js_parser::ast;
-use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
+use bun_js_parser::{ast, ToJSError};
+use bun_js_parser_jsc::ExprJsc;
+use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsError, JsResult, LogJsc};
 use bun_logger as logger;
-use bun_str::ZigString;
+
+// Local shim: `JSGlobalObject::throw_stack_overflow` lives in the not-yet-wired
+// `src/jsc/JSGlobalObject.rs` impl block; until that lands on the lib.rs type,
+// call the C++ export directly (matches ConsoleObject.rs pattern).
+unsafe extern "C" {
+    fn JSGlobalObject__throwStackOverflow(this: *const JSGlobalObject);
+}
 
 pub fn create(global: &JSGlobalObject) -> JSValue {
     let object = JSValue::create_empty_object(global, 1);
     object.put(
         global,
-        ZigString::static_(b"parse"),
+        b"parse",
         JSFunction::create(
             global,
             b"parse",
-            parse,
+            // `#[bun_jsc::host_fn]` emits the raw C-ABI shim under this name.
+            __jsc_host_parse,
             1,
             Default::default(),
         ),

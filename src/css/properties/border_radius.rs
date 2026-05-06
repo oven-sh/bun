@@ -129,6 +129,18 @@ pub struct BorderRadiusHandler {
 // token-level field/variant access. Rust has no field-by-name reflection, so these are
 // macro_rules! that paste the field ident and the corresponding Property variant ident.
 
+// PORT NOTE: `Size2D::is_compatible` is bounded on `T: values::protocol::IsCompatible`,
+// which `LengthPercentage` (= `DimensionPercentage<LengthValue>`) does not yet impl.
+// Hand-roll the per-component check via `LengthPercentage::is_compatible` (inherent
+// method) until that protocol impl lands.
+#[inline]
+fn size2d_lp_is_compatible(
+    val: &Size2D<LengthPercentage>,
+    browsers: css::targets::Browsers,
+) -> bool {
+    val.a.is_compatible(browsers) && val.b.is_compatible(browsers)
+}
+
 macro_rules! maybe_flush {
     ($self:expr, $d:expr, $ctx:expr, $prop:ident, $val:expr, $vp:expr) => {{
         // If two vendor prefixes for the same property have different
@@ -141,7 +153,7 @@ macro_rules! maybe_flush {
 
         if $self.$prop.is_some()
             && $ctx.targets.browsers.is_some()
-            && !$val.is_compatible($ctx.targets.browsers.unwrap())
+            && !size2d_lp_is_compatible($val, $ctx.targets.browsers.unwrap())
         {
             $self.flush($d, $ctx);
         }
@@ -233,15 +245,25 @@ impl BorderRadiusHandler {
         context: &mut PropertyHandlerContext,
     ) -> bool {
         let bump = dest.bump();
+        // PORT NOTE: `Property::deep_clone` is still gated; reconstruct the
+        // matched variant directly (Size2D<LP> deep-clones via inherent method).
         match property {
             Property::BorderTopLeftRadius((val, vp)) => property_helper!(self, dest, context, bump, top_left, val, *vp),
             Property::BorderTopRightRadius((val, vp)) => property_helper!(self, dest, context, bump, top_right, val, *vp),
             Property::BorderBottomRightRadius((val, vp)) => property_helper!(self, dest, context, bump, bottom_right, val, *vp),
             Property::BorderBottomLeftRadius((val, vp)) => property_helper!(self, dest, context, bump, bottom_left, val, *vp),
-            Property::BorderStartStartRadius(_) => logical_property_helper!(self, dest, context, start_start, property.deep_clone(bump)),
-            Property::BorderStartEndRadius(_) => logical_property_helper!(self, dest, context, start_end, property.deep_clone(bump)),
-            Property::BorderEndEndRadius(_) => logical_property_helper!(self, dest, context, end_end, property.deep_clone(bump)),
-            Property::BorderEndStartRadius(_) => logical_property_helper!(self, dest, context, end_start, property.deep_clone(bump)),
+            Property::BorderStartStartRadius(r) => {
+                logical_property_helper!(self, dest, context, start_start, Property::BorderStartStartRadius(r.deep_clone(bump)))
+            }
+            Property::BorderStartEndRadius(r) => {
+                logical_property_helper!(self, dest, context, start_end, Property::BorderStartEndRadius(r.deep_clone(bump)))
+            }
+            Property::BorderEndEndRadius(r) => {
+                logical_property_helper!(self, dest, context, end_end, Property::BorderEndEndRadius(r.deep_clone(bump)))
+            }
+            Property::BorderEndStartRadius(r) => {
+                logical_property_helper!(self, dest, context, end_start, Property::BorderEndStartRadius(r.deep_clone(bump)))
+            }
             Property::BorderRadius((val, vp)) => {
                 self.start_start = None;
                 self.start_end = None;
@@ -264,16 +286,16 @@ impl BorderRadiusHandler {
                     // we can still add vendor prefixes to the property itself.
                     match unparsed.property_id.tag() {
                         PropertyIdTag::BorderStartStartRadius => {
-                            logical_property_helper!(self, dest, context, start_start, property.deep_clone(bump))
+                            logical_property_helper!(self, dest, context, start_start, Property::Unparsed(unparsed.deep_clone(bump)))
                         }
                         PropertyIdTag::BorderStartEndRadius => {
-                            logical_property_helper!(self, dest, context, start_end, property.deep_clone(bump))
+                            logical_property_helper!(self, dest, context, start_end, Property::Unparsed(unparsed.deep_clone(bump)))
                         }
                         PropertyIdTag::BorderEndEndRadius => {
-                            logical_property_helper!(self, dest, context, end_end, property.deep_clone(bump))
+                            logical_property_helper!(self, dest, context, end_end, Property::Unparsed(unparsed.deep_clone(bump)))
                         }
                         PropertyIdTag::BorderEndStartRadius => {
-                            logical_property_helper!(self, dest, context, end_start, property.deep_clone(bump))
+                            logical_property_helper!(self, dest, context, end_start, Property::Unparsed(unparsed.deep_clone(bump)))
                         }
                         _ => {
                             self.flush(dest, context);

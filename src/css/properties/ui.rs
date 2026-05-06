@@ -193,8 +193,12 @@ pub enum Appearance {
 #[derive(Default)]
 pub struct ColorSchemeHandler;
 
+// PORT NOTE: un-gated B-2 round 15 — Property::ColorScheme variant +
+// PropertyHandlerContext::{add_dark_rule,targets} + TokenList/DashedIdent/
+// CustomProperty shapes are all real now. `context.allocator` was dropped from
+// PropertyHandlerContext; `define_var` no longer needs an arena because
+// `TokenList.v` is a std `Vec<TokenOrValue>` (LIFETIMES.tsv classification).
 impl ColorSchemeHandler {
-    #[cfg(any())] // blocked_on: Property::ColorScheme variant match + Property::deep_clone + PropertyHandlerContext::{allocator,add_dark_rule,targets}
     pub fn handle_property(
         &mut self,
         property: &css::Property,
@@ -203,88 +207,47 @@ impl ColorSchemeHandler {
     ) -> bool {
         match property {
             css::Property::ColorScheme(color_scheme_) => {
-                let color_scheme: &ColorScheme = color_scheme_;
+                let color_scheme: ColorScheme = *color_scheme_;
                 if !context.targets.is_compatible(css::compat::Feature::LightDark) {
                     if color_scheme.contains(ColorScheme::LIGHT) {
-                        dest.push(define_var(
-                            context.allocator,
-                            b"--buncss-light",
-                            css::Token::Ident(b"initial"),
-                        ));
-                        dest.push(define_var(
-                            context.allocator,
-                            b"--buncss-dark",
-                            css::Token::Whitespace(b" "),
-                        ));
+                        dest.push(define_var(b"--buncss-light", css::Token::Ident(b"initial")));
+                        dest.push(define_var(b"--buncss-dark", css::Token::Whitespace(b" ")));
 
                         if color_scheme.contains(ColorScheme::DARK) {
-                            context.add_dark_rule(
-                                context.allocator,
-                                define_var(
-                                    context.allocator,
-                                    b"--buncss-light",
-                                    css::Token::Whitespace(b" "),
-                                ),
-                            );
-                            context.add_dark_rule(
-                                context.allocator,
-                                define_var(
-                                    context.allocator,
-                                    b"--buncss-dark",
-                                    css::Token::Ident(b"initial"),
-                                ),
-                            );
+                            context.add_dark_rule(define_var(
+                                b"--buncss-light",
+                                css::Token::Whitespace(b" "),
+                            ));
+                            context.add_dark_rule(define_var(
+                                b"--buncss-dark",
+                                css::Token::Ident(b"initial"),
+                            ));
                         }
                     } else if color_scheme.contains(ColorScheme::DARK) {
-                        dest.push(define_var(
-                            context.allocator,
-                            b"--buncss-light",
-                            css::Token::Whitespace(b" "),
-                        ));
-                        dest.push(define_var(
-                            context.allocator,
-                            b"--buncss-dark",
-                            css::Token::Ident(b"initial"),
-                        ));
+                        dest.push(define_var(b"--buncss-light", css::Token::Whitespace(b" ")));
+                        dest.push(define_var(b"--buncss-dark", css::Token::Ident(b"initial")));
                     }
                 }
-                dest.push(property.deep_clone(context.allocator));
+                // PORT NOTE: Zig pushed `property.deepClone(allocator)`; ColorScheme is
+                // `Copy` (bitflags u8), so reconstruct the variant directly.
+                dest.push(css::Property::ColorScheme(color_scheme));
                 true
             }
             _ => false,
         }
     }
 
-    // No-op stub bodies until the gated `handle_property` above lands; keeps
-    // `DeclarationHandler` compiling against the real type.
-    #[cfg(not(any()))]
-    #[inline]
-    pub fn handle_property(
-        &mut self,
-        _property: &crate::properties::Property,
-        _dest: &mut css::DeclarationList<'_>,
-        _context: &mut css::PropertyHandlerContext<'_>,
-    ) -> bool {
-        false
-    }
-
     pub fn finalize(&mut self, _: &mut css::DeclarationList<'_>, _: &mut css::PropertyHandlerContext<'_>) {}
 }
 
-#[cfg(any())] // blocked_on: TokenList { v: BumpVec } shape + DashedIdent { v } field + CustomProperty fields
-fn define_var(allocator: &Arena, name: &'static [u8], value: css::Token) -> css::Property {
+fn define_var(name: &'static [u8], value: css::Token) -> css::Property {
     // PORT NOTE: `name` is `&'static [u8]` because all call sites pass byte-string literals.
+    // `TokenList.v` is `Vec<TokenOrValue>` (std Vec — see custom.rs:320), so no arena
+    // threading is needed here despite Zig's `ArrayList(TokenOrValue)`.
     css::Property::Custom(css::css_properties::custom::CustomProperty {
-        name: css::css_properties::custom::CustomPropertyName::Custom(css::DashedIdent { v: name }),
+        name: css::css_properties::custom::CustomPropertyName::Custom(DashedIdent { v: name }),
         value: css::TokenList {
-            v: 'brk: {
-                let mut list =
-                    bumpalo::collections::Vec::<css::css_properties::custom::TokenOrValue>::new_in(
-                        allocator,
-                    );
-                list.push(css::css_properties::custom::TokenOrValue::Token(value));
-                break 'brk list;
-            },
+            v: vec![css::css_properties::custom::TokenOrValue::Token(value)],
         },
     })
 }

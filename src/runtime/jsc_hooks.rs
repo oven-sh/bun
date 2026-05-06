@@ -1243,19 +1243,20 @@ fn transpile_source_code_inner(
                     // PORT NOTE: spec frees via `cache.output_code_allocator`;
                     // `Box<[u8]>` drops on its own.
                     entry.output_code = Box::default();
-                    // PORT NOTE: `entry.metadata.module_type` encodes the
-                    // on-disk cache enum (`RuntimeTranspilerCache.ModuleType`:
-                    // none=0, esm=1, cjs=2 — RuntimeTranspilerCache.zig:399),
-                    // NOT `bun_bundler::options::ModuleType` (Unknown=0, Cjs=1,
-                    // Esm=2). Spec ModuleLoader.zig:446 compares against the
-                    // cache enum's `.cjs` (= 2).
-                    const CACHE_MODULE_TYPE_CJS: u8 = 2;
+                    // PORT NOTE: `entry.metadata.module_type` is
+                    // `cache::MetadataModuleType` (none=0, esm=1, cjs=2 —
+                    // RuntimeTranspilerCache.zig:399), NOT
+                    // `bun_bundler::options::ModuleType` (Unknown=0, Cjs=1,
+                    // Esm=2) — the discriminants are inverted. Spec
+                    // ModuleLoader.zig:446 compares against the cache enum's
+                    // `.cjs`.
+                    use bun_bundler::cache::MetadataModuleType;
                     return Ok(ResolvedSource {
                         source_code,
                         specifier: input_specifier.dupe_ref(),
                         source_url: create_if_different(input_specifier, path.text),
                         is_commonjs_module: entry.metadata.module_type
-                            == CACHE_MODULE_TYPE_CJS,
+                            == MetadataModuleType::Cjs,
                         // TODO(b2-blocked): `module_info` + `tag` package_json probe (:448-464).
                         tag: ResolvedSourceTag::Javascript,
                         ..Default::default()

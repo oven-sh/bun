@@ -80,6 +80,21 @@ impl RuntimeTranspilerCache {
     }
 }
 
+/// Mirrors `RuntimeTranspilerCache.ModuleType` (RuntimeTranspilerCache.zig:399).
+///
+/// PORT NOTE: NOT `options::ModuleType` — the on-disk wire enum has `Esm`/`Cjs`
+/// **swapped** relative to the in-memory parser/options enum (`Unknown=0,
+/// Cjs=1, Esm=2`). Comparing `metadata.module_type` against
+/// `options::ModuleType::Cjs as u8` would test for `.esm`.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MetadataModuleType {
+    #[default]
+    None = 0,
+    Esm = 1,
+    Cjs = 2,
+}
+
 /// Mirrors `RuntimeTranspilerCache.Entry` — on-disk blob handle.
 #[derive(Default)]
 pub struct RuntimeTranspilerCacheEntry {
@@ -96,7 +111,7 @@ pub struct RuntimeTranspilerCacheEntry {
 pub struct RuntimeTranspilerCacheMetadata {
     pub cache_version: u32,
     pub output_encoding: u8, // Encoding
-    pub module_type: u8,     // ModuleType
+    pub module_type: MetadataModuleType,
     pub features_hash: u64,
     pub input_byte_length: u64,
     pub input_hash: u64,
@@ -120,7 +135,7 @@ impl Default for RuntimeTranspilerCacheMetadata {
         Self {
             cache_version: RUNTIME_TRANSPILER_CACHE_VERSION,
             output_encoding: 0, // Encoding::none
-            module_type: 0,     // ModuleType::none
+            module_type: MetadataModuleType::None,
             features_hash: 0,
             input_byte_length: 0,
             input_hash: 0,

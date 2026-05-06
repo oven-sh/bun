@@ -199,13 +199,11 @@ pub extern "C" fn BUN__warn__extra_ca_load_failed(filename: *const c_char, error
     // SAFETY: C++ caller passes valid NUL-terminated strings.
     let filename = unsafe { core::ffi::CStr::from_ptr(filename) };
     let error_msg = unsafe { core::ffi::CStr::from_ptr(error_msg) };
-    bun_core::Output::warn(
+    bun_core::Output::warn(&format_args!(
         "ignoring extra certs from {}, load failed: {}",
-        (
-            bstr::BStr::new(filename.to_bytes()),
-            bstr::BStr::new(error_msg.to_bytes()),
-        ),
-    );
+        bstr::BStr::new(filename.to_bytes()),
+        bstr::BStr::new(error_msg.to_bytes()),
+    ));
 }
 
 #[cfg(windows)]

@@ -280,10 +280,7 @@ pub mod lib {
                         match file.pwrite_all(data, block.offset) {
                             Err(_) => {
                                 *can_use_pwrite = false;
-                                bun_core::output::debug_warn(
-                                    "libarchive: falling back to write() after pwrite() failure",
-                                    (),
-                                );
+                                bun_core::output::debug_warn("libarchive: falling back to write() after pwrite() failure");
                                 // Fall through to lseek+write path
                             }
                             Ok(()) => {

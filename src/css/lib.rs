@@ -360,7 +360,13 @@ impl VendorPrefix {
     pub const ALL_PREFIXES: VendorPrefix = VendorPrefix::all();
 
     /// Fields listed here so we can iterate them in the order we want
-    pub const FIELDS: &'static [&'static str] = &["webkit", "moz", "ms", "o", "none"];
+    pub const FIELDS: &'static [VendorPrefix] = &[
+        VendorPrefix::WEBKIT,
+        VendorPrefix::MOZ,
+        VendorPrefix::MS,
+        VendorPrefix::O,
+        VendorPrefix::NONE,
+    ];
 
     // NOTE: bitflags 2.x already generates `from_name(&str) -> Option<Self>`;
     // the Zig `fromName` (panicking) is exposed as `from_name_str`.
@@ -393,8 +399,8 @@ impl VendorPrefix {
         Self::from_bits_retain(left.bits().wrapping_sub(right.bits()))
     }
 
-    pub fn bitwise_and(a: Self, b: Self) -> Self {
-        a & b
+    pub fn bitwise_and(self, b: Self) -> Self {
+        self & b
     }
 
     pub fn as_bits(self) -> u8 {

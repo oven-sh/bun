@@ -444,7 +444,7 @@ impl RepeatCount {
     // PORT NOTE: `css.DeriveParse(@This()).parse` — hand-expanded in declaration
     // order (Number → keyword `auto-fill` → keyword `auto-fit`).
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
-        if let Ok(n) = input.try_parse(css::CSSIntegerFns::parse) {
+        if let Ok(n) = input.try_parse(CSSIntegerFns::parse) {
             return Ok(RepeatCount::Number(n));
         }
         let location = input.current_source_location();
@@ -464,7 +464,7 @@ impl RepeatCount {
     // PORT NOTE: `css.DeriveToCss(@This()).toCss` — hand-expanded.
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
-            RepeatCount::Number(n) => css::CSSIntegerFns::to_css(n, dest),
+            RepeatCount::Number(n) => CSSIntegerFns::to_css(n, dest),
             RepeatCount::AutoFill => dest.write_str("auto-fill"),
             RepeatCount::AutoFit => dest.write_str("auto-fit"),
         }

@@ -70,7 +70,7 @@ impl Id {
                 core::mem::size_of::<semver::Version>(),
             )
         });
-        Id(hasher.r#final())
+        Id(hasher.final_())
     }
 
     pub fn for_bin_link(package_id: PackageID) -> Id {
@@ -83,21 +83,21 @@ impl Id {
                 core::mem::size_of::<PackageID>(),
             )
         });
-        Id(hasher.r#final())
+        Id(hasher.final_())
     }
 
     pub fn for_manifest(name: &[u8]) -> Id {
         let mut hasher = Wyhash11::init(0);
         hasher.update(b"manifest:");
         hasher.update(name);
-        Id(hasher.r#final())
+        Id(hasher.final_())
     }
 
     pub fn for_tarball(url: &[u8]) -> Id {
         let mut hasher = Wyhash11::init(0);
         hasher.update(b"tarball:");
         hasher.update(url);
-        Id(hasher.r#final())
+        Id(hasher.final_())
     }
 
     // These cannot change:
@@ -106,7 +106,7 @@ impl Id {
         let mut hasher = Wyhash11::init(0);
         hasher.update(url);
         // @truncate to u61 then widen to u64 — keep low 61 bits
-        Id((4u64 << 61) | (hasher.r#final() & ((1u64 << 61) - 1)))
+        Id((4u64 << 61) | (hasher.final_() & ((1u64 << 61) - 1)))
     }
 
     pub fn for_git_checkout(url: &[u8], resolved: &[u8]) -> Id {
@@ -114,7 +114,7 @@ impl Id {
         hasher.update(url);
         hasher.update(b"@");
         hasher.update(resolved);
-        Id((5u64 << 61) | (hasher.r#final() & ((1u64 << 61) - 1)))
+        Id((5u64 << 61) | (hasher.final_() & ((1u64 << 61) - 1)))
     }
 }
 

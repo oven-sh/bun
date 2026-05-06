@@ -81,11 +81,9 @@ impl<R> StyleRule<R> {
         } else {
             let mut first_rule = true;
             // `inline for (css.VendorPrefix.FIELDS) |field|` — iterate the bool fields of the
-            // packed struct in declared order, then `VendorPrefix.fromName(field)` to get the
-            // single-bit prefix. In Rust the bitflags type exposes the same ordered string
-            // table; map back via `from_name_str`.
-            for &field in VendorPrefix::FIELDS {
-                let prefix = VendorPrefix::from_name_str(field);
+            // packed struct in declared order. In Rust the bitflags type exposes the same
+            // ordered single-bit table directly.
+            for &prefix in VendorPrefix::FIELDS {
                 if self.vendor_prefix.contains(prefix) {
                     if first_rule {
                         first_rule = false;

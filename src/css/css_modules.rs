@@ -387,7 +387,7 @@ impl Pattern {
 /// A segment in a CSS modules class name pattern.
 ///
 /// See [Pattern](Pattern).
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Segment {
     /// A literal string segment.
     Literal(&'static [u8]),

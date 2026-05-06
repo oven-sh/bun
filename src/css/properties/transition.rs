@@ -139,7 +139,7 @@ macro_rules! handler_maybe_flush {
         // If two vendor prefixes for the same property have different
         // values, we need to flush what we have immediately to preserve order.
         if let Some((v, prefixes)) = &$this.$field {
-            if !$val.eql(v) && !prefixes.contains($vp) {
+            if !SmallList::eql($val, v) && !prefixes.contains($vp) {
                 $this.flush($dest, $context);
             }
         }
@@ -272,10 +272,10 @@ impl TransitionHandler {
             // Find the intersection of prefixes with the same value.
             // Remove that from the prefixes of each of the properties. The remaining
             // prefixes will be handled by outputting individual properties below.
-            let intersection = property_prefixes
-                .bitwise_and(*duration_prefixes)
-                .bitwise_and(*delay_prefixes)
-                .bitwise_and(*timing_prefixes);
+            let intersection = *property_prefixes
+                & *duration_prefixes
+                & *delay_prefixes
+                & *timing_prefixes;
             if !intersection.is_empty() {
                 let transitions = get_transitions(allocator, properties, durations, delays, timing_functions);
 
@@ -393,8 +393,8 @@ fn get_transitions(
         // PORT NOTE: Zig used `inline for (VendorPrefix.FIELDS)` over packed-struct
         // bool fields. With bitflags, iterate the individual flag bits.
         // PERF(port): was comptime-unrolled inline-for — profile in Phase B.
-        for prefix_field in VendorPrefix::FIELDS {
-            if prefix_to_iter.contains(prefix_field) {
+        for &prefix_flag in VendorPrefix::FIELDS {
+            if prefix_to_iter.contains(prefix_flag) {
                 let mut t = if cloned {
                     transition.deep_clone(allocator)
                 } else {
@@ -404,8 +404,7 @@ fn get_transitions(
                     transition.deep_clone(allocator)
                 };
                 cloned = true;
-                let new_prefix = prefix_field;
-                t.property = property_id.with_prefix(new_prefix);
+                t.property = property_id.with_prefix(prefix_flag);
                 transitions.append(t);
             }
         }
@@ -465,7 +464,7 @@ fn expand_properties(
 
                 // Expand mask properties, which use different vendor-prefixed names.
                 if let Some(property_id) = masking::get_webkit_mask_property(properties.at(i)) {
-                    if context.targets.prefixes(VendorPrefix::NONE, Feature::MaskBorder).webkit() {
+                    if context.targets.prefixes(VendorPrefix::NONE, Feature::MaskBorder).contains(VendorPrefix::WEBKIT) {
                         properties.insert(i, property_id);
                         i += 1;
                     }
@@ -475,7 +474,7 @@ fn expand_properties(
                     rtl_props.slice_mut()[i as usize].set_prefixes_for_targets(context.targets);
 
                     if let Some(property_id) = masking::get_webkit_mask_property(rtl_props.at(i)) {
-                        if context.targets.prefixes(VendorPrefix::NONE, Feature::MaskBorder).webkit() {
+                        if context.targets.prefixes(VendorPrefix::NONE, Feature::MaskBorder).contains(VendorPrefix::WEBKIT) {
                             rtl_props.insert(i, property_id);
                             i += 1;
                         }

@@ -481,10 +481,11 @@ impl<T, const N: usize> SmallList<T, N> {
         ret
     }
 
-    pub fn eql(lhs: &Self, rhs: &Self) -> bool
+    pub fn eql(&self, rhs: &Self) -> bool
     where
         T: generic::CssEql,
     {
+        let lhs = self;
         if lhs.len() != rhs.len() {
             return false;
         }

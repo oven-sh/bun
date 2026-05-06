@@ -374,7 +374,7 @@ impl PropertyIdTag {
 
 /// A known CSS property name + (for prefixable properties) the vendor
 /// prefix it was parsed with. Variants without payload are unprefixed.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PropertyId {
     BackgroundColor,
     BackgroundImage,
@@ -5812,7 +5812,7 @@ impl Property {
             Property::MaskBoxImageOutset(v) => Property::MaskBoxImageOutset((css::generic::deep_clone(&v.0, allocator), v.1)),
             Property::MaskBoxImageRepeat(v) => Property::MaskBoxImageRepeat((css::generic::deep_clone(&v.0, allocator), v.1)),
             Property::ColorScheme(v) => Property::ColorScheme(css::generic::deep_clone(v, allocator)),
-            Property::All(a) => Property::All(a.deep_clone(allocator)),
+            Property::All(a) => Property::All(*a),
             Property::Unparsed(u) => Property::Unparsed(u.deep_clone(allocator)),
             Property::Custom(c) => Property::Custom(c.deep_clone(allocator)),
         }

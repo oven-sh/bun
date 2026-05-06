@@ -5,11 +5,11 @@ use bumpalo::collections::Vec as BumpVec;
 
 use bun_core::{self, StackCheck};
 use bun_logger as logger;
-// TODO(b0-genuine): bun_js_parser::js_lexer — same-tier (T4) lexer dep; not a
-// dispatch/hook case. CYCLEBREAK marks this GENUINE→`js_lexer`; left as a
-// direct import pending the js_lexer split (move-in pass).
-use bun_js_parser::js_lexer;
-use bun_js_parser::js_lexer::T;
+// CYCLEBREAK: was `bun_js_parser::js_lexer` (GENUINE T4 cycle). The JSON-only
+// lexer subset now lives in this crate (`json_lexer.rs`) so the parser no
+// longer reaches up-tier.
+use crate::json_lexer as js_lexer;
+use crate::json_lexer::T;
 // MOVE_DOWN(b0): bun_js_parser::js_ast → bun_logger::js_ast (remapped, T2)
 use bun_logger::js_ast;
 use bun_logger::js_ast::{E, G, Stmt, ExprNodeList};

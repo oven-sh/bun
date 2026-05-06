@@ -1218,10 +1218,9 @@ use bstr::BStr;
 use bun_boringssl as boringssl;
 use bun_collections::{ArrayHashMap, MutableString};
 use bun_core::{self as bun, Environment, FeatureFlags, Global, Output, StringBuilder, err};
-// TODO(b0): CommonAbortReason arrives in bun_http_types via move-in
-// (TYPE_ONLY from bun_jsc::CommonAbortReason — enum(u8) only; toJS stays in jsc)
-use bun_http_types::CommonAbortReason;
-use bun_str::{self as strings, ZigString, ZStr};
+// CommonAbortReason — enum(u8) only; toJS stays in jsc
+use bun_http_types::FetchRedirect::CommonAbortReason;
+use bun_string::{self as strings, ZigString, ZStr};
 // TODO(b0): bun_jsc::URL::{href_from_string, join} arrive in bun_url via move-in
 // (MOVE_DOWN bun_jsc::URL → bun_url, shared with install/js_parser/bake)
 use bun_url::URL;
@@ -1235,15 +1234,19 @@ use crate::h3_client as h3;
 use crate::http_cert_error::HTTPCertError;
 use crate::http_context::{HttpContext, HttpSocket, HttpsContext};
 use crate::http_request_body::HTTPRequestBody;
-use crate::http_thread::HTTPThread;
+use crate::http_thread::HttpThread as HTTPThread;
 use crate::internal_state::InternalState;
 use crate::proxy_tunnel::ProxyTunnel;
 use crate::signals::Signals;
-use bun_http_types::{Encoding, FetchRedirect, Method};
+use crate::HTTPClientResultCallback;
+use bun_http_types::Encoding;
+use bun_http_types::FetchRedirect::FetchRedirect;
+use bun_http_types::Method::Method;
+use bun_http_types::ETag::{HeaderEntryField, StringPointer};
 use bun_picohttp as picohttp;
-use bun_schema::api;
+use super::HeaderEntrySliceExt;
 
-bun_output::declare_scope!(fetch, visible);
+bun_core::declare_scope!(fetch, visible);
 
 // ───────────────────────────── re-exports ─────────────────────────────
 pub use bun_http_types::{ETag, FetchCacheMode, FetchRequestMode, MimeType, URLPath};
@@ -1256,9 +1259,9 @@ pub use crate::h3_client as H3;
 pub use crate::header_builder::HeaderBuilder;
 pub use crate::header_value_iterator::HeaderValueIterator;
 pub use crate::headers::Headers;
-pub use crate::http_context::NewHTTPContext;
+pub use crate::http_context::HTTPContext as NewHTTPContext;
 pub use crate::http_request_body::HTTPRequestBody as HTTPRequestBodyExport;
-pub use crate::http_thread::HTTPThread as HTTPThreadExport;
+pub use crate::http_thread::HttpThread as HTTPThreadExport;
 pub use crate::init_error::InitError;
 pub use crate::internal_state::InternalState as InternalStateExport;
 pub use crate::send_file::SendFile;
@@ -1399,8 +1402,8 @@ pub struct HTTPClient<'a> {
     pub method: Method,
     pub header_entries: crate::headers::EntryList,
     pub header_buf: &'static [u8], // TODO(port): lifetime — borrows external buffer
-    pub url: URL,
-    pub connected_url: URL,
+    pub url: URL<'a>,
+    pub connected_url: URL<'a>,
     // allocator param dropped — global mimalloc
     pub verbose: HTTPVerboseLevel,
     pub remaining_redirect_count: i8,
@@ -1432,7 +1435,7 @@ pub struct HTTPClient<'a> {
     pub if_modified_since: &'static [u8], // TODO(port): lifetime
     pub request_content_len_buf: [u8; b"-4294967295".len()],
 
-    pub http_proxy: Option<URL>,
+    pub http_proxy: Option<URL<'a>>,
     pub proxy_headers: Option<Headers>,
     pub proxy_authorization: Option<Vec<u8>>,
     pub proxy_tunnel: Option<Arc<ProxyTunnel>>,
@@ -1476,7 +1479,7 @@ impl<'a> Drop for HTTPClient<'a> {
 /// Priority: tls_props.server_name > client.hostname > client.url.hostname
 /// The Host header value (client.hostname) may contain a port suffix which
 /// must be stripped because it is not part of the DNS name in certificates.
-fn get_tls_hostname(client: &HTTPClient<'_>, allow_proxy_url: bool) -> &[u8] {
+fn get_tls_hostname<'a>(client: &'a HTTPClient<'a>, allow_proxy_url: bool) -> &'a [u8] {
     if allow_proxy_url {
         if let Some(proxy) = &client.http_proxy {
             return proxy.hostname;
@@ -1484,10 +1487,13 @@ fn get_tls_hostname(client: &HTTPClient<'_>, allow_proxy_url: bool) -> &[u8] {
     }
     // Prefer the explicit TLS server_name (e.g. from Node.js servername option)
     if let Some(props) = &client.tls_props {
-        if let Some(sn) = props.get().server_name {
-            let sn_slice = bun_str::slice_to_nul(sn);
+        let sn = props.get().server_name;
+        if !sn.is_null() {
+            // SAFETY: server_name is a NUL-terminated heap C string owned by SSLConfig.
+            let sn_slice = unsafe { core::ffi::CStr::from_ptr(sn) }.to_bytes();
             if !sn_slice.is_empty() {
-                return sn_slice;
+                // SAFETY: lifetime widened — backing string outlives the client.
+                return unsafe { core::mem::transmute::<&[u8], &'a [u8]>(sn_slice) };
             }
         }
     }
@@ -1530,18 +1536,18 @@ fn write_proxy_connect(
     } else {
         b"80"
     };
-    let _ = writer.write(b"CONNECT ");
-    let _ = writer.write(client.url.hostname);
-    let _ = writer.write(b":");
-    let _ = writer.write(port);
-    let _ = writer.write(b" HTTP/1.1\r\n");
+    let _ = writer.write_all(b"CONNECT ");
+    let _ = writer.write_all(client.url.hostname);
+    let _ = writer.write_all(b":");
+    let _ = writer.write_all(port);
+    let _ = writer.write_all(b" HTTP/1.1\r\n");
 
-    let _ = writer.write(b"Host: ");
-    let _ = writer.write(client.url.hostname);
-    let _ = writer.write(b":");
-    let _ = writer.write(port);
+    let _ = writer.write_all(b"Host: ");
+    let _ = writer.write_all(client.url.hostname);
+    let _ = writer.write_all(b":");
+    let _ = writer.write_all(port);
 
-    let _ = writer.write(b"\r\nProxy-Connection: Keep-Alive\r\n");
+    let _ = writer.write_all(b"\r\nProxy-Connection: Keep-Alive\r\n");
 
     // Check if user provided Proxy-Authorization in custom headers
     let user_provided_proxy_auth = client
@@ -1553,9 +1559,9 @@ fn write_proxy_connect(
     // Only write auto-generated proxy_authorization if user didn't provide one
     if let Some(auth) = &client.proxy_authorization {
         if !user_provided_proxy_auth {
-            let _ = writer.write(b"Proxy-Authorization: ");
-            let _ = writer.write(auth);
-            let _ = writer.write(b"\r\n");
+            let _ = writer.write_all(b"Proxy-Authorization: ");
+            let _ = writer.write_all(auth);
+            let _ = writer.write_all(b"\r\n");
         }
     }
 
@@ -1565,14 +1571,14 @@ fn write_proxy_connect(
         let names = slice.items_name();
         let values = slice.items_value();
         for (idx, name_ptr) in names.iter().enumerate() {
-            let _ = writer.write(hdrs.as_str(*name_ptr));
-            let _ = writer.write(b": ");
-            let _ = writer.write(hdrs.as_str(values[idx]));
-            let _ = writer.write(b"\r\n");
+            let _ = writer.write_all(hdrs.as_str(*name_ptr));
+            let _ = writer.write_all(b": ");
+            let _ = writer.write_all(hdrs.as_str(values[idx]));
+            let _ = writer.write_all(b"\r\n");
         }
     }
 
-    let _ = writer.write(b"\r\n");
+    let _ = writer.write_all(b"\r\n");
     Ok(())
 }
 
@@ -1581,21 +1587,21 @@ fn write_proxy_request(
     request: &picohttp::Request,
     client: &HTTPClient<'_>,
 ) -> Result<(), bun_core::Error> {
-    let _ = writer.write(request.method);
+    let _ = writer.write_all(request.method);
     // will always be http:// here, https:// needs CONNECT tunnel
-    let _ = writer.write(b" http://");
-    let _ = writer.write(client.url.hostname);
+    let _ = writer.write_all(b" http://");
+    let _ = writer.write_all(client.url.hostname);
     // Only include the port in the absolute-form request URI when the
     // original URL had an explicit port. RFC 7230 §5.3.2 treats the default
     // port as redundant, and writing `:80`/`:443` here breaks proxies that
     // do strict Host/authority matching (e.g. Charles, mitmproxy). Matches
     // curl and Node.js `http.request` behavior.
     if client.url.get_port().is_some() {
-        let _ = writer.write(b":");
-        let _ = writer.write(client.url.port);
+        let _ = writer.write_all(b":");
+        let _ = writer.write_all(client.url.port);
     }
-    let _ = writer.write(request.path);
-    let _ = writer.write(b" HTTP/1.1\r\nProxy-Connection: Keep-Alive\r\n");
+    let _ = writer.write_all(request.path);
+    let _ = writer.write_all(b" HTTP/1.1\r\nProxy-Connection: Keep-Alive\r\n");
 
     // Check if user provided Proxy-Authorization in custom headers
     let user_provided_proxy_auth = client
@@ -1607,9 +1613,9 @@ fn write_proxy_request(
     // Only write auto-generated proxy_authorization if user didn't provide one
     if let Some(auth) = &client.proxy_authorization {
         if !user_provided_proxy_auth {
-            let _ = writer.write(b"Proxy-Authorization: ");
-            let _ = writer.write(auth);
-            let _ = writer.write(b"\r\n");
+            let _ = writer.write_all(b"Proxy-Authorization: ");
+            let _ = writer.write_all(auth);
+            let _ = writer.write_all(b"\r\n");
         }
     }
 
@@ -1619,21 +1625,21 @@ fn write_proxy_request(
         let names = slice.items_name();
         let values = slice.items_value();
         for (idx, name_ptr) in names.iter().enumerate() {
-            let _ = writer.write(hdrs.as_str(*name_ptr));
-            let _ = writer.write(b": ");
-            let _ = writer.write(hdrs.as_str(values[idx]));
-            let _ = writer.write(b"\r\n");
+            let _ = writer.write_all(hdrs.as_str(*name_ptr));
+            let _ = writer.write_all(b": ");
+            let _ = writer.write_all(hdrs.as_str(values[idx]));
+            let _ = writer.write_all(b"\r\n");
         }
     }
 
     for header in request.headers {
-        let _ = writer.write(header.name);
-        let _ = writer.write(b": ");
-        let _ = writer.write(header.value);
-        let _ = writer.write(b"\r\n");
+        let _ = writer.write_all(header.name);
+        let _ = writer.write_all(b": ");
+        let _ = writer.write_all(header.value);
+        let _ = writer.write_all(b"\r\n");
     }
 
-    let _ = writer.write(b"\r\n");
+    let _ = writer.write_all(b"\r\n");
     Ok(())
 }
 
@@ -1641,19 +1647,19 @@ fn write_request(
     writer: &mut impl bun_io::Write,
     request: &picohttp::Request,
 ) -> Result<(), bun_core::Error> {
-    let _ = writer.write(request.method);
-    let _ = writer.write(b" ");
-    let _ = writer.write(request.path);
-    let _ = writer.write(b" HTTP/1.1\r\n");
+    let _ = writer.write_all(request.method);
+    let _ = writer.write_all(b" ");
+    let _ = writer.write_all(request.path);
+    let _ = writer.write_all(b" HTTP/1.1\r\n");
 
     for header in request.headers {
-        let _ = writer.write(header.name);
-        let _ = writer.write(b": ");
-        let _ = writer.write(header.value);
-        let _ = writer.write(b"\r\n");
+        let _ = writer.write_all(header.name);
+        let _ = writer.write_all(b": ");
+        let _ = writer.write_all(header.value);
+        let _ = writer.write_all(b"\r\n");
     }
 
-    let _ = writer.write(b"\r\n");
+    let _ = writer.write_all(b"\r\n");
     Ok(())
 }
 
@@ -2304,7 +2310,7 @@ impl HTTPClient {
         }
     }
 
-    pub fn header_str(&self, ptr: api::StringPointer) -> &'static [u8] {
+    pub fn header_str(&self, ptr: StringPointer) -> &'static [u8] {
         // PORT NOTE: header_buf is `&'static [u8]`; explicit reborrow so the
         // returned slice doesn't tie up `&self` for borrowck.
         let buf: &'static [u8] = self.header_buf;

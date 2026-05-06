@@ -87,7 +87,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
                     return Ok(SQLDataCell { tag: CellTag::Uint4, value: CellValue { uint4: u32::try_from(val).unwrap() }, ..Default::default() });
                 }
                 if bigint {
-                    return Ok(SQLDataCell { tag: CellTag::uint8, value: CellValue { uint8: val }, ..Default::default() });
+                    return Ok(SQLDataCell { tag: CellTag::Uint8, value: CellValue { uint8: val }, ..Default::default() });
                 }
                 let mut buffer = [0u8; 22];
                 let written = {
@@ -98,7 +98,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
                 };
                 let slice = &buffer[..written];
                 return Ok(SQLDataCell {
-                    tag: CellTag::string,
+                    tag: CellTag::String,
                     value: CellValue { string: if !slice.is_empty() { clone_utf8_wtf_impl(slice) } else { core::ptr::null_mut() } },
                     free_value: 1,
                     ..Default::default()
@@ -109,7 +109,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
                 return Ok(SQLDataCell { tag: CellTag::Int4, value: CellValue { int4: i32::try_from(val).unwrap() }, ..Default::default() });
             }
             if bigint {
-                return Ok(SQLDataCell { tag: CellTag::int8, value: CellValue { int8: val }, ..Default::default() });
+                return Ok(SQLDataCell { tag: CellTag::Int8, value: CellValue { int8: val }, ..Default::default() });
             }
             let mut buffer = [0u8; 22];
             let written = {
@@ -120,7 +120,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
             };
             let slice = &buffer[..written];
             Ok(SQLDataCell {
-                tag: CellTag::string,
+                tag: CellTag::String,
                 value: CellValue { string: if !slice.is_empty() { clone_utf8_wtf_impl(slice) } else { core::ptr::null_mut() } },
                 free_value: 1,
                 ..Default::default()
@@ -131,21 +131,21 @@ pub fn decode_binary_value<Context: ReaderContext>(
                 let data = reader.read(4)?;
                 return Ok(SQLDataCell::raw(&data));
             }
-            Ok(SQLDataCell { tag: CellTag::float8, value: CellValue { float8: f32::from_bits(reader.int::<u32>()?) as f64 }, ..Default::default() })
+            Ok(SQLDataCell { tag: CellTag::Float8, value: CellValue { float8: f32::from_bits(reader.int::<u32>()?) as f64 }, ..Default::default() })
         }
         FieldType::MYSQL_TYPE_DOUBLE => {
             if raw {
                 let data = reader.read(8)?;
                 return Ok(SQLDataCell::raw(&data));
             }
-            Ok(SQLDataCell { tag: CellTag::float8, value: CellValue { float8: f64::from_bits(reader.int::<u64>()?) }, ..Default::default() })
+            Ok(SQLDataCell { tag: CellTag::Float8, value: CellValue { float8: f64::from_bits(reader.int::<u64>()?) }, ..Default::default() })
         }
         FieldType::MYSQL_TYPE_TIME => {
             match reader.byte()? {
                 0 => {
                     let slice = b"00:00:00";
                     Ok(SQLDataCell {
-                        tag: CellTag::string,
+                        tag: CellTag::String,
                         value: CellValue { string: if !slice.is_empty() { clone_utf8_wtf_impl(slice) } else { core::ptr::null_mut() } },
                         free_value: 1,
                         ..Default::default()
@@ -177,7 +177,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
                     };
                     // PORT NOTE: reshaped for borrowck — compute remaining before re-borrowing buffer
                     Ok(SQLDataCell {
-                        tag: CellTag::string,
+                        tag: CellTag::String,
                         value: CellValue { string: if !slice.is_empty() { clone_utf8_wtf_impl(slice) } else { core::ptr::null_mut() } },
                         free_value: 1,
                         ..Default::default()
@@ -188,12 +188,12 @@ pub fn decode_binary_value<Context: ReaderContext>(
         }
         FieldType::MYSQL_TYPE_DATE | FieldType::MYSQL_TYPE_TIMESTAMP | FieldType::MYSQL_TYPE_DATETIME => match reader.byte()? {
             0 => {
-                Ok(SQLDataCell { tag: CellTag::date, value: CellValue { date: 0.0 }, ..Default::default() })
+                Ok(SQLDataCell { tag: CellTag::Date, value: CellValue { date: 0.0 }, ..Default::default() })
             }
             l @ (11 | 7 | 4) => {
                 let data = reader.read(l as u32)?;
                 let time = DateTime::from_data(&data)?;
-                Ok(SQLDataCell { tag: CellTag::date, value: CellValue { date: time.to_js_timestamp(global_object)? }, ..Default::default() })
+                Ok(SQLDataCell { tag: CellTag::Date, value: CellValue { date: time.to_js_timestamp(global_object)? }, ..Default::default() })
             }
             _ => Err(bun_core::err!("InvalidBinaryValue")),
         },
@@ -224,7 +224,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
             }
             let slice = string_data.slice();
             Ok(SQLDataCell {
-                tag: CellTag::string,
+                tag: CellTag::String,
                 value: CellValue { string: if !slice.is_empty() { clone_utf8_wtf_impl(slice) } else { core::ptr::null_mut() } },
                 free_value: 1,
                 ..Default::default()
@@ -239,7 +239,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
             let string_data = reader.encode_len_string()?;
             let slice = string_data.slice();
             Ok(SQLDataCell {
-                tag: CellTag::json,
+                tag: CellTag::Json,
                 value: CellValue { json: if !slice.is_empty() { clone_utf8_wtf_impl(slice) } else { core::ptr::null_mut() } },
                 free_value: 1,
                 ..Default::default()
@@ -250,7 +250,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
             if column_length == 1 {
                 let data = reader.encode_len_string()?;
                 let slice = data.slice();
-                Ok(SQLDataCell { tag: CellTag::bool, value: CellValue { bool_: if !slice.is_empty() && slice[0] == 1 { 1 } else { 0 } }, ..Default::default() })
+                Ok(SQLDataCell { tag: CellTag::Bool, value: CellValue { bool_: if !slice.is_empty() && slice[0] == 1 { 1 } else { 0 } }, ..Default::default() })
             } else {
                 let data = reader.encode_len_string()?;
                 Ok(SQLDataCell::raw(&data))

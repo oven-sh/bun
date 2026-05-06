@@ -3,6 +3,9 @@ name = "bun_sourcemap"
 version.workspace = true
 edition.workspace = true
 
+[dependencies.bun_interchange]
+workspace = true
+
 [lib]
 path = "lib.rs"
 

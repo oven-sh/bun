@@ -1,23 +1,25 @@
 use core::ptr;
 
-use bun_jsc::{ExternColumnIdentifier, JSGlobalObject, JSValue};
-use bun_str::String as BunString;
+use crate::jsc::{ExternColumnIdentifier, JSGlobalObject, JSValue};
+use bun_string::String as BunString;
 
 use bun_sql::mysql::protocol::any_mysql_error::AnyMySQLError;
+use bun_sql::mysql::protocol::column_definition41::ColumnFlags;
 use bun_sql::mysql::protocol::encode_int::decode_length_int;
-use bun_sql::mysql::protocol::new_reader::NewReader;
+use bun_sql::mysql::protocol::new_reader::{NewReader, ReaderContext};
 use bun_sql::mysql::protocol::ColumnDefinition41;
+use bun_sql::shared::ColumnIdentifier as NameOrIndex;
 use bun_sql::shared::Data;
 use bun_sql::shared::SQLQueryResultMode;
 
-use crate::shared::sql_data_cell::{SQLDataCell, SQLDataCellFlags, SQLDataCellTag as Tag, SQLDataCellValue as Value};
+use crate::shared::sql_data_cell::{Flags as SQLDataCellFlags, SQLDataCell, Tag, Value};
 use crate::shared::CachedStructure;
 
 use super::decode_binary_value::{self, decode_binary_value};
 
 pub use bun_sql::mysql::protocol::ResultSetHeader as Header;
 
-bun_output::declare_scope!(MySQLResultSet, visible);
+bun_core::declare_scope!(MySQLResultSet, visible);
 
 pub struct Row<'a> {
     pub values: Box<[SQLDataCell]>,
@@ -41,11 +43,11 @@ impl<'a> Row<'a> {
         cached_structure: Option<&CachedStructure>,
     ) -> Result<JSValue, bun_core::Error> {
         // TODO(port): narrow error set — Zig `!JSValue` had no `try` sites; depends on construct_object_from_data_cell.
-        let mut names: *const ExternColumnIdentifier = ptr::null();
+        let mut names: *mut ExternColumnIdentifier = ptr::null_mut();
         let mut names_count: u32 = 0;
         if let Some(c) = cached_structure {
             if let Some(f) = c.fields.as_deref() {
-                names = f.as_ptr();
+                names = f.as_ptr() as *mut ExternColumnIdentifier;
                 names_count = f.len() as u32;
             }
         }
@@ -58,12 +60,12 @@ impl<'a> Row<'a> {
             self.values.len() as u32,
             flags,
             result_mode as u8,
-            names,
+            Some(names),
             names_count,
         )
     }
 
-    pub fn decode_internal<Context>(
+    pub fn decode_internal<Context: ReaderContext>(
         &mut self,
         reader: NewReader<Context>,
     ) -> Result<(), AnyMySQLError> {
@@ -80,7 +82,7 @@ impl<'a> Row<'a> {
         column: &ColumnDefinition41,
         value: &Data,
     ) {
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             MySQLResultSet,
             "parseValueAndSetCell: {} {}",
             <&'static str>::from(column.column_type),
@@ -89,7 +91,7 @@ impl<'a> Row<'a> {
         use bun_sql::mysql::protocol::FieldType::*;
         match column.column_type {
             MYSQL_TYPE_FLOAT | MYSQL_TYPE_DOUBLE => {
-                let val: f64 = bun_core::parse_double(value.slice()).unwrap_or(f64::NAN);
+                let val: f64 = bun_string::parse_double(value.slice()).unwrap_or(f64::NAN);
                 *cell = SQLDataCell { tag: Tag::Float8, value: Value { float8: val }, ..SQLDataCell::default() };
             }
             MYSQL_TYPE_TINY | MYSQL_TYPE_SHORT => {
@@ -222,7 +224,7 @@ impl<'a> Row<'a> {
         }
     }
 
-    fn decode_text<Context>(&mut self, reader: NewReader<Context>) -> Result<(), AnyMySQLError> {
+    fn decode_text<Context: ReaderContext>(&mut self, reader: NewReader<Context>) -> Result<(), AnyMySQLError> {
         let cells = vec![SQLDataCell { tag: Tag::Null, value: Value { null: 0 }, ..SQLDataCell::default() }; self.columns.len()]
             .into_boxed_slice();
         let mut cells = scopeguard::guard(cells, |mut cells| {
@@ -268,7 +270,7 @@ impl<'a> Row<'a> {
         Ok(())
     }
 
-    fn decode_binary<Context>(&mut self, reader: NewReader<Context>) -> Result<(), AnyMySQLError> {
+    fn decode_binary<Context: ReaderContext>(&mut self, reader: NewReader<Context>) -> Result<(), AnyMySQLError> {
         // Header
         let _ = reader.int::<u8>()?;
 
@@ -327,7 +329,7 @@ impl<'a> Row<'a> {
     // TODO(port): `pub const decode = decoderWrap(Row, decodeInternal).decodeAllocator;`
     // decoderWrap is a comptime type-returning fn that wraps decode_internal with allocator
     // injection. In Rust the allocator param is dropped, so this collapses to a direct call.
-    pub fn decode<Context>(&mut self, reader: NewReader<Context>) -> Result<(), AnyMySQLError> {
+    pub fn decode<Context: ReaderContext>(&mut self, reader: NewReader<Context>) -> Result<(), AnyMySQLError> {
         self.decode_internal(reader)
     }
 }
@@ -344,15 +346,13 @@ impl<'a> Drop for Row<'a> {
 
 // ─── helpers ──────────────────────────────────────────────────────────────
 
-use bun_sql::mysql::protocol::column_definition41::{ColumnFlags, NameOrIndex};
-
 #[inline]
-fn clone_wtf_string_or_null(slice: &[u8]) -> *mut bun_str::WTFStringImpl {
-    // TODO(port): Zig: `bun.String.cloneUTF8(slice).value.WTFStringImpl` — extracts the raw
+fn clone_wtf_string_or_null(slice: &[u8]) -> bun_string::WTFStringImpl {
+    // Zig: `bun.String.cloneUTF8(slice).value.WTFStringImpl` — extracts the raw
     // WTFStringImpl* from a freshly-cloned bun.String (ownership transferred to the cell,
-    // freed via `free_value = 1`). Phase B: expose `BunString::clone_utf8_into_wtf_impl`.
+    // freed via `free_value = 1`).
     if !slice.is_empty() {
-        BunString::clone_utf8(slice).leak_wtf_string_impl()
+        BunString::clone_utf8(slice).leak_wtf_impl()
     } else {
         ptr::null_mut()
     }

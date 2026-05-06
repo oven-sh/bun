@@ -669,7 +669,12 @@ pub mod codegen {
         cached_slot!(queries_get_cached, queries_set_cached);
         cached_slot!(onconnect_get_cached, onconnect_set_cached);
         cached_slot!(onclose_get_cached, onclose_set_cached);
+        pub fn get_constructor(_g: &JSGlobalObject) -> JSValue {
+            unimplemented!("b2-blocked: codegen::JSMySQLConnection::get_constructor")
+        }
     }
+    #[allow(non_snake_case)]
+    pub use js_mysql_connection as JSMySQLConnection;
 
     pub mod js_mysql_query {
         use super::*;
@@ -677,6 +682,39 @@ pub mod codegen {
         cached_slot!(columns_get_cached, columns_set_cached);
         cached_slot!(pending_value_get_cached, pending_value_set_cached);
         cached_slot!(target_get_cached, target_set_cached);
+        pub fn get_constructor(_g: &JSGlobalObject) -> JSValue {
+            unimplemented!("b2-blocked: codegen::JSMySQLQuery::get_constructor")
+        }
+    }
+    #[allow(non_snake_case)]
+    pub use js_mysql_query as JSMySQLQuery;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// JSFunction — host-function constructor (mirrors bun_jsc::JSFunction).
+// `create` is generic over the host-fn pointer because callers pass both
+// shim-typed (`&crate::jsc::JSGlobalObject`) and bun_jsc-typed signatures
+// during the Phase-B transition; the real bun_jsc impl narrows this to
+// `JSHostFn` once the shim is dropped.
+// ──────────────────────────────────────────────────────────────────────────
+
+#[repr(C)]
+pub struct JSFunction { _opaque: [u8; 0], _m: PhantomData<(*mut u8, core::marker::PhantomPinned)> }
+
+#[derive(Default)]
+pub struct CreateJSFunctionOptions {
+    _priv: (),
+}
+
+impl JSFunction {
+    pub fn create<F>(
+        _global: &JSGlobalObject,
+        _name: &str,
+        _implementation: F,
+        _arg_count: u32,
+        _opts: CreateJSFunctionOptions,
+    ) -> JSValue {
+        unimplemented!("b2-blocked: bun_jsc::JSFunction::create")
     }
 }
 

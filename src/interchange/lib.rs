@@ -17,16 +17,21 @@
 // is `bun_string`. Alias once here so submodule `use bun_str::…` paths resolve.
 extern crate bun_string as bun_str;
 
-// ───── json ───────────────────────────────────────────────────────────────
-// Full draft remains blocked: depends on `bun_js_parser::js_lexer` (GENUINE
-// same-tier cycle per CYCLEBREAK §interchange) plus `bun_logger::{js_ast,
-// js_printer}` (MOVE_DOWN not yet landed in T2). The `json` module below
-// exposes the public free-fn surface (parse / parse_utf8_impl / parse_for_macro
-// / parse_env_json / parse_ts_config) as signature-correct `todo!()` stubs so
-// downstream crates can resolve the symbols and un-gate their own bodies.
+// ───── json_lexer (CYCLEBREAK) ────────────────────────────────────────────
+// JSON-only subset of `bun_js_parser::js_lexer`, sliced from
+// `src/js_parser/lexer.zig` with `is_json = true` arms taken. Breaks the
+// GENUINE T4 cycle (`bun_js_parser` → `bun_interchange` → `bun_js_parser`)
+// so `json.rs` can build without an upward dep. See module doc-comment.
+pub mod json_lexer;
 
-#[path = "json.rs"]
-pub mod json_draft;
+// ───── json ───────────────────────────────────────────────────────────────
+// Real port lives in `json.rs` and is wired against `crate::json_lexer` (the
+// cycle-break above). The inline `pub mod json` below is the live surface
+// re-exported as `json_parser`; `json.rs` replaces it once the remaining
+// `bun_logger::js_ast` shape mismatches in its body are reconciled.
+// PORT NOTE: `json.rs` is intentionally NOT `mod`-included here yet — it is
+// the _draft_ with duplicate symbols of the inline `json` mod (per phase-d
+// policy: drop the draft module from the build, keep the file on disk).
 
 pub mod json {
     use bumpalo::Bump;

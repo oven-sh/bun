@@ -234,13 +234,13 @@ pub fn dispatch_frame(
                 // §6.9/§6.9.1: zero increment / overflow on a stream are
                 // stream-level errors; RST_STREAM and fail just that one.
                 if inc == 0 {
-                    stream.rst(wire::ErrorCode::PROTOCOL_ERROR);
+                    session.rst_stream(stream, wire::ErrorCode::PROTOCOL_ERROR);
                     stream.fatal_error = Some(err!(HTTP2ProtocolError));
                     return;
                 }
                 let next = i64::from(stream.send_window) + i64::from(inc);
                 if next > i64::from(wire::MAX_WINDOW_SIZE) {
-                    stream.rst(wire::ErrorCode::FLOW_CONTROL_ERROR);
+                    session.rst_stream(stream, wire::ErrorCode::FLOW_CONTROL_ERROR);
                     stream.fatal_error = Some(err!(HTTP2FlowControlError));
                     return;
                 }
@@ -430,7 +430,7 @@ pub fn dispatch_frame(
             // §8.1.1: DATA before the *final* response HEADERS is malformed —
             // a 1xx alone (status_code still 0) doesn't satisfy this.
             if stream.status_code == 0 {
-                stream.rst(wire::ErrorCode::PROTOCOL_ERROR);
+                session.rst_stream(stream, wire::ErrorCode::PROTOCOL_ERROR);
                 stream.fatal_error = Some(err!(HTTP2ProtocolError));
                 return;
             }
@@ -546,7 +546,10 @@ pub fn decode_discard_orphan(session: &mut ClientSession) {
     // PORT NOTE: reshaped for borrowck (was `defer .clearRetainingCapacity()`).
     let mut offset: usize = 0;
     while offset < session.orphan_header_block.len() {
-        let result = match session.hpack().decode(&session.orphan_header_block[offset..]) {
+        // SAFETY: sole live borrow of the HPACK table; `orphan_header_block`
+        // is a disjoint field read-only here.
+        let hpack = unsafe { session.hpack() };
+        let result = match hpack.decode(&session.orphan_header_block[offset..]) {
             Ok(r) => r,
             Err(_) => {
                 session.fatal_error = Some(err!(HTTP2CompressionError));
@@ -579,7 +582,10 @@ pub fn decode_header_block(session: &mut ClientSession, stream: &mut Stream) {
 
     let mut offset: usize = 0;
     while offset < stream.header_block.len() {
-        let result = match session.hpack().decode(&stream.header_block[offset..]) {
+        // SAFETY: sole live borrow of the HPACK table; `stream.header_block`
+        // is disjoint from the FFI allocation.
+        let hpack = unsafe { session.hpack() };
+        let result = match hpack.decode(&stream.header_block[offset..]) {
             Ok(r) => r,
             Err(_) => {
                 // The decoder has already committed earlier fields from this
@@ -656,7 +662,7 @@ pub fn decode_header_block(session: &mut ClientSession, stream: &mut Stream) {
 
     if malformed {
         stream.decoded_bytes.truncate(start_len);
-        stream.rst(wire::ErrorCode::PROTOCOL_ERROR);
+        session.rst_stream(stream, wire::ErrorCode::PROTOCOL_ERROR);
         stream.fatal_error = Some(err!(HTTP2ProtocolError));
         return;
     }

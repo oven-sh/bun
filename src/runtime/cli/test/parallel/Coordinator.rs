@@ -154,10 +154,9 @@ impl<'a> Coordinator<'a> {
         // A prior failed start()'s errdefer leaves ipc.done = true; reset so a
         // retry on the same slot starts with a fresh channel.
         w.ipc = Default::default();
-        // TODO(port): Worker.out / Worker.err init — need StreamCapture { role, worker } shape.
         // The Zig stores a back-pointer; in Rust this is an intrusive backref (raw ptr).
-        w.out = super::worker::StreamCapture::new(super::worker::Role::Stdout, w as *mut Worker);
-        w.err = super::worker::StreamCapture::new(super::worker::Role::Stderr, w as *mut Worker);
+        w.out = WorkerPipe::new(PipeRole::Stdout, w as *const Worker);
+        w.err = WorkerPipe::new(PipeRole::Stderr, w as *const Worker);
         match w.start() {
             Ok(()) => {}
             Err(e) => {

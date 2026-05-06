@@ -31,6 +31,52 @@ pub enum Kind {
     Touch, Cat, Cp, Seq, Dirname, Basename, Yes,
 }
 
+impl Kind {
+    /// Builtins disabled on POSIX (delegate to the system binary) unless the
+    /// experimental feature flag is set. Spec: Builtin.zig `Kind.DISABLED_ON_POSIX`.
+    pub const DISABLED_ON_POSIX: &'static [Kind] = &[Kind::Cat, Kind::Cp];
+
+    fn force_enable_on_posix() -> bool {
+        bun_core::env_var::feature_flag::BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS
+            .get()
+            .unwrap_or(false)
+    }
+
+    /// Spec: Builtin.zig `Kind.fromStr`. Maps argv[0] to a builtin kind, or
+    /// `None` to fall through to subprocess spawn.
+    pub fn from_argv0(s: &[u8]) -> Option<Kind> {
+        let result = match s {
+            b"cat" => Kind::Cat,
+            b"touch" => Kind::Touch,
+            b"mkdir" => Kind::Mkdir,
+            b"export" => Kind::Export,
+            b"cd" => Kind::Cd,
+            b"echo" => Kind::Echo,
+            b"pwd" => Kind::Pwd,
+            b"which" => Kind::Which,
+            b"rm" => Kind::Rm,
+            b"mv" => Kind::Mv,
+            b"ls" => Kind::Ls,
+            b"exit" => Kind::Exit,
+            b"true" => Kind::True,
+            b"false" => Kind::False,
+            b"yes" => Kind::Yes,
+            b"seq" => Kind::Seq,
+            b"dirname" => Kind::Dirname,
+            b"basename" => Kind::Basename,
+            b"cp" => Kind::Cp,
+            _ => return None,
+        };
+        if cfg!(windows) || Self::force_enable_on_posix() {
+            return Some(result);
+        }
+        if Self::DISABLED_ON_POSIX.contains(&result) {
+            return None;
+        }
+        Some(result)
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum IoKind { Stdin, Stdout, Stderr }
 
@@ -70,6 +116,72 @@ impl Builtin {
     #[inline]
     pub fn args_slice(&self) -> &[*const c_char] {
         &self.args
+    }
+
+    /// Construct a `Builtin` for `kind`, install it into the owning Cmd's
+    /// `exec` slot, and return `None` (meaning: caller should now call
+    /// `Builtin::start`). A `Some(yield)` return means setup wrote a failing
+    /// error and the caller should propagate that yield instead.
+    ///
+    /// Spec: Builtin.zig `init()`. Redirect handling (open files / arraybuf /
+    /// blob targets) is still gated on IOWriter — for now stdin/stdout/stderr
+    /// are taken straight from the Cmd's `io`.
+    pub fn init(interp: &mut Interpreter, cmd: NodeId, kind: Kind) -> Option<Yield> {
+        use crate::shell::builtins;
+        use crate::shell::states::cmd::Exec;
+
+        // Borrow argv[1..] as `*const c_char` into the Cmd's `args` storage.
+        // The Cmd's `args: Vec<Vec<u8>>` are NUL-terminated by
+        // `Cmd::transition_to_exec` before this is called.
+        let (args, stdin, stdout, stderr) = {
+            let me = interp.as_cmd(cmd);
+            let mut argv: Vec<*const c_char> = Vec::with_capacity(me.args.len().saturating_sub(1));
+            for a in me.args.iter().skip(1) {
+                argv.push(a.as_ptr() as *const c_char);
+            }
+            (
+                argv,
+                me.io.stdin.clone(),
+                BuiltinIO { kind: me.io.stdout.clone() },
+                BuiltinIO { kind: me.io.stderr.clone() },
+            )
+        };
+
+        let impl_ = match kind {
+            Kind::True => Impl::True,
+            Kind::False => Impl::False,
+            Kind::Pwd => Impl::Pwd(builtins::pwd::Pwd::default()),
+            Kind::Exit => Impl::Exit(builtins::exit::Exit::default()),
+            Kind::Basename => Impl::Basename(builtins::basename::Basename::default()),
+            Kind::Dirname => Impl::Dirname(builtins::dirname::Dirname::default()),
+            Kind::Cd => Impl::Cd(builtins::cd::Cd::default()),
+            Kind::Echo => Impl::Echo(builtins::echo::Echo::default()),
+            Kind::Export => Impl::Export(builtins::export::Export::default()),
+            Kind::Cat => Impl::Cat(Box::default()),
+            Kind::Mv => Impl::Mv(Box::default()),
+            Kind::Rm => Impl::Rm(Box::default()),
+            // TODO(b2-blocked): Which/Ls/Mkdir/Touch/Cp/Seq/Yes — async-task
+            // plumbing not yet ported. Dispatch to `Unimplemented` so
+            // `Builtin::start` returns exit 1.
+            Kind::Which | Kind::Ls | Kind::Mkdir | Kind::Touch | Kind::Cp | Kind::Seq | Kind::Yes => {
+                Impl::Unimplemented
+            }
+        };
+
+        interp.as_cmd_mut(cmd).exec = Exec::Builtin(Box::new(Builtin {
+            cmd,
+            kind,
+            args,
+            stdin,
+            stdout,
+            stderr,
+            impl_,
+        }));
+
+        // TODO(b2-blocked): redirect-file open (Builtin.zig init lines
+        // 380-520) — needs IOWriter::init for the redirect fd and
+        // ast::RedirectFlags inspection.
+        None
     }
 
     /// Finish the builtin with `exit_code` and signal the owning Cmd.
@@ -200,9 +312,9 @@ impl Builtin {
     }
 }
 
-// The full body (~900 lines: Kind::from_argv0, init, redirect handling,
-// stdin/stdout/stderr open, write_failing_error_fmt, OutputSrc) is preserved
-// gated — depends on ast::Cmd, IOWriter::enqueue, bun_sys open flags.
+// Remaining body (~700 lines: redirect handling, stdin/stdout/stderr open,
+// write_failing_error_fmt, OutputSrc) is preserved gated — depends on
+// IOWriter::enqueue, bun_sys open flags.
 #[cfg(any())]
 mod builtin_body {
     include!("Builtin_body_gated.rs");
@@ -211,6 +323,6 @@ mod builtin_body {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/shell/Builtin.zig (1015 lines)
-//   confidence: medium (NodeId dispatch; init/redirect body gated)
-//   blocked_on: ast::Cmd, IOWriter::enqueue, bun_sys open
+//   confidence: medium (NodeId dispatch; from_argv0 + init wired)
+//   blocked_on: redirect-file open (IOWriter::init), write_failing_error_fmt
 // ──────────────────────────────────────────────────────────────────────────

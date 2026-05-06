@@ -4,7 +4,7 @@
 //! → resolve to builtin or spawn subprocess → await exit.
 
 use crate::shell::ast;
-use crate::shell::builtin::Builtin;
+use crate::shell::builtin::{Builtin, Kind as BuiltinKind};
 use crate::shell::interpreter::{log, CowFd, Interpreter, Node, NodeId, ShellExecEnv, StateKind};
 use crate::shell::io::IO;
 use crate::shell::states::assigns::{AssignCtx, Assigns};
@@ -149,12 +149,7 @@ impl Cmd {
                     return Expansion::start(interp, child);
                 }
                 CmdState::Exec => {
-                    // TODO(b2-blocked): Builtin::Kind::from_argv0(args[0]) →
-                    // construct Builtin and `Builtin::start`, or spawn
-                    // `subproc::ShellSubprocess`. Both depend on gated bodies
-                    // (Builtin init, IOWriter redirect open, bun_spawn).
-                    let _ = Builtin::start;
-                    return Yield::suspended();
+                    return Self::transition_to_exec(interp, this);
                 }
                 CmdState::WaitingWriteErr => return Yield::suspended(),
                 CmdState::Done => {
@@ -194,6 +189,15 @@ impl Cmd {
             match interp.as_cmd_mut(this).state {
                 CmdState::ExpandingArgs { ref mut idx } => {
                     *idx += 1;
+                    // Spec (Cmd.zig childDone 400-409): when the sole
+                    // `name_and_args` atom is a `.simple == .cmd_subst`, stash
+                    // `e.out_exit_code` so an empty-argv command consisting
+                    // only of `$(cmd)` propagates `cmd`'s exit code via the
+                    // empty-argv0 branch in `transition_to_exec`.
+                    // TODO(b2-blocked): `ExpansionOut` has no `out_exit_code`
+                    // yet (Expansion.rs body gated) and `ast::Atom` is opaque
+                    // so the `.cmd_subst` check can't be expressed. Wire once
+                    // Expansion exposes the substitution's exit code.
                     // PORT NOTE: Zig used `out.bounds` to split into multiple
                     // argv words (glob/IFS); preserved here verbatim.
                     let me = interp.as_cmd_mut(this);
@@ -216,6 +220,62 @@ impl Cmd {
             }
         }
         interp.deinit_node(child);
+        Yield::Next(this)
+    }
+
+    /// Spec: Cmd.zig `transitionToExecStateAndYield()` + `initSubproc()` up
+    /// through the `Builtin.Kind.fromStr` branch. Resolves argv[0] to a
+    /// builtin or falls through to subprocess spawn (still gated).
+    fn transition_to_exec(interp: &mut Interpreter, this: NodeId) -> Yield {
+        // NUL-terminate every arg so builtins can borrow them as `*const c_char`.
+        // (Zig stored argv as `[*:0]const u8`; the Rust port collected them as
+        // `Vec<u8>` from Expansion.)
+        for a in &mut interp.as_cmd_mut(this).args {
+            if a.last() != Some(&0) {
+                a.push(0);
+            }
+        }
+
+        // Spec (Cmd.zig initSubproc lines 442-456): empty/null argv[0] → exit
+        // with the exit code from a sole command-substitution (stashed by
+        // `child_done` once Expansion exposes `out_exit_code`; see TODO there),
+        // else 0.
+        let first_arg: Vec<u8> = {
+            let me = interp.as_cmd(this);
+            match me.args.first() {
+                Some(a) if a.len() > 1 => {
+                    // strip the trailing NUL we just added
+                    a[..a.len() - 1].to_vec()
+                }
+                _ => {
+                    let exit = me.exit_code.unwrap_or(0);
+                    let parent = me.base.parent;
+                    return interp.child_done(parent, this, exit);
+                }
+            }
+        };
+
+        if let Some(kind) = BuiltinKind::from_argv0(&first_arg) {
+            log!("Cmd {} exec builtin={:?}", this, kind);
+            if let Some(y) = Builtin::init(interp, this, kind) {
+                return y;
+            }
+            debug_assert!(matches!(interp.as_cmd(this).exec, Exec::Builtin(_)));
+            return Builtin::start(interp, this);
+        }
+
+        // TODO(b2-blocked): subprocess path — `which()` lookup +
+        // `subproc::ShellSubprocess::spawn`. Until bun_spawn is wired, fail
+        // with the spec's "command not found" exit code.
+        // Spec (Cmd.zig initSubproc lines 489-494): writeFailingError(
+        // "bun: command not found: {s}\n") → `.waiting_write_err` →
+        // onIOWriterChunk (Cmd.zig:360-362) → `parent.childDone(this, 1)`.
+        // IOWriter not yet wired, so finish synchronously with the spec's
+        // exit code (1, NOT 127).
+        log!("Cmd {} exec: command not found: {:?}", this, first_arg);
+        let me = interp.as_cmd_mut(this);
+        me.exit_code = Some(1);
+        me.state = CmdState::Done;
         Yield::Next(this)
     }
 
@@ -248,7 +308,7 @@ impl Cmd {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/shell/states/Cmd.zig (1018 lines)
-//   confidence: medium (state-machine + expansion path wired; Exec gated)
-//   blocked_on: Builtin::Kind::from_argv0, subproc::ShellSubprocess,
-//               IOWriter redirect handling
+//   confidence: medium (state-machine + expansion + builtin Exec wired)
+//   blocked_on: subproc::ShellSubprocess (which() + spawn),
+//               IOWriter redirect handling, writeFailingError
 // ──────────────────────────────────────────────────────────────────────────

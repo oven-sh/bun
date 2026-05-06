@@ -5,7 +5,6 @@ use crate::shell::interpreter::{
 use crate::shell::io::{InKind, OutKind, IO};
 use crate::shell::io_reader::IOReader;
 use crate::shell::io_writer::{self, IOWriter};
-use crate::shell::states::assigns::{AssignCtx, Assigns};
 use crate::shell::states::base::Base;
 use crate::shell::states::cmd::Cmd;
 use crate::shell::states::cond_expr::CondExpr;
@@ -107,9 +106,15 @@ impl Pipeline {
         // SAFETY: `node` points into the AST arena which outlives every state
         // node.
         let items: &[ast::PipelineItem] = unsafe { &*(*node).items };
-        let n = items.len();
+        // Spec (Pipeline.zig setupCommands): assigns inside a pipeline are
+        // no-ops — they're not counted, not duped, not started. `cmd_count`
+        // here is the number of *runnable* children.
+        let cmd_count = items
+            .iter()
+            .filter(|it| !matches!(it, ast::PipelineItem::Assigns(_)))
+            .count();
 
-        if n == 0 {
+        if cmd_count == 0 {
             // Spec (Pipeline.zig start()): empty pipeline finishes with 0.
             // Return `Next(this)` so the trampoline sees `is_done`, removes us
             // from the pipeline stack, and `next()` bubbles to the parent.
@@ -121,52 +126,81 @@ impl Pipeline {
 
         // First entry: allocate pipes + cmd slots.
         if idx == 0 && interp.as_pipeline(this).cmds.is_none() {
-            let mut pipes: Vec<Pipe> = Vec::with_capacity(n.saturating_sub(1));
-            for _ in 0..n.saturating_sub(1) {
-                match bun_sys::pipe() {
+            let mut pipes: Vec<Pipe> = Vec::with_capacity(cmd_count.saturating_sub(1));
+            for _ in 0..cmd_count.saturating_sub(1) {
+                // Spec (Pipeline.zig initializePipes 291-313): on POSIX use a
+                // UNIX stream socketpair (so the writer end has socket
+                // semantics — SO_NOSIGPIPE, shutdown()); on Windows use pipe().
+                #[cfg(windows)]
+                let r = bun_sys::pipe();
+                #[cfg(unix)]
+                let r = bun_sys::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, false);
+                match r {
                     Ok(p) => pipes.push(p),
                     Err(e) => {
                         for p in &pipes {
                             closefd(p[0]);
                             closefd(p[1]);
                         }
+                        // Leave `StartingCmds` so `drain_pipelines` doesn't
+                        // re-enter `next_starting` and retry the failing
+                        // syscall in a loop (spec: setupCommands → start →
+                        // .waiting_write_err → suspended).
+                        interp.as_pipeline_mut(this).state = PipelineState::WaitingWriteErr;
                         interp.throw(&ShellErr::new_sys(e));
                         return Yield::failed();
                     }
                 }
             }
             let cmds: Vec<CmdOrResult> =
-                (0..n).map(|_| CmdOrResult::Result(0)).collect();
+                (0..cmd_count).map(|_| CmdOrResult::Result(0)).collect();
             let me = interp.as_pipeline_mut(this);
             me.pipes = Some(pipes.into_boxed_slice());
             me.cmds = Some(cmds.into_boxed_slice());
         }
 
-        if (idx as usize) >= n {
+        // `idx` walks `items[]`; skip over Assigns to find the next runnable.
+        let mut item_idx = idx as usize;
+        while item_idx < items.len() && matches!(items[item_idx], ast::PipelineItem::Assigns(_)) {
+            item_idx += 1;
+        }
+        if item_idx >= items.len() {
             // All children spawned; wait for their `child_done` callbacks.
             interp.as_pipeline_mut(this).state = PipelineState::Pending;
             return Yield::suspended();
         }
+        // `cmd_idx` is the position among runnable children (indexes
+        // `pipes[]`/`cmds[]`).
+        let cmd_idx = items[..item_idx]
+            .iter()
+            .filter(|it| !matches!(it, ast::PipelineItem::Assigns(_)))
+            .count();
 
-        let i = idx as usize;
         // Build per-child IO: stdin from prev pipe read end (or parent
-        // stdin for i==0), stdout to this pipe write end (or parent stdout
-        // for last), stderr inherited.
+        // stdin for first), stdout to this pipe write end (or parent stdout
+        // for last), stderr inherited. Spec: Pipeline.zig readPipe/writePipe.
         let child_io = {
             let me = interp.as_pipeline(this);
             let pipes = me.pipes.as_ref().expect("pipes set above");
-            let stdin = if i == 0 {
+            let stdin = if cmd_count == 1 || cmd_idx == 0 {
                 me.io.stdin.clone()
             } else {
-                InKind::Fd(IOReader::init(pipes[i - 1][0], evtloop))
+                InKind::Fd(IOReader::init(pipes[cmd_idx - 1][0], evtloop))
             };
-            let stdout = if i == n - 1 {
+            let stdout = if cmd_count == 1 || cmd_idx == cmd_count - 1 {
                 me.io.stdout.clone()
             } else {
                 OutKind::Fd(crate::shell::io::OutFd {
                     writer: IOWriter::init(
-                        pipes[i][1],
-                        io_writer::Flags { pollable: true, ..Default::default() },
+                        pipes[cmd_idx][1],
+                        // Spec (Pipeline.zig writePipe 320-324):
+                        // `.is_socket = bun.Environment.isPosix` — the POSIX
+                        // pipe is actually a socketpair end (see above).
+                        io_writer::Flags {
+                            pollable: true,
+                            is_socket: cfg!(unix),
+                            ..Default::default()
+                        },
                         evtloop,
                     ),
                     captured: None,
@@ -184,16 +218,33 @@ impl Pipeline {
         } {
             Ok(d) => d,
             Err(e) => {
+                // Spec (Pipeline.zig setupCommands 132-140): on dupe failure,
+                // close the pipe ends not yet wrapped in an IOReader/IOWriter,
+                // deref `cmd_io`, transition to `.waiting_write_err`, and
+                // suspend. Without the state transition `drain_pipelines`
+                // would re-enter at the same `idx`, re-wrapping the same fds
+                // in fresh IOReader/IOWriter each iteration.
+                drop(child_io);
+                {
+                    let me = interp.as_pipeline_mut(this);
+                    if let Some(pipes) = me.pipes.as_ref() {
+                        let len = pipes.len();
+                        for p in &pipes[cmd_idx..] {
+                            closefd(p[0]);
+                        }
+                        for p in &pipes[core::cmp::min(cmd_idx + 1, len)..] {
+                            closefd(p[1]);
+                        }
+                    }
+                    me.state = PipelineState::WaitingWriteErr;
+                }
                 interp.throw(&ShellErr::new_sys(e));
                 return Yield::failed();
             }
         };
 
-        let child = match items[i] {
+        let child = match items[item_idx] {
             ast::PipelineItem::Cmd(c) => Cmd::init(interp, duped, c, this, child_io),
-            ast::PipelineItem::Assigns(a) => {
-                Assigns::init(interp, duped, a, this, AssignCtx::Shell, child_io)
-            }
             ast::PipelineItem::Subshell(s) => {
                 Subshell::init(interp, duped, s, this, child_io)
             }
@@ -201,12 +252,14 @@ impl Pipeline {
             ast::PipelineItem::CondExpr(c) => {
                 CondExpr::init(interp, duped, c, this, child_io)
             }
+            ast::PipelineItem::Assigns(_) => unreachable!("skipped above"),
         };
-        interp.as_pipeline_mut(this).cmds.as_mut().unwrap()[i] = CmdOrResult::Cmd(child);
-        interp.as_pipeline_mut(this).state = PipelineState::StartingCmds { idx: idx + 1 };
+        interp.as_pipeline_mut(this).cmds.as_mut().unwrap()[cmd_idx] = CmdOrResult::Cmd(child);
+        interp.as_pipeline_mut(this).state =
+            PipelineState::StartingCmds { idx: (item_idx + 1) as u32 };
 
         // Spawn exactly this one child. The trampoline will re-enter us via
-        // `drain_pipelines` to spawn `cmds[idx+1]` after this one yields.
+        // `drain_pipelines` to spawn the next after this one yields.
         interp.start_node(child)
     }
 
@@ -240,16 +293,21 @@ impl Pipeline {
         interp.deinit_node(child);
         if all_done {
             // Exit code = last command's exit code (bash semantics).
-            let exit = interp
-                .as_pipeline(this)
-                .cmds
-                .as_ref()
-                .and_then(|c| c.last())
-                .map(|r| match r {
-                    CmdOrResult::Result(e) => *e,
-                    CmdOrResult::Cmd(_) => 0,
-                })
-                .unwrap_or(0);
+            // Spec (Pipeline.zig childDone 258-266): the back-scan loop is
+            // `var i = len-1; while (i > 0) : (i -= 1)` — note `> 0`, not
+            // `>= 0` — so for a single-runnable pipeline the loop body never
+            // runs and `last_exit_code` stays 0. Mirror that exactly: only
+            // inspect `cmds[len-1]` when `len >= 2`.
+            let exit = {
+                let me = interp.as_pipeline(this);
+                match me.cmds.as_ref() {
+                    Some(c) if c.len() >= 2 => match c.last() {
+                        Some(CmdOrResult::Result(e)) => *e,
+                        _ => 0,
+                    },
+                    _ => 0,
+                }
+            };
             interp.as_pipeline_mut(this).state = PipelineState::Done { exit_code: exit };
             return Yield::Next(this);
         }

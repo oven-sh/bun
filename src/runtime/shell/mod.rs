@@ -126,6 +126,12 @@ pub const SUBSHELL_TODO_ERROR: &str =
 // parser is un-gated we expose opaque ZSTs so the interpreter compiles.
 //
 // TODO(b2-blocked): bun_shell_parser ast — replace with `pub use shell_body::ast`.
+//
+// These shapes mirror `shell_body.rs` / `shell.zig` just enough for the
+// interpreter state machines to compile. State nodes hold `*const ast::*` raw
+// pointers into the (eventually bumpalo-allocated) AST; until the parser is
+// un-gated, no code constructs these — they're only dereferenced through
+// pointers the parser will hand out.
 pub mod ast {
     macro_rules! opaque_ast {
         ($($name:ident),* $(,)?) => {
@@ -137,12 +143,93 @@ pub mod ast {
             )*
         };
     }
-    opaque_ast!(
-        Script, Stmt, Expr, Pipeline, Binary, Cmd, If, CondExpr, Subshell,
-        Assign, Atom, Redirect, CmdOrAssigns, SimpleAtom, CompoundAtom,
-    );
-    /// `ast::If::else_parts` etc. — opaque list type.
+    // Leaf nodes the interpreter never inspects (only holds pointers to).
+    opaque_ast!(Assign, Atom, CondExpr, CmdOrAssigns, SimpleAtom, CompoundAtom);
+
+    /// `ast::If::else_parts` etc. — inline small-vec.
     pub type SmolList<T, const N: usize> = crate::shell::interpreter::SmolList<T, N>;
+
+    #[repr(C)]
+    pub struct Script {
+        pub stmts: *const [Stmt],
+    }
+
+    #[repr(C)]
+    pub struct Stmt {
+        pub exprs: *const [Expr],
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub enum Expr {
+        Cmd(*const Cmd),
+        Binary(*const Binary),
+        Pipeline(*const Pipeline),
+        Assign(*const [Assign]),
+        If(*const If),
+        CondExpr(*const CondExpr),
+        Subshell(*const Subshell),
+        Async(*const Expr),
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub enum BinaryOp {
+        And,
+        Or,
+    }
+
+    #[repr(C)]
+    pub struct Binary {
+        pub op: BinaryOp,
+        pub left: Expr,
+        pub right: Expr,
+    }
+
+    #[repr(C)]
+    pub struct Pipeline {
+        pub items: *const [PipelineItem],
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub enum PipelineItem {
+        Cmd(*const Cmd),
+        Assigns(*const [Assign]),
+        If(*const If),
+        CondExpr(*const CondExpr),
+        Subshell(*const Subshell),
+    }
+
+    #[repr(C)]
+    pub struct Cmd {
+        pub assigns: *const [Assign],
+        pub name_and_args: *const [Atom],
+        pub redirect_file: Option<Redirect>,
+        // TODO(b2-blocked): `redirect: RedirectFlags` — needed by
+        // Builtin::init redirect handling and Cmd::initRedirections.
+    }
+
+    #[repr(C)]
+    pub enum Redirect {
+        Atom(Atom),
+        JsBuf(u32),
+    }
+
+    #[repr(C)]
+    pub struct If {
+        pub cond: SmolList<Stmt, 1>,
+        pub then: SmolList<Stmt, 1>,
+        /// Flat: [elif-cond, elif-then, ..., (final else)?]. See Zig
+        /// `ast.If.else_parts` doc comment.
+        pub else_parts: SmolList<SmolList<Stmt, 1>, 1>,
+    }
+
+    #[repr(C)]
+    pub struct Subshell {
+        pub script: Script,
+        // TODO(b2-blocked): `redirect: ?Redirect`, `redirect_flags: RedirectFlags`
+    }
 }
 
 // TODO(b2-blocked): bun_shell_parser — these come from shell_body.rs once un-gated.

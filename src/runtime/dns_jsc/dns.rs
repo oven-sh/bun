@@ -355,7 +355,7 @@ pub mod lib_uv_backend {
 
         let hints = query.options.to_libc();
         let mut port_buf = [0u8; 128];
-        let port_len = bun_fmt::print_int(&mut port_buf, query.port, 10);
+        let port_len = bun_fmt::print_int(&mut port_buf, query.port);
         port_buf[port_len] = 0;
         // SAFETY: port_buf[port_len] == 0 written above
         let port_z = unsafe { ZStr::from_raw(port_buf.as_ptr(), port_len) };

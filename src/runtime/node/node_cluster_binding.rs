@@ -97,12 +97,9 @@ pub fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
 
     let good = ipc_instance
         .data
-        .serialize_and_send(global, message, .internal, JSValue::NULL, None);
-    // TODO(port): `.internal` is an enum-literal arg to serialize_and_send — replace with the
-    // concrete IPC message-kind enum once ported.
+        .serialize_and_send(global, message, IsInternal::Internal, JSValue::NULL, None);
 
-    if good == .failure {
-        // TODO(port): `.failure` / `.success` are enum-literal results of serialize_and_send.
+    if good == SerializeAndSendResult::Failure {
         let ex = global.create_type_error_instance("sendInternal() failed", format_args!(""));
         ex.put(
             global,

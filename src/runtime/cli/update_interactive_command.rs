@@ -128,18 +128,16 @@ impl UpdateInteractiveCommand {
         path_buf: &'b mut PathBuffer,
     ) -> &'b [u8] {
         if !workspace_path.is_empty() {
-            path::join_abs_string_buf(
+            path::resolve_path::join_abs_string_buf::<path::platform::Auto>(
                 root_dir,
                 path_buf,
                 &[workspace_path, b"package.json"],
-                path::Style::Auto,
             )
         } else {
-            path::join_abs_string_buf(
+            path::resolve_path::join_abs_string_buf::<path::platform::Auto>(
                 root_dir,
                 path_buf,
                 &[b"package.json"],
-                path::Style::Auto,
             )
         }
     }
@@ -214,7 +212,7 @@ impl UpdateInteractiveCommand {
     pub fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
         Output::prettyln(format_args!(
             "<r><b>bun update --interactive <r><d>v{}<r>",
-            Global::PACKAGE_JSON_VERSION_WITH_SHA
+            Global::package_json_version_with_sha
         ));
         Output::flush();
 

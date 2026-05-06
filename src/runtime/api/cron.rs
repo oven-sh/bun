@@ -1401,7 +1401,7 @@ impl CronJob {
 
         if let Some(promise) = result.as_any_promise() {
             match promise.status() {
-                jsc::PromiseStatus::Pending => {
+                jsc::js_promise::Status::Pending => {
                     this_ref.ref_();
                     this_ref.pending_ref = true;
                     js::pending_promise_set_cached(js_this, this_ref.global, result);
@@ -1415,8 +1415,8 @@ impl CronJob {
                     }
                     return;
                 }
-                jsc::PromiseStatus::Fulfilled => {}
-                jsc::PromiseStatus::Rejected => {
+                jsc::js_promise::Status::Fulfilled => {}
+                jsc::js_promise::Status::Rejected => {
                     promise.set_handled(this_ref.global.vm());
                     vm.unhandled_rejection(vm.global, promise.result(this_ref.global.vm()), result);
                 }

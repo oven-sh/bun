@@ -230,7 +230,7 @@ impl OutdatedCommand {
                                 path::Platform::Posix,
                             );
 
-                            if !glob::match_(pattern, strings::without_trailing_slash(abs_res_path))
+                            if !glob::r#match(pattern, strings::without_trailing_slash(abs_res_path))
                                 .matches()
                             {
                                 break 'matched false;
@@ -239,7 +239,7 @@ impl OutdatedCommand {
                         WorkspaceFilter::Name(pattern) => {
                             let name = pkg_names[workspace_pkg_id as usize].slice(string_buf);
 
-                            if !glob::match_(pattern, name).matches() {
+                            if !glob::r#match(pattern, name).matches() {
                                 break 'matched false;
                             }
                         }
@@ -451,7 +451,7 @@ impl OutdatedCommand {
                                     if name_pattern.is_empty() {
                                         continue;
                                     }
-                                    if !glob::match_(name_pattern, dep.name.slice(string_buf))
+                                    if !glob::r#match(name_pattern, dep.name.slice(string_buf))
                                         .matches()
                                     {
                                         break 'match_ false;

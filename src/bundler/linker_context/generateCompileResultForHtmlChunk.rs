@@ -417,14 +417,21 @@ fn generate_compile_result_for_html_chunk_impl(
     // TODO(port): Zig used `dev.allocator()` vs `worker.allocator` to control output ownership.
     // In Rust with global mimalloc this distinction collapses; verify DevServer ownership in Phase B.
 
+    let log: *mut Log = c.log as *mut Log;
+    let minify_whitespace = c.options.minify_whitespace;
+    let compile_to_standalone_html = c.options.compile_to_standalone_html;
+    let has_dev_server = c.dev_server.is_some();
+    let contents: &[u8] = &sources[source_index as usize].contents;
+    let records = import_records[source_index as usize].slice();
+
     let mut html_loader = HTMLLoader {
-        linker: c,
+        linker: &*c,
         source_index,
-        import_records: import_records[source_index as usize].slice(),
-        log: c.log as *mut Log,
+        import_records: records,
+        log,
         current_import_record_index: 0,
-        minify_whitespace: c.options.minify_whitespace,
-        compile_to_standalone_html: c.options.compile_to_standalone_html,
+        minify_whitespace,
+        compile_to_standalone_html,
         chunk: chunk as *const Chunk,
         chunks,
         output: Vec::new(),
@@ -437,11 +444,8 @@ fn generate_compile_result_for_html_chunk_impl(
         added_body_script: false,
     };
 
-    HTMLProcessor::<HTMLLoader, true>::run(
-        &mut html_loader,
-        &sources[source_index as usize].contents,
-    )
-    .unwrap_or_else(|_| panic!("unexpected error from HTMLProcessor.run"));
+    HTMLProcessor::<HTMLLoader, true>::run(&mut html_loader, contents)
+        .unwrap_or_else(|_| panic!("unexpected error from HTMLProcessor.run"));
 
     // There are some cases where invalid HTML will make it so </head> is
     // never emitted, even if the literal text DOES appear. These cases are
@@ -449,7 +453,7 @@ fn generate_compile_result_for_html_chunk_impl(
     // element. In this case, head_end_tag_index will be 0, and a simple
     // search through the page is done to find the "</head>"
     // See https://github.com/oven-sh/bun/issues/17554
-    let script_injection_offset: u32 = if c.dev_server.is_some() {
+    let script_injection_offset: u32 = if has_dev_server {
         'brk: {
             if let Some(head) = html_loader.end_tag_indices.head {
                 break 'brk head;

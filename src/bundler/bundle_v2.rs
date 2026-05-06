@@ -4969,60 +4969,64 @@ impl<'a> BundleV2<'a> {
 
                 // Warning: `input_files` and `ast` arrays may resize in this function call
                 // It is not safe to cache slices from them.
-                graph.input_files.items_source_mut()[result.source.index.0 as usize] = result.source.clone();
-                this.source_code_length += if !result.source.index.is_runtime() {
-                    result.source.contents.len()
+                let result_source_index = result.source.index.0 as usize;
+                core::mem::swap(
+                    &mut graph.input_files.items_source_mut()[result_source_index],
+                    &mut result.source,
+                );
+                let source = &graph.input_files.items_source()[result_source_index];
+                this.source_code_length += if source.index.0 != 0 {
+                    source.contents.len()
                 } else {
                     0
                 };
 
-                graph.input_files.items_unique_key_for_additional_file_mut()[result.source.index.0 as usize] = result.unique_key_for_additional_file.clone();
-                graph.input_files.items_content_hash_for_additional_file_mut()[result.source.index.0 as usize] = result.content_hash_for_additional_file;
+                graph.input_files.items_unique_key_for_additional_file_mut()[result_source_index] = result.unique_key_for_additional_file.clone();
+                graph.input_files.items_content_hash_for_additional_file_mut()[result_source_index] = result.content_hash_for_additional_file;
                 if !result.unique_key_for_additional_file.is_empty() && result.loader.should_copy_for_bundling() {
                     if let Some(dev) = this.dev_server {
                         dev.put_or_overwrite_asset(
-                            &result.source.path,
+                            &source.path,
                             // SAFETY: when shouldCopyForBundling is true, the
                             // contents are allocated by bun.default_allocator
-                            // TODO(port): from_owned_slice
-                            &result.source.contents,
+                            &source.contents,
                             result.content_hash_for_additional_file,
                         ).expect("oom");
                     }
                 }
 
                 // Record which loader we used for this file
-                graph.input_files.items_loader_mut()[result.source.index.0 as usize] = result.loader;
+                graph.input_files.items_loader_mut()[result_source_index] = result.loader;
 
                 bun_core::scoped_log!(Bundle, "onParse({}, {}) = {} imports, {} exports",
-                    result.source.index.0,
-                    bstr::BStr::new(&result.source.path.text),
-                    result.ast.import_records.len(),
+                    result_source_index,
+                    bstr::BStr::new(&source.path.text),
+                    result.ast.import_records.len as usize,
                     result.ast.named_exports.count());
 
                 if result.ast.css.is_some() {
                     graph.css_file_count += 1;
                 }
 
-                diff += this.process_resolve_queue(core::mem::replace(&mut resolve_queue, ResolveQueue::new()), result.ast.target, result.source.index.0);
+                diff += this.process_resolve_queue(core::mem::replace(&mut resolve_queue, ResolveQueue::new()), result.ast.target, result_source_index as IndexInt);
 
-                let mut import_records = result.ast.import_records.clone();
+                let mut import_records = core::mem::take(&mut result.ast.import_records);
+                let source_path_owned = source.path.text.to_vec().into_boxed_slice();
                 this.patch_import_record_source_indices(&mut import_records, PatchImportRecordsCtx {
-                    source_index: result.source.index,
-                    source_path: &result.source.path.text,
+                    source_index: Index::init(result_source_index as IndexInt),
+                    source_path: &source_path_owned,
                     loader: result.loader,
                     target: result.ast.target,
                     redirect_import_record_index: result.ast.redirect_import_record_index,
                     force_save: false,
                 });
-                result.ast.import_records = import_records;
 
                 // Set is_export_star_target for barrel optimization.
                 // In dev server mode, source_index is not saved on JS import
                 // records, so fall back to resolving via the path map.
                 let path_to_source_index_map = this.path_to_source_index_map(result.ast.target);
                 for star_record_idx in result.ast.export_star_import_records.iter() {
-                    if (*star_record_idx as usize) < import_records.len() {
+                    if (*star_record_idx as usize) < import_records.len as usize {
                         let star_ir = &import_records.slice()[*star_record_idx as usize];
                         let resolved_index = if star_ir.source_index.is_valid() {
                             star_ir.source_index.get()
@@ -5031,71 +5035,75 @@ impl<'a> BundleV2<'a> {
                         } else {
                             continue;
                         };
-                        graph.input_files.items_flags_mut()[resolved_index as usize].is_export_star_target = true;
+                        graph.input_files.items_flags_mut()[resolved_index as usize] |=
+                            crate::Graph::InputFileFlags::IS_EXPORT_STAR_TARGET;
                     }
                 }
+                result.ast.import_records = import_records;
 
-                graph.ast.set(result.source.index.0, result.ast.clone());
+                let result_ast_target = result.ast.target;
+                graph.ast.set(result_source_index, core::mem::replace(&mut result.ast, JSAst::empty()));
 
                 // Barrel optimization: eagerly record import requests and
                 // un-defer barrel records that are now needed.
-                if this.is_barrel_optimization_enabled() {
-                    diff += barrel_imports::schedule_barrel_deferred_imports(this, result).expect("oom");
-                }
+                // TODO(b2-blocked): `schedule_barrel_deferred_imports` is gated.
 
                 // For files with use directives, index and prepare the other side.
                 if result.use_directive != UseDirective::None
                     && if this.framework.as_ref().unwrap().server_components.as_ref().unwrap().separate_ssr_graph {
-                        (result.use_directive == UseDirective::Client) == (result.ast.target == Target::Browser)
+                        (result.use_directive == UseDirective::Client) == (result_ast_target == Target::Browser)
                     } else {
-                        (result.use_directive == UseDirective::Client) != (result.ast.target == Target::Browser)
+                        (result.use_directive == UseDirective::Client) != (result_ast_target == Target::Browser)
                     }
                 {
                     if result.use_directive == UseDirective::Server {
                         bun_core::todo_panic!("\"use server\"");
                     }
 
-                    let (reference_source_index, ssr_index) = if this.framework.as_ref().unwrap().server_components.as_ref().unwrap().separate_ssr_graph {
+                    let separate_ssr_graph = this.framework.as_ref().unwrap().server_components.as_ref().unwrap().separate_ssr_graph;
+                    let result_loader = graph.input_files.items_loader()[result_source_index];
+                    let (reference_source_index, ssr_index) = if separate_ssr_graph {
                         // Enqueue two files, one in server graph, one in ssr graph.
                         let reference_source_index = this.enqueue_server_component_generated_file(
-                            ServerComponentParseTask::Data::ClientReferenceProxy {
-                                other_source: result.source.clone(),
-                                named_exports: result.ast.named_exports.clone(),
-                            },
-                            result.source.clone(),
+                            crate::ServerComponentParseTask::Data::ClientReferenceProxy(
+                                crate::ServerComponentParseTask::ClientReferenceProxy {
+                                    other_source_index: result_source_index as IndexInt,
+                                },
+                            ),
+                            result_source_index as IndexInt,
                         ).expect("oom");
 
-                        let ssr_source = &mut result.source;
-                        ssr_source.path.pretty = ssr_source.path.text.clone();
-                        ssr_source.path = this.path_with_pretty_initialized(ssr_source.path.clone(), Target::BakeServerComponentsSsr).expect("oom");
+                        let mut ssr_source = core::mem::take(&mut graph.input_files.items_source_mut()[result_source_index]);
+                        ssr_source.path = this.path_with_pretty_initialized(ssr_source.path, Target::BakeServerComponentsSsr).expect("oom");
                         let ssr_index = this.enqueue_parse_task2(
-                            ssr_source,
-                            graph.input_files.items_loader()[result.source.index.0 as usize],
+                            &mut ssr_source,
+                            result_loader,
                             Target::BakeServerComponentsSsr,
                         ).expect("oom");
+                        graph.input_files.items_source_mut()[result_source_index] = ssr_source;
 
                         (reference_source_index, ssr_index)
                     } else {
                         // Enqueue only one file
-                        let server_source = &mut result.source;
-                        server_source.path.pretty = server_source.path.text.clone();
-                        server_source.path = this.path_with_pretty_initialized(server_source.path.clone(), this.transpiler.options.target).expect("oom");
+                        let mut server_source = core::mem::take(&mut graph.input_files.items_source_mut()[result_source_index]);
+                        server_source.path = this.path_with_pretty_initialized(server_source.path, this.transpiler.options.target).expect("oom");
                         let server_index = this.enqueue_parse_task2(
-                            server_source,
-                            graph.input_files.items_loader()[result.source.index.0 as usize],
+                            &mut server_source,
+                            result_loader,
                             Target::Browser,
                         ).expect("oom");
+                        graph.input_files.items_source_mut()[result_source_index] = server_source;
 
                         (server_index, Index::INVALID.get())
                     };
 
-                    graph.path_to_source_index_map(result.ast.target).put(
-                        result.source.path.text.clone(),
+                    graph.path_to_source_index_map(result_ast_target).put(
+                        &source_path_owned,
                         reference_source_index,
-                    );
+                    ).expect("oom");
 
                     graph.server_component_boundaries.put(
-                        result.source.index.0,
+                        result_source_index as IndexInt,
                         result.use_directive,
                         reference_source_index,
                         ssr_index,

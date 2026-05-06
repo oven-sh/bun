@@ -1,12 +1,12 @@
 use bun_collections::MultiArrayList;
-use bun_core::StringJoiner;
 use bun_logger as logger;
-use bun_sourcemap::line_column_offset::Optional as LineColumnOffsetOptional;
-use bun_sourcemap::LineColumnOffset;
+use bun_sourcemap::{LineColumnOffset, LineColumnOffsetOptional};
+use bun_string::string_joiner::{StringJoiner, Watcher};
 
-use crate::linker_context::GenerateChunkCtx;
+use crate::chunk::IntermediateOutput;
+use crate::linker_context_mod::{GenerateChunkCtx, LinkerOptionsMode};
 use crate::thread_pool;
-use crate::{Chunk, CompileResultForSourceMap, Index, IntermediateOutput};
+use crate::{options, Chunk, CompileResultForSourceMap, Index};
 
 /// This runs after we've already populated the compile results
 pub fn post_process_css_chunk(
@@ -18,15 +18,15 @@ pub fn post_process_css_chunk(
     let c = ctx.c;
     let mut j = StringJoiner {
         // TODO(port): worker.allocator is a per-worker arena — thread `&'bump Bump` in Phase B
-        watcher: bun_core::string_joiner::Watcher {
+        watcher: Watcher {
             input: chunk.unique_key,
+            ..Default::default()
         },
         ..Default::default()
     };
 
-    // TODO(port): exact enum path for `c.options.source_maps` (.none) — assuming `crate::options::SourceMapOption::None`
     let mut line_offset: LineColumnOffsetOptional =
-        if c.options.source_maps != crate::options::SourceMapOption::None {
+        if c.options.source_maps != options::SourceMapOption::None {
             LineColumnOffsetOptional::Value(LineColumnOffset::default())
         } else {
             LineColumnOffsetOptional::Null
@@ -54,15 +54,14 @@ pub fn post_process_css_chunk(
 
     let mut compile_results_for_source_map: MultiArrayList<CompileResultForSourceMap> =
         MultiArrayList::default();
-    compile_results_for_source_map.reserve(compile_results.len());
+    bun_core::handle_oom(compile_results_for_source_map.set_capacity(compile_results.len()));
 
     // TODO(port): MultiArrayList field-slice accessor — Zig: `c.parse_graph.input_files.items(.source)`
     let sources: &[logger::Source] = c.parse_graph.input_files.items_source();
     for compile_result in compile_results.iter() {
         let source_index = compile_result.source_index();
 
-        // TODO(port): exact enum path for `c.options.mode` (.bundle)
-        if c.options.mode == crate::options::Mode::Bundle
+        if c.options.mode == LinkerOptionsMode::Bundle
             && !c.options.minify_whitespace
             && Index::init(source_index).is_valid()
         {
@@ -88,17 +87,25 @@ pub fn post_process_css_chunk(
         }
 
         // Save the offset to the start of the stored JavaScript
-        // PORT NOTE: dropped `bun.default_allocator` arg
-        j.push(compile_result.code());
+        // PORT NOTE: Zig `j.push(.., bun.default_allocator)` — code() borrows from
+        // compile_results which outlives the joiner; treat as static (no copy/free).
+        j.push_static(compile_result.code());
 
         if let Some(source_map_chunk) = compile_result.source_map_chunk() {
-            if c.options.source_maps != crate::options::SourceMapOption::None {
-                compile_results_for_source_map.push(CompileResultForSourceMap {
-                    source_map_chunk,
-                    // TODO(port): `LineColumnOffsetOptional::value()` accessor — Zig reads `.value` payload directly
-                    generated_offset: line_offset.value(),
-                    source_index: compile_result.source_index(),
-                });
+            if c.options.source_maps != options::SourceMapOption::None {
+                bun_core::handle_oom(compile_results_for_source_map.append(
+                    CompileResultForSourceMap {
+                        source_map_chunk: source_map_chunk.clone(),
+                        // Zig reads `.value` payload directly — guaranteed `Value` here
+                        // because `source_maps != None` implies `line_offset` was
+                        // initialised to `Value(_)` above.
+                        generated_offset: match line_offset {
+                            LineColumnOffsetOptional::Value(v) => v,
+                            LineColumnOffsetOptional::Null => unreachable!(),
+                        },
+                        source_index: compile_result.source_index(),
+                    },
+                ));
             }
 
             line_offset.reset();

@@ -1058,16 +1058,10 @@ fn get_ast(
                 }
             };
             // Make sure the css modules local refs have a valid tag
-            // TODO(port): re-enable once `bun_css::LocalScope` value type exposes `.ref_`.
-            #[cfg(any(/* debug_assertions */))]
-            {
-                if css_ast.local_scope.count() > 0 {
-                    for entry in css_ast.local_scope.values() {
-                        let r = entry.ref_;
-                        debug_assert!(r.inner_index() < extra.symbols.len);
-                    }
-                }
-            }
+            // TODO(port): re-enable once `bun_css::LocalScope` value type
+            // exposes `.ref_` (current no-css stub stores `()`).
+            // (debug-only assertion in Zig — omitted here, not gated.)
+            let _ = &extra;
             if let Err(_e) = css_ast.minify(
                 bump,
                 bun_css::MinifyOptions {

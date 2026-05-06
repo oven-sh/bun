@@ -284,7 +284,7 @@ impl LinkerContext<'_> {
                         // note: if we crash on append, it is due to threadlocal heaps in mimalloc
                         part.dependencies
                             .append(Dependency {
-                                source_index: Index::init(source_index),
+                                source_index: js_ast::Index::source(source_index),
                                 part_index: other_part_index,
                             })
                             .expect("unreachable");
@@ -458,7 +458,7 @@ impl LinkerContext<'_> {
                 // Use a non-local dependency since this is likely from a different
                 // file if it came in through an export star
                 ns_export_dependencies.append_assume_capacity(Dependency {
-                    source_index: Index::init(exp_data.source_index.get()),
+                    source_index: js_ast::Index::source(exp_data.source_index.get()),
                     part_index: part_id,
                 });
             }
@@ -548,7 +548,7 @@ impl LinkerContext<'_> {
                 .expect("OOM");
             for &part_index in parts {
                 ns_export_dependencies.append_assume_capacity(Dependency {
-                    source_index: Index::RUNTIME,
+                    source_index: js_ast::Index::RUNTIME,
                     part_index,
                 });
             }

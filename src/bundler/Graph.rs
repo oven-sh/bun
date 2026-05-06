@@ -2,7 +2,7 @@ use core::ptr::NonNull;
 
 use bun_alloc::Arena as ThreadLocalArena;
 use bun_collections::{BabyList, MultiArrayList};
-use bun_js_parser::ServerComponentBoundary;
+use bun_js_parser::ast::server_component_boundary;
 use bun_js_parser::BundledAst as JSAst;
 use bun_logger as logger;
 use enum_map::EnumMap;
@@ -65,10 +65,7 @@ pub struct Graph {
 
     /// When Server Components is enabled, this holds a list of all boundary
     /// files. This happens for all files with a "use <side>" directive.
-    // TODO(b2-blocked): bun_js_parser::server_component_boundary::List — stub
-    // surface only exposes the singular `ServerComponentBoundary`. Retyped to a
-    // Vec until the real `List` lands.
-    pub server_component_boundaries: Vec<ServerComponentBoundary>,
+    pub server_component_boundaries: server_component_boundary::List,
 
     /// Track HTML imports from server-side code
     /// Each entry represents a server file importing an HTML file that needs a client build

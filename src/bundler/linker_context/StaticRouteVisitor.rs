@@ -6,11 +6,14 @@
 use bun_collections::{ArrayHashMap, AutoBitSet};
 use bun_core::env_var;
 
+use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
+use bun_js_parser::ast::server_component_boundary::ServerComponentBoundaryListExt as _;
+
 use crate::import_record;
 use crate::{Index, LinkerContext, UseDirective};
 
 pub struct StaticRouteVisitor<'a> {
-    pub c: &'a LinkerContext,
+    pub c: &'a LinkerContext<'a>,
     pub cache: ArrayHashMap</* Index::Int */ u32, bool>,
     pub visited: AutoBitSet,
 }
@@ -24,30 +27,26 @@ impl<'a> StaticRouteVisitor<'a> {
     /// Investigate performance. It can have false negatives (it doesn't properly
     /// handle cycles), but that's okay as it's just used an optimization
     pub fn has_transitive_use_client(&mut self, entry_point_source_index: u32) -> bool {
-        if cfg!(debug_assertions) && env_var::BUN_SSG_DISABLE_STATIC_ROUTE_VISITOR.get() {
+        if cfg!(debug_assertions) && env_var::BUN_SSG_DISABLE_STATIC_ROUTE_VISITOR.get().unwrap_or(false) {
             return false;
         }
 
         // PORT NOTE: `self.c` is `&'a LinkerContext` (Copy), so these slice
         // borrows are tied to `'a`, not to `&self`, and do not conflict with
         // the `&mut self` call below.
-        // TODO(port): exact MultiArrayList column-slice accessor (`.items(.field)` in Zig)
+        // SAFETY: `parse_graph` is a backref into `BundleV2.graph`, valid for
+        // the lifetime of the link pass; SoA columns are not reallocated here.
+        let parse_graph = unsafe { &*self.c.parse_graph };
         let all_import_records: &[import_record::List] =
-            self.c.parse_graph.ast.items().import_records;
-        let referenced_source_indices: &[u32] = self
-            .c
-            .parse_graph
+            parse_graph.ast.items_import_records();
+        let referenced_source_indices: &[u32] = parse_graph
             .server_component_boundaries
             .list
-            .items()
-            .reference_source_index;
-        let use_directives: &[UseDirective] = self
-            .c
-            .parse_graph
+            .items_reference_source_index();
+        let use_directives: &[UseDirective] = parse_graph
             .server_component_boundaries
             .list
-            .items()
-            .use_directive;
+            .items_use_directive();
 
         self.has_transitive_use_client_impl(
             all_import_records,
@@ -73,15 +72,15 @@ impl<'a> StaticRouteVisitor<'a> {
         if let Some(result) = self.cache.get(&source_index.get()) {
             return *result;
         }
-        if self.visited.is_set(source_index.get()) {
+        if self.visited.is_set(source_index.get() as usize) {
             return false;
         }
-        self.visited.set(source_index.get());
+        self.visited.set(source_index.get() as usize);
 
         let import_records = &all_import_records[source_index.get() as usize];
 
         let result = 'result: {
-            for import_record in import_records.as_slice() {
+            for import_record in import_records.slice() {
                 if !import_record.source_index.is_valid() {
                     continue;
                 }

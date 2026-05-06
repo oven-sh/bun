@@ -11,13 +11,13 @@ use bun_wyhash::{self, Wyhash11};
 use crate::Transpiler;
 use bun_js_parser as js_ast;
 
-// TODO(b2-blocked): bun_resolver::fs (PathName, FileSystem) — `bun_resolver` is
-// not in this crate's dep set (tier-ordering). Local opaque stand-ins so struct
-// signatures resolve; bodies referencing the real API stay re-gated.
-mod Fs {
+// PORT NOTE: `Path`/`PathName` come from the lower-tier `bun_logger::fs` shim
+// (lifetime-erased `'static` slices, Phase-A) so `logger::Source` field types
+// line up; `FileSystem` is the real `bun_resolver::fs` singleton now that
+// `bun_resolver` is in this crate's dep set.
+pub mod Fs {
     pub use bun_logger::fs::{Path, PathName};
-    /// Stub: real type lives in `bun_resolver::fs::FileSystem`.
-    pub struct FileSystem;
+    pub use bun_resolver::fs::FileSystem;
 }
 
 pub struct FallbackEntryPoint {
@@ -154,16 +154,14 @@ impl ClientEntryPoint {
     }
 
     
-    // TODO(b2-blocked): bun_resolver::fs::FileSystem::instance / PathName field
-    // shape (`dir`/`base`/`ext` are `&[u8]` in resolver, `&str` in the local
-    // stub).
     pub fn generate_entry_point_path<'a>(
         outbuffer: &'a mut [u8],
         original_path: &Fs::PathName,
     ) -> &'a [u8] {
         let joined_base_and_dir_parts: [&[u8]; 2] = [original_path.dir, original_path.base];
+        // SAFETY: FileSystem singleton is initialized before bundling.
         let mut generated_path =
-            Fs::FileSystem::instance().abs_buf(&joined_base_and_dir_parts, outbuffer);
+            unsafe { (*Fs::FileSystem::instance()).abs_buf(&joined_base_and_dir_parts, outbuffer) };
 
         // PORT NOTE: reshaped for borrowck — capture len, drop borrow, re-borrow outbuffer.
         let mut len = generated_path.len();
@@ -176,15 +174,14 @@ impl ClientEntryPoint {
     }
 
     
-    // TODO(b2-blocked): bun_resolver::fs::FileSystem::instance — see
-    // `generate_entry_point_path`.
     pub fn decode_entry_point_path<'a>(
         outbuffer: &'a mut [u8],
         original_path: &Fs::PathName,
     ) -> &'a [u8] {
         let joined_base_and_dir_parts: [&[u8]; 2] = [original_path.dir, original_path.base];
+        // SAFETY: FileSystem singleton is initialized before bundling.
         let generated_path =
-            Fs::FileSystem::instance().abs_buf(&joined_base_and_dir_parts, outbuffer);
+            unsafe { (*Fs::FileSystem::instance()).abs_buf(&joined_base_and_dir_parts, outbuffer) };
         let len = generated_path.len();
         let mut original_ext = original_path.ext;
         if let Some(entry_i) = strings::index_of(original_path.ext, b"entry") {
@@ -197,11 +194,8 @@ impl ClientEntryPoint {
     }
 
     
-    // TODO(b2-blocked): crate::options::Framework / ClientCssInJs — `options`
-    // module is still gated; body also depends on `bun_resolver::fs::PathName`
-    // accessor `dir_with_trailing_slash`.
     pub fn generate<TranspilerType>(
-        entry: &mut ClientEntryPoint,
+        &mut self,
         transpiler: &mut TranspilerType,
         original_path: &Fs::PathName,
         client: &[u8],
@@ -211,6 +205,7 @@ impl ClientEntryPoint {
         // TODO(port): TranspilerType trait bound — body reads `.options.framework`.
         TranspilerType: TranspilerLike,
     {
+        let entry = self;
         // This is *extremely* naive.
         // The basic idea here is this:
         // --
@@ -267,7 +262,7 @@ impl ClientEntryPoint {
         }
 
         entry.source = logger::Source::init_path_string(
-            Self::generate_entry_point_path(entry.path_buffer.as_mut_slice(), original_path),
+            Self::generate_entry_point_path(&mut entry.path_buffer.0, original_path),
             code,
         );
         entry.source.path.namespace = b"client-entry";

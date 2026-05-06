@@ -27,10 +27,8 @@
 //!    then we don't need to do any allocations or extra work to get the output
 //!    file for a chunk.
 
-use crate::options::{self, Loader, OutputFile};
+use crate::options::{self, Format, Loader, OutputFile};
 use crate::{Chunk, LinkerContext};
-// TODO(port): verify module path for OutputFormat (used for `.esm` comparison)
-use crate::options::OutputFormat;
 
 pub struct OutputFileList {
     pub output_files: Vec<options::OutputFile>,
@@ -63,7 +61,7 @@ impl OutputFileList {
         let mut output_files: Vec<options::OutputFile> =
             Vec::with_capacity(length as usize);
         // PERF(port): was appendNTimesAssumeCapacity — profile in Phase B
-        output_files.resize_with(length as usize, || OutputFile::ZERO_VALUE);
+        output_files.resize_with(length as usize, OutputFile::zero_value);
 
         Self {
             output_files,
@@ -96,6 +94,10 @@ impl OutputFileList {
         c: &LinkerContext,
         chunks: &[Chunk],
     ) -> (u32, u32) {
+        // SAFETY: `parse_graph` is set by `LinkerContext::load` before any chunk
+        // generation runs and outlives the linker context for the duration of the
+        // bundle. This mirrors the Zig `c.parse_graph.*` field access.
+        let parse_graph = unsafe { &*c.parse_graph };
         let source_map_count: usize = if c.options.source_maps.has_external_files() {
             'brk: {
                 let mut count: usize = 0;
@@ -116,11 +118,10 @@ impl OutputFileList {
         let bytecode_count: usize = if c.options.generate_bytecode_cache {
             'bytecode_count: {
                 let mut bytecode_count: usize = 0;
+                let loaders = parse_graph.input_files.items_loader();
                 for chunk in chunks {
-                    let loader: Loader = if chunk.entry_point.is_entry_point {
-                        // TODO(port): MultiArrayList field accessor — verify `.loader()` slice method name
-                        c.parse_graph.input_files.loader()
-                            [chunk.entry_point.source_index as usize]
+                    let loader: Loader = if chunk.entry_point.is_entry_point() {
+                        loaders[chunk.entry_point.source_index() as usize]
                     } else {
                         Loader::Js
                     };
@@ -137,7 +138,7 @@ impl OutputFileList {
 
         // module_info is generated for ESM bytecode in --compile builds
         let module_info_count: usize = if c.options.generate_bytecode_cache
-            && c.options.output_format == OutputFormat::Esm
+            && c.options.output_format == Format::Esm
             && c.options.compile
         {
             bytecode_count
@@ -148,7 +149,7 @@ impl OutputFileList {
         let additional_output_files_count: usize = if c.options.compile_to_standalone_html {
             0
         } else {
-            c.parse_graph.additional_output_files.len()
+            parse_graph.additional_output_files.len()
         };
         (
             u32::try_from(

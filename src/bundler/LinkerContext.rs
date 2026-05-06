@@ -300,7 +300,7 @@ impl<'a> LinkerContext<'a> {
         let stmts: &[Stmt] = unsafe { &*part.stmts };
         if stmts.len() == 1 {
             if let Some(s_import) = stmts[0].data.as_s_import() {
-                let record = self.graph.ast.items_import_records()[source_index as usize].at(s_import.import_record_index);
+                let record = self.graph.ast.items_import_records()[source_index as usize].at(s_import.import_record_index as usize);
                 if record.source_index.is_valid()
                     && self.graph.meta.items_flags()[record.source_index.get() as usize].wrap == WrapKind::None
                 {
@@ -1350,8 +1350,9 @@ impl<'a> LinkerContext<'a> {
         // any import to be considered different if the import's output path has changed.
         hasher.write(&chunk.template.data);
 
-        let public_path: &[u8] = if chunk.flags.is_browser_chunk_from_server_build {
-            // SAFETY: self is BundleV2.linker; container_of
+        let public_path: &[u8] = if chunk.flags.contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD) {
+            // SAFETY: self is BundleV2.linker; container_of recovers the parent.
+            // `transpiler_for_target` only reads `bundle.browser_transpiler`.
             let bundle = unsafe {
                 &mut *((self as *mut LinkerContext as *mut u8)
                     .sub(offset_of!(BundleV2, linker))
@@ -1546,7 +1547,7 @@ impl<'a> LinkerContext<'a> {
         alloc: &Bump,
         ast: &JSAst,
     ) -> Result<bool, BunError> {
-        let record = ast.import_records.at(import_record_index);
+        let record = ast.import_records.at(import_record_index as usize);
         // Barrel optimization: deferred import records should be dropped
         if record.flags.contains(bun_options_types::ImportRecordFlags::IS_UNUSED) {
             return Ok(true);
@@ -3386,9 +3387,10 @@ impl<'a> LinkerContext<'a> {
             if !matches!(stmt.data, bun_js_parser::ast::stmt::Data::SLazyExport(_)) {
                 panic!("Internal error: expected top-level lazy export statement");
             }
-            // SAFETY: `css_ast` is a `*mut BundlerStyleSheet` pointing into the
-            // graph's arena-backed AST column; valid for the link pass.
-            let css_ast = unsafe { &mut *css_ast };
+            // SAFETY: `css_ast` is a type-erased `*mut BundlerStyleSheet`
+            // (BundledAst.rs:58) pointing into the graph's arena-backed AST
+            // column; cast back and deref for the link pass.
+            let css_ast = unsafe { &mut *(css_ast as *mut css::BundlerStyleSheet) };
             'out: {
                 if css_ast.local_scope.count() == 0 {
                     break 'out;

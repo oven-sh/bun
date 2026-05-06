@@ -2210,7 +2210,7 @@ pub mod bv2_impl {
             let mut had_busted_dir_cache = false;
             let resolve_result: _resolver::Result = loop {
                 // SAFETY: see `transpiler` note above.
-                match unsafe { &mut *transpiler }.resolver.resolve(
+                match unsafe { &mut *transpiler }.resolver.resolve_with_global_cache(
                     source_dir,
                     &import_record.specifier,
                     import_record.kind,
@@ -6066,7 +6066,7 @@ pub mod bv2_impl {
 
                 let mut had_busted_dir_cache = false;
                 let resolve_result: _resolver::Result = 'inner: loop {
-                    match transpiler.resolver.resolve_with_framework(
+                    match transpiler.resolver.resolve_with_framework_and_global_cache(
                         source_dir,
                         import_record.path.text,
                         import_record.kind,

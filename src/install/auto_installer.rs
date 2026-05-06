@@ -314,6 +314,10 @@ impl hooks::AutoInstaller for PackageManager {
         self.on_wake = handler;
     }
 
+    fn on_wake_context(&self) -> Option<core::ptr::NonNull<core::ffi::c_void>> {
+        self.on_wake.context
+    }
+
     fn path_for_resolution<'b>(
         &mut self,
         package_id: PackageID,

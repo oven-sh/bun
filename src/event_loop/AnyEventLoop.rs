@@ -28,6 +28,12 @@ unsafe extern "Rust" {
     /// for the current thread. Kept as a bare extern (no owner). No caller-side
     /// preconditions: panics (not UB) if no VM is bound on this thread.
     pub(crate) safe fn __bun_js_event_loop_current() -> *mut ();
+
+    /// Like `__bun_js_event_loop_current`, but returns null instead of panicking
+    /// when no VM is bound on this thread. Used by `bun_install::PackageManager`
+    /// to fall back to a `MiniEventLoop` when called from a VM-less thread
+    /// (e.g. `bun build` CLI or the bundler's worker thread).
+    pub(crate) safe fn __bun_js_event_loop_current_or_null() -> *mut ();
 }
 
 /// Wrap an erased `*mut jsc::EventLoop` in a
@@ -114,8 +120,29 @@ impl<'a> AnyEventLoop<'a> {
         }
     }
 
+<<<<<<< HEAD
     // All callers pass a pointer, so we take the erased fn-ptr form directly;
     // callers cast.
+=======
+    /// Like `js_current`, but falls back to a fresh `Mini` event loop when no
+    /// VM is bound on the calling thread. Used by `bun_install::PackageManager`
+    /// so auto-install works from the `bun build` CLI and the bundler's worker
+    /// thread (neither of which has a VM).
+    pub fn js_current_or_mini() -> AnyEventLoop<'static> {
+        let ptr = __bun_js_event_loop_current_or_null();
+        if ptr.is_null() {
+            AnyEventLoop::Mini(MiniEventLoop::init())
+        } else {
+            AnyEventLoop::Js {
+                owner: JsEventLoop::current(),
+            }
+        }
+    }
+
+    // PORT NOTE: Zig `context: anytype` + `@ptrCast(isDone)` erases the fn-ptr
+    // type at the call into `mini.tick(ctx, *const fn(*anyopaque) bool)`. All
+    // callers pass a pointer, so we take the erased form directly; callers cast.
+>>>>>>> b57303fd33 (Enable auto-install for bun build and Bun.build())
     pub fn tick(
         &mut self,
         context: *mut core::ffi::c_void,

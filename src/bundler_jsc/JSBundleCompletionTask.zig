@@ -24,6 +24,10 @@ pub fn createAndScheduleCompletionTask(
         .plugins = plugins,
         .log = Logger.Log.init(bun.default_allocator),
         .task = undefined,
+        .global_cache = globalThis.bunVM().transpiler.options.global_cache,
+        .install = globalThis.bunVM().transpiler.options.install,
+        .prefer_offline_install = globalThis.bunVM().transpiler.options.prefer_offline_install,
+        .prefer_latest_install = globalThis.bunVM().transpiler.options.prefer_latest_install,
     });
     completion.task = JSBundleCompletionTask.TaskCompletion.init(completion);
 
@@ -78,6 +82,10 @@ pub const JSBundleCompletionTask = struct {
     transpiler: *BundleV2 = undefined,
     plugins: ?*bun.jsc.API.JSBundler.Plugin = null,
     started_at_ns: u64 = 0,
+    global_cache: options.GlobalCache = .disable,
+    install: ?*api.BunInstall = null,
+    prefer_offline_install: bool = false,
+    prefer_latest_install: bool = false,
 
     pub fn configureBundler(
         completion: *JSBundleCompletionTask,
@@ -209,6 +217,11 @@ pub const JSBundleCompletionTask = struct {
             // Emitting DCE annotations is nonsensical in --compile.
             transpiler.options.emit_dce_annotations = false;
         }
+
+        transpiler.options.global_cache = completion.global_cache;
+        transpiler.options.install = completion.install;
+        transpiler.options.prefer_offline_install = completion.prefer_offline_install;
+        transpiler.options.prefer_latest_install = completion.prefer_latest_install;
 
         transpiler.configureLinker();
         try transpiler.configureDefines();

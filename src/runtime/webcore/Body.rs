@@ -1763,7 +1763,7 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
         let encoding = encoder.encoding;
         // encoder dropped at end of scope (replaces defer encoder.deinit())
 
-        let js_value = match bun_core::form_data::to_js(global_object, blob.slice(), encoding) {
+        let js_value = match webcore::form_data::FormData::to_js(global_object, blob.slice(), &encoding) {
             Ok(v) => v,
             Err(err) => {
                 blob.detach();

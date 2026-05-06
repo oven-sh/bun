@@ -5,10 +5,14 @@ use bun_alloc::AllocError;
 use bun_collections::StringHashMap;
 use bun_core::Error;
 use bun_paths::{self as path, AbsPath, PathBuffer, WPathBuffer, MAX_PATH_BYTES, SEP, SEP_STR};
+use bun_paths::resolve_path;
+use bun_paths::platform::Auto as PlatformAuto;
 use bun_semver::{ExternalString, String};
 use bun_str::{strings, w, ZStr};
 use bun_sys::{self as sys, Fd, Mode};
 
+use crate::bun_json;
+use crate::bun_json::ExprAccessors as _;
 use crate::dependency::Dependency;
 use crate::install::{self as Install, DependencyID, ExternalStringList};
 use crate::windows_shim::BinLinkingShim as WinBinLinkingShim;

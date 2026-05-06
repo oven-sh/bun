@@ -266,7 +266,7 @@ impl PackageManager {
                         }
                     };
                     let mut builder = self.lockfile.string_builder();
-                    lockfile::Package::Scripts::parse_count(&mut builder, &json_root);
+                    Scripts::parse_count(&mut builder, &json_root);
                     builder.allocate().expect("unreachable");
                     debug_assert!(*package_id != INVALID_PACKAGE_ID);
                     // TODO(port): MultiArrayList SoA accessor — verify .items(.scripts) mapping
@@ -313,8 +313,8 @@ impl PackageManager {
                     &dependency,
                     resolution,
                     install_peer,
-                    assign_root_resolution,
-                    fail_root_resolution,
+                    PackageManager::assign_root_resolution,
+                    PackageManager::fail_root_resolution,
                 )?;
                 if let Some(ptr) = any_root {
                     let new_resolution_id =

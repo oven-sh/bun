@@ -1483,9 +1483,9 @@ impl FFI {
             return invalid_options_arg(global);
         };
 
-        let filepath_buf = bun_paths::path_buffer_pool().get();
+        let mut filepath_buf = bun_paths::path_buffer_pool::get();
         let name: &[u8] = 'brk: {
-            let ext: &[u8] = match () {
+            let _ext: &[u8] = match () {
                 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
                 () => b"so",
                 #[cfg(target_os = "macos")]
@@ -1494,9 +1494,12 @@ impl FFI {
                 () => b"dll",
                 // TODO(port): wasm @compileError("TODO")
             };
-            if let Some(resolved) =
-                ModuleLoader::resolve_embedded_file(vm, &mut *filepath_buf, name_slice.slice(), ext)
-            {
+            // TODO(b2-blocked): `ModuleLoader::resolve_embedded_file` lives in
+            // `crate::jsc_hooks` (private hook with a different signature) —
+            // wire the standalone-graph extraction once that surface is public.
+            let _ = (vm, &mut *filepath_buf);
+            #[allow(unreachable_code)]
+            if let Some(resolved) = None::<&[u8]> {
                 filepath_buf[resolved.len()] = 0;
                 break 'brk &filepath_buf[0..resolved.len()];
             }
@@ -1609,14 +1612,11 @@ impl FFI {
                 }
                 Step::Compiled(compiled) => {
                     let str = ZigString::init(function_name.as_bytes());
-                    let cb = host_fn::new_runtime_function(
+                    let cb = new_runtime_function(
                         global,
                         &str,
                         u32::try_from(function.arg_types.len()).unwrap(),
-                        // SAFETY: compiled.ptr is a valid JSHostFn entry point from TCC
-                        unsafe {
-                            core::mem::transmute::<*mut c_void, *const jsc::JSHostFn>(compiled.ptr)
-                        },
+                        compiled.ptr as *const c_void,
                         true,
                         function.symbol_from_dynamic_library,
                     );
@@ -1633,7 +1633,7 @@ impl FFI {
         });
 
         let js_object = lib.to_js(global);
-        jsc::codegen::JSFFI::symbols_value_set_cached(js_object, global, obj);
+        symbols_value_set_cached(js_object, global, obj);
         js_object
     }
 

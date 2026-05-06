@@ -120,8 +120,8 @@ pub struct S3HttpSimpleTask {
     pub poll_ref: KeepAlive,
 }
 
-// TODO(port): bun.JSTerminated is `error{Terminated}` — confirm bun_jsc::JsTerminated is the right newtype
-type JsTerminatedResult<T> = Result<T, JsTerminated>;
+// Re-export the canonical alias so sibling modules that imported it from here keep compiling.
+pub use bun_jsc::JsTerminatedResult;
 
 pub enum Callback {
     Stat(fn(S3StatResult<'_>, *mut c_void) -> JsTerminatedResult<()>),

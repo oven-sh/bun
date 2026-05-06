@@ -1841,7 +1841,8 @@ pub extern "C" fn Bun__escapeHTML8(
     let input_slice = unsafe { core::slice::from_raw_parts(ptr, len) };
     // PERF(port): was stack-fallback (256 bytes) — profile in Phase B
 
-    let escaped = match strings::escape_html_for_latin1_input(input_slice) {
+    use bun_str::immutable::escape_html::{escape_html_for_latin1_input, Escaped};
+    let escaped = match escape_html_for_latin1_input(input_slice) {
         Ok(v) => v,
         Err(_) => {
             let _ = global_object
@@ -1851,9 +1852,9 @@ pub extern "C" fn Bun__escapeHTML8(
     };
 
     match escaped {
-        strings::EscapedHTML::Static(val) => ZigString::init(val).to_js(global_object),
-        strings::EscapedHTML::Original => input_value,
-        strings::EscapedHTML::Allocated(escaped_html) => {
+        Escaped::Static(val) => ZigString::init(val).to_js(global_object),
+        Escaped::Original => input_value,
+        Escaped::Allocated(escaped_html) => {
             if cfg!(debug_assertions) {
                 // the output should always be longer than the input
                 debug_assert!(escaped_html.len() > input_slice.len());

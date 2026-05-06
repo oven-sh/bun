@@ -4938,15 +4938,15 @@ impl DevServer<'_> {
         &mut self,
         abs_path: &[u8],
         associated_route: framework_router::RouteIndex,
-        file_kind: framework_router::RouteFileKind,
+        file_kind: framework_router::FileKind,
     ) -> Result<OpaqueFileId, bun_core::Error> {
         let index = self.server_graph.insert_stale_extra(abs_path, false, true)?;
         self.route_lookup.put(
             index,
-            RouteIndexAndRecurseFlag {
-                route_index: associated_route,
-                should_recurse_when_visiting: file_kind == framework_router::RouteFileKind::Layout,
-            },
+            RouteIndexAndRecurseFlag::new(
+                associated_route,
+                file_kind == framework_router::FileKind::Layout,
+            ),
         )?;
         Ok(to_opaque_file_id::<{ bake::Side::Server }>(index))
     }

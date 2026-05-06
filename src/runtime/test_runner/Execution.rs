@@ -39,7 +39,9 @@ use core::ptr::NonNull;
 #[allow(unused_imports)] use crate::test_runner::expect::{JSValueTestExt, JSGlobalObjectTestExt, make_formatter};
 
 use bun_core::Timespec; // TODO(port): confirm crate path for bun.timespec
-use bun_jsc::{JSGlobalObject, JsResult, VirtualMachine};
+use bun_jsc::{JSGlobalObject, JsResult};
+// `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
+use bun_jsc::virtual_machine::VirtualMachine;
 use bun_core::scoped_log;
 
 use super::debug::group as group_log; // bun_test.debug.group
@@ -247,7 +249,7 @@ impl Execution {
     // Zig `deinit` only freed `groups` and `#sequences` via the parent allocator.
     // Both are now `Box<[T]>` and drop automatically — no explicit Drop impl needed.
 
-    pub fn load_from_order(&mut self, order: &mut Order) -> JsResult<()> {
+    pub fn load_from_order(&mut self, order: &mut Order::Order) -> JsResult<()> {
         debug_assert!(self.groups.is_empty());
         debug_assert!(self.sequences.is_empty());
         // Zig: bun.safety.CheckedAllocator asserts that order's lists used the same gpa.

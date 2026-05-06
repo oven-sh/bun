@@ -195,6 +195,9 @@ pub enum JsTerminated {
     JSTerminated,
 }
 
+/// Zig: `bun.JSTerminated!T` — short alias for `Result<T, JsTerminated>`.
+pub type JsTerminatedResult<T> = Result<T, JsTerminated>;
+
 impl From<JsTerminated> for bun_core::Error {
     fn from(_: JsTerminated) -> Self {
         bun_core::err!("JSTerminated")

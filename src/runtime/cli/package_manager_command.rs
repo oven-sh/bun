@@ -63,15 +63,19 @@ pub struct PackageManagerCommand;
 
 impl PackageManagerCommand {
     pub fn handle_load_lockfile_errors(load_lockfile: &Lockfile::LoadResult, pm: &mut PackageManager) {
+        // TODO(port): `pm.options.log_level != .silent` — blocked_on
+        // bun_install::package_manager_real Options::LogLevel un-gate (reconciler-6).
+        let not_silent = true;
+        let _ = pm;
         if matches!(load_lockfile, Lockfile::LoadResult::NotFound) {
-            if pm.options.log_level != bun_install::LogLevel::Silent {
+            if not_silent {
                 Output::err_generic("Lockfile not found", format_args!(""));
             }
             Global::exit(1);
         }
 
         if let Lockfile::LoadResult::Err(err) = load_lockfile {
-            if pm.options.log_level != bun_install::LogLevel::Silent {
+            if not_silent {
                 Output::err_generic(
                     "Error loading lockfile: {s}",
                     format_args!("{}", err.value.name()),

@@ -2524,7 +2524,9 @@ struct GitHandler;
 
 // TODO(port): mutable static atomic + thread handle — single use per process
 static SUCCESS: AtomicU32 = AtomicU32::new(0);
-static mut THREAD: Option<bun_threading::Thread> = None;
+// Zig used `std.Thread`; bun_threading has no top-level Thread wrapper yet,
+// so use std::thread::JoinHandle directly (CLI-only, no JSC interaction).
+static mut THREAD: Option<std::thread::JoinHandle<()>> = None;
 
 impl GitHandler {
     pub fn spawn(destination: &[u8], path: &[u8], verbose: bool) {

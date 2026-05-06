@@ -1005,6 +1005,24 @@ impl Default for CallbackStackEntry {
     }
 }
 
+impl<'a> md::types::RendererImpl for JsCallbackRenderer<'a> {
+    fn enter_block(&mut self, block_type: md::BlockType, data: u32, flags: u32) -> JsResult<()> {
+        Self::enter_block_impl(self as *mut Self as *mut c_void, block_type, data, flags)
+    }
+    fn leave_block(&mut self, block_type: md::BlockType, data: u32) -> JsResult<()> {
+        Self::leave_block_impl(self as *mut Self as *mut c_void, block_type, data)
+    }
+    fn enter_span(&mut self, span_type: md::SpanType, detail: md::SpanDetail<'_>) -> JsResult<()> {
+        Self::enter_span_impl(self as *mut Self as *mut c_void, span_type, detail)
+    }
+    fn leave_span(&mut self, span_type: md::SpanType) -> JsResult<()> {
+        Self::leave_span_impl(self as *mut Self as *mut c_void, span_type)
+    }
+    fn text(&mut self, text_type: md::TextType, content: &[u8]) -> JsResult<()> {
+        Self::text_impl(self as *mut Self as *mut c_void, text_type, content)
+    }
+}
+
 impl<'a> JsCallbackRenderer<'a> {
     fn init(global_object: &'a JSGlobalObject, src_text: &'a [u8], heading_ids: bool) -> Result<JsCallbackRenderer<'a>, bun_alloc::AllocError> {
         let mut self_ = JsCallbackRenderer {
@@ -1063,14 +1081,6 @@ impl<'a> JsCallbackRenderer<'a> {
     fn renderer(&mut self) -> md::Renderer<'_> {
         md::Renderer { ptr: self }
     }
-
-    const VTABLE: md::types::VTable = md::types::VTable {
-        enter_block: Self::enter_block_impl,
-        leave_block: Self::leave_block_impl,
-        enter_span: Self::enter_span_impl,
-        leave_span: Self::leave_span_impl,
-        text: Self::text_impl,
-    };
 
     // ========================================
     // Content stack operations

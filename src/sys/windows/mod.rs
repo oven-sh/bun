@@ -4354,16 +4354,19 @@ pub fn move_opened_file_at(
     const STRUCT_BUF_LEN: usize = size_of::<win32::FILE_RENAME_INFORMATION_EX>() + (bun_paths::MAX_PATH_BYTES - 1);
     #[repr(align(8))] // align_of FILE_RENAME_INFORMATION_EX
     struct AlignedBuf([u8; STRUCT_BUF_LEN]);
-    // SAFETY: AlignedBuf is plain [u8; N] used as raw byte storage; fully written via *rename_info = ... and copy_nonoverlapping before any read
-    let mut rename_info_buf: AlignedBuf = unsafe { MaybeUninit::uninit().assume_init() };
+    let mut rename_info_buf = MaybeUninit::<AlignedBuf>::uninit();
 
     let struct_len = size_of::<win32::FILE_RENAME_INFORMATION_EX>() - 1 + new_file_name.len() * 2;
     if struct_len > STRUCT_BUF_LEN {
         return bun_sys::Result::errno(E::NAMETOOLONG, bun_sys::Tag::NtSetInformationFile);
     }
 
-    // SAFETY: buffer aligned for FILE_RENAME_INFORMATION_EX
-    let rename_info = unsafe { &mut *(rename_info_buf.0.as_mut_ptr() as *mut win32::FILE_RENAME_INFORMATION_EX) };
+    // SAFETY: AlignedBuf is #[repr(align(8))] which matches FILE_RENAME_INFORMATION_EX alignment.
+    // Kept as a raw pointer (not &mut) so provenance covers the full STRUCT_BUF_LEN bytes; the
+    // trailing FileName write extends past size_of::<FILE_RENAME_INFORMATION_EX>() and a &mut
+    // reborrow would shrink provenance to just the struct, making that write UB. The buffer is
+    // uniquely owned on this stack frame, so no aliasing is possible.
+    let rename_info: *mut win32::FILE_RENAME_INFORMATION_EX = rename_info_buf.as_mut_ptr().cast();
     // SAFETY: all-zero is a valid IO_STATUS_BLOCK
     let mut io_status_block: win32::IO_STATUS_BLOCK = unsafe { core::mem::zeroed() };
 
@@ -4371,26 +4374,32 @@ pub fn move_opened_file_at(
     if replace_if_exists {
         flags |= win32::FILE_RENAME_REPLACE_IF_EXISTS;
     }
-    *rename_info = win32::FILE_RENAME_INFORMATION_EX {
-        Flags: flags,
-        RootDirectory: if bun_paths::is_absolute_windows_wtf16(new_file_name) { ptr::null_mut() } else { new_dir_fd.cast() },
-        FileNameLength: u32::try_from(new_file_name.len() * 2).unwrap(), // already checked error.NameTooLong
-        FileName: [0; 1], // overwritten below
-    };
-    // SAFETY: rename_info_buf has space for new_file_name after the header
+    // SAFETY: rename_info is aligned, non-null, and points into uninitialized storage we own;
+    // ptr::write initializes the header without dropping prior (uninit) contents.
+    unsafe {
+        ptr::write(rename_info, win32::FILE_RENAME_INFORMATION_EX {
+            Flags: flags,
+            RootDirectory: if bun_paths::is_absolute_windows_wtf16(new_file_name) { ptr::null_mut() } else { new_dir_fd.cast() },
+            FileNameLength: u32::try_from(new_file_name.len() * 2).unwrap(), // already checked error.NameTooLong
+            FileName: [0; 1], // overwritten below
+        });
+    }
+    // SAFETY: rename_info_buf has STRUCT_BUF_LEN bytes (>= struct_len, checked above) reserved for
+    // the variable-length FileName tail. addr_of_mut! on the raw pointer preserves full-buffer
+    // provenance so writing new_file_name.len() u16s here stays in-bounds.
     unsafe {
         ptr::copy_nonoverlapping(
             new_file_name.as_ptr(),
-            rename_info.FileName.as_mut_ptr(),
+            ptr::addr_of_mut!((*rename_info).FileName).cast::<u16>(),
             new_file_name.len(),
         );
     }
-    // SAFETY: src_fd valid; rename_info has struct_len bytes
+    // SAFETY: src_fd valid; rename_info has struct_len initialized bytes
     let rc = unsafe {
         ntdll::NtSetInformationFile(
             src_fd.cast(),
             &mut io_status_block,
-            rename_info as *mut _ as *mut c_void,
+            rename_info.cast::<c_void>(),
             u32::try_from(struct_len).unwrap(), // already checked for error.NameTooLong
             win32::FileInformationClass::FileRenameInformationEx,
         )

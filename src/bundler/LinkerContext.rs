@@ -3106,7 +3106,7 @@ impl<'a> LinkerContext<'a> {
     /// Spec: `LinkerContext.zig:2471 matchImportsWithExportsForFile`.
     pub fn match_imports_with_exports_for_file(
         &mut self,
-        named_imports_ptr: &mut bun_js_parser::ast::bundled_ast::NamedImports,
+        named_imports_ptr: *const bun_js_parser::ast::bundled_ast::NamedImports,
         imports_to_bind: &mut crate::RefImportData,
         source_index: crate::IndexInt,
     ) {
@@ -3115,13 +3115,22 @@ impl<'a> LinkerContext<'a> {
         // (owns a `BabyList`), so we sort an index vector over the live
         // keys/values instead — same observable iteration order (ascending
         // `inner_index`). The write-back is a no-op here since we never mutate
-        // the local; the Zig clone existed only because `match_import_with_export`
-        // re-read `named_imports` via the SoA column, which we re-fetch fresh
-        // each call.
-        let keys: *const [Ref] = named_imports_ptr.keys();
-        let values: *const [NamedImport] = named_imports_ptr.values();
-        // SAFETY: `keys`/`values` borrow stable backing storage; the loop body
-        // never mutates `named_imports_ptr` (only `imports_to_bind`/`log`/`symbols`).
+        // the map.
+        //
+        // The Zig clone existed to break the alias between this parameter and
+        // `self.graph.ast.named_imports[source_index]`, which
+        // `match_import_with_export` re-reads via the SoA column. Taking the
+        // parameter as a raw `*const` (no uniqueness assertion) and reading
+        // through it preserves that alias-safety without the clone: no live
+        // `&`/`&mut` to the column element spans the `&mut self` call below.
+        //
+        // SAFETY: `named_imports_ptr` points into the `graph.ast.named_imports`
+        // SoA column, which is never reallocated during linking; the loop body
+        // never mutates that column (only `imports_to_bind`/`log`/`symbols`/
+        // `meta.probably_typescript_type`), so the backing `keys`/`values`
+        // slices stay valid for the whole loop.
+        let keys: *const [Ref] = unsafe { (*named_imports_ptr).keys() };
+        let values: *const [NamedImport] = unsafe { (*named_imports_ptr).values() };
         let mut order: Vec<usize> = (0..unsafe { (&*keys).len() }).collect();
         order.sort_by(|&a, &b| unsafe { (&*keys)[a].inner_index().cmp(&(&*keys)[b].inner_index()) });
 

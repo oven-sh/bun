@@ -565,15 +565,17 @@ impl ProxyTunnel {
         // SAFETY: proxy_tunnel is a non-null Box::into_raw result.
         this.proxy_tunnel = Some(unsafe { NonNull::new_unchecked(proxy_tunnel) });
         proxy_tunnel_ref.socket = Socket::from_generic::<IS_SSL>(socket);
-        // Drop the unique &mut borrows before calling into the SSLWrapper: start()
-        // synchronously fires on_open()/write_encrypted(), which re-derive &mut to
-        // both `*this` and `*proxy_tunnel` from the raw ctx pointer. Holding
-        // `proxy_tunnel_ref` (and `this`) live across that call would alias &mut.
-        let _ = proxy_tunnel_ref;
-        let _ = this;
+        // End the named &mut borrows before calling into the SSLWrapper. start()
+        // synchronously fires on_open()/write_encrypted(), which re-derive
+        // borrows to `*this` and fields of `*proxy_tunnel` from the raw ctx
+        // pointer. NLL ends `proxy_tunnel_ref`/`this` here since neither is
+        // used below; the temporary `&mut SSLWrapper` formed for the call is
+        // the sole live unique borrow of the wrapper, and the callbacks access
+        // only disjoint tunnel fields via `addr_of!` (see ALIASING NOTE).
         if !start_payload.is_empty() {
             scoped_log!(http_proxy_tunnel, "proxy tunnel start with payload");
-            // SAFETY: sole live access; callbacks reborrow via ctx, never concurrently with this line.
+            // SAFETY: `&mut wrapper` is the sole live unique borrow; callbacks
+            // touch only disjoint fields via raw projection.
             unsafe { (*proxy_tunnel).wrapper.as_mut().unwrap().start_with_payload(start_payload) };
         } else {
             scoped_log!(http_proxy_tunnel, "proxy tunnel start");
@@ -583,19 +585,31 @@ impl ProxyTunnel {
     }
 
     pub fn close(&mut self, err: Error) {
-        self.shutdown_err = err;
-        self.shutdown();
+        // SAFETY: `&mut self` was derived from the Box::into_raw pointer; the
+        // receiver is never used again after this line so the raw call's
+        // disjoint field projections do not alias it.
+        unsafe { Self::close_raw(self, err) };
     }
 
-    /// Raw-pointer entry for `close()` — used from on_data after the prior
-    /// `&mut self` borrow is dead, so the fresh `&mut *this` here does not
-    /// alias under Stacked Borrows.
+    /// Raw-pointer close: sets `shutdown_err` then drives `wrapper.shutdown()`.
+    /// Takes `*mut Self` so the SSLWrapper close callback (which reenters
+    /// on_close and reborrows tunnel fields via raw projection) does not alias
+    /// a held `&mut ProxyTunnel`.
     ///
     /// # Safety
-    /// `this` must point to a live, exclusively-accessible `ProxyTunnel`.
+    /// `this` must be live; caller must not hold `&mut ProxyTunnel` or
+    /// `&mut HTTPClient` across this call.
     pub unsafe fn close_raw(this: *mut Self, err: Error) {
-        // SAFETY: caller contract.
-        unsafe { (*this).close(err) }
+        // SAFETY: write to `shutdown_err` only — disjoint from `wrapper`.
+        unsafe { *addr_of_mut!((*this).shutdown_err) = err };
+        // SAFETY: project `&mut wrapper` from the raw ptr. shutdown() fires
+        // on_close synchronously, which accesses only disjoint tunnel fields
+        // via `addr_of!` (see on_close), so this `&mut SSLWrapper` remains the
+        // sole unique borrow of its memory across the reentrant call.
+        if let Some(wrapper) = unsafe { &mut *addr_of_mut!((*this).wrapper) } {
+            // fast shutdown the connection
+            let _ = wrapper.shutdown(true);
+        }
     }
 
     pub fn shutdown(&mut self) {
@@ -607,29 +621,39 @@ impl ProxyTunnel {
 
     pub fn on_writable<const IS_SSL: bool>(&mut self, socket: HTTPSocket<IS_SSL>) {
         scoped_log!(http_proxy_tunnel, "ProxyTunnel onWritable");
-        self.ref_();
+        // Capture the raw pointer FIRST and perform every subsequent field
+        // access through it. Touching `self` again after deriving `self_ptr`
+        // would (under Stacked Borrows) pop `self_ptr`'s tag, invalidating the
+        // later flush()/deref(). The receiver borrow is never used after this
+        // line.
         let self_ptr: *mut Self = self;
-        // PORT NOTE: reshaped for borrowck — Zig `defer wrapper.flush()` runs
-        // AFTER the body but BEFORE the `defer deref()` (LIFO). We mirror that
-        // LIFO order explicitly at every exit instead of via a scopeguard, since
-        // a guard's drop would form a fresh `&mut *self_ptr` while the `self`
-        // receiver borrow is still live (locals drop before params) — aliased &mut.
-        let encoded_data = self.write_buffer.slice();
-        if !encoded_data.is_empty() {
-            let written = socket.write(encoded_data);
-            let written = usize::try_from(written).unwrap();
-            if written == encoded_data.len() {
-                self.write_buffer.reset();
-            } else {
-                self.write_buffer.cursor += written;
+        // SAFETY: `self_ptr` is live; ref_count is a Cell.
+        unsafe { ref_raw(self_ptr) };
+        // PORT NOTE: Zig `defer wrapper.flush()` runs AFTER the body but BEFORE
+        // `defer deref()` (LIFO). We mirror that order explicitly at the single
+        // exit. flush() → handle_traffic → write_encrypted reenters and touches
+        // `write_buffer`/`socket` via raw projection; we must not hold a
+        // `&mut ProxyTunnel` (or any borrow overlapping those fields) across it.
+        {
+            // SAFETY: `&mut write_buffer` is disjoint from `wrapper`; sole
+            // unique borrow of that field for this scope.
+            let write_buffer = unsafe { &mut *addr_of_mut!((*self_ptr).write_buffer) };
+            let encoded_data = write_buffer.slice();
+            if !encoded_data.is_empty() {
+                let written = socket.write(encoded_data);
+                let written = usize::try_from(written).unwrap();
+                if written == encoded_data.len() {
+                    write_buffer.reset();
+                } else {
+                    write_buffer.cursor += written;
+                }
             }
-        }
-        // End the receiver borrow before reentering via raw ptr. flush() may call
-        // write_encrypted(ctx) which reborrows this tunnel; deref() may free it.
-        let _ = self;
-        // SAFETY: refcount > 0 until deref() below; sole live access via raw ptr.
+        } // drop &mut write_buffer before flush() reborrows it inside write_encrypted
+        // SAFETY: refcount > 0 until deref() below. Project `&mut wrapper` from
+        // the raw ptr; the reentrant write_encrypted touches only `write_buffer`
+        // / `socket` via `addr_of!`, disjoint from this borrow.
         unsafe {
-            if let Some(wrapper) = &mut (*self_ptr).wrapper {
+            if let Some(wrapper) = &mut *addr_of_mut!((*self_ptr).wrapper) {
                 // Cycle to through the SSL state machine
                 let _ = wrapper.flush();
             }
@@ -638,14 +662,23 @@ impl ProxyTunnel {
     }
 
     pub fn receive(&mut self, buf: &[u8]) {
-        self.ref_();
+        // Capture raw pointer first; never touch `self` again (see on_writable).
         let self_ptr: *mut Self = self;
-        let _guard = scopeguard::guard((), move |_| {
-            // SAFETY: balances the ref_ above; tunnel still allocated.
-            unsafe { ProxyTunnel::deref(self_ptr) };
-        });
-        if let Some(wrapper) = &mut self.wrapper {
-            wrapper.receive_data(buf);
+        // SAFETY: `self_ptr` is live; ref_count is a Cell.
+        unsafe { ref_raw(self_ptr) };
+        // SAFETY: project `&mut wrapper` from the raw ptr. receive_data() fires
+        // on_data/on_handshake/write_encrypted/on_close synchronously; each
+        // accesses only tunnel fields disjoint from `wrapper` via `addr_of!`
+        // (see ALIASING NOTE), so this `&mut SSLWrapper` stays the sole unique
+        // borrow of its memory across those reentrant calls.
+        unsafe {
+            if let Some(wrapper) = &mut *addr_of_mut!((*self_ptr).wrapper) {
+                wrapper.receive_data(buf);
+            }
+            // Balance the ref_raw above. Runs after receive_data (Zig LIFO
+            // `defer deref()`); `self_ptr`'s provenance is intact because
+            // `self` was never reborrowed after `self_ptr` was captured.
+            ProxyTunnel::deref(self_ptr);
         }
     }
 

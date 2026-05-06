@@ -1325,7 +1325,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             Some(Headers::from(
                 Some(fetch_headers_ref(headers_ref)),
                 HeadersOptions {
-                    body: any_blob_ref(body.get_any_blob()),
+                    body: any_blob_ref_opt(body.get_any_blob().map(|b| &*b)),
                 },
             ))
         } else {
@@ -1485,7 +1485,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 }
             };
 
-            url_string = jsc_url_file_url_from_string(BunString::borrow_utf8(temp_file_path));
+            url_string = jsc::URL::file_url_from_string(BunString::borrow_utf8(temp_file_path));
 
             // PORT NOTE: `find_or_create_file_from_path` is typed against the
             // `crate::webcore::node_types` stub (until it's swapped to a

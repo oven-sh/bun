@@ -401,7 +401,7 @@ impl TimerObjectInternals {
     /// is `()` (see `set_enable_keeping_event_loop_alive`).
     pub fn fire(&mut self, _now: &ElTimespec, vm: *mut VirtualMachine) {
         let id = self.id;
-        let kind = self.flags.kind().big();
+        let kind: KindBig = self.flags.kind().into();
         let async_id = ID { id, kind };
         // SAFETY: `vm` is the live per-thread VM (FIRE_TIMER hook contract);
         // `event_loop_timer()` derives a pointer into the live parent.

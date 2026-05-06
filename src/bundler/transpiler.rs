@@ -2346,6 +2346,407 @@ impl<'a> Transpiler<'a> {
             module_info,
         )
     }
+
+    /// Port of `transpiler.zig:1225 normalizeEntryPointPath`.
+    fn normalize_entry_point_path(&self, _entry: &[u8]) -> &'static [u8] {
+        let entry = self.normalize_entry_point_path_windows_weird(_entry);
+        if !strings::starts_with(entry, b"./") {
+            // Entry point paths without a leading "./" are interpreted as package
+            // paths. This happens because they go through general path resolution
+            // like all other import paths so that plugins can run on them. Requiring
+            // a leading "./" for a relative path simplifies writing plugins because
+            // entry points aren't a special case.
+            //
+            // However, requiring a leading "./" also breaks backward compatibility
+            // and makes working with the CLI more difficult. So attempt to insert
+            // "./" automatically when needed. We don't want to unconditionally insert
+            // a leading "./" because the path may not be a file system path. For
+            // example, it may be a URL. So only insert a leading "./" when the path
+            // is an exact match for an existing file.
+            let mut __entry = Vec::with_capacity(2 + entry.len());
+            __entry.extend_from_slice(b"./");
+            __entry.extend_from_slice(entry);
+            return crate::linker::dupe(&__entry);
+        }
+        crate::linker::dupe(entry)
+    }
+
+    #[cfg(windows)]
+    fn normalize_entry_point_path_windows_weird<'b>(&self, entry: &'b [u8]) -> &'b [u8] {
+        // TODO(port): bun.resolver.isDotSlash + windows path-normalize-if-exists
+        entry
+    }
+    #[cfg(not(windows))]
+    #[inline]
+    fn normalize_entry_point_path_windows_weird<'b>(&self, entry: &'b [u8]) -> &'b [u8] {
+        entry
+    }
+
+    /// Port of `transpiler.zig:1254 enqueueEntryPoints`.
+    ///
+    /// PORT NOTE: the Zig version writes the resolved entry results into a
+    /// caller-provided `[]Result` slice; the only caller (`transform`) discards
+    /// that slice immediately, so the Rust port returns only the count and lets
+    /// `linker.enqueue_resolve_result` push directly onto `resolve_queue`.
+    fn enqueue_entry_points<const NORMALIZE_ENTRY_POINT: bool>(&mut self) -> usize {
+        let mut entry_point_i: usize = 0;
+
+        // PORT NOTE: snapshot entry points so the `&mut self` resolver call
+        // does not conflict with the `&self.options` borrow.
+        let entries: Vec<Box<[u8]>> = self.options.entry_points.iter().cloned().collect();
+        // SAFETY: `self.fs` is the process-lifetime `Fs::FileSystem::instance`
+        // singleton wired in `Transpiler::init`.
+        let top_level_dir = unsafe { (*self.fs).top_level_dir };
+
+        for _entry in entries.iter() {
+            let entry: &[u8] = if NORMALIZE_ENTRY_POINT {
+                self.normalize_entry_point_path(_entry)
+            } else {
+                _entry
+            };
+
+            let _reset = scopeguard::guard((), |_| {
+                js_ast::Expr::data_store_reset();
+                js_ast::Stmt::data_store_reset();
+            });
+
+            let result = match self.resolver.resolve(
+                top_level_dir,
+                entry,
+                bun_options_types::ImportKind::EntryPointBuild,
+            ) {
+                Ok(r) => r,
+                Err(err) => {
+                    bun_core::Output::pretty_error(format_args!(
+                        "Error resolving \"{}\": {}\n",
+                        bstr::BStr::new(entry),
+                        err.name(),
+                    ));
+                    continue;
+                }
+            };
+
+            if result.path_const().is_none() {
+                bun_core::Output::pretty_error(format_args!(
+                    "\"{}\" is disabled due to \"browser\" field in package.json.\n",
+                    bstr::BStr::new(entry),
+                ));
+                continue;
+            }
+
+            if self
+                .linker
+                .enqueue_resolve_result(result)
+                .expect("unreachable")
+            {
+                entry_point_i += 1;
+            }
+        }
+
+        entry_point_i
+    }
+
+    /// Port of `transpiler.zig:1286 transform`.
+    pub fn transform(
+        &mut self,
+        log: *mut logger::Log,
+        _opts: api::TransformOptions,
+    ) -> Result<options::TransformResult, bun_core::Error> {
+        let _ = self.enqueue_entry_points::<true>();
+
+        // SAFETY: `log` is the same `*mut Log` stored on `self.log`; caller
+        // (`BuildCommand::exec`) holds it for the process lifetime.
+        if unsafe { &*log }.level.at_least(logger::Level::Debug) {
+            self.resolver.debug_logs = Some(resolver::DebugLogs::init()?);
+        }
+        self.options.transform_only = true;
+
+        if self.options.output_dir_handle.is_none() {
+            let outstream = TransformOutstream::Stdout(bun_sys::File::stdout());
+            match self.options.import_path_format {
+                options::ImportPathFormat::Relative => {
+                    self.process_resolve_queue(options::ImportPathFormat::Relative, outstream)?;
+                }
+                options::ImportPathFormat::AbsoluteUrl => {
+                    self.process_resolve_queue(options::ImportPathFormat::AbsoluteUrl, outstream)?;
+                }
+                options::ImportPathFormat::AbsolutePath => {
+                    self.process_resolve_queue(options::ImportPathFormat::AbsolutePath, outstream)?;
+                }
+                options::ImportPathFormat::PackagePath => {
+                    self.process_resolve_queue(options::ImportPathFormat::PackagePath, outstream)?;
+                }
+            }
+        } else {
+            let Some(output_dir) = self.options.output_dir_handle.as_ref().copied() else {
+                bun_core::Output::print_error("Invalid or missing output directory.");
+                bun_core::Global::crash();
+            };
+            let outstream = TransformOutstream::Dir(output_dir);
+            match self.options.import_path_format {
+                options::ImportPathFormat::Relative => {
+                    self.process_resolve_queue(options::ImportPathFormat::Relative, outstream)?;
+                }
+                options::ImportPathFormat::AbsoluteUrl => {
+                    self.process_resolve_queue(options::ImportPathFormat::AbsoluteUrl, outstream)?;
+                }
+                options::ImportPathFormat::AbsolutePath => {
+                    self.process_resolve_queue(options::ImportPathFormat::AbsolutePath, outstream)?;
+                }
+                options::ImportPathFormat::PackagePath => {
+                    self.process_resolve_queue(options::ImportPathFormat::PackagePath, outstream)?;
+                }
+            }
+        }
+
+        if bun_core::FeatureFlags::TRACING
+            // SAFETY: `self.options.log` is non-null after `init`.
+            && unsafe { &*self.options.log }.level.at_least(logger::Level::Info)
+        {
+            bun_core::Output::pretty_errorln(format_args!(
+                "<r><d>\n---Tracing---\nResolve time:      {}\nParsing time:      {}\n---Tracing--\n\n<r>",
+                self.resolver.elapsed, self.elapsed,
+            ));
+        }
+
+        let outbase: Box<[u8]> = self.result.outbase.clone();
+        let output_files: Box<[options::OutputFile]> =
+            std::mem::take(&mut self.output_files).into_boxed_slice();
+        // SAFETY: see above.
+        let mut final_result = options::TransformResult::init(outbase, output_files, unsafe {
+            &mut *log
+        })?;
+        final_result.root_dir = self.options.output_dir_handle.as_ref().copied();
+        Ok(final_result)
+    }
+
+    /// Port of `transpiler.zig:1344 processResolveQueue` (with
+    /// `wrap_entry_point = false`, the only value passed by the in-tree caller).
+    fn process_resolve_queue(
+        &mut self,
+        import_path_format: options::ImportPathFormat,
+        outstream: TransformOutstream,
+    ) -> Result<(), bun_core::Error> {
+        while let Some(item) = self.resolve_queue.pop_front() {
+            js_ast::Expr::data_store_reset();
+            js_ast::Stmt::data_store_reset();
+
+            let output_file = match self.build_with_resolve_result_eager(
+                item,
+                import_path_format,
+                &outstream,
+                None,
+            ) {
+                Ok(Some(f)) => f,
+                Ok(None) | Err(_) => continue,
+            };
+            self.output_files.push(output_file);
+        }
+        Ok(())
+    }
+
+    /// Port of `transpiler.zig:380 buildWithResolveResultEager`.
+    fn build_with_resolve_result_eager(
+        &mut self,
+        resolve_result: resolver::Result,
+        import_path_format: options::ImportPathFormat,
+        _outstream: &TransformOutstream,
+        client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint>,
+    ) -> Result<Option<options::OutputFile>, bun_core::Error> {
+        if resolve_result.flags.is_external() {
+            return Ok(None);
+        }
+
+        let Some(file_path_ref) = resolve_result.path_const() else {
+            return Ok(None);
+        };
+        let mut file_path = file_path_ref.clone();
+
+        // Step 1. Parse & scan
+        let loader = self.options.loader(file_path.name.ext);
+
+        if let Some(cep) = client_entry_point_.as_deref() {
+            file_path = cep.source.path.clone();
+        }
+
+        // SAFETY: `self.fs` is the process-lifetime singleton.
+        let rel = unsafe { &*self.fs }.relative_to(file_path.text);
+        file_path.pretty = crate::linker::dupe(rel);
+
+        let mut output_file = options::OutputFile::zero_value();
+        output_file.src_path = logger::fs::Path::init(file_path.text);
+        output_file.loader = loader;
+        output_file.output_kind = options::OutputKind::Chunk;
+        output_file.side = None;
+        output_file.entry_point_index = None;
+
+        match loader {
+            options::Loader::Jsx
+            | options::Loader::Tsx
+            | options::Loader::Js
+            | options::Loader::Ts
+            | options::Loader::Json
+            | options::Loader::Jsonc
+            | options::Loader::Toml
+            | options::Loader::Yaml
+            | options::Loader::Json5
+            | options::Loader::Text
+            | options::Loader::Md => {
+                // PORT NOTE: borrowck — `parse` consumes `&mut self`, so capture
+                // the option fields needed for `ParseOptions` first.
+                let jsx = resolve_result.jsx.clone();
+                let dirname_fd = resolve_result.dirname_fd;
+                let emit_decorator_metadata =
+                    resolve_result.flags.emit_decorator_metadata();
+                let experimental_decorators = resolve_result.flags.experimental_decorators();
+                let macro_remappings = self
+                    .options
+                    .macro_remap
+                    .clone()
+                    .map_err(|_| bun_core::err!("OutOfMemory"))?;
+
+                let parse_opts = ParseOptions {
+                    allocator: self.allocator,
+                    path: logger::fs::Path::init(file_path.text),
+                    loader,
+                    dirname_fd,
+                    file_descriptor: None,
+                    file_hash: None,
+                    file_fd_ptr: None,
+                    macro_remappings,
+                    macro_js_ctx: default_macro_js_value(),
+                    jsx,
+                    emit_decorator_metadata,
+                    experimental_decorators,
+                    virtual_source: None,
+                    replace_exports: Default::default(),
+                    inject_jest_globals: false,
+                    set_breakpoint_on_first_line: false,
+                    remove_cjs_module_wrapper: false,
+                    dont_bundle_twice: false,
+                    allow_commonjs: false,
+                    module_type: options::ModuleType::Unknown,
+                    runtime_transpiler_cache: None,
+                    keep_json_and_toml_as_one_statement: false,
+                    allow_bytecode_cache: false,
+                };
+
+                let Some(mut result) = self.parse(parse_opts, client_entry_point_) else {
+                    return Ok(None);
+                };
+
+                if !self.options.transform_only {
+                    let origin = self.options.origin.borrow();
+                    if !self.options.target.is_bun() {
+                        self.linker.link::<false, false>(
+                            &file_path,
+                            &mut result,
+                            &origin,
+                            import_path_format,
+                        )?;
+                    } else {
+                        self.linker.link::<false, true>(
+                            &file_path,
+                            &mut result,
+                            &origin,
+                            import_path_format,
+                        )?;
+                    }
+                }
+
+                let buffer_writer = js_printer::BufferWriter::init();
+                let mut writer = js_printer::BufferPrinter::init(buffer_writer);
+
+                output_file.size = match self.options.target {
+                    options::Target::Browser | options::Target::Node => {
+                        self.print(result, &mut writer, js_printer::Format::Esm)?
+                    }
+                    options::Target::Bun
+                    | options::Target::BunMacro
+                    | options::Target::BakeServerComponentsSsr => {
+                        self.print(result, &mut writer, js_printer::Format::EsmAscii)?
+                    }
+                };
+                output_file.value = crate::output_file::Value::Buffer {
+                    bytes: writer.ctx.written().to_vec().into_boxed_slice(),
+                };
+            }
+            options::Loader::Dataurl | options::Loader::Base64 => {
+                bun_core::Output::panic("TODO: dataurl, base64", ());
+            }
+            options::Loader::Css => {
+                // TODO(port): CSS --no-bundle path — `bun_css` is feature-gated
+                // (`css = ["dep:bun_css"]`) and not enabled in the default
+                // build; the CSS minify+print pipeline is ported in
+                // `LinkerContext` for the bundling path. For the legacy
+                // single-file `--no-bundle` mode, fall through to the file
+                // copy behaviour until the css feature is wired here.
+                let hashed_name = self.linker.get_hashed_filename(
+                    &logger::fs::Path::init(file_path.text),
+                    None,
+                )?;
+                let mut pathname =
+                    Vec::with_capacity(hashed_name.len() + file_path.name.ext.len());
+                pathname.extend_from_slice(&hashed_name);
+                pathname.extend_from_slice(file_path.name.ext);
+
+                output_file.value =
+                    crate::output_file::Value::Copy(crate::output_file::FileOperation {
+                        pathname: pathname.into_boxed_slice(),
+                        dir: self
+                            .options
+                            .output_dir_handle
+                            .as_ref()
+                            .map(|d| d.fd)
+                            .unwrap_or(bun_sys::Fd::INVALID),
+                        is_outdir: true,
+                        ..Default::default()
+                    });
+            }
+            options::Loader::Html
+            | options::Loader::Bunsh
+            | options::Loader::SqliteEmbedded
+            | options::Loader::Sqlite
+            | options::Loader::Wasm
+            | options::Loader::File
+            | options::Loader::Napi => {
+                let hashed_name = self.linker.get_hashed_filename(
+                    &logger::fs::Path::init(file_path.text),
+                    None,
+                )?;
+                let mut pathname =
+                    Vec::with_capacity(hashed_name.len() + file_path.name.ext.len());
+                pathname.extend_from_slice(&hashed_name);
+                pathname.extend_from_slice(file_path.name.ext);
+
+                output_file.value =
+                    crate::output_file::Value::Copy(crate::output_file::FileOperation {
+                        pathname: pathname.into_boxed_slice(),
+                        dir: self
+                            .options
+                            .output_dir_handle
+                            .as_ref()
+                            .map(|d| d.fd)
+                            .unwrap_or(bun_sys::Fd::INVALID),
+                        is_outdir: true,
+                        ..Default::default()
+                    });
+            }
+        }
+
+        Ok(Some(output_file))
+    }
+}
+
+/// Port of the `comptime Outstream: type` parameter to
+/// `processResolveQueue` / `buildWithResolveResultEager` — Zig switched on
+/// `bun.sys.File` vs `std.fs.Dir` at the type level; collapse to a runtime
+/// enum since the only behavioural difference is unused (`_ = outstream`).
+#[allow(dead_code)]
+#[derive(Clone, Copy)]
+enum TransformOutstream {
+    Stdout(bun_sys::File),
+    Dir(bun_sys::Dir),
 }
 
 

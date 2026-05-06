@@ -857,6 +857,15 @@ impl FormDataContext {
                 joiner.push_owned(value.to_slice().into_vec().into_boxed_slice());
             }
             FormDataEntry::File { blob, filename } => {
+                // PORT NOTE (layering): `bun_jsc::dom_form_data::FormDataEntry`
+                // carries the lower-tier `bun_jsc::WebCore::Blob` forward-decl
+                // (layout-identical `#[repr(C)]` to this crate's `Blob`). The
+                // C++ side hands us the native `m_ctx` pointer; cast it back to
+                // the runtime type so the inherent methods resolve.
+                // SAFETY: `bun_jsc::WebCore::Blob` is repr(C)-identical to
+                // `crate::webcore::Blob`; pointer originates from C++ `JSBlob::m_ctx`.
+                let blob: &mut Blob =
+                    unsafe { &mut *(blob as *const _ as *mut Blob) };
                 joiner.push_static(b"\"; filename=\"");
                 joiner.push_owned(filename.to_slice().into_vec().into_boxed_slice());
                 joiner.push_static(b"\"\r\n");
@@ -880,16 +889,39 @@ impl FormDataContext {
                             // TODO: s3
                             // we need to make this async and use download/downloadSlice
                         }
-                        store::Data::File(_file) => {
+                        store::Data::File(file) => {
                             // TODO: make this async + lazy
-                            // PORT NOTE (phase-d): `bun_jsc::DOMFormData` is a
-                            // `stub_ty!` (no `for_each`), so this callback is
-                            // currently unreachable. The NodeFS sync-read path
-                            // additionally needs `VirtualMachine::node_fs()` to
-                            // return `*mut NodeFS` (currently `*mut c_void`).
-                            let _ = global_this;
-                            self.failed = true;
-                            todo!("blocked_on: bun_jsc::dom_form_data + VirtualMachine::node_fs typed return");
+                            // PORT NOTE (layering): Zig used the per-VM cached
+                            // `globalThis.bunVM().nodeFS()`. That accessor lives
+                            // behind a `bun_runtime → bun_jsc` cycle, so use a
+                            // fresh stack `NodeFS` (it is stateless aside from a
+                            // path scratch buffer; the per-VM cache is purely a
+                            // perf reuse).
+                            let mut node_fs = crate::node::node_fs::NodeFS::default();
+                            let res = node_fs.read_file(
+                                &crate::node::node_fs::args::ReadFile {
+                                    encoding: crate::node::types::Encoding::Buffer,
+                                    path: file.pathlike.clone(),
+                                    offset: blob.offset,
+                                    max_size: Some(blob.size),
+                                    ..Default::default()
+                                },
+                                crate::node::node_fs::Flavor::Sync,
+                            );
+                            match res {
+                                bun_sys::Maybe::Err(err) => {
+                                    self.failed = true;
+                                    let Ok(js_err) = err.to_js(global_this) else { return };
+                                    let _ = global_this.throw_value(js_err);
+                                }
+                                bun_sys::Maybe::Ok(result) => {
+                                    // PORT NOTE: Zig handed `result.buffer.allocator`
+                                    // to the joiner so it freed in-place.
+                                    // `StringOrBuffer::slice()` borrows; clone into
+                                    // the joiner so `result` can drop normally.
+                                    joiner.push_cloned(result.slice());
+                                }
+                            }
                         }
                         store::Data::Bytes(_) => {
                             joiner.push_cloned(blob.shared_view());

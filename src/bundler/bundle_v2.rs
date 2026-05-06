@@ -19,9 +19,10 @@ pub use __phase_a_draft::bake_types;
 pub use __phase_a_draft::dispatch;
 pub use __phase_a_draft::api;
 pub use __phase_a_draft::{
-    JSMeta, ImportData, ExportData, RefImportData, ImportTracker, DevServerOutput,
+    JSMeta, ImportData, ExportData, ImportTracker, DevServerOutput,
     EntryPoint, EntryPointKind, EntryPointList, generic_path_with_pretty_initialized,
 };
+pub use crate::ungate_support::RefImportData;
 use self::bake_types as bake;
 
 use crate::barrel_imports::{self, RequestedExports};

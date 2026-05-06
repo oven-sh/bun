@@ -10,9 +10,16 @@ use crate::bun_fs::FileSystem;
 
 use bun_install::{
     DependencyID, ExtractTarball, NetworkTask, Npm, PackageID, PackageManifestError, PatchTask,
-    Repository, Store, TarballStream, Task, INVALID_PACKAGE_ID,
+    Repository, Store, TarballStream, INVALID_PACKAGE_ID,
 };
-use bun_install::lockfile::{Lockfile, Package};
+// `Task::Id` etc. are namespaced types in Zig (`PackageManagerTask.Id`); import
+// the *module* under the `Task` name so `Task::Id` resolves as a path.
+use bun_install::package_manager_task as Task;
+use bun_install::lockfile::Lockfile;
+use crate::lockfile_real::package::Package;
+use crate::network_task::{Authorization, ForTarballError};
+use crate::package_manifest_map::Value as ManifestEntry;
+use bun_core::fmt::PathSep;
 
 use super::{Options, PackageInstaller, PackageManager, ProgressStrings};
 
@@ -461,7 +468,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             .manifests
                             .hash_map
                             .get_or_put(manifest.pkg.name.hash)?;
-                        *entry.value_ptr = Npm::ManifestEntry::Manifest(manifest);
+                        *entry.value_ptr = ManifestEntry::Manifest(manifest);
 
                         if timestamp_this_tick.is_none() {
                             // TODO(port): std.time.timestamp() — replace with bun_core time API.
@@ -553,7 +560,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                         bstr::BStr::new(extract.name.slice()),
                                         extract.resolution.fmt(
                                             &manager.lockfile.buffers.string_bytes,
-                                            bun_install::ResolutionFmtMode::Auto,
+                                            PathSep::Auto,
                                         ),
                                         task.retried,
                                         manager.options.max_retry_count,
@@ -630,7 +637,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 bstr::BStr::new(extract.name.slice()),
                                 extract.resolution.fmt(
                                     &manager.lockfile.buffers.string_bytes,
-                                    bun_install::ResolutionFmtMode::Auto,
+                                    PathSep::Auto,
                                 ),
                             ),
                         );
@@ -644,7 +651,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 bstr::BStr::new(extract.name.slice()),
                                 extract.resolution.fmt(
                                     &manager.lockfile.buffers.string_bytes,
-                                    bun_install::ResolutionFmtMode::Auto,
+                                    PathSep::Auto,
                                 ),
                             ),
                         );

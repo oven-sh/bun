@@ -532,7 +532,7 @@ pub struct NamesIterator<'a> {
     pub i: usize,
     pub done: bool,
     // TODO(port): std.fs.Dir.Iterator → bun_sys directory iterator type
-    pub dir_iterator: Option<sys::DirIterator>,
+    pub dir_iterator: Option<sys::dir_iterator::WrappedIterator>,
     pub package_name: String,
     // TODO(port): std.fs.Dir → bun_sys::Dir; default was bun.invalid_fd.stdDir()
     pub destination_node_modules: sys::Dir,

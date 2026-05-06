@@ -5,8 +5,9 @@ use std::cell::RefCell;
 use std::io::Write as _;
 
 use bun_alloc::AllocError;
-use bun_collections::{ArrayHashMap, HashMap, HiveArray, LinearFifo, StringArrayHashMap, UnboundedQueue};
-use bun_core::{err, Error, Global, LazyBool, Once, Output};
+use bun_collections::{ArrayHashMap, HashMap, HiveArray, LinearFifo, StringArrayHashMap};
+use bun_collections::linear_fifo::{DynamicBuffer, StaticBuffer};
+use bun_core::{err, Error, Global, Once, Output};
 use bun_dotenv as dot_env;
 use crate::bun_fs as fs;
 use crate::bun_fs::FileSystem;
@@ -17,15 +18,66 @@ use bun_ini as ini;
 use bun_event_loop::{self, AnyEventLoop, EventLoopHandle, MiniEventLoop};
 use bun_logger as logger;
 use bun_paths::{self as path, PathBuffer, DELIMITER, SEP, SEP_STR};
-use crate::bun_progress::Progress;
+use bun_paths::resolve_path::{self, platform, PosixToWinNormalizer};
+use crate::bun_progress::{Node as ProgressNode, Progress};
 use crate::bun_schema::api as Api;
 use bun_semver::{self as Semver, String as SemverString};
-use bun_spawn::process::WaiterThread;
 use bun_str::{strings, ZStr};
 use bun_sys::{self, Fd};
-use bun_threading::ThreadPool;
+use bun_threading::{thread_pool, ThreadPool, UnboundedQueue};
 use bun_transpiler::{self as transpiler, Transpiler};
 use bun_url::URL;
+
+/// Port of `bun.LazyBool` (bun.zig:2234) — caches the result of a getter the
+/// first time `get()` is called. Zig used `@fieldParentPtr` to recover the
+/// containing struct from the field address; Rust has no field-parent-pointer
+/// so the getter receives `&mut PackageManager` explicitly and the caller
+/// passes `self` (the field is always read via `self.ci_mode.get(self)` in
+/// PackageManager — see `is_continuous_integration`). Because the field lives
+/// inside the parent and we'd otherwise need a simultaneous `&mut self.ci_mode`
+/// + `&self` borrow, model the cache as a `Cell<Option<bool>>` and read the
+/// parent through a raw pointer (mirrors Zig's non-exclusive `*Parent`).
+pub struct LazyBool<F> {
+    value: core::cell::Cell<Option<bool>>,
+    getter: F,
+}
+impl<F> LazyBool<F> {
+    pub const fn new(getter: F) -> Self {
+        Self { value: core::cell::Cell::new(None), getter }
+    }
+}
+impl LazyBool<fn(&PackageManager) -> bool> {
+    pub fn get(&self, parent: &PackageManager) -> bool {
+        if let Some(v) = self.value.get() {
+            return v;
+        }
+        let v = (self.getter)(parent);
+        self.value.set(Some(v));
+        v
+    }
+}
+
+/// `bun.spawn.process.WaiterThread` shim — the real type lives in
+/// `bun_runtime::api::bun::process` (tier-6). Install only flips the
+/// "force waiter thread" flag during init; expose just that hook here and
+/// let bun_runtime register the backing storage at startup.
+// MOVE_DOWN(b0): bun_runtime::api::bun::process::WaiterThread → bun_spawn
+pub struct WaiterThread;
+impl WaiterThread {
+    /// Hook (GENUINE b0): set by `bun_runtime::init()` to point at
+    /// `process::WaiterThreadPosix::set_should_use_waiter_thread`.
+    pub static SET_SHOULD_USE_WAITER_THREAD: core::sync::atomic::AtomicPtr<()> =
+        core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+}
+impl WaiterThread {
+    pub fn set_should_use_waiter_thread() {
+        let hook = Self::SET_SHOULD_USE_WAITER_THREAD.load(Ordering::Relaxed);
+        if !hook.is_null() {
+            // SAFETY: hook was registered by bun_runtime as `fn()`.
+            unsafe { core::mem::transmute::<*mut (), fn()>(hook)() };
+        }
+    }
+}
 
 // MOVE_DOWN(b0): bun_runtime::cli::Arguments → bun_bunfig::Arguments (config loading is bunfig-tier).
 use crate::bun_bunfig::Arguments as BunArguments;

@@ -2194,9 +2194,11 @@ impl VirtualMachine {
             });
             if let Err(e) = r {
                 let exc = global_object.take_exception(e);
-                if let Some(ex) = exc.as_exception(global_object.vm()) {
-                    let _ = Self::report_uncaught_exception(global_object, ex);
-                }
+                // PORT NOTE: Zig went `exc.asException(vm)` → `reportUncaughtException`,
+                // which itself just does `uncaughtException(global, exception.value(), false)`.
+                // `JSValue::as_exception` is not yet ported; inline the body — `exc` is
+                // already the exception's value.
+                let _ = this.uncaught_exception(global_object, exc, false);
             }
         };
 
@@ -3196,7 +3198,11 @@ impl VirtualMachine {
             // PORT NOTE: Zig comptime-generated `AggregateErrorIterator` with
             // `extern "C"` callbacks; here we use `for_each` with a Rust
             // closure (the `bun_jsc` wrapper handles the C trampoline).
-            let errors = value.get_errors_property(global_ref);
+            let errors = value
+                .get(global_ref, "errors")
+                .ok()
+                .flatten()
+                .unwrap_or(JSValue::UNDEFINED);
             let _ = errors.for_each(global_ref, |_, _, next_value| {
                 // SAFETY: per-thread VM.
                 let vm = unsafe { &mut *VirtualMachine::get() };
@@ -3228,16 +3234,14 @@ impl VirtualMachine {
         );
 
         if was_internal {
-            if let Some(exception_) = exception {
-                let mut holder = ZigException::Holder::init();
-                let zig_exception = holder.zig_exception();
-                exception_.get_stack_trace(global_ref, &mut zig_exception.stack);
-                if zig_exception.stack.frames_len > 0 {
-                    let _ = Self::print_stack_trace(writer, &zig_exception.stack, allow_ansi_color);
-                }
-                // TODO(b2-cycle): `zig_exception.addToErrorList(list, top_level_dir, origin)`
-                // — `ExceptionList` is `Vec<()>` placeholder.
-                holder.deinit(self);
+            if let Some(_exception_) = exception {
+                // TODO(port): blocked_on `ZigStackTrace` stub — populate
+                // `holder.zig_exception().stack` via
+                // `Exception::get_stack_trace` and route through
+                // `print_stack_trace`. `crate::ZigStackTrace` is a `stub_ty!`
+                // opaque (no `frames_len`/`frames_ptr`) until B-2 un-gates the
+                // real `#[repr(C)]` definition.
+                let _ = (global_ref, allow_ansi_color);
             }
         }
     }
@@ -3254,6 +3258,9 @@ impl VirtualMachine {
     ) -> bool {
         if value.js_type() == jsc::JSType::DOMWrapper {
             if let Some(build_error) = value.as_::<crate::BuildMessage>() {
+                // SAFETY: `as_` returns a live `*mut BuildMessage` backed by
+                // the JSCell's private data; valid while `value` is alive.
+                let build_error = unsafe { &mut *build_error };
                 if !build_error.logged {
                     if self.had_errors {
                         let _ = writer.write_all(b"\n");
@@ -3272,6 +3279,9 @@ impl VirtualMachine {
                 bun_core::Output::flush();
                 return true;
             } else if let Some(resolve_error) = value.as_::<crate::ResolveMessage>() {
+                // SAFETY: see above; `*mut ResolveMessage` is live while
+                // `value` is alive.
+                let resolve_error = unsafe { &mut *resolve_error };
                 if !resolve_error.logged {
                     if self.had_errors {
                         let _ = writer.write_all(b"\n");
@@ -3301,8 +3311,9 @@ impl VirtualMachine {
             allow_side_effects,
         ) {
             if err == bun_core::err!("JSError") {
-                // SAFETY: `global` valid for VM lifetime.
-                unsafe { (*self.global).clear_exception() };
+                // SAFETY: `global` valid for VM lifetime; FFI clears the
+                // pending VM exception.
+                unsafe { JSGlobalObject__clearException(self.global) };
             } else {
                 #[cfg(debug_assertions)]
                 {
@@ -3325,7 +3336,7 @@ impl VirtualMachine {
         // SAFETY: per-thread VM.
         let jsc_vm = unsafe { &mut *global_object.bun_vm() };
         let _ = jsc_vm.uncaught_exception(global_object, exception.value(), false);
-        JSValue::js_undefined()
+        JSValue::UNDEFINED
     }
 
     /// Spec VirtualMachine.zig:2813 `printStackTrace`.
@@ -3337,6 +3348,14 @@ impl VirtualMachine {
         trace: &crate::ZigStackTrace,
         allow_ansi_colors: bool,
     ) -> Result<(), bun_core::Error> {
+        // TODO(port): blocked_on `ZigStackTrace`/`ZigStackFrame` stub — both
+        // are `stub_ty!` opaques (no `frames()`/`.position`/`.source_url`).
+        // Full body preserved below under `#[cfg(any())]`; un-gate when the
+        // real `#[repr(C)]` types land.
+        let _ = (writer, trace, allow_ansi_colors);
+        return Ok(());
+        #[cfg(any())]
+        {
         let stack = trace.frames();
         if stack.is_empty() {
             return Ok(());
@@ -3344,7 +3363,7 @@ impl VirtualMachine {
         // SAFETY: per-thread VM.
         let vm = unsafe { &mut *VirtualMachine::get() };
         let origin = if vm.is_from_devserver { Some(&vm.origin) } else { None };
-        let dir = vm.transpiler.fs.top_level_dir;
+        let dir = unsafe { (*vm.transpiler.fs).top_level_dir };
 
         for frame in stack {
             let file_slice = frame.source_url.to_utf8();
@@ -3403,6 +3422,7 @@ impl VirtualMachine {
             }
         }
         Ok(())
+        } // end #[cfg(any())]
     }
 
     /// Spec VirtualMachine.zig:2904 `remapStackFramePositions`.
@@ -3426,6 +3446,14 @@ impl VirtualMachine {
         // miss. The cache is purely a perf optimization (most stacks repeat
         // the same source); port the straightforward per-frame resolve and
         // leave the cache as `// PERF(port)`.
+        //
+        // TODO(port): blocked_on `ZigStackFrame` stub — `.position` /
+        // `.remapped` / `.source_url` are unavailable on the `stub_ty!`
+        // opaque. Loop body preserved under `#[cfg(any())]`; un-gate when the
+        // real `#[repr(C)]` type lands.
+        let _ = (frames, frames_count, &mut table_locked);
+        #[cfg(any())]
+        {
         // SAFETY: caller passes `frames_count` valid `ZigStackFrame`s.
         let frames = unsafe { core::slice::from_raw_parts_mut(frames, frames_count) };
         for frame in frames {
@@ -3462,6 +3490,7 @@ impl VirtualMachine {
             self.source_mappings.lock();
             table_locked = true;
         }
+        }
 
         if table_locked {
             self.source_mappings.unlock();
@@ -3476,7 +3505,7 @@ impl VirtualMachine {
         error_instance: JSValue,
         exception_list: Option<&mut ExceptionList>,
         must_reset_parser_arena_later: &mut bool,
-        source_code_slice: &mut Option<jsc::ZigString::Slice>,
+        source_code_slice: &mut Option<bun_string::ZigStringSlice>,
         allow_source_code_preview: bool,
     ) {
         // SAFETY: `global` valid for VM lifetime.
@@ -3494,9 +3523,12 @@ impl VirtualMachine {
         // populate `exception.stack.source_lines_*` from the original source.
         // The frame-remap step is shared with `remap_stack_frame_positions`;
         // delegate to it for the position rewrite.
-        let frames_ptr = exception.stack.frames_ptr;
-        let frames_len = exception.stack.frames_len as usize;
-        self.remap_stack_frame_positions(frames_ptr, frames_len);
+        //
+        // TODO(port): blocked_on `ZigStackTrace` stub — no
+        // `frames_ptr`/`frames_len` on the `stub_ty!` opaque.
+        // self.remap_stack_frame_positions(exception.stack.frames_ptr,
+        //     exception.stack.frames_len as usize);
+        let _ = &exception.stack;
 
         // TODO(port): `NoisyBuiltinFunctionMap` filtering + source-line
         // preview population (VirtualMachine.zig:3078-3263). Requires
@@ -3512,7 +3544,7 @@ impl VirtualMachine {
         if let Some(_list) = exception_list {
             // TODO(b2-cycle): `ZigException::add_to_error_list` — `ExceptionList`
             // is `Vec<()>` placeholder.
-            let _ = (&self.transpiler.fs.top_level_dir, &self.origin);
+            let _ = (self.transpiler.fs, &self.origin);
         }
     }
 
@@ -3525,10 +3557,9 @@ impl VirtualMachine {
         allow_side_effects: bool,
         allow_ansi_color: bool,
     ) -> Result<(), bun_core::Error> {
-        let mut default_formatter = crate::console_object::Formatter {
-            global_this: self.global,
-            ..Default::default()
-        };
+        // SAFETY: `global` valid for VM lifetime.
+        let mut default_formatter =
+            crate::console_object::Formatter::new(unsafe { &*self.global });
         let f = formatter.unwrap_or(&mut default_formatter);
         self.print_error_instance_zig(
             zig_exception,

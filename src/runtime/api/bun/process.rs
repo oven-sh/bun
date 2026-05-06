@@ -896,7 +896,10 @@ impl core::fmt::Display for Status {
 
 #[cfg(unix)]
 pub enum PollerPosix {
-    Fd(Box<FilePoll>),
+    /// Hive-allocated `bun_aio::FilePoll` slot. Pointer (not `Box`) because the
+    /// poll lives in `Store` (Zig: `*FilePoll`); freed via `FilePoll::deinit`,
+    /// never via Rust `drop`.
+    Fd(core::ptr::NonNull<FilePoll>),
     WaiterThread(KeepAlive),
     Detached,
 }
@@ -904,17 +907,16 @@ pub enum PollerPosix {
 #[cfg(unix)]
 impl Drop for PollerPosix {
     fn drop(&mut self) {
-        // Fd arm: Box<FilePoll> drops automatically.
+        // Fd arm: hive-owned, returned via `Process::close()` before drop.
         if let PollerPosix::WaiterThread(w) = self {
             w.disable();
         }
     }
 }
 
-// TODO(b2-blocked): bun_aio::FilePoll::{can_enable,enable,disable}_keeping_process_alive — verify EventLoopHandle arg shape.
-#[cfg(any())]
+#[cfg(unix)]
 impl PollerPosix {
-    fn into_fd(mut self) -> Option<Box<FilePoll>> {
+    fn into_fd(mut self) -> Option<core::ptr::NonNull<FilePoll>> {
         // PORT NOTE: reshaped for borrowck — Drop impl forbids partial move out of `self`.
         match core::mem::replace(&mut self, PollerPosix::Detached) {
             PollerPosix::Fd(f) => Some(f),
@@ -922,25 +924,27 @@ impl PollerPosix {
         }
     }
 
-    pub fn enable_keeping_event_loop_alive(&mut self, event_loop: EventLoopHandle) {
+    pub fn enable_keeping_event_loop_alive(&mut self, ctx: bun_aio::EventLoopCtx) {
         match self {
             PollerPosix::Fd(poll) => {
-                poll.enable_keeping_process_alive(event_loop);
+                // SAFETY: poll is a live hive slot, exclusive on the event-loop thread.
+                unsafe { poll.as_mut() }.enable_keeping_process_alive(ctx);
             }
             PollerPosix::WaiterThread(waiter) => {
-                waiter.ref_(event_loop);
+                waiter.ref_(ctx);
             }
             _ => {}
         }
     }
 
-    pub fn disable_keeping_event_loop_alive(&mut self, event_loop: EventLoopHandle) {
+    pub fn disable_keeping_event_loop_alive(&mut self, ctx: bun_aio::EventLoopCtx) {
         match self {
             PollerPosix::Fd(poll) => {
-                poll.disable_keeping_process_alive(event_loop);
+                // SAFETY: see `enable_keeping_event_loop_alive`.
+                unsafe { poll.as_mut() }.disable_keeping_process_alive(ctx);
             }
             PollerPosix::WaiterThread(waiter) => {
-                waiter.unref(event_loop);
+                waiter.unref(ctx);
             }
             _ => {}
         }
@@ -948,7 +952,10 @@ impl PollerPosix {
 
     pub fn has_ref(&self) -> bool {
         match self {
-            PollerPosix::Fd(fd) => fd.can_enable_keeping_process_alive(),
+            PollerPosix::Fd(fd) => {
+                // SAFETY: see `enable_keeping_event_loop_alive`.
+                unsafe { fd.as_ref() }.can_enable_keeping_process_alive()
+            }
             PollerPosix::WaiterThread(w) => w.is_active(),
             _ => false,
         }

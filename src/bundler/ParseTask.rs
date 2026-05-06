@@ -488,10 +488,14 @@ pub fn get_runtime_source(target: options::Target) -> RuntimeSource {
 // getEmptyCSSAST / getEmptyAST
 // ───────────────────────────────────────────────────────────────────────────
 
+// blocked_on: `js_parser::new_lazy_export_ast` body (parser.rs round-D gate —
+// `Parser::to_lazy_export_ast`); `bun_css::BundlerStyleSheet` (gated upstream);
+// `Expr::init` overload set for arbitrary `E::*` defaults.
+#[cfg(any())]
 fn get_empty_css_ast(
     log: &mut Log,
     transpiler: &mut Transpiler,
-    opts: js_parser::parser::Options,
+    opts: ParserOptions,
     bump: &Bump,
     source: &Source,
 ) -> core::result::Result<JSAst, AnyError> {
@@ -504,10 +508,14 @@ fn get_empty_css_ast(
     Ok(ast)
 }
 
+// blocked_on: `js_parser::new_lazy_export_ast` body (parser.rs round-D gate);
+// `Expr::init(RootType)` requires `IntoExprData` bound that doesn't yet cover
+// `E::Undefined`/`E::Object`/`E::String` defaults uniformly.
+#[cfg(any())]
 fn get_empty_ast<RootType: Default>(
     log: &mut Log,
     transpiler: &mut Transpiler,
-    opts: js_parser::parser::Options,
+    opts: ParserOptions,
     bump: &Bump,
     source: &Source,
 ) -> core::result::Result<JSAst, AnyError>
@@ -526,21 +534,32 @@ where
 // FileLoaderHash
 // ───────────────────────────────────────────────────────────────────────────
 
-struct FileLoaderHash {
+pub struct FileLoaderHash {
     // TODO(port): arena lifetime
-    key: &'static [u8],
-    content_hash: u64,
+    pub key: &'static [u8],
+    pub content_hash: u64,
 }
 
 // ───────────────────────────────────────────────────────────────────────────
 // getAST
 // ───────────────────────────────────────────────────────────────────────────
 
+// blocked_on: per-loader branches require:
+//   - `resolver.caches.js.parse` / `resolver.caches.json.parse_json` (gated in
+//     `bun_resolver::cache_set`);
+//   - `bun_interchange::{toml,yaml,json5}` parser entry points;
+//   - `bun_css::BundlerStyleSheet::parse_bundler` (gated upstream);
+//   - `crate::HTMLScanner` (gated module);
+//   - `bun_core::fmt::bytes_to_hex_lower` Display adaptor;
+//   - `js_parser::new_lazy_export_ast` body (round-D).
+// The signature now names the real `ParserOptions`; body un-gates in lockstep
+// with the above.
+#[cfg(any())]
 #[allow(clippy::too_many_arguments)]
 fn get_ast(
     log: &mut Log,
     transpiler: &mut Transpiler,
-    opts: js_parser::parser::Options,
+    opts: ParserOptions,
     bump: &Bump,
     resolver: &mut Resolver,
     source: &Source,

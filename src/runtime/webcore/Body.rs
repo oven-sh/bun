@@ -260,6 +260,9 @@ impl PendingValue {
         None
     }
 
+    // TODO(b2-blocked): JSGlobalObject::readable_stream_to_{json,array_buffer,
+    // bytes,text,blob,form_data} + bun_core::FormDataEncoding (gated payload).
+    #[cfg(any())]
     pub fn set_promise(
         &mut self,
         global_this: &JSGlobalObject,
@@ -728,6 +731,10 @@ impl Value {
         }
     }
 
+    // TODO(b2-blocked): crate::api::Image, Blob::from_dom_form_data /
+    // from_url_search_params / get / dupe_with_content_type live in Blob's
+    // `_jsc_gated` block; ReadableStream::from_js / Ptr::Blob too.
+    #[cfg(any())]
     pub fn from_js(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Value> {
         value.ensure_still_alive();
 
@@ -861,6 +868,10 @@ impl Value {
         })
     }
 
+    // TODO(b2-blocked): AnyBlob::to_string_transfer / to_json_share /
+    // to_array_buffer_transfer / to_uint8_array_transfer + Blob::new/to_js +
+    // AnyPromise::wrap — all in gated Blob/jsc impls.
+    #[cfg(any())]
     pub fn resolve(
         to_resolve: &mut Value,
         new: &mut Value,

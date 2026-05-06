@@ -740,10 +740,11 @@ impl WindowsWrite {
 #[derive(Default)]
 pub struct WindowsState {
     pub is_server: bool,
-    pub windows_write: Option<Box<WindowsWrite>>,
-    // TODO(port): lifetime — LIFETIMES.tsv classes this OWNED Box<WindowsWrite>,
-    // but the box is leaked into libuv via raw ptr and reclaimed in
-    // _windowsOnWriteComplete. Phase B: likely Option<*mut WindowsWrite>.
+    /// Non-owning raw pointer (matches Zig `?*WindowsWrite`). The allocation
+    /// is `Box::into_raw`'d in `_write` and freed exactly once by
+    /// `_windows_on_write_complete` via `WindowsWrite::destroy`. Nulling this
+    /// field never frees.
+    pub windows_write: Option<*mut WindowsWrite>,
     pub try_close_after_write: bool,
 }
 
@@ -940,12 +941,14 @@ impl SendQueue {
         log!("SendQueue#_socketClosed");
         #[cfg(windows)]
         {
-            if let Some(windows_write) = self.windows.windows_write.as_mut() {
-                windows_write.owner = None; // so _windowsOnWriteComplete doesn't try to continue writing
+            if let Some(windows_write) = self.windows.windows_write {
+                // SAFETY: `windows_write` was leaked via `Box::into_raw` in
+                // `_write`; libuv still holds it and will free it in
+                // `_windows_on_write_complete`. We only clear the backref so
+                // the callback doesn't touch a dead `SendQueue`.
+                unsafe { (*windows_write).owner = None };
             }
             self.windows.windows_write = None; // will be freed by _windowsOnWriteComplete
-            // TODO(port): lifetime — see WindowsState.windows_write note; this drops the Box
-            // but Zig leaves freeing to the libuv callback. Phase B must reconcile.
         }
         self.keep_alive.disable();
         let was_open = matches!(self.socket, SocketUnion::Open(_));
@@ -1208,12 +1211,10 @@ impl SendQueue {
         // log("sending ipc message: '{'}' (has_handle={})", .{ std.zig.fmtString(to_send), first.handle != null });
         debug_assert!(!self.write_in_progress);
         self.write_in_progress = true;
-        // PORT NOTE: reshaped for borrowck — recompute slice/fd via raw to avoid &mut self overlap.
         let fd = self.queue[0].handle.as_ref().map(|h| h.fd);
-        let to_send: *const [u8] = &self.queue[0].data.list[self.queue[0].data.cursor..];
-        // SAFETY: `to_send` borrows queue[0].data which is not reallocated by _write
-        // (only _on_write_complete may pop the queue, and that runs after the write).
-        self._write(unsafe { &*to_send }, fd);
+        // `_write` re-slices `self.queue[0]` internally so we never hand a
+        // borrow of `self` into a `&mut self` method (PORTING.md aliased-&mut).
+        self._write(fd);
         // the write is queued. this._onWriteComplete() will be called when the write completes.
         self.update_ref(global);
     }

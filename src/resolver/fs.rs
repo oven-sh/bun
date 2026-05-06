@@ -425,7 +425,7 @@ impl DirEntry {
         }
     }
 
-    pub fn get<'a>(&'a self, query_: &[u8]) -> Option<EntryLookup<'a>> {
+    pub fn get<'a>(&'a self, query_: &'a [u8]) -> Option<EntryLookup<'a>> {
         if query_.is_empty() || query_.len() > MAX_PATH_BYTES {
             return None;
         }
@@ -433,24 +433,21 @@ impl DirEntry {
 
         let query = strings::copy_lowercase_if_needed(query_, &mut scratch_lookup_buffer[..]);
         let &result_ptr = self.data.get(query)?;
-        // SAFETY: EntryStore-owned pointer
+        // SAFETY: EntryStore-owned pointer; valid for the lifetime of the store (process-static).
         let result = unsafe { &*result_ptr };
         let basename = result.base();
         if !strings::eql_long::<true>(basename, query_) {
             return Some(EntryLookup {
-                entry: result,
+                entry: result_ptr,
                 diff_case: Some(DifferentCase {
                     dir: self.dir,
-                    // TODO(port): lifetime — Zig stored caller's slice; widened to 'a.
-                    // SAFETY: extended for borrowck reshape; consumed before caller's
-                    // buffer is overwritten (see resolver call sites).
-                    query: unsafe { &*(query_ as *const [u8]) },
+                    query: query_,
                     actual: basename,
                 }),
             });
         }
 
-        Some(EntryLookup { entry: result, diff_case: None })
+        Some(EntryLookup { entry: result_ptr, diff_case: None })
     }
 
     // TODO(port): getComptimeQuery used comptime string lowering + comptime hash; Rust port
@@ -458,13 +455,13 @@ impl DirEntry {
     pub fn get_comptime_query<'a>(&'a self, query_lower: &'static [u8]) -> Option<EntryLookup<'a>> {
         // PERF(port): was comptime hash precompute — profile in Phase B
         let &result_ptr = self.data.get(query_lower)?;
-        // SAFETY: EntryStore-owned pointer
+        // SAFETY: EntryStore-owned pointer; valid for the lifetime of the store (process-static).
         let result = unsafe { &*result_ptr };
         let basename = result.base();
 
         if basename != query_lower {
             return Some(EntryLookup {
-                entry: result,
+                entry: result_ptr,
                 diff_case: Some(DifferentCase {
                     dir: self.dir,
                     query: query_lower,
@@ -473,7 +470,7 @@ impl DirEntry {
             });
         }
 
-        Some(EntryLookup { entry: result, diff_case: None })
+        Some(EntryLookup { entry: result_ptr, diff_case: None })
     }
 
     pub fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool {
@@ -559,8 +556,32 @@ pub struct DifferentCase<'a> {
 }
 
 pub struct EntryLookup<'a> {
-    pub entry: &'a Entry,
+    /// Mutable raw pointer matching Zig `*Entry` — the lazy-stat methods
+    /// `Entry::kind`/`Entry::symlink` need `&mut Entry` to fill `cache`, and
+    /// `Entry` lives in the process-static `EntryStore` (BSSList) so a raw
+    /// pointer is the correct ownership shape (BACKREF/ARENA).
+    pub entry: *mut Entry,
     pub diff_case: Option<DifferentCase<'a>>,
+}
+
+impl<'a> EntryLookup<'a> {
+    /// Convenience: dereference `entry` as a shared borrow.
+    /// SAFETY: `entry` points into the process-static `EntryStore`; caller must
+    /// not hold a concurrent `&mut` to the same `Entry`.
+    #[inline]
+    pub unsafe fn entry_ref(&self) -> &Entry {
+        // SAFETY: see fn doc
+        unsafe { &*self.entry }
+    }
+    /// Convenience: dereference `entry` as a mutable borrow for the lazy-stat
+    /// path (`kind`/`symlink`).
+    /// SAFETY: `entry` points into the process-static `EntryStore`; caller must
+    /// hold no other borrow to the same `Entry`.
+    #[inline]
+    pub unsafe fn entry_mut(&self) -> &mut Entry {
+        // SAFETY: see fn doc
+        unsafe { &mut *self.entry }
+    }
 }
 
 #[derive(Clone, Copy)]

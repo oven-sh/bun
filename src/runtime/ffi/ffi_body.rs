@@ -801,9 +801,8 @@ impl CompileC {
                             path::Style::Auto,
                         );
                         if state.add_sys_include_path(include_dir).is_err() {
-                            return global_this
-                                .throw("TinyCC failed to add sysinclude path", &[])
-                                .into();
+                            global_this.throw("TinyCC failed to add sysinclude path");
+                            return Err(bun_core::err!("JSError"));
                         }
 
                         let lib_dir = path::join_abs_string_buf_z(
@@ -813,9 +812,8 @@ impl CompileC {
                             path::Style::Auto,
                         );
                         if state.add_library_path(lib_dir).is_err() {
-                            return global_this
-                                .throw("TinyCC failed to add library path", &[])
-                                .into();
+                            global_this.throw("TinyCC failed to add library path");
+                            return Err(bun_core::err!("JSError"));
                         }
 
                         break 'add_system_include_dir;

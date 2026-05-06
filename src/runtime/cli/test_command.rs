@@ -1602,11 +1602,11 @@ impl CommandLineReporter {
 
         if REPORTERS_LCOV {
             let state = scopeguard::ScopeGuard::into_inner(lcov_guard);
-            if let Some((lcov_file, lcov_name, ref mut buffered)) = state.as_mut() {
-                if let bun_sys::Result::Err(e) = lcov_file.write_all(buffered) {
+            if let Some((lcov_file, lcov_name, buffered)) = state.take() {
+                if let bun_sys::Result::Err(e) = lcov_file.write_all(&buffered) {
                     return Err(bun_core::Error::from(e));
                 }
-                lcov_file.close();
+                let _ = lcov_file.close();
                 let cwd = Fd::cwd();
                 if let Err(err) = bun_sys::move_file_z(
                     cwd,

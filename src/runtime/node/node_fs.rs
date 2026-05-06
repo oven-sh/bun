@@ -1746,7 +1746,9 @@ impl AsyncReaddirRecursiveTask {
         let mut batch = self.result_list_queue.pop_batch();
         let mut iter = batch.iterator();
         let mut to_destroy: Option<*mut ResultListEntry> = None;
-        while let Some(val) = iter.next() {
+        loop {
+            let val = iter.next();
+            if val.is_null() { break; }
             // SAFETY: `val` is a live queue node until freed below
             unsafe { &mut *val }.value.deinit();
             // SAFETY: paired with Box::leak in write_results()

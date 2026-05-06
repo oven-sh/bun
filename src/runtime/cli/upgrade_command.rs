@@ -710,8 +710,9 @@ impl UpgradeCommand {
 
             let bytes = zip_file_buffer.slice();
 
-            progress.end();
-            refresher.refresh();
+            // SAFETY: refresher/progress are leaked allocations.
+            unsafe { (*progress).end() };
+            unsafe { (*refresher).refresh() };
 
             if bytes.is_empty() {
                 Output::pretty_errorln(format_args!(

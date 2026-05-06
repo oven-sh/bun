@@ -1266,24 +1266,26 @@ fn scrypt_sync(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSVa
 pub fn create_node_crypto_binding_zig(global: &JSGlobalObject) -> JSValue {
     let crypto = JSValue::create_empty_object(global, 15);
 
-    crypto.put(global, BunString::init("pbkdf2"), JSFunction::create(global, "pbkdf2", pbkdf2, 5, ()));
-    crypto.put(global, BunString::init("pbkdf2Sync"), JSFunction::create(global, "pbkdf2Sync", pbkdf2_sync, 5, ()));
-    crypto.put(global, BunString::init("randomInt"), JSFunction::create(global, "randomInt", random::random_int, 2, ()));
-    crypto.put(global, BunString::init("randomFill"), JSFunction::create(global, "randomFill", random::random_fill, 4, ()));
-    crypto.put(global, BunString::init("randomFillSync"), JSFunction::create(global, "randomFillSync", random::random_fill_sync, 3, ()));
-    crypto.put(global, BunString::init("randomUUID"), JSFunction::create(global, "randomUUID", random::random_uuid, 1, ()));
-    crypto.put(global, BunString::init("randomBytes"), JSFunction::create(global, "randomBytes", random::random_bytes, 2, ()));
-    crypto.put(global, BunString::init("timingSafeEqual"), JSFunction::create(global, "timingSafeEqual", timing_safe_equal, 2, ()));
+    // `#[bun_jsc::host_fn]` emits a `__jsc_host_{name}` shim with the raw `JSHostFn` ABI;
+    // pass that (not the safe-Rust body) to `JSFunction::create`.
+    crypto.put(global, b"pbkdf2", JSFunction::create(global, "pbkdf2", __jsc_host_pbkdf2, 5, Default::default()));
+    crypto.put(global, b"pbkdf2Sync", JSFunction::create(global, "pbkdf2Sync", __jsc_host_pbkdf2_sync, 5, Default::default()));
+    crypto.put(global, b"randomInt", JSFunction::create(global, "randomInt", random::__jsc_host_random_int, 2, Default::default()));
+    crypto.put(global, b"randomFill", JSFunction::create(global, "randomFill", random::__jsc_host_random_fill, 4, Default::default()));
+    crypto.put(global, b"randomFillSync", JSFunction::create(global, "randomFillSync", random::__jsc_host_random_fill_sync, 3, Default::default()));
+    crypto.put(global, b"randomUUID", JSFunction::create(global, "randomUUID", random::__jsc_host_random_uuid, 1, Default::default()));
+    crypto.put(global, b"randomBytes", JSFunction::create(global, "randomBytes", random::__jsc_host_random_bytes, 2, Default::default()));
+    crypto.put(global, b"timingSafeEqual", JSFunction::create(global, "timingSafeEqual", __jsc_host_timing_safe_equal, 2, Default::default()));
 
-    crypto.put(global, BunString::init("secureHeapUsed"), JSFunction::create(global, "secureHeapUsed", secure_heap_used, 0, ()));
-    crypto.put(global, BunString::init("getFips"), JSFunction::create(global, "getFips", get_fips, 0, ()));
-    crypto.put(global, BunString::init("setFips"), JSFunction::create(global, "setFips", set_fips, 1, ()));
-    crypto.put(global, BunString::init("setEngine"), JSFunction::create(global, "setEngine", set_engine, 2, ()));
+    crypto.put(global, b"secureHeapUsed", JSFunction::create(global, "secureHeapUsed", __jsc_host_secure_heap_used, 0, Default::default()));
+    crypto.put(global, b"getFips", JSFunction::create(global, "getFips", __jsc_host_get_fips, 0, Default::default()));
+    crypto.put(global, b"setFips", JSFunction::create(global, "setFips", __jsc_host_set_fips, 1, Default::default()));
+    crypto.put(global, b"setEngine", JSFunction::create(global, "setEngine", __jsc_host_set_engine, 2, Default::default()));
 
-    crypto.put(global, BunString::init("getHashes"), JSFunction::create(global, "getHashes", get_hashes, 0, ()));
+    crypto.put(global, b"getHashes", JSFunction::create(global, "getHashes", __jsc_host_get_hashes, 0, Default::default()));
 
-    crypto.put(global, BunString::init("scrypt"), JSFunction::create(global, "scrypt", scrypt, 5, ()));
-    crypto.put(global, BunString::init("scryptSync"), JSFunction::create(global, "scryptSync", scrypt_sync, 4, ()));
+    crypto.put(global, b"scrypt", JSFunction::create(global, "scrypt", __jsc_host_scrypt, 5, Default::default()));
+    crypto.put(global, b"scryptSync", JSFunction::create(global, "scryptSync", __jsc_host_scrypt_sync, 4, Default::default()));
 
     crypto
 }

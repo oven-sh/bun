@@ -337,8 +337,8 @@ impl PmVersionCommand {
                         &package_json_dir,
                         pm_shims::env(pm),
                         &[],
-                        pm.options.log_level == LogLevel::Silent,
-                        ctx.debug.use_system_shell,
+                        silent,
+                        use_system_shell,
                     )?;
                 }
             }

@@ -436,7 +436,7 @@ impl HTMLRewriterLoader {
             | Writable::Owned(_)
             | Writable::Temporary(_) => {
                 self.signal.ready(
-                    if self.chunk_size > 0 { Some(self.chunk_size) } else { None },
+                    if self.chunk_size > 0 { Some(self.chunk_size as u32) } else { None },
                     None,
                 );
             }

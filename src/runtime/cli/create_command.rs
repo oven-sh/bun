@@ -2082,12 +2082,12 @@ impl Example {
         refresher: &mut Progress,
         progress: &mut ProgressNode,
     ) -> Result<MutableString, bun_core::Error> {
-        let owner_i = bun_str::strings::index_of_char(name, b'/').unwrap();
+        let owner_i = bun_str::strings::index_of_char(name, b'/').unwrap() as usize;
         let owner = &name[0..owner_i];
         let mut repository = &name[owner_i + 1..];
 
         if let Some(i) = bun_str::strings::index_of_char(repository, b'/') {
-            repository = &repository[0..i];
+            repository = &repository[0..i as usize];
         }
 
         progress.name = ProgressBuf::pretty(
@@ -2119,7 +2119,7 @@ impl Example {
             &url_buf[..written]
         });
 
-        let mut header_entries: Headers::Entry::List = Default::default();
+        let mut header_entries: bun_http::headers::EntryList = Default::default();
         let mut headers_buf: &[u8] = b"";
 
         if let Some(access_token) = env_loader
@@ -2131,16 +2131,16 @@ impl Example {
                 let mut buf = Vec::new();
                 write!(&mut buf, "AuthorizationBearer {}", bstr::BStr::new(access_token))?;
                 headers_buf = Box::leak(buf.into_boxed_slice());
-                header_entries.push(Headers::Entry {
-                    name: Headers::Slice {
+                header_entries.append(bun_http::headers::Entry {
+                    name: bun_http_types::ETag::StringPointer {
                         offset: 0,
                         length: u32::try_from(b"Authorization".len()).unwrap(),
                     },
-                    value: Headers::Slice {
+                    value: bun_http_types::ETag::StringPointer {
                         offset: u32::try_from(b"Authorization".len()).unwrap(),
                         length: u32::try_from(headers_buf.len() - b"Authorization".len()).unwrap(),
                     },
-                });
+                })?;
             }
         }
 
@@ -2159,7 +2159,7 @@ impl Example {
             None,
             HTTP::FetchRedirect::Follow,
         )));
-        async_http.client.progress_node = Some(progress);
+        async_http.client.progress_node = Some(core::ptr::NonNull::from(&mut *progress));
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
         let response = async_http.send_sync()?;
@@ -2176,10 +2176,10 @@ impl Example {
         let mut is_expected_content_type = false;
         let mut content_type: &[u8] = b"";
         for header in response.headers.list.iter() {
-            if strings::eql_case_insensitive_ascii(header.name, b"content-type", true) {
-                content_type = header.value;
+            if strings::eql_case_insensitive_ascii(header.name(), b"content-type", true) {
+                content_type = header.value();
 
-                if header.value == b"application/x-gzip" {
+                if header.value() == b"application/x-gzip" {
                     is_expected_content_type = true;
                     break;
                 }
@@ -2191,15 +2191,14 @@ impl Example {
             refresher.refresh();
 
             if !content_type.is_empty() {
-                Output::pretty_errorln(
+                Output::pretty_errorln(format_args!(
                     "<r><red>error<r>: Unexpected content type from GitHub: {}",
-                    format_args!("{}", bstr::BStr::new(content_type)),
-                );
+                    bstr::BStr::new(content_type),
+                ));
                 Global::crash();
             } else {
                 Output::pretty_errorln(
                     "<r><red>error<r>: Invalid response from GitHub (missing content type)",
-                    format_args!(""),
                 );
                 Global::crash();
             }
@@ -2211,13 +2210,12 @@ impl Example {
 
             Output::pretty_errorln(
                 "<r><red>error<r>: Invalid response from GitHub (missing body)",
-                format_args!(""),
             );
             Global::crash();
         }
 
         // TODO(port): Zig returned `mutable.*` (deref-copy of struct). MutableString may need Clone.
-        Ok(mutable.clone())
+        Ok(mutable.clone()?)
     }
 
     pub fn fetch(
@@ -2264,7 +2262,7 @@ impl Example {
             None,
             HTTP::FetchRedirect::Follow,
         )));
-        async_http.client.progress_node = Some(progress);
+        async_http.client.progress_node = Some(core::ptr::NonNull::from(&mut *progress));
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
         let mut response = async_http.send_sync()?;
@@ -2355,7 +2353,7 @@ impl Example {
             None,
             HTTP::FetchRedirect::Follow,
         );
-        async_http.client.progress_node = Some(progress);
+        async_http.client.progress_node = Some(core::ptr::NonNull::from(&mut *progress));
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
         refresher.maybe_refresh();
@@ -2377,7 +2375,7 @@ impl Example {
         refresher.refresh();
 
         // TODO(port): see note above re: returning MutableString by value
-        Ok(mutable.clone())
+        Ok(mutable.clone()?)
     }
 
     pub fn fetch_all(

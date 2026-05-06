@@ -5431,11 +5431,17 @@ impl H2FrameParser {
 
     #[bun_jsc::host_fn(method)]
     pub fn detach_from_js(this: &mut Self, _global_object: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
-        // PORT NOTE: iterator stores a raw *mut so the loop body can keep using `this` exclusively.
-        let mut it = StreamResumableIterator::init(this as *mut Self);
+        // PORT NOTE: StreamResumableIterator stores a raw *mut and only borrows the parser briefly
+        // inside next(). Under Stacked Borrows, writing through the original `this` between next()
+        // calls would pop the iterator's raw-ptr tag, so route in-loop parser access through the
+        // same raw pointer the iterator holds (mirrors flush_stream_queue).
+        let this_ptr = this as *mut Self;
+        let mut it = StreamResumableIterator::init(this_ptr);
         while let Some(stream) = it.next() {
-            // SAFETY: stream is *mut Stream from self.streams; valid until freed below / map cleared
-            unsafe { (*stream).free_resources::<false>(this) };
+            // SAFETY: stream is *mut Stream from self.streams; valid until freed below / map
+            // cleared. this_ptr derived from `this` above; iterator holds only a raw pointer and
+            // `stream` points into a disjoint Box, so this is the sole exclusive borrow of *this.
+            unsafe { (*stream).free_resources::<false>(&mut *this_ptr) };
         }
         this.detach();
         if let Some(this_value) = this.strong_this.try_get() {

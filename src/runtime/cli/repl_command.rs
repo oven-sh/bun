@@ -13,7 +13,8 @@ use core::ffi::c_char;
 
 use bun_alloc::Arena;
 use bun_core::{Global, Output};
-use bun_jsc::{self as jsc, JSGlobalObject, VirtualMachine};
+use bun_jsc::{self as jsc, JSGlobalObject};
+use bun_jsc::virtual_machine::VirtualMachine;
 use bun_js_parser as js_ast;
 use crate::dns_jsc::Order as DnsOrder;
 use bun_str::ZigString;
@@ -42,7 +43,7 @@ impl ReplCommand {
         Self::boot_repl_vm(ctx, &mut repl)
     }
 
-    fn boot_repl_vm(ctx: Command::Context, repl: &mut Repl) -> Result<(), bun_core::Error> {
+    fn boot_repl_vm(ctx: Command::Context, repl: &mut Repl<'_>) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         // Load bunfig if not already loaded
         if !ctx.debug.loaded_bunfig {

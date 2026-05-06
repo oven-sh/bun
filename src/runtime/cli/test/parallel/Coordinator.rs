@@ -10,14 +10,13 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use std::io::Write as _;
 
 use bun_core::{Global, Output};
-use bun_jsc::VirtualMachine;
-use bun_str::{strings, ZStr};
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_str::{strings, PathString, ZStr};
 
 use super::frame::{self, Frame};
-use super::worker::Worker;
+use super::worker::{PipeRole, Worker, WorkerPipe};
 use crate::test_command::CommandLineReporter;
 
-use bun_paths::PathString;
 // TODO(port): verify crate path for bun.spawn.Status
 use bun_spawn::Status as SpawnStatus;
 

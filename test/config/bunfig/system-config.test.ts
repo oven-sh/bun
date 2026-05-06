@@ -3,6 +3,14 @@ import { existsSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
+// Feature #28726: system-wide bunfig.toml support via `BUN_SYSTEM_CONFIG`
+// or platform default (/etc/bunfig.toml on POSIX, %ALLUSERSPROFILE%\bunfig.toml
+// on Windows). Merge order is system → home → project; later overrides earlier.
+//
+// Every subtest passes `BUN_SYSTEM_CONFIG` explicitly so none of them read the
+// real `/etc/bunfig.toml` on the CI host, and every subtest uses a freshly-
+// allocated tempDir to avoid cross-test bleed.
+
 describe("system-wide bunfig.toml", () => {
   test("system config preload is applied via BUN_SYSTEM_CONFIG", async () => {
     using dir = tempDir("system-bunfig-preload", {

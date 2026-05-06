@@ -1,6 +1,6 @@
 use core::cell::Cell;
 use core::ffi::CStr;
-use core::ptr::NonNull;
+use core::ptr::{addr_of, addr_of_mut, NonNull};
 use core::sync::atomic::Ordering;
 
 use bun_core::{err, Error, ZStr};

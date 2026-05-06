@@ -148,12 +148,18 @@ mod windows_impl {
     const NS_PER_MS: u64 = 1_000_000;
 
     pub struct WindowsImpl {
-        condition: windows::CONDITION_VARIABLE,
+        condition: core::cell::UnsafeCell<windows::CONDITION_VARIABLE>,
     }
+
+    // SAFETY: CONDITION_VARIABLE is an OS-managed sync primitive designed for
+    // concurrent access from multiple threads; all access goes through kernel32
+    // calls which provide their own synchronization.
+    unsafe impl Sync for WindowsImpl {}
+    unsafe impl Send for WindowsImpl {}
 
     impl Default for WindowsImpl {
         fn default() -> Self {
-            Self { condition: windows::CONDITION_VARIABLE::default() }
+            Self { condition: core::cell::UnsafeCell::new(windows::CONDITION_VARIABLE::default()) }
         }
     }
 
@@ -181,15 +187,17 @@ mod windows_impl {
                 // TODO(port): Mutex internals — Zig: mutex.impl.locking_thread.store(0, .unordered)
                 mutex.impl_.locking_thread.store(0, Ordering::Relaxed);
             }
-            // SAFETY: condition and srwlock are valid OS handles; mutex is locked by caller.
+            // SAFETY: `condition` and `srwlock` are UnsafeCell-wrapped OS sync primitives;
+            // kernel32 mutates them internally and provides its own synchronization. The
+            // mutex is locked by the caller per this function's contract.
             let rc = unsafe {
                 kernel32::SleepConditionVariableSRW(
-                    &self.condition as *const _ as *mut _,
+                    self.condition.get(),
                     // TODO(port): Mutex internals — debug build wraps an inner impl with `srwlock`.
                     #[cfg(debug_assertions)]
-                    { &mutex.impl_.impl_.srwlock as *const _ as *mut _ },
+                    { mutex.impl_.impl_.srwlock.get() },
                     #[cfg(not(debug_assertions))]
-                    { &mutex.impl_.srwlock as *const _ as *mut _ },
+                    { mutex.impl_.srwlock.get() },
                     timeout_ms,
                     0, // the srwlock was assumed to acquired in exclusive mode not shared
                 )

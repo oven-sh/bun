@@ -16,17 +16,21 @@ unsafe extern "C" {
 
 pub fn fetch_redirect_to_js(this: FetchRedirect, global: &JSGlobalObject) -> JSValue {
     // SAFETY: FFI call into JSC bindings; `global` is a valid borrowed JSGlobalObject.
-    unsafe { Bun__FetchRedirect__toJS(this as u8, global as *const _ as *mut _) }
+    // `as_mut_ptr` routes through `UnsafeCell::get` so the `*mut` carries write
+    // provenance even though we hold `&JSGlobalObject` (the C++ side allocates).
+    unsafe { Bun__FetchRedirect__toJS(this as u8, global.as_mut_ptr()) }
 }
 
 pub fn fetch_request_mode_to_js(this: FetchRequestMode, global: &JSGlobalObject) -> JSValue {
     // SAFETY: FFI call into JSC bindings; `global` is a valid borrowed JSGlobalObject.
-    unsafe { Bun__FetchRequestMode__toJS(this as u8, global as *const _ as *mut _) }
+    // `as_mut_ptr` routes through `UnsafeCell::get` for sound interior mutability.
+    unsafe { Bun__FetchRequestMode__toJS(this as u8, global.as_mut_ptr()) }
 }
 
 pub fn fetch_cache_mode_to_js(this: FetchCacheMode, global: &JSGlobalObject) -> JSValue {
     // SAFETY: FFI call into JSC bindings; `global` is a valid borrowed JSGlobalObject.
-    unsafe { Bun__FetchCacheMode__toJS(this as u8, global as *const _ as *mut _) }
+    // `as_mut_ptr` routes through `UnsafeCell::get` for sound interior mutability.
+    unsafe { Bun__FetchCacheMode__toJS(this as u8, global.as_mut_ptr()) }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

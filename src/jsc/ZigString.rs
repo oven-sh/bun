@@ -61,12 +61,13 @@ pub enum ByteString<'a> {
 /// `ZigString.Slice` re-export for `crate::zig_string::Slice` callers.
 pub use bun_string::ZigStringSlice as Slice;
 
-/// `ZigString.static(comptime s)` — borrow a static UTF-8 literal.
+/// `ZigString.static(comptime s)` — borrow a static ASCII/Latin-1 literal.
+/// Spec (`ZigString.static`, ZigString.zig:499-506) constructs the string with
+/// the raw literal pointer and NO encoding tag. Callers who need UTF-8
+/// semantics must use `init_utf8` / `from_utf8` explicitly.
 #[inline]
 pub fn static_(s: &'static [u8]) -> bun_string::ZigString {
-    let mut z = bun_string::ZigString::init(s);
-    z.mark_utf8();
-    z
+    bun_string::ZigString::init(s)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

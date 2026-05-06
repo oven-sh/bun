@@ -129,7 +129,7 @@ impl ArrayBuffer {
         }
 
         let mut array_buffer = buffer_value.as_array_buffer(global).expect("Unexpected");
-        let mut bytes = array_buffer.byte_slice();
+        let mut bytes = array_buffer.byte_slice_mut();
 
         buffer_value.ensure_still_alive();
 
@@ -242,7 +242,12 @@ impl ArrayBuffer {
     #[inline]
     pub fn stream(self) -> ArrayBufferStream<'static> {
         // TODO(port): lifetime — Zig returns a stream over self.slice() (raw ptr-backed).
-        // SAFETY: ptr is FFI-backed; caller must keep backing JSValue alive.
+        // Spec routes through `slice()` which yields `&.{}` for detached buffers; mirror
+        // that here to avoid passing a null ptr to `from_raw_parts_mut` (UB even at len 0).
+        if self.is_detached() {
+            return std::io::Cursor::new(&mut [][..]);
+        }
+        // SAFETY: ptr is non-null (checked above), FFI-backed; caller must keep backing JSValue alive.
         let slice: &'static mut [u8] = unsafe { core::slice::from_raw_parts_mut(self.ptr, self.byte_len) };
         std::io::Cursor::new(slice)
     }
@@ -468,12 +473,26 @@ impl ArrayBuffer {
     /// ```js
     ///    new ArrayBuffer(view.buffer, view.byteOffset, view.byteLength)
     /// ```
+    // PORT NOTE: Zig `byteSlice(self: *const @This()) []u8` is sound under Zig's
+    // aliasing model but cannot be transliterated to `&self -> &mut [_]` in Rust
+    // (forbidden aliased-`&mut` per PORTING.md §Forbidden). Split into a shared
+    // accessor (`&self -> &[u8]`) and an exclusive one (`&mut self -> &mut [u8]`).
     #[inline]
-    pub fn byte_slice(&self) -> &mut [u8] {
+    pub fn byte_slice(&self) -> &[u8] {
+        if self.is_detached() {
+            return &[];
+        }
+        // SAFETY: ptr is non-null (checked above) and backed by JSC ArrayBuffer of byte_len bytes.
+        unsafe { core::slice::from_raw_parts(self.ptr, self.byte_len) }
+    }
+
+    #[inline]
+    pub fn byte_slice_mut(&mut self) -> &mut [u8] {
         if self.is_detached() {
             return &mut [];
         }
         // SAFETY: ptr is non-null (checked above) and backed by JSC ArrayBuffer of byte_len bytes.
+        // `&mut self` enforces exclusive access to this view.
         unsafe { core::slice::from_raw_parts_mut(self.ptr, self.byte_len) }
     }
 
@@ -483,41 +502,48 @@ impl ArrayBuffer {
     ///    new ArrayBuffer(view.buffer, view.byteOffset, view.byteLength)
     /// ```
     #[inline]
-    pub fn slice(&self) -> &mut [u8] {
+    pub fn slice(&self) -> &[u8] {
         self.byte_slice()
     }
 
     #[inline]
-    pub fn as_u16(&self) -> &mut [u16] {
+    pub fn slice_mut(&mut self) -> &mut [u8] {
+        self.byte_slice_mut()
+    }
+
+    #[inline]
+    pub fn as_u16(&mut self) -> &mut [u16] {
         // TODO(port): Zig @alignCast — Rust slices require natural alignment. This will be UB
         // if ptr is not 2-byte aligned. Phase B: consider returning &[Unaligned<u16>] or asserting.
         self.as_u16_unaligned()
     }
 
     #[inline]
-    pub fn as_u16_unaligned(&self) -> &mut [u16] {
+    pub fn as_u16_unaligned(&mut self) -> &mut [u16] {
         if self.is_detached() {
             return &mut [];
         }
         // TODO(port): Zig returns []align(1) u16; Rust has no unaligned slice type.
         // SAFETY: ptr non-null; len = floor(byte_len/2). Alignment NOT checked — see above.
+        // `&mut self` enforces exclusive access to this view.
         let len = self.byte_len / core::mem::size_of::<u16>();
         unsafe { core::slice::from_raw_parts_mut(self.ptr.cast::<u16>(), len) }
     }
 
     #[inline]
-    pub fn as_u32(&self) -> &mut [u32] {
+    pub fn as_u32(&mut self) -> &mut [u32] {
         // TODO(port): see as_u16 alignment note.
         self.as_u32_unaligned()
     }
 
     #[inline]
-    pub fn as_u32_unaligned(&self) -> &mut [u32] {
+    pub fn as_u32_unaligned(&mut self) -> &mut [u32] {
         if self.is_detached() {
             return &mut [];
         }
         // TODO(port): Zig returns []align(1) u32; Rust has no unaligned slice type.
         // SAFETY: ptr non-null; len = floor(byte_len/4). Alignment NOT checked.
+        // `&mut self` enforces exclusive access to this view.
         let len = self.byte_len / core::mem::size_of::<u32>();
         unsafe { core::slice::from_raw_parts_mut(self.ptr.cast::<u32>(), len) }
     }
@@ -546,8 +572,12 @@ impl ArrayBufferStrong {
         let _ = self;
     }
 
-    pub fn slice(&self) -> &mut [u8] {
+    pub fn slice(&self) -> &[u8] {
         self.array_buffer.slice()
+    }
+
+    pub fn slice_mut(&mut self) -> &mut [u8] {
+        self.array_buffer.slice_mut()
     }
 }
 
@@ -791,7 +821,7 @@ impl MarkedArrayBuffer {
     #[inline]
     pub fn stream(&mut self) -> ArrayBufferStream<'_> {
         // TODO(port): see ArrayBuffer::stream lifetime note.
-        std::io::Cursor::new(self.buffer.byte_slice())
+        std::io::Cursor::new(self.buffer.byte_slice_mut())
     }
 
     pub fn from_typed_array(ctx: &JSGlobalObject, value: JSValue) -> MarkedArrayBuffer {
@@ -837,8 +867,13 @@ impl MarkedArrayBuffer {
     };
 
     #[inline]
-    pub fn slice(&self) -> &mut [u8] {
+    pub fn slice(&self) -> &[u8] {
         self.buffer.byte_slice()
+    }
+
+    #[inline]
+    pub fn slice_mut(&mut self) -> &mut [u8] {
+        self.buffer.byte_slice_mut()
     }
 
     /// Releases the owned byte buffer if this `MarkedArrayBuffer` was created with an

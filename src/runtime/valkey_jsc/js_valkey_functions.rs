@@ -6,7 +6,9 @@ use bun_jsc::node::BlobOrStringOrBuffer as JSArgument;
 use bun_str::strings;
 
 use super::js_valkey::{JSValkeyClient, SubscriptionCtx};
-use bun_valkey::{self as valkey, protocol, Command, CommandArgs, CommandMeta};
+use super::protocol_jsc as protocol;
+use super::valkey;
+use super::valkey_command_body::{Args as CommandArgs, Command, Meta as CommandMeta};
 
 type Slice = bun_jsc::ZigStringSlice;
 

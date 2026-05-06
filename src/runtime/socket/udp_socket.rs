@@ -4,7 +4,7 @@ use core::mem::MaybeUninit;
 use bun_aio::KeepAlive;
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::{
-    ArrayBuffer, CallFrame, Codegen, JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer,
+    CallFrame, Codegen, JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer,
     Ref as JscRef, SystemError, VirtualMachine,
 };
 use bun_str::{self as bun_string, String as BunString, ZigString, ZigStringSlice};

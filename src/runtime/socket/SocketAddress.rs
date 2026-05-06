@@ -10,8 +10,8 @@ use core::mem;
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, JsError};
 use bun_str::{self as strings, String as BunString, ZStr};
-// TODO(port): move to <area>_sys — c-ares FFI lives in bun_c_ares
-use bun_c_ares as ares;
+// TODO(port): move to <area>_sys — c-ares FFI lives in bun_cares_sys
+use bun_cares_sys::c_ares as ares;
 use bun_jsc::URL;
 
 // `pub const js = jsc.Codegen.JSSocketAddress;` + toJS/fromJS/fromJSDirect

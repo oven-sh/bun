@@ -2,32 +2,24 @@ use core::any::Any;
 use core::ffi::c_char;
 
 use bun_boringssl::c as boring_ssl;
-use bun_jsc::node::{BlobOrStringOrBuffer, Encoding, StringOrBuffer};
+use bun_jsc::node::BlobOrStringOrBuffer;
 use bun_jsc::{ArrayBuffer, CallFrame, JSGlobalObject, JSObject, JSValue, JsError, JsResult};
 use bun_str::{strings, ZigString};
 
-use crate::api::bun::crypto::{create_crypto_error, EVP, HMAC};
+use crate::crypto::{create_crypto_error, evp, HMAC};
+use crate::crypto::evp::EVP;
+use crate::node::{Encoding, StringOrBuffer};
 // TODO(port): `Hashers` = src/sha_hmac/sha.zig — confirm crate path in Phase B
 use bun_sha_hmac::sha as hashers;
 
 // TODO(port): std.crypto.hash.{sha3,blake2} — Zig std crypto algos not in BoringSSL.
 // Phase B: pick a Rust impl (e.g. `sha3`/`blake2` crates or a thin Zig→C shim) and
-// expose as `bun_crypto_std::{sha3,blake2}` with the `ZigHashAlgo` trait below.
-use bun_crypto_std::blake2::Blake2s256;
-use bun_crypto_std::sha3::{Sha3_224, Sha3_256, Sha3_384, Sha3_512, Shake128, Shake256};
+// wire into the `ZigHashAlgo` trait below. Until then these are local todo!-stubs
+// so the `for_each_zig_algo!` table type-checks.
+use zig_crypto_stubs::{Blake2s256, Sha3_224, Sha3_256, Sha3_384, Sha3_512, Shake128, Shake256};
 
-type Digest = <EVP as evp_digest_alias::HasDigest>::Digest;
-// PORT NOTE: in Zig `Digest = EVP.Digest` is a `[EVP_MAX_MD_SIZE]u8`. The alias above
-// is just to mirror the Zig — Phase B can replace with a direct `pub type Digest = EVP::Digest;`
-// once the `EVP` Rust port lands. Kept as a TODO indirection to avoid guessing the array len here.
-mod evp_digest_alias {
-    pub trait HasDigest {
-        type Digest;
-    }
-    impl HasDigest for super::EVP {
-        type Digest = super::EVP::Digest; // TODO(port): EVP::Digest = [u8; EVP_MAX_MD_SIZE]
-    }
-}
+// Zig: `const Digest = EVP.Digest;` → `[u8; EVP_MAX_MD_SIZE]`
+type Digest = evp::Digest;
 
 /// `union(enum)` → Rust enum with payload variants.
 /// `.classes.ts`-backed type: the C++ JSCell wrapper stays generated; this is the `m_ctx` payload.

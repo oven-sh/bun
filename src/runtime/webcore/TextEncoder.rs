@@ -169,7 +169,7 @@ struct RopeStringEncoder<'a> {
 impl<'a> RopeStringEncoder<'a> {
     pub unsafe extern "C" fn append8(it: *mut JSStringIterator, ptr: *const u8, len: u32) {
         // SAFETY: it.data was set to &mut RopeStringEncoder in iter()
-        let this = unsafe { &mut *((*it).data as *mut RopeStringEncoder) };
+        let this = unsafe { &mut *((*it).data as *mut RopeStringEncoder<'a>) };
         // SAFETY: ptr[0..len] is provided by JSC rope iteration
         let src = unsafe { core::slice::from_raw_parts(ptr, len as usize) };
         let result =
@@ -185,7 +185,7 @@ impl<'a> RopeStringEncoder<'a> {
 
     pub unsafe extern "C" fn append16(it: *mut JSStringIterator, _: *const u16, _: u32) {
         // SAFETY: it.data was set to &mut RopeStringEncoder in iter()
-        let this = unsafe { &mut *((*it).data as *mut RopeStringEncoder) };
+        let this = unsafe { &mut *((*it).data as *mut RopeStringEncoder<'a>) };
         this.any_non_ascii = true;
         // SAFETY: it is a valid pointer for the duration of the callback
         unsafe { (*it).stop = 1 };
@@ -193,7 +193,7 @@ impl<'a> RopeStringEncoder<'a> {
 
     pub unsafe extern "C" fn write8(it: *mut JSStringIterator, ptr: *const u8, len: u32, offset: u32) {
         // SAFETY: it.data was set to &mut RopeStringEncoder in iter()
-        let this = unsafe { &mut *((*it).data as *mut RopeStringEncoder) };
+        let this = unsafe { &mut *((*it).data as *mut RopeStringEncoder<'a>) };
         // SAFETY: ptr[0..len] is provided by JSC rope iteration
         let src = unsafe { core::slice::from_raw_parts(ptr, len as usize) };
         let result = strings::copy_latin1_into_utf8_stop_on_non_ascii(
@@ -210,7 +210,7 @@ impl<'a> RopeStringEncoder<'a> {
 
     pub unsafe extern "C" fn write16(it: *mut JSStringIterator, _: *const u16, _: u32, _: u32) {
         // SAFETY: it.data was set to &mut RopeStringEncoder in iter()
-        let this = unsafe { &mut *((*it).data as *mut RopeStringEncoder) };
+        let this = unsafe { &mut *((*it).data as *mut RopeStringEncoder<'a>) };
         this.any_non_ascii = true;
         // SAFETY: it is a valid pointer for the duration of the callback
         unsafe { (*it).stop = 1 };
@@ -218,7 +218,7 @@ impl<'a> RopeStringEncoder<'a> {
 
     pub fn iter(&mut self) -> JSStringIterator {
         JSStringIterator {
-            data: self as *mut RopeStringEncoder as *mut c_void,
+            data: self as *mut Self as *mut c_void,
             stop: 0,
             append8: Some(Self::append8),
             append16: Some(Self::append16),

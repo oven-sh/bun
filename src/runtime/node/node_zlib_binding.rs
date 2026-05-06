@@ -590,9 +590,24 @@ impl<T> CompressionStream<T> {
     }
 }
 
-pub use jsc::codegen::JSNativeZlib::get_constructor as NativeZlib;
-pub use jsc::codegen::JSNativeBrotli::get_constructor as NativeBrotli;
-pub use jsc::codegen::JSNativeZstd::get_constructor as NativeZstd;
+// Zig: `pub const NativeZlib = jsc.Codegen.JSNativeZlib.getConstructor;` (etc.) —
+// in Rust the per-class `JS*` codegen submodules collapse into the generic
+// `jsc::codegen::js::get_constructor::<T>` helper (see src/jsc/lib.rs `pub mod codegen`).
+#[allow(non_snake_case)]
+#[inline]
+pub fn NativeZlib(global: &JSGlobalObject) -> JSValue {
+    jsc::codegen::js::get_constructor::<crate::node::zlib::NativeZlib>(global)
+}
+#[allow(non_snake_case)]
+#[inline]
+pub fn NativeBrotli(global: &JSGlobalObject) -> JSValue {
+    jsc::codegen::js::get_constructor::<crate::node::zlib::NativeBrotli<'static>>(global)
+}
+#[allow(non_snake_case)]
+#[inline]
+pub fn NativeZstd(global: &JSGlobalObject) -> JSValue {
+    jsc::codegen::js::get_constructor::<crate::node::zlib::NativeZstd>(global)
+}
 } // mod _impl
 
 // ──────────────────────────────────────────────────────────────────────────

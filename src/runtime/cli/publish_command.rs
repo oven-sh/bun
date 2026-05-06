@@ -331,14 +331,12 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         })
     }
 
-    pub type FromWorkspaceError = pack::PackError<true>;
-
     /// `bun publish` without a tarball path. Automatically pack the current workspace and get
     /// information required for publishing
     pub fn from_workspace(
-        ctx: Command::Context,
+        ctx: Command::Context<'a>,
         manager: &'a mut PackageManager,
-    ) -> Result<Context<'a, DIRECTORY_PUBLISH>, Self::FromWorkspaceError> {
+    ) -> Result<Context<'a, DIRECTORY_PUBLISH>, FromWorkspaceError> {
         // TODO(port): in-place init — Lockfile::loadFromCwd writes into out-param `lockfile`
         let mut lockfile = Lockfile::default();
         let load_from_disk_result = lockfile.load_from_cwd(

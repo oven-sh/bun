@@ -740,13 +740,22 @@ pub struct NewAsyncCpTask<const IS_SHELL: bool> {
 /// When clonefile cannot be used, this task is started once per file.
 pub struct CpSingleTask<const IS_SHELL: bool> {
     pub cp_task: *mut NewAsyncCpTask<IS_SHELL>,
-    pub src: OSPathSliceZ,  // points into owned path_buf
-    pub dest: OSPathSliceZ, // points into owned path_buf
+    // PORT NOTE: Zig `bun.OSPathSliceZ` is a sentinel-terminated slice (fat
+    // pointer). The Rust `OSPathSliceZ` alias is a DST (`ZStr`/`WStr`), so the
+    // owning struct stores `&'static` borrows into the `Box::leak`'d `path_buf`
+    // allocated in `_cp_async_directory`; `destroy()` reconstitutes and frees
+    // that allocation from `src.as_ptr()`.
+    pub src: &'static OSPathSliceZ,  // points into owned path_buf
+    pub dest: &'static OSPathSliceZ, // points into owned path_buf
     pub task: WorkPoolTask,
 }
 
 impl<const IS_SHELL: bool> CpSingleTask<IS_SHELL> {
-    pub fn create(parent: *mut NewAsyncCpTask<IS_SHELL>, src: OSPathSliceZ, dest: OSPathSliceZ) {
+    pub fn create(
+        parent: *mut NewAsyncCpTask<IS_SHELL>,
+        src: &'static OSPathSliceZ,
+        dest: &'static OSPathSliceZ,
+    ) {
         let task = Box::new(CpSingleTask {
             cp_task: parent,
             src,

@@ -290,14 +290,14 @@ impl PackageFilterIterator {
         })
     }
 
-    fn walker_next(&mut self) -> Result<Option<&[u8]>, bun_core::Error> {
+    fn walker_next(&mut self) -> Result<Option<glob::walk::MatchedPath>, bun_core::Error> {
         // TODO(port): narrow error set
         loop {
             // SAFETY: `valid == true` (caller invariant) so `iter` is initialized.
             let iter = unsafe { self.iter.assume_init_mut() };
             match iter.next()? {
                 Err(err) => {
-                    output::pretty_errorln!("Error: {}", err);
+                    bun_core::pretty_errorln!("Error: {}", err);
                     continue;
                 }
                 Ok(path) => {

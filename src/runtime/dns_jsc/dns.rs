@@ -8,23 +8,27 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use bun_jsc::{
-    self as jsc, host_fn, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, SystemError,
-    VirtualMachine, ZigString,
+    self as jsc, host_fn, CallFrame, JSGlobalObject, JSPromise, JSPromiseStrong, JSValue, JsResult,
+    SystemError, VirtualMachine, ZigString,
 };
 use bun_aio::{self as Async, FilePoll, KeepAlive};
-use bun_core::{self as bun, env_var, feature_flag, fmt as bun_fmt, Global, Output};
+use bun_core::{self as bun, env_var, feature_flag, fmt as bun_fmt, mach_port, Global, Output};
 use bun_collections::{ArrayHashMap, HiveArray};
-use bun_dns::GetAddrInfo;
+use bun_dns::{
+    self, Backend as GetAddrInfoBackend, GetAddrInfo, GetAddrInfoResult, Options as GetAddrInfoOptions,
+    ResultAny as GetAddrInfoResultAny, ResultList as GetAddrInfoResultList,
+};
 use bun_paths::{PathBuffer, MAX_PATH_BYTES};
 use bun_str::{self, strings, ZStr, ZigString as ZigStringSlice};
-use bun_sys::{self as sys, libc, mach_port};
+use bun_sys::{self as sys};
+#[cfg(windows)]
 use bun_sys::windows::libuv;
-use bun_threading::ThreadPool;
+use bun_threading::{thread_pool, ThreadPool};
 use bun_uws::{self as uws, ConnectingSocket, Loop};
 use bun_wyhash::hash as wyhash;
 
-use crate::c_ares;
-use crate::Timer::EventLoopTimer;
+use bun_cares_sys::c_ares_draft as c_ares;
+use crate::timer::{EventLoopTimer, EventLoopTimerTag};
 
 bun_output::declare_scope!(LibUVBackend, visible);
 bun_output::declare_scope!(ResolveInfoRequest, hidden);

@@ -447,8 +447,14 @@ impl CreateCommand {
 
                 progress.refresh();
 
+                // PORT NOTE: see SKIP_DIRS note re: os_path_literal — Plucker::init
+                // takes `&[OSPathChar]`, which is `&[u8]` on POSIX / `&[u16]` on Windows.
+                #[cfg(not(windows))]
+                let package_json_lit: &OSPathSlice = b"package.json";
+                #[cfg(windows)]
+                let package_json_lit: &OSPathSlice = bun_str::w!("package.json");
                 let mut pluckers: [Archiver::Plucker; 1] = if !create_options.skip_package_json {
-                    [Archiver::Plucker::init(bun_paths::os_path_literal!("package.json"), 2048)?]
+                    [Archiver::Plucker::init(package_json_lit, 2048)?]
                 } else {
                     // SAFETY: never read when skip_package_json is true
                     [unsafe { core::mem::zeroed() }]
@@ -1795,7 +1801,7 @@ fn file_copier_copy(
 
 // PORT NOTE: hoisted from Zig fn-local `const Analyzer = struct {...}` inside runOnEntryPoint.
 struct Analyzer<'a> {
-    ctx: &'a Command::Context,
+    ctx: &'a Command::Context<'a>,
     example_tag: ExampleTag,
     entry_point: &'a [u8],
     node: &'a mut Progress::Node,
@@ -1805,7 +1811,7 @@ struct Analyzer<'a> {
 impl<'a> Analyzer<'a> {
     pub fn on_analyze(
         this: &mut Self,
-        result: &mut bun_bundler::BundleV2::DependenciesScanner::Result,
+        result: &mut bun_bundler::bundle_v2::DependenciesScannerResult,
     ) -> Result<(), bun_core::Error> {
         this.node.end();
 

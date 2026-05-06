@@ -996,11 +996,9 @@ impl DevServer<'_> {
         self.server = Some(AnyServer::from(server));
         let app = server.app().unwrap();
         // TODO(port): `is_ssl` was extracted via @typeInfo(@TypeOf(app)).pointer.child.is_ssl
-        let is_ssl = S::IS_SSL;
-
         macro_rules! route {
             ($method:ident, $path:expr, $handler:expr) => {
-                app.$method($path, self as *mut _, wrap_generic_request_handler::<_, { is_ssl }>($handler));
+                app.$method($path, self as *mut _, wrap_generic_request_handler::<_, { S::IS_SSL }>($handler));
             };
         }
         // TODO(port): comptime string concat → const_format::concatcp!
@@ -1016,7 +1014,7 @@ impl DevServer<'_> {
             const_format::concatcp!(INTERNAL_PREFIX, "/hmr"),
             self as *mut _,
             0,
-            WebSocketBehavior::wrap::<DevServer, HmrSocket, { is_ssl }>(Default::default()),
+            WebSocketBehavior::wrap::<DevServer, HmrSocket, { S::IS_SSL }>(Default::default()),
         );
 
         #[cfg(feature = "bake_debugging_features")]

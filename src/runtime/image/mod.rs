@@ -11,6 +11,7 @@
 
 #[path = "Image.rs"]
 mod image_body; // full Phase-A draft of Image.zig
+pub use image_body::AsyncImageTask;
 
 #[path = "codecs.rs"]
 pub mod codecs_body; // full Phase-A draft — needs bun_str::zstr!, bun_alloc::mimalloc

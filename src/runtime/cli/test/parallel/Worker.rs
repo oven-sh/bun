@@ -10,13 +10,18 @@ use bun_jsc as jsc;
 use bun_aio as r#async;
 use bun_io;
 use bun_sys;
-// TODO(port): `bun.spawn` lives under src/runtime/api/bun/process.zig — confirm crate path in Phase B.
-use crate::spawn::{self, Process, Rusage, SpawnOptions, Status, Stdio};
+// `bun.spawn` lives under src/runtime/api/bun/process.zig → mounted at
+// `crate::api::bun_process`, re-exported as `crate::api::bun::process`.
+use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};
+#[cfg(unix)]
+use crate::api::bun::process::PosixStdio as Stdio;
+#[cfg(not(unix))]
+use crate::api::bun::process::WindowsStdio as Stdio;
 
-use super::channel::Channel;
+use super::channel::{Channel, ChannelOwner};
 use super::coordinator::Coordinator;
 use super::file_range::FileRange;
-use super::frame::Frame;
+use super::frame::{self, Frame};
 
 pub struct Worker {
     // TODO(port): LIFETIMES.tsv classifies this BACKREF → *const, but the Zig

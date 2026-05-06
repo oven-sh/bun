@@ -16,15 +16,11 @@ macro_rules! gated_mod {
         
         #[path = $path]
         pub mod $name;
-        #[cfg(any())]
-        pub mod $name {}
     };
     ($name:ident, $path:literal, { $($body:tt)* }) => {
-        
+
         #[path = $path]
         pub mod $name;
-        #[cfg(any())]
-        pub mod $name { $($body)* }
     };
 }
 

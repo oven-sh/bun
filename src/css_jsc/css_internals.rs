@@ -77,7 +77,10 @@ pub fn testing_impl(
     // PERF(port): was arena bulk-free — CSS parser allocates into this bump
 
     let arguments_ = frame.arguments_old::<3>();
-    let mut arguments = bun_jsc::ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
+    // SAFETY: bunVM() never returns null for a Bun-owned global; reborrow the
+    // raw `*mut VirtualMachine` as a shared ref for the slice's lifetime.
+    let mut arguments =
+        bun_jsc::ArgumentsSlice::init(unsafe { &*global.bun_vm() }, arguments_.slice());
     let Some(source_arg) = arguments.next_eat() else {
         return Err(global.throw(format_args!(
             "minifyTestWithOptions: expected 2 arguments, got 0"
@@ -145,7 +148,7 @@ pub fn testing_impl(
             let (mut stylesheet, extra) = ret;
             let mut minify_options = MinifyOptions::default();
             minify_options.targets.browsers = browsers;
-            match stylesheet.minify(&minify_options, &extra) {
+            match stylesheet.minify(&arena, &minify_options, &extra) {
                 Ok(_) => {}
                 Err(err) => {
                     return Err(
@@ -311,12 +314,22 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     use bun_jsc::{LogJsc as _, StringJsc as _};
     use bun_options_types::ImportRecord;
 
-    let _arena = Arena::new();
-    // PERF(port): was arena bulk-free — StyleAttribute::parse owns its own bump
-    // internally; kept for parity with Zig defer arena.deinit().
+    let arena = Arena::new();
+    // PERF(port): was arena bulk-free — StyleAttribute::parse allocates its
+    // AST into this bump; freed when `arena` drops at end of scope.
+    //
+    // SAFETY: `StyleAttribute` stores `DeclarationBlock<'static>` (lifetime
+    // erased crate-wide until 'bump threads through the rule tree — see
+    // css_parser.rs PORT NOTE). The arena strictly outlives the parsed
+    // `stylesheet` below, so erasing `&arena -> &'static Bump` here matches
+    // the existing `unsafe { &*(allocator as *const Bump) }` pattern in
+    // bun_css (declaration.rs / context.rs / css_parser.rs).
+    let alloc: &'static Arena = unsafe { &*(&arena as *const Arena) };
 
     let arguments_ = frame.arguments_old::<4>();
-    let mut arguments = bun_jsc::ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
+    // SAFETY: bunVM() never returns null for a Bun-owned global.
+    let mut arguments =
+        bun_jsc::ArgumentsSlice::init(unsafe { &*global.bun_vm() }, arguments_.slice());
     let Some(source_arg) = arguments.next_eat() else {
         return Err(global.throw(format_args!("attrTest: expected 3 arguments, got 0")));
     };
@@ -355,6 +368,7 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
 
     let mut import_records = BabyList::<ImportRecord>::default();
     match StyleAttribute::parse(
+        alloc,
         source.slice(),
         parser_options,
         &mut import_records,
@@ -367,6 +381,7 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
             stylesheet.minify(minify_options);
 
             let result = match stylesheet.to_css(
+                alloc,
                 PrinterOptions {
                     minify,
                     targets,

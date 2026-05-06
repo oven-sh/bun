@@ -16,11 +16,9 @@ use css::error::MinifyErr;
 macro_rules! gated_rule {
     ($name:ident) => {
          pub mod $name;
-        #[cfg(any())] pub mod $name {}
     };
     ($name:ident, { $($body:tt)* }) => {
          pub mod $name;
-        #[cfg(any())] pub mod $name { $($body)* }
     };
 }
 

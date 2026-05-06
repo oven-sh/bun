@@ -463,6 +463,33 @@ impl String {
         }
     }
 
+    /// `bun.String.substring` (string.zig:669) — borrowed slice from `start_index`
+    /// to end. The returned `String` borrows the same underlying storage; for
+    /// `WTFStringImpl` this downgrades to a `ZigString` view (no ref taken), so
+    /// the original must outlive the result.
+    pub fn substring(&self, start_index: usize) -> String {
+        let len = self.length();
+        self.substring_with_len(start_index.min(len), len)
+    }
+
+    /// `bun.String.substringWithLen` (string.zig:674).
+    pub fn substring_with_len(&self, start_index: usize, end_index: usize) -> String {
+        match self.tag {
+            Tag::ZigString | Tag::StaticZigString => String::init(
+                unsafe { self.value.zig }.substring_with_len(start_index, end_index),
+            ),
+            Tag::WTFStringImpl => unsafe {
+                let w = &*self.value.wtf;
+                if w.is_8bit() {
+                    String::init(ZigString::init(&w.latin1_slice()[start_index..end_index]))
+                } else {
+                    String::init(ZigString::init_utf16(&w.utf16_slice()[start_index..end_index]))
+                }
+            },
+            _ => *self,
+        }
+    }
+
     /// `String.toUTF8` — borrowed-or-owned UTF-8 byte slice.
     /// - `WTFStringImpl`: refs the impl (Latin-1, all-ASCII) or transcodes (Latin-1/UTF-16 → owned).
     /// - `ZigString`: borrows (UTF-8) or transcodes (UTF-16/non-ASCII Latin-1).
@@ -984,6 +1011,24 @@ impl ZigString {
         if self.len == 0 { return &[]; }
         let bytes = if self.is_16bit() { self.len * 2 } else { self.len };
         unsafe { core::slice::from_raw_parts(Self::untagged(self.ptr), bytes) }
+    }
+    /// `ZigString.substringWithLen` (ZigString.zig:166) — re-wrap a sub-range
+    /// of the underlying storage, preserving the UTF-8/16-bit/global tag bits.
+    pub fn substring_with_len(self, start_index: usize, end_index: usize) -> ZigString {
+        if self.is_16bit() {
+            let mut out = ZigString::init_utf16(&self.utf16_slice()[start_index..end_index]);
+            if self.is_globally_allocated() { out.mark_global(); }
+            return out;
+        }
+        let mut out = ZigString::init(&self.slice()[start_index..end_index]);
+        if self.is_utf8() { out.mark_utf8(); }
+        if self.is_globally_allocated() { out.mark_global(); }
+        out
+    }
+    /// `ZigString.substring` (ZigString.zig:183).
+    #[inline]
+    pub fn substring(self, start_index: usize) -> ZigString {
+        self.substring_with_len(start_index.min(self.len), self.len)
     }
     /// `ZigString.toSlice` — borrowed-or-owned UTF-8.
     pub fn to_slice(&self) -> ZigStringSlice {

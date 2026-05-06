@@ -436,7 +436,7 @@ pub enum ParsedComponent {
     // PORT NOTE: `TransformList<'bump>` borrows the parser arena. Phase A uses
     // `'static` placeholders (matching `Token`/`Ident`); Phase B threads `'bump`
     // through `ParsedComponent<'a>`.
-    TransformList(TransformList<'static>),
+    TransformList(TransformList),
     /// A `<custom-ident>` value.
     CustomIdent(CustomIdent),
     /// A literal value.

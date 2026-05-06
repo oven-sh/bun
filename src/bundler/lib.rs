@@ -33,7 +33,6 @@ pub mod entry_points;
 #[cfg(any())]
 pub mod AstBuilder;
 pub mod analyze_transpiled_module;
-#[cfg(any())]
 pub mod linker;
 pub mod defines;
 pub mod barrel_imports;
@@ -154,16 +153,16 @@ pub use output_file::OutputFile;
 pub use chunk::Chunk;
 /// Real `LinkerContext` (un-gated B-2). See `linker_context_mod` module.
 pub use linker_context_mod::LinkerContext;
-/// Stub: see gated `linker` module — `Transpiler.linker` field placeholder.
-pub struct Linker(());
+/// Real `Linker` (un-gated B-2). See `linker` module.
+pub use linker::Linker;
 /// Real `LinkerGraph` (un-gated B-2). See `linker_graph` module.
 pub use linker_graph::LinkerGraph;
 pub use Graph::Graph as GraphStruct;
 /// Real `ParseTask` (un-gated B-2). See `parse_task` module.
 pub use parse_task::ParseTask;
-/// Real `EntryPoint` struct (un-gated B-2). The companion `EntryPoint` *module*
-/// (for `EntryPoint::Kind`) lives in `ungate_support` and is glob-re-exported
-/// above; types and modules occupy separate namespaces so both resolve.
+/// Real `EntryPoint` struct (un-gated B-2). `EntryPoint::Kind` is an inherent
+/// associated type on the struct (not a sibling module — that would collide
+/// with this re-export).
 pub use ungate_support::entry_point::EntryPoint;
 pub use defines::Define;
 /// Real `ThreadPool` (un-gated B-2). See `thread_pool` module.

@@ -4040,6 +4040,55 @@ impl Blob {
         &slice_[..slice_.len().min(self.size as usize)]
     }
 
+    /// Raw-pointer counterpart of [`shared_view`]: returns a `*mut [u8]` into
+    /// the Store's byte buffer with **mutable provenance** (derived through
+    /// `StoreRef::as_ptr()` → the original `Box::into_raw` tag), suitable for
+    /// the `*_with_bytes` paths that hand the buffer to JSC as a writable
+    /// ArrayBuffer backing. Mirrors Zig `@constCast(this.sharedView())` without
+    /// laundering a `&[u8]` through `as *const _ as *mut _` (which would carry
+    /// read-only provenance and make the downstream `&mut *buf` retag UB).
+    ///
+    /// Returns a dangling-empty slice when there is no byte store.
+    ///
+    /// # Aliasing
+    /// The returned pointer aliases the Store's `Vec<u8>` payload. Callers must
+    /// not hold a live `&`/`&mut` into the same Store across uses of this
+    /// pointer, and must keep a `StoreRef` alive for the pointer's lifetime.
+    fn shared_view_raw(&self) -> *mut [u8] {
+        let empty = || core::ptr::slice_from_raw_parts_mut(core::ptr::NonNull::<u8>::dangling().as_ptr(), 0);
+        if self.size == 0 {
+            return empty();
+        }
+        let Some(store_ref) = self.store.as_ref() else { return empty() };
+        // `as_ptr()` yields the `*mut Store` originally produced by
+        // `Box::into_raw` (see `StoreRef::from<Box<Store>>`), so it carries
+        // mutable provenance over the whole allocation.
+        let store = store_ref.as_ptr();
+        // SAFETY: `store` is live (we hold a `StoreRef`). No `&Store` is
+        // materialized here — we go straight from the raw pointer — so the
+        // brief `&mut` to the payload below does not alias any outstanding
+        // borrow (other `StoreRef`s only hold raw `NonNull<Store>`, never a
+        // long-lived `&Store`; JS execution is single-threaded).
+        let (base, len) = unsafe {
+            match &mut (*store).data {
+                Store::Data::Bytes(bytes) => {
+                    let v = bytes.as_array_list_leak();
+                    (v.as_mut_ptr(), v.len())
+                }
+                _ => return empty(),
+            }
+        };
+        if len == 0 {
+            return empty();
+        }
+        // Defensive: `offset` may originate from untrusted structured-clone data.
+        let off = (self.offset as usize).min(len);
+        let clamped = (len - off).min(self.size as usize);
+        // SAFETY: `off <= len` and `clamped <= len - off`; `base[..len]` is the
+        // initialized prefix of the Store's `Vec<u8>`.
+        core::ptr::slice_from_raw_parts_mut(unsafe { base.add(off) }, clamped)
+    }
+
     pub fn set_is_ascii_flag(&mut self, is_all_ascii: bool) {
         self.charset = strings::AsciiStatus::from_bool(is_all_ascii);
         // if this Blob represents the entire binary data
@@ -4172,30 +4221,25 @@ impl Blob {
             return self.do_read_from_s3::<ToStringWithBytesFn>(global);
         }
 
-        let view_ = self.shared_view();
-        if view_.is_empty() {
+        // PORT NOTE: reshaped for borrowck — Zig @constCast'd shared_view().
+        // `shared_view_raw` yields a `*mut [u8]` with mutable provenance (via
+        // `StoreRef::as_ptr`), avoiding the const→mut cast. `to_string_with_bytes`
+        // only ever reads through it (`&*raw_bytes`); the sole write path —
+        // `Box::from_raw` in the `Temporary` arm — is statically unreachable
+        // below. Mirrors Zig `@constCast(this.sharedView())`.
+        let view_ptr = self.shared_view_raw();
+        if view_ptr.len() == 0 {
             return Ok(ZigString::EMPTY.to_js(global));
         }
-
-        // PORT NOTE: reshaped for borrowck — Zig @constCast'd shared_view().
-        // SAFETY: `view_ptr` is derived from a shared borrow into the Store's
-        // byte allocation (via `StoreRef::deref` → `NonNull::as_ref`, so its
-        // provenance is rooted in the Store heap, not in `self`). It is *only
-        // ever read* by `to_string_with_bytes` (`&*raw_bytes`); the sole write
-        // path — `Box::from_raw` in the `Temporary` arm — is statically
-        // unreachable below, so the const→mut cast is never written through.
-        // Mirrors Zig `@constCast(this.sharedView())`.
-        let view_ptr = view_ as *const [u8] as *mut [u8];
         // TODO(port): dispatch on `lifetime` (was comptime in Zig). Phase B.
         match lifetime {
             Lifetime::Clone => self.to_string_with_bytes::<{ Lifetime::Clone }>(global, view_ptr),
             Lifetime::Transfer => self.to_string_with_bytes::<{ Lifetime::Transfer }>(global, view_ptr),
             Lifetime::Share => self.to_string_with_bytes::<{ Lifetime::Share }>(global, view_ptr),
             // UB guard: `Temporary` would `Box::from_raw(view_ptr)`, but
-            // `view_ptr` has read-only provenance and points at a store-owned
-            // interior slice (not a leaked `Box<[u8]>`). No Zig caller passes
-            // `.temporary` to `toString`; the leaked-buffer path calls
-            // `to_string_with_bytes` directly with a real `*mut [u8]`.
+            // `view_ptr` points at a store-owned interior slice (not a leaked
+            // `Box<[u8]>`). No Zig caller passes `.temporary` to `toString`;
+            // the leaked-buffer path calls `to_string_with_bytes` directly.
             Lifetime::Temporary => unreachable!("Blob::to_string: store-owned bytes are never Temporary"),
         }
     }
@@ -4208,10 +4252,11 @@ impl Blob {
             return self.do_read_from_s3::<ToJsonWithBytesFn>(global);
         }
 
-        let view_ = self.shared_view();
-        // SAFETY: `LIFETIME == Share` ⇒ `to_json_with_bytes` never frees the
-        // pointer; it is read-only. Mirrors Zig `@constCast(this.sharedView())`.
-        let view_ptr = view_ as *const [u8] as *mut [u8];
+        // `shared_view_raw` yields a `*mut [u8]` with mutable provenance (via
+        // `StoreRef::as_ptr`). `LIFETIME == Share` ⇒ `to_json_with_bytes` never
+        // frees the pointer; it is read-only. Mirrors Zig
+        // `@constCast(this.sharedView())`.
+        let view_ptr = self.shared_view_raw();
         // TODO(port): dispatch on lifetime const-generic
         self.to_json_with_bytes::<{ Lifetime::Share }>(global, view_ptr)
     }
@@ -4439,30 +4484,28 @@ impl Blob {
             return self.do_read_from_s3::<ToArrayBufferWithBytesFn>(global);
         }
 
-        let view_ = self.shared_view();
-        if view_.is_empty() {
+        // PORT NOTE: reshaped for borrowck — Zig @constCast'd shared_view().
+        // `shared_view_raw` yields a `*mut [u8]` with mutable provenance (via
+        // `StoreRef::as_ptr`). The `Clone` arm only reads (`&*buf`);
+        // `Share`/`Transfer` hand the ptr to JSC as an external ArrayBuffer
+        // backing via FFI and materialize `&mut *buf` to record ptr+len, which
+        // is sound now that the provenance is writable. The `Temporary` arm
+        // (`Box::from_raw`) is statically unreachable below. Mirrors Zig
+        // `@constCast(this.sharedView())`.
+        let view_ptr = self.shared_view_raw();
+        if view_ptr.len() == 0 {
             return Ok(jsc::ArrayBuffer::create(global, b"", TYPED_ARRAY_VIEW));
         }
-
-        // PORT NOTE: reshaped for borrowck — Zig @constCast'd shared_view().
-        // SAFETY: `view_ptr` is derived from a shared borrow into the Store's
-        // byte allocation (via `StoreRef::deref` → `NonNull::as_ref`, so its
-        // provenance is rooted in the Store heap, not in `self`). The `Clone`
-        // arm only reads (`&*buf`); `Share`/`Transfer` hand the ptr to JSC as
-        // an external buffer backing via FFI (no Rust-side write). The sole
-        // Rust write path — `Box::from_raw` in the `Temporary` arm — is
-        // statically unreachable below. Mirrors Zig `@constCast(this.sharedView())`.
-        let view_ptr = view_ as *const [u8] as *mut [u8];
         // TODO(port): dispatch on lifetime const-generic and TYPED_ARRAY_VIEW.
         match lifetime {
             Lifetime::Clone => self.to_array_buffer_view_with_bytes::<{ Lifetime::Clone }, TYPED_ARRAY_VIEW>(global, view_ptr),
             Lifetime::Share => self.to_array_buffer_view_with_bytes::<{ Lifetime::Share }, TYPED_ARRAY_VIEW>(global, view_ptr),
             Lifetime::Transfer => self.to_array_buffer_view_with_bytes::<{ Lifetime::Transfer }, TYPED_ARRAY_VIEW>(global, view_ptr),
             // UB guard: `Temporary` would `Box::from_raw(view_ptr)`, but
-            // `view_ptr` has read-only provenance and points at a store-owned
-            // interior slice (not a leaked `Box<[u8]>`). No Zig caller passes
-            // `.temporary` to `toArrayBufferView`; the leaked-buffer path calls
-            // `to_array_buffer_view_with_bytes` directly with a real `*mut [u8]`.
+            // `view_ptr` points at a store-owned interior slice (not a leaked
+            // `Box<[u8]>`). No Zig caller passes `.temporary` to
+            // `toArrayBufferView`; the leaked-buffer path calls
+            // `to_array_buffer_view_with_bytes` directly.
             Lifetime::Temporary => unreachable!("Blob::to_array_buffer_view: store-owned bytes are never Temporary"),
         }
     }
@@ -4475,21 +4518,17 @@ impl Blob {
             return self.do_read_from_s3::<ToFormDataWithBytesFn>(global);
         }
 
-        let view_ = self.shared_view();
-        if view_.is_empty() {
-            return Ok(jsc::DOMFormData::create(global));
-        }
-
         // PORT NOTE: reshaped for borrowck — Zig @constCast'd shared_view().
-        // SAFETY: `view_ptr` is derived from a shared borrow into the Store's
-        // byte allocation (via `StoreRef::deref` → `NonNull::as_ref`, so its
-        // provenance is rooted in the Store heap, not in `self`). It is *only
-        // ever read* by `to_form_data_with_bytes` (`FormData::to_js` takes
-        // `&[u8]`), so the const→mut cast is never written through. Note: the
+        // `shared_view_raw` yields a `*mut [u8]` with mutable provenance (via
+        // `StoreRef::as_ptr`). It is *only ever read* by
+        // `to_form_data_with_bytes` (`FormData::to_js` takes `&[u8]`). Note: the
         // Store is intrusively shared (`ref_count: AtomicU32`); `&mut self` does
         // NOT imply exclusive ownership of the underlying bytes. Mirrors Zig
         // `@constCast(this.sharedView())`.
-        let view_ptr = view_ as *const [u8] as *mut [u8];
+        let view_ptr = self.shared_view_raw();
+        if view_ptr.len() == 0 {
+            return Ok(jsc::DOMFormData::create(global));
+        }
         Ok(self.to_form_data_with_bytes::<{ Lifetime::Temporary }>(global, view_ptr))
     }
 }

@@ -16,7 +16,7 @@ use bun_options_types::{ImportKind, ImportRecord, ImportRecordFlags};
 use bun_string::strings;
 use bun_threading::thread_pool::Task as ThreadPoolLibTask;
 
-use crate::linker_context_mod::{LinkerContext, LinkerCtx, PendingPartRange};
+use crate::linker_context_mod::{GenerateChunkCtx, LinkerContext, LinkerCtx, PendingPartRange};
 use crate::options::Loader;
 use crate::thread_pool::Worker;
 use crate::HTMLScanner::{HTMLProcessor, HTMLProcessorHandler};
@@ -49,30 +49,54 @@ macro_rules! debug {
 ///    points to the module or chunk's unique key so that we tell the
 ///    browser to preload the user's code.
 pub fn generate_compile_result_for_html_chunk(task: *mut ThreadPoolLibTask) {
-    // SAFETY: task points to PendingPartRange.task
-    let part_range: &PendingPartRange = unsafe {
-        &*(task as *mut u8)
+    // SAFETY: `task` is the `task` field of a `PendingPartRange` scheduled by
+    // `generate_chunks_in_parallel`; recover the parent via offset_of. We keep
+    // `part_range` as a raw pointer (never `&PendingPartRange`) so that reading
+    // the `ctx` field — and the `&mut` pointers stored inside it — does not go
+    // through a shared reborrow that would strip write provenance.
+    let part_range: *const PendingPartRange = unsafe {
+        (task as *mut u8)
             .sub(offset_of!(PendingPartRange, task))
             .cast::<PendingPartRange>()
     };
-    let ctx = part_range.ctx;
-    // SAFETY: ctx.c points to BundleV2.linker
-    let c: *mut LinkerContext = ctx.c as *const LinkerContext as *mut LinkerContext;
-    let bv2: &mut BundleV2 = unsafe {
-        &mut *(c as *mut u8)
+    let i = unsafe { (*part_range).i } as usize;
+    // SAFETY: read the stored ctx reference's bits as a raw pointer. `&T` and
+    // `*const T` share layout; this avoids ever materializing `&GenerateChunkCtx`
+    // (which would shared-reborrow its `&mut` fields under Stacked Borrows).
+    let ctx: *const GenerateChunkCtx = unsafe {
+        *(core::ptr::addr_of!((*part_range).ctx) as *const *const GenerateChunkCtx)
+    };
+    // SAFETY: `GenerateChunkCtx.c` is the embedded `LinkerContext` inside
+    // `BundleV2`. The link step never mutates `LinkerContext` from this task,
+    // so a `*const` (and the derived `&BundleV2` for `Worker::get`) suffices —
+    // no const→mut cast needed.
+    let c: *const LinkerContext = unsafe {
+        *(core::ptr::addr_of!((*ctx).c) as *const *const LinkerContext)
+    };
+    let bv2: &BundleV2 = unsafe {
+        &*(c as *const u8)
             .sub(offset_of!(BundleV2, linker))
             .cast::<BundleV2>()
     };
     let worker = Worker::get(bv2);
     let _unget = scopeguard::guard(&mut *worker, |w| w.unget());
 
-    // SAFETY: ctx.chunk / ctx.chunks are valid for the duration of the task; the
-    // intrusive task node never aliases its own chunk slice mutably here.
-    let chunk: *mut Chunk = ctx.chunk as *const Chunk as *mut Chunk;
-    let chunks: *mut [Chunk] = ctx.chunks as *const [Chunk] as *mut [Chunk];
+    // SAFETY: `GenerateChunkCtx.{chunk,chunks}` were constructed from `&mut`
+    // borrows in `generate_chunks_in_parallel`. We read their pointer bits
+    // directly (`&mut T` and `*mut T` share layout) so the mutable provenance
+    // they were created with is preserved — never round-tripping through
+    // `*const`. Zig's `*T` aliases freely; this is the raw-pointer equivalent.
+    let chunk: *mut Chunk = unsafe {
+        *(core::ptr::addr_of!((*ctx).chunk) as *const *mut Chunk)
+    };
+    let chunks: *mut [Chunk] = unsafe {
+        *(core::ptr::addr_of!((*ctx).chunks) as *const *mut [Chunk])
+    };
+    // SAFETY: `chunk` is this task's exclusively-owned HTML chunk for the
+    // duration of the compile step; the result slot was pre-allocated.
+    let result = unsafe { generate_compile_result_for_html_chunk_impl(&*c, chunk, chunks) };
     unsafe {
-        (*chunk).compile_results_for_chunk[part_range.i as usize] =
-            generate_compile_result_for_html_chunk_impl(&mut *c, &*chunk, chunks);
+        (*chunk).compile_results_for_chunk[i] = result;
     }
 }
 
@@ -406,16 +430,20 @@ impl<'a> HTMLLoader<'a> {
     }
 }
 
-fn generate_compile_result_for_html_chunk_impl(
-    c: &mut LinkerContext,
-    chunk: &Chunk,
+/// SAFETY: `chunk` must point to a live `Chunk` that is an element of `*chunks`,
+/// and both must remain valid for the duration of this call. `chunk` is only
+/// read here; the caller retains the sole writer.
+unsafe fn generate_compile_result_for_html_chunk_impl(
+    c: &LinkerContext,
+    chunk: *const Chunk,
     chunks: *mut [Chunk],
 ) -> CompileResult {
     // SAFETY: parse_graph backref valid for link step.
     let parse_graph = unsafe { &*c.parse_graph };
     let sources = parse_graph.input_files.items_source();
     let import_records = c.graph.ast.items_import_records();
-    let source_index = chunk.entry_point.source_index();
+    // SAFETY: caller guarantees `chunk` is live; we only read `entry_point`.
+    let source_index = unsafe { (*chunk).entry_point.source_index() };
 
     // HTML bundles for dev server must be allocated to it, as it must outlive
     // the bundle task. See `DevServer.RouteBundle.HTML.bundled_html_text`

@@ -99,7 +99,7 @@ pub struct HtmlImports {
     pub html_source_indices: BabyList<IndexInt>,
 }
 
-#[derive(bun_collections::MultiArrayElement)]
+#[derive(Default, bun_collections::MultiArrayElement)]
 pub struct InputFile {
     pub source: logger::Source,
     pub secondary_path: Box<[u8]>,

@@ -1444,10 +1444,10 @@ impl FFI {
                 let function_ = Box::into_raw(Box::new(core::mem::take(func)));
                 // SAFETY: function_ is a valid Box::into_raw pointer
                 let compiled_ptr = unsafe { (*function_).step.compiled_ptr() };
-                Ok(JSValue::create_object_2(
+                Ok(create_object_2(
                     global_this,
-                    ZigString::static_(b"ptr"),
-                    ZigString::static_(b"ctx"),
+                    &ZigString::static_(b"ptr"),
+                    &ZigString::static_(b"ctx"),
                     JSValue::from_ptr_address(compiled_ptr as usize),
                     JSValue::from_ptr_address(function_ as usize),
                 ))

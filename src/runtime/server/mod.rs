@@ -848,7 +848,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     (
                         sni_name.as_ptr(),
                         sni_name.to_bytes().len(),
-                        sni_ssl_config.as_usockets(),
+                        to_sys_socket_options(sni_ssl_config.as_usockets()),
                     )
                 };
                 // SAFETY: name_ptr/name_len point into config.sni[i].server_name;

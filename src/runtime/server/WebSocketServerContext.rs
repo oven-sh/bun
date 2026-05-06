@@ -109,10 +109,10 @@ impl Handler {
         for (i, (key, field)) in pairs.into_iter().enumerate() {
             if let Some(value) = object.get_truthy(global_object, key)? {
                 if !value.is_cell() || !value.is_callable() {
-                    return global_object.throw_invalid_arguments(format_args!(
+                    return Err(global_object.throw_invalid_arguments(format_args!(
                         "websocket expects a function for the '{}' option",
                         key
-                    ));
+                    )));
                 }
                 let cb = value.with_async_context_if_needed(global_object);
                 *field = cb;

@@ -70,8 +70,8 @@ type AbortSignalRef = NonNull<AbortSignal>;
 use super::stat::Stats;
 use super::time_like::TimeLike;
 use super::types::{
-    ArgumentsSlice, Dirent, Encoding, FileSystemFlags, PathLike, StringOrBuffer,
-    VectorArrayBuffer,
+    ArgumentsSlice, Dirent, Encoding, FdJsc as _, FileSystemFlags, FileSystemFlagsKind,
+    PathLike, StringOrBuffer, VectorArrayBuffer,
 };
 // Re-exported publicly: `crate::node::fs::PathOrFileDescriptor` is the
 // canonical path used by `cli/build_command.rs` et al. (mirrors Zig's

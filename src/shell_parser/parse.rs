@@ -4057,7 +4057,7 @@ pub fn assert_special_char(c: u8) {
 }
 
 /// Characters that need to be backslashed inside double quotes
-const BACKSLASHABLE_CHARS: [u8; 4] = [b'$', b'`', b'"', b'\\'];
+pub const BACKSLASHABLE_CHARS: [u8; 4] = [b'$', b'`', b'"', b'\\'];
 
 pub fn escape_bun_str<const ADD_QUOTES: bool>(
     bunstr: BunString,

@@ -426,25 +426,33 @@ impl DefineDataExt for DefineData {
                 ),
             });
         }
+        // PORT NOTE: Zig parsed against a stack-local `Source` then
+        // `Expr.Data.deepClone`d into the arena to detach from `value_str`.
+        // `ExprData::deep_clone` is still gated (b2-ast-round-C), so instead
+        // dupe `value_str` into `bump` *before* parsing — every string slice
+        // the JSON lexer hands back then already points into the long-lived
+        // arena, so the resulting `ExprData` is detached by construction and
+        // no post-hoc deep clone is needed. Same arena, same lifetime
+        // contract; one extra `value_str.len()` copy vs Zig.
+        let arena_value: &[u8] = bump.alloc_slice_copy(value_str);
         let source = logger::Source {
             // SAFETY: `Source.contents` is typed `&'static [u8]` as a Phase-A
-            // stand-in (see logger/lib.rs `Str` note). The borrow does not
-            // escape this stack frame: `parse_env_json` only reads it during
-            // parsing, and `deep_clone(bump)` below copies all string bytes
-            // into the caller-owned arena before `source` is dropped.
-            contents: unsafe { core::mem::transmute::<&[u8], &'static [u8]>(value_str) },
+            // stand-in (see logger/lib.rs `Str` note). `arena_value` lives in
+            // `bump`, which the caller (`Define::init`) owns for the lifetime
+            // of the `Define` table — i.e. as long as any `ExprData` produced
+            // here is reachable.
+            contents: unsafe { core::mem::transmute::<&[u8], &'static [u8]>(arena_value) },
             path: defines_path(),
             ..Default::default()
         };
         let expr = bun_interchange::json_parser::parse_env_json(&source, log, bump)?;
         // T2 interchange `Expr` → T4 parser `ExprData` (`From` impl deep-walks
-        // and interns into the AST store), then `deep_clone` into the
-        // long-lived arena to detach from `source.contents`.
+        // and interns into the AST store). All borrowed bytes already live in
+        // `bump` (see above), so this is the final value — no `deep_clone`.
         let data: ExprData = expr.data.into();
         let can_be_removed_if_unused = js_ast::ast::expr::Tag::is_primitive_literal(data.tag());
-        let cloned = ExprData::deep_clone(data, bump)?;
         Ok(DefineData {
-            value: cloned,
+            value: data,
             original_name: if !value_str.is_empty() {
                 Some(Box::<[u8]>::from(value_str))
             } else {

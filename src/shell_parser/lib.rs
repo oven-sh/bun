@@ -19,7 +19,13 @@ pub use braces::{has_eq_sign, CharIter, InputChar, ShellCharIter, ShellCharIterS
 pub mod parse;
 
 pub use parse::{
-    ast, ast as AST, is_valid_var_name, JSValueRaw, LexError, LexResult, Lexer, LexerAscii,
-    LexerError, LexerUnicode, ParseError, Parser, ParserError, SmolList, Token, TokenTag,
-    LEX_JS_OBJREF_PREFIX, LEX_JS_STRING_PREFIX,
+    assert_special_char, ast, ast as AST, escape_8bit, escape_bun_str, escape_utf16,
+    is_valid_var_name, needs_escape_bunstr, needs_escape_utf16, needs_escape_utf8_ascii_latin1,
+    EscapeUtf16Result, IfClauseTok, JSValueRaw, LexError, LexResult, Lexer, LexerAscii,
+    LexerError, LexerUnicode, MemoryCost, ParseError, Parser, ParserError, SmolList,
+    SubShellKind, SubshellKind, TextRange, Token, TokenTag, BACKSLASHABLE_CHARS,
+    LEX_JS_OBJREF_PREFIX, LEX_JS_STRING_PREFIX, SPECIAL_CHARS, SPECIAL_CHARS_TABLE,
 };
+// NOTE: `StringEncoding`/`ShellCharIter`/`InputChar`/`has_eq_sign` already
+// re-exported from `braces` above; `parse` defines its own (lexer-shaped)
+// copies which stay module-scoped to avoid crate-root ambiguity.

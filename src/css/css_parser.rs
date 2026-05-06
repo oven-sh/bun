@@ -1218,28 +1218,14 @@ where
 // ───────────────────── rule_parsers (heavy impl bodies) ──────────────────────
 // Un-gated: `declaration::parse_declaration_impl` + `selectors::parser` are
 // real, so the `QualifiedRuleParser`/`DeclarationParser`/`RuleBodyItemParser`
-// surface and `parse_nested`/`parse_style_block` compile end-to-end. Several
-// at-rule arms still bottom out on leaf-module parse fns that remain gated
-// (`MediaList::parse`, `KeyframesListParser`/`FontFaceDeclarationParser` trait
-// impls, `SmallList::<LayerName,1>::parse`); those specific call sites are
-// inline-`#[cfg(any())]`-gated below with a `todo!()` runtime fallback so the
-// type structure stays real and `StyleSheet::parse` links.
+// surface and `parse_nested`/`parse_style_block` compile end-to-end. The
+// at-rule arms now call the leaf-module parse fns directly (`LayerName`,
+// `SupportsCondition`, `KeyframesName`, `PageSelector`, `ContainerName`,
+// `ContainerCondition`, `FontPaletteValuesRule`, `PageRule`, `PropertyRule`
+// have un-gated). Only `@font-face`/`@keyframes` block bodies remain
+// inline-`#[cfg(any())]`-gated on their `RuleBodyItemParser` trait impls.
 mod rule_parsers { use super::*;
 use crate::selectors::parser as selector_parser;
-
-/// Thunk a leaf-module `parse` fn that is still `#[cfg(any())]`-gated in its
-/// own file. The call site stays type-correct (the gated body compiles under
-/// `--cfg any` once the leaf un-gates); the ungated build hits a runtime
-/// `todo()` instead of a compile error so the surrounding rule-parser surface
-/// stays real.
-macro_rules! gated_parse {
-    ($what:literal, $expr:expr) => {{
-        #[cfg(any())]
-        { $expr }
-        #[cfg(not(any()))]
-        { todo(concat!($what, " — leaf parse fn gated")) }
-    }};
-}
 
 // PORT NOTE: Zig threaded `composes_ctx: anytype` (pointer to the
 // `NestedRuleParser`) directly into `parse_declaration`. Rust's borrow checker
@@ -1290,25 +1276,19 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> AtRuleParser for TopLevelRuleParser<
                 if input.try_parse(|p| p.expect_ident_matching(b"layer")).is_ok() {
                     Some(None)
                 } else if input.try_parse(|p| p.expect_function_matching(b"layer")).is_ok() {
-                    Some(Some(input.parse_nested_block(|p| {
-                        let _ = p;
-                        gated_parse!("LayerName::parse", LayerName::parse(p))
-                    })?))
+                    Some(Some(input.parse_nested_block(LayerName::parse)?))
                 } else {
                     None
                 };
 
             let supports = if input.try_parse(|p| p.expect_function_matching(b"supports")).is_ok() {
                 Some(input.parse_nested_block(|p| {
-                    let _ = p;
-                    gated_parse!("SupportsCondition::parse", {
-                        let result = p.try_parse(SupportsCondition::parse);
-                        if result.is_err() {
-                            SupportsCondition::parse_declaration(p)
-                        } else {
-                            result
-                        }
-                    })
+                    let result = p.try_parse(SupportsCondition::parse);
+                    if result.is_err() {
+                        SupportsCondition::parse_declaration(p)
+                    } else {
+                        result
+                    }
                 })?)
             } else {
                 None
@@ -1621,9 +1601,7 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                 break 'brk AtRulePrelude::Media(parse_media_list(input)?);
             }
             if strings::eql_case_insensitive_ascii::<true>(name, b"supports") {
-                break 'brk AtRulePrelude::Supports(
-                    gated_parse!("SupportsCondition::parse", SupportsCondition::parse(input)?),
-                );
+                break 'brk AtRulePrelude::Supports(SupportsCondition::parse(input)?);
             }
             if strings::eql_case_insensitive_ascii::<true>(name, b"font-face") {
                 break 'brk AtRulePrelude::FontFace;
@@ -1661,10 +1639,8 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                 } else {
                     VendorPrefix::NONE
                 };
-                let keyframes_name = gated_parse!(
-                    "KeyframesName::parse",
-                    input.try_parse(css_rules::keyframes::KeyframesName::parse)?
-                );
+                let keyframes_name =
+                    input.try_parse(css_rules::keyframes::KeyframesName::parse)?;
                 break 'brk AtRulePrelude::Keyframes { name: keyframes_name, prefix };
             }
             if strings::eql_case_insensitive_ascii::<true>(name, b"page") {

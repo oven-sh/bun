@@ -734,14 +734,10 @@ mod inherent_bridge {
         BackfaceVisibility, Perspective, Rotate, Scale, TransformBox, TransformList,
         TransformStyle, Translate,
     };
-    bridge_deep_clone!(
-        TransformList, Translate, Rotate, Scale, Perspective, TransformStyle, TransformBox,
-        BackfaceVisibility,
-    );
-    bridge_eql!(
-        TransformList, Translate, Rotate, Scale, Perspective, TransformStyle, TransformBox,
-        BackfaceVisibility,
-    );
+    bridge_deep_clone!(TransformList, Translate, Rotate, Scale, Perspective);
+    bridge_eql!(TransformList, Translate, Rotate, Scale, Perspective);
+    // Unit enums via DefineEnumProperty — no inherent eql/deep_clone, route through Copy/PartialEq.
+    bridge_clone_partialeq!(TransformStyle, TransformBox, BackfaceVisibility);
 
     // ── properties/transition ──
     use crate::properties::transition::Transition;

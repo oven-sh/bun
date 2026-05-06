@@ -89,7 +89,7 @@ pub const TestingAPIs = struct {
                     name,
                 ) catch continue;
 
-            const is_glob = std.mem.indexOfAny(u8, name, "*?[{") != null;
+            const is_glob = bun.strings.indexOfAny(name, "*?[{") != null;
             if (is_glob) {
                 glob_list.appendAssumeCapacity(normalized_pattern);
                 has_globs = true;
@@ -108,41 +108,39 @@ pub const TestingAPIs = struct {
         else
             .{ .unspecified = {} };
 
-        // When exercising the pre-fix path, also bypass the normalization
-        // `hasSideEffects` now does on the runtime key — that normalization
-        // is part of the fix too.
-        if (use_pre_fix) {
-            return switch (side_effects) {
-                .unspecified => .jsBoolean(true),
-                .false => .jsBoolean(false),
-                .map => |m| .jsBoolean(m.contains(bun.StringHashMapUnowned.Key.init(path.slice()))),
-                .glob => |gl| blk: {
-                    const normalized_path = package_json.PackageJSON.normalizePathForGlob(bun.default_allocator, path.slice()) catch break :blk .jsBoolean(true);
+        const matches = if (use_pre_fix) blk: {
+            // Replicate the pre-#30320 `hasSideEffects` (no path-side
+            // normalization) so the test can assert the Windows repro
+            // actually fails through every branch (glob / exact / mixed).
+            switch (side_effects) {
+                .unspecified => break :blk true,
+                .false => break :blk false,
+                .map => |m| break :blk m.contains(bun.StringHashMapUnowned.Key.init(path.slice())),
+                .glob => |gl| {
+                    const normalized_path = package_json.PackageJSON.normalizePathForGlob(bun.default_allocator, path.slice()) catch break :blk true;
                     defer bun.default_allocator.free(normalized_path);
                     for (gl.items) |pattern| {
-                        if (bun.glob.match(pattern, normalized_path).matches()) break :blk .jsBoolean(true);
+                        if (bun.glob.match(pattern, normalized_path).matches()) break :blk true;
                     }
-                    break :blk .jsBoolean(false);
+                    break :blk false;
                 },
-                .mixed => |mx| blk: {
-                    if (mx.exact.contains(bun.StringHashMapUnowned.Key.init(path.slice()))) break :blk .jsBoolean(true);
-                    const normalized_path = package_json.PackageJSON.normalizePathForGlob(bun.default_allocator, path.slice()) catch break :blk .jsBoolean(true);
+                .mixed => |mx| {
+                    if (mx.exact.contains(bun.StringHashMapUnowned.Key.init(path.slice()))) break :blk true;
+                    const normalized_path = package_json.PackageJSON.normalizePathForGlob(bun.default_allocator, path.slice()) catch break :blk true;
                     defer bun.default_allocator.free(normalized_path);
                     for (mx.globs.items) |pattern| {
-                        if (bun.glob.match(pattern, normalized_path).matches()) break :blk .jsBoolean(true);
+                        if (bun.glob.match(pattern, normalized_path).matches()) break :blk true;
                     }
-                    break :blk .jsBoolean(false);
+                    break :blk false;
                 },
-            };
-        }
+            }
+        } else side_effects.hasSideEffects(path.slice());
 
-        const matches = side_effects.hasSideEffects(path.slice());
-        return .jsBoolean(matches);
+        return if (matches) .true else .false;
     }
 };
 
 const package_json = @import("../resolver/package_json.zig");
-const std = @import("std");
 
 const bun = @import("bun");
 const jsc = bun.jsc;

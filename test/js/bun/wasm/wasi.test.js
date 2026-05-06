@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { expect, it } from "bun:test";
-import { join } from "node:path";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 
 it("Should support printing 'hello world'", () => {
   const { stdout, stderr, exitCode } = spawnSync({

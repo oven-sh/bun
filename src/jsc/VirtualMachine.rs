@@ -1129,8 +1129,12 @@ static RUNTIME_HOOKS: core::sync::atomic::AtomicPtr<RuntimeHooks> =
 /// Called by `bun_runtime` at startup to install the real hook table.
 /// `hooks` must have `'static` lifetime (typically `&'static RUNTIME_HOOKS_IMPL`).
 pub fn set_runtime_hooks(hooks: &'static RuntimeHooks) {
+    // SAFETY: `AtomicPtr` only stores `*mut T`, but this pointer is never
+    // written through — `runtime_hooks()` only ever materializes `&'static
+    // RuntimeHooks` via `as_ref()`. The `cast_mut()` is an API-shape coercion,
+    // not a mutability grant.
     RUNTIME_HOOKS.store(
-        hooks as *const RuntimeHooks as *mut RuntimeHooks,
+        core::ptr::from_ref(hooks).cast_mut(),
         core::sync::atomic::Ordering::Release,
     );
 }

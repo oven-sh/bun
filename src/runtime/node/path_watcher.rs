@@ -379,9 +379,7 @@ pub fn watch(
     manager.mutex.lock();
 
     // SAFETY: holding manager.mutex; exclusive access to manager.watchers.
-    let watchers = unsafe {
-        &mut *(&manager.watchers as *const _ as *mut StringArrayHashMap<*mut PathWatcher>)
-    };
+    let watchers = unsafe { &mut *manager.watchers.get() };
     let gop = watchers.get_or_put(key);
     if gop.found_existing {
         let existing = *gop.value_ptr;

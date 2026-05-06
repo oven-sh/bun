@@ -2722,52 +2722,53 @@ pub(crate) mod __forward_decls {
     pub use crate::package_json::install_stubs::PackageManager;
 
     // ── bun_install::dependency ─────────────────────────────────────────
+    // Unified with `package_json::install_stubs` so the auto-install body in
+    // `load_node_modules` and `PackageJSON::parse` agree on
+    // `Dependency`/`Version`/`Behavior` identity.
     pub mod Dependency {
-        #[derive(Clone, Default)]
-        pub struct Version { pub tag: version::Tag }
-        pub mod version {
-            #[derive(Clone, Copy, PartialEq, Eq, Default)]
-            pub enum Tag { #[default] Uninitialized, Npm }
+        pub use crate::package_json::install_stubs::Dependency;
+        pub use crate::package_json::install_stubs::Version::Version;
+        pub use crate::package_json::install_stubs::Version as version;
+        pub use crate::package_json::install_stubs::DepBehavior as Behavior;
+        pub use crate::package_json::install_stubs::Dependency as parse_;
+        /// Re-export of `install_stubs::Dependency::parse` (see INSTALL_HOOKS).
+        pub use crate::package_json::install_stubs::Dependency as _Parse;
+        #[inline]
+        pub fn parse(
+            name: bun_semver::String,
+            name_hash: Option<u64>,
+            version: &[u8],
+            sliced: &bun_semver::SlicedString,
+            log: *mut bun_logger::Log,
+            pm: *const crate::package_json::install_stubs::PackageManager,
+        ) -> Option<crate::package_json::install_stubs::Version::Version> {
+            crate::package_json::install_stubs::Dependency::parse(name, name_hash, version, sliced, log, pm)
         }
-        #[derive(Clone, Copy, Default)]
-        pub struct Behavior { pub prod: bool }
-        #[derive(Clone)]
-        pub struct Dependency {
-            pub name: super::SemverString,
-            pub version: Version,
-            pub behavior: Behavior,
-        }
-        // `Dependency::parse` is only reached on the auto-install path; that
-        // path is re-gated below.
     }
 
-    // ── bun_semver shims (string::Builder, SlicedString) ────────────────
-    pub mod Semver {
-        pub use super::SemverString as String;
-        #[derive(Default)]
-        pub struct SlicedString;
-        impl SlicedString { pub fn init(_a: &[u8], _b: &[u8]) -> Self { Self } }
-        pub mod string {
-            #[derive(Default)]
-            pub struct Builder;
-            impl Builder {
-                pub fn allocate(&mut self) -> Result<(), bun_core::Error> { Ok(()) }
-                pub fn allocated_slice(&self) -> Vec<u8> { Vec::new() }
-            }
-        }
-    }
-    #[derive(Clone, Default)]
-    pub struct SemverString;
-    impl SemverString {
-        pub fn init(_buf: &[u8], _slice: &[u8]) -> Self { Self }
-        pub fn slice<'b>(&self, _buf: &'b [u8]) -> &'b [u8] { b"" }
-        pub fn from(_s: &[u8]) -> () { () }
-    }
+    // ── bun_semver re-exports ───────────────────────────────────────────
+    // PORT NOTE: previously a local stub `Semver` module; now thread the real
+    // `bun_semver` crate so `Package::count`/`clone` (which take
+    // `&mut bun_semver::semver_string::Builder`) type-check at the auto-install
+    // call sites.
+    pub use ::bun_semver as Semver;
+    pub use ::bun_semver::String as SemverString;
 
     // ── bun_http ────────────────────────────────────────────────────────
     pub mod bun_http {
         pub mod mime_type {
             pub use bun_http_types::MimeType::Category;
+        }
+        /// FORWARD_DECL: `bun_http::HTTPThread`. The resolver only calls
+        /// `init(&InitOpts::default())` on the auto-install path; bun_http is
+        /// not yet a dep edge (cycle through bun_install).
+        pub mod HTTPThread {
+            #[derive(Default)]
+            pub struct InitOpts;
+            pub fn init(_opts: &InitOpts) {
+                // FORWARD_DECL: bun_http::HTTPThread::init — no-op until
+                // bun_http links (auto-install-only path).
+            }
         }
     }
 

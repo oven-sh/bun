@@ -998,6 +998,11 @@ pub fn update_package_json_and_install(
         debug_assert!(!hook.is_null(), "BUILD_COMMAND_EXEC_HOOK unset (bun_runtime::init not called)");
         // SAFETY: hook signature documented on BUILD_COMMAND_EXEC_HOOK; set once at startup.
         let f: unsafe fn(*mut (), *mut ()) -> Result<(), Error> = unsafe { core::mem::transmute(hook) };
+        // SAFETY: `Command::get()` returns the process-global `*mut ContextData` (always live);
+        // `fetcher` is a stack local that outlives the call; the hook is the registered
+        // `BuildCommand::exec` and only reads `entry_points` before invoking `on_fetch`, so the raw
+        // `fetcher.ctx → analyzer` and `analyzer.cli → cli` chain remains exclusively owned until
+        // the callback materializes `&mut`.
         unsafe {
             f(
                 Command::get() as *mut _ as *mut (),

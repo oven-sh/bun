@@ -72,9 +72,9 @@ impl MaxBuf {
         let p = this_nn.as_ptr();
         // SAFETY: `this_nn` came from `create_for_subprocess` (Box::into_raw); allocation is
         // live until `destroy`. Raw-pointer field access only — this fn is reachable from the
-        // `on_overflow` vtable while `on_read_bytes` still holds `&mut self` for the same
-        // allocation, so materializing a second `&mut MaxBuf` here would alias (Zig's `*T`
-        // permits that; Rust does not).
+        // `on_overflow` vtable while `on_read_bytes` is still on the stack for the same
+        // allocation, so no `&mut MaxBuf` may exist on this re-entrancy path (Zig's `*T`
+        // permits aliasing; Rust does not).
         unsafe {
             debug_assert!((*p).owned_by_subprocess.is_some());
             (*p).owned_by_subprocess = None;
@@ -122,17 +122,31 @@ impl MaxBuf {
         *prev = None;
     }
 
-    pub fn on_read_bytes(&mut self, bytes: u64) {
+    /// # Safety
+    /// `this` must point to a live `MaxBuf` allocated by `create_for_subprocess`.
+    ///
+    /// Takes `NonNull` instead of `&mut self` because the `on_overflow` vtable is contractually
+    /// required to call `remove_from_subprocess`, which writes `owned_by_subprocess = None`
+    /// through a sibling raw pointer to this same allocation. Under Stacked Borrows a `&mut self`
+    /// argument carries a protector, so that foreign-provenance write would pop a protected
+    /// Unique tag (UB). Raw place access keeps the whole overflow → callback →
+    /// `remove_from_subprocess` re-entrancy path free of `&mut MaxBuf`. Zig's `*T` has no
+    /// uniqueness guarantee, so the original `.zig` could re-enter freely; Rust cannot.
+    pub unsafe fn on_read_bytes(this: NonNull<MaxBuf>, bytes: u64) {
+        let p = this.as_ptr();
         let delta = i64::try_from(bytes).unwrap_or(0);
-        self.remaining_bytes = self.remaining_bytes.checked_sub(delta).unwrap_or(-1);
-        if self.remaining_bytes < 0 {
-            if let Some((owner_nn, vtable)) = self.owned_by_subprocess {
-                let this_nn = NonNull::from(&mut *self);
+        // SAFETY: caller guarantees `this` is live; raw place access only (no `&mut`).
+        let remaining = unsafe { (*p).remaining_bytes }.checked_sub(delta).unwrap_or(-1);
+        // SAFETY: same live allocation; raw place write.
+        unsafe { (*p).remaining_bytes = remaining };
+        if remaining < 0 {
+            // SAFETY: same live allocation; raw place read (copies the Option out).
+            if let Some((owner_nn, vtable)) = unsafe { (*p).owned_by_subprocess } {
                 // SAFETY: `owned_by_subprocess` is cleared by the Subprocess before it is dropped
                 // (see `remove_from_subprocess`), so the pointer is valid while Some.
                 // CYCLEBREAK(vtable): the stderr/stdout slot lookup + on_max_buffer
                 // call moves to bun_runtime's `MaxBufOwnerVTable` impl.
-                unsafe { (vtable.on_overflow)(owner_nn, this_nn) };
+                unsafe { (vtable.on_overflow)(owner_nn, this) };
             }
         }
     }

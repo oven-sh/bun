@@ -433,8 +433,14 @@ impl FilePoll {
         bun_io::FileType::Pipe
     }
 
+    // PORT NOTE: Zig `onKQueueEvent`/`onEpollEvent` take `_: *Loop` (unused, raw-pointer
+    // semantics). The Rust signatures drop the loop parameter entirely: holding a
+    // protected `&mut Loop` across `on_update` would alias the fresh `&mut Loop`
+    // that downstream `ON_POLL_DISPATCH` handlers conjure via
+    // `EventLoopCtx::platform_event_loop()` when they re-enter the loop
+    // (`register_with_fd`/`unregister`/`deinit`).
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-    pub fn on_kqueue_event(&mut self, _loop: &mut Loop, kqueue_event: &KQueueEvent) {
+    pub fn on_kqueue_event(&mut self, kqueue_event: &KQueueEvent) {
         self.update_flags(Flags::from_kqueue_event(kqueue_event));
         syslog!("onKQueueEvent: {}", self);
 
@@ -445,7 +451,7 @@ impl FilePoll {
     }
 
     #[cfg(target_os = "linux")]
-    pub fn on_epoll_event(&mut self, _loop: &mut Loop, epoll_event: &bun_sys::linux::epoll_event) {
+    pub fn on_epoll_event(&mut self, epoll_event: &bun_sys::linux::epoll_event) {
         self.update_flags(Flags::from_epoll_event(epoll_event));
         self.on_update(0);
     }
@@ -510,7 +516,11 @@ impl FilePoll {
         let was_ever_registered = self.flags.contains(Flags::WasEverRegistered);
         self.flags = FlagsSet::empty();
         self.fd = INVALID_FD;
-        polls.put(self, vm, was_ever_registered);
+        // `self` may live inside `polls.hive`'s inline array, so passing both
+        // `&mut Store` and `&mut FilePoll` would form overlapping unique borrows.
+        // Coerce to a raw pointer here (Zig `*FilePoll` semantics) and let
+        // `Store::put` access fields via raw-pointer ops.
+        polls.put(self as *mut FilePoll, vm, was_ever_registered);
     }
 
     pub fn deinit_with_vm(&mut self, vm: EventLoopCtx) {
@@ -1501,20 +1511,22 @@ impl Store {
         self.pending_free_tail = ptr::null_mut();
     }
 
-    pub fn put(&mut self, poll: &mut FilePoll, vm: EventLoopCtx, ever_registered: bool) {
+    pub fn put(&mut self, poll: *mut FilePoll, vm: EventLoopCtx, ever_registered: bool) {
+        // SAFETY: `poll` may point *inside* `self.hive`'s inline `[FilePoll; 128]`
+        // buffer, so accepting it as `&mut FilePoll` while `&mut self` is live
+        // would retag overlapping storage under Stacked Borrows (UB). Mirror Zig's
+        // alias-tolerant `poll: *FilePoll` and touch fields only through raw
+        // pointer ops — same rationale as `process_deferred_frees` above.
         if !ever_registered {
             self.hive.put(poll);
             return;
         }
 
-        debug_assert!(poll.next_to_free.is_null());
+        debug_assert!(unsafe { (*poll).next_to_free }.is_null());
 
         if !self.pending_free_tail.is_null() {
             debug_assert!(!self.pending_free_head.is_null());
-            // SAFETY: tail is non-null and points into the hive. Use raw-pointer
-            // access (Zig `*FilePoll` semantics) — a `&mut FilePoll` here could
-            // alias `poll` (if a caller ever re-puts the current tail) and would
-            // overlap storage reachable through `&mut self`.
+            // SAFETY: tail is non-null and points into the hive.
             unsafe {
                 debug_assert!((*self.pending_free_tail).next_to_free.is_null());
                 (*self.pending_free_tail).next_to_free = poll;
@@ -1526,7 +1538,8 @@ impl Store {
             debug_assert!(self.pending_free_tail.is_null());
         }
 
-        poll.flags.insert(Flags::IgnoreUpdates);
+        // SAFETY: see fn-level comment — raw-pointer field access only.
+        unsafe { (*poll).flags.insert(Flags::IgnoreUpdates) };
         self.pending_free_tail = poll;
 
         let callback: OpaqueCallback = Self::process_deferred_frees_thunk;

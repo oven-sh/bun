@@ -11,9 +11,9 @@ pub fn to_contain_all_keys(
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     // Zig: `defer this.postMatch(globalObject);`
-    // PORT NOTE: reshaped for borrowck — scopeguard would hold &mut *this for the whole fn.
-    // TODO(port): verify post_match runs on every exit path (incl. `?` early returns) in Phase B.
-    let _post_match = scopeguard::guard((), |_| this.post_match(global));
+    // PORT NOTE: reshaped for borrowck — scopeguard owns the `&mut Expect` borrow so `post_match`
+    // runs on every exit path; method calls go through DerefMut on the guard.
+    let mut this = scopeguard::guard(this, |this| this.post_match(global));
 
     let this_value = frame.this();
     let arguments_ = frame.arguments_old::<1>();

@@ -5359,7 +5359,7 @@ impl H2FrameParser {
                         has_priority = true;
                     }
                 } else {
-                    return global_object.throw_invalid_argument_type_value("options.exclusive", "boolean", exclusive_js);
+                    return Err(global_object.throw_invalid_argument_type_value("options.exclusive", "boolean", exclusive_js));
                 }
             }
 
@@ -5375,7 +5375,7 @@ impl H2FrameParser {
                     }
                     stream.stream_dependency = u32::try_from(parent).unwrap();
                 } else {
-                    return global_object.throw_invalid_argument_type_value("options.parent", "number", parent_js);
+                    return Err(global_object.throw_invalid_argument_type_value("options.parent", "number", parent_js));
                 }
             }
 
@@ -5391,7 +5391,7 @@ impl H2FrameParser {
                     }
                     stream.weight = u16::try_from(weight).unwrap();
                 } else {
-                    return global_object.throw_invalid_argument_type_value("options.weight", "number", weight_js);
+                    return Err(global_object.throw_invalid_argument_type_value("options.weight", "number", weight_js));
                 }
 
                 if weight < 1 || weight > u8::MAX as i32 {

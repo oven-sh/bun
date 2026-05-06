@@ -54,13 +54,13 @@ pub fn to_start_with(
         return Ok(JSValue::UNDEFINED);
     }
 
+    // PORT NOTE: Zig shares one `*Formatter` across both `toFmt` calls; in Rust the
+    // `ZigFormatter` adapter holds `&'a mut Formatter`, so two live adapters cannot alias
+    // the same backing formatter. Use a second formatter for the received value —
+    // `make_formatter` is a trivial struct init with no shared state between values.
     let mut formatter = super::make_formatter(global);
+    let mut formatter2 = super::make_formatter(global);
     // `defer formatter.deinit()` dropped — Formatter impls Drop.
-    let value_fmt = value.to_fmt(&mut formatter);
-    let expected_fmt = expected.to_fmt(&mut formatter);
-    // TODO(port): both `to_fmt` calls borrow `&mut formatter`; in Zig these were aliasing
-    // `*Formatter` handles. Phase B: make `to_fmt` take `&Formatter` or interleave into the
-    // `format_args!` call sites.
 
     if not {
         const EXPECTED_LINE: &str = "Expected to not start with: <green>{}<r>\n";

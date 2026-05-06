@@ -4424,7 +4424,7 @@ fn is_all_ascii(s: &[u8]) -> bool {
 // ───────────────────────────── CmdEnvIter ─────────────────────────────
 
 pub struct CmdEnvIter<'a> {
-    pub env: &'a bun_collections::StringArrayHashMap<Box<ZStr>>,
+    pub env: &'a mut bun_collections::StringArrayHashMap<Box<ZStr>>,
     // TODO(port): Zig `[:0]const u8` value — confirm map value type.
     pub iter: bun_collections::array_hash_map::Iter<'a, Box<[u8]>, Box<ZStr>>,
 }

@@ -4372,10 +4372,11 @@ impl AnyServer {
 
     pub fn on_request(&self, req: &mut uws::Request, resp: uws::AnyResponse) {
         match self.ptr.tag() {
-            t if t == <TaggedPtrUnion<_>>::case::<HTTPServer>() => self.ptr.as_::<HTTPServer>().on_request(req, resp.assert_no_ssl()),
-            t if t == <TaggedPtrUnion<_>>::case::<HTTPSServer>() => self.ptr.as_::<HTTPSServer>().on_request(req, resp.assert_ssl()),
-            t if t == <TaggedPtrUnion<_>>::case::<DebugHTTPServer>() => self.ptr.as_::<DebugHTTPServer>().on_request(req, resp.assert_no_ssl()),
-            t if t == <TaggedPtrUnion<_>>::case::<DebugHTTPSServer>() => self.ptr.as_::<DebugHTTPSServer>().on_request(req, resp.assert_ssl()),
+            // SAFETY: tag was just checked; as_unchecked yields the matching live *mut.
+            t if t == <TaggedPtrUnion<_>>::case::<HTTPServer>() => unsafe { &mut *self.ptr.as_unchecked::<HTTPServer>() }.on_request(req, resp.assert_no_ssl()),
+            t if t == <TaggedPtrUnion<_>>::case::<HTTPSServer>() => unsafe { &mut *self.ptr.as_unchecked::<HTTPSServer>() }.on_request(req, resp.assert_ssl()),
+            t if t == <TaggedPtrUnion<_>>::case::<DebugHTTPServer>() => unsafe { &mut *self.ptr.as_unchecked::<DebugHTTPServer>() }.on_request(req, resp.assert_no_ssl()),
+            t if t == <TaggedPtrUnion<_>>::case::<DebugHTTPSServer>() => unsafe { &mut *self.ptr.as_unchecked::<DebugHTTPSServer>() }.on_request(req, resp.assert_ssl()),
             _ => unreachable!("Invalid pointer tag"),
         }
     }
@@ -4411,10 +4412,11 @@ impl AnyServer {
         extra_args: [JSValue; EXTRA_ARG_COUNT],
     ) {
         match self.ptr.tag() {
-            t if t == <TaggedPtrUnion<_>>::case::<HTTPServer>() => self.ptr.as_::<HTTPServer>().on_saved_request(req, resp.tcp(), callback, extra_args),
-            t if t == <TaggedPtrUnion<_>>::case::<HTTPSServer>() => self.ptr.as_::<HTTPSServer>().on_saved_request(req, resp.ssl(), callback, extra_args),
-            t if t == <TaggedPtrUnion<_>>::case::<DebugHTTPServer>() => self.ptr.as_::<DebugHTTPServer>().on_saved_request(req, resp.tcp(), callback, extra_args),
-            t if t == <TaggedPtrUnion<_>>::case::<DebugHTTPSServer>() => self.ptr.as_::<DebugHTTPSServer>().on_saved_request(req, resp.ssl(), callback, extra_args),
+            // SAFETY: tag was just checked; as_unchecked yields the matching live *mut. AnyResponse variant matches SSL flag.
+            t if t == <TaggedPtrUnion<_>>::case::<HTTPServer>() => unsafe { &mut *self.ptr.as_unchecked::<HTTPServer>() }.on_saved_request(req, unsafe { &mut *resp.assert_no_ssl() }, callback, extra_args),
+            t if t == <TaggedPtrUnion<_>>::case::<HTTPSServer>() => unsafe { &mut *self.ptr.as_unchecked::<HTTPSServer>() }.on_saved_request(req, unsafe { &mut *resp.assert_ssl() }, callback, extra_args),
+            t if t == <TaggedPtrUnion<_>>::case::<DebugHTTPServer>() => unsafe { &mut *self.ptr.as_unchecked::<DebugHTTPServer>() }.on_saved_request(req, unsafe { &mut *resp.assert_no_ssl() }, callback, extra_args),
+            t if t == <TaggedPtrUnion<_>>::case::<DebugHTTPSServer>() => unsafe { &mut *self.ptr.as_unchecked::<DebugHTTPSServer>() }.on_saved_request(req, unsafe { &mut *resp.assert_ssl() }, callback, extra_args),
             _ => unreachable!("Invalid pointer tag"),
         }
     }

@@ -4591,7 +4591,7 @@ impl H2FrameParser {
             let name_slice = header_name.to_utf8();
             let name = name_slice.slice();
 
-            if header_name.char_at(0) == b':' as u16 {
+            if name.first() == Some(&b':') {
                 let exception = global_object.to_type_error_fmt(bun_jsc::ErrorCode::HTTP2_INVALID_PSEUDOHEADER, format_args!("\"{}\" is an invalid pseudoheader or is used incorrectly", BStr::new(name)));
                 return global_object.throw_value(exception);
             }
@@ -5084,7 +5084,7 @@ impl H2FrameParser {
                     }
                 };
 
-                if header_name.char_at(0) == b':' as u16 {
+                if name.first() == Some(&b':') {
                     if ignore_pseudo_headers == 1 {
                         continue;
                     }

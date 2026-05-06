@@ -1005,12 +1005,12 @@ impl NodeHTTPResponse {
         scoped_log!(
             NodeHTTPResponse,
             "drainBufferedRequestBodyFromPause {}",
-            self.buffered_request_body_data_during_pause.len()
+            self.buffered_request_body_data_during_pause.len
         );
-        if self.buffered_request_body_data_during_pause.len() > 0 {
+        if self.buffered_request_body_data_during_pause.len > 0 {
             let result = JSValue::create_buffer(
                 global_object,
-                self.buffered_request_body_data_during_pause.slice(),
+                self.buffered_request_body_data_during_pause.slice_mut(),
             );
             self.buffered_request_body_data_during_pause = BabyList::default();
             return Some(result);

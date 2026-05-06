@@ -356,10 +356,10 @@ impl WindowsNamedPipe {
     pub fn on_timeout(&mut self) {
         bun_output::scoped_log!(WindowsNamedPipe, "onTimeout");
 
-        let has_been_cleared = self.event_loop_timer.state == EventLoopTimer::State::CANCELLED
+        let has_been_cleared = self.event_loop_timer.state == EventLoopTimerState::CANCELLED
             || self.vm.script_execution_status() != bun_jsc::ScriptExecutionStatus::Running;
 
-        self.event_loop_timer.state = EventLoopTimer::State::FIRED;
+        self.event_loop_timer.state = EventLoopTimerState::FIRED;
         self.event_loop_timer.heap = Default::default();
 
         if has_been_cleared {

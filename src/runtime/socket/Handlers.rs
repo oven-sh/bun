@@ -133,10 +133,10 @@ impl Handlers {
                         .cast::<Listener>()
                 };
                 // allow it to be GC'd once the last connection is closed and it's not listening anymore
-                if listen_socket.listener.is_none() {
-                    listen_socket.poll_ref.unref(self.vm);
-                    listen_socket.strong_self.clear();
-                    // PORT NOTE: Zig `strong_self.deinit()` → Strong::clear()/drop; field stays valid
+                if matches!(listen_socket.listener, ListenerType::None) {
+                    listen_socket.poll_ref.unref(vm_ctx());
+                    listen_socket.strong_self.deinit();
+                    // PORT NOTE: Zig `strong_self.deinit()` → StrongOptional::deinit; field stays valid (empty)
                 }
             } else {
                 // Client-mode Handlers is heap-allocated per-connection

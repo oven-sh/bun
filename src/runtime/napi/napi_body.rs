@@ -2613,7 +2613,11 @@ pub extern "C" fn napi_unref_threadsafe_function(
     let env = get_env!(env_);
     // SAFETY: func is non-null per N-API contract.
     let func = unsafe { &mut *func };
-    debug_assert!(core::ptr::eq(func.event_loop.global(), env.to_js()));
+    // SAFETY: event_loop is the live JS-thread loop; `global` is set after init.
+    debug_assert!(core::ptr::eq(
+        unsafe { (*func.event_loop).global.unwrap().as_ptr() },
+        env.to_js()
+    ));
     func.unref();
     env.ok()
 }
@@ -2627,7 +2631,11 @@ pub extern "C" fn napi_ref_threadsafe_function(
     let env = get_env!(env_);
     // SAFETY: func is non-null per N-API contract.
     let func = unsafe { &mut *func };
-    debug_assert!(core::ptr::eq(func.event_loop.global(), env.to_js()));
+    // SAFETY: event_loop is the live JS-thread loop; `global` is set after init.
+    debug_assert!(core::ptr::eq(
+        unsafe { (*func.event_loop).global.unwrap().as_ptr() },
+        env.to_js()
+    ));
     func.ref_();
     env.ok()
 }

@@ -13,10 +13,9 @@ pub fn to_match(
     // jsc.markBinding(@src()) — debug-only source marker; no-op in Rust.
 
     // Zig: `defer this.postMatch(globalThis);`
-    // TODO(port): borrowck — this guard borrows `this` for the whole scope and
-    // conflicts with later `&mut self` uses. Phase B should expose
-    // `Expect::post_match_guard(global)` as an RAII type instead.
-    let _post_match = scopeguard::guard((), |_| this.post_match(global));
+    // PORT NOTE: borrowck — wrap `this` in a scopeguard that owns the &mut Expect
+    // and runs post_match on drop; the body accesses `this` via the guard's DerefMut.
+    let mut this = scopeguard::guard(this, |t| t.post_match(global));
 
     let this_value = frame.this();
     let arguments: &[JSValue] = frame.arguments();
@@ -67,10 +66,12 @@ pub fn to_match(
     }
 
     // handle failure
-    // TODO(port): two `&mut formatter` borrows alive across the same format_args! —
-    // Phase B may need `to_fmt(&formatter)` (shared) or interior mutability on Formatter.
+    // PORT NOTE: Zig shares one Formatter across both `to_fmt` calls; in Rust each
+    // `to_fmt` borrows `&mut Formatter` for the lifetime of the returned wrapper, so
+    // we need a second Formatter for the second value (matches toContain.rs / toBe.rs).
+    let mut formatter2 = super::make_formatter(global);
     let expected_fmt = expected_value.to_fmt(&mut formatter);
-    let value_fmt = value.to_fmt(&mut formatter);
+    let value_fmt = value.to_fmt(&mut formatter2);
 
     if not {
         const EXPECTED_LINE: &str = "Expected substring or pattern: not <green>{}<r>\n";
@@ -114,6 +115,6 @@ pub fn to_match(
 // PORT STATUS
 //   source:     src/test_runner/expect/toMatch.zig (69 lines)
 //   confidence: medium
-//   todos:      3
-//   notes:      `defer this.postMatch` and dual `to_fmt(&mut formatter)` need borrowck reshape; `get_signature` must be const.
+//   todos:      1
+//   notes:      scopeguard owns &mut Expect for `defer postMatch`; second Formatter for dual to_fmt borrow; `get_signature` must be const.
 // ──────────────────────────────────────────────────────────────────────────

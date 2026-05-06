@@ -757,7 +757,7 @@ impl VM {
     /// Spec `VM.zig` `executionForbidden` — wraps `JSC__VM__executionForbidden`.
     #[inline]
     pub fn execution_forbidden(&self) -> bool {
-        extern "C" {
+        unsafe extern "C" {
             fn JSC__VM__executionForbidden(vm: *mut VM) -> bool;
         }
         // SAFETY: `self` is a live opaque JSC VM handle.

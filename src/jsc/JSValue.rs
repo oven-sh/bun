@@ -857,6 +857,7 @@ unsafe extern "C" {
     fn JSC__JSValue__asArrayBuffer(this: JSValue, global: *const JSGlobalObject, out: *mut ArrayBuffer) -> bool;
     fn JSC__JSValue__asPromise(this: JSValue) -> *mut JSPromise;
     fn JSC__JSValue__asInternalPromise(this: JSValue) -> *mut JSInternalPromise;
+    fn Bun__attachAsyncStackFromPromise(global: *const JSGlobalObject, err: JSValue, promise: *const JSPromise);
     fn JSC__JSValue__isAnyError(this: JSValue) -> bool;
     fn JSC__JSValue__getClassInfoName(this: JSValue, out: *mut *const u8, len: *mut usize) -> bool;
     fn JSC__JSValue__getLengthIfPropertyExistsInternal(this: JSValue, global: *const JSGlobalObject) -> f64;

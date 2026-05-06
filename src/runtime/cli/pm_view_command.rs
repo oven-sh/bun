@@ -221,7 +221,7 @@ pub fn view(
         if json_output {
             Output::print(format_args!(
                 "{{ \"error\": \"No matching version found\", \"version\": {} }}\n",
-                bun_fmt::format_json_string_utf8(spec_, bun_fmt::JsonStringOptions { quote: true }),
+                bun_fmt::format_json_string_utf8(spec_, bun_fmt::JSONFormatterUTF8Options { quote: true }),
             ));
             Output::flush();
         } else {
@@ -304,8 +304,8 @@ pub fn view(
             if json_output {
                 Output::print(format_args!(
                     "{{ \"error\": \"Property not found\", \"version\": {}, \"property\": {} }}\n",
-                    bun_fmt::format_json_string_utf8(spec_, bun_fmt::JsonStringOptions { quote: true }),
-                    bun_fmt::format_json_string_utf8(prop_path, bun_fmt::JsonStringOptions { quote: true }),
+                    bun_fmt::format_json_string_utf8(spec_, bun_fmt::JSONFormatterUTF8Options { quote: true }),
+                    bun_fmt::format_json_string_utf8(prop_path, bun_fmt::JSONFormatterUTF8Options { quote: true }),
                 ));
                 Output::flush();
             } else {

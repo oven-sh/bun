@@ -3724,7 +3724,7 @@ impl H2FrameParser {
         this.handlers.binary_type = match BinaryType::from_js_value(global_object, args_list.ptr[0])? {
             Some(bt) => bt,
             None => {
-                let err = global_object.to_invalid_arguments(format_args!("Expected 'binaryType' to be 'arraybuffer', 'uint8array', 'buffer'")).as_object_ref();
+                let err = global_object.to_invalid_arguments(format_args!("Expected 'binaryType' to be 'arraybuffer', 'uint8array', 'buffer'"));
                 return Err(global_object.throw_value(err));
             }
         };
@@ -3881,23 +3881,26 @@ impl H2FrameParser {
     #[bun_jsc::host_fn(method)]
     pub fn get_current_state(this: &mut Self, global_object: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
         let result = JSValue::create_empty_object(global_object, 9);
-        result.put(global_object, ZigString::static_("effectiveLocalWindowSize"), JSValue::js_number(this.window_size));
-        result.put(global_object, ZigString::static_("effectiveRecvDataLength"), JSValue::js_number(this.window_size - this.used_window_size));
-        result.put(global_object, ZigString::static_("nextStreamID"), JSValue::js_number(this.get_next_stream_id()));
-        result.put(global_object, ZigString::static_("lastProcStreamID"), JSValue::js_number(this.last_stream_id as f64));
+        result.put(global_object, b"effectiveLocalWindowSize", JSValue::js_number(this.window_size as f64));
+        result.put(global_object, b"effectiveRecvDataLength", JSValue::js_number((this.window_size - this.used_window_size) as f64));
+        result.put(global_object, b"nextStreamID", JSValue::js_number(this.get_next_stream_id() as f64));
+        result.put(global_object, b"lastProcStreamID", JSValue::js_number(this.last_stream_id as f64));
 
         let settings = this.remote_settings.unwrap_or_default();
-        result.put(global_object, ZigString::static_("remoteWindowSize"), JSValue::js_number(settings.initial_window_size));
-        result.put(global_object, ZigString::static_("localWindowSize"), JSValue::js_number(this.local_settings.initial_window_size));
-        result.put(global_object, ZigString::static_("deflateDynamicTableSize"), JSValue::js_number(this.local_settings.header_table_size));
-        result.put(global_object, ZigString::static_("inflateDynamicTableSize"), JSValue::js_number(this.local_settings.header_table_size));
-        result.put(global_object, ZigString::static_("outboundQueueSize"), JSValue::js_number(this.outbound_queue_size));
+        let remote_iws = settings.initial_window_size;
+        let local_iws = this.local_settings.initial_window_size;
+        let local_hts = this.local_settings.header_table_size;
+        result.put(global_object, b"remoteWindowSize", JSValue::js_number(remote_iws as f64));
+        result.put(global_object, b"localWindowSize", JSValue::js_number(local_iws as f64));
+        result.put(global_object, b"deflateDynamicTableSize", JSValue::js_number(local_hts as f64));
+        result.put(global_object, b"inflateDynamicTableSize", JSValue::js_number(local_hts as f64));
+        result.put(global_object, b"outboundQueueSize", JSValue::js_number(this.outbound_queue_size as f64));
         Ok(result)
     }
 
     #[bun_jsc::host_fn(method)]
     pub fn goaway(this: &mut Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args_list = callframe.arguments_old(3);
+        let args_list = callframe.arguments_old::<3>();
         if args_list.len < 1 {
             return Err(global_object.throw("Expected errorCode argument"));
         }
@@ -4166,20 +4169,20 @@ impl H2FrameParser {
         let stream = unsafe { &mut *stream };
         let state = JSValue::create_empty_object(global_object, 6);
 
-        state.put(global_object, ZigString::static_("localWindowSize"), JSValue::js_number(stream.window_size));
-        state.put(global_object, ZigString::static_("state"), JSValue::js_number(stream.state as u8 as f64));
-        state.put(global_object, ZigString::static_("localClose"), JSValue::js_number(if stream.can_send_data() { 0i32 } else { 1 }));
-        state.put(global_object, ZigString::static_("remoteClose"), JSValue::js_number(if stream.can_receive_data() { 0i32 } else { 1 }));
+        state.put(global_object, b"localWindowSize", JSValue::js_number(stream.window_size as f64));
+        state.put(global_object, b"state", JSValue::js_number(stream.state as u8 as f64));
+        state.put(global_object, b"localClose", JSValue::js_number(if stream.can_send_data() { 0.0 } else { 1.0 }));
+        state.put(global_object, b"remoteClose", JSValue::js_number(if stream.can_receive_data() { 0.0 } else { 1.0 }));
         // TODO: sumDependencyWeight
-        state.put(global_object, ZigString::static_("sumDependencyWeight"), JSValue::js_number(0));
-        state.put(global_object, ZigString::static_("weight"), JSValue::js_number(stream.weight));
+        state.put(global_object, b"sumDependencyWeight", JSValue::js_number(0.0));
+        state.put(global_object, b"weight", JSValue::js_number(stream.weight as f64));
 
         Ok(state)
     }
 
     #[bun_jsc::host_fn(method)]
     pub fn set_stream_priority(this: &mut Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args_list = callframe.arguments_old(2);
+        let args_list = callframe.arguments_old::<2>();
         if args_list.len < 2 {
             return Err(global_object.throw("Expected stream and options arguments"));
         }

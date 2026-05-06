@@ -913,12 +913,9 @@ fn transpile_source_code_inner(
             #[allow(unused)]
             let mut package_json: Option<*mut c_void> = None;
             
-            unsafe {
-                if let Some(index) = (*jsc_vm).bun_watcher.index_of(hash) {
-                    fd = (*jsc_vm).bun_watcher.watchlist().items_fd()[index].unwrap_valid();
-                    package_json = (*jsc_vm).bun_watcher.watchlist().items_package_json()[index];
-                }
-            }
+            // TODO(b2-cycle): `vm.bun_watcher` is `*mut c_void` (ImportWatcher
+            // gated in hot_reloader.rs). `index_of`/`watchlist()` un-gate with it.
+            let _ = hash;
 
             // ── RuntimeTranspilerCache ──────────────────────────────────────
             // Spec :178-182.

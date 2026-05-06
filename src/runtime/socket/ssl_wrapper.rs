@@ -218,7 +218,7 @@ impl<T: Copy> SSLWrapper<T> {
             // SAFETY: ssl_ctx ref was just created by create_ssl_context and not yet adopted by init_with_ctx.
             unsafe { boring_sys::SSL_CTX_free(c.as_ptr()) };
         });
-        let this = Self::init_with_ctx(ssl_ctx, is_client, handlers)?;
+        let this = Self::init_with_ctx(ssl_ctx.as_ptr(), is_client, handlers)?;
         let _ = scopeguard::ScopeGuard::into_inner(ctx_guard);
         Ok(this)
     }

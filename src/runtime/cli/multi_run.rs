@@ -871,13 +871,14 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
             let Some(pkg_scripts) = pkgjson.scripts else {
                 continue;
             };
+            let run_in_bun = ctx.debug.run_in_bun;
             let pkg_path_env = RunCommand::configure_path_for_run_with_package_json_dir(
                 ctx,
                 &dirpath,
-                &mut this_transpiler,
+                this_transpiler,
                 None,
                 &dirpath,
-                ctx.debug.run_in_bun,
+                run_in_bun,
             )?;
             let pkg_name: Box<[u8]> = if !pkgjson.name.is_empty() {
                 Box::from(pkgjson.name)

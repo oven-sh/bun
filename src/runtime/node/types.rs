@@ -353,15 +353,15 @@ impl StringOrBuffer {
     ) -> JsResult<Vec<u8>> {
         if let Some(array_buffer) = value.as_array_buffer(global_object) {
             let bytes = array_buffer.byte_slice();
-            global_object.vm().deprecated_report_extra_memory(array_buffer.len as usize);
+            vm_report_extra_memory(global_object, array_buffer.len as usize);
             return Ok(bytes.to_vec());
         }
 
         let str = bun_str::String::from_js(value, global_object)?;
         // `str.deref()` happens on Drop.
 
-        let result = str.to_owned_slice()?;
-        global_object.vm().deprecated_report_extra_memory(result.len());
+        let result = str.to_owned_slice();
+        vm_report_extra_memory(global_object, result.len());
         Ok(result)
     }
 

@@ -40,13 +40,89 @@ mod _impl {
 use super::*;
 use std::io::Write as _;
 use bun_core::{env_var, fmt as bun_fmt};
-use bun_jsc::{CallFrame, JSArray, JSObject, SystemError};
+use bun_jsc::{CallFrame, JSArray, JSObject, SystemError, SysErrorJsc as _, StringJsc as _};
 use crate::node::ErrorCode;
 use bun_paths::PathBuffer;
-use bun_str::{strings, ZigString};
+use bun_str::{strings, ZigString, ZStr};
 use bun_sys::c;
 #[cfg(windows)]
 use bun_sys::windows::{self, libuv};
+
+// ─── local shims for upstream API gaps (Phase D) ──────────────────────────
+
+/// Unified error for `cpus_impl_*` so `?` works on both `JsResult` and
+/// `bun_core::Error`/`bun_sys::Error`. The variant payload is discarded by
+/// `cpus()` (matches Zig's `catch` → throw `SystemError`).
+pub(crate) enum OsError {
+    Js(bun_jsc::JsError),
+    Any,
+}
+impl From<bun_jsc::JsError> for OsError {
+    fn from(_: bun_jsc::JsError) -> Self { Self::Js(_0_dropped()) }
+}
+#[inline(always)] fn _0_dropped() -> bun_jsc::JsError { bun_jsc::JsError::Thrown }
+impl From<bun_core::Error> for OsError {
+    fn from(_: bun_core::Error) -> Self { Self::Any }
+}
+impl From<bun_sys::Error> for OsError {
+    fn from(_: bun_sys::Error) -> Self { Self::Any }
+}
+
+/// `bun_jsc::SystemError` has no `Default` (TODO in src/jsc/SystemError.rs).
+/// Local zero-value matching Zig's extern-struct field defaults.
+#[inline]
+fn system_error_default() -> SystemError {
+    SystemError {
+        errno: 0,
+        code: BunString::empty(),
+        message: BunString::empty(),
+        path: BunString::empty(),
+        syscall: BunString::empty(),
+        hostname: BunString::empty(),
+        fd: c_int::MIN,
+        dest: BunString::empty(),
+    }
+}
+
+/// `bun_jsc::SystemError` lacks `to_error_instance_with_info_object`; the
+/// full impl lives in `bun_jsc::system_error::SystemError` (not the exported
+/// type). Shim to the available method until upstream unifies.
+trait SystemErrorExt {
+    fn to_error_instance_with_info_object(&self, global: &JSGlobalObject) -> JSValue;
+}
+impl SystemErrorExt for SystemError {
+    #[inline]
+    fn to_error_instance_with_info_object(&self, global: &JSGlobalObject) -> JSValue {
+        // TODO(port): blocked_on: bun_jsc::SystemError::to_error_instance_with_info_object
+        self.to_error_instance(global)
+    }
+}
+
+/// `bun_str::ZigString` (the `bun_string` crate type) is `repr(C)`-identical
+/// to the JSC-side `ZigString` but lacks `with_encoding`/`to_js`. Provide them
+/// locally so call sites match the Zig spec verbatim.
+trait ZigStringJs {
+    fn with_encoding(self) -> ZigString;
+    fn to_js(&self, global: &JSGlobalObject) -> JSValue;
+}
+impl ZigStringJs for ZigString {
+    #[inline]
+    fn with_encoding(mut self) -> ZigString {
+        // Zig `setOutputEncoding`: if not already 16-bit, mark UTF-8.
+        if !self.is_16bit() {
+            self.mark_utf8();
+        }
+        self
+    }
+    #[inline]
+    fn to_js(&self, global: &JSGlobalObject) -> JSValue {
+        unsafe extern "C" {
+            fn ZigString__toValueGC(arg0: *const ZigString, arg1: *const JSGlobalObject) -> JSValue;
+        }
+        // SAFETY: `self` is a valid repr(C) ZigString; `global` is live.
+        unsafe { ZigString__toValueGC(self, global) }
+    }
+}
 
 // `bun.HOST_NAME_MAX` (bun.zig) — `std.posix.HOST_NAME_MAX` on unix, 256 on
 // Windows. Neither `bun_core` nor `bun_sys` re-export it yet; 256 is a safe

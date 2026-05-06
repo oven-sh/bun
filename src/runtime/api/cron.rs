@@ -1799,7 +1799,7 @@ trait SpawnCmdTarget: CronJobBase + BufferedReaderParent {
 impl SpawnCmdTarget for CronRegisterJob {
     fn set_err(&mut self, args: core::fmt::Arguments<'_>) { CronRegisterJob::set_err(self, args) }
     fn finish(this: *mut Self) { CronRegisterJob::finish(this) }
-    fn process_slot(&mut self) -> &mut Option<Arc<Process>> { &mut self.process }
+    fn process_slot(&mut self) -> &mut Option<*mut Process> { &mut self.process }
     fn stdout_reader(&mut self) -> &mut OutputReader { &mut self.stdout_reader }
     fn stderr_reader(&mut self) -> &mut OutputReader { &mut self.stderr_reader }
     fn remaining_fds(&mut self) -> &mut i8 { &mut self.remaining_fds }
@@ -1807,7 +1807,7 @@ impl SpawnCmdTarget for CronRegisterJob {
 impl SpawnCmdTarget for CronRemoveJob {
     fn set_err(&mut self, args: core::fmt::Arguments<'_>) { CronRemoveJob::set_err(self, args) }
     fn finish(this: *mut Self) { CronRemoveJob::finish(this) }
-    fn process_slot(&mut self) -> &mut Option<Arc<Process>> { &mut self.process }
+    fn process_slot(&mut self) -> &mut Option<*mut Process> { &mut self.process }
     fn stdout_reader(&mut self) -> &mut OutputReader { &mut self.stdout_reader }
     fn stderr_reader(&mut self) -> &mut OutputReader { &mut self.stderr_reader }
     fn remaining_fds(&mut self) -> &mut i8 { &mut self.remaining_fds }

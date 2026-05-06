@@ -933,8 +933,10 @@ pub use self::js_promise::UnwrapMode as PromiseUnwrapMode;
 pub use self::js_promise::Unwrapped as PromiseResult;
 
 /// `JSPropertyIteratorOptions` — comptime config struct in Zig; here a value type
-/// downstream can use as a const-generic carrier or runtime flag set.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// downstream can use as a runtime flag set. `Default` mirrors the Zig struct's
+/// field defaults (JSPropertyIterator.zig:1-7): `own_properties_only = true`,
+/// `observable = true`, `only_non_index_properties = false`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct JSPropertyIteratorOptions {
     pub skip_empty_name: bool,
     pub include_value: bool,
@@ -942,16 +944,38 @@ pub struct JSPropertyIteratorOptions {
     pub observable: bool,
     pub only_non_index_properties: bool,
 }
+impl Default for JSPropertyIteratorOptions {
+    #[inline]
+    fn default() -> Self {
+        Self {
+            skip_empty_name: false,
+            include_value: false,
+            own_properties_only: true,
+            observable: true,
+            only_non_index_properties: false,
+        }
+    }
+}
 
 /// Shorthand of `JSPropertyIteratorOptions` matching the Zig spec's most common
 /// call-site shape (`.{ .skip_empty_name = …, .include_value = … }`). Runtime
 /// values are accepted by `JSPropertyIterator::init` for source-level parity
-/// with Zig; the const-generic params on the iterator type still drive the
-/// actual behaviour.
+/// with Zig; the remaining three options take the Zig struct defaults via the
+/// `From` conversion below.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PropertyIteratorOptions {
     pub skip_empty_name: bool,
     pub include_value: bool,
+}
+impl From<PropertyIteratorOptions> for JSPropertyIteratorOptions {
+    #[inline]
+    fn from(o: PropertyIteratorOptions) -> Self {
+        Self {
+            skip_empty_name: o.skip_empty_name,
+            include_value: o.include_value,
+            ..Self::default()
+        }
+    }
 }
 
 /// Conversion shim so `JSPropertyIterator::init`'s `object` argument accepts
@@ -1537,6 +1561,7 @@ pub mod js_property_iterator {
         pub value: JSValue,
         skip_empty_name: bool,
         include_value: bool,
+        observable: bool,
     }
 
     unsafe extern "C" {
@@ -1548,6 +1573,13 @@ pub mod js_property_iterator {
             only_non_index_properties: bool,
         ) -> *mut core::ffi::c_void;
         fn Bun__JSPropertyIterator__getNameAndValue(
+            iter: *mut core::ffi::c_void,
+            global: *mut JSGlobalObject,
+            object: *mut JSObject,
+            name: *mut bun_string::String,
+            i: usize,
+        ) -> JSValue;
+        fn Bun__JSPropertyIterator__getNameAndValueNonObservable(
             iter: *mut core::ffi::c_void,
             global: *mut JSGlobalObject,
             object: *mut JSObject,
@@ -1566,13 +1598,20 @@ pub mod js_property_iterator {
         pub fn init(
             global: &JSGlobalObject,
             object: impl super::IntoIterObject,
-            options: super::PropertyIteratorOptions,
+            options: impl Into<super::JSPropertyIteratorOptions>,
         ) -> JsResult<Self> {
+            let options: super::JSPropertyIteratorOptions = options.into();
             let object = object.into_iter_object();
             let mut len: usize = 0;
             // SAFETY: `global` is live; `len` valid out-param.
             let impl_ = unsafe {
-                Bun__JSPropertyIterator__create(global.as_ptr(), object, &mut len, true, false)
+                Bun__JSPropertyIterator__create(
+                    global.as_ptr(),
+                    object,
+                    &mut len,
+                    options.own_properties_only,
+                    options.only_non_index_properties,
+                )
             };
             if global.has_exception() { return Err(JsError::Thrown); }
             Ok(Self {
@@ -1584,6 +1623,7 @@ pub mod js_property_iterator {
                 value: JSValue::ZERO,
                 skip_empty_name: options.skip_empty_name,
                 include_value: options.include_value,
+                observable: options.observable,
             })
         }
         pub fn next(&mut self) -> JsResult<Option<bun_string::String>> {
@@ -1595,9 +1635,15 @@ pub mod js_property_iterator {
                 if self.include_value {
                     // SAFETY: `impl_`/`object` live for `self`'s lifetime.
                     let v = unsafe {
-                        Bun__JSPropertyIterator__getNameAndValue(
-                            self.impl_, self.global, self.object, &mut name, i,
-                        )
+                        if self.observable {
+                            Bun__JSPropertyIterator__getNameAndValue(
+                                self.impl_, self.global, self.object, &mut name, i,
+                            )
+                        } else {
+                            Bun__JSPropertyIterator__getNameAndValueNonObservable(
+                                self.impl_, self.global, self.object, &mut name, i,
+                            )
+                        }
                     };
                     // SAFETY: `global` was live when stored.
                     if unsafe { (*self.global).has_exception() } { return Err(JsError::Thrown); }
@@ -1608,6 +1654,10 @@ pub mod js_property_iterator {
                     // SAFETY: `impl_` live for `self`'s lifetime.
                     unsafe { Bun__JSPropertyIterator__getName(self.impl_, &mut name, i) };
                 }
+                // JSPropertyIterator.zig:90 — C++ leaves name Dead for skipped
+                // entries (e.g. private symbols); always loop past those before
+                // and independently of the `skip_empty_name` filter.
+                if name.is_dead() { continue; }
                 if self.skip_empty_name && name.is_empty() { continue; }
                 return Ok(Some(name));
             }

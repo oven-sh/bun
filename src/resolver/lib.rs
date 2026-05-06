@@ -70,6 +70,7 @@ pub use __phase_a_body::{
     DebugLogs, DebugMeta, FlushMode, Bufs, DirEntryResolveQueueItem, AnyResolveWatcher,
     BrowserMapPathKind, Dirname, RootPathPair,
 };
+pub use __phase_a_body::options;
 
 /// Minimal real subset of `src/resolver/fs.zig` so `bun_resolver::fs::X` paths
 /// resolve for downstream crates during B-2. Full Phase-A draft remains in

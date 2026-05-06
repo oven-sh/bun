@@ -2995,7 +2995,7 @@ impl StyleAttribute {
         let mut input = ParserInput::new(code, allocator);
         let mut parser = Parser::new(
             &mut input,
-            Some(import_records),
+            Some(core::ptr::NonNull::from(import_records)),
             if options.css_modules.is_some() { ParserOpts::CSS_MODULES } else { ParserOpts::empty() },
             Some(&mut parser_extra),
         );
@@ -3173,11 +3173,9 @@ where
                                 self.input,
                                 Delimiters::SEMICOLON,
                                 error_behavior,
-                                (self.parser as *mut P, name),
+                                (&mut *self.parser, name),
                                 |(parser, name), input| {
                                     input.expect_colon()?;
-                                    // SAFETY: parser outlives this closure
-                                    let parser = unsafe { &mut *parser };
                                     P::parse_value(parser, name, input)
                                 },
                             )

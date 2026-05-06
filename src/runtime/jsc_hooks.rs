@@ -2770,7 +2770,11 @@ unsafe fn transpile_virtual_module(
 
     // SAFETY: per fn contract — `global` is the live JS-thread global.
     let global_ref = unsafe { &*global };
-    let jsc_vm = global_ref.bun_vm() as *const VirtualMachine as *mut VirtualMachine;
+    // PORT NOTE: `bun_vm_ptr()` returns the FFI `*mut VirtualMachine` directly;
+    // going through `bun_vm() -> &VirtualMachine -> *const -> *mut` would
+    // launder provenance through a shared ref and the `&mut *jsc_vm` /
+    // transpiler writes below would be UB under Stacked Borrows.
+    let jsc_vm: *mut VirtualMachine = global_ref.bun_vm_ptr();
     // PORT NOTE: spec asserted `jsc_vm.plugin_runner != null` then dropped the
     // assert ("not required for build.module()") — keep parity (no assert).
 

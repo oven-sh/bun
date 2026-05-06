@@ -3381,7 +3381,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // --- 2. Setup WebSocket handler's app reference ---
         if let Some(websocket) = &mut self.config.websocket {
             websocket.global_object = self.global_this;
-            websocket.handler.app = Some(app as *const _ as *mut c_void);
+            // SAFETY: `app_ptr` is the original `*mut uws::NewApp<SSL>` stored in `self.app`;
+            // the websocket handler later calls mutating uWS methods through it, so we must
+            // preserve write provenance instead of routing through the `&` borrow.
+            websocket.handler.app = Some(app_ptr as *mut c_void);
             websocket.handler.flags.ssl = SSL;
         }
 
@@ -3640,7 +3643,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // If onNodeHTTPRequest is configured, it might be needed for Node.js compatibility layer
         // for specific Node API routes, even if it's not the main "/*" handler.
         if !self.config.on_node_http_request.is_empty() {
-            unsafe { NodeHTTP_assignOnNodeJSCompat(SSL, app as *const _ as *mut c_void) };
+            // SAFETY: FFI registers Node-compat routes on the uWS app and needs write access;
+            // pass the original `*mut` (`app_ptr`) rather than the narrowed `&` borrow.
+            unsafe { NodeHTTP_assignOnNodeJSCompat(SSL, app_ptr as *mut c_void) };
         }
 
         route_list_value

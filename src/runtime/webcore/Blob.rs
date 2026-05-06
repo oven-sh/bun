@@ -4178,12 +4178,18 @@ impl Blob {
         }
 
         // PORT NOTE: reshaped for borrowck — Zig @constCast'd shared_view().
+        // SAFETY: `to_string_with_bytes` only frees `raw_bytes` in the
+        // `Temporary` arm, which by Zig invariant is never reached from this
+        // call site (the bytes are store-owned, not a leaked Box). For all
+        // other arms the pointer is read-only, so the const→mut cast is never
+        // written through. Mirrors Zig `@constCast(this.sharedView())`.
+        let view_ptr = view_ as *const [u8] as *mut [u8];
         // TODO(port): dispatch on `lifetime` (was comptime in Zig). Phase B.
         match lifetime {
-            Lifetime::Clone => self.to_string_with_bytes::<{ Lifetime::Clone }>(global, view_),
-            Lifetime::Transfer => self.to_string_with_bytes::<{ Lifetime::Transfer }>(global, view_),
-            Lifetime::Share => self.to_string_with_bytes::<{ Lifetime::Share }>(global, view_),
-            Lifetime::Temporary => self.to_string_with_bytes::<{ Lifetime::Temporary }>(global, view_),
+            Lifetime::Clone => self.to_string_with_bytes::<{ Lifetime::Clone }>(global, view_ptr),
+            Lifetime::Transfer => self.to_string_with_bytes::<{ Lifetime::Transfer }>(global, view_ptr),
+            Lifetime::Share => self.to_string_with_bytes::<{ Lifetime::Share }>(global, view_ptr),
+            Lifetime::Temporary => self.to_string_with_bytes::<{ Lifetime::Temporary }>(global, view_ptr),
         }
     }
 
@@ -4196,8 +4202,11 @@ impl Blob {
         }
 
         let view_ = self.shared_view();
+        // SAFETY: `LIFETIME == Share` ⇒ `to_json_with_bytes` never frees the
+        // pointer; it is read-only. Mirrors Zig `@constCast(this.sharedView())`.
+        let view_ptr = view_ as *const [u8] as *mut [u8];
         // TODO(port): dispatch on lifetime const-generic
-        self.to_json_with_bytes::<{ Lifetime::Share }>(global, view_)
+        self.to_json_with_bytes::<{ Lifetime::Share }>(global, view_ptr)
     }
 
     /// See [`to_string_with_bytes`] for why `raw_bytes` is `*mut [u8]`.

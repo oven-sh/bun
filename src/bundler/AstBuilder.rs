@@ -284,7 +284,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         Ok(ref_)
     }
 
-    pub fn to_bundled_ast(&mut self, target: options::Target) -> Result<js_ast::BundledAst, OOM> {
+    pub fn to_bundled_ast(&mut self, target: options::Target) -> Result<js_ast::BundledAst<'_>, OOM> {
         // TODO: missing import scanner
         debug_assert!(self.scopes.is_empty());
         let module_scope = self.current_scope;

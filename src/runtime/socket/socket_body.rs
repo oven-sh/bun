@@ -3172,21 +3172,24 @@ pub fn js_upgrade_duplex_to_tls(
         default_data.ensure_still_alive();
     }
 
-    let handlers_taken = handlers_guard.take().unwrap();
+    let mut handlers_taken = handlers_guard.take().unwrap();
     scopeguard::ScopeGuard::into_inner(handlers_guard);
-    // TODO(port): Rc<Handlers> vs Box — Zig allocates a raw `*Handlers` here.
-    let mut handlers_rc = Rc::new(UnsafeCell::new(handlers_taken));
     // Set mode to duplex_server so TLSSocket.isServer() returns true for ALPN server mode
     // without affecting markInactive lifecycle (which requires a Listener parent).
-    // Freshly allocated, sole owner — `Rc::get_mut` + `UnsafeCell::get_mut` are both safe.
-    Rc::get_mut(&mut handlers_rc).unwrap().get_mut().mode = if is_server {
+    handlers_taken.mode = if is_server {
         SocketMode::DuplexServer
     } else {
         SocketMode::Client
     };
+    // Zig: `bun.default_allocator.create(Handlers)` — client-mode `Handlers`
+    // is a standalone heap allocation that `Handlers::mark_inactive` later
+    // frees via `Box::from_raw`.
+    // SAFETY: `Box::new` never returns null.
+    let handlers_ptr =
+        unsafe { NonNull::new_unchecked(Box::into_raw(Box::new(handlers_taken))) };
     let tls = TLSSocket::new(TLSSocket {
         ref_count: Cell::new(1),
-        handlers: Some(handlers_rc),
+        handlers: Some(handlers_ptr),
         socket: SocketHandler::<true>::DETACHED,
         owned_ssl_ctx: None,
         connection: None,
@@ -3216,8 +3219,9 @@ pub fn js_upgrade_duplex_to_tls(
     let tls_js_value = tls_ref.get_this_value(global);
     TLSSocket::data_set_cached(tls_js_value, global, default_data);
 
-    let owned_ctx_taken = owned_ctx.take();
-    scopeguard::ScopeGuard::into_inner(owned_ctx_guard);
+    // Ownership of the +1 `SSL_CTX` ref transfers into
+    // `DuplexUpgradeContext.owned_ctx` below; defuse the errdefer.
+    let owned_ctx_taken = scopeguard::ScopeGuard::into_inner(owned_ctx);
 
     let duplex_context = DuplexUpgradeContext::new(DuplexUpgradeContext {
         // TODO(port): in-place init — Zig `undefined`, assigned below after we

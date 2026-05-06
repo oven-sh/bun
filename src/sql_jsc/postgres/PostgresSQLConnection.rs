@@ -431,7 +431,10 @@ impl PostgresSQLConnection {
 
         self.max_lifetime_timer.next =
             bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::AllowMockedTime, i64::from(self.max_lifetime_interval_ms));
-        unsafe { self.vm() }.timer().insert(&mut self.max_lifetime_timer);
+        // PORT NOTE: reshaped for borrowck — see `disable_connection_timeout`.
+        let vm: *mut VirtualMachine = self.vm;
+        // SAFETY: `vm` is the live VM singleton stored in this connection.
+        unsafe { &mut *vm }.timer().insert(&mut self.max_lifetime_timer);
     }
 
     pub fn on_connection_timeout(&mut self) {
@@ -695,7 +698,10 @@ impl PostgresSQLConnection {
         }
     }
 
-    fn start_tls(&mut self, socket: uws::AnySocket) {
+    // PORT NOTE: Zig passed `socket` by value; both call sites have already
+    // stored it into `self.socket`, so dispatch through `socket_write` instead
+    // (avoids moving the non-`Copy` `AnySocket` enum out of `self`).
+    fn start_tls(&mut self) {
         debug!("startTLS");
         let offset: u8 = match self.tls_status {
             TLSStatus::MessageSent(count) => count,
@@ -706,10 +712,7 @@ impl PostgresSQLConnection {
             0x04, 0xD2, 0x16, 0x2F, // SSL request code
         ];
 
-        let written = match &socket {
-            Socket::SocketTcp(s) => s.write(&ssl_request[offset as usize..]),
-            Socket::SocketTls(s) => s.write(&ssl_request[offset as usize..]),
-        };
+        let written = self.socket_write(&ssl_request[offset as usize..]);
         if written > 0 {
             self.tls_status = TLSStatus::MessageSent(offset + u8::try_from(written).unwrap());
         } else {
@@ -724,7 +727,7 @@ impl PostgresSQLConnection {
         self.update_has_pending_activity();
 
         if matches!(self.tls_status, TLSStatus::MessageSent(_) | TLSStatus::Pending) {
-            self.start_tls(socket);
+            self.start_tls();
             return;
         }
 

@@ -2366,6 +2366,12 @@ pub mod bun_string_jsc {
         fn BunString__toJSON(this: *mut bun_string::String, global: *mut JSGlobalObject) -> JSValue;
         fn BunString__toErrorInstance(this: *const bun_string::String, global: *mut JSGlobalObject) -> JSValue;
         fn BunString__toTypeErrorInstance(this: *const bun_string::String, global: *mut JSGlobalObject) -> JSValue;
+        fn Bun__parseDate(global_object: *mut JSGlobalObject, this: *mut bun_string::String) -> f64;
+    }
+    pub fn parse_date(this: &mut bun_string::String, global: &JSGlobalObject) -> JsResult<f64> {
+        // SAFETY: `this` is a live &mut String; `global` borrowed for call duration.
+        let v = unsafe { Bun__parseDate(global.as_ptr(), this) };
+        if global.has_exception() { Err(JsError::Thrown) } else { Ok(v) }
     }
     pub fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<bun_string::String> {
         let mut out = bun_string::String::DEAD;

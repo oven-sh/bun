@@ -208,7 +208,7 @@ fn parse_array(
                     // defer str.deref() → Drop on BunString
                     array.push(SQLDataCell {
                         tag: Tag::Date,
-                        value: Value { date: crate::jsc::bun_string_jsc::parse_date(&mut str, global_object)? },
+                        value: Value { date: crate::jsc::bun_string_jsc::parse_date(&mut str, global_object).map_err(crate::jsc::js_error_to_postgres)? },
                         ..Default::default()
                     });
 
@@ -346,7 +346,7 @@ fn parse_array(
                         let mut str = BunString::init(element);
                         array.push(SQLDataCell {
                             tag: Tag::Date,
-                            value: Value { date: crate::jsc::bun_string_jsc::parse_date(&mut str, global_object)? },
+                            value: Value { date: crate::jsc::bun_string_jsc::parse_date(&mut str, global_object).map_err(crate::jsc::js_error_to_postgres)? },
                             ..Default::default()
                         });
                     } else {
@@ -1025,7 +1025,7 @@ pub fn from_bytes(
                 let mut str = BunString::init(bytes);
                 Ok(SQLDataCell {
                     tag: Tag::Date,
-                    value: Value { date: crate::jsc::bun_string_jsc::parse_date(&mut str, global_object)? },
+                    value: Value { date: crate::jsc::bun_string_jsc::parse_date(&mut str, global_object).map_err(crate::jsc::js_error_to_postgres)? },
                     ..Default::default()
                 })
             }
@@ -1436,12 +1436,12 @@ impl<'a> Putter<'a> {
         structure: JSValue,
         flags: Flags,
         result_mode: PostgresSQLQueryResultMode,
-        cached_structure: Option<PostgresCachedStructure>,
+        cached_structure: Option<&PostgresCachedStructure>,
     ) -> Result<JSValue, AnyPostgresError> {
         // TODO(port): jsc.JSObject.ExternColumnIdentifier path — confirm bun_jsc export name
         let mut names: *mut crate::jsc::ExternColumnIdentifier = core::ptr::null_mut();
         let mut names_count: u32 = 0;
-        if let Some(c) = &cached_structure {
+        if let Some(c) = cached_structure {
             if let Some(f) = c.fields.as_ref() {
                 names = f.as_ptr() as *mut _;
                 names_count = f.len() as u32;
@@ -1458,7 +1458,7 @@ impl<'a> Putter<'a> {
             result_mode as u8,
             names,
             names_count,
-        )?)
+        ).map_err(crate::jsc::js_error_to_postgres)?)
     }
 
     fn put_impl<const IS_RAW: bool>(&mut self, index: u32, optional_bytes: Option<&mut Data>) -> Result<bool> {

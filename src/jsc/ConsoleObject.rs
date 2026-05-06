@@ -2789,19 +2789,34 @@ pub mod formatter {
 
             // SAFETY: ctx_ptr points to the stack-allocated `Self` passed by the caller via the C forEach callback.
             let Some(ctx) = (unsafe { (ctx_ptr as *mut Self).as_mut() }) else { return };
-            let this = &mut *ctx.formatter;
-            if this.failed {
+            if ctx.formatter.failed {
                 return;
             }
-            let writer_ = &mut *ctx.writer;
+
+            // PORT NOTE: borrowck reshape — `WrappedWriter` mutably borrows
+            // `ctx.formatter.estimated_line_length` and `ctx.writer`, which
+            // conflicts with any whole-`Formatter` `&mut self` call. Snapshot
+            // the scalar fields the body reads so the writer can stay live,
+            // and route line-length bookkeeping through `WrappedWriter`'s own
+            // mirrors (`add_for_new_line`/`reset_line`/`print_comma`/...).
+            let disable_inspect_custom = ctx.formatter.disable_inspect_custom;
+            let single_line = ctx.formatter.single_line;
+            let always_newline_scope = ctx.formatter.always_newline_scope;
+            let quote_keys = ctx.formatter.quote_keys;
+            let indent = ctx.formatter.indent;
+            // `format` requires a `&'b JSGlobalObject`; the anonymous-lifetime
+            // `global_this` parameter cannot satisfy that, so reuse the
+            // formatter's own handle (same pointer in practice).
+            let format_global = ctx.formatter.global_this;
+
             let mut writer = WrappedWriter {
-                ctx: writer_,
+                ctx: &mut *ctx.writer,
                 failed: false,
-                estimated_line_length: &mut this.estimated_line_length,
+                estimated_line_length: &mut ctx.formatter.estimated_line_length,
             };
 
             let mut opts = TagOptions::HIDE_GLOBAL;
-            if this.disable_inspect_custom {
+            if disable_inspect_custom {
                 opts |= TagOptions::DISABLE_INSPECT_CUSTOM;
             }
             let Ok(tag) = Tag::get_advanced(value, global_this, opts) else { return };
@@ -2815,26 +2830,26 @@ pub mod formatter {
                     return;
                 }
                 writer = WrappedWriter {
-                    ctx: ctx.writer,
+                    ctx: &mut *ctx.writer,
                     failed: false,
                     estimated_line_length: &mut ctx.formatter.estimated_line_length,
                 };
             } else {
-                this.print_comma::<C>(writer_).expect("unreachable");
+                writer.print_comma::<C>();
             }
 
             let i_before = ctx.i;
             ctx.i += 1;
-            // Re-borrow after possible reseat above.
-            let this = &mut *ctx.formatter;
 
             if i_before > 0 {
-                if !this.single_line
-                    && (ctx.always_newline || this.always_newline_scope || this.good_time_for_a_new_line())
+                if !single_line
+                    && (ctx.always_newline
+                        || always_newline_scope
+                        || writer.good_time_for_a_new_line(indent))
                 {
                     writer.write_all(b"\n");
-                    let _ = this.write_indent(writer.ctx);
-                    this.reset_line();
+                    writer.write_indent(indent);
+                    writer.reset_line(indent);
                 } else {
                     writer.space();
                 }
@@ -2843,9 +2858,9 @@ pub mod formatter {
             if !is_symbol {
                 // TODO: make this one pass?
                 if !key.is_16_bit()
-                    && (!this.quote_keys && JSLexer::is_latin1_identifier_u8(key.slice()))
+                    && (!quote_keys && JSLexer::is_latin1_identifier_u8(key.slice()))
                 {
-                    this.add_for_new_line(key.len + 1);
+                    writer.add_for_new_line(key.len + 1);
                     writer.print(format_args!(
                         concat!("{}", "{}", "{}"),
                         pfmt!("<r>", C),
@@ -2853,10 +2868,10 @@ pub mod formatter {
                         pfmt!("<d>:<r> ", C),
                     ));
                 } else if key.is_16_bit()
-                    && (!this.quote_keys
+                    && (!quote_keys
                         && JSLexer::is_latin1_identifier_u16(key.utf16_slice_aligned()))
                 {
-                    this.add_for_new_line(key.len + 1);
+                    writer.add_for_new_line(key.len + 1);
                     writer.print(format_args!(
                         concat!("{}", "{}", "{}"),
                         pfmt!("<r>", C),
@@ -2866,7 +2881,7 @@ pub mod formatter {
                 } else if key.is_16_bit() {
                     let mut utf16_slice = key.utf16_slice_aligned();
 
-                    this.add_for_new_line(utf16_slice.len() + 2);
+                    writer.add_for_new_line(utf16_slice.len() + 2);
 
                     if C {
                         writer.write_all(pfmt!("<r><green>", true).as_bytes());
@@ -2888,7 +2903,7 @@ pub mod formatter {
                         pfmt!("\"<r><d>:<r> ", C)
                     ));
                 } else {
-                    this.add_for_new_line(key.len + 2);
+                    writer.add_for_new_line(key.len + 2);
 
                     writer.print(format_args!(
                         "{}{}{}",
@@ -2898,7 +2913,7 @@ pub mod formatter {
                     ));
                 }
             } else if cfg!(debug_assertions) && is_private_symbol {
-                this.add_for_new_line(1 + "$:".len() + key.len);
+                writer.add_for_new_line(1 + "$:".len() + key.len);
                 writer.print(format_args!(
                     "{}{}{}{}",
                     pfmt!("<r><magenta>", C),
@@ -2919,7 +2934,7 @@ pub mod formatter {
                     pfmt!("<r><d>:<r> ", C),
                 ));
             } else {
-                this.add_for_new_line(1 + "[Symbol()]:".len() + key.len);
+                writer.add_for_new_line(1 + "[Symbol()]:".len() + key.len);
                 writer.print(format_args!(
                     "{}Symbol({}){}",
                     pfmt!("<r><d>[<r><blue>", C),
@@ -2934,12 +2949,29 @@ pub mod formatter {
                 }
             }
 
-            let _ = this.format::<C>(tag, ctx.writer, value, global_this);
+            // Reseat: `format` needs `&mut Formatter` + `&mut dyn Write`, both
+            // currently held by `writer`.
+            let writer_failed = writer.failed;
+            drop(writer);
+            if writer_failed {
+                ctx.formatter.failed = true;
+            }
+            let _ = ctx
+                .formatter
+                .format::<C>(tag, &mut *ctx.writer, value, format_global);
+            writer = WrappedWriter {
+                ctx: &mut *ctx.writer,
+                failed: false,
+                estimated_line_length: &mut ctx.formatter.estimated_line_length,
+            };
 
             if tag.cell.is_string_like() {
                 if C {
                     writer.write_all(pfmt!("<r>", true).as_bytes());
                 }
+            }
+            if writer.failed {
+                ctx.formatter.failed = true;
             }
         }
     }
@@ -3620,7 +3652,12 @@ pub mod formatter {
                                 self.quote_keys = true;
                                 let _r = defer_restore!(self.quote_keys, prev_quote_keys);
                                 let tag = Tag::get(result, self.global_this)?;
-                                reseat_writer!();
+                                // PORT NOTE: inline `reseat_writer!()` release-only — the
+                                // macro's trailing recreate would re-borrow `writer_`/`self`
+                                // before the recursive `format` call (E0499). We `return`
+                                // immediately, so no recreate is needed.
+                                if writer.failed { self.failed = true; }
+                                drop(writer);
                                 self.format::<ENABLE_ANSI_COLORS>(tag, writer_, result, self.global_this)?;
                                 return Ok(());
                             }
@@ -3633,7 +3670,7 @@ pub mod formatter {
                     let mut str = BunString::empty();
 
                     value.json_stringify(self.global_this, self.indent, &mut str)?;
-                    self.add_for_new_line(str.length());
+                    writer.add_for_new_line(str.length());
                     if js_type == jsc::JSType::JSDate {
                         // in the code for printing dates, it never exceeds this amount
                         let mut iso_string_buf = [0u8; 36];
@@ -3666,27 +3703,53 @@ pub mod formatter {
                     writer.print(format_args!("{str}"));
                 }
                 Tag::Event => {
-                    reseat_writer!();
+                    // PORT NOTE: inline `reseat_writer!()` as drop/call/recreate so the
+                    // recursive helper can borrow `&mut self` + `writer_` (E0499).
+                    if writer.failed { self.failed = true; }
+                    drop(writer);
                     self.print_event::<ENABLE_ANSI_COLORS>(
                         writer_,
                         value,
                         &mut remove_before_recurse,
                     )?;
+                    writer = WrappedWriter {
+                        ctx: writer_,
+                        failed: false,
+                        estimated_line_length: &mut self.estimated_line_length,
+                    };
                 }
                 Tag::JSX => {
-                    reseat_writer!();
+                    if writer.failed { self.failed = true; }
+                    drop(writer);
                     self.print_jsx::<ENABLE_ANSI_COLORS>(writer_, value)?;
+                    writer = WrappedWriter {
+                        ctx: writer_,
+                        failed: false,
+                        estimated_line_length: &mut self.estimated_line_length,
+                    };
                 }
                 Tag::Object => {
-                    reseat_writer!();
+                    if writer.failed { self.failed = true; }
+                    drop(writer);
                     self.print_object::<ENABLE_ANSI_COLORS>(writer_, value, js_type)?;
+                    writer = WrappedWriter {
+                        ctx: writer_,
+                        failed: false,
+                        estimated_line_length: &mut self.estimated_line_length,
+                    };
                 }
                 Tag::TypedArray => {
-                    reseat_writer!();
+                    if writer.failed { self.failed = true; }
+                    drop(writer);
                     self.print_typed_array::<ENABLE_ANSI_COLORS>(writer_, value, js_type)?;
+                    writer = WrappedWriter {
+                        ctx: writer_,
+                        failed: false,
+                        estimated_line_length: &mut self.estimated_line_length,
+                    };
                 }
                 Tag::RevokedProxy => {
-                    self.add_for_new_line("<Revoked Proxy>".len());
+                    writer.add_for_new_line("<Revoked Proxy>".len());
                     writer.print(format_args!(
                         "{}<Revoked Proxy>{}",
                         pf!("<r><cyan>"),
@@ -3702,13 +3765,19 @@ pub mod formatter {
                     // TODO: if (options.showProxy), print like
                     // `Proxy { target: ..., handlers: ... }` — this is default
                     // off so it is not used.
-                    reseat_writer!();
+                    if writer.failed { self.failed = true; }
+                    drop(writer);
                     self.format::<ENABLE_ANSI_COLORS>(
                         Tag::get(target, self.global_this)?,
                         writer_,
                         target,
                         self.global_this,
                     )?;
+                    writer = WrappedWriter {
+                        ctx: writer_,
+                        failed: false,
+                        estimated_line_length: &mut self.estimated_line_length,
+                    };
                 }
                 // Exhaustive — `StringPossiblyFormatted` already handled above.
                 Tag::StringPossiblyFormatted => unreachable!(),
@@ -3781,7 +3850,7 @@ pub mod formatter {
                 let _depth = defer_decrement!(self.depth);
                 let _indent = defer_decrement!(self.indent);
 
-                self.add_for_new_line(2);
+                writer.add_for_new_line(2);
 
                 let prev_quote_strings = self.quote_strings;
                 self.quote_strings = true;
@@ -3790,20 +3859,21 @@ pub mod formatter {
                 'first: {
                     let element = value.get_direct_index(self.global_this, 0);
 
-                    let tag = Tag::get_advanced(element, self.global_this, self.tag_opts())?;
+                    let tag = Tag::get_advanced(element, self.global_this, tag_opts)?;
 
-                    was_good_time =
-                        was_good_time || !tag.tag.is_primitive() || self.good_time_for_a_new_line();
+                    was_good_time = was_good_time
+                        || !tag.tag.is_primitive()
+                        || writer.good_time_for_a_new_line(self.indent);
 
                     if !self.single_line && (self.ordered_properties || was_good_time) {
-                        self.reset_line();
+                        writer.reset_line(self.indent);
                         writer.write_all(b"[");
                         writer.write_all(b"\n");
-                        self.write_indent(writer.ctx).expect("unreachable");
-                        self.add_for_new_line(1);
+                        writer.write_indent(self.indent);
+                        writer.add_for_new_line(1);
                     } else {
                         writer.write_all(b"[ ");
-                        self.add_for_new_line(2);
+                        writer.add_for_new_line(2);
                     }
 
                     if element.is_empty() {
@@ -3837,10 +3907,10 @@ pub mod formatter {
                         continue;
                     }
                     if nonempty_count >= 100 {
-                        self.print_comma::<C>(writer.ctx).expect("unreachable");
+                        writer.print_comma::<C>();
                         writer.write_all(b"\n"); // we want the line break to be unconditional here
-                        self.estimated_line_length = 0;
-                        self.write_indent(writer.ctx).expect("unreachable");
+                        *writer.estimated_line_length = 0;
+                        writer.write_indent(self.indent);
                         writer.pretty::<C>(
                             "... N more items".len(),
                             format_args!("{}... {} more items{}", pf!("<r><d>"), len - u64::from(i), pf!("<r>")),
@@ -3851,13 +3921,14 @@ pub mod formatter {
 
                     if let Some(empty) = empty_start {
                         if empty > 0 {
-                            self.print_comma::<C>(writer.ctx).expect("unreachable");
+                            writer.print_comma::<C>();
                             if !self.single_line
-                                && (self.ordered_properties || self.good_time_for_a_new_line())
+                                && (self.ordered_properties
+                                    || writer.good_time_for_a_new_line(self.indent))
                             {
                                 was_good_time = true;
                                 writer.write_all(b"\n");
-                                self.write_indent(writer.ctx).expect("unreachable");
+                                writer.write_indent(self.indent);
                             } else {
                                 writer.space();
                             }

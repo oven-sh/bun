@@ -397,8 +397,6 @@ impl SavedSourceMap {
         path: &[u8],
         hint: SourceMap::ParseUrlResultHint,
     ) -> SourceMap::ParseUrl {
-         // TODO(b2-blocked): bun_collections::TaggedPtrUnion::{tag, tag_of, as_, init, from}, bun_sourcemap::ParsedSourceMap field shape, ParseUrl field shape
-        {
         let h = hash(path);
 
         // This lock is for the hash table
@@ -407,59 +405,58 @@ impl SavedSourceMap {
         // This mapping entry is only valid while the mutex is locked
         // SAFETY: `map` points at the live sibling HashTable on VirtualMachine.
         let map = unsafe { &mut *self.map };
-        let Some(mapping) = map.get_entry(h) else {
+        let Some(mapping) = map.get_mut(&h) else {
             self.unlock();
             return SourceMap::ParseUrl::default();
         };
 
-        let tagged = Value::from(*mapping.value_ptr());
-        // TODO(port): Value.Tag via @typeName — assuming `TaggedPtrUnion::tag_of::<T>()` API in bun_collections.
+        let tagged = Value::from(Some(*mapping));
         let tag = tagged.tag();
-        if tag == Value::tag_of::<InternalSourceMap>() {
+        if tag == Value::case::<InternalSourceMap>() {
             // Runtime-transpiled module. Wrap the blob in a refcounted
             // ParsedSourceMap shell (no VLQ decode, no Mapping.List) so callers
             // can hold a ref while the table mutates. The shell takes ownership
             // of the blob.
             let ism = InternalSourceMap {
-                data: tagged.as_::<InternalSourceMap>() as *mut _ as *mut u8,
+                data: tagged.as_unchecked::<InternalSourceMap>() as *mut u8,
             };
-            let result = Box::into_raw(Box::new(ParsedSourceMap {
-                ref_count: Default::default(),
-                input_line_count: ism.input_line_count(),
-                internal: ism,
-                ..Default::default()
-            }));
-            // TODO(port): ParsedSourceMap likely has more fields with defaults — verify Default impl in Phase B.
-            *mapping.value_ptr_mut() = Value::init(result).ptr();
-            // SAFETY: `result` is a freshly boxed, non-null ParsedSourceMap.
-            unsafe { (*result).ref_() };
+            // Table holds one strong ref (leaked via `into_raw`); caller gets
+            // the returned `Arc`. Mirrors Zig's intrusive `ref()` pair.
+            let result = Arc::new(ParsedSourceMap::from_internal(ism));
+            *mapping = Value::init(Arc::into_raw(Arc::clone(&result))).ptr();
             self.unlock();
             return SourceMap::ParseUrl {
                 map: Some(result),
                 ..Default::default()
             };
-        } else if tag == Value::tag_of::<ParsedSourceMap>() {
-            let parsed = tagged.as_::<ParsedSourceMap>();
-            // SAFETY: pointer was stored by us and is live while locked.
-            unsafe { (*parsed).ref_() };
+        } else if tag == Value::case::<ParsedSourceMap>() {
+            let parsed = tagged.as_unchecked::<ParsedSourceMap>();
+            // SAFETY: pointer was stored by us via `Arc::into_raw` and is live
+            // while locked. Bump the strong count for the caller's handle.
+            let result = unsafe {
+                Arc::increment_strong_count(parsed as *const ParsedSourceMap);
+                Arc::from_raw(parsed as *const ParsedSourceMap)
+            };
             self.unlock();
             return SourceMap::ParseUrl {
-                map: Some(parsed),
+                map: Some(result),
                 ..Default::default()
             };
-        } else if tag == Value::tag_of::<SourceProviderMap>() {
-            let ptr: *mut SourceProviderMap = tagged.as_::<SourceProviderMap>();
+        } else if tag == Value::case::<SourceProviderMap>() {
+            let ptr: *mut SourceProviderMap = tagged.as_unchecked::<SourceProviderMap>();
             self.unlock();
 
             // Do not lock the mutex while we're parsing JSON!
             // SAFETY: SourceProviderMap is kept alive by JSC; we did not hold a ref.
             if let Some(parse) = unsafe { (*ptr).get_source_map(path, Default::default(), hint) } {
                 // TODO(port): `.none` enum literal for second arg — verify SourceMap load-hint default.
-                if let Some(parsed_map) = parse.map {
-                    // SAFETY: returned map is a valid heap allocation from get_source_map.
-                    unsafe { (*parsed_map).ref_() };
+                if let Some(ref parsed_map) = parse.map {
                     // The mutex is not locked. We have to check the hash table again.
-                    let _ = self.put_value(path, Value::init(parsed_map));
+                    // Leak one strong ref into the table (mirrors Zig `map.ref()`).
+                    let _ = self.put_value(
+                        path,
+                        Value::init(Arc::into_raw(Arc::clone(parsed_map))),
+                    );
 
                     return parse;
                 }
@@ -468,7 +465,7 @@ impl SavedSourceMap {
             self.lock();
             // does not have a valid source map. let's not try again
             // SAFETY: `map` points at the live sibling HashTable on VirtualMachine.
-            unsafe { (*self.map).remove(h) };
+            unsafe { (*self.map).remove(&h) };
 
             // Store path for a user note.
             // SAFETY: single-threaded JS-thread access; matches Zig's unsynchronized `pub var`.
@@ -480,19 +477,20 @@ impl SavedSourceMap {
             }
             self.unlock();
             return SourceMap::ParseUrl::default();
-        } else if tag == Value::tag_of::<BakeSourceProvider>() {
+        } else if tag == Value::case::<BakeSourceProvider>() {
             // TODO: This is a copy-paste of above branch
-            let ptr: *mut BakeSourceProvider = tagged.as_::<BakeSourceProvider>();
+            let ptr: *mut BakeSourceProvider = tagged.as_unchecked::<BakeSourceProvider>();
             self.unlock();
 
             // Do not lock the mutex while we're parsing JSON!
             // SAFETY: BakeSourceProvider is kept alive by its owner.
             if let Some(parse) = unsafe { (*ptr).get_source_map(path, Default::default(), hint) } {
-                if let Some(parsed_map) = parse.map {
-                    // SAFETY: returned map is a valid heap allocation from get_source_map.
-                    unsafe { (*parsed_map).ref_() };
+                if let Some(ref parsed_map) = parse.map {
                     // The mutex is not locked. We have to check the hash table again.
-                    let _ = self.put_value(path, Value::init(parsed_map));
+                    let _ = self.put_value(
+                        path,
+                        Value::init(Arc::into_raw(Arc::clone(parsed_map))),
+                    );
 
                     return parse;
                 }
@@ -501,7 +499,7 @@ impl SavedSourceMap {
             self.lock();
             // does not have a valid source map. let's not try again
             // SAFETY: `map` points at the live sibling HashTable on VirtualMachine.
-            unsafe { (*self.map).remove(h) };
+            unsafe { (*self.map).remove(&h) };
 
             // Store path for a user note.
             // SAFETY: single-threaded JS-thread access; matches Zig's unsynchronized `pub var`.
@@ -513,19 +511,20 @@ impl SavedSourceMap {
             }
             self.unlock();
             return SourceMap::ParseUrl::default();
-        } else if tag == Value::tag_of::<DevServerSourceProvider>() {
+        } else if tag == Value::case::<DevServerSourceProvider>() {
             // TODO: This is a copy-paste of above branch
-            let ptr: *mut DevServerSourceProvider = tagged.as_::<DevServerSourceProvider>();
+            let ptr: *mut DevServerSourceProvider = tagged.as_unchecked::<DevServerSourceProvider>();
             self.unlock();
 
             // Do not lock the mutex while we're parsing JSON!
             // SAFETY: DevServerSourceProvider is kept alive by its owner.
             if let Some(parse) = unsafe { (*ptr).get_source_map(path, Default::default(), hint) } {
-                if let Some(parsed_map) = parse.map {
-                    // SAFETY: returned map is a valid heap allocation from get_source_map.
-                    unsafe { (*parsed_map).ref_() };
+                if let Some(ref parsed_map) = parse.map {
                     // The mutex is not locked. We have to check the hash table again.
-                    let _ = self.put_value(path, Value::init(parsed_map));
+                    let _ = self.put_value(
+                        path,
+                        Value::init(Arc::into_raw(Arc::clone(parsed_map))),
+                    );
 
                     return parse;
                 }
@@ -534,7 +533,7 @@ impl SavedSourceMap {
             self.lock();
             // does not have a valid source map. let's not try again
             // SAFETY: `map` points at the live sibling HashTable on VirtualMachine.
-            unsafe { (*self.map).remove(h) };
+            unsafe { (*self.map).remove(&h) };
 
             // Store path for a user note.
             // SAFETY: single-threaded JS-thread access; matches Zig's unsynchronized `pub var`.
@@ -554,9 +553,6 @@ impl SavedSourceMap {
 
             return SourceMap::ParseUrl::default();
         }
-        } // end 
-        let _ = (path, hint);
-        SourceMap::ParseUrl::default()
     }
 
     /// You must `deref()` the returned value or you will leak memory
@@ -566,14 +562,9 @@ impl SavedSourceMap {
 
     /// Mutex must already be held. Returns the raw table value for `hash` if any.
     pub fn get_value_locked(&mut self, h: u64) -> Option<Value> {
-         // TODO(b2-blocked): bun_collections::HashMap::get, TaggedPtrUnion::from(*mut c_void)
-        {
-            // SAFETY: `map` points at the live sibling HashTable on VirtualMachine; caller holds mutex.
-            let raw = unsafe { (*self.map).get(h)? };
-            return Some(Value::from(raw));
-        }
-        let _ = h;
-        None
+        // SAFETY: `map` points at the live sibling HashTable on VirtualMachine; caller holds mutex.
+        let raw = unsafe { *(*self.map).get(&h)? };
+        Some(Value::from(Some(raw)))
     }
 
     pub fn resolve_mapping(

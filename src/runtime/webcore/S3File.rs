@@ -374,7 +374,7 @@ pub fn construct_s3_file_with_s3_credentials(
         false,
         global,
     )?;
-    let store = blob::Store::init_s3(path, None, aws_options.credentials);
+    let mut store = blob::Store::init_s3(path, None, aws_options.credentials).expect("oom");
     // errdefer store.deinit() — handled by Drop on early return
     store.data.as_s3_mut().options = aws_options.options;
     store.data.as_s3_mut().acl = aws_options.acl;

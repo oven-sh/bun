@@ -716,8 +716,6 @@ impl ServerConfig {
                      Learn more at https://bun.com/docs/api/http",
                 ));
             };
-            // SAFETY: get_object() returned Some, so the pointer is a live JSObject.
-            let static_obj = unsafe { &*static_obj };
             args.had_routes_object = true;
 
             let mut iter = JSPropertyIterator::init(

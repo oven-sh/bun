@@ -1451,22 +1451,23 @@ impl Request {
 
         req.url = href;
 
-        if matches!(req.body.value(), BodyValue::Blob(_))
-            && req.headers.is_some()
-        {
-            if let BodyValue::Blob(blob) = req.body.value() {
-                if !blob.content_type.is_empty()
+        if matches!(&*req.body, BodyValue::Blob(_)) && req.headers.is_some() {
+            if let BodyValue::Blob(blob) = &*req.body {
+                // SAFETY: Blob.content_type is a valid (possibly empty) raw slice ptr.
+                let ct: &[u8] = unsafe { &*blob.content_type };
+                if !ct.is_empty()
                     && !req
                         .headers
                         .as_ref()
                         .unwrap()
-                        .fast_has(FetchHeaders::HeaderName::ContentType)
+                        .fast_has(HTTPHeaderName::ContentType)
                 {
-                    let ct = blob.content_type.clone();
                     // PORT NOTE: reshaped for borrowck — split borrow of req.body and req.headers
-                    match req.headers.as_ref().unwrap().put(
-                        FetchHeaders::HeaderName::ContentType,
-                        &ct,
+                    let ct_ptr: *const [u8] = ct;
+                    match req.headers.as_mut().unwrap().put(
+                        HTTPHeaderName::ContentType,
+                        // SAFETY: ct_ptr borrows req.body which is not mutated here.
+                        unsafe { &*ct_ptr },
                         global_this,
                     ) {
                         Ok(()) => {}
@@ -1480,7 +1481,7 @@ impl Request {
         req.check_body_stream_ref(global_this);
         success = true;
 
-        cleanup(&mut req, &body, success);
+        cleanup(&mut req, body_ptr, success);
         Ok(req)
     }
 
@@ -1490,16 +1491,11 @@ impl Request {
         callframe: &CallFrame,
         this_value: JSValue,
     ) -> JsResult<Box<Request>> {
-        let arguments_ = callframe.arguments_old(2);
+        let arguments_ = callframe.arguments_old::<2>();
         let arguments = &arguments_.ptr[0..arguments_.len];
 
         let request = Self::construct_into(global_this, arguments, this_value)?;
         Ok(Request::new(request))
-    }
-
-    pub fn get_body_value(&mut self) -> &mut BodyValue {
-        // TODO(port): Arc<BodyValue> mutation — see field note
-        self.body.value_mut()
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
@@ -1527,7 +1523,7 @@ impl Request {
         // Update the original request's body cache with the new teed stream.
         // At this point, this.#body.value.Locked.readable still holds the teed stream
         // because checkBodyStreamRef hasn't been called on the original request yet.
-        if let BodyValue::Locked(locked) = self.body.value() {
+        if let BodyValue::Locked(locked) = &*self.body {
             if let Some(readable) = locked.readable.get(global_this) {
                 js_gen::body_set_cached(this_value, global_this, readable.value);
             }
@@ -1545,21 +1541,22 @@ impl Request {
     ) -> JsResult<()> {
         // allocator param dropped (global mimalloc)
         let _ = self.ensure_url();
-        let vm = global_this.bun_vm();
-        let mut body_ = 'brk: {
+        let _ = global_this.bun_vm();
+        let body_ = 'brk: {
             if let Some(js_ref) = self.js_ref.try_get() {
                 if let Some(stream) = js_gen::stream_get_cached(js_ref) {
                     let mut readable = ReadableStream::from_js(stream, global_this)?;
                     if let Some(r) = readable.as_mut() {
-                        break 'brk self.body.value().clone_with_readable_stream(global_this, r)?;
+                        break 'brk self.body.clone_with_readable_stream(global_this, r)?;
                     }
                 }
             }
 
-            break 'brk self.body.value().clone(global_this)?;
+            break 'brk self.body.clone(global_this)?;
         };
         // errdefer body_.deinit() → deleted; BodyValue: Drop frees on `?` error path
-        let body = vm.init_request_body_value(body_)?;
+        // TODO(port): blocked_on: bun_jsc::VirtualMachine::init_request_body_value (HiveRef pool)
+        let body: Box<BodyValue> = Box::new(body_);
         // TODO(port): errdefer chain — the Zig has 3 cascading errdefers; ScopeGuard
         // captures only one &mut at a time. Phase B should verify error-path cleanup.
         let url = if preserve_url {
@@ -1585,7 +1582,7 @@ impl Request {
             method: self.method,
             flags: self.flags,
             request_context: AnyRequestContext::NULL,
-            weak_ptr_data: WeakPtrData::empty(),
+            weak_ptr_data: WeakPtrData::EMPTY,
             reported_estimated_size: 0,
             internal_event_callback: InternalJSEventCallback::default(),
         };
@@ -1612,7 +1609,7 @@ impl Request {
             method: Method::GET,
             flags: Flags::default(),
             request_context: AnyRequestContext::NULL,
-            weak_ptr_data: WeakPtrData::empty(),
+            weak_ptr_data: WeakPtrData::EMPTY,
             reported_estimated_size: 0,
             internal_event_callback: InternalJSEventCallback::default(),
         });

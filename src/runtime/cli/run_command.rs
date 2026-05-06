@@ -3835,6 +3835,7 @@ impl RunCommand {
         let mut seen: StringHashMap<()> = StringHashMap::default();
         let mut remote_urls: Vec<&[u8]> = Vec::new();
         for u in collector.urls.iter() {
+            let u: &[u8] = u.as_ref();
             if !u.starts_with(b"http://") && !u.starts_with(b"https://") {
                 continue;
             }
@@ -3851,53 +3852,29 @@ impl RunCommand {
             return;
         }
 
-        http::HTTPThread::init(&Default::default());
+        http::http_thread::init(&Default::default());
 
         // Heap-allocate each Download so AsyncHTTP.task has a stable
         // address (see RemoteImageDownload doc comment).
         let mut downloads: Vec<Box<RemoteImageDownload>> = Vec::new();
         // Drop frees response_buffer + the Box for each download.
 
-        let done_channel = DoneChannel::init();
+        let done_channel = DoneChannel::init_static();
 
         // Kick off every download in parallel. Accumulate tasks into a
         // single ThreadPool.Batch, then ship the whole batch to the
         // HTTP thread in one schedule() call — worker picks up and runs
         // them concurrently.
-        let mut batch = bun_threading::ThreadPool::Batch::default();
+        let mut batch = bun_threading::thread_pool::Batch::default();
         for raw_url in remote_urls.iter() {
-            let Ok(response_buffer) = bun_str::MutableString::init(8 * 1024) else {
-                continue;
-            };
-            // TODO(port): Box::try_new is nightly; using Box::new (aborts on OOM via mimalloc)
-            let mut d = Box::new(RemoteImageDownload {
-                // Assigned immediately after construction (can't be set in the literal because
-                // AsyncHTTP::init needs a pointer to response_buffer, which only has a stable
-                // address once the owning struct is live).
-                // SAFETY: field is fully overwritten by AsyncHTTP::init immediately below
-                // before any read.
-                // TODO(port): MaybeUninit pattern
-                async_http: unsafe { ::core::mem::zeroed() },
-                response_buffer,
-                url: raw_url,
-                done: &done_channel,
-            });
-            d.async_http = http::AsyncHTTP::init(
-                http::Method::GET,
-                bun_url::URL::parse(raw_url),
-                Default::default(),
-                b"",
-                &mut d.response_buffer as *mut _,
-                b"",
-                http::HTTPClientResult::Callback::new::<RemoteImageDownload>(
-                    RemoteImageDownload::on_done,
-                )
-                .init(&mut *d),
-                http::FetchRedirect::Follow,
-                Default::default(),
-            );
-            d.async_http.schedule(&mut batch);
-            downloads.push(d);
+            let _ = raw_url;
+            let _ = &done_channel;
+            let _ = &mut batch;
+            // TODO(b2-blocked): `bun_http::AsyncHTTP::init` / `HTTPClientResultCallback::new`
+            // signatures have drifted from the Phase-A draft; re-port once the
+            // bun_http surface stabilizes. The collector stub above always
+            // yields zero URLs, so this loop is dead at runtime.
+            todo!("blocked_on: bun_http::AsyncHTTP::init");
         }
         if downloads.is_empty() {
             return;

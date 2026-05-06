@@ -1228,20 +1228,20 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             return Ok(JSValue::ZERO);
         }
 
-        if let Some(headers_) = fetch_headers {
+        let result = if let Some(headers_) = fetch_headers {
             // SAFETY: headers_ points to a live FetchHeaders (either JS-owned or
-            // refcounted via fetch_headers_to_deref guard above).
-            let headers_ = unsafe { &*headers_ };
-            if let Some(hostname_) = headers_.fast_get(FetchHeaders::HTTPHeaderName::Host) {
+            // refcounted via fetch_headers_to_deref above).
+            let headers_ref = unsafe { &mut *headers_ };
+            if let Some(hostname_) = headers_ref.fast_get(HTTPHeaderName::Host) {
                 hostname = Some(hostname_.to_owned_slice_z());
             }
             if url.is_s3() {
-                if let Some(range_) = headers_.fast_get(FetchHeaders::HTTPHeaderName::Range) {
+                if let Some(range_) = headers_ref.fast_get(HTTPHeaderName::Range) {
                     range = Some(range_.to_owned_slice_z());
                 }
             }
 
-            if let Some(upgrade_) = headers_.fast_get(FetchHeaders::HTTPHeaderName::Upgrade) {
+            if let Some(upgrade_) = headers_ref.fast_get(HTTPHeaderName::Upgrade) {
                 let upgrade = upgrade_.to_slice();
                 // PORT NOTE: `defer upgrade.deinit()` → Drop.
                 let slice = upgrade.slice();
@@ -1250,15 +1250,23 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 }
             }
 
-            break 'extract_headers Some(Headers::from(
-                Some(headers_),
-                Headers::Options {
+            Some(Headers::from(
+                Some(fetch_headers_ref(headers_ref)),
+                HeadersOptions {
                     body: body.get_any_blob(),
                 },
-            ));
+            ))
+        } else {
+            headers
+        };
+
+        // PORT NOTE: deferred `fetch_headers_to_deref.deref()` (release +1 from create_from_js).
+        if let Some(fh) = fetch_headers_to_deref {
+            // SAFETY: fh was obtained from create_from_js which returns +1 ref.
+            unsafe { (*fh).deref() };
         }
 
-        break 'extract_headers headers;
+        break 'extract_headers result;
     };
 
     if global_this.has_exception() {
@@ -1402,11 +1410,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
             url_string = jsc::URL::file_url_from_string(BunString::borrow_utf8(temp_file_path));
 
-            let mut pathlike = node::PathOrFileDescriptor::Path(node::PathLike::EncodedSlice(
-                ZigString::Slice::init(
-                    Box::<[u8]>::from(temp_file_path),
-                ),
-            ));
+            // PORT NOTE: `find_or_create_file_from_path` is typed against the
+            // `crate::webcore::node_types` stub (until it's swapped to a
+            // re-export of `crate::node::types`); construct that variant here.
+            let mut pathlike = crate::webcore::node_types::PathOrFileDescriptor::Path(
+                crate::webcore::node_types::PathLike::Buffer(temp_file_path.to_vec()),
+            );
 
             break 'blob Blob::find_or_create_file_from_path(&mut pathlike, global_this, true);
         };

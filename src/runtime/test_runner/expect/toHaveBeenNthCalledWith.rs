@@ -124,9 +124,11 @@ pub fn to_have_been_nth_called_with(
 
     // The call existed but didn't match. Show a diff.
     let diff_format = DiffFormatter {
-        expected: expected_args_js_array,
-        received: nth_call_value,
-        global_this: global,
+        expected: Some(expected_args_js_array),
+        received: Some(nth_call_value),
+        expected_string: None,
+        received_string: None,
+        global_this: Some(global),
         not: false,
     };
     this.throw(

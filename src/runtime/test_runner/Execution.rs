@@ -644,12 +644,12 @@ impl Execution {
             return;
         }
 
-        let _scope = group_log::begin();
+        group_begin!();
         if entry.timeout != 0 {
             group_log::log(format_args!("-> entry.timeout: {}", entry.timeout));
-            entry.timespec = Timespec::ms_from_now_force_real_time(entry.timeout);
+            entry.timespec = Timespec::ms_from_now_force_real_time(entry.timeout as i64);
         } else {
-            group_log::log("-> entry.timeout: 0");
+            group_log::log(format_args!("-> entry.timeout: 0"));
             entry.timespec = Timespec::EPOCH;
         }
     }

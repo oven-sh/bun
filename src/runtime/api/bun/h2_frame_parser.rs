@@ -2750,8 +2750,8 @@ impl H2FrameParser {
                     sensitive_headers.push(global_object, js_header_name)?;
                 }
             } else {
-                let js_header_name = BunString::create_utf8_for_js(global_object, header.name)?;
-                let js_header_value = BunString::create_utf8_for_js(global_object, header.value)?;
+                let js_header_name = bun_jsc::bun_string_jsc::create_utf8_for_js(global_object, header.name)?;
+                let js_header_value = bun_jsc::bun_string_jsc::create_utf8_for_js(global_object, header.value)?;
 
                 if header.never_index {
                     if sensitive_headers.is_undefined() {

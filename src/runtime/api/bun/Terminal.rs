@@ -798,9 +798,10 @@ mod lib_util {
                 bun_core::zstr!("libc.so.6"),
             ];
             for lib_name in LIB_NAMES {
-                HANDLE = sys::dlopen(lib_name, sys::RTLD::LAZY);
-                if HANDLE.is_some() {
-                    return HANDLE;
+                let h = sys::dlopen(lib_name, sys::RTLD::LAZY);
+                if h.is_some() {
+                    HANDLE = h;
+                    return h;
                 }
             }
             None

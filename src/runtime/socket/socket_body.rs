@@ -3081,29 +3081,33 @@ pub type TLSSocket = NewSocket<true>;
 macro_rules! impl_socket_js_class {
     ($ty:ty, $name:ident) => {
         const _: () = {
+            // Extern signatures use `*mut c_void` and are cast at the call site:
+            // `$ty` = `NewSocket<SSL>` embeds `bun_uws::NewSocketHandler<SSL>`,
+            // which is not `#[repr(C)]` and trips the `improper_ctypes` lint.
+            // The C++ side treats these as opaque pointers anyway.
             unsafe extern "C" {
                 #[link_name = concat!(stringify!($name), "__fromJS")]
-                fn __from_js(value: JSValue) -> *mut $ty;
+                fn __from_js(value: JSValue) -> *mut c_void;
                 #[link_name = concat!(stringify!($name), "__fromJSDirect")]
-                fn __from_js_direct(value: JSValue) -> *mut $ty;
+                fn __from_js_direct(value: JSValue) -> *mut c_void;
                 #[link_name = concat!(stringify!($name), "__create")]
-                fn __create(global: *mut JSGlobalObject, ptr: *mut $ty) -> JSValue;
+                fn __create(global: *mut JSGlobalObject, ptr: *mut c_void) -> JSValue;
                 #[link_name = concat!(stringify!($name), "__getConstructor")]
                 fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
             }
             impl bun_jsc::JsClass for $ty {
                 fn from_js(value: JSValue) -> Option<*mut Self> {
                     // SAFETY: pure FFI downcast; null on type mismatch.
-                    let p = unsafe { __from_js(value) };
+                    let p = unsafe { __from_js(value) } as *mut Self;
                     if p.is_null() { None } else { Some(p) }
                 }
                 fn from_js_direct(value: JSValue) -> Option<*mut Self> {
                     // SAFETY: exact-structure FFI downcast; null on miss.
-                    let p = unsafe { __from_js_direct(value) };
+                    let p = unsafe { __from_js_direct(value) } as *mut Self;
                     if p.is_null() { None } else { Some(p) }
                 }
                 fn to_js(self, global: &JSGlobalObject) -> JSValue {
-                    let ptr = Box::into_raw(Box::new(self));
+                    let ptr = Box::into_raw(Box::new(self)) as *mut c_void;
                     // SAFETY: ownership of `ptr` transfers to the C++ wrapper
                     // (freed via `${typeName}Class__finalize`).
                     unsafe { __create(global.as_ptr(), ptr) }

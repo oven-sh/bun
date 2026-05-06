@@ -138,7 +138,7 @@ pub trait HotReloaderCtx {
     /// Called from `Task::run` to perform the actual reload. Zig passed the
     /// concrete `*HotReloadTask`; Rust erases the const-generic via the
     /// `HotReloadTask` view so this trait isn't recursively generic.
-    fn reload(&mut self, task: &mut dyn HotReloadTask);
+    fn reload(&mut self, task: &mut dyn HotReloadTaskView);
 
     /// Zig: `this.ctx.bustDirCache(path)`. Returns whether anything was busted.
     fn bust_dir_cache(&mut self, path: &[u8]) -> bool;
@@ -158,13 +158,13 @@ pub trait HotReloaderCtx {
 
 /// Type-erased view of a `Task<Ctx, EventLoopType, RELOAD_IMMEDIATELY>` so
 /// `HotReloaderCtx::reload` doesn't need to name the const generics.
-pub trait HotReloadTask {
+pub trait HotReloadTaskView {
     fn count(&self) -> u8;
     fn hashes(&self) -> &[u32];
     fn paths(&self) -> &[&'static [u8]];
 }
 
-impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> HotReloadTask
+impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> HotReloadTaskView
     for Task<Ctx, EventLoopType, RELOAD_IMMEDIATELY>
 {
     fn count(&self) -> u8 {

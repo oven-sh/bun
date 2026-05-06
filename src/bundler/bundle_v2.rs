@@ -213,19 +213,10 @@ impl<'a> BundleV2<'a> {
                     if let Some(mut p) = self.client_transpiler {
                         return p.as_mut();
                     }
-                    
-                    {
-                        return self.initialize_client_transpiler().unwrap_or_else(|e| {
-                            bun_core::output::err(e);
-                            crate::Global::crash();
-                        });
-                    }
-                    // Spec (bundle_v2.zig:247-263) lazily constructs the
-                    // client transpiler here. `initialize_client_transpiler`
-                    // is still gated; PORTING.md §Forbidden bans silently
-                    // falling through to the server transpiler (wrong target
-                    // semantics), so fail loudly instead.
-                    todo!("b2-blocked: initialize_client_transpiler — browser-target parse in server-side build");
+                    // bundle_v2.zig:250-252 — `client_transpiler orelse initializeClientTranspiler() catch panic`.
+                    return self.initialize_client_transpiler().unwrap_or_else(|e| {
+                        panic!("Failed to initialize client transpiler: {}", e.name());
+                    });
                 }
                 return &mut *self.transpiler;
             }

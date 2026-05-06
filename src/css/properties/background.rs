@@ -684,22 +684,30 @@ impl BackgroundHandler {
         let allocator = dest.bump();
         match property {
             Property::BackgroundColor(val) => {
-                flush_helper!(self, allocator, color, val, dest, context);
+                flush_helper!(self, color, val, dest, context);
                 self.color = Some(val.deep_clone(allocator));
             }
             Property::BackgroundImage(val) => {
-                self.background_helper(allocator, val, property, dest, context);
+                self.background_helper(val, property, dest, context);
                 self.images = Some(val.deep_clone(allocator));
             }
             Property::BackgroundPosition(val) => {
                 let len = val.len();
-                let x_positions = init_small_list_helper!(self, x_positions, allocator, len);
-                let y_positions = init_small_list_helper!(self, y_positions, allocator, len);
-                debug_assert_eq!(val.slice().len(), x_positions.len());
-                debug_assert_eq!(val.slice().len(), y_positions.len());
-                for ((position, x), y) in val.slice().iter().zip(x_positions.iter_mut()).zip(y_positions.iter_mut()) {
-                    *x = position.x.deep_clone(allocator);
-                    *y = position.y.deep_clone(allocator);
+                // PORT NOTE: reshaped for borrowck — Zig held two simultaneous &mut into
+                // disjoint fields of `self`. Index per-loop instead of holding both slices.
+                {
+                    let x_positions = init_small_list_helper!(self, x_positions, len);
+                    debug_assert_eq!(val.slice().len(), x_positions.len());
+                    for (position, x) in val.slice().iter().zip(x_positions.iter_mut()) {
+                        *x = position.x.clone();
+                    }
+                }
+                {
+                    let y_positions = init_small_list_helper!(self, y_positions, len);
+                    debug_assert_eq!(val.slice().len(), y_positions.len());
+                    for (position, y) in val.slice().iter().zip(y_positions.iter_mut()) {
+                        *y = position.y.clone();
+                    }
                 }
             }
             Property::BackgroundPositionX(val) => {
@@ -724,77 +732,106 @@ impl BackgroundHandler {
             Property::BackgroundClip(x) => {
                 let val: &SmallList<BackgroundClip, 1> = &x.0;
                 let vendor_prefix: VendorPrefix = x.1;
-                if let Some((clips, vp)) = &mut self.clips {
-                    if vendor_prefix != *vp && !val.eql(clips) {
-                        // `flush()` takes ownership of `self.clips` via `take()` and
-                        // frees it, so `clips` (which aliases the payload of `self.clips`)
-                        // is a stale reference once `flush()` returns. Do not touch it.
-                        // PORT NOTE: reshaped for borrowck — drop borrow before calling flush().
-                        let new = (val.deep_clone(allocator), vendor_prefix);
-                        self.flush(allocator, dest, context);
-                        self.clips = Some(new);
-                    } else {
-                        if !val.eql(clips) {
-                            *clips = val.deep_clone(allocator);
-                        }
-                        vp.insert(vendor_prefix);
+                // PORT NOTE: reshaped for borrowck — Zig held &mut into self.clips
+                // across self.flush(). Compute the predicate first, then dispatch.
+                let needs_flush = if let Some((clips, vp)) = &self.clips {
+                    vendor_prefix != *vp && !SmallList::eql(val, clips)
+                } else {
+                    false
+                };
+                if needs_flush {
+                    // `flush()` takes ownership of `self.clips` via `take()` and
+                    // frees it, so any borrow into `self.clips` would be stale
+                    // once `flush()` returns. Do not touch it.
+                    self.flush(dest, context);
+                    let allocator = dest.bump();
+                    self.clips = Some((val.deep_clone(allocator), vendor_prefix));
+                } else if let Some((clips, vp)) = &mut self.clips {
+                    if !SmallList::eql(val, clips) {
+                        *clips = val.deep_clone(allocator);
                     }
+                    vp.insert(vendor_prefix);
                 } else {
                     self.clips = Some((val.deep_clone(allocator), vendor_prefix));
                 }
             }
             Property::Background(val) => {
-                let mut images: SmallList<Image, 1> = SmallList::init_capacity(allocator, val.len());
+                let mut images: SmallList<Image, 1> = SmallList::init_capacity(val.len());
                 for b in val.slice() {
-                    images.push(b.image.deep_clone(allocator));
-                    // PERF(port): was appendAssumeCapacity — profile in Phase B
+                    images.append_assume_capacity(b.image.deep_clone(allocator));
                 }
-                self.background_helper(allocator, &images, property, dest, context);
+                self.background_helper(&images, property, dest, context);
+                let allocator = dest.bump();
                 let color = val.last().unwrap().color.deep_clone(allocator);
-                flush_helper!(self, allocator, color, &color, dest, context);
-                let mut clips: SmallList<BackgroundClip, 1> = SmallList::init_capacity(allocator, val.len());
+                flush_helper!(self, color, &color, dest, context);
+                let allocator = dest.bump();
+                let mut clips: SmallList<BackgroundClip, 1> = SmallList::init_capacity(val.len());
                 for b in val.slice() {
-                    clips.push(b.clip.deep_clone(allocator));
-                    // PERF(port): was appendAssumeCapacity — profile in Phase B
+                    clips.append_assume_capacity(b.clip);
                 }
                 let mut clips_vp = VendorPrefix::NONE;
-                if let Some((existing_clips, existing_vp)) = &self.clips {
-                    if clips_vp != *existing_vp && !clips.eql(existing_clips) {
-                        // PORT NOTE: reshaped for borrowck — drop borrow before calling flush().
-                        let _ = (existing_clips, existing_vp);
-                        self.flush(allocator, dest, context);
-                    } else {
-                        clips_vp.insert(*existing_vp);
-                    }
+                // PORT NOTE: reshaped for borrowck — drop borrow before calling flush().
+                let needs_flush = if let Some((existing_clips, existing_vp)) = &self.clips {
+                    clips_vp != *existing_vp && !SmallList::eql(&clips, existing_clips)
+                } else {
+                    false
+                };
+                if needs_flush {
+                    self.flush(dest, context);
+                } else if let Some((_, existing_vp)) = &self.clips {
+                    clips_vp.insert(*existing_vp);
                 }
 
                 self.color = Some(color);
                 self.images = Some(images);
                 let len = val.len();
-                let x_positions = init_small_list_helper!(self, x_positions, allocator, len);
-                let y_positions = init_small_list_helper!(self, y_positions, allocator, len);
-                let repeats = init_small_list_helper!(self, repeats, allocator, len);
-                let sizes = init_small_list_helper!(self, sizes, allocator, len);
-                let attachments = init_small_list_helper!(self, attachments, allocator, len);
-                let origins = init_small_list_helper!(self, origins, allocator, len);
-
-                // TODO(port): borrowck — multiple disjoint &mut borrows of self fields are live
-                // here simultaneously. If this fails to compile in Phase B, switch to indexed
-                // access into each list inside the loop body.
-                for (i, b) in val.slice().iter().enumerate() {
-                    x_positions[i] = b.position.x.deep_clone(allocator);
-                    y_positions[i] = b.position.y.deep_clone(allocator);
-                    repeats[i] = b.repeat.deep_clone(allocator);
-                    sizes[i] = b.size.deep_clone(allocator);
-                    attachments[i] = b.attachment.deep_clone(allocator);
-                    origins[i] = b.origin.deep_clone(allocator);
+                // PORT NOTE: reshaped for borrowck — Zig zipped 6 mutable slices borrowed
+                // from disjoint `self` fields simultaneously. Rust forbids overlapping &mut
+                // through the macro borrows, so each list is initialised and filled
+                // sequentially.
+                {
+                    let x_positions = init_small_list_helper!(self, x_positions, len);
+                    for (i, b) in val.slice().iter().enumerate() {
+                        x_positions[i] = b.position.x.clone();
+                    }
+                }
+                {
+                    let y_positions = init_small_list_helper!(self, y_positions, len);
+                    for (i, b) in val.slice().iter().enumerate() {
+                        y_positions[i] = b.position.y.clone();
+                    }
+                }
+                {
+                    let repeats = init_small_list_helper!(self, repeats, len);
+                    for (i, b) in val.slice().iter().enumerate() {
+                        repeats[i] = b.repeat;
+                    }
+                }
+                {
+                    let sizes = init_small_list_helper!(self, sizes, len);
+                    for (i, b) in val.slice().iter().enumerate() {
+                        sizes[i] = b.size.deep_clone(allocator);
+                    }
+                }
+                {
+                    let attachments = init_small_list_helper!(self, attachments, len);
+                    for (i, b) in val.slice().iter().enumerate() {
+                        attachments[i] = b.attachment;
+                    }
+                }
+                {
+                    let origins = init_small_list_helper!(self, origins, len);
+                    for (i, b) in val.slice().iter().enumerate() {
+                        origins[i] = b.origin;
+                    }
                 }
 
                 self.clips = Some((clips, clips_vp));
             }
             Property::Unparsed(val) => {
                 if is_background_property(val.property_id) {
-                    self.flush(allocator, dest, context);
+                    self.flush(dest, context);
+                    let allocator = dest.bump();
                     let mut unparsed = val.deep_clone(allocator);
                     context.add_unparsed_fallbacks(&mut unparsed);
                     if let Some(prop) = BackgroundProperty::try_from_property_id(val.property_id) {
@@ -815,25 +852,25 @@ impl BackgroundHandler {
 
     fn background_helper(
         &mut self,
-        allocator: &Bump,
         val: &SmallList<Image, 1>,
         property: &Property,
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) {
-        flush_helper!(self, allocator, images, val, dest, context);
+        flush_helper!(self, images, val, dest, context);
 
         // Store prefixed properties. Clear if we hit an unprefixed property and we have
         // targets. In this case, the necessary prefixes will be generated.
         self.has_prefix = val.any(|item: &Image| item.has_vendor_prefix());
         if self.has_prefix {
+            let allocator = dest.bump();
             self.decls.push(property.deep_clone(allocator));
         } else if context.targets.browsers.is_some() {
             self.decls.clear();
         }
     }
 
-    fn flush(&mut self, allocator: &Bump, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
+    fn flush(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
         if !self.has_any {
             return;
         }

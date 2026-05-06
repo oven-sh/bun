@@ -1296,15 +1296,16 @@ impl NodeHTTPResponse {
             self.deref();
             return;
         };
-        let global_this = VirtualMachine::get().global();
+        let global_this = vm_get().global();
         js::on_writable_set_cached(this_value, global_this, JSValue::UNDEFINED); // TODO(@heimskr): is this necessary?
-        let vm = global_this.bun_vm();
+        let vm = bun_vm_mut(global_this);
 
-        vm.event_loop().run_callback(
+        // SAFETY: event_loop() returns the live VM event-loop pointer.
+        unsafe { &mut *vm.event_loop() }.run_callback(
             on_writable,
             global_this,
             JSValue::UNDEFINED,
-            &[JSValue::js_number_from_u64(offset)],
+            &[JSValue::js_number_from_uint64(offset)],
         );
 
         self.deref();

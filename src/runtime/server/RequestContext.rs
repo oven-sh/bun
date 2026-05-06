@@ -377,13 +377,16 @@ where
         }
     }
 
-    pub fn set_cookies(&mut self, cookie_map: Option<Rc<CookieMap>>) {
+    pub fn set_cookies(&mut self, cookie_map: Option<*mut CookieMap>) {
         if let Some(cookies) = self.cookies.take() {
-            drop(cookies); // deref
+            // SAFETY: opaque FFI handle with intrusive refcount; we held a ref.
+            unsafe { (*cookies).deref() };
         }
         self.cookies = cookie_map;
-        // Rc clone is the ref(); the Zig does ref() because the param is borrowed.
-        // TODO(port): if callers pass an already-owned Rc, the extra ref is a no-op here.
+        if let Some(cookies) = self.cookies {
+            // SAFETY: caller passes a live CookieMap*; we take a ref for storage.
+            unsafe { (*cookies).ref_() };
+        }
     }
 
     pub fn set_timeout_handler(&mut self) {

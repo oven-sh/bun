@@ -437,8 +437,7 @@ fn parse_option_definitions(
                 option.multiple = validators::validate_boolean(
                     global,
                     multiple_value,
-                    "options.{}.multiple",
-                    format_args!("{}", option.long_name),
+                    format_args!("options.{}.multiple", option.long_name),
                 )?;
             }
         }
@@ -451,15 +450,13 @@ fn parse_option_definitions(
                             let _ = validators::validate_string_array(
                                 global,
                                 default_value,
-                                "options.{}.default",
-                                format_args!("{}", option.long_name),
+                                format_args!("options.{}.default", option.long_name),
                             )?;
                         } else {
                             validators::validate_string(
                                 global,
                                 default_value,
-                                "options.{}.default",
-                                format_args!("{}", option.long_name),
+                                format_args!("options.{}.default", option.long_name),
                             )?;
                         }
                     }

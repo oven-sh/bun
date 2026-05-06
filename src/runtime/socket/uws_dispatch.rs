@@ -209,8 +209,8 @@ pub extern "C" fn us_dispatch_ssl_raw_tap(
 ) -> *mut us_socket_t {
     // SAFETY: `s` is non-null per loop.c contract.
     debug_assert!(unsafe { (*s).kind() } == SocketKind::BunSocketTls);
-    // TODO(port): confirm path for `bun.jsc.API.NewSocket(true)` (TLS socket payload type)
-    type TLSSocket = bun_jsc::api::NewSocket<true>;
+    // `bun.jsc.API.NewSocket(true)` → the runtime-local `socket::NewSocket<true>`.
+    type TLSSocket = super::NewSocket<true>;
     // SAFETY: ext slot for BunSocketTls always holds a non-null *mut TLSSocket
     // (stamped at construction); deref of both the slot and the pointer is sound.
     let tls: &mut TLSSocket = unsafe { &mut **(*s).ext::<*mut TLSSocket>() };
@@ -220,8 +220,10 @@ pub extern "C" fn us_dispatch_ssl_raw_tap(
         let slice = unsafe {
             core::slice::from_raw_parts(data, usize::try_from(len).expect("len >= 0"))
         };
-        // Zig: `TLSSocket.Socket.from(s)` where `Socket = uws.NewSocketHandler(ssl)`.
-        raw.on_data(uws::NewSocketHandler::<true>::from(s), slice);
+        // Zig: `raw.onData(TLSSocket.Socket.from(s), data[..])` where
+        // `Socket = uws.NewSocketHandler(ssl)`. SAFETY: `twin` is the unique
+        // heap owner of the `[raw, _]` half; dispatch is single-threaded.
+        let _ = unsafe { &mut *raw }.on_data(NewSocketHandler::<true>::from(s), slice);
     }
     s
 }

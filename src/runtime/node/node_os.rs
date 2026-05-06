@@ -306,11 +306,10 @@ fn cpus_impl_linux(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
     }
 
     // Read /proc/cpuinfo to get model information (optional)
-    if let Ok(file) = bun_sys::File::open(b"/proc/cpuinfo", bun_sys::O::RDONLY, 0) {
+    if let Ok(file) = bun_sys::File::open(bun_core::zstr!("/proc/cpuinfo"), bun_sys::O::RDONLY, 0) {
         // file closed on Drop
 
-        let read = bun_sys::File::from(file).read_to_end_with_array_list(&mut file_buf, bun_sys::SizeHint::ProbablySmall).unwrap()?;
-        let contents = &file_buf[0..read];
+        let contents = file.read_to_end_with_array_list(&mut file_buf, bun_sys::SizeHint::ProbablySmall)?;
 
         let mut line_iter = contents.split(|b| *b == b'\n').filter(|s| !s.is_empty());
 
@@ -323,26 +322,26 @@ fn cpus_impl_linux(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
             if line.starts_with(KEY_PROCESSOR) {
                 if !has_model_name {
                     let cpu = values.get_index(global_this, cpu_index)?;
-                    cpu.put(global_this, ZigString::static_("model"), ZigString::static_("unknown").with_encoding().to_js(global_this));
+                    cpu.put(global_this, b"model", ZigString::static_("unknown").with_encoding().to_js(global_this));
                 }
                 // If this line starts a new processor, parse the index from the line
                 let digits = trim_bytes(&line[KEY_PROCESSOR.len()..], b" \t\n");
                 cpu_index = parse_u32(digits)?;
                 if cpu_index >= num_cpus {
-                    return Err(bun_core::err!("too_may_cpus"));
+                    return Err(OsError::Any);
                 }
                 has_model_name = false;
             } else if line.starts_with(KEY_MODEL_NAME) {
                 // If this is the model name, extract it and store on the current cpu
                 let model_name = &line[KEY_MODEL_NAME.len()..];
                 let cpu = values.get_index(global_this, cpu_index)?;
-                cpu.put(global_this, ZigString::static_("model"), ZigString::init(model_name).with_encoding().to_js(global_this));
+                cpu.put(global_this, b"model", ZigString::init(model_name).with_encoding().to_js(global_this));
                 has_model_name = true;
             }
         }
         if !has_model_name {
             let cpu = values.get_index(global_this, cpu_index)?;
-            cpu.put(global_this, ZigString::static_("model"), ZigString::static_("unknown").with_encoding().to_js(global_this));
+            cpu.put(global_this, b"model", ZigString::static_("unknown").with_encoding().to_js(global_this));
         }
 
         file_buf.clear();
@@ -350,7 +349,7 @@ fn cpus_impl_linux(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
         // Initialize model name to "unknown"
         let mut it = values.array_iterator(global_this)?;
         while let Some(cpu) = it.next()? {
-            cpu.put(global_this, ZigString::static_("model"), ZigString::static_("unknown").with_encoding().to_js(global_this));
+            cpu.put(global_this, b"model", ZigString::static_("unknown").with_encoding().to_js(global_this));
         }
     }
 

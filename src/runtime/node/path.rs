@@ -3636,7 +3636,7 @@ pub fn to_namespaced_path_windows_js_t<T: PathChar>(
     buf2: &mut [T],
 ) -> JsResult<JSValue> {
     match to_namespaced_path_windows_t(path, buf, buf2) {
-        Ok(r) => BunString::create_utf8_for_js(global_object, r),
+        Ok(r) => create_js_string_t::<T>(global_object, r),
         Err(e) => Ok(e.to_js(global_object)),
     }
 }
@@ -3647,7 +3647,7 @@ pub fn to_namespaced_path_js_t<T: PathChar>(
     path: &[T],
 ) -> JsResult<JSValue> {
     if !is_windows || path.is_empty() {
-        return BunString::create_utf8_for_js(global_object, path);
+        return create_js_string_t::<T>(global_object, path);
     }
     // Account for CWD (up to MAX_PATH_SIZE) that resolve may prepend to relative paths.
     let buf_len = (path.len() + max_path_size::<T>() + 1).max(path_size::<T>());

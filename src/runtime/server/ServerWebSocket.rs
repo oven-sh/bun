@@ -1,8 +1,8 @@
 use core::mem;
 use std::sync::Arc;
 
-use bun_uws::{self as uws, AnyWebSocket, SendStatus, WebSocketBehavior};
-use bun_uws_sys::Opcode;
+use bun_uws::{self as uws, AnyWebSocket, WebSocketBehavior};
+use bun_uws_sys::{Opcode, SendStatus};
 
 use crate::server::jsc::{self, BinaryType, JSGlobalObject, JSValue, JsRef, JsResult};
 use crate::server::WebSocketServerHandler;

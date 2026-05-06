@@ -1307,7 +1307,7 @@ impl FFI {
                     }
 
                     return Err(
-                        global_this.throw(format_args!("{}", BStr::new(&combined)), &[])
+                        global_this.throw(format_args!("{}", BStr::new(&combined)))
                     );
                 } else if err == bun_core::err!("JSError") {
                     return Err(JsError::Thrown);

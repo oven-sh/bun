@@ -1165,7 +1165,7 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
     for handle in state.handles.iter_mut() {
         if handle.remaining_dependencies == 0 {
             if handle.start().is_err() {
-                Output::pretty_errorln("<r><red>error<r>: Failed to start process", ());
+                Output::pretty_errorln("<r><red>error<r>: Failed to start process");
                 Global::exit(1);
             }
         }
@@ -1178,11 +1178,12 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
             AbortHandler::uninstall();
             state.abort();
         }
-        event_loop.tick_once(&state);
+        // SAFETY: event_loop points at the thread-lifetime MiniEventLoop singleton.
+        unsafe { (*event_loop).tick_once(&state as *const State as *mut c_void) };
     }
 
     let status = state.finalize();
-    Global::exit(status);
+    Global::exit(status as u32);
 }
 
 fn has_runnable_extension(name: &[u8]) -> bool {

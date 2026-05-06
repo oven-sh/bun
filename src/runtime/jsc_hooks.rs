@@ -1889,17 +1889,9 @@ fn maybe_watch_file(
         return;
     }
     *should_close_input_file_fd = false;
-    let _ = unsafe {
-        (*jsc_vm).bun_watcher.add_file(
-            input_file_fd,
-            path.text,
-            hash,
-            loader,
-            bun_sys::Fd::INVALID,
-            package_json,
-            true,
-        )
-    };
+    // TODO(b2-cycle): `vm.bun_watcher` is `*mut c_void` (ImportWatcher gated in
+    // hot_reloader.rs). `add_file` un-gates with it.
+    let _ = (jsc_vm, input_file_fd, hash, loader, package_json);
 }
 
 // Spec ModuleLoader.zig:681-708 — generated `bun:sqlite` import shims.

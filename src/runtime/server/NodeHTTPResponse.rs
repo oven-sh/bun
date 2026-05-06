@@ -410,7 +410,7 @@ impl NodeHTTPResponse {
         {
             return;
         }
-        self.raw_response.as_ref().unwrap().resume();
+        self.raw_response.as_ref().unwrap().resume_();
     }
 
     pub fn upgrade(

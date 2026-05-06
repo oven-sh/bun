@@ -754,7 +754,7 @@ pub extern "C" fn napi_create_string_utf8(
     bun_output::scoped_log!(napi, "napi_create_string_utf8: {}", bstr::BStr::new(slice));
 
     let global_object = env.to_js();
-    let string = match bun_str::String::create_utf8_for_js(global_object, slice) {
+    let string = match jsc::bun_string_jsc::create_utf8_for_js(global_object, slice) {
         Ok(v) => v,
         Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::pending_exception),
     };
@@ -1233,7 +1233,7 @@ pub extern "C" fn napi_get_arraybuffer_info(
     let Some(array_buffer) = arraybuffer.as_array_buffer(env.to_js()) else {
         return NapiEnv::set_last_error(Some(env), NapiStatus::invalid_arg);
     };
-    if array_buffer.typed_array_type != jsc::TypedArrayType::ArrayBuffer {
+    if array_buffer.typed_array_type != jsc::JSType::ArrayBuffer {
         return NapiEnv::set_last_error(Some(env), NapiStatus::invalid_arg);
     }
 

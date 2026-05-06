@@ -31,8 +31,8 @@ use bun_str::strings;
 use bun_sys::{self, Fd, File};
 
 use super::{
-    attempt_to_create_package_json, CommandLineArguments, PackageJSONEditor, PackageManager,
-    PatchCommitResult, Subcommand, UpdateRequest,
+    attempt_to_create_package_json, Command, CommandLineArguments, PackageJSONEditor,
+    PackageManager, PatchCommitResult, Subcommand, UpdateRequest,
 };
 // TODO(port): `update_request::Array` is a type alias in Zig (likely `ArrayListUnmanaged(UpdateRequest)`).
 use super::update_request::Array as UpdateRequestArray;

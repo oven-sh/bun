@@ -100,8 +100,10 @@ unsafe fn init_runtime_state(
     vm: *mut VirtualMachine,
     _opts: &InitOptions,
 ) -> OpaqueRuntimeState {
-    // SAFETY: per fn contract.
-    let _vm_ref = unsafe { &mut *vm };
+    let _ = vm;
+    // PORT NOTE: do NOT form `&mut *vm` here — the caller
+    // (`VirtualMachine::init`) may still hold a `&mut VirtualMachine` to the
+    // same allocation. Dereference per-field via the raw `vm` ptr if needed.
 
     // PORT NOTE: spec VirtualMachine.zig:1313 —
     // `uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc_vm` — already done by

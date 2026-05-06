@@ -6728,7 +6728,8 @@ impl<'b> BrowserMapPath<'b> {
                 //     debug.add_note_fmt(format_args!("Checking for \"{}\" ", bstr::BStr::new(new_path)));
                 // }
                 if let Some(_remapped) = map.get(new_path) {
-                    self.remapped = _remapped;
+                    // SAFETY: ARENA — see `result` note above.
+                    self.remapped = unsafe { core::slice::from_raw_parts(_remapped.as_ptr(), _remapped.len()) };
                     // SAFETY: TODO(port): lifetime — `new_path` borrows the threadlocal `extension_path` buf; consumed before next overwrite.
                     self.cleaned = unsafe { &*(new_path as *const [u8]) };
                     // SAFETY: same as above.

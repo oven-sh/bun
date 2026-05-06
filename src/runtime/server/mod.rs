@@ -705,23 +705,34 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     // TODO(port): make this return JsResult<JSValue> and let the caller errdefer-deinit.
     pub fn listen(this: *mut Self) -> JSValue {
         httplog!("listen");
-        // SAFETY: `this` was produced by `init()`; live for this call.
-        let self_ = unsafe { &mut *this };
-        // SAFETY: global_this set in init(); STATIC per LIFETIMES.tsv.
-        let global = unsafe { &*self_.global_this };
+        // PORT NOTE: reshaped for borrowck (PORTING.md §Forbidden — aliased
+        // `&mut`). No long-lived `&mut Self` is held across re-derives from
+        // `this`; each use site reborrows fresh and the borrow ends before the
+        // next derive. The serverName / SNI loop extracts raw `(ptr, len)` so
+        // no `&self.config` outlives the per-domain `set_routes()` call.
+        //
+        // SAFETY (applies to every `&*this` / `&mut *this` below): `this` was
+        // produced by `init()` and is live for this call; only one reference
+        // derived from it is alive at a time.
+
+        // `global_this` is a `*const` raw-pointer field — read it once via a
+        // short-lived `&*this`; the resulting `&JSGlobalObject` borrows a
+        // separate STATIC allocation, not `*this`.
+        let global = unsafe { &*(*this).global_this };
 
         let app: *mut uws_sys::NewApp<SSL>;
         let mut route_list_value = JSValue::ZERO;
 
         if SSL {
             bun_boringssl::load();
-            let Some(ssl_config) = self_.config.ssl_config.as_ref() else {
+            let Some(ssl_options) =
+                unsafe { &*this }.config.ssl_config.as_ref().map(|c| c.as_usockets())
+            else {
                 // unreachable in practice — fromJS guarantees ssl_config when SSL.
                 let _ = global.throw(format_args!("Failed to create HTTPS server: missing tls config"));
                 Self::deinit(this);
                 return JSValue::ZERO;
             };
-            let ssl_options = ssl_config.as_usockets();
 
             app = match uws_sys::NewApp::<SSL>::create(ssl_options) {
                 Some(a) => a,
@@ -729,15 +740,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     if !global.has_exception() && !throw_ssl_error_if_necessary(global) {
                         let _ = global.throw(format_args!("Failed to create HTTP server"));
                     }
-                    self_.app = None;
+                    unsafe { (*this).app = None };
                     Self::deinit(this);
                     return JSValue::ZERO;
                 }
             };
-            self_.app = Some(app);
+            unsafe { (*this).app = Some(app) };
 
-            if Self::HAS_H3 && self_.config.h3 {
-                self_.h3_app = match uws_sys::h3::App::create(ssl_options, self_.config.idle_timeout as u32) {
+            if Self::HAS_H3 && unsafe { &*this }.config.h3 {
+                let idle_timeout = unsafe { &*this }.config.idle_timeout as u32;
+                let h3 = match uws_sys::h3::App::create(ssl_options, idle_timeout) {
                     Some(a) => Some(a),
                     None => {
                         if !global.has_exception() {
@@ -747,92 +759,103 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         return JSValue::ZERO;
                     }
                 };
+                unsafe { (*this).h3_app = h3 };
             }
 
-            route_list_value = self_.set_routes();
+            route_list_value = unsafe { &mut *this }.set_routes();
 
             // add serverName to the SSL context using the default ssl options
-            // PORT NOTE: ssl_config / sni borrow self_.config while set_routes()
-            // needs &mut self; reborrow via the raw `this` pointer (Zig had no
-            // aliasing checker here — config.sni is never touched by set_routes).
-            // SAFETY: `this` is live; set_routes() does not invalidate config.ssl_config/sni.
-            let ssl_config = unsafe { (*this).config.ssl_config.as_ref().unwrap() };
-            if let Some(server_name) = ssl_config.server_name.as_deref() {
-                if !server_name.to_bytes().is_empty() {
-                    // SAFETY: app is the live handle just stored in self_.app.
-                    if unsafe { (*app).add_server_name_with_options(server_name, ssl_options) }.is_err() {
-                        if !global.has_exception() && !throw_ssl_error_if_necessary(global) {
-                            let _ = global.throw(format_args!(
-                                "Failed to add serverName: {}",
-                                bstr::BStr::new(server_name.to_bytes())
-                            ));
-                        }
-                        Self::deinit(this);
-                        return JSValue::ZERO;
+            // PORT NOTE: extract raw (ptr, len) so no `&self.config` borrow
+            // outlives the `set_routes()` call below. set_routes() does not
+            // touch `config.ssl_config`, so the bytes remain valid.
+            let server_name_raw = unsafe { &*this }
+                .config
+                .ssl_config
+                .as_ref()
+                .and_then(|c| c.server_name.as_deref())
+                .filter(|n| !n.to_bytes().is_empty())
+                .map(|n| (n.as_ptr(), n.to_bytes().len()));
+            if let Some((name_ptr, name_len)) = server_name_raw {
+                // SAFETY: name_ptr/name_len were just extracted from the live
+                // `config.ssl_config.server_name` CString; valid + NUL-terminated.
+                let server_name = unsafe { core::ffi::CStr::from_ptr(name_ptr) };
+                // SAFETY: app is the live handle just stored in self.app.
+                if unsafe { (*app).add_server_name_with_options(server_name, ssl_options) }.is_err() {
+                    if !global.has_exception() && !throw_ssl_error_if_necessary(global) {
+                        let _ = global.throw(format_args!(
+                            "Failed to add serverName: {}",
+                            bstr::BStr::new(server_name.to_bytes())
+                        ));
                     }
-                    if throw_ssl_error_if_necessary(global) {
-                        Self::deinit(this);
-                        return JSValue::ZERO;
-                    }
-
-                    // SAFETY: server_name is a CStr; ZStr::from_raw upholds the NUL invariant.
-                    let z = unsafe {
-                        bun_core::ZStr::from_raw(
-                            server_name.as_ptr().cast(),
-                            server_name.to_bytes().len(),
-                        )
-                    };
-                    // SAFETY: app is a live uws handle.
-                    unsafe { (*app).domain(z) };
-                    if throw_ssl_error_if_necessary(global) {
-                        Self::deinit(this);
-                        return JSValue::ZERO;
-                    }
-
-                    // Ensure routes are set for that domain name.
-                    // SAFETY: see PORT NOTE above; disjoint from ssl_config borrow.
-                    let _ = unsafe { (*this).set_routes() };
+                    Self::deinit(this);
+                    return JSValue::ZERO;
                 }
+                if throw_ssl_error_if_necessary(global) {
+                    Self::deinit(this);
+                    return JSValue::ZERO;
+                }
+
+                // SAFETY: server_name is a CStr; ZStr::from_raw upholds the NUL invariant.
+                let z = unsafe { bun_core::ZStr::from_raw(name_ptr.cast(), name_len) };
+                // SAFETY: app is a live uws handle.
+                unsafe { (*app).domain(z) };
+                if throw_ssl_error_if_necessary(global) {
+                    Self::deinit(this);
+                    return JSValue::ZERO;
+                }
+
+                // Ensure routes are set for that domain name.
+                let _ = unsafe { &mut *this }.set_routes();
             }
 
             // SNI: per-hostname contexts
-            // SAFETY: see PORT NOTE above; config.sni is not touched by set_routes().
-            if let Some(sni) = unsafe { (*this).config.sni.as_ref() } {
-                for sni_ssl_config in sni.slice() {
+            // PORT NOTE: iterate by index and reborrow `&*this` per iteration so
+            // the `set_routes()` `&mut` at the bottom of the loop body never
+            // overlaps an outstanding `&self.config.sni` borrow.
+            let sni_len = unsafe { &*this }
+                .config
+                .sni
+                .as_ref()
+                .map_or(0, |s| s.slice().len());
+            for i in 0..sni_len {
+                let (name_ptr, name_len, sni_opts) = {
+                    let cfg = unsafe { &*this };
+                    let sni_ssl_config = &cfg.config.sni.as_ref().unwrap().slice()[i];
                     let Some(sni_name) = sni_ssl_config.server_name.as_deref() else { continue };
                     if sni_name.to_bytes().is_empty() {
                         continue;
                     }
-                    // TODO(b2-blocked): h3_app.add_server_name_with_options(..) once
-                    // bun_uws_sys::h3 exposes a &CStr overload (currently &ZStr only).
-                    // SAFETY: app is a live uws handle.
-                    if unsafe {
-                        (*app).add_server_name_with_options(sni_name, sni_ssl_config.as_usockets())
+                    (
+                        sni_name.as_ptr(),
+                        sni_name.to_bytes().len(),
+                        sni_ssl_config.as_usockets(),
+                    )
+                };
+                // SAFETY: name_ptr/name_len point into config.sni[i].server_name;
+                // set_routes() does not mutate config.sni so the bytes are valid.
+                let sni_name = unsafe { core::ffi::CStr::from_ptr(name_ptr) };
+                // TODO(b2-blocked): h3_app.add_server_name_with_options(..) once
+                // bun_uws_sys::h3 exposes a &CStr overload (currently &ZStr only).
+                // SAFETY: app is a live uws handle.
+                if unsafe { (*app).add_server_name_with_options(sni_name, sni_opts) }.is_err() {
+                    if !global.has_exception() && !throw_ssl_error_if_necessary(global) {
+                        let _ = global.throw(format_args!(
+                            "Failed to add serverName: {}",
+                            bstr::BStr::new(sni_name.to_bytes())
+                        ));
                     }
-                    .is_err()
-                    {
-                        if !global.has_exception() && !throw_ssl_error_if_necessary(global) {
-                            let _ = global.throw(format_args!(
-                                "Failed to add serverName: {}",
-                                bstr::BStr::new(sni_name.to_bytes())
-                            ));
-                        }
-                        Self::deinit(this);
-                        return JSValue::ZERO;
-                    }
-                    // SAFETY: sni_name is a CStr; NUL invariant holds.
-                    let z = unsafe {
-                        bun_core::ZStr::from_raw(sni_name.as_ptr().cast(), sni_name.to_bytes().len())
-                    };
-                    // SAFETY: app is a live uws handle.
-                    unsafe { (*app).domain(z) };
-                    if throw_ssl_error_if_necessary(global) {
-                        Self::deinit(this);
-                        return JSValue::ZERO;
-                    }
-                    // SAFETY: see PORT NOTE above; disjoint from sni borrow.
-                    let _ = unsafe { (*this).set_routes() };
+                    Self::deinit(this);
+                    return JSValue::ZERO;
                 }
+                // SAFETY: sni_name is a CStr; NUL invariant holds.
+                let z = unsafe { bun_core::ZStr::from_raw(name_ptr.cast(), name_len) };
+                // SAFETY: app is a live uws handle.
+                unsafe { (*app).domain(z) };
+                if throw_ssl_error_if_necessary(global) {
+                    Self::deinit(this);
+                    return JSValue::ZERO;
+                }
+                let _ = unsafe { &mut *this }.set_routes();
             }
         } else {
             app = match uws_sys::NewApp::<SSL>::create(uws_sys::BunSocketContextOptions::default()) {
@@ -845,14 +868,17 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     return JSValue::ZERO;
                 }
             };
-            self_.app = Some(app);
-            route_list_value = self_.set_routes();
+            unsafe { (*this).app = Some(app) };
+            route_list_value = unsafe { &mut *this }.set_routes();
         }
 
-        if self_.config.on_node_http_request.is_some() {
-            self_.set_using_custom_expect_handler(true);
+        if unsafe { &*this }.config.on_node_http_request.is_some() {
+            unsafe { &mut *this }.set_using_custom_expect_handler(true);
         }
 
+        // PORT NOTE: scope a single `&mut *this` for the address match — no
+        // other re-derive from `this` happens inside this block.
+        let self_ = unsafe { &mut *this };
         match &self_.config.address {
             server_config::Address::Tcp { port, hostname } => {
                 let mut host: *const c_char = core::ptr::null();

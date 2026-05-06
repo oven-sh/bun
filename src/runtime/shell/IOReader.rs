@@ -333,8 +333,11 @@ impl bun_io::pipe_reader::BufferedReaderParent for IOReader {
     const HAS_ON_READ_CHUNK: bool = true;
     // SAFETY (all): see `BufferedReaderParent` aliasing contract — `this` is the
     // `*mut Self` registered via `set_parent`; a `&mut` to the embedded reader
-    // may be live on the caller's stack. These reborrow `&mut *this` only to
-    // forward to inherent impls; further aliasing audit lives with those impls.
+    // may be live on the caller's stack. These dereference `this` only to call
+    // `&self` inherent methods (autoref → `&*this`); no `&mut IOReader` is
+    // materialized, satisfying the init() *const→*mut invariant. Aliasing with
+    // the caller's live `&mut ReaderImpl` is handled by the state/reader
+    // UnsafeCell split — callbacks touch only `state`, never `reader()`.
     unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], has_more: bun_io::ReadState) -> bool {
         unsafe { (*this).on_read_chunk_cb(chunk, has_more) }
     }

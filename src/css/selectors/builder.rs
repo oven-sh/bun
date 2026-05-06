@@ -158,10 +158,19 @@ impl<'bump, Impl: ValidSelectorImpl> SelectorBuilder<'bump, Impl> {
 
         loop {
             if current_simple_selectors_i < current_simple_selectors.len() {
-                // TODO(port): Zig copies the component by value here (struct copy).
-                // GenericComponent<Impl> may not be `Copy` in Rust; Phase B should
-                // decide between `Clone` or draining via `set_len(0)` + ptr::read.
-                components.push(current_simple_selectors[current_simple_selectors_i]);
+                // PORT NOTE: Zig copies the component by value here (struct copy).
+                // `GenericComponent<Impl>` is not `Copy`; we bitwise-move it out
+                // via `ptr::read` — sound because every element of
+                // `simple_selectors` is consumed exactly once across the loop,
+                // and `set_len(0)` below suppresses the source slice's `Drop`.
+                // SAFETY: each index is read at most once (the cursor
+                // monotonically advances; `rest_of_simple_selectors` is the
+                // disjoint prefix of the previous `current` slice). The source
+                // storage is leaked-then-truncated via `set_len(0)`.
+                let moved = unsafe {
+                    core::ptr::read(&current_simple_selectors[current_simple_selectors_i])
+                };
+                components.push(moved);
                 current_simple_selectors_i += 1;
             } else {
                 if combinator_i >= 0 {

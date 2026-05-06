@@ -1035,14 +1035,33 @@ pub use lockfile::{Lockfile, PatchedDep, LoadResult, LoadStep};
 #[derive(Default)] pub struct PackageManager {
     pub options: PackageManagerOptionsStub,
     pub timestamp_for_manifest_cache_control: u32,
+    /// Zig: `cache_directory_: ?std.fs.Dir` — lazy-initialised by
+    /// `getCacheDirectory`.
+    pub cache_directory_: Option<bun_sys::Fd>,
+    /// Zig: `cache_directory_path: stringZ` — populated as a side-effect of
+    /// `ensureCacheDirectory`.
+    pub cache_directory_path: Vec<u8>,
+    /// Zig: held inside `getTemporaryDirectoryOnce`; lifted onto the struct
+    /// here so the stub doesn't need a global `bun.once`.
+    temp_directory_: Option<bun_sys::Fd>,
+    temp_directory_path: Vec<u8>,
 }
 #[derive(Default)] pub struct PackageManagerOptionsStub {
     pub enable: PackageManagerEnableStub,
+    /// Zig: `Options.cache_directory` — bunfig override.
+    pub cache_directory: Vec<u8>,
 }
 #[derive(Default)] pub struct PackageManagerEnableStub {
     pub manifest_cache: bool,
+    /// Zig: `Options.Enable.cache` — drives the `ensureCacheDirectory`
+    /// fallback to `node_modules/.cache`.
+    pub cache: bool,
 }
-pub struct PackageManagerTmpDirStub { pub handle: bun_sys::Fd }
+pub struct PackageManagerTmpDirStub {
+    pub handle: bun_sys::Fd,
+    pub path: &'static [u8],
+    pub name: &'static [u8],
+}
 #[derive(Default)] pub struct FolderResolution;
 #[derive(Default)] pub struct LifecycleScriptSubprocess;
 #[derive(Default)] pub struct SecurityScanSubprocess;
@@ -1052,8 +1071,125 @@ pub struct PackageManagerTmpDirStub { pub handle: bun_sys::Fd }
 #[derive(Default)] pub struct PatchTask;
 impl PackageManager {
     pub fn verbose_install() -> bool { false }
-    pub fn get_cache_directory(&mut self) -> bun_sys::Fd { todo!("phase-b2: PackageManager::get_cache_directory (gated)") }
-    pub fn get_temporary_directory(&mut self) -> PackageManagerTmpDirStub { todo!("phase-b2: PackageManager::get_temporary_directory (gated)") }
+
+    /// Port of `directories.getCacheDirectory`
+    /// (src/install/PackageManager/PackageManagerDirectories.zig:1).
+    /// Lazy-init: first call runs `ensure_cache_directory`, stashes the fd,
+    /// and every subsequent call returns it.
+    pub fn get_cache_directory(&mut self) -> bun_sys::Fd {
+        if let Some(d) = self.cache_directory_ {
+            return d;
+        }
+        let d = self.ensure_cache_directory();
+        self.cache_directory_ = Some(d);
+        d
+    }
+
+    /// Port of `directories.ensureCacheDirectory`
+    /// (src/install/PackageManager/PackageManagerDirectories.zig:121).
+    #[inline(never)]
+    fn ensure_cache_directory(&mut self) -> bun_sys::Fd {
+        use bun_sys::{Dir, OpenDirOptions};
+        loop {
+            if self.options.enable.cache {
+                // Zig: `fetchCacheDirectoryPath(this.env, &this.options)`.
+                // The DotEnv loader isn't on the stub; route through the
+                // process env directly (same precedence — see
+                // PackageManagerDirectories.zig:152).
+                let cache_dir_path = if !self.options.cache_directory.is_empty() {
+                    self.options.cache_directory.clone()
+                } else {
+                    bun_sys::fetch_cache_directory_path()
+                };
+                self.cache_directory_path = cache_dir_path.clone();
+
+                match Dir::cwd().make_open_path(&cache_dir_path, OpenDirOptions::default()) {
+                    Ok(dir) => return dir.fd,
+                    Err(_) => {
+                        self.options.enable.cache = false;
+                        self.cache_directory_path.clear();
+                        continue;
+                    }
+                }
+            }
+
+            // Fallback: `node_modules/.cache` under cwd. Zig joins against
+            // `Fs.FileSystem.instance.top_level_dir`; that singleton lives in
+            // `bun_resolver` (T4). Until the vtable is wired the cwd-relative
+            // path is equivalent — `top_level_dir` is initialised to cwd.
+            self.cache_directory_path = b"node_modules/.cache".to_vec();
+            match Dir::cwd().make_open_path(b"node_modules/.cache", OpenDirOptions::default()) {
+                Ok(dir) => return dir.fd,
+                Err(err) => {
+                    bun_core::Output::pretty_errorln(
+                        format_args!("<r><red>error<r>: bun is unable to write files: {}", err),
+                    );
+                    bun_core::Global::crash();
+                }
+            }
+        }
+    }
+
+    /// Port of `directories.getTemporaryDirectory`
+    /// (src/install/PackageManager/PackageManagerDirectories.zig:13).
+    /// The chosen tempdir must be on the **same filesystem** as the cache
+    /// directory so `renameat()` works (extract→cache moves). Mirror the Zig
+    /// strategy: try the system tempdir, but if creating/renaming a probe
+    /// file fails, fall back to `<cache>/.tmp`.
+    pub fn get_temporary_directory(&mut self) -> PackageManagerTmpDirStub {
+        if let Some(fd) = self.temp_directory_ {
+            // SAFETY: temp_directory_path is set whenever temp_directory_ is.
+            // Leak as 'static — PackageManager is process-lifetime.
+            let path: &'static [u8] = unsafe {
+                core::slice::from_raw_parts(
+                    self.temp_directory_path.as_ptr(),
+                    self.temp_directory_path.len(),
+                )
+            };
+            return PackageManagerTmpDirStub { handle: fd, path, name: b".tmp" };
+        }
+
+        use bun_sys::{Dir, OpenDirOptions};
+        let cache_directory = self.get_cache_directory();
+
+        // The chosen tempdir must be on the same filesystem as the cache
+        // directory — this makes renameat() work.
+        // PORT NOTE: Zig also tries `Fs.FileSystem.RealFS.getDefaultTempDir()`
+        // first and probes with a renameat() across the boundary; that helper
+        // lives in `bun_resolver`. Until it's reachable from this tier, go
+        // straight to the cache-relative `.tmp` (the path Zig falls back to
+        // anyway whenever the system tempdir is on a different mount — which
+        // it almost always is on Linux/macOS with `/tmp` on tmpfs).
+        let tempdir = match Dir { fd: cache_directory }
+            .make_open_path(b".tmp", OpenDirOptions::default())
+        {
+            Ok(d) => d,
+            Err(err) => {
+                bun_core::Output::pretty_errorln(format_args!(
+                    "<r><red>error<r>: bun is unable to access tempdir: {}",
+                    err
+                ));
+                bun_core::Global::crash();
+            }
+        };
+
+        let mut path = self.cache_directory_path.clone();
+        if !path.is_empty() && *path.last().unwrap() != bun_paths::SEP {
+            path.push(bun_paths::SEP);
+        }
+        path.extend_from_slice(b".tmp");
+        self.temp_directory_path = path;
+        self.temp_directory_ = Some(tempdir.fd);
+
+        // SAFETY: temp_directory_path lives as long as PackageManager (process-lifetime).
+        let path_ref: &'static [u8] = unsafe {
+            core::slice::from_raw_parts(
+                self.temp_directory_path.as_ptr(),
+                self.temp_directory_path.len(),
+            )
+        };
+        PackageManagerTmpDirStub { handle: tempdir.fd, path: path_ref, name: b".tmp" }
+    }
 }
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub enum Subcommand { #[default] Install, Add, Remove, Update, Link, Unlink, Pm, Patch, PatchCommit, Outdated }

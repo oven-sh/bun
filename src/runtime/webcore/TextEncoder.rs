@@ -1,10 +1,26 @@
 use core::ffi::c_void;
 
 use bun_jsc::js_string::Iterator as JSStringIterator;
-use bun_jsc::{ArrayBuffer, JSGlobalObject, JSString, JSValue, TypedArrayType};
+use bun_jsc::{ArrayBuffer, JSGlobalObject, JSString, JSType, JSValue, JsResult};
 use bun_str::strings;
 
 // `const TextEncoder = @This();` — file is a namespace of exported fns; no wrapper struct needed.
+
+// Local shim for `JSValue::create_uninitialized_uint8_array` (lives in the still-gated
+// bun_jsc JSValue.rs). Wraps the C++ FFI directly with the same `JsResult` contract.
+unsafe extern "C" {
+    fn JSC__JSValue__createUninitializedUint8Array(
+        global: *const JSGlobalObject,
+        len: usize,
+    ) -> JSValue;
+}
+
+#[inline]
+fn create_uninitialized_uint8_array(global: &JSGlobalObject, len: usize) -> JsResult<JSValue> {
+    bun_jsc::from_js_host_call(global, || unsafe {
+        JSC__JSValue__createUninitializedUint8Array(global, len)
+    })
+}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn TextEncoder__encode8(
@@ -26,18 +42,17 @@ pub extern "C" fn TextEncoder__encode8(
 
     if slice.len() <= buf.len() / 2 {
         let result = strings::copy_latin1_into_utf8(&mut buf, slice);
-        let Ok(uint8array) =
-            JSValue::create_uninitialized_uint8_array(global_this, result.written as usize)
+        let Ok(uint8array) = create_uninitialized_uint8_array(global_this, result.written as usize)
         else {
             return JSValue::ZERO;
         };
         debug_assert!(result.written as usize <= buf.len());
         debug_assert!(result.read as usize == slice.len());
-        let Some(array_buffer) = uint8array.as_array_buffer(global_this) else {
+        let Some(mut array_buffer) = uint8array.as_array_buffer(global_this) else {
             return JSValue::ZERO;
         };
-        debug_assert!(result.written == array_buffer.len);
-        array_buffer.byte_slice()[..result.written as usize]
+        debug_assert!(result.written as usize == array_buffer.len);
+        array_buffer.byte_slice_mut()[..result.written as usize]
             .copy_from_slice(&buf[..result.written as usize]);
         uint8array
     } else {
@@ -45,7 +60,8 @@ pub extern "C" fn TextEncoder__encode8(
             return global_this.throw_out_of_memory_value();
         };
         debug_assert!(bytes.len() >= slice.len());
-        ArrayBuffer::from_bytes(bytes, TypedArrayType::Uint8Array)
+        // PORT NOTE: ownership transfers to JSC via to_js_unchecked; leak the Vec.
+        ArrayBuffer::from_bytes(bytes.leak(), JSType::Uint8Array)
             .to_js_unchecked(global_this)
             .unwrap_or(JSValue::ZERO)
     }
@@ -74,31 +90,30 @@ pub extern "C" fn TextEncoder__encode16(
     if slice.len() <= buf.len() / 4 {
         let result = strings::copy_utf16_into_utf8(&mut buf, slice);
         if result.read == 0 || result.written == 0 {
-            let Ok(uint8array) = JSValue::create_uninitialized_uint8_array(global_this, 3) else {
+            let Ok(uint8array) = create_uninitialized_uint8_array(global_this, 3) else {
                 return JSValue::ZERO;
             };
-            let array_buffer = uint8array.as_array_buffer(global_this).unwrap();
+            let mut array_buffer = uint8array.as_array_buffer(global_this).unwrap();
             const REPLACEMENT_CHAR: [u8; 3] = [239, 191, 189];
-            array_buffer.slice()[..REPLACEMENT_CHAR.len()].copy_from_slice(&REPLACEMENT_CHAR);
+            array_buffer.slice_mut()[..REPLACEMENT_CHAR.len()].copy_from_slice(&REPLACEMENT_CHAR);
             return uint8array;
         }
         let Ok(uint8array) =
-            JSValue::create_uninitialized_uint8_array(global_this, result.written as usize)
+            create_uninitialized_uint8_array(global_this, result.written as usize)
         else {
             return JSValue::ZERO;
         };
         debug_assert!(result.written as usize <= buf.len());
         debug_assert!(result.read as usize == slice.len());
-        let array_buffer = uint8array.as_array_buffer(global_this).unwrap();
-        debug_assert!(result.written == array_buffer.len);
-        array_buffer.slice()[..result.written as usize]
+        let mut array_buffer = uint8array.as_array_buffer(global_this).unwrap();
+        debug_assert!(result.written as usize == array_buffer.len);
+        array_buffer.slice_mut()[..result.written as usize]
             .copy_from_slice(&buf[..result.written as usize]);
         uint8array
     } else {
-        let Ok(bytes) = strings::to_utf8_alloc_with_type(slice) else {
-            return global_this.to_invalid_arguments(format_args!("Out of memory"));
-        };
-        ArrayBuffer::from_bytes(bytes, TypedArrayType::Uint8Array)
+        let bytes = strings::to_utf8_alloc_with_type(slice);
+        // PORT NOTE: ownership transfers to JSC via to_js_unchecked; leak the Vec.
+        ArrayBuffer::from_bytes(bytes.leak(), JSType::Uint8Array)
             .to_js_unchecked(global_this)
             .unwrap_or(JSValue::ZERO)
     }
@@ -127,31 +142,30 @@ pub extern "C" fn c(
     if slice.len() <= buf.len() / 4 {
         let result = strings::copy_utf16_into_utf8(&mut buf, slice);
         if result.read == 0 || result.written == 0 {
-            let Ok(uint8array) = JSValue::create_uninitialized_uint8_array(global_this, 3) else {
+            let Ok(uint8array) = create_uninitialized_uint8_array(global_this, 3) else {
                 return JSValue::ZERO;
             };
-            let array_buffer = uint8array.as_array_buffer(global_this).unwrap();
+            let mut array_buffer = uint8array.as_array_buffer(global_this).unwrap();
             const REPLACEMENT_CHAR: [u8; 3] = [239, 191, 189];
-            array_buffer.slice()[..REPLACEMENT_CHAR.len()].copy_from_slice(&REPLACEMENT_CHAR);
+            array_buffer.slice_mut()[..REPLACEMENT_CHAR.len()].copy_from_slice(&REPLACEMENT_CHAR);
             return uint8array;
         }
         let Ok(uint8array) =
-            JSValue::create_uninitialized_uint8_array(global_this, result.written as usize)
+            create_uninitialized_uint8_array(global_this, result.written as usize)
         else {
             return JSValue::ZERO;
         };
         debug_assert!(result.written as usize <= buf.len());
         debug_assert!(result.read as usize == slice.len());
-        let array_buffer = uint8array.as_array_buffer(global_this).unwrap();
-        debug_assert!(result.written == array_buffer.len);
-        array_buffer.slice()[..result.written as usize]
+        let mut array_buffer = uint8array.as_array_buffer(global_this).unwrap();
+        debug_assert!(result.written as usize == array_buffer.len);
+        array_buffer.slice_mut()[..result.written as usize]
             .copy_from_slice(&buf[..result.written as usize]);
         uint8array
     } else {
-        let Ok(bytes) = strings::to_utf8_alloc_with_type(slice) else {
-            return global_this.throw_out_of_memory_value();
-        };
-        ArrayBuffer::from_bytes(bytes, TypedArrayType::Uint8Array)
+        let bytes = strings::to_utf8_alloc_with_type(slice);
+        // PORT NOTE: ownership transfers to JSC via to_js_unchecked; leak the Vec.
+        ArrayBuffer::from_bytes(bytes.leak(), JSType::Uint8Array)
             .to_js_unchecked(global_this)
             .unwrap_or(JSValue::ZERO)
     }
@@ -241,13 +255,16 @@ pub extern "C" fn TextEncoder__encodeRopeString(
     let mut buf_to_use: &mut [u8] = &mut stack_buf;
     let length = rope_str.length();
     let mut array: JSValue = JSValue::ZERO;
+    // PORT NOTE: store the ArrayBuffer view so the borrowed slice outlives the if-branch.
+    let mut heap_ab: ArrayBuffer;
     if length > stack_buf_len / 2 {
-        array = match JSValue::create_uninitialized_uint8_array(global_this, length) {
+        array = match create_uninitialized_uint8_array(global_this, length) {
             Ok(v) => v,
             Err(_) => return JSValue::ZERO,
         };
         array.ensure_still_alive();
-        buf_to_use = array.as_array_buffer(global_this).unwrap().slice();
+        heap_ab = array.as_array_buffer(global_this).unwrap();
+        buf_to_use = heap_ab.slice_mut();
     }
     let mut encoder = RopeStringEncoder {
         global_this,
@@ -265,7 +282,7 @@ pub extern "C" fn TextEncoder__encodeRopeString(
     }
 
     if array.is_empty() {
-        array = match JSValue::create_uninitialized_uint8_array(global_this, length) {
+        array = match create_uninitialized_uint8_array(global_this, length) {
             Ok(v) => v,
             Err(_) => return JSValue::ZERO,
         };
@@ -274,7 +291,7 @@ pub extern "C" fn TextEncoder__encodeRopeString(
         array
             .as_array_buffer(global_this)
             .unwrap()
-            .byte_slice()
+            .byte_slice_mut()
             .copy_from_slice(&encoder.buf[..length]);
     }
 

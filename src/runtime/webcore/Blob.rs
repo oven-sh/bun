@@ -1608,7 +1608,7 @@ fn write_file_with_empty_source_to_destination(
                         S3UploadResult::Success => this.promise.resolve(global, JSValue::js_number(0.0))?,
                         S3UploadResult::Failure(err) => {
                             // SAFETY: sole `&mut JSPromise` borrow; consumed immediately.
-                            let err_js = crate::webcore::s3::error_jsc::s3_error_to_js_with_async_stack(
+                            let err_js = s3_client::error_jsc::s3_error_to_js_with_async_stack(
                                 &err, global, this.store.get_path(), unsafe { this.promise.get() },
                             );
                             this.promise.reject(global, Ok(err_js))?;
@@ -1848,7 +1848,7 @@ pub fn write_file_with_source_destination(
                                 }
                                 S3UploadResult::Failure(err) => {
                                     // SAFETY: sole `&mut JSPromise` borrow; consumed immediately.
-                                    let err_js = crate::webcore::s3::error_jsc::s3_error_to_js_with_async_stack(
+                                    let err_js = s3_client::error_jsc::s3_error_to_js_with_async_stack(
                                         &err, global, this.store.get_path(), unsafe { this.promise.get() },
                                     );
                                     this.promise.reject(global, Ok(err_js))?;
@@ -4493,7 +4493,7 @@ impl Blob {
         // `@constCast(this.sharedView())`.
         let view_ptr = self.shared_view_raw();
         if view_ptr.len() == 0 {
-            return Ok(jsc::dom_form_data::DOMFormData::create(global));
+            return Ok(jsc::DOMFormData::create(global));
         }
         Ok(self.to_form_data_with_bytes::<{ Lifetime::Temporary }>(global, view_ptr))
     }
@@ -4808,6 +4808,8 @@ impl Blob {
 pub use _jsc_gated::{WriteFileOptions, write_file_internal};
 // Re-export the mkdirp helper + types for blob/copy_file.rs (CopyFile open path).
 pub use _jsc_gated::{MkdirpTarget, Retry, mkdir_if_not_exists};
+// Re-export for Body.rs `writeFormat` (Blob size pretty-printer).
+pub use _jsc_gated::write_format_for_size;
 // Re-export the size formatter so Body.rs can render `size: N KB` for buffered
 // InternalBlob / WTFStringImpl bodies without going through a Blob instance.
 pub use _jsc_gated::write_format_for_size;
@@ -5696,7 +5698,7 @@ impl Inline {
     
     pub fn to_string_owned(&mut self, global_this: &JSGlobalObject) -> JSValue {
         if self.len == 0 {
-            return JscZigString::EMPTY.to_js(global_this);
+            return ZigString::EMPTY.to_js(global_this);
         }
 
         let mut str = ZigString::init(self.slice_const());

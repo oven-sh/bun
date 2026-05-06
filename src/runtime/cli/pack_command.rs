@@ -65,11 +65,13 @@ fn dir_open_dir_z(dir: &Dir, path: &ZStr, _opts: bun_sys::OpenDirOptions) -> Res
 
 
 /// Process-lifetime bump arena for `Expr::as_string*` calls (CLI is one-shot;
-/// see `pm_pkg_command::dummy_bump`).
+/// see `pm_pkg_command::dummy_bump`). `bun_alloc::Arena` (= `bumpalo::Bump`)
+/// is `!Sync`, so a `static OnceLock` is out; cache a leaked arena per thread.
 fn pack_bump() -> &'static bun_alloc::Arena {
-    use std::sync::OnceLock;
-    static BUMP: OnceLock<bun_alloc::Arena> = OnceLock::new();
-    BUMP.get_or_init(bun_alloc::Arena::new)
+    thread_local! {
+        static BUMP: &'static bun_alloc::Arena = Box::leak(Box::new(bun_alloc::Arena::new()));
+    }
+    BUMP.with(|b| *b)
 }
 
 /// Shim for the removed `bun_sys::File::to_source_at` (T1->T2 layering split).

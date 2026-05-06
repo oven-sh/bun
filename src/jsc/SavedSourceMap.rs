@@ -84,13 +84,49 @@ impl SavedSourceMap {
 /// `ParsedSourceMap` is materialized lazily from a `SourceProviderMap` /
 /// `BakeSourceProvider` / `DevServerSourceProvider` for sources that ship
 /// their own external `.map`.
-pub type Value = TaggedPtrUnion<(
-    ParsedSourceMap,
-    SourceProviderMap,
-    BakeSourceProvider,
-    DevServerSourceProvider,
-    InternalSourceMap,
-)>;
+pub type Value = TaggedPtrUnion<ValueTypes>;
+
+/// Local type-list marker so `TypeList`/`UnionMember` impls satisfy orphan
+/// rules — `bun_ptr::impl_tagged_ptr_union!` would impl on a tuple of foreign
+/// types (all five live in `bun_sourcemap`), which the coherence checker
+/// rejects from this crate. Tags are `1024 - i` to match Zig's
+/// `TagTypeEnumWithTypeMap` ordering in `SavedSourceMap.zig`.
+pub struct ValueTypes;
+
+impl bun_ptr::tagged_pointer::TypeList for ValueTypes {
+    const LEN: usize = 5;
+    const MIN_TAG: bun_ptr::tagged_pointer::TagType = 1024 - 4;
+    fn type_name_from_tag(tag: bun_ptr::tagged_pointer::TagType) -> Option<&'static str> {
+        match tag {
+            1024 => Some("ParsedSourceMap"),
+            1023 => Some("SourceProviderMap"),
+            1022 => Some("BakeSourceProvider"),
+            1021 => Some("DevServerSourceProvider"),
+            1020 => Some("InternalSourceMap"),
+            _ => None,
+        }
+    }
+}
+impl bun_ptr::tagged_pointer::UnionMember<ValueTypes> for ParsedSourceMap {
+    const TAG: bun_ptr::tagged_pointer::TagType = 1024;
+    const NAME: &'static str = "ParsedSourceMap";
+}
+impl bun_ptr::tagged_pointer::UnionMember<ValueTypes> for SourceProviderMap {
+    const TAG: bun_ptr::tagged_pointer::TagType = 1023;
+    const NAME: &'static str = "SourceProviderMap";
+}
+impl bun_ptr::tagged_pointer::UnionMember<ValueTypes> for BakeSourceProvider {
+    const TAG: bun_ptr::tagged_pointer::TagType = 1022;
+    const NAME: &'static str = "BakeSourceProvider";
+}
+impl bun_ptr::tagged_pointer::UnionMember<ValueTypes> for DevServerSourceProvider {
+    const TAG: bun_ptr::tagged_pointer::TagType = 1021;
+    const NAME: &'static str = "DevServerSourceProvider";
+}
+impl bun_ptr::tagged_pointer::UnionMember<ValueTypes> for InternalSourceMap {
+    const TAG: bun_ptr::tagged_pointer::TagType = 1020;
+    const NAME: &'static str = "InternalSourceMap";
+}
 
 pub mod missing_source_map_note_info {
     use super::*;

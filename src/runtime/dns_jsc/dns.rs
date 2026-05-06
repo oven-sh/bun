@@ -3090,12 +3090,12 @@ impl Resolver {
         let Some(addr) = result else {
             unsafe {
                 let mut pending = (*key.lookup).head.next;
-                (*key.lookup).head.process_resolve(err, timeout, None);
+                CAresReverse::process_resolve(ptr::addr_of_mut!((*key.lookup).head), err, timeout, None);
                 drop(Box::from_raw(key.lookup));
 
                 while let Some(value) = pending {
                     pending = (*value.as_ptr()).next;
-                    (*value.as_ptr()).process_resolve(err, timeout, None);
+                    CAresReverse::process_resolve(value.as_ptr(), err, timeout, None);
                 }
             }
             return;
@@ -3107,9 +3107,9 @@ impl Resolver {
             //  The callback need not and should not attempt to free the memory
             //  pointed to by hostent; the ares library will free it when the
             //  callback returns.
-            let mut array = (*addr).to_js_response(prev_global, "").unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+            let mut array = (*addr).to_js_response(&*prev_global, "").unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
             array.ensure_still_alive();
-            (*key.lookup).head.on_complete(array);
+            CAresReverse::on_complete(ptr::addr_of_mut!((*key.lookup).head), array);
             drop(Box::from_raw(key.lookup));
 
             array.ensure_still_alive();
@@ -3117,13 +3117,13 @@ impl Resolver {
             while let Some(value) = pending {
                 let new_global = (*value.as_ptr()).global_this;
                 if !core::ptr::eq(prev_global, new_global) {
-                    array = (*addr).to_js_response(new_global, "").unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+                    array = (*addr).to_js_response(&*new_global, "").unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
                     prev_global = new_global;
                 }
                 pending = (*value.as_ptr()).next;
 
                 array.ensure_still_alive();
-                (*value.as_ptr()).on_complete(array);
+                CAresReverse::on_complete(value.as_ptr(), array);
                 array.ensure_still_alive();
             }
         }
@@ -3144,12 +3144,12 @@ impl Resolver {
         let Some(mut name_info) = result else {
             unsafe {
                 let mut pending = (*key.lookup).head.next;
-                (*key.lookup).head.process_resolve(err, timeout, None);
+                CAresNameInfo::process_resolve(ptr::addr_of_mut!((*key.lookup).head), err, timeout, None);
                 drop(Box::from_raw(key.lookup));
 
                 while let Some(value) = pending {
                     pending = (*value.as_ptr()).next;
-                    (*value.as_ptr()).process_resolve(err, timeout, None);
+                    CAresNameInfo::process_resolve(value.as_ptr(), err, timeout, None);
                 }
             }
             return;
@@ -3159,9 +3159,9 @@ impl Resolver {
             let mut pending = (*key.lookup).head.next;
             let mut prev_global = (*key.lookup).head.global_this;
 
-            let mut array = name_info.to_js_response(prev_global).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+            let mut array = name_info.to_js_response(&*prev_global).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
             array.ensure_still_alive();
-            (*key.lookup).head.on_complete(array);
+            CAresNameInfo::on_complete(ptr::addr_of_mut!((*key.lookup).head), array);
             drop(Box::from_raw(key.lookup));
 
             array.ensure_still_alive();
@@ -3169,13 +3169,13 @@ impl Resolver {
             while let Some(value) = pending {
                 let new_global = (*value.as_ptr()).global_this;
                 if !core::ptr::eq(prev_global, new_global) {
-                    array = name_info.to_js_response(new_global).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+                    array = name_info.to_js_response(&*new_global).unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
                     prev_global = new_global;
                 }
                 pending = (*value.as_ptr()).next;
 
                 array.ensure_still_alive();
-                (*value.as_ptr()).on_complete(array);
+                CAresNameInfo::on_complete(value.as_ptr(), array);
                 array.ensure_still_alive();
             }
         }

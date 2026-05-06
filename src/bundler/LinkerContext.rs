@@ -3546,7 +3546,7 @@ impl<'a> LinkerContext<'a> {
                     if symbol.namespace_alias.is_some() {
                         break 'brk Expr::init(
                             E::ImportIdentifier {
-                                r#ref: exp_data.import_ref,
+                                ref_: exp_data.import_ref,
                                 ..Default::default()
                             },
                             loc,
@@ -3556,7 +3556,7 @@ impl<'a> LinkerContext<'a> {
 
                 Expr::init(
                     E::Identifier {
-                        r#ref: exp_data.import_ref,
+                        ref_: exp_data.import_ref,
                         ..Default::default()
                     },
                     loc,
@@ -3564,7 +3564,7 @@ impl<'a> LinkerContext<'a> {
             };
 
             let fn_body = G::FnBody {
-                stmts: stmts.eat1(Stmt::allocate(
+                stmts: stmts_eat1!(Stmt::allocate(
                     allocator,
                     S::Return { value: Some(value) },
                     loc,
@@ -3574,12 +3574,11 @@ impl<'a> LinkerContext<'a> {
             properties.push(G::Property {
                 key: Some(Expr::allocate(
                     allocator,
-                    E::String {
-                        // TODO: test emoji work as expected
-                        // relevant for WASM exports
-                        data: alias as *const [u8],
-                        ..Default::default()
-                    },
+                    // TODO: test emoji work as expected (relevant for WASM exports)
+                    // SAFETY: `alias` borrows the worker arena which outlives the
+                    // link pass; `E::String::data: &'static [u8]` is the arena
+                    // erasure used throughout the AST.
+                    E::String::init(unsafe { &*(alias as *const [u8]) }),
                     loc,
                 )),
                 value: Some(Expr::allocate(
@@ -3608,7 +3607,7 @@ impl<'a> LinkerContext<'a> {
                 // Use a non-local dependency since this is likely from a different
                 // file if it came in through an export star
                 ns_export_dependencies.append_assume_capacity(Dependency {
-                    source_index: exp_data.source_index,
+                    source_index: Index::init(exp_data.source_index.get()),
                     part_index: part_id,
                 });
             }

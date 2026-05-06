@@ -2829,7 +2829,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         // here keeps both `&mut` derivations sharing provenance, and the
         // reborrow ends at `;` so it does not span the call's reentrancy.
         unsafe { (*tls_ptr).on_open((*tls_ptr).socket) };
-        new_raw.start_tls_handshake();
+        // SAFETY: `new_raw` is the live adopted `us_socket_t`.
+        unsafe { (*new_raw.as_ptr()).start_tls_handshake() };
 
         let array = JSValue::create_empty_array(global, 2)?;
         array.put_index(global, 0, raw_js_value)?;

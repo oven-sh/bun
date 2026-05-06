@@ -5034,11 +5034,13 @@ impl NodeFS {
             Encoding::Base64 | Encoding::Base64url => (size / 3).saturating_sub(1),
             Encoding::Ascii | Encoding::Latin1 | Encoding::Buffer => size,
         };
-        if adjusted_size > VirtualMachine::SYNTHETIC_ALLOCATION_LIMIT
+        // SAFETY: `SYNTHETIC_ALLOCATION_LIMIT` is a `static mut` written once at
+        // startup (`VirtualMachine` init); reads after that point are race-free.
+        if adjusted_size > unsafe { bun_jsc::virtual_machine::SYNTHETIC_ALLOCATION_LIMIT }
             // If they do not have enough memory to open the file and they're on Linux, let's throw an error instead of dealing with the OOM killer.
             || (cfg!(target_os = "linux") && size as u64 >= get_total_memory_size())
         {
-            return Some(sys::Error::from_code(E::NOMEM, syscall));
+            return Some(sys::Error::from_code(E::ENOMEM, syscall));
         }
         None
     }

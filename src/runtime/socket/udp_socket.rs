@@ -293,7 +293,7 @@ impl UDPSocketConfig {
 
         let port: u16 = 'brk: {
             if let Some(value) = options.get_truthy(global_this, "port")? {
-                let number = value.coerce_to_int32(global_this)?;
+                let number = value.coerce_to_i32(global_this)?;
                 if number < 0 || number > 0xffff {
                     return Err(global_this.throw_invalid_arguments(format_args!(
                         "Expected \"port\" to be an integer between 0 and 65535"
@@ -392,7 +392,7 @@ impl UDPSocketConfig {
             let Some(connect_port_js) = connect.get_truthy(global_this, "port")? else {
                 return Err(global_this.throw_invalid_arguments(format_args!("Expected \"connect.port\" to be an integer")));
             };
-            let connect_port = connect_port_js.coerce_to_int32(global_this)?;
+            let connect_port = connect_port_js.coerce_to_i32(global_this)?;
 
             let connect_host = connect_host_js.to_bun_string(global_this)?;
 
@@ -946,7 +946,7 @@ impl UDPSocket {
             return Err(global_this.throw_invalid_arguments(format_args!("Expected 1 argument, got {}", arguments.len())));
         }
 
-        let ttl = arguments[0].coerce_to_int32(global_this)?;
+        let ttl = arguments[0].coerce_to_i32(global_this)?;
         let Some(socket) = this.socket else {
             return Err(global_this.throw(format_args!("Socket is closed")));
         };
@@ -1244,7 +1244,7 @@ impl UDPSocket {
         storage: &mut sockaddr_storage,
     ) -> JsResult<bool> {
         let _ = self;
-        let number = port_val.coerce_to_int32(global_this)?;
+        let number = port_val.coerce_to_i32(global_this)?;
         let port: u16 = if number < 1 || number > 0xffff {
             0
         } else {

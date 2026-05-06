@@ -172,9 +172,10 @@ impl Crypto {
     ) -> JsResult<JSValue> {
         let (mut str, bytes) = BunString::create_uninitialized_latin1(36);
 
-        let uuid = global.bun_vm().rare_data().next_uuid();
+        // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
+        let uuid = unsafe { &mut *global.bun_vm() }.rare_data().next_uuid();
 
-        uuid.print(&mut bytes[0..36]);
+        uuid.print((&mut bytes[0..36]).try_into().unwrap());
         Ok(str.transfer_to_js(global))
     }
 

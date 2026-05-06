@@ -1843,7 +1843,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(ctx, err));
         }
 
-        let request = Box::new(existing_request);
+        let mut request = Box::new(existing_request);
 
         debug_assert!(self.config.on_request.is_some()); // confirmed above
         // SAFETY: global_this set in init() and outlives ThisServer (JSC_BORROW)
@@ -3026,6 +3026,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         req: &mut Ctx::Req,
         resp: &mut Ctx::Resp,
     ) {
+        let self_ptr: *mut Self = self;
         let mut should_deinit_context = false;
         let Some(prepared) = self.prepare_js_request_context_for::<Ctx>(
             req,
@@ -3035,12 +3036,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             None,
         ) else { return };
 
-        debug_assert!(self.config.on_request.is_some());
+        // SAFETY: `prepared` borrows into `*self` but the fields touched below
+        // (`config.on_request`, `global_this`, `js_value`) are disjoint from
+        // the request/ctx allocations it references. Reborrow to satisfy NLL.
+        let this = unsafe { &mut *self_ptr };
+        debug_assert!(this.config.on_request.is_some());
 
         // SAFETY: global_this set in init() and outlives ThisServer (JSC_BORROW)
-        let global = unsafe { &*self.global_this };
-        let js_value = self.js_value_assert_alive();
-        let on_request_fn = self.config.on_request.as_ref().map(|s| s.get()).unwrap_or(JSValue::UNDEFINED);
+        let global = unsafe { &*this.global_this };
+        let js_value = this.js_value_assert_alive();
+        let on_request_fn = this.config.on_request.as_ref().map(|s| s.get()).unwrap_or(JSValue::UNDEFINED);
         let response_value = match on_request_fn.call(
             global,
             js_value,
@@ -3050,7 +3055,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             Err(err) => global.take_exception(err),
         };
 
-        self.handle_request_for::<Ctx>(&mut should_deinit_context, prepared, req, response_value);
+        this.handle_request_for::<Ctx>(&mut should_deinit_context, prepared, req, response_value);
     }
 
     pub fn on_saved_request<const ARG_COUNT: usize>(

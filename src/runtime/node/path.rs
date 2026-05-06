@@ -2913,7 +2913,7 @@ pub fn relative(
 
     let from_zig_str = from_ptr.get_zig_string(global_object)?;
     let to_zig_str = to_ptr.get_zig_string(global_object)?;
-    if (from_zig_str.len() + to_zig_str.len()) == 0 {
+    if (from_zig_str.len + to_zig_str.len) == 0 {
         return Ok(from_ptr);
     }
 

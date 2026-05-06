@@ -1527,7 +1527,7 @@ impl FFI {
 
         let mut symbols = StringArrayHashMap::<Function>::default();
         if let Some(val) =
-            generate_symbols(global, &mut symbols, obj).unwrap_or(Some(JSValue::ZERO))
+            generate_symbols(global, &mut symbols, unsafe { &*obj }).unwrap_or(Some(JSValue::ZERO))
         {
             // an error while validating symbols
             // keys/arg_types freed by Drop

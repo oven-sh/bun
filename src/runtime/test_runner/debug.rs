@@ -1,4 +1,5 @@
 use core::fmt;
+use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::io::Write as _;
 
@@ -27,8 +28,8 @@ pub fn dump_describe(describe: &DescribeScope) -> JsResult<()> {
         "describe \"{}\" (concurrent={}, mode={}, only={}, has_callback={})",
         bstr::BStr::new(describe.base.name.as_deref().unwrap_or(b"(unnamed)")),
         describe.base.concurrent,
-        <&'static str>::from(describe.base.mode),
-        <&'static str>::from(describe.base.only),
+        describe.base.mode.tag_name(),
+        describe.base.only.tag_name(),
         describe.base.has_callback,
     ));
     let _guard = scopeguard::guard((), |_| group::end());
@@ -60,7 +61,7 @@ pub fn dump_test(current: &ExecutionEntry, label: &[u8]) -> JsResult<()> {
         bstr::BStr::new(label),
         bstr::BStr::new(current.base.name.as_deref().unwrap_or(b"(unnamed)")),
         current.base.concurrent,
-        current.base.only,
+        current.base.only.tag_name(),
     ));
     let _guard = scopeguard::guard((), |_| group::end());
     Ok(())
@@ -80,25 +81,27 @@ pub fn dump_order(this: &Execution) -> JsResult<()> {
         ));
         let _guard = scopeguard::guard((), |_| group::end());
 
-        for (sequence_index, sequence) in group_value.sequences(this).iter().enumerate() {
+        for (sequence_index, sequence) in group_value.sequences_const(this).iter().enumerate() {
             group::begin_msg(format_args!(
                 "{} Sequence ({}x)",
                 sequence_index, sequence.remaining_repeat_count,
             ));
             let _guard = scopeguard::guard((), |_| group::end());
 
-            let mut current_entry = sequence.first_entry;
-            while let Some(entry) = current_entry {
-                // TODO(port): lifetime — `entry` is a linked-list node ptr (?*ExecutionEntry in Zig)
+            let mut current_entry: Option<NonNull<ExecutionEntry>> = sequence.first_entry;
+            while let Some(entry_ptr) = current_entry {
+                // SAFETY: linked-list nodes are owned by the Execution and remain valid for the
+                // duration of this read-only dump (Zig: ?*ExecutionEntry walked via .next).
+                let entry = unsafe { entry_ptr.as_ref() };
                 group::log(format_args!(
                     "ExecutionEntry \"{}\" (concurrent={}, mode={}, only={}, has_callback={})",
                     bstr::BStr::new(entry.base.name.as_deref().unwrap_or(b"(unnamed)")),
                     entry.base.concurrent,
-                    <&'static str>::from(entry.base.mode),
-                    <&'static str>::from(entry.base.only),
+                    entry.base.mode.tag_name(),
+                    entry.base.only.tag_name(),
                     entry.base.has_callback,
                 ));
-                current_entry = entry.next;
+                current_entry = entry.next.and_then(NonNull::new);
             }
         }
     }
@@ -121,7 +124,7 @@ pub mod group {
     static LAST_WAS_START: AtomicBool = AtomicBool::new(false);
 
     fn get_log_enabled_runtime() -> bool {
-        bun_core::env_var::WANTS_LOUD.get()
+        bun_core::env_var::WANTS_LOUD.get().unwrap_or(false)
     }
 
     #[inline(always)]
@@ -139,12 +142,31 @@ pub mod group {
         }
     }
 
-    // TODO(port): std.builtin.SourceLocation — consider a macro wrapper using file!()/line!()/column!()
-    pub fn begin(file: &str, line: u32, column: u32, fn_name: &str) {
+    /// RAII guard returned by [`begin`]; calls [`end`] on drop. Mirrors Zig's
+    /// `group.begin(@src()); defer group.end();` pattern.
+    #[must_use = "binding this guard keeps the log group open until end of scope"]
+    pub struct GroupGuard(());
+
+    impl Drop for GroupGuard {
+        fn drop(&mut self) {
+            end();
+        }
+    }
+
+    /// Port of Zig's `begin(@src())`. Uses `#[track_caller]` so the source
+    /// location is taken from the *call site* (file/line/column), matching
+    /// `std.builtin.SourceLocation` minus `fn_name` (Rust has no stable equivalent).
+    #[track_caller]
+    pub fn begin() -> GroupGuard {
+        let loc = core::panic::Location::caller();
         begin_msg(format_args!(
             "\x1b[36m{}\x1b[37m:\x1b[93m{}\x1b[37m:\x1b[33m{}\x1b[37m: \x1b[35m{}\x1b[m",
-            file, line, column, fn_name,
+            loc.file(),
+            loc.line(),
+            loc.column(),
+            "", // fn_name not available in stable Rust
         ));
+        GroupGuard(())
     }
 
     pub fn begin_msg(args: fmt::Arguments<'_>) {
@@ -186,7 +208,9 @@ pub mod group {
         let _ = std::io::stdout().write_all(buf.as_slice());
     }
 
-    pub fn log(args: fmt::Arguments<'_>) {
+    /// Accepts anything `Display` so callers can pass either `&str` literals or
+    /// `format_args!(...)` (Zig's `log(fmt, args)` is variadic; Rust callers use both forms).
+    pub fn log(args: impl fmt::Display) {
         if !get_log_enabled() {
             return;
         }
@@ -202,6 +226,6 @@ pub mod group {
 // PORT STATUS
 //   source:     src/test_runner/debug.zig (108 lines)
 //   confidence: medium
-//   todos:      3
-//   notes:      stdout writer API + std.zig.fmtString escaping + SourceLocation need Phase B wiring; mutable globals → atomics; byte buffers via Vec<u8> + std::io::Write
+//   todos:      2
+//   notes:      stdout writer API + std.zig.fmtString escaping need Phase B wiring; mutable globals → atomics; byte buffers via Vec<u8> + std::io::Write; @src() → #[track_caller]
 // ──────────────────────────────────────────────────────────────────────────

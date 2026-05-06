@@ -494,11 +494,15 @@ impl<Owner> Drop for Channel<Owner> {
 #[cfg(not(windows))]
 pub struct PosixHandlers<Owner: ChannelOwner>(PhantomData<Owner>);
 
+/// Ext slot type for the usockets vtable: `*mut *mut Channel<Owner>`.
+// PORT NOTE: was an inherent `type Ext` on the impl in the Zig-shaped draft;
+// inherent associated types are unstable in Rust, so it lives as a free alias.
+#[cfg(not(windows))]
+pub type PosixExt<Owner> = *mut *mut Channel<Owner>;
+
 #[cfg(not(windows))]
 impl<Owner: ChannelOwner> PosixHandlers<Owner> {
-    pub type Ext = *mut *mut Channel<Owner>;
-
-    pub fn on_data(self_: Self::Ext, _s: *mut uws::us_socket_t, data: &[u8]) {
+    pub fn on_data(self_: PosixExt<Owner>, _s: *mut uws::us_socket_t, data: &[u8]) {
         // SAFETY: ext slot was set to `self as *mut Channel<_>` in `adopt()`;
         // the owner outlives all usockets callbacks (see module doc).
         unsafe { &mut **self_ }.ingest(data);

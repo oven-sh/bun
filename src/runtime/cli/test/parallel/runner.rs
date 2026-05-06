@@ -12,7 +12,7 @@ use bun_str::{PathString, ZStr};
 use bun_sys::Fd;
 
 use super::aggregate;
-use super::channel::Channel;
+use super::channel::{Channel, ChannelOwner};
 use super::coordinator::Coordinator;
 use super::frame::{self, Frame};
 use super::worker::Worker;

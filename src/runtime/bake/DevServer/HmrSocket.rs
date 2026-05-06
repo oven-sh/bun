@@ -7,8 +7,9 @@ use bun_uws::{AnyWebSocket, Opcode};
 
 use super::source_map_store::{self, SourceMapStore};
 use super::{
-    ConsoleLogKind, DevServer, HmrTopic, HmrTopicBits, IncomingMessageId, MessageId, RouteBundle,
+    ConsoleLogKind, DevServer, HmrTopic, IncomingMessageId, MessageId, RouteBundle,
 };
+use crate::bake::dev_server_body::HmrTopicBits;
 
 pub struct HmrSocket {
     // TODO(port): lifetime — backref to owning DevServer (destroyed via

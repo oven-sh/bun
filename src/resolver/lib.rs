@@ -2856,8 +2856,13 @@ pub struct ResolveWatcher<C, const ON_WATCH: fn(*mut C, &[u8], FD)>;
 
 pub struct Resolver<'a> {
     pub opts: options::BundleOptions,
-    pub fs: &'a mut Fs::FileSystem,
-    pub log: &'a mut logger::Log,
+    // PORT NOTE: Zig `fs: *Fs.FileSystem` / `log: *logger.Log` are raw aliasing
+    // pointers — the bundler bitwise-copies `Resolver` per worker thread
+    // (`clone_for_worker`), so `&'a mut` here would manufacture aliased unique
+    // refs across threads (instant UB). Model as `*mut` and deref through the
+    // `fs()` / `log()` accessors below.
+    pub fs: *mut Fs::FileSystem,
+    pub log: *mut logger::Log,
     // allocator: dropped — global mimalloc
     pub extension_order: &'static [&'static [u8]], // TODO(port): lifetime — points into opts
     pub timer: Timer,

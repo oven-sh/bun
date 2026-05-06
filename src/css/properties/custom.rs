@@ -1334,7 +1334,9 @@ impl UnparsedProperty {
     }
 
     pub fn eql(&self, rhs: &Self) -> bool {
-        self.property_id.eql(&rhs.property_id) && self.value.eql(&rhs.value)
+        // `PropertyId` is `Copy` (tag + optional `VendorPrefix`/`CustomPropertyName`)
+        // and derives `PartialEq` in `properties_generated.rs` — use `==` directly.
+        self.property_id == rhs.property_id && self.value.eql(&rhs.value)
     }
 }
 

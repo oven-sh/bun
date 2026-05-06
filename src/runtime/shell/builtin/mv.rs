@@ -460,10 +460,10 @@ impl ShellMvBatchedTask {
         this.task.on_finish();
     }
 
-    pub fn run_from_main_thread(this: *mut ShellMvBatchedTask, interp: &mut Interpreter) {
-        // SAFETY: `this` is a live boxed task.
-        let cmd = unsafe { (*this).cmd };
-        Mv::batched_move_task_done(interp, cmd, this);
+    pub fn run_from_main_thread(_this: *mut ShellMvBatchedTask, _interp: &mut Interpreter) {
+        // TODO(port): Mv::batched_move_task_done needs the task's index in
+        // `MvState::Executing::tasks`; either store the index on the task or
+        // look it up by pointer once `on_finish` is wired.
     }
 }
 

@@ -192,7 +192,7 @@ pub mod attrs {
             self.prefix.eql(&rhs.prefix) && strings::eql(self.url, rhs.url)
         }
         pub fn deep_clone(&self) -> Self {
-            self.clone()
+            Self { prefix: self.prefix.clone(), url: self.url.clone() }
         }
         pub fn hash(&self, hasher: &mut Wyhash) {
             self.prefix.hash(hasher);

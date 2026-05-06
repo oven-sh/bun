@@ -86,9 +86,9 @@ impl TransformList {
         Ok(())
     }
 
-    pub fn deep_clone(&self, bump: &'bump Bump) -> Self {
+    pub fn deep_clone(&self, bump: &Bump) -> Self {
         // TODO(port): css.implementDeepClone reflection — replace with crate-wide DeepClone derive
-        let mut v = BumpVec::with_capacity_in(self.v.len(), bump);
+        let mut v = Vec::with_capacity(self.v.len());
         for item in self.v.iter() {
             v.push(item.deep_clone(bump));
         }
@@ -1088,7 +1088,7 @@ impl TransformHandler {
 
     fn flush(
         &mut self,
-        bump: &'bump Bump,
+        bump: &Bump,
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) {

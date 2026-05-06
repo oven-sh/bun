@@ -169,6 +169,29 @@ macro_rules! handler_property {
 }
 
 impl TransitionHandler {
+    // No-op stubs so `DeclarationHandler` compiles; real bodies are gated below.
+    #[inline]
+    pub fn handle_property(
+        &mut self,
+        _property: &Property,
+        _dest: &mut DeclarationList<'_>,
+        _context: &mut PropertyHandlerContext<'_>,
+    ) -> bool {
+        false
+    }
+    #[inline]
+    pub fn finalize(
+        &mut self,
+        _dest: &mut DeclarationList<'_>,
+        _context: &mut PropertyHandlerContext<'_>,
+    ) {
+    }
+}
+
+#[cfg(any())] // blocked_on: Property variant payloads + SmallList::eql/deep_clone + masking::get_webkit_mask_property + VendorPrefix::FIELDS
+mod transition_handler_body {
+use super::*;
+impl TransitionHandler {
     pub fn handle_property(
         &mut self,
         prop: &Property,
@@ -607,3 +630,5 @@ fn is_transition_property(property_id: &PropertyId) -> bool {
 //   todos:      3
 //   notes:      @field comptime dispatch → macros; PropertyId variant names guessed (kebab→PascalCase); VendorPrefix::FIELDS iteration assumes bitflags-style API
 // ──────────────────────────────────────────────────────────────────────────
+
+} // mod transition_handler_body

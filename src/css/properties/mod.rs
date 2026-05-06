@@ -75,6 +75,14 @@ macro_rules! prop_value_stub {
     ($($T:ident),+ $(,)?) => {$(
         #[derive(Debug, Clone, Default, PartialEq)]
         pub struct $T;
+        // Protocol surface so `#[derive(CssEql/CssHash/DeepClone)]` on
+        // un-gated aggregates (e.g. `TokenOrValue`) that carry a still-stubbed
+        // payload type-checks. Unit struct → trivial bodies.
+        impl $T {
+            #[inline] pub fn eql(&self, _other: &Self) -> bool { true }
+            #[inline] pub fn hash(&self, _hasher: &mut ::bun_wyhash::Wyhash11) {}
+            #[inline] pub fn deep_clone(&self, _bump: &::bun_alloc::Arena) -> Self { Self }
+        }
     )+};
 }
 

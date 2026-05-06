@@ -3541,7 +3541,13 @@ impl RunCommand {
         }
 
         if FILTER == Filter::Bin || FILTER == Filter::All || FILTER == Filter::AllPlusBunJs {
-            for bin_path in this_transpiler.resolver.bin_dirs() {
+            // `bin_dirs()` reads process-static storage but its return slice is
+            // tied to `&self`, which would conflict with the `&mut self` borrow
+            // taken by `read_dir_info` inside the loop. Snapshot the `'static`
+            // path slices into a local Vec to detach the borrow.
+            let bin_dirs_snapshot: Vec<&'static [u8]> =
+                this_transpiler.resolver.bin_dirs().to_vec();
+            for bin_path in bin_dirs_snapshot {
                 if let Some(bin_dir) = this_transpiler.resolver.read_dir_info(bin_path).ok().flatten() {
                     // SAFETY: resolver cache owns the DirInfo for the process lifetime.
                     if let Some(entries) = unsafe { &*bin_dir }.get_entries_const() {

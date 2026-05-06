@@ -3839,7 +3839,7 @@ impl RunCommand {
                 if let Ok(handle) = sys::windows::GetStdHandle(sys::windows::STD_OUTPUT_HANDLE) {
                     // SAFETY: all-zero is a valid CONSOLE_SCREEN_BUFFER_INFO (#[repr(C)] POD).
                     let mut csbi: sys::windows::CONSOLE_SCREEN_BUFFER_INFO =
-                        unsafe { core::mem::zeroed() };
+                        unsafe { ::core::mem::zeroed() };
                     if sys::windows::kernel32::GetConsoleScreenBufferInfo(handle, &mut csbi)
                         != sys::windows::FALSE
                     {
@@ -3981,7 +3981,7 @@ impl RunCommand {
                     #[cfg(windows)]
                     {
                         resolved =
-                            resolve_path::normalize_string(resolved, false, bun_paths::Style::Windows);
+                            bun_paths::resolve_path::normalize_string::<false, bun_paths::platform::Windows>(resolved);
                     }
                     break 'brk sys::open_file(resolved, sys::OpenFlags::READ_ONLY);
                 } else if !script_name_to_search.starts_with(b"..")

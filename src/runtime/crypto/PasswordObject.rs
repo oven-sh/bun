@@ -799,11 +799,11 @@ pub fn js_password_object_hash(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    let arguments_ = callframe.arguments_old(2);
+    let arguments_ = callframe.arguments_old::<2>();
     let arguments = &arguments_.ptr[..arguments_.len];
 
     if arguments.len() < 1 {
-        return global_object.throw_not_enough_arguments("hash", 1, 0);
+        return Err(global_object.throw_not_enough_arguments("hash", 1, 0));
     }
 
     let mut algorithm = AlgorithmValue::DEFAULT;
@@ -822,10 +822,12 @@ pub fn js_password_object_hash(
     // errdefer bun.default_allocator.free(password_to_hash) — Box<[u8]> drops on `?`.
 
     if password_to_hash.is_empty() {
-        return global_object.throw_invalid_arguments(format_args!("password must not be empty"));
+        return Err(
+            global_object.throw_invalid_arguments(format_args!("password must not be empty"))
+        );
     }
 
-    JSPasswordObject::hash::<false>(global_object, password_to_hash, algorithm)
+    JSPasswordObject::hash::<false>(global_object, password_to_hash.into_boxed_slice(), algorithm)
 }
 
 // Once we have bindings generator, this should be replaced with a generated function
@@ -834,11 +836,11 @@ pub fn js_password_object_hash_sync(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    let arguments_ = callframe.arguments_old(2);
+    let arguments_ = callframe.arguments_old::<2>();
     let arguments = &arguments_.ptr[..arguments_.len];
 
     if arguments.len() < 1 {
-        return global_object.throw_not_enough_arguments("hash", 1, 0);
+        return Err(global_object.throw_not_enough_arguments("hash", 1, 0));
     }
 
     let mut algorithm = AlgorithmValue::DEFAULT;
@@ -848,16 +850,18 @@ pub fn js_password_object_hash_sync(
     }
 
     let Some(string_or_buffer) = StringOrBuffer::from_js(global_object, arguments[0])? else {
-        return global_object.throw_invalid_argument_type(
+        return Err(global_object.throw_invalid_argument_type(
             "hash",
             "password",
             "string or TypedArray",
-        );
+        ));
     };
     // defer string_or_buffer.deinit() — Drop at scope exit.
 
     if string_or_buffer.slice().is_empty() {
-        return global_object.throw_invalid_arguments(format_args!("password must not be empty"));
+        return Err(
+            global_object.throw_invalid_arguments(format_args!("password must not be empty"))
+        );
     }
 
     // PORT NOTE: sync path borrows the slice; pass as Box for unified signature.

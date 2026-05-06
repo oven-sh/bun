@@ -156,19 +156,116 @@ use bun_uws;
 // entry points (`emit_handle_ipc_message`, Listener fd extraction) are
 // routed through `IPC_HOOKS` registered at startup.
 // ──────────────────────────────────────────────────────────────────────────
-mod high_tier {
-    /// Stand-in for `bun_runtime::node::node_cluster_binding::InternalMsgHolder`.
-    /// SendQueue stores one inline; only `Default`/`Drop` are needed at this
-    /// tier — the fields are touched exclusively from `bun_runtime` via the
-    /// `*mut SendQueue` it holds.
-    // TODO(port): once `bun_runtime` lands its cycle-break re-export, replace
-    // this with the real struct (layout must match for the inline storage).
-    #[derive(Default)]
-    pub struct InternalMsgHolder {
-        _opaque: [usize; 6],
+// TODO: rewrite this code.
+/// Queue for messages sent between parent and child processes in an IPC environment. node:cluster sends json serialized messages
+/// to describe different events it performs. It will send a message with an incrementing sequence number and then call a callback
+/// when a message is received with an 'ack' property of the same sequence number.
+///
+/// PORT NOTE: moved down from `bun_runtime::node::node_cluster_binding` (cycle-break per
+/// docs/PORTING.md) — `SendQueue` stores one inline so the struct must live at this tier.
+/// All field accesses + dispatch methods need only `bun_jsc`/`bun_collections` symbols.
+pub struct InternalMsgHolder {
+    pub seq: i32,
+
+    // TODO: move this to an Array or a JS Object or something which doesn't
+    // individually create a Strong for every single IPC message...
+    pub callbacks: bun_collections::ArrayHashMap<i32, crate::StrongOptional>,
+    pub worker: crate::StrongOptional,
+    pub cb: crate::StrongOptional,
+    pub messages: Vec<crate::StrongOptional>,
+}
+
+impl Default for InternalMsgHolder {
+    fn default() -> Self {
+        Self {
+            seq: 0,
+            callbacks: bun_collections::ArrayHashMap::default(),
+            worker: crate::StrongOptional::empty(),
+            cb: crate::StrongOptional::empty(),
+            messages: Vec::new(),
+        }
     }
 }
-pub use high_tier::InternalMsgHolder;
+
+impl InternalMsgHolder {
+    pub fn is_ready(&self) -> bool {
+        self.worker.has() && self.cb.has()
+    }
+
+    pub fn enqueue(&mut self, message: JSValue, global: &JSGlobalObject) {
+        // TODO: .addOne is workaround for .append causing crash/ dependency loop in zig compiler
+        // (Rust: just push; the workaround is Zig-specific.)
+        self.messages.push(crate::StrongOptional::create(message, global));
+    }
+
+    pub fn dispatch(&mut self, message: JSValue, global: &JSGlobalObject) -> JsResult<()> {
+        if !self.is_ready() {
+            self.enqueue(message, global);
+            return Ok(());
+        }
+        self.dispatch_unsafe(message, global)
+    }
+
+    fn dispatch_unsafe(&mut self, message: JSValue, global: &JSGlobalObject) -> JsResult<()> {
+        let cb = self.cb.get().unwrap();
+        let worker = self.worker.get().unwrap();
+
+        // SAFETY: `bun_vm()` never returns null; sole &mut on JS thread.
+        let event_loop = unsafe { &mut *(*global.bun_vm()).event_loop() };
+
+        if let Some(p) = message.get(global, "ack")? {
+            if !p.is_undefined() {
+                let ack = p.to_int32();
+                // PORT NOTE: reshaped for borrowck — Zig copied the Strong out of the
+                // entry, then conditionally deinit+swapRemove. Here we peek the JSValue
+                // first (ending the immutable borrow), then swap_remove (which drops the
+                // Strong == `defer cbstrong.deinit()`).
+                let entry = self.callbacks.get(&ack).map(|s| s.get());
+                if let Some(callback_opt) = entry {
+                    if let Some(callback) = callback_opt {
+                        self.callbacks.swap_remove(&ack);
+                        event_loop.run_callback(
+                            callback,
+                            global,
+                            self.worker.get().unwrap(),
+                            &[
+                                message,
+                                JSValue::NULL, // handle
+                            ],
+                        );
+                    }
+                    return Ok(());
+                }
+            }
+        }
+        event_loop.run_callback(
+            cb,
+            global,
+            worker,
+            &[
+                message,
+                JSValue::NULL, // handle
+            ],
+        );
+        Ok(())
+    }
+
+    pub fn flush(&mut self, global: &JSGlobalObject) -> JsResult<()> {
+        debug_assert!(self.is_ready());
+        let messages = core::mem::take(&mut self.messages);
+        for strong in messages {
+            if let Some(message) = strong.get() {
+                self.dispatch_unsafe(message, global)?;
+            }
+            // strong drops here (== `strong.deinit()`)
+        }
+        // messages Vec drops here (== `messages.deinit(bun.default_allocator)`)
+        Ok(())
+    }
+
+    // `deinit` body only freed owned fields (Strongs, map, Vec). All of those impl Drop in
+    // Rust, so no explicit Drop body is needed.
+}
 
 /// Hooks into `bun_runtime` (tier-6) that own the concrete Subprocess /
 /// IPCInstance / Listener types. Registered once at startup via

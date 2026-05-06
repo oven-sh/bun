@@ -1,4 +1,4 @@
-use bun_js_parser::Expr;
+use bun_js_parser::{Expr, ExprData};
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

@@ -2008,22 +2008,31 @@ mod windows_impl {
         let _ = close(file);
         r
     }
-    pub fn access(path: &ZStr, _mode: i32) -> Maybe<()> {
-        // sys.zig:1748 — windows arm: GetFileAttributesW.
+    pub fn access(path: &ZStr, mode: i32) -> Maybe<()> {
+        // sys.zig:1748-1768 — windows arm: GetFileAttributesW, then if
+        // `(mode & W_OK) != 0` AND the file is read-only AND it is NOT a
+        // directory, return `.err = EPERM`.
+        const W_OK: i32 = 2;
         let mut wbuf = WPathBuffer::default();
         let wpath = bun_str::strings::to_kernel32_path(&mut wbuf, path.as_bytes());
         let attrs = unsafe { w::kernel32::GetFileAttributesW(wpath.as_ptr()) };
         if attrs == w::INVALID_FILE_ATTRIBUTES {
             return Err(Error::new(w::get_last_errno(), Tag::access).with_path(path.as_bytes()));
         }
+        let is_readonly = (attrs & w::FILE_ATTRIBUTE_READONLY) != 0;
+        let is_directory = (attrs & w::FILE_ATTRIBUTE_DIRECTORY) != 0;
+        if (mode & W_OK) != 0 && is_readonly && !is_directory {
+            return Err(Error::new(E::EPERM, Tag::access).with_path(path.as_bytes()));
+        }
         Ok(())
     }
     pub fn faccessat(dir: Fd, sub: &ZStr) -> Maybe<bool> {
-        // sys.zig:3504 — windows arm: openat the file for attribute read; success ⇒ exists.
+        // sys.zig:3504-3531 — `faccessat` NEVER returns `.err`: rc==0 → `.result
+        // = true`, else → `.result = false` regardless of errno. There is no
+        // dedicated windows arm in the spec; collapse all errors to `Ok(false)`.
         match openat(dir, sub, O::RDONLY, 0) {
             Ok(fd) => { let _ = close(fd); Ok(true) }
-            Err(e) if e.get_errno() == E::ENOENT => Ok(false),
-            Err(e) => Err(e),
+            Err(_) => Ok(false),
         }
     }
     pub fn futimens(fd: Fd, atime: TimeLike, mtime: TimeLike) -> Maybe<()> {

@@ -1381,10 +1381,10 @@ impl BorderHandler {
                 self.has_any = true;
             }
             Property::Border(val) => {
-                self.border_top.set_border(context.allocator, val);
-                self.border_bottom.set_border(context.allocator, val);
-                self.border_left.set_border(context.allocator, val);
-                self.border_right.set_border(context.allocator, val);
+                self.border_top.set_border(allocator, val);
+                self.border_bottom.set_border(allocator, val);
+                self.border_left.set_border(allocator, val);
+                self.border_right.set_border(allocator, val);
 
                 self.border_block_start.reset(allocator);
                 self.border_block_end.reset(allocator);
@@ -1392,7 +1392,7 @@ impl BorderHandler {
                 self.border_inline_end.reset(allocator);
 
                 // Setting the `border` property resets `border-image`
-                self.border_image_handler.reset(allocator);
+                self.border_image_handler.reset();
                 self.has_any = true;
             }
             Property::Unparsed(val) => {
@@ -1440,10 +1440,12 @@ impl BorderHandler {
         // PORT NOTE: reshaped for borrowck — Zig stored `self: *BorderHandler` in
         // FlushContext and accessed self.border_* through it. We instead take
         // independent &mut borrows of each shorthand, plus &mut self.flushed_properties.
+        let allocator = dest.bump();
         let mut flctx = FlushContext {
             flushed_properties: &mut self.flushed_properties,
             dest,
             ctx: context,
+            allocator,
             logical_supported,
             logical_shorthand_supported,
         };

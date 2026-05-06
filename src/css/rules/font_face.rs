@@ -887,11 +887,11 @@ const _: () = {
     }
 
     impl RuleBodyItemParser for FontFaceDeclarationParser {
-        fn parse_qualified(&self) -> bool {
+        fn parse_qualified(_this: &Self) -> bool {
             false
         }
 
-        fn parse_declarations(&self) -> bool {
+        fn parse_declarations(_this: &Self) -> bool {
             true
         }
     }

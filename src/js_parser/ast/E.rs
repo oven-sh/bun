@@ -950,7 +950,7 @@ pub mod object {
 
 // `toJS` alias deleted — lives in `js_parser_jsc` extension trait.
 impl Object {
-    pub fn set(&self, key: Expr, _bump: &Bump, value: Expr) -> Result<(), SetError> {
+    pub fn set(&mut self, key: Expr, _bump: &Bump, value: Expr) -> Result<(), SetError> {
         let head_key = match key.data.e_string() {
             Some(s) => s.data,
             None => return Err(SetError::Clobber),
@@ -958,12 +958,9 @@ impl Object {
         if self.has_property(head_key) {
             return Err(SetError::Clobber);
         }
-        // TODO(port): Zig takes `*const Object` but mutates `properties` (BabyList interior).
-        // Mirroring with raw cast; Phase B should make this `&mut self`.
-        // SAFETY: BabyList stores ptr/len/cap; Zig mutates through `*const Object` here and
-        // callers never hold an aliasing borrow over the properties slice.
-        let this = unsafe { &mut *(self as *const Object as *mut Object) };
-        this.properties.append(G::Property {
+        // Zig takes `*const Object` here and mutates through BabyList's interior pointer;
+        // in Rust we require `&mut self` so the borrow checker tracks the write.
+        self.properties.append(G::Property {
             key: Some(key),
             value: Some(value),
             ..G::Property::default()

@@ -485,20 +485,20 @@ impl Process {
     pub fn watch_or_reap(&mut self) -> bun_sys::Result<bool> {
         if self.has_exited() {
             let zeroed = rusage_zeroed();
-            self.on_exit(self.status, &zeroed);
-            return Maybe::Result(true);
+            self.on_exit(self.status.clone(), &zeroed);
+            return Ok(true);
         }
 
         match self.watch() {
-            Maybe::Err(err) => {
+            Err(err) => {
                 #[cfg(unix)]
-                if err.get_errno() == bun_sys::E::SRCH {
+                if err.get_errno() == bun_sys::E::ESRCH {
                     self.wait(true);
-                    return Maybe::Result(self.has_exited());
+                    return Ok(self.has_exited());
                 }
-                Maybe::Err(err)
+                Err(err)
             }
-            Maybe::Result(()) => Maybe::Result(self.has_exited()),
+            Ok(()) => Ok(self.has_exited()),
         }
     }
 
@@ -508,19 +508,20 @@ impl Process {
             if let Poller::Uv(p) = &mut self.poller {
                 p.ref_();
             }
-            return Maybe::SUCCESS;
+            return Ok(());
         }
 
         #[cfg(unix)]
         {
+            let ctx = self.event_loop_ctx();
             if WaiterThread::should_use_waiter_thread() {
                 self.poller = Poller::WaiterThread(KeepAlive::default());
                 if let Poller::WaiterThread(w) = &mut self.poller {
-                    w.ref_(self.event_loop);
+                    w.ref_(ctx);
                 }
                 self.ref_();
                 WaiterThread::append(self);
-                return Maybe::SUCCESS;
+                return Ok(());
             }
 
             #[cfg(target_os = "linux")]
@@ -528,34 +529,41 @@ impl Process {
             #[cfg(not(target_os = "linux"))]
             let watchfd = self.pid;
 
-            let poll = if let Poller::Fd(fd) = &mut self.poller {
+            let poll: *mut FilePoll = if matches!(self.poller, Poller::Fd(_)) {
                 // already have a poll
-                // PORT NOTE: reshaped for borrowck — take existing Box out
+                // PORT NOTE: reshaped for borrowck — take existing pointer out
                 core::mem::replace(&mut self.poller, Poller::Detached)
                     .into_fd()
                     .unwrap()
+                    .as_ptr()
             } else {
                 FilePoll::init(
-                    self.event_loop,
+                    ctx,
                     Fd::from_native(watchfd),
-                    Default::default(),
-                    self as *mut Process,
+                    bun_aio::file_poll::FlagsSet::default(),
+                    bun_aio::Owner::new(
+                        bun_aio::posix_event_loop::poll_tag::PROCESS,
+                        (self as *mut Process).cast(),
+                    ),
                 )
             };
 
-            self.poller = Poller::Fd(poll);
-            let Poller::Fd(fd) = &mut self.poller else { unreachable!() };
-            fd.enable_keeping_process_alive(self.event_loop);
+            // SAFETY: `poll` is a live hive slot (just allocated or recycled).
+            self.poller = Poller::Fd(unsafe { core::ptr::NonNull::new_unchecked(poll) });
+            // SAFETY: poll is live; exclusive on this thread (event loop).
+            let fd = unsafe { &mut *poll };
+            fd.enable_keeping_process_alive(ctx);
 
-            match fd.register(self.event_loop.loop_(), bun_aio::PollKind::Process, true) {
-                Maybe::Result(()) => {
+            // SAFETY: `platform_event_loop` returns the live uws loop.
+            let loop_ = unsafe { &mut *self.event_loop.platform_event_loop() };
+            match fd.register(loop_, bun_aio::PollKind::Process, true) {
+                Ok(()) => {
                     self.ref_();
-                    Maybe::SUCCESS
+                    Ok(())
                 }
-                Maybe::Err(err) => {
-                    let Poller::Fd(fd) = &mut self.poller else { unreachable!() };
-                    fd.disable_keeping_process_alive(self.event_loop);
-                    Maybe::Err(err)
+                Err(err) => {
+                    fd.disable_keeping_process_alive(ctx);
+                    Err(err)
                 }
             }
         }
@@ -563,21 +571,26 @@ impl Process {
 
     #[cfg(unix)]
     pub fn rewatch_posix(&mut self) -> bun_sys::Result<()> {
+        let ctx = self.event_loop_ctx();
         if WaiterThread::should_use_waiter_thread() {
             if !matches!(self.poller, Poller::WaiterThread(_)) {
                 self.poller = Poller::WaiterThread(KeepAlive::default());
             }
             if let Poller::WaiterThread(w) = &mut self.poller {
-                w.ref_(self.event_loop);
+                w.ref_(ctx);
             }
             self.ref_();
             WaiterThread::append(self);
-            return Maybe::SUCCESS;
+            return Ok(());
         }
 
-        if let Poller::Fd(fd) = &mut self.poller {
-            let maybe = fd.register(self.event_loop.loop_(), bun_aio::PollKind::Process, true);
-            if let Maybe::Result(()) = maybe {
+        if let Poller::Fd(poll) = &mut self.poller {
+            // SAFETY: poll is a live hive slot, exclusive on the event-loop thread.
+            let fd = unsafe { poll.as_mut() };
+            // SAFETY: `platform_event_loop` returns the live uws loop.
+            let loop_ = unsafe { &mut *self.event_loop.platform_event_loop() };
+            let maybe = fd.register(loop_, bun_aio::PollKind::Process, true);
+            if maybe.is_ok() {
                 self.ref_();
             }
             maybe
@@ -655,16 +668,15 @@ impl Process {
     pub fn close(&mut self) {
         #[cfg(unix)]
         {
-            match &mut self.poller {
-                Poller::Fd(_) => {
-                    // fd.deinit() handled by Drop on Box<FilePoll>
-                    self.poller = Poller::Detached;
+            match core::mem::replace(&mut self.poller, Poller::Detached) {
+                Poller::Fd(poll) => {
+                    // SAFETY: poll is a live hive slot; deinit returns it to the Store.
+                    unsafe { (*poll.as_ptr()).deinit() };
                 }
-                Poller::WaiterThread(waiter) => {
+                Poller::WaiterThread(mut waiter) => {
                     waiter.disable();
-                    self.poller = Poller::Detached;
                 }
-                _ => {}
+                Poller::Detached => {}
             }
         }
         #[cfg(windows)]
@@ -684,15 +696,17 @@ impl Process {
 
         #[cfg(target_os = "linux")]
         {
-            if self.pidfd != bun_sys::INVALID_FD.value().as_system() && self.pidfd > 0 {
+            use bun_sys::FdExt as _;
+            if self.pidfd != Fd::INVALID.native() && self.pidfd > 0 {
                 Fd::from_native(self.pidfd).close();
-                self.pidfd = bun_sys::INVALID_FD.value().as_system();
+                self.pidfd = Fd::INVALID.native();
             }
         }
     }
 
     pub fn disable_keeping_event_loop_alive(&mut self) {
-        self.poller.disable_keeping_event_loop_alive(self.event_loop);
+        let ctx = self.event_loop_ctx();
+        self.poller.disable_keeping_event_loop_alive(ctx);
     }
 
     pub fn has_ref(&self) -> bool {
@@ -703,7 +717,8 @@ impl Process {
         if self.has_exited() {
             return;
         }
-        self.poller.enable_keeping_event_loop_alive(self.event_loop);
+        let ctx = self.event_loop_ctx();
+        self.poller.enable_keeping_event_loop_alive(ctx);
     }
 
     pub fn detach(&mut self) {
@@ -727,10 +742,11 @@ impl Process {
                     // SAFETY: libc kill
                     let err = unsafe { libc::kill(self.pid, signal as c_int) };
                     if err != 0 {
-                        let errno_ = bun_sys::get_errno(err);
+                        let errno_ = bun_sys::get_errno(err as isize);
                         // if the process was already killed don't throw
-                        if errno_ != bun_sys::E::SRCH {
-                            return Maybe::Err(bun_sys::Error::from_code(errno_, bun_sys::Syscall::Kill));
+                        if errno_ != bun_sys::E::ESRCH {
+                            // TODO(port): bun_sys::Tag::kill — placeholder until full table.
+                            return Err(bun_sys::Error::from_code(errno_, bun_sys::Tag::TODO));
                         }
                     }
                 }
@@ -741,19 +757,19 @@ impl Process {
         {
             match &mut self.poller {
                 Poller::Uv(handle) => {
-                    if let Some(err) = handle.kill(signal).to_error(bun_sys::Syscall::Kill) {
+                    if let Some(err) = handle.kill(signal).to_error(bun_sys::Tag::TODO) {
                         // if the process was already killed don't throw
-                        if err.errno != bun_sys::E::SRCH as i32 {
-                            return Maybe::Err(err);
+                        if err.errno != bun_sys::E::ESRCH as i32 {
+                            return Err(err);
                         }
                     }
-                    return Maybe::Result(());
+                    return Ok(());
                 }
                 _ => {}
             }
         }
 
-        Maybe::Result(())
+        Ok(())
     }
 }
 

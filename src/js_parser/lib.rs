@@ -1243,6 +1243,11 @@ pub mod defines {
         pub parts: Vec<Box<[u8]>>,
         pub data: DefineData,
     }
+    impl Define {
+        pub fn for_identifier(&self, name: &[u8]) -> Option<&IdentifierDefine> {
+            self.identifiers.get(name)
+        }
+    }
 }
 pub use defines::{Define, DefineData};
 

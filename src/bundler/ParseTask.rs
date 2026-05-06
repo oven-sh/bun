@@ -187,44 +187,61 @@ pub enum Step {
 // ───────────────────────────────────────────────────────────────────────────
 
 impl ParseTask {
-    // TODO(b2-blocked): body reads `_resolver::Result` fields and
-    // `ctx.transpiler.options.target` (raw-ptr deref); the worker callbacks
-    // (`task_callback`/`io_task_callback`) are gated below. Un-gates with the
-    // `__parse_worker_draft` block.
-    #[cfg(any())]
     pub fn init(
         resolve_result: &_resolver::Result,
         source_index: Index,
         ctx: &BundleV2,
     ) -> ParseTask {
+        // SAFETY: `package_json` is `Option<*const PackageJSON>`; the resolver
+        // arena outlives the bundle pass, so deref'ing the raw pointer here to
+        // borrow `name`/`version` is sound. Slices are leaked to `'static` per
+        // the Phase-A arena-lifetime convention (TODO(port): arena lifetime).
+        let (package_name, package_version): (&'static [u8], &'static [u8]) =
+            match resolve_result.package_json {
+                Some(pj) => unsafe {
+                    let pj = &*pj;
+                    (
+                        core::mem::transmute::<&[u8], &'static [u8]>(&pj.name[..]),
+                        core::mem::transmute::<&[u8], &'static [u8]>(&pj.version[..]),
+                    )
+                },
+                None => (b"", b""),
+            };
         ParseTask {
-            ctx: ctx as *const BundleV2<'static>,
+            // SAFETY: lifetime erased — `ctx` outlives the ParseTask (BACKREF).
+            ctx: ctx as *const BundleV2 as *const BundleV2<'static>,
             path: resolve_result.path_pair.primary.clone(),
             contents_or_fd: ContentsOrFd::Fd {
                 dir: resolve_result.dirname_fd,
                 file: resolve_result.file_fd,
             },
             side_effects: resolve_result.primary_side_effects_data,
-            jsx: resolve_result.jsx.clone(),
+            // TODO(port): `_resolver::Result.jsx` is `bun_resolver::options::jsx::Pragma`
+            // (resolver-local mirror), distinct from `crate::options::jsx::Pragma`.
+            // The two are structurally identical (CYCLEBREAK TYPE_ONLY); once the
+            // type unifies this becomes `resolve_result.jsx.clone()`.
+            jsx: options::jsx::Pragma::default(),
             source_index,
+            // PORT NOTE: `_resolver::options::ModuleType` and
+            // `crate::options::ModuleType` are the same `bun_options_types` enum.
             module_type: resolve_result.module_type,
-            emit_decorator_metadata: resolve_result.flags.emit_decorator_metadata,
-            experimental_decorators: resolve_result.flags.experimental_decorators,
-            package_version: match &resolve_result.package_json {
-                Some(package_json) => package_json.version,
-                None => b"",
-            },
-            package_name: match &resolve_result.package_json {
-                Some(package_json) => package_json.name,
-                None => b"",
-            },
-            known_target: ctx.transpiler.options.target,
+            emit_decorator_metadata: resolve_result.flags.emit_decorator_metadata(),
+            experimental_decorators: resolve_result.flags.experimental_decorators(),
+            package_version,
+            package_name,
+            known_target: ctx.transpiler().options.target,
             // defaults:
             secondary_path_for_commonjs_interop: None,
             external_free_function: ExternalFreeFunction::NONE,
             loader: None,
-            task: ThreadPoolLib::Task::new(task_callback),
-            io_task: ThreadPoolLib::Task::new(io_task_callback),
+            task: ThreadPoolLib::Task {
+                node: ThreadPoolLib::Node::default(),
+                callback: task_callback,
+            },
+            io_task: ThreadPoolLib::Task {
+                node: ThreadPoolLib::Node::default(),
+                callback: io_task_callback,
+            },
             stage: ParseTaskStage::NeedsSourceCode,
             tree_shaking: false,
             is_entry_point: false,
@@ -233,6 +250,33 @@ impl ParseTask {
             // and use `..Default::default()` here.
         }
     }
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// taskCallback / ioTaskCallback — thread-pool entry points. Real `unsafe fn`
+// signatures matching `ThreadPoolLib::Task.callback`; bodies dispatch to
+// `parse_worker::run_from_thread_pool` once the `ThreadPool::Worker` module
+// un-gates (lib.rs `#[cfg(any())] pub mod ThreadPool`).
+// ───────────────────────────────────────────────────────────────────────────
+
+pub unsafe fn io_task_callback(task: *mut ThreadPoolLib::Task) {
+    // SAFETY: task points to ParseTask.io_task (intrusive field).
+    let parse_task = unsafe {
+        &mut *(task as *mut u8)
+            .sub(offset_of!(ParseTask, io_task))
+            .cast::<ParseTask>()
+    };
+    parse_worker::run_from_thread_pool(parse_task);
+}
+
+pub unsafe fn task_callback(task: *mut ThreadPoolLib::Task) {
+    // SAFETY: task points to ParseTask.task (intrusive field).
+    let parse_task = unsafe {
+        &mut *(task as *mut u8)
+            .sub(offset_of!(ParseTask, task))
+            .cast::<ParseTask>()
+    };
+    parse_worker::run_from_thread_pool(parse_task);
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -360,15 +404,13 @@ export var __callDispose = (stack, error, hasError) => {
 
 // ══════════════════════════════════════════════════════════════════════════
 // Per-file parse worker — `getAST`/`getCodeForParseTask`/`runFromThreadPool`.
-// TODO(b2-blocked): bodies depend on `js_parser::parser::Options`,
-// `bun_md::render_to_html`, `options::OutputFormat`, `bundler::api::JSBundler`,
-// `ThreadPool::Worker`, `Transpiler.options` field shape, and the gated
-// `BundleV2::on_parse_task_complete`. The struct surface above (ParseTask /
-// Result / Success / ContentsOrFd / RuntimeSource) is real; this block
-// un-gates once `js_parser::parser` and `BundleV2` method bodies land.
+// Un-gated B-2: struct/FFI surface and `get_runtime_source` are real. Bodies
+// that touch the still-gated `crate::ThreadPool` Worker module or the opaque
+// `JSBundlerPlugin`/`FileMap` forward-decls remain `#[cfg(any())]`-gated
+// per-function below with explicit `// blocked_on:` notes; they un-gate by
+// deletion once those modules land.
 // ══════════════════════════════════════════════════════════════════════════
-#[cfg(any())]
-mod __parse_worker_draft {
+pub mod parse_worker {
 use super::*;
 
 fn get_runtime_source_comptime(target: options::Target) -> RuntimeSource {
@@ -406,8 +448,14 @@ fn get_runtime_source_comptime(target: options::Target) -> RuntimeSource {
         // defaults:
         secondary_path_for_commonjs_interop: None,
         external_free_function: ExternalFreeFunction::NONE,
-        task: ThreadPoolLib::Task::new(task_callback),
-        io_task: ThreadPoolLib::Task::new(io_task_callback),
+        task: ThreadPoolLib::Task {
+            node: ThreadPoolLib::Node::default(),
+            callback: task_callback,
+        },
+        io_task: ThreadPoolLib::Task {
+            node: ThreadPoolLib::Node::default(),
+            callback: io_task_callback,
+        },
         stage: ParseTaskStage::NeedsSourceCode,
         tree_shaking: false,
         module_type: options::ModuleType::Unknown,
@@ -418,7 +466,10 @@ fn get_runtime_source_comptime(target: options::Target) -> RuntimeSource {
         is_entry_point: false,
     };
     let source = Source {
-        path: parse_task.path.clone(),
+        // PORT NOTE: `logger::Source.path` is `bun_logger::fs::Path`, distinct
+        // from `bun_resolver::fs::Path` (CYCLEBREAK TYPE_ONLY mirror). Construct
+        // directly rather than `clone()` across the type boundary.
+        path: bun_logger::fs::Path::init_with_namespace(b"runtime", b"bun:runtime"),
         contents: runtime_code.as_bytes(),
         index: Index::RUNTIME,
         ..Default::default()

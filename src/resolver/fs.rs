@@ -1,6 +1,7 @@
 use core::cell::{Cell, RefCell};
 use core::ffi::{c_void, CStr};
 use core::sync::atomic::{AtomicU32, Ordering};
+use std::borrow::Cow;
 use std::io::Write as _;
 
 use bstr::BStr;
@@ -329,7 +330,11 @@ impl DirEntry {
                 // PERF(port): was stack-fallback alloc — profile in Phase B
                 let prehashed =
                     bun_collections::StringHashMapContext::PrehashedCaseInsensitive::init(name_slice);
-                if let Some(&existing_ptr) = map.get_adapted(name_slice, &prehashed) {
+                // PORT NOTE: `StringHashMap::get_adapted` ignores the adapter and looks up by the
+                // raw key; pass the already-lowercased `prehashed.input` so the case-insensitive
+                // lookup matches the lowercased keys stored in `data` (Zig: `getAdapted` lowercases
+                // for both hash and eql).
+                if let Some(&existing_ptr) = map.get_adapted(&prehashed.input, &prehashed) {
                     // SAFETY: EntryStore-owned pointer, valid for lifetime of store
                     let existing = unsafe { &mut *existing_ptr };
                     existing.mutex.lock();

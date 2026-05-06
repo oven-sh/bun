@@ -647,7 +647,9 @@ impl CallbackList {
                 arr.protect();
                 arr.put_index(global, 0, prev)?; // add the old callback to the array
                 arr.put_index(global, 1, callback)?; // add the new callback to the array
-                prev.unprotect(); // owned by the array now
+                // `prev` is unprotected exactly once by `Drop` when the old
+                // variant is overwritten below — do NOT unprotect manually
+                // (would underflow JSC's protect count).
                 *self = CallbackList::CallbackArray(arr);
             }
             CallbackList::CallbackArray(arr) => {
@@ -663,7 +665,8 @@ impl CallbackList {
             CallbackList::None => {}
             CallbackList::Callback(cb) => {
                 JSValue::call_next_tick_1(*cb, global, JSValue::NULL)?;
-                cb.unprotect();
+                // Assignment runs `Drop` on the old `Callback(cb)` variant,
+                // which performs the single `unprotect()`.
                 *self = CallbackList::None;
             }
             CallbackList::CallbackArray(arr) => {
@@ -671,7 +674,8 @@ impl CallbackList {
                 while let Some(item) = iter.next()? {
                     JSValue::call_next_tick_1(item, global, JSValue::NULL)?;
                 }
-                arr.unprotect();
+                // Assignment runs `Drop` on the old `CallbackArray(arr)`
+                // variant, which performs the single `unprotect()`.
                 *self = CallbackList::None;
             }
         }

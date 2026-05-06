@@ -613,7 +613,7 @@ impl Value {
         }
     }
 
-    pub fn create_blob_value(data: Vec<u8>, was_string: bool) -> Value<'a> {
+    pub fn create_blob_value(data: Vec<u8>, was_string: bool) -> Value {
         // if (data.len <= InlineBlob.available_bytes) {
         //     var _blob = InlineBlob{
         //         .bytes = undefined,
@@ -633,7 +633,11 @@ impl Value {
 
     // pub const empty = Value::Empty;
 
-    pub fn to_readable_stream(&mut self, global_this: &'a JSGlobalObject) -> JsResult<JSValue> {
+    // TODO(b2-blocked): ByteStream::Source — webcore::byte_stream is still a unit
+    // stub (`pub struct ByteStream;`); `Source::new` / `.context.setup()` /
+    // `.to_readable_stream()` need the real ByteStream port to land.
+    #[cfg(any())]
+    pub fn to_readable_stream(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         jsc::mark_binding(core::panic::Location::caller());
 
         match self {
@@ -724,7 +728,7 @@ impl Value {
         }
     }
 
-    pub fn from_js(global_this: &'a JSGlobalObject, value: JSValue) -> JsResult<Value<'a>> {
+    pub fn from_js(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Value> {
         value.ensure_still_alive();
 
         if value.is_empty_or_undefined_or_null() {
@@ -849,8 +853,8 @@ impl Value {
 
     pub fn from_readable_stream_without_lock_check(
         readable: ReadableStream,
-        global_this: &'a JSGlobalObject,
-    ) -> Value<'a> {
+        global_this: &JSGlobalObject,
+    ) -> Value {
         Value::Locked(PendingValue {
             readable: webcore::readable_stream::Strong::init(readable, global_this),
             ..PendingValue::new(global_this)
@@ -858,8 +862,8 @@ impl Value {
     }
 
     pub fn resolve(
-        to_resolve: &mut Value<'a>,
-        new: &mut Value<'a>,
+        to_resolve: &mut Value,
+        new: &mut Value,
         global: &JSGlobalObject,
         headers: Option<&FetchHeaders>,
     ) -> JsTerminated<()> {
@@ -926,7 +930,7 @@ impl Value {
                     Action::None | Action::GetBlob => {
                         let mut blob = Blob::new(new.use_());
                         if let Some(fetch_headers) = headers {
-                            if let Some(content_type) = fetch_headers.fast_get(FetchHeaders::ContentType) {
+                            if let Some(content_type) = fetch_headers.fast_get(HTTPHeaderName::ContentType) {
                                 let content_slice = content_type.to_slice();
                                 let mut allocated = false;
                                 let mime_type = bun_http_types::MimeType::init(content_slice.slice(), &mut allocated);
@@ -1191,11 +1195,15 @@ impl Value {
         }
     }
 
+    // TODO(b2-blocked): ByteStream::Source — see `to_readable_stream`. The
+    // tail half of `tee()` constructs a `ByteStream::Source` to back a fresh
+    // ReadableStream; un-gate once the real ByteStream port lands.
+    #[cfg(any())]
     pub fn tee(
         &mut self,
-        global_this: &'a JSGlobalObject,
+        global_this: &JSGlobalObject,
         owned_readable: Option<&mut ReadableStream>,
-    ) -> JsResult<Value<'a>> {
+    ) -> JsResult<Value> {
         let Value::Locked(locked) = self else {
             // TODO(port): Zig assumed self.* == .Locked at entry (caller guarantees).
             unreachable!("tee() called on non-Locked Value");
@@ -1291,19 +1299,23 @@ impl Value {
         }))
     }
 
-    pub fn clone(&mut self, global_this: &'a JSGlobalObject) -> JsResult<Value<'a>> {
+    pub fn clone(&mut self, global_this: &JSGlobalObject) -> JsResult<Value> {
         self.clone_with_readable_stream(global_this, None)
     }
 
     pub fn clone_with_readable_stream(
         &mut self,
-        global_this: &'a JSGlobalObject,
+        global_this: &JSGlobalObject,
         readable: Option<&mut ReadableStream>,
-    ) -> JsResult<Value<'a>> {
+    ) -> JsResult<Value> {
         self.to_blob_if_possible();
 
         if matches!(self, Value::Locked(_)) {
-            return self.tee(global_this, readable);
+            // TODO(b2-blocked): ByteStream::Source — `tee()` is gated above.
+            #[cfg(any())]
+            { return self.tee(global_this, readable); }
+            #[cfg(not(any()))]
+            { let _ = readable; return Ok(Value::Used); }
         }
 
         if let Value::InternalBlob(internal_blob) = self {

@@ -5623,9 +5623,9 @@ pub mod testing_apis {
         let _ = &test_tokens;
         todo!("blocked_on: bun_core::json::fmt");
         #[allow(unreachable_code)]
-        let mut bun_str = BunString::from_bytes(&str);
+        let bun_str = BunString::from_bytes(&str);
         // TODO(port): move to *_jsc — to_js() lives in StringJsc extension trait
-        Ok(bun_str.to_js(global))
+        bun_str.to_js(global)
     }
 
     pub const SHELL_PARSE: jsc::JSHostFn = marked_arg_buffer_wrap(shell_parse_impl);

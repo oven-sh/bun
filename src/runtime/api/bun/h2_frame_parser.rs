@@ -680,7 +680,7 @@ impl FullSettingsPayload {
 
 /// Minimal writer trait used for `(comptime Writer: type, writer: Writer)` params.
 /// All call sites use either a fixed-buffer cursor or `DirectWriterStruct`.
-trait WireWriter {
+pub trait WireWriter {
     fn write(&mut self, data: &[u8]) -> Result<usize, bun_core::Error>;
     fn write_int_u16_be(&mut self, v: u16) -> Result<(), bun_core::Error> {
         self.write(&v.to_be_bytes()).map(|_| ())

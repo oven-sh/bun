@@ -5121,7 +5121,9 @@ impl Blob {
         if self.is_s3() {
             // SAFETY: `self` is a heap-allocated *mut Blob (see `Blob::new`); the
             // C++ side wraps it in a JSS3File without taking a second ref.
-            return unsafe { BUN__createJSS3FileUnsafely(global_object, self as *mut Blob) };
+            return unsafe {
+                BUN__createJSS3FileUnsafely(global_object, self as *mut Blob as *mut core::ffi::c_void)
+            };
         }
 
         // codegen stub takes an erased `*mut ()`; cast through the heap pointer.
@@ -6171,7 +6173,7 @@ pub trait FileCloser: Sized {
     #[cfg(windows)]
     fn loop_(&self) -> *mut bun_uv_sys::uv_loop_t;
 
-    fn schedule_close(_request: &mut bun_io::Request) -> bun_io::Action {
+    fn schedule_close(_request: &mut bun_io::Request) -> bun_io::Action<'_> {
         // TODO(port): Zig used `@fieldParentPtr("io_request", request)` — Rust
         // `offset_of!` can't name fields on a trait `Self`. Implementors must
         // override this with a concrete container_of recovery + CloseAction.

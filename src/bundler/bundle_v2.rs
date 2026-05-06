@@ -2272,36 +2272,46 @@ impl<'a> BundleV2<'a> {
                 // "production build" part of Bake.
 
                 let keys = named_exports_array[*source_id as usize].keys();
-                let mut client_manifest_items = vec![G::Property::default(); keys.len()].into_boxed_slice();
+                // PORT NOTE: `G::Property: !Clone` — build via iterator instead of `vec![v; n]`.
+                let mut client_manifest_items: Box<[G::Property]> =
+                    (0..keys.len()).map(|_| G::Property::default()).collect();
 
                 if !sc.separate_ssr_graph {
                     bun_core::todo_panic!("separate_ssr_graph=false");
                 }
 
-                let client_path = server.new_expr(E::String {
-                    data: alloc.alloc_str(&format!("{:x}S{:08}", self.unique_key, source_id)),
+                // SAFETY: arena slice — `alloc` (== `self.graph.heap`) outlives the
+                // produced AST. Phase-A erases the `'bump` lifetime to `'static`.
+                let astr = |s: &[u8]| -> &'static [u8] {
+                    unsafe { core::mem::transmute::<&[u8], &'static [u8]>(s) }
+                };
+
+                let client_path = server.new_expr(E::EString {
+                    data: astr(alloc.alloc_slice_copy(format!("{:x}S{:08}", self.unique_key, source_id).as_bytes())),
+                    ..Default::default()
                 });
-                let ssr_path = server.new_expr(E::String {
-                    data: alloc.alloc_str(&format!("{:x}S{:08}", self.unique_key, ssr_index)),
+                let ssr_path = server.new_expr(E::EString {
+                    data: astr(alloc.alloc_slice_copy(format!("{:x}S{:08}", self.unique_key, ssr_index).as_bytes())),
+                    ..Default::default()
                 });
 
                 debug_assert_eq!(keys.len(), client_manifest_items.len());
                 for (export_name_string, client_item) in keys.iter().zip(client_manifest_items.iter_mut()) {
-                    let server_key_string = alloc.alloc_str(&format!(
+                    let server_key_string = astr(alloc.alloc_slice_copy(format!(
                         "{:x}S{:08}#{}",
                         self.unique_key, source_id, bstr::BStr::new(export_name_string)
-                    ));
+                    ).as_bytes()));
                     let export_name = server.new_expr(E::EString { data: export_name_string, ..Default::default() });
 
                     // write dependencies on the underlying module, not the proxy
                     server_manifest_props.push(G::Property {
                         key: Some(server.new_expr(E::EString { data: server_key_string, ..Default::default() })),
                         value: Some(server.new_expr(E::Object {
-                            properties: js_ast::ast::g::PropertyList::from_slice(alloc, &[
+                            properties: js_ast::ast::g::PropertyList::from_owned_slice(Box::new([
                                 G::Property { key: Some(id_string), value: Some(client_path), ..Default::default() },
                                 G::Property { key: Some(name_string), value: Some(export_name), ..Default::default() },
                                 G::Property { key: Some(chunks_string), value: Some(empty_array), ..Default::default() },
-                            ])?,
+                            ])),
                             ..Default::default()
                         })),
                         ..Default::default()
@@ -2309,10 +2319,10 @@ impl<'a> BundleV2<'a> {
                     *client_item = G::Property {
                         key: Some(export_name),
                         value: Some(server.new_expr(E::Object {
-                            properties: js_ast::ast::g::PropertyList::from_slice(alloc, &[
+                            properties: js_ast::ast::g::PropertyList::from_owned_slice(Box::new([
                                 G::Property { key: Some(name_string), value: Some(export_name), ..Default::default() },
                                 G::Property { key: Some(specifier_string), value: Some(ssr_path), ..Default::default() },
-                            ])?,
+                            ])),
                             ..Default::default()
                         })),
                         ..Default::default()

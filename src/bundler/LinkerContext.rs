@@ -2997,7 +2997,7 @@ impl<'a> LinkerContext<'a> {
 
                     // Warn about importing from a file that is known to not have any exports
                     if status == ImportTrackerStatus::CjsWithoutExports {
-                        let source = self.get_source(tracker.source_index.get() as usize);
+                        let source = self.get_source(tracker.source_index.get());
                         // SAFETY: `alias` is an arena `*const [u8]` valid for the link pass.
                         let alias = unsafe { &*named_import.alias.unwrap() };
                         self.log.add_range_warning_fmt(
@@ -3006,7 +3006,7 @@ impl<'a> LinkerContext<'a> {
                             format_args!(
                                 "Import \"{}\" will always be undefined because the file \"{}\" has no exports",
                                 bstr::BStr::new(alias),
-                                bstr::BStr::new(&self.get_source(next_tracker.source_index.get() as usize).path.pretty),
+                                bstr::BStr::new(&self.get_source(next_tracker.source_index.get()).path.pretty),
                             ),
                         ).expect("unreachable");
                     }
@@ -3062,9 +3062,9 @@ impl<'a> LinkerContext<'a> {
                     let symbol = unsafe { &mut *self.graph.symbols.get(tracker.import_ref).unwrap() };
                     let named_import: &NamedImport = self.graph.ast.items_named_imports()[prev_source_index as usize]
                         .get(&tracker.import_ref).unwrap();
-                    let source = self.get_source(prev_source_index as usize);
+                    let source = self.get_source(prev_source_index);
 
-                    let next_source = self.get_source(next_tracker.source_index.get() as usize);
+                    let next_source = self.get_source(next_tracker.source_index.get());
                     let r = source.range_of_identifier(named_import.alias_loc.unwrap());
                     // SAFETY: arena `*const [u8]` valid for the link pass.
                     let alias = unsafe { &*named_import.alias.unwrap() };
@@ -3330,7 +3330,7 @@ impl<'a> LinkerContext<'a> {
                         });
                 }
                 MatchImportKind::Cycle => {
-                    let source = self.get_source(source_index as usize);
+                    let source = self.get_source(source_index);
                     let r = lex::range_of_identifier(source, named_import.alias_loc.unwrap_or(Loc::default()));
                     // SAFETY: arena `*const [u8]` valid for the link pass.
                     let alias = unsafe { &*named_import.alias.unwrap() };
@@ -3348,7 +3348,7 @@ impl<'a> LinkerContext<'a> {
                         .expect("unreachable");
                 }
                 MatchImportKind::Ambiguous => {
-                    let source = self.get_source(source_index as usize);
+                    let source = self.get_source(source_index);
                     let r = lex::range_of_identifier(source, named_import.alias_loc.unwrap_or(Loc::default()));
 
                     // TODO: log locations of the ambiguous exports
@@ -3573,7 +3573,7 @@ impl<'a> LinkerContext<'a> {
                     write!(
                         &mut name_buf,
                         "{}_default",
-                        self.get_source(source_index as usize).fmt_identifier()
+                        self.get_source(source_index).fmt_identifier()
                     )
                     .expect("write to Vec<u8> cannot fail");
                     let name: &[u8] = self.allocator().alloc_slice_copy(&name_buf);

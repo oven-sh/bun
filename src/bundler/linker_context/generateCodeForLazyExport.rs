@@ -413,7 +413,8 @@ pub fn generate_code_for_lazy_export(
     match exports_kind {
         js_ast::ExportsKind::Cjs => {
             // SAFETY: `part.stmts` non-empty arena slice.
-            unsafe { &mut *part.stmts }[0] = Stmt::assign(
+            // PORT NOTE: parenthesized — `unsafe { … }` at stmt-head parses as a block stmt, not an expr.
+            (unsafe { &mut *part.stmts })[0] = Stmt::assign(
                 Expr::init(
                     E::Dot {
                         target: Expr::init_identifier(module_ref, stmt.loc),

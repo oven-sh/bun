@@ -4605,14 +4605,20 @@ impl H2FrameParser {
 
     #[bun_jsc::host_fn(method)]
     pub fn emit_abort_to_all_streams(this: &mut Self, _global_object: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
-        // PORT NOTE: iterator stores a raw *mut so the loop body can keep using `this` exclusively.
-        let mut it = StreamResumableIterator::init(this as *mut Self);
+        // PORT NOTE: StreamResumableIterator stores a raw *mut and only borrows the parser briefly
+        // inside next(). Under Stacked Borrows, writing through the original `this` between next()
+        // calls would pop the iterator's raw-ptr tag, so route every in-loop parser access through
+        // the same raw pointer the iterator holds (mirrors flush_stream_queue).
+        let this_ptr = this as *mut Self;
+        let mut it = StreamResumableIterator::init(this_ptr);
         while let Some(stream_ptr) = it.next() {
             // SAFETY: stream_ptr is a *mut Stream stored in self.streams (Box::into_raw); valid for
             // the lifetime of the entry. Separate heap allocation from `this`, so no aliasing.
             let stream = unsafe { &mut *stream_ptr };
             // this is the oposite logic of emitErrorToallStreams, in this case we wanna to cancel this streams
-            if this.is_server {
+            // SAFETY: this_ptr derived from `this` above; iterator holds only a raw pointer (no
+            // live &mut) and `stream` points into a disjoint Box, so this short borrow is exclusive.
+            if unsafe { (*this_ptr).is_server } {
                 if stream.id % 2 == 0 { continue; }
             } else if stream.id % 2 != 0 {
                 continue;
@@ -4623,8 +4629,11 @@ impl H2FrameParser {
                 stream.rst_code = ErrorCode::CANCEL.0;
                 let identifier = stream.get_identifier();
                 identifier.ensure_still_alive();
-                stream.free_resources::<false>(this);
-                this.dispatch_with_2_extra(JSH2FrameParser::Gc::onAborted, identifier, JSValue::UNDEFINED, JSValue::js_number(old_state as u8));
+                // SAFETY: see this_ptr note above — sole exclusive borrow of *this for the call,
+                // routed through the same provenance the iterator's raw pointer carries.
+                stream.free_resources::<false>(unsafe { &mut *this_ptr });
+                // SAFETY: same as above; reborrow through this_ptr keeps the iterator's tag valid.
+                unsafe { &mut *this_ptr }.dispatch_with_2_extra(JSH2FrameParser::Gc::onAborted, identifier, JSValue::UNDEFINED, JSValue::js_number(old_state as u8));
             }
         }
         Ok(JSValue::UNDEFINED)
@@ -4637,8 +4646,12 @@ impl H2FrameParser {
             return global_object.throw("Expected error argument");
         }
 
-        // PORT NOTE: iterator stores a raw *mut so the loop body can keep using `this` exclusively.
-        let mut it = StreamResumableIterator::init(this as *mut Self);
+        // PORT NOTE: StreamResumableIterator stores a raw *mut and only borrows the parser briefly
+        // inside next(). Under Stacked Borrows, writing through the original `this` between next()
+        // calls would pop the iterator's raw-ptr tag, so route every in-loop parser access through
+        // the same raw pointer the iterator holds (mirrors flush_stream_queue).
+        let this_ptr = this as *mut Self;
+        let mut it = StreamResumableIterator::init(this_ptr);
         while let Some(stream_ptr) = it.next() {
             // SAFETY: stream_ptr is a *mut Stream stored in self.streams (Box::into_raw); valid for
             // the lifetime of the entry. Separate heap allocation from `this`, so no aliasing.
@@ -4648,8 +4661,12 @@ impl H2FrameParser {
                 stream.rst_code = args_list.ptr[0].to::<u32>();
                 let identifier = stream.get_identifier();
                 identifier.ensure_still_alive();
-                stream.free_resources::<false>(this);
-                this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, identifier, args_list.ptr[0]);
+                // SAFETY: this_ptr derived from `this` above; iterator holds only a raw pointer (no
+                // live &mut) and `stream` points into a disjoint Box, so this is the sole exclusive
+                // borrow of *this for the call, sharing provenance with the iterator's raw pointer.
+                stream.free_resources::<false>(unsafe { &mut *this_ptr });
+                // SAFETY: same as above; reborrow through this_ptr keeps the iterator's tag valid.
+                unsafe { &mut *this_ptr }.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, identifier, args_list.ptr[0]);
             }
         }
         Ok(JSValue::UNDEFINED)

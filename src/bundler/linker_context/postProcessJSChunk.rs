@@ -956,8 +956,7 @@ pub fn generate_entry_point_tail_js(
                                 //
                                 stmts.push(Stmt::alloc(
                                     S::Local {
-                                        decls: js_ast::G::Decl::List::from_slice(
-                                            temp_allocator,
+                                        decls: G::DeclList::from_slice(
                                             &[G::Decl {
                                                 binding: Binding::alloc(
                                                     temp_allocator,
@@ -966,7 +965,7 @@ pub fn generate_entry_point_tail_js(
                                                 ),
                                                 value: Some(Expr::init(
                                                     E::ImportIdentifier {
-                                                        r#ref: resolved_export.data.import_ref,
+                                                        ref_: resolved_export.data.import_ref,
                                                         ..Default::default()
                                                     },
                                                     Logger::Loc::EMPTY,
@@ -981,7 +980,7 @@ pub fn generate_entry_point_tail_js(
 
                                 items.push(js_ast::ClauseItem {
                                     name: js_ast::LocRef {
-                                        r#ref: Some(temp_ref),
+                                        ref_: Some(temp_ref),
                                         loc: Logger::Loc::EMPTY,
                                     },
                                     alias,
@@ -1014,7 +1013,7 @@ pub fn generate_entry_point_tail_js(
                                 //
                                 items.push(js_ast::ClauseItem {
                                     name: js_ast::LocRef {
-                                        r#ref: Some(resolved_export.data.import_ref),
+                                        ref_: Some(resolved_export.data.import_ref),
                                         loc: resolved_export.data.name_loc,
                                     },
                                     alias,
@@ -1026,9 +1025,9 @@ pub fn generate_entry_point_tail_js(
 
                         stmts.push(Stmt::alloc(
                             S::ExportClause {
-                                items: items.as_slice(),
-                                // TODO(port): items field type — Zig passes items.items (slice);
-                                // Rust ExportClause may want owned Vec/BabyList
+                                // PORT NOTE: arena-owned `*mut [ClauseItem]` — leak the Vec
+                                // (worker arena reset frees it in Phase B; for now leak).
+                                items: Box::leak(items.clone().into_boxed_slice()) as *mut [js_ast::ClauseItem],
                                 is_single_line: false,
                             },
                             Logger::Loc::EMPTY,

@@ -842,15 +842,19 @@ impl ClientSession {
         if self.registry_index.get() == u32::MAX {
             return;
         }
-        // SAFETY: ctx back-ref is valid for the session's lifetime.
-        let ctx = unsafe { &mut *self.ctx };
-        ctx.h2_unregister(self);
+        // SAFETY: ctx back-ref is valid for the session's lifetime. This path
+        // is reachable re-entrantly via HTTPContext::connect() → adopt() while
+        // connect() still holds `&mut HTTPContext<true>`, so we MUST NOT
+        // materialise a second `&mut NewHTTPContext` from the backref —
+        // unregister_h2_raw operates via raw-ptr place projection instead.
+        unsafe { NewHTTPContext::<true>::unregister_h2_raw(self.ctx, self) };
         if self.can_pool() && !socket_is_closed_or_has_error(&self.socket) {
             // Pool stores the live *ClientSession so a later fetch can resume
             // the multiplexed connection. SAFETY: `self` is heap-owned and
             // outlives the pool entry (release_socket takes the strong ref).
             let self_ptr = unsafe { NonNull::new_unchecked(self as *mut ClientSession) };
-            ctx.release_socket(
+            // SAFETY: ctx back-ref is valid for the session's lifetime.
+            unsafe { &mut *self.ctx }.release_socket(
                 self.socket,
                 self.did_have_handshaking_error,
                 &self.hostname,

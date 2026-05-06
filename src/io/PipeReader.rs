@@ -1351,7 +1351,9 @@ impl WindowsBufferedReader {
         nread: uv::ReturnCodeI64,
         buf: *const uv::uv_buf_t,
     ) {
-        // SAFETY: handle is a uv_stream_t*; data points at WindowsBufferedReader.
+        // SAFETY: libuv read_cb — `handle` is a `uv_stream_t*` whose `.data`
+        // was set to `*mut Self` in `set_data`. Invoked from the event loop
+        // with no other Rust borrow of the reader live (single-owner).
         let stream = handle as *mut uv::uv_stream_t;
         let this = unsafe { &mut *((*stream).data as *mut WindowsBufferedReader) };
 
@@ -1393,7 +1395,9 @@ impl WindowsBufferedReader {
     /// Handles cleanup, cancellation, and normal read processing.
     #[cfg(windows)]
     extern "C" fn on_file_read(fs: *mut uv::fs_t) {
-        // SAFETY: fs is a valid uv_fs_t from libuv.
+        // SAFETY: libuv fs_cb — `fs` is a valid `uv_fs_t*` owned by the boxed
+        // `source::File` (separate heap allocation from `Self`). Invoked from
+        // the event loop with no other Rust borrow of it live (single-owner).
         let fs_ref = unsafe { &mut *fs };
         let file = crate::source::File::from_fs(fs_ref);
         let result = fs_ref.result;

@@ -14,7 +14,7 @@ impl Expect {
         // PORT NOTE: `defer this.postMatch(globalThis)` — reshaped for borrowck: scopeguard owns
         // the &mut Expect and runs post_match on drop; body re-borrows through DerefMut.
         let mut this = scopeguard::guard(this, |t| t.post_match(global));
-        let this: &mut Expect = &mut this;
+        let this: &mut Expect = &mut *this;
 
         let this_value = frame.this();
         let _arguments = frame.arguments_old::<1>();

@@ -5020,13 +5020,13 @@ fn to_opaque_file_id<const SIDE: bake::Side>(
     OpaqueFileId::init(index.get())
 }
 
-fn from_opaque_file_id<const SIDE: bake::Side>(id: OpaqueFileId) -> incremental_graph::FileIndex {
+fn from_opaque_file_id<const SIDE: bake::Side>(id: OpaqueFileId) -> incremental_graph::FileIndex<SIDE> {
     if cfg!(debug_assertions) {
         let safe = SafeFileId(id.get());
         debug_assert!(SIDE == safe.side());
-        return incremental_graph::FileIndex::init(safe.index());
+        return incremental_graph::FileIndex::<SIDE>::init(safe.index());
     }
-    incremental_graph::FileIndex::init(u32::try_from(id.get()).unwrap())
+    incremental_graph::FileIndex::<SIDE>::init(u32::try_from(id.get()).unwrap())
 }
 
 impl DevServer<'_> {

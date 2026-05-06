@@ -1331,7 +1331,7 @@ impl CommandLineReporter {
         &mut self,
         vm: &mut VirtualMachine,
         opts: &mut CodeCoverageOptions,
-        byte_ranges: &mut [ByteRangeMapping],
+        byte_ranges: &mut [&mut ByteRangeMapping],
     ) -> Result<(), bun_core::Error> {
         let trace = if REPORTERS_TEXT && REPORTERS_LCOV {
             bun::perf::trace("TestCommand.printCodeCoverageLCovAndText")

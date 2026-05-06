@@ -866,6 +866,7 @@ unsafe extern "C" {
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
+#[allow(non_camel_case_types)] // names mirror Node.js zlib mode constants
 pub enum NodeMode {
     NONE = 0,
     DEFLATE = 1,

@@ -1959,6 +1959,10 @@ pub fn statfs(path: &ZStr) -> Maybe<StatFS> {
     }
 }
 
+/// `bun.timespec` — re-exported from `bun_core` so `PosixStat.rs` can spell
+/// `crate::Timespec` (matching the Zig `bun.timespec` namespacing).
+pub use bun_core::Timespec;
+
 /// `bun.sys.PosixStat` — uv-shaped stat struct (`src/sys/PosixStat.zig`).
 /// Re-exported here so dependents (`node_fs.rs`, `Stat.rs`) can spell
 /// `bun_sys::PosixStat` exactly as the Zig source spells `bun.sys.PosixStat`.

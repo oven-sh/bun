@@ -569,7 +569,7 @@ pub mod ssl_wrapper {
         ) -> Result<Self, InitError> {
             bun_boringssl::load();
 
-            let mut err = bun_uws_sys::create_bun_socket_error_t::none;
+            let mut err = crate::create_bun_socket_error_t::none;
             let Some(ssl_ctx) = ctx_opts.create_ssl_context(&mut err).and_then(NonNull::new)
             else {
                 return Err(InitError::InvalidOptions);

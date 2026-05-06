@@ -1207,7 +1207,10 @@ impl JSTranspiler {
         // PERF(port): was MimallocArena bulk-free — profile in Phase B
         let arena = Arena::new();
         let prev_allocator = self.transpiler.allocator;
-        self.transpiler.set_allocator(&arena);
+        // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
+        // allocator is restored to `prev_allocator` before return.
+        self.transpiler
+            .set_allocator(unsafe { &*(&arena as *const Arena) });
         let mut log = logger::Log::init();
         // defer log.deinit() → Drop
         self.transpiler.set_log(&mut log);
@@ -1385,7 +1388,10 @@ impl JSTranspiler {
         // TODO(port): `Transpiler` is not Clone; Zig copied it by-value to restore on exit.
         // For now, save/restore only allocator + log.
         let prev_allocator = self.transpiler.allocator;
-        self.transpiler.set_allocator(&arena);
+        // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
+        // allocator is restored to `prev_allocator` before return.
+        self.transpiler
+            .set_allocator(unsafe { &*(&arena as *const Arena) });
         self.transpiler.macro_context = None;
         let mut log = logger::Log::init();
         log.level = self.config.log.level;

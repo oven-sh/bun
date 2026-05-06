@@ -123,28 +123,28 @@ pub fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
             let Some(encoding_enum) =
                 NodeEncoding::from_js_with_default_on_empty(encoding_js, global, NodeEncoding::Base64url)?
             else {
-                return global.throw_invalid_arguments(format_args!(
+                return Err(global.throw_invalid_arguments(format_args!(
                     "Invalid format: must be 'base64', 'base64url', or 'hex'"
-                ));
+                )));
             };
             encoding = match encoding_enum {
                 NodeEncoding::Base64 => csrf::TokenFormat::Base64,
-                NodeEncoding::Base64url => csrf::TokenFormat::Base64url,
+                NodeEncoding::Base64url => csrf::TokenFormat::Base64Url,
                 NodeEncoding::Hex => csrf::TokenFormat::Hex,
                 _ => {
-                    return global.throw_invalid_arguments(format_args!(
+                    return Err(global.throw_invalid_arguments(format_args!(
                         "Invalid format: must be 'base64', 'base64url', or 'hex'"
-                    ));
+                    )));
                 }
             };
         }
 
         if let Some(algorithm_js) = options_value.get(global, "algorithm")? {
             if !algorithm_js.is_string() {
-                return global.throw_invalid_argument_type_value("algorithm", "string", algorithm_js);
+                return Err(global.throw_invalid_argument_type_value("algorithm", "string", algorithm_js));
             }
-            let Some(algo) = EvpAlgorithm::map().from_js_case_insensitive(global, algorithm_js)? else {
-                return global.throw_invalid_arguments(format_args!("Algorithm not supported"));
+            let Some(algo) = algorithm_from_js_case_insensitive(global, algorithm_js)? else {
+                return Err(global.throw_invalid_arguments(format_args!("Algorithm not supported")));
             };
             algorithm = algo;
             match algorithm {
@@ -155,7 +155,7 @@ pub fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
                 | EvpAlgorithm::Sha512
                 | EvpAlgorithm::Sha512_256 => {}
                 _ => {
-                    return global.throw_invalid_arguments(format_args!("Algorithm not supported"));
+                    return Err(global.throw_invalid_arguments(format_args!("Algorithm not supported")));
                 }
             }
         }

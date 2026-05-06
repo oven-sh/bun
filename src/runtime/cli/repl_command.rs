@@ -109,15 +109,20 @@ impl ReplCommand {
             .as_deref()
             .map(|p| unsafe { &*(p as *const _) });
         b.options.install = install_ref;
-        b.resolver.opts.install = install_ref;
+        // PORT NOTE: resolver's stub `BundleOptions.install` is `*const ()` (forward-decl
+        // to break the bun_install dep cycle) — erase the type here.
+        b.resolver.opts.install =
+            install_ref.map_or(core::ptr::null(), |p| p as *const _ as *const ());
         b.resolver.opts.global_cache = ctx.debug.global_cache;
         b.resolver.opts.prefer_offline_install =
             ctx.debug.offline_mode_setting.unwrap_or(OfflineMode::Online) == OfflineMode::Offline;
-        b.resolver.opts.prefer_latest_install =
+        let prefer_latest =
             ctx.debug.offline_mode_setting.unwrap_or(OfflineMode::Online) == OfflineMode::Latest;
+        // TODO(port): blocked_on: bun_resolver::options::BundleOptions::prefer_latest_install —
+        // resolver's forward-decl stub lacks this field; assign directly to b.options below.
         b.options.global_cache = b.resolver.opts.global_cache;
         b.options.prefer_offline_install = b.resolver.opts.prefer_offline_install;
-        b.options.prefer_latest_install = b.resolver.opts.prefer_latest_install;
+        b.options.prefer_latest_install = prefer_latest;
         b.resolver.env_loader = NonNull::new(b.env);
         b.options.env.behavior = EnvBehavior::LoadAllWithoutInlining;
         b.options.dead_code_elimination = false; // REPL needs all code

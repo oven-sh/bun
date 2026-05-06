@@ -1832,7 +1832,7 @@ impl<'a> S3StreamWrapper<'a> {
                     BunString::create_atom_if_possible(self_.url.href),
                     false,
                 ));
-                let response_js = Response::make_maybe_pooled(global, response);
+                let response_js = Response::make_maybe_pooled(global, Box::into_raw(response));
                 response_js.ensure_still_alive();
                 self_.promise.resolve(global, response_js)?;
             }
@@ -1854,7 +1854,7 @@ impl<'a> S3StreamWrapper<'a> {
                     false,
                 ));
 
-                let response_js = Response::make_maybe_pooled(global, response);
+                let response_js = Response::make_maybe_pooled(global, Box::into_raw(response));
                 response_js.ensure_still_alive();
                 self_.promise.resolve(global, response_js)?;
             }

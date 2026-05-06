@@ -120,8 +120,15 @@ impl<'a> Scanner<'a> {
 
     pub fn scan(&mut self, path_literal: &[u8]) -> Result<(), ScanError> {
         let parts: [&[u8]; 2] = [self.fs.top_level_dir, path_literal];
-        // PORT NOTE: reshaped for borrowck — absBuf borrows self.fs and self.scan_dir_buf disjointly
-        let path = self.fs.abs_buf(&parts, &mut self.scan_dir_buf);
+        // PORT NOTE: reshaped for borrowck — abs_buf's return keeps a &mut borrow
+        // of scan_dir_buf alive across the &mut self calls below. Capture only the
+        // length, then reconstruct a detached slice from the raw buffer pointer.
+        let path_len = self.fs.abs_buf(&parts, &mut self.scan_dir_buf).len();
+        // SAFETY: scan_dir_buf is not written again for the remainder of this
+        // function — read_dir_with_name/next() only touch open_dir_buf — so the
+        // bytes at [0, path_len) remain valid while `path` is live.
+        let path: &[u8] =
+            unsafe { core::slice::from_raw_parts(self.scan_dir_buf.0.as_ptr(), path_len) };
 
         let root = self.read_dir_with_name(path, None).map_err(|_| ScanError::OutOfMemory)?;
 
@@ -240,7 +247,7 @@ impl<'a> Scanner<'a> {
             .read_directory_with_iterator(name, handle.map(|d| d.fd), 0, true, iter)
     }
 
-    pub fn could_be_test_file<const NEEDS_TEST_SUFFIX: bool>(&mut self, name: &[u8]) -> bool {
+    pub fn could_be_test_file<const NEEDS_TEST_SUFFIX: bool>(&self, name: &[u8]) -> bool {
         let extname = bun_paths::extension(name);
         if extname.is_empty() || !self.options.loader(extname).is_javascript_like() {
             return false;
@@ -326,7 +333,7 @@ impl<'a> Scanner<'a> {
         false
     }
 
-    pub fn is_test_file(&mut self, name: &[u8]) -> bool {
+    pub fn is_test_file(&self, name: &[u8]) -> bool {
         self.could_be_test_file::<false>(name)
             && self.does_path_match_filter(name)
             && !self.matches_path_ignore_pattern(name)
@@ -363,7 +370,11 @@ impl<'a> Scanner<'a> {
                 // Prune ignored directory trees early so we never traverse them.
                 if !self.path_ignore_patterns.is_empty() {
                     let parts: [&[u8]; 2] = [entry.dir, entry.base()];
-                    let dir_path = self.fs.abs_buf(&parts, &mut self.open_dir_buf);
+                    // PORT NOTE: reshaped for borrowck — drop the &mut borrow from
+                    // abs_buf and reborrow open_dir_buf immutably so &self methods
+                    // can be called with the slice.
+                    let dir_path_len = self.fs.abs_buf(&parts, &mut self.open_dir_buf).len();
+                    let dir_path = &self.open_dir_buf[..dir_path_len];
                     if self.matches_path_ignore_pattern(dir_path) {
                         return;
                     }

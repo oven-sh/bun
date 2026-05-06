@@ -6,28 +6,12 @@ use super::protocol_jsc::{resp_value_to_js_with_options, ToJSOptions};
 
 type Slice = bun_str::ZigStringSlice;
 
-// PORT NOTE: `bun_jsc::Node::BlobOrStringOrBuffer` is currently an upstream stub type;
-// callers in `js_valkey_functions.rs` construct `Vec<bun_jsc::Node::BlobOrStringOrBuffer>`
-// directly, so `Args::Args` must accept that exact type. The real implementation lives
-// at `crate::node::types::BlobOrStringOrBuffer` — once the upstream re-export lands,
-// switch this alias and drop the shim trait below.
-type BlobOrStringOrBuffer = bun_jsc::Node::BlobOrStringOrBuffer;
-
-/// Local shim providing `slice()` / `byte_length()` over the upstream stub so
-/// `Command::write` type-checks. Real bodies live on
-/// `crate::node::types::BlobOrStringOrBuffer`.
-trait BlobOrStringOrBufferExt {
-    fn slice(&self) -> &[u8];
-    fn byte_length(&self) -> usize;
-}
-impl BlobOrStringOrBufferExt for BlobOrStringOrBuffer {
-    fn slice(&self) -> &[u8] {
-        todo!("blocked_on: bun_jsc::Node::BlobOrStringOrBuffer::slice")
-    }
-    fn byte_length(&self) -> usize {
-        todo!("blocked_on: bun_jsc::Node::BlobOrStringOrBuffer::byte_length")
-    }
-}
+// PORT NOTE: callers in `js_valkey_functions.rs` construct
+// `Vec<crate::node::types::BlobOrStringOrBuffer>` directly, so `Args::Args` must accept
+// that exact type. The upstream `bun_jsc::Node::BlobOrStringOrBuffer` re-export is a
+// stub; use the real in-crate definition (which already provides `slice()` /
+// `byte_length()`).
+type BlobOrStringOrBuffer = crate::node::types::BlobOrStringOrBuffer;
 
 // PORT NOTE: `Command` is a transient view struct (Zig `deinit` is a no-op); fields
 // borrow caller-owned data for the duration of serialization.

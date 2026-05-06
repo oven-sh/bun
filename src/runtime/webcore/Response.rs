@@ -649,7 +649,6 @@ impl Response {
         // those convert into the others, so funnel everything through
         // `fmt::Error` (Zig's `anyerror!void` carried no payload either).
         let js_err = |_: JsError| core::fmt::Error;
-        let core_err = |_: bun_core::Error| core::fmt::Error;
 
         write!(writer, "Response ({}) {{\n", bun_core::fmt::size(self.body.len() as usize, Default::default()))?;
 
@@ -703,7 +702,7 @@ impl Response {
             writer.write_str("\n")?;
 
             formatter.reset_line();
-            self.body.write_format::<F, W, ENABLE_ANSI_COLORS>(formatter, writer).map_err(core_err)?;
+            self.body.write_format::<F, W, ENABLE_ANSI_COLORS>(formatter, writer)?;
             // indent restored by `_indent_guard` on scope exit (incl. error returns)
         }
         writer.write_str("\n")?;
@@ -1033,7 +1032,7 @@ impl Response {
                         ..Default::default()
                     };
 
-                    let credentials = blob.store.as_ref().unwrap().data.s3().get_credentials();
+                    let credentials = blob.store.as_ref().unwrap().data.as_s3().get_credentials();
                     let _ = credentials;
 
                     // TODO(b2-blocked): bun_s3 — `s3_stub::S3Credentials` is an

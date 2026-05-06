@@ -690,15 +690,210 @@ mod _gated_impl {
 
         // TODO(port): narrow error set to bun_alloc::AllocError — Zig body only
         // `try`s std.fmt.allocPrint (OOM-only). write! into Vec<u8> is
-        // infallible; replace `?` with `.ok()`.
+        // infallible here; `.ok()` collapses the `fmt::Result`.
         fn resolve_error(
             &mut self,
             vm: &mut VirtualMachine,
             import_record_id: u32,
             result: PackageResolveError<'_>,
         ) -> Result<(), bun_core::Error> {
-            // body preserved in git @ 5410a51d85^:src/jsc/AsyncModule.rs
-            todo!()
+            let global_this = self.global_this;
+
+            let mut msg: Vec<u8> = Vec::new();
+            let e = result.err;
+            if e == bun_core::err!("PackageManifestHTTP400") {
+                write!(
+                    &mut msg,
+                    "HTTP 400 while resolving package '{}' at '{}'",
+                    bstr::BStr::new(result.name),
+                    bstr::BStr::new(result.url)
+                )
+                .ok();
+            } else if e == bun_core::err!("PackageManifestHTTP401") {
+                write!(
+                    &mut msg,
+                    "HTTP 401 while resolving package '{}' at '{}'",
+                    bstr::BStr::new(result.name),
+                    bstr::BStr::new(result.url)
+                )
+                .ok();
+            } else if e == bun_core::err!("PackageManifestHTTP402") {
+                write!(
+                    &mut msg,
+                    "HTTP 402 while resolving package '{}' at '{}'",
+                    bstr::BStr::new(result.name),
+                    bstr::BStr::new(result.url)
+                )
+                .ok();
+            } else if e == bun_core::err!("PackageManifestHTTP403") {
+                write!(
+                    &mut msg,
+                    "HTTP 403 while resolving package '{}' at '{}'",
+                    bstr::BStr::new(result.name),
+                    bstr::BStr::new(result.url)
+                )
+                .ok();
+            } else if e == bun_core::err!("PackageManifestHTTP404") {
+                write!(
+                    &mut msg,
+                    "Package '{}' was not found",
+                    bstr::BStr::new(result.name)
+                )
+                .ok();
+            } else if e == bun_core::err!("PackageManifestHTTP4xx") {
+                write!(
+                    &mut msg,
+                    "HTTP 4xx while resolving package '{}' at '{}'",
+                    bstr::BStr::new(result.name),
+                    bstr::BStr::new(result.url)
+                )
+                .ok();
+            } else if e == bun_core::err!("PackageManifestHTTP5xx") {
+                write!(
+                    &mut msg,
+                    "HTTP 5xx while resolving package '{}' at '{}'",
+                    bstr::BStr::new(result.name),
+                    bstr::BStr::new(result.url)
+                )
+                .ok();
+            } else if e == bun_core::err!("DistTagNotFound")
+                || e == bun_core::err!("NoMatchingVersion")
+            {
+                // PORT NOTE: Zig peeks at the tagged-union via
+                // `result.version.tag == .npm and
+                // result.version.value.npm.version.isExact()`. The Rust
+                // `Version::npm()` accessor performs the tag guard and yields
+                // the `NpmInfo` (whose `.version` is the semver query group).
+                let npm = result.version.npm();
+                let prefix: &[u8] = if e == bun_core::err!("NoMatchingVersion")
+                    && npm.map(|n| n.version.is_exact()).unwrap_or(false)
+                {
+                    b"Version not found"
+                } else if npm.map(|n| !n.version.is_exact()).unwrap_or(false) {
+                    b"No matching version found"
+                } else {
+                    b"No match found"
+                };
+
+                write!(
+                    &mut msg,
+                    "{} '{}' for package '{}' (but package exists)",
+                    bstr::BStr::new(prefix),
+                    bstr::BStr::new(
+                        vm.package_manager().lockfile.str(&result.version.literal)
+                    ),
+                    bstr::BStr::new(result.name)
+                )
+                .ok();
+            } else {
+                write!(
+                    &mut msg,
+                    "{} resolving package '{}' at '{}'",
+                    e.name(),
+                    bstr::BStr::new(result.name),
+                    bstr::BStr::new(result.url)
+                )
+                .ok();
+            }
+            // msg dropped at scope exit (defer bun.default_allocator.free(msg)).
+
+            let name: &[u8] = if e == bun_core::err!("NoMatchingVersion") {
+                b"PackageVersionNotFound"
+            } else if e == bun_core::err!("DistTagNotFound") {
+                b"PackageTagNotFound"
+            } else if e == bun_core::err!("PackageManifestHTTP403") {
+                b"PackageForbidden"
+            } else if e == bun_core::err!("PackageManifestHTTP404") {
+                b"PackageNotFound"
+            } else {
+                b"PackageResolveError"
+            };
+
+            let error_instance = ZigString::init(&msg)
+                .with_encoding()
+                .to_error_instance(global_this);
+            if !result.url.is_empty() {
+                error_instance.put(
+                    global_this,
+                    b"url",
+                    ZigString::init(result.url).with_encoding().to_js(global_this),
+                );
+            }
+            error_instance.put(
+                global_this,
+                b"name",
+                ZigString::init(name).with_encoding().to_js(global_this),
+            );
+            error_instance.put(
+                global_this,
+                b"pkg",
+                ZigString::init(result.name)
+                    .with_encoding()
+                    .to_js(global_this),
+            );
+            error_instance.put(
+                global_this,
+                b"specifier",
+                ZigString::init(self.specifier)
+                    .with_encoding()
+                    .to_js(global_this),
+            );
+            let location = logger::range_data(
+                Some(&self.parse_result.source),
+                self.parse_result
+                    .ast
+                    .import_records
+                    .at(import_record_id as usize)
+                    .range,
+                b"",
+            )
+            .location
+            .unwrap();
+            error_instance.put(
+                global_this,
+                b"sourceURL",
+                ZigString::init(self.parse_result.source.path.text)
+                    .with_encoding()
+                    .to_js(global_this),
+            );
+            error_instance.put(
+                global_this,
+                b"line",
+                JSValue::js_number(location.line as f64),
+            );
+            if let Some(line_text) = location.line_text.as_deref() {
+                error_instance.put(
+                    global_this,
+                    b"lineText",
+                    ZigString::init(line_text).with_encoding().to_js(global_this),
+                );
+            }
+            error_instance.put(
+                global_this,
+                b"column",
+                JSValue::js_number(location.column as f64),
+            );
+            if !self.referrer.is_empty() && self.referrer != b"undefined" {
+                error_instance.put(
+                    global_this,
+                    b"referrer",
+                    ZigString::init(self.referrer)
+                        .with_encoding()
+                        .to_js(global_this),
+                );
+            }
+
+            let promise_value = self.promise.swap();
+            let promise = promise_value.as_internal_promise().unwrap();
+            promise_value.ensure_still_alive();
+            self.poll_ref.unref(vm);
+            // PORT NOTE: Zig called `this.deinit()` here; in Rust the caller
+            // (Queue::retain_mut) returns `false` and Vec drops the element,
+            // running Drop.
+            // SAFETY: `promise` is a live `JSInternalPromise*` from
+            // `as_internal_promise`; reborrow for the FFI call only.
+            let _ = unsafe { &mut *promise }.reject_as_handled(global_this, error_instance);
+            Ok(())
         }
 
         fn download_error(
@@ -707,8 +902,202 @@ mod _gated_impl {
             import_record_id: u32,
             result: PackageDownloadError<'_>,
         ) -> Result<(), bun_core::Error> {
-            // body preserved in git @ 5410a51d85^:src/jsc/AsyncModule.rs
-            todo!()
+            let global_this = self.global_this;
+
+            let string_bytes: *const [u8] =
+                vm.package_manager().lockfile.buffers.string_bytes.as_slice();
+            // SAFETY: `string_bytes` is borrowed from the per-VM lockfile arena
+            // which outlives this stack frame; reborrow as `&[u8]` so
+            // `Resolution::fmt` doesn't extend the `&mut vm` borrow across the
+            // `match e` body (the `else` arm calls `vm.package_manager()`
+            // again).
+            let resolution_fmt = result
+                .resolution
+                .fmt(unsafe { &*string_bytes }, bun_core::fmt::PathSep::Any);
+
+            let mut msg: Vec<u8> = Vec::new();
+            let e = result.err;
+            if e == bun_core::err!("TarballHTTP400") {
+                write!(
+                    &mut msg,
+                    "HTTP 400 downloading package '{}@{}'",
+                    bstr::BStr::new(result.name),
+                    resolution_fmt
+                )
+                .ok();
+            } else if e == bun_core::err!("TarballHTTP401") {
+                write!(
+                    &mut msg,
+                    "HTTP 401 downloading package '{}@{}'",
+                    bstr::BStr::new(result.name),
+                    resolution_fmt
+                )
+                .ok();
+            } else if e == bun_core::err!("TarballHTTP402") {
+                write!(
+                    &mut msg,
+                    "HTTP 402 downloading package '{}@{}'",
+                    bstr::BStr::new(result.name),
+                    resolution_fmt
+                )
+                .ok();
+            } else if e == bun_core::err!("TarballHTTP403") {
+                write!(
+                    &mut msg,
+                    "HTTP 403 downloading package '{}@{}'",
+                    bstr::BStr::new(result.name),
+                    resolution_fmt
+                )
+                .ok();
+            } else if e == bun_core::err!("TarballHTTP404") {
+                write!(
+                    &mut msg,
+                    "HTTP 404 downloading package '{}@{}'",
+                    bstr::BStr::new(result.name),
+                    resolution_fmt
+                )
+                .ok();
+            } else if e == bun_core::err!("TarballHTTP4xx") {
+                write!(
+                    &mut msg,
+                    "HTTP 4xx downloading package '{}@{}'",
+                    bstr::BStr::new(result.name),
+                    resolution_fmt
+                )
+                .ok();
+            } else if e == bun_core::err!("TarballHTTP5xx") {
+                write!(
+                    &mut msg,
+                    "HTTP 5xx downloading package '{}@{}'",
+                    bstr::BStr::new(result.name),
+                    resolution_fmt
+                )
+                .ok();
+            } else if e == bun_core::err!("TarballFailedToExtract") {
+                write!(
+                    &mut msg,
+                    "Failed to extract tarball for package '{}@{}'",
+                    bstr::BStr::new(result.name),
+                    resolution_fmt
+                )
+                .ok();
+            } else {
+                write!(
+                    &mut msg,
+                    "{} downloading package '{}@{}'",
+                    e.name(),
+                    bstr::BStr::new(result.name),
+                    result.resolution.fmt(
+                        vm.package_manager().lockfile.buffers.string_bytes.as_slice(),
+                        bun_core::fmt::PathSep::Any,
+                    )
+                )
+                .ok();
+            }
+            // msg dropped at scope exit.
+
+            let name: &[u8] = if e == bun_core::err!("TarballFailedToExtract") {
+                b"PackageExtractionError"
+            } else if e == bun_core::err!("TarballHTTP403") {
+                b"TarballForbiddenError"
+            } else if e == bun_core::err!("TarballHTTP404") {
+                b"TarballNotFoundError"
+            } else {
+                b"TarballDownloadError"
+            };
+
+            let error_instance = ZigString::init(&msg)
+                .with_encoding()
+                .to_error_instance(global_this);
+            if !result.url.is_empty() {
+                error_instance.put(
+                    global_this,
+                    b"url",
+                    ZigString::init(result.url).with_encoding().to_js(global_this),
+                );
+            }
+            error_instance.put(
+                global_this,
+                b"name",
+                ZigString::init(name).with_encoding().to_js(global_this),
+            );
+            error_instance.put(
+                global_this,
+                b"pkg",
+                ZigString::init(result.name)
+                    .with_encoding()
+                    .to_js(global_this),
+            );
+            if !self.specifier.is_empty() && self.specifier != b"undefined" {
+                error_instance.put(
+                    global_this,
+                    b"referrer",
+                    ZigString::init(self.specifier)
+                        .with_encoding()
+                        .to_js(global_this),
+                );
+            }
+
+            let location = logger::range_data(
+                Some(&self.parse_result.source),
+                self.parse_result
+                    .ast
+                    .import_records
+                    .at(import_record_id as usize)
+                    .range,
+                b"",
+            )
+            .location
+            .unwrap();
+            error_instance.put(
+                global_this,
+                b"specifier",
+                ZigString::init(
+                    self.parse_result
+                        .ast
+                        .import_records
+                        .at(import_record_id as usize)
+                        .path
+                        .text,
+                )
+                .with_encoding()
+                .to_js(global_this),
+            );
+            error_instance.put(
+                global_this,
+                b"sourceURL",
+                ZigString::init(self.parse_result.source.path.text)
+                    .with_encoding()
+                    .to_js(global_this),
+            );
+            error_instance.put(
+                global_this,
+                b"line",
+                JSValue::js_number(location.line as f64),
+            );
+            if let Some(line_text) = location.line_text.as_deref() {
+                error_instance.put(
+                    global_this,
+                    b"lineText",
+                    ZigString::init(line_text).with_encoding().to_js(global_this),
+                );
+            }
+            error_instance.put(
+                global_this,
+                b"column",
+                JSValue::js_number(location.column as f64),
+            );
+
+            let promise_value = self.promise.swap();
+            let promise = promise_value.as_internal_promise().unwrap();
+            promise_value.ensure_still_alive();
+            self.poll_ref.unref(vm);
+            // PORT NOTE: Zig called `this.deinit()` here; caller drops via
+            // retain_mut → false.
+            // SAFETY: `promise` is a live `JSInternalPromise*` from
+            // `as_internal_promise`; reborrow for the FFI call only.
+            let _ = unsafe { &mut *promise }.reject_as_handled(global_this, error_instance);
+            Ok(())
         }
 
         pub fn resume_loading_module(
@@ -720,10 +1109,168 @@ mod _gated_impl {
                 "resumeLoadingModule: {}",
                 bstr::BStr::new(self.specifier)
             );
-            // body preserved in git @ 5410a51d85^:src/jsc/AsyncModule.rs —
-            // depends on `Transpiler::linker.link`, `print_with_source_map`,
-            // `ref_counted_resolved_source`, `bun_watcher.add_file`.
-            todo!()
+            // PORT NOTE: Zig copied `parse_result` by value, mutated, wrote
+            // back. Rust takes-by-value via `mem::take` then restores below to
+            // satisfy borrowck around `linker.link(&mut parse_result)` while
+            // `self` is also borrowed.
+            let mut parse_result = core::mem::take(&mut self.parse_result);
+            let path = self.path.clone();
+            let jsc_vm = VirtualMachine::get();
+            let specifier = self.specifier;
+            // SAFETY: `jsc_vm` is the live per-thread VM (one VM per thread);
+            // raw-ptr aliasing matches the Zig `*VirtualMachine` field accesses
+            // (`transpiler.log`/`resolver.log`/`linker.log` are themselves raw
+            // `*mut Log` aliased deliberately — see `Transpiler::set_log`).
+            let old_log = unsafe { (*jsc_vm).log };
+
+            let log_ptr: *mut logger::Log = log;
+            // SAFETY: see above — single-thread VM; raw-ptr field stores.
+            unsafe {
+                (*jsc_vm).transpiler.linker.log = log_ptr;
+                (*jsc_vm).transpiler.log = log_ptr;
+                (*jsc_vm).transpiler.resolver.log = log_ptr;
+                (*jsc_vm).package_manager().log = log_ptr;
+            }
+            let _restore = scopeguard::guard((jsc_vm, old_log), |(jsc_vm, old_log)| {
+                // SAFETY: same per-thread VM; restoring the original `*mut Log`
+                // values stored above.
+                unsafe {
+                    let old_log_ptr = old_log
+                        .map(|p| p.as_ptr())
+                        .unwrap_or(core::ptr::null_mut());
+                    (*jsc_vm).transpiler.linker.log = old_log_ptr;
+                    (*jsc_vm).transpiler.log = old_log_ptr;
+                    (*jsc_vm).transpiler.resolver.log = old_log_ptr;
+                    (*jsc_vm).package_manager().log = old_log_ptr;
+                }
+            });
+
+            // We _must_ link because:
+            // - node_modules bundle won't be properly
+            // SAFETY: per-thread VM; `linker` is a value field of `transpiler`.
+            unsafe {
+                (*jsc_vm).transpiler.linker.link::<false, true>(
+                    &path,
+                    &mut parse_result,
+                    &(*jsc_vm).origin,
+                    bun_bundler::options::ImportPathFormat::AbsolutePath,
+                )?;
+            }
+            self.parse_result = parse_result;
+            let parse_result = &self.parse_result;
+
+            // PORT NOTE: `VirtualMachine.source_code_printer` is a thread-local
+            // `?*BufferPrinter` (see `SOURCE_CODE_PRINTER`); Zig dereferenced
+            // to copy by value, reset, and wrote back in a `defer`. We mirror
+            // with `clone()`/scopeguard write-back to preserve the same
+            // buffer-reuse dance (matches RuntimeTranspilerStore.rs:802).
+            let printer_ptr = crate::virtual_machine::SOURCE_CODE_PRINTER
+                .get()
+                .expect("source_code_printer not initialized");
+            // SAFETY: thread-local owns the leaked Box; only this thread touches it.
+            let source_code_printer = unsafe { printer_ptr.as_mut() };
+            let mut printer = source_code_printer.clone();
+            printer.ctx.reset();
+
+            {
+                // SAFETY: per-thread VM; `source_map_handler` stashes the
+                // `*mut BufferPrinter` and only reborrows inside
+                // `on_source_map_chunk` after the writer's last use retires.
+                let mut mapper =
+                    unsafe { (*jsc_vm).source_map_handler(&mut printer) };
+                let _writeback = scopeguard::guard(
+                    (
+                        source_code_printer as *mut bun_js_printer::BufferPrinter,
+                        &mut printer as *mut _,
+                    ),
+                    |(dst, src)| {
+                        // SAFETY: both pointees outlive this scope; no aliases at drop.
+                        unsafe { *dst = (*src).clone() };
+                    },
+                );
+                // SAFETY: per-thread VM.
+                let _ = unsafe {
+                    (*jsc_vm).transpiler.print_with_source_map(
+                        // PORT NOTE: `print_with_source_map` consumes
+                        // `ParseResult` by value (it moves `ast` into
+                        // `print_ast`). Clone — `self.parse_result` is read
+                        // again below for `is_commonjs_module` / `input_fd`.
+                        parse_result.clone(),
+                        &mut printer,
+                        bun_js_printer::Format::EsmAscii,
+                        mapper.get(),
+                        None,
+                    )
+                }?;
+            }
+
+            #[cfg(feature = "dump_source")]
+            {
+                crate::runtime_transpiler_store::dump_source_string(
+                    // SAFETY: per-thread VM.
+                    unsafe { &*jsc_vm },
+                    specifier,
+                    printer.ctx.get_written(),
+                );
+            }
+            // TODO(port): Environment.dump_source mapped to cfg feature; confirm flag name.
+
+            let is_commonjs_module = parse_result.ast.has_commonjs_export_names
+                || parse_result.ast.exports_kind == bun_js_parser::ExportsKind::Cjs;
+
+            // SAFETY: per-thread VM.
+            if unsafe { (*jsc_vm).is_watcher_enabled() } {
+                // SAFETY: per-thread VM.
+                let mut resolved_source = unsafe {
+                    (*jsc_vm).ref_counted_resolved_source::<false>(
+                        printer.ctx.written(),
+                        BunString::init(specifier),
+                        path.text,
+                        None,
+                    )
+                };
+
+                if let Some(fd_) = parse_result.input_fd {
+                    if bun_paths::is_absolute(path.text)
+                        && !strings::contains(path.text, b"node_modules")
+                    {
+                        // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set
+                        // when `is_watcher_enabled()`; cast recovers the
+                        // concrete type (matches VirtualMachine.rs:2301).
+                        let watcher = unsafe {
+                            &mut *((*jsc_vm).bun_watcher
+                                as *mut crate::hot_reloader::ImportWatcher)
+                        };
+                        let _ = watcher.add_file::<true>(
+                            fd_,
+                            path.text,
+                            self.hash,
+                            options::Loader::from_api(self.loader),
+                            Fd::invalid(),
+                            // TODO(port): `&PackageJSON` → `&mut PackageJSON`
+                            // mismatch — `ImportWatcher::add_file` takes
+                            // `Option<&mut>` but `self.package_json` is
+                            // `Option<&>`. Zig passed a `*const`-ish slice
+                            // through; the watcher only reads it. Phase B:
+                            // relax `add_file`'s param to `Option<&>`.
+                            None,
+                        );
+                    }
+                }
+
+                resolved_source.is_commonjs_module = is_commonjs_module;
+
+                return Ok(resolved_source);
+            }
+
+            Ok(ResolvedSource {
+                allocator: core::ptr::null_mut(),
+                source_code: BunString::clone_latin1(printer.ctx.get_written()),
+                specifier: BunString::init(specifier),
+                source_url: BunString::init(path.text),
+                is_commonjs_module,
+                ..Default::default()
+            })
         }
     }
 }

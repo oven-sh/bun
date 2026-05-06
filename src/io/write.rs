@@ -261,6 +261,10 @@ impl Write for DiscardingWriter {
         self.count += n;
         Ok(())
     }
+    #[inline]
+    fn written_len(&self) -> usize {
+        self.count
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════

@@ -112,6 +112,10 @@ impl ImportWatcher {
 
 pub type HotReloader = NewHotReloader<VirtualMachine, EventLoop, false>;
 pub type WatchReloader = NewHotReloader<VirtualMachine, EventLoop, true>;
+/// The concrete `HotReloadTask` instance the JS event loop dispatches
+/// (`jsc.hot_reloader.HotReloader.Task` in Zig). The dyn trait of the same
+/// name below is the type-erased view used by `HotReloaderCtx::reload`.
+pub type HotReloadTask = Task<VirtualMachine, EventLoop, false>;
 
 /// Replaces Zig's structural duck-typing on `Ctx` (`this.ctx.eventLoop()`,
 /// `this.ctx.bun_watcher`, `this.ctx.bustDirCache`, `this.ctx.getLoaders`,

@@ -950,11 +950,7 @@ impl FileSink {
     }
 
     pub fn sink(&mut self) -> crate::webcore::sink::Sink<'_> {
-        // `Sink::init` is the gated `js_sink!` entry; the un-gated path is
-        // `init_with_type<T: SinkHandler>`, but `FileSink` does not yet impl
-        // `SinkHandler` (return-type mismatch on `connect`).
-        let _ = self;
-        todo!("blocked_on: bun_runtime::webcore::sink::SinkHandler for FileSink")
+        crate::webcore::sink::Sink::init(self)
     }
 
     pub fn update_ref(&mut self, value: bool) {

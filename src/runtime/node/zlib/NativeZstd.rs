@@ -217,7 +217,7 @@ impl Default for Context {
         Self {
             mode: NodeMode::NONE,
             state: None,
-            flush: c::ZSTD_e_continue,
+            flush: c::ZSTD_e_continue as c_int,
             input: c::ZSTD_inBuffer { src: ptr::null(), size: 0, pos: 0 },
             output: c::ZSTD_outBuffer { dst: ptr::null_mut(), size: 0, pos: 0 },
             pledged_src_size: u64::MAX,

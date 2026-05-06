@@ -1562,17 +1562,22 @@ fn transpile_source_code_inner(
                 // fall-through to the non-watcher tail below is an explicit,
                 // intentional degradation rather than a silent live divergence.
                 if unsafe { (*jsc_vm).is_watcher_enabled() } {
+                    // SAFETY: `extra.source_code_printer` is non-null per
+                    // `TranspileExtra` contract; rederive after the print block
+                    // (Stacked Borrows — see the matching note below).
+                    let printer: &mut bun_js_printer::BufferPrinter =
+                        unsafe { &mut *(*extra).source_code_printer };
                     let mut resolved_source = unsafe {
-                        (*jsc_vm).ref_counted_resolved_source(
+                        (*jsc_vm).ref_counted_resolved_source::<false>(
                             printer.ctx.get_written(),
                             input_specifier,
                             path.text,
                             None,
-                            false,
                         )
                     };
                     resolved_source.is_commonjs_module = is_commonjs_module;
-                    resolved_source.module_info = module_info;
+                    // TODO(b2-blocked): `analyze_transpiled_module::ModuleInfo::create`.
+                    resolved_source.module_info = core::ptr::null_mut();
                     return Ok(resolved_source);
                 }
 

@@ -855,32 +855,35 @@ impl BunxCommand {
         bun_output::scoped_log!(bunx, "try run existing? {}", look_for_existing_bin);
         if look_for_existing_bin {
             'try_run_existing: {
-                let mut destination_: Option<&ZStr> = None;
-
-                // Only use the system-installed version if there is no version specified
-                if update_request.version.literal.is_empty() {
-                    // If the bin name is a guess derived from a scoped package name,
-                    // exclude the original system $PATH so we don't match unrelated
-                    // system binaries. Only search local node_modules/.bin directories.
-                    destination_ = bun_core::which(
-                        as_core_path_buf(&mut path_buf),
-                        if initial_bin_name_is_a_guess { &local_bin_dirs } else { &path_for_bin_dirs },
-                        if !ignore_cwd.is_empty() { b"" } else { top_level_dir },
-                        initial_bin_name,
-                    );
-                }
-
                 // Similar to "npx":
                 //
                 //  1. Try the bin in the current node_modules and then we try the bin in the global cache
-                let dest_or_cache = match destination_ {
-                    Some(d) => Some(d),
-                    None => bun_core::which(
+                //
+                // PORT NOTE: Zig kept a single `?[:0]const u8 destination_` and
+                // `orelse`d the cache probe. NLL can't see that the buffer
+                // borrow is dead in the `None` arm, so we fold both probes into
+                // one labeled block instead.
+                let dest_or_cache: Option<&ZStr> = 'find: {
+                    // Only use the system-installed version if there is no version specified
+                    if update_request.version.literal.is_empty() {
+                        // If the bin name is a guess derived from a scoped package name,
+                        // exclude the original system $PATH so we don't match unrelated
+                        // system binaries. Only search local node_modules/.bin directories.
+                        if let Some(d) = bun_core::which(
+                            as_core_path_buf(&mut path_buf),
+                            if initial_bin_name_is_a_guess { &local_bin_dirs } else { &path_for_bin_dirs },
+                            if !ignore_cwd.is_empty() { b"" } else { top_level_dir },
+                            initial_bin_name,
+                        ) {
+                            break 'find Some(d);
+                        }
+                    }
+                    bun_core::which(
                         as_core_path_buf(&mut path_buf),
                         bunx_cache_dir,
                         if !ignore_cwd.is_empty() { b"" } else { top_level_dir },
                         absolute_in_cache_dir,
-                    ),
+                    )
                 };
                 if let Some(destination) = dest_or_cache {
                     let out: &[u8] = destination.as_bytes();

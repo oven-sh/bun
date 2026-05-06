@@ -3367,7 +3367,7 @@ unsafe fn resolve_hook(
             specifier_utf8.slice(),
             source_utf8.slice(),
             bun_core::err!("NameTooLong"),
-            import_kind,
+            import_kind.into(),
         ));
         let msg = logger::Msg {
             data: logger::range_data(None, logger::Range::NONE, printed),

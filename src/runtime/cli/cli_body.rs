@@ -1533,7 +1533,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
 
                     let mut prefilled_i: usize = 0;
                     for cur in results {
-                        if cur.is_empty() || !strings::has_prefix(cur, filter[1]) {
+                        if cur.is_empty() || !strings::has_prefix(cur, &filter[1]) {
                             continue;
                         }
                         prefilled_completions[prefilled_i] = cur;

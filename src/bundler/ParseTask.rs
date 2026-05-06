@@ -1253,14 +1253,23 @@ fn get_code_for_parse_task_without_plugins(
                 false,
                 contents_file.unwrap_valid(),
             ) {
-                Ok(e) => Ok(CacheEntry {
-                    contents: crate::cache::Contents::SharedBuffer {
-                        ptr: e.contents.as_ptr(),
-                        len: e.contents.len(),
-                    },
-                    fd: e.fd,
-                    ..Default::default()
-                }),
+                Ok(e) => {
+                    // PORT NOTE: `bun_resolver::cache::Entry` ↔ `crate::cache::Entry`
+                    // are structurally identical CYCLEBREAK twins; convert
+                    // by-variant so ownership of `Owned(Vec<u8>)` transfers.
+                    use bun_resolver::cache::Contents as RC;
+                    let contents = match e.contents {
+                        RC::Empty => crate::cache::Contents::Empty,
+                        RC::Owned(v) => crate::cache::Contents::Owned(v),
+                        RC::SharedBuffer { ptr, len } => {
+                            crate::cache::Contents::SharedBuffer { ptr, len }
+                        }
+                        RC::External { ptr, len } => {
+                            crate::cache::Contents::External { ptr, len }
+                        }
+                    };
+                    Ok(CacheEntry { contents, fd: e.fd, ..Default::default() })
+                }
                 Err(e) => {
                     let source = Source::init_empty_file(
                         // TODO(port): zig duped via log.msgs.allocator

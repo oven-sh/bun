@@ -403,6 +403,23 @@ pub mod bun_renamer {
         Number(Box<bun_js_printer::renamer::NumberRenamer>),
         Minify(Box<bun_js_printer::renamer::MinifyRenamer>),
     }
+
+    impl ChunkRenamer {
+        pub fn name_for_symbol(&mut self, ref_: bun_js_parser::Ref) -> &[u8] {
+            match self {
+                ChunkRenamer::None => unreachable!("ChunkRenamer not initialized"),
+                ChunkRenamer::Number(r) => r.name_for_symbol(ref_),
+                ChunkRenamer::Minify(r) => r.name_for_symbol(ref_),
+            }
+        }
+        pub fn as_renamer(&mut self) -> bun_js_printer::renamer::Renamer<'_> {
+            match self {
+                ChunkRenamer::None => unreachable!("ChunkRenamer not initialized"),
+                ChunkRenamer::Number(r) => bun_js_printer::renamer::Renamer::NumberRenamer(r),
+                ChunkRenamer::Minify(r) => bun_js_printer::renamer::Renamer::MinifyRenamer(r),
+            }
+        }
+    }
 }
 
 /// `HTMLImportManifest` — bundler-calling-convention adapter over the real

@@ -1460,8 +1460,8 @@ impl VirtualMachine {
         let global_ref = unsafe { &*global };
         let promise = if !self.main_is_html_entrypoint {
             let name = bun_string::String::borrow_utf8(MAIN_FILE_NAME);
-            jsc::JSModuleLoader::load_and_evaluate_module(global_ref, Some(&name))
-                .map(|p| p as *const _ as *mut JSInternalPromise)
+            jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, Some(&name))
+                .map(NonNull::as_ptr)
                 .ok_or_else(|| bun_core::err!("JSError"))?
         } else {
             // SAFETY: extern "C" FFI; global valid for VM lifetime.
@@ -3013,11 +3013,9 @@ impl VirtualMachine {
 
         // PORT NOTE: reshaped for borrowck.
         let global = self.global;
-        // SAFETY: `global` valid for VM lifetime.
-        let global_ref = unsafe { &*global };
         let main_str = bun_string::String::from_bytes(self.main);
-        let promise = jsc::JSModuleLoader::load_and_evaluate_module(global_ref, Some(&main_str))
-            .map(|p| p as *const _ as *mut JSInternalPromise)
+        let promise = jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, Some(&main_str))
+            .map(NonNull::as_ptr)
             .ok_or_else(|| bun_core::err!("JSError"))?;
         self.pending_internal_promise = Some(promise);
         self.pending_internal_promise_is_protected = false;
@@ -3197,11 +3195,10 @@ impl VirtualMachine {
     /// Spec VirtualMachine.zig:2641 `_loadMacroEntryPoint`.
     #[inline]
     pub fn _load_macro_entry_point(&mut self, entry_path: &[u8]) -> Option<*mut JSInternalPromise> {
-        // SAFETY: `global` valid for VM lifetime.
-        let global_ref = unsafe { &*self.global };
         let path_str = bun_string::String::init(entry_path);
-        let promise = jsc::JSModuleLoader::load_and_evaluate_module(global_ref, Some(&path_str))?;
-        let promise = promise as *const _ as *mut JSInternalPromise;
+        let promise =
+            jsc::JSModuleLoader::load_and_evaluate_module_ptr(self.global, Some(&path_str))?
+                .as_ptr();
         self.wait_for_promise(jsc::AnyPromise::Internal(promise));
         Some(promise)
     }

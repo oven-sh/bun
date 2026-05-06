@@ -1527,13 +1527,15 @@ pub mod package_manifest {
             tmpdir: Fd,
             cache_dir: Fd,
         ) {
+            use bun_threading::thread_pool::{Task as PoolTask, Batch as PoolBatch, Node as PoolNode};
+
             pub struct SaveTask<'a> {
                 manifest: PackageManifest,
                 scope: &'a registry::Scope,
                 tmpdir: Fd,
                 cache_dir: Fd,
 
-                task: ThreadPool::Task,
+                task: PoolTask,
             }
 
             impl<'a> SaveTask<'a> {
@@ -1541,7 +1543,7 @@ pub mod package_manifest {
                     Box::new(init)
                 }
 
-                pub fn run(task: *mut ThreadPool::Task) {
+                pub unsafe fn run(task: *mut PoolTask) {
                     let _tracer = bun_core::perf::trace("PackageManifest.Serializer.save");
 
                     // SAFETY: task points to SaveTask.task

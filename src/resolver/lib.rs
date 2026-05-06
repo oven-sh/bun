@@ -2704,10 +2704,23 @@ pub(crate) mod __forward_decls {
     /// FORWARD_DECL: `bun_install::lockfile::Package`.
     #[derive(Default)]
     pub struct Package {
-        pub name: (),
+        pub name: ::bun_semver::String,
         pub resolution: Resolution,
         pub meta: PackageMeta,
         pub scripts: PackageScripts,
+    }
+    impl Package {
+        /// FORWARD_DECL: `bun_install::lockfile::Package::fromPackageJSON`.
+        /// Auto-install-only — unreachable until bun_install installs itself
+        /// (gated behind `r.package_manager.is_some()`).
+        pub fn from_package_json(
+            _lockfile: &mut crate::package_json::install_stubs::Lockfile,
+            _pm: &mut crate::package_json::install_stubs::PackageManager,
+            _package_json: &crate::package_json::PackageJSON,
+            _features: Install::Features,
+        ) -> Result<Package, bun_core::Error> {
+            Ok(Package::default())
+        }
     }
     #[derive(Default)]
     pub struct PackageMeta { pub id: Install::PackageID }

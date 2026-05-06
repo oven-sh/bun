@@ -575,9 +575,12 @@ impl Default for Linux {
 }
 
 #[cfg(target_os = "linux")]
-struct WdOwner<'a> {
-    // TODO(port): lifetime — TSV says BORROW_PARAM; stored in long-lived map, compared by ptr.
-    watcher: &'a PathWatcher,
+struct WdOwner {
+    /// Raw `*mut` (Zig: `*PathWatcher`). Stored in a long-lived map and mutated
+    /// (`emit`, `platform.wds`) under `manager.mutex`; a `&PathWatcher` here would
+    /// make every write-through a const→mut cast (UB). Lifetime: outlives the entry
+    /// because `remove_watch` drops all of a watcher's wd entries before `destroy()`.
+    watcher: *mut PathWatcher,
     /// Path of the watched directory/file relative to `watcher.path`. Empty for
     /// the root. Owned; freed when this owner is removed from the wd.
     subpath: Box<ZStr>,

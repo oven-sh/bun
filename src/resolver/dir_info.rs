@@ -104,6 +104,24 @@ impl DirInfo {
         self.flags.contains(Flags::InsideNodeModules)
     }
 
+    /// Read-only view of `package_json`. The field stores `NonNull` to preserve
+    /// mut-provenance for `reset()`; callers that only read go through here.
+    #[inline]
+    pub fn package_json(&self) -> Option<&'static PackageJSON> {
+        // SAFETY: ARENA — pointee is interned in the resolver's process-lifetime
+        // PackageJSON arena (see `intern_package_json`); never freed until
+        // `reset()` at shutdown, after which no reader exists.
+        self.package_json.map(|p| unsafe { &*p.as_ptr() })
+    }
+
+    /// Read-only view of `tsconfig_json`. See `package_json()`.
+    #[inline]
+    pub fn tsconfig_json(&self) -> Option<&'static TSConfigJSON> {
+        // SAFETY: ARENA — pointee is a leaked `Box<TSConfigJSON>` interned into
+        // DirInfo (resolver.rs merge loop); outlives every reader until `reset()`.
+        self.tsconfig_json.map(|p| unsafe { &*p.as_ptr() })
+    }
+
     pub fn has_parent_package(&self) -> bool {
         let Some(parent) = self.get_parent() else {
             return false;
@@ -202,19 +220,20 @@ impl DirInfo {
     // explicitly when invalidating the cache slot. Zig name was `deinit`.
     pub fn reset(&mut self) {
         if let Some(p) = self.package_json.take() {
-            // SAFETY: package_json points to a live PackageJSON in the resolver cache;
-            // drop_in_place releases its owned resources in-place (storage itself is
-            // BSS/cache-owned and not freed here, matching Zig `p.deinit()`). Cast away
-            // const — the `&'static T` shape is for ergonomic auto-deref at read sites;
-            // ownership is logically held here.
-            unsafe { core::ptr::drop_in_place(p as *const PackageJSON as *mut PackageJSON) };
+            // SAFETY: `p` carries mut-provenance from `intern_package_json` (NonNull
+            // derived from the arena's `&mut Box<PackageJSON>`); this is the sole
+            // remaining owner at shutdown. `drop_in_place` releases its owned
+            // resources in-place (storage itself is BSS/cache-owned and not freed
+            // here, matching Zig `p.deinit()`).
+            unsafe { core::ptr::drop_in_place(p.as_ptr()) };
         }
         if let Some(t) = self.tsconfig_json.take() {
-            // SAFETY: tsconfig_json points to a live TSConfigJSON in the resolver cache;
-            // drop_in_place releases its owned resources in-place (storage itself is
-            // BSS/cache-owned and not freed here, matching Zig `t.deinit()`). See note
-            // above re const cast.
-            unsafe { core::ptr::drop_in_place(t as *const TSConfigJSON as *mut TSConfigJSON) };
+            // SAFETY: `t` carries mut-provenance from `Box::into_raw` in the
+            // tsconfig merge loop; this is the sole remaining owner at shutdown.
+            // `drop_in_place` releases its owned resources in-place (storage
+            // itself is BSS/cache-owned and not freed here, matching Zig
+            // `t.deinit()`).
+            unsafe { core::ptr::drop_in_place(t.as_ptr()) };
         }
     }
 }

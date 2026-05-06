@@ -165,10 +165,14 @@ impl NativeZlib {
             .as_u32()
             .as_mut_ptr();
         let write_callback = validators::validate_function(global, "writeCallback", arguments.ptr[5])?;
+        // Bind the ArrayBuffer view to a local so the borrowed byte_slice() outlives
+        // the call to `stream.init` below (E0716 otherwise).
+        let dictionary_buf;
         let dictionary = if arguments.ptr[6].is_undefined() {
             None
         } else {
-            Some(arguments.ptr[6].as_array_buffer(global).unwrap().byte_slice())
+            dictionary_buf = arguments.ptr[6].as_array_buffer(global).unwrap();
+            Some(dictionary_buf.byte_slice())
         };
 
         self.write_result = Some(write_result);

@@ -34,7 +34,7 @@ use bun_url::URL;
 use bun_uws::{self as uws, AnyResponse, AnyWebSocket, Opcode, ResponseKind, WebSocketUpgradeContext};
 use bun_uws_sys as uws_sys;
 use crate::bake::{self as bake};
-use crate::bake::dev_server::DevServer;
+use crate::bake::dev_server::{self as dev_server_mod, DevServer};
 use crate::bake::framework_router as FrameworkRouter;
 use bun_paths::fs::FileSystem;
 use bun_standalone_graph::StandaloneModuleGraph;
@@ -897,11 +897,15 @@ impl ServePlugins {
                     }
                     return Ok(GetOrStartLoadResult::Pending);
                 }
-                ServePluginsState::Loaded(plugins) => {
-                    return Ok(GetOrStartLoadResult::Ready(Some(plugins)));
-                }
+                ServePluginsState::Loaded(_) => break,
                 ServePluginsState::Err => return Ok(GetOrStartLoadResult::Err),
             }
+        }
+        // PORT NOTE: split out of the loop so the `Loaded` arm's borrow of
+        // `self.state` doesn't conflict with the `Unqueued` arm's `&mut self`.
+        match &mut self.state {
+            ServePluginsState::Loaded(plugins) => Ok(GetOrStartLoadResult::Ready(Some(plugins))),
+            _ => unreachable!(),
         }
     }
 
@@ -1295,6 +1299,37 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     // doPublish -> publish, doReload -> on_reload, doFetch -> on_fetch, doRequestIP -> request_ip,
     // doTimeout -> timeout
 
+    /// SAFETY: `self.vm` is the per-thread singleton (`&'static`); reborrow exclusively
+    /// for the duration of one mutating call. Caller must not hold another `&mut VirtualMachine`.
+    #[inline]
+    fn vm_mut(&self) -> &mut jsc::virtual_machine::VirtualMachine {
+        // SAFETY: see fn doc — singleton VM, single-threaded JS runtime.
+        unsafe {
+            &mut *(self.vm as *const jsc::virtual_machine::VirtualMachine
+                as *mut jsc::virtual_machine::VirtualMachine)
+        }
+    }
+
+    pub fn get_plugins(&self) -> PluginsResult<'_> {
+        match &self.plugins {
+            None => PluginsResult::Found(None),
+            Some(p) => match &p.state {
+                ServePluginsState::Unqueued(_) | ServePluginsState::Pending { .. } => PluginsResult::Pending,
+                ServePluginsState::Loaded(plugin) => PluginsResult::Found(Some(plugin)),
+                ServePluginsState::Err => PluginsResult::Err,
+            },
+        }
+    }
+
+    pub fn get_plugins_async(
+        &mut self,
+        _bundle: &mut html_bundle::HTMLBundleRoute,
+        _raw_plugins: &[&[u8]],
+        _bunfig_path: &[u8],
+    ) {
+        todo!("blocked_on: bun_runtime::server::ServePlugins::loadAndResolvePluginsForHtmlBundle")
+    }
+
     /// Returns:
     /// - .ready if no plugin has to be loaded
     /// - .err if there is a cached failure. Currently, this requires restarting the entire server.
@@ -1338,7 +1373,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         // SAFETY: self.app is Some and points to a live uws App for the lifetime of any JS-reachable Server
-        Ok(JSValue::js_number(f64::from(unsafe { &*self.app.unwrap() }.num_subscribers(topic.slice()))))
+        Ok(JSValue::js_number(f64::from(unsafe { &mut *self.app.unwrap() }.num_subscribers(topic.slice()))))
     }
 
     // `#[bun_jsc::JsClass]` emits the C-ABI `*Class__construct` shim that calls
@@ -1377,7 +1412,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     #[bun_jsc::host_fn(method)]
     pub fn timeout(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<2>().slice();
+        let arguments_buf = callframe.arguments_old::<2>();
+        let arguments = arguments_buf.slice();
         if arguments.len() < 2 || arguments[0].is_empty_or_undefined_or_null() {
             return Err(throw_not_enough_arguments(global, "timeout", 2, arguments.len()));
         }
@@ -1861,7 +1897,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 headers,
                 // TODO(port): blocked_on: bun_jsc::VirtualMachine::init_request_body_value
                 // Upstream returns *mut c_void; Request::init2 expects Arc<BodyValue>. Wrap directly here.
-                std::sync::Arc::new(body),
+                Box::new(body),
                 method,
             );
         } else if first_arg.is_object() && {
@@ -1871,7 +1907,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         } {
             todo!("blocked_on: webcore::request::Request: JsClass");
             #[allow(unreachable_code)]
-            { existing_request = Request::init2(BunString::empty(), None, std::sync::Arc::new(BodyValue::Null), Method::GET); }
+            { existing_request = Request::init2(BunString::empty(), None, Box::new(BodyValue::Null), Method::GET); }
         } else {
             // Local shim — `JSValueGetType` lives in the gated `jsc::_gated::c_api` and is
             // not re-exported through `jsc::C`. Declare the FFI here so we don't depend on
@@ -1970,12 +2006,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         if let Some(listener) = self.listener {
             // SAFETY: listener is a live uws ListenSocket FFI handle until stop_listening() nulls it
-            return JSValue::js_number(unsafe { &*listener }.get_local_port() as f64);
+            return JSValue::js_number(unsafe { &mut *listener }.get_local_port() as f64);
         }
         if Self::HAS_H3 {
             if let Some(h3l) = self.h3_listener {
                 // SAFETY: h3_listener is a live H3 ListenSocket FFI handle until stop_listening() nulls it
-                return JSValue::js_number(unsafe { &*h3l }.get_local_port() as f64);
+                return JSValue::js_number(unsafe { &mut *h3l }.get_local_port() as f64);
             }
         }
         match &self.config.address {
@@ -2013,11 +2049,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
                 if let Some(listener) = self.listener {
                     // SAFETY: listener is a live uws ListenSocket FFI handle until stop_listening() nulls it
-                    let listener = unsafe { &*listener };
+                    let listener = unsafe { &mut *listener };
                     port = u16::try_from(listener.get_local_port()).unwrap();
 
                     let mut buf = [0u8; 64];
-                    let Some(address_bytes) = listener.socket().local_address(&mut buf) else {
+                    let Some(address_bytes) = listener.socket::<SSL>().local_address(&mut buf) else {
                         return Ok(JSValue::NULL);
                     };
                     let mut addr = match SocketAddress::init(address_bytes, port) {
@@ -2034,7 +2070,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 if Self::HAS_H3 {
                     if let Some(h3l) = self.h3_listener {
                         // SAFETY: h3_listener is a live H3 ListenSocket FFI handle until stop_listening() nulls it
-                        let h3l = unsafe { &*h3l };
+                        let h3l = unsafe { &mut *h3l };
                         port = u16::try_from(h3l.get_local_port()).unwrap();
                         let mut buf = [0u8; 64];
                         let Some(address_bytes) = h3l.get_local_address(&mut buf) else {
@@ -2080,11 +2116,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 let mut port: u16 = *tcp_port;
                 if let Some(listener) = self.listener {
                     // SAFETY: listener is a live uws ListenSocket FFI handle until stop_listening() nulls it
-                    port = u16::try_from(unsafe { &*listener }.get_local_port()).unwrap();
+                    port = u16::try_from(unsafe { &mut *listener }.get_local_port()).unwrap();
                 } else if Self::HAS_H3 {
                     if let Some(h3l) = self.h3_listener {
                         // SAFETY: h3_listener is a live H3 ListenSocket FFI handle until stop_listening() nulls it
-                        port = u16::try_from(unsafe { &*h3l }.get_local_port()).unwrap();
+                        port = u16::try_from(unsafe { &mut *h3l }.get_local_port()).unwrap();
                     }
                 }
                 break 'blk bun_fmt::URLFormatter {
@@ -2119,7 +2155,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             if let Some(listener) = self.listener {
                 let mut buf = [0u8; 1024];
                 // SAFETY: listener is a live uws ListenSocket FFI handle until stop_listening() nulls it
-                if let Some(addr) = unsafe { &*listener }.socket().remote_address(&mut buf[..1024]) {
+                if let Some(addr) = unsafe { &mut *listener }.socket::<SSL>().remote_address(&mut buf[..1024]) {
                     if !addr.is_empty() {
                         return jsc::bun_string_jsc::create_utf8_for_js(global, addr);
                     }
@@ -2269,7 +2305,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // `this.memoryCost()` bytes.
             if let Some(dev) = self.dev_server.take() {
                 if let Some(app) = self.app {
-                    unsafe { &*app }.clear_routes();
+                    unsafe { &mut *app }.clear_routes();
                 }
                 drop(dev);
             }
@@ -2312,7 +2348,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if !SSL {
             // SAFETY: vm is the per-thread singleton; cast through global_this for &mut access.
             unsafe { &mut *(self.vm as *const _ as *mut jsc::virtual_machine::VirtualMachine) }
-                .remove_listening_socket_for_watch_mode(unsafe { &*listener }.socket().fd());
+                .remove_listening_socket_for_watch_mode(unsafe { &mut *listener }.socket::<SSL>().fd());
         }
 
         self.notify_inspector_server_stopped();
@@ -2341,8 +2377,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             self.js_value.downgrade();
         }
         if self.config.allow_hot && !self.config.id.is_empty() {
-            if let Some(hot) = unsafe { &*self.global_this }.bun_vm().hot_map() {
-                hot.remove(&self.config.id);
+            // SAFETY: bun_vm() returns the per-thread singleton VM pointer.
+            if let Some(hot) = unsafe { &mut *(&*self.global_this).bun_vm() }.hot_map() {
+                hot.remove(self.config.id.as_bytes());
             }
         }
 
@@ -2372,7 +2409,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     Ok(())
                 },
             });
-            self.vm.enqueue_task(jsc::Task::init(Box::into_raw(task)));
+            self.vm_mut().enqueue_task(jsc::Task::init(Box::into_raw(task)));
         }
 
         // Zig: jsc.AnyTask.New(ThisServer, deinit).init(this)
@@ -2383,17 +2420,21 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 Ok(())
             },
         });
-        self.vm.enqueue_task(jsc::Task::init(Box::into_raw(task)));
+        self.vm_mut().enqueue_task(jsc::Task::init(Box::into_raw(task)));
     }
 
     fn notify_inspector_server_stopped(&mut self) {
-        if self.inspector_server_id.to_optional().unwrap().is_some() {
+        if self.inspector_server_id.get() != 0 {
             #[cold] fn cold() {}
             cold();
-            if let Some(debugger) = &mut self.vm.debugger {
+            if let Some(debugger) = &mut self.vm_mut().debugger {
                 cold();
-                debugger.http_server_agent.notify_server_stopped(AnyServer::from(self));
-                self.inspector_server_id = DebuggerId::init(0);
+                let _ = &debugger.http_server_agent;
+                // TODO(port): HTTPServerAgent is a forward-decl stub in bun_jsc::Debugger;
+                // the real `notify_server_stopped` lives in the gated http_server_agent crate.
+                todo!("blocked_on: bun_jsc::debugger::HTTPServerAgent::notify_server_stopped");
+                #[allow(unreachable_code)]
+                { self.inspector_server_id = DebuggerId::new(0); }
             }
         }
     }
@@ -2429,18 +2470,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let base_url: Box<[u8]> = strings::trim(config.base_url.href, b"/").into();
         // errdefer free(base_url) — Box drops on Err automatically
 
-        let dev_server = if let Some(bake_options) = &mut config.bake {
-            Some(DevServer::DevServer::init(DevServer::Options {
-                arena: &bake_options.arena,
-                root: bake_options.root,
-                framework: bake_options.framework,
-                bundler_options: bake_options.bundler_options,
-                vm: global.bun_vm(),
-                broadcast_console_log_from_browser_to_server:
-                    config.broadcast_console_log_from_browser_to_server_for_bake,
-                dump_sources: None,
-                dump_state_on_crash: None,
-            })?)
+        let dev_server: Option<Box<DevServer>> = if let Some(_bake_options) = &mut config.bake {
+            // TODO(port): bake::UserOptions field shapes (root: &ZStr, framework/bundler_options
+            // by value) don't yet line up with dev_server::Options; defer until both stabilize.
+            todo!("blocked_on: bun_runtime::bake::dev_server::Options field-shape mismatch");
+            #[allow(unreachable_code)]
+            Some(dev_server_mod::init(todo!())?)
         } else {
             None
         };

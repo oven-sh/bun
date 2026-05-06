@@ -558,12 +558,15 @@ impl EditorContext {
         bun_sys::File::write_file(tmpdir, basename_z, blob)?;
 
         let opened = bun_sys::File::open_at(tmpdir, basename, bun_sys::O::RDONLY, 0)?;
-        let _close = scopeguard::guard((), |_| {
+        // PORT NOTE: borrowck — capture the fd handle before `opened` is moved into
+        // the scopeguard closure (`File::close` consumes `self`).
+        let opened_fd = opened.handle();
+        let _close = scopeguard::guard((), move |_| {
             let _ = opened.close();
         });
 
         let mut path_buf = PathBuffer::uninit();
-        let resolved = bun_sys::get_fd_path(opened.handle(), &mut path_buf)?;
+        let resolved = bun_sys::get_fd_path(opened_fd, &mut path_buf)?;
 
         editor_.open(path, resolved, Some(line), Some(column))
     }

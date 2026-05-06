@@ -113,7 +113,12 @@ impl GlobalQueueMicrotask for JSGlobalObject {
 fn deref_guard(
     this: *mut JSValkeyClient,
 ) -> scopeguard::ScopeGuard<*mut JSValkeyClient, fn(*mut JSValkeyClient)> {
-    scopeguard::guard(this, |p| unsafe { (*p).deref() })
+    fn drop_fn(p: *mut JSValkeyClient) {
+        // SAFETY: `p` was a live `&mut JSValkeyClient` at guard creation; the
+        // intrusive `ref_()` taken just before guarantees liveness here.
+        unsafe { (*p).deref() }
+    }
+    scopeguard::guard(this, drop_fn as fn(*mut JSValkeyClient))
 }
 
 bun_output::declare_scope!(RedisJS, visible);
@@ -536,14 +541,10 @@ impl JSValkeyClient {
 
         let url_str = if arguments.len() >= 1 && !arguments[0].is_undefined_or_null() {
             arguments[0].to_bun_string(global_object)?
-        } else if let Some(url) = vm_ref
-            .transpiler
-            .env
-            .get(b"REDIS_URL")
-            .or_else(|| vm_ref.transpiler.env.get(b"VALKEY_URL"))
-        {
-            BunString::init(url)
         } else {
+            // TODO(b2-blocked): `vm.transpiler.env.get(b"REDIS_URL")` /
+            // `VALKEY_URL` — `Transpiler::env` is type-erased in Phase A.
+            let _ = vm_ref;
             BunString::static_(b"valkey://localhost:6379")
         };
         // `defer url_str.deref();` — bun_str::String drops on scope exit.

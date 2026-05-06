@@ -18,7 +18,10 @@ use crate::webcore::s3::client::{
     S3ListObjectsOptions, S3ListObjectsResult, ACL, StorageClass,
 };
 use crate::webcore::s3::client as s3_client;
-use crate::webcore::s3::error_jsc::S3ErrorJsc as _;
+// `error_jsc` is a sub-module of the client umbrella (`client.rs` declares
+// `pub mod error_jsc`); the inline `mod s3 { }` in webcore.rs does not re-export
+// it directly, so reach it through `client::`.
+use crate::webcore::s3::client::S3ErrorJsc as _;
 use bun_url::URL;
 
 use super::{Blob, SizeType};
@@ -308,7 +311,18 @@ impl Store {
 
                 match &file.pathlike {
                     PathOrFileDescriptor::Fd(fd) => {
-                        writer.write_struct(fd)?;
+                        // PORT NOTE: Zig `writer.writeStruct(fd)` writes the raw
+                        // bytes of the FD wrapper. `bun_io::Write` has no
+                        // `write_struct`; shim it locally over the POD bytes.
+                        // SAFETY: `bun_sys::Fd` is a `#[repr(C)]`/transparent
+                        // integer wrapper — every bit pattern is valid `u8`.
+                        let bytes = unsafe {
+                            core::slice::from_raw_parts(
+                                (fd as *const bun_sys::Fd).cast::<u8>(),
+                                core::mem::size_of::<bun_sys::Fd>(),
+                            )
+                        };
+                        writer.write_all(bytes)?;
                     }
                     PathOrFileDescriptor::Path(path) => {
                         let path_slice = path.slice();
@@ -575,26 +589,39 @@ impl File {
     pub fn unlink(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         match &self.pathlike {
             PathOrFileDescriptor::Path(path_like) => {
+                // PORT NOTE: Zig `slice.toOwned()` / `toSliceClone()` are
+                // fallible only on OOM; the Rust ports return the slice
+                // directly (mimalloc aborts on OOM), so no `?`.
                 let encoded_slice = match path_like {
-                    PathLike::EncodedSlice(slice) => slice.to_owned()?,
-                    _ => ZigString::from_utf8(path_like.slice()).to_slice_clone()?,
+                    PathLike::EncodedSlice(slice) => {
+                        bun_str::ZigStringSlice::Owned(slice.slice().to_vec())
+                    }
+                    _ => ZigString::from_utf8(path_like.slice()).to_slice_clone(),
                 };
-                // TODO(port): jsc.Node.fs.Async.unlink.create — second arg is `undefined` in Zig
+                // Zig passes `undefined` for the `*Binding` arg (it is unused in
+                // `AsyncFSTask::create`). `Binding` is an opaque ZST in
+                // `node_fs.rs`; zero-init a local stand-in.
+                // SAFETY: ZST — `zeroed()` produces a valid value.
+                let mut binding: node_fs::Binding = unsafe { core::mem::zeroed() };
                 // SAFETY: `bun_vm()` returns the live per-global VM pointer; the
                 // task is created on the JS thread that owns it.
-                node_fs::async_::Unlink::create(
+                Ok(node_fs::async_::Unlink::create(
                     global_this,
-                    /* undefined */ Default::default(),
+                    &mut binding,
                     node_fs::args::Unlink {
                         path: PathLike::EncodedSlice(encoded_slice),
                     },
                     unsafe { &mut *global_this.bun_vm() },
-                )
+                ))
             }
             PathOrFileDescriptor::Fd(_) => Ok(JSPromise::resolved_promise_value(
                 global_this,
-                global_this
-                    .create_invalid_args("Is not possible to unlink a file descriptor", &[]),
+                // `JSGlobalObject::create_invalid_args` lives in the still-gated
+                // `JSGlobalObject.rs`; `ERR_INVALID_ARG_TYPE` (lib.rs) is the
+                // same `ErrorCode::INVALID_ARG_TYPE.fmt(...)` body.
+                global_this.ERR_INVALID_ARG_TYPE(format_args!(
+                    "Is not possible to unlink a file descriptor"
+                )),
             )),
         }
     }
@@ -741,12 +768,13 @@ impl S3 {
 
         let promise = bun_jsc::JSPromiseStrong::init(global_this);
         let value = promise.value();
-        let proxy_url = global_this
-            .bun_vm()
-            .transpiler
-            .env
-            .get_http_proxy(true, None, None);
-        let proxy = proxy_url.as_ref().map(|url| url.href());
+        // SAFETY: `bun_vm()` returns the live per-global VM pointer (JS thread);
+        // `transpiler.env` is the process-singleton dotenv loader, never null
+        // once the VM is initialised.
+        let proxy_url: Option<URL<'_>> = unsafe {
+            (*(*global_this.bun_vm()).transpiler.env).get_http_proxy(true, None, None)
+        };
+        let proxy = proxy_url.as_ref().map(|url| url.href);
         let aws_options = self.get_credentials_with_options(extra_options, global_this)?;
         // `defer aws_options.deinit()` → Drop handles it.
 
@@ -776,10 +804,9 @@ impl S3 {
         extra_options: Option<JSValue>,
     ) -> JsResult<JSValue> {
         if !list_options.is_empty_or_undefined_or_null() && !list_options.is_object() {
-            return global_this.throw_invalid_arguments(
+            return Err(global_this.throw_invalid_arguments(
                 "S3Client.listObjects() needs a S3ListObjectsOption as it's first argument",
-                &[],
-            );
+            ));
         }
 
         struct Wrapper {
@@ -806,10 +833,9 @@ impl S3 {
                         // `defer list_result.deinit()` → Drop handles it.
                         let list_result_js = match list_result.to_js(global_object) {
                             Ok(v) => v,
-                            Err(_) => {
-                                return self_
-                                    .promise
-                                    .reject(global_object, bun_core::err!("JSError"));
+                            Err(e) => {
+                                // Zig: `catch return self.promise.reject(global, error.JSError)`
+                                return self_.promise.reject(global_object, Err(e));
                             }
                         };
                         self_.promise.resolve(global_object, list_result_js)?;
@@ -837,29 +863,41 @@ impl S3 {
 
         let promise = bun_jsc::JSPromiseStrong::init(global_this);
         let value = promise.value();
-        let proxy_url = global_this
-            .bun_vm()
-            .transpiler
-            .env
-            .get_http_proxy(true, None, None);
-        let proxy = proxy_url.as_ref().map(|url| url.href());
+        // SAFETY: `bun_vm()` returns the live per-global VM pointer (JS thread);
+        // `transpiler.env` is the process-singleton dotenv loader, never null
+        // once the VM is initialised.
+        let proxy_url: Option<URL<'_>> = unsafe {
+            (*(*global_this.bun_vm()).transpiler.env).get_http_proxy(true, None, None)
+        };
+        let proxy = proxy_url.as_ref().map(|url| url.href);
         let aws_options = self.get_credentials_with_options(extra_options, global_this)?;
         // `defer aws_options.deinit()` → Drop handles it.
 
         let options = s3_client::get_list_objects_options_from_js(global_this, list_options)?;
 
+        // PORT NOTE: Zig passed `options` by-value to both `bun.S3.listObjects`
+        // and `Wrapper.resolvedlistOptions` (implicit struct copy).
+        // `S3ListObjectsOptions` is not `Clone` in Rust (owns `Utf8Slice`s);
+        // box the wrapper first so the options live on the heap, then hand a
+        // borrow to `list_objects` (which only reads them synchronously to
+        // build the search-params string). The wrapper retains ownership for
+        // `Drop` after the async callback — matching Zig's `deinit()`.
+        let wrapper = Box::into_raw(Box::new(Wrapper {
+            promise,
+            // SAFETY: `store` is a live heap `Store`; `retained` bumps the
+            // intrusive refcount (Zig: `store.ref()`).
+            store: unsafe { StoreRef::retained(NonNull::from(store)) },
+            resolved_list_options: options,
+            global: global_this as *const _,
+        }));
+
         s3_client::list_objects(
             &aws_options.credentials,
-            options.clone(),
+            // SAFETY: `wrapper` is freshly leaked and untouched until the
+            // callback; this borrow ends before any other access.
+            unsafe { &(*wrapper).resolved_list_options },
             Wrapper::resolve,
-            Box::into_raw(Box::new(Wrapper {
-                promise,
-                // SAFETY: `store` is a live heap `Store`; `retained` bumps the
-                // intrusive refcount (Zig: `store.ref()`).
-                store: unsafe { StoreRef::retained(NonNull::from(store)) },
-                resolved_list_options: options,
-                global: global_this as *const _,
-            })) as *mut c_void,
+            wrapper as *mut c_void,
             proxy,
         )?;
 
@@ -876,7 +914,10 @@ impl S3 {
             credentials: Some(Arc::clone(&credentials)),
             pathlike,
             mime_type: mime_type.unwrap_or(bun_http_types::MimeType::OTHER),
-            ..Default::default()
+            options: MultiPartUploadOptions::default(),
+            acl: None,
+            storage_class: None,
+            request_payer: false,
         }
     }
 
@@ -886,7 +927,10 @@ impl S3 {
             credentials: Some(Arc::new(credentials)),
             pathlike,
             mime_type: mime_type.unwrap_or(bun_http_types::MimeType::OTHER),
-            ..Default::default()
+            options: MultiPartUploadOptions::default(),
+            acl: None,
+            storage_class: None,
+            request_payer: false,
         }
     }
 

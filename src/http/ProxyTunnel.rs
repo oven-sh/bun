@@ -332,16 +332,23 @@ fn on_handshake(ctx: *mut HTTPClient, handshake_success: bool, ssl_error: uws::u
         if this.flags.reject_unauthorized {
             // only reject the connection if reject_unauthorized == true
             if this.flags.did_have_handshaking_error {
-                proxy.close(crate::get_cert_error_from_no(handshake_error.error_no));
+                let err = crate::get_cert_error_from_no(handshake_error.error_no);
+                // SAFETY: `this` dead (NLL); reenter via raw ptr so on_close's
+                // fresh `&mut *ctx` does not alias us.
+                unsafe { ProxyTunnel::close_raw(proxy_ptr, err) };
                 return;
             }
 
             // if checkServerIdentity returns false, we dont call open this means that the connection was rejected
-            debug_assert!(proxy.wrapper.is_some());
-            let Some(ssl_ptr) = proxy.wrapper.as_ref().and_then(|w| w.ssl) else { return };
+            // SAFETY: shared read of Copy field through raw ptr; caller's
+            // `&mut SSLWrapper` is live on this memory but we only read.
+            let ssl_opt = unsafe { (*proxy_ptr).wrapper.as_ref().and_then(|w| w.ssl) };
+            debug_assert!(unsafe { (*proxy_ptr).wrapper.is_some() });
+            let Some(ssl_ptr) = ssl_opt else { return };
 
-            match proxy.socket {
-                Socket::Ssl(socket) => {
+            // SAFETY: shared borrow of `socket` only — disjoint from `wrapper`.
+            match unsafe { &*addr_of!((*proxy_ptr).socket) } {
+                &Socket::Ssl(socket) => {
                     if !this.check_server_identity::<true>(socket, handshake_error, ssl_ptr.as_ptr(), false) {
                         scoped_log!(http_proxy_tunnel, "ProxyTunnel onHandshake checkServerIdentity failed");
                         // checkServerIdentity already called closeAndFail()
@@ -351,7 +358,7 @@ fn on_handshake(ctx: *mut HTTPClient, handshake_success: bool, ssl_error: uws::u
                         return;
                     }
                 }
-                Socket::Tcp(socket) => {
+                &Socket::Tcp(socket) => {
                     if !this.check_server_identity::<false>(socket, handshake_error, ssl_ptr.as_ptr(), false) {
                         scoped_log!(http_proxy_tunnel, "ProxyTunnel onHandshake checkServerIdentity failed");
                         // see Ssl arm — `this` may be freed here.
@@ -362,12 +369,17 @@ fn on_handshake(ctx: *mut HTTPClient, handshake_success: bool, ssl_error: uws::u
             }
         }
 
-        match proxy.socket {
-            Socket::Ssl(socket) => {
-                this.on_writable::<true, true>(socket);
+        // `this.on_writable` may reach ProxyTunnel::on_writable → flush() →
+        // write_encrypted, which reborrows the tunnel via raw ptr. Read the
+        // socket out first, then let `this` (NLL) end before the call so the
+        // reentrant `&mut *ctx` inside write_encrypted does not alias.
+        // SAFETY: shared borrow of `socket` only — disjoint from `wrapper`.
+        match unsafe { &*addr_of!((*proxy_ptr).socket) } {
+            &Socket::Ssl(socket) => {
+                unsafe { (*ctx).on_writable::<true, true>(socket) };
             }
-            Socket::Tcp(socket) => {
-                this.on_writable::<true, false>(socket);
+            &Socket::Tcp(socket) => {
+                unsafe { (*ctx).on_writable::<true, false>(socket) };
             }
             Socket::None => {}
         }
@@ -376,11 +388,14 @@ fn on_handshake(ctx: *mut HTTPClient, handshake_success: bool, ssl_error: uws::u
         // if we are here is because server rejected us, and the error_no is the cause of this
         // if we set reject_unauthorized == false this means the server requires custom CA aka NODE_EXTRA_CA_CERTS
         if this.flags.did_have_handshaking_error && handshake_error.error_no != 0 {
-            proxy.close(crate::get_cert_error_from_no(handshake_error.error_no));
+            let err = crate::get_cert_error_from_no(handshake_error.error_no);
+            // SAFETY: `this` dead (NLL); reenter via raw ptr.
+            unsafe { ProxyTunnel::close_raw(proxy_ptr, err) };
             return;
         }
         // if handshake_success it self is false, this means that the connection was rejected
-        proxy.close(err!(ConnectionRefused));
+        // SAFETY: `this` dead (NLL); reenter via raw ptr.
+        unsafe { ProxyTunnel::close_raw(proxy_ptr, err!(ConnectionRefused)) };
         return;
     }
 }

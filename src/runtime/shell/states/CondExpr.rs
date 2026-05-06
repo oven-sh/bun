@@ -50,10 +50,7 @@ impl CondExpr {
         // TODO(b2-blocked): ast::CondExpr::{op, args} + bun_sys stat/lstat —
         // full body (~250 lines) gated. Shape: expand each arg via Expansion,
         // then evaluate the operator (-e/-f/-d/-z/-n/==/!= etc.).
-        
-        {
-            include!("CondExpr_next_body.rs");
-        }
+        // See CondExpr.zig `next()` + `commandImplStart()` for the spec.
         let parent = interp.as_condexpr(this).base.parent;
         interp.child_done(parent, this, 0)
     }

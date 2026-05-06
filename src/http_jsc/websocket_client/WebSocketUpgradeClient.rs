@@ -271,10 +271,10 @@ impl<const SSL: bool> HTTPClient<SSL> {
         let extra_headers =
             unsafe { Headers8Bit::init(header_names, header_values, header_count) };
 
-        let proxy_host_slice: Option<Utf8Slice<'_>> = proxy_host.map(|ph| ph.to_utf8());
-        let target_authorization_slice: Option<Utf8Slice<'_>> =
+        let proxy_host_slice: Option<Utf8Slice> = proxy_host.map(|ph| ph.to_utf8());
+        let target_authorization_slice: Option<Utf8Slice> =
             target_authorization.map(|ta| ta.to_utf8());
-        let unix_socket_path_slice: Option<Utf8Slice<'_>> =
+        let unix_socket_path_slice: Option<Utf8Slice> =
             unix_socket_path.map(|usp| usp.to_utf8());
 
         let using_proxy = proxy_host.is_some();
@@ -311,7 +311,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // request becomes the initial input_body_buf instead.
         let (proxy_state, input_body_buf): (Option<WebSocketProxy>, Vec<u8>) = if using_proxy {
             // Parse proxy authorization (temporary, freed after building CONNECT request)
-            let proxy_auth_decoded: Option<Utf8Slice<'_>> =
+            let proxy_auth_decoded: Option<Utf8Slice> =
                 proxy_authorization.map(|auth| auth.to_utf8());
             let proxy_auth_slice: Option<&[u8]> = proxy_auth_decoded.as_ref().map(|s| s.slice());
 
@@ -572,7 +572,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     }
 
     pub fn clear_data(&mut self) {
-        self.poll_ref.unref(vm_loop_ctx(bun_jsc::virtual_machine::get()));
+        self.poll_ref.unref(vm_loop_ctx(VirtualMachineRef::get()));
 
         self.subprotocols.clear_and_free();
         self.clear_input();
@@ -1911,9 +1911,9 @@ fn build_request_body(
     client_protocol: &[u8],
     extra_headers: &Headers8Bit<'_>,
     target_authorization: Option<&[u8]>,
-    /// When false, don't advertise `permessage-deflate` (matches `ws` with
-    /// `perMessageDeflate: false`). When true, send the default extension
-    /// offer `permessage-deflate; client_max_window_bits`.
+    // When false, don't advertise `permessage-deflate` (matches `ws` with
+    // `perMessageDeflate: false`). When true, send the default extension
+    // offer `permessage-deflate; client_max_window_bits`.
     offer_permessage_deflate: bool,
 ) -> Result<BuildRequestResult, bun_alloc::AllocError> {
     // Check for user overrides
@@ -2076,7 +2076,7 @@ fn build_request_body(
 /// Compute the expected Sec-WebSocket-Accept value per RFC 6455 §4.2.2:
 /// base64(SHA-1(key ++ "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
 fn compute_accept_value(key: &[u8]) -> [u8; 28] {
-    use bun_sha_hmac::hashers::SHA1;
+    use bun_sha_hmac::sha::hashers::SHA1;
     const WEBSOCKET_GUID: &[u8] = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
     let mut hasher = SHA1::init();
     hasher.update(key);

@@ -92,6 +92,22 @@ impl<C: ReaderContext> NewReader<C> {
         Ok(I::from_ne_slice(&data.slice()[..I::SIZE]))
     }
 
+    /// Zig `reader.int(u24)` — read 3 little-endian bytes, zero-extend to u32.
+    pub fn int_u24(self) -> Result<u32, AnyMySQLError> {
+        let data = self.read(3)?;
+        let s = data.slice();
+        Ok(u32::from_le_bytes([s[0], s[1], s[2], 0]))
+    }
+
+    /// Zig `reader.int(i24)` — read 3 little-endian bytes, sign-extend to i32.
+    pub fn int_i24(self) -> Result<i32, AnyMySQLError> {
+        let data = self.read(3)?;
+        let s = data.slice();
+        let u = u32::from_le_bytes([s[0], s[1], s[2], 0]);
+        // sign-extend 24 -> 32
+        Ok(((u as i32) << 8) >> 8)
+    }
+
     pub fn encode_len_string(self) -> Result<Data, AnyMySQLError> {
         if let Some(result) = decode_length_int(self.peek()) {
             self.skip(result.bytes_read);

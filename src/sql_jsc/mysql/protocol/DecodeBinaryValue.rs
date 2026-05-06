@@ -36,7 +36,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
         FieldType::MYSQL_TYPE_TINY => {
             if raw {
                 let data = reader.read(1)?;
-                return Ok(SQLDataCell::raw(&data));
+                return Ok(SQLDataCell::raw(Some(&data)));
             }
             let val = reader.byte()?;
             if unsigned {
@@ -49,7 +49,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
         FieldType::MYSQL_TYPE_SHORT => {
             if raw {
                 let data = reader.read(2)?;
-                return Ok(SQLDataCell::raw(&data));
+                return Ok(SQLDataCell::raw(Some(&data)));
             }
             if unsigned {
                 return Ok(SQLDataCell { tag: CellTag::Uint4, value: CellValue { uint4: reader.int::<u16>()? as u32 }, ..Default::default() });
@@ -59,10 +59,9 @@ pub fn decode_binary_value<Context: ReaderContext>(
         FieldType::MYSQL_TYPE_INT24 => {
             if raw {
                 let data = reader.read(3)?;
-                return Ok(SQLDataCell::raw(&data));
+                return Ok(SQLDataCell::raw(Some(&data)));
             }
             if unsigned {
-                // TODO(port): Zig `reader.int(u24)` — Rust has no native u24; NewReader port must expose int_u24()/int_i24()
                 return Ok(SQLDataCell { tag: CellTag::Uint4, value: CellValue { uint4: reader.int_u24()? }, ..Default::default() });
             }
             Ok(SQLDataCell { tag: CellTag::Int4, value: CellValue { int4: reader.int_i24()? }, ..Default::default() })
@@ -70,7 +69,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
         FieldType::MYSQL_TYPE_LONG => {
             if raw {
                 let data = reader.read(4)?;
-                return Ok(SQLDataCell::raw(&data));
+                return Ok(SQLDataCell::raw(Some(&data)));
             }
             if unsigned {
                 return Ok(SQLDataCell { tag: CellTag::Uint4, value: CellValue { uint4: reader.int::<u32>()? }, ..Default::default() });
@@ -79,7 +78,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
         }
         FieldType::MYSQL_TYPE_LONGLONG => {
             if raw {
-                return Ok(SQLDataCell::raw(&reader.read(8)?));
+                return Ok(SQLDataCell::raw(Some(&reader.read(8)?)));
             }
             if unsigned {
                 let val = reader.int::<u64>()?;
@@ -129,14 +128,14 @@ pub fn decode_binary_value<Context: ReaderContext>(
         FieldType::MYSQL_TYPE_FLOAT => {
             if raw {
                 let data = reader.read(4)?;
-                return Ok(SQLDataCell::raw(&data));
+                return Ok(SQLDataCell::raw(Some(&data)));
             }
             Ok(SQLDataCell { tag: CellTag::Float8, value: CellValue { float8: f32::from_bits(reader.int::<u32>()?) as f64 }, ..Default::default() })
         }
         FieldType::MYSQL_TYPE_DOUBLE => {
             if raw {
                 let data = reader.read(8)?;
-                return Ok(SQLDataCell::raw(&data));
+                return Ok(SQLDataCell::raw(Some(&data)));
             }
             Ok(SQLDataCell { tag: CellTag::Float8, value: CellValue { float8: f64::from_bits(reader.int::<u64>()?) }, ..Default::default() })
         }
@@ -152,10 +151,10 @@ pub fn decode_binary_value<Context: ReaderContext>(
                     })
                 }
                 l @ (8 | 12) => {
-                    let data = reader.read(l as u32)?;
+                    let data = reader.read(l as usize)?;
                     let time = Time::from_data(&data)?;
 
-                    let total_hours = time.hours + time.days * 24;
+                    let total_hours: u32 = time.hours as u32 + time.days * 24;
                     // -838:59:59 to 838:59:59 is valid (it only store seconds)
                     // it should be represented as HH:MM:SS or HHH:MM:SS if total_hours > 99
                     let mut buffer = [0u8; 32];
@@ -191,7 +190,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
                 Ok(SQLDataCell { tag: CellTag::Date, value: CellValue { date: 0.0 }, ..Default::default() })
             }
             l @ (11 | 7 | 4) => {
-                let data = reader.read(l as u32)?;
+                let data = reader.read(l as usize)?;
                 let time = DateTime::from_data(&data)?;
                 Ok(SQLDataCell { tag: CellTag::Date, value: CellValue { date: time.to_js_timestamp(global_object)? }, ..Default::default() })
             }

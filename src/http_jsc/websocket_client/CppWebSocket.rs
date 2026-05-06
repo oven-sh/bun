@@ -10,7 +10,7 @@
 
 use core::ffi::c_void;
 
-use bun_jsc::virtual_machine as VirtualMachine;
+use bun_jsc::virtual_machine::VirtualMachine;
 use bun_string::{String as BunString, ZigString};
 use bun_uws_sys::{Socket, SslCtx};
 

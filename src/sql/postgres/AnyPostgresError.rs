@@ -60,31 +60,29 @@ impl From<AnyPostgresError> for bun_core::Error {
 }
 
 /// Options for creating a PostgresError
-// TODO(port): lifetime — these slices borrow from the parsed wire buffer for
-// the duration of `createPostgresError`; Phase A forbids struct lifetime
-// params, so `&'static [u8]` is a placeholder. Phase B should make this
-// `PostgresErrorOptions<'a>` with `&'a [u8]`.
-pub struct PostgresErrorOptions {
-    pub code: &'static [u8],
-    pub errno: Option<&'static [u8]>,
-    pub detail: Option<&'static [u8]>,
-    pub hint: Option<&'static [u8]>,
-    pub severity: Option<&'static [u8]>,
-    pub position: Option<&'static [u8]>,
-    pub internal_position: Option<&'static [u8]>,
-    pub internal_query: Option<&'static [u8]>,
-    pub r#where: Option<&'static [u8]>,
-    pub schema: Option<&'static [u8]>,
-    pub table: Option<&'static [u8]>,
-    pub column: Option<&'static [u8]>,
-    pub data_type: Option<&'static [u8]>,
-    pub constraint: Option<&'static [u8]>,
-    pub file: Option<&'static [u8]>,
-    pub line: Option<&'static [u8]>,
-    pub routine: Option<&'static [u8]>,
+// These slices borrow from the parsed wire buffer for the duration of
+// `createPostgresError`; the `'a` lifetime ties them to that buffer.
+pub struct PostgresErrorOptions<'a> {
+    pub code: &'a [u8],
+    pub errno: Option<&'a [u8]>,
+    pub detail: Option<&'a [u8]>,
+    pub hint: Option<&'a [u8]>,
+    pub severity: Option<&'a [u8]>,
+    pub position: Option<&'a [u8]>,
+    pub internal_position: Option<&'a [u8]>,
+    pub internal_query: Option<&'a [u8]>,
+    pub r#where: Option<&'a [u8]>,
+    pub schema: Option<&'a [u8]>,
+    pub table: Option<&'a [u8]>,
+    pub column: Option<&'a [u8]>,
+    pub data_type: Option<&'a [u8]>,
+    pub constraint: Option<&'a [u8]>,
+    pub file: Option<&'a [u8]>,
+    pub line: Option<&'a [u8]>,
+    pub routine: Option<&'a [u8]>,
 }
 
-impl Default for PostgresErrorOptions {
+impl Default for PostgresErrorOptions<'_> {
     fn default() -> Self {
         Self {
             code: b"",

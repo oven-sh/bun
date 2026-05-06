@@ -124,10 +124,6 @@ pub fn to_js(this: &ErrorResponse, global_object: &JSGlobalObject) -> JSValue {
     let len = b.len;
     let error_message: &[u8] = if len > 0 { &b.allocated_slice()[..len] } else { b"" };
 
-    // TODO(port): bun_sql::postgres::PostgresErrorOptions<'a> — currently every
-    // slice field is `&'static [u8]` (Phase-A placeholder), so the borrowed
-    // `byte_slice()` results above won't typecheck. Once bun_sql gives
-    // PostgresErrorOptions a lifetime param this body compiles unchanged.
     create_postgres_error(
         global_object,
         error_message,
@@ -158,6 +154,6 @@ pub fn to_js(this: &ErrorResponse, global_object: &JSGlobalObject) -> JSValue {
 // PORT STATUS
 //   source:     src/sql_jsc/postgres/protocol/error_response_jsc.zig (132 lines)
 //   confidence: medium
-//   todos:      1
-//   notes:      final create_postgres_error call gated on PostgresErrorOptions<'a> lifetime in bun_sql; bun_string::String borrowed (not Copy) in match arms; field_message_payload reused from notice_response_jsc.
+//   todos:      0
+//   notes:      bun_string::String borrowed (not Copy) in match arms; field_message_payload reused from notice_response_jsc.
 // ──────────────────────────────────────────────────────────────────────────

@@ -3,9 +3,14 @@
 //! `valkey/`; only the `JSGlobalObject`/`JSValue`-touching conversions live
 //! here so `valkey/` is JSC-free.
 
-use bun_jsc::{ArrayBuffer, Error as JscError, JSGlobalObject, JSValue, JsError, JsResult};
+use crate::jsc::{
+    bun_string_jsc, ArrayBuffer, Error as JscError, JSGlobalObject, JSValue, JsError, JsResult,
+};
 use bun_str::String as BunString;
 use bun_valkey::valkey_protocol::{self as protocol, RESPValue, RedisError};
+
+#[allow(unused_imports)]
+use protocol as _; // keep `protocol` referenced for sibling drafts
 
 pub fn valkey_error_to_js(
     global: &JSGlobalObject,
@@ -73,7 +78,7 @@ fn valkey_str_to_js_value(
         // TODO: handle values > 4.7 GB
         ArrayBuffer::create_buffer(global, str)
     } else {
-        BunString::create_utf8_for_js(global, str)
+        bun_string_jsc::create_utf8_for_js(global, str)
     }
 }
 
@@ -145,8 +150,8 @@ pub fn resp_value_to_js_with_options(
             let js_obj = JSValue::create_empty_object_with_null_prototype(global);
 
             // Add the push type
-            let kind_str = BunString::create_utf8_for_js(global, &push.kind)?;
-            js_obj.put(global, "type", kind_str);
+            let kind_str = bun_string_jsc::create_utf8_for_js(global, &push.kind)?;
+            js_obj.put(global, b"type", kind_str);
 
             // Add the data as an array
             let data_array = JSValue::create_empty_array(global, push.data.len())?;
@@ -154,7 +159,7 @@ pub fn resp_value_to_js_with_options(
                 let js_item = resp_value_to_js_with_options(item, global, options)?;
                 data_array.put_index(global, u32::try_from(i).unwrap(), js_item)?;
             }
-            js_obj.put(global, "data", data_array);
+            js_obj.put(global, b"data", data_array);
 
             Ok(js_obj)
         }
@@ -169,7 +174,7 @@ pub fn resp_value_to_js_with_options(
                 Ok(JSValue::js_number(int))
             } else {
                 // If it doesn't fit in an i64, return as string
-                BunString::create_utf8_for_js(global, str)
+                bun_string_jsc::create_utf8_for_js(global, str)
             }
         }
     }

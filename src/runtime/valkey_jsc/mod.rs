@@ -31,9 +31,6 @@ pub mod js_valkey_functions; // 200+ prototype methods (get/set/hget/…)
 #[path = "ValkeyCommand.rs"]
 pub mod valkey_command_body; // Command::serialize, Promise::resolve/reject
 #[cfg(any())]
-#[path = "protocol_jsc.rs"]
-pub mod protocol_jsc; // RESPValue → JSValue, RedisError → JS Error
-#[cfg(any())]
 #[path = "index.rs"]
 pub mod index;
 
@@ -41,6 +38,10 @@ pub mod index;
 #[path = "ValkeyContext.rs"]
 pub mod valkey_context;
 pub use valkey_context::ValkeyContext;
+
+#[path = "protocol_jsc.rs"]
+pub mod protocol_jsc; // RESPValue → JSValue, RedisError → JS Error
+pub use protocol_jsc::{resp_value_to_js, resp_value_to_js_with_options, valkey_error_to_js, ToJSOptions};
 
 // ─── real type surface (B-2 struct/state un-gate) ────────────────────────────
 // Method bodies remain in the gated drafts above — they need:

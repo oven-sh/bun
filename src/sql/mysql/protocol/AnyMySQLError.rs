@@ -51,6 +51,11 @@ impl core::fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
+/// Zig callers name this `AnyMySQLError` (the file basename); the Rust enum is
+/// `Error` per convention. Re-export both spellings so cross-crate `use` lines
+/// (`bun_sql::mysql::protocol::any_mysql_error::AnyMySQLError`) resolve.
+pub type AnyMySQLError = Error;
+
 impl From<Error> for bun_core::Error {
     fn from(e: Error) -> Self {
         bun_core::Error::from_name(<&'static str>::from(e))

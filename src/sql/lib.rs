@@ -94,6 +94,31 @@ pub mod mysql {
         pub mod new_reader;
         #[path = "Auth.rs"]
         pub mod auth;
+
+        // ── flat re-exports for `bun_sql_jsc` ──────────────────────────────
+        // sql_jsc names most of these via `bun_sql::mysql::protocol::Foo`
+        // (mirroring Zig's flat `MySQLProtocol.zig` namespace), so surface
+        // them here as well as via their leaf modules.
+        pub use any_mysql_error::{AnyMySQLError, Error as Error};
+        pub use new_reader::{Decode, NewReader, NewReaderOf, ReaderContext, ReadableInt};
+        pub use new_writer::{NewWriter, NewWriterWrap, Packet, WriterContext, write_wrap};
+        pub use column_definition41::{ColumnDefinition41, ColumnFlags};
+        pub use result_set_header::ResultSetHeader;
+        pub use handshake_response41::HandshakeResponse41;
+        pub use handshake_v10::HandshakeV10;
+        pub use error_packet::{ErrorPacket, MySQLErrorOptions};
+        pub use ok_packet::OKPacket;
+        pub use eof_packet::EOFPacket;
+        pub use packet_header::PacketHeader;
+        pub use packet_type::PacketType;
+        pub use stack_reader::StackReader;
+        pub use stmt_prepare_ok_packet::StmtPrepareOKPacket;
+        pub use auth_switch_request::AuthSwitchRequest;
+        pub use auth_switch_response::AuthSwitchResponse;
+        pub use local_infile_request::LocalInfileRequest;
+        pub use ssl_request::SSLRequest;
+        // `protocol::FieldType` (Zig re-export of mysql_types.FieldType).
+        pub use crate::mysql::mysql_types::FieldType;
     }
 
     pub use ssl_mode::SSLMode;
@@ -209,6 +234,12 @@ pub mod postgres {
         pub mod new_writer;
         #[path = "Authentication.rs"]
         pub mod authentication;
+
+        // ── flat re-exports for `bun_sql_jsc` (Decode/Write trait surface) ──
+        pub use new_reader::{NewReader, NewReaderWrap, ProtocolInt, ReaderContext};
+        pub use new_writer::{new_writer, LengthWriter, NewWriter, WriterContext};
+        pub use decoder_wrap::DecoderWrap;
+        pub use write_wrap::WriteWrap;
     }
 
     pub use ssl_mode::SSLMode;
@@ -217,4 +248,14 @@ pub mod postgres {
     pub use any_postgres_error::{AnyPostgresError, PostgresErrorOptions};
     pub use command_tag::CommandTag;
     pub use types::tag::Tag;
+
+    // PascalCase module aliases — Zig callers used `PostgresProtocol.Foo` /
+    // `PostgresTypes.Int4` / `SocketMonitor.write` directly; sql_jsc still
+    // names them that way.
+    pub use postgres_protocol as PostgresProtocol;
+    pub use postgres_types as PostgresTypes;
+    pub use socket_monitor as SocketMonitor;
 }
+
+// Top-level convenience re-export (sql_jsc::jsc references `bun_sql::FieldMessage`).
+pub use postgres::protocol::field_message::FieldMessage;

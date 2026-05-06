@@ -62,7 +62,7 @@ impl Assets {
         &mut self,
         _abs_path: &[u8],
         _content: &crate::webcore::blob::Any,
-        _mime: &bun_http::MimeType,
+        _mime: &bun_http::MimeType::MimeType,
         _content_hash: u64,
     ) -> Result<EntryIndex, bun_alloc::AllocError> {
         todo!("blocked_on: dev_server::Assets::replace_path body un-gate")

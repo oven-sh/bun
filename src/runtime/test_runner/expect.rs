@@ -2292,7 +2292,7 @@ impl ExpectCustomAsymmetricMatcher {
         if dont_throw {
             // `JSGlobalObject::clear_exception` lives in the gated JSGlobalObject.rs;
             // bind the FFI symbol locally (matches BlockList.rs shim).
-            extern "C" {
+            unsafe extern "C" {
                 fn JSGlobalObject__clearException(global: *const JSGlobalObject);
             }
             // SAFETY: FFI — `global_this` is a valid JSGlobalObject*; C++ side has no extra preconditions.
@@ -2843,7 +2843,7 @@ fn put_may_be_index(
     key: &bun_str::String,
     value: JSValue,
 ) -> JsResult<()> {
-    extern "C" {
+    unsafe extern "C" {
         // bindings.cpp: JSC__JSValue__putMayBeIndex — [[ZIG_EXPORT(check_slow)]]
         fn JSC__JSValue__putMayBeIndex(
             target: JSValue,

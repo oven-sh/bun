@@ -21,7 +21,7 @@ use crate::shell::io_writer::{self, IOWriter};
 use crate::shell::{self as sh, EnvMap, Yield};
 use bun_spawn::{self, Status};
 use crate::api::bun::process::{
-    self as bun_process, Process, ProcessExitOwner, Rusage, SignalCodeExt, SpawnOptions,
+    self as bun_process, Process, ProcessExitHandler as ProcessExitOwner, Rusage, SignalCodeExt, SpawnOptions,
 };
 #[cfg(windows)]
 use crate::api::bun::process::{WindowsSpawnOptions, WindowsSpawnResult, WindowsStdioResult, WindowsOptions};
@@ -2121,7 +2121,7 @@ impl bun_io::pipe_reader::BufferedReaderParent for PipeReader {
         // SAFETY: see trait contract.
         unsafe { (*this).r#loop() }
     }
-    unsafe fn event_loop(this: *mut Self) -> EventLoopHandle {
+    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
         // SAFETY: see trait contract.
         unsafe { (*this).event_loop() }
     }

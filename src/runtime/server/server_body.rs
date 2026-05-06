@@ -16,7 +16,7 @@ use bun_http_jsc::method_jsc::MethodJsc as _;
 use bun_jsc::{
     self as jsc, host_fn, ArrayBuffer, CallFrame, JSGlobalObject, JSPromise, JSValue, JsError,
     JsRef, JsResult, Node, StringJsc as _, Strong, StrongOptional, SysErrorJsc as _, SystemError,
-    VirtualMachine, ZigString,
+    VirtualMachine,
 };
 use crate::webcore::{self as WebCore, AbortSignal, AnyBlob, Blob, Body, CookieMap, FetchHeaders, Request, Response};
 use crate::webcore::fetch as Fetch;
@@ -28,7 +28,7 @@ use crate::webcore::response::HeadersRef;
 use bun_logger as logger;
 use bun_paths as paths;
 use bun_ptr::{IntrusiveRc, RefPtr};
-use bun_str::{self as bstr, strings, String as BunString, ZStr};
+use bun_str::{self as bstr, strings, String as BunString, ZStr, ZigString};
 use bun_sys as sys;
 use bun_url::URL;
 use bun_uws::{self as uws, AnyResponse, AnyWebSocket, Opcode, ResponseKind, WebSocketUpgradeContext};
@@ -1875,12 +1875,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         } else {
             // Local shim — `JSValueGetType` lives in the gated `jsc::_gated::c_api` and is
             // not re-exported through `jsc::C`. Declare the FFI here so we don't depend on
-            // the upstream module path.
+            // the upstream module path. `JSValueRef` is an opaque pointer; use `*const c_void`
+            // to avoid the deprecated `jsc::c_api` re-export.
             unsafe extern "C" {
-                fn JSValueGetType(ctx: *mut JSGlobalObject, value: jsc::C::JSValueRef) -> c_int;
+                fn JSValueGetType(ctx: *mut JSGlobalObject, value: *const c_void) -> c_int;
             }
             // SAFETY: FFI call into JSC C API; ctx is a live JSGlobalObject and first_arg is a valid JSValueRef
-            let js_type = unsafe { JSValueGetType(ctx as *const _ as *mut _, first_arg.as_ref()) } as usize;
+            let js_type = unsafe { JSValueGetType(ctx as *const _ as *mut _, first_arg.as_ref() as *const c_void) } as usize;
             let fetch_error = Fetch::FETCH_TYPE_ERROR_STRINGS
                 .get(js_type)
                 .copied()

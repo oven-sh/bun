@@ -38,14 +38,11 @@ impl CommonStringsForZig {
     #[inline]
     fn to_js(self, global_object: &JSGlobalObject) -> JSValue {
         // SAFETY: `global_object` is a valid live JSGlobalObject reference; the C++
-        // side reads from its lazily-initialized common-strings table and never
-        // retains the pointer past this call.
-        unsafe {
-            Bun__CommonStringsForZig__toJS(
-                self,
-                global_object as *const JSGlobalObject as *mut JSGlobalObject,
-            )
-        }
+        // side lazily initializes its common-strings table (interior mutation) and
+        // never retains the pointer past this call. `JSGlobalObject` is an opaque
+        // `UnsafeCell`-backed FFI handle, so `as_mut_ptr()` yields a `*mut` with
+        // write provenance from `&self` — sound under Stacked Borrows.
+        unsafe { Bun__CommonStringsForZig__toJS(self, global_object.as_mut_ptr()) }
     }
 }
 

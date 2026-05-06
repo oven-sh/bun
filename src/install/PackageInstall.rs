@@ -406,23 +406,15 @@ impl HardLinkWindowsInstallTask {
         let allocation_size = src.len() + 1 + dest.len() + 1;
 
         let mut combined = vec![0u16; allocation_size].into_boxed_slice();
-        let mut remaining = &mut combined[..];
-        remaining[..src.len()].copy_from_slice(src);
-        remaining[src.len()] = 0;
-        // SAFETY: NUL written at [src.len()]
-        let src_ = unsafe { bun_str::WStr::from_raw_mut(remaining.as_mut_ptr(), src.len()) } as *mut _;
-        remaining = &mut remaining[src.len() + 1..];
-
+        combined[..src.len()].copy_from_slice(src);
+        combined[src.len()] = 0;
+        let remaining = &mut combined[src.len() + 1..];
         remaining[..dest.len()].copy_from_slice(dest);
         remaining[dest.len()] = 0;
-        // SAFETY: NUL written at [dest.len()]
-        let dest_ = unsafe { bun_str::WStr::from_raw_mut(remaining.as_mut_ptr(), dest.len()) } as *mut _;
-        // remaining = &mut remaining[dest.len() + 1..]; // unused
 
         Box::into_raw(Box::new(Self {
             bytes: combined,
-            src: src_,
-            dest: dest_,
+            src_len: src.len(),
             basename: basename.len() as u16, // @truncate
             task: WorkPoolTask { callback: Self::run_from_thread_pool },
             err: None,

@@ -3244,10 +3244,13 @@ pub mod formatter {
                     // Call custom inspect function. Will return the error if there
                     // is one; we'll need to pass the callback through to the "this"
                     // value in here.
-                    // SAFETY: FFI call; global_this is a valid JSGlobalObject pointer for the call's duration.
+                    // SAFETY: FFI call; `global_this` is a valid `JSGlobalObject` for
+                    // the call's duration. `JSGlobalObject` is an opaque handle with
+                    // `UnsafeCell` interior, so `.as_ptr()` yields a `*mut` with write
+                    // provenance — the C++ callee may mutate VM state through it.
                     let result = crate::from_js_host_call(self.global_this, || unsafe {
                         JSC__JSValue__callCustomInspectFunction(
-                            self.global_this as *const _ as *mut _,
+                            self.global_this.as_ptr(),
                             self.custom_formatted_object.function,
                             self.custom_formatted_object.this,
                             u32::from(self.max_depth.saturating_sub(self.depth)),

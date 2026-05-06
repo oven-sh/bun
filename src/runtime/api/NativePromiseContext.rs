@@ -74,28 +74,25 @@ pub trait NativePromiseContextType {
     const TAG: Tag;
 }
 
-// TODO(port): exact Rust paths for these server RequestContext monomorphizations
-// depend on how `server.zig`'s generic `NewServer(...)` is ported. Adjust the
-// impl targets in Phase B once `crate::api::server` lands.
-impl NativePromiseContextType for server::HTTPServer::RequestContext {
+impl NativePromiseContextType for HTTPServerRequestContext {
     const TAG: Tag = Tag::HTTPServerRequestContext;
 }
-impl NativePromiseContextType for server::HTTPSServer::RequestContext {
+impl NativePromiseContextType for HTTPSServerRequestContext {
     const TAG: Tag = Tag::HTTPSServerRequestContext;
 }
-impl NativePromiseContextType for server::DebugHTTPServer::RequestContext {
+impl NativePromiseContextType for DebugHTTPServerRequestContext {
     const TAG: Tag = Tag::DebugHTTPServerRequestContext;
 }
-impl NativePromiseContextType for server::DebugHTTPSServer::RequestContext {
+impl NativePromiseContextType for DebugHTTPSServerRequestContext {
     const TAG: Tag = Tag::DebugHTTPSServerRequestContext;
 }
-impl NativePromiseContextType for server::HTTPSServer::H3RequestContext {
+impl NativePromiseContextType for HTTPSServerH3RequestContext {
     const TAG: Tag = Tag::HTTPSServerH3RequestContext;
 }
-impl NativePromiseContextType for server::DebugHTTPSServer::H3RequestContext {
+impl NativePromiseContextType for DebugHTTPSServerH3RequestContext {
     const TAG: Tag = Tag::DebugHTTPSServerH3RequestContext;
 }
-impl NativePromiseContextType for body::ValueBufferer {
+impl NativePromiseContextType for body::ValueBufferer<'_> {
     const TAG: Tag = Tag::BodyValueBufferer;
 }
 

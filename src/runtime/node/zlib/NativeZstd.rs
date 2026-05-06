@@ -12,14 +12,13 @@ use core::cell::Cell;
 use core::ffi::{c_int, c_uint, c_void, CStr};
 use core::ptr;
 
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, Strong};
+use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, Strong, WorkPoolTask};
 use bun_sys::c; // `bun.c` translated-c-headers (ZSTD_* fns/consts live here)
-use bun_threading::WorkPoolTask;
 
 use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive, Error};
 use crate::node::util::validators;
-// TODO(port): confirm path — `bun.zlib.NodeMode` re-export; lives alongside this module.
-use super::NodeMode;
+// `bun.zlib.NodeMode` — #[repr(u8)] enum shared by all native-zlib stream types.
+use bun_zlib::NodeMode;
 
 #[bun_jsc::JsClass]
 pub struct NativeZstd {

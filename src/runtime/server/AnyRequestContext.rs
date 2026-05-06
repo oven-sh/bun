@@ -104,33 +104,6 @@ macro_rules! dispatch {
     }};
 }
 
-impl AnyRequestContext {
-    pub fn memory_cost(self) -> usize {
-        dispatch!(self, 0, |_T, ctx| ctx.memory_cost())
-    }
-
-    pub fn set_additional_on_abort_callback(self, cb: Option<AdditionalOnAbortCallback>) {
-        dispatch!(self, (), |_T, ctx| {
-            debug_assert!(ctx.additional_on_abort.is_none());
-            ctx.additional_on_abort = cb;
-        })
-    }
-
-    pub fn detach_request(self) {
-        dispatch!(self, (), |_T, ctx| {
-            ctx.req = None;
-        })
-    }
-
-    pub fn dev_server(self) -> Option<&'static crate::bake::DevServer::DevServer> {
-        // SAFETY: server backref outlives any AnyRequestContext (held only for
-        // the duration of a request callback).
-        dispatch!(self, None, |_T, ctx| unsafe {
-            core::mem::transmute::<Option<&_>, Option<&'static _>>(ctx.dev_server())
-        })
-    }
-}
-
 // ─── dispatch arms calling gated RequestContext methods ──────────────────────
 // set_timeout / set_cookies / set_timeout_handler / get_remote_socket_info /
 // on_abort / ref_ / deref / set_signal_aborted forward to RequestContext
@@ -138,7 +111,7 @@ impl AnyRequestContext {
 // TODO(b2-blocked): RequestContext state-machine bodies.
 
 impl AnyRequestContext {
-    pub fn set_additional_on_abort_callback_(self, cb: Option<AdditionalOnAbortCallback>) {
+    pub fn set_additional_on_abort_callback(self, cb: Option<AdditionalOnAbortCallback>) {
         dispatch!(self, (), |_T, ctx| {
             debug_assert!(ctx.additional_on_abort.is_none());
             ctx.additional_on_abort = cb;

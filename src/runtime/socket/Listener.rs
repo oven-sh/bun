@@ -15,8 +15,9 @@ use bun_sys::{self, Fd};
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 
-use crate::api::server_config::SSLConfig;
-use crate::api::{SecureContext, SocketHandlers as Handlers, TCPSocket, TLSSocket};
+use crate::api::bun_secure_context::SecureContext;
+use crate::api::{SocketHandlers as Handlers, TCPSocket, TLSSocket};
+use crate::socket::SSLConfig;
 use crate::node::path as node_path;
 use crate::socket::{NewSocket, SocketConfig, WindowsNamedPipeContext};
 

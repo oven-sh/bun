@@ -118,7 +118,7 @@ impl FileResponseStream {
 
         // TODO(port): bun.new — heap-allocate as IntrusiveRc payload; pointer is
         // handed to uWS callbacks below and freed in `deinit` via Box::from_raw.
-        let this: *mut FileResponseStream<'a> = Box::into_raw(Box::new(FileResponseStream {
+        let this: *mut FileResponseStream = Box::into_raw(Box::new(FileResponseStream {
             ref_count: Cell::new(1),
             resp: opts.resp,
             vm: opts.vm,

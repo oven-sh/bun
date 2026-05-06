@@ -2344,35 +2344,35 @@ impl<'a> BundleV2<'a> {
 
         server.append_stmt(S::Local {
             kind: js_ast::ast::s::Kind::KConst,
-            decls: js_ast::ast::g::DeclList::from_slice(alloc, &[G::Decl {
+            decls: js_ast::ast::g::DeclList::from_owned_slice(Box::new([G::Decl {
                 binding: Binding::alloc(alloc, js_ast::ast::b::Identifier {
                     r#ref: server.new_symbol(js_ast::ast::symbol::Kind::Other, b"serverManifest")?,
                 }, Logger::Loc::EMPTY),
                 value: Some(server.new_expr(E::Object {
-                    properties: js_ast::ast::g::PropertyList::move_from_list(&mut server_manifest_props),
+                    properties: js_ast::ast::g::PropertyList::move_from_list(server_manifest_props),
                     ..Default::default()
                 })),
-            }])?,
+            }])),
             is_export: true,
             ..Default::default()
         })?;
         server.append_stmt(S::Local {
             kind: js_ast::ast::s::Kind::KConst,
-            decls: js_ast::ast::g::DeclList::from_slice(alloc, &[G::Decl {
+            decls: js_ast::ast::g::DeclList::from_owned_slice(Box::new([G::Decl {
                 binding: Binding::alloc(alloc, js_ast::ast::b::Identifier {
                     r#ref: server.new_symbol(js_ast::ast::symbol::Kind::Other, b"ssrManifest")?,
                 }, Logger::Loc::EMPTY),
                 value: Some(server.new_expr(E::Object {
-                    properties: js_ast::ast::g::PropertyList::move_from_list(&mut client_manifest_props),
+                    properties: js_ast::ast::g::PropertyList::move_from_list(client_manifest_props),
                     ..Default::default()
                 })),
-            }])?,
+            }])),
             is_export: true,
             ..Default::default()
         })?;
 
-        self.graph.ast.set(Index::BAKE_SERVER_DATA.get(), server.to_bundled_ast(Target::Bun)?);
-        self.graph.ast.set(Index::BAKE_CLIENT_DATA.get(), client.to_bundled_ast(Target::Browser)?);
+        self.graph.ast.set(Index::BAKE_SERVER_DATA.get() as usize, server.to_bundled_ast(Target::Bun)?);
+        self.graph.ast.set(Index::BAKE_CLIENT_DATA.get() as usize, client.to_bundled_ast(Target::Browser)?);
         Ok(())
     }
 

@@ -22,6 +22,7 @@ use crate::output_file::{
 use crate::chunk::{Content, Flags as ChunkFlags};
 use crate::{cheap_prefix_normalizer, BundleV2, Chunk};
 use crate::LinkerContext;
+use crate::linker_context_mod::LinkerCtx;
 use crate::linker_context::output_file_list_builder::OutputFileList;
 
 // CYCLEBREAK MOVE_DOWN: write_file_with_path_buffer → bun_sys.
@@ -44,7 +45,7 @@ pub fn write_output_files_to_disk(
     root_path: &[u8],
     chunks: &mut [Chunk],
     output_files: &mut OutputFileList,
-    standalone_chunk_contents: Option<&[Option<&[u8]>]>,
+    standalone_chunk_contents: Option<&[Option<Box<[u8]>>]>,
 ) -> Result<(), Error> {
     let _trace = bun_core::perf::trace("Bundler.writeOutputFilesToDisk");
 

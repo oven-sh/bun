@@ -17,8 +17,8 @@ impl IndexStringMap {
         self.map.get(&index).map(|v| v.as_ref())
     }
 
-    pub fn put(&mut self, index: IndexInt, value: &[u8]) -> Result<(), bun_alloc::AllocError> {
-        let duped = Box::<[u8]>::from(value);
+    pub fn put(&mut self, index: IndexInt, value: impl AsRef<[u8]>) -> Result<(), bun_alloc::AllocError> {
+        let duped = Box::<[u8]>::from(value.as_ref());
         // errdefer allocator.free(duped) — deleted: `duped` is Drop, `?` handles cleanup.
         self.map.insert(index, duped);
         Ok(())

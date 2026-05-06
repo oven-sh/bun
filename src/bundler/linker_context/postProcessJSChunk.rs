@@ -1035,11 +1035,10 @@ pub fn generate_entry_point_tail_js(
 
                         if flags.needs_synthetic_default_export && !had_default_export {
                             let mut properties =
-                                G::Property::List::with_capacity(items.len());
+                                G::PropertyList::init_capacity(items.len()).expect("OOM");
                             // PERF(port): was initCapacity catch unreachable
-                            let getter_fn_body: &mut [Stmt] = allocator
-                                .alloc_slice(items.len())
-                                .expect("unreachable");
+                            let getter_fn_body: &mut [Stmt] =
+                                allocator.alloc_slice_fill_default(items.len());
                             // TODO(port): allocator.alloc(Stmt, n) — needs arena slice alloc API
                             let mut remain_getter_fn_body = &mut getter_fn_body[..];
                             for export_item in items.iter() {
@@ -1049,7 +1048,7 @@ pub fn generate_entry_point_tail_js(
                                     S::Return {
                                         value: Some(Expr::init(
                                             E::Identifier {
-                                                r#ref: export_item.name.r#ref.unwrap(),
+                                                ref_: export_item.name.ref_.unwrap(),
                                                 ..Default::default()
                                             },
                                             export_item.name.loc,
@@ -1058,10 +1057,11 @@ pub fn generate_entry_point_tail_js(
                                     Logger::Loc::EMPTY,
                                 );
                                 // PERF(port): was appendAssumeCapacity
-                                properties.push(G::Property {
+                                properties.append(G::Property {
                                     key: Some(Expr::init(
                                         E::String {
-                                            data: export_item.alias,
+                                            // SAFETY: alias is an arena `*const [u8]`; never null.
+                                            data: unsafe { &*export_item.alias },
                                             is_utf16: false,
                                             ..Default::default()
                                         },
@@ -1079,18 +1079,18 @@ pub fn generate_entry_point_tail_js(
                                         },
                                         export_item.alias_loc,
                                     )),
-                                    kind: G::Property::Kind::Get,
-                                    flags: js_ast::Flags::Property::IsMethod.into(),
+                                    kind: G::PropertyKind::Get,
+                                    flags: js_ast::flags::Property::IsMethod.into(),
                                     ..Default::default()
-                                });
+                                }).expect("OOM");
                             }
                             stmts.push(Stmt::alloc(
                                 S::ExportDefault {
                                     default_name: js_ast::LocRef {
-                                        r#ref: Some(Ref::NONE),
+                                        ref_: Some(Ref::NONE),
                                         loc: Logger::Loc::EMPTY,
                                     },
-                                    value: S::ExportDefault::Value::Expr(Expr::init(
+                                    value: StmtOrExpr::Expr(Expr::init(
                                         E::Object {
                                             properties,
                                             ..Default::default()

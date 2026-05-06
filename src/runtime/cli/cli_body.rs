@@ -1146,7 +1146,6 @@ Examples<d>:<r>
   <b><green>bunx<r> <cyan>-p @angular/cli<r> <blue>ng<r> new my-app
   <b><green>bunx<r> <cyan>--bun<r> <blue>vite<r> dev foo.js<r>
 ",
-                    format_args!(""),
                 );
             }
             Tag::BuildCommand => {

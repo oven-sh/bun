@@ -1102,27 +1102,19 @@ impl Image {
         // the body path is made `.Locked`.
         if let Source::Blob(strong) = &self.source {
             const REFUSE: &str = "Image: fd/S3-backed Bun.file as a Response body — pass `await file.bytes()` or a path string";
-            let Some(blob_js) = strong.get() else {
-                return global.throw("Image: Blob source was collected");
-            };
+            let blob_js = strong.get();
             let Some(blob) = blob_js.as_::<Blob>() else {
-                return global.throw(REFUSE);
+                return Err(global.throw(REFUSE));
             };
+            // SAFETY: `as_` returned a non-null `*mut Blob` rooted by `blob_js`.
+            let blob = unsafe { &*blob };
             // Braced so the `else` can't dangle onto the inner `if` — a null
             // store would otherwise fall through to `pin_for_task`'s `.blob =>
             // unreachable`. (The Strong-held wrapper makes that nominally
             // unreachable, but this path should throw, not abort, when it isn't.)
             // TODO(port): Blob store/pathlike field access — verify shape.
-            if let Some(store) = &blob.store {
-                if store.data.is_file() && store.data.file().pathlike.is_path() {
-                    let p = bun_str::ZStr::from_bytes(store.data.file().pathlike.path().slice());
-                    self.source = Source::Path(p);
-                } else {
-                    return global.throw(REFUSE);
-                }
-            } else {
-                return global.throw(REFUSE);
-            }
+            let _ = blob;
+            todo!("blocked_on: webcore::blob::Store data/file/pathlike field shape");
         }
         let input = match self.pin_for_task(this_value, global) {
             Ok(i) => i,
@@ -1130,7 +1122,7 @@ impl Image {
                 if matches!(e, PinError::OutOfMemory) {
                     bun_core::out_of_memory();
                 }
-                return global.throw("Image: source ArrayBuffer was detached");
+                return Err(global.throw("Image: source ArrayBuffer was detached"));
             }
         };
         let _release = scopeguard::guard((), |_| input.release());

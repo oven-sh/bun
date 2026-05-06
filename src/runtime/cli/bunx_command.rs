@@ -982,7 +982,7 @@ impl BunxCommand {
                                         exe = EXE_SUFFIX,
                                     )
                                     .expect("unreachable");
-                                    let written = absolute_in_cache_dir_buf.len() - cursor.len();
+                                    let written = buf_total - cursor.len();
                                     // SAFETY: `written` bytes initialized above
                                     unsafe { core::slice::from_raw_parts(absolute_in_cache_dir_buf.as_ptr(), written) }
                                 };
@@ -995,39 +995,31 @@ impl BunxCommand {
                                 // cache (handled by the `orelse` absolute-path probe below) and not in a
                                 // local node_modules.
                                 if update_request.version.literal.is_empty() {
-                                    destination_ = PATH_BUF.with_borrow_mut(|path_buf| {
-                                        bun_core::which(
-                                            path_buf,
-                                            &local_bin_dirs,
-                                            if !ignore_cwd.is_empty() { b"" } else { this_transpiler.fs.top_level_dir },
-                                            &package_name_for_bin,
-                                        )
-                                    });
+                                    destination_ = bun_core::which(
+                                        as_core_path_buf(&mut path_buf),
+                                        &local_bin_dirs,
+                                        if !ignore_cwd.is_empty() { b"" } else { top_level_dir },
+                                        &package_name_for_bin,
+                                    );
                                 }
 
-                                let dest_or_cache2 = destination_.or_else(|| {
-                                    PATH_BUF.with_borrow_mut(|path_buf| {
-                                        bun_core::which(
-                                            path_buf,
-                                            bunx_cache_dir,
-                                            if !ignore_cwd.is_empty() { b"" } else { this_transpiler.fs.top_level_dir },
-                                            absolute_in_cache_dir,
-                                        )
-                                    })
-                                });
+                                let dest_or_cache2 = match destination_ {
+                                    Some(d) => Some(d),
+                                    None => bun_core::which(
+                                        as_core_path_buf(&mut path_buf),
+                                        bunx_cache_dir,
+                                        if !ignore_cwd.is_empty() { b"" } else { top_level_dir },
+                                        absolute_in_cache_dir,
+                                    ),
+                                };
                                 if let Some(destination) = dest_or_cache2 {
                                     let out: &[u8] = destination.as_bytes();
-                                    Run::run_binary(
-                                        ctx,
-                                        this_transpiler.fs.dirname_store.append(out)?,
-                                        destination,
-                                        this_transpiler.fs.top_level_dir,
-                                        &this_transpiler.env,
-                                        passthrough,
-                                        None,
-                                    )?;
-                                    // runBinary is noreturn
-                                    unreachable!();
+                                    let _stored = fs.dirname_store.append(out)?;
+                                    let _ = (&ctx, destination, top_level_dir, &env_loader, passthrough);
+                                    // TODO(port): see note above re: `run_binary`.
+                                    //   Run::run_binary(ctx, _stored, destination,
+                                    //       top_level_dir, env_loader, passthrough, None)?;
+                                    todo!("blocked_on: RunCommand::run_binary");
                                 }
                             }
                         }

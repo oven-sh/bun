@@ -2314,9 +2314,9 @@ impl IncrementalGraph<Client> {
         // hot updates shouldn't be emitted if there are no chunks
         debug_assert!(self.current_chunk_len > 0);
 
-        let runtime: HmrRuntime = match kind {
-            ChunkKind::InitialResponse => crate::bake::bake_body::get_hmr_runtime(Side::Client),
-            ChunkKind::HmrChunk => HmrRuntime::init(b"self[Symbol.for(\"bun:hmr\")]({\n"),
+        let runtime_code: &[u8] = match kind {
+            ChunkKind::InitialResponse => crate::bake::bake_body::get_hmr_runtime(crate::bake::bake_body::Side::Client).code.as_bytes(),
+            ChunkKind::HmrChunk => b"self[Symbol.for(\"bun:hmr\")]({\n",
         };
 
         // A small amount of metadata is present at the end of the chunk

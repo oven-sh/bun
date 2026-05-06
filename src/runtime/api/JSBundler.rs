@@ -1279,7 +1279,8 @@ pub mod js_bundler {
                         }
                         this.names.owned_entry_point.append_slice_exact(slice.slice())?;
                         // TODO(port): self-referential slice — entry_point.data borrows owned_entry_point
-                        this.names.entry_point.data = this.names.owned_entry_point.as_slice_ptr();
+                        this.names.entry_point.data =
+                            this.names.owned_entry_point.list.clone().into_boxed_slice();
                         drop(slice);
                     }
                 } else if naming.is_object() {
@@ -1290,7 +1291,8 @@ pub mod js_bundler {
                             this.names.owned_entry_point.append_slice_exact(b"./")?;
                         }
                         this.names.owned_entry_point.append_slice_exact(slice.slice())?;
-                        this.names.entry_point.data = this.names.owned_entry_point.as_slice_ptr();
+                        this.names.entry_point.data =
+                            this.names.owned_entry_point.list.clone().into_boxed_slice();
                         drop(slice);
                     }
 

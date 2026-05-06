@@ -1716,7 +1716,9 @@ impl AsyncReaddirRecursiveTask {
             // append each batch's items, then drop the entry box. Mirrors zig:1206-1225.
             let cap = self.result_list_count.swap(0, Ordering::Relaxed);
             self.result_list.reserve_exact(cap);
-            while let Some(val) = iter.next() {
+            loop {
+                let val = iter.next();
+                if val.is_null() { break; }
                 if let Some(dest) = to_destroy {
                     // SAFETY: paired with Box::leak in write_results()
                     unsafe { drop(Box::from_raw(dest)) };

@@ -1602,9 +1602,9 @@ impl CronJob {
         callback_arg: JSValue,
     ) -> JsResult<JSValue> {
         if !schedule_arg.is_string() {
-            return global.throw_invalid_arguments(format_args!(
+            return Err(global.throw_invalid_arguments(format_args!(
                 "Bun.cron() expects a string cron expression"
-            ));
+            )));
         }
 
         let schedule_str = schedule_arg.to_bun_string(global)?;
@@ -1613,22 +1613,19 @@ impl CronJob {
         let parsed = match CronExpression::parse(schedule_slice.slice()) {
             Ok(p) => p,
             Err(e) => {
-                return global.throw_invalid_arguments(format_args!(
+                return Err(global.throw_invalid_arguments(format_args!(
                     "{}",
-                    CronExpression::error_message(e)
-                ))
+                    bstr::BStr::new(CronExpression::error_message(e))
+                )))
             }
         };
 
-        let vm = global.bun_vm();
+        // SAFETY: `bun_vm()` returns the per-thread singleton.
+        let vm = unsafe { &mut *global.bun_vm() };
 
         let job = Box::into_raw(Box::new(CronJob {
             ref_count: Cell::new(1),
-            event_loop_timer: EventLoopTimer {
-                tag: EventLoopTimer::Tag::CronJob,
-                next: bun_core::Timespec::EPOCH,
-                ..EventLoopTimer::default()
-            },
+            event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::CronJob),
             // SAFETY: global outlives the job; JSC_BORROW per LIFETIMES.tsv.
             global: unsafe { core::mem::transmute::<&JSGlobalObject, &'static JSGlobalObject>(global) },
             parsed,

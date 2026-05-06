@@ -737,14 +737,15 @@ impl CompileC {
             &self.flags
         } else if let Some(tcc_options) = env_var::BUN_TCC_OPTIONS.get() {
             // TODO(port): @ptrCast from []const u8 to [:0]const u8 — env var must be NUL-terminated
-            // SAFETY: env vars are NUL-terminated by the OS
-            unsafe { ZStr::from_ptr(tcc_options.as_ptr()) }
+            // SAFETY: env vars are NUL-terminated by the OS; the slice points into
+            // the process env block, so a sentinel byte follows it.
+            unsafe { ZStr::from_raw(tcc_options.as_ptr(), tcc_options.len()) }
         } else {
-            ZStr::from_static(Self::DEFAULT_TCC_OPTIONS.as_bytes())
+            zstr!(b"-std=c11 -Wl,--export-all-symbols -g -O2")
         };
 
         // TODO: correctly handle invalid user-provided options
-        let state = match TCC::State::init::<CompileC, true>(TCC::Config {
+        let state_ptr = match TCC::State::init::<CompileC, true>(TCC::Config {
             options: Some(NonNull::from(compile_options)),
             output_type: TCC::OutputFormat::Memory,
             err: TCC::ConfigErr {

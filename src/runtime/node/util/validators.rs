@@ -438,7 +438,7 @@ pub fn validate_array(
 pub fn validate_string_array(
     global_this: &JSGlobalObject,
     value: JSValue,
-    name: fmt::Arguments<'_>,
+    name: impl fmt::Display + Copy,
 ) -> JsResult<usize> {
     validate_array(global_this, value, name, None)?;
     let mut i: usize = 0;
@@ -460,7 +460,7 @@ pub fn validate_string_array(
 pub fn validate_boolean_array(
     global_this: &JSGlobalObject,
     value: JSValue,
-    name: fmt::Arguments<'_>,
+    name: impl fmt::Display + Copy,
 ) -> JsResult<usize> {
     validate_array(global_this, value, name, None)?;
     let mut i: usize = 0;

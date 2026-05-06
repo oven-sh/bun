@@ -1087,7 +1087,8 @@ pub mod get_addr_info_request {
             // https://github.com/ziglang/zig/pull/14242
             let _free = scopeguard::guard(addrinfo, |a| unsafe { libc::freeaddrinfo(a) });
 
-            *self = LibcBackend::Success(GetAddrInfoResult::to_list(addrinfo));
+            // SAFETY: addrinfo is non-null (checked above); freed by `_free` guard after copy.
+            *self = LibcBackend::Success(bun_core::handle_oom(GetAddrInfoResult::to_list(unsafe { &*addrinfo })));
         }
     }
 

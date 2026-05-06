@@ -1360,7 +1360,7 @@ impl Subprocess<'_> {
     #[bun_jsc::host_fn(getter)]
     pub fn get_exit_code(this: &Self, _global: &JSGlobalObject) -> JSValue {
         if let Status::Exited(exited) = &this.process.status {
-            return JSValue::js_number(exited.code);
+            return JSValue::js_number(exited.code as f64);
         }
         JSValue::NULL
     }
@@ -1368,11 +1368,17 @@ impl Subprocess<'_> {
     #[bun_jsc::host_fn(getter)]
     pub fn get_signal_code(this: &Self, global: &JSGlobalObject) -> JSValue {
         if let Some(signal) = this.process.signal_code() {
-            if let Some(name) = signal.name() {
-                #[allow(deprecated)]
-                return ZigString::init(name).to_js(global);
+            // `process.signal_code()` returns the tier-0 `bun_core::SignalCode`
+            // (bare `#[repr(u8)]` discriminant); name/exit-code helpers live on
+            // `bun_sys::SignalCode`.
+            let sys_sig = bun_sys::SignalCode(signal as u8);
+            if let Some(name) = sys_sig.name() {
+                let _ = (name, global);
+                // TODO(blocked_on: bun_str::ZigString::to_js): `ZigStringJsc`
+                // only exposes error-instance constructors, not plain `to_js`.
+                todo!("blocked_on: bun_str::ZigString::to_js")
             } else {
-                return JSValue::js_number(signal as u32);
+                return JSValue::js_number(signal as u32 as f64);
             }
         }
 
@@ -1394,12 +1400,16 @@ impl Subprocess<'_> {
                 if !this_jsvalue.is_empty() {
                     if let Some(cb) = js::ipc_callback_get_cached(this_jsvalue) {
                         let global_this = self.global_this();
-                        global_this.bun_vm().event_loop().run_callback(
-                            cb,
-                            global_this,
-                            this_jsvalue,
-                            &[data, this_jsvalue, handle],
-                        );
+                        // SAFETY: bun_vm()/event_loop() return live VM-owned pointers.
+                        let event_loop = unsafe { (*global_this.bun_vm()).event_loop() };
+                        unsafe {
+                            (*event_loop).run_callback(
+                                cb,
+                                global_this,
+                                this_jsvalue,
+                                &[data, this_jsvalue, handle],
+                            )
+                        };
                     }
                 }
             }

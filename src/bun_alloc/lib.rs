@@ -865,21 +865,20 @@ pub mod heap_breakdown {
             return *z;
         }
         // Zone names live forever (zones are never destroyed); allocate the
-        // NUL-terminated label once and hand its pointer to the OS.
+        // NUL-terminated label once, stash it in the 'static map, then hand the
+        // OS a raw pointer into the map-owned buffer (PORTING.md §Forbidden:
+        // no `&*(p as *const _)` lifetime extension; ownership is the map's).
         let mut owned = Vec::with_capacity(name.len() + 1);
         owned.extend_from_slice(name);
         owned.push(0);
-        let raw = owned.as_ptr();
-        // SAFETY: `owned` ends in NUL and contains no interior NUL (type-name input).
-        let cstr = unsafe { core::ffi::CStr::from_ptr(raw as *const c_char) };
-        // SAFETY: the bytes backing `cstr` are owned by `owned`, which is moved
-        // into the 'static map below before this fn returns and is never removed
-        // or replaced (insert only on cache miss), so the pointer the OS stores
-        // via `malloc_set_zone_name` remains valid for process lifetime.
-        let cstr_static: &'static core::ffi::CStr =
-            unsafe { &*(cstr as *const core::ffi::CStr) };
-        let zone = Zone::init(cstr_static);
-        map.insert(name.to_vec(), (owned, zone));
+        let entry = map.entry(name.to_vec()).or_insert((owned, core::ptr::null()));
+        // `Vec`'s heap buffer address is stable across map rehashes (only the
+        // `Vec` struct moves), and this entry is never removed or overwritten.
+        let raw = entry.0.as_ptr() as *const c_char;
+        // SAFETY: `raw` points into the map-owned, NUL-terminated, never-freed
+        // buffer; valid for process lifetime per `Zone::init` contract.
+        let zone = unsafe { Zone::init(raw) };
+        entry.1 = zone;
         zone
     }
 

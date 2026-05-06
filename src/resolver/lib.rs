@@ -6043,8 +6043,8 @@ impl<'a> Resolver<'a> {
                                 None,
                                 esm.version,
                                 &sliced_string,
-                                unsafe { &mut *self.log() },
-                                manager,
+                                self.log(),
+                                manager as *const _,
                             ) {
                                 Some(v) => v,
                                 None => break 'load_module_from_cache,
@@ -6062,8 +6062,12 @@ impl<'a> Resolver<'a> {
 
                     // unsupported or not found dependency, we might need to install it to the cache
                     match self.enqueue_dependency_to_resolve(
-                        // SAFETY: see function-wide note above.
-                        unsafe { &*dir_info }.package_json_for_dependencies.or(unsafe { &*dir_info }.package_json),
+                        // SAFETY: see function-wide note above. Passed as `*const` and
+                        // re-derived `*mut` inside (Zig held `?*PackageJSON`).
+                        unsafe { &*dir_info }
+                            .package_json_for_dependencies
+                            .or(unsafe { &*dir_info }.package_json)
+                            .map(|p| p as *const PackageJSON),
                         &esm,
                         dependency_behavior,
                         &mut resolved_package_id,

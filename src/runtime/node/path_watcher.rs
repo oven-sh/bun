@@ -724,10 +724,13 @@ impl Linux {
     /// Caller holds `manager.mutex`. Drops this watcher's ownership of each of its
     /// wds; only issues `inotify_rm_watch` once a wd has no remaining owners.
     fn remove_watch(manager: &'static PathWatcherManager, watcher: &mut PathWatcher) {
-        // SAFETY: caller holds manager.mutex.
-        let plat = unsafe { &mut *(&manager.platform as *const _ as *mut Linux) };
+        let plat: *mut Linux = manager.platform.get();
+        // SAFETY: `fd` is immutable after init; see `add_one`.
+        let fd = unsafe { (*plat).fd };
+        // SAFETY: caller holds manager.mutex; exclusive access to `wd_map`.
+        let wd_map = unsafe { &mut (*plat).wd_map };
         for &wd in watcher.platform.wds.iter() {
-            let Some(owners) = plat.wd_map.get_mut(&wd) else { continue };
+            let Some(owners) = wd_map.get_mut(&wd) else { continue };
             let mut j: usize = 0;
             while j < owners.len() {
                 if core::ptr::eq(owners[j].watcher, watcher) {
@@ -737,8 +740,8 @@ impl Linux {
                 }
             }
             if owners.is_empty() {
-                plat.wd_map.remove(&wd);
-                let _ = sys::syscall::inotify_rm_watch(plat.fd.native(), wd);
+                wd_map.remove(&wd);
+                let _ = sys::syscall::inotify_rm_watch(fd.native(), wd);
             }
         }
         watcher.platform.wds.clear();

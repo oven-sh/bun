@@ -91,27 +91,27 @@ impl us_socket_t {
 
     pub fn is_closed(&self) -> bool {
         // SAFETY: self is a live us_socket_t; C side does not mutate through this pointer
-        unsafe { c::us_socket_is_closed(self as *const _ as *mut _) > 0 }
+        unsafe { c::us_socket_is_closed(self) > 0 }
     }
 
     pub fn is_shutdown(&self) -> bool {
         // SAFETY: self is a live us_socket_t; C side does not mutate through this pointer
-        unsafe { c::us_socket_is_shut_down(self as *const _ as *mut _) > 0 }
+        unsafe { c::us_socket_is_shut_down(self) > 0 }
     }
 
     pub fn is_tls(&self) -> bool {
         // SAFETY: self is a live us_socket_t; C side does not mutate through this pointer
-        unsafe { c::us_socket_is_tls(self as *const _ as *mut _) > 0 }
+        unsafe { c::us_socket_is_tls(self) > 0 }
     }
 
     pub fn local_port(&self) -> i32 {
         // SAFETY: self is a live us_socket_t; C side does not mutate through this pointer
-        unsafe { c::us_socket_local_port(self as *const _ as *mut _) }
+        unsafe { c::us_socket_local_port(self) }
     }
 
     pub fn remote_port(&self) -> i32 {
         // SAFETY: self is a live us_socket_t; C side does not mutate through this pointer
-        unsafe { c::us_socket_remote_port(self as *const _ as *mut _) }
+        unsafe { c::us_socket_remote_port(self) }
     }
 
     /// Returned slice is a view into `buf`.
@@ -120,7 +120,7 @@ impl us_socket_t {
         let mut length: i32 = i32::try_from(buf.len().min(MAX_I32)).unwrap();
         unsafe {
             // SAFETY: buf.as_mut_ptr() valid for `length` bytes; length is in/out
-            c::us_socket_local_address(self as *const _ as *mut _, buf.as_mut_ptr(), &mut length);
+            c::us_socket_local_address(self, buf.as_mut_ptr(), &mut length);
         }
         if length < 0 {
             let errno = bun_errno::get_errno(length);
@@ -138,7 +138,7 @@ impl us_socket_t {
         let mut length: i32 = i32::try_from(buf.len().min(MAX_I32)).unwrap();
         unsafe {
             // SAFETY: buf.as_mut_ptr() valid for `length` bytes; length is in/out
-            c::us_socket_remote_address(self as *const _ as *mut _, buf.as_mut_ptr(), &mut length);
+            c::us_socket_remote_address(self, buf.as_mut_ptr(), &mut length);
         }
         if length < 0 {
             let errno = bun_errno::get_errno(length);
@@ -220,7 +220,7 @@ impl us_socket_t {
 
     pub fn kind(&self) -> SocketKind {
         // SAFETY: self is a live us_socket_t; C side does not mutate through this pointer
-        SocketKind::from_u8(unsafe { c::us_socket_kind(self as *const _ as *mut _) })
+        SocketKind::from_u8(unsafe { c::us_socket_kind(self) })
     }
 
     /// Re-stamp the dispatch kind in place. Used after `Listener.onCreate`

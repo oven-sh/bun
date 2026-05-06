@@ -1707,7 +1707,8 @@ pub mod package_manifest {
 
             // TODO(port): inline-for over SIZES_FIELDS — unrolled by hand
             {
-                pkg_stream.pos = bun_core::mem::align_forward(pkg_stream.pos, core::mem::align_of::<NpmPackage>());
+                // std.mem.alignForward(usize, pos, alignOf(NpmPackage))
+                pkg_stream.pos = pkg_stream.pos.next_multiple_of(core::mem::align_of::<NpmPackage>());
                 package_manifest.pkg = pkg_stream.read_struct::<NpmPackage>()?;
             }
             package_manifest.string_buf = Self::read_array::<u8>(&mut pkg_stream)?.into();
@@ -1733,7 +1734,7 @@ impl PackageManifest {
     }
 
     pub fn report_size(&self) {
-        Output::pretty_errorln(format_args!(
+        Output::pretty_errorln(
             " Versions count:            {}\n \
              External Strings count:    {}\n \
              Package Versions count:    {}\n\n \
@@ -1743,18 +1744,20 @@ impl PackageManifest {
              Packages:   {}\n  \
              Strings:    {}\n  \
              Total:      {}",
-            self.versions.len(),
-            self.external_strings.len(),
-            self.package_versions.len(),
-            core::mem::size_of_val(&*self.versions),
-            core::mem::size_of_val(&*self.external_strings),
-            core::mem::size_of_val(&*self.package_versions),
-            core::mem::size_of_val(&*self.string_buf),
-            core::mem::size_of_val(&*self.versions)
-                + core::mem::size_of_val(&*self.external_strings)
-                + core::mem::size_of_val(&*self.package_versions)
-                + core::mem::size_of_val(&*self.string_buf),
-        ));
+            (
+                self.versions.len(),
+                self.external_strings.len(),
+                self.package_versions.len(),
+                core::mem::size_of_val(&*self.versions),
+                core::mem::size_of_val(&*self.external_strings),
+                core::mem::size_of_val(&*self.package_versions),
+                core::mem::size_of_val(&*self.string_buf),
+                core::mem::size_of_val(&*self.versions)
+                    + core::mem::size_of_val(&*self.external_strings)
+                    + core::mem::size_of_val(&*self.package_versions)
+                    + core::mem::size_of_val(&*self.string_buf),
+            ),
+        );
         Output::flush();
     }
 }

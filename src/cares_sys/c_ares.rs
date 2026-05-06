@@ -1391,20 +1391,9 @@ pub trait AnyHandler: Sized {
 impl struct_any_reply {
     // toJSResponse / toJS aliases deleted.
 
-    pub unsafe extern "C" fn callback_wrapper<T: AnyHandler>(
-        ctx: *mut c_void,
-        status: c_int,
-        timeouts: c_int,
-        buffer: *mut u8,
-        buffer_length: c_int,
-    ) {
-        // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
-        let this = unsafe { &mut *(ctx as *mut T) };
-        if status != ARES_SUCCESS {
-            this.on_any(Error::get(status), timeouts, None);
-            return;
-        }
-
+    /// Parse a DNS `ANY` reply buffer into a heap-allocated aggregate. Returns
+    /// the last per-record parse error if no record type parsed successfully.
+    pub fn parse(buffer: *mut u8, buffer_length: c_int) -> Result<Box<Self>, Error> {
         let mut any_success = false;
         let mut last_error: Option<c_int> = None;
         let mut reply = Box::new(struct_any_reply::default());

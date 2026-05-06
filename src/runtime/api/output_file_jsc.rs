@@ -1,16 +1,21 @@
 //! `to_js`/`to_blob` bridges for `bundler/OutputFile.zig`. Exposed as an
 //! extension trait so call sites stay `output.to_js(global)`.
+//!
+//! LAYERING: this file lives in `bun_runtime` (not `bun_bundler_jsc`) because
+//! it constructs `webcore::Blob`, `webcore::blob::Store`, `api::BuildArtifact`
+//! and `node::types::{PathLike, PathOrFileDescriptor}` — all `bun_runtime`
+//! types. `bun_runtime` already depends on `bun_bundler`, so there is no cycle.
 
-use crate::{JSGlobalObject, JSValue};
+use bun_jsc::{JSGlobalObject, JSValue};
 
 use bun_bundler::output_file::{OutputFile, Value as OutputFileValue};
 #[allow(unused_imports)]
 use bun_bundler::options_impl::LoaderExt;
 use bun_core::Output;
-use bun_jsc::api::BuildArtifact;
-use bun_jsc::node::{PathLike, PathOrFileDescriptor};
-use bun_jsc::webcore::blob::{SizeType as BlobSizeType, Store as BlobStore};
-use bun_jsc::webcore::Blob;
+use crate::api::js_bundler::BuildArtifact;
+use crate::node::types::{PathLike, PathOrFileDescriptor};
+use crate::webcore::blob::{SizeType as BlobSizeType, Store as BlobStore};
+use crate::webcore::Blob;
 use bun_string::PathString;
 
 /// Heap-dupe a path slice and return a borrowed view suitable for

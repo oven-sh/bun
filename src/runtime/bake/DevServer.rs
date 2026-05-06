@@ -2732,25 +2732,49 @@ impl DevServer<'_> {
         let ast_memory_allocator = heap.alloc(bun_js_parser::ASTMemoryAllocator::default());
         let _ast_scope = ast_memory_allocator.enter();
 
-        // PORT NOTE: `BundleV2::init` consumes `heap` *and* borrows it as
-        // `alloc: &Arena`; Zig passed both by-value (heap-moved into `bv2.graph.heap`)
-        // and an interior allocator handle. Until `BundleV2::init` is reshaped to
-        // derive `alloc` internally, this call cannot satisfy borrowck. The
-        // `BakeOptions.framework` field is also blocked (no `Clone`).
-        let _ = (
-            &mut self.server_transpiler,
-            &mut self.client_transpiler,
-            &mut self.ssr_transpiler,
-            self.bundler_options.plugin,
-            // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
-            unsafe { &*self.vm }.event_loop(),
-            bun_threading::work_pool::WorkPool::get(),
+        // PORT NOTE: `BundleV2::init` consumes `heap` and also wants
+        // `alloc: &Arena` derived from it. Zig's `heap.allocator()` is a
+        // `Copy` vtable handle that survives the move; in Rust the `Bump` is
+        // moved into `bv2.graph.heap`, so any pre-move borrow would dangle.
+        // `BundleV2::init` itself re-derives `linker.graph.bump = &this.graph
+        // .heap` internally and only uses `alloc` for short-lived setup —
+        // pass the heap's address via raw pointer (it lives at a stable
+        // `Box`-interior slot once `init` writes it).
+        //
+        // SAFETY: `heap_ptr` is read by `BundleV2::init` only after `heap` is
+        // moved into `this.graph.heap` (same allocation, stable address inside
+        // the freshly-`Box::new`'d `BundleV2`). The borrow is scoped to the
+        // call; we never reuse `heap_ptr` after `init` returns.
+        let heap_ptr: *const bun_alloc::Arena = &heap;
+        // PORT NOTE: split `&mut self` into disjoint field reborrows so
+        // `server_transpiler` (`&'a mut`) and `client/ssr_transpiler`
+        // (NonNull) don't trip the single-`&mut self` rule.
+        let self_ptr = self as *mut Self;
+        let mut bv2: Box<BundleV2<'_>> = BundleV2::init(
+            // SAFETY: `server_transpiler` outlives `bv2` (held by `self`).
+            unsafe { &mut (*self_ptr).server_transpiler },
+            Some(bundler::BakeOptions {
+                framework: framework_as_bundler_view(&self.framework),
+                // SAFETY: sibling fields of `*self`; `BundleV2` stores them as
+                // raw pointers and never moves them.
+                client_transpiler: unsafe {
+                    ::core::ptr::NonNull::from(&mut (*self_ptr).client_transpiler)
+                },
+                ssr_transpiler: unsafe {
+                    ::core::ptr::NonNull::from(&mut (*self_ptr).ssr_transpiler)
+                },
+                plugins: self.bundler_options.plugin.map(|p| p.cast()),
+            }),
+            // SAFETY: see `heap_ptr` note above.
+            unsafe { &*heap_ptr },
+            bundler::bundle_v2::EventLoop::Js(
+                // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
+                unsafe { &*self.vm }.event_loop(),
+            ),
+            false, // watching is handled separately
+            Some(bun_threading::work_pool::WorkPool::get()),
             heap,
-        );
-        let bv2: Box<BundleV2<'_>> =
-            todo!("blocked_on: bun_bundler::BundleV2::init (alloc/heap aliasing + bake::Framework Clone)");
-        #[allow(unreachable_code)]
-        let bv2 = bv2;
+        )?;
         bv2.bun_watcher = Some(::core::ptr::NonNull::from(&mut *self.bun_watcher).cast::<()>());
         bv2.asynchronous = true;
 

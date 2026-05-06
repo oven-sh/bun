@@ -827,55 +827,26 @@ fn iterate_bundled_deps(
             while let Some(sub_entry) = scoped_iter.next().ok().flatten() {
                 let entry_name = entry_subpath(_entry_name, sub_entry.name.slice())?;
 
-                for dep in ctx.bundled_deps.iter_mut() {
+                // PORT NOTE: reshaped for borrowck — Zig iterates `*dep` and
+                // calls `add_bundled_dep(ctx, ...)` mid-loop; in Rust we find
+                // the matching index first, mark it, then call with `&mut ctx`.
+                let Some(dep_idx) = ctx.bundled_deps.iter().position(|dep| {
                     debug_assert!(dep.from_root_package_json);
-                    if !strings::eql_long(entry_name.as_bytes(), &dep.name, true) {
-                        continue;
-                    }
+                    strings::eql_long(entry_name.as_bytes(), &dep.name, true)
+                }) else {
+                    continue;
+                };
 
-                    let entry_subpath_ = entry_subpath(b"node_modules", entry_name.as_bytes())?;
+                let entry_subpath_ = entry_subpath(b"node_modules", entry_name.as_bytes())?;
 
-                    let dedupe_entry = dedupe.get_or_put(entry_subpath_.as_bytes())?;
-                    if dedupe_entry.found_existing {
-                        // already got to it in `add_bundled_dep` below
-                        dep.was_packed = true;
-                        break;
-                    }
-
-                    let subdir = open_subdir(&dir, entry_name.as_bytes(), &entry_subpath_);
-                    dep.was_packed = true;
-                    add_bundled_dep(
-                        ctx,
-                        root_dir,
-                        DirInfo(subdir, entry_subpath_.as_bytes().into(), 2),
-                        &mut bundled_pack_queue,
-                        &mut dedupe,
-                        &mut additional_bundled_deps,
-                        log_level,
-                    )?;
-
-                    break;
-                }
-            }
-        } else {
-            let entry_name = _entry_name;
-            for dep in ctx.bundled_deps.iter_mut() {
-                debug_assert!(dep.from_root_package_json);
-                if !strings::eql_long(entry_name, &dep.name, true) {
+                let dedupe_entry = dedupe.get_or_put(entry_subpath_.as_bytes())?;
+                ctx.bundled_deps[dep_idx].was_packed = true;
+                if dedupe_entry.found_existing {
+                    // already got to it in `add_bundled_dep` below
                     continue;
                 }
 
-                let entry_subpath_ = entry_subpath(b"node_modules", entry_name)?;
-
-                let dedupe_entry = dedupe.get_or_put(entry_subpath_.as_bytes())?;
-                if dedupe_entry.found_existing {
-                    // already got to it in `add_bundled_dep` below
-                    dep.was_packed = true;
-                    break;
-                }
-
-                let subdir = open_subdir(&dir, entry_name, &entry_subpath_);
-                dep.was_packed = true;
+                let subdir = open_subdir(&dir, entry_name.as_bytes(), &entry_subpath_);
                 add_bundled_dep(
                     ctx,
                     root_dir,
@@ -885,9 +856,36 @@ fn iterate_bundled_deps(
                     &mut additional_bundled_deps,
                     log_level,
                 )?;
-
-                break;
             }
+        } else {
+            let entry_name = _entry_name;
+            // PORT NOTE: reshaped for borrowck — see comment in scoped branch.
+            let Some(dep_idx) = ctx.bundled_deps.iter().position(|dep| {
+                debug_assert!(dep.from_root_package_json);
+                strings::eql_long(entry_name, &dep.name, true)
+            }) else {
+                continue;
+            };
+
+            let entry_subpath_ = entry_subpath(b"node_modules", entry_name)?;
+
+            let dedupe_entry = dedupe.get_or_put(entry_subpath_.as_bytes())?;
+            ctx.bundled_deps[dep_idx].was_packed = true;
+            if dedupe_entry.found_existing {
+                // already got to it in `add_bundled_dep` below
+                continue;
+            }
+
+            let subdir = open_subdir(&dir, entry_name, &entry_subpath_);
+            add_bundled_dep(
+                ctx,
+                root_dir,
+                DirInfo(subdir, entry_subpath_.as_bytes().into(), 2),
+                &mut bundled_pack_queue,
+                &mut dedupe,
+                &mut additional_bundled_deps,
+                log_level,
+            )?;
         }
     }
 

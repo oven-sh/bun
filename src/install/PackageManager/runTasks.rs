@@ -122,11 +122,16 @@ pub fn run_tasks<C: RunTasksCallbacks>(
     // for the body. Dropped before the guards reborrow the same pointers.
     let manager = unsafe { &mut *manager_ptr };
     let extract_ctx = unsafe { &mut *extract_ctx_ptr };
-    let has_updated_ptr = &mut has_updated_this_run as *mut bool;
+    let has_updated_ptr: *mut bool = &mut has_updated_this_run;
+    // SAFETY: same shadow-reborrow as `manager`/`extract_ctx` above — every body
+    // write goes through this `&mut` so `has_updated_ptr` keeps provenance for
+    // the guard's read.
+    let has_updated_this_run = unsafe { &mut *has_updated_ptr };
     let _drain_guard = scopeguard::guard((), move |()| {
-        // SAFETY: guard drops after every body borrow of `manager` has ended
-        // (scope exit or `?` unwind); `manager_ptr` retains provenance because
-        // the body only ever accessed the allocation through reborrows of it.
+        // SAFETY: guard drops after every body borrow of `manager` /
+        // `has_updated_this_run` has ended (scope exit or `?` unwind);
+        // `manager_ptr` / `has_updated_ptr` retain provenance because the body
+        // only ever accessed those allocations through reborrows of them.
         let manager = unsafe { &mut *manager_ptr };
         let has_updated_this_run = unsafe { *has_updated_ptr };
         manager.drain_dependency_list();

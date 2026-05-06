@@ -271,10 +271,18 @@ impl JSMySQLConnection {
         self.ref_();
         self.stop_timers();
         self.unregister_auto_flusher();
-        let _guard = scopeguard::guard((), |_| {
-            // TODO(port): errdefer — captures &mut self across guard; Phase B may need reshape
-            self.update_reference_type();
-            self.deref();
+        // Zig `defer { updateReferenceType(); deref(); }`. The guard re-enters
+        // through a raw pointer so the closure does not hold a second `&mut`
+        // alias of `self`, and so that no `&mut Self` is live across the
+        // potential free in `deref()`. LIFO order matches Zig: deref last.
+        let p: *mut Self = self;
+        let _guard = scopeguard::guard((), move |_| {
+            // SAFETY: `p` is derived from a live `&mut self`; the matching
+            // `ref_()` above guarantees `*p` survives until this `deref()`.
+            unsafe {
+                (*p).update_reference_type();
+                Self::deref(p);
+            }
         });
         if self.vm.is_shutting_down() {
             self.connection.close();
@@ -290,7 +298,11 @@ impl JSMySQLConnection {
             return self.close();
         }
         self.ref_();
-        let _ref_guard = scopeguard::guard((), |_| self.deref());
+        // Zig `defer this.deref();` — raw-pointer guard so no `&mut` alias is
+        // captured and no reference is live across the potential free.
+        let p: *mut Self = self;
+        // SAFETY: `p` from live `&mut self`; paired with `ref_()` above.
+        let _ref_guard = scopeguard::guard((), move |_| unsafe { Self::deref(p) });
         let event_loop = self.vm.event_loop();
         event_loop.enter();
         let _loop_guard = scopeguard::guard((), |_| event_loop.exit());

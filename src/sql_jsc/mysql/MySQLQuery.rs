@@ -228,12 +228,18 @@ impl MySQLQuery {
     fn bind_and_execute_impl<W>(
         &mut self,
         writer: &mut W,
-        statement: &mut MySQLStatement,
+        statement: *mut MySQLStatement,
         global_object: &JSGlobalObject,
         binding_value: JSValue,
         columns_value: JSValue,
         roots: &mut MarkedArgumentBuffer,
     ) -> Result<(), AnyMySQLError> {
+        // SAFETY: `statement` was derived from the `Rc<MySQLStatement>` held in
+        // `self.statement` by `run_prepared_query`; that `Rc` keeps the allocation alive
+        // across this call. The caller dropped its `&mut` borrow before reborrowing `self`,
+        // so this is the only live mutable access path to the statement for the duration
+        // of this function (matches Zig .zig:74 which takes an independent `*MySQLStatement`).
+        let statement = unsafe { &mut *statement };
         let mut execute = prepared_statement::Execute {
             statement_id: statement.statement_id,
             param_types: statement.signature.fields.clone(), // TODO(port): Zig borrows the slice; Phase B should make `Execute.param_types` a `&[_]`.
@@ -352,11 +358,18 @@ impl MySQLQuery {
                 if connection.can_pipeline() {
                     debug!("bindAndExecute");
                     let writer = connection.get_writer();
-                    // TODO(port): needs `&mut MySQLStatement`; see field note.
-                    let stmt_mut = Rc::get_mut(self.statement.as_mut().unwrap())
-                        .expect("TODO(port): shared mutation — switch to IntrusiveRc/RefCell");
+                    // Derive a raw `*mut MySQLStatement` and let the `&mut self` borrow used
+                    // to obtain it end *before* calling the `&mut self` method below — passing a
+                    // `&mut MySQLStatement` rooted in `*self` alongside `&mut self` would be two
+                    // overlapping mutable borrows. The Zig spec (.zig:183/195) passes an
+                    // independent `*MySQLStatement` here.
+                    // TODO(port): `Rc::get_mut` panics when the connection map also holds a ref;
+                    // see field note — switch to IntrusiveRc/RefCell.
+                    let stmt_ptr: *mut MySQLStatement = Rc::get_mut(self.statement.as_mut().unwrap())
+                        .expect("TODO(port): shared mutation — switch to IntrusiveRc/RefCell")
+                        as *mut MySQLStatement;
                     if let Err(err) =
-                        self.bind_and_execute(writer, stmt_mut, global_object, binding_value, columns_value)
+                        self.bind_and_execute(writer, stmt_ptr, global_object, binding_value, columns_value)
                     {
                         if !global_object.has_exception() {
                             return global_object.throw_value(mysql_error_to_js(

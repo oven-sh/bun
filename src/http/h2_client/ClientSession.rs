@@ -511,10 +511,13 @@ impl ClientSession {
             unsafe { ClientSession::deref(self_ptr) }
         });
         for &stream in self.streams.values() {
-            // SAFETY: owned live Stream pointer.
-            let stream = unsafe { &mut *stream };
+            // SAFETY: owned live Stream pointer (disjoint heap alloc). Shared
+            // borrow only — we read the `client` backref, never mutate the
+            // Stream, so no `&mut` is materialised.
+            let stream = unsafe { &*stream };
             let Some(client) = stream.client else { continue };
-            // SAFETY: stream.client is a live back-ref while set.
+            // SAFETY: stream.client is a live HTTPClient back-ref while set;
+            // disjoint allocation, sole `&mut` at this point.
             let client = unsafe { &mut *client.as_ptr() };
             if client.async_http_id != async_http_id {
                 continue;
@@ -537,10 +540,13 @@ impl ClientSession {
         // PORT NOTE: reshaped for borrowck — collect target stream ptr before mutating self.
         let mut target: Option<*mut Stream> = None;
         for &stream in self.streams.values() {
-            // SAFETY: owned live Stream pointer.
-            let s = unsafe { &mut *stream };
+            // SAFETY: owned live Stream pointer (disjoint heap alloc). Shared
+            // borrow only — we read the `client` backref, never mutate the
+            // Stream itself in this scan loop.
+            let s = unsafe { &*stream };
             let Some(client_ptr) = s.client else { continue };
-            // SAFETY: stream.client is a live back-ref while set.
+            // SAFETY: stream.client is a live HTTPClient back-ref while set;
+            // disjoint allocation, sole `&mut` at this point.
             let client = unsafe { &mut *client_ptr.as_ptr() };
             if client.async_http_id != async_http_id {
                 continue;
@@ -685,14 +691,15 @@ impl ClientSession {
         while i < self.streams.count() {
             let stream = self.streams.values()[i];
             if self.deliver_stream(stream) {
-                // SAFETY: stream is a live entry in self.streams.
+                // SAFETY: stream is a live entry in self.streams; disjoint
+                // heap alloc so `&mut Stream` does not overlap `&mut self`.
                 let s = unsafe { &mut *stream };
                 // Any detach that leaves the stream open from the server's
                 // perspective (we never sent END_STREAM, *or* the server
                 // never did and hasn't RST'd) must signal abandonment so the
                 // server can release its concurrency slot. rst() is idempotent.
                 if s.state != StreamState::Closed {
-                    s.rst(wire::ErrorCode::CANCEL);
+                    self.rst_stream(s, wire::ErrorCode::CANCEL);
                     rst_any = true;
                 }
                 self.remove_stream(stream);

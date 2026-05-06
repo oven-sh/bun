@@ -4236,9 +4236,14 @@ impl HTTPClient {
             content_length.is_some() && self.state.total_body_received >= content_length.unwrap();
         if is_done || self.signals.get(signals::Field::ResponseBodyStreaming) || content_length.is_none() {
             let is_final_chunk = is_done;
-            // TODO(port): buffer.* is a value copy in Zig; pass &mut here
-            // SAFETY: buffer points into self.state; process_body_buffer is the only borrower.
-            let processed = self.state.process_body_buffer(unsafe { &mut *(buffer as *mut MutableString) }, is_final_chunk)?;
+            // PORT NOTE: get_body_buffer() may return `&mut self.state.compressed_body`;
+            // pass via raw `*const` because process_body_buffer takes `&mut self`
+            // (would alias) but only reads `buffer.list` and writes to disjoint
+            // body_out_str.
+            let buffer_ptr: *const MutableString = self.state.get_body_buffer();
+            // SAFETY: buffer_ptr points into self.state; process_body_buffer
+            // only reads `buffer.list` and writes to a disjoint output buffer.
+            let processed = self.state.process_body_buffer(unsafe { &*buffer_ptr }, is_final_chunk)?;
 
             // We can only use the libdeflate fast path when we are not streaming
             // If we ever call processBodyBuffer again, it cannot go through the fast path.
@@ -4430,8 +4435,9 @@ impl HTTPClient {
                     // If we're streaming, we cannot use the libdeflate fast path
                     self.state.flags.is_libdeflate_fast_path_disabled = true;
 
-                    // SAFETY: body_buffer points into self.state; sole live borrow.
-                    return self.state.process_body_buffer(unsafe { &mut *body_buffer }, true);
+                    // SAFETY: body_buffer points into self.state; process_body_buffer
+                    // only reads `buffer.list` and writes to a disjoint output buffer.
+                    return self.state.process_body_buffer(unsafe { &*body_buffer }, true);
                 }
 
                 Ok(false)

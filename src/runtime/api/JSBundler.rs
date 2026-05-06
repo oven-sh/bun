@@ -265,9 +265,16 @@ pub mod js_bundler {
             {
                 if let Some((key, _)) = self.map.get_key_value(specifier) {
                     let key: &[u8] = key.as_ref();
+                    // PORT NOTE: Zig hands back a borrow into `self.map`; Rust's
+                    // `resolver::Result` is `'static`, so leak the key (FileMap keys
+                    // already live for the bundler run).
+                    // SAFETY: `key` points into `self.map`, which outlives the
+                    // returned `resolver::Result` (FileMap is owned by the Config).
+                    let key_static: &'static [u8] =
+                        unsafe { core::slice::from_raw_parts(key.as_ptr(), key.len()) };
                     return Some(resolver::Result {
                         path_pair: resolver::PathPair {
-                            primary: Fs::Path::init_with_namespace(key, b"file"),
+                            primary: Fs::Path::init_with_namespace(key_static, b"file"),
                             ..Default::default()
                         },
                         module_type: options::ModuleType::Unknown,

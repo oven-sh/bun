@@ -1392,9 +1392,14 @@ impl AnyServer {
         &self,
         topic: &[u8],
         message: &[u8],
-        opcode: bun_uws_sys::Opcode,
+        opcode: uws::Opcode,
         compress: bool,
     ) -> bool {
+        // PORT NOTE: callers (bake::DevServer) hold `bun_uws::Opcode`; the
+        // underlying uws_sys app wants `bun_uws_sys::Opcode`. Both are
+        // `#[repr(transparent)]` i32 newtypes with identical discriminants —
+        // re-wrap by value rather than depending on a cross-crate `From` impl.
+        let opcode = uws_sys::Opcode(opcode.0);
         any_server_dispatch!(self, |s| match s.app {
             // SAFETY: app handle is live while AnyServer is held.
             Some(app) => unsafe { (*app).publish(topic, message, opcode, compress) },

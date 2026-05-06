@@ -322,17 +322,9 @@ pub use sink::Sink;
 pub mod file_sink;
 pub use file_sink::FileSink;
 
-// ─── stub-only (heavy JSC; struct types only) ────────────────────────────────
-// TODO(b2-blocked): un-gate ByteBlobLoader/ByteStream bodies once bun_jsc methods land.
-pub mod byte_stream {
-    #[derive(Debug, Default)]
-    pub struct ByteStream;
-}
+// ByteStream/ByteBlobLoader: real bodies now live in webcore/ByteStream.rs and
+// webcore/ByteBlobLoader.rs (declared above). Re-export the struct types here.
 pub use byte_stream::ByteStream;
-pub mod byte_blob_loader {
-    #[derive(Debug, Default)]
-    pub struct ByteBlobLoader;
-}
 pub use byte_blob_loader::ByteBlobLoader;
 
 // TODO: make this JSGlobalObject local for better security

@@ -516,7 +516,7 @@ pub fn get_tls_peer_finished_message(this: &mut This, global: &JSGlobalObject, _
     Ok(buffer)
 }
 
-pub fnexport_keying_material(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub fn export_keying_material(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     if this.socket.is_detached() {
         return Ok(JSValue::UNDEFINED);
     }
@@ -771,7 +771,7 @@ pub fn get_tls_ticket(this: &mut This, global: &JSGlobalObject, _frame: &CallFra
     jsc::ArrayBuffer::create_buffer(global, slice)
 }
 
-pub fnrenegotiate(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub fn renegotiate(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::UNDEFINED) };
     // SAFETY: ERR_clear_error has no preconditions; clears the calling thread's BoringSSL error queue.
     unsafe { boringssl::ERR_clear_error() };

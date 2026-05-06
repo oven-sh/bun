@@ -665,9 +665,8 @@ impl ServePlugins {
         let ServePluginsState::Unqueued(plugin_list) = &self.state else { unreachable!() };
         let plugin_list: Vec<_> = plugin_list.iter().collect(); // borrow before state mutation
         // PORT NOTE: reshaped for borrowck — clone the slice refs so we can mutate self.state below
-        let bunfig_folder = paths::dirname(
+        let bunfig_folder = paths::resolve_path::dirname::<paths::platform::Auto>(
             global.bun_vm().transpiler.options.bunfig_path,
-            paths::Platform::Auto,
         );
 
         self.ref_();
@@ -716,7 +715,7 @@ impl ServePlugins {
             if let Some(promise) = result.as_any_promise() {
                 match promise.status() {
                     // promise not fulfilled yet
-                    jsc::PromiseStatus::Pending => {
+                    jsc::js_promise::Status::Pending => {
                         self.ref_();
                         let promise_value = promise.as_value();
                         if let ServePluginsState::Pending { promise, .. } = &mut self.state {
@@ -725,11 +724,11 @@ impl ServePlugins {
                         promise_value.then(global, self as *mut Self, on_resolve_impl, on_reject_impl)?;
                         return Ok(());
                     }
-                    jsc::PromiseStatus::Fulfilled => {
+                    jsc::js_promise::Status::Fulfilled => {
                         self.handle_on_resolve();
                         return Ok(());
                     }
-                    jsc::PromiseStatus::Rejected => {
+                    jsc::js_promise::Status::Rejected => {
                         let value = promise.result(global.vm());
                         self.handle_on_reject(global, value);
                         return Ok(());
@@ -2569,14 +2568,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         req.set_yield(false);
         // PERF(port): was stack-fallback alloc
 
-        let buffer_writer = bun_js_parser::printer::BufferWriter::init();
-        let mut writer = bun_js_parser::printer::BufferPrinter::init(buffer_writer);
+        let buffer_writer = bun_js_printer::BufferWriter::init();
+        let mut writer = bun_js_printer::BufferPrinter::init(buffer_writer);
         let source = logger::Source::init_empty_file(b"info.json");
-        let _ = bun_js_parser::printer::print_json(
+        // SAFETY: `VirtualMachine::get()` is only called from the JS thread after VM init.
+        let transpiler = unsafe { &(*VirtualMachine::VirtualMachine::get()).transpiler };
+        let _ = bun_js_printer::print_json(
             &mut writer,
-            BunInfo::generate(&VirtualMachine::get().transpiler).expect("unreachable"),
+            BunInfo::generate(transpiler).expect("unreachable"),
             &source,
-            bun_js_parser::printer::Options { mangled_props: None },
+            bun_js_printer::PrintJsonOptions { mangled_props: None, ..Default::default() },
         );
 
         resp.write_status(b"200 OK");
@@ -2672,22 +2673,22 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
 
             if let Some(promise) = result.as_any_promise() {
-                if promise.status() == jsc::PromiseStatus::Pending {
+                if promise.status() == jsc::js_promise::Status::Pending {
                     strong_promise.set(global, result);
                     needs_to_drain = false;
                     vm.drain_microtasks();
                 }
 
                 match promise.status() {
-                    jsc::PromiseStatus::Fulfilled => {
+                    jsc::js_promise::Status::Fulfilled => {
                         global.handle_rejected_promises();
                         break 'brk HTTPResult::Success;
                     }
-                    jsc::PromiseStatus::Rejected => {
+                    jsc::js_promise::Status::Rejected => {
                         promise.set_handled(global.vm());
                         break 'brk HTTPResult::Rejection(promise.result(global.vm()));
                     }
-                    jsc::PromiseStatus::Pending => {
+                    jsc::js_promise::Status::Pending => {
                         global.handle_rejected_promises();
                         if let Some(node_response) = node_http_response {
                             let node_response = unsafe { &mut *node_response };
@@ -3097,13 +3098,17 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         // TODO(port): pool selection — Ctx::IS_H3 ? h3_request_pool_allocator : request_pool_allocator
-        let pool_allocator = if Ctx::IS_H3 {
-            // SAFETY: same struct layout for both pool kinds; Phase B refactor
-            unsafe { mem::transmute::<_, &dyn super::request_context::Pool<Ctx>>(self.h3_request_pool_allocator) }
-        } else {
-            unsafe { mem::transmute::<_, &dyn super::request_context::Pool<Ctx>>(self.request_pool_allocator) }
-        };
-        let ctx = pool_allocator.try_get(); // bun.handleOom — aborts on OOM
+        // SAFETY: both allocators hand out `*mut RequestContext<_, SSL, DEBUG, _>`; the
+        // const-bool H3 parameter only affects associated consts/types, not layout, so
+        // reinterpreting the slot pointer as the caller's `Ctx` monomorphization is sound.
+        let ctx: &mut Ctx = unsafe {
+            let raw: *mut Ctx = if Ctx::IS_H3 {
+                bun_core::handle_oom(self.h3_request_pool_allocator.try_get()).cast()
+            } else {
+                bun_core::handle_oom(self.request_pool_allocator.try_get()).cast()
+            };
+            &mut *raw
+        }; // bun.handleOom — aborts on OOM
         ctx.create(self, req, resp, should_deinit_context, method);
         self.vm.jsc_vm.deprecated_report_extra_memory(mem::size_of::<Ctx>());
         let body = self.vm.init_request_body_value(Body::Value::Null).expect("unreachable");
@@ -3120,7 +3125,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             signal.ref_(),
             body.ref_(),
         ));
-        ctx.request_weakref = super::request_context::WeakRef::init_ref(request_object);
+        ctx.request_weakref = crate::webcore::request::WeakRef::init_ref(request_object);
 
         // The lazy `getRequest()` path that backs Request.url / .headers
         // is `*uws.Request`-typed; for HTTP/3 we populate both eagerly so
@@ -3554,10 +3559,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 if entry.path.as_ref() == b"/*" {
                     has_static_route_for_star_path = true;
                     match &entry.method {
-                        Option<http::Method>::Any => {
+                        server_config::MethodOptional::Any => {
                             star_methods_covered_by_user = http::Method::Set::init_full();
                         }
-                        Option<http::Method>::Method(method) => {
+                        server_config::MethodOptional::Method(method) => {
                             star_methods_covered_by_user.set_union(*method);
                         }
                     }
@@ -3952,7 +3957,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.ref_();
 
         // Starting up an HTTP server is a good time to GC
-        if self.vm.aggressive_garbage_collection == jsc::AggressiveGC::Aggressive {
+        if self.vm.aggressive_garbage_collection == jsc::virtual_machine::GCLevel::Aggressive {
             self.vm.auto_garbage_collect();
         } else {
             self.vm.event_loop().perform_gc();

@@ -89,6 +89,15 @@ fn wrap<const SSL: bool>(s: *mut us_socket_t) -> NewSocketHandler<SSL> {
     NewSocketHandler::<SSL>::from(s)
 }
 
+/// Bridge the C-ABI verify-error struct from `bun_uws_sys` (delivered by the
+/// vtable trampoline) to the `bun_uws` mirror that consumer crates still take.
+/// Both are `#[repr(C)]` with identical layout; this just renames the first
+/// field. Drop once `bun_uws` re-exports the sys type directly.
+#[inline(always)]
+fn to_uws_verify_err(e: us_bun_verify_error_t) -> bun_uws::us_bun_verify_error_t {
+    bun_uws::us_bun_verify_error_t { error_no: e.error, code: e.code, reason: e.reason }
+}
+
 impl<T, const SSL: bool> VHandler for PtrHandler<T, SSL>
 where
     T: SocketEvents<SSL> + 'static,

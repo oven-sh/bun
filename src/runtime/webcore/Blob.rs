@@ -5035,9 +5035,9 @@ impl Blob {
                 if let Some(tag) = fd.stdio_tag() {
                     let vm = global_this.bun_vm();
                     let store = match tag {
-                        bun_sys::StdioTag::StdIn => vm.rare_data().stdin(),
-                        bun_sys::StdioTag::StdErr => vm.rare_data().stderr(),
-                        bun_sys::StdioTag::StdOut => vm.rare_data().stdout(),
+                        bun_sys::Stdio::StdIn => vm.rare_data().stdin(),
+                        bun_sys::Stdio::StdErr => vm.rare_data().stderr(),
+                        bun_sys::Stdio::StdOut => vm.rare_data().stdout(),
                     };
                     return Blob::init_with_store(store.clone(), global_this);
                 }

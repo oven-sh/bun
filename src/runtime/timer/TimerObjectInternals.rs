@@ -730,7 +730,8 @@ impl TimerObjectInternals {
         let s = unsafe { &mut *this };
         // TODO(port): redundant once JsRef has Drop — parent's `drop(Box::from_raw)` runs field Drops
         s.this_value.deinit();
-        let vm = VirtualMachine::get();
+        // SAFETY: `VirtualMachine::get()` returns the live per-thread VM; short-lived &mut at use site.
+        let vm = unsafe { &mut *VirtualMachine::get() };
         let kind = s.flags.kind();
 
         if s.event_loop_timer().state == EventLoopTimer::State::ACTIVE {
@@ -745,9 +746,10 @@ impl TimerObjectInternals {
                 // Values are 1 ptr
                 // Therefore, 12 bytes per entry
                 // So if you created 21,000 timers and accessed them by ID, you'd be using 252KB
-                let allocated_bytes = map.capacity() * core::mem::size_of::<<TimeoutMap as super::TimeoutMapExt>::Data>();
-                let used_bytes = map.count() * core::mem::size_of::<<TimeoutMap as super::TimeoutMapExt>::Data>();
-                // TODO(port): TimeoutMap.Data sizeof — verify Rust-side entry layout
+                // Zig: `@sizeOf(TimeoutMap.Data)` — entry is i32 key + *EventLoopTimer value (12 bytes/entry).
+                let entry_size = core::mem::size_of::<i32>() + core::mem::size_of::<*mut EventLoopTimer>();
+                let allocated_bytes = map.capacity() * entry_size;
+                let used_bytes = map.count() * entry_size;
                 if allocated_bytes - used_bytes > 256 * 1024 {
                     map.shrink_and_free(map.count() + 8);
                 }

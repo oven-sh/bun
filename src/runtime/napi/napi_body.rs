@@ -3036,10 +3036,16 @@ impl NapiFinalizerTask {
         // SAFETY: env is valid (held by NapiEnvRef).
         let global_this = unsafe { &*self.finalizer.env.get() }.to_js();
 
-        let (vm, thread_kind) = global_this.try_bun_vm();
+        // Inline of `JSGlobalObject::try_bun_vm` (the full impl lives in the
+        // gated `JSGlobalObject.rs`): the VM pointer is fetched unconditionally
+        // from C++; "main thread" is determined by whether the thread-local VM
+        // holder is populated.
+        // SAFETY: `bun_vm()` returns a valid `*mut VirtualMachine` for this global.
+        let vm: &VirtualMachine = unsafe { &*global_this.bun_vm() };
+        let is_main_thread = VirtualMachine::get_or_null().is_some();
         let this = Box::into_raw(self);
 
-        if thread_kind != jsc::ThreadKind::Main {
+        if !is_main_thread {
             // TODO(@heimskr): do we need to handle the case where the vm is shutting down?
             vm.event_loop()
                 .enqueue_task_concurrent(ConcurrentTask::create(Task::init_ptr(this)));

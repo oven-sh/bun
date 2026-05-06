@@ -173,7 +173,7 @@ impl<'a> RopeStringEncoder<'a> {
         // SAFETY: ptr[0..len] is provided by JSC rope iteration
         let src = unsafe { core::slice::from_raw_parts(ptr, len as usize) };
         let result =
-            strings::copy_latin1_into_utf8_stop_on_non_ascii(&mut this.buf[this.tail..], src, true);
+            strings::copy_latin1_into_utf8_stop_on_non_ascii::<true>(&mut this.buf[this.tail..], src);
         if result.read == u32::MAX && result.written == u32::MAX {
             // SAFETY: it is a valid pointer for the duration of the callback
             unsafe { (*it).stop = 1 };
@@ -196,10 +196,9 @@ impl<'a> RopeStringEncoder<'a> {
         let this = unsafe { &mut *((*it).data as *mut RopeStringEncoder<'a>) };
         // SAFETY: ptr[0..len] is provided by JSC rope iteration
         let src = unsafe { core::slice::from_raw_parts(ptr, len as usize) };
-        let result = strings::copy_latin1_into_utf8_stop_on_non_ascii(
+        let result = strings::copy_latin1_into_utf8_stop_on_non_ascii::<true>(
             &mut this.buf[offset as usize..],
             src,
-            true,
         );
         if result.read == u32::MAX && result.written == u32::MAX {
             // SAFETY: it is a valid pointer for the duration of the callback

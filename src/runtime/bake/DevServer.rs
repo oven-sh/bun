@@ -5267,7 +5267,7 @@ impl bun_uws_sys::body_reader_mixin::BodyReaderHandler for UnrefSourceMapRequest
 impl UnrefSourceMapRequest {
     fn run<R>(dev: &mut DevServer, _: &mut Request, resp: &mut R)
     where
-        R: uws::body_reader_mixin::BodyResponse,
+        R: bun_uws_sys::body_reader_mixin::BodyResponse,
     {
         let ctx = Box::new(UnrefSourceMapRequest {
             dev: dev as *mut DevServer<'_> as *mut DevServer<'static>,

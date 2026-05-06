@@ -185,7 +185,9 @@ pub struct S3Client {
 }
 
 impl S3Client {
-    #[bun_jsc::host_fn]
+    // PORT NOTE: no `#[bun_jsc::host_fn]` here — the `#[bun_jsc::JsClass]`
+    // derive on the struct emits `S3ClientClass__construct` which calls
+    // `<S3Client>::constructor` directly.
     pub fn constructor(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<Box<Self>> {
         let arguments = callframe.arguments_old(1).slice();
         let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments);

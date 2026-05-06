@@ -643,6 +643,11 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
     }
 }
 
+// Gated: depends on `Lockfile.packages` MultiArrayList accessors and
+// `Resolution::fmt(.., FmtMode)` which only exist on the real (currently
+// `#![cfg(any())]`-gated) `bun_install::lockfile_real` / `resolution` impls.
+// Sole caller is the `ls` branch above, itself gated for the same reason.
+#[cfg(any())]
 fn print_node_modules_folder_structure(
     directory: &NodeModulesFolder,
     directory_package_id: Option<PackageID>,
@@ -731,7 +736,7 @@ fn print_node_modules_folder_structure(
                     Global::exit(1);
                 }
             };
-            Output::println("{s} node_modules", format_args!("{}", bstr::BStr::new(path)));
+            Output::println(format_args!("{} node_modules", bstr::BStr::new(path)));
         }
     }
 

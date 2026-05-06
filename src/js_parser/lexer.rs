@@ -211,6 +211,58 @@ pub struct ScanResult<'a> {
 // `std.array_list.Managed(u16)`. Dropped instead of porting; `decode_escape_sequences` is
 // monomorphized to `Vec<u16>`.
 
+/// POD snapshot of all backtrack-relevant lexer state.
+///
+/// Zig backtracks via `const old = lexer.*; ...; lexer.* = old;` — a full struct
+/// copy. Rust can't do that here because `LexerType` holds `log: &'a mut Log`
+/// (non-`Clone`, non-`Copy`, unique borrow). Instead, callers do:
+///
+/// ```ignore
+/// let snap = p.lexer.snapshot();
+/// /* speculative parse */
+/// p.lexer.restore(&snap);
+/// ```
+///
+/// This struct is `Copy` and intentionally excludes `log`, `source`, `allocator`
+/// (shared/unique borrows that never change across a backtrack) and the three
+/// growable `Vec` buffers (captured as lengths only — `restore()` truncates).
+#[derive(Clone, Copy)]
+pub struct LexerSnapshot<'a> {
+    pub current: usize,
+    pub start: usize,
+    pub end: usize,
+    pub did_panic: bool,
+    pub approximate_newline_count: usize,
+    pub previous_backslash_quote_in_jsx: Range,
+    pub token: T,
+    pub has_newline_before: bool,
+    pub has_pure_comment_before: bool,
+    pub has_no_side_effect_comment_before: bool,
+    pub preserve_all_comments_before: bool,
+    pub is_legacy_octal_literal: bool,
+    pub is_log_disabled: bool,
+    pub code_point: CodePoint,
+    pub identifier: &'a [u8],
+    pub jsx_pragma: JSXPragma,
+    pub source_mapping_url: Option<js_ast::Span>,
+    pub number: f64,
+    pub rescan_close_brace_as_template_token: bool,
+    pub prev_error_loc: Loc,
+    pub prev_token_was_await_keyword: bool,
+    pub await_keyword_loc: Loc,
+    pub fn_or_arrow_start_loc: Loc,
+    pub regex_flags_start: Option<u16>,
+    pub string_literal_raw_content: &'a [u8],
+    pub string_literal_start: usize,
+    pub string_literal_raw_format: StringLiteralRawFormat,
+    pub is_ascii_only: bool,
+    pub track_comments: bool,
+    pub indent_info: IndentInfo,
+    // Vec buffer lengths — restore() truncates back to these.
+    pub all_comments_len: usize,
+    pub comments_to_preserve_before_len: usize,
+}
+
 /// The lexer struct produced by `NewLexer_`.
 ///
 /// `'a` is the lifetime of the borrowed `Log` and the source contents (arena/source-owned
@@ -410,11 +462,51 @@ lexer_impl_header! {
         Ok(())
     }
 
-    pub fn restore(&mut self, original: &Self) {
-        // PORT NOTE: reshaped for borrowck — Zig does `this.* = original.*` then patches
-        // back the three growable buffers. In Rust we copy each scalar field individually
-        // and truncate the buffers, since `Self` is not `Copy` and `log: &mut Log` cannot
-        // be aliased.
+    /// Capture a `Copy` snapshot of all backtrack-relevant state. See
+    /// `LexerSnapshot` doc — this replaces Zig's by-value struct copy, which
+    /// Rust can't do here because of `log: &mut Log`.
+    pub fn snapshot(&self) -> LexerSnapshot<'a> {
+        LexerSnapshot {
+            current: self.current,
+            start: self.start,
+            end: self.end,
+            did_panic: self.did_panic,
+            approximate_newline_count: self.approximate_newline_count,
+            previous_backslash_quote_in_jsx: self.previous_backslash_quote_in_jsx,
+            token: self.token,
+            has_newline_before: self.has_newline_before,
+            has_pure_comment_before: self.has_pure_comment_before,
+            has_no_side_effect_comment_before: self.has_no_side_effect_comment_before,
+            preserve_all_comments_before: self.preserve_all_comments_before,
+            is_legacy_octal_literal: self.is_legacy_octal_literal,
+            is_log_disabled: self.is_log_disabled,
+            code_point: self.code_point,
+            identifier: self.identifier,
+            jsx_pragma: self.jsx_pragma,
+            source_mapping_url: self.source_mapping_url,
+            number: self.number,
+            rescan_close_brace_as_template_token: self.rescan_close_brace_as_template_token,
+            prev_error_loc: self.prev_error_loc,
+            prev_token_was_await_keyword: self.prev_token_was_await_keyword,
+            await_keyword_loc: self.await_keyword_loc,
+            fn_or_arrow_start_loc: self.fn_or_arrow_start_loc,
+            regex_flags_start: self.regex_flags_start,
+            string_literal_raw_content: self.string_literal_raw_content,
+            string_literal_start: self.string_literal_start,
+            string_literal_raw_format: self.string_literal_raw_format,
+            is_ascii_only: self.is_ascii_only,
+            track_comments: self.track_comments,
+            indent_info: self.indent_info,
+            all_comments_len: self.all_comments.len(),
+            comments_to_preserve_before_len: self.comments_to_preserve_before.len(),
+        }
+    }
+
+    /// Rewind to a prior `snapshot()`. Mirrors Zig's `this.* = original.*` then
+    /// patches back the growable buffers — here we copy each scalar field and
+    /// truncate the Vecs to their snapshotted lengths. `log`/`source`/`allocator`
+    /// are left untouched.
+    pub fn restore(&mut self, original: &LexerSnapshot<'a>) {
         // TODO(port): keep this list in sync with the struct fields.
         self.current = original.current;
         self.start = original.start;
@@ -448,16 +540,16 @@ lexer_impl_header! {
         self.track_comments = original.track_comments;
         self.indent_info = original.indent_info;
 
-        debug_assert!(self.all_comments.len() >= original.all_comments.len());
+        debug_assert!(self.all_comments.len() >= original.all_comments_len);
         debug_assert!(
             self.comments_to_preserve_before.len()
-                >= original.comments_to_preserve_before.len()
+                >= original.comments_to_preserve_before_len
         );
-        debug_assert!(self.temp_buffer_u16.is_empty() && original.temp_buffer_u16.is_empty());
+        debug_assert!(self.temp_buffer_u16.is_empty());
 
-        self.all_comments.truncate(original.all_comments.len());
+        self.all_comments.truncate(original.all_comments_len);
         self.comments_to_preserve_before
-            .truncate(original.comments_to_preserve_before.len());
+            .truncate(original.comments_to_preserve_before_len);
     }
 
     /// Look ahead at the next n codepoints without advancing the iterator.
@@ -4203,5 +4295,5 @@ impl fmt::Display for InvalidEscapeSequenceFormatter {
 //   source:     src/js_parser/lexer.zig (3401 lines)
 //   confidence: medium
 //   todos:      34
-//   notes:      8-way const-generic LexerType; 'a lifetime for log+source borrows is approximate (raw()/identifier alias source.contents); restore() reshaped field-by-field; SIMD multiline-comment scanner is scalar fallback; arena allocator routing needs Phase B audit; FakeArrayList16 dropped (dead in Zig source).
+//   notes:      8-way const-generic LexerType; 'a lifetime for log+source borrows is approximate (raw()/identifier alias source.contents); snapshot()/restore() use a Copy LexerSnapshot POD (Zig by-value struct copy is impossible here due to &mut Log); SIMD multiline-comment scanner is scalar fallback; arena allocator routing needs Phase B audit; FakeArrayList16 dropped (dead in Zig source).
 // ──────────────────────────────────────────────────────────────────────────

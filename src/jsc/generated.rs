@@ -202,10 +202,12 @@ macro_rules! js_class_module {
 
             pub fn from_js(_value: JSValue) -> ::core::option::Option<*mut ()> {
                 // TODO(port): codegen — re-run generate-classes.ts with .rs output.
-                None
+                // Must NOT silently return `None` (PORTING.md §Forbidden patterns):
+                // a valid wrapper would be misreported as a type mismatch.
+                todo!(concat!("generated::", stringify!($mod_name), "::from_js"))
             }
             pub fn from_js_direct(_value: JSValue) -> ::core::option::Option<*mut ()> {
-                None
+                todo!(concat!("generated::", stringify!($mod_name), "::from_js_direct"))
             }
             pub fn to_js(_ptr: *mut (), _global: &JSGlobalObject) -> JSValue {
                 todo!(concat!("generated::", stringify!($mod_name), "::to_js"))
@@ -219,9 +221,9 @@ macro_rules! js_class_module {
 
 js_class_module!(JSTimeout   = "Timeout"   { callback, arguments, idleTimeout, repeat, idleStart });
 js_class_module!(JSImmediate = "Immediate" { callback, arguments });
-js_class_module!(JSBlob      = "Blob"      { name });
-js_class_module!(JSResponse  = "Response"  { body, headers, url, statusText });
-js_class_module!(JSRequest   = "Request"   { body, headers, url, signal });
+js_class_module!(JSBlob      = "Blob"      { name, stream });
+js_class_module!(JSResponse  = "Response"  { body, headers, url, statusText, stream });
+js_class_module!(JSRequest   = "Request"   { body, headers, url, signal, stream });
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

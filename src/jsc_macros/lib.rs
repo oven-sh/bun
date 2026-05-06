@@ -211,6 +211,131 @@ fn expand_host_fn(args: HostFnArgs, func: ItemFn) -> syn::Result<TokenStream2> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// bun_jsc::codegen_cached_accessors!("TypeName"; prop_a, prop_b, ...)
+//
+// Emits one `${snake}_get_cached` / `${snake}_set_cached` pair per listed
+// property, each thin-wrapping the C++-side
+//   `${TypeName}Prototype__${prop}GetCachedValue(JSValue) -> JSValue`
+//   `${TypeName}Prototype__${prop}SetCachedValue(JSValue, *JSGlobalObject, JSValue)`
+// shims that `src/codegen/generate-classes.ts` produces for every
+// `cache: true` property. The getter maps `.zero` → `None` (matches the Zig
+// `${name}GetCached` wrapper). Both extern blocks are duplicated under the
+// JSC calling-convention `#[cfg]` split (see `jsc_extern_fn` above).
+// ──────────────────────────────────────────────────────────────────────────
+
+struct CachedAccessorsInput {
+    type_name: LitStr,
+    props: Vec<Ident>,
+}
+
+impl Parse for CachedAccessorsInput {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let type_name: LitStr = input.parse()?;
+        // Accept either `;` or `,` between the type name and the prop list.
+        if input.peek(Token![;]) {
+            input.parse::<Token![;]>()?;
+        } else if input.peek(Token![,]) {
+            input.parse::<Token![,]>()?;
+        }
+        let mut props = Vec::new();
+        while !input.is_empty() {
+            props.push(input.parse()?);
+            if input.peek(Token![,]) {
+                input.parse::<Token![,]>()?;
+            }
+        }
+        Ok(Self { type_name, props })
+    }
+}
+
+#[proc_macro]
+pub fn codegen_cached_accessors(input: TokenStream) -> TokenStream {
+    let CachedAccessorsInput { type_name, props } = parse_macro_input!(input as CachedAccessorsInput);
+    let ty = type_name.value();
+
+    let mut out = TokenStream2::new();
+    for prop in &props {
+        let prop_str = prop.to_string();
+        // C++ symbol uses the JS-side (camelCase) property name verbatim.
+        let get_sym = LitStr::new(
+            &format!("{ty}Prototype__{prop_str}GetCachedValue"),
+            Span::call_site(),
+        );
+        let set_sym = LitStr::new(
+            &format!("{ty}Prototype__{prop_str}SetCachedValue"),
+            Span::call_site(),
+        );
+        // Rust-side wrapper names are snake_case (`idleTimeout` → `idle_timeout`).
+        let snake = camel_to_snake(&prop_str);
+        let get_fn = format_ident!("{snake}_get_cached");
+        let set_fn = format_ident!("{snake}_set_cached");
+        let get_ext = format_ident!("__{snake}_get_cached_value");
+        let set_ext = format_ident!("__{snake}_set_cached_value");
+
+        out.extend(quote! {
+            #[cfg(all(windows, target_arch = "x86_64"))]
+            unsafe extern "sysv64" {
+                #[link_name = #get_sym]
+                fn #get_ext(this_value: ::bun_jsc::JSValue) -> ::bun_jsc::JSValue;
+                #[link_name = #set_sym]
+                fn #set_ext(
+                    this_value: ::bun_jsc::JSValue,
+                    global: *mut ::bun_jsc::JSGlobalObject,
+                    value: ::bun_jsc::JSValue,
+                );
+            }
+            #[cfg(not(all(windows, target_arch = "x86_64")))]
+            unsafe extern "C" {
+                #[link_name = #get_sym]
+                fn #get_ext(this_value: ::bun_jsc::JSValue) -> ::bun_jsc::JSValue;
+                #[link_name = #set_sym]
+                fn #set_ext(
+                    this_value: ::bun_jsc::JSValue,
+                    global: *mut ::bun_jsc::JSGlobalObject,
+                    value: ::bun_jsc::JSValue,
+                );
+            }
+
+            /// `JSC::WriteBarrier` slot read — `None` if never assigned.
+            #[inline]
+            pub fn #get_fn(this_value: ::bun_jsc::JSValue) -> ::core::option::Option<::bun_jsc::JSValue> {
+                // SAFETY: pure FFI read of a `WriteBarrier<Unknown>` slot on the
+                // C++ wrapper; `this_value` must be the codegen'd JSCell.
+                let result = unsafe { #get_ext(this_value) };
+                if result == ::bun_jsc::JSValue::ZERO { None } else { Some(result) }
+            }
+
+            /// `JSC::WriteBarrier` slot write — emits a GC write barrier.
+            #[inline]
+            pub fn #set_fn(
+                this_value: ::bun_jsc::JSValue,
+                global: &::bun_jsc::JSGlobalObject,
+                value: ::bun_jsc::JSValue,
+            ) {
+                // SAFETY: `global` is live; FFI does `m_${prop}.set(vm, this, value)`.
+                unsafe { #set_ext(this_value, global as *const _ as *mut _, value) }
+            }
+        });
+    }
+    out.into()
+}
+
+fn camel_to_snake(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 4);
+    for (i, ch) in s.char_indices() {
+        if ch.is_ascii_uppercase() {
+            if i != 0 {
+                out.push('_');
+            }
+            out.push(ch.to_ascii_lowercase());
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // #[bun_jsc::host_call] — bare ABI rewrite for non-JSHostFn signatures
 // (e.g. `hasPendingActivity: extern fn(*mut Self) -> bool`).
 // ──────────────────────────────────────────────────────────────────────────
@@ -264,6 +389,10 @@ struct JsClassArgs {
     no_finalize: bool,
     /// `construct: false` → skip the construct hook.
     no_construct: bool,
+    /// `estimatedSize: true` in `.classes.ts` → emit `${T}__estimatedSize`
+    /// (generate-classes.ts:2170-2175). Off by default — the C++ side only
+    /// links against this symbol when the class definition opts in.
+    estimated_size: bool,
 }
 
 impl Parse for JsClassArgs {
@@ -278,6 +407,7 @@ impl Parse for JsClassArgs {
                 }
                 "no_finalize" => out.no_finalize = true,
                 "no_construct" => out.no_construct = true,
+                "estimated_size" => out.estimated_size = true,
                 other => {
                     return Err(syn::Error::new(
                         ident.span(),
@@ -390,15 +520,32 @@ fn js_class_hooks(args: &JsClassArgs, strukt: &ItemStruct) -> TokenStream2 {
         )
     };
 
-    let estimated_hook = jsc_extern_fn(
-        &estimated_sym,
-        quote! { #estimated_ident(__ptr: *mut ::core::ffi::c_void) },
-        quote! { usize },
-        quote! {
-            let _ = __ptr;
-            ::core::mem::size_of::<#rust_ty>()
-        },
-    );
+    // Only emit `${T}__estimatedSize` when the class opts in
+    // (`estimatedSize: true` in `.classes.ts`). The body MUST dereference the
+    // instance pointer and ask the value for its dynamic footprint — the C++
+    // side feeds this into `reportExtraMemoryAllocated` /
+    // `visitor.reportExtraMemoryVisited` (generate-classes.ts:1656-1660,
+    // 1913-1916), so returning the static struct size would hide MB-scale body
+    // buffers from the GC. Resolution is via method syntax so a user-provided
+    // inherent `fn estimated_size(&self) -> usize` shadows the `JsClass` trait
+    // default (`size_of::<Self>()`).
+    let estimated_hook = if args.estimated_size {
+        jsc_extern_fn(
+            &estimated_sym,
+            quote! { #estimated_ident(__ptr: *mut ::core::ffi::c_void) },
+            quote! { usize },
+            quote! {
+                #[allow(unused_imports)]
+                use ::bun_jsc::JsClass as _;
+                // SAFETY: `__ptr` is the wrapper's `m_ctx` (Box<#rust_ty>),
+                // live for the duration of the call (called from
+                // `visitChildrenImpl` / `${T}__create` on the GC/mutator thread).
+                unsafe { (&*__ptr.cast::<#rust_ty>()).estimated_size() }
+            },
+        )
+    } else {
+        quote! {}
+    };
 
     // `JsClass` trait impl — wraps the C++-side `fromJS`/`create` exports.
     // `callconv(jsc.conv)` on the import side: two cfg-gated `extern` blocks.

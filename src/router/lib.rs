@@ -2139,16 +2139,86 @@ mod tests {
     }
 
     fn make_test(cwd_path: &[u8], data: &[(&str, &str)]) -> Result<(), bun_core::Error> {
-        // TODO(port): Zig used comptime field iteration over an anonymous struct.
+        // PORT NOTE: Zig used comptime field iteration over an anonymous struct.
         // Ported as runtime slice of (path, content) pairs.
-        // TODO(port): replace std::fs usage with bun_sys — banned per PORTING.md
         Output::init_test();
         debug_assert!(
             cwd_path.len() > 1 && cwd_path != b"/" && !cwd_path.ends_with(b"bun")
         );
-        let _ = (cwd_path, data);
-        // TODO(port): bun_sys directory creation + file writing
-        unimplemented!("make_test: filesystem setup pending bun_sys port");
+        // const bun_tests_dir = try std.fs.cwd().makeOpenPath("bun-test-scratch", .{});
+        let bun_tests_dir = bun_sys::Dir::cwd()
+            .make_open_path(b"bun-test-scratch", bun_sys::OpenDirOptions::default())?;
+        // bun_tests_dir.deleteTree(cwd_path) catch {};
+        let _ = bun_tests_dir.delete_tree(cwd_path);
+
+        // const cwd = try bun_tests_dir.makeOpenPath(cwd_path, .{});
+        let cwd = bun_tests_dir.make_open_path(cwd_path, bun_sys::OpenDirOptions::default())?;
+        // try cwd.setAsCwd();
+        bun_sys::fchdir(cwd.fd())?;
+
+        // inline for (fields) |field| { ... }
+        for (name, value) in data {
+            let name_b = name.as_bytes();
+            // if (std.fs.path.dirname(field.name)) |dir| { try cwd.makePath(dir); }
+            // PORT NOTE: `std.fs.path.dirname` returns null for paths without a
+            // separator; replicate with rposition on '/' (test fixture paths
+            // are always forward-slash).
+            if let Some(slash) = name_b.iter().rposition(|&c| c == b'/') {
+                if slash > 0 {
+                    cwd.make_path(&name_b[..slash])?;
+                }
+            }
+            // var file = try cwd.createFile(field.name, .{ .truncate = true });
+            let file = bun_sys::File::create(cwd.fd(), name_b, true)?;
+            // try file.writeAll(value);
+            file.write_all(value.as_bytes())?;
+            // file.close();
+            let _ = file.close();
+        }
+        Ok(())
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // Bridge the real `bun_resolver::Resolver` to this crate's erased
+    // `ResolverLike` / `DirInfoRef` surface (CYCLEBREAK: dev-dep only).
+    // ──────────────────────────────────────────────────────────────────────
+
+    /// vtable mapping `bun_resolver::DirInfo::get_entries_const` onto the
+    /// opaque `bun_sys::fs::DirEntry` handle the router walks.
+    static RESOLVER_DIR_INFO_VTABLE: DirInfoVTable = DirInfoVTable {
+        get_entries_const: |owner| {
+            // SAFETY: `owner` is an erased `*const bun_resolver::DirInfo`
+            // produced by `dir_info_ref` below; the resolver guarantees it
+            // outlives the router walk.
+            let di = unsafe { &*(owner as *const bun_resolver::DirInfo) };
+            di.get_entries_const()
+                .map(|e| e as *const bun_resolver::fs::DirEntry as *const Fs::DirEntry)
+        },
+    };
+
+    #[inline]
+    fn dir_info_ref(di: *const bun_resolver::DirInfo) -> DirInfoRef {
+        DirInfoRef { owner: di as *const (), vtable: &RESOLVER_DIR_INFO_VTABLE }
+    }
+
+    /// Newtype so the orphan rule lets us `impl ResolverLike` for a
+    /// foreign-crate type.
+    struct TestResolver<'a>(bun_resolver::Resolver<'a>);
+
+    impl<'a> ResolverLike for TestResolver<'a> {
+        fn fs(&self) -> &'static FileSystem {
+            // SAFETY: `bun_sys::fs::FileSystem` is a `#[repr(C)]` ZST opaque
+            // handle whose documented backing type is the resolver singleton —
+            // the cast is the intended bridge (PORTING.md §Dispatch).
+            unsafe { &*(self.0.fs() as *const bun_sys::fs::FileSystem) }
+        }
+        fn fs_impl(&self) -> *mut core::ffi::c_void {
+            // SAFETY: `&fs.fs` — the `Implementation` field, type-erased.
+            unsafe { (&mut (*self.0.fs()).fs) as *mut _ as *mut core::ffi::c_void }
+        }
+        fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<DirInfoRef> {
+            self.0.read_dir_info_ignore_error(path).map(dir_info_ref)
+        }
     }
 
     pub struct Test;
@@ -2158,18 +2228,147 @@ mod tests {
             test_name: &'static str,
             data: &[(&str, &str)],
         ) -> Result<Routes, bun_core::Error> {
-            // TODO(port): heavy comptime + Resolver/Options wiring; stubbed for Phase A.
-            let _ = (test_name, data);
-            unimplemented!("Test::make_routes pending bun_resolver/bun_bundler port");
+            Output::init_test();
+            make_test(test_name.as_bytes(), data)?;
+            // JSAst.Expr.Data.Store.create / Stmt.Data.Store.create
+            bun_js_parser::ast::expr::Expr::data_store_create();
+            bun_js_parser::ast::stmt::Stmt::data_store_create();
+            // const fs = try FileSystem.init(null);
+            let fs = bun_resolver::fs::FileSystem::init(None)?;
+            // SAFETY: singleton just initialized above.
+            let top_level_dir = unsafe { (*fs).top_level_dir };
+
+            // var pages_parts = [_]string{ top_level_dir, "pages" };
+            // const pages_dir = try Fs.FileSystem.instance.absAlloc(default_allocator, &pages_parts);
+            let pages_parts: [&[u8]; 2] = [top_level_dir, b"pages"];
+            let pages_dir = bun_resolver::fs::FileSystem::instance()
+                .abs_alloc(&pages_parts)
+                .map_err(|_| bun_core::err!("OutOfMemory"))?;
+
+            // const router = try Router.init(&FileSystem.instance, default_allocator, RouteConfig{...});
+            // SAFETY: see `TestResolver::fs` — opaque-handle cast to the ZST view.
+            let fs_opaque: &'static FileSystem =
+                unsafe { &*(fs as *const bun_sys::fs::FileSystem) };
+            let router = Router::init(
+                fs_opaque,
+                RouteConfig {
+                    dir: pages_dir.to_vec().into_boxed_slice(),
+                    routes_enabled: true,
+                    extensions: vec![b"js".as_slice().into()].into_boxed_slice(),
+                    ..RouteConfig::default()
+                },
+            )?;
+
+            let mut log = bun_logger::Log::init();
+            // PORT NOTE: `errdefer logger.print(Output.errorWriter())` — Rust has
+            // no errdefer; the test harness panics on error anyway, and the stub
+            // `b1_stubs::logger::Log` carries no buffered messages to flush.
+            let _err_dump = scopeguard::guard(&mut log as *mut bun_logger::Log, |log| {
+                // SAFETY: pointer to a stack local that outlives this guard.
+                let _ = unsafe { &*log }.print(bun_core::output::error_writer());
+            });
+
+            // const opts = Options.BundleOptions{ .target = .browser, ... };
+            // PORT NOTE: the resolver-side `BundleOptions` subset omits
+            // `loaders`/`define`/`log`/`routes`/`entry_points`/`out_extensions`/
+            // `transform_options` — none are read by `Resolver::init1` or the
+            // dir-info walk, so `Default` + `target` is the faithful projection.
+            let opts = bun_resolver::options::BundleOptions {
+                target: bun_resolver::options::Target::Browser,
+                external: bun_resolver::options::ExternalModules::default(),
+                ..Default::default()
+            };
+
+            // var resolver = Resolver.init1(default_allocator, &logger, &FileSystem.instance, opts);
+            let mut resolver =
+                TestResolver(bun_resolver::Resolver::init1(&mut log, fs, opts));
+
+            // const root_dir = (try resolver.readDirInfo(pages_dir)).?;
+            let root_dir = resolver
+                .0
+                .read_dir_info(pages_dir)?
+                .ok_or_else(|| bun_core::err!("FileNotFound"))?;
+
+            // return RouteLoader.loadAll(..., opts.routes, &logger, Resolver, &resolver, root_dir);
+            let mut route_log = logger::Log;
+            let routes = RouteLoader::load_all(
+                router.config.clone(),
+                &mut route_log,
+                &mut resolver,
+                dir_info_ref(root_dir),
+                top_level_dir,
+            );
+            scopeguard::ScopeGuard::into_inner(_err_dump);
+            Ok(routes)
         }
 
         pub fn make(
             test_name: &'static str,
             data: &[(&str, &str)],
         ) -> Result<Router<'static>, bun_core::Error> {
-            // TODO(port): heavy comptime + Resolver/Options wiring; stubbed for Phase A.
-            let _ = (test_name, data);
-            unimplemented!("Test::make pending bun_resolver/bun_bundler port");
+            make_test(test_name.as_bytes(), data)?;
+            // JSAst.Expr.Data.Store.create / Stmt.Data.Store.create
+            bun_js_parser::ast::expr::Expr::data_store_create();
+            bun_js_parser::ast::stmt::Stmt::data_store_create();
+            // const fs = try FileSystem.initWithForce(null, true);
+            let fs = bun_resolver::fs::FileSystem::init_with_force::<true>(None)?;
+            // SAFETY: singleton just initialized above.
+            let top_level_dir = unsafe { (*fs).top_level_dir };
+
+            let pages_parts: [&[u8]; 2] = [top_level_dir, b"pages"];
+            let pages_dir = bun_resolver::fs::FileSystem::instance()
+                .abs_alloc(&pages_parts)
+                .map_err(|_| bun_core::err!("OutOfMemory"))?;
+
+            // var router = try Router.init(&FileSystem.instance, default_allocator, RouteConfig{...});
+            // SAFETY: see `TestResolver::fs` — opaque-handle cast to the ZST view.
+            let fs_opaque: &'static FileSystem =
+                unsafe { &*(fs as *const bun_sys::fs::FileSystem) };
+            let mut router = Router::init(
+                fs_opaque,
+                RouteConfig {
+                    dir: pages_dir.to_vec().into_boxed_slice(),
+                    routes_enabled: true,
+                    extensions: vec![b"js".as_slice().into()].into_boxed_slice(),
+                    ..RouteConfig::default()
+                },
+            )?;
+
+            let mut log = bun_logger::Log::init();
+            let _err_dump = scopeguard::guard(&mut log as *mut bun_logger::Log, |log| {
+                // SAFETY: pointer to a stack local that outlives this guard.
+                let _ = unsafe { &*log }.print(bun_core::output::error_writer());
+            });
+
+            let opts = bun_resolver::options::BundleOptions {
+                target: bun_resolver::options::Target::Browser,
+                external: bun_resolver::options::ExternalModules::default(),
+                ..Default::default()
+            };
+
+            let mut resolver =
+                TestResolver(bun_resolver::Resolver::init1(&mut log, fs, opts));
+
+            // const root_dir = (try resolver.readDirInfo(pages_dir)).?;
+            let root_dir = resolver
+                .0
+                .read_dir_info(pages_dir)?
+                .ok_or_else(|| bun_core::err!("FileNotFound"))?;
+
+            // try router.loadRoutes(&logger, root_dir, Resolver, &resolver, top_level_dir);
+            let mut route_log = logger::Log;
+            router.load_routes(
+                &mut route_log,
+                dir_info_ref(root_dir),
+                &mut resolver,
+                top_level_dir,
+            )?;
+            let entry_points = router.get_entry_points();
+
+            // try expectEqual(std.meta.fieldNames(@TypeOf(data)).len, entry_points.len);
+            assert_eq!(data.len(), entry_points.len());
+            scopeguard::ScopeGuard::into_inner(_err_dump);
+            Ok(router)
         }
     }
 

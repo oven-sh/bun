@@ -311,7 +311,9 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     use bun_jsc::{LogJsc as _, StringJsc as _};
     use bun_options_types::ImportRecord;
 
-    let arena = Arena::new();
+    let _arena = Arena::new();
+    // PERF(port): was arena bulk-free — StyleAttribute::parse owns its own bump
+    // internally; kept for parity with Zig defer arena.deinit().
 
     let arguments_ = frame.arguments_old::<4>();
     let mut arguments = bun_jsc::ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
@@ -395,6 +397,5 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
 // PORT STATUS
 //   source:     src/css_jsc/css_internals.zig (341 lines)
 //   confidence: medium
-//   todos:      see TODO(b2-blocked) markers
-//   notes:      const-generic comptime enums lowered to runtime params (adt_const_params unstable); host_fn attribute removed pending proc-macro; fn bodies gated on bun_jsc method surface + bun_css parser types.
+//   notes:      const-generic comptime enums lowered to runtime params (adt_const_params unstable); host_fn attribute removed pending proc-macro; bodies un-gated against bun_css::stylesheet_impl (StyleSheet/StyleAttribute parse·minify·to_css).
 // ──────────────────────────────────────────────────────────────────────────

@@ -521,6 +521,20 @@ pub trait SourceContext: Sized {
     /// `setRefUnrefFn != null`
     const SUPPORTS_REF: bool = false;
 
+    // ─── codegen externs (`.classes.ts` → `ZigGeneratedClasses.cpp`) ──────────
+    // Zig: `js = @field(jsc.Codegen, "JS" ++ name ++ "InternalReadableStreamSource")`.
+    // Each context binds its per-type C symbols via `source_context_codegen!`.
+    /// `${NAME}InternalReadableStreamSource__create`
+    const JS_CREATE: unsafe extern "C" fn(*const JSGlobalObject, *mut c_void) -> JSValue;
+    /// `${NAME}InternalReadableStreamSourcePrototype__pendingPromiseSetCachedValue`
+    const JS_PENDING_PROMISE_SET_CACHED:
+        unsafe extern "C" fn(JSValue, *const JSGlobalObject, JSValue);
+    /// `${NAME}InternalReadableStreamSourcePrototype__onDrainCallbackSetCachedValue`
+    const JS_ON_DRAIN_CALLBACK_SET_CACHED:
+        unsafe extern "C" fn(JSValue, *const JSGlobalObject, JSValue);
+    /// `${NAME}InternalReadableStreamSourcePrototype__onDrainCallbackGetCachedValue`
+    const JS_ON_DRAIN_CALLBACK_GET_CACHED: unsafe extern "C" fn(JSValue) -> JSValue;
+
     fn on_start(&mut self) -> streams::Start;
     fn on_pull(&mut self, buf: &mut [u8], view: JSValue) -> streams::Result;
     fn on_cancel(&mut self);

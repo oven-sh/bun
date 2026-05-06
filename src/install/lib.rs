@@ -54,8 +54,12 @@ pub(crate) mod bun_json {
             if let ExprData::EObject(o) = &self.data { o.as_property(key.as_ref()) } else { None }
         }
         #[inline]
-        fn get(&self, _key: impl AsRef<[u8]>) -> Option<Expr> {
-            todo!("phase-b2: bun_json::ExprExt::get — E::Object::get(key) signature mismatch")
+        fn get(&self, key: impl AsRef<[u8]>) -> Option<Expr> {
+            // Zig `Expr.get(name)` (src/js_parser/ast/Expr.zig) is sugar over
+            // `asProperty(name).?.expr`. Route through the trait's own
+            // `as_property` so the `EObject` payload-shape question stays in
+            // one place.
+            self.as_property(key).map(|q| q.expr)
         }
     }
 }

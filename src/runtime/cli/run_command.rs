@@ -1671,19 +1671,47 @@ impl RunCommand {
     /// `bun run -` — read script from stdin into `ctx.runtime_options.eval`
     /// and boot the VM with the synthetic `[stdin]` path.
     fn exec_stdin(ctx: &mut ContextData) -> Result<bool, bun_core::Error> {
-        // TODO(b2-blocked): `bun_sys::File::stdin().read_to_end` — File API
-        // shape not yet on the Rust `bun_sys` surface at this tier. Preserved
-        // in phase_a_draft.
-        
-        {
-            let mut list: Vec<u8> = Vec::new();
-            if bun_sys::File::stdin().read_to_end(&mut list).is_err() {
-                return Ok(false);
-            }
-            ctx.runtime_options.eval.script = list.into_boxed_slice();
+        bun_core::scoped_log!(RUN_LOG, "Executing from stdin");
+
+        // read from stdin
+        // PERF(port): Zig `stackFallback(2048, …)` — Phase B can swap to
+        // `SmallVec<[u8; 2048]>` if profiled hot; cold CLI path here.
+        // PORT NOTE: `read_to_end_into` is the cursor-relative streaming reader
+        // (stdin is a pipe/tty, not seekable; `read_to_end` would `pread(0)`).
+        let mut list: Vec<u8> = Vec::new();
+        if bun_sys::File::stdin().read_to_end_into(&mut list).is_err() {
+            return Ok(false);
         }
-        let _ = ctx;
-        todo!("RunCommand::exec stdin path — bun_sys::File::stdin gated")
+        ctx.runtime_options.eval.script = list.into_boxed_slice();
+
+        // Zig: `bun.pathLiteral("/[stdin]")`.
+        #[cfg(windows)]
+        const STDIN_TRIGGER: &[u8] = b"\\[stdin]";
+        #[cfg(not(windows))]
+        const STDIN_TRIGGER: &[u8] = b"/[stdin]";
+
+        let mut entry_point_buf = [0u8; MAX_PATH_BYTES + STDIN_TRIGGER.len()];
+        let mut cwd_buf = PathBuffer::uninit();
+        // SAFETY: bun_paths::PathBuffer and bun_core::PathBuffer are layout-identical.
+        let cwd = bun_core::getcwd(unsafe {
+            &mut *(::core::ptr::addr_of_mut!(cwd_buf) as *mut bun_core::PathBuffer)
+        })?;
+        let cwd_bytes = cwd.as_bytes();
+        let cwd_len = cwd_bytes.len();
+        entry_point_buf[..cwd_len].copy_from_slice(cwd_bytes);
+        entry_point_buf[cwd_len..cwd_len + STDIN_TRIGGER.len()].copy_from_slice(STDIN_TRIGGER);
+        let entry_path = &entry_point_buf[..cwd_len + STDIN_TRIGGER.len()];
+
+        // Zig: prepend "-" to `ctx.passthrough` so `process.argv[1]` matches
+        // Node's `node -` semantics.
+        let mut passthrough_list: Vec<Box<[u8]>> =
+            Vec::with_capacity(ctx.passthrough.len() + 1);
+        passthrough_list.push(b"-".to_vec().into_boxed_slice());
+        passthrough_list.append(&mut ctx.passthrough);
+        ctx.passthrough = passthrough_list;
+
+        // `Run.boot(ctx, dupe(entry_path), null) catch |err| { … exit(1) }`
+        Ok(Self::_boot_and_handle_error(ctx, entry_path, None))
     }
 
     /// Port of `cli.zig`'s `@"bun --eval --print"` — synthetic `cwd/[eval]`

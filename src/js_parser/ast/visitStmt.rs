@@ -201,10 +201,45 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let items_len = items.len();
         let mut end: usize = 0;
         let mut any_replaced = false;
-        if REPLACE_EXPORTS_REAL {
-            // blocked_on: replace_exports is bool placeholder; .count()/.get_ptr() not real.
-            // Full body preserved in ` mod _draft::s_export_clause`.
-            todo!("s_export_clause: replace_exports map path");
+        if p.options.features.replace_exports.count() > 0 {
+            for i in 0..items_len {
+                let name = p.load_name_from_ref(items[i].name.ref_.unwrap());
+                let symbol = p.find_symbol(items[i].alias_loc, name)?;
+                let ref_ = symbol.r#ref;
+
+                // PORT NOTE: reshaped for borrowck — get_ptr borrows options; clone the
+                // small enum payload so `inject_replacement_export(&mut self, ...)` can run.
+                if let Some(entry) = p.options.features.replace_exports.get_ptr(name).cloned() {
+                    if !entry.is_replace() {
+                        p.ignore_usage(symbol.r#ref);
+                    }
+                    let _ = p.inject_replacement_export(stmts, symbol.r#ref, stmt.loc, &entry);
+                    any_replaced = true;
+                    continue;
+                }
+
+                if p.symbols[ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Unbound {
+                    // Silently strip exports of non-local symbols in TypeScript, since
+                    // those likely correspond to type-only exports. But report exports of
+                    // non-local symbols as errors in JavaScript.
+                    if !TYPESCRIPT {
+                        let r = js_lexer::range_of_identifier(p.source, items[i].name.loc);
+                        p.log.add_range_error_fmt(
+                            Some(p.source),
+                            r,
+                            format_args!("\"{}\" is not declared in this file", bstr::BStr::new(name)),
+                        )?;
+                    }
+                    continue;
+                }
+
+                items[i].name.ref_ = Some(ref_);
+                if end != i {
+                    // SAFETY: both indices < items_len; ClauseItem fields are POD/ptr.
+                    unsafe { core::ptr::copy_nonoverlapping(items.as_ptr().add(i), items.as_mut_ptr().add(end), 1) };
+                }
+                end += 1;
+            }
         } else {
             for i in 0..items_len {
                 let name = p.load_name_from_ref(items[i].name.ref_.unwrap());
@@ -240,8 +275,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
         }
 
-        // blocked_on: p.options.tree_shaking field doesn't exist on ParserOptions stub.
-        let remove_for_tree_shaking = any_replaced && end == 0 && items_len > 0;
+        let remove_for_tree_shaking =
+            any_replaced && end == 0 && items_len > 0 && p.options.tree_shaking;
         // Truncate `data.items` to `end` by reslicing the raw arena ptr.
         data.items = core::ptr::slice_from_raw_parts_mut(items.as_mut_ptr(), end);
 

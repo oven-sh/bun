@@ -493,58 +493,44 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                             }
 
                             OutputColorFormat::Hsl => {
-                                
-                                {
-                                    // TODO(b2-blocked): bun_css::values::color::{RGBA,FloatColor,LABColor}::into_hsl
-                                    let hsl: HSL = match &result {
-                                        CssColor::Float(float) => 'brk: {
-                                            match &**float {
-                                                css::FloatColor::Hsl(hsl) => break 'brk *hsl,
-                                                // TODO(port): inline else over FloatColor variants → trait `IntoColor<HSL>`
-                                                other => break 'brk other.into_hsl(),
-                                            }
-                                        }
-                                        CssColor::Rgba(rgba) => rgba.into_hsl(),
-                                        CssColor::Lab(lab) => {
-                                            // TODO(port): inline else over LabColor variants → trait `IntoColor<HSL>`
-                                            lab.into_hsl()
-                                        }
-                                        _ => break 'formatted,
-                                    };
+                                let hsl: HSL = match &result {
+                                    CssColor::Float(float) => match &**float {
+                                        css::FloatColor::Hsl(hsl) => *hsl,
+                                        // TODO(port): inline else over FloatColor variants → trait `IntoColor<HSL>`
+                                        other => other.into_hsl(),
+                                    },
+                                    CssColor::Rgba(rgba) => rgba.into_hsl(),
+                                    CssColor::Lab(lab) => {
+                                        // TODO(port): inline else over LabColor variants → trait `IntoColor<HSL>`
+                                        lab.into_hsl()
+                                    }
+                                    _ => break 'formatted,
+                                };
 
-                                    break 'color BunString::create_format(format_args!(
-                                        "hsl({}, {}, {})",
-                                        hsl.h, hsl.s, hsl.l
-                                    ));
-                                }
-                                let _ = &result;
-                                todo!("bun_css_jsc::color_js Hsl branch — gated on bun_css::values::color::*::into_hsl")
+                                break 'color BunString::create_format(format_args!(
+                                    "hsl({}, {}, {})",
+                                    hsl.h, hsl.s, hsl.l
+                                ));
                             }
                             OutputColorFormat::Lab => {
-                                
-                                {
-                                    // TODO(b2-blocked): bun_css::values::color::{RGBA,FloatColor,LABColor}::into_lab
-                                    let lab: LAB = match &result {
-                                        CssColor::Float(float) => {
-                                            // TODO(port): inline else over FloatColor variants → trait `IntoColor<LAB>`
-                                            float.into_lab()
-                                        }
-                                        CssColor::Lab(lab) => match &**lab {
-                                            css::LabColor::Lab(lab_) => *lab_,
-                                            // TODO(port): inline else over LabColor variants → trait `IntoColor<LAB>`
-                                            other => other.into_lab(),
-                                        },
-                                        CssColor::Rgba(rgba) => rgba.into_lab(),
-                                        _ => break 'formatted,
-                                    };
+                                let lab: LAB = match &result {
+                                    CssColor::Float(float) => {
+                                        // TODO(port): inline else over FloatColor variants → trait `IntoColor<LAB>`
+                                        float.into_lab()
+                                    }
+                                    CssColor::Lab(lab) => match &**lab {
+                                        css::LabColor::Lab(lab_) => *lab_,
+                                        // TODO(port): inline else over LabColor variants → trait `IntoColor<LAB>`
+                                        other => other.into_lab(),
+                                    },
+                                    CssColor::Rgba(rgba) => rgba.into_lab(),
+                                    _ => break 'formatted,
+                                };
 
-                                    break 'color BunString::create_format(format_args!(
-                                        "lab({}, {}, {})",
-                                        lab.l, lab.a, lab.b
-                                    ));
-                                }
-                                let _ = &result;
-                                todo!("bun_css_jsc::color_js Lab branch — gated on bun_css::values::color::*::into_lab")
+                                break 'color BunString::create_format(format_args!(
+                                    "lab({}, {}, {})",
+                                    lab.l, lab.a, lab.b
+                                ));
                             }
                         }
                     };

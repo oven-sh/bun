@@ -449,7 +449,7 @@ impl<'a> Run<'a> {
         // TODO(b2-blocked): bun_jsc::MarkedArgumentBuffer (len / as_ptr — opaque FFI handle)
         
         {
-        let Some(macro_callback) = macro_.vm.macros.get(id) else {
+        let Some(macro_callback) = macro_.vm().macros.get(id) else {
             return Ok(caller);
         };
 
@@ -457,7 +457,7 @@ impl<'a> Run<'a> {
             // SAFETY: MarkedArgumentBuffer stores contiguous JSValue (#[repr(transparent)] i64);
             // JSObjectRef is the C API handle for the same encoded value.
             js::JSObjectCallAsFunctionReturnValueHoldingAPILock(
-                macro_.vm.global,
+                macro_.vm().global,
                 macro_callback,
                 core::ptr::null_mut(),
                 args.len(),
@@ -469,7 +469,7 @@ impl<'a> Run<'a> {
             caller,
             function_name,
             macro_: &macro_,
-            global: macro_.vm.global,
+            global: macro_.vm().global,
             id,
             log,
             source,
@@ -547,7 +547,7 @@ impl<'a> Run<'a> {
         use ConsoleObject::formatter::Tag as T;
         match tag {
             T::Error => {
-                let _ = self.macro_.vm.uncaught_exception(self.global, value, false);
+                let _ = self.macro_.vm().uncaught_exception(self.global, value, false);
                 return Ok(self.caller);
             }
             T::Undefined => {
@@ -577,7 +577,7 @@ impl<'a> Run<'a> {
                     } else if value.as_::<ResolveMessage>().is_some()
                         || value.as_::<BuildMessage>().is_some()
                     {
-                        let _ = self.macro_.vm.uncaught_exception(self.global, value, false);
+                        let _ = self.macro_.vm().uncaught_exception(self.global, value, false);
                         return Err(MacroError::MacroFailed);
                     }
                 }
@@ -745,9 +745,9 @@ impl<'a> Run<'a> {
 
                 let promise = value.as_any_promise().expect("Unexpected promise type");
 
-                self.macro_.vm.wait_for_promise(promise);
+                self.macro_.vm().wait_for_promise(promise);
 
-                let promise_result = promise.result(self.macro_.vm.jsc_vm);
+                let promise_result = promise.result(self.macro_.vm().jsc_vm);
                 let rejected = promise.status() == jsc::PromiseStatus::Rejected;
 
                 if promise_result.is_undefined() && self.is_top_level {
@@ -760,7 +760,7 @@ impl<'a> Run<'a> {
                     || promise_result.is_aggregate_error(self.global)
                     || promise_result.is_exception(self.global.vm())
                 {
-                    self.macro_.vm.unhandled_rejection(
+                    self.macro_.vm().unhandled_rejection(
                         self.global,
                         promise_result,
                         promise.as_value(),

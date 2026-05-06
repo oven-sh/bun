@@ -269,38 +269,44 @@ fn as_response(value: JSValue) -> Option<&'static mut Response> {
 mod shim {
     use super::*;
 
-    #[inline] pub fn response_body_stream(_r: &mut Response, _g: &JSGlobalObject) -> Option<ReadableStream> {
-        todo!("blocked_on: crate::webcore::response::Response::get_body_readable_stream")
+    #[inline] pub fn response_body_stream(r: &mut Response, g: &JSGlobalObject) -> Option<ReadableStream> {
+        r.get_body_readable_stream(g)
     }
-    #[inline] pub fn response_detach_stream(_r: &mut Response, _g: &JSGlobalObject) {
-        todo!("blocked_on: crate::webcore::response::Response::detach_readable_stream")
+    #[inline] pub fn response_detach_stream(r: &mut Response, g: &JSGlobalObject) {
+        r.detach_readable_stream(g)
     }
-    #[inline] pub fn signal_aborted(_s: &Arc<AbortSignal>) -> bool {
-        todo!("blocked_on: bun_jsc::AbortSignal::aborted")
+    #[inline] pub fn signal_aborted(s: &Arc<AbortSignal>) -> bool {
+        // Arc derefs to &AbortSignal; method takes &self.
+        AbortSignal::aborted(s)
     }
-    #[inline] pub fn signal_fire(_s: &Arc<AbortSignal>, _g: &JSGlobalObject, _r: jsc::CommonAbortReason) {
-        todo!("blocked_on: bun_jsc::AbortSignal::signal")
+    #[inline] pub fn signal_fire(s: &Arc<AbortSignal>, g: &JSGlobalObject, r: jsc::CommonAbortReason) {
+        AbortSignal::signal(s, g, r)
     }
-    #[inline] pub fn signal_unref(_s: &Arc<AbortSignal>) {
-        todo!("blocked_on: bun_jsc::AbortSignal::pending_activity_unref")
+    #[inline] pub fn signal_unref(s: &Arc<AbortSignal>) {
+        AbortSignal::pending_activity_unref(s)
     }
-    #[inline] pub fn iec_trigger(_cb: &mut request::InternalJSEventCallback, _ev: request::EventType, _g: &JSGlobalObject) -> bool {
-        todo!("blocked_on: crate::webcore::request::InternalJSEventCallback::trigger")
+    #[inline] pub fn iec_trigger(cb: &mut request::InternalJSEventCallback, ev: request::EventType, g: &JSGlobalObject) -> bool {
+        cb.trigger(ev, g)
     }
-    #[inline] pub fn iec_deinit(_cb: &mut request::InternalJSEventCallback) {
-        todo!("blocked_on: crate::webcore::request::InternalJSEventCallback::deinit")
+    #[inline] pub fn iec_deinit(cb: &mut request::InternalJSEventCallback) {
+        cb.deinit()
     }
-    #[inline] pub fn iec_has_callback(_cb: &request::InternalJSEventCallback) -> bool {
-        todo!("blocked_on: crate::webcore::request::InternalJSEventCallback::has_callback")
+    #[inline] pub fn iec_has_callback(cb: &request::InternalJSEventCallback) -> bool {
+        cb.has_callback()
     }
-    #[inline] pub fn byte_stream_unpipe(_s: &ByteStream) {
-        todo!("blocked_on: crate::webcore::streams::ByteStream::unpipe_without_deref")
+    #[inline] pub fn byte_stream_unpipe(s: &ByteStream) {
+        // SAFETY: unpipe only nulls two `Option` fields; no drop side effects.
+        // Shim signature is `&` to avoid an `&mut` borrow at the lone call site
+        // (which holds a shared ref through the byte_stream NonNull).
+        unsafe { &mut *(s as *const ByteStream as *mut ByteStream) }.unpipe_without_deref()
     }
-    #[inline] pub fn body_value_unref(_v: &mut Body::Value) {
-        todo!("blocked_on: crate::webcore::body::Value::unref")
+    #[inline] pub fn body_value_unref(v: &mut Body::Value) {
+        // SAFETY: every `Body::Value` reachable from `RequestContext.request_body`
+        // is the `.value` field of a pooled `HiveRef` slot (see field docs).
+        let _ = unsafe { v.unref() };
     }
-    #[inline] pub fn request_ensure_url(_r: &mut Request) -> Result<(), ()> {
-        todo!("blocked_on: crate::webcore::request::Request::ensure_url")
+    #[inline] pub fn request_ensure_url(r: &mut Request) -> Result<(), bun_alloc::AllocError> {
+        r.ensure_url()
     }
 }
 // `Api::FallbackMessageContainer`/`JsException`/`Problems`/`Fallback::render_backend`
@@ -327,11 +333,11 @@ where
     const RESP_KIND: uws::ResponseKind = uws::ResponseKind::from(SSL_ENABLED, HTTP3);
 
     pub fn set_signal_aborted(&mut self, reason: jsc::CommonAbortReason) {
-        if let Some(_signal) = &self.signal {
-            if let Some(_server) = self.server {
+        if let Some(signal) = &self.signal {
+            if let Some(server) = self.server {
                 // SAFETY: server is valid while RequestContext is alive (BACKREF)
-                let _ = reason;
-                todo!("blocked_on: bun_jsc::AbortSignal::signal");
+                let global = unsafe { (*(server as *mut ThisServer)).global_this() };
+                signal.signal(global, reason);
             }
         }
     }

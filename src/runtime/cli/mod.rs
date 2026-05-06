@@ -793,16 +793,18 @@ pub mod command {
                 let ctx = unsafe { &mut *init(tag, log)? };
                 ctx.args.target = Some(bun_options_types::schema::api::Target::Bun);
 
-                // TODO(b2-blocked): MultiRun / FilterRun (`--parallel`,
-                // `--filter`, `--workspaces`) — needs `multi_run.rs` /
-                // `filter_run.rs` un-gated.
-                
                 if ctx.parallel || ctx.sequential {
-                    return MultiRun::run(ctx);
+                    if let Err(err) = super::multi_run::run(ctx) {
+                        pretty_errorln!("<r><red>error<r>: {}", err.name());
+                        Global::exit(1);
+                    }
                 }
-                
+
                 if !ctx.filters.is_empty() || ctx.workspaces {
-                    return FilterRun::run_scripts_with_filter(ctx);
+                    if let Err(err) = super::filter_run::run_scripts_with_filter(ctx) {
+                        pretty_errorln!("<r><red>error<r>: {}", err.name());
+                        Global::exit(1);
+                    }
                 }
 
                 if tag == Tag::AutoCommand && !ctx.runtime_options.eval.script.is_empty() {

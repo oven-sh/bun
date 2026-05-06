@@ -583,14 +583,23 @@ impl Expr {
             let Some(key) = &prop.key else { continue };
             let Data::EString(key_str) = &key.data else { continue };
             if key_str.eql_bytes(name) {
-                prop.value = Some(Expr::init(E::String { data: value, ..Default::default() }, Loc::EMPTY));
+                prop.value = Some(Expr::init(
+                    E::String { data: unsafe { arena_str(value) }, ..Default::default() },
+                    Loc::EMPTY,
+                ));
                 return Ok(());
             }
         }
 
         obj.properties.append(G::Property {
-            key: Some(Expr::init(E::String { data: name, ..Default::default() }, Loc::EMPTY)),
-            value: Some(Expr::init(E::String { data: value, ..Default::default() }, Loc::EMPTY)),
+            key: Some(Expr::init(
+                E::String { data: unsafe { arena_str(name) }, ..Default::default() },
+                Loc::EMPTY,
+            )),
+            value: Some(Expr::init(
+                E::String { data: unsafe { arena_str(value) }, ..Default::default() },
+                Loc::EMPTY,
+            )),
             ..Default::default()
         })?;
         Ok(())

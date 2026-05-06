@@ -494,11 +494,13 @@ impl FileSink {
         let mut force_sync_out = self.force_sync;
         // CYCLEBREAK(TYPE_ONLY): `OpenForWritingInput` is impl'd for
         // `bun_io::PathOrFileDescriptor`, not `webcore::PathOrFileDescriptor`;
-        // bridge by-value here.
+        // bridge by-value here. `PathString::init` borrows `slice.slice()` for
+        // the duration of `open_for_writing` (the call only needs it for
+        // `openat_a`).
         let io_path = match &options.input_path {
             PathOrFileDescriptor::Fd(fd) => bun_io::PathOrFileDescriptor::Fd(*fd),
-            PathOrFileDescriptor::Path(_slice) => {
-                todo!("blocked_on: bun_io::PathOrFileDescriptor::Path from ZigStringSlice")
+            PathOrFileDescriptor::Path(slice) => {
+                bun_io::PathOrFileDescriptor::Path(bun_string::PathString::init(slice.slice()))
             }
         };
         let result = bun_io::open_for_writing(
@@ -559,12 +561,23 @@ impl FileSink {
                 self.writer.update_ref(self.io_evtloop(), false);
                 #[cfg(unix)]
                 {
-                    // `bun_io::FilePoll` is an opaque vtable handle and does not
-                    // yet expose `.flags` for direct mutation; the original Zig
-                    // set `.nonblocking`/`.socket`/`.fifo` here.
-                    if self.nonblocking || self.is_socket || self.pollable {
-                        let _ = self.writer.get_poll();
-                        todo!("blocked_on: bun_io::FilePoll::set_flag");
+                    if self.nonblocking {
+                        self.writer
+                            .get_poll()
+                            .unwrap()
+                            .set_flag(bun_io::FilePollFlag::Nonblocking);
+                    }
+
+                    if self.is_socket {
+                        self.writer
+                            .get_poll()
+                            .unwrap()
+                            .set_flag(bun_io::FilePollFlag::Socket);
+                    } else if self.pollable {
+                        self.writer
+                            .get_poll()
+                            .unwrap()
+                            .set_flag(bun_io::FilePollFlag::Fifo);
                     }
                 }
             }

@@ -2035,13 +2035,43 @@ pub mod webcore {
             /// `Store.initFile(pathlike, mime_type, allocator)`
             /// (src/runtime/webcore/blob/Store.zig:125). Allocates a new
             /// file-backed `Store`.
+            ///
+            /// `bun_webcore` is a forward-dep (it depends on `bun_jsc`), so the
+            /// real body lives in `bun_webcore::blob::Store::init_file`. This
+            /// shim calls through a C-ABI trampoline exported by that crate
+            /// (`Bun__Blob__Store__initFile`) — same dep-cycle break as
+            /// `Bun__Blob__sharedView` above. `pathlike` is moved by pointer
+            /// (the callee `core::ptr::read`s it); the stub type here is opaque
+            /// and layout-compatible only by ABI contract.
             pub fn init_file(
-                pathlike: crate::node::PathOrFileDescriptor,
+                mut pathlike: crate::node::PathOrFileDescriptor,
                 mime_type: Option<&bun_http::MimeType::MimeType>,
             ) -> Result<*mut Store, bun_core::AllocError> {
-                let _ = (pathlike, mime_type);
-                // TODO(b2): bun_webcore forward-dep — gated.
-                todo!("webcore::blob::Store::init_file")
+                unsafe extern "C" {
+                    fn Bun__Blob__Store__initFile(
+                        pathlike: *mut core::ffi::c_void,
+                        mime_type: *const core::ffi::c_void,
+                    ) -> *mut Store;
+                }
+                let mime_ptr = mime_type
+                    .map(|m| m as *const _ as *const core::ffi::c_void)
+                    .unwrap_or(core::ptr::null());
+                // SAFETY: trampoline is exported by `bun_webcore`; it takes
+                // ownership of `*pathlike` by `ptr::read` and returns a
+                // `Box::into_raw` `Store` (or null on OOM).
+                let store = unsafe {
+                    Bun__Blob__Store__initFile(
+                        &mut pathlike as *mut _ as *mut core::ffi::c_void,
+                        mime_ptr,
+                    )
+                };
+                // Ownership of `pathlike`'s payload moved across FFI.
+                core::mem::forget(pathlike);
+                if store.is_null() {
+                    Err(bun_core::AllocError)
+                } else {
+                    Ok(store)
+                }
             }
         }
     }

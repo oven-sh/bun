@@ -668,38 +668,60 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             Kind::Any => {}
         }
 
-        // CYCLEBREAK: `getFdPath` is a syscall living in `bun_sys` (T1 sibling),
-        // which `bun_paths` cannot depend on. Route through `bun_core::FD_PATH_HOOK`
-        // — bun_sys installs it at startup with signature
-        // `unsafe fn(Fd, *mut u8, cap: usize) -> isize` (>0 = bytes, <0 = error).
-        // PORT NOTE: hook is u8-only; the Zig `fd.getFdPath(this._buf.pooled)`
-        // also type-errors on u16 instantiation (lazy eval hides it). u16 callers
-        // should transcode at the call site or use the bun_sys constructor directly.
+        // CYCLEBREAK: `getFdPath`/`getFdPathW` are syscalls living in `bun_sys`
+        // (T1 sibling), which `bun_paths` cannot depend on. Route through
+        // `bun_core::FD_PATH_HOOK` / `FD_PATH_HOOK_W` — bun_sys installs them
+        // at startup with signature `unsafe fn(Fd, *mut U, cap: usize) -> isize`
+        // (>0 = units written, <0 = error).
+        // PORT NOTE: Zig `fd.getFdPath(this._buf.pooled)` dispatches on the
+        // pooled buffer's element type (u8 → readlink/F_GETPATH, u16 →
+        // GetFinalPathNameByHandleW). Rust monomorphizes eagerly, so we
+        // TypeId-dispatch to the matching hook.
         use core::any::TypeId;
-        if TypeId::of::<U>() != TypeId::of::<u8>() {
-            unimplemented!("init_fd_path: u16 unit — use bun_sys getFdPathW directly");
-        }
-
         let mut this = Self::init();
-        // SAFETY: TypeId check above proves U == u8; identity slice cast.
-        let buf: &mut [u8] =
-            unsafe { core::mem::transmute(U::buffer_as_mut_slice(&mut this._buf.pooled)) };
 
-        let hook = bun_core::FD_PATH_HOOK.load(core::sync::atomic::Ordering::Acquire);
-        if hook.is_null() {
-            // bun_sys hasn't installed the hook yet (early init / isolated test).
-            return Err(bun_core::Error::TODO);
+        if TypeId::of::<U>() == TypeId::of::<u8>() {
+            // SAFETY: TypeId check above proves U == u8; identity slice cast.
+            let buf: &mut [u8] =
+                unsafe { core::mem::transmute(U::buffer_as_mut_slice(&mut this._buf.pooled)) };
+
+            let hook = bun_core::FD_PATH_HOOK.load(core::sync::atomic::Ordering::Acquire);
+            if hook.is_null() {
+                // bun_sys hasn't installed the hook yet (early init / isolated test).
+                return Err(bun_core::Error::TODO);
+            }
+            // SAFETY: hook installed by bun_sys with `unsafe fn(Fd, *mut u8, usize) -> isize`.
+            let f: unsafe fn(Fd, *mut u8, usize) -> isize = unsafe { core::mem::transmute(hook) };
+            // SAFETY: buf is valid for buf.len() writable bytes.
+            let n = unsafe { f(fd, buf.as_mut_ptr(), buf.len()) };
+            if n < 0 {
+                return Err(bun_core::Error::from_errno(9)); // EBADF — hook surfaces no errno
+            }
+            let raw = &buf[..n as usize];
+            let trimmed = trim_input(TrimInputKind::Abs, raw);
+            this._buf.len = trimmed.len();
+        } else {
+            // U == u16 → getFdPathW (Windows GetFinalPathNameByHandleW).
+            // SAFETY: PathUnit is sealed to {u8, u16}; not-u8 ⇒ u16; identity slice cast.
+            let buf: &mut [u16] =
+                unsafe { core::mem::transmute(U::buffer_as_mut_slice(&mut this._buf.pooled)) };
+
+            let hook = bun_core::FD_PATH_HOOK_W.load(core::sync::atomic::Ordering::Acquire);
+            if hook.is_null() {
+                // bun_sys hasn't installed the wide hook yet (early init / non-Windows test).
+                return Err(bun_core::Error::TODO);
+            }
+            // SAFETY: hook installed by bun_sys with `unsafe fn(Fd, *mut u16, usize) -> isize`.
+            let f: unsafe fn(Fd, *mut u16, usize) -> isize = unsafe { core::mem::transmute(hook) };
+            // SAFETY: buf is valid for buf.len() writable u16 units.
+            let n = unsafe { f(fd, buf.as_mut_ptr(), buf.len()) };
+            if n < 0 {
+                return Err(bun_core::Error::from_errno(9)); // EBADF — hook surfaces no errno
+            }
+            let raw = &buf[..n as usize];
+            let trimmed = trim_input(TrimInputKind::Abs, raw);
+            this._buf.len = trimmed.len();
         }
-        // SAFETY: hook installed by bun_sys with `unsafe fn(Fd, *mut u8, usize) -> isize`.
-        let f: unsafe fn(Fd, *mut u8, usize) -> isize = unsafe { core::mem::transmute(hook) };
-        // SAFETY: buf is valid for buf.len() writable bytes.
-        let n = unsafe { f(fd, buf.as_mut_ptr(), buf.len()) };
-        if n < 0 {
-            return Err(bun_core::Error::from_errno(9)); // EBADF — hook surfaces no errno
-        }
-        let raw = &buf[..n as usize];
-        let trimmed = trim_input(TrimInputKind::Abs, raw);
-        this._buf.len = trimmed.len();
         Ok(this)
     }
 

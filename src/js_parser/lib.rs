@@ -56,7 +56,7 @@ pub mod lexer_tables;
 // TODO(b2-blocked): bun_core::runtime_embed_file
 // TODO(b2-blocked): bun_core::EmbedKind
 // TODO(b2-blocked): bun_options_types::schema::api (or bun_schema crate)
-#[cfg(any())]
+
 #[path = "runtime.rs"]
 pub mod runtime_full;
 /// `runtime.rs` is gated until its `bun_core`/`bun_options` deps land. Surface
@@ -1589,7 +1589,7 @@ pub mod defines {
 }
 pub use defines::{Define, DefineData};
 
-#[cfg(any())]
+
 pub mod defines_full_draft {
     use bun_collections::{ArrayHashMap, StringHashMap};
     use bun_logger as logger;

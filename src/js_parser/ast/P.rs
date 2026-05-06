@@ -779,7 +779,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 // ═══════════════════════════════════════════════════════════════════════════
 // Round-D: core helper methods on P. Un-gated in groups; heavy bodies that
 // touch unfinished E/S/ts surface or call into parse_*/visit_* sibling files
-// stay individually `#[cfg(any())] // blocked_on:` below.
+// stay individually ` // blocked_on:` below.
 // ═══════════════════════════════════════════════════════════════════════════
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     P<'a, TYPESCRIPT, J, SCAN_ONLY>
@@ -797,7 +797,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     /// Extracts a matchable "shape" from a dynamic import argument.
     /// Template literals: static parts joined by \x00 placeholders.
     /// Everything else: empty string.
-    #[cfg(any())] // blocked_on: E::Template::Head enum (TemplateContents in E.rs differs); options.allow_unresolved
+     // blocked_on: E::Template::Head enum (TemplateContents in E.rs differs); options.allow_unresolved
     fn extract_dynamic_specifier_shape(
         &mut self,
         arg: Expr,
@@ -849,7 +849,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // Unreachable while AllowUnresolved is the unit stub (the `|| true` above
         // short-circuits). Body kept gated so it un-gates verbatim once the type
         // lands; `extract_dynamic_specifier_shape` is gated for the same reason.
-        #[cfg(any())] // blocked_on: extract_dynamic_specifier_shape; options::AllowUnresolved::{All, allows}
+         // blocked_on: extract_dynamic_specifier_shape; options::AllowUnresolved::{All, allows}
         {
             let mut shape_buf = BumpVec::new_in(self.allocator);
             let shape = self.extract_dynamic_specifier_shape(arg, &mut shape_buf)?;
@@ -1274,7 +1274,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
     }
 
-    #[cfg(any())] // blocked_on: is_binding_used; SideEffects::to_boolean; Part fields; named_exports key type
+     // blocked_on: is_binding_used; SideEffects::to_boolean; Part fields; named_exports key type
     pub fn tree_shake(&mut self, parts: &mut &'a mut [js_ast::Part], merge: bool) {
         let mut parts_ = core::mem::take(parts);
         // PORT NOTE: Zig used `defer` to merge parts after the loop. We replicate by
@@ -2781,7 +2781,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // WrapExportsForClientReference / WrapAnonServerFunctions /
         // WrapExportsForServerReference). The two switches below un-gate once
         // that enum is ported into options::JSX or bundler::options.
-        #[cfg(any())]
+        
         {
         match self.options.features.server_components {
             options::ServerComponents::None | options::ServerComponents::ClientSide => {}
@@ -2810,7 +2810,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 });
             }
         }
-        } // end #[cfg(any())]
+        } // end 
 
         if self.options.features.hot_module_reloading {
             self.hmr_api_ref = self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"hmr")?;
@@ -3197,7 +3197,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     // from expression to binding should be written to "invalidLog" instead. That
     // way we can potentially keep this as an expression if it turns out it's not
     // needed as a binding after all.
-    #[cfg(any())] // round-D: needs ArrayBinding (B.rs gated trait), Flags::PropertyInit
+     // round-D: needs ArrayBinding (B.rs gated trait), Flags::PropertyInit
     fn convert_expr_to_binding(&mut self, expr: ExprNodeIndex, invalid_loc: &mut LocList) -> Option<Binding> {
         match expr.data {
             js_ast::ExprData::EMissing(_) => return None,
@@ -3301,7 +3301,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         None
     }
 
-    #[cfg(any())] // round-D: heavy body, depends on parse_*/visit_*/ImportScanner/full E surface
+     // round-D: heavy body, depends on parse_*/visit_*/ImportScanner/full E surface
     pub fn convert_expr_to_binding_and_initializer(
         &mut self,
         _expr: &mut ExprNodeIndex,
@@ -3396,7 +3396,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // Match spec: only assert above, do not actually pop.
     }
 
-    #[cfg(any())] // blocked_on: S::Import field set; MacroState::RefData; ParsedPath fields; ImportItemForNamespaceMap API
+     // blocked_on: S::Import field set; MacroState::RefData; ParsedPath fields; ImportItemForNamespaceMap API
     pub fn process_import_statement(
         &mut self,
         stmt_: S::Import,
@@ -3652,7 +3652,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Ok(self.s(stmt, loc))
     }
 
-    #[cfg(any())] // blocked_on: ParsedPath fields; S::Import.items; options::Loader
+     // blocked_on: ParsedPath fields; S::Import.items; options::Loader
     #[cold]
     fn validate_and_set_import_type(&mut self, path: &ParsedPath, stmt: &mut S::Import) -> Result<(), bun_core::Error> {
         if let Some(loader) = path.loader {
@@ -4439,7 +4439,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Output::panic(format_args!("{}\n{}", fmt, args));
     }
 
-    #[cfg(any())] // blocked_on: log.print(&mut [u8]); add_range_error_fmt allocator arg; Output::panic
+     // blocked_on: log.print(&mut [u8]); add_range_error_fmt allocator arg; Output::panic
     pub fn panic_loc(&mut self, fmt: &'static str, args: core::fmt::Arguments, loc: Option<logger::Loc>) -> ! {
         let panic_buffer = self.allocator.alloc_slice_fill_default::<u8>(32 * 1024);
         // TODO(port): std.Io.Writer.fixed → write into &mut [u8] via std::io::Write
@@ -5399,13 +5399,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
     }
 
-    #[cfg(any())] // blocked_on: options.features.replace_exports type (currently bool placeholder)
+     // blocked_on: options.features.replace_exports type (currently bool placeholder)
     pub fn is_export_to_eliminate(&self, r#ref: Ref) -> bool {
         let symbol_name = self.load_name_from_ref(r#ref);
         self.options.features.replace_exports.contains(symbol_name)
     }
 
-    #[cfg(any())] // blocked_on: b(); visit_and_append_stmt; Runtime::ReplaceableExport variants; Decl::List
+     // blocked_on: b(); visit_and_append_stmt; Runtime::ReplaceableExport variants; Decl::List
     pub fn inject_replacement_export(
         &mut self,
         stmts: &mut StmtList,
@@ -5543,7 +5543,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
     }
 
-    #[cfg(any())] // blocked_on: b(); G::Decl::List; E::Arrow.args slice type; S::SExpr/Return; emitted_namespace_vars.put_no_clobber
+     // blocked_on: b(); G::Decl::List; E::Arrow.args slice type; S::SExpr/Return; emitted_namespace_vars.put_no_clobber
     pub fn generate_closure_for_type_script_namespace_or_enum(
         &mut self,
         stmts: &mut ListManaged<'a, Stmt>,
@@ -6685,8 +6685,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         r#ref
     }
 
-    #[cfg(any())] // blocked_on: js_ast::Ast::TsEnumsMap path; StringHashMap::put_assume_capacity_no_clobber; ts::Data variants — only caller is to_ast
-    #[cfg(any())] // superseded by the round-G un-gate copy below (see `to_ast` impl block)
+     // blocked_on: js_ast::Ast::TsEnumsMap path; StringHashMap::put_assume_capacity_no_clobber; ts::Data variants — only caller is to_ast
+     // superseded by the round-G un-gate copy below (see `to_ast` impl block)
     pub fn compute_ts_enums_map(&self, allocator: &'a Bump) -> Result<js_ast::Ast::TsEnumsMap, bun_core::Error> {
         // When hot module reloading is enabled, we disable enum inlining
         // to avoid making the HMR graph more complicated.
@@ -6757,7 +6757,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     /// with ones that were imported, so that it can share an import record.
     ///
     /// This function replaces all specifier strings with `e_special.resolved_specifier_string`
-    #[cfg(any())] // blocked_on: rewrite_import_meta_hot_accept_string; Log::add_error wants &[u8] (IMPORT_META_HOT_ACCEPT_ERR is &str)
+     // blocked_on: rewrite_import_meta_hot_accept_string; Log::add_error wants &[u8] (IMPORT_META_HOT_ACCEPT_ERR is &str)
     pub fn handle_import_meta_hot_accept_call(&mut self, call: &mut E::Call) {
         if call.args.len == 0 {
             return;
@@ -6788,7 +6788,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         call.target.data = js_ast::ExprData::ESpecial(E::Special::HotAcceptVisited);
     }
 
-    #[cfg(any())] // blocked_on: EString::to_utf8 arena arg; ImportRecordList::items() accessor; E::Special::ResolvedSpecifierString takes u32 directly (drop ResolvedSpecifierStringIndex::init)
+     // blocked_on: EString::to_utf8 arena arg; ImportRecordList::items() accessor; E::Special::ResolvedSpecifierString takes u32 directly (drop ResolvedSpecifierStringIndex::init)
     fn rewrite_import_meta_hot_accept_string(&mut self, str_: &mut E::String, loc: logger::Loc) -> Option<js_ast::ExprData> {
         let _ = str_.to_utf8(self.allocator);
         let specifier = str_.data;
@@ -8294,7 +8294,7 @@ pub fn null_expr_data() -> js_ast::ExprData {
 pub fn null_stmt_data() -> js_ast::StmtData {
     js_ast::StmtData::SEmpty(S::Empty {})
 }
-#[cfg(any())] // TODO(b2-blocked): ExprData::EString wants StoreRef<EString>; EString is !Sync (NonNull rope ptrs) so a `static` Prefill won't compile. Needs either a Sync wrapper around the prefill constants or `ExprData::EString` to accept by-value for the const-string fast path.
+ // TODO(b2-blocked): ExprData::EString wants StoreRef<EString>; EString is !Sync (NonNull rope ptrs) so a `static` Prefill won't compile. Needs either a Sync wrapper around the prefill constants or `ExprData::EString` to accept by-value for the const-string fast path.
 #[inline]
 pub fn key_expr_data() -> js_ast::ExprData {
     js_ast::ExprData::EString(&Prefill::string::KEY)

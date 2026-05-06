@@ -48,7 +48,7 @@ const SERVER_COMPONENTS_WRAPS_EXPORTS: bool = false;
 // Zig: `pub fn VisitStmt(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
 // a direct `impl P` block. The 30+ per-variant `s_*` helpers are private; only
-// `visit_and_append_stmt` is surfaced. Full draft body preserved under #[cfg(any())] mod _draft below.
+// `visit_and_append_stmt` is surfaced. Full draft body preserved under  mod _draft below.
 
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
     // SAFETY: `current_scope` is always a valid arena-owned Scope for the parse;
@@ -194,7 +194,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let mut any_replaced = false;
         if REPLACE_EXPORTS_REAL {
             // blocked_on: replace_exports is bool placeholder; .count()/.get_ptr() not real.
-            // Full body preserved in `#[cfg(any())] mod _draft::s_export_clause`.
+            // Full body preserved in ` mod _draft::s_export_clause`.
             todo!("s_export_clause: replace_exports map path");
         } else {
             for i in 0..items_len {
@@ -336,7 +336,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         // blocked_on: the .stmt branch needs hook_ctx_storage (Option<&'a mut _> can't hold a
         //   stack local), visit_class 3-arg form, lower_class data flow, server_components.
-        //   Full body preserved verbatim in `#[cfg(any())] mod _draft::s_export_default`.
+        //   Full body preserved verbatim in ` mod _draft::s_export_default`.
         //   Round-H ports the .expr branch only; .stmt re-enters via todo!().
         match &mut data.value {
             js_ast::StmtOrExpr::Expr(expr) => {
@@ -434,7 +434,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     ) -> Result<(), Error> {
         // We mark it as dead, but the value may not actually be dead
         // We just want to be sure to not increment the usage counts for anything in the function
-        // blocked_on: is_export_to_eliminate (#[cfg(any())] P.rs:5030) + replace_exports map.
+        // blocked_on: is_export_to_eliminate ( P.rs:5030) + replace_exports map.
         let mark_as_dead = false;
         let original_is_dead = p.is_control_flow_dead;
 
@@ -505,14 +505,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         if p.options.features.react_fast_refresh {
             if let Some(hook) = react_hook_data.as_mut() {
-                // blocked_on: get_react_refresh_hook_signal_{decl,init} in #[cfg(any())] block (P.rs:5422)
+                // blocked_on: get_react_refresh_hook_signal_{decl,init} in  block (P.rs:5422)
                 //   AND hook_ctx_storage save/restore (see above). `react_hook_data` is never
                 //   populated until that lands, so this arm is unreachable; kept for shape.
                 let _ = hook.signature_cb;
                 todo!("s_function: react_refresh hook signal emit");
             }
 
-            // blocked_on: handle_react_refresh_register in #[cfg(any())] block (P.rs:5422)
+            // blocked_on: handle_react_refresh_register in  block (P.rs:5422)
             //   AND hook_ctx_storage save/restore (see above). Gate loud unconditionally —
             //   even off-module-scope, the parent's hook_ctx_storage was left active across
             //   visit_func, mis-attributing inner hook calls. Cannot fall through silently.
@@ -687,7 +687,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         _ => break 'try_register,
                     };
                     let original_name = unsafe { arena_str(p.symbols[id.inner_index() as usize].original_name) };
-                    // blocked_on: handle_react_refresh_register in #[cfg(any())] block (P.rs:5422).
+                    // blocked_on: handle_react_refresh_register in  block (P.rs:5422).
                     let _ = (original_name, id, ReactRefreshExportKind::Named);
                     todo!("s_local: handle_react_refresh_register");
                 }
@@ -703,7 +703,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 
     // ─── light visitors (bodies still gated) ────────────────────────────────
-    // Full draft bodies preserved verbatim under `#[cfg(any())] mod _draft` below.
+    // Full draft bodies preserved verbatim under ` mod _draft` below.
     // blocked_on: push_scope_for_visit_pass/find_label_symbol/SideEffects helpers per-variant;
     //   un-gate in a follow-up round once those P helpers are real.
 
@@ -782,7 +782,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 }
 
-#[cfg(any())]
+
 // blocked_on: P::{push_scope_for_visit_pass, pop_scope, record_usage, ignore_usage,
 //   maybe_relocate_vars_to_top_level, mark_exported_decls_inside_namespace, lower_class,
 //   stmts_to_single_stmt, find_label_symbol, generate_closure_for_type_script_namespace_or_enum,

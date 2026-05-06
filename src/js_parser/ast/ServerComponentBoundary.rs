@@ -54,7 +54,7 @@ type Map = ArrayHashMap<(), ()>;
 // TODO(port): hand-roll MultiArrayElement for ServerComponentBoundary (4 fields).
 // Until then the MultiArrayList<SCB> append/slice methods don't resolve, so the
 // impl blocks below stay gated. The struct/List/Slice types themselves are real.
-#[cfg(any())] // TODO(b2-blocked): MultiArrayElement derive + ArrayHashMap::*_adapted (track-A)
+ // TODO(b2-blocked): MultiArrayElement derive + ArrayHashMap::*_adapted (track-A)
 impl List {
     /// Can only be called on the bundler thread.
     pub fn put(
@@ -97,14 +97,14 @@ impl List {
 
 // TODO(b2-blocked): Slice<SCB> needs MultiArrayElement; gate the whole struct since it's
 // only useful with the gated impls below.
-#[cfg(any())]
+
 pub struct Slice<'a> {
     pub list: multi_array_list::Slice<ServerComponentBoundary>,
     pub map: &'a Map,
 }
-#[cfg(any())]
 
-#[cfg(any())] // TODO(b2-blocked): MultiArrayElement + ArrayHashMap::*_adapted (track-A)
+
+ // TODO(b2-blocked): MultiArrayElement + ArrayHashMap::*_adapted (track-A)
 impl<'a> Slice<'a> {
     pub fn get_index(&self, real_source_index: IndexInt) -> Option<usize> {
         self.map.get_index_adapted(
@@ -131,12 +131,12 @@ impl<'a> Slice<'a> {
     }
 }
 
-#[cfg(any())] // TODO(b2-blocked): MultiArrayElement bound (see file-top note)
+ // TODO(b2-blocked): MultiArrayElement bound (see file-top note)
 pub struct Adapter {
     pub list: multi_array_list::Slice<ServerComponentBoundary>,
 }
 
-#[cfg(any())] // TODO(b2-blocked): bun_wyhash::hash_int + Slice<SCB>::items() (track-A)
+ // TODO(b2-blocked): bun_wyhash::hash_int + Slice<SCB>::items() (track-A)
 impl Adapter {
     pub fn hash(&self, key: IndexInt) -> u32 {
         bun_wyhash::hash_int(key as u32)

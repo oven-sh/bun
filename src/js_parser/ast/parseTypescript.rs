@@ -38,7 +38,7 @@ fn clone_ts_member_data(d: &TSNamespaceMemberData) -> TSNamespaceMemberData {
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
     // TODO(port): narrow error set
     pub fn parse_type_script_decorators(&mut self) -> Result<ExprNodeList, Error> {
-        #[cfg(any())]
+        
         // blocked_on: ExprNodeList = BabyList<Expr> (return type) — BumpVec→BabyList conversion
         //   (BabyList::move_from_list takes Vec<T>, not BumpVec); p.options.features.standard_decorators
         //   field missing on RuntimeFeatures (Parser.rs).
@@ -89,7 +89,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     ///   @ DecoratorParenthesizedExpression
     // TODO(port): narrow error set
     pub fn parse_standard_decorator(&mut self) -> Result<ExprNodeIndex, Error> {
-        #[cfg(any())]
+        
         // blocked_on: P::store_name_in_ref gated (P.rs:640 impl block); E::Dot has no Default
         //   (needs full {target,name,name_loc,optional_chain,can_be_removed_if_unused,
         //   call_can_be_unwrapped_if_unused}); E::Call.args is ExprNodeList (BabyList) not slice;
@@ -448,7 +448,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         default_name: &'a [u8],
     ) -> Result<Stmt, Error> {
         let _ = (loc, opts, default_name_loc, default_name);
-        #[cfg(any())]
+        
         // blocked_on: P::{b, declare_symbol, push_scope_for_parse_pass, pop_scope} gated (P.rs:640);
         //   G::DeclList = BabyList<Decl> (need from_slice/init_one); E::Call/E::Dot full struct-init.
         {
@@ -537,7 +537,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         opts: &mut ParseStatementOptions,
     ) -> Result<Stmt, Error> {
         let _ = (loc, opts);
-        #[cfg(any())]
+        
         // blocked_on: P::{push_scope_for_parse_pass, declare_symbol, get_or_create_exported_namespace_members,
         //   pop_scope, store_name_in_ref} gated (P.rs:640); p.scopes_in_order_for_enum field shape;
         //   EnumValue.{name,value} field types; TSNamespaceMemberMap insert API.
@@ -740,5 +740,5 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 //               (raw *mut TSNamespaceScope/MemberMap derefs match Zig pointer semantics);
 //               decorators/import_equals/enum bodies still gated on E struct shapes.
 //   blocked_on: P::get_or_create_exported_namespace_members + P::define_exported_namespace_binding
-//               are #[cfg(any())]-gated in P.rs — un-gate there to clear the last error here.
+//               are -gated in P.rs — un-gate there to clear the last error here.
 // ──────────────────────────────────────────────────────────────────────────

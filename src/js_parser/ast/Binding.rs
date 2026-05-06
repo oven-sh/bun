@@ -124,7 +124,7 @@ impl Binding {
 // `Expr::{init,assign}`, `G::Property` field set, and arena lifetimes. The
 // Phase-A draft body is preserved below for the next round.
 // ──────────────────────────────────────────────────────────────────────────
-#[cfg(any())]
+
 mod _draft {
     use super::*;
     use bun_alloc::Arena;

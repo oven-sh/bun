@@ -10,7 +10,7 @@ use crate::ast::TypeScript::Metadata;
 
 // Zig: `fn SkipTypescript(comptime ts, comptime jsx, comptime scan_only) type { return struct {...} }`
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
-// a direct `impl P` block. Full draft body preserved under #[cfg(any())] mod _draft below.
+// a direct `impl P` block. Full draft body preserved under  mod _draft below.
 
 // TODO(b2-ast-E): SkipTypeOptions::Bitset path — verify against TypeScript.rs
 pub type SkipTypeOptionsBitset = u8;
@@ -123,7 +123,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 }
 
-#[cfg(any())]
+
 // blocked_on: Lexer snapshot — Zig `const old = p.lexer` (value copy) for the four
 //   *_with_backtracking entry points; Rust Lexer holds `&mut Log` so cannot Clone — needs a
 //   POD `LexerSnapshot` that `restore()` accepts (same as TypeScript.rs:197 blocker);

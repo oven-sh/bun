@@ -286,7 +286,7 @@ impl<'a> Parser<'a> {
 // gated in P.rs. Each is per-method gated; `parse()`/`has_bun_pragma()` above
 // stay live.
 impl<'a> Parser<'a> {
-    #[cfg(any())] // blocked_on: _scan_imports (P::init / parse_stmts_up_to gated)
+     // blocked_on: _scan_imports (P::init / parse_stmts_up_to gated)
     pub fn scan_imports(&mut self, scan_pass: &mut ScanPassResult) -> Result<(), Error> {
         if self.options.ts && self.options.jsx.parse {
             self._scan_imports::<true, JsxReact>(scan_pass)
@@ -299,7 +299,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    #[cfg(any())] // blocked_on: P::init / parse_stmts_up_to / add_import_record (P.rs gated)
+     // blocked_on: P::init / parse_stmts_up_to / add_import_record (P.rs gated)
     fn _scan_imports<const TS: bool, JX: JsxT>(
         &mut self,
         scan_pass: &mut ScanPassResult,
@@ -409,7 +409,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    #[cfg(any())] // blocked_on: P::init / prepare_for_visit_pass / to_ast (P.rs gated)
+     // blocked_on: P::init / prepare_for_visit_pass / to_ast (P.rs gated)
     pub fn to_lazy_export_ast(
         &mut self,
         expr: Expr,
@@ -485,7 +485,7 @@ impl<'a> Parser<'a> {
         Ok(js_ast::Result::Ast(p.to_ast(&mut parts, exports_kind, WrapMode::None, b"")?))
     }
 
-    #[cfg(any())] // blocked_on: P::init / parse_stmts_up_to / prepare_for_visit_pass / append_part (P.rs gated)
+     // blocked_on: P::init / parse_stmts_up_to / prepare_for_visit_pass / append_part (P.rs gated)
     pub fn analyze(
         &mut self,
         context: *mut c_void,

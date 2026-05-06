@@ -33,6 +33,7 @@ pub use tables::{
 };
 
 #[inline]
+#[allow(non_snake_case)]
 fn tokenToString_get(token: T) -> &'static [u8] {
     tokenToString[token]
 }
@@ -386,6 +387,7 @@ macro_rules! lexer_impl_header {
 }
 
 lexer_impl_header! {
+    #[allow(dead_code)]
     const JSON: JSONOptions = JSONOptions {
         is_json: IS_JSON,
         allow_comments: ALLOW_COMMENTS,

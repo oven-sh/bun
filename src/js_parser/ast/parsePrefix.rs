@@ -261,7 +261,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // Handle the start of an arrow expression
         if p.lexer.token == T::TEqualsGreaterThan && level.lte(Level::Assign) {
             let ref_ = p.store_name_in_ref(name).expect("unreachable");
-            #[cfg(any())] // blocked_on: parse_arrow_body args type — parseFn.rs stub takes ExprNodeList; Zig is []G.Arg.
+             // blocked_on: parse_arrow_body args type — parseFn.rs stub takes ExprNodeList; Zig is []G.Arg.
             {
                 // PORT NOTE: reshaped for borrowck — build binding before borrowing allocator
                 let binding = p.b(B::Identifier { ref_ }, loc);

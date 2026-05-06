@@ -3,13 +3,10 @@
 //! ** you must also increment the `expected_version` in RuntimeTranspilerCache **
 //! ** IMPORTANT **
 
-use core::ffi::c_void;
-
 use bun_collections::{ArrayHashMap, HashMap, StringArrayHashMap, StringHashMap};
 use bun_core::Output;
 use bun_logger as logger;
-use bun_options_types::import_record::{ImportKind, ImportRecord};
-use bun_string::strings;
+use bun_options_types::import_record::ImportRecord;
 // Zig `std.hash.Wyhash` (final4 variant) — used by `hash_for_runtime_transpiler`
 // (runtime.zig:272) and `ReactRefresh.HookContext` (parser.zig:1140). NOT
 // interchangeable with `bun_wyhash::Wyhash11`.
@@ -18,7 +15,9 @@ use bun_wyhash::Wyhash;
 // Re-exports (mirrors the Zig `pub const X = @import(...)` block at the bottom).
 // Round-C: stub the still-gated submodules so the helper *types* in this file
 // compile; the real bodies arrive in rounds D/E.
+#[allow(non_snake_case)]
 pub mod ConvertESMExportsForHmr { pub type Ctx = (); }
+#[allow(non_snake_case)]
 pub mod ImportScanner { pub type State = (); }
 pub use crate::ast::TypeScript;
 pub use bun_paths::fs;
@@ -201,6 +200,7 @@ pub mod options {
     /// `RuntimeFeatures.server_components` resolve to one type.
     pub use crate::parser::Runtime::ServerComponentsMode as ServerComponents;
     #[derive(Clone, Copy, Default, PartialEq, Eq)]
+    #[allow(non_camel_case_types)]
     pub enum OutputFormat { #[default] Preserve, Cjs, Esm, Iife, Internal_BakeDev }
     /// Port of `options_types/BundleEnums.zig` `Format` (spec for
     /// `Parser.Options.output_format`). Variants and order match spec exactly;
@@ -281,6 +281,7 @@ pub use bun_options_types::import_record as importRecord;
 // its bun_core/bun_schema deps are wired, the *real* type surface — the parts
 // `P`/`visitStmt`/`visitExpr` actually consume — lives here so dependents can
 // drop their bool-placeholder guards.
+#[allow(non_snake_case)]
 pub mod Runtime {
     use bun_collections::{StringArrayHashMap, StringSet};
     use bun_string::strings;
@@ -912,7 +913,6 @@ pub use js_ast::{
     S, Scope, Stmt, StmtNodeIndex, StmtNodeList, Symbol,
 };
 use js_ast::G;
-use js_ast::G::Decl;
 
 pub use js_ast::Op;
 pub use js_ast::Op::Level;
@@ -922,7 +922,6 @@ pub use js_lexer::T;
 
 // TODO(b0): defines arrives from move-in (was bun_bundler::defines → js_parser)
 use crate::defines::Define;
-use bun_collections::pool::ObjectPool;
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -1282,13 +1281,13 @@ pub struct JSXTag<'a> {
 impl<'a> JSXTag<'a> {
     #[allow(unused_variables)]
     pub fn parse<P>(p: &mut P) -> Result<JSXTag<'a>, bun_core::Error> {
-        todo!("JSXTag::parse — gated; see #[cfg(any())] impl below")
+        todo!("JSXTag::parse — gated; see  impl below")
     }
 }
 
 // Round-D: body uses ParserLike methods (lexer_mut/source/arena) not yet on the
 // trait, plus E::String/E::Dot struct-init that doesn't match round-B field set.
-#[cfg(any())]
+
 impl<'a> JSXTag<'a> {
     pub fn parse<P>(p: &'a mut P) -> Result<JSXTag<'a>, bun_core::Error>
     where
@@ -1770,6 +1769,7 @@ pub enum StmtsKind {
 }
 
 #[cold]
+#[allow(dead_code)]
 fn notimpl() -> ! {
     Output::panic(format_args!("Not implemented yet!!"));
 }
@@ -2293,6 +2293,7 @@ pub mod prefill {
     use super::*;
 
     pub mod hot_module_reloading {
+        #[allow(unused_imports)]
         use super::*;
         // TODO(port): mutable static Expr arrays — need `static mut` or `LazyLock`.
         // pub static DEBUG_ENABLED_ARGS: [Expr; 1] = [...];
@@ -2349,6 +2350,7 @@ pub mod prefill {
 }
 
 #[derive(Default)]
+#[allow(dead_code)]
 struct ReactJSX {
     // TODO(port): ArrayHashMap with bun.ArrayIdentityContext (identity hash on Ref)
     hoisted_elements: ArrayHashMap<Ref, G::Decl>,
@@ -2555,7 +2557,7 @@ pub fn new_lazy_export_ast_impl<'bump>(
     runtime_api_call: &'static [u8], // PERF(port): was comptime monomorphization — profile in Phase B
     symbols: js_ast::symbol::List,
 ) -> Result<Option<js_ast::Ast>, bun_core::Error> {
-    #[cfg(any())]
+    
     {
         // TODO(b2-blocked): Parser::to_lazy_export_ast (round-D parse_* methods)
         let mut temp_log = logger::Log::init();
@@ -2725,6 +2727,7 @@ impl ReactRefresh<'_> {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, strum::EnumString)]
+#[allow(non_camel_case_types)]
 pub enum BuiltInHook {
     useState,
     useReducer,

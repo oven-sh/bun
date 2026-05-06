@@ -42,7 +42,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // blocked_on: Binding2ExprWrapperHoisted is a `()` stub (P.rs round-C);
         // Binding::to_expr requires `&mut impl ToExprWrapper`. The decl loop
         // un-gates once the wrapper carries `&mut P` + wrap_identifier_hoisted.
-        #[cfg(any())]
+        
         {
         let mut value: Expr = Expr::EMPTY;
         for decl in decls {
@@ -62,7 +62,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             stmt: Some(p.s(S::SExpr { value, does_not_affect_tree_shaking: false }, value.loc)),
             ok: true,
         };
-        } // end #[cfg(any())]
+        } // end 
         let _ = (decls, mode);
         // Spec maybe.zig:25-43: once the hoisted scope IS module_scope, the return is ALWAYS
         // `ok: true` (with or without a comma-joined assignment stmt). Returning `ok: false`
@@ -280,7 +280,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     return None;
                                 }
 
-                                #[cfg(any())] // dead in Zig (for-else above always returns)
+                                 // dead in Zig (for-else above always returns)
                                 {
                                 let mut stmts = bumpalo::collections::Vec::with_capacity_in(
                                     props.len() * 2,
@@ -380,7 +380,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                 p.ignore_usage(p.module_ref);
                                 p.commonjs_replacement_stmts = stmts.into_bump_slice();
                                 return Some(p.new_expr(E::Missing {}, name_loc));
-                                } // end #[cfg(any())] (dead in Zig)
+                                } // end  (dead in Zig)
                             }
 
                             // Deoptimizations:
@@ -581,7 +581,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             // blocked_on: jsc::URL::file_url_from_string FFI (MOVE_DOWN
                             // bun_jsc::URL → bun_url; see http/lib.rs:1225). The Zig
                             // formatter writes a `file://` URL via WTF::URL.
-                            #[cfg(any())]
+                            
                             {
                                 let bunstr = bun_string::String::from_bytes(p.source.path.text);
                                 let url = p.allocator.alloc_slice_copy(
@@ -806,7 +806,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         None
     }
 
-    #[cfg(any())] // round-D draft body; superseded by the un-gated body above.
+     // round-D draft body; superseded by the un-gated body above.
     fn _maybe_rewrite_property_access_draft(
         &mut self,
         loc: logger::Loc,
@@ -1454,7 +1454,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
 
         None
-        } // end #[cfg(any())]
+        } // end 
     }
 
     fn maybe_rewrite_property_access_for_namespace(

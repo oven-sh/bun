@@ -24,7 +24,7 @@ type Result<T> = core::result::Result<T, bun_core::Error>;
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
 // a direct `impl P` block. The 25+ per-token `t_*` helpers are private; only `parse_stmt` is
 // surfaced. Round-G un-gated the simpler `t_*` bodies; `t_export`/`t_import`/fallthrough remain
-// blocked on helper availability (see #[cfg(any())] mod _draft_heavy below).
+// blocked on helper availability (see  mod _draft_heavy below).
 
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
     fn t_semicolon(p: &mut Self) -> Result<Stmt> {
@@ -791,7 +791,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     // yet real on P (create_default_name, default_name_for_expr, parse_clause_alias,
     // add_import_record, fs::PathName, ImportTag, p.panic, p.import_records mut
     // accessors, current_scope field write, S::Import Default). Full draft bodies
-    // preserved verbatim under #[cfg(any())] mod _draft_heavy below.
+    // preserved verbatim under  mod _draft_heavy below.
 
     fn t_export(
         p: &mut Self,
@@ -860,7 +860,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 }
 
-#[cfg(any())]
+
 // blocked_on: P::{create_default_name, default_name_for_expr, parse_clause_alias,
 //   add_import_record, has_export_default, has_es_module_syntax, panic,
 //   import_records.as_mut_slice}; fs::PathName; ImportTag; S::Import Default;

@@ -62,7 +62,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 }
 
-#[cfg(any())]
+
 // blocked_on: P::{push_scope_for_parse_pass, pop_scope, declare_symbol, declare_binding,
 //   validate_function_name, store_name_in_ref, hoist_symbols, declare_generated_symbol}
 //   all gated (P.rs:640 impl block); G::Fn.{args, body, flags} field shapes (args is

@@ -955,7 +955,7 @@ pub mod object {
 // TODO(b2-ast-round-C): Object accessors call `Expr::as_property`/`EString::eql`
 // which need `bun_string::utf16_eql_string` (track-A blocked_on) and the gated
 // `impl Expr` accessor block. Un-gate with the parser round.
-#[cfg(any())]
+
 impl Object {
     pub fn get(&self, key: &[u8]) -> Option<Expr> {
         self.as_property(key).map(|query| query.expr)
@@ -1733,7 +1733,7 @@ fn array_sorter_is_less_than(lhs: &Expr, rhs: &Expr) -> Ordering {
 // `string_z`/`to_zig_string` need `bun_string::ZStr::from_bytes_in` +
 // bump-arena `to_utf8_alloc_z`. The duplicate methods kept here for
 // diffability against E.zig.
-#[cfg(any())]
+
 impl EString {
     pub fn to_utf8(&mut self, bump: &Bump) -> Result<(), AllocError> {
         if !self.is_utf16 {
@@ -2139,7 +2139,7 @@ impl TemplateContents {
     }
 }
 
-#[cfg(any())]
+
 impl Template {
     /// "`a${'b'}c`" => "`abc`"
     pub fn fold(&mut self, bump: &Bump, loc: logger::Loc) -> Expr {

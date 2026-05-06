@@ -957,7 +957,7 @@ impl SideEffects {
     }
 }
 
-#[cfg(any())]
+
 // blocked_on: simplify_unused_expr's `.e_object` arm — G::Property is not Copy
 //   (BabyList ts_decorators); index/raw-ptr reshape pending. simplify_unused_binary_comma_expr
 //   uses a local Vec until P.binary_expression_simplify_stack element type is fixed

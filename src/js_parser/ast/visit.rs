@@ -35,7 +35,7 @@ type ListManaged<'bump, T> = BumpVec<'bump, T>;
 
 // Zig: `pub fn Visit(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
-// a direct `impl P` block. Full draft body preserved under #[cfg(any())] mod _draft below.
+// a direct `impl P` block. Full draft body preserved under  mod _draft below.
 
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
     // SAFETY: `current_scope` is always a valid arena-owned Scope for the parse;
@@ -158,7 +158,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             //   disjoint-borrow-incompatible. Body preserved in `_draft::visit_func`.
             // TODO(port): wire handle_react_refresh_post_visit_function_body once hook storage
             // is reshaped to a raw ptr (matching the Zig `*?Hook`).
-            #[cfg(any())]
+            
             {
                 let hook_storage = self
                     .react_refresh
@@ -328,7 +328,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             if core::ptr::eq(last_hook, &*call) {
                                 // blocked_on: B::write_to_hasher generic bound + hook_ctx_storage
                                 //   double-borrow; preserved in `_draft::visit_decls`.
-                                #[cfg(any())]
+                                
                                 decl.binding.data.write_to_hasher(
                                     &mut self
                                         .react_refresh
@@ -371,10 +371,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     self.is_control_flow_dead = orig_dead;
                     if let BData::BIdentifier(_) = decl.binding.data {
                         if let Some(_ptr) = replacement {
-                            // blocked_on: P::replace_decl_and_possibly_remove is #[cfg(any())]-gated
+                            // blocked_on: P::replace_decl_and_possibly_remove is -gated
                             //   (P.rs); un-gate this call when it lands. Body preserved in
                             //   `_draft::visit_decls`.
-                            #[cfg(any())]
+                            
                             {
                                 // SAFETY: _ptr points into self.options.features.replace_exports,
                                 // which is not mutated during the visit pass.
@@ -411,10 +411,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         .get_ptr(name)
                         .map(|r| r as *const crate::parser::Runtime::ReplaceableExport)
                     {
-                        // blocked_on: P::replace_decl_and_possibly_remove is #[cfg(any())]-gated
+                        // blocked_on: P::replace_decl_and_possibly_remove is -gated
                         //   (P.rs); un-gate this call when it lands. Body preserved in
                         //   `_draft::visit_decls`.
-                        #[cfg(any())]
+                        
                         {
                             // SAFETY: _ptr points into self.options.features.replace_exports,
                             // which is not mutated during the visit pass.
@@ -731,7 +731,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
     }
 
-    // PORT NOTE: P::stmts_to_single_stmt is `#[cfg(any())]`-gated (P.rs:6267, blocked on
+    // PORT NOTE: P::stmts_to_single_stmt is ``-gated (P.rs:6267, blocked on
     // S::Block Default). Inline a local copy until that un-gates.
     fn stmts_to_single_stmt_(&mut self, loc: logger::Loc, stmts: &'a mut [Stmt]) -> Stmt {
         if stmts.is_empty() {
@@ -1971,7 +1971,7 @@ pub fn fn_body_contains_use_strict(body: &[Stmt]) -> Option<logger::Loc> {
     None
 }
 
-#[cfg(any())]
+
 // blocked_on: P::{push_scope_for_visit_pass, pop_scope, record_usage, ignore_usage,
 //   record_declared_symbol, mark_strict_mode_feature, declare_symbol, find_label_symbol,
 //   handle_react_refresh_*, lower_class, generate_temp_ref, append_if_body_preserving_scope}

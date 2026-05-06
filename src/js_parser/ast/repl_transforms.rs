@@ -28,7 +28,7 @@ use crate::ast::G::Decl;
 //
 // TODO(b2-ast-D): body has 141 errors against E/S/G/B/Stmt/Binding shapes (path fixups,
 // ExprData variant names, BabyList/BumpVec method names). The `apply` surface is stubbed;
-// full draft body preserved under #[cfg(any())] mod _draft below.
+// full draft body preserved under  mod _draft below.
 
 use crate::ast::p::P as PReal;
 use crate::parser::JsxT;
@@ -48,7 +48,7 @@ impl<'a, const TS: bool, J: JsxT, const SCAN: bool> PReal<'a, TS, J, SCAN> {
     }
 }
 
-#[cfg(any())] // TODO(b2-ast-D): full body draft
+ // TODO(b2-ast-D): full body draft
 mod _draft {
 use super::*;
 struct ReplTransforms<P>(PhantomData<P>);

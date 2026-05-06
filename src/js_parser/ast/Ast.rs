@@ -181,7 +181,7 @@ impl Ast {
     // the `Origin::Borrowed` debug guard — unwrapping `ManuallyDrop` here
     // would free the caller's slice. Gate until test callers are surveyed and
     // can switch to owned input (see Symbol::init_with_one_list, same issue).
-    #[cfg(any())]
+    
     pub fn init_test(parts: &[Part]) -> Ast {
         Ast {
             parts: PartList::from_owned_slice(parts.to_vec().into_boxed_slice()),
@@ -198,10 +198,10 @@ impl Ast {
     }
 
     // TODO(port): Zig used `std.json.stringify(self.parts, opts, stream)` with whitespace.separator = true.
-    // Phase B: pick a JSON serializer for `parts` (serde or hand-rolled). Gated `#[cfg(any())]`
+    // Phase B: pick a JSON serializer for `parts` (serde or hand-rolled). Gated ``
     // until then so it cannot silently succeed with an empty stream (PORTING.md §Forbidden:
     // silent-no-op). No live callers.
-    #[cfg(any())]
+    
     pub fn to_json<W: std::io::Write>(&self, stream: &mut W) -> Result<(), bun_core::Error> {
         todo!("port: std.json.stringify(self.parts, opts, stream)")
     }

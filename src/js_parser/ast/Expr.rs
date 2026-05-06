@@ -131,12 +131,12 @@ impl Expr {
 impl Expr {
     // TODO(b2-ast-round-C): clone/deep_clone forward to `Data::clone`/
     // `Data::deep_clone` (gated below). Un-gate together.
-    #[cfg(any())]
+    
     pub fn clone_in(this: Expr, bump: &Bump) -> Result<Expr, bun_core::Error> {
         // TODO(port): narrow error set
         Ok(Expr { loc: this.loc, data: this.data.clone(bump)? })
     }
-    #[cfg(any())]
+    
     pub fn deep_clone(this: Expr, bump: &Bump) -> Result<Expr, AllocError> {
         Ok(Expr { loc: this.loc, data: this.data.deep_clone(bump)? })
     }
@@ -163,7 +163,7 @@ impl Expr {
     // TODO(b2-blocked): bun_http_types::MimeType + bun_interchange::json::parse — this is the
     // macro-expansion `Expr.fromBlob` path (cold). High tier (`js_parser_jsc`) should own it
     // anyway since it touches `jsc::webcore::Blob`. Gate body until those land.
-    #[cfg(any())]
+    
     pub fn from_blob(
         blob: BlobRef,
         bump: &Bump,
@@ -311,7 +311,7 @@ impl Expr {
     // TODO(b2-ast-round-C): gated on `EString::string_z` (E.rs:1666 block) which
     // needs `bun_string::ZStr` bump-arena constructors. Only caller
     // (`get_string_cloned_z`) is likewise gated.
-    #[cfg(any())]
+    
     #[inline]
     pub fn as_string_z<'b>(
         &self,
@@ -362,7 +362,7 @@ impl Expr {
 // methods that need `bun_string::utf16_eql_string`/`to_utf8_alloc` (track-A
 // blocked_on) and `BabyList::deep_clone`. Types are real; bodies un-gate with
 // the parser round once those land.
-#[cfg(any())]
+
 impl Expr {
     pub fn has_any_property_named(expr: &Expr, names: &'static [&'static [u8]]) -> bool {
         let Data::EObject(obj) = &expr.data else { return false };
@@ -970,7 +970,7 @@ impl Expr {
 
 // TODO(port): jsonStringify protocol — replace with serde or custom trait in
 // Phase B. Kept gated; `Serializable` is its payload shape.
-#[cfg(any())]
+
 impl Expr {
     pub fn json_stringify(self_: &Expr, writer: &mut impl fmt::Write) -> fmt::Result {
         let _ = (self_, writer);
@@ -2112,7 +2112,7 @@ impl Data {
 // surfaces, `bun_core::write_any_to_hasher`, and parser-state types that land
 // with `P.rs`/`Parser.rs`. The *types* (`Data`/`Expr`/`Tag`/`Store`) are real;
 // only these method bodies wait. The round-B verify gate covers what's live.
-#[cfg(any())]
+
 impl Data {
     pub fn clone(this: Data, bump: &Bump) -> Result<Data, bun_core::Error> {
         // TODO(port): narrow error set

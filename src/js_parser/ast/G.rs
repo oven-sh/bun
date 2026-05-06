@@ -201,7 +201,7 @@ impl Default for Property {
 impl Property {
     // TODO(b2-ast-round): depends on Expr::deep_clone / ExprNodeList::deep_clone /
     // BabyList<Stmt>::clone — wire after Expr/Stmt land.
-    #[cfg(any())]
+    
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> core::result::Result<Property, bun_alloc::AllocError> {
         let mut class_static_block: Option<&'ast mut ClassStaticBlock> = None;
         if let Some(csb) = &self.class_static_block {
@@ -306,7 +306,7 @@ impl Default for Fn {
 
 impl Fn {
     // TODO(b2-ast-round): Arg::deep_clone — wire after Expr lands.
-    #[cfg(any())]
+    
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> core::result::Result<Fn, bun_alloc::AllocError> {
         // PERF(port): Zig allocator.alloc + per-index assign; bumpalo equivalent
         let args = bump.alloc_slice_fill_default::<Arg>(self.args.len());
@@ -353,7 +353,7 @@ impl Default for Arg {
 
 impl Arg {
     // TODO(b2-ast-round): ExprNodeList/Expr deep_clone.
-    #[cfg(any())]
+    
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> core::result::Result<Arg, bun_alloc::AllocError> {
         Ok(Arg {
             ts_decorators: self.ts_decorators.deep_clone(bump)?,

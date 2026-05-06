@@ -8,7 +8,7 @@ use crate::ast::{self as js_ast, Binding, Expr, Stmt, B, E, G, S};
 use crate::ast::p::P;
 use crate::parser::{JsxT, ReactRefresh, Ref, TempRef};
 
-// PORT NOTE: `P::generate_temp_ref` is `#[cfg(any())]`-gated in P.rs (round-6
+// PORT NOTE: `P::generate_temp_ref` is ``-gated in P.rs (round-6
 // re-gate); replicate it here so this file can un-gate independently. Body is
 // a 1:1 port of P.zig `generateTempRefWithScope` with `scope = current_scope`.
 // `P::will_use_renamer` is private — its body is inlined.

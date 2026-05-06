@@ -119,7 +119,7 @@ impl B {
 
 // TODO(b2-ast-round): write_to_hasher needs Expr::Data::write_to_hasher +
 // SymbolTable bound + bun_core::write_any_to_hasher; wire after Expr lands.
-#[cfg(any())]
+
 impl B {
     // TODO(port): `union(Binding.Tag)` — Phase B should ensure `Binding::Tag` discriminants
     // match this enum's variant order so `tag()` stays a transmute/match.

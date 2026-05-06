@@ -142,7 +142,7 @@ pub use typescript_full as TypeScript;
 
 // ── round-C: P.rs / Parser.rs (parser state + entry point) ─────────────────
 // Real files; declared here so `crate::ast::p::P` / `crate::ast::p::Parser`
-// resolve. Heavy parse_*/visit_* method bodies stay #[cfg(any())]-gated inside.
+// resolve. Heavy parse_*/visit_* method bodies stay -gated inside.
 #[path = "P.rs"]
 pub mod p;
 pub use p::P;
@@ -185,7 +185,7 @@ pub use known_global::KnownGlobal;
 // ── round-D batch 3 / E / F (16 files) ─────────────────────────────────────
 // Each file is a parse*/visit*/transform method-body mixin on `P`. The Phase-A
 // drafts have 30-200 path/shape errors each against the round-A/B/C type
-// surface. They are declared here behind `#[cfg(any())]` so:
+// surface. They are declared here behind `` so:
 //   (a) the module tree is complete (`crate::ast::parse_stmt::*` is addressable);
 //   (b) the draft bodies are preserved verbatim on disk for the body-un-gate
 //       follow-up rounds (each file needs the same mixin→impl-P conversion as

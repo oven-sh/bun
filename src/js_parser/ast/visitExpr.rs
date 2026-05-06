@@ -27,7 +27,7 @@ use js_ast::ExprTag as Tag;
 use js_ast::OpCode as Op;
 
 // `Expr::join_with_comma` lives in a still-gated `impl Expr` block
-// (Expr.rs `#[cfg(any())]` @793 — depends on `IntoExprData` for `E::Binary`).
+// (Expr.rs `` @793 — depends on `IntoExprData` for `E::Binary`).
 // The visit pass needs the trivial 2-ary form now; provide it locally and
 // build the binary node via `Expr::init`, which does have an ungated path.
 #[inline]
@@ -51,7 +51,7 @@ fn has_value_for_this_in_call(expr: &Expr) -> bool {
 // Zig: `pub fn VisitExpr(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
 // a direct `impl P` block. The 25+ per-variant `e_*` helpers are private; only `visit_expr` /
-// `visit_expr_in_out` are surfaced. Full draft body preserved under #[cfg(any())] mod _draft below.
+// `visit_expr_in_out` are surfaced. Full draft body preserved under  mod _draft below.
 
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
     pub fn visit_expr(&mut self, expr: Expr) -> Expr {
@@ -108,7 +108,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     // In Zig these live on a nested `const visitors = struct { ... }`; in Rust they are private
     // associated fns on this impl so they can see the const-generic feature params. Round-G
     // un-gated the trivial bodies; heavy bodies remain `todo!()` with full draft preserved in
-    // `#[cfg(any())] mod _draft` below until the matching expr::Data accessors / P helpers land.
+    // ` mod _draft` below until the matching expr::Data accessors / P helpers land.
 
     fn e_new_target(_: &mut Self, expr: Expr, _: ExprIn) -> Expr {
         // this error is not necessary and it is causing breakages
@@ -171,7 +171,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     // / Option<T>); P::value_for_this + P::find_symbol are real. All 24
     // visitor bodies are now un-gated from `_draft`. Inside the bodies,
     // `todo!()` markers remain only at call-sites for P helpers still gated
-    // under `#[cfg(any())]` (P.rs:5380 impl block + individually-gated fns):
+    // under `` (P.rs:5380 impl block + individually-gated fns):
     // value_for_define, is_dot_define_match, transpose_require,
     // transpose_require_resolve_known_string, check_dynamic_specifier,
     // handle_import_meta_hot_accept_call, handle_react_refresh_hook_call,
@@ -185,7 +185,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         if let Some(meta) = p.define.dots.get(b"meta".as_slice()) {
             for define in meta {
                 // blocked_on: P::is_dot_define_match + P::value_for_define live in the
-                // gated round-D impl (P.rs `#[cfg(any())]` ~5380); `defines::DotDefine.parts`
+                // gated round-D impl (P.rs `` ~5380); `defines::DotDefine.parts`
                 // is the round-C `Vec<Box<[u8]>>` stub (full type is `*const [*const [u8]]`).
                 // TODO: clean up how we do define matches
                 let is_match: bool = {
@@ -293,7 +293,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             if let Some(def) = p.define.for_identifier(name) {
                 if !def.valueless() {
                     // blocked_on: P::value_for_define is in the gated round-D impl
-                    // (P.rs `#[cfg(any())]` block); body preserved in _draft.
+                    // (P.rs `` block); body preserved in _draft.
                     let newvalue: Expr = {
                         let _ = (in_.assign_target, is_delete_target, &def);
                         todo!("e_identifier: P::value_for_define (gated)")
@@ -532,7 +532,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     // TODO(port): jsxChildrenKeyData in Zig is a mutable `var` of `Expr.Data`
                     // pointing at `Prefill.String.Children`. ExprData::EString wants a
                     // `StoreRef<EString>` (arena-backed) so a process-static won't compile (see
-                    // P.rs `#[cfg(any())]` ~7552). Allocate via `p.new_expr` from the const
+                    // P.rs `` ~7552). Allocate via `p.new_expr` from the const
                     // `prefill::string::CHILDREN` instead — small extra alloc.
                     // PERF(port): was process-static — profile in Phase B
                     let children_key = p.new_expr(prefill::string::CHILDREN, expr.loc);
@@ -706,7 +706,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         }
 
                         // blocked_on: bun_logger::fs::Path::is_node_module (Zig: `path.isNodeModule()`).
-                        #[cfg(any())]
+                        
                         if p.source.path.is_node_module() {
                             p.log
                                 .add_error(
@@ -747,7 +747,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // it may no longer be a template literal after this point (it may turn into
         // a plain string literal instead).
         if p.should_fold_typescript_constant_expressions || p.options.features.inlining {
-            // blocked_on: E::Template::fold (E.rs `#[cfg(any())]` ~2141 — depends on
+            // blocked_on: E::Template::fold (E.rs `` ~2141 — depends on
             // E::Number::to_string + Expr::Data::ETemplate(self) by-ref store).
             todo!("e_template: E::Template::fold (gated)");
         }
@@ -1185,8 +1185,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         }
 
                         if p.options.features.minify_syntax {
-                            // blocked_on: Expr::maybe_simplify_not (Expr.rs `#[cfg(any())]` impl @1481).
-                            #[cfg(any())]
+                            // blocked_on: Expr::maybe_simplify_not (Expr.rs `` impl @1481).
+                            
                             if let Some(exp) = Expr::maybe_simplify_not(&e_.value, p.allocator) {
                                 return exp;
                             }
@@ -1270,7 +1270,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         if let Some(parts) = p.define.dots.get(e_.name) {
             for define in parts {
                 // blocked_on: P::is_dot_define_match + P::value_for_define live in the
-                // gated round-D impl (P.rs `#[cfg(any())]` ~5380); `defines::DotDefine.parts`
+                // gated round-D impl (P.rs `` ~5380); `defines::DotDefine.parts`
                 // is the round-C `Vec<Box<[u8]>>` stub (full type is `*const [*const [u8]]`).
                 let is_match: bool = {
                     let _ = &define.parts;
@@ -1890,7 +1890,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 match &first.data {
                     Data::EString(..) => {
                         // require(FOO) => require(FOO)
-                        // blocked_on: P::transpose_require gated (P.rs:871 `#[cfg(any())]`).
+                        // blocked_on: P::transpose_require gated (P.rs:871 ``).
                         let _ = (first, &state);
                         todo!("e_call: P::transpose_require (gated)");
                     }
@@ -1922,7 +1922,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
 
             if e_.args.len >= 1 {
-                // blocked_on: P::check_dynamic_specifier gated (P.rs:690 `#[cfg(any())]`).
+                // blocked_on: P::check_dynamic_specifier gated (P.rs:690 ``).
                 let _ = (e_.args.slice()[0], e_.target.loc);
                 todo!("e_call: P::check_dynamic_specifier (gated)");
             }
@@ -2010,7 +2010,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 }
 
                 // blocked_on: bun_logger::fs::Path::is_node_module (Zig: `path.isNodeModule()`).
-                #[cfg(any())]
+                
                 if p.source.path.is_node_module() {
                     p.log
                         .add_error(
@@ -2093,7 +2093,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 } {
                     debug_assert!(p.options.features.server_components.is_server_side());
                     // blocked_on: bun_logger::fs::Path::pretty field/accessor.
-                    #[cfg(any())]
+                    
                     if !strings::starts_with(p.source.path.pretty, b"node_modules")
                         && original_name == b"useState"
                     {
@@ -2146,9 +2146,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         if p.options.features.minify_syntax {
             // blocked_on: KnownGlobal::minify_global_constructor body gated
-            // (KnownGlobal.rs `#[cfg(any())]` impl). Signature matches; un-gate
+            // (KnownGlobal.rs `` impl). Signature matches; un-gate
             // there to light this up.
-            #[cfg(any())]
+            
             if let Some(minified) = js_ast::known_global::KnownGlobal::minify_global_constructor(
                 p.allocator,
                 &mut *e_,
@@ -2325,7 +2325,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         p.fn_only_data_visit.is_inside_async_arrow_fn = old_inside_async_arrow_fn;
         p.fn_or_arrow_data_visit = old_fn_or_arrow_data;
 
-        #[cfg(any())] // blocked_on: P::get_react_refresh_hook_signal_{decl,init},
+         // blocked_on: P::get_react_refresh_hook_signal_{decl,init},
         //   handle_react_refresh_post_visit_function_body
         if let Some(hook) = react_hook_data.as_mut() {
             'try_mark_hook: {
@@ -2383,7 +2383,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         let mut final_expr = expr;
 
-        #[cfg(any())] // blocked_on: P::get_react_refresh_hook_signal_{decl,init}
+         // blocked_on: P::get_react_refresh_hook_signal_{decl,init}
         if let Some(hook) = react_hook_data.as_mut() {
             'try_mark_hook: {
                 let Some(mut stmts) = p.nearest_stmt_list else {
@@ -2446,7 +2446,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 }
 
-#[cfg(any())]
+
 // blocked_on: P::{handle_identifier, record_usage, ignore_usage, value_for_this, value_for_define,
 //   is_dot_define_match, transpose_import, transpose_require, jsx_import, jsx_import_automatic,
 //   call_runtime, maybe_rewrite_property_access, expr_can_be_removed_if_unused,

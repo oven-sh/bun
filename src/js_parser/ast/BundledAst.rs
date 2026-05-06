@@ -114,7 +114,7 @@ bitflags::bitflags! {
 // The conversions (init/to_ast/empty) need either (a) Clone bounds on heavy fields, or
 // (b) signature changes to consume/produce by value, or (c) arena param + alloc_slice_copy.
 // Struct def is real (downstream bundler::LinkerGraph stores it); methods gated.
-#[cfg(any())]
+
 impl<'arena> BundledAst<'arena> {
     // TODO(port): Zig `pub const empty = BundledAst.init(Ast.empty);` — cannot be a `const` in Rust
     // because `init` is not const-evaluable. Phase B: consider a `static` via `OnceLock` or make
@@ -200,7 +200,7 @@ impl<'arena> BundledAst<'arena> {
     // Ast owns Box<[u32]>, BundledAst<'arena> borrows &'arena [u32]. With no arena param
     // and no Box::leak (PORTING.md §Forbidden), either retype the field to Box<[u32]> or
     // add an `&'arena Bump` param and `bump.alloc_slice_copy(&ast.export_star_import_records)`.
-    #[cfg(any())]
+    
     pub fn init(ast: Ast) -> Self {
         let mut flags = Flags::empty();
         flags.set(Flags::USES_EXPORTS_REF, ast.uses_exports_ref);
@@ -267,7 +267,7 @@ impl<'arena> BundledAst<'arena> {
     }
 
     /// TODO: Move this from being done on all parse tasks into the start of the linker. This currently allocates base64 encoding for every small file loaded thing.
-    #[cfg(any())] // TODO(b2-blocked): bun_http_types::MimeType + bun_paths::extension (back-edge); CSS-only helper
+     // TODO(b2-blocked): bun_http_types::MimeType + bun_paths::extension (back-edge); CSS-only helper
     pub fn add_url_for_css(
         &mut self,
         bump: &'arena bun_alloc::Arena,

@@ -86,7 +86,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 None
             };
             if let Some(slice) = slice_opt {
-                #[cfg(any())] // blocked_on: bun_options_types::ImportRecord: Default (P::add_import_record chain re-gated)
+                 // blocked_on: bun_options_types::ImportRecord: Default (P::add_import_record chain re-gated)
                 {
                     let import_record_index = p.add_import_record(
                         bun_options_types::ImportKind::Dynamic,
@@ -116,7 +116,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 
     pub fn parse_import_clause(&mut self) -> Result<ImportClause, Error> {
-        #[cfg(any())]
+        
         // blocked_on: P::{store_name_in_ref, check_for_non_bmp_code_point} gated (P.rs:640
         //   impl block); ClauseItem.alias is ArenaStr (*const [u8]) not &[u8]; BumpVec
         //   construction (items.push needs &'a Bump); LocRef.ref_ is Option<Ref>.
@@ -297,12 +297,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 false
             },
         });
-        } // end #[cfg(any())]
+        } // end 
         todo!("b2-ast-D: parse_import_clause body")
     }
 
     pub fn parse_export_clause(&mut self) -> Result<ExportClauseResult, Error> {
-        #[cfg(any())]
+        
         // blocked_on: P::{store_name_in_ref, check_for_non_bmp_code_point} gated (P.rs:640
         //   impl block); ClauseItem.alias is ArenaStr (*const [u8]) not &[u8];
         //   ExportClauseResult.clauses is &'a [ClauseItem] (need into_bump_slice).
@@ -493,7 +493,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             is_single_line,
             had_type_only_exports,
         });
-        } // end #[cfg(any())]
+        } // end 
         todo!("b2-ast-D: parse_export_clause body")
     }
 }

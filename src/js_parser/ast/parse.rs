@@ -23,7 +23,7 @@ use crate::parser::{
 
 // Zig: `pub fn Parse(comptime ts, comptime jsx, comptime scan) type { return struct { ... } }`
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
-// a direct `impl P` block. Full draft body preserved under #[cfg(any())] mod _draft below.
+// a direct `impl P` block. Full draft body preserved under  mod _draft below.
 
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
     // Zig: `inline fn parseExprOrBindings(p, level, errors: ?*DeferredErrors, expr: *Expr) !void`
@@ -190,7 +190,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 }
 
-#[cfg(any())]
+
 // blocked_on: P::{push_scope_for_parse_pass, pop_scope, pop_and_discard_scope, declare_symbol,
 //   store_name_in_ref, declare_binding, convert_expr_to_binding_and_initializer,
 //   will_need_binding_pattern, log_expr_errors, log_arrow_arg_errors} all gated

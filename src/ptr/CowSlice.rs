@@ -32,7 +32,7 @@ pub type CowSlice<T> = CowSliceZ<T, false>;
 // Rust const generics cannot express `Option<T>` for generic `T`, so this port
 // uses a `bool` and assumes sentinel == 0 when `Z`. Revisit if a non-zero
 // sentinel is ever needed.
-pub struct CowSliceZ<T, const Z: bool> {
+pub struct CowSliceZ<T: 'static, const Z: bool> {
     /// Pointer to the underlying data. Do not access this directly.
     ///
     /// NOTE: `ptr` is logically const if data is borrowed.
@@ -86,10 +86,11 @@ impl Flags {
 }
 
 impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
+    // T: 'static needed for `EMPTY` (init_static takes &'static [T]). All
+    // concrete uses (u8, u16, Index, ...) satisfy this; relax if a borrowed-T
+    // case ever appears.
     pub const EMPTY: Self = Self::init_static(&[]);
-}
 
-impl<T, const Z: bool> CowSliceZ<T, Z> {
     // TODO(port): Zig exposed `pub const Slice` / `SliceMut` associated type
     // aliases that switched on `sentinel` (`[:z]const T` vs `[]const T`). Rust
     // has no inherent associated type aliases; callers use `&[T]` / `&mut [T]`
@@ -316,7 +317,7 @@ impl<T, const Z: bool> CowSliceZ<T, Z> {
     }
 }
 
-impl<T, const Z: bool> Drop for CowSliceZ<T, Z> {
+impl<T: 'static, const Z: bool> Drop for CowSliceZ<T, Z> {
     /// Free this `Cow`'s allocation if it is owned.
     ///
     /// In debug builds, dropping borrowed strings performs debug

@@ -359,8 +359,6 @@ pub mod jsc_stub {
             __wrap as $crate::jsc_stub::JSHostFn
         }};
     }
-
-    extern crate alloc;
 }
 pub use jsc_stub::JsResult;
 

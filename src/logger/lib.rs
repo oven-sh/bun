@@ -3311,9 +3311,6 @@ pub fn source_from_file_at(
     Ok(Source::init_path_string_owned(path.as_bytes(), bytes))
 }
 
-mod file_source_ext_draft {
-use super::*;
-
 /// Read `path` (relative to `dir_fd`) into memory and wrap it in a `Source`.
 pub fn to_source_at(
     dir_fd: bun_sys::Fd,

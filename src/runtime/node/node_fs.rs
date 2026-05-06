@@ -4094,10 +4094,15 @@ impl NodeFS {
         if rc < 0 {
             return Maybe::Err(sys::Error { errno: (-rc) as _, syscall: sys::Tag::open, path: args.path.slice().into(), from_libuv: true, ..Default::default() });
         }
-        let _ = req;
-        // blocked_on: bun_sys::StatFS — `sys::StatFS` (the libc/libuv struct) is
-        // not exported from `bun_sys` yet; the Windows-only caller is gated.
-        todo!("blocked_on: bun_sys::StatFS")
+        // node_fs.zig:4333 — `req.ptrAs(*align(1) bun.StatFS).*`: libuv stores
+        // a `uv_statfs_t*` in `req.ptr` on success. The struct is unaligned in
+        // the request buffer, hence `read_unaligned`.
+        // SAFETY: `rc >= 0` ⇒ libuv populated `req.ptr` with a valid
+        // `uv_statfs_t` (= `RawStatFS` on Windows); we copy it out by value
+        // before `uv_fs_req_cleanup` releases the backing storage.
+        let statfs_: super::statfs::RawStatFS =
+            unsafe { core::ptr::read_unaligned(req.ptr_as::<super::statfs::RawStatFS>()) };
+        Maybe::Ok(ret::StatFS::init(&statfs_, args.big_int))
     }
 
     pub fn open_dir(&mut self, _: &args::OpenDir, _: Flavor) -> Maybe<()> {

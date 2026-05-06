@@ -711,7 +711,7 @@ impl<T> BabyList<T> {
         #[cfg(debug_assertions)]
         if TRACES_ENABLED {
             if let Origin::Borrowed { trace: Some(trace) } = &self.origin {
-                bun_core::Output::note("borrowed BabyList created here:", ());
+                bun_core::Output::note("borrowed BabyList created here:");
                 bun_core::dump_stack_trace(
                     &trace.trace(),
                     bun_core::DumpStackTraceOptions {

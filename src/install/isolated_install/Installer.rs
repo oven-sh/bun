@@ -1583,14 +1583,18 @@ impl Task {
 
                 Step::RunPostInstallAndPrePostPrepare => {
                     let current_step = Step::RunPostInstallAndPrePostPrepare;
-                    if !manager.options.do_.run_scripts
+                    // SAFETY: read-only `PackageManager` access; see top-of-fn note.
+                    if !unsafe { &*manager_ptr }.options.do_.run_scripts
                         || self.entry_id == Store::Entry::Id::ROOT
                     {
                         step = self.next_step(current_step);
                         continue;
                     }
 
-                    let Some(list) = entry_scripts[self.entry_id.get()] else {
+                    // SAFETY: this Task is the sole owner of its `entry_id`'s
+                    // `scripts` slot; written (if at all) by this same Task in
+                    // `Step::RunPreinstall` above, never touched concurrently.
+                    let Some(list) = (unsafe { *entry_scripts[self.entry_id.get()].get() }) else {
                         step = self.next_step(current_step);
                         continue;
                     };
@@ -1652,9 +1656,12 @@ impl Task {
         // thread pool concurrently across many `Task`s sharing the same
         // `*mut Installer` — never materialize `&mut Installer`. `task_queue.push`
         // takes `&self` (lock-free); `store.entries` columns are atomic / per-entry;
-        // both are reached through a shared `&Installer`. `manager.wake()` requires
-        // `&mut PackageManager`, so read that pointer field raw (separate
-        // allocation, does not overlap `&Installer`) and deref it fresh per call.
+        // both are reached through a shared `&Installer`. `manager.wake()` is the
+        // cross-thread wakeup: route through `PackageManager::wake_raw` which never
+        // forms `&mut PackageManager`, so two threads finishing simultaneously do
+        // not hold aliased exclusive borrows (Zig's `*PackageManager` carries no
+        // exclusivity contract; "deref it fresh per call" alone would not prevent
+        // the `&mut` lifetimes from overlapping).
         let installer_ptr = this.installer;
         let installer = unsafe { &*installer_ptr };
         let manager_ptr: *mut PackageManager =
@@ -1665,13 +1672,18 @@ impl Task {
             Yield::RunScripts(list) => {
                 if Environment::CI_ASSERT {
                     bun_core::assert_with_location(
-                        installer.store.entries.items().scripts[this.entry_id.get()].is_some(),
+                        // SAFETY: this Task is the sole owner of its `entry_id`'s
+                        // `scripts` slot; read-only check.
+                        unsafe {
+                            (*installer.store.entries.items().scripts[this.entry_id.get()].get())
+                                .is_some()
+                        },
                         core::panic::Location::caller(),
                     );
                 }
                 this.result = Result::RunScripts(list);
                 installer.task_queue.push(this);
-                unsafe { &mut *manager_ptr }.wake();
+                unsafe { PackageManager::wake_raw(manager_ptr) };
             }
             Yield::Done => {
                 if Environment::CI_ASSERT {
@@ -1685,7 +1697,7 @@ impl Task {
                 }
                 this.result = Result::Done;
                 installer.task_queue.push(this);
-                unsafe { &mut *manager_ptr }.wake();
+                unsafe { PackageManager::wake_raw(manager_ptr) };
             }
             Yield::Blocked => {
                 if Environment::CI_ASSERT {
@@ -1699,7 +1711,7 @@ impl Task {
                 }
                 this.result = Result::Blocked;
                 installer.task_queue.push(this);
-                unsafe { &mut *manager_ptr }.wake();
+                unsafe { PackageManager::wake_raw(manager_ptr) };
             }
             Yield::Fail(err) => {
                 if Environment::CI_ASSERT {

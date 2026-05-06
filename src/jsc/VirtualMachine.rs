@@ -1149,8 +1149,11 @@ fn runtime_hooks() -> Option<&'static RuntimeHooks> {
 // TODO(port): move to jsc_sys
 #[allow(improper_ctypes)] // VirtualMachine is opaque to C++; passed as `void*`
 unsafe extern "C" {
-    fn ZigGlobalObject__create(
-        vm: *mut VirtualMachine,
+    // Spec JSGlobalObject.zig:863 / headers.h:435 — note the real symbol is
+    // `Zig__GlobalObject__create` and takes 5 args (no leading `vm`); the Zig
+    // wrapper `JSGlobalObject.create` accepts `vm` only to call
+    // `vm.eventLoop().ensureWaker()` before the FFI.
+    fn Zig__GlobalObject__create(
         console: *mut c_void,
         context_id: i32,
         mini_mode: bool,

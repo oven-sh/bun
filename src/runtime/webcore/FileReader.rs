@@ -796,7 +796,7 @@ impl FileReader {
                     bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer_len, amount_read);
 
                     if amount_read > 0 {
-                        if self.reader.is_done() {
+                        if self.reader().is_done() {
                             return streams::Result::IntoArrayAndDone(streams::IntoArray {
                                 value: array,
                                 len: amount_read as u32, // @truncate
@@ -809,7 +809,7 @@ impl FileReader {
                         });
                     }
 
-                    if self.reader.is_done() {
+                    if self.reader().is_done() {
                         return streams::Result::Done;
                     }
                     // PORT NOTE: fallthrough — but `buffer` was moved into read_inside_on_pull.
@@ -823,7 +823,7 @@ impl FileReader {
                 }
                 ReadDuringJSOnPullResult::Temporary(buf) => {
                     bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer_len, buf.len());
-                    if self.reader.is_done() {
+                    if self.reader().is_done() {
                         return streams::Result::TemporaryAndDone(ByteList::from_borrowed_slice_dangerous(buf));
                     }
 
@@ -831,7 +831,7 @@ impl FileReader {
                 }
                 ReadDuringJSOnPullResult::UseBuffered(_) => {
                     bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer_len, self.buffered.len());
-                    if self.reader.is_done() {
+                    if self.reader().is_done() {
                         return streams::Result::OwnedAndDone(ByteList::move_from_list(mem::take(&mut self.buffered)));
                     }
                     return streams::Result::Owned(ByteList::move_from_list(mem::take(&mut self.buffered)));
@@ -866,28 +866,28 @@ impl FileReader {
         if !self.buffered.is_empty() {
             let out = ByteList::move_from_list(mem::take(&mut self.buffered));
             if cfg!(debug_assertions) {
-                debug_assert!(self.reader.buffer().as_ptr() != out.ptr);
+                debug_assert!(self.reader().buffer().as_ptr() != out.ptr);
             }
             return out;
         }
 
-        if self.reader.has_pending_read() {
+        if self.reader().has_pending_read() {
             return ByteList::default();
         }
 
-        ByteList::move_from_list(mem::take(self.reader.buffer()))
+        ByteList::move_from_list(mem::take(self.reader().buffer()))
     }
 
     pub fn set_ref_or_unref(&mut self, enable: bool) {
         if self.done {
             return;
         }
-        self.reader.update_ref(enable);
+        self.reader().update_ref(enable);
     }
 
     fn consume_reader_buffer(&mut self) {
         if self.buffered.capacity() == 0 {
-            self.buffered = mem::take(self.reader.buffer());
+            self.buffered = mem::take(self.reader().buffer());
         }
     }
 
@@ -939,7 +939,7 @@ impl FileReader {
         }
         #[cfg(windows)]
         {
-            self.reader.set_raw_mode(flag)
+            self.reader().set_raw_mode(flag)
         }
     }
 

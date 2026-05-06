@@ -3100,6 +3100,10 @@ impl Resolver {
         // TODO(port): generic getKey over T::CACHE_FIELD
         let cache = self.pending_cache_for::<T>(T::CACHE_FIELD);
         debug_assert!(cache.used.is_set(index as usize));
+        // SAFETY: `used` bit is set ⇒ slot was initialized by
+        // `get_or_put_into_resolve_pending_cache` + `*Request::init`.
+        // `PendingCacheKey` is POD; reading by value then unsetting the bit hands
+        // ownership of the slot back to the HiveArray (Zig's `= undefined`).
         let key = unsafe { core::ptr::read(&cache.buffer[index as usize]) };
         cache.used.unset(index as usize);
 
@@ -3459,9 +3463,15 @@ impl Resolver {
 
     pub extern "C" fn on_dns_poll_uv(watcher: *mut libuv::uv_poll_t, status: c_int, events: c_int) {
         let poll = UvDnsPoll::from_poll(watcher);
+        // SAFETY: `poll` is the live `UvDnsPoll` recovered from libuv's `watcher`
+        // via `from_poll` (libuv guarantees the handle outlives this callback).
+        // `parent` is the heap-allocated Resolver back-ptr (set in
+        // `on_dns_socket_state`); it is kept alive across `Channel::process` by the
+        // `ref_()`/`_deref` bracket below. `channel` is non-null because c-ares
+        // must have been initialized for this poll callback to fire.
         unsafe {
-            let parent = (*poll).parent as *mut Resolver;
-            let vm = (*parent).vm;
+            let parent: *mut Resolver = (*poll).parent;
+            let vm = &*(*parent).vm;
             vm.event_loop().enter();
             let _exit = scopeguard::guard((), |_| vm.event_loop().exit());
             (*parent).ref_();
@@ -3489,20 +3499,30 @@ impl Resolver {
     }
 
     pub fn on_dns_poll(&mut self, poll: &mut FilePoll) {
-        let vm = self.vm();
+        // Drop to a raw pointer immediately: `Channel::process` (== `ares_process_fd`)
+        // synchronously fires c-ares completion callbacks which re-enter this
+        // Resolver via fresh `&mut` (e.g. `request_completed`, `drain_pending_*`).
+        // Holding `&mut self` across that call would alias `&mut Resolver` (UB).
+        let this: *mut Self = self;
+        // SAFETY: VirtualMachine outlives the Resolver (BACKREF). Read the raw
+        // back-ptr directly so the borrow isn't tied to `&self`'s lifetime.
+        let vm = unsafe { &*(*this).vm };
         vm.event_loop().enter();
         let _exit = scopeguard::guard((), |_| vm.event_loop().exit());
-        let Some(channel) = self.channel else {
-            let _ = self.polls.ordered_remove(&poll.fd.native());
+        // SAFETY: `this` is live for the duration of this callback (caller holds it).
+        let Some(channel) = (unsafe { (*this).channel }) else {
+            unsafe { let _ = (*this).polls.ordered_remove(&poll.fd.native()); }
             poll.deinit();
             return;
         };
 
-        self.ref_();
-        let this: *mut Self = self;
-        // SAFETY: `this` derived from `&mut self`; paired with `ref_()` above so count stays > 0.
+        // SAFETY: `this` is live (see above).
+        unsafe { (*this).ref_() };
+        // SAFETY: `this` is the heap allocation from `init`; paired with `ref_()` above so count stays > 0.
         let _deref = scopeguard::guard((), move |_| unsafe { Self::deref(this) });
 
+        // SAFETY: `channel` is the live c-ares channel owned by `*this`; no `&mut`
+        // to `*this` is held across this re-entrant call.
         unsafe {
             (*channel).process(poll.fd.native(), poll.is_readable(), poll.is_writable());
         }

@@ -885,18 +885,16 @@ impl<'a> Parser<'a> {
                             .iter()
                             .position(|k| *k == stmt.loc)
                             .expect("enum scope-order entry recorded during parse");
-                        // SAFETY: Zig's `[]ScopeOrder` map values freely alias
-                        // with `scope_order_to_visit`. Rust models both as
-                        // `&'a mut [_]`, so this materializes a second `&'a mut`
-                        // to the same arena slice. Kept raw-ptr-shaped pending
-                        // a P.rs field-type change (`scopes_in_order_for_enum`
-                        // values → `*mut [ScopeOrder]`); `append_part →
-                        // visit_stmts` re-reads the map entry, so it cannot be
-                        // moved out here.
+                        // Map stores `NonNull<[ScopeOrder]>` (Zig `[]ScopeOrder`
+                        // slice value); materialize the sole live `&'a mut` here
+                        // — `append_part → visit_stmts` re-reads the raw map
+                        // entry, never as `&mut`, so no aliasing `&mut` exists.
+                        // SAFETY: arena-owned slice recorded at parse time
+                        // (parseTypescript.rs), valid for `'a`; the previous
+                        // unique borrow was just stashed in
+                        // `old_scopes_in_order` above.
                         p.scope_order_to_visit = unsafe {
-                            let slot: &mut &'a mut [_] =
-                                &mut p.scopes_in_order_for_enum.values_mut()[idx];
-                            &mut *(core::ptr::from_mut::<[_]>(*slot))
+                            p.scopes_in_order_for_enum.values()[idx].as_mut()
                         };
 
                         let mut enum_parts = BumpVec::<js_ast::Part>::new_in(allocator);

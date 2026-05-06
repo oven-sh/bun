@@ -1123,35 +1123,38 @@ impl<'a> Formatter<'a> {
         // `failed` at scope exit. estimated_line_length is unused by WrappedWriter
         // methods in this file, so we leave it None here.
         let mut writer = WrappedWriter::new(writer_);
-        let result: JsResult<()> = (|| {
-            if FORMAT.can_have_circular_references() {
-                if self.map_node.is_none() {
-                    // TODO(port): Visited::Pool::get() — pool guard semantics
-                    self.map_node = Some(visited::Pool::get());
-                    self.map_node.as_mut().unwrap().data.clear();
-                    self.map = core::mem::take(&mut self.map_node.as_mut().unwrap().data);
-                }
 
-                let entry = self.map.get_or_put(value).expect("unreachable");
-                if entry.found_existing {
-                    writer.write_all(
-                        Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><cyan>[Circular]<r>").as_bytes(),
-                    );
-                    return Ok(());
-                }
+        if FORMAT.can_have_circular_references() {
+            if self.map_node.is_none() {
+                // TODO(port): Visited::Pool::get() — pool guard semantics
+                self.map_node = Some(visited::Pool::get());
+                self.map_node.as_mut().unwrap().data.clear();
+                // PORT NOTE: Zig (.zig:878-880) does a struct copy aliasing the same
+                // backing buffer. Rust takes the map here and swaps it back into
+                // `node.data` at release time (see JestPrettyFormat::format defer),
+                // so the pooled allocation is retained across uses.
+                self.map = core::mem::take(&mut self.map_node.as_mut().unwrap().data);
             }
 
-            // PORT NOTE: defer { if FORMAT.can_have_circular_references() { self.map.remove(&value); } }
-            // — handled at fn end via scopeguard-style manual cleanup below.
-            let guard = scopeguard::guard((), |_| {
-                if FORMAT.can_have_circular_references() {
-                    let _ = self.map.remove(&value);
+            let entry = self.map.get_or_put(value).expect("unreachable");
+            if entry.found_existing {
+                writer.write_all(
+                    Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><cyan>[Circular]<r>").as_bytes(),
+                );
+                if writer.failed {
+                    self.failed = true;
                 }
-            });
-            // TODO(port): scopeguard captures &mut self; borrowck conflict with body.
-            // Phase B: hoist remove() to end of match instead.
-            let _ = scopeguard::ScopeGuard::into_inner(guard);
+                // Mirrors .zig:884-887 — return BEFORE the remove() defer is registered,
+                // so the parent frame's entry stays in the map.
+                return Ok(());
+            }
+        }
 
+        // PORT NOTE: Zig `defer { if (Format.canHaveCircularReferences()) _ = this.map.remove(value); }`
+        // (.zig:890-894) is realized by wrapping the match in a closure and unconditionally
+        // calling `self.map.remove(&value)` after it returns (Ok or Err). A scopeguard
+        // cannot be used here because it would hold `&mut self` across the match body.
+        let result: JsResult<()> = (|| {
             match FORMAT {
                 Tag::StringPossiblyFormatted => {
                     let str = value.to_slice(self.global_this)?;
@@ -1247,12 +1250,14 @@ impl<'a> Formatter<'a> {
                         writer.write_string(remaining);
                         writer.write_all(b"\"");
 
-                        if ENABLE_ANSI_COLORS {
-                            writer.write_all(Output::pretty_fmt::<true>("<r>").as_bytes());
-                        }
-
                         if has_newline {
                             writer.write_all(b"\n");
+                        }
+                        // PORT NOTE: Zig registers the `<r>` reset as a `defer` (.zig:942-943)
+                        // before the body, so it fires AFTER the trailing `\n` at .zig:975.
+                        // Emit it last here to keep byte-for-byte parity with colored output.
+                        if ENABLE_ANSI_COLORS {
+                            writer.write_all(Output::pretty_fmt::<true>("<r>").as_bytes());
                         }
                         return Ok(());
                     }
@@ -1484,81 +1489,89 @@ impl<'a> Formatter<'a> {
                         let prev_quote_strings = self.quote_strings;
                         self.quote_strings = true;
 
-                        {
-                            // SAFETY: `r#ref` is a live JSObjectRef for `value`; index 0 is
-                            // bounds-checked by `len > 0` in the enclosing branch.
-                            let element = JSValue::c(unsafe {
-                                capi_ext::JSObjectGetPropertyAtIndex(
-                                    self.global_this, r#ref, 0, core::ptr::null_mut(),
-                                )
-                            });
-                            let tag = Tag::get(element, self.global_this)?;
+                        // PORT NOTE: Zig registers `defer this.indent -|= 1` (.zig:1120) and
+                        // `defer this.quote_strings = prev_quote_strings` (.zig:1128) so state is
+                        // restored even when `Tag.get` / `format` throw. Wrap the fallible body in
+                        // a closure and restore unconditionally afterward to match.
+                        let inner: JsResult<()> = (|| {
+                            {
+                                // SAFETY: `r#ref` is a live JSObjectRef for `value`; index 0 is
+                                // bounds-checked by `len > 0` in the enclosing branch.
+                                let element = JSValue::c(unsafe {
+                                    capi_ext::JSObjectGetPropertyAtIndex(
+                                        self.global_this, r#ref, 0, core::ptr::null_mut(),
+                                    )
+                                });
+                                let tag = Tag::get(element, self.global_this)?;
 
-                            was_good_time = was_good_time
-                                || !tag.tag.is_primitive()
-                                || self.good_time_for_a_new_line();
+                                was_good_time = was_good_time
+                                    || !tag.tag.is_primitive()
+                                    || self.good_time_for_a_new_line();
 
-                            self.reset_line();
-                            writer.write_all(b"[");
-                            writer.write_all(b"\n");
-                            self.write_indent(writer.ctx).expect("unreachable");
-                            self.add_for_new_line(1);
+                                self.reset_line();
+                                writer.write_all(b"[");
+                                writer.write_all(b"\n");
+                                self.write_indent(writer.ctx).expect("unreachable");
+                                self.add_for_new_line(1);
 
-                            self.format::<W, ENABLE_ANSI_COLORS>(
-                                tag, writer.ctx, element, self.global_this,
-                            )?;
+                                self.format::<W, ENABLE_ANSI_COLORS>(
+                                    tag, writer.ctx, element, self.global_this,
+                                )?;
 
-                            if tag.cell.is_string_like() {
-                                if ENABLE_ANSI_COLORS {
-                                    writer.write_all(
-                                        Output::pretty_fmt::<true>("<r>").as_bytes(),
-                                    );
+                                if tag.cell.is_string_like() {
+                                    if ENABLE_ANSI_COLORS {
+                                        writer.write_all(
+                                            Output::pretty_fmt::<true>("<r>").as_bytes(),
+                                        );
+                                    }
+                                }
+
+                                if len == 1 {
+                                    self.print_comma::<W, ENABLE_ANSI_COLORS>(writer.ctx)
+                                        .expect("unreachable");
                                 }
                             }
 
-                            if len == 1 {
+                            let mut i: u32 = 1;
+                            while i < len {
                                 self.print_comma::<W, ENABLE_ANSI_COLORS>(writer.ctx)
                                     .expect("unreachable");
-                            }
-                        }
 
-                        let mut i: u32 = 1;
-                        while i < len {
-                            self.print_comma::<W, ENABLE_ANSI_COLORS>(writer.ctx)
-                                .expect("unreachable");
+                                writer.write_all(b"\n");
+                                self.write_indent(writer.ctx).expect("unreachable");
 
-                            writer.write_all(b"\n");
-                            self.write_indent(writer.ctx).expect("unreachable");
+                                // SAFETY: `i < len`, `r#ref` is the live object ref.
+                                let element = JSValue::c(unsafe {
+                                    capi_ext::JSObjectGetPropertyAtIndex(
+                                        self.global_this, r#ref, i, core::ptr::null_mut(),
+                                    )
+                                });
+                                let tag = Tag::get(element, self.global_this)?;
 
-                            // SAFETY: `i < len`, `r#ref` is the live object ref.
-                            let element = JSValue::c(unsafe {
-                                capi_ext::JSObjectGetPropertyAtIndex(
-                                    self.global_this, r#ref, i, core::ptr::null_mut(),
-                                )
-                            });
-                            let tag = Tag::get(element, self.global_this)?;
+                                self.format::<W, ENABLE_ANSI_COLORS>(
+                                    tag, writer.ctx, element, self.global_this,
+                                )?;
 
-                            self.format::<W, ENABLE_ANSI_COLORS>(
-                                tag, writer.ctx, element, self.global_this,
-                            )?;
-
-                            if tag.cell.is_string_like() {
-                                if ENABLE_ANSI_COLORS {
-                                    writer.write_all(
-                                        Output::pretty_fmt::<true>("<r>").as_bytes(),
-                                    );
+                                if tag.cell.is_string_like() {
+                                    if ENABLE_ANSI_COLORS {
+                                        writer.write_all(
+                                            Output::pretty_fmt::<true>("<r>").as_bytes(),
+                                        );
+                                    }
                                 }
-                            }
 
-                            if i == len - 1 {
-                                self.print_comma::<W, ENABLE_ANSI_COLORS>(writer.ctx)
-                                    .expect("unreachable");
+                                if i == len - 1 {
+                                    self.print_comma::<W, ENABLE_ANSI_COLORS>(writer.ctx)
+                                        .expect("unreachable");
+                                }
+                                i += 1;
                             }
-                            i += 1;
-                        }
+                            Ok(())
+                        })();
 
                         self.quote_strings = prev_quote_strings;
                         self.indent = self.indent.saturating_sub(1);
+                        inner?;
                     }
 
                     self.reset_line();
@@ -1635,12 +1648,22 @@ impl<'a> Formatter<'a> {
                             JSType::Object,
                         );
                     } else if let Some(timer) = {
-                        // TODO(port): `crate::timer::TimeoutObject` does not yet impl
-                        // `bun_jsc::JsClass`, so `value.as_::<TimeoutObject>()` won't
-                        // typecheck. Stub to `None` until the codegen-backed impl lands.
-                        // blocked_on: crate::timer::TimeoutObject (JsClass)
-                        let _ = value;
-                        None::<*mut crate::timer::TimeoutObject>
+                        // DIVERGENCE(blocked_on: crate::timer::TimeoutObject — JsClass):
+                        // `value.as_::<TimeoutObject>()` does not yet typecheck because the
+                        // codegen-backed `JsClass` impl has not landed. This condition is
+                        // therefore ALWAYS `None`; Timeout values currently fall through to
+                        // the generic `print_as::<Object>(…, JSType::Event)` at the bottom
+                        // of this arm instead of printing `Timeout (#N[, repeats])` per
+                        // .zig:1242-1254. Replace with `value.as_::<crate::timer::TimeoutObject>()`
+                        // once available.
+                        #[cfg(any())]
+                        {
+                            value.as_::<crate::timer::TimeoutObject>()
+                        }
+                        #[cfg(not(any()))]
+                        {
+                            None::<*mut crate::timer::TimeoutObject>
+                        }
                     } {
                         // SAFETY: `as_` returned non-null; the GC keeps the cell alive while
                         // `value` is on the stack (conservative scan).
@@ -1685,9 +1708,18 @@ impl<'a> Formatter<'a> {
 
                         return Ok(());
                     } else if let Some(immediate) = {
-                        // blocked_on: crate::timer::ImmediateObject (JsClass)
-                        let _ = value;
-                        None::<*mut crate::timer::ImmediateObject>
+                        // DIVERGENCE(blocked_on: crate::timer::ImmediateObject — JsClass):
+                        // ALWAYS `None` until codegen lands; Immediate values fall through to
+                        // the generic Object printer instead of `Immediate (#N)` per
+                        // .zig:1255-1261. Replace with `value.as_::<crate::timer::ImmediateObject>()`.
+                        #[cfg(any())]
+                        {
+                            value.as_::<crate::timer::ImmediateObject>()
+                        }
+                        #[cfg(not(any()))]
+                        {
+                            None::<*mut crate::timer::ImmediateObject>
+                        }
                     } {
                         // SAFETY: see TimeoutObject branch above.
                         let immediate = unsafe { &*immediate };
@@ -1711,9 +1743,18 @@ impl<'a> Formatter<'a> {
 
                         return Ok(());
                     } else if let Some(build_log) = {
-                        // blocked_on: crate::api::BuildMessage (JsClass)
-                        let _ = value;
-                        None::<*mut crate::api::BuildMessage>
+                        // DIVERGENCE(blocked_on: crate::api::BuildMessage — JsClass):
+                        // ALWAYS `None` until codegen lands; BuildMessage values fall through
+                        // to the generic Object printer instead of `msg.writeFormat` per
+                        // .zig:1262-1264. Replace with `value.as_::<crate::api::BuildMessage>()`.
+                        #[cfg(any())]
+                        {
+                            value.as_::<crate::api::BuildMessage>()
+                        }
+                        #[cfg(not(any()))]
+                        {
+                            None::<*mut crate::api::BuildMessage>
+                        }
                     } {
                         // SAFETY: non-null JsClass cell, GC-rooted via `value`.
                         // `Msg::write_format` wants `fmt::Write`; route through a String.
@@ -1724,9 +1765,18 @@ impl<'a> Formatter<'a> {
                         writer.write_all(s.as_bytes());
                         return Ok(());
                     } else if let Some(resolve_log) = {
-                        // blocked_on: crate::api::ResolveMessage (JsClass)
-                        let _ = value;
-                        None::<*mut crate::api::ResolveMessage>
+                        // DIVERGENCE(blocked_on: crate::api::ResolveMessage — JsClass):
+                        // ALWAYS `None` until codegen lands; ResolveMessage values fall through
+                        // to the generic Object printer instead of `msg.writeFormat` per
+                        // .zig:1265-1268. Replace with `value.as_::<crate::api::ResolveMessage>()`.
+                        #[cfg(any())]
+                        {
+                            value.as_::<crate::api::ResolveMessage>()
+                        }
+                        #[cfg(not(any()))]
+                        {
+                            None::<*mut crate::api::ResolveMessage>
+                        }
                     } {
                         // SAFETY: non-null JsClass cell, GC-rooted via `value`.
                         let mut s = String::new();
@@ -1739,7 +1789,7 @@ impl<'a> Formatter<'a> {
                         // TODO(port): printAsymmetricMatcher takes name_buf by value [512]u8;
                         // borrowck conflict with `writer`. Phase B: pass &mut [u8; 512].
                         JestPrettyFormat::print_asymmetric_matcher::<W, FORMAT, ENABLE_ANSI_COLORS>(
-                            self, &mut writer, writer.ctx, *name_buf, value,
+                            self, &mut writer, *name_buf, value,
                         )
                     })? {
                         return Ok(());
@@ -2654,17 +2704,17 @@ impl JestPrettyFormat {
     >(
         // the Formatter instance
         this: &mut Formatter<'_>,
-        // The WrappedWriter
+        // The WrappedWriter (caller's instance — `failed` propagates back)
         writer: &mut WrappedWriter<'_, W>,
-        // The raw writer
-        writer_: &mut W,
         // Buf used to print strings
         name_buf: [u8; 512],
         value: JSValue,
     ) -> JsResult<bool> {
         let _ = FORMAT;
-        // TODO(port): `writer` and `writer_` alias the same underlying writer in Zig
-        // (writer wraps writer_). Phase B: pass only `writer_` and rebuild wrapper.
+        // PORT NOTE: Zig (.zig:2005-2013) passes both `*WrappedWriter` and the raw inner
+        // writer, which alias. In Rust that would be two live `&mut W` to the same target
+        // (UB / borrowck violation), so we accept only the wrapped writer and reach the
+        // raw `&mut W` via `writer.ctx` for `print_as` calls — single borrow chain.
 
         if let Some(matcher) = value.as_::<expect::ExpectAnything>() {
             Self::print_asymmetric_matcher_promise_prefix(matcher.flags, this, writer);
@@ -2744,7 +2794,7 @@ impl JestPrettyFormat {
                 writer.write_all(b"ObjectContaining ");
             }
             this.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(
-                writer_, object_value, JSType::Object,
+                writer.ctx, object_value, JSType::Object,
             )?;
         } else if let Some(matcher) = value.as_::<expect::ExpectStringContaining>() {
             let Some(substring_value) =
@@ -2762,7 +2812,7 @@ impl JestPrettyFormat {
                 writer.write_all(b"StringContaining ");
             }
             this.print_as::<W, { Tag::String }, ENABLE_ANSI_COLORS>(
-                writer_, substring_value, JSType::String,
+                writer.ctx, substring_value, JSType::String,
             )?;
         } else if let Some(matcher) = value.as_::<expect::ExpectStringMatching>() {
             let Some(test_value) = expect::ExpectStringMatching::js::test_value_get_cached(value)
@@ -2784,12 +2834,12 @@ impl JestPrettyFormat {
                 this.quote_strings = false;
             }
             this.print_as::<W, { Tag::String }, ENABLE_ANSI_COLORS>(
-                writer_, test_value, JSType::String,
+                writer.ctx, test_value, JSType::String,
             )?;
             this.quote_strings = original_quote_strings;
         } else if let Some(instance) = value.as_::<expect::ExpectCustomAsymmetricMatcher>() {
             let printed = instance
-                .custom_print(value, this.global_this, writer_, true)
+                .custom_print(value, this.global_this, writer.ctx, true)
                 .expect("unreachable");
             if !printed {
                 // default print (non-overridden by user)
@@ -2815,7 +2865,7 @@ impl JestPrettyFormat {
                 writer.print(format_args!("{}", matcher_name));
                 writer.write_all(b" ");
                 this.print_as::<W, { Tag::Array }, ENABLE_ANSI_COLORS>(
-                    writer_, args_value, JSType::Array,
+                    writer.ctx, args_value, JSType::Array,
                 )?;
             }
         } else {

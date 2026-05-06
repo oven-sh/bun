@@ -240,15 +240,17 @@ impl S3HttpDownloadStreamingTask {
 
         if should_enqueue {
             if let Some(body) = result.body {
-                // TODO(port): Zig does `this.response_buffer = body.*;` (struct copy of
-                // MutableString). Phase B: confirm ownership transfer semantics.
-                // SAFETY: `body` points to a live MutableString inside `result`; Zig does
-                // `this.response_buffer = body.*` (shallow struct copy) — bitwise read matches that.
-                self.response_buffer = unsafe { core::ptr::read(body) };
+                // .zig:207 does `this.response_buffer = body.*;`, but `body` is
+                // `&this.response_buffer` (see http/client.zig:600), so that line is a no-op
+                // self-assign in Zig. In Rust, a `ptr::read` + assign here would run Drop on the
+                // old `self.response_buffer`, freeing the Vec allocation that `body` (and the
+                // freshly-stored value) still point at — a use-after-free / double-free. The net
+                // effect of .zig:207-211 is: append `body`'s bytes to `reported_response_buffer`,
+                // then reset the buffer. Do exactly that, operating on `body` directly.
                 if !body.as_slice().is_empty() {
                     self.reported_response_buffer.write(body.as_slice());
                 }
-                self.response_buffer.reset();
+                body.reset();
                 if self.reported_response_buffer.as_slice().is_empty() && !is_done {
                     unlock(self);
                     return false;

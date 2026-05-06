@@ -1134,7 +1134,7 @@ impl FilesContext {
                 continue;
             }
 
-            let pathname = entry_ref.pathname().as_bytes();
+            let pathname = entry_ref.pathname_utf8().as_bytes();
             // Apply glob pattern filtering (supports both positive and negative patterns)
             if let Some(patterns) = &self.glob_patterns {
                 if !match_glob_patterns(patterns, pathname) {
@@ -1143,8 +1143,7 @@ impl FilesContext {
             }
 
             let size: usize = usize::try_from(entry_ref.size().max(0)).unwrap();
-            // TODO(b2-blocked): bun_libarchive::lib::Entry::mtime — port returns 0 until then.
-            let mtime: i64 = 0;
+            let mtime: i64 = entry_ref.mtime();
 
             // Read data first before allocating path
             let mut data: Vec<u8> = Vec::new();
@@ -1442,7 +1441,7 @@ fn extract_to_disk_filtered(
     while archive_ref.read_next_header(&mut entry) == lib::Result::Ok {
         // SAFETY: read_next_header returned Ok; entry valid until next call.
         let entry_ref = unsafe { &*entry };
-        let pathname = entry_ref.pathname().as_bytes();
+        let pathname = entry_ref.pathname_utf8().as_bytes();
 
         // Validate path safety (reject absolute paths, path traversal)
         if !is_safe_path(pathname) {

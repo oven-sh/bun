@@ -159,7 +159,7 @@ pub mod lib {
 
         pub fn to_owned_slice(&mut self) -> core::result::Result<Vec<u8>, bun_core::OOM> {
             if self.had_error {
-                return Err(bun_core::OOM);
+                return Err(bun_core::AllocError);
             }
             Ok(core::mem::take(&mut self.list))
         }

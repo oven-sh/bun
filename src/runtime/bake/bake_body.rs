@@ -250,7 +250,16 @@ impl SplitBundlerOptions {
         // `#[cfg(any())]`-gated. The validation walk below mirrors the spec
         // (bake.zig:152-196) so error paths are exercised; the FFI calls are
         // stubbed until the upstream module un-gates.
+        //
+        // Spec (bake.zig:149-150) creates `Plugin` and assigns it to
+        // `opts.plugin` BEFORE iterating, so `plugins: []` still leaves
+        // `self.plugin = Some(_)`. We can't construct the real Plugin yet, so
+        // fail loudly here rather than silently diverging on the empty-array
+        // path. TODO(b2-blocked): crate::api::js_bundler::Plugin — replace
+        // with `self.plugin.get_or_insert_with(|| Plugin::create(global, .bun))`.
         let _ = &mut self.plugin;
+        todo!("blocked_on: crate::api::js_bundler::Plugin");
+        #[allow(unreachable_code)]
         let empty_object = JSValue::create_empty_object(global, 0);
         let _ = empty_object;
 
@@ -1255,18 +1264,17 @@ fn style_from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<framework_
         if str.eql_comptime("nextjs-app-routes") {
             return Ok(framework_router::Style::NextjsAppRoutes);
         }
-        return Err(global.throw_invalid_arguments(format_args!(
-            "Unknown router style: {}",
-            str
-        )));
+        return Err(global.throw_invalid_arguments(format_args!("{STYLE_ERROR_MESSAGE}")));
     }
     // TODO(b2-blocked): super::framework_router::Style::JavaScriptDefined —
     // the JS-callback variant needs `jsc::Strong`; until that lands, only the
     // built-in string styles are accepted.
-    Err(global.throw_invalid_arguments(format_args!(
-        "'style' must be a string or function"
-    )))
+    Err(global.throw_invalid_arguments(format_args!("{STYLE_ERROR_MESSAGE}")))
 }
+
+/// `FrameworkRouter.Style.error_message` (FrameworkRouter.zig:470).
+const STYLE_ERROR_MESSAGE: &str =
+    "'style' must be either \"nextjs-pages\", \"nextjs-app-ui\", \"nextjs-app-routes\", or a function.";
 
 fn get_optional_string(
     target: JSValue,
@@ -1327,29 +1335,37 @@ pub fn get_hmr_runtime(side: Side) -> HmrRuntime {
     }
     #[cfg(not(feature = "codegen_embed"))]
     {
-        // `runtime_embed_file!` returns `&'static str` (no NUL); leak a
-        // NUL-terminated copy on first call. The Zig used `runtimeEmbedFile`
-        // which returns `[:0]const u8` directly — Phase B should add a `_z`
-        // variant to `bun_core` so this leak goes away.
-        fn intern_z(s: &'static str) -> &'static ZStr {
-            // SAFETY: leaked allocation lives forever; written NUL-terminated.
-            let mut v = Vec::with_capacity(s.len() + 1);
-            v.extend_from_slice(s.as_bytes());
-            v.push(0);
-            let leaked: &'static [u8] = Box::leak(v.into_boxed_slice());
-            // SAFETY: leaked[len-1] == 0; pass length excluding sentinel.
-            unsafe { ZStr::from_raw(leaked.as_ptr(), leaked.len() - 1) }
+        // `runtime_embed_file!` returns `&'static str` (no NUL). The Zig
+        // `runtimeEmbedFile` (bun.zig:2938) returns `[:0]const u8` from a
+        // `bun.once`-guarded static — read once per process, never freed.
+        // Mirror that with a per-side `OnceLock` holding the NUL-terminated
+        // copy. PORTING.md §Forbidden bans `Box::leak` for `&'static`; this
+        // is the sanctioned process-lifetime-singleton pattern instead.
+        // TODO(port): add a `runtime_embed_file_z!` to bun_core that yields
+        // `&'static ZStr` directly so the second copy goes away.
+        use std::sync::OnceLock;
+        fn nul_terminate(s: &'static str, cell: &'static OnceLock<Box<[u8]>>) -> &'static ZStr {
+            let buf = cell.get_or_init(|| {
+                let mut v = Vec::with_capacity(s.len() + 1);
+                v.extend_from_slice(s.as_bytes());
+                v.push(0);
+                v.into_boxed_slice()
+            });
+            // SAFETY: buf is process-lifetime (`OnceLock` static), buf[len-1] == 0.
+            unsafe { ZStr::from_raw(buf.as_ptr(), buf.len() - 1) }
         }
+        static CLIENT: OnceLock<Box<[u8]>> = OnceLock::new();
+        static SERVER: OnceLock<Box<[u8]>> = OnceLock::new();
         HmrRuntime::init(match side {
-            Side::Client => intern_z(bun_core::runtime_embed_file!(
-                bun_core::EmbedKind::CodegenEager,
-                "bake.client.js"
-            )),
+            Side::Client => nul_terminate(
+                bun_core::runtime_embed_file!(bun_core::EmbedKind::CodegenEager, "bake.client.js"),
+                &CLIENT,
+            ),
             // server runtime is loaded once, so it is pointless to make this eager.
-            Side::Server => intern_z(bun_core::runtime_embed_file!(
-                bun_core::EmbedKind::Codegen,
-                "bake.server.js"
-            )),
+            Side::Server => nul_terminate(
+                bun_core::runtime_embed_file!(bun_core::EmbedKind::Codegen, "bake.server.js"),
+                &SERVER,
+            ),
         })
     }
 }
@@ -1446,18 +1462,37 @@ pub fn add_import_meta_defines(
 // initializers from bake.zig:976-984.
 pub fn server_virtual_source() -> logger::Source {
     logger::Source {
-        // bun:bake/server
-        path: logger::fs::Path::init(b"bun:bake/server"),
+        // = bun.fs.Path.initForKitBuiltIn("bun", "bake/server")
+        path: logger::fs::Path {
+            pretty: b"bun:bake/server",
+            text: b"_bun/bake/server",
+            namespace: b"bun",
+            name: logger::fs::PathName::init(b"bake/server"),
+            is_symlink: true,
+            is_disabled: false,
+        },
         contents: b"", // Virtual
+        // = bun.ast.Index.bake_server_data (=1). bundle_v2 asserts on this; the
+        // `..Default::default()` would silently zero it.
+        index: logger::Index::source(1),
         ..Default::default()
     }
 }
 
 pub fn client_virtual_source() -> logger::Source {
     logger::Source {
-        // bun:bake/client
-        path: logger::fs::Path::init(b"bun:bake/client"),
+        // = bun.fs.Path.initForKitBuiltIn("bun", "bake/client")
+        path: logger::fs::Path {
+            pretty: b"bun:bake/client",
+            text: b"_bun/bake/client",
+            namespace: b"bun",
+            name: logger::fs::PathName::init(b"bake/client"),
+            is_symlink: true,
+            is_disabled: false,
+        },
         contents: b"", // Virtual
+        // = bun.ast.Index.bake_client_data (=2).
+        index: logger::Index::source(2),
         ..Default::default()
     }
 }

@@ -39,14 +39,13 @@ impl Order {
         Ok(())
     }
 
-    pub fn generate_all_order(&mut self, entries: &[Box<ExecutionEntry>]) -> JsResult<AllOrderResult> {
+    pub fn generate_all_order(&mut self, entries: &mut [Box<ExecutionEntry>]) -> JsResult<AllOrderResult> {
         let start = self.groups.len();
-        for entry_box in entries {
-            // SAFETY: intrusive-list pattern — entries are arena-style Box-owned by DescribeScope and
-            // outlive Order; Zig mutated through `*ExecutionEntry`, we cast away const to match.
-            let entry: *mut ExecutionEntry = (&**entry_box) as *const ExecutionEntry as *mut ExecutionEntry;
-            // SAFETY: `entry` is a valid live ExecutionEntry (Box-owned by caller's DescribeScope).
-            let entry_ref = unsafe { &mut *entry };
+        for entry_box in entries.iter_mut() {
+            // Zig signature is `[]const *ExecutionEntry` (immutable slice of *mutable* pointers); the
+            // Rust equivalent that preserves write provenance is `&mut [Box<ExecutionEntry>]`.
+            let entry_ref: &mut ExecutionEntry = &mut **entry_box;
+            let entry: *mut ExecutionEntry = entry_ref;
             if bun_core::Environment::CI_ASSERT && entry_ref.added_in_phase != AddedInPhase::Preload {
                 debug_assert!(entry_ref.next.is_none());
             }
@@ -77,22 +76,14 @@ impl Order {
 
         // gather beforeAll
         let beforeall_order: AllOrderResult = if use_hooks {
-            self.generate_all_order(&current.before_all)?
+            self.generate_all_order(&mut current.before_all)?
         } else {
             AllOrderResult::EMPTY
         };
 
         // shuffle entries if randomize flag is set
         if let Some(random) = self.cfg.randomize.as_mut() {
-            // Fisher-Yates shuffle — port of `std.Random.shuffle(TestScheduleEntry, items)`.
-            let items = &mut current.entries;
-            let mut i = items.len();
-            while i > 1 {
-                i -= 1;
-                // uintLessThan(i+1) — modulo bias is acceptable here (Zig's stdlib also biases for non-pow2).
-                let j = (random.next_u64() % (i as u64 + 1)) as usize;
-                items.swap(i, j);
-            }
+            shuffle_with_index(random, &mut current.entries);
         }
 
         // gather children
@@ -110,7 +101,7 @@ impl Order {
 
         // gather afterAll
         let afterall_order: AllOrderResult = if use_hooks {
-            self.generate_all_order(&current.after_all)?
+            self.generate_all_order(&mut current.after_all)?
         } else {
             AllOrderResult::EMPTY
         };
@@ -123,15 +114,18 @@ impl Order {
 
     pub fn generate_order_test(&mut self, current: *mut ExecutionEntry) -> JsResult<()> {
         // SAFETY: caller guarantees `current` is a valid live ExecutionEntry (Box-owned in DescribeScope.entries).
-        let cur = unsafe { &mut *current };
-        debug_assert!(cur.base.has_callback == cur.callback.is_some());
-        let use_each_hooks = cur.base.has_callback;
+        // Stacked Borrows: `current` is reborrowed as `&mut` inside `list.append` and the skip-past
+        // loop below, so we never hold a long-lived `&mut *current` across those calls — each access
+        // dereferences the raw pointer locally.
+        debug_assert!(unsafe { (*current).base.has_callback == (*current).callback.is_some() });
+        let use_each_hooks = unsafe { (*current).base.has_callback };
+        let first_parent: Option<*const DescribeScope> = unsafe { (*current).base.parent };
 
         let mut list = EntryList::default();
 
         // gather beforeEach (alternatively, this could be implemented recursively to make it less complicated)
         if use_each_hooks {
-            let mut parent: Option<*const DescribeScope> = cur.base.parent;
+            let mut parent: Option<*const DescribeScope> = first_parent;
             while let Some(p_ptr) = parent {
                 // SAFETY: parent chain consists of live DescribeScope nodes.
                 let p = unsafe { &*p_ptr };
@@ -157,7 +151,7 @@ impl Order {
 
         // gather afterEach
         if use_each_hooks {
-            let mut parent: Option<*const DescribeScope> = cur.base.parent;
+            let mut parent: Option<*const DescribeScope> = first_parent;
             while let Some(p_ptr) = parent {
                 // SAFETY: parent chain consists of live DescribeScope nodes.
                 let p = unsafe { &*p_ptr };
@@ -177,24 +171,34 @@ impl Order {
         let mut failure_skip_past: Option<*mut ExecutionEntry> = Some(current);
         while let Some(entry_ptr) = index {
             // SAFETY: list contains valid ExecutionEntry nodes linked via `next`.
-            let entry = unsafe { &mut *entry_ptr };
-            entry.failure_skip_past = failure_skip_past; // we could consider matching skip_to in beforeAll to skip directly to the first afterAll from its own scope rather than skipping to the first afterAll from any scope
-            if Some(entry_ptr) == failure_skip_past {
-                failure_skip_past = None;
+            unsafe {
+                (*entry_ptr).failure_skip_past = failure_skip_past; // we could consider matching skip_to in beforeAll to skip directly to the first afterAll from its own scope rather than skipping to the first afterAll from any scope
+                if Some(entry_ptr) == failure_skip_past {
+                    failure_skip_past = None;
+                }
+                index = (*entry_ptr).next;
             }
-            index = entry.next;
         }
 
         // add these as a single sequence
+        // SAFETY: `current` still valid; re-derive fields locally so no `&mut` outlives the
+        // competing reborrows performed by `list.append` / the skip-past loop above.
+        let (retry_count, repeat_count, concurrent) = unsafe {
+            (
+                (*current).retry_count,
+                (*current).repeat_count,
+                (*current).base.concurrent,
+            )
+        };
         let sequences_start = self.sequences.len();
         self.sequences.push(ExecutionSequence::init(
             list.first.and_then(NonNull::new),
             NonNull::new(current),
-            cur.retry_count,
-            cur.repeat_count,
+            retry_count,
+            repeat_count,
         )); // add sequence to concurrentgroup
         let sequences_end = self.sequences.len();
-        self.append_or_extend_concurrent_group(cur.base.concurrent, sequences_start, sequences_end)?; // add or extend the concurrent group
+        self.append_or_extend_concurrent_group(concurrent, sequences_start, sequences_end)?; // add or extend the concurrent group
         Ok(())
     }
 
@@ -251,6 +255,51 @@ pub struct Config {
     pub randomize: Option<bun_core::rand::DefaultPrng>,
 }
 
+/// Exact port of `std.Random.shuffleWithIndex(T, buf, usize)` (vendor/zig/lib/std/Random.zig).
+/// Forward Fisher-Yates: `i` from 0 to len-2, `j = intRangeLessThan(usize, i, len)`.
+/// Must produce the identical permutation to Zig for the same xoshiro256++ state so that
+/// `bun test --randomize --seed=N` is reproducible across the Zig and Rust ports.
+fn shuffle_with_index<T>(r: &mut bun_core::rand::DefaultPrng, buf: &mut [T]) {
+    if buf.len() < 2 {
+        return;
+    }
+    let max = buf.len();
+    let mut i: usize = 0;
+    while i < max - 1 {
+        // intRangeLessThan(usize, i, max) == i + uintLessThan(usize, max - i)
+        let j = i + uint_less_than(r, (max - i) as u64) as usize;
+        buf.swap(i, j);
+        i += 1;
+    }
+}
+
+/// Exact port of `std.Random.uintLessThan(u64, less_than)` — Lemire's debiased method
+/// ("Lemire's (with an extra tweak from me)", http://www.pcg-random.org/posts/bounded-rands.html).
+/// `r.int(u64)` on xoshiro256 is one `next()` call read little-endian, i.e. `next_u64()`.
+fn uint_less_than(r: &mut bun_core::rand::DefaultPrng, less_than: u64) -> u64 {
+    debug_assert!(0 < less_than);
+    let mut x = r.next_u64();
+    let mut m = (x as u128).wrapping_mul(less_than as u128);
+    let mut l = m as u64;
+    if l < less_than {
+        // -%less_than
+        let mut t = less_than.wrapping_neg();
+        if t >= less_than {
+            t -= less_than;
+            if t >= less_than {
+                t %= less_than;
+            }
+        }
+        while l < t {
+            x = r.next_u64();
+            m = (x as u128).wrapping_mul(less_than as u128);
+            l = m as u64;
+        }
+    }
+    let _ = x;
+    (m >> 64) as u64
+}
+
 #[derive(Default)]
 struct EntryList {
     first: Option<*mut ExecutionEntry>,
@@ -294,5 +343,5 @@ impl EntryList {
 //   source:     src/test_runner/Order.zig (186 lines)
 //   confidence: medium
 //   todos:      3
-//   notes:      arena field dropped per non-AST rule; ExecutionEntry clones now Box::into_raw via ptr::read (leak risk) — Phase B must restore arena or add cleanup. Intrusive list uses Option<*mut> to match bun_test::ExecutionEntry.{next,failure_skip_past}. std.Random mapped to concrete DefaultPrng with inline Fisher-Yates shuffle.
+//   notes:      arena field dropped per non-AST rule; ExecutionEntry clones now Box::into_raw via ptr::read (leak risk) — Phase B must restore arena or add cleanup. Intrusive list uses Option<*mut> to match bun_test::ExecutionEntry.{next,failure_skip_past}. std.Random mapped to concrete DefaultPrng; shuffle_with_index/uint_less_than are exact ports of std.Random.shuffleWithIndex/uintLessThan(u64) so --seed=N permutes identically to Zig.
 // ──────────────────────────────────────────────────────────────────────────

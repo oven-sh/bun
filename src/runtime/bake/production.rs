@@ -234,6 +234,12 @@ pub struct EntryPointMap {
     /// OpaqueFileId refers to the index in this map.
     /// Values are left uninitialized until after the bundle is done and indexed.
     pub files: EntryPointHashMap,
+
+    /// Owned backing storage for the duped path bytes that `InputFile` keys
+    /// point into (raw ptr+len). Mirrors Zig's `map.allocator.dupe(u8, abs_path)`
+    /// against `bun.default_allocator` (.zig:889) — kept here so the allocations
+    /// drop with the map instead of being `Box::leak`ed (PORTING.md §Forbidden).
+    pub owned_paths: Vec<Box<[u8]>>,
 }
 
 pub type EntryPointHashMap = ArrayHashMap<InputFile, OutputFileIndex>;
@@ -284,18 +290,19 @@ impl EntryPointMap {
     ) -> Result<OpaqueFileId, bun_core::Error> {
         let k = InputFile::init(abs_path, side);
         let gop = self.files.get_or_put(k)?;
+        let index = gop.index;
         if !gop.found_existing {
-            // errdefer: rolls back map state on failure (not just freeing a local)
-            let guard = scopeguard::guard(&mut self.files, |files| {
-                files.swap_remove_at(gop.index);
-            });
+            // Zig: `gop.key_ptr.* = InputFile.init(try map.allocator.dupe(u8, abs_path), side);`
+            // The Zig `errdefer map.files.swapRemoveAt(gop.index)` only guards the
+            // `allocator.dupe`, which is infallible in Rust, so no rollback guard
+            // is needed. Own the duped bytes in `owned_paths` (Box heap address is
+            // stable across the move) instead of `Box::leak` so they drop with the
+            // map — PORTING.md §Forbidden bans `Box::leak` for `'static` borrows.
             let owned: Box<[u8]> = Box::<[u8]>::from(abs_path);
-            // TODO(port): owned slice is leaked into the map key's raw pointer; lifetime tied to map
-            let owned_ptr = Box::leak(owned);
-            *gop.key_ptr = InputFile::init(owned_ptr, side);
-            scopeguard::ScopeGuard::into_inner(guard);
+            *gop.key_ptr = InputFile::init(&owned, side);
+            self.owned_paths.push(owned);
         }
-        Ok(OpaqueFileId::init(u32::try_from(gop.index).unwrap()))
+        Ok(OpaqueFileId::init(u32::try_from(index).unwrap()))
     }
 
     pub fn get_file_id_for_router(

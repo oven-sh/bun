@@ -566,19 +566,32 @@ pub fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
         return Ok(0);
     }
 
-    // SAFETY: caller guarantees `input[..len]` and `to[..to_len]` are valid.
-    let input_slice = unsafe { slice::from_raw_parts(input, len) };
-    let to_slice = unsafe { slice::from_raw_parts_mut(to, to_len) };
+    // NOTE: Do NOT eagerly materialize `&[u16]` / `&mut [u8]` slices over `input`/`to` here.
+    // The Ucs2/Utf16le arm is spec'd to accept overlapping input/output (Zig uses
+    // `bun.memmove` at encoding.zig:391/400). Building a `&mut [u8]` whose memory is also
+    // covered by a live `&[u16]` would violate `slice::from_raw_parts_mut`'s exclusive-access
+    // contract (aliased-&mut UB). Each arm below constructs only the slice views it needs,
+    // and the Ucs2/Utf16le arm stays raw-pointer-only.
 
     match encoding_from_u8(ENCODING) {
-        Encoding::Utf8 => Ok(strings::copy_utf16_into_utf8_impl::<ALLOW_PARTIAL_WRITE>(
-            to_slice,
-            input_slice,
-        )
-        .written as usize),
+        Encoding::Utf8 => {
+            // SAFETY: caller guarantees `input[..len]` and `to[..to_len]` are valid and
+            // non-overlapping for this encoding.
+            let input_slice = unsafe { slice::from_raw_parts(input, len) };
+            let to_slice = unsafe { slice::from_raw_parts_mut(to, to_len) };
+            Ok(strings::copy_utf16_into_utf8_impl::<ALLOW_PARTIAL_WRITE>(
+                to_slice,
+                input_slice,
+            )
+            .written as usize)
+        }
         Encoding::Latin1 | Encoding::Ascii | Encoding::Buffer => {
             let out = len.min(to_len);
-            strings::copy_u16_into_u8(to_slice, &input_slice[..out]);
+            // SAFETY: caller guarantees `input[..len]` and `to[..to_len]` are valid and
+            // non-overlapping for this encoding.
+            let input_slice = unsafe { slice::from_raw_parts(input, out) };
+            let to_slice = unsafe { slice::from_raw_parts_mut(to, to_len) };
+            strings::copy_u16_into_u8(to_slice, input_slice);
             Ok(out)
         }
         // string is already encoded, just need to copy the data
@@ -608,7 +621,13 @@ pub fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
             }
         }
 
-        Encoding::Hex => Ok(strings::decode_hex_to_bytes_truncate(to_slice, input_slice)),
+        Encoding::Hex => {
+            // SAFETY: caller guarantees `input[..len]` and `to[..to_len]` are valid and
+            // non-overlapping for this encoding.
+            let input_slice = unsafe { slice::from_raw_parts(input, len) };
+            let to_slice = unsafe { slice::from_raw_parts_mut(to, to_len) };
+            Ok(strings::decode_hex_to_bytes_truncate(to_slice, input_slice))
+        }
 
         Encoding::Base64 | Encoding::Base64url => {
             if to_len < 2 || len == 0 {
@@ -617,6 +636,9 @@ pub fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
 
             // very very slow case!
             // shouldn't really happen though
+            // SAFETY: caller guarantees `input[..len]` is valid; only an immutable view is
+            // needed here since the output goes through `write_u8` with raw `to`.
+            let input_slice = unsafe { slice::from_raw_parts(input, len) };
             let transcoded = match strings::to_utf8_alloc(input_slice) {
                 Ok(v) => v,
                 Err(_) => return Ok(0),

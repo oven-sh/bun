@@ -42,10 +42,15 @@ mod ConcurrentTask {
     }
 }
 
-/// `webcore.Blob.SizeType` — Zig used `u52`; Rust models it as `u64` (see
-/// `src/runtime/webcore/Blob.rs`). Aliased locally because `BlobSizeType`
-/// is not an associated type in the Rust port.
+/// `webcore.Blob.SizeType` — Zig is `u52` (src/runtime/webcore/Blob.zig:60).
+/// Rust has no native `u52`, so the *storage* width is `u64`, but **never** use
+/// `BlobSizeType::MAX` to mean the spec maximum — that yields `u64::MAX`, which
+/// wraps to `-1` under `as i64` and silently breaks every bounds check that the
+/// Zig spec wrote as `std.math.maxInt(jsc.WebCore.Blob.SizeType)`. Use
+/// [`BLOB_SIZE_MAX`] instead.
 type BlobSizeType = u64;
+/// `std.math.maxInt(jsc.WebCore.Blob.SizeType)` == `maxInt(u52)` == 2^52 - 1.
+const BLOB_SIZE_MAX: u64 = (1u64 << 52) - 1;
 
 /// `webcore.RefPtr<AbortSignal>` — JSC's intrusive ref-counted pointer. Zig
 /// stored this as `?*AbortSignal` and called `.ref()`/`.unref()` manually; the
@@ -188,18 +193,17 @@ impl StandaloneModuleGraphStub {
     fn stat(&self, _: &ZStr) -> Option<sys::Stat> { None }
 }
 
-/// `bun.getTotalMemorySize()` — defined in `src/bun.rs` (the umbrella crate),
-/// not `bun_core`. Re-implement the platform query here; matches the Zig
-/// fallback path (`/proc/meminfo` → sysconf).
+/// `bun.getTotalMemorySize()` — Zig (bun.zig:3498) forwards to the linked C++
+/// `Bun__ramSize()` (src/jsc/bindings/c-bindings.cpp), which is cgroup/jetsam
+/// aware. PORTING.md §Forbidden: never hand-roll a Rust equivalent for linked
+/// C/C++ — declare the extern and forward.
 #[inline]
 fn get_total_memory_size() -> u64 {
-    #[cfg(target_os = "linux")]
-    unsafe {
-        let pages = libc::sysconf(libc::_SC_PHYS_PAGES);
-        let pgsz = libc::sysconf(libc::_SC_PAGESIZE);
-        if pages > 0 && pgsz > 0 { return (pages as u64).saturating_mul(pgsz as u64); }
+    extern "C" {
+        fn Bun__ramSize() -> usize;
     }
-    u64::MAX
+    // SAFETY: FFI into bun's C++ bindings; no invariants required.
+    unsafe { Bun__ramSize() as u64 }
 }
 
 /// `bun.sys.PosixStat` — uv-shaped stat struct (`src/sys/PosixStat.rs`). The
@@ -1837,7 +1841,7 @@ pub mod args {
                     arguments.next().unwrap_or(JSValue::js_number(0)),
                     "len",
                     Some(i64::from(i52::MIN)),
-                    Some(BlobSizeType::MAX as i64),
+                    Some(BLOB_SIZE_MAX as i64),
                 )?
                 .max(0),
             )
@@ -1904,8 +1908,10 @@ pub mod args {
     /// `num_traits` dependency and hard-code the wrap.
     #[inline]
     fn wrap_to<T: From<u32>>(in_: i64) -> T {
-        // -1 → wrap to MAX (matches `@as(u32, @bitCast(@as(i32, -1)))`).
-        T::from(in_.rem_euclid(1i64 << 32) as u32)
+        // Zig spec (node_fs.zig:1586): `@intCast(@mod(in, std.math.maxInt(T)))`
+        // — i.e. modulus is `u32::MAX` (2^32 - 1), **not** 2^32. So `-1 → 4294967294`
+        // and `4294967295 → 0`. Match the spec exactly.
+        T::from(in_.rem_euclid(u32::MAX as i64) as u32)
     }
 
     pub type LChown = Chown;
@@ -2601,7 +2607,10 @@ pub mod args {
                 return Err(ctx.throw_range_error(length_float, bun_jsc::RangeErrorOptions { field_name: b"length", msg: b"an integer", ..Default::default() }));
             }
             let length_int: i64 = length_float as i64;
-            if length_int as usize > buf_len {
+            // Zig (node_fs.zig:2621) compares `i64 > usize` with sign-aware peer
+            // widening, so negative `length_int` falls through to the `< 0` arm
+            // below. Guard the `as usize` cast so it doesn't wrap-to-huge here.
+            if length_int > 0 && length_int as usize > buf_len {
                 return Err(ctx.throw_range_error(length_float, bun_jsc::RangeErrorOptions { field_name: b"length", max: (buf_len as i64).min(i64::MAX), ..Default::default() }));
             }
             if i64::try_from(offset).unwrap().saturating_add(length_int) > buf_len as i64 {
@@ -4823,7 +4832,7 @@ impl NodeFS {
 
         // For certain files, the size might be 0 but the file might still have contents.
         // https://github.com/oven-sh/bun/issues/1220
-        let max_size: u64 = args.max_size.map(|v| v as u64).unwrap_or(BlobSizeType::MAX as u64);
+        let max_size: u64 = args.max_size.map(|v| v as u64).unwrap_or(BLOB_SIZE_MAX);
         let has_max_size = args.max_size.is_some();
 
         let size: u64 = (stat_.size as i64)

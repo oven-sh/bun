@@ -221,7 +221,17 @@ impl<'a> Snapshots<'a> {
         let opts = js_parser::Parser::Options::init(vm.transpiler.options.jsx, js_parser::options::Loader::Js);
         let mut temp_log = logger::Log::init();
 
-        let test_file = Jest::runner().unwrap().files.get(file.id);
+        // PORT NOTE: do NOT call `Jest::runner()` here — it returns `&'static mut TestRunner`,
+        // and `self: &mut Snapshots` is a live borrow of that same TestRunner's `.snapshots`
+        // field. Retagging the whole TestRunner would invalidate `self` under Stacked Borrows.
+        // Project the disjoint `.files` sibling through the raw `RUNNER` pointer instead.
+        // SAFETY: single-threaded JS VM; RUNNER is set before any Snapshots method runs
+        // (Snapshots is a field of TestRunner). Raw-pointer place projection touches only
+        // `.files` bytes, disjoint from `&mut self`.
+        let test_file = unsafe {
+            let p = Jest::RUNNER.expect("Jest runner not set").as_ptr();
+            (*p).files.get(file.id)
+        };
         let test_filename = test_file.source.path.name.filename;
         let dir_path = test_file.source.path.name.dir_with_trailing_slash();
 
@@ -379,7 +389,13 @@ impl<'a> Snapshots<'a> {
             });
 
             // 2. load file text
-            let test_file = Jest::runner().unwrap().files.get(file_id);
+            // PORT NOTE: avoid `Jest::runner()` (would alias `&mut TestRunner` over the live
+            // `&mut self` / `ils_info` borrow of `runner.snapshots`). See comment in `parse_file`.
+            // SAFETY: see `parse_file` — raw-pointer projection to disjoint `.files` field.
+            let test_file = unsafe {
+                let p = Jest::RUNNER.expect("Jest runner not set").as_ptr();
+                (*p).files.get(file_id)
+            };
             // TODO(port): arena.dupeZ — using owned Vec<u8> with trailing NUL.
             let test_filename: Box<[u8]> = {
                 let mut v = test_file.source.path.text.to_vec();
@@ -730,7 +746,10 @@ impl<'a> Snapshots<'a> {
                 result_text.extend_from_slice(b"`");
 
                 if ils.is_added {
-                    Jest::runner().unwrap().snapshots.added += 1;
+                    // PORT NOTE: Zig spec does `Jest.runner.?.snapshots.added += 1` (snapshot.zig:461),
+                    // but `runner.snapshots` *is* `*self`. Going back through `Jest::runner()` would
+                    // create a second `&mut Snapshots` aliasing `self` (UB) and invalidate `ils_info`.
+                    self.added += 1;
                 }
             }
 
@@ -788,7 +807,12 @@ impl<'a> Snapshots<'a> {
         if self._current_file.is_none() || self._current_file.as_ref().unwrap().id != file_id {
             self.write_snapshot_file()?;
 
-            let test_file = Jest::runner().unwrap().files.get(file_id);
+            // PORT NOTE: avoid `Jest::runner()` (aliases `&mut TestRunner` over live `&mut self`).
+            // SAFETY: see `parse_file` — raw-pointer projection to disjoint `.files` field.
+            let test_file = unsafe {
+                let p = Jest::RUNNER.expect("Jest runner not set").as_ptr();
+                (*p).files.get(file_id)
+            };
             let test_filename = test_file.source.path.name.filename;
             let dir_path = test_file.source.path.name.dir_with_trailing_slash();
 

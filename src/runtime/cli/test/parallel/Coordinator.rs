@@ -420,13 +420,12 @@ impl<'a> Coordinator<'a> {
     }
 
     pub fn try_reap(&mut self, w: &mut Worker) {
-        let Some(status) = w.exit_status else {
-            return;
-        };
-        if !w.ipc.done {
+        // PORT NOTE: SpawnStatus is not Copy (Err arm owns a path); take()
+        // instead of pattern-match-by-copy.
+        if w.exit_status.is_none() || !w.ipc.done {
             return;
         }
-        w.exit_status = None;
+        let status = w.exit_status.take().expect("checked above");
         self.reap_worker(w, status);
     }
 

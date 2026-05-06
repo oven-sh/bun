@@ -91,9 +91,9 @@ struct UnsupportedPackages {
 
 impl UnsupportedPackages {
     pub fn update(&mut self, expr: js_ast::Expr) {
-        for prop in expr.data.e_object().properties.slice() {
+        for prop in expr.data.e_object().unwrap().properties.slice() {
             // inline for over field names — only one field: "styled-jsx"
-            if prop.key.unwrap().data.e_string().data == b"styled-jsx" {
+            if prop.key.unwrap().data.e_string().unwrap().data == b"styled-jsx" {
                 self.styled_jsx = true;
             }
         }
@@ -101,9 +101,9 @@ impl UnsupportedPackages {
 
     pub fn print(&self) {
         if self.styled_jsx {
-            Output::pretty_errorln(
+            pretty_errorln!(
                 "<r><yellow>warn<r><d>:<r> <b>\"{}\"<r> won't work in bun yet\n",
-                format_args!("{}", "styled-jsx"),
+                "styled-jsx",
             );
         }
     }
@@ -147,7 +147,7 @@ fn exec_task(task_: &[u8], cwd: &[u8], _path: &[u8], npm_client: Option<NPMClien
         argv = &argv[2..];
     }
 
-    Output::pretty("\n<r><d>$<b>", format_args!(""));
+    pretty!("\n<r><d>$<b>");
     for (i, arg) in argv.iter().enumerate() {
         if i > argv.len() - 1 {
             Output::print(format_args!(" {} ", bstr::BStr::new(arg)));
@@ -155,7 +155,7 @@ fn exec_task(task_: &[u8], cwd: &[u8], _path: &[u8], npm_client: Option<NPMClien
             Output::print(format_args!(" {}", bstr::BStr::new(arg)));
         }
     }
-    Output::pretty("<r>", format_args!(""));
+    pretty!("<r>");
     Output::print(format_args!("\n"));
     Output::flush();
 

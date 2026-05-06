@@ -467,22 +467,29 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
     // wired we couldn't store the result. Re-gated; see phase_a_draft below.
     
     {
-        let cwd: Box<ZStr> = if let Some(cwd_arg) = args.option(b"--cwd") {
+        // PORT NOTE: Zig stored a `[:0]u8` (NUL-terminated, owned). The Rust
+        // `api::TransformOptions.absolute_working_dir` is `Option<Box<[u8]>>`
+        // (sentinel dropped per schema.rs), so we dupe into a plain `Box<[u8]>`.
+        let cwd: Box<[u8]> = if let Some(cwd_arg) = args.option(b"--cwd") {
             let mut outbuf = bun_paths::PathBuffer::uninit();
-            let out = resolve_path::join_abs::<platform::Loose>(bun_sys::getcwd(&mut outbuf)?, cwd_arg);
-            if let bun_sys::Result::Err(err) = bun_sys::chdir(b"", out) {
+            let cwd_len = bun_sys::getcwd(&mut *outbuf)?;
+            let out = resolve_path::join_abs::<platform::Loose>(&outbuf[..cwd_len], cwd_arg);
+            // `chdir` wants a NUL-terminated path; `join_abs` returns a borrowed
+            // slice into a threadlocal buffer, so dupe-Z once and reuse for both
+            // the `chdir` arg and the stored `absolute_working_dir`.
+            let out_z = bun_core::ZBox::from_bytes(out);
+            if let bun_sys::Result::Err(err) = bun_sys::chdir(&out_z) {
                 Output::err(err, "Could not change directory to \"{}\"\n", format_args!("{}", BStr::new(cwd_arg)));
                 Global::exit(1);
             }
-            bun_str::ZStr::from_bytes(out)?
+            Box::<[u8]>::from(out_z.as_bytes())
         } else {
             let mut temp = bun_paths::PathBuffer::uninit();
-            let temp_slice = bun_sys::getcwd(&mut temp)?;
-            bun_str::ZStr::from_bytes(temp_slice)
+            let len = bun_sys::getcwd(&mut *temp)?;
+            Box::<[u8]>::from(&temp[..len])
         };
         ctx.args.absolute_working_dir = Some(cwd);
     }
-    let _ = args.option(b"--cwd"); // accepted but not yet acted on
 
     // ── run/auto: filter, silent, --bun ──────────────────────────────────────
     if matches!(cmd, CommandTag::RunCommand | CommandTag::AutoCommand) {
@@ -547,7 +554,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
                 use bun_jsc::RegularExpression;
                 let regex = match RegularExpression::init(
                     bun_str::String::from_bytes(name_pattern),
-                    RegularExpression::Flags::NONE,
+                    bun_jsc::regular_expression::Flags::None,
                 ) {
                     Ok(r) => r,
                     Err(_) => {

@@ -1401,7 +1401,7 @@ impl RunCommand {
         Self::configure_path_for_run(
             ctx,
             root_dir_info,
-            &mut this_transpiler,
+            this_transpiler,
             Some(&mut original_path),
             unsafe { (*root_dir_info).abs_path },
             force_using_bun,

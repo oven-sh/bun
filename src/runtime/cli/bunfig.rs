@@ -1272,7 +1272,16 @@ mod phase_a_draft {
         }
 
         pub(super) fn phase_a_install(&mut self, install_obj: &Expr) -> Result<(), bun_core::Error> {
-            let install: &mut api::BunInstall = self.ctx.install.as_deref_mut().unwrap();
+            // PORT NOTE: Zig held `*BunInstall` and `*Parser` simultaneously.
+            // The helper methods below (`expect*`, `add_error`, `parse_registry`)
+            // take `&mut self` but never touch `self.ctx.install`, so route the
+            // install borrow through a raw pointer to sidestep the overlap —
+            // same pattern as `Bunfig::parse` for `ctx.log`.
+            let install_ptr: *mut api::BunInstall =
+                self.ctx.install.as_deref_mut().unwrap() as *mut _;
+            // SAFETY: sole writer for the duration of this call; no callee
+            // below reaches `self.ctx.install`.
+            let install: &mut api::BunInstall = unsafe { &mut *install_ptr };
 
             if let Some(cafile) = expr_get(install_obj, b"cafile") {
                 install.cafile = match expr_as_string(&cafile, self.bump) {

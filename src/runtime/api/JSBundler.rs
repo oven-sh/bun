@@ -572,18 +572,17 @@ pub mod js_bundler {
                 } else if compile_value.is_object() {
                     break 'brk compile_value;
                 } else {
-                    return global_this.throw_invalid_arguments(
+                    return Err(global_this.throw_invalid_arguments(
                         "Expected compile to be a boolean or string or options object",
-                        &[],
-                    );
+                    ));
                 }
             };
 
-            if let Some(target) = object.get_own(global_this, "target")? {
+            if let Some(target) = get_own_str(object, global_this, "target")? {
                 this.compile_target = compile_target_from_js(global_this, target)?;
             }
 
-            if let Some(exec_argv) = object.get_own_array(global_this, "execArgv")? {
+            if let Some(exec_argv) = object.get_array(global_this, "execArgv")? {
                 let mut iter = exec_argv.array_iterator(global_this)?;
                 let mut is_first = true;
                 while let Some(arg) = iter.next()? {

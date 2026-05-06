@@ -252,9 +252,10 @@ pub fn encode_indexed(
     level: i8,
     colors: u16,
     dither: bool,
-    icc_profile: Option<&[u8]>,
+    icc_profile: Option<NonNull<[u8]>>,
 ) -> Result<codecs::Encoded, codecs::Error> {
-    let q = quantize::quantize(rgba, w, h, quantize::Options { max_colors: colors, dither })?;
+    let q = quantize::quantize(rgba, w, h, quantize::Options { max_colors: colors, dither })
+        .map_err(|_| codecs::Error::OutOfMemory)?;
 
     // SAFETY: spng_ctx_new is safe to call; null return = OOM.
     let ctx = unsafe { spng_ctx_new(SPNG_CTX_ENCODER) };
@@ -284,15 +285,16 @@ pub fn encode_indexed(
     if unsafe { spng_set_ihdr(ctx, &ihdr) } != 0 {
         return Err(codecs::Error::EncodeFailed);
     }
-    embed_iccp(ctx, icc_profile);
+    // SAFETY: caller guarantees `icc_profile` points to valid bytes for the duration of encode().
+    embed_iccp(ctx, icc_profile.map(|p| unsafe { p.as_ref() }));
 
-    let mut plte = Plte { n_entries: q.colors, entries: [[0u8; 4]; 256] };
+    let mut plte = Plte { n_entries: u32::from(q.colors), entries: [[0u8; 4]; 256] };
     let mut trns = Trns {
         gray: 0,
         red: 0,
         green: 0,
         blue: 0,
-        n_type3_entries: q.colors,
+        n_type3_entries: u32::from(q.colors),
         type3_alpha: [0u8; 256],
     };
     for i in 0..(q.colors as usize) {
@@ -322,8 +324,8 @@ pub fn encode_indexed(
     }
     // SAFETY: buf is non-null and points to `len` bytes owned by us (malloc'd by libspng).
     Ok(codecs::Encoded {
-        bytes: unsafe { core::slice::from_raw_parts_mut(buf, len) },
-        free: codecs::Encoded::wrap(libc::free as unsafe extern "C" fn(*mut c_void)),
+        bytes: unsafe { NonNull::new_unchecked(core::ptr::slice_from_raw_parts_mut(buf, len)) },
+        free: encoded_wrap_free!(libc::free),
     })
 }
 

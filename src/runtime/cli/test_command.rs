@@ -19,6 +19,7 @@ use bun_paths::resolve_path;
 use bun_resolver::fs::FileSystem;
 use bun_str::{strings, PathString};
 use bun_str::immutable::paths::without_leading_path_separator;
+use bun_str::immutable::Appender as _;
 use bun_sys::{self, Fd, File};
 use bun_uws as uws;
 

@@ -848,7 +848,14 @@ impl IncrementalGraph<Client> {
     pub fn get_file_by_index(&self, index: FileIndex) -> ClientFile {
         // TODO(port): `ClientFilePacked::unpack` consumes self; values() returns a slice.
         // Phase B should make `unpack` take `&self` or make `ClientFilePacked: Clone`.
-        self.bundled_files.values()[index.get() as usize].unpack()
+        self.unpack_at(index.get() as usize)
+    }
+
+    fn unpack_at(&self, idx: usize) -> ClientFile {
+        // PORT NOTE: reshaped — `ClientFilePacked` is not `Copy`/`Clone`; clone the
+        // inner `ClientFile` (which is `Clone`) directly.
+        let packed = &self.bundled_files.values()[idx];
+        packed.unsafe_packed_data.clone()
     }
 
     pub fn html_route_bundle_index(&self, index: FileIndex) -> RouteBundleIndex {

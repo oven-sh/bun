@@ -202,16 +202,22 @@ impl Assets {
         ref_count: u32,
     ) -> Result<Option<&mut *mut StaticRoute>, bun_alloc::AllocError> {
         // Zig: `defer assert(assets.files.count() == assets.refs.items.len);`
+        // PORT NOTE: reshaped for borrowck — `gop.value_ptr` borrows `self.files` mutably,
+        // so re-derive the slot via `values_mut()[index]` after the invariant assert.
         let file_index_gop = self.files.get_or_put(content_hash)?;
-        let result = if !file_index_gop.found_existing {
+        let index = file_index_gop.index;
+        let found = file_index_gop.found_existing;
+        if !found {
             self.refs.push(ref_count);
-            Some(file_index_gop.value_ptr)
         } else {
-            self.refs[file_index_gop.index] += ref_count;
-            None
-        };
+            self.refs[index] += ref_count;
+        }
         debug_assert_eq!(self.files.count(), self.refs.len());
-        Ok(result)
+        Ok(if !found {
+            Some(&mut self.files.values_mut()[index])
+        } else {
+            None
+        })
     }
 
     pub fn unref_by_hash(&mut self, content_hash: u64, dec_count: u32) {

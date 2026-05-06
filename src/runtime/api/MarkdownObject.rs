@@ -762,7 +762,7 @@ impl<'a> ParseRenderer<'a> {
                 }
             }
             md::BlockType::Ol => {
-                props.put(g, b"start", JSValue::js_number(entry.data));
+                props.put(g, b"start", JSValue::js_number(entry.data as f64));
             }
             md::BlockType::Li => {
                 let task_mark = md::types::task_mark_from_data(entry.data);
@@ -1439,7 +1439,7 @@ impl<'a> JsCallbackRenderer<'a> {
                 let slug = self.heading_tracker.leave_heading();
                 let field_count: usize = if slug.is_some() { 2 } else { 1 };
                 let obj = JSValue::create_empty_object(g, field_count);
-                obj.put(g, b"level", JSValue::js_number(data));
+                obj.put(g, b"level", JSValue::js_number(data as f64));
                 if let Some(s) = slug {
                     obj.put(g, b"id", create_utf8_for_js(g, s)?);
                 }
@@ -1447,7 +1447,7 @@ impl<'a> JsCallbackRenderer<'a> {
             }
             md::BlockType::Ol => {
                 // SAFETY: FFI into JSC bindings.
-                Ok(Some(unsafe { BunMarkdownMeta__createList(g, true, JSValue::js_number(data), self.count_list_depth()) }))
+                Ok(Some(unsafe { BunMarkdownMeta__createList(g, true, JSValue::js_number(data as f64), self.count_list_depth()) }))
             }
             md::BlockType::Ul => {
                 // SAFETY: FFI into JSC bindings.
@@ -1486,7 +1486,7 @@ impl<'a> JsCallbackRenderer<'a> {
                 let depth: u32 = if enclosing > 0 { enclosing - 1 } else { 0 };
                 let task_mark = md::types::task_mark_from_data(data);
 
-                let start_js = if is_ordered { JSValue::js_number(parent.unwrap().data) } else { JSValue::UNDEFINED };
+                let start_js = if is_ordered { JSValue::js_number(parent.unwrap().data as f64) } else { JSValue::UNDEFINED };
                 let checked_js = if task_mark != 0 {
                     JSValue::from(md::types::is_task_checked(task_mark))
                 } else {

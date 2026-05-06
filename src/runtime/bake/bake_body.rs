@@ -1431,7 +1431,7 @@ fn get_optional_string(
     property: &[u8],
     allocations: &mut StringRefList,
     arena: &Arena,
-) -> Result<Option<&'static [u8]>, bun_core::Error> {
+) -> JsResult<Option<&'static [u8]>> {
     let Some(value) = target.get(global, property)? else {
         return Ok(None);
     };
@@ -1440,7 +1440,7 @@ fn get_optional_string(
     }
     let str = value.to_bun_string(global)?;
     let _ = arena; // TODO(port): arena param unused after to_utf8() drops allocator
-    Ok(Some(allocations.track(str.to_utf8())))
+    Ok(Some(arena_erase(allocations.track(str.to_utf8()))))
 }
 
 pub struct HmrRuntime {

@@ -208,12 +208,29 @@ pub mod entry_point_list {
 pub struct EntryPointList {
     pub set: StringArrayHashMap<entry_point_list::Flags>,
 }
+impl EntryPointList {
+    /// `EntryPointList.appendCss` — DevServer.zig. Full body in gated draft.
+    pub fn append_css(&mut self, abs_path: &[u8]) {
+        let gop = self.set.get_or_put(abs_path);
+        if gop.found_existing {
+            *gop.value_ptr |= entry_point_list::Flags::CLIENT | entry_point_list::Flags::CSS;
+        } else {
+            *gop.value_ptr = entry_point_list::Flags::CLIENT | entry_point_list::Flags::CSS;
+        }
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // TestingBatch
 // ──────────────────────────────────────────────────────────────────────────
 pub struct TestingBatch {
     pub entry_points: EntryPointList,
+}
+impl TestingBatch {
+    /// `TestingBatch.append` — DevServer.zig. Full body in gated draft.
+    pub fn append(&mut self, _entry_points: &EntryPointList) {
+        todo!("blocked_on: dev_server::TestingBatch::append body un-gate")
+    }
 }
 pub enum TestingBatchEvents {
     Disabled,

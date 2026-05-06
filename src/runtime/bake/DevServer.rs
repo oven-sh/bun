@@ -5617,23 +5617,31 @@ fn bundle_new_route_js_function_impl(
     vm.event_loop().enter();
     let _exit = scopeguard::guard((), |_| vm.event_loop().exit());
 
+    // TODO(port): `AnyRequestContext::dev_server()` returns the keystone
+    // `&dev_server::DevServer`, but this body needs `&mut dev_server_body::DevServer`
+    // (different struct + mutability). Shadow until the two types are unified.
+    let _ = dev;
+    let dev: &mut DevServer =
+        todo!("blocked_on: AnyRequestContext::dev_server -> &mut dev_server_body::DevServer");
+
+    let route_bundle_index = dev
+        .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Framework(route_index))
+        .expect("oom");
     let mut ctx = PromiseEnsureRouteBundledCtx {
         dev,
         global,
         promise: None,
         p: None,
         already_loaded: false,
-        route_bundle_index: dev
-            .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Framework(route_index))
-            .expect("oom"),
+        route_bundle_index,
     };
 
     let rbi = ctx.route_bundle_index;
-    ensure_route_is_bundled(dev, rbi, &mut ctx)?;
+    ensure_route_is_bundled(ctx.dev, rbi, &mut ctx)?;
 
     let array = JSValue::create_empty_array(global, 2)?;
 
-    array.put_index(global, 0, JSValue::js_number_from_u64(rbi.get() as u64))?;
+    array.put_index(global, 0, JSValue::js_number_from_uint64(rbi.get() as u64))?;
 
     if ctx.p.is_none() {
         array.put_index(global, 1, JSValue::UNDEFINED)?;

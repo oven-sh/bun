@@ -252,7 +252,7 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
 fn fail_with_build_error(vm: &mut VirtualMachine) -> ! {
     // SAFETY: vm.log is the process-lifetime ctx.log set in build_command.
     if let Some(log) = vm.log {
-        let _ = unsafe { log.as_ref() }.print(Output::error_writer());
+        let _ = unsafe { log.as_ref() }.print(Output::error_writer() as *mut _);
     }
     Global::exit(1);
 }

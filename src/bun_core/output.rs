@@ -80,8 +80,13 @@ pub static OUTPUT_SINK_VTABLE: core::sync::atomic::AtomicPtr<OutputSinkVTable> =
 /// Called once by `bun_sys` at startup with a `&'static OutputSinkVTable`.
 #[inline]
 pub fn install_output_sink(vtable: &'static OutputSinkVTable) {
+    // SAFETY: `AtomicPtr<T>` only accepts `*mut T`, but the stored pointer is
+    // never written through — `output_sink()` loads it back as `&*p` (shared
+    // ref) and the vtable itself is `&'static` and immutable. The const→mut
+    // cast here is purely to satisfy `AtomicPtr`'s signature; no `&mut` is
+    // ever materialized from it, so no provenance/aliasing UB.
     OUTPUT_SINK_VTABLE.store(
-        vtable as *const _ as *mut _,
+        core::ptr::from_ref(vtable).cast_mut(),
         core::sync::atomic::Ordering::Release,
     );
 }

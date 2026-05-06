@@ -517,10 +517,10 @@ impl StandaloneModuleGraph {
         modules.lock_pointers(); // make the pointers stable forever
 
         Ok(StandaloneModuleGraph {
-            bytes: &raw_bytes[0..offsets.byte_count],
+            bytes: &bytes[0..offsets.byte_count],
             files: modules,
             entry_point_id: offsets.entry_point_id,
-            compile_exec_argv: slice_to_z(raw_bytes, offsets.compile_exec_argv_ptr).as_bytes(),
+            compile_exec_argv: slice_to_z(bytes, offsets.compile_exec_argv_ptr).as_bytes(),
             flags: offsets.flags,
         })
     }
@@ -531,6 +531,20 @@ fn slice_to(bytes: &'static [u8], ptr: StringPointer) -> &'static [u8] {
         return b"";
     }
     &bytes[ptr.offset as usize..][..ptr.length as usize]
+}
+
+/// Mutable-subslice helper for `from_bytes`. Derives a `*mut [u8]` directly from the raw
+/// section base so the result carries write provenance — going through `slice_to` (which
+/// returns `&[u8]`) and casting `*const [u8] as *mut [u8]` would be UB on write.
+///
+/// SAFETY: caller guarantees `base[..len]` is a live allocation with write permission and
+/// that `[ptr.offset, ptr.offset + ptr.length)` is in-bounds.
+unsafe fn slice_to_mut(base: *mut u8, len: usize, ptr: StringPointer) -> *mut [u8] {
+    let off = ptr.offset as usize;
+    let n = ptr.length as usize;
+    debug_assert!(off.checked_add(n).is_some_and(|end| end <= len));
+    let _ = len;
+    core::ptr::slice_from_raw_parts_mut(unsafe { base.add(off) }, n)
 }
 
 fn slice_to_z(bytes: &'static [u8], ptr: StringPointer) -> &'static ZStr {

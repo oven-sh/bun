@@ -1594,7 +1594,7 @@ pub mod package_manifest {
             scope: &registry::Scope,
         ) -> Result<&'b bun_str::ZStr, Error> {
             use core::fmt::Write as _;
-            let file_id_hex_fmt = bun_fmt::hex_int_lower(file_id);
+            let file_id_hex_fmt = bun_fmt::hex_int_lower::<16>(file_id);
             let mut stream = bun_io::FixedBufferStream::new_mut(buf);
             if scope.url_hash == *registry::DEFAULT_URL_HASH {
                 write!(stream, "{}.npm", file_id_hex_fmt)?;
@@ -1603,7 +1603,7 @@ pub mod package_manifest {
                     stream,
                     "{}-{}.npm",
                     file_id_hex_fmt,
-                    bun_fmt::hex_int_lower(scope.url_hash),
+                    bun_fmt::hex_int_lower::<16>(scope.url_hash),
                 )?;
             }
             stream.write_byte(0)?;

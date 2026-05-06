@@ -1781,6 +1781,191 @@ pub fn pwritev(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize>
     }
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// `bun.PlatformIOVec` — mutable iovec (`{ *void, usize }` on POSIX,
+// `uv_buf_t` on Windows). Layout-compatible with `libc::iovec` so a
+// `&[PlatformIoVec]` can be passed straight to `readv(2)`/`writev(2)`.
+// ──────────────────────────────────────────────────────────────────────────
+#[cfg(unix)]
+pub type PlatformIoVec = libc::iovec;
+#[cfg(not(unix))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct PlatformIoVec {
+    pub base: *mut u8,
+    pub len: usize,
+}
+
+#[inline]
+pub fn platform_iovec_create(buf: &mut [u8]) -> PlatformIoVec {
+    #[cfg(unix)]
+    { PlatformIoVec { iov_base: buf.as_mut_ptr().cast(), iov_len: buf.len() } }
+    #[cfg(not(unix))]
+    { PlatformIoVec { base: buf.as_mut_ptr(), len: buf.len() } }
+}
+
+/// `bun.sys.writev` — gather-write. macOS uses `writev$NOCANCEL` with no
+/// EINTR retry (sys.zig:1923-1934); other POSIX retries on EINTR.
+pub fn writev(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
+    #[cfg(unix)]
+    {
+        #[cfg(target_os = "macos")]
+        {
+            // SAFETY: `PlatformIoVec` is `libc::iovec`; writev(2) only reads
+            // the descriptor table. sys.zig:1925 — single shot, surfaces EINTR.
+            let rc = unsafe {
+                nocancel::writev(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int)
+            };
+            if rc < 0 {
+                return Err(Error::from_code_int(last_errno(), Tag::writev).with_fd(fd));
+            }
+            return Ok(rc as usize);
+        }
+        #[cfg(not(target_os = "macos"))]
+        loop {
+            // SAFETY: see above.
+            let rc = unsafe {
+                libc::writev(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int)
+            };
+            if rc < 0 {
+                let e = last_errno();
+                if e == libc::EINTR { continue; }
+                return Err(Error::from_code_int(e, Tag::writev).with_fd(fd));
+            }
+            return Ok(rc as usize);
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        // TODO(b2-windows): route through `uv_fs_write` with `uv_buf_t[]`.
+        let _ = (fd, vecs);
+        Err(Error::from_code_int(libc::ENOSYS, Tag::writev))
+    }
+}
+
+/// `bun.sys.readv` — scatter-read. macOS uses `readv$NOCANCEL` with no
+/// EINTR retry (sys.zig:1982-2014); other POSIX retries on EINTR.
+pub fn readv(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
+    #[cfg(debug_assertions)]
+    if vecs.is_empty() {
+        bun_core::Output::debug_warn("readv() called with 0 length buffer", format_args!(""));
+    }
+    #[cfg(unix)]
+    {
+        #[cfg(target_os = "macos")]
+        {
+            // SAFETY: vecs.ptr is `*const iovec`; the kernel writes through
+            // each `iov_base`, never the array itself. sys.zig:1991 — single shot.
+            let rc = unsafe {
+                nocancel::readv(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int)
+            };
+            if rc < 0 {
+                return Err(Error::from_code_int(last_errno(), Tag::readv).with_fd(fd));
+            }
+            return Ok(rc as usize);
+        }
+        #[cfg(not(target_os = "macos"))]
+        loop {
+            // SAFETY: see above.
+            let rc = unsafe {
+                libc::readv(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int)
+            };
+            if rc < 0 {
+                let e = last_errno();
+                if e == libc::EINTR { continue; }
+                return Err(Error::from_code_int(e, Tag::readv).with_fd(fd));
+            }
+            return Ok(rc as usize);
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (fd, vecs);
+        Err(Error::from_code_int(libc::ENOSYS, Tag::readv))
+    }
+}
+
+/// `bun.sys.preadv` — scatter-read at `position`. macOS uses
+/// `preadv$NOCANCEL` with no EINTR retry (sys.zig:2016-2048).
+pub fn preadv(fd: Fd, vecs: &[PlatformIoVec], position: i64) -> Maybe<usize> {
+    #[cfg(debug_assertions)]
+    if vecs.is_empty() {
+        bun_core::Output::debug_warn("preadv() called with 0 length buffer", format_args!(""));
+    }
+    #[cfg(unix)]
+    {
+        #[cfg(target_os = "macos")]
+        {
+            // SAFETY: see `readv`. sys.zig:2025 — single shot.
+            let rc = unsafe {
+                nocancel::preadv(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int, position)
+            };
+            if rc < 0 {
+                return Err(Error::from_code_int(last_errno(), Tag::preadv).with_fd(fd));
+            }
+            return Ok(rc as usize);
+        }
+        #[cfg(not(target_os = "macos"))]
+        loop {
+            // SAFETY: see `readv`.
+            let rc = unsafe {
+                libc::preadv(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int, position)
+            };
+            if rc < 0 {
+                let e = last_errno();
+                if e == libc::EINTR { continue; }
+                return Err(Error::from_code_int(e, Tag::preadv).with_fd(fd));
+            }
+            return Ok(rc as usize);
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (fd, vecs, position);
+        Err(Error::from_code_int(libc::ENOSYS, Tag::preadv))
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// `bun.StatFS` / `bun.sys.statfs` — sys.zig:547-571.
+// On POSIX `bun.StatFS` aliases `struct statfs` (Linux/macOS/FreeBSD); on
+// Windows it is `uv_statfs_t` populated from `GetDiskFreeSpace` (handled in
+// `sys_uv`).
+// ──────────────────────────────────────────────────────────────────────────
+#[cfg(unix)]
+pub type StatFS = libc::statfs;
+#[cfg(not(unix))]
+pub type StatFS = self::windows::libuv::uv_statfs_t;
+
+/// `bun.sys.statfs` — query filesystem stats for `path`. Retries on EINTR.
+pub fn statfs(path: &ZStr) -> Maybe<StatFS> {
+    #[cfg(unix)]
+    loop {
+        // SAFETY: all-zero is a valid `struct statfs` (kernel writes every
+        // field on success); `path` is NUL-terminated by `ZStr`.
+        let mut st: StatFS = unsafe { core::mem::zeroed() };
+        let rc = unsafe { libc::statfs(path.as_ptr(), &mut st) };
+        if rc < 0 {
+            let e = last_errno();
+            if e == libc::EINTR { continue; }
+            return Err(Error::from_code_int(e, Tag::statfs).with_path(path.as_bytes()));
+        }
+        return Ok(st);
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Err(Error::from_code(E::NOSYS, Tag::statfs))
+    }
+}
+
+/// `bun.sys.PosixStat` — uv-shaped stat struct (`src/sys/PosixStat.zig`).
+/// Re-exported here so dependents (`node_fs.rs`, `Stat.rs`) can spell
+/// `bun_sys::PosixStat` exactly as the Zig source spells `bun.sys.PosixStat`.
+#[path = "PosixStat.rs"]
+pub mod posix_stat;
+pub use posix_stat::PosixStat;
+
 /// `std::io::Write` adapter for `Fd` (used by `File::buffered_writer`).
 pub struct FileWriter(pub Fd);
 impl std::io::Write for FileWriter {

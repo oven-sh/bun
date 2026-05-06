@@ -795,8 +795,32 @@ impl VirtualMachine {
             // `exception_list` (if any) borrows caller stack for this call.
             unsafe { (hooks.print_exception)(self, result, exception_list) };
         } else {
-            let _ = (result, exception_list);
-            todo!("b2-cycle: run_error_handler needs ConsoleObject formatter via RuntimeHooks");
+            // Low-tier fallback (no `bun_runtime` installed — unit tests):
+            // we cannot reach `ConsoleObject::Formatter`, so emit a degraded
+            // one-line render via the buffered error writer. Spec
+            // VirtualMachine.zig:2156-2189 routes through `printErrorlikeObject`
+            // (which formats name/message/stack); the closest we can do here
+            // without the high tier is the value's own `toString`.
+            let _ = exception_list;
+            let writer = bun_core::Output::error_writer();
+            // SAFETY: `global` is set during init and live for VM lifetime.
+            let global = unsafe { &*self.global };
+            let display = result
+                .to_error()
+                .unwrap_or(result)
+                .get_zig_string(global)
+                .ok();
+            match display {
+                Some(zs) => {
+                    let utf8 = zs.to_owned_slice();
+                    let _ = writer.write_all(utf8.slice());
+                    let _ = writer.write_all(b"\n");
+                }
+                None => {
+                    let _ = writer.write_all(b"[unhandled exception]\n");
+                }
+            }
+            let _ = writer.flush();
         }
 
         // PORT NOTE: Zig `defer this.had_errors = prev_had_errors;` — the hook

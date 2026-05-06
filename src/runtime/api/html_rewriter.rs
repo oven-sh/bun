@@ -714,12 +714,13 @@ impl BufferOutputSink {
         // expression and does not overlap raw-pointer writes (the bufferer may
         // re-enter `BufferOutputSink::write/done` through the lol-html
         // callback, which writes through the raw `sink` pointer).
-        // TODO(b2-blocked): un-gate `.body_value_bufferer.run()` with
-        // webcore::body::ValueBufferer.
-        let _ = (value, owned_readable_stream);
-        let buffering_result: Result<(), bun_core::Error> =
-            todo!("blocked_on: webcore::body::ValueBufferer::run");
-        #[allow(unreachable_code)]
+        let buffering_result: Result<(), bun_core::Error> = unsafe {
+            (*sink)
+                .body_value_bufferer
+                .as_mut()
+                .unwrap()
+                .run(value, owned_readable_stream)
+        };
         if let Err(buffering_error) = buffering_result {
             BufferOutputSink::deref(sink);
             return Ok(match buffering_error {

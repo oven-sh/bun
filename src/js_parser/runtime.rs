@@ -171,9 +171,8 @@ pub struct Base64FallbackMessage<'a> {
 impl fmt::Display for Base64FallbackMessage<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut bb: Vec<u8> = Vec::new();
-        // TODO(port): exact `schema::Writer` API over a `Vec<u8>` sink
         let mut encoder = schema::Writer::new(&mut bb);
-        let _ = self.msg.encode(&mut encoder); // catch {}
+        self.msg.encode(&mut encoder); // catch {}
         let _ = base64_encoder::encode(&bb, f); // catch {}
         Ok(())
     }

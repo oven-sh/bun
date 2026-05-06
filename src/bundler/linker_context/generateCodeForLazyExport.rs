@@ -442,7 +442,7 @@ pub fn generate_code_for_lazy_export(
             {
                 this.graph.generate_runtime_symbol_import_and_use(
                     source_index,
-                    Index::part(1),
+                    Index::part(1u32),
                     b"__require",
                     1,
                 )?;

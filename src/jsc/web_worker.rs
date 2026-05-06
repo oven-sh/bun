@@ -541,21 +541,24 @@ impl WebWorker {
         // Stop subsequent JS at the next safepoint. `this.vm` is null during
         // `vm.onExit()` (shutdown nulls it first), so a re-entrant
         // process.exit() from an exit handler does not re-arm the trap.
-        if !self.vm.is_null() {
-            // SAFETY: vm non-null; jsc_vm is a valid JSC::VM*;
+        // SAFETY: worker-thread only; `vm` is read here on the same thread
+        // that publishes/unpublishes it, so no lock is needed for the load.
+        let vm_ptr = unsafe { *self.vm.get() };
+        if !vm_ptr.is_null() {
+            // SAFETY: vm_ptr non-null; jsc_vm is a valid JSC::VM*;
             // notify_need_termination is documented thread-safe (VMTraps).
             // Cast through the real opaque `crate::VM`.
-            unsafe { (*((*self.vm).jsc_vm as *const crate::VM)).notify_need_termination() };
+            unsafe { (*((*vm_ptr).jsc_vm as *const crate::VM)).notify_need_termination() };
         }
     }
 
-    fn set_status(&mut self, status: Status) {
+    fn set_status(&self, status: Status) {
         log!(
             "[{}] status: {}",
             self.execution_context_id,
             <&'static str>::from(status)
         );
-        self.status = status;
+        self.status.set(status);
     }
 }
 

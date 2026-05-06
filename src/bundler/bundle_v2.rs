@@ -2658,7 +2658,7 @@ impl<'a> BundleV2<'a> {
 
         this.process_server_component_manifest_files()?;
 
-        let reachable_files = this.find_reachable_files()?;
+        let mut reachable_files = this.find_reachable_files()?;
         *reachable_files_count = reachable_files.len().saturating_sub(1); // - 1 for the runtime
 
         this.process_files_to_copy(&reachable_files)?;
@@ -2667,12 +2667,23 @@ impl<'a> BundleV2<'a> {
 
         this.clone_ast()?;
 
-        let chunks = this.linker.link(
-            &mut *this,
-            &this.graph.entry_points,
-            &this.graph.server_component_boundaries,
-            &reachable_files,
-        )?;
+        // SAFETY: `Graph::entry_points` is `Vec<bun_js_parser::Index>` while
+        // `LinkerContext::link` takes `&mut [crate::Index]`; both are
+        // `repr(transparent)` u32 newtypes so the slice cast is sound. The
+        // raw-ptr dance also sidesteps the `&mut self.linker` / `&mut *this`
+        // / `&mut this.graph` borrow overlap (Zig stored all as raw ptrs).
+        let mut chunks = unsafe {
+            let bundle_ptr: *mut BundleV2 = &mut *this;
+            let ep_len = (*bundle_ptr).graph.entry_points.len();
+            let ep: *mut Index = (*bundle_ptr).graph.entry_points.as_mut_ptr().cast();
+            let scbs = core::mem::take(&mut (*bundle_ptr).graph.server_component_boundaries);
+            this.linker.link(
+                &mut *bundle_ptr,
+                core::slice::from_raw_parts_mut(ep, ep_len),
+                scbs,
+                &mut reachable_files,
+            )?
+        };
 
         // Do this at the very end, after processing all the imports/exports so that we can follow exports as needed.
         if let Some(fetch) = fetcher {
@@ -2684,11 +2695,11 @@ impl<'a> BundleV2<'a> {
             });
         }
 
-        let output_files = crate::linker_context_mod::generate_chunks_in_parallel::<false>(&mut this.linker, chunks)?;
+        let output_files = crate::linker_context_mod::generate_chunks_in_parallel::<false>(&mut this.linker, &mut chunks)?;
 
         // Generate metafile if requested (CLI writes files in build_command.zig)
         let metafile: Option<Box<[u8]>> = if this.linker.options.metafile {
-            match crate::linker_context::metafile_builder::MetafileBuilder::generate(&mut this.linker, chunks) {
+            match crate::linker_context::metafile_builder::generate(&mut this.linker, &mut chunks) {
                 Ok(m) => Some(m),
                 Err(err) => {
                     Output::warn(format_args!("Failed to generate metafile: {}", err));
@@ -2794,7 +2805,7 @@ impl<'a> BundleV2<'a> {
 
         this.process_server_component_manifest_files()?;
 
-        let reachable_files = this.find_reachable_files()?;
+        let mut reachable_files = this.find_reachable_files()?;
 
         this.process_files_to_copy(&reachable_files)?;
 
@@ -2802,12 +2813,20 @@ impl<'a> BundleV2<'a> {
 
         this.clone_ast()?;
 
-        let chunks = this.linker.link(
-            &mut *this,
-            &this.graph.entry_points,
-            &this.graph.server_component_boundaries,
-            &reachable_files,
-        )?;
+        // SAFETY: see `generate_from_cli` — repr(transparent) Index slice cast +
+        // raw-ptr borrow sidestep.
+        let mut chunks = unsafe {
+            let bundle_ptr: *mut BundleV2 = &mut *this;
+            let ep_len = (*bundle_ptr).graph.entry_points.len();
+            let ep: *mut Index = (*bundle_ptr).graph.entry_points.as_mut_ptr().cast();
+            let scbs = core::mem::take(&mut (*bundle_ptr).graph.server_component_boundaries);
+            this.linker.link(
+                &mut *bundle_ptr,
+                core::slice::from_raw_parts_mut(ep, ep_len),
+                scbs,
+                &mut reachable_files,
+            )?
+        };
 
         if chunks.is_empty() {
             return Ok(Vec::new());
@@ -4009,6 +4028,23 @@ pub struct ResolveImportRecordResult {
 // Re-construct field-by-field rather than transmute non-`repr(C)` structs.
 // SAFETY: Phase-A lifetime erasure — backing slices are arena/BSSStringList-owned
 // and outlive the bundle pass (TODO(port): unify Path types to remove this).
+#[inline]
+pub(crate) fn fs_path_from_ir(p: &bun_paths::fs::Path<'static>) -> Fs::Path<'static> {
+    Fs::Path {
+        pretty: p.pretty,
+        text: p.text,
+        namespace: p.namespace,
+        name: Fs::PathName {
+            base: p.name.base,
+            dir: p.name.dir,
+            ext: p.name.ext,
+            filename: p.name.filename,
+        },
+        is_disabled: p.is_disabled,
+        is_symlink: p.is_symlink,
+    }
+}
+
 #[inline]
 pub(crate) fn ir_path_from_fs(p: &Fs::Path<'_>) -> bun_paths::fs::Path<'static> {
     let s = |b: &[u8]| -> &'static [u8] { unsafe { core::mem::transmute(b) } };

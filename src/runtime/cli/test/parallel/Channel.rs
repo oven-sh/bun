@@ -511,13 +511,13 @@ impl<Owner: ChannelOwner> PosixHandlers<Owner> {
         // SAFETY: see on_data.
         unsafe { &mut **self_ }.flush();
     }
-    pub fn on_close(self_: Self::Ext, _s: *mut uws::us_socket_t, _code: i32, _reason: *mut c_void) {
+    pub fn on_close(self_: PosixExt<Owner>, _s: *mut uws::us_socket_t, _code: i32, _reason: *mut c_void) {
         // SAFETY: see on_data.
         let chan = unsafe { &mut **self_ };
         chan.backend.socket = Socket::DETACHED;
         chan.mark_done();
     }
-    pub fn on_end(_self: Self::Ext, s: *mut uws::us_socket_t) {
+    pub fn on_end(_self: PosixExt<Owner>, s: *mut uws::us_socket_t) {
         // SAFETY: `s` is a live us_socket_t passed by usockets.
         unsafe { &*s }.close(uws::CloseCode::Normal);
     }

@@ -58,6 +58,7 @@ pub mod discord_command;
  #[path = "open.rs"]
 mod open_full;
 pub mod open {
+    pub use super::open_full::{Editor, EditorContext};
     use bun_core::Output;
 
     #[cfg(target_os = "macos")]

@@ -3,7 +3,6 @@
 
 use std::rc::Rc;
 
-use bun_core::assert_eql;
 use bun_sourcemap::Chunk as SourceMapChunk;
 
 /// Packed source mapping data for a single file.

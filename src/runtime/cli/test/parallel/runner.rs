@@ -33,7 +33,7 @@ pub fn run_as_coordinator(
     vm: &VirtualMachine,
     files: &[PathString],
     ctx: Command::Context,
-    coverage_opts: &mut TestCommand::CodeCoverageOptions,
+    coverage_opts: &mut CodeCoverageOptions,
 ) -> Result<bool, bun_core::Error> {
     // TODO(port): narrow error set
     let n: u32 = u32::try_from(files.len()).unwrap();

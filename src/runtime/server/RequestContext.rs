@@ -738,7 +738,7 @@ where
         let fallback_container = Box::new(Api::FallbackMessageContainer {
             message: message.into_boxed_slice(),
             router: None,
-            reason: Api::FallbackReason::FetchEventHandler,
+            reason: Some(Api::FallbackStep::fetch_event_handler),
             cwd: VirtualMachine::get().transpiler.fs.top_level_dir.clone(),
             problems: Api::Problems {
                 // TODO(port): @intFromError(err) — bun_core::Error is NonZeroU16

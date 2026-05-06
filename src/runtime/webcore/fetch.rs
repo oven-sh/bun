@@ -131,67 +131,29 @@ impl FetchBunStringExt for BunString {
     }
 }
 
-/// `jsc.URL.fileURLFromString` — the un-gated `bun_jsc::URL` stub only has
-/// `href_from_js` / `path_from_file_url`; the file-URL builder is gated.
-#[inline]
-fn jsc_url_file_url_from_string(_s: BunString) -> BunString {
-    todo!("blocked_on: bun_jsc::URL::file_url_from_string")
-}
-
 /// Convert the runtime-tier `socket::ssl_config::SSLConfig` into the
-/// `bun_http::ssl_config::SharedPtr` shape FetchTasklet expects.
+/// `bun_http::ssl_config::SharedPtr` shape FetchTasklet/AsyncHTTP expect.
+/// `bun_http` (T5) cannot name the runtime SSLConfig (cycle), so we deep-copy
+/// into the lower-tier struct and intern it in the http-tier registry.
 #[inline]
-fn ssl_config_intern_for_http(_config: SSLConfig) -> http::ssl_config::SharedPtr {
-    todo!("blocked_on: bun_http::ssl_config::SharedPtr::from(crate::socket::ssl_config::SSLConfig)")
+fn ssl_config_intern_for_http(config: SSLConfig) -> http::ssl_config::SharedPtr {
+    http::ssl_config::global_registry::intern(config.into_http())
 }
 
-/// `JSValue::getOptionalEnum::<T>()` — upstream lives in `bun_jsc` but is
-/// gated behind a generic `JsEnum` trait that `FetchRedirect` doesn't impl yet.
-trait FetchJSValueExt {
-    fn get_optional_enum_fetch_redirect(
-        self,
-        global: &JSGlobalObject,
-        name: &'static str,
-    ) -> JsResult<Option<FetchRedirect>>;
-    fn as_fetch_headers(self) -> Option<*mut FetchHeaders>;
-    fn as_abort_signal(self) -> Option<*mut AbortSignal>;
-    fn to_slice_clone_with_allocator(self, global: &JSGlobalObject) -> JsResult<ZigStringSlice>;
-}
-impl FetchJSValueExt for JSValue {
-    fn get_optional_enum_fetch_redirect(
-        self,
-        _global: &JSGlobalObject,
-        _name: &'static str,
-    ) -> JsResult<Option<FetchRedirect>> {
-        todo!("blocked_on: bun_jsc::JSValue::get_optional_enum::<FetchRedirect>")
-    }
-    fn as_fetch_headers(self) -> Option<*mut FetchHeaders> {
-        todo!("blocked_on: bun_jsc::JSValue::as_::<FetchHeaders> (FetchHeaders: JsClass)")
-    }
-    fn as_abort_signal(self) -> Option<*mut AbortSignal> {
-        todo!("blocked_on: bun_jsc::JSValue::as_::<AbortSignal> (AbortSignal: JsClass)")
-    }
-    fn to_slice_clone_with_allocator(self, global: &JSGlobalObject) -> JsResult<ZigStringSlice> {
-        // PORT NOTE: Zig `toSliceCloneWithAllocator` ≈ `to_slice_clone` (no allocator arg).
-        self.to_slice_clone(global)
-    }
-}
-
-/// `Method::from_js` — upstream `bun_http::Method` has no JSC dep; shim here.
-fn method_from_js(_global: &JSGlobalObject, _value: JSValue) -> JsResult<Option<Method>> {
-    todo!("blocked_on: bun_http_jsc::Method::from_js")
-}
-
-/// Erase a `&FetchHeaders` (opaque C++ ref) into the vtable-based
-/// `bun_http::headers::FetchHeadersRef` expected by `Headers::from`.
-fn fetch_headers_ref<'a>(_h: &'a FetchHeaders) -> FetchHeadersRef<'a> {
-    todo!("blocked_on: bun_http::headers::FetchHeadersRef::from(&bun_jsc::FetchHeaders)")
-}
-
-/// Erase an `&AnyBlob` into the vtable-based `bun_http::headers::AnyBlobRef`
-/// expected by `Headers::from`.
-fn any_blob_ref<'a>(_b: Option<&'a mut blob::Any>) -> Option<bun_http::headers::AnyBlobRef<'a>> {
-    todo!("blocked_on: bun_http::headers::AnyBlobRef::from(&webcore::blob::Any)")
+/// Build the refcounted `bun_s3_signing::S3Credentials` from the lower-tier
+/// `bun_dotenv::S3Credentials` POD mirror. The dotenv crate (T2) cannot name
+/// `bun_s3_signing` types (would be an upward dep), so the conversion lives at
+/// the call site here in T6.
+fn s3_credentials_from_env(env: &bun_dotenv::S3Credentials) -> bun_s3_signing::S3Credentials {
+    bun_s3_signing::S3Credentials::new_value(
+        env.access_key_id.clone(),
+        env.secret_access_key.clone(),
+        env.region.clone(),
+        env.endpoint.clone(),
+        env.bucket.clone(),
+        env.session_token.clone(),
+        env.insecure_http,
+    )
 }
 
 /// `Blob.Any` accessor shim — Zig union-field access `body.AnyBlob.Blob`.

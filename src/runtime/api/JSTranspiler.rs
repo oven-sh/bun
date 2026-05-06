@@ -1,31 +1,5 @@
 //! `Bun.Transpiler` — single-file transform/scan over the JS parser.
 
-/// `.classes.ts` payload (Arena + Transpiler + Config) — re-export from the
-/// un-gated body so callers see `crate::api::js_transpiler::JSTranspiler`.
-pub use _jsc_gated::JSTranspiler;
-pub use _jsc_gated::{AsyncTransformTask, AsyncTransformEventLoopTask, Config, TransformTask};
-
-/// Heuristic used by the REPL: returns true if `code` starts with `{` (after
-/// whitespace) and doesn't end with `;` — i.e. should be wrapped in `()` to
-/// parse as an object literal rather than a block statement. Mirrors Node.js.
-pub fn is_likely_object_literal(code: &[u8]) -> bool {
-    let mut start: usize = 0;
-    while start < code.len()
-        && matches!(code[start], b' ' | b'\t' | b'\n' | b'\r')
-    {
-        start += 1;
-    }
-    if start >= code.len() || code[start] != b'{' {
-        return false;
-    }
-    let mut end: usize = code.len();
-    while end > 0 && matches!(code[end - 1], b' ' | b'\t' | b'\n' | b'\r') {
-        end -= 1;
-    }
-    !(end > 0 && code[end - 1] == b';')
-}
-
-mod _jsc_gated {
 use std::io::Write as _;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export

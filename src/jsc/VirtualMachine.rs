@@ -4517,7 +4517,7 @@ impl VirtualMachine {
             let Some(socket) = socket else {
                 IPCInstance::deinit(instance);
                 self.ipc = None;
-                bun_core::output::warn(format_args!("Unable to start IPC socket"));
+                bun_core::output::warn("Unable to start IPC socket");
                 return None;
             };
             socket.set_timeout(0);
@@ -4553,7 +4553,7 @@ impl VirtualMachine {
             if let Err(_) = unsafe { (*instance).data.windows_configure_client(fd) } {
                 IPCInstance::deinit(instance);
                 self.ipc = None;
-                bun_core::output::warn(format_args!("Unable to start IPC pipe '{:?}'", fd));
+                bun_core::output::warn(&format_args!("Unable to start IPC pipe '{:?}'", fd));
                 return None;
             }
 

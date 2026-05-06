@@ -1358,18 +1358,21 @@ pub mod defines {
     #[derive(Clone)]
     pub struct DefineData {
         pub value: ExprData,
-        // Not using a slice here shrinks the size from 48 bytes to 40 bytes.
-        // TODO(port): lifetime — borrows into caller-owned key/value strings.
+        // Zig stored `original_name_ptr: ?[*]const u8` + `original_name_len: u32`
+        // borrowing into caller-owned strings (defines.zig:24-25 — the 48→40-byte
+        // packing trick). The Rust port owns the `RawDefines` value bytes
+        // (`Box<[u8]>`), so borrowing would be a use-after-free once the
+        // `RawDefines` map is dropped after `Define::init`. Own the bytes here
+        // instead — these are tiny startup-time copies.
         // Kept `pub` so the bundler-side `parse`/`from_input` (which live a
         // tier up for json-parser access) can construct directly.
-        pub original_name_ptr: Option<NonNull<u8>>,
-        pub original_name_len: u32,
+        pub original_name: Option<Box<[u8]>>,
         pub flags: Flags,
     }
 
-    // SAFETY: `original_name_ptr` aliases into immutable, process-lifetime
-    // string storage (`DirnameStore`/static tables/env-map). Never written
-    // through; treated as `&'static [u8]` by `original_name()`.
+    // SAFETY: `ExprData` contains `StoreRef` raw pointers into immutable,
+    // process-lifetime AST stores. `DefineData` is only shared across threads
+    // via the read-only `Box<Define>` after init. Never written through.
     unsafe impl Send for DefineData {}
     unsafe impl Sync for DefineData {}
 
@@ -1378,8 +1381,7 @@ pub mod defines {
             Self {
                 // Zig: `.e_missing = .{}`
                 value: ExprData::EMissing(E::Missing),
-                original_name_ptr: None,
-                original_name_len: 0,
+                original_name: None,
                 flags: Flags::default(),
             }
         }
@@ -1417,24 +1419,16 @@ pub mod defines {
                     options.call_can_be_unwrapped_if_unused,
                     options.method_call_must_be_replaced_with_undefined,
                 ),
-                original_name_ptr: options
-                    .original_name
-                    .and_then(|name| NonNull::new(name.as_ptr() as *mut u8)),
-                original_name_len: options.original_name.map(|n| n.len() as u32).unwrap_or(0),
+                original_name: options.original_name.map(Box::<[u8]>::from),
             }
         }
 
         #[inline]
         pub fn original_name(&self) -> Option<&[u8]> {
-            if self.original_name_len > 0 {
-                let ptr = self.original_name_ptr.unwrap();
-                // SAFETY: ptr/len were set together from a borrowed slice that
-                // the caller keeps alive for the lifetime of the `Define`.
-                return Some(unsafe {
-                    core::slice::from_raw_parts(ptr.as_ptr(), self.original_name_len as usize)
-                });
+            match &self.original_name {
+                Some(name) if !name.is_empty() => Some(name.as_ref()),
+                _ => None,
             }
-            None
         }
 
         /// True if accessing this value is known to not have any side effects.
@@ -1485,8 +1479,7 @@ pub mod defines {
                     a.method_call_must_be_replaced_with_undefined()
                         || b.method_call_must_be_replaced_with_undefined(),
                 ),
-                original_name_ptr: b.original_name_ptr,
-                original_name_len: b.original_name_len,
+                original_name: b.original_name,
             }
         }
     }

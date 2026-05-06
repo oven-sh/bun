@@ -2311,9 +2311,18 @@ impl<'a> Transpiler<'a> {
             None => match dot_env::instance() {
                 Some(l) => l,
                 None => {
-                    // TODO(port): Box::leak for &'static — Zig used allocator.create; classified STATIC.
-                    let map = Box::leak(Box::new(dot_env::Map::init()));
-                    let loader = Box::leak(Box::new(dot_env::Loader::init(map)));
+                    // Spec transpiler.zig:196-197 — `allocator.create(DotEnv.Map)`
+                    // / `allocator.create(DotEnv.Loader)`. Allocate in the
+                    // per-process arena (PORTING.md §Forbidden bars `Box::leak`
+                    // even for singletons); the arena outlives the process so
+                    // erasing to `'static` for `dot_env::set_instance` is sound.
+                    // SAFETY: ARENA — `allocator` is the top-level transpiler
+                    // arena (process lifetime); installed into the global
+                    // `dot_env::INSTANCE` below and never freed.
+                    let map: &'static mut dot_env::Map =
+                        unsafe { &mut *(allocator.alloc(dot_env::Map::init()) as *mut _) };
+                    let loader: &'static mut dot_env::Loader =
+                        unsafe { &mut *(allocator.alloc(dot_env::Loader::init(map)) as *mut _) };
                     loader
                 }
             },

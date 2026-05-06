@@ -420,7 +420,7 @@ impl<'a> S3BlobStatTask<'a> {
             s3::S3StatResult::Failure(err) => {
                 this.promise.reject(
                     this.global,
-                    err.to_js_with_async_stack(this.global, this.store.data.as_s3().path(), this.promise.get()),
+                    err.to_js_with_async_stack(this.global, this.store.data.as_s3().path(), unsafe { this.promise.get() }),
                 )?;
             }
         }
@@ -439,7 +439,7 @@ impl<'a> S3BlobStatTask<'a> {
                 // TODO(port): Zig binds same payload name for .not_found and .failure arms; verify NotFound carries an error payload
                 this.promise.reject(
                     this.global,
-                    err.to_js_with_async_stack(this.global, this.store.data.as_s3().path(), this.promise.get()),
+                    err.to_js_with_async_stack(this.global, this.store.data.as_s3().path(), unsafe { this.promise.get() }),
                 )?;
             }
         }
@@ -467,7 +467,7 @@ impl<'a> S3BlobStatTask<'a> {
             s3::S3StatResult::NotFound(err) | s3::S3StatResult::Failure(err) => {
                 this.promise.reject(
                     global,
-                    err.to_js_with_async_stack(global, this.store.data.as_s3().path(), this.promise.get()),
+                    err.to_js_with_async_stack(global, this.store.data.as_s3().path(), unsafe { this.promise.get() }),
                 )?;
             }
         }

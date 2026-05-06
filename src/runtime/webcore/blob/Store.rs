@@ -615,7 +615,8 @@ impl S3 {
                             err.to_js_with_async_stack(
                                 global_object,
                                 self_.store.get_path(),
-                                self_.promise.get(),
+                                // SAFETY: sole `&mut JSPromise` borrow; consumed immediately.
+                                unsafe { self_.promise.get() },
                             ),
                         )?;
                     }
@@ -710,7 +711,8 @@ impl S3 {
                             err.to_js_with_async_stack(
                                 global_object,
                                 self_.store.get_path(),
-                                self_.promise.get(),
+                                // SAFETY: sole `&mut JSPromise` borrow; consumed immediately.
+                                unsafe { self_.promise.get() },
                             ),
                         )?;
                     }

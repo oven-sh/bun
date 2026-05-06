@@ -696,6 +696,11 @@ impl Tag {
     pub const fchdir: Tag = Tag(102);
     pub const fchownat: Tag = Tag(103);
     pub const ioctl: Tag = Tag(104);
+    // PORT NOTE: sys.zig folds `inotify_init1`/`inotify_add_watch` under the
+    // generic `.watch` tag; `INotifyWatcher.rs` was ported against the
+    // draft-b1 enum that had a distinct `.inotify` variant. Alias to `.watch`
+    // so the JS-facing `err.syscall == "watch"` string stays node-compatible.
+    pub const inotify: Tag = Tag::watch;
 
     /// `@tagName(self)` — must match sys.zig spelling exactly (JS-facing
     /// `err.syscall` string; node-compat code matches on it).

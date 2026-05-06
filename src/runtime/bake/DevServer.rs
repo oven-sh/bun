@@ -5210,7 +5210,8 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
                         .route_bundle_indices
                         .put(self.route_bundle_index, ())
                         .expect("oom");
-                    self.p = Some(cb.promise.strong.get());
+                    // SAFETY: sole `&mut JSPromise` borrow; stored as raw pointer.
+                    self.p = Some(unsafe { cb.promise.strong.get() });
                     return Ok(());
                 }
                 let strong_promise = self.ensure_promise();
@@ -5230,7 +5231,8 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
                         .route_bundle_indices
                         .put(self.route_bundle_index, ())
                         .expect("oom");
-                    self.p = Some(self.dev.next_bundle.promise.strong.get());
+                    // SAFETY: sole `&mut JSPromise` borrow; stored as raw pointer.
+                    self.p = Some(unsafe { self.dev.next_bundle.promise.strong.get() });
                     return Ok(());
                 }
                 let strong_promise = self.ensure_promise();

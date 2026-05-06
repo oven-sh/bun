@@ -641,7 +641,8 @@ impl ErrorDeferred {
             ..Default::default()
         };
 
-        let instance = system_error.to_error_instance_with_async_stack(global_this, self.promise.get());
+        // SAFETY: sole `&mut JSPromise` borrow; consumed immediately as `&JSPromise`.
+        let instance = system_error.to_error_instance_with_async_stack(global_this, unsafe { self.promise.get() });
         instance.put(global_this, b"name", bstr::String::static_(b"DNSException").to_js(global_this)?);
 
         // `self` (and thus self.promise / self.hostname) drops at scope exit — matches

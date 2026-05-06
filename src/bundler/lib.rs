@@ -178,18 +178,16 @@ pub enum AdditionalFile {
 /// as `pub const Index = bun.ast.Index`.
 pub use bun_options_types::BundleEnums::{Index, IndexInt};
 
-// Re-export the real `options` module (un-gated B-2). Downstream crates that
-// were compiled against the B-1 stub aliases (Loader/Target re-exported from
-// `bun_options_types::BundleEnums`) keep those names; the file-backed
-// `options_impl` module supplies the rest. The two `Loader`/`Target` enums are
-// structurally identical — Phase B-3 collapses them once all callers move.
+// Re-export the real `options` module (un-gated B-2). `Loader`/`Target` were
+// MOVE_DOWN'd to `bun_options_types::BundleEnums` in B-3 — `options_impl`
+// re-exports the canonical defs, so there is exactly ONE nominal type for each
+// across bundler/resolver/js_parser. Bundler-only behaviour hangs off
+// `TargetExt`/`LoaderExt` extension traits in `options_impl`.
 pub mod options {
     pub use super::options_impl::*;
-    // PORT NOTE: shadow the file-backed Loader/Target with the lower-tier
-    // `bun_options_types::BundleEnums` defs so downstream crates that already
-    // depend on those exact types (via bun_options_types) keep compiling. The
-    // file-backed defs are still reachable as `crate::options_impl::Loader` for
-    // intra-crate use.
+    // Explicit re-export (redundant with the glob above post-B-3) kept so the
+    // public-API surface of `bun_bundler::options::{Loader,Target}` is stable
+    // even if `options_impl`'s internal re-exports churn.
     pub use bun_options_types::BundleEnums::{Loader, LoaderHashTable, Target};
     pub use bun_options_types::schema::api::DotEnvBehavior as EnvBehavior;
     pub use super::OutputFile;

@@ -63,6 +63,11 @@ impl From<ParseError> for bun_core::Error {
 pub mod ast {
     use super::*;
 
+    // PORT NOTE: Zig AST nodes hold `[]T` slices (ptr+len, copyable). The Rust
+    // port uses `&'arena [T]` so the whole tree is `Clone`/`Copy`-able like
+    // Zig — required by `Atom::merge` and `SmolList::init_with_slice`.
+
+    #[derive(Clone)]
     pub struct Script<'arena> {
         pub stmts: &'arena [Stmt<'arena>],
     }
@@ -632,6 +637,7 @@ pub mod ast {
         }
     }
 
+    #[derive(Clone)]
     pub enum Atom<'arena> {
         Simple(SimpleAtom<'arena>),
         Compound(CompoundAtom<'arena>),
@@ -660,9 +666,10 @@ pub mod ast {
             use SimpleAtom as SA;
             match (&self, &right) {
                 (Atom::Simple(l), Atom::Simple(r)) => {
-                    let atoms = bump.alloc_slice_fill_default::<SimpleAtom>(2);
-                    // TODO(port): bumpalo doesn't have alloc_slice_fill_default for non-Default;
-                    // use alloc_slice_fill_iter or manual writes.
+                    // PORT NOTE: Zig `try allocator.alloc(SimpleAtom, 2)` —
+                    // bumpalo has no fill_default for non-Default types, so
+                    // seed with `QuotedEmpty` then overwrite.
+                    let atoms = bump.alloc_slice_fill_with(2, |_| SimpleAtom::QuotedEmpty);
                     atoms[0] = l.clone();
                     atoms[1] = r.clone();
                     let brace = matches!(l, SA::BraceBegin | SA::BraceEnd)
@@ -806,6 +813,7 @@ pub mod ast {
         }
     }
 
+    #[derive(Clone)]
     pub struct CompoundAtom<'arena> {
         pub atoms: &'arena [SimpleAtom<'arena>],
         pub brace_expansion_hint: bool,
@@ -4203,12 +4211,12 @@ impl<T, const INLINED_MAX: usize> SmolListInlined<T, INLINED_MAX> {
     }
 
     pub fn promote(&mut self, n: usize, new: T) -> BabyList<T> {
-        let mut list = BabyList::<T>::with_capacity(n);
+        let mut list = bun_core::handle_oom(BabyList::<T>::init_capacity(n));
         // SAFETY: moving INLINED_MAX initialized elements out
         for i in 0..INLINED_MAX {
             // SAFETY: all INLINED_MAX slots are initialized when promote is called (len == INLINED_MAX)
             let v = unsafe { self.items[i].assume_init_read() };
-            list.push(v);
+            list.append_assume_capacity(v);
         }
         self.len = 0;
         list.push(new);
@@ -4311,9 +4319,8 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
             }
             return this;
         }
-        let mut heap = BabyList::<T>::with_capacity(vals.len());
-        heap.extend_from_slice(vals);
-        // PERF(port): was assume_capacity
+        let mut heap = bun_core::handle_oom(BabyList::<T>::init_capacity(vals.len()));
+        heap.append_slice_assume_capacity(vals);
         SmolList::Heap(heap)
     }
 
@@ -4323,7 +4330,7 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
     pub fn len(&self) -> usize {
         match self {
             SmolList::Inlined(i) => i.len as usize,
-            SmolList::Heap(h) => h.len() as usize,
+            SmolList::Heap(h) => h.len as usize,
         }
     }
 
@@ -4380,16 +4387,16 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
                 // new_len > starting_idx; mirroring intended semantics (shift-down) here.
             }
             SmolList::Heap(heap) => {
-                let new_len = heap.len() as usize - starting_idx;
-                // SAFETY: overlapping copy within heap buffer
+                let new_len = heap.len as usize - starting_idx;
+                // SAFETY: overlapping copy within heap buffer; first `heap.len` elements are init.
                 unsafe {
                     core::ptr::copy(
-                        heap.as_ptr().add(starting_idx),
-                        heap.as_mut_ptr(),
+                        heap.ptr.as_ptr().add(starting_idx),
+                        heap.ptr.as_ptr(),
                         new_len,
                     );
                 }
-                heap.set_len(u32::try_from(new_len).unwrap());
+                heap.len = u32::try_from(new_len).unwrap();
             }
         }
     }
@@ -4404,7 +4411,7 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
                 i.slice_mut()
             }
             SmolList::Heap(h) => {
-                if h.len() == 0 {
+                if h.len == 0 {
                     return &mut [];
                 }
                 h.slice_mut()
@@ -4422,7 +4429,7 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
                 i.slice()
             }
             SmolList::Heap(h) => {
-                if h.len() == 0 {
+                if h.len == 0 {
                     return &[];
                 }
                 h.slice()
@@ -4470,7 +4477,7 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
                 inlined.len += 1;
             }
             SmolList::Heap(heap) => {
-                heap.push(new);
+                bun_core::handle_oom(heap.append(new));
             }
         }
     }

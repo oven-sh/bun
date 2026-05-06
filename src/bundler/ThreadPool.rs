@@ -185,8 +185,9 @@ mod io_thread_pool {
             return false;
         }
         // SAFETY: we hold MUTEX, REF_COUNT == 0, and we previously CAS'd from 1 ⇒ initialized.
+        // `&raw mut` avoids the edition-2024 `static_mut_refs` hard error.
         unsafe {
-            THREAD_POOL.assume_init_drop();
+            (*(&raw mut THREAD_POOL)).assume_init_drop();
         }
         // PORT NOTE: Zig source falls off the end of a `bool`-returning fn here
         // (`thread_pool = undefined;` is the last statement). Assuming `true`.

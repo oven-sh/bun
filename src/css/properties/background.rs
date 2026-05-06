@@ -260,7 +260,7 @@ impl Background {
 }
 
 /// A value for the [background-size](https://www.w3.org/TR/css-backgrounds-3/#background-size) property.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub enum BackgroundSize {
     /// An explicit background size.
     Explicit(ExplicitBackgroundSize),
@@ -270,7 +270,7 @@ pub enum BackgroundSize {
     Contain,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct ExplicitBackgroundSize {
     /// The width of the background.
     pub width: LengthPercentageOrAuto,
@@ -278,40 +278,35 @@ pub struct ExplicitBackgroundSize {
     pub height: LengthPercentageOrAuto,
 }
 
-#[cfg(any())] // blocked_on: LengthPercentageOrAuto::{to_css,is_auto}
 impl ExplicitBackgroundSize {
     pub fn eql(&self, rhs: &Self) -> bool {
-        css::implement_eql(self, rhs)
+        self == rhs
     }
 
     #[inline]
-    pub fn deep_clone(&self, allocator: &Bump) -> Self {
-        css::implement_deep_clone(self, allocator)
+    pub fn deep_clone(&self, _allocator: &Bump) -> Self {
+        self.clone()
     }
 }
 
-#[cfg(any())] // blocked_on: LengthPercentageOrAuto::{parse,to_css}
 impl BackgroundSize {
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
-        if let Some(width) = input.try_parse(LengthPercentageOrAuto::parse).as_value() {
+        if let Ok(width) = input.try_parse(LengthPercentageOrAuto::parse) {
             let height = input
                 .try_parse(LengthPercentageOrAuto::parse)
                 .unwrap_or(LengthPercentageOrAuto::Auto);
-            return css::Result::Ok(BackgroundSize::Explicit(ExplicitBackgroundSize { width, height }));
+            return Ok(BackgroundSize::Explicit(ExplicitBackgroundSize { width, height }));
         }
 
         let location = input.current_source_location();
-        let ident = match input.expect_ident() {
-            css::Result::Ok(v) => v,
-            css::Result::Err(e) => return css::Result::Err(e),
-        };
+        let ident = unsafe { css::css_parser::src_str(input.expect_ident()?) };
 
         if strings::eql_case_insensitive_ascii_check_length(ident, b"cover") {
-            css::Result::Ok(BackgroundSize::Cover)
+            Ok(BackgroundSize::Cover)
         } else if strings::eql_case_insensitive_ascii_check_length(ident, b"contain") {
-            css::Result::Ok(BackgroundSize::Contain)
+            Ok(BackgroundSize::Contain)
         } else {
-            css::Result::Err(location.new_basic_unexpected_token_error(css::Token::Ident(ident)))
+            Err(location.new_unexpected_token_error(css::Token::Ident(ident)))
         }
     }
 
@@ -331,7 +326,7 @@ impl BackgroundSize {
     }
 
     pub fn eql(&self, rhs: &Self) -> bool {
-        css::implement_eql(self, rhs)
+        self == rhs
     }
 
     pub fn default() -> Self {
@@ -342,13 +337,13 @@ impl BackgroundSize {
     }
 
     #[inline]
-    pub fn deep_clone(&self, allocator: &Bump) -> Self {
-        css::implement_deep_clone(self, allocator)
+    pub fn deep_clone(&self, _allocator: &Bump) -> Self {
+        self.clone()
     }
 }
 
 /// A value for the [background-position](https://drafts.csswg.org/css-backgrounds/#background-position) shorthand property.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct BackgroundPosition {
     /// The x-position.
     pub x: HorizontalPosition,
@@ -356,7 +351,6 @@ pub struct BackgroundPosition {
     pub y: VerticalPosition,
 }
 
-#[cfg(any())] // blocked_on: Position::{parse,to_css}
 impl BackgroundPosition {
     // TODO(port): PropertyFieldMap — Zig comptime struct mapping fields → PropertyIdTag.
     // Port as associated consts or a trait impl in Phase B.
@@ -364,11 +358,8 @@ impl BackgroundPosition {
     pub const PROPERTY_FIELD_MAP_Y: PropertyIdTag = PropertyIdTag::BackgroundPositionY;
 
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
-        let pos = match Position::parse(input) {
-            css::Result::Ok(v) => v,
-            css::Result::Err(e) => return css::Result::Err(e),
-        };
-        css::Result::Ok(BackgroundPosition::from_position(pos))
+        let pos = Position::parse(input)?;
+        Ok(BackgroundPosition::from_position(pos))
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -377,7 +368,7 @@ impl BackgroundPosition {
     }
 
     pub fn eql(&self, rhs: &Self) -> bool {
-        css::implement_eql(self, rhs)
+        self == rhs
     }
 
     pub fn default() -> Self {
@@ -393,13 +384,13 @@ impl BackgroundPosition {
     }
 
     #[inline]
-    pub fn deep_clone(&self, allocator: &Bump) -> Self {
-        css::implement_deep_clone(self, allocator)
+    pub fn deep_clone(&self, _allocator: &Bump) -> Self {
+        self.clone()
     }
 }
 
 /// A value for the [background-repeat](https://www.w3.org/TR/css-backgrounds-3/#background-repeat) property.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct BackgroundRepeat {
     /// A repeat style for the x direction.
     pub x: BackgroundRepeatKeyword,
@@ -407,7 +398,6 @@ pub struct BackgroundRepeat {
     pub y: BackgroundRepeatKeyword,
 }
 
-#[cfg(any())] // blocked_on: BackgroundRepeatKeyword parse/to_css derive
 impl BackgroundRepeat {
     pub fn default() -> Self {
         BackgroundRepeat {
@@ -418,18 +408,15 @@ impl BackgroundRepeat {
 
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
         let state = input.state();
-        let ident = match input.expect_ident() {
-            css::Result::Ok(v) => v,
-            css::Result::Err(e) => return css::Result::Err(e),
-        };
+        let ident = unsafe { css::css_parser::src_str(input.expect_ident()?) };
 
         if strings::eql_case_insensitive_ascii_check_length(ident, b"repeat-x") {
-            return css::Result::Ok(BackgroundRepeat {
+            return Ok(BackgroundRepeat {
                 x: BackgroundRepeatKeyword::Repeat,
                 y: BackgroundRepeatKeyword::NoRepeat,
             });
         } else if strings::eql_case_insensitive_ascii_check_length(ident, b"repeat-y") {
-            return css::Result::Ok(BackgroundRepeat {
+            return Ok(BackgroundRepeat {
                 x: BackgroundRepeatKeyword::NoRepeat,
                 y: BackgroundRepeatKeyword::Repeat,
             });
@@ -437,14 +424,10 @@ impl BackgroundRepeat {
 
         input.reset(&state);
 
-        let x = match BackgroundRepeatKeyword::parse(input) {
-            css::Result::Ok(v) => v,
-            css::Result::Err(e) => return css::Result::Err(e),
-        };
-
+        let x = BackgroundRepeatKeyword::parse(input)?;
         let y = input.try_parse(BackgroundRepeatKeyword::parse).unwrap_or(x);
 
-        css::Result::Ok(BackgroundRepeat { x, y })
+        Ok(BackgroundRepeat { x, y })
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -465,11 +448,11 @@ impl BackgroundRepeat {
     }
 
     pub fn eql(&self, rhs: &Self) -> bool {
-        css::implement_eql(self, rhs)
+        self == rhs
     }
 
-    pub fn deep_clone(&self, allocator: &Bump) -> Self {
-        css::implement_deep_clone(self, allocator)
+    pub fn deep_clone(&self, _allocator: &Bump) -> Self {
+        *self
     }
 }
 
@@ -541,7 +524,6 @@ pub enum BackgroundClip {
         Text,
 }
 
-#[cfg(any())] // blocked_on: BackgroundOrigin <-> BackgroundClip eq comparison
 impl BackgroundClip {
     pub fn default() -> BackgroundClip {
         BackgroundClip::BorderBox

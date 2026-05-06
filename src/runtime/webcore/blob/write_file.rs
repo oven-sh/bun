@@ -975,7 +975,8 @@ impl<'a> WriteFileWaitFromLockedValueTask<'a> {
     ) -> Result<(), JsTerminated> {
         // SAFETY: this is a Box-allocated task (see Blob.zig:1581).
         let this_ref = unsafe { &mut *this };
-        let mut promise = this_ref.promise.get();
+        // SAFETY: sole `&mut JSPromise` borrow in this scope.
+        let mut promise = unsafe { this_ref.promise.get() };
         let global_this = this_ref.global_this;
         let mut file_blob = this_ref.file_blob.clone();
         // TODO(port): Zig copied `var file_blob = this.file_blob;` by value (Blob is a value type

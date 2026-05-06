@@ -1,5 +1,3 @@
-use core::ptr::NonNull;
-
 use bun_collections::StringHashMap;
 use bun_js_parser as js_ast;
 use bun_js_parser::ast::expr::IntoExprData;
@@ -61,7 +59,6 @@ impl Globals {
 }
 
 // `fs::Path::init` is not `const fn`; lazily build the path.
-#[allow(dead_code)] // used only in the cfg(any())-gated json-parse arm below
 fn defines_path() -> fs::Path {
     let mut p = fs::Path::init(b"defines.json");
     p.namespace = b"internal";
@@ -303,6 +300,7 @@ pub trait DefineDataExt: Sized {
         value_is_undefined: bool,
         method_call_must_be_replaced_with_undefined_: bool,
         log: &mut logger::Log,
+        bump: &bun_alloc::Arena,
     ) -> Result<DefineData, bun_core::Error>;
 
     fn from_mergeable_input_entry(
@@ -312,12 +310,14 @@ pub trait DefineDataExt: Sized {
         value_is_undefined: bool,
         method_call_must_be_replaced_with_undefined_: bool,
         log: &mut logger::Log,
+        bump: &bun_alloc::Arena,
     ) -> Result<(), bun_core::Error>;
 
     fn from_input(
         defines: &RawDefines,
         drop: &[&[u8]],
         log: &mut logger::Log,
+        bump: &bun_alloc::Arena,
     ) -> Result<UserDefines, bun_core::Error>;
 }
 
@@ -329,6 +329,7 @@ impl DefineDataExt for DefineData {
         value_is_undefined: bool,
         method_call_must_be_replaced_with_undefined_: bool,
         log: &mut logger::Log,
+        bump: &bun_alloc::Arena,
     ) -> Result<(), bun_core::Error> {
         // PERF(port): was putAssumeCapacity — profile in Phase B
         user_defines.insert(
@@ -339,6 +340,7 @@ impl DefineDataExt for DefineData {
                 value_is_undefined,
                 method_call_must_be_replaced_with_undefined_,
                 log,
+                bump,
             )?,
         );
         Ok(())
@@ -350,6 +352,7 @@ impl DefineDataExt for DefineData {
         value_is_undefined: bool,
         method_call_must_be_replaced_with_undefined_: bool,
         log: &mut logger::Log,
+        bump: &bun_alloc::Arena,
     ) -> Result<DefineData, bun_core::Error> {
         // TODO(port): narrow error set
         let mut key_splitter = key.split(|b| *b == b'.');
@@ -405,12 +408,15 @@ impl DefineDataExt for DefineData {
 
             return Ok(DefineData {
                 value,
-                original_name_ptr: if !value_str.is_empty() {
-                    NonNull::new(value_str.as_ptr() as *mut u8)
+                // PORT NOTE: upstream `DefineData` now owns `original_name:
+                // Option<Box<[u8]>>` (js_parser/lib.rs:1369) instead of the
+                // borrowed `ptr`/`len` pair (Zig's 48→40-byte packing). Dupe
+                // the value bytes — these are tiny startup-time copies.
+                original_name: if !value_str.is_empty() {
+                    Some(Box::<[u8]>::from(value_str))
                 } else {
                     None
                 },
-                original_name_len: value_str.len() as u32, // @truncate
                 flags: Flags::new(
                     /* valueless: */ value_is_undefined,
                     /* can_be_removed_if_unused: */ true,
@@ -456,19 +462,20 @@ impl DefineDataExt for DefineData {
         defines: &RawDefines,
         drop: &[&[u8]],
         log: &mut logger::Log,
+        bump: &bun_alloc::Arena,
     ) -> Result<UserDefines, bun_core::Error> {
         let mut user_defines = UserDefines::default();
         user_defines.reserve((defines.len() + drop.len()) as u32 as usize); // @truncate
         for (key, value) in defines.keys().iter().zip(defines.values().iter()) {
             <Self as DefineDataExt>::from_mergeable_input_entry(
-                &mut user_defines, key, value, false, false, log,
+                &mut user_defines, key, value, false, false, log, bump,
             )?;
         }
 
         for drop_item in drop {
             if !drop_item.is_empty() {
                 <Self as DefineDataExt>::from_mergeable_input_entry(
-                    &mut user_defines, drop_item, b"", true, true, log,
+                    &mut user_defines, drop_item, b"", true, true, log, bump,
                 )?;
             }
         }

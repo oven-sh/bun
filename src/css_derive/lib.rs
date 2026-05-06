@@ -7,20 +7,19 @@
 //! reflection, so the derive emits the equivalent field-wise / variant-wise
 //! recursion as an `impl bun_css::generics::DeepClone<'bump> for T`.
 //!
-//! The generated body uses **method-syntax** dispatch
-//! (`field.deep_clone(bump)`) with the trait brought into scope, so a leaf
-//! type may satisfy the call with either a *signature-matching* inherent
-//! `pub fn deep_clone(&self, &Arena) -> Self` *or* a `DeepClone` trait impl
-//! (the blanket impls in `bun_css::generics` cover Option, Vec, Box, slices,
-//! primitives, …).
+//! The generated body uses **UFCS** dispatch
+//! (`::bun_css::generics::DeepClone::deep_clone(&field, bump)`), so the call
+//! resolves *only* through the trait — never an inherent. This sidesteps Rust's
+//! method-probe rule that selects an inherent by *name only* (and would
+//! otherwise let an unrelated `BabyList::deep_clone(&self) -> Result<_,_>`
+//! shadow the blanket `impl DeepClone for BabyList<T>` and fail E0061).
 //!
-//! **CAVEAT:** Rust's method probe selects an inherent by *name only* and does
-//! NOT fall through to the trait on arity/signature mismatch. An inherent with
-//! a *different* signature (e.g. `BabyList::deep_clone(&self) -> Result<_,_>`)
-//! shadows the blanket `impl DeepClone for BabyList<T>` and fails E0061. Such
-//! conflicting inherents must be renamed (e.g. `deep_clone_fallible`) — UFCS
-//! in the derive is not an option because many CSS leaves carry inherent-only
-//! `deep_clone`/`hash` and would lose dispatch.
+//! Consequence: every leaf type reached by a derive **must** carry a real
+//! `DeepClone` (or `CssEql`/`CssHash`/`IsCompatible`) trait impl — an
+//! inherent `pub fn deep_clone` alone is no longer sufficient. The blanket
+//! impls in `bun_css::generics` cover Option, Vec, Box, slices, primitives,
+//! `SmallList`, `BabyList`, …; everything else derives or hand-implements the
+//! trait.
 //!
 //! Generics handling:
 //!   * If the deriving type already carries a lifetime parameter, the **first**
@@ -55,13 +54,12 @@ pub fn derive_deep_clone(input: TokenStream) -> TokenStream {
 // Zig's `implementEql` / `implementHash` use `@typeInfo(T)` to walk struct
 // fields or `union(enum)` variants and recurse via `eql(field.type, …)` /
 // `hash(field.type, …)`, which in turn dispatch to `T.eql` / `T.hash` if the
-// type `@hasDecl`s one. The derives below preserve that two-level dispatch by
-// emitting **method-syntax** calls (`field.eql(other)`, `field.hash(hasher)`)
-// with the trait brought into scope inside the body — so a field type may
-// satisfy the recursion either with a *signature-matching* inherent
-// `pub fn eql/hash` *or* a `CssEql`/`CssHash` impl. See the CAVEAT in the
-// crate-level doc: an inherent with a *different* signature shadows the trait
-// and is a hard error — rename such inherents rather than expecting fallthrough.
+// type `@hasDecl`s one. The derives below emit **UFCS** calls
+// (`::bun_css::generics::CssEql::eql(&field, other)`,
+//  `::bun_css::generics::CssHash::hash(&field, hasher)`) so dispatch is
+// *always* through the trait — an inherent `eql`/`hash` on a field type is
+// ignored and never shadows. Every field type reached by the derive must
+// therefore carry a real `CssEql`/`CssHash` impl (blanket or derived).
 //
 // Unions: Zig prefixes the hash with `bun.writeAnyToHasher(@intFromEnum(this))`.
 // The derive feeds the variant index as a `u32` (CSS hashing is in-process
@@ -139,7 +137,7 @@ fn expand_css_eql(input: DeriveInput) -> syn::Result<TokenStream2> {
                 if idx.is_empty() {
                     quote! { true }
                 } else {
-                    quote! { #( self.#idx.eql(&__other.#idx) )&&* }
+                    quote! { #( ::bun_css::generics::CssEql::eql(&self.#idx, &__other.#idx) )&&* }
                 }
             }
             Fields::Named(fs) => {
@@ -152,7 +150,7 @@ fn expand_css_eql(input: DeriveInput) -> syn::Result<TokenStream2> {
                 if names.is_empty() {
                     quote! { true }
                 } else {
-                    quote! { #( self.#names.eql(&__other.#names) )&&* }
+                    quote! { #( ::bun_css::generics::CssEql::eql(&self.#names, &__other.#names) )&&* }
                 }
             }
         },
@@ -179,7 +177,7 @@ fn expand_css_eql(input: DeriveInput) -> syn::Result<TokenStream2> {
                         } else {
                             let lk = kept.iter().map(|&i| &la[i]);
                             let rk = kept.iter().map(|&i| &ra[i]);
-                            quote! { #( #lk.eql(#rk) )&&* }
+                            quote! { #( ::bun_css::generics::CssEql::eql(#lk, #rk) )&&* }
                         };
                         quote! {
                             (Self::#vname( #(#la),* ), Self::#vname( #(#ra),* )) => #cmp,
@@ -204,7 +202,7 @@ fn expand_css_eql(input: DeriveInput) -> syn::Result<TokenStream2> {
                         } else {
                             let lk = kept.iter().map(|&i| &la[i]);
                             let rk = kept.iter().map(|&i| &ra[i]);
-                            quote! { #( #lk.eql(#rk) )&&* }
+                            quote! { #( ::bun_css::generics::CssEql::eql(#lk, #rk) )&&* }
                         };
                         quote! {
                             (Self::#vname { #(#fnames: #la),* },
@@ -237,8 +235,6 @@ fn expand_css_eql(input: DeriveInput) -> syn::Result<TokenStream2> {
             #[inline]
             #[allow(unused_variables)]
             fn eql(&self, __other: &Self) -> bool {
-                #[allow(unused_imports)]
-                use ::bun_css::generics::CssEql as _;
                 #body
             }
         }
@@ -260,7 +256,7 @@ fn expand_css_hash(input: DeriveInput) -> syn::Result<TokenStream2> {
                     .enumerate()
                     .filter(|(_, f)| !has_css_skip(&f.attrs))
                     .map(|(i, _)| syn::Index::from(i));
-                quote! { #( self.#idx.hash(__hasher); )* }
+                quote! { #( ::bun_css::generics::CssHash::hash(&self.#idx, __hasher); )* }
             }
             Fields::Named(fs) => {
                 let names: Vec<_> = fs
@@ -269,7 +265,7 @@ fn expand_css_hash(input: DeriveInput) -> syn::Result<TokenStream2> {
                     .filter(|f| !has_css_skip(&f.attrs))
                     .map(|f| f.ident.clone().unwrap())
                     .collect();
-                quote! { #( self.#names.hash(__hasher); )* }
+                quote! { #( ::bun_css::generics::CssHash::hash(&self.#names, __hasher); )* }
             }
         },
         Data::Enum(e) => {
@@ -296,7 +292,7 @@ fn expand_css_hash(input: DeriveInput) -> syn::Result<TokenStream2> {
                         quote! {
                             Self::#vname( #(#binds),* ) => {
                                 #tag
-                                #( #kept.hash(__hasher); )*
+                                #( ::bun_css::generics::CssHash::hash(#kept, __hasher); )*
                             }
                         }
                     }
@@ -312,7 +308,7 @@ fn expand_css_hash(input: DeriveInput) -> syn::Result<TokenStream2> {
                         quote! {
                             Self::#vname { #(#fnames),* } => {
                                 #tag
-                                #( #kept.hash(__hasher); )*
+                                #( ::bun_css::generics::CssHash::hash(#kept, __hasher); )*
                             }
                         }
                     }
@@ -334,8 +330,6 @@ fn expand_css_hash(input: DeriveInput) -> syn::Result<TokenStream2> {
             #[inline]
             #[allow(unused_variables)]
             fn hash(&self, __hasher: &mut ::bun_css::generics::Wyhash) {
-                #[allow(unused_imports)]
-                use ::bun_css::generics::CssHash as _;
                 let _ = __hasher;
                 #body
             }
@@ -361,9 +355,10 @@ fn expand_css_hash(input: DeriveInput) -> syn::Result<TokenStream2> {
 //     to the payload's `.is_compatible(b)` (the hand-written pattern in e.g.
 //     `FontWeight`, `BorderSideWidth`, `FontFamily`).
 //
-// As with `CssEql`/`CssHash`, the body uses **method-syntax** dispatch so a
-// payload type may satisfy the recursion with either an inherent
-// `pub fn is_compatible(&self, Browsers) -> bool` *or* an `IsCompatible` impl.
+// As with `CssEql`/`CssHash`, the body uses **UFCS** dispatch
+// (`::bun_css::generics::IsCompatible::is_compatible(&field, b)`) so the call
+// resolves only through the trait — every payload type must carry an
+// `IsCompatible` impl (blanket or derived); inherent methods are ignored.
 
 #[proc_macro_derive(IsCompatible, attributes(css))]
 pub fn derive_is_compatible(input: TokenStream) -> TokenStream {
@@ -392,7 +387,7 @@ fn expand_is_compatible(input: DeriveInput) -> syn::Result<TokenStream2> {
                 if idx.is_empty() {
                     quote! { true }
                 } else {
-                    quote! { #( self.#idx.is_compatible(__browsers) )&&* }
+                    quote! { #( ::bun_css::generics::IsCompatible::is_compatible(&self.#idx, __browsers) )&&* }
                 }
             }
             Fields::Named(fs) => {
@@ -405,7 +400,7 @@ fn expand_is_compatible(input: DeriveInput) -> syn::Result<TokenStream2> {
                 if names.is_empty() {
                     quote! { true }
                 } else {
-                    quote! { #( self.#names.is_compatible(__browsers) )&&* }
+                    quote! { #( ::bun_css::generics::IsCompatible::is_compatible(&self.#names, __browsers) )&&* }
                 }
             }
         },
@@ -433,7 +428,7 @@ fn expand_is_compatible(input: DeriveInput) -> syn::Result<TokenStream2> {
                         let body = if kept.is_empty() {
                             quote! { true }
                         } else {
-                            quote! { #( #kept.is_compatible(__browsers) )&&* }
+                            quote! { #( ::bun_css::generics::IsCompatible::is_compatible(#kept, __browsers) )&&* }
                         };
                         quote! { Self::#vname( #(#binds),* ) => #body, }
                     }
@@ -449,7 +444,7 @@ fn expand_is_compatible(input: DeriveInput) -> syn::Result<TokenStream2> {
                         let body = if kept.is_empty() {
                             quote! { true }
                         } else {
-                            quote! { #( #kept.is_compatible(__browsers) )&&* }
+                            quote! { #( ::bun_css::generics::IsCompatible::is_compatible(#kept, __browsers) )&&* }
                         };
                         quote! { Self::#vname { #(#fnames),* } => #body, }
                     }
@@ -475,8 +470,6 @@ fn expand_is_compatible(input: DeriveInput) -> syn::Result<TokenStream2> {
             #[inline]
             #[allow(unused_variables)]
             fn is_compatible(&self, __browsers: ::bun_css::targets::Browsers) -> bool {
-                #[allow(unused_imports)]
-                use ::bun_css::generics::IsCompatible as _;
                 #body
             }
         }

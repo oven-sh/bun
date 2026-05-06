@@ -493,14 +493,9 @@ pub static MODULE_TYPE_LIST: phf::Map<&'static [u8], ModuleType> = ModuleType::L
 // targets all share one nominal type (kills the `to_bundle_enums_target` shim).
 pub use bun_options_types::BundleEnums::Target;
 
-// PORT NOTE: hoisted from `impl Target` — Rust forbids `static` in inherent impls.
-pub static TARGET_MAP: phf::Map<&'static [u8], Target> = phf::phf_map! {
-    b"browser" => Target::Browser,
-    b"bun" => Target::Bun,
-    b"bun_macro" => Target::BunMacro,
-    b"macro" => Target::BunMacro,
-    b"node" => Target::Node,
-};
+// Forwarded to the canonical assoc-const so there is exactly one phf body.
+// Kept as a module-level name for callers that pre-date `Target::MAP`.
+pub static TARGET_MAP: phf::Map<&'static [u8], Target> = Target::MAP;
 
 pub const TARGET_MAIN_FIELD_NAMES: [&[u8]; 4] = [
     b"browser",

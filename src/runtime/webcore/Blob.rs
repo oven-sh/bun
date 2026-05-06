@@ -1385,7 +1385,8 @@ fn write_file_with_empty_source_to_destination(
                         S3::S3UploadResult::Failure(err) => {
                             this.promise.reject(
                                 global,
-                                err.to_js_with_async_stack(global, this.store.get_path(), this.promise.get()),
+                                // SAFETY: sole `&mut JSPromise` borrow; consumed immediately.
+                                err.to_js_with_async_stack(global, this.store.get_path(), unsafe { this.promise.get() }),
                             )?;
                         }
                     }
@@ -1611,7 +1612,8 @@ pub fn write_file_with_source_destination(
                                     this.promise.resolve(global, JSValue::js_number(this.store.data.as_bytes().len))?;
                                 }
                                 S3::S3UploadResult::Failure(err) => {
-                                    this.promise.reject(global, err.to_js_with_async_stack(global, this.store.get_path(), this.promise.get()))?;
+                                    // SAFETY: sole `&mut JSPromise` borrow; consumed immediately.
+                                    this.promise.reject(global, err.to_js_with_async_stack(global, this.store.get_path(), unsafe { this.promise.get() }))?;
                                 }
                             }
                             Ok(())
@@ -2626,7 +2628,8 @@ impl S3BlobDownloadTask {
                 if this.blob.size == MAX_SIZE {
                     this.blob.size = bytes.len() as SizeType;
                 }
-                jsc::AnyPromise::Normal(this.promise.get()).wrap(
+                // SAFETY: sole `&mut JSPromise` borrow; coerced to `*mut` immediately.
+                jsc::AnyPromise::Normal(unsafe { this.promise.get() }).wrap(
                     global,
                     S3BlobDownloadTask::call_handler,
                     (this, bytes),
@@ -2638,7 +2641,8 @@ impl S3BlobDownloadTask {
                     err.to_js_with_async_stack(
                         global,
                         this.blob.store.as_ref().unwrap().get_path(),
-                        this.promise.get(),
+                        // SAFETY: sole `&mut JSPromise` borrow; consumed immediately.
+                        unsafe { this.promise.get() },
                     ),
                 )?;
             }

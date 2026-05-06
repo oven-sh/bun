@@ -326,7 +326,8 @@ impl<R, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, F> {
         let global_object = unsafe { &*self.global_object };
         let success = matches!(self.result, Maybe::Ok(_));
         let promise_value = self.promise.value();
-        let promise = self.promise.get();
+        // SAFETY: sole `&mut JSPromise` borrow in this scope (resolver-style accessor).
+        let promise = unsafe { self.promise.get() };
         let result = match &mut self.result {
             Maybe::Err(err) => match err.to_js_with_async_stack(global_object, promise) {
                 Ok(v) => v,
@@ -456,7 +457,8 @@ impl<R, A: FsArgument, const F: NodeFSFunctionEnum> AsyncFSTask<R, A, F> {
 
         let success = matches!(self.result, Maybe::Ok(_));
         let promise_value = self.promise.value();
-        let promise = self.promise.get();
+        // SAFETY: sole `&mut JSPromise` borrow in this scope (resolver-style accessor).
+        let promise = unsafe { self.promise.get() };
         let result = match &mut self.result {
             Maybe::Err(err) => match err.to_js_with_async_stack(global_object, promise) {
                 Ok(v) => v,
@@ -791,7 +793,8 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         });
         let success = matches!(*self.result.get_mut(), Maybe::Ok(_));
         let promise_value = self.promise.value();
-        let promise = self.promise.get();
+        // SAFETY: sole `&mut JSPromise` borrow in this scope (resolver-style accessor).
+        let promise = unsafe { self.promise.get() };
         let result = match self.result.get_mut() {
             Maybe::Err(err) => match err.to_js_with_async_stack(global_object, promise) {
                 Ok(v) => v,
@@ -1400,7 +1403,8 @@ impl AsyncReaddirRecursiveTask {
         let global_object = unsafe { &*self.global_object };
         let success = self.pending_err.is_none();
         let promise_value = self.promise.value();
-        let promise = self.promise.get();
+        // SAFETY: sole `&mut JSPromise` borrow in this scope (resolver-style accessor).
+        let promise = unsafe { self.promise.get() };
         let result = if let Some(err) = &mut self.pending_err {
             match err.to_js_with_async_stack(global_object, promise) {
                 Ok(v) => v,

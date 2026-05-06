@@ -214,9 +214,9 @@ impl<'a> BundleV2<'a> {
                         return p.as_mut();
                     }
                     // bundle_v2.zig:250-252 — `client_transpiler orelse initializeClientTranspiler() catch panic`.
-                    return self.initialize_client_transpiler().unwrap_or_else(|e| {
-                        panic!("Failed to initialize client transpiler: {}", e.name());
-                    });
+                    // PORT NOTE: `initialize_client_transpiler` lives in the
+                    // gated draft below; until that un-gates, this path panics.
+                    panic!("Failed to initialize client transpiler: not yet wired");
                 }
                 return &mut *self.transpiler;
             }
@@ -253,12 +253,11 @@ impl<'a> BundleV2<'a> {
             let _dev = self
                 .dev_server
                 .unwrap_or_else(|| panic!("No dev server attached in asynchronous bundle job"));
-            
-            {
-                // TODO(b2-blocked): `finish_from_bake_dev_server` — full body
-                // gated below (needs full `DevServerVTable` slot set).
-                self.finish_from_bake_dev_server(_dev).expect("oom");
-            }
+            // TODO(b2-blocked): `finish_from_bake_dev_server` — full body gated
+            // below (needs full `DevServerVTable` slot set). The DevServer
+            // vtable's `finalize_bundle` slot drives completion; until the
+            // draft un-gates, the dev-server path is unreachable from here.
+            let _ = _dev;
         }
     }
 

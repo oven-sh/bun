@@ -19,7 +19,7 @@ use crate::webcore::jsc::{
     Strong, URL,
 };
 use bun_ptr::weak_ptr::WeakPtrData;
-use crate::api::{AnyRequestContext, NodeHTTPResponse};
+use crate::api::AnyRequestContext;
 use crate::webcore::body::{self, Body, BodyMixin, Value as BodyValue};
 use crate::webcore::{AbortSignal, Blob, CookieMap, FetchHeaders, ReadableStream, Response};
 use super::response::HeadersRef;

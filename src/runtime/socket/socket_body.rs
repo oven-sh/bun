@@ -2463,7 +2463,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     tls_js,
                 )?;
             } else if tls_js.to_boolean() {
-                ssl_opts = Some(SSLConfig::ZERO);
+                ssl_opts = Some(SSLConfig::default());
             }
             let cfg = ssl_opts
                 .as_mut()
@@ -3229,7 +3229,7 @@ pub fn js_upgrade_duplex_to_tls(
             ssl_opts =
                 SSLConfig::from_js(VirtualMachine::get(), global, tls)?;
         } else if tls.to_boolean() {
-            ssl_opts = Some(SSLConfig::ZERO);
+            ssl_opts = Some(SSLConfig::default());
         }
     }
     if owned_ctx.is_none() && ssl_opts.is_none() {

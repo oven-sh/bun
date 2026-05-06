@@ -13,8 +13,6 @@ use bun_http_types::Method::Method;
 use super::body::{Body, BodyMixin, Value as BodyValue};
 use super::blob::{Blob, Internal as InternalBlob};
 use super::{FetchHeaders, ReadableStream, Request};
-// TODO(port): bun.S3 lives outside runtime/webcore — confirm crate path
-use crate::webcore::s3_stub as s3;
 use bun_ptr::weak_ptr::WeakPtrData;
 
 // C++ helper functions for AsyncLocalStorage integration

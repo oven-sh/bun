@@ -4293,7 +4293,11 @@ impl Blob {
         }
 
         if bom == Some(strings::BOM::Utf16Le) {
-            let out = BunString::clone_utf16(bun_core::reinterpret_slice::<u16>(buf));
+            // SAFETY: BOM::Utf16Le ⇒ buf is UTF-16LE bytes; len is even after BOM strip.
+            // Mirrors Zig `bun.reinterpretSlice(u16, buf)`.
+            let out = BunString::clone_utf16(unsafe {
+                core::slice::from_raw_parts(buf.as_ptr() as *const u16, buf.len() / 2)
+            });
             let _free = scopeguard::guard((), |_| {
                 if LIFETIME == Lifetime::Temporary {
                     unsafe { drop(Box::from_raw(raw_bytes)) };
@@ -4344,10 +4348,18 @@ impl Blob {
             return ZigString::init(b"Invalid encoding").to_error_instance(global);
         };
 
+        // PORT NOTE: `get_form_data_encoding` returns `bun_core::form_data::Encoding`
+        // (tier-0 type); the JSC-touching `FormData::to_js` lives in
+        // `crate::webcore::form_data` and takes its own `Encoding`. Same shape —
+        // re-tag here. TODO(port): unify the two `Encoding` enums in Phase B.
+        let encoding = match encoder.encoding {
+            bun_core::form_data::Encoding::URLEncoded => crate::webcore::form_data::Encoding::URLEncoded,
+            bun_core::form_data::Encoding::Multipart(b) => crate::webcore::form_data::Encoding::Multipart(b),
+        };
         // SAFETY: `buf` is valid for reads for the duration of this call (either a
         // leaked Box for `Temporary` or a store-backed view otherwise);
         // `FormData::to_js` only reads it.
-        match bun_core::FormData::to_js(global, unsafe { &*buf }, encoder.encoding) {
+        match crate::webcore::form_data::FormData::to_js(global, unsafe { &*buf }, &encoding) {
             Ok(v) => v,
             Err(err) => global
                 .create_error_instance(format_args!("FormData encoding failed: {}", err.name())),

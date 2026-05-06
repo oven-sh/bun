@@ -1290,11 +1290,18 @@ impl FetchTasklet {
         if is_stream {
             let buffer = Arc::new(ThreadSafeStreamBuffer::default());
             buffer.set_drain_callback::<FetchTasklet>(FetchTasklet::on_write_request_data_drain, fetch_tasklet_ptr);
-            fetch_tasklet.request_body_streaming_buffer = Some(buffer.clone());
-            fetch_tasklet.http.as_mut().unwrap().request_body = http::RequestBody::Stream {
-                buffer,
-                ended: false,
-            };
+            // PORT NOTE: `http::http_request_body::Stream.buffer` is `Option<NonNull<_>>` (intrusive
+            // refcount), but FetchTasklet currently models the same buffer as `Arc<_>`. Hand the
+            // raw pointer to the HTTP thread side; intrusive `ref_count` starts at 2 (one for each
+            // side) so this matches Zig's ownership.
+            // TODO(port): unify ThreadSafeStreamBuffer ownership (intrusive vs Arc) in Phase B.
+            let buffer_nn = core::ptr::NonNull::new(Arc::as_ptr(&buffer) as *mut ThreadSafeStreamBuffer);
+            fetch_tasklet.request_body_streaming_buffer = Some(buffer);
+            fetch_tasklet.http.as_mut().unwrap().request_body =
+                http::HTTPRequestBody::Stream(http::http_request_body::Stream {
+                    buffer: buffer_nn,
+                    ended: false,
+                });
         }
         // TODO is this necessary? the http client already sets the redirect type,
         // so manually setting it here seems redundant
@@ -1308,7 +1315,7 @@ impl FetchTasklet {
         if let HTTPRequestBody::Sendfile(sendfile) = &fetch_tasklet.request_body {
             debug_assert!(url.is_http());
             debug_assert!(fetch_options.proxy.is_none());
-            fetch_tasklet.http.as_mut().unwrap().request_body = http::RequestBody::Sendfile(*sendfile);
+            fetch_tasklet.http.as_mut().unwrap().request_body = http::HTTPRequestBody::Sendfile(*sendfile);
         }
 
         if let Some(signal) = fetch_tasklet.signal.as_ref() {
@@ -1359,8 +1366,9 @@ impl FetchTasklet {
     }
 
     /// This is ALWAYS called from the main thread
-    // XXX: in Zig 'fn (*FetchTasklet) error{}!void' coerces to 'fn (*FetchTasklet) bun.JSError!void' but 'fn (*FetchTasklet) void' does not
-    pub fn resume_request_data_stream(this: *mut FetchTasklet) {
+    // PORT NOTE: in Zig 'fn (*FetchTasklet) error{}!void' coerces to 'fn (*FetchTasklet) bun.JSError!void';
+    // ConcurrentTask::from_callback expects `fn(*mut T) -> JsResult<()>`, so return Ok(()).
+    pub fn resume_request_data_stream(this: *mut FetchTasklet) -> JsResult<()> {
         // SAFETY: ref held from on_write_request_data_drain
         let this_ref = unsafe { &mut *this };
         bun_output::scoped_log!(FetchTasklet, "resumeRequestDataStream");

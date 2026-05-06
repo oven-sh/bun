@@ -70,20 +70,31 @@ pub struct PathWatcherManager {
     /// Dedup map: dedup key → PathWatcher. The key is the resolved path with a one-byte
     /// suffix encoding `recursive` (so `fs.watch(p)` and `fs.watch(p, {recursive:true})`
     /// don't share — they want different OS registrations on every platform).
-    // TODO(port): interior mutability — mutated under `mutex` via &'static; needs UnsafeCell
-    watchers: StringArrayHashMap<*mut PathWatcher>,
+    ///
+    /// Interior-mutable: written through `&'static PathWatcherManager` while holding
+    /// `mutex`. Zig's `*PathWatcherManager` aliases freely; in Rust the field must be
+    /// `UnsafeCell` so deriving `&mut` from a shared manager reference is defined.
+    watchers: UnsafeCell<StringArrayHashMap<*mut PathWatcher>>,
 
     /// Platform-specific state (inotify fd / kqueue fd + dispatch maps + thread).
     /// On macOS this is empty — FSEvents owns its own thread via `fs_events.zig`.
-    platform: Platform,
+    /// Interior-mutable for the same reason as `watchers`.
+    platform: UnsafeCell<Platform>,
 }
+
+// SAFETY: all interior-mutable state (`watchers`, `platform` dispatch maps) is only
+// accessed while holding `mutex`. The `running` atomic and the platform fd are
+// effectively read-only after `init()` for the reader thread. The manager is a
+// process-global singleton shared between the JS thread(s) and the reader thread.
+unsafe impl Sync for PathWatcherManager {}
+unsafe impl Send for PathWatcherManager {}
 
 impl Default for PathWatcherManager {
     fn default() -> Self {
         Self {
             mutex: Mutex::new(),
-            watchers: StringArrayHashMap::default(),
-            platform: Platform::default(),
+            watchers: UnsafeCell::new(StringArrayHashMap::default()),
+            platform: UnsafeCell::new(Platform::default()),
         }
     }
 }

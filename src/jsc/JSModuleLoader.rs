@@ -77,6 +77,23 @@ impl JSModuleLoader {
         }
     }
 
+    /// Raw-pointer variant of [`load_and_evaluate_module`]. Returns the FFI
+    /// `*mut JSInternalPromise` directly so callers that need to store or pass
+    /// a mutable cell pointer don't launder provenance through `&T -> *mut T`.
+    pub fn load_and_evaluate_module_ptr(
+        global_object: *mut JSGlobalObject,
+        module_name: Option<&BunString>,
+    ) -> Option<core::ptr::NonNull<JSInternalPromise>> {
+        // SAFETY: C++ side accepts a nullable `const BunString*` and returns a
+        // nullable JSInternalPromise cell pointer owned by the JSC heap.
+        core::ptr::NonNull::new(unsafe {
+            JSC__JSModuleLoader__loadAndEvaluateModule(
+                global_object,
+                module_name.map_or(core::ptr::null(), |p| p as *const _),
+            )
+        })
+    }
+
     pub fn import<'a>(
         global_object: &'a JSGlobalObject,
         module_name: &BunString,

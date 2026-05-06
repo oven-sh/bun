@@ -2382,20 +2382,20 @@ impl<'a> LinkerContext<'a> {
     ///
     /// PORT NOTE: signature reshaped vs. the gated draft above — the un-gated
     /// caller (`scanImportsAndExports.rs`) holds raw SoA column pointers and
-    /// passes the `css_asts` column as an opaque `*mut [Option<&c_void>]`
+    /// passes the `css_asts` column as an opaque `*mut [Option<*mut c_void>]`
     /// (the `bun_css::BundlerStyleSheet` element type is still gated). `log`
     /// is borrowed through `&mut self` instead of as a separate parameter.
     pub fn scan_css_imports(
         &mut self,
         file_source_index: u32,
         file_import_records: &mut [ImportRecord],
-        css_asts: *mut [Option<&'static core::ffi::c_void>],
+        css_asts: *mut [Option<*mut core::ffi::c_void>],
         sources: &[Source],
         loaders: &[Loader],
     ) -> ScanCssImportsResult {
         // SAFETY: `css_asts` points at the `graph.ast.items_css()` column for
         // the duration of `scanImportsAndExports`; we only test `is_none()`.
-        let css_asts: &[Option<&'static core::ffi::c_void>] = unsafe { &*css_asts };
+        let css_asts: &[Option<*mut core::ffi::c_void>] = unsafe { &*css_asts };
         for record in file_import_records.iter_mut() {
             if record.source_index.is_valid() {
                 // Other file is not CSS

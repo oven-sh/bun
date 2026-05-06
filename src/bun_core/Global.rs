@@ -590,25 +590,11 @@ pub fn crash() -> ! {
     exit(1);
 }
 
-// TODO(b0-genuine): BunInfo::generate depends on bun_analytics::generate_header::Platform,
-// bun_js_parser::Expr, and bun_json::to_ast — all higher-tier. The struct + generate()
-// move to bun_runtime (move-in pass); only the version constant is needed here.
-pub struct BunInfo {
-    pub bun_version: &'static [u8],
-    // SAFETY: erased bun_analytics::generate_header::generate_platform::Platform
-    pub platform: *const (),
-}
-
-impl BunInfo {
-    /// Stub: real impl moves to `bun_runtime` (depends on analytics + json + js_parser::Expr).
-    /// Kept so the sole caller (src/runtime/server/mod.rs:2393) fails loudly with the
-    /// move-in instruction instead of an unresolved-symbol error.
-    /// TODO(b0-genuine): bun_runtime move-in adds `BunInfo::generate` and re-exports it here.
-    #[allow(unused_variables)]
-    pub fn generate<B>(transpiler: B) -> ! {
-        todo!("BunInfo::generate moved to bun_runtime — see CYCLEBREAK.md §bun_core GENUINE")
-    }
-}
+// CYCLEBREAK §bun_core GENUINE: `BunInfo` (struct + `generate()`) depends on
+// `bun_analytics::generate_header::Platform`, `bun_js_parser::Expr`, and
+// `bun_interchange::json::to_ast` — all higher-tier than `bun_core`. It now
+// lives at `bun_runtime::server::BunInfo`. Only the version constants below
+// are needed at this tier.
 
 pub const user_agent: &str = concatcp!("Bun/", package_json_version);
 

@@ -74,8 +74,6 @@ pub mod bun_install_js_bindings {
         // as long as we aren't migration from `package-lock.json`, leaving this undefined is okay
         
         let manager = Some(global.bun_vm().transpiler.resolver.get_package_manager());
-        #[cfg(any())]
-        let manager = None;
 
         let load_result: lockfile::LoadResult =
             lockfile_.load_from_dir(*dir, manager, &mut log, true);

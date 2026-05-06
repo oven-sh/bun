@@ -733,13 +733,15 @@ pub fn parse_arguments(
 // Codegen bridge — `#[bun_jsc::JsClass]` derive provides `to_js`/`from_js`/`from_js_direct`.
 // `js::each_set_cached` is the codegen'd setter for the C++ `m_each` WriteBarrier
 // (see jest.classes.ts `values: ["each"]`).
-// TODO(b2-blocked): re-run generate-classes.ts with .rs output → `bun_jsc::codegen::js_scope_functions`.
+//
+// Hand-expansion of what `src/codegen/generate-classes.ts` emits into
+// `ZigGeneratedClasses.zig` for `pub const JSScopeFunctions = struct { ... }`:
+// `eachSetCached` / `eachGetCached` thin-wrap the C++-side
+// `ScopeFunctionsPrototype__each{Set,Get}CachedValue` shims, which write/read the
+// `JSC::WriteBarrier<Unknown> m_each` slot on the JSCell wrapper so the GC visits
+// the `.each(arr)` argument between construction and the trailing `("name", cb)` call.
 pub mod js {
-    use bun_jsc::{JSGlobalObject, JSValue};
-    #[inline]
-    pub fn each_set_cached(_this: JSValue, _global: &JSGlobalObject, _value: JSValue) {
-        todo!("blocked_on: bun_jsc::codegen::js_scope_functions::each_set_cached")
-    }
+    bun_jsc::codegen_cached_accessors!("ScopeFunctions"; each);
 }
 
 impl fmt::Display for ScopeFunctions {

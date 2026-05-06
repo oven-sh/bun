@@ -1712,7 +1712,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
 
             match res {
-                bun_sys::Maybe::Err(err) => {
+                Err(err) => {
                     is_error = true;
                     let rejected_value =
                         JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
@@ -1722,7 +1722,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     body.detach();
                     return Ok(rejected_value);
                 }
-                bun_sys::Maybe::Ok(result) => {
+                Ok(result) => {
                     body.detach();
                     body = HTTPRequestBody::AnyBlob(blob::Any::from_owned_slice(
                         result.slice().to_vec(),

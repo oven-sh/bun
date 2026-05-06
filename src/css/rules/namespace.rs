@@ -27,6 +27,17 @@ impl NamespaceRule {
         CssStringFns::to_css(&self.url, dest)?;
         dest.write_char(b';')
     }
+
+    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+        // PORT NOTE: `css.implementDeepClone` field-walk. `CssString` is
+        // `*const [u8]` (arena-owned slice → identity copy per generics.zig
+        // "const strings" rule); `Ident::deep_clone` is the same identity copy.
+        Self {
+            prefix: self.prefix.as_ref().map(|p| p.deep_clone(bump)),
+            url: self.url,
+            loc: self.loc,
+        }
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -34,5 +45,5 @@ impl NamespaceRule {
 //   source:     src/css/rules/namespace.zig (38 lines)
 //   confidence: high
 //   todos:      0
-//   notes:      inherent deep_clone provided by deep_clone_shim! in mod.rs until DeepClone derive lands
+//   notes:      inherent deep_clone real (field-walk port of css.implementDeepClone)
 // ──────────────────────────────────────────────────────────────────────────

@@ -9,7 +9,6 @@ use core::ptr::NonNull;
 use std::io::Write as _;
 
 use bumpalo::Bump;
-use crate::parser::ExpressionTransposer;
 
 use bun_alloc::Arena;
 use bun_collections::{BabyList, HashMap, ArrayHashMap, StringHashMap};
@@ -553,9 +552,9 @@ pub struct P<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> {
     //     Expression , AssignmentExpression
     //
     pub after_arrow_body_loc: logger::Loc,
-    pub import_transposer: ImportTransposer<'a>,
-    pub require_transposer: RequireTransposer<'a>,
-    pub require_resolve_transposer: RequireResolveTransposer<'a>,
+    pub import_transposer: ImportTransposer<'a, TYPESCRIPT, J, SCAN_ONLY>,
+    pub require_transposer: RequireTransposer<'a, TYPESCRIPT, J, SCAN_ONLY>,
+    pub require_resolve_transposer: RequireResolveTransposer<'a, TYPESCRIPT, J, SCAN_ONLY>,
 
     pub const_values: js_ast::ast::ConstValuesMap,
 
@@ -898,6 +897,80 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
         #[allow(unreachable_code)]
         Ok(())
+    }
+
+    // ───────────────────────────────────────────────────────────────────────
+    // Inlined ExpressionTransposer recursion (Zig: parser.zig:163-199).
+    // Defined as `&mut self` methods so the only live `&mut` is the caller's
+    // `&mut P` — avoids the aliased-`&mut` that arises when a transposer
+    // *field* holds `&mut self` while a `&mut P` is materialised inside the
+    // visitor (PORTING.md §Forbidden).
+    pub fn maybe_transpose_if_import(&mut self, arg: Expr, state: &TransposeState) -> Expr {
+        match arg.data {
+            js_ast::ExprData::EIf(ex) => Expr::init(
+                E::If {
+                    yes: self.maybe_transpose_if_import(ex.yes, state),
+                    no: self.maybe_transpose_if_import(ex.no, state),
+                    test_: ex.test_,
+                },
+                arg.loc,
+            ),
+            _ => self.transpose_import(arg, state),
+        }
+    }
+
+    pub fn maybe_transpose_if_require(&mut self, arg: Expr, state: &TransposeState) -> Expr {
+        match arg.data {
+            js_ast::ExprData::EIf(ex) => Expr::init(
+                E::If {
+                    yes: self.maybe_transpose_if_require(ex.yes, state),
+                    no: self.maybe_transpose_if_require(ex.no, state),
+                    test_: ex.test_,
+                },
+                arg.loc,
+            ),
+            _ => self.transpose_require(arg, state),
+        }
+    }
+
+    pub fn transpose_known_to_be_if_require(&mut self, arg: Expr, state: &TransposeState) -> Expr {
+        // Caller guarantees `arg.data` is `EIf`.
+        let js_ast::ExprData::EIf(ex) = arg.data else { unreachable!() };
+        Expr::init(
+            E::If {
+                yes: self.maybe_transpose_if_require(ex.yes, state),
+                no: self.maybe_transpose_if_require(ex.no, state),
+                test_: ex.test_,
+            },
+            arg.loc,
+        )
+    }
+
+    pub fn maybe_transpose_if_require_resolve(&mut self, arg: Expr, state: Expr) -> Expr {
+        match arg.data {
+            js_ast::ExprData::EIf(ex) => Expr::init(
+                E::If {
+                    yes: self.maybe_transpose_if_require_resolve(ex.yes, state),
+                    no: self.maybe_transpose_if_require_resolve(ex.no, state),
+                    test_: ex.test_,
+                },
+                arg.loc,
+            ),
+            _ => self.transpose_require_resolve(arg, state),
+        }
+    }
+
+    pub fn transpose_known_to_be_if_require_resolve(&mut self, arg: Expr, state: Expr) -> Expr {
+        // Caller guarantees `arg.data` is `EIf`.
+        let js_ast::ExprData::EIf(ex) = arg.data else { unreachable!() };
+        Expr::init(
+            E::If {
+                yes: self.maybe_transpose_if_require_resolve(ex.yes, state),
+                no: self.maybe_transpose_if_require_resolve(ex.no, state),
+                test_: ex.test_,
+            },
+            arg.loc,
+        )
     }
 
     pub fn transpose_import(&mut self, arg: Expr, state: &TransposeState) -> Expr {
@@ -7850,9 +7923,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // For SCAN_ONLY, the caller (Parser) assigns the borrowed variants after construction.
 
         // PORT NOTE: Zig wires `ImportTransposer.init(this)` etc. here. The Rust
-        // struct-literal above seeded each transposer with the real visitor and a
-        // null `TransposerCtx` cell; the cell is populated with `self as *mut Self`
-        // in `prepare_for_visit_pass` (after `this` reaches its final address).
+        // struct-literal above seeded each transposer compat-shim as `dangling()`;
+        // `prepare_for_visit_pass` writes `addr_of_mut!(*self)` once `this`
+        // reaches its final address. The recursion itself lives as inherent
+        // `P::maybe_transpose_if_*` methods (no aliased `&mut`).
         // TODO(port): Binding2ExprWrapper.{Namespace,Hoisted}.init(this) —
         // self-referential; same pattern once the wrapper types are real.
 

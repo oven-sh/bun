@@ -699,9 +699,12 @@ impl Interpreter {
         // ── run ────────────────────────────────────────────────────────────
         interp.exit_code = Some(1);
         if let Err(e) = interp.run() {
+            // PORT NOTE: `ErrName` not yet impl'd for `bun_sys::Error`; use
+            // its `name()` (errno tag) like Zig's `Output.err(e, …)` does.
+            let name = e.name();
             interp.deinit_from_exec();
             bun_core::output::err(
-                e,
+                name,
                 format_args!("Failed to run script <b>{}<r>", bstr::BStr::new(path_for_errors)),
             );
             bun_core::Global::exit(1);

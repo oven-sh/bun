@@ -60,7 +60,6 @@ use bun_alloc::Arena;
 mod ext {
     use super::*;
     use crate::dependencies;
-    use crate::properties::css_modules::Specifier;
 
     /// Inline of `Url::parse` (gated in `values/url.rs` on
     /// `Parser::add_import_record`, which now exists at css_parser.rs:3228).
@@ -83,12 +82,13 @@ mod ext {
     /// Vec<u8>`, which this round adds in css_parser.rs).
     pub(super) fn url_to_css(this: &Url, dest: &mut Printer) -> PrintResult<()> {
         let dep: Option<dependencies::UrlDependency> = if dest.dependencies.is_some() {
-            Some(dependencies::UrlDependency::new(
-                dest.allocator,
-                this,
-                dest.filename(),
-                dest.get_import_records()?,
-            ))
+            // PORT NOTE: reshaped for borrowck — `get_import_records` borrows
+            // &mut *dest, so capture allocator/filename first.
+            let allocator = dest.allocator;
+            // SAFETY: filename borrows the printer arena/options which outlive `dest`.
+            let filename: &[u8] = unsafe { &*(dest.filename() as *const [u8]) };
+            let records = dest.get_import_records()?;
+            Some(dependencies::UrlDependency::new(allocator, this, filename, records))
         } else {
             None
         };

@@ -327,7 +327,10 @@ impl LinkerGraph {
         debug_assert_eq!(part_ids.len(), new_dependencies.len());
         for (part_id, dependency) in part_ids.iter().zip(new_dependencies.iter_mut()) {
             *dependency = Dependency {
-                source_index: source_index_to_import_from,
+                // PORT NOTE: `Dependency.source_index` is `bun_js_parser::Index`
+                // (ast crate's newtype); `crate::Index` is the structurally
+                // identical `bun_options_types` newtype. Phase B-3 unifies them.
+                source_index: js_ast::Index::source(source_index_to_import_from.get() as usize),
                 part_index: *part_id, // @truncate (already u32)
             };
         }

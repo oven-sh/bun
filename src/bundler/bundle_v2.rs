@@ -449,7 +449,7 @@ impl<'a> BundleV2<'a> {
                     "onParse({}, {}) = {} imports, {} exports",
                     result.source.index.0,
                     bstr::BStr::new(result.source.path.text),
-                    result.ast.import_records.len(),
+                    result.ast.import_records.len,
                     result.ast.named_exports.count()
                 );
 

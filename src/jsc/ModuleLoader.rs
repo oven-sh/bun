@@ -15,8 +15,8 @@ use bun_logger as logger;
 
 use crate::virtual_machine::VirtualMachine;
 use crate::{
-    self as jsc, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSValue,
-    ResolvedSource,
+    self as jsc, ErrorableResolvedSource, ErrorableString, JSGlobalObject, JSInternalPromise,
+    JSValue, JsError, JsResult, ResolvedSource,
 };
 
 // Re-exports (thin re-exports from the original Zig file).
@@ -179,6 +179,27 @@ pub struct LoaderHooks {
     /// `StandaloneModuleGraph`).
     pub resolve_embedded_node_file:
         unsafe fn(vm: *mut VirtualMachine, in_out_str: *mut bun_string::String) -> bool,
+    /// `VirtualMachine.resolveMaybeNeedsTrailingSlash(res, global, specifier,
+    /// source, query_string?, is_esm, is_a_file_path, is_user_require_resolve)`
+    /// (spec VirtualMachine.zig:1873-2016) — the resolution path behind
+    /// `Bun__resolveSync` / `Zig__GlobalObject__resolve` / `import.meta.resolve`.
+    /// Body reaches into `transpiler.resolver.resolveAndAutoInstall`, the
+    /// `PluginRunner`, `ObjectURLRegistry`, and `ServerEntryPoint` (all
+    /// `bun_runtime` types), so the low tier owns the symbol and dispatches.
+    ///
+    /// Writes `*res` (always — `.ok` or `.err`); writes `*query_string` (if
+    /// non-null) to a fresh owned `bun.String`. Returns `false` iff a JS
+    /// exception is pending on `global` (the Zig `bun.JSError!void` shape).
+    pub resolve: unsafe fn(
+        res: *mut ErrorableString,
+        global: *mut JSGlobalObject,
+        specifier: bun_string::String,
+        source: bun_string::String,
+        query_string: *mut bun_string::String,
+        is_esm: bool,
+        is_a_file_path: bool,
+        is_user_require_resolve: bool,
+    ) -> bool,
     /// `Bun__transpileFile` body — needs `options.getLoaderAndVirtualSource`,
     /// `node_module_module`, `webcore.Blob`, the concurrent-transpiler queue.
     /// Returns the in-flight promise when `allow_promise && async`, else null
@@ -244,6 +265,77 @@ pub fn fetch_builtin_module(
     // SAFETY: hook contract — `jsc_vm` is the live per-thread VM; `out` is a
     // valid out-param.
     unsafe { (hooks.fetch_builtin_module)(jsc_vm, global, specifier, referrer, out) }
+}
+
+/// `VirtualMachine.resolveMaybeNeedsTrailingSlash(...)` — thin shim over the
+/// §Dispatch hook. Spec VirtualMachine.zig:1873. The body lives in
+/// `bun_runtime::jsc_hooks` because it drives `transpiler.resolver` (forward
+/// dep on `bun_jsc`).
+///
+/// PORT NOTE: `is_a_file_path` was a Zig `comptime bool`; demoted to runtime
+/// because the §Dispatch fn-ptr signature must be monomorphic across the crate
+/// boundary. The branch is a single length-check / `dirWithTrailingSlash` —
+/// PERF(port): was inline switch; the fn-ptr indirection is one call per
+/// `import` / `require.resolve`, dominated by the resolver's dir-cache walk.
+pub fn resolve_maybe_needs_trailing_slash(
+    res: &mut ErrorableString,
+    global: &JSGlobalObject,
+    specifier: bun_string::String,
+    source: bun_string::String,
+    query_string: Option<&mut bun_string::String>,
+    is_esm: bool,
+    is_a_file_path: bool,
+    is_user_require_resolve: bool,
+) -> JsResult<()> {
+    let Some(hooks) = loader_hooks() else {
+        // No high tier (unit tests) — fail closed with ModuleNotFound so
+        // callers surface a real ResolveMessage rather than `undefined`.
+        *res = ErrorableString::err(bun_core::err!("ModuleNotFound"), JSValue::UNDEFINED);
+        return Ok(());
+    };
+    let qs = query_string
+        .map(|q| q as *mut bun_string::String)
+        .unwrap_or(core::ptr::null_mut());
+    // SAFETY: hook contract — `global` is the live JS-thread global; `res`/`qs`
+    // are valid out-params for the call (single-threaded, no aliasing).
+    let ok = unsafe {
+        (hooks.resolve)(
+            res,
+            global as *const _ as *mut _,
+            specifier,
+            source,
+            qs,
+            is_esm,
+            is_a_file_path,
+            is_user_require_resolve,
+        )
+    };
+    if ok { Ok(()) } else { Err(JsError::Thrown) }
+}
+
+/// `VirtualMachine.resolve(res, global, specifier, source, query_string,
+/// is_esm)` (spec VirtualMachine.zig:1854-1863) — the `Zig__GlobalObject__resolve`
+/// entry point. Thin wrapper that fixes `is_a_file_path = true`,
+/// `is_user_require_resolve = false`.
+#[inline]
+pub fn resolve(
+    res: &mut ErrorableString,
+    global: &JSGlobalObject,
+    specifier: bun_string::String,
+    source: bun_string::String,
+    query_string: Option<&mut bun_string::String>,
+    is_esm: bool,
+) -> JsResult<()> {
+    resolve_maybe_needs_trailing_slash(
+        res,
+        global,
+        specifier,
+        source,
+        query_string,
+        is_esm,
+        true,
+        false,
+    )
 }
 
 /// `VirtualMachine.processFetchLog(global, specifier, referrer, log, &errorable,

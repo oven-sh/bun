@@ -9,8 +9,7 @@ use css::css_values::length::LengthValue as Length;
 use css::css_properties::align::{AlignItems, JustifyContent, AlignSelf, AlignContent};
 use css::prefixes::Feature as PrefixFeature;
 // Zig: `const isFlex2009 = css.prefixes.Feature.isFlex2009;`
-#[cfg(any())]
-use css::prefixes::Feature::is_flex_2009;
+use css::prefixes::is_flex_2009;
 
 /// A value for the [flex-direction](https://www.w3.org/TR/2018/CR-css-flexbox-1-20181119/#propdef-flex-direction) property.
 /// A value for the [flex-direction](https://www.w3.org/TR/2018/CR-css-flexbox-1-20181119/#propdef-flex-direction) property.
@@ -378,7 +377,6 @@ pub enum BoxLines {
     Multiple,
 }
 
-#[cfg(any())] // blocked_on: FlexWrap from_standard wiring
 impl BoxLines {
     pub fn from_standard(wrap: &FlexWrap) -> Option<BoxLines> {
         match *wrap {
@@ -565,27 +563,6 @@ pub struct FlexHandler {
 }
 
 impl FlexHandler {
-    // No-op stubs so `DeclarationHandler` compiles; real bodies are gated below.
-    #[inline]
-    pub fn handle_property(
-        &mut self,
-        _property: &Property,
-        _dest: &mut css::DeclarationList<'_>,
-        _context: &mut css::PropertyHandlerContext<'_>,
-    ) -> bool {
-        false
-    }
-    #[inline]
-    pub fn finalize(
-        &mut self,
-        _dest: &mut css::DeclarationList<'_>,
-        _context: &mut css::PropertyHandlerContext<'_>,
-    ) {
-    }
-}
-
-#[cfg(any())] // blocked_on: prefixes::Feature::is_flex_2009 + Property variant payloads + PropertyId tuple variants
-impl FlexHandler {
     pub fn handle_property(
         &mut self,
         property: &Property,
@@ -611,14 +588,14 @@ impl FlexHandler {
                 maybe_flush!($prop, $val, $vp);
 
                 // Otherwise, update the value and add the prefix
+                // PORT NOTE: Zig threaded `context.allocator` into `css.generic.deepClone`;
+                // every payload here is `Clone` (Copy enums / f32 / i32 / LengthPercentageOrAuto),
+                // so `.clone()` is the faithful equivalent.
                 if let Some(field) = &mut self.$prop {
-                    field.0 = css::generic::deep_clone($val, context.allocator);
+                    field.0 = ($val).clone();
                     field.1.insert(*$vp);
                 } else {
-                    self.$prop = Some((
-                        css::generic::deep_clone($val, context.allocator),
-                        *$vp,
-                    ));
+                    self.$prop = Some((($val).clone(), *$vp));
                     self.has_any = true;
                 }
             }};
@@ -698,7 +675,10 @@ impl FlexHandler {
             Property::Unparsed(val) => {
                 if Self::is_flex_property(&val.property_id) {
                     self.flush(dest, context);
-                    dest.push(property.deep_clone(context.allocator));
+                    // PORT NOTE: Zig pushed `property.deepClone(context.allocator)`. `Property`
+                    // has no blanket `deep_clone` yet; reconstruct from the matched payload.
+                    let bump = dest.bump();
+                    dest.push(Property::Unparsed(val.deep_clone(bump)));
                 } else {
                     return false;
                 }
@@ -875,13 +855,13 @@ impl FlexHandler {
                                         prefixes_2009.insert(VendorPrefix::MOZ);
                                     }
                                     if !prefixes_2009.is_empty() {
-                                        ($body_2009)(val, &prefix, prefixes_2009);
+                                        ($body_2009)(val.clone(), &prefix, prefixes_2009);
                                     }
                                 }
                             }
                         }
                         // 2012 block
-                        ($body_2012)(val, &mut prefix);
+                        ($body_2012)(val.clone(), &mut prefix);
 
                         // Firefox only implemented the 2009 spec prefixed.
                         prefix.remove(VendorPrefix::MOZ);

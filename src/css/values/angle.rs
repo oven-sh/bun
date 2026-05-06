@@ -17,7 +17,7 @@ const TAG_TURN: u8 = 8;
 /// Angles may be explicit or computed by `calc()`, but are always stored and serialized
 /// as their computed value.
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, crate::generics::CssEql, crate::generics::CssHash, crate::generics::DeepClone)]
+#[derive(Clone, Copy, PartialEq, crate::generics::CssHash, crate::generics::DeepClone)]
 pub enum Angle {
     /// An angle in degrees. There are 360 degrees in a full circle.
     Deg(CSSNumber) = TAG_DEG,
@@ -204,8 +204,8 @@ impl Angle {
         Some(Angle::Deg(self.to_degrees() + rhs.to_degrees()))
     }
 
-    pub fn eql(lhs: &Angle, rhs: &Angle) -> bool {
-        lhs.to_degrees() == rhs.to_degrees()
+    pub fn eql(&self, rhs: &Angle) -> bool {
+        self.to_degrees() == rhs.to_degrees()
     }
 
     pub fn mul_f32(self, other: f32) -> Angle {
@@ -289,6 +289,15 @@ impl Angle {
 
     // css.implementHash / css.implementDeepClone — provided by
     // `#[derive(CssHash, DeepClone)]` above (POD f32 payload → bitwise).
+}
+
+impl crate::generics::CssEql for Angle {
+    #[inline]
+    fn eql(&self, other: &Self) -> bool {
+        // Spec angle.zig:200-202 — `lhs.toDegrees() == rhs.toDegrees()`.
+        // NOT structural variant comparison: Deg(180) eql Rad(PI) eql Turn(0.5).
+        self.to_degrees() == other.to_degrees()
+    }
 }
 
 /// A CSS [`<angle-percentage>`](https://www.w3.org/TR/css-values-4/#typedef-angle-percentage) value.

@@ -25,12 +25,15 @@ impl ViewportRule {
     }
 }
 
-// blocked_on: DeepClone derive.
-#[cfg(any())]
 impl ViewportRule {
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // TODO(port): css.implementDeepClone is comptime field reflection; replace with #[derive(DeepClone)] or trait impl in Phase B
-        crate::implement_deep_clone(self, bump)
+        // PORT NOTE: `css.implementDeepClone` field-walk. `VendorPrefix` is a
+        // `Copy` bitflag (generics.zig "simple copy types" → identity).
+        Self {
+            vendor_prefix: self.vendor_prefix,
+            declarations: super::dc::decl_block(&self.declarations, bump),
+            loc: self.loc,
+        }
     }
 }
 

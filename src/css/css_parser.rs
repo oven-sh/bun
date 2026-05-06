@@ -102,23 +102,13 @@ pub use gated_shims::*;
 mod gated_shims {
     use super::*;
 
-    // ── rules/ leaf-module payload shims ─────────────────────────────────
-    // `gated_rule!(keyframes/page/container/...)` in rules/mod.rs only stub
-    // the *Rule struct, not the prelude payload types `AtRulePrelude` carries.
-    // These are data-only stand-ins; the real layouts land when each leaf
-    // un-gates in rules/mod.rs.
-    /// `rules::keyframes::KeyframesName` — ident or string.
-    #[derive(Default)]
-    pub struct KeyframesName;
-    /// `rules::page::PageSelector` — `<ident>? <pseudo-page>*`.
-    #[derive(Default)]
-    pub struct PageSelector;
-    /// `rules::container::ContainerName` — `<custom-ident>` newtype.
-    #[derive(Default)]
-    pub struct ContainerName;
-    /// `rules::container::ContainerCondition` — size/style query tree.
-    #[derive(Default)]
-    pub struct ContainerCondition;
+    // ── rules/ leaf-module payload re-exports ────────────────────────────
+    // The leaf modules are un-gated; re-export the real prelude payload types
+    // `AtRulePrelude` carries so the rule-parser impl bodies type-check
+    // against the same structs `CssRule` stores.
+    pub use crate::rules::keyframes::KeyframesName;
+    pub use crate::rules::page::PageSelector;
+    pub use crate::rules::container::{ContainerCondition, ContainerName};
 
     // ── values::{number,string} ──────────────────────────────────────────
     pub type CSSNumber = f32;
@@ -479,7 +469,6 @@ fn parse_at_rule<P: AtRuleParser>(
     }
 }
 
-#[cfg(any())] // blocked_on: properties/custom (TokenListFns::parse real impl)
 fn parse_custom_at_rule_prelude<T: CustomAtRuleParser>(
     name: &[u8],
     input: &mut Parser,
@@ -495,11 +484,14 @@ fn parse_custom_at_rule_prelude<T: CustomAtRuleParser>(
             ) {
                 // do nothing
             } else {
-                return Err(input.new_custom_error(ParserError::AtRulePreludeInvalid));
+                return Err(input.new_custom_error(ParserError::at_rule_prelude_invalid));
             }
         }
     }
 
+    // TODO(port): lifetime — `name` borrows the input arena. The detach is the
+    // same `'static` erasure already applied to `Token`/`AtRulePrelude::Unknown`.
+    let name: &'static [u8] = unsafe { &*(name as *const [u8]) };
     options.warn(input.new_error(BasicParseErrorKind::at_rule_invalid(name)));
     input.skip_whitespace();
     let tokens = TokenListFns::parse(input, options, 0)?;
@@ -1038,20 +1030,19 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> TopLevelRuleParser<'a, AtRuleParserT
         }
     }
 
-    #[cfg(any())] // blocked_on: DeclarationList<'bump> arena threading (NestedRuleParser fields)
     pub fn nested(&mut self) -> NestedRuleParser<'_, AtRuleParserT> {
         NestedRuleParser {
             options: self.options,
-            at_rule_parser: self.at_rule_parser,
+            at_rule_parser: &mut *self.at_rule_parser,
             declarations: DeclarationList::default(),
             important_declarations: DeclarationList::default(),
-            rules: self.rules,
+            rules: &mut *self.rules,
             is_in_style_rule: false,
             allow_declarations: false,
             composes_state: ComposesState::DisallowEntirely,
-            composes: self.composes,
+            composes: &mut *self.composes,
             composes_refs: &mut self.composes_refs,
-            local_properties: self.local_properties,
+            local_properties: &mut *self.local_properties,
         }
     }
 }

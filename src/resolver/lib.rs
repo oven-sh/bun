@@ -904,16 +904,126 @@ pub mod fs {
         }
 
         /// Port of `DirEntry.addEntry` in `fs.zig`.
-        // TODO(b2-blocked): full body in gated `fs.rs` (EntryStore alloc + lowercase
-        // dedup). Type-only stub so the resolver's readdir loop compiles.
-        pub fn add_entry<I, A, B>(
+        // PORT NOTE: Zig signature was `(prev_map, *entry, allocator, comptime Iterator, iterator)`.
+        // The `allocator` param is dropped (everything routes through the global stores) but
+        // call-site shape is preserved as `_allocator: ()` so existing ported call sites
+        // (`dir_info_cached_maybe_log` / `dir_info_for_resolution`) keep their 4-arg form.
+        pub fn add_entry<I: DirEntryIterator>(
             &mut self,
-            _prev_map: Option<&mut dir_entry::EntryMap>,
-            _value: &I,
-            _a: A,
-            _b: B,
+            prev_map: Option<&mut dir_entry::EntryMap>,
+            entry: &bun_sys::dir_iterator::IteratorResult,
+            _allocator: (),
+            iterator: I,
         ) -> core::result::Result<(), bun_core::Error> {
-            unimplemented!("DirEntry::add_entry (Phase B — fs.rs)")
+            use bun_sys::FileKind as DK;
+            let name_slice = entry.name.slice();
+            let found_kind: Option<EntryKind> = match entry.kind {
+                DK::Directory => Some(EntryKind::Dir),
+                DK::File => Some(EntryKind::File),
+
+                // For a symlink, we will need to stat the target later
+                DK::SymLink
+                // Some filesystems return `.unknown` from getdents() no matter the actual kind of the file
+                // (often because it would be slow to look up the kind). If we get this, then code that
+                // needs the kind will have to find it out later by calling stat().
+                | DK::Unknown => None,
+
+                DK::BlockDevice
+                | DK::CharacterDevice
+                | DK::NamedPipe
+                | DK::UnixDomainSocket
+                | DK::Whiteout
+                | DK::Door
+                | DK::EventPort => return Ok(()),
+            };
+
+            let stored: *mut Entry = 'brk: {
+                if let Some(map) = prev_map {
+                    // PERF(port): was stack-fallback alloc — profile in Phase B
+                    let prehashed =
+                        bun_collections::StringHashMapContext::PrehashedCaseInsensitive::init(name_slice);
+                    // PORT NOTE: `StringHashMap::get_adapted` ignores the adapter and looks up by the
+                    // raw key; pass the already-lowercased `prehashed.input` so the case-insensitive
+                    // lookup matches the lowercased keys stored in `data` (Zig: `getAdapted` lowercases
+                    // for both hash and eql).
+                    if let Some(&existing_ptr) = map.get_adapted(&prehashed.input, &prehashed) {
+                        // SAFETY: EntryStore-owned pointer, valid for lifetime of store
+                        let existing = unsafe { &mut *existing_ptr };
+                        existing.mutex.lock();
+                        let _guard = scopeguard::guard(core::ptr::addr_of!(existing.mutex), |m| {
+                            // SAFETY: `m` points into `*existing`, which outlives this guard.
+                            unsafe { (*m).unlock() }
+                        });
+                        existing.dir = self.dir;
+
+                        existing.need_stat = existing.need_stat
+                            || found_kind.is_none()
+                            || Some(existing.cache.kind) != found_kind;
+                        // TODO: is this right?
+                        if Some(existing.cache.kind) != found_kind {
+                            // if found_kind is null, we have set need_stat above, so we
+                            // store an arbitrary kind
+                            existing.cache.kind = found_kind.unwrap_or(EntryKind::File);
+
+                            existing.cache.symlink = PathString::EMPTY;
+                        }
+                        break 'brk existing_ptr;
+                    }
+                }
+
+                // name_slice only lives for the duration of the iteration
+                let name = strings::StringOrTinyString::init_append_if_needed(
+                    name_slice,
+                    &mut FilenameStore::instance(),
+                ).map_err(|_| bun_core::err!("OutOfMemory"))?;
+
+                let name_lowercased = strings::StringOrTinyString::init_lower_case_append_if_needed(
+                    name_slice,
+                    &mut FilenameStore::instance(),
+                ).map_err(|_| bun_core::err!("OutOfMemory"))?;
+
+                dir_entry::EntryStore::append(Entry {
+                    base_: name,
+                    base_lowercase_: name_lowercased,
+                    dir: self.dir,
+                    mutex: Mutex::default(),
+                    // Call "stat" lazily for performance. The "@material-ui/icons" package
+                    // contains a directory with over 11,000 entries in it and running "stat"
+                    // for each entry was a big performance issue for that package.
+                    need_stat: found_kind.is_none(),
+                    cache: EntryCache {
+                        symlink: PathString::EMPTY,
+                        // if found_kind is null, we have set need_stat above, so we
+                        // store an arbitrary kind
+                        kind: found_kind.unwrap_or(EntryKind::File),
+                        fd: Fd::INVALID,
+                    },
+                    abs_path: PathString::EMPTY,
+                })?
+            };
+
+            // SAFETY: just produced from EntryStore append or prev_map lookup
+            let stored_ref = unsafe { &mut *stored };
+
+            self.data
+                .put(stored_ref.base_lowercase(), stored)
+                .map_err(|_| bun_core::err!("OutOfMemory"))?;
+
+            if !I::IS_VOID {
+                iterator.next(stored_ref, self.fd);
+            }
+
+            if bun_core::FeatureFlags::VERBOSE_FS {
+                // PORT NOTE: re-borrow `base()` after the `iterator.next` mutable borrow ends.
+                let stored_name = stored_ref.base();
+                if found_kind == Some(EntryKind::Dir) {
+                    bun_core::prettyln!("   + {}/", bstr::BStr::new(stored_name));
+                } else {
+                    bun_core::prettyln!("   + {}", bstr::BStr::new(stored_name));
+                }
+            }
+
+            Ok(())
         }
 
         /// Port of `DirEntry.hasComptimeQuery` in `fs.zig`.

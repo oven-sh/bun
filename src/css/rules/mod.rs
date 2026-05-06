@@ -163,80 +163,96 @@ impl<R> Default for CssRuleList<R> {
 // landed.)
 use style::StyleRule;
 
-// ─── leaf-rule deep_clone shims ────────────────────────────────────────────
-// Same protocol as the (now-removed) `to_css_shim!`: each leaf module owns its real
-// `deep_clone` body but the `gated_rule!` data-only stubs in this file don't.
-// `CssRule::deep_clone` needs *some* inherent method to dispatch to until each
-// stub un-gates and the real `rules/<leaf>.rs` impl takes over (compiler then
-// flags a duplicate `deep_clone` here — delete that line). The shim panics
-// rather than returning `Default::default()` because silently dropping nested
-// AST is data loss (PORTING.md §Forbidden: silent no-op); every current
-// caller of `CssRuleList::deep_clone` is itself `#[cfg(any())]`-gated, so this
-// only fires once a leaf un-gates without bringing its real `deep_clone`.
-macro_rules! deep_clone_shim {
-    ($( $(#[$m:meta])* $ty:ty ),* $(,)?) => {$(
-        $(#[$m])*
-        impl $ty {
-            #[allow(clippy::unused_self)]
-            pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-                todo!(concat!(
-                    "blocked_on: ", stringify!($ty),
-                    " — gated_rule! stub; un-gate the leaf module for the real deep_clone"
-                ))
-            }
-        }
-    )*};
-    (generic: $( $(#[$m:meta])* $ty:ident ),* $(,)?) => {$(
-        $(#[$m])*
-        impl<R> $ty<R> {
-            #[allow(clippy::unused_self)]
-            pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-                todo!(concat!(
-                    "blocked_on: ", stringify!($ty),
-                    "<R> — gated_rule! stub; un-gate the leaf module for the real deep_clone"
-                ))
-            }
-        }
-    )*};
-}
+// ─── leaf-rule deep_clone ──────────────────────────────────────────────────
+// Every leaf module now owns a real inherent `deep_clone` body — the field-
+// wise / variant-wise port of `css.implementDeepClone`. `CssRule::deep_clone`
+// (below) dispatches via method-syntax so it picks up the inherent impl.
+//
+// PORT NOTE: most leaf rules can't use `#[derive(DeepClone)]` directly yet
+// because several field types still lack an arena-aware `deep_clone(&self,
+// &Arena) -> Self` (their owners are outside `rules/`): `DeclarationBlock<'_>`
+// (declaration.rs gated on `Property: DeepClone`), `MediaList` /
+// `QueryFeature` (media_query.rs gated bodies), `SelectorList` (selectors/
+// parser.rs uses no-arg `deep_clone()`), `Property` (properties_generated).
+// Until those land, the leaf bodies hand-roll the field walk and route the
+// blocked fields through the `dc::*` passthroughs below — each of which is
+// the real port body where possible, and otherwise `todo!()`s with the
+// blocker named so any caller that un-gates first fails loudly (PORTING.md
+// §Forbidden: silent no-op). Once an upstream type grows its own
+// `deep_clone(&self, &Arena)`, swap the `dc::foo(&x, bump)` call for
+// `x.deep_clone(bump)` and delete the helper.
+pub(super) mod dc {
+    use bun_alloc::Arena;
 
-// `gated_rule!` data-only stubs (no inherent `deep_clone`) + real leaf modules
-// whose `deep_clone` impl is still `#[cfg(any())]`-gated on their own field
-// blockers (`MediaList`, `DeclarationBlock`, `SelectorList`, `SyntaxString`,
-// `properties::{font,custom}` payloads, …).
-deep_clone_shim!(
-    import::ImportRule,
-    layer::LayerStatementRule,
-    custom_media::CustomMediaRule,
-    namespace::NamespaceRule,
-    unknown::UnknownAtRule,
-    keyframes::KeyframesRule,
-    font_face::FontFaceRule,
-    font_palette_values::FontPaletteValuesRule,
-    page::PageRule,
-    counter_style::CounterStyleRule,
-    viewport::ViewportRule,
-    property::PropertyRule,
-);
-use container::ContainerRule;
-use document::MozDocumentRule;
-use layer::LayerBlockRule;
-use media::MediaRule;
-use nesting::NestingRule;
-use scope::ScopeRule;
-use starting_style::StartingStyleRule;
-use supports::SupportsRule;
-deep_clone_shim!(generic:
-    LayerBlockRule,
-    MediaRule,
-    StyleRule,
-    SupportsRule,
-    MozDocumentRule,
-    NestingRule,
-    ContainerRule,
-    ScopeRule,
-    StartingStyleRule,
-);
+    /// `DeclarationBlock::deep_clone` — gated in declaration.rs on
+    /// `Property: DeepClone`.
+    #[inline]
+    pub fn decl_block(
+        this: &crate::DeclarationBlock<'static>,
+        bump: &Arena,
+    ) -> crate::DeclarationBlock<'static> {
+        #[cfg(any())]
+        return this.deep_clone(bump);
+        #[cfg(not(any()))]
+        {
+            let _ = (this, bump);
+            todo!("blocked_on: DeclarationBlock::deep_clone — Property: DeepClone (properties_generated)")
+        }
+    }
+
+    /// `MediaList::deep_clone` — no arena-aware impl yet (media_query.rs
+    /// `__impl_bodies` is gated). All payloads are arena-borrowed slices /
+    /// `Copy` so `Clone` is a faithful deep clone today.
+    #[inline]
+    pub fn media_list(this: &crate::media_query::MediaList, _bump: &Arena) -> crate::media_query::MediaList {
+        // PORT NOTE: Zig `css.implementDeepClone` on `MediaList` walks
+        // `media_queries: ArrayList(MediaQuery)`. Every leaf payload is either
+        // `Copy` or an arena-owned `[]const u8` (identity copy under the
+        // generics.zig "const strings" rule), so `#[derive(Clone)]` is
+        // semantically equivalent until `'bump` is threaded.
+        this.clone()
+    }
+
+    /// `SelectorList::deep_clone` — selectors/parser.rs intentionally drops
+    /// the `&Arena` parameter (its slices are arena-static). Adapt the call
+    /// shape so leaf rules can stay uniform.
+    #[inline]
+    pub fn selector_list(
+        this: &crate::selectors::SelectorList,
+        _bump: &Arena,
+    ) -> crate::selectors::SelectorList {
+        this.deep_clone()
+    }
+
+    /// `QueryFeature<F>::deep_clone` — no arena-aware impl yet; `Clone` is
+    /// faithful for the same reason as `media_list` above.
+    #[inline]
+    pub fn query_feature<F>(
+        this: &crate::media_query::QueryFeature<F>,
+        _bump: &Arena,
+    ) -> crate::media_query::QueryFeature<F>
+    where
+        F: crate::media_query::FeatureIdTrait + Clone,
+    {
+        this.clone()
+    }
+
+    /// `Property::deep_clone` — gated on the per-variant `DeepClone` derives in
+    /// `properties_generated.rs`.
+    #[inline]
+    pub fn property(this: &crate::properties::Property, bump: &Arena) -> crate::properties::Property {
+        #[cfg(any())]
+        {
+            use crate::generics::DeepClone as _;
+            return this.deep_clone(bump);
+        }
+        #[cfg(not(any()))]
+        {
+            let _ = (this, bump);
+            todo!("blocked_on: Property: DeepClone (properties_generated)")
+        }
+    }
+}
 
 // `Location` is plain `Copy` data; the derive expands to field-wise
 // `u32::deep_clone` (identity). Doubles as the in-tree smoke test that the
@@ -615,24 +631,10 @@ impl<R> CssRuleList<R> {
     where
         R: css::generics::DeepClone<'bump>,
     {
-        // blocked_on: CssRule::deep_clone — every leaf variant's inherent
-        // `deep_clone` is `#[cfg(any())]`-gated on the crate-wide DeepClone
-        // derive. All current callers are themselves gated; panic loudly if
-        // one un-gates first (PORTING.md §Forbidden: silent no-op).
-        #[cfg(any())]
-        return Self { v: self.v.iter().map(|r| r.deep_clone(bump)).collect() };
-        #[cfg(not(any()))]
-        {
-            let _ = bump;
-            todo!("blocked_on: CssRule::deep_clone — crate-wide DeepClone derive")
-        }
+        Self { v: self.v.iter().map(|r| r.deep_clone(bump)).collect() }
     }
 }
 
-// blocked_on: every leaf rule's inherent `deep_clone` is `#[cfg(any())]`-gated
-// on the crate-wide DeepClone derive (see each leaf's `// blocked_on: DeepClone`
-// block). This dispatch un-gates atomically with those.
-#[cfg(any())]
 impl<R> CssRule<R> {
     /// Zig: `css.implementDeepClone(@This(), this, allocator)` — variant-wise
     /// dispatch to each leaf rule's `deep_clone`. Hand-written (not

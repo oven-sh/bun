@@ -8,7 +8,7 @@ use bun_string::strings;
 use bun_wyhash::Wyhash;
 
 use crate::parser::options;
-use bun_options_types::import_record::ImportRecord;
+use bun_options_types::import_record::{ImportRecord, Flags as ImportRecordFlags};
 
 use crate::defines::Define;
 use crate::lexer as js_lexer;
@@ -1397,8 +1397,7 @@ impl<'a> Parser<'a> {
 
                 let import_record: Option<&ImportRecord> = 'brk: {
                     for import_record in p.import_records.items() {
-                        // TODO(port): Zig also checks `is_unused` (field not yet on Rust ImportRecord).
-                        if import_record.tag.is_internal() {
+                        if import_record.flags.intersects(ImportRecordFlags::IS_INTERNAL | ImportRecordFlags::IS_UNUSED) {
                             continue;
                         }
                         if import_record.kind == bun_options_types::ImportKind::Stmt {
@@ -1502,8 +1501,7 @@ impl<'a> Parser<'a> {
                     // If they use an import statement, we say it's ESM because that's not allowed in CommonJS files.
                     let uses_any_import_statements = 'brk: {
                         for import_record in p.import_records.items() {
-                            // TODO(port): Zig also checks `is_unused` (field not yet on Rust ImportRecord).
-                            if import_record.tag.is_internal() {
+                            if import_record.flags.intersects(ImportRecordFlags::IS_INTERNAL | ImportRecordFlags::IS_UNUSED) {
                                 continue;
                             }
                             if import_record.kind == bun_options_types::ImportKind::Stmt {

@@ -71,10 +71,7 @@ impl RGBA {
     /// Zig: `ColorspaceConversions(@This()).tryFromCssColor`.
     #[inline]
     pub fn try_from_css_color(color: &CssColor) -> Option<RGBA> {
-        #[cfg(any())] // blocked_on: gated_full_impl (SRGB::try_from_css_color)
-        { return Some(SRGB::try_from_css_color(color)?.into_rgba()); }
-        let _ = color;
-        todo!("blocked_on: gated_full_impl — RGBA::try_from_css_color")
+        Some(SRGB::try_from_css_color(color)?.into_rgba())
     }
 }
 
@@ -289,20 +286,12 @@ impl CssColor {
                     Err(location.new_unexpected_token_error(token))
                 }
             }
-            css::Token::Function(name) => {
-                let _ = (name, &location);
-                todo!("blocked_on: gated_full_impl::parse_color_function")
-            }
+            css::Token::Function(name) => parse_color_function(location, name, input),
             _ => Err(location.new_unexpected_token_error(token)),
         }
     }
 
     /// Serialize this color to CSS text via `dest`.
-    #[cfg(not(any()))] // stub while gated_full_impl (short_color_name/compact_hex/write_components/...) is gated
-    pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
-        todo!("blocked_on: gated_full_impl — CssColor::to_css")
-    }
-    #[cfg(any())] // blocked_on: gated_full_impl (short_color_name/compact_hex/expand_hex/write_components/write_predefined)
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             CssColor::CurrentColor => dest.write_str("currentColor"),
@@ -594,7 +583,9 @@ impl CssColor {
                 let dark = ld_dark.to_p3()?;
                 Some(CssColor::LightDark { light: Box::new(light), dark: Box::new(dark) })
             }
-            _ => todo!("blocked_on: gated_full_impl — P3::try_from_css_color"),
+            _ => Some(CssColor::Predefined(Box::new(PredefinedColor::DisplayP3(
+                P3::try_from_css_color(self)?,
+            )))),
         }
     }
 
@@ -605,7 +596,9 @@ impl CssColor {
                 let dark = ld_dark.to_lab()?;
                 Some(CssColor::LightDark { light: Box::new(light), dark: Box::new(dark) })
             }
-            _ => todo!("blocked_on: gated_full_impl — LAB::try_from_css_color"),
+            _ => Some(CssColor::Lab(Box::new(LABColor::Lab(
+                LAB::try_from_css_color(self)?,
+            )))),
         }
     }
 

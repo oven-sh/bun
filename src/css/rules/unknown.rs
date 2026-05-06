@@ -41,6 +41,19 @@ impl UnknownAtRule {
             dest.write_char(b';')
         }
     }
+
+    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+        use crate::generics::DeepClone as _;
+        // PORT NOTE: `css.implementDeepClone` field-walk. `name: &'static [u8]`
+        // is an arena-owned slice → identity copy (generics.zig "const strings"
+        // rule); `TokenList` carries `#[derive(DeepClone)]`.
+        Self {
+            name: self.name,
+            prelude: self.prelude.deep_clone(bump),
+            block: self.block.as_ref().map(|b| b.deep_clone(bump)),
+            loc: self.loc,
+        }
+    }
 }
 
 // blocked_on: properties::custom::TokenList::to_css — its body is `#[cfg(any())]`
@@ -68,5 +81,5 @@ fn token_list_to_css(
 //   source:     src/css/rules/unknown.zig (52 lines)
 //   confidence: high
 //   todos:      1
-//   notes:      `name` field laundered as &'static [u8] until crate-wide 'bump thread; inherent deep_clone provided by deep_clone_shim! in mod.rs until DeepClone derive lands
+//   notes:      `name` field laundered as &'static [u8] until crate-wide 'bump thread; inherent deep_clone real (field-walk port of css.implementDeepClone)
 // ──────────────────────────────────────────────────────────────────────────

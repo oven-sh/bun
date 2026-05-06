@@ -44,6 +44,14 @@ impl JSMySQLQuery {
             unsafe { Self::deinit(self as *mut Self) };
         }
     }
+
+    /// `deref_` — spelling used by raw-pointer call sites in
+    /// `MySQLConnection.rs` where Rust's `Deref` trait would otherwise be
+    /// found first via auto-deref. Forwards to the intrusive-rc decrement.
+    #[inline]
+    pub fn deref_(&mut self) {
+        self.deref();
+    }
 }
 
 impl JSMySQLQuery {

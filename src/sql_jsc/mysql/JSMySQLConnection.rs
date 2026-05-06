@@ -1063,6 +1063,13 @@ use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode as ResultMode;
 // pub const js = jsc.Codegen.JSMySQLConnection; — re-exported via `use ... as js` above.
 // fromJS / fromJSDirect / toJS — provided by #[bun_jsc::JsClass] derive.
 
+/// Zig re-export pattern: `MySQLQuery.zig` / `MySQLRequestQueue.zig` /
+/// `JSMySQLQuery.zig` import the JS-wrapper type under the bare
+/// `MySQLConnection` name (the connection state-machine struct lives in
+/// `my_sql_connection`). Surface the alias here so `super::js_mysql_connection::
+/// MySQLConnection` resolves to this type, not the protocol-layer struct.
+pub use JSMySQLConnection as MySQLConnection;
+
 pub type Writer = my_sql_connection::Writer;
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -985,7 +985,8 @@ impl<'a> RouteLoader<'a> {
                         }
                     }
 
-                    bun_sys::EntryKind::File => {
+                    // .file — see note above re: 2-variant collapse.
+                    _ => {
                         let extname = bun_paths::extension(entry.base());
                         // exclude "." or ""
                         if extname.len() < 2 {
@@ -1021,7 +1022,6 @@ impl<'a> RouteLoader<'a> {
                             }
                         }
                     }
-                    _ => {}
                 }
             }
         }
@@ -1300,6 +1300,15 @@ impl Route {
                     let parts = [entry.dir(), entry.base()];
                     let abs_len =
                         FileSystem::instance().abs_buf(&parts, route_file_buf).len();
+                    // Zig: `abs_path_str = FileSystem.instance.absBuf(...)`
+                    // (router.zig:743). Rebind so the later getFdPath error
+                    // message prints the computed path instead of `b""`.
+                    // SAFETY: lifetime-laundered raw view into route_file_buf
+                    // (same pattern as `public_path` above) so the buffer can
+                    // be reborrowed mutably for the NUL write / open below.
+                    abs_path_str = unsafe {
+                        core::slice::from_raw_parts(route_file_buf.as_ptr(), abs_len)
+                    };
                     route_file_buf[abs_len] = 0;
                     // SAFETY: NUL-terminated above; `abs_len` bytes valid in route_file_buf.
                     let buf = unsafe {

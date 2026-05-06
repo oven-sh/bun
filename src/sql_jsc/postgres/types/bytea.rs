@@ -1,4 +1,4 @@
-use crate::jsc::{JSGlobalObject, JSValue};
+use crate::jsc::{JSGlobalObject, JSValue, JSValueSqlExt};
 use bun_sql::postgres::AnyPostgresError;
 use bun_sql::postgres::types::int_types::Short;
 use bun_sql::shared::Data;

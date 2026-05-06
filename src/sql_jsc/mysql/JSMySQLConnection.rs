@@ -119,7 +119,9 @@ impl JSMySQLConnection {
     /// the JS thread already owns. Do not call while another `&mut VirtualMachine`
     /// is live in this frame.
     #[inline]
-    fn vm_mut(&self) -> &mut VirtualMachine {
+    fn vm_mut(&self) -> &'static mut VirtualMachine {
+        // Explicit `'static` so the return does not reborrow `*self` — callers
+        // pair this with `&mut self.timer` in the same expression.
         unsafe { &mut *(self.vm as *const VirtualMachine as *mut VirtualMachine) }
     }
 
@@ -826,7 +828,7 @@ impl JSMySQLConnection {
         if js_error.is_empty() {
             js_error = mysql_error_to_js(
                 self.global_object,
-                Some(b"Connection closed"),
+                b"Connection closed",
                 AnyMySQLErrorT::ConnectionClosed,
             );
         }
@@ -848,7 +850,7 @@ impl JSMySQLConnection {
     }
 
     fn fail(&mut self, message: &[u8], err: AnyMySQLErrorT) {
-        let instance = mysql_error_to_js(self.global_object, Some(message), err);
+        let instance = mysql_error_to_js(self.global_object, message, err);
         self.fail_with_js_value(instance);
     }
 

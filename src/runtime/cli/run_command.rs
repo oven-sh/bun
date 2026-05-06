@@ -3504,8 +3504,9 @@ impl RunCommand {
         type ResultList = ArrayHashMap<Box<[u8]>, ()>;
         // TODO(port): Zig used bun.StringArrayHashMap(void) keyed by borrowed slices
 
-        if let Some(shell) = this_transpiler.env.get(b"SHELL") {
-            shell_out.shell = ShellCompletions::Shell::from_env(shell);
+        // SAFETY: `Transpiler::env` is a non-null process-lifetime `*mut Loader`.
+        if let Some(shell) = unsafe { &*this_transpiler.env }.get(b"SHELL") {
+            shell_out.shell = crate::cli::shell_completions::Shell::from_env(shell);
         }
 
         let mut results = ResultList::new();
@@ -3515,7 +3516,7 @@ impl RunCommand {
             if let Some(defaults) = default_completions {
                 results.ensure_unused_capacity(defaults.len())?;
                 for item in defaults {
-                    let _ = results.get_or_put_assume_capacity(Box::from(*item));
+                    let _ = results.get_or_put(Box::from(*item));
                     // PERF(port): was assume_capacity
                 }
             }

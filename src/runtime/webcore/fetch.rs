@@ -958,23 +958,26 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                                     {
                                         if !headers_value.is_undefined_or_null() {
                                             if let Some(fetch_hdrs) =
-                                                headers_value.as_::<FetchHeaders>()
+                                                headers_value.as_fetch_headers()
                                             {
+                                                // SAFETY: as_fetch_headers returns a live FetchHeaders*.
+                                                let fetch_hdrs = unsafe { &*fetch_hdrs };
                                                 proxy_headers = Some(Headers::from(
-                                                    Some(fetch_hdrs),
-                                                    Headers::Options::default(),
+                                                    Some(fetch_headers_ref(fetch_hdrs)),
+                                                    HeadersOptions::default(),
                                                 ));
                                             } else if let Some(fetch_hdrs) =
                                                 FetchHeaders::create_from_js(ctx, headers_value)?
                                             {
-                                                // PORT NOTE: `defer fetch_hdrs.deref()` → Drop guard.
-                                                let _g = scopeguard::guard((), |_| {
-                                                    fetch_hdrs.deref()
-                                                });
+                                                // SAFETY: create_from_js returns a +1-ref NonNull<FetchHeaders>.
+                                                let fetch_hdrs_ref = unsafe { fetch_hdrs.as_ref() };
                                                 proxy_headers = Some(Headers::from(
-                                                    Some(fetch_hdrs),
-                                                    Headers::Options::default(),
+                                                    Some(fetch_headers_ref(fetch_hdrs_ref)),
+                                                    HeadersOptions::default(),
                                                 ));
+                                                // PORT NOTE: `defer fetch_hdrs.deref()` — release the +1 ref.
+                                                // SAFETY: paired with the create_from_js +1 ref above.
+                                                unsafe { (*fetch_hdrs.as_ptr()).deref() };
                                             }
                                         }
                                     }

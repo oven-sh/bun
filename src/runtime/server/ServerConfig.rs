@@ -1133,7 +1133,7 @@ impl ServerConfig {
 
         if let Some(on_request_) = arg.get_truthy(global, "fetch")? {
             if !on_request_.is_callable() {
-                return global.throw_invalid_arguments("Expected fetch() to be a function", &[]);
+                return Err(global.throw_invalid_arguments("Expected fetch() to be a function"));
             }
             let on_request = on_request_.with_async_context_if_needed(global);
             args.on_request = Some(Strong::create(on_request, global));
@@ -1146,7 +1146,7 @@ impl ServerConfig {
             if global.has_exception() {
                 return Err(JsError::Thrown);
             }
-            return global.throw_invalid_arguments(
+            return Err(global.throw_invalid_arguments(
                 "Bun.serve() needs either:\n\n\
                  \x20 - A routes object:\n\
                  \x20    routes: {\n\
@@ -1159,8 +1159,7 @@ impl ServerConfig {
                  \x20      return new Response(\"Hello\")\n\
                  \x20    }\n\n\
                  Learn more at https://bun.com/docs/api/http",
-                &[],
-            );
+            ));
         } else {
             if global.has_exception() {
                 return Err(JsError::Thrown);

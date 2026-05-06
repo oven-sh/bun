@@ -4051,16 +4051,14 @@ mod zigstring_blob_ext {
             unsafe { ZigString__external(self, global, ctx, cb) }
         }
     }
-    #[inline]
-    pub(super) fn zig_string_to_json_object(this: &ZigString, global: &JSGlobalObject) -> JSValue {
-        // SAFETY: see `external`.
-        unsafe { ZigString__toJSONObject(this, global) }
-    }
-    // Silence dead_code on the unused FFI re-decls (kept for symbol parity).
+    // Silence dead_code on the unused FFI re-decls (kept for symbol parity;
+    // `to_js`/`to_external_value`/`to_json_object` resolve via the crate-level
+    // `ZigStringBlobExt` instead).
     #[allow(dead_code)]
     const _: (unsafe extern "C" fn(*const ZigString, *const JSGlobalObject) -> JSValue,
+              unsafe extern "C" fn(*const ZigString, *const JSGlobalObject) -> JSValue,
               unsafe extern "C" fn(*const ZigString, *const JSGlobalObject) -> JSValue) =
-        (ZigString__toValueGC, ZigString__toExternalValue);
+        (ZigString__toValueGC, ZigString__toExternalValue, ZigString__toJSONObject);
     #[inline]
     pub(super) fn zig_string_to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObject) -> JSValue {
         // SAFETY: `ptr[..len]` is a leaked default-allocator `Box<[u16]>`;
@@ -4102,7 +4100,7 @@ mod zigstring_blob_ext {
 }
 use zigstring_blob_ext::{
     ZigStringExternalExt as _, JSValueBlobExt as _, ZigStringSliceBlobExt as _,
-    zig_string_to_external_u16, zig_string_to_json_object,
+    zig_string_to_external_u16,
 };
 use bun_jsc::{StringJsc as _, ZigStringJsc as _};
 
@@ -5597,8 +5595,12 @@ impl ZigStringBlobExt for ZigString {
         }
         self
     }
-    fn to_json_object(&self, _global: &JSGlobalObject) -> JSValue {
-        todo!("blocked_on: bun_jsc::zig_string::ZigString::to_json_object")
+    fn to_json_object(&self, global: &JSGlobalObject) -> JSValue {
+        unsafe extern "C" {
+            fn ZigString__toJSONObject(this: *const ZigString, global: *const JSGlobalObject) -> JSValue;
+        }
+        // SAFETY: `self` is `#[repr(C)] (ptr,len)`; `global` is live.
+        unsafe { ZigString__toJSONObject(self, global) }
     }
 }
 

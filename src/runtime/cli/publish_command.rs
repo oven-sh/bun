@@ -1197,11 +1197,11 @@ impl PublishCommand {
 
             if !registry.token.is_empty() {
                 write!(print_buf, "Bearer {}", bstr::BStr::new(&registry.token)).ok();
-                headers.count(b"authorization", print_buf);
+                headers.count(b"authorization", &**print_buf);
                 print_buf.clear();
             } else if !registry.auth.is_empty() {
                 write!(print_buf, "Basic {}", bstr::BStr::new(&registry.auth)).ok();
-                headers.count(b"authorization", print_buf);
+                headers.count(b"authorization", &**print_buf);
                 print_buf.clear();
             }
 
@@ -1227,7 +1227,7 @@ impl PublishCommand {
                 bstr::BStr::new(ci_name.unwrap_or(b"")),
             ).ok();
             // headers.count("user-agent", "npm/10.8.3 node/v24.3.0 darwin arm64 workspaces/false");
-            headers.count(b"user-agent", print_buf);
+            headers.count(b"user-agent", &**print_buf);
             print_buf.clear();
 
             headers.count(b"Connection", b"keep-alive");
@@ -1235,7 +1235,7 @@ impl PublishCommand {
 
             if let Some(json_len) = maybe_json_len {
                 write!(print_buf, "{}", json_len).ok();
-                headers.count(b"Content-Length", print_buf);
+                headers.count(b"Content-Length", &**print_buf);
                 print_buf.clear();
             }
         }
@@ -1248,11 +1248,11 @@ impl PublishCommand {
 
             if !registry.token.is_empty() {
                 write!(print_buf, "Bearer {}", bstr::BStr::new(&registry.token)).ok();
-                headers.append(b"authorization", print_buf);
+                headers.append(b"authorization", &**print_buf);
                 print_buf.clear();
             } else if !registry.auth.is_empty() {
                 write!(print_buf, "Basic {}", bstr::BStr::new(&registry.auth)).ok();
-                headers.append(b"authorization", print_buf);
+                headers.append(b"authorization", &**print_buf);
                 print_buf.clear();
             }
 
@@ -1278,7 +1278,7 @@ impl PublishCommand {
                 bstr::BStr::new(ci_name.unwrap_or(b"")),
             ).ok();
             // headers.append("user-agent", "npm/10.8.3 node/v24.3.0 darwin arm64 workspaces/false");
-            headers.append(b"user-agent", print_buf);
+            headers.append(b"user-agent", &**print_buf);
             print_buf.clear();
 
             headers.append(b"Connection", b"keep-alive");
@@ -1286,7 +1286,7 @@ impl PublishCommand {
 
             if let Some(json_len) = maybe_json_len {
                 write!(print_buf, "{}", json_len).ok();
-                headers.append(b"Content-Length", print_buf);
+                headers.append(b"Content-Length", &**print_buf);
                 print_buf.clear();
             }
         }

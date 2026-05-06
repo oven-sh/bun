@@ -2990,12 +2990,116 @@ impl Blob {
             ));
         }
 
-        // TODO(port): Windows-specific FileSink open path (Zig lines 2627-2689) and
-        // POSIX FileSink start path (lines 2691-2720). Elided in Phase A for brevity;
-        // both paths produce `file_sink: Arc<FileSink>` and continue below.
-        let file_sink: Arc<webcore::FileSink> = todo!("port FileSink open/start branches");
+        let file_sink: *mut webcore::FileSink = 'brk_sink: {
+            #[cfg(windows)]
+            {
+                let pathlike = &store.data.as_file().pathlike;
+                let fd: Fd = if let PathOrFileDescriptor::Fd(fd) = pathlike {
+                    *fd
+                } else {
+                    let mut file_path = bun_paths::PathBuffer::uninit();
+                    let path = pathlike.path().slice_z(&mut file_path);
+                    match bun_sys::open(
+                        path,
+                        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK,
+                        WRITE_PERMISSIONS,
+                    ) {
+                        bun_sys::Result::Ok(result) => result,
+                        bun_sys::Result::Err(err) => {
+                            return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                                global_this,
+                                err.with_path(path).to_js(global_this)?,
+                            ));
+                        }
+                    }
+                };
 
-        let signal = &mut file_sink.signal;
+                let is_stdout_or_stderr = 'brk: {
+                    if !matches!(pathlike, PathOrFileDescriptor::Fd(_)) {
+                        break 'brk false;
+                    }
+
+                    if let Some(rare) = global_this.bun_vm().rare_data.as_ref() {
+                        if rare.stdout_store.as_ref().is_some_and(|s| Arc::ptr_eq(s, &store)) {
+                            break 'brk true;
+                        }
+                        if rare.stderr_store.as_ref().is_some_and(|s| Arc::ptr_eq(s, &store)) {
+                            break 'brk true;
+                        }
+                    }
+
+                    if let Some(tag) = fd.stdio_tag() {
+                        matches!(tag, bun_sys::StdioTag::StdOut | bun_sys::StdioTag::StdErr)
+                    } else {
+                        false
+                    }
+                };
+                let sink = webcore::FileSink::init(
+                    fd,
+                    // SAFETY: self.global_this stored from a live &JSGlobalObject; VM outlives this task.
+                    unsafe { (*self.global_this).bun_vm() }.event_loop(),
+                );
+                // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink.
+                unsafe { (*sink).writer.owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_)) };
+
+                if is_stdout_or_stderr {
+                    // SAFETY: sink is live; sole owner here.
+                    if let bun_sys::Result::Err(err) = unsafe { (*sink).writer.start_sync(fd, false) } {
+                        unsafe { (*sink).deref() };
+                        return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                            global_this,
+                            err.to_js(global_this)?,
+                        ));
+                    }
+                } else {
+                    // SAFETY: sink is live; sole owner here.
+                    if let bun_sys::Result::Err(err) = unsafe { (*sink).writer.start(fd, true) } {
+                        unsafe { (*sink).deref() };
+                        return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                            global_this,
+                            err.to_js(global_this)?,
+                        ));
+                    }
+                }
+
+                break 'brk_sink sink;
+            }
+
+            #[cfg(not(windows))]
+            {
+                let sink = webcore::FileSink::init(
+                    bun_sys::INVALID_FD,
+                    // SAFETY: self.global_this stored from a live &JSGlobalObject; VM outlives this task.
+                    unsafe { (*self.global_this).bun_vm() }.event_loop(),
+                );
+
+                let input_path: webcore::PathOrFileDescriptor = match &store.data.as_file().pathlike {
+                    PathOrFileDescriptor::Fd(fd) => webcore::PathOrFileDescriptor::Fd(*fd),
+                    PathOrFileDescriptor::Path(p) => {
+                        webcore::PathOrFileDescriptor::Path(ZigString::Slice::init_dupe(p.slice()))
+                    }
+                };
+                // input_path drops at scope exit (Zig: `defer input_path.deinit()`).
+
+                let stream_start = streams::Start::FileSink(streams::FileSinkOptions {
+                    input_path,
+                    ..Default::default()
+                });
+
+                // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink.
+                if let bun_sys::Result::Err(err) = unsafe { (*sink).start(stream_start) } {
+                    unsafe { (*sink).deref() };
+                    return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                        global_this,
+                        err.to_js(global_this)?,
+                    ));
+                }
+                break 'brk_sink sink;
+            }
+        };
+
+        // SAFETY: file_sink is a live +1 *mut FileSink for the rest of this fn.
+        let signal = unsafe { &mut (*file_sink).signal };
         *signal = webcore::FileSink::JSSink::SinkSignal::init(JSValue::ZERO);
 
         // explicitly set it to a dead pointer
@@ -3006,7 +3110,7 @@ impl Blob {
         let assignment_result: JSValue = webcore::FileSink::JSSink::assign_to_stream(
             global_this,
             readable_stream.value,
-            file_sink.clone(),
+            file_sink,
             &mut signal.ptr as *mut _ as *mut *mut c_void,
         );
 
@@ -3016,7 +3120,8 @@ impl Blob {
         debug_assert!(!signal.is_dead());
 
         if let Some(err) = assignment_result.to_error() {
-            drop(file_sink);
+            // SAFETY: release our +1 ref on the sink.
+            unsafe { (*file_sink).deref() };
             return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                 global_this, err,
             ));
@@ -3046,12 +3151,14 @@ impl Blob {
                         return Ok(promise_value);
                     }
                     jsc::PromiseStatus::Fulfilled => {
-                        drop(file_sink);
+                        // SAFETY: release our +1 ref on the sink.
+                        unsafe { (*file_sink).deref() };
                         readable_stream.done(global_this);
                         return Ok(JSPromise::resolved_promise_value(global_this, JSValue::js_number(0)));
                     }
                     jsc::PromiseStatus::Rejected => {
-                        drop(file_sink);
+                        // SAFETY: release our +1 ref on the sink.
+                        unsafe { (*file_sink).deref() };
                         readable_stream.cancel(global_this);
                         return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                             global_this,
@@ -3060,14 +3167,16 @@ impl Blob {
                     }
                 }
             } else {
-                drop(file_sink);
+                // SAFETY: release our +1 ref on the sink.
+                unsafe { (*file_sink).deref() };
                 readable_stream.cancel(global_this);
                 return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                     global_this, assignment_result,
                 ));
             }
         }
-        drop(file_sink);
+        // SAFETY: release our +1 ref on the sink.
+        unsafe { (*file_sink).deref() };
 
         Ok(JSPromise::resolved_promise_value(global_this, JSValue::js_number(0)))
     }

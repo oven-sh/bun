@@ -10,6 +10,12 @@ use bun_core::Output;
 use bun_logger as logger;
 use bun_options_types::import_record::{ImportKind, ImportRecord};
 use bun_string::strings;
+// TODO(port): MUST be `bun_wyhash::Wyhash` (Zig `std.hash.Wyhash`, not Bun's
+// `Wyhash11`). `hash_for_runtime_transpiler` (runtime.zig:272) hashes with the
+// stdlib variant, so on-disk RuntimeTranspilerCache keys won't match the Zig
+// build until the real `Wyhash` is ported into `bun_wyhash`. Aliased for now so
+// every signature below already spells `Wyhash` and flips atomically once
+// `bun_wyhash::Wyhash` lands. blocked_on: bun_wyhash::Wyhash (std.hash.Wyhash port).
 use bun_wyhash::Wyhash11 as Wyhash;
 
 // Re-exports (mirrors the Zig `pub const X = @import(...)` block at the bottom).
@@ -326,11 +332,12 @@ pub mod Runtime {
         /// When `feature("FLAG_NAME")` is called, it returns true if FLAG_NAME is in this set.
         ///
         /// Zig `bundler_feature_flags: *const bun.StringSet = &empty_bundler_feature_flags`.
-        /// `None` ≡ the empty static set (contributes nothing to the hash). Kept
-        /// `Option` because `StringSet` has no const-empty constructor yet
-        /// (`StringSet::EMPTY` TODO in collections), so a `&'static StringSet`
-        /// default would need a lazy_static.
-        pub bundler_feature_flags: Option<&'static StringSet>,
+        /// `None` ≡ the empty static set (contributes nothing to the hash).
+        /// Owned `Box` (not `&'static`) per PORTING.md §Forbidden — the Zig
+        /// caller frees it on `BundleOptions` teardown, so Rust must too;
+        /// `Box::leak`-ing to satisfy a `&'static` would be an unbounded leak
+        /// in watch/dev-server mode.
+        pub bundler_feature_flags: Option<Box<StringSet>>,
 
         /// REPL mode: transforms code for interactive evaluation
         /// - Wraps lone object literals `{...}` in parentheses
@@ -392,31 +399,37 @@ pub mod Runtime {
 
     impl Features {
         /// Initialize bundler feature flags for dead-code elimination via `import { feature } from "bun:bundle"`.
-        /// Returns a leaked `&'static StringSet`, or `None` if no flags are provided.
+        /// Returns an owned `Box<StringSet>`, or `None` if no flags are provided.
         /// Keys are kept sorted so iteration order is deterministic (for RuntimeTranspilerCache hashing).
-        pub fn init_bundler_feature_flags(feature_flags: &[&[u8]]) -> Option<&'static StringSet> {
+        pub fn init_bundler_feature_flags(feature_flags: &[&[u8]]) -> Option<Box<StringSet>> {
             // Zig returns `*const bun.StringSet` heap-allocated via `allocator.create`, and
-            // the caller frees it. Rust callers (BundleOptions) own the result for the
-            // process lifetime, so leak is fine. Empty path returns `None` (≡ static empty).
+            // the caller frees it on `BundleOptions` teardown. Empty path returns `None`
+            // (≡ static empty). Owned `Box` per PORTING.md §Forbidden — never `Box::leak`.
             if feature_flags.is_empty() {
                 return None;
             }
+            // PORT NOTE: reshaped for borrowck — Zig inserted then sorted via
+            // `set.map.sort(...)` with a comparator borrowing `set.map.keys()`.
+            // `StringSet` preserves insertion order and has no in-place key sort,
+            // so sort the inputs first; the resulting `keys()` iteration order
+            // is then byte-lexicographic and matches runtime.zig:241-246.
+            let mut sorted: Vec<&[u8]> = feature_flags.to_vec();
+            sorted.sort_unstable();
             let mut set = StringSet::new();
-            for flag in feature_flags {
+            for flag in sorted {
                 let _ = set.insert(flag);
             }
-            // PORT NOTE: reshaped for borrowck — Zig sorted via `set.map.sort` with a
-            // comparator closure that borrowed `set.map.keys()`. Here we sort the
-            // backing ArrayHashMap by key bytes directly.
-            // TODO(port): exact API on bun_collections::StringSet for in-place key sort
-            // (currently no `sort_keys_by`; iteration order is insertion order).
-            Some(Box::leak(Box::new(set)))
+            Some(Box::new(set))
         }
 
         // Zig: `hash_fields_for_runtime_transpiler` — a comptime tuple of field-name
         // enum literals iterated with `inline for` + `@field`. Rust has no field
         // reflection; expanded by hand. Keep this list in sync with the Zig tuple.
-        pub fn hash_for_runtime_transpiler(&self, hasher: &mut bun_wyhash::Wyhash11) {
+        //
+        // NOTE: Spec runtime.zig:272 takes `*std.hash.Wyhash` (NOT `Wyhash11`).
+        // The `Wyhash` alias above is currently `Wyhash11` until `bun_wyhash::Wyhash`
+        // (the stdlib variant) is ported — see TODO at the top-level `use`.
+        pub fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
             debug_assert!(self.runtime_transpiler_cache.is_some());
 
             let bools: [bool; 17] = [
@@ -449,7 +462,7 @@ pub mod Runtime {
             // feature("NAME") replacement in visitExpr.zig. When empty, we add
             // nothing to the hash so existing cache entries remain valid.
             // Keys are sorted in init_bundler_feature_flags so flag order on the CLI doesn't matter.
-            if let Some(flags) = self.bundler_feature_flags {
+            if let Some(flags) = self.bundler_feature_flags.as_deref() {
                 for flag in flags.keys() {
                     hasher.update(flag);
                     hasher.update(b"\x00");

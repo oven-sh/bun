@@ -6706,7 +6706,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     break 'hash_arg;
                 }
                 let arg = hook_call.args.slice()[arg_index];
+                // blocked_on: ExprData::write_to_hasher (Expr.rs track-A; needs
+                // SymbolTable trait + bun_core::write_any_to_hasher). Hashing the
+                // initial-state arg only sharpens the refresh signature; safe to
+                // skip until that lands.
+                #[cfg(any())]
                 arg.data.write_to_hasher(&mut ctx.hasher, self.symbols.as_slice());
+                let _ = arg;
             }
         } else {
             // TODO(port): Zig used `inline .e_identifier, .e_import_identifier, .e_commonjs_export_identifier => |id, tag|`

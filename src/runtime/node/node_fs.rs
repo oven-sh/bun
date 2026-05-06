@@ -1289,7 +1289,7 @@ impl AsyncReaddirRecursiveTask {
         this.perform_work(this.root_path.slice_assume_z(), &mut buf, true);
     }
 
-    pub fn write_results<T>(&mut self, result: &mut Vec<T>) {
+    pub fn write_results<T: IntoResultListEntry>(&mut self, result: &mut Vec<T>) {
         if !result.is_empty() {
             let mut clone: Vec<T> = Vec::with_capacity(result.len());
             // PERF(port): was appendSliceAssumeCapacity
@@ -1432,11 +1432,41 @@ impl AsyncReaddirRecursiveTask {
     }
 }
 
-// TODO(port): helper trait — maps Vec<T> -> ResultListEntryValue variant
+/// Maps a readdir element type to its `ResultListEntryValue` variant.
+///
+/// PORT NOTE: Zig used `@unionInit(ResultListEntry.Value, @tagName(tag), clone)`
+/// inside `writeResults`, dispatching on `comptime ResultType`. Rust can't
+/// switch on a generic `T`, so the per-type wrapping lives on this trait.
+pub trait IntoResultListEntry: Sized {
+    fn into_variant(v: Vec<Self>) -> ResultListEntryValue;
+}
+impl IntoResultListEntry for Dirent {
+    fn into_variant(v: Vec<Self>) -> ResultListEntryValue { ResultListEntryValue::WithFileTypes(v) }
+}
+impl IntoResultListEntry for Buffer {
+    fn into_variant(v: Vec<Self>) -> ResultListEntryValue { ResultListEntryValue::Buffers(v) }
+}
+impl IntoResultListEntry for BunString {
+    fn into_variant(v: Vec<Self>) -> ResultListEntryValue { ResultListEntryValue::Files(v) }
+}
+
 impl ResultListEntryValue {
-    fn from_vec<T>(_v: Vec<T>) -> Self { todo!("ResultListEntryValue::from_vec dispatch") }
-    fn reserve_exact(&mut self, _n: usize) { /* TODO(port) */ }
-    fn append_from(&mut self, _other: &mut Self) { /* TODO(port) */ }
+    fn from_vec<T: IntoResultListEntry>(v: Vec<T>) -> Self { T::into_variant(v) }
+    fn reserve_exact(&mut self, n: usize) {
+        match self {
+            Self::WithFileTypes(v) => v.reserve_exact(n),
+            Self::Buffers(v) => v.reserve_exact(n),
+            Self::Files(v) => v.reserve_exact(n),
+        }
+    }
+    fn append_from(&mut self, other: &mut Self) {
+        match (self, other) {
+            (Self::WithFileTypes(a), Self::WithFileTypes(b)) => a.append(b),
+            (Self::Buffers(a), Self::Buffers(b)) => a.append(b),
+            (Self::Files(a), Self::Files(b)) => a.append(b),
+            _ => debug_assert!(false, "ResultListEntryValue tag mismatch"),
+        }
+    }
 }
 
 } // mod _async_tasks

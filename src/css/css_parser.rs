@@ -683,7 +683,7 @@ pub trait QualifiedRuleParser {
     ) -> CssResult<Self::QualifiedRule>;
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone, Copy, crate::DeepClone)]
 pub struct DefaultAtRule;
 
 impl DefaultAtRule {

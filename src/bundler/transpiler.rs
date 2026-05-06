@@ -719,6 +719,268 @@ impl<'a> Transpiler<'a> {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
+// B-2 un-gated: `Transpiler::print` / `print_with_source_map` — final step of
+// `ModuleLoader::transpile_source_code` (jsc_hooks.rs spec :525-539). The
+// `bun_js_printer` entry points (`print_ast` / `print_common_js` / `Options` /
+// `SourceMapHandler` / `Format` / `WriterTrait`) are now real types; un-gate
+// the dispatch shim so `RuntimeTranspilerStore` / `AsyncModule` link.
+//
+// PORT NOTE: `comptime format: js_printer.Format` demoted to a runtime arg —
+// `bun_js_printer::Format` doesn't derive `ConstParamTy` (and can't be added
+// from this crate). All un-gated callers pass a literal anyway; the inner
+// `print_ast::<_, ASCII_ONLY, ENABLE_SOURCE_MAP>` keeps both real comptime
+// bools, so codegen monomorphizes the printer body identically.
+// PERF(port): outer `match format` is one extra branch — profile in Phase B.
+// ══════════════════════════════════════════════════════════════════════════
+
+use bun_js_printer as js_printer;
+use crate::analyze_transpiled_module;
+
+/// Re-export so `bun_bundler::PrintFormat::EsmAscii` (AsyncModule.rs:1018)
+/// resolves once `lib.rs` `pub use transpiler::*` lands.
+pub use js_printer::Format as PrintFormat;
+
+impl<'a> Transpiler<'a> {
+    fn print_with_source_map_maybe<W, const ENABLE_SOURCE_MAP: bool>(
+        &mut self,
+        mut ast: js_ast::Ast,
+        source: &logger::Source,
+        writer: W,
+        format: js_printer::Format,
+        source_map_context: Option<js_printer::SourceMapHandler<'_>>,
+        runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
+        module_info: Option<*mut analyze_transpiled_module::ModuleInfo>,
+    ) -> Result<usize, bun_core::Error>
+    where
+        W: js_printer::WriterTrait,
+    {
+        // TODO(port): narrow error set
+        // TODO(port): `bun.perf.trace("JSPrinter.printWithSourceMap")` /
+        // `("JSPrinter.print")` — `bun_perf::trace` now takes a `PerfEvent`
+        // enum and neither variant is in `generated_perf_trace_events.rs`
+        // yet. Re-add once `scripts/generate-perf-trace-events.sh` runs
+        // against the Rust tree.
+
+        // PORT NOTE: Zig built `Symbol.NestedList.fromBorrowedSliceDangerous(
+        // &.{ast.symbols})` — aliased the stack-one-slice into the map. Rust
+        // can't borrow `ast.symbols` while moving `ast` into `print_ast`, so
+        // take the column out (the printer never reads `tree.symbols`; it
+        // walks `symbols` exclusively — `rg tree.symbols js_printer/lib.rs` is
+        // empty). `init_with_one_list` boxes the single inner list.
+        // PERF(port): one extra alloc vs Zig's borrowed-slice — profile Phase B.
+        let symbols = js_ast::ast::symbol::Map::init_with_one_list(core::mem::take(&mut ast.symbols));
+
+        // TODO(b2-blocked): three Options fields can't cross the type seam yet
+        // (only this crate is editable); set to `Default` and forward once the
+        // lower-tier types unify:
+        //   * `css_import_behavior` — `self.options.css_import_behavior()`
+        //     returns `bun_options_types::schema::api::CssInJsBehavior` but
+        //     `js_printer::Options` still uses its local stand-in
+        //     `js_printer::CssInJsBehavior` (variants don't even match —
+        //     `AutoOnimportcss` vs `AutoOnlyCssFiles`).
+        //   * `runtime_imports` — `Ast.runtime_imports` is the opaque
+        //     `ast::runtime_stub::Imports` unit struct; `Options.runtime_imports`
+        //     wants `bun_js_parser::runtime::Imports` (parser.rs stub).
+        //   * `target` — `BundleOptions.target` is `crate::options::Target`
+        //     (the bundler-local enum at options.rs:490); `Options.target`
+        //     wants `bun_options_types::BundleEnums::Target`. Same shape,
+        //     distinct nominal type — needs a `From` in options_types.
+        // None of these affect the `EsmAscii`/bun runtime path's printer
+        // output for the un-gated callers (RuntimeTranspilerStore/AsyncModule
+        // never bundle CSS-in-JS and don't use runtime-imports rewriting).
+        let _ = (runtime_transpiler_cache, module_info);
+        // TODO(b2-blocked): `runtime_transpiler_cache` — `Options` wants
+        // `Option<RuntimeTranspilerCacheRef>` (erased `(owner, &'static
+        // vtable)`), but `crate::cache::RuntimeTranspilerCache` exposes no
+        // `put` yet to build the vtable from. Forward once `cache.rs` grows
+        // the `RUNTIME_TRANSPILER_CACHE_VTABLE` static.
+        // TODO(b2-blocked): `module_info` — `js_printer` defines its own
+        // inline `analyze_transpiled_module::ModuleInfo` (lib.rs:109); the
+        // bundler's `crate::analyze_transpiled_module::ModuleInfo` is a
+        // sibling, not the same type. Unify in Phase B (move js_printer's
+        // inline mod to a `pub use bun_bundler::analyze_transpiled_module`).
+
+        let require_ref = ast.require_ref;
+        let import_meta_ref = ast.import_meta_ref;
+        let wrapper_ref = ast.wrapper_ref;
+        let exports_kind = ast.exports_kind;
+
+        let base_opts = |source_map_handler| js_printer::Options {
+            bundling: false,
+            require_ref: Some(require_ref),
+            source_map_handler,
+            minify_whitespace: self.options.minify_whitespace,
+            minify_syntax: self.options.minify_syntax,
+            minify_identifiers: self.options.minify_identifiers,
+            transform_only: self.options.transform_only,
+            print_dce_annotations: self.options.emit_dce_annotations,
+            hmr_ref: wrapper_ref,
+            mangled_props: None,
+            ..Default::default()
+        };
+
+        match format {
+            js_printer::Format::Cjs => js_printer::print_common_js::<W, false, ENABLE_SOURCE_MAP>(
+                writer,
+                // PORT NOTE: `print_common_js` grew a `&bumpalo::Bump` arg in
+                // the Rust port (for `binary_expression_stack` arena). Zig
+                // threaded `opts.allocator`; here `self.allocator` IS the
+                // per-transpiler `bun_alloc::Arena = bumpalo::Bump`.
+                self.allocator,
+                &ast,
+                symbols,
+                source,
+                base_opts(source_map_context),
+            ),
+
+            js_printer::Format::Esm => js_printer::print_ast::<W, false, ENABLE_SOURCE_MAP>(
+                writer,
+                ast,
+                symbols,
+                source,
+                js_printer::Options {
+                    import_meta_ref,
+                    ..base_opts(source_map_context)
+                },
+            ),
+
+            js_printer::Format::EsmAscii => {
+                // PORT NOTE: `switch (target.isBun()) { inline else => |is_bun| ... }`
+                // — runtime bool → comptime dispatch. Hoisted into the
+                // `print_ast_esm_ascii` helper so the const-generic IS_BUN can
+                // also drive `module_type`.
+                if self.options.target.is_bun() {
+                    self.print_ast_esm_ascii::<W, ENABLE_SOURCE_MAP, true>(
+                        writer,
+                        ast,
+                        symbols,
+                        source,
+                        source_map_context,
+                        import_meta_ref,
+                        exports_kind,
+                    )
+                } else {
+                    self.print_ast_esm_ascii::<W, ENABLE_SOURCE_MAP, false>(
+                        writer,
+                        ast,
+                        symbols,
+                        source,
+                        source_map_context,
+                        import_meta_ref,
+                        exports_kind,
+                    )
+                }
+            }
+
+            // Spec transpiler.zig:672 `else => unreachable`.
+            js_printer::Format::CjsAscii => unreachable!(),
+        }
+    }
+
+    // PORT NOTE: hoisted from `inline else => |is_bun|` arm of
+    // print_with_source_map_maybe to express the comptime bool dispatch as a
+    // const generic.
+    #[allow(clippy::too_many_arguments)]
+    fn print_ast_esm_ascii<W, const ENABLE_SOURCE_MAP: bool, const IS_BUN: bool>(
+        &mut self,
+        writer: W,
+        ast: js_ast::Ast,
+        symbols: js_ast::ast::symbol::Map,
+        source: &logger::Source,
+        source_map_context: Option<js_printer::SourceMapHandler<'_>>,
+        import_meta_ref: js_ast::Ref,
+        exports_kind: js_ast::ExportsKind,
+    ) -> Result<usize, bun_core::Error>
+    where
+        W: js_printer::WriterTrait,
+    {
+        js_printer::print_ast::<W, IS_BUN, ENABLE_SOURCE_MAP>(
+            writer,
+            ast,
+            symbols,
+            source,
+            js_printer::Options {
+                bundling: false,
+                require_ref: Some(ast.require_ref),
+                source_map_handler: source_map_context,
+                minify_whitespace: self.options.minify_whitespace,
+                minify_syntax: self.options.minify_syntax,
+                minify_identifiers: self.options.minify_identifiers,
+                transform_only: self.options.transform_only,
+                module_type: if IS_BUN && self.options.transform_only {
+                    // this is for when using `bun build --no-bundle`
+                    // it should copy what was passed for the cli
+                    self.options.output_format
+                } else if exports_kind == js_ast::ExportsKind::Cjs {
+                    options::Format::Cjs
+                } else {
+                    options::Format::Esm
+                },
+                inline_require_and_import_errors: false,
+                import_meta_ref,
+                print_dce_annotations: self.options.emit_dce_annotations,
+                hmr_ref: ast.wrapper_ref,
+                mangled_props: None,
+                ..Default::default()
+            },
+        )
+    }
+
+    pub fn print<W>(
+        &mut self,
+        result: ParseResult,
+        writer: W,
+        format: js_printer::Format,
+    ) -> Result<usize, bun_core::Error>
+    where
+        W: js_printer::WriterTrait,
+    {
+        self.print_with_source_map_maybe::<W, false>(
+            result.ast,
+            &result.source,
+            writer,
+            format,
+            None,
+            None,
+            None,
+        )
+    }
+
+    pub fn print_with_source_map<W>(
+        &mut self,
+        result: ParseResult,
+        writer: W,
+        format: js_printer::Format,
+        handler: js_printer::SourceMapHandler<'_>,
+        module_info: Option<*mut analyze_transpiled_module::ModuleInfo>,
+    ) -> Result<usize, bun_core::Error>
+    where
+        W: js_printer::WriterTrait,
+    {
+        if bun_core::env_var::BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS::get().unwrap_or(false) {
+            return self.print_with_source_map_maybe::<W, false>(
+                result.ast,
+                &result.source,
+                writer,
+                format,
+                Some(handler),
+                result.runtime_transpiler_cache,
+                module_info,
+            );
+        }
+        self.print_with_source_map_maybe::<W, true>(
+            result.ast,
+            &result.source,
+            writer,
+            format,
+            Some(handler),
+            result.runtime_transpiler_cache,
+            module_info,
+        )
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
 // Phase-A draft body — gated until lower-tier crate surfaces solidify.
 // (`bun_fs`/`bun_str`/`bun_data_url`/`bun_node_fallbacks` crate aliases,
 // `crate::linker`, `resolver::PendingResolution::List`, parser FFI.)

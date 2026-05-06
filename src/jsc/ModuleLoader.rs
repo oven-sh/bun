@@ -22,8 +22,16 @@ use crate::{
 // Re-exports (thin re-exports from the original Zig file).
 pub use bun_resolve_builtins::HardcodedModule;
 pub use bun_resolver::node_fallbacks;
-// TODO(b2): `AsyncModule` / `RuntimeTranspilerStore` are gated siblings.
-crate::stub_ty!(AsyncModule, RuntimeTranspilerStore);
+pub use crate::runtime_transpiler_store::RuntimeTranspilerStore;
+
+// Spec ModuleLoader.zig:4 — `pub const AsyncModule = @import("./AsyncModule.zig").AsyncModule;`
+// Mounted as a sub-module here (rather than from `lib.rs`) so the Phase-B
+// un-gate touches only the two files this slice owns; `lib.rs` already
+// re-exports `module_loader as ModuleLoader`, so `jsc::ModuleLoader::AsyncModule`
+// resolves identically to the Zig path.
+#[path = "AsyncModule.rs"]
+pub mod async_module;
+pub use async_module::{AsyncModule, Queue as AsyncModuleQueue};
 
 bun_core::declare_scope!(ModuleLoader, hidden);
 

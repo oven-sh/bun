@@ -107,9 +107,10 @@ pub fn print<Enc: Encoding, W: fmt::Write>(
     writer: &mut W,
 ) -> fmt::Result {
     // TODO(port): Printer is commented-out in Zig source; this fn references
-    // Parser(encoding).Printer which does not exist. Stubbed.
+    // Parser(encoding).Printer which does not exist. Any caller in Zig would
+    // hit a compile error — fail loudly here instead of silently no-op'ing.
     let _ = (stream, writer);
-    Ok(())
+    todo!("Printer is commented out in yaml.zig spec")
 }
 
 // ───────────────────────────────────────────────────────────────────────────

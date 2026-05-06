@@ -676,10 +676,24 @@ impl<R> CssRuleList<R> {
     where
         R: css::generics::DeepClone<'bump>,
     {
-        Self { v: self.v.iter().map(|r| r.deep_clone(bump)).collect() }
+        // blocked_on: CssRule::deep_clone — every leaf variant's inherent
+        // `deep_clone` is `#[cfg(any())]`-gated on the crate-wide DeepClone
+        // derive. All current callers are themselves gated; panic loudly if
+        // one un-gates first (PORTING.md §Forbidden: silent no-op).
+        #[cfg(any())]
+        return Self { v: self.v.iter().map(|r| r.deep_clone(bump)).collect() };
+        #[cfg(not(any()))]
+        {
+            let _ = bump;
+            todo!("blocked_on: CssRule::deep_clone — crate-wide DeepClone derive")
+        }
     }
 }
 
+// blocked_on: every leaf rule's inherent `deep_clone` is `#[cfg(any())]`-gated
+// on the crate-wide DeepClone derive (see each leaf's `// blocked_on: DeepClone`
+// block). This dispatch un-gates atomically with those.
+#[cfg(any())]
 impl<R> CssRule<R> {
     /// Zig: `css.implementDeepClone(@This(), this, allocator)` — variant-wise
     /// dispatch to each leaf rule's `deep_clone`. Hand-written (not

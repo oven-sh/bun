@@ -7,8 +7,10 @@ use bun_string::strings;
 use bun_core::{Output, Global};
 use bun_collections::{StringHashMap, StringArrayHashMap, ArrayHashMap, MultiArrayList};
 use bun_resolver::fs as Fs;
+#[allow(unused_imports)]
 use bun_resolver as resolver;
 use bun_resolver::package_json::{MacroMap as MacroRemap, PackageJSON};
+#[allow(unused_imports)]
 use bun_dotenv as DotEnv;
 #[allow(unused_imports)]
 use bun_url::URL;

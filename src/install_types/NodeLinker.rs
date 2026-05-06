@@ -209,12 +209,6 @@ impl PnpmMatcher {
         log: &mut logger::Log,
         source: &logger::Source,
     ) -> Result<PnpmMatcher, FromExprError> {
-        #![allow(unreachable_code)]
-        // TODO(b2-blocked): bun_logger::ast::ExprData (enum variants EString/EArray)
-        // TODO(b2-blocked): bun_logger::ast::Expr::as_string_cloned
-        // TODO(b2-blocked): bun_logger::ast::E::String::slice
-        // TODO(b2-blocked): bun_logger::ast::E::Array::slice
-        {
         let mut buf: Vec<u8> = Vec::new();
         // Scratch arena for `E::String::slice` / `as_string_cloned` (Zig passed
         // `allocator`). Freed on return; the patterns are consumed by
@@ -316,12 +310,10 @@ impl PnpmMatcher {
             Behavior::HasExcludeAndIncludeMatchers
         };
 
-        return Ok(PnpmMatcher {
+        Ok(PnpmMatcher {
             matchers: matchers.into_boxed_slice(),
             behavior,
-        });
-        let _ = (expr, log, source);
-        Err(FromExprError::UnexpectedExpr)
+        })
     }
 
     pub fn is_match(&self, name: &[u8]) -> bool {

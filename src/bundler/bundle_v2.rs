@@ -3694,40 +3694,27 @@ fn write_metafile_output(
     output_kind: crate::options::OutputKind,
 ) -> Result<(), Error> {
     if !outdir.is_empty() {
-        // Open the output directory
-        let mut root_dir = match bun_sys::Fd::cwd().make_open_path(outdir) {
-            Ok(d) => d,
+        // Open the output directory and write the metafile relative to it.
+        // PORT NOTE: Zig used `bun.FD.cwd().makeOpenPath()` +
+        // `NodeFS.writeFileWithPathBuffer`. Route through `bun_sys::File`.
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let joined = bun_paths::resolve_path::join_string_buf::<bun_paths::platform::Auto>(
+            &mut buf.0[..], &[outdir, file_path],
+        );
+        // Create parent directories if needed (relative to outdir).
+        let parent = bun_paths::resolve_path::dirname::<bun_paths::platform::Loose>(joined);
+        if !parent.is_empty() {
+            let _ = bun_sys::makedir_recursive(parent, 0o755);
+        }
+        match bun_sys::File::write_file(bun_core::Fd::cwd(), joined, content) {
+            Ok(()) => {}
             Err(err) => {
-                Output::warn(format_args!("Failed to open output directory '{}': {}", bstr::BStr::new(outdir), err.name()));
-                return Ok(());
-            }
-        };
-        // root_dir closed on drop
-
-        // Create parent directories if needed (relative to outdir)
-        if let Some(parent) = bun_paths::resolve_path::dirname::<bun_paths::platform::Loose>(file_path, bun_paths::platform::Loose) {
-            if !parent.is_empty() {
-                let _ = root_dir.make_path(parent);
+                Output::warn(format_args!(
+                    "Failed to write metafile to '{}': {}",
+                    bstr::BStr::new(file_path), err
+                ));
             }
         }
-
-        // Write to disk relative to outdir
-        // CYCLEBREAK MOVE_DOWN: NodeFS::write_file_with_path_buffer → bun_sys.
-        // TODO(b0): bun_sys::write_file_with_path_buffer arrives from move-in.
-        let mut path_buf = bun_paths::PathBuffer::uninit();
-        let _ = bun_sys::write_file_with_path_buffer(&mut path_buf, bun_sys::WriteFileArgs {
-            data: bun_sys::WriteFileData::Buffer {
-                buffer: content,
-            },
-            encoding: bun_sys::WriteFileEncoding::Buffer,
-            mode: 0o644,
-            dirfd: bun_sys::Fd::from_std_dir(&root_dir),
-            file: bun_sys::PathOrFileDescriptor::Path(
-                bun_string::PathString::init(file_path),
-            ),
-        }).unwrap_or_else(|err| {
-            Output::warn(format_args!("Failed to write metafile to '{}': {}", bstr::BStr::new(file_path), err.name()));
-        });
     }
 
     // Add as OutputFile so it appears in result.outputs

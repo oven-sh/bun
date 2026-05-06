@@ -1442,7 +1442,10 @@ pub mod jsx {
                 factory: src.factory,
                 fragment: src.fragment,
                 runtime: match src.runtime {
-                    Runtime::Automatic => P::Runtime::Automatic,
+                    // Parser-side `Runtime` has no `_None`; collapse to the
+                    // default (Zig leaves `.automatic` when `runtime == _none`
+                    // never reaches the parser path).
+                    Runtime::_None | Runtime::Automatic => P::Runtime::Automatic,
                     Runtime::Classic => P::Runtime::Classic,
                     Runtime::Solid => P::Runtime::Solid,
                 },
@@ -1476,9 +1479,6 @@ pub mod default_user_defines {
 
 pub use default_user_defines as DefaultUserDefines;
 
-
-// TODO(b2-blocked): defines::{DefineDataInit, DefineValue} (names not yet
-// surfaced by bundler/defines.rs) + DotEnv::Loader::copy_for_define.
 pub fn defines_from_transform_options(
     log: &mut logger::Log,
     maybe_input_define: Option<api::StringMap>,

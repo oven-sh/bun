@@ -1596,14 +1596,14 @@ pub fn init(
     drop(workspace_names); // workspace_names.map.deinit()
 
     allocate_package_manager();
-    let manager = get();
+    let manager_ptr: *mut PackageManager = get();
     // var progress = Progress{};
     // var node = progress.start(name: []const u8, estimated_total_items: usize)
-    // SAFETY: manager points to uninitialized memory from allocate_package_manager();
+    // SAFETY: manager_ptr points to uninitialized memory from allocate_package_manager();
     // we fully initialize it here via ptr::write.
     unsafe {
         core::ptr::write(
-            manager as *mut PackageManager,
+            manager_ptr,
             PackageManager {
                 cache_directory_: None,
                 cache_directory_path: ZStr::EMPTY_BOX, // TODO(port): default ""
@@ -1611,7 +1611,7 @@ pub fn init(
                 preallocated_resolve_tasks: PreallocatedTaskStore::init(),
                 options,
                 active_lifecycle_scripts: LifecycleScriptSubprocess::List {
-                    context: manager as *mut _,
+                    context: manager_ptr,
                 },
                 network_task_fifo: NetworkQueue::init(),
                 patch_task_fifo: PatchTaskFifo::init(),
@@ -1693,6 +1693,10 @@ pub fn init(
             },
         );
     }
+    // SAFETY: `ptr::write` above fully initialized the singleton in place; the
+    // `&mut PackageManager` validity invariant now holds for the post-init body
+    // and the `&'static mut` return (Zig PackageManager.zig:850 onward).
+    let manager = unsafe { &mut *manager_ptr };
     manager
         .event_loop
         .loop_()
@@ -1814,7 +1818,7 @@ pub fn init_with_runtime(
     bun_install: Option<&Api::BunInstall>,
     cli: CommandLineArguments,
     env: &mut dot_env::Loader,
-) -> &'static mut PackageManager {
+) -> *mut PackageManager {
     INIT_WITH_RUNTIME_ONCE.call((log, bun_install, cli, env));
     get()
 }

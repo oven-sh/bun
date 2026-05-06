@@ -29,7 +29,12 @@ pub struct Blob {
 }
 
 pub struct StandaloneModuleGraph {
-    pub bytes: &'static [u8],
+    /// Raw view over the serialized graph (`[0, offsets.byte_count)`). Stored as a
+    /// raw fat pointer — NOT `&'static [u8]` — because `byte_count` covers the
+    /// bytecode/module_info subranges that JSC mutates in place via
+    /// `File.bytecode`. Holding a `&'static [u8]` over those bytes would freeze
+    /// them under Stacked/Tree Borrows and make the later foreign write UB.
+    pub bytes: *const [u8],
     pub files: StringArrayHashMap<File>,
     pub entry_point_id: u32,
     pub compile_exec_argv: &'static [u8],

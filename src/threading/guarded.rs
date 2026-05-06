@@ -1,5 +1,7 @@
 //! A wrapper around a mutex, and a value protected by the mutex.
 
+use core::cell::UnsafeCell;
+
 use crate::Mutex;
 use bun_safety::ThreadLock;
 
@@ -15,9 +17,17 @@ pub type Debug<Value> = GuardedBy<Value, ThreadLock>;
 // TODO(port): `RawMutex` trait (lock/unlock) is assumed to live in bun_threading; verify in Phase B.
 pub struct GuardedBy<Value, M: RawMutex> {
     /// The raw value. Don't use this if there might be concurrent accesses.
-    pub unsynchronized_value: Value,
+    // `UnsafeCell` is load-bearing: `lock(&self)` hands out `&mut Value` while other `&self`
+    // borrows of `GuardedBy` exist (the mutex serializes the actual writers). Without the cell,
+    // deriving `&mut Value` from `&self` is UB under Stacked Borrows regardless of the mutex.
+    pub unsynchronized_value: UnsafeCell<Value>,
     mutex: M,
 }
+
+// SAFETY: access to `unsynchronized_value` is serialized by `mutex`; `M: RawMutex` provides the
+// happens-before edge. `UnsafeCell<Value>` is `!Sync` by default, so re-assert `Sync` here under
+// the same bounds a `std::sync::Mutex<Value>` would require.
+unsafe impl<Value: Send, M: RawMutex + Sync> Sync for GuardedBy<Value, M> {}
 
 impl<Value, M: RawMutex + Default> GuardedBy<Value, M> {
     /// Creates a guarded value with a default-initialized mutex.

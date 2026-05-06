@@ -2033,30 +2033,42 @@ fn run_with_source_code(
             .separate_ssr_graph)
         ||
         // set the target to the client when bundling client-side files
-        ((transpiler.options.server_components || transpiler.options.dev_server.is_some())
+        ((transpiler_ref.options.server_components || !transpiler_ref.options.dev_server.is_null())
             && task.known_target == options::Target::Browser)
     {
         // separate_ssr_graph makes boundaries switch to client because the server file uses that generated file as input.
         // this is not done when there is one server graph because it is easier for plugins to deal with.
-        transpiler = this.transpiler_for_target(options::Target::Browser);
+        transpiler = this.transpiler_for_target(options::Target::Browser) as *mut _;
     }
+    // SAFETY: `transpiler` re-derived from a live `&mut` above.
+    let transpiler_ref = unsafe { &mut *transpiler };
 
     let source = Source {
-        path: file_path.clone(),
-        index: task.source_index,
-        contents: entry.contents,
+        // PORT NOTE: `Source.path` is `bun_logger::fs::Path`, distinct from
+        // `bun_resolver::fs::Path` (CYCLEBREAK TYPE_ONLY mirror). Construct
+        // field-by-field across the type boundary.
+        path: bun_logger::fs::Path {
+            text: leak_static(file_path.text),
+            namespace: leak_static(file_path.namespace),
+            name: bun_logger::fs::PathName::init(leak_static(file_path.text)),
+            pretty: leak_static(file_path.pretty),
+            is_disabled: file_path.is_disabled,
+            is_symlink: file_path.is_symlink,
+        },
+        index: bun_logger::Index(task.source_index.get()),
+        contents: std::borrow::Cow::Borrowed(leak_static(entry_contents)),
         contents_is_recycled: false,
         ..Default::default()
     };
 
     let target = (if task.source_index.get() == 1 {
-        target_from_hashbang(entry.contents)
+        target_from_hashbang(entry_contents)
     } else {
         None
     })
     .unwrap_or_else(|| {
         if task.known_target == options::Target::BakeServerComponentsSsr
-            && transpiler
+            && transpiler_ref
                 .options
                 .framework
                 .as_ref()

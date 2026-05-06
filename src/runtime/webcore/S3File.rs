@@ -430,7 +430,7 @@ impl<'a> S3BlobStatTask<'a> {
         // SAFETY: `this` was allocated via Box::into_raw in `exists`; reconstructing here replaces `defer this.deinit()`
         let this = unsafe { Box::from_raw(this) };
         match result {
-            s3::S3StatResult::NotFound => {
+            s3::S3StatResult::NotFound(_) => {
                 this.promise.resolve(this.global, JSValue::FALSE)?;
             }
             s3::S3StatResult::Success(_) => {

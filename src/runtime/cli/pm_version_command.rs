@@ -107,16 +107,23 @@ impl PmVersionCommand {
 
         let package_json_source =
             logger::Source::init_path_string(package_json_path.as_bytes(), &package_json_contents);
-        let json_result = match JSON::parse_package_json_utf8_with_opts(
+        // PORT NOTE: Zig passed `ctx.allocator`; Rust ctx dropped allocator (global mimalloc),
+        // so we hand the parser a local bump arena for its scratch allocations.
+        let json_bump = bumpalo::Bump::new();
+        let json_result = match JSON::parse_package_json_utf8_with_opts::<
+            true,  // IS_JSON
+            true,  // ALLOW_COMMENTS
+            true,  // ALLOW_TRAILING_COMMAS
+            false, // IGNORE_LEADING_ESCAPE_SEQUENCES
+            false, // IGNORE_TRAILING_ESCAPE_SEQUENCES
+            false, // JSON_WARN_DUPLICATE_KEYS
+            false, // WAS_ORIGINALLY_MACRO
+            true,  // GUESS_INDENTATION
+        >(
             &package_json_source,
-            ctx.log,
-            JSON::ParseOptions {
-                is_json: true,
-                allow_comments: true,
-                allow_trailing_commas: true,
-                guess_indentation: true,
-                ..Default::default()
-            },
+            // SAFETY: ctx.log is a non-null process-lifetime singleton (see cli::command).
+            unsafe { &mut *ctx.log },
+            &json_bump,
         ) {
             Ok(r) => r,
             Err(err) => {

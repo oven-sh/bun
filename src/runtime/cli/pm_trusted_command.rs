@@ -174,6 +174,7 @@ impl UntrustedCommand {
 pub struct TrustCommand;
 
 /// Anonymous struct from Zig: value type stored in `scripts_at_depth`.
+#[cfg(any())] // blocked_on: bun_install::lockfile_real un-gate — package::scripts::List
 struct ScriptInfo {
     package_id: PackageID,
     scripts_list: lockfile::package::scripts::List,
@@ -249,6 +250,9 @@ impl TrustCommand {
             Self::error_expected_args();
         }
 
+        todo!("blocked_on: bun_install::lockfile_real un-gate (reconciler-6) — package::scripts::{{Scripts,List,PrintFormat}} / tree::{{Iterator,IteratorPathStyle}}");
+        #[cfg(any())]
+        {
         let buf = pm.lockfile.buffers.string_bytes.as_slice();
         let packages = pm.lockfile.packages.slice();
         let resolutions: &[Resolution] = packages.items_resolution();
@@ -587,6 +591,7 @@ impl TrustCommand {
 
         let _ = root_node; // suppress unused warning when progress is disabled
         Ok(())
+        } // end #[cfg(any())]
     }
 }
 

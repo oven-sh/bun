@@ -796,17 +796,14 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 if let Some(ctx) = &self.ctx {
                     let previous_step = ctx.installer.store.entries.items_step()
                         [ctx.entry_id.get()]
-                    .swap(Store::Step::Done, Ordering::Release);
-                    #[cfg(feature = "ci_assert")]
-                    {
+                    .swap(Step::Done, Ordering::Release);
+                    if bun_core::Environment::CI_ASSERT {
                         debug_assert!(self.current_script_index != 0);
-                        debug_assert!(
-                            previous_step == Store::Step::RunPostInstallAndPrePostPrepare
-                        );
+                        debug_assert!(previous_step == Step::RunPostInstallAndPrePostPrepare);
                     }
                     let _ = previous_step;
                     ctx.installer
-                        .on_task_complete(ctx.entry_id, Store::TaskResult::Success);
+                        .on_task_complete(ctx.entry_id, CompleteState::Success);
                 }
 
                 // the last script finished
@@ -831,9 +828,9 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 if self.optional {
                     if let Some(ctx) = &self.ctx {
                         ctx.installer.store.entries.items_step()[ctx.entry_id.get()]
-                            .store(Store::Step::Done, Ordering::Release);
+                            .store(Step::Done, Ordering::Release);
                         ctx.installer
-                            .on_task_complete(ctx.entry_id, Store::TaskResult::Skipped);
+                            .on_task_complete(ctx.entry_id, CompleteState::Skipped);
                     }
                     self.decrement_pending_script_tasks();
                     self.deinit_and_delete_package();
@@ -920,7 +917,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             ));
         }
         'try_delete_dir: {
-            let Some(dirname) = bun_paths::dirname(&self.scripts.cwd) else {
+            let Some(dirname) = bun_core::dirname(self.scripts.cwd.as_bytes()) else {
                 break 'try_delete_dir;
             };
             let basename = bun_paths::basename(&self.scripts.cwd);
@@ -936,11 +933,11 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
     pub fn spawn_package_scripts(
         manager: &'a PackageManager,
-        list: Package::Scripts::List,
+        list: ScriptsList,
         envp: *const *const c_char,
         shell_bin: Option<&'a ZStr>,
         optional: bool,
-        log_level: PackageManager::Options::LogLevel,
+        log_level: crate::LogLevel,
         foreground: bool,
         ctx: Option<InstallCtx<'a>>,
     ) -> Result<(), bun_core::Error> {
@@ -985,7 +982,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         if let Err(err) = unsafe { Self::spawn_next_script(lifecycle_subprocess, first_index) } {
             Output::pretty_errorln(format_args!(
                 "<r><red>error<r>: Failed to run script <b>{}<r> due to error <b>{}<r>",
-                bstr::BStr::new(Lockfile::Scripts::NAMES[first_index as usize]),
+                bstr::BStr::new(LockfileScripts::NAMES[first_index as usize]),
                 err.name(),
             ));
             Global::exit(1);

@@ -307,6 +307,27 @@ pub use resolve_path::{Platform, PlatformT, platform};
 #[path = "Path.rs"] pub mod path;
 pub use path::{AbsPath, RelPath, Path, AutoAbsPath, AutoRelPath, options as path_options, PathUnit};
 
+/// Duck-typing surface for the `anytype` `buf` parameter on Zig path-builder
+/// helpers (`appendStorePath`, `appendGlobalStoreEntryPath`, etc. in
+/// `isolated_install/Installer.zig`). Zig accepted any `bun.Path(...)`
+/// instantiation; Rust callers pass `Path<U, KIND, SEP, CHECK>` for arbitrary
+/// const params, so expose the three operations the helpers need behind a
+/// trait and blanket-impl it for every monomorphisation.
+pub trait PathLike {
+    fn clear(&mut self);
+    fn append(&mut self, bytes: &[u8]);
+    fn append_fmt(&mut self, args: core::fmt::Arguments<'_>);
+}
+impl<U: PathUnit, const KIND: u8, const SEP: u8, const CHK: u8> PathLike
+    for path::Path<U, KIND, SEP, CHK>
+{
+    #[inline] fn clear(&mut self) { path::Path::clear(self) }
+    #[inline] fn append(&mut self, bytes: &[u8]) { let _ = path::Path::append(self, bytes); }
+    #[inline] fn append_fmt(&mut self, args: core::fmt::Arguments<'_>) {
+        let _ = path::Path::append_fmt(self, args);
+    }
+}
+
 /// Zig: `bun.Dirname` namespace — width-generic `std.fs.path.dirname`
 /// (POSIX `/` on Unix, disk-designator-aware on Windows). Backed by
 /// `path::dirname_generic`.

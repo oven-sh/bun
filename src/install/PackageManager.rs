@@ -1424,7 +1424,7 @@ pub fn init(
         let mut found = false;
         if subcommand.should_chdir_to_root() {
             if !created_package_json {
-                while let Some(parent) = path::dirname(this_cwd) {
+                while let Some(parent) = bun_core::dirname(this_cwd) {
                     let parent_without_trailing_slash = strings::without_trailing_slash(parent);
                     let mut parent_path_buf = PathBuffer::uninit();
                     parent_path_buf[..parent_without_trailing_slash.len()]
@@ -1435,16 +1435,12 @@ pub fn init(
                     parent_path_buf[parent_without_trailing_slash.len() + b"/package.json".len()] =
                         0;
 
-                    let json_file = match bun_sys::open_file_z(
+                    let json_file = match bun_sys::File::openat(
                         bun_sys::Fd::cwd(),
-                        // SAFETY: NUL written above
-                        unsafe {
-                            &ZStr::from_raw(
-                                parent_path_buf.as_ptr(),
-                                parent_without_trailing_slash.len() + b"/package.json".len(),
-                            )
-                        },
-                        bun_sys::OpenMode::ReadWrite,
+                        &parent_path_buf
+                            [..parent_without_trailing_slash.len() + b"/package.json".len()],
+                        bun_sys::O::RDWR | bun_sys::O::CLOEXEC,
+                        0,
                     ) {
                         Ok(f) => f,
                         Err(_) => {
@@ -1472,7 +1468,7 @@ pub fn init(
                         logger::Source::init_path_string(json_path, &json_buf[..json_len]);
                     initialize_store();
                     let json =
-                        bun_json::parse_package_json_utf8(&json_source, ctx.log, /* allocator */)?;
+                        crate::bun_json::parse_package_json_utf8(&json_source, ctx.log, /* allocator */)?;
                     if subcommand == Subcommand::Pm {
                         if let Ok(Some(name)) = json.get_string_cloned("name") {
                             root_package_json_name_at_time_of_init = name;
@@ -1520,11 +1516,9 @@ pub fn init(
                             let child_path: &[u8] = if bun_paths::is_absolute(path_) {
                                 child_cwd
                             } else {
-                                path::relative_normalized(
+                                resolve_path::relative_normalized::<platform::Auto, true>(
                                     json_source.path.name.dir,
                                     child_cwd,
-                                    path::Style::Auto,
-                                    true,
                                 )
                             };
 

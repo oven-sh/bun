@@ -618,6 +618,18 @@ pub mod feature_flag {
 }
 #[inline] pub fn linux_kernel_version() -> Version { Version { major: 0, minor: 0, patch: 0 } }
 
+/// Port of `bun.assertWithLocation` (src/bun_core/bun.zig) — `bun.assert` plus
+/// the caller's source location for the failure message. In release builds the
+/// Zig version logs and continues; here it panics under `debug_assertions` and
+/// is a no-op otherwise (matching `bun.assert`'s release-safe behaviour).
+#[track_caller]
+#[inline]
+pub fn assert_with_location(cond: bool, loc: &'static core::panic::Location<'static>) {
+    if cfg!(debug_assertions) && !cond {
+        panic!("assertion failed at {}:{}", loc.file(), loc.line());
+    }
+}
+
 pub mod asan {
     #[inline] pub unsafe fn poison(_: *const u8, _: usize) {}
     #[inline] pub unsafe fn unpoison(_: *const u8, _: usize) {}

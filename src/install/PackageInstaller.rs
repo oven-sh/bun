@@ -375,7 +375,7 @@ impl<'a> PackageInstaller<'a> {
             );
         }
 
-        if SHOULD_INSTALL_PACKAGES {
+        if should_install_packages {
             const FORCE: bool = false;
             self.install_available_packages::<FORCE>(log_level);
         }
@@ -1253,7 +1253,8 @@ impl<'a> PackageInstaller<'a> {
                 if cfg!(debug_assertions) {
                     panic!("Internal assertion failure: unexpected resolution tag");
                 }
-                self.increment_tree_install_count::<{ !IS_PENDING_PACKAGE_INSTALL }>(
+                self.increment_tree_install_count(
+                    !IS_PENDING_PACKAGE_INSTALL,
                     self.current_tree_id,
                     log_level,
                 );

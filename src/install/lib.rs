@@ -2283,8 +2283,9 @@ impl Aligner {
 }
 
 #[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
 pub enum Origin {
+    #[default]
     Local = 0,
     Npm = 1,
     Tarball = 2,

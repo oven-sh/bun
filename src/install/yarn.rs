@@ -1178,7 +1178,7 @@ pub fn migrate_yarn_lockfile(
                     npm::OperatingSystem::All
                 },
                 man_dir: SemverString::default(),
-                has_install_script: lockfile::HasInstallScript::False,
+                has_install_script: HasInstallScript::False,
                 integrity: if let Some(integrity) = entry.integrity {
                     Integrity::parse(integrity)
                 } else {

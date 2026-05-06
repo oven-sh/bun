@@ -1203,6 +1203,8 @@ pub struct FilePollVTable {
     pub register: unsafe fn(FilePollPtr, loop_: *mut c_void, kind: FilePollKind, fd: Fd) -> sys::Result<()>,
     pub unregister: unsafe fn(FilePollPtr, loop_: *mut c_void, force_unregister: bool) -> sys::Result<()>,
     pub has_flag: unsafe fn(FilePollPtr, FilePollFlag) -> bool,
+    /// `poll.flags.insert(flag)` — direct flag mutation (Zig field write).
+    pub set_flag: unsafe fn(FilePollPtr, FilePollFlag),
     pub file_type: unsafe fn(FilePollPtr) -> crate::pipes::FileType,
     pub is_registered: unsafe fn(FilePollPtr) -> bool,
     pub is_active: unsafe fn(FilePollPtr) -> bool,

@@ -537,23 +537,10 @@ pub mod hosted_git_info_stub {
 // Re-exports
 // ──────────────────────────────────────────────────────────────────────────
 
-pub use extract_tarball::ExtractTarball;
-pub use network_task::NetworkTask;
-pub use tarball_stream::TarballStream;
 pub use npm as Npm;
-pub use package_manager::PackageManager;
 pub use package_manifest_map::PackageManifestMap;
 pub use package_manager_task::Task;
-pub use lockfile::bun_lock as TextLockfile;
-pub use bin::Bin;
-pub use resolvers::folder_resolver::FolderResolution;
-pub use lifecycle_script_runner::LifecycleScriptSubprocess;
-pub use package_manager::security_scanner::SecurityScanSubprocess;
-pub use package_install::PackageInstall;
-pub use repository::Repository;
 pub use resolution::Resolution;
-pub use isolated_install::Store;
-pub use isolated_install::FileCopier;
 pub use pnpm_matcher::PnpmMatcher;
 pub use postinstall_optimizer::PostinstallOptimizer;
 
@@ -571,15 +558,31 @@ pub use integrity::Integrity;
 pub use dependency::Dependency;
 pub use dependency::Behavior;
 
-pub use lockfile::Lockfile;
-pub use lockfile::PatchedDep;
-pub use lockfile::LoadResult;
-pub use lockfile::LoadStep;
-
-pub use package_manager::Subcommand;
-
+// ─── reconciler-6: stub surface for re-gated heavy modules ──────────────────
+// The file-backed bodies are `#![cfg(any())]`-gated (1200+ port errors).
+// These opaque stubs keep `bun_jsc::AsyncModule` / `bun_runtime` callers
+// type-checking until the bodies un-gate per-file.
+pub mod TextLockfile {}
 pub use patch_install as patch;
-pub use patch::PatchTask;
+#[derive(Default)] pub struct ExtractTarball;
+#[derive(Default)] pub struct NetworkTask;
+#[derive(Default)] pub struct TarballStream;
+#[derive(Default)] pub struct PackageManager;
+#[derive(Default)] pub struct Bin;
+#[derive(Default)] pub struct FolderResolution;
+#[derive(Default)] pub struct LifecycleScriptSubprocess;
+#[derive(Default)] pub struct SecurityScanSubprocess;
+#[derive(Default)] pub struct PackageInstall;
+#[derive(Default)] pub struct Repository;
+#[derive(Default)] pub struct Store;
+#[derive(Default)] pub struct FileCopier;
+#[derive(Default)] pub struct Lockfile;
+#[derive(Default)] pub struct PatchedDep;
+#[derive(Default)] pub struct LoadResult;
+#[derive(Default)] pub struct LoadStep;
+#[derive(Default)] pub struct PatchTask;
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum Subcommand { #[default] Install, Add, Remove, Update, Link, Unlink, Pm, Patch, PatchCommit, Outdated }
 
 // ──────────────────────────────────────────────────────────────────────────
 // MOVE_DOWN(b0): bun_runtime::cli::ShellCompletions → install

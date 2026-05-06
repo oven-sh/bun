@@ -1954,22 +1954,22 @@ mod bun_paths {
     /// `Platform::AUTO` / `Platform::Loose` at runtime (carried over from Zig's
     /// `comptime _platform: Platform` callsites that took a function param).
     macro_rules! dispatch_platform {
-        ($p:expr, $f:ident::<$($pre:ident,)* P $(, $post:ident)*>($($arg:expr),*)) => {{
+        ($p:expr, |$P:ident| $body:expr) => {{
             use ::bun_paths::resolve_path::{self as rp, platform};
             match $p {
-                rp::Platform::Loose   => rp::$f::<$($pre,)* platform::Loose   $(, $post)*>($($arg),*),
-                rp::Platform::Windows => rp::$f::<$($pre,)* platform::Windows $(, $post)*>($($arg),*),
-                rp::Platform::Posix   => rp::$f::<$($pre,)* platform::Posix   $(, $post)*>($($arg),*),
-                rp::Platform::Nt      => rp::$f::<$($pre,)* platform::Nt      $(, $post)*>($($arg),*),
+                rp::Platform::Loose   => { type $P = platform::Loose;   $body },
+                rp::Platform::Windows => { type $P = platform::Windows; $body },
+                rp::Platform::Posix   => { type $P = platform::Posix;   $body },
+                rp::Platform::Nt      => { type $P = platform::Nt;      $body },
             }
         }};
     }
     pub fn dirname_platform(p: &[u8], platform: Platform) -> &[u8] {
-        dispatch_platform!(platform, dirname::<P>(p))
+        dispatch_platform!(platform, |P| ::bun_paths::resolve_path::dirname::<P>(p))
     }
     /// Port of `bun.path.joinAbsStringBuf` (value-dispatched).
     pub fn join_abs_string_buf<'b>(cwd: &[u8], buf: &'b mut [u8], parts: &[&[u8]], platform: Platform) -> &'b [u8] {
-        dispatch_platform!(platform, join_abs_string_buf::<P>(cwd, buf, parts))
+        dispatch_platform!(platform, |P| ::bun_paths::resolve_path::join_abs_string_buf::<P>(cwd, buf, parts))
     }
     pub fn join_abs(cwd: &[u8], platform: Platform, part: &[u8]) -> &'static [u8] {
         // PORT NOTE: `resolve_path::join_abs` ties the result lifetime to `cwd`, but the
@@ -1977,15 +1977,15 @@ mod bun_paths {
         // (or is `cwd` itself when `parts.is_empty()`, which never happens here — we
         // pass exactly one part). Re-erase to `'static` so the resolver can hold it
         // across `&mut self` calls.
-        let s = dispatch_platform!(platform, join_abs::<P>(cwd, part));
+        let s = dispatch_platform!(platform, |P| ::bun_paths::resolve_path::join_abs::<P>(cwd, part));
         // SAFETY: see PORT NOTE — slice borrows threadlocal storage, valid 'static per-thread.
         unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) }
     }
     pub fn join(parts: &[&[u8]], platform: Platform) -> &'static [u8] {
-        dispatch_platform!(platform, join::<P>(parts))
+        dispatch_platform!(platform, |P| ::bun_paths::resolve_path::join::<P>(parts))
     }
     pub fn join_string_buf<'b>(buf: &'b mut [u8], parts: &[&[u8]], platform: Platform) -> &'b [u8] {
-        dispatch_platform!(platform, join_string_buf::<P>(buf, parts))
+        dispatch_platform!(platform, |P| ::bun_paths::resolve_path::join_string_buf::<P>(buf, parts))
     }
     /// Port of `bun.PosixToWinNormalizer` — on POSIX it's a no-op pass-through.
     // TODO(b2-blocked): real Windows long-path / drive-relative normalization.

@@ -6640,21 +6640,25 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         )
     }
 
-    #[cfg(any())] // reconciler-6 re-gate: ReactRefresh::HookContext path; BUILT_IN_HOOKS
     pub fn handle_react_refresh_hook_call(&mut self, hook_call: &mut E::Call, original_name: &[u8]) {
         debug_assert!(self.options.features.react_fast_refresh);
         debug_assert!(ReactRefresh::is_hook_name(original_name));
-        let Some(ctx_storage) = self.react_refresh.hook_ctx_storage else {
-            return; // not in a function, ignore this hook call.
+        // PORT NOTE: Zig stores `?*?HookContext` (raw pointer to stack storage in
+        // the visiting fn frame). The Rust field is `Option<&'a mut Option<HookContext>>`;
+        // erase to a raw pointer immediately so we can call other `&mut self`
+        // methods (generate_temp_ref_with_scope, declared_symbols.append) while
+        // holding the storage — exactly mirroring the Zig pointer flow.
+        let ctx_storage_ptr: *mut Option<crate::HookContext> = match self.react_refresh.hook_ctx_storage.as_deref_mut() {
+            Some(s) => s as *mut _,
+            None => return, // not in a function, ignore this hook call.
         };
-        // SAFETY: hook_ctx_storage points at stack storage in the visiting fn frame
-        let ctx_storage = unsafe { &mut *ctx_storage };
+        // SAFETY: hook_ctx_storage points at stack storage in the visiting fn frame,
+        // disjoint from `self`; no aliasing &mut outstanding across the calls below.
+        let ctx_storage = unsafe { &mut *ctx_storage_ptr };
 
         // if this function has no hooks recorded, initialize a hook context
         // every function visit provides stack storage, which it will inspect at visit finish.
-        let ctx: &mut ReactRefresh::HookContext = if let Some(ctx) = ctx_storage {
-            ctx
-        } else {
+        if ctx_storage.is_none() {
             self.react_refresh.signature_used = true;
 
             let mut scope = self.current_scope;
@@ -6665,12 +6669,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     break;
                 }
                 let Some(p) = s.parent else { break };
-                scope = p;
+                scope = p.as_ptr();
             }
 
-            *ctx_storage = Some(ReactRefresh::HookContext {
+            let signature_cb = self.generate_temp_ref_with_scope(Some(b"_s"), scope);
+            // SAFETY: see ctx_storage_ptr note above; reborrow after &mut self calls.
+            let ctx_storage = unsafe { &mut *ctx_storage_ptr };
+            *ctx_storage = Some(crate::HookContext {
                 hasher: Wyhash::init(0),
-                signature_cb: self.generate_temp_ref_with_scope(Some(b"_s"), scope),
+                signature_cb,
                 user_hooks: Default::default(),
             });
 
@@ -6678,21 +6685,21 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             // theoretically affects all usages of temp refs, but i cannot
             // find another example of it breaking (like with `using`)
             self.declared_symbols
-                .push(self.allocator, DeclaredSymbol { is_top_level: true, r#ref: ctx_storage.as_ref().unwrap().signature_cb })
+                .append(DeclaredSymbol { is_top_level: true, ref_: signature_cb })
                 .expect("oom");
-
-            ctx_storage.as_mut().unwrap()
-        };
+        }
+        // SAFETY: see ctx_storage_ptr note above; reborrow for the rest of the body.
+        let ctx: &mut crate::HookContext = unsafe { &mut *ctx_storage_ptr }.as_mut().unwrap();
 
         ctx.hasher.update(original_name);
 
-        if let Some(built_in_hook) = ReactRefresh::BUILT_IN_HOOKS.get(original_name) {
+        if let Some(built_in_hook) = crate::BUILT_IN_HOOKS.get(original_name) {
             'hash_arg: {
                 let arg_index: usize = match built_in_hook {
                     // useState first argument is initial state.
-                    ReactRefresh::BuiltInHook::UseState => 0,
+                    crate::BuiltInHook::useState => 0,
                     // useReducer second argument is initial state.
-                    ReactRefresh::BuiltInHook::UseReducer => 1,
+                    crate::BuiltInHook::useReducer => 1,
                     _ => break 'hash_arg,
                 };
                 if (hook_call.args.len as usize) <= arg_index {
@@ -6706,19 +6713,19 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             // with @unionInit. We expand the three arms.
             match &hook_call.target.data {
                 js_ast::ExprData::EIdentifier(id) => {
-                    let gop = ctx.user_hooks.get_or_put(self.allocator, id.r#ref).expect("oom");
+                    let gop = ctx.user_hooks.get_or_put(id.ref_).expect("oom");
                     if !gop.found_existing {
                         *gop.value_ptr = Expr { data: js_ast::ExprData::EIdentifier(*id), loc: logger::Loc::EMPTY };
                     }
                 }
                 js_ast::ExprData::EImportIdentifier(id) => {
-                    let gop = ctx.user_hooks.get_or_put(self.allocator, id.r#ref).expect("oom");
+                    let gop = ctx.user_hooks.get_or_put(id.ref_).expect("oom");
                     if !gop.found_existing {
                         *gop.value_ptr = Expr { data: js_ast::ExprData::EImportIdentifier(*id), loc: logger::Loc::EMPTY };
                     }
                 }
                 js_ast::ExprData::ECommonjsExportIdentifier(id) => {
-                    let gop = ctx.user_hooks.get_or_put(self.allocator, id.r#ref).expect("oom");
+                    let gop = ctx.user_hooks.get_or_put(id.ref_).expect("oom");
                     if !gop.found_existing {
                         *gop.value_ptr = Expr { data: js_ast::ExprData::ECommonjsExportIdentifier(*id), loc: logger::Loc::EMPTY };
                     }

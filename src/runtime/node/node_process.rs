@@ -1,37 +1,172 @@
 //! Process information and control APIs (`globalThis.process` / `node:process`)
 
-// ─── gated: every fn body is a JSC host fn or `extern "C"` shim that calls
-//     bun_jsc methods (`.bun_vm()`, `.throw_value()`, `ZigString::to_js`) or
-//     reaches `crate::cli::process_title` / `bun_core::Global` consts not yet
-//     exported. No standalone type defs to hoist — this module is process
-//     accessors only.
-// TODO(b2-blocked): un-gate once bun_jsc + bun_core::Global consts land.
-#[cfg(any())]
-mod _impl {
-use core::ffi::{c_char, c_void};
+use core::ffi::c_char;
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_str::{self as bstr_, String as BunString, ZigString, strings};
-use bun_sys as Syscall;
-use bun_paths::{self, PathBuffer, MAX_PATH_BYTES, SEP};
-use bun_core::{self, Environment, Global, env_var, feature_flag};
+use bun_jsc::{JSGlobalObject, JSValue, VirtualMachine, WebWorker};
+use bun_jsc::zig_string::ZigString;
+use bun_core::{self, Environment, Global};
+use bun_core::env_var::feature_flag;
 
 // TODO(port): move to <area>_sys — extern decls colocated for now
 unsafe extern "C" {
     fn Bun__Process__getArgv(global: *const JSGlobalObject) -> JSValue;
     fn Bun__Process__getExecArgv(global: *const JSGlobalObject) -> JSValue;
-    #[cfg(windows)]
+}
+
+// ───────────────────────────── argv0 / execPath ─────────────────────────────
+
+#[unsafe(no_mangle)]
+#[export_name = "Bun__Process__createArgv0"]
+pub extern "C" fn create_argv0(global_object: *const JSGlobalObject) -> JSValue {
+    // SAFETY: global_object is valid for the duration of this call
+    let global = unsafe { &*global_object };
+    let argv0 = bun_core::argv().get(0).map(|z| z.as_bytes()).unwrap_or(b"bun");
+    ZigString::from_utf8(argv0).to_js(global)
+}
+
+#[unsafe(no_mangle)]
+#[export_name = "Bun__Process__getExecPath"]
+pub extern "C" fn get_exec_path(global_object: *const JSGlobalObject) -> JSValue {
+    let Ok(out) = bun_core::self_exe_path() else {
+        // if for any reason we are unable to get the executable path, we just return argv[0]
+        return create_argv0(global_object);
+    };
+    // SAFETY: global_object is valid for the duration of this call
+    let global = unsafe { &*global_object };
+    ZigString::from_utf8(out.as_bytes()).to_js(global)
+}
+
+// ───────────────────────────── argv (C++ accessor wrappers) ─────────────────
+
+pub extern "C" fn get_argv(global: &JSGlobalObject) -> JSValue {
+    // SAFETY: FFI call into C++; global is valid
+    unsafe { Bun__Process__getArgv(global) }
+}
+
+pub extern "C" fn get_exec_argv(global: &JSGlobalObject) -> JSValue {
+    // SAFETY: FFI call into C++; global is valid
+    unsafe { Bun__Process__getExecArgv(global) }
+}
+
+// ───────────────────────────── exit ─────────────────────────────
+
+// TODO(@190n) this may need to be noreturn
+#[unsafe(no_mangle)]
+#[export_name = "Bun__Process__exit"]
+pub extern "C" fn exit(global_object: *const JSGlobalObject, code: u8) {
+    // SAFETY: global_object is valid for the duration of this call
+    let global_object = unsafe { &*global_object };
+    // PORT NOTE: `bun_vm()` returns `&VirtualMachine`; the Zig original mutates
+    // `exit_handler.exit_code` and calls `&mut self` methods. Cast through the
+    // shared pointer — the VM is per-thread and this matches the Zig semantics.
+    let vm = global_object.bun_vm() as *const VirtualMachine as *mut VirtualMachine;
+    // SAFETY: vm is the live per-thread VirtualMachine for this global.
+    unsafe { (*vm).exit_handler.exit_code = code };
+    // SAFETY: worker is either None or a valid `*const WebWorker` (BACKREF set
+    // by `init_worker`).
+    if let Some(worker) = unsafe { (*vm).worker } {
+        // TODO(@190n) we may need to use requestTerminate or throwTerminationException
+        // instead to terminate the worker sooner
+        // SAFETY: worker pointer is valid for the lifetime of the VM.
+        unsafe { (*(worker as *const WebWorker)).exit() };
+    } else {
+        // SAFETY: vm is the live per-thread VirtualMachine; on_exit/global_exit
+        // are the canonical shutdown path.
+        unsafe {
+            (*vm).on_exit();
+            (*vm).global_exit();
+        }
+    }
+}
+
+// ───────────────────────────── misc exports ─────────────────────────────
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__NODE_NO_WARNINGS() -> bool {
+    feature_flag::NODE_NO_WARNINGS.get().unwrap_or(false)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__suppressCrashOnProcessKillSelfIfDesired() {
+    if feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF
+        .get()
+        .unwrap_or(false)
+    {
+        bun_crash_handler::suppress_reporting();
+    }
+}
+
+// PORT NOTE: Zig `export const Foo: [*:0]const u8 = "..."` exports a static
+// pointing at rodata. Rust raw-pointer statics are `!Sync`; wrap in a
+// `#[repr(transparent)]` newtype so the C++ side still sees a single
+// `const char*`-sized symbol.
+#[repr(transparent)]
+pub struct CStrPtr(*const c_char);
+// SAFETY: the wrapped pointer always targets a `'static` NUL-terminated
+// rodata literal produced by `concatcp!`; it is never written through.
+unsafe impl Sync for CStrPtr {}
+
+#[unsafe(no_mangle)]
+pub static Bun__version: CStrPtr =
+    CStrPtr(const_format::concatcp!("v", Global::package_json_version, "\0").as_ptr() as *const c_char);
+#[unsafe(no_mangle)]
+pub static Bun__version_with_sha: CStrPtr = CStrPtr(
+    const_format::concatcp!("v", Global::package_json_version_with_sha, "\0").as_ptr()
+        as *const c_char,
+);
+// Version exports removed - now handled by build-generated header (bun_dependency_versions.h)
+// The C++ code in BunProcess.cpp uses the generated header directly
+#[unsafe(no_mangle)]
+pub static Bun__versions_uws: CStrPtr =
+    CStrPtr(const_format::concatcp!(Environment::GIT_SHA, "\0").as_ptr() as *const c_char);
+#[unsafe(no_mangle)]
+pub static Bun__versions_usockets: CStrPtr =
+    CStrPtr(const_format::concatcp!(Environment::GIT_SHA, "\0").as_ptr() as *const c_char);
+#[unsafe(no_mangle)]
+pub static Bun__version_sha: CStrPtr =
+    CStrPtr(const_format::concatcp!(Environment::GIT_SHA, "\0").as_ptr() as *const c_char);
+
+// ─── gated: remaining accessors that reach not-yet-un-gated surfaces ────────
+//   - get_title/set_title:      crate::cli::process_title / set_process_title
+//                               (mutable global; not yet exported by cli/mod.rs)
+//   - create_exec_argv:         vm.worker() / vm.standalone_module_graph()
+//                               accessor shapes, BunString::to_js,
+//                               crate::cli::arguments::AUTO_PARAMS_TAKING_VALUE_SET,
+//                               bun_core::append_options_env / bun_options_argc
+//   - create_argv:              vm.worker() typed accessor (.argv()/.eval_mode()),
+//                               BunString::to_js_array
+//   - get_eval:                 vm.module_loader().eval_source() shape
+//   - get_cwd/set_cwd:          super::path::get_cwd, transpiler().fs()
+//                               top_level_dir_buf*/set_top_level_dir surface
+//   - bun_process_edit_windows_env_var: BunString wtf-impl accessors
+//                               (utf16_byte_length / value().wtf_string_impl())
+// TODO(b2-blocked): un-gate once the above land. uncaught_exception/BunObject
+// are external blockers, not referenced here.
+#[cfg(any())]
+mod _impl {
+use core::ffi::{c_char, c_void};
+
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::zig_string::ZigString;
+use bun_str::{self as bstr_, String as BunString, strings};
+use bun_sys as Syscall;
+use bun_paths::{self, PathBuffer, MAX_PATH_BYTES, SEP};
+use bun_core::{self, Environment, Global, env_var};
+
+#[cfg(windows)]
+unsafe extern "C" {
     fn SetEnvironmentVariableW(name: *const u16, value: *const u16) -> i32;
 }
 
 // ───────────────────────────── title ─────────────────────────────
 
-static TITLE_MUTEX: bun_threading::Mutex<()> = bun_threading::Mutex::new(());
+static TITLE_MUTEX: bun_threading::Mutex = bun_threading::Mutex::default();
 
 #[unsafe(no_mangle)]
 #[export_name = "Bun__Process__getTitle"]
 pub extern "C" fn get_title(_global: *const JSGlobalObject, title: *mut BunString) {
-    let _guard = TITLE_MUTEX.lock();
+    TITLE_MUTEX.lock();
+    let _guard = scopeguard::guard((), |()| TITLE_MUTEX.unlock());
     // TODO(port): crate::cli::process_title is a mutable global Option<Box<[u8]>> guarded by TITLE_MUTEX
     // SAFETY: TITLE_MUTEX held; process_title reads a static guarded by it
     let str_ = unsafe { crate::cli::process_title() };
@@ -47,45 +182,17 @@ pub extern "C" fn get_title(_global: *const JSGlobalObject, title: *mut BunStrin
 pub extern "C" fn set_title(global_object: *const JSGlobalObject, newvalue: *mut BunString) {
     // SAFETY: newvalue is a valid pointer from C++; we consume one ref before returning
     let newvalue = unsafe { &mut *newvalue };
-    let _guard = TITLE_MUTEX.lock();
+    TITLE_MUTEX.lock();
+    let _guard = scopeguard::guard((), |()| TITLE_MUTEX.unlock());
 
-    // PORT NOTE: reshaped for borrowck — Zig `defer newvalue.deref()` inlined on each exit path
-    let new_title = match newvalue.to_owned_slice() {
-        Ok(s) => s,
-        Err(_) => {
-            newvalue.deref_();
-            // SAFETY: global_object is valid for the duration of this call
-            let _ = unsafe { &*global_object }.throw_out_of_memory();
-            return;
-        }
-    };
+    // PORT NOTE: reshaped — Zig `defer newvalue.deref()` inlined; to_owned_slice
+    // is now infallible (Vec<u8>) so the OOM-throw path is unreachable here.
+    let new_title = newvalue.to_owned_slice().into_boxed_slice();
 
     // TODO(port): crate::cli::set_process_title takes ownership; old value (if any) is dropped
     // SAFETY: TITLE_MUTEX held; set_process_title mutates the static guarded by it
     unsafe { crate::cli::set_process_title(Some(new_title)) };
-    newvalue.deref_();
-}
-
-// ───────────────────────────── argv0 / execPath ─────────────────────────────
-
-#[unsafe(no_mangle)]
-#[export_name = "Bun__Process__createArgv0"]
-pub extern "C" fn create_argv0(global_object: *const JSGlobalObject) -> JSValue {
-    // SAFETY: global_object is valid for the duration of this call
-    let global = unsafe { &*global_object };
-    ZigString::from_utf8(bun_core::argv()[0]).to_js(global)
-}
-
-#[unsafe(no_mangle)]
-#[export_name = "Bun__Process__getExecPath"]
-pub extern "C" fn get_exec_path(global_object: *const JSGlobalObject) -> JSValue {
-    let Ok(out) = bun_core::self_exe_path() else {
-        // if for any reason we are unable to get the executable path, we just return argv[0]
-        return create_argv0(global_object);
-    };
-    // SAFETY: global_object is valid for the duration of this call
-    let global = unsafe { &*global_object };
-    ZigString::from_utf8(out).to_js(global)
+    newvalue.deref();
 }
 
 // ───────────────────────────── execArgv ─────────────────────────────
@@ -160,9 +267,11 @@ pub fn create_exec_argv(global_object: &JSGlobalObject) -> JsResult<JSValue> {
 
     // we re-parse the process argv to extract execArgv, since this is a very uncommon operation
     // it isn't worth doing this as a part of the CLI
-    for arg in &argv[argv.len().min(1)..] {
+    let mut iter = argv.iter();
+    let _ = iter.next(); // skip argv[0]
+    for arg in iter {
         // emulate `defer prev = arg` by setting at end of each iteration body
-        let arg: &[u8] = arg.as_ref();
+        let arg: &[u8] = arg;
 
         if arg.len() >= 1 && arg[0] == b'-' {
             args.push(BunString::clone_utf8(arg));
@@ -228,7 +337,7 @@ pub extern "C" fn create_argv(global_object: *const JSGlobalObject) -> JSValue {
     } else {
         let exe_path = bun_core::self_exe_path().ok();
         args_list.push(match exe_path {
-            Some(str_) => BunString::borrow_utf8(str_),
+            Some(str_) => BunString::borrow_utf8(str_.as_bytes()),
             None => BunString::static_(b"bun"),
         });
         // PERF(port): was assume_capacity
@@ -262,16 +371,6 @@ pub extern "C" fn create_argv(global_object: *const JSGlobalObject) -> JSValue {
     }
 
     BunString::to_js_array(global_object, &args_list).unwrap_or(JSValue::ZERO)
-}
-
-pub extern "C" fn get_argv(global: &JSGlobalObject) -> JSValue {
-    // SAFETY: FFI call into C++; global is valid
-    unsafe { Bun__Process__getArgv(global) }
-}
-
-pub extern "C" fn get_exec_argv(global: &JSGlobalObject) -> JSValue {
-    // SAFETY: FFI call into C++; global is valid
-    unsafe { Bun__Process__getExecArgv(global) }
 }
 
 // ───────────────────────────── eval ─────────────────────────────
@@ -357,26 +456,6 @@ pub fn set_cwd(global_object: &JSGlobalObject, to: &ZigString) -> JsResult<JSVal
     }
 }
 
-// ───────────────────────────── exit ─────────────────────────────
-
-// TODO(@190n) this may need to be noreturn
-#[unsafe(no_mangle)]
-#[export_name = "Bun__Process__exit"]
-pub extern "C" fn exit(global_object: *const JSGlobalObject, code: u8) {
-    // SAFETY: global_object is valid for the duration of this call
-    let global_object = unsafe { &*global_object };
-    let vm = global_object.bun_vm();
-    vm.exit_handler_mut().exit_code = code;
-    if let Some(worker) = vm.worker() {
-        // TODO(@190n) we may need to use requestTerminate or throwTerminationException
-        // instead to terminate the worker sooner
-        worker.exit();
-    } else {
-        vm.on_exit();
-        vm.global_exit();
-    }
-}
-
 // ───────────────────────────── Windows env var ─────────────────────────────
 
 // TODO: switch this to using *bun.wtf.String when it is added
@@ -427,42 +506,6 @@ pub extern "C" fn bun_process_edit_windows_env_var(k: BunString, v: BunString) {
         );
     }
 }
-
-// ───────────────────────────── misc exports ─────────────────────────────
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__NODE_NO_WARNINGS() -> bool {
-    feature_flag::NODE_NO_WARNINGS.get()
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__suppressCrashOnProcessKillSelfIfDesired() {
-    if feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF.get() {
-        bun_crash_handler::suppress_reporting();
-    }
-}
-
-// TODO(port): exporting raw `*const c_char` statics — Rust statics of raw ptrs
-// are `!Sync`; Phase B may need a `#[repr(transparent)]` Sync wrapper or to
-// export these as `&'static CStr` and adjust the C++ side.
-#[unsafe(no_mangle)]
-pub static Bun__version: *const c_char =
-    const_format::concatcp!("v", Global::PACKAGE_JSON_VERSION, "\0").as_ptr() as *const c_char;
-#[unsafe(no_mangle)]
-pub static Bun__version_with_sha: *const c_char =
-    const_format::concatcp!("v", Global::PACKAGE_JSON_VERSION_WITH_SHA, "\0").as_ptr()
-        as *const c_char;
-// Version exports removed - now handled by build-generated header (bun_dependency_versions.h)
-// The C++ code in BunProcess.cpp uses the generated header directly
-#[unsafe(no_mangle)]
-pub static Bun__versions_uws: *const c_char =
-    const_format::concatcp!(Environment::GIT_SHA, "\0").as_ptr() as *const c_char;
-#[unsafe(no_mangle)]
-pub static Bun__versions_usockets: *const c_char =
-    const_format::concatcp!(Environment::GIT_SHA, "\0").as_ptr() as *const c_char;
-#[unsafe(no_mangle)]
-pub static Bun__version_sha: *const c_char =
-    const_format::concatcp!(Environment::GIT_SHA, "\0").as_ptr() as *const c_char;
 } // mod _impl
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -470,5 +513,5 @@ pub static Bun__version_sha: *const c_char =
 //   source:     src/runtime/node/node_process.zig (381 lines)
 //   confidence: medium
 //   todos:      4
-//   notes:      comptime-built ComptimeStringMap from cli auto_params needs build.rs/proc-macro; mutable global process_title accessed via bun_cli helpers; exported *const c_char statics need Sync wrapper; host_fn.wrapN exports mapped to #[bun_jsc::host_fn]+#[export_name]
+//   notes:      comptime-built ComptimeStringMap from cli auto_params needs build.rs/proc-macro; mutable global process_title accessed via bun_cli helpers; exported *const c_char statics wrapped in Sync newtype; host_fn.wrapN exports mapped to #[bun_jsc::host_fn]+#[export_name]
 // ──────────────────────────────────────────────────────────────────────────

@@ -236,7 +236,7 @@ pub type UVFSRequest<R, A, const F: NodeFSFunctionEnum> = AsyncFSTask<R, A, F>;
 
 #[cfg(windows)]
 pub struct UVFSRequest<R, A, const F: NodeFSFunctionEnum> {
-    pub promise: JSPromise::Strong,
+    pub promise: JSPromiseStrong,
     pub args: A,
     pub global_object: *mut JSGlobalObject,
     pub req: uv::fs_t,
@@ -257,7 +257,7 @@ impl<R, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, F> {
         vm: &mut VirtualMachine,
     ) -> JSValue {
         let mut task = Box::new(Self {
-            promise: JSPromise::Strong::init(global_object),
+            promise: JSPromiseStrong::init(global_object),
             args: task_args,
             // SAFETY: all-zero is a valid Maybe<R>; written before read
             result: unsafe { core::mem::zeroed() },
@@ -380,7 +380,7 @@ pub trait FsArgument {
 }
 
 pub struct AsyncFSTask<R, A, const F: NodeFSFunctionEnum> {
-    pub promise: JSPromise::Strong,
+    pub promise: JSPromiseStrong,
     pub args: A,
     pub global_object: *mut JSGlobalObject,
     pub task: WorkPoolTask,
@@ -406,7 +406,7 @@ impl<R, A: FsArgument, const F: NodeFSFunctionEnum> AsyncFSTask<R, A, F> {
         vm: &mut VirtualMachine,
     ) -> JSValue {
         let mut task = Box::new(Self {
-            promise: JSPromise::Strong::init(global_object),
+            promise: JSPromiseStrong::init(global_object),
             args,
             result: unsafe { core::mem::zeroed() }, // SAFETY: written before read
             global_object: global_object as *const _ as *mut _,
@@ -508,10 +508,24 @@ impl<R, A: FsArgument, const F: NodeFSFunctionEnum> AsyncFSTask<R, A, F> {
 pub type AsyncCpTask = NewAsyncCpTask<false>;
 pub type ShellAsyncCpTask = NewAsyncCpTask<true>;
 
-type ShellCpTask = crate::shell::Interpreter::Builtin::Cp::ShellCpTask;
+// Zig path was `bun.shell.Interpreter.Builtin.Cp.ShellCpTask`. The Rust shell
+// port flattens builtins under `crate::shell::builtins::*`.
+type ShellCpTask = crate::shell::builtins::cp::ShellCpTask;
+
+/// Callbacks `NewAsyncCpTask<true>` fires back into the owning shell `cp`
+/// builtin. In Zig these are inherent methods on `ShellCpTask`
+/// (`cpOnCopy` / `cpOnFinish`); the Rust shell port hasn't grown them yet, so
+/// they're routed through this extension trait with no-op defaults. Once
+/// `shell/builtin/cp.rs` adds inherent `cp_on_copy` / `cp_on_finish`, method
+/// resolution will prefer those over the trait defaults automatically.
+pub trait ShellCpHooks {
+    fn cp_on_copy(&mut self, _src: &[OSPathChar], _dest: &[OSPathChar]) {}
+    fn cp_on_finish(&mut self, _result: Maybe<ret::Cp>) {}
+}
+impl ShellCpHooks for ShellCpTask {}
 
 pub struct NewAsyncCpTask<const IS_SHELL: bool> {
-    pub promise: JSPromise::Strong,
+    pub promise: JSPromiseStrong,
     pub args: args::Cp,
     pub evtloop: EventLoopHandle,
     pub task: WorkPoolTask,
@@ -625,10 +639,10 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
     pub fn on_copy(&self, src: impl AsRef<[OSPathChar]>, dest: impl AsRef<[OSPathChar]>) {
         if !IS_SHELL { return; }
         // SAFETY: when IS_SHELL, shelltask is non-null and outlives this task
-        unsafe { &mut *self.shelltask }.cp_on_copy(src, dest);
+        unsafe { &mut *self.shelltask }.cp_on_copy(src.as_ref(), dest.as_ref());
     }
 
-    pub fn on_finish(&mut self, result: Maybe<()>) {
+    pub fn on_finish(&mut self, result: Maybe<ret::Cp>) {
         if !IS_SHELL { return; }
         // SAFETY: when IS_SHELL, shelltask is non-null and outlives this task
         unsafe { &mut *self.shelltask }.cp_on_finish(result);
@@ -653,7 +667,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         enable_promise: bool,
     ) -> *mut Self {
         let mut task = Box::new(Self {
-            promise: if enable_promise { JSPromise::Strong::init(global_object) } else { JSPromise::Strong::default() },
+            promise: if enable_promise { JSPromiseStrong::init(global_object) } else { JSPromiseStrong::default() },
             args: cp_args,
             has_result: AtomicBool::new(false),
             // SAFETY: all-zero is a valid Maybe<ret::Cp>; written before read
@@ -681,7 +695,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         shelltask: *mut ShellCpTask,
     ) -> *mut Self {
         let mut task = Box::new(Self {
-            promise: JSPromise::Strong::default(),
+            promise: JSPromiseStrong::default(),
             args: cp_args,
             has_result: AtomicBool::new(false),
             // SAFETY: all-zero is a valid Maybe<ret::Cp>; written before read
@@ -1086,7 +1100,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct AsyncReaddirRecursiveTask {
-    pub promise: JSPromise::Strong,
+    pub promise: JSPromiseStrong,
     pub args: args::Readdir,
     pub global_object: *mut JSGlobalObject,
     pub task: WorkPoolTask,
@@ -1203,7 +1217,7 @@ impl AsyncReaddirRecursiveTask {
         };
         let root_path = PathString::init(ZStr::from_bytes(args.path.slice()));
         let mut task = Self::new(AsyncReaddirRecursiveTask {
-            promise: JSPromise::Strong::init(global_object),
+            promise: JSPromiseStrong::init(global_object),
             args,
             has_result: AtomicBool::new(false),
             global_object: global_object as *const _ as *mut _,
@@ -1425,11 +1439,11 @@ impl ResultListEntryValue {
     fn append_from(&mut self, _other: &mut Self) { /* TODO(port) */ }
 }
 
-} // mod _async_gated
-#[cfg(any())]
-pub use _async_gated::{
-    async_, AsyncCpTask, AsyncFSTask, AsyncReaddirRecursiveTask, FsArgument, NewAsyncCpTask,
-    ShellAsyncCpTask, UVFSRequest,
+} // mod _async_tasks
+pub use _async_tasks::{
+    async_, AsyncCpTask, AsyncFSTask, AsyncReaddirRecursiveTask, CpSingleTask, FsArgument,
+    NewAsyncCpTask, ResultListEntry, ResultListEntryValue, ShellAsyncCpTask, ShellCpHooks,
+    UVFSRequest,
 };
 
 // ──────────────────────────────────────────────────────────────────────────

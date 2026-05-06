@@ -1147,7 +1147,7 @@ pub enum GetLoaderAndVirtualSourceErr {
 pub struct LoaderResult<'a> {
     pub loader: Option<Loader>,
     pub virtual_source: Option<&'a logger::Source>,
-    pub path: Fs::Path,
+    pub path: Fs::Path<'a>,
     pub is_main: bool,
     pub specifier: &'a [u8],
     /// NOTE: This is always `null` for non-js-like loaders since it's not

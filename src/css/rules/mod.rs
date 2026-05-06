@@ -321,10 +321,10 @@ deep_clone_shim!(generic:
     StartingStyleRule,
 );
 
-impl<'bump> css::generics::DeepClone<'bump> for Location {
-    #[inline]
-    fn deep_clone(&self, _bump: &'bump bun_alloc::Arena) -> Self { *self }
-}
+// `Location` is plain `Copy` data; the derive expands to field-wise
+// `u32::deep_clone` (identity). Doubles as the in-tree smoke test that the
+// `#[derive(DeepClone)]` proc-macro round-trips through a real CSS type.
+// (The Zig `implementDeepClone` returns `this.*` for simple-copy types.)
 
 // ─── shared serialization helpers for leaf rules ──────────────────────────
 // Several leaf-rule `to_css` bodies bottom out on helpers whose canonical
@@ -1048,7 +1048,7 @@ pub fn merge_style_rules<R>(
 /// Cross-source location (carries a source-map source index). Same layout as
 /// `crate::Location` — kept as a distinct type here to match the Zig surface
 /// (`css_rules.Location` vs `css.Location`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, css::DeepClone)]
 pub struct Location {
     /// The index of the source file within the source map.
     pub source_index: u32,

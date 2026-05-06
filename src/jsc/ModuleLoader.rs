@@ -33,7 +33,6 @@ pub use crate::runtime_transpiler_store::RuntimeTranspilerStore;
 pub mod async_module;
 pub use async_module::{AsyncModule, Queue as AsyncModuleQueue};
 
-#[allow(non_upper_case_globals)]
 bun_core::declare_scope!(ModuleLoader, hidden);
 
 #[derive(Default)]

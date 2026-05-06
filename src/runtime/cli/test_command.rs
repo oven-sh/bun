@@ -1816,9 +1816,7 @@ impl TestCommand {
                 // SAFETY: lifetime-erase to `'static`; `ctx` is the
                 // process-lifetime CLI context and `exec()` never returns.
                 test_options: unsafe {
-                    core::mem::transmute::<&crate::TestOptions, &'static crate::TestOptions>(
-                        &ctx.test_options,
-                    )
+                    &*(&ctx.test_options as *const bun_options_types::TestOptions)
                 },
                 unhandled_errors_between_tests: 0,
                 summary: Summary::default(),
@@ -1842,7 +1840,8 @@ impl TestCommand {
             jest::Jest::RUNNER =
                 Some(core::ptr::NonNull::from(&mut reporter.jest));
         }
-        reporter.jest.test_options = &ctx.test_options;
+        // PORT NOTE: `reporter.jest.test_options` is initialised in the struct
+        // literal above (lifetime-erased); the post-init assignment is dropped.
 
         if ctx.test_options.reporters.junit {
             reporter.reporters.junit = Some(JunitReporter::init());

@@ -1,16 +1,14 @@
-use std::rc::Rc;
-
 use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsClass as _, JsResult};
 use bun_str::String as BunString;
 
-use crate::test_runner::bun_test::{group_begin, BunTest, RefData};
+use crate::test_runner::bun_test::{group_begin, BunTest, RefDataPtr};
 use crate::test_runner::debug;
 use crate::test_runner::expect::JSValueTestExt as _;
 
 #[bun_jsc::JsClass(no_construct)] // codegen wires to_js / from_js (Zig: jsc.Codegen.JSDoneCallback)
 pub struct DoneCallback {
     /// Some = not called yet. None = done already called, no-op.
-    pub r#ref: Option<Rc<RefData>>,
+    pub r#ref: Option<RefDataPtr>,
     pub called: bool, // = false
 }
 

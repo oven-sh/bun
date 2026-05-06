@@ -690,7 +690,7 @@ impl<'a> BunTest<'a> {
                 active_scope: self.collection.active_scope,
             },
             Phase::Execution => 'blk: {
-                let Some(active_group) = self.execution.active_group() else {
+                let Some(active_group) = self.execution.active_group_ref() else {
                     debug_assert!(false); // should have switched phase if we're calling getCurrentStateData, but it could happen with re-entry maybe
                     break 'blk RefDataValue::Done;
                 };

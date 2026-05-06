@@ -180,13 +180,16 @@ impl<'a> Task<'a> {
                     // SAFETY: tag == PackageManifest discriminates the union
                     let manifest = unsafe { &mut *this.request.package_manifest };
 
-                    let body = &mut manifest.network.response_buffer;
+                    // PORT NOTE: split-borrow `manifest.network` so the mutable
+                    // `response_buffer` borrow doesn't overlap the immutable
+                    // `response`/`callback` reads below.
+                    let network = &mut *manifest.network;
+                    let body = &mut network.response_buffer;
                     // TODO(port): `defer body.deinit()` — free response_buffer after use
 
-                    let Some(metadata) = &manifest.network.response.metadata else {
+                    let Some(metadata) = &network.response.metadata else {
                         // Handle the case when metadata is null (e.g., network failure before receiving headers)
-                        let err = manifest
-                            .network
+                        let err = network
                             .response
                             .fail
                             .unwrap_or(bun_core::err!("HTTPError"));

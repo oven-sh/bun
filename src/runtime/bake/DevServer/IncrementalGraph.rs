@@ -628,9 +628,18 @@ impl<S: GraphSide> IncrementalGraph<S> {
     }
 
     fn dev_allocator(&self) -> DevAllocator {
-        // SAFETY: const-cast of self to call `owner()`; owner() does not mutate through `self`.
+        // SAFETY: same container_of invariant as `owner()`, but const-only — `self` is the
+        // `client_graph` / `server_graph` field of DevServer, and `dev_allocator()` only needs
+        // shared access. Avoids the `*const -> *mut` cast that the `&mut`-taking `owner()` would
+        // require (which is UB to write through and unsound to form `&mut` from a `&self`).
         let dev_server: &DevServer::DevServer = unsafe {
-            (*(self as *const Self as *mut Self)).owner()
+            let offset = match S::SIDE {
+                Side::Client => offset_of!(DevServer::DevServer, client_graph),
+                Side::Server => offset_of!(DevServer::DevServer, server_graph),
+            };
+            &*(self as *const Self as *const u8)
+                .sub(offset)
+                .cast::<DevServer::DevServer>()
         };
         dev_server.dev_allocator()
     }

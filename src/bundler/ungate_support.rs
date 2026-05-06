@@ -215,8 +215,38 @@ impl StableRef {
     }
 }
 
+// PORT NOTE: `#[repr(packed)]` forbids derived comparison (would take an
+// unaligned `&self.field`). Manual impls copy the packed fields to locals
+// first. Ordering matches `bundle_v2.zig:StableRef.isLessThan` —
+// `(stable_source_index, ref.inner_index)` lexicographic — so
+// `slice.sort_unstable()` reproduces Zig `std.sort.pdq(StableRef, …,
+// isLessThan)` call sites.
+impl PartialEq for StableRef {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        let (a_idx, a_ref) = (self.stable_source_index, self.r#ref);
+        let (b_idx, b_ref) = (other.stable_source_index, other.r#ref);
+        a_idx == b_idx && a_ref == b_ref
+    }
+}
+impl Eq for StableRef {}
+impl Ord for StableRef {
+    #[inline]
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        let (a_idx, a_ref) = (self.stable_source_index, self.r#ref);
+        let (b_idx, b_ref) = (other.stable_source_index, other.r#ref);
+        (a_idx, a_ref.inner_index()).cmp(&(b_idx, b_ref.inner_index()))
+    }
+}
+impl PartialOrd for StableRef {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 /// `bundle_v2.zig:ImportTracker`.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub struct ImportTracker {
     pub source_index: Index,
     pub name_loc: bun_logger::Loc,

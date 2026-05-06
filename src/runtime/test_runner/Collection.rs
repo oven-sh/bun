@@ -39,9 +39,10 @@ pub struct QueuedDescribe<'a> {
 // Zig `deinit` only called `callback.deinit()`; `Strong: Drop` covers it — no explicit Drop needed.
 
 impl Collection {
-    pub fn init(bun_test_root: &mut BunTestRoot) -> Collection {
-        // TODO(port): @src() source-location for debug tracing — consider #[track_caller] + Location::caller()
+    pub fn init(bun_test_root: *mut BunTestRoot) -> Collection {
         let _g = group::begin();
+        // SAFETY: caller (BunTest::init) passes a live pointer to its own `bun_test_root` field.
+        let bun_test_root = unsafe { &mut *bun_test_root };
 
         let only = if let Some(runner) = Jest::runner() {
             if runner.only { bun_test::Only::Contains } else { bun_test::Only::No }

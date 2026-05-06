@@ -41,7 +41,7 @@ pub fn to_end_with(
         let value_string = value.to_slice_or_null(global)?;
         let expected_string = expected.to_slice_or_null(global)?;
         pass = strings::ends_with(value_string.slice(), expected_string.slice())
-            || expected_string.len() == 0;
+            || expected_string.slice().is_empty();
         // value_string / expected_string drop here (was: defer .deinit())
     }
 

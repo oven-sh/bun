@@ -362,7 +362,7 @@ impl Execution {
         global_this: &JSGlobalObject,
         data: RefDataValue,
     ) -> JsResult<StepResult> {
-        let _scope = group_log::begin();
+        group_begin!();
         let buntest = buntest_strong.get();
         let buntest_ptr = NonNull::from(&mut *buntest);
         let this = &mut buntest.execution;
@@ -370,7 +370,7 @@ impl Execution {
 
         match data {
             RefDataValue::Start => {
-                return step_group(buntest_strong, global_this, &mut now);
+                return step_group(&buntest_strong, global_this, &mut now);
             }
             _ => {
                 // determine the active sequence,group

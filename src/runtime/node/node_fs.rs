@@ -25,7 +25,7 @@ use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_paths::{self as paths, OSPathBuffer, OSPathChar, OSPathSliceZ, PathBuffer};
 use bun_string::{self as bstr, strings, String as BunString, ZStr, PathString, ZigString};
-use bun_sys::{self as sys, Fd as FD, Maybe, Mode, SystemErrno, E};
+use bun_sys::{self as sys, Fd as FD, FdExt as _, Maybe, Mode, SystemErrno, E};
 use bun_threading::work_pool::{WorkPool, Task as WorkPoolTask};
 use crate::webcore;
 

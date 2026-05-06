@@ -766,6 +766,7 @@ impl WindowsNamedPipe {
         if let Some(wrapper) = self.wrapper.as_mut() {
             let _ = wrapper.shutdown_read();
         } else {
+            #[cfg(windows)]
             if let Some(stream) = self.writer.get_stream() {
                 let _ = stream.read_stop();
             }

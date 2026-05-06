@@ -5500,10 +5500,11 @@ pub mod testing_apis {
         }
         #[cfg(not(windows))]
         {
-            let arguments_ = callframe.arguments_old(1);
-            let mut arguments =
-                jsc::CallFrame::ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
-            let string = match arguments.next_eat() {
+            let arguments_ = callframe.arguments_old::<1>();
+            // SAFETY: bun_vm() is non-null for a Bun-owned global.
+            let vm = unsafe { &*global.bun_vm() };
+            let mut arguments = jsc::ArgumentsSlice::init(vm, arguments_.slice());
+            let string: JSValue = match arguments.next_eat() {
                 Some(s) => s,
                 None => {
                     return Err(global.throw(format_args!(
@@ -5516,7 +5517,7 @@ pub mod testing_apis {
             let _g1 = scopeguard::guard((), |_| bunstr.deref());
             let utf8str = bunstr.to_utf8();
 
-            for disabled in interpret::Interpreter::Builtin::Kind::DISABLED_ON_POSIX {
+            for disabled in crate::shell::builtin::Kind::DISABLED_ON_POSIX {
                 if utf8str.byte_slice() == <&'static str>::from(*disabled).as_bytes() {
                     return Ok(JSValue::TRUE);
                 }

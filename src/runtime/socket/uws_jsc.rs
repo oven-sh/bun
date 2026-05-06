@@ -13,6 +13,33 @@ use bun_uws::{
 
 use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
 
+// ── local extension: StreamBuffer accessors (upstream `bun_uws_sys::us_socket::StreamBuffer`
+// is a bare `{ list: Vec<u8>, cursor: usize }`; mirror `bun_io::StreamBuffer` API here) ──
+trait StreamBufferExt {
+    fn is_not_empty(&self) -> bool;
+    fn slice(&self) -> &[u8];
+    fn wrote(&mut self, amount: usize);
+    fn write(&mut self, buffer: &[u8]);
+}
+impl StreamBufferExt for bun_uws_sys::us_socket::StreamBuffer {
+    #[inline]
+    fn is_not_empty(&self) -> bool {
+        self.list.len() > self.cursor
+    }
+    #[inline]
+    fn slice(&self) -> &[u8] {
+        &self.list[self.cursor..]
+    }
+    #[inline]
+    fn wrote(&mut self, amount: usize) {
+        self.cursor += amount;
+    }
+    #[inline]
+    fn write(&mut self, buffer: &[u8]) {
+        self.list.extend_from_slice(buffer);
+    }
+}
+
 // ── create_bun_socket_error_t.toJS / us_bun_verify_error_t.toJS ────────────
 pub fn create_bun_socket_error_to_js(
     this: create_bun_socket_error_t,
@@ -136,7 +163,7 @@ pub extern "C" fn us_socket_buffered_js_write(
     let result: JSValue = 'body: {
         // PERF(port): was stack-fallback (std.heap.stackFallback(16 * 1024)) — profile in Phase B
         let node_buffer: BlobOrStringOrBuffer = if data.is_undefined() {
-            BlobOrStringOrBuffer::StringOrBuffer(StringOrBuffer::empty())
+            BlobOrStringOrBuffer::StringOrBuffer(StringOrBuffer::EMPTY)
         } else {
             match BlobOrStringOrBuffer::from_js_with_encoding_value_allow_request_response(
                 global_object,

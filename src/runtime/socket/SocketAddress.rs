@@ -111,9 +111,10 @@ impl Options {
                 return Err(global.throw_range_error(
                     fl.as_number(),
                     bun_jsc::RangeErrorOptions {
-                        field_name: "options.flowlabel",
+                        field_name: b"options.flowlabel",
                         min: 0,
                         max: i64::from(u32::MAX),
+                        msg: b"",
                     },
                 ));
             }

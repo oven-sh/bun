@@ -28,7 +28,7 @@ pub fn to_contain_any_values(
 
         let expected = arguments[0];
         if !expected.js_type().is_array() {
-            return global.throw_invalid_argument_type("toContainAnyValues", "expected", "array");
+            return Err(global.throw_invalid_argument_type("toContainAnyValues", "expected", "array"));
         }
         expected.ensure_still_alive();
         let value: JSValue =
@@ -44,7 +44,7 @@ pub fn to_contain_any_values(
 
             'outer: while let Some(item) = itr.next()? {
                 let mut i: u32 = 0;
-                while i < count {
+                while (i as u64) < count {
                     let key = values.get_index(global, i)?;
                     if key.jest_deep_equals(item, global)? {
                         pass = true;

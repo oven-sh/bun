@@ -37,10 +37,9 @@ pub fn to_be_one_of(
     global_this: &JSGlobalObject,
     call_frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let _post = scopeguard::guard((), |_| this.post_match(global_this));
-    // PORT NOTE: reshaped for borrowck — `_post` borrows `this`/`global_this`; Phase B may need to
-    // restructure post_match invocation (e.g. explicit calls before each return) if borrowck rejects.
-    // TODO(port): errdefer/defer captures &mut this across fn body
+    // PORT NOTE: reshaped for borrowck — wrap `this` in a scopeguard so post_match runs on every
+    // exit path; `this` remains usable below via DerefMut on the guard (matches toContainEqual/toBeDefined).
+    let mut this = scopeguard::guard(this, |t| t.post_match(global_this));
 
     let this_value = call_frame.this();
     let arguments_ = call_frame.arguments_old::<1>();

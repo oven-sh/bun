@@ -2248,11 +2248,14 @@ impl<const SSL: bool> NewSocket<SSL> {
         let this_ref = unsafe { &mut *this };
         this_ref.mark_inactive();
         this_ref.detach_native_callback();
-        this_ref.this_value.deinit();
+        // PORT NOTE: Zig `JSRef.deinit()` → reset to empty (Strong drops on assign).
+        this_ref.this_value = JsRef::empty();
 
-        this_ref.buffered_data_for_node_net.deinit();
+        this_ref.buffered_data_for_node_net.clear_and_free();
 
-        this_ref.poll_ref.unref(VirtualMachine::get());
+        this_ref
+            .poll_ref
+            .unref(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
         // need to deinit event without being attached
         if this_ref.flags.contains(Flags::OWNED_PROTOS) {
             this_ref.protos = None; // Box::<[u8]> drops

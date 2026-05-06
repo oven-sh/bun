@@ -842,8 +842,7 @@ impl ServerWebSocket {
         topic_str: &JSString,
         array: &JSUint8Array,
     ) -> JsResult<JSValue> {
-        // SAFETY: handler outlives the ServerWebSocket (see PORT NOTE on struct).
-        let handler = unsafe { &*self.handler };
+        let handler = self.handler();
         let Some(app) = handler.app else {
             bun_output::scoped_log!(WebSocketServer, "publish() closed");
             return Ok(JSValue::js_number(0.0));
@@ -895,8 +894,7 @@ impl ServerWebSocket {
         topic_str: &JSString,
         str: &JSString,
     ) -> JsResult<JSValue> {
-        // SAFETY: handler outlives the ServerWebSocket (see PORT NOTE on struct).
-        let handler = unsafe { &*self.handler };
+        let handler = self.handler();
         let Some(app) = handler.app else {
             bun_output::scoped_log!(WebSocketServer, "publish() closed");
             return Ok(JSValue::js_number(0.0));

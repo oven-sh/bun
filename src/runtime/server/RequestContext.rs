@@ -2446,8 +2446,16 @@ where
                 if !err.is_empty_or_undefined_or_null() {
                     // SAFETY: BACKREF
                     let server = unsafe { &*server };
-                    let mut exception_list: Vec<Api::JsException> = Vec::new();
-                    server.vm().run_error_handler(err, &mut exception_list);
+                    // `run_error_handler` takes `Option<&mut ExceptionList>` where
+                    // `ExceptionList = Vec<()>` upstream; once it carries
+                    // `Api::JsException`, swap the local back in.
+                    let mut exception_list: jsc::ExceptionList = Vec::new();
+                    // SAFETY: see drain_microtasks() re: const→mut cast.
+                    unsafe {
+                        (*(server.vm() as *const VirtualMachine as *mut VirtualMachine))
+                            .run_error_handler(err, Some(&mut exception_list));
+                    }
+                    let exception_list: Vec<Api::JsException> = Vec::new();
 
                     if let Some(_dev_server) = server.dev_server() {
                         // Render the error fallback HTML page like renderDefaultError does

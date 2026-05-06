@@ -873,7 +873,7 @@ impl FileReader {
 
         let buffer_len = buffer.len();
         // SAFETY: see `parent()`.
-        let global = unsafe { (*self.parent()).global_this() };
+        let global = unsafe { &*(*self.parent()).global_this };
         self.pending_value.set(global, array);
         self.pending_view = buffer;
 

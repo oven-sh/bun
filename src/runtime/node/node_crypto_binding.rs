@@ -675,30 +675,30 @@ pub mod random {
         offset: u32,
         length: usize,
     ) -> JsResult<u32> {
-        let mut size = validators::validate_number(global, size_value, "size", None, None)?;
+        let mut size = validators::validate_number(global, size_value, b"size", None, None)?;
         size *= element_size as f64;
 
         if size.is_nan() || size > (MAX_POSSIBLE_LENGTH as f64) || size < 0.0 {
-            return global.throw_range_error(
+            return Err(global.throw_range_error(
                 size,
                 jsc::RangeErrorOptions {
-                    field_name: "size",
-                    min: Some(0),
-                    max: Some(i64::try_from(MAX_POSSIBLE_LENGTH).unwrap()),
+                    field_name: b"size",
+                    min: 0,
+                    max: i64::try_from(MAX_POSSIBLE_LENGTH).unwrap(),
                     ..Default::default()
                 },
-            );
+            ));
         }
 
         if size + (offset as f64) > (length as f64) {
-            return global.throw_range_error(
+            return Err(global.throw_range_error(
                 size + (offset as f64),
                 jsc::RangeErrorOptions {
-                    field_name: "size + offset",
-                    max: Some(i64::try_from(length).unwrap()),
+                    field_name: b"size + offset",
+                    max: i64::try_from(length).unwrap(),
                     ..Default::default()
                 },
-            );
+            ));
         }
 
         Ok(size as u32)

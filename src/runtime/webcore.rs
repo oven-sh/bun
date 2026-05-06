@@ -473,7 +473,7 @@ pub enum DrainResult {
     Aborted,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Copy, Clone, Eq, PartialEq, core::marker::ConstParamTy)]
 pub enum Lifetime {
     Clone,
     Transfer,

@@ -2453,6 +2453,7 @@ impl TransformOptions {
 
 pub use crate::output_file::OutputFile;
 
+#[derive(Default)]
 pub struct TransformResult {
     pub errors: Box<[logger::Msg]>,
     pub warnings: Box<[logger::Msg]>,

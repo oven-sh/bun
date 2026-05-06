@@ -811,14 +811,21 @@ impl<'a> Transpiler<'a> {
             log,
             // .thread_pool = pool,
             // PORT NOTE: Zig used `undefined`; `configure_linker` assigns later.
-            // `crate::linker::Linker` stores only raw pointers + integers
-            // (linker.rs `Linker::init`), so `zeroed` is the bit-exact analogue
-            // of Zig `undefined` here — no Drop fields, no niche invariants.
-            // SAFETY: every field of `crate::linker::Linker` is a raw pointer,
-            // integer, or `bool`; the all-zeroes bit pattern is a valid value
-            // for each (null ptrs / 0 / false). Callers must run
-            // `configure_linker*` before any `linker.link()` deref.
-            linker: unsafe { core::mem::zeroed::<crate::linker::Linker>() },
+            // `core::mem::zeroed()` is NOT a valid analogue here —
+            // `Linker.hashed_filenames: HashMap` carries a `NonNull` (niche),
+            // so the all-zeroes bit pattern is instant UB. Construct via
+            // `Linker::init` with null back-pointers instead; the value fields
+            // (`hashed_filenames`, `tagged_resolutions`, …) get their proper
+            // defaults and `configure_linker_with_auto_jsx` overwrites the
+            // self-referential pointers before any deref.
+            linker: crate::linker::Linker::init(
+                log,
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                fs,
+            ),
             result: options::TransformResult {
                 outbase,
                 ..Default::default()

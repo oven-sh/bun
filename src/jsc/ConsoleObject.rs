@@ -1623,9 +1623,23 @@ pub mod formatter {
     }
 
     /// `Display` adapter equivalent to Zig's `Formatter.ZigFormatter`.
+    ///
+    /// The Zig spec (`ConsoleObject.zig:1044-1062`) takes `self: ZigFormatter`
+    /// *by value* with a raw `*Formatter` field, so writing through
+    /// `self.formatter.*` carries no aliasing constraint. `Display::fmt` only
+    /// gives us `&self`, so the mutable handle is parked behind a `Cell` and
+    /// moved out for the duration of the call — this preserves unique-borrow
+    /// provenance without the `&shared → *const → *mut` cast that would be UB
+    /// under Stacked Borrows.
     pub struct ZigFormatter<'a, 'b> {
-        pub formatter: &'a mut Formatter<'b>,
+        pub formatter: Cell<Option<&'a mut Formatter<'b>>>,
         pub value: JSValue,
+    }
+
+    impl<'a, 'b> ZigFormatter<'a, 'b> {
+        pub fn new(formatter: &'a mut Formatter<'b>, value: JSValue) -> Self {
+            Self { formatter: Cell::new(Some(formatter)), value }
+        }
     }
 
     impl core::fmt::Display for ZigFormatter<'_, '_> {
@@ -1634,14 +1648,19 @@ pub mod formatter {
             // through `core::fmt::Write`. Phase B may need a `bun_io::Write`
             // adapter for `core::fmt::Formatter` to keep the byte path.
             //
-            // `Display::fmt` takes `&self`, but `ZigFormatter` is a transient
-            // adapter that uniquely owns the `&mut Formatter` for the duration
-            // of the call. Cast through a raw pointer so we can mutate without
-            // holding a long-lived borrow that aliases the body.
-            // SAFETY: `self.formatter` is the unique handle; no other `&mut`
-            // to the same `Formatter` exists while `fmt` runs.
-            let formatter: &mut Formatter<'_> =
-                unsafe { &mut *(&*self.formatter as *const Formatter<'_> as *mut Formatter<'_>) };
+            // Move the unique `&mut Formatter` out of the cell; re-seat it on
+            // every exit path so the adapter can be `Display`ed again if a
+            // caller ever reuses it.
+            let formatter: &mut Formatter<'_> = self
+                .formatter
+                .take()
+                .expect("ZigFormatter::fmt re-entered or used after consumption");
+            let fmt_ptr: *mut Formatter<'_> = formatter;
+            let _reseat = scopeguard::guard((), |_| {
+                // SAFETY: `fmt_ptr` is the same unique borrow we just moved
+                // out; the body's `formatter` reference is dead by drop time.
+                self.formatter.set(Some(unsafe { &mut *fmt_ptr }));
+            });
 
             let one = [self.value];
             formatter.remaining_values = &one;

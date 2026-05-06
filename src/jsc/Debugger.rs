@@ -199,7 +199,9 @@ pub extern "C" fn Debugger__didConnect() {
     // the field type to `Option<Box<Debugger>>`. The real body flips
     // `wait_for_connection = Off`, unrefs `poll_ref`, and wakes the loop.
     let this = VirtualMachine::get();
-    this.event_loop().wakeup();
+    // SAFETY: VirtualMachine::get() returns the per-thread singleton; called on
+    // JS thread. `event_loop()` returns the raw `*mut EventLoop` slot.
+    unsafe { (*(*this).event_loop()).wakeup() };
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -442,9 +444,11 @@ pub struct AsyncTaskTracker {
 
 impl AsyncTaskTracker {
     pub fn init(vm: &mut VirtualMachine) -> AsyncTaskTracker {
-        AsyncTaskTracker {
-            id: vm.next_async_task_id(),
-        }
+        let _ = vm;
+        // TODO(b2-blocked): VirtualMachine::next_async_task_id is in the
+        // gated impl block; until that un-gates, debugger async tracking is
+        // a no-op (id = 0 short-circuits all `did_*` methods).
+        AsyncTaskTracker { id: 0 }
     }
 
     pub fn did_schedule(self, global_object: &JSGlobalObject) {

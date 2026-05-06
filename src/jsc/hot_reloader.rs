@@ -13,7 +13,7 @@ use bun_sys::{self, Fd};
 use bun_watcher::Watcher;
 
 use crate::{MarkedArrayBuffer, Task as JscTask};
-use crate::event_loop::{ConcurrentTask, EventLoop};
+use crate::event_loop::{ConcurrentTaskItem as ConcurrentTask, EventLoop};
 use crate::virtual_machine::VirtualMachine;
 
 bun_core::declare_scope!(hot_reloader, visible);
@@ -105,7 +105,7 @@ impl ImportWatcher {
             ImportWatcher::None => {}
         }
         let _ = (fd, file_path, hash, loader, dir_fd, package_json);
-        bun_sys::Result::success(())
+        Ok(())
     }
 }
 

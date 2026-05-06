@@ -481,7 +481,11 @@ mod advanced {
 
         let payload_length: usize = size_of::<IPCMessageType>() + size_of::<u32>() + size as usize;
 
-        let _ = writer.ensure_unused_capacity(payload_length);
+        // Spec ipc.zig:160 uses `try` — propagate OOM so serializeAndSend
+        // returns `.failure` instead of silently discarding the Result.
+        writer
+            .ensure_unused_capacity(payload_length)
+            .map_err(|_| IPCSerializationError::OutOfMemory)?;
 
         // PERF(port): was assume_capacity
         writer.write_type_as_bytes_assume_capacity(match is_internal {
@@ -656,7 +660,11 @@ mod json {
             result_len += 1;
         }
 
-        let _ = writer.ensure_unused_capacity(result_len);
+        // Spec ipc.zig:280 uses `try` — propagate OOM so serializeAndSend
+        // returns `.failure` instead of silently discarding the Result.
+        writer
+            .ensure_unused_capacity(result_len)
+            .map_err(|_| IPCSerializationError::OutOfMemory)?;
 
         // PERF(port): was assume_capacity
         if is_internal == IsInternal::Internal {

@@ -574,9 +574,8 @@ impl SavedSourceMap {
     }
 
     /// You must `deref()` the returned value or you will leak memory
-    pub fn get(&mut self, path: &[u8]) -> Option<*mut ParsedSourceMap> {
-        self.get_with_content(path, SourceMap::ParseUrlResultHint::MappingsOnly)
-            .map
+    pub fn get(&mut self, path: &[u8]) -> Option<std::sync::Arc<ParsedSourceMap>> {
+        self.get_with_content(path, SourceMap::ParseUrlResultHint::MappingsOnly).map
     }
 
     /// Mutex must already be held. Returns the raw table value for `hash` if any.

@@ -25,6 +25,102 @@ use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
 use crate::node::StringOrBuffer;
 
+// ─── local shims (upstream-crate gaps; see PORTING.md §extension traits) ────
+
+/// JS-thread `EventLoopCtx` for `KeepAlive::ref_/unref`. Zig passed the
+/// `*VirtualMachine` directly (anytype dispatch); the Rust split routes through
+/// the aio hook registered by `crate::init()`.
+#[inline]
+fn vm_ctx() -> bun_aio::EventLoopCtx {
+    bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js)
+}
+
+unsafe extern "C" {
+    fn AsyncContextFrame__withAsyncContextIfNeeded(
+        global: *const JSGlobalObject,
+        callback: JSValue,
+    ) -> JSValue;
+    fn Bun__Process__queueNextTick2(
+        global: *const JSGlobalObject,
+        func: JSValue,
+        arg1: JSValue,
+        arg2: JSValue,
+    );
+}
+
+/// Local extension surface for `JSValue` methods not yet on the `bun_jsc` stub.
+pub(crate) trait JSValueCryptoExt {
+    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue;
+    fn is_safe_integer(self) -> bool;
+    fn call_next_tick_2(
+        self,
+        global: &JSGlobalObject,
+        a: JSValue,
+        b: JSValue,
+    ) -> JsResult<()>;
+}
+
+impl JSValueCryptoExt for JSValue {
+    #[inline]
+    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue {
+        // SAFETY: `global` is a live opaque ZST handle; FFI returns a valid encoded JSValue.
+        unsafe { AsyncContextFrame__withAsyncContextIfNeeded(global, self) }
+    }
+
+    /// Port of `JSValue.isSafeInteger` (JSValue.zig:140) — Number.isSafeInteger semantics.
+    #[inline]
+    fn is_safe_integer(self) -> bool {
+        if self.is_int32() {
+            return true;
+        }
+        if !self.is_double() {
+            return false;
+        }
+        let d = self.as_double();
+        d.trunc() == d && d.abs() <= jsc::MAX_SAFE_INTEGER as f64
+    }
+
+    #[inline]
+    fn call_next_tick_2(
+        self,
+        global: &JSGlobalObject,
+        a: JSValue,
+        b: JSValue,
+    ) -> JsResult<()> {
+        // SAFETY: `global` is live; `self`/`a`/`b` are valid encoded JSValues.
+        jsc::from_js_host_call_generic(global, || unsafe {
+            Bun__Process__queueNextTick2(global, self, a, b)
+        })
+    }
+}
+
+/// Local extension surface for `JSGlobalObject` methods not yet on the `bun_jsc` stub.
+pub(crate) trait JSGlobalObjectCryptoExt {
+    fn throw_invalid_argument_type_value2(
+        &self,
+        argname: &str,
+        typename: &str,
+        value: JSValue,
+    ) -> jsc::JsError;
+}
+
+impl JSGlobalObjectCryptoExt for JSGlobalObject {
+    /// `"The \"{argname}\" argument must be {typename}. Received {actual}"`
+    /// (JSGlobalObject.zig:197) — differs from `throw_invalid_argument_type_value`
+    /// only in omitting the words "of type".
+    fn throw_invalid_argument_type_value2(
+        &self,
+        argname: &str,
+        typename: &str,
+        value: JSValue,
+    ) -> jsc::JsError {
+        // TODO(blocked_on: bun_jsc::JSGlobalObject::throw_invalid_argument_type_value2):
+        // upstream `js_global_object::JSGlobalObject` is a separate type; reuse the
+        // lib.rs `_value` form for now (wording differs by "of type").
+        self.throw_invalid_argument_type_value(argname, typename, value)
+    }
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // ExternCryptoJob — Zig `fn ExternCryptoJob(comptime name: []const u8) type`.
 // This does token-pasting to form C symbol names (`Bun__<name>Ctx__runTask`

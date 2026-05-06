@@ -256,7 +256,8 @@ impl WindowsNamedPipeContext {
     }
 
     pub fn create(global_this: &JSGlobalObject, socket: SocketType) -> *mut WindowsNamedPipeContext {
-        let vm = global_this.bun_vm();
+        // SAFETY: `bun_vm()` returns the process-global VM which outlives this context.
+        let vm: &'static VirtualMachine = unsafe { &*global_this.bun_vm() };
         // TODO(port): in-place init — `named_pipe`/`task` capture `this` (self-referential), so
         // allocate uninit, derive the stable pointer, build the fields, then ptr::write the whole
         // struct. Avoids `mem::zeroed()` on non-POD AnyTask/WindowsNamedPipe.

@@ -791,10 +791,12 @@ mod _gated_from_js {
             let protocols: Option<CString> = match &generated.alpn_protocols {
                 jsc::generated::SSLConfigAlpnProtocols::None => None,
                 jsc::generated::SSLConfigAlpnProtocols::String(val) => {
-                    Some(val.get().to_owned_slice_z())
+                    Some(zbox_into_cstring(val.get().to_owned_slice_z()))
                 }
                 jsc::generated::SSLConfigAlpnProtocols::Buffer(val) => {
-                    let buffer: jsc::ArrayBuffer = val.get().as_array_buffer();
+                    // SAFETY: `val.get()` returns a non-null `*mut JSCArrayBuffer`
+                    // owned by the GenVal for the duration of `generated`.
+                    let buffer: jsc::ArrayBuffer = unsafe { (*val.get()).as_array_buffer() };
                     let mut v = buffer.byte_slice().to_vec();
                     v.push(0);
                     // SAFETY: we just appended the only NUL we rely on; matches Zig

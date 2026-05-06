@@ -296,19 +296,26 @@ impl WindowsNamedPipe {
     }
 
     pub fn resume_stream(&mut self) -> bool {
-        let Some(stream) = self.writer.get_stream() else {
-            return false;
-        };
-        let read_start_result = stream.read_start(
-            self,
-            Self::on_read_alloc,
-            Self::on_read_error,
-            Self::on_read,
-        );
-        if read_start_result.is_err() {
-            return false;
+        #[cfg(windows)]
+        {
+            let Some(stream) = self.writer.get_stream() else {
+                return false;
+            };
+            let read_start_result = stream.read_start(
+                self,
+                Self::on_read_alloc,
+                Self::on_read_error,
+                Self::on_read,
+            );
+            if read_start_result.is_err() {
+                return false;
+            }
+            true
         }
-        true
+        #[cfg(not(windows))]
+        {
+            false
+        }
     }
 
     pub fn pause_stream(&mut self) -> bool {

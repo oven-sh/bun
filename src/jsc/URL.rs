@@ -149,8 +149,8 @@ impl URL {
     /// URL("http://example.com:8080").host() => "example.com"
     /// ```
     pub fn host(&self) -> String {
-        // SAFETY: self is a valid *URL handle from C++
-        unsafe { URL__host(self as *const URL as *mut URL) }
+        // SAFETY: self is a valid opaque *URL handle from C++; getter does not mutate.
+        unsafe { URL__host(self) }
     }
 
     /// Returns the host WITH the port.

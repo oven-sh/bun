@@ -312,9 +312,10 @@ impl ArrayBuffer {
 
     pub fn create_buffer(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
         crate::mark_binding!();
-        // SAFETY: FFI — global is valid; bytes ptr/len come from a live slice, copied by callee.
+        // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); bytes ptr/len
+        // come from a live slice, copied by callee.
         crate::host_fn::from_js_host_call(global, || unsafe {
-            Bun__createUint8ArrayForCopy(global as *const _ as *mut _, bytes.as_ptr().cast(), bytes.len(), true)
+            Bun__createUint8ArrayForCopy(global, bytes.as_ptr().cast(), bytes.len(), true)
         })
     }
 

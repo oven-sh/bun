@@ -4346,7 +4346,7 @@ impl<'a> Resolver<'a> {
         #[cfg(debug_assertions)]
         // MOVE_DOWN(b0): debug_flags relocated bun_cli → bun_core
         if bun_core::debug_flags::has_resolve_breakpoint(import_path) {
-            bun_core::Output::debug(format_args!(
+            bun_core::Output::debug("{}", format_args!(
                 "Resolving <green>{}<r> from <blue>{}<r>",
                 bstr::BStr::new(import_path),
                 bstr::BStr::new(source_dir),

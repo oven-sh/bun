@@ -171,6 +171,27 @@ pub struct LoaderHooks {
         hardcoded: bun_resolve_builtins::Module,
         out: *mut ResolvedSource,
     ) -> bool,
+    /// `ModuleLoader.resolveEmbeddedFile(vm, &path_buf, input_path, "node")`
+    /// (spec ModuleLoader.zig:1332-1342) — extracts an embedded `.node` addon
+    /// from the standalone-module graph to a real on-disk temp file and writes
+    /// the resulting path back into `*in_out_str`. Returns `true` on success.
+    /// Body lives in `bun_runtime` (reaches into `node::fs` +
+    /// `StandaloneModuleGraph`).
+    pub resolve_embedded_node_file:
+        unsafe fn(vm: *mut VirtualMachine, in_out_str: *mut bun_string::String) -> bool,
+    /// `VirtualMachine.processFetchLog(global, specifier, referrer, log,
+    /// &errorable, err)` (spec VirtualMachine.zig) — synthesizes a JS
+    /// Error/AggregateError from `log` messages and writes it into
+    /// `errorable.result.err.value`. Body lives in `bun_runtime` (constructs JS
+    /// error instances from logger::Msg).
+    pub process_fetch_log: unsafe fn(
+        global: *mut JSGlobalObject,
+        specifier: bun_string::String,
+        referrer: bun_string::String,
+        log: *mut logger::Log,
+        errorable: *mut ErrorableResolvedSource,
+        err: bun_core::Error,
+    ),
     /// `Bun__transpileFile` body — needs `options.getLoaderAndVirtualSource`,
     /// `node_module_module`, `webcore.Blob`, the concurrent-transpiler queue.
     /// Returns the in-flight promise when `allow_promise && async`, else null
@@ -236,6 +257,30 @@ pub fn fetch_builtin_module(
     // SAFETY: hook contract — `jsc_vm` is the live per-thread VM; `out` is a
     // valid out-param.
     unsafe { (hooks.fetch_builtin_module)(jsc_vm, global, specifier, referrer, out) }
+}
+
+/// `VirtualMachine.processFetchLog(global, specifier, referrer, log, &errorable,
+/// err)` — thin shim over the §Dispatch hook. Synthesizes a JS error from the
+/// parser/resolve `log` and writes it into `errorable` so the C++ side
+/// (`Bun__onFulfillAsyncModule`, ModuleLoader.cpp:473) rejects the import
+/// promise with a real Error instead of `undefined`.
+pub fn process_fetch_log(
+    global: *mut JSGlobalObject,
+    specifier: bun_string::String,
+    referrer: bun_string::String,
+    log: &mut logger::Log,
+    errorable: &mut ErrorableResolvedSource,
+    err: bun_core::Error,
+) {
+    let Some(hooks) = loader_hooks() else {
+        // No high tier (unit tests) — fail closed: still mark `success ==
+        // false` with the bare error code so callers don't observe a stale ok.
+        *errorable = ErrorableResolvedSource::err(err, JSValue::UNDEFINED);
+        return;
+    };
+    // SAFETY: hook contract — `global` is the live JS-thread global; `log` /
+    // `errorable` are valid out-params for the call.
+    unsafe { (hooks.process_fetch_log)(global, specifier, referrer, log, errorable, err) }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -355,29 +400,31 @@ pub extern "C" fn Bun__resolveAndFetchBuiltinModule(
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__resolveEmbeddedNodeFile(
     vm: *mut VirtualMachine,
-    _in_out_str: *mut bun_string::String,
+    in_out_str: *mut bun_string::String,
 ) -> bool {
     jsc::mark_binding(core::panic::Location::caller());
     // SAFETY: C++ passed the live per-thread VM.
     if unsafe { (*vm).standalone_module_graph.is_none() } {
         return false;
     }
-    // TODO(b2-cycle): `ModuleLoader.resolveEmbeddedFile` reaches into
-    // `bun_runtime::node::fs` + `StandaloneModuleGraph` (gated). Until then,
-    // fail closed — there is no embedded graph to probe in the non-standalone
-    // path above, and the standalone build wires the real body.
-    #[cfg(any())]
-    {
-        let input_path = unsafe { (*_in_out_str).to_utf8() };
-        let mut path_buf = bun_paths::PathBuffer::default();
-        if let Some(result) =
-            resolve_embedded_file(unsafe { &mut *vm }, &mut path_buf, input_path.slice(), b"node")
-        {
-            unsafe { *_in_out_str = bun_string::String::clone_utf8(result) };
-            return true;
-        }
-    }
-    false
+    // `ModuleLoader.resolveEmbeddedFile` reaches into `bun_runtime::node::fs` +
+    // `StandaloneModuleGraph` — forward-dep on `bun_jsc`. Per §Dispatch the low
+    // tier owns the extern symbol and dispatches through `LoaderHooks`; the
+    // high tier extracts the embedded addon to a temp file and writes the
+    // on-disk path back into `*in_out_str` (spec ModuleLoader.zig:1332-1342:
+    // `bun.String.cloneUTF8(result)`).
+    let Some(hooks) = loader_hooks() else {
+        // Reaching here requires a standalone module graph but no `bun_runtime`
+        // — an inconsistent state. Fail loud rather than silently returning
+        // `false` (which would leave the virtual specifier in `*in_out_str`
+        // and make `process.dlopen()` mis-resolve — PORTING.md §Forbidden:
+        // silent-no-op for real Zig logic).
+        todo!("b2-cycle: resolveEmbeddedFile — standalone graph present but LoaderHooks unset");
+    };
+    // SAFETY: hook contract — `vm` is the live per-thread VM; `in_out_str` is a
+    // valid in/out `bun.String*` (C++ ABI, BunProcess.cpp:463).
+    // PERF(port): was inline switch.
+    unsafe { (hooks.resolve_embedded_node_file)(vm, in_out_str) }
 }
 
 /// Spec ModuleLoader.zig:1344-1347.

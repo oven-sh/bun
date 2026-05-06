@@ -362,6 +362,11 @@ pub mod enum_property_util {
     }
 }
 
+// Derive macros for the comptime helpers above. Re-exported here as well as
+// at crate root because some leaf modules alias `crate::css_parser as css`
+// (Zig's `css.DefineEnumProperty(...)` lived in this file).
+pub use bun_css_derive::{DefineEnumProperty, DeriveParse, DeriveToCss, Parse, ToCss};
+
 /// Replaces Zig's `DefineEnumProperty` comptime fn.
 pub trait EnumProperty: Sized + Copy + Into<&'static str> {
     fn from_ascii_case_insensitive(ident: &[u8]) -> Option<Self>;

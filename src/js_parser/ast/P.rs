@@ -567,11 +567,16 @@ pub struct P<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> {
 }
 
 // Transposer type aliases (Zig: `const ImportTransposer = ExpressionTransposer(P, ..., P.transposeImport);`)
-// TODO(port): ExpressionTransposer is a comptime fn-returning-type in Zig; in Rust it
-// becomes a generic struct parameterized by a callback. Phase B wires the exact shape.
-pub type ImportTransposer<'a> = ExpressionTransposer<'a, (), TransposeState>;
-pub type RequireTransposer<'a> = ExpressionTransposer<'a, (), TransposeState>;
-pub type RequireResolveTransposer<'a> = ExpressionTransposer<'a, (), Expr>;
+// PORT NOTE: ExpressionTransposer is a comptime fn-returning-type in Zig that
+// captures `*P`. Rust models the context as an arena-allocated raw self-pointer
+// cell (`TransposerCtx`); the cell is null after `P::init` and wired to `&mut P`
+// in `prepare_for_visit_pass` (after the parser is in its final location, before
+// any visit-pass `maybe_transpose_if` call).
+#[repr(transparent)]
+pub struct TransposerCtx(pub *mut core::ffi::c_void);
+pub type ImportTransposer<'a> = ExpressionTransposer<'a, TransposerCtx, TransposeState>;
+pub type RequireTransposer<'a> = ExpressionTransposer<'a, TransposerCtx, TransposeState>;
+pub type RequireResolveTransposer<'a> = ExpressionTransposer<'a, TransposerCtx, Expr>;
 
 // Zig: `const Binding2ExprWrapper = struct { pub const Namespace = Binding.ToExpr(P, P.wrapIdentifierNamespace); ... }`
 // TODO(port): Binding.ToExpr(P, fn) is a comptime type-generator; needs a Rust trait/closure in Phase B.
@@ -6903,8 +6908,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             let mut hmr_transform_ctx = ConvertESMExportsForHmr {
                 last_part,
                 // PORT NOTE: `fs::Path::is_node_module` not yet on bun_logger::fs::Path;
-                // inline its body (Zig: `strings.contains(path.text, "/node_modules/")`).
-                is_in_node_modules: strings::contains(self.source.path.text, b"/node_modules/"),
+                // inline its real body (src/resolver/fs.zig:2002):
+                //   strings.lastIndexOf(this.name.dir, sep_str ++ "node_modules" ++ sep_str) != null
+                // — checks `path.name.dir` (not `path.text`) and uses the platform separator.
+                is_in_node_modules: strings::last_index_of(
+                    self.source.path.name.dir,
+                    const_format::concatcp!(bun_paths::SEP_STR, "node_modules", bun_paths::SEP_STR).as_bytes(),
+                )
+                .is_some(),
                 imports_seen: Default::default(),
                 export_star_props: Vec::new(),
                 export_props: Vec::new(),
@@ -6958,9 +6969,17 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 // Potentially remove some statements, then filter out parts to remove any
                 // with no statements
                 for idx in begin..parts.len() {
-                    // PORT NOTE: Zig shallow-copied the Part struct; Rust moves it
-                    // out (Default-filling the slot) and writes back on keep.
-                    let mut part = core::mem::take(&mut parts[idx]);
+                    // PORT NOTE: Zig `var part = part_;` is a *shallow bitwise copy*
+                    // that leaves `parts.items[idx]` intact so the outer multi-pass
+                    // loop (which restarts at `begin = parts_end`) re-scans real data
+                    // on the next iteration. `mem::take` would zero the slot and
+                    // degrade this to a single pass. Match Zig with `ptr::read`; the
+                    // duplicate is non-owning (paired with `ptr::write`/`forget`
+                    // below to avoid double-drop of arena-backed BabyList fields).
+                    // SAFETY: idx < parts.len(); Part fields are arena/bump-backed
+                    // (Borrowed-origin BabyLists, raw stmt slices) — bitwise copy
+                    // matches Zig struct-assignment semantics.
+                    let mut part = unsafe { core::ptr::read(&parts[idx]) };
                     self.import_records_for_current_part.clear();
                     self.declared_symbols.clear_retaining_capacity();
 
@@ -7007,8 +7026,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                                 .expect("oom");
                         }
 
-                        parts[parts_end] = part;
+                        // SAFETY: bitwise overwrite matching Zig
+                        // `parts.items[parts_end] = part;` — old slot value is not
+                        // dropped (arena-owned; Zig never deinit'd it either).
+                        unsafe { core::ptr::write(parts.as_mut_ptr().add(parts_end), part) };
                         parts_end += 1;
+                    } else {
+                        // Drop path: `parts[idx]` still owns this data; discard the
+                        // bitwise duplicate without running Drop.
+                        core::mem::forget(part);
                     }
                 }
 
@@ -7244,11 +7270,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         let symbols = unsafe { js_ast::symbol::List::from_bump_slice(self.symbols.as_mut_slice()) };
         // SAFETY: same — `parts` is a BumpVec<'a, Part>.
         let parts_list = unsafe { BabyList::<js_ast::Part>::from_bump_slice(parts.as_mut_slice()) };
-        // TODO(port): `Ast.import_records` should consume `self.import_records`;
-        // ImportRecordList<'a> is an Owned-BumpVec/Borrowed-Vec enum and BabyList
-        // wants global-allocator storage. Round-E adds an adapter; until then leave
-        // empty (no caller reads it before the bundler pass re-populates).
-        let import_records: BabyList<ImportRecord> = Default::default();
+        // Spec P.zig:6697: `ImportRecord.List.moveFromList(&p.import_records)`.
+        // SAFETY: same as `symbols`/`parts` above — wrap the bump/Vec-backed
+        // storage as a Borrowed BabyList so downstream (printer, linker) can
+        // resolve every `S.Import`/`E.RequireString`/`E.Import` by index.
+        let import_records: BabyList<ImportRecord> =
+            unsafe { BabyList::<ImportRecord>::from_bump_slice(self.import_records.items_mut()) };
 
         Ok(js_ast::Ast {
             // TODO(port): Ast.runtime_imports is the round-B opaque

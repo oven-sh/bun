@@ -1339,7 +1339,7 @@ macro_rules! println {
 /// Text automatically buffers
 #[macro_export]
 macro_rules! debug {
-    ($fmt:literal $(, $arg:expr)* $(,)?) => {
+    ($fmt:expr $(, $arg:expr)* $(,)?) => {
         if cfg!(debug_assertions) {
             $crate::pretty_errorln!(concat!("<d>DEBUG:<r> ", $fmt) $(, $arg)*);
             $crate::output::flush();
@@ -1853,23 +1853,108 @@ pub fn pretty_with_printer(
     }
 }
 
+/// Internal: bind each `$arg` exactly once into a `match` tuple, then dispatch
+/// on the per-destination color flag and call `print_to` with the appropriate
+/// `pretty_fmt!`-expanded template. Mirrors Zig's `prettyTo` which receives the
+/// args tuple already evaluated and only branches on the color flag
+/// (output.zig:1066-1074).
+///
+/// The recursive `@go` arm zips each user arg with a name from `pool` so the
+/// emitted `match (&a, &b, ..)` pattern can rebind them as plain idents — both
+/// `format_args!` branches then borrow the *same* evaluated values, so a
+/// side-effecting `$arg` runs exactly once and the expression text is not
+/// duplicated into each branch.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __pretty_dispatch {
+    // peel: pair next arg with next pool name
+    (@go $dest:expr, $fmt:expr, $tail:tt;
+        bound = [$(($n:ident $v:expr))*];
+        args  = [$a:expr, $($rest:expr,)*];
+        pool  = [$name:ident $($pool:ident)*]
+    ) => {
+        $crate::__pretty_dispatch!(@go $dest, $fmt, $tail;
+            bound = [$(($n $v))* ($name $a)];
+            args  = [$($rest,)*];
+            pool  = [$($pool)*]
+        )
+    };
+    // base — no `\n` tail (`pretty!` / `pretty_error!`)
+    (@go $dest:expr, $fmt:expr, [];
+        bound = [$(($n:ident $v:expr))*];
+        args  = [];
+        pool  = [$($pool:ident)*]
+    ) => {
+        match ($dest, $( &($v), )*) {
+            (__d, $($n,)*) => {
+                if $crate::output::enable_color_for(__d) {
+                    $crate::output::print_to(
+                        __d,
+                        ::core::format_args!($crate::pretty_fmt!($fmt, true) $(, $n)*),
+                    )
+                } else {
+                    $crate::output::print_to(
+                        __d,
+                        ::core::format_args!($crate::pretty_fmt!($fmt, false) $(, $n)*),
+                    )
+                }
+            }
+        }
+    };
+    // base — with conditional `\n` tail (`prettyln!` / `pretty_errorln!`)
+    (@go $dest:expr, $fmt:expr, [$nl:ident];
+        bound = [$(($n:ident $v:expr))*];
+        args  = [];
+        pool  = [$($pool:ident)*]
+    ) => {
+        match ($dest, $( &($v), )*) {
+            (__d, $($n,)*) => {
+                if $crate::output::enable_color_for(__d) {
+                    $crate::output::print_to(
+                        __d,
+                        ::core::format_args!(
+                            ::core::concat!($crate::pretty_fmt!($fmt, true), "{}"),
+                            $($n,)* $nl
+                        ),
+                    )
+                } else {
+                    $crate::output::print_to(
+                        __d,
+                        ::core::format_args!(
+                            ::core::concat!($crate::pretty_fmt!($fmt, false), "{}"),
+                            $($n,)* $nl
+                        ),
+                    )
+                }
+            }
+        }
+    };
+}
+
+/// Entry shim: seed `__pretty_dispatch!` with a fixed name pool (32 slots
+/// covers every `Output.pretty*` call site in the tree) so the recursive zip
+/// can rebind each user arg to a plain ident.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __pretty_dispatch_start {
+    ($dest:expr, $fmt:expr, $tail:tt; [$($arg:expr,)*]) => {
+        $crate::__pretty_dispatch!(@go $dest, $fmt, $tail;
+            bound = [];
+            args  = [$($arg,)*];
+            pool  = [__p0 __p1 __p2 __p3 __p4 __p5 __p6 __p7
+                     __p8 __p9 __p10 __p11 __p12 __p13 __p14 __p15
+                     __p16 __p17 __p18 __p19 __p20 __p21 __p22 __p23
+                     __p24 __p25 __p26 __p27 __p28 __p29 __p30 __p31]
+        )
+    };
+}
+
 #[macro_export]
 macro_rules! pretty {
     ($fmt:expr $(, $arg:expr)* $(,)?) => {
-        // Branch *before* building `format_args!` so each `$arg` is evaluated
-        // exactly once (Zig `prettyTo` constructs the args tuple once and
-        // dispatches on the color flag — output.zig:1066-1074).
-        if $crate::output::enable_color_for($crate::output::Destination::Stdout) {
-            $crate::output::print_to(
-                $crate::output::Destination::Stdout,
-                ::core::format_args!($crate::pretty_fmt!($fmt, true) $(, $arg)*),
-            )
-        } else {
-            $crate::output::print_to(
-                $crate::output::Destination::Stdout,
-                ::core::format_args!($crate::pretty_fmt!($fmt, false) $(, $arg)*),
-            )
-        }
+        $crate::__pretty_dispatch_start!(
+            $crate::output::Destination::Stdout, $fmt, []; [$($arg,)*]
+        )
     };
 }
 
@@ -1878,19 +1963,14 @@ macro_rules! pretty {
 #[macro_export]
 macro_rules! prettyln {
     ($fmt:expr $(, $arg:expr)* $(,)?) => {{
-        // Only append `\n` when the template doesn't already end in one.
+        // Only append `\n` when the *processed* template doesn't already end in
+        // one — `pretty_fmt!` flattens `concat!`/`stringify!` so wrapper macros
+        // (`note!`, `warn!`, …) that prefix the user template still see the
+        // user's trailing newline and don't emit a second one.
         const __NL: &str = $crate::output::_needs_nl($crate::pretty_fmt!($fmt, false));
-        if $crate::output::enable_color_for($crate::output::Destination::Stdout) {
-            $crate::output::print_to(
-                $crate::output::Destination::Stdout,
-                ::core::format_args!(concat!($crate::pretty_fmt!($fmt, true), "{}"), $($arg,)* __NL),
-            )
-        } else {
-            $crate::output::print_to(
-                $crate::output::Destination::Stdout,
-                ::core::format_args!(concat!($crate::pretty_fmt!($fmt, false), "{}"), $($arg,)* __NL),
-            )
-        }
+        $crate::__pretty_dispatch_start!(
+            $crate::output::Destination::Stdout, $fmt, [__NL]; [$($arg,)*]
+        )
     }};
 }
 
@@ -1908,17 +1988,9 @@ macro_rules! print_errorln {
 #[macro_export]
 macro_rules! pretty_error {
     ($fmt:expr $(, $arg:expr)* $(,)?) => {
-        if $crate::output::enable_color_for($crate::output::Destination::Stderr) {
-            $crate::output::print_to(
-                $crate::output::Destination::Stderr,
-                ::core::format_args!($crate::pretty_fmt!($fmt, true) $(, $arg)*),
-            )
-        } else {
-            $crate::output::print_to(
-                $crate::output::Destination::Stderr,
-                ::core::format_args!($crate::pretty_fmt!($fmt, false) $(, $arg)*),
-            )
-        }
+        $crate::__pretty_dispatch_start!(
+            $crate::output::Destination::Stderr, $fmt, []; [$($arg,)*]
+        )
     };
 }
 
@@ -1928,17 +2000,9 @@ macro_rules! pretty_error {
 macro_rules! pretty_errorln {
     ($fmt:expr $(, $arg:expr)* $(,)?) => {{
         const __NL: &str = $crate::output::_needs_nl($crate::pretty_fmt!($fmt, false));
-        if $crate::output::enable_color_for($crate::output::Destination::Stderr) {
-            $crate::output::print_to(
-                $crate::output::Destination::Stderr,
-                ::core::format_args!(concat!($crate::pretty_fmt!($fmt, true), "{}"), $($arg,)* __NL),
-            )
-        } else {
-            $crate::output::print_to(
-                $crate::output::Destination::Stderr,
-                ::core::format_args!(concat!($crate::pretty_fmt!($fmt, false), "{}"), $($arg,)* __NL),
-            )
-        }
+        $crate::__pretty_dispatch_start!(
+            $crate::output::Destination::Stderr, $fmt, [__NL]; [$($arg,)*]
+        )
     }};
 }
 
@@ -2062,7 +2126,10 @@ impl fmt::Display for DebugTimer {
 /// Print a blue note message to stderr
 #[macro_export]
 macro_rules! note {
-    ($fmt:literal $(, $arg:expr)* $(,)?) => {
+    ($fmt:expr $(, $arg:expr)* $(,)?) => {
+        // `pretty_errorln!` accepts `:expr` and the `pretty_fmt!` proc-macro
+        // flattens nested `concat!`, so the prefix is folded into the template
+        // at compile time even when `$fmt` is itself a `concat!(..)`.
         $crate::pretty_errorln!(concat!("<blue>note<r><d>:<r> ", $fmt) $(, $arg)*)
     };
 }
@@ -2070,7 +2137,7 @@ macro_rules! note {
 /// Print a yellow warning message to stderr
 #[macro_export]
 macro_rules! warn {
-    ($fmt:literal $(, $arg:expr)* $(,)?) => {
+    ($fmt:expr $(, $arg:expr)* $(,)?) => {
         $crate::pretty_errorln!(concat!("<yellow>warn<r><d>:<r> ", $fmt) $(, $arg)*)
     };
 }
@@ -2078,7 +2145,7 @@ macro_rules! warn {
 /// Print a yellow warning message, only in debug mode
 #[macro_export]
 macro_rules! debug_warn {
-    ($fmt:literal $(, $arg:expr)* $(,)?) => {
+    ($fmt:expr $(, $arg:expr)* $(,)?) => {
         if cfg!(debug_assertions) {
             $crate::pretty_errorln!(concat!("<yellow>debug warn<r><d>:<r> ", $fmt) $(, $arg)*);
             $crate::output::flush();
@@ -2248,7 +2315,7 @@ fn scoped_writer() -> QuietWriter {
 /// Print a red error message with "error: " as the prefix. For custom prefixes see `err()`
 #[macro_export]
 macro_rules! err_generic {
-    ($fmt:literal $(, $arg:expr)* $(,)?) => {
+    ($fmt:expr $(, $arg:expr)* $(,)?) => {
         // `pretty_errorln!` accepts `:expr` and `pretty_fmt!` flattens `concat!`,
         // so the prefix is folded into the template at compile time.
         $crate::pretty_errorln!(concat!("<r><red>error<r><d>:<r> ", $fmt) $(, $arg)*)

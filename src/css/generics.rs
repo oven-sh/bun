@@ -16,7 +16,10 @@ use core::cmp::Ordering;
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_collections::BabyList;
 // Zig `std.hash.Wyhash` (iterative) → `Wyhash11` (the iterative impl in bun_wyhash).
-use bun_wyhash::Wyhash11 as Wyhash;
+// Re-exported `pub` so `#[derive(CssHash)]` (in `bun_css_derive`) can name the
+// hasher type as `::bun_css::generics::Wyhash` without depending on `bun_wyhash`
+// directly.
+pub use bun_wyhash::Wyhash11 as Wyhash;
 
 use crate::css_parser as css;
 use crate::css_parser::{Parser, ParserOptions};
@@ -208,6 +211,12 @@ pub trait CssEql {
     fn eql(&self, other: &Self) -> bool;
 }
 
+/// `#[derive(CssEql)]` — field-wise / variant-wise port of Zig's
+/// `css.implementEql`. See `src/css_derive/lib.rs` for the expansion rules.
+/// Re-exported here so `use crate::generics::CssEql;` brings both trait and
+/// derive into scope (same-name idiom, cf. `Clone`).
+pub use bun_css_derive::CssEql;
+
 #[inline]
 pub fn implement_eql<T: CssEql>(this: &T, other: &T) -> bool {
     // TODO(port): Zig `implementEql` is comptime field/variant reflection ==
@@ -311,6 +320,40 @@ impl CssEql for [u8] {
     }
 }
 
+impl CssEql for str {
+    #[inline]
+    fn eql(&self, other: &Self) -> bool {
+        bun_string::strings::eql(self.as_bytes(), other.as_bytes())
+    }
+}
+
+impl<T: CssEql, const N: usize> CssEql for [T; N] {
+    #[inline]
+    fn eql(&self, other: &Self) -> bool {
+        // Zig: element-wise eql (length is `N` on both sides by type).
+        for (a, b) in self.iter().zip(other.iter()) {
+            if !a.eql(b) {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+impl<T: CssEql> CssEql for Vec<T> {
+    #[inline]
+    fn eql(&self, other: &Self) -> bool {
+        self.as_slice().eql(other.as_slice())
+    }
+}
+
+impl<T: CssEql + ?Sized> CssEql for Box<T> {
+    #[inline]
+    fn eql(&self, other: &Self) -> bool {
+        (**self).eql(&**other)
+    }
+}
+
 impl CssEql for VendorPrefix {
     #[inline]
     fn eql(&self, other: &Self) -> bool {
@@ -362,6 +405,12 @@ pub const HASH_SEED: u64 = 0;
 pub trait CssHash {
     fn hash(&self, hasher: &mut Wyhash);
 }
+
+/// `#[derive(CssHash)]` — field-wise / variant-wise port of Zig's
+/// `css.implementHash`. See `src/css_derive/lib.rs` for the expansion rules.
+/// Re-exported here so `use crate::generics::CssHash;` brings both trait and
+/// derive into scope.
+pub use bun_css_derive::CssHash;
 
 #[inline]
 pub fn implement_hash<T: CssHash>(this: &T, hasher: &mut Wyhash) {
@@ -487,6 +536,37 @@ impl CssHash for [u8] {
     #[inline]
     fn hash(&self, hasher: &mut Wyhash) {
         hasher.update(self);
+    }
+}
+
+impl CssHash for str {
+    #[inline]
+    fn hash(&self, hasher: &mut Wyhash) {
+        hasher.update(self.as_bytes());
+    }
+}
+
+impl<T: CssHash> CssHash for Vec<T> {
+    #[inline]
+    fn hash(&self, hasher: &mut Wyhash) {
+        for item in self.iter() {
+            item.hash(hasher);
+        }
+    }
+}
+
+impl<T: CssHash + ?Sized> CssHash for Box<T> {
+    #[inline]
+    fn hash(&self, hasher: &mut Wyhash) {
+        (**self).hash(hasher)
+    }
+}
+
+impl CssHash for VendorPrefix {
+    #[inline]
+    fn hash(&self, hasher: &mut Wyhash) {
+        // Zig: `hasher.update(std.mem.asBytes(&this))` on the packed-struct repr.
+        hasher.update(&[self.as_bits()]);
     }
 }
 

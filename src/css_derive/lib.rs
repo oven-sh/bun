@@ -257,14 +257,6 @@ fn expand_css_hash(input: DeriveInput) -> syn::Result<TokenStream2> {
     })
 }
 
-#[proc_macro_derive(DeepCloneDummy_DoNotUse)]
-pub fn _derive_deep_clone_dummy(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as DeriveInput);
-    expand_deep_clone(input)
-        .unwrap_or_else(|e| e.to_compile_error())
-        .into()
-}
-
 fn expand_deep_clone(input: DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
 

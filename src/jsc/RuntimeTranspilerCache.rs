@@ -4,13 +4,18 @@ use core::cell::{Cell, RefCell};
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use bun_core::{self as bun, env_var, FeatureFlags};
-use bun_string::{String as BunString, ZStr};
+use bun_io::Write as _;
+use bun_string::{String as BunString, PathString, ZStr};
 use bun_sys::{self as sys, Fd};
 use bun_paths::{self as paths, PathBuffer, MAX_PATH_BYTES, SEP};
-use bun_js_parser::ast::ExportsKind;
+use bun_js_parser::ast::{ExportsKind, ParserOptions};
 use bun_logger::Source;
-use bun_resolver::fs::{FileSystem, Path as FsPath, PathString};
-use bun_wyhash::Wyhash;
+use bun_resolver::fs::{FileSystem, Path as FsPath};
+// PORT NOTE: Zig used `std.hash.Wyhash`; the Rust crate currently exposes only
+// `Wyhash11` (TODO(b2) in bun_wyhash routes std-Wyhash through it). All call
+// sites below — including `ParserOptions::hash_for_runtime_transpiler` — agree
+// on `Wyhash11`, so on-disk hashes stay self-consistent across encode/decode.
+use bun_wyhash::Wyhash11 as Wyhash;
 
 bun_core::declare_scope!(cache, visible);
 
@@ -112,16 +117,28 @@ impl Default for Metadata {
     }
 }
 
+// ── local Read cursor ─────────────────────────────────────────────────────
+// `bun_io` only ships the `Write` half of Zig's `std.Io` surface today; the
+// matching `Read::read_int_le` lands with the io round. `decode` is only ever
+// driven from a fixed in-memory buffer (`std.io.fixedBufferStream`), so a
+// borrowed-slice cursor is all we need here.
+#[inline]
+fn read_int_le<const N: usize>(cur: &mut &[u8]) -> Result<[u8; N], bun_core::Error> {
+    if cur.len() < N {
+        return Err(bun_core::err!(EndOfStream));
+    }
+    let mut out = [0u8; N];
+    out.copy_from_slice(&cur[..N]);
+    *cur = &cur[N..];
+    Ok(out)
+}
+
 impl Metadata {
     // Zig computed this via @typeInfo field iteration; in Rust we sum it by hand.
     // 1×u32 + 2×u8 (enum reprs) + 12×u64 = 4 + 2 + 96 = 102
-    // TODO(port): static-assert this matches encode() output length
     pub const SIZE: usize = 4 + 1 + 1 + 12 * 8;
 
-    pub fn encode<W>(&self, writer: &mut W) -> Result<(), bun_core::Error> {
-        #[cfg(any())] // TODO(b2-blocked): bun_io::Write trait + write_int_le
-        {
-        // TODO(port): narrow error set
+    pub fn encode<W: bun_io::Write>(&self, writer: &mut W) -> Result<(), bun_core::Error> {
         writer.write_int_le::<u32>(self.cache_version)?;
         writer.write_int_le::<u8>(self.module_type as u8)?;
         writer.write_int_le::<u8>(self.output_encoding.0)?;
@@ -142,64 +159,63 @@ impl Metadata {
         writer.write_int_le::<u64>(self.esm_record_byte_offset)?;
         writer.write_int_le::<u64>(self.esm_record_byte_length)?;
         writer.write_int_le::<u64>(self.esm_record_hash)?;
-        return Ok(());
-        } // end #[cfg(any())]
-        let _ = writer;
-        Err(bun_core::err!("CacheDisabled"))
+        Ok(())
     }
 
-    pub fn decode<R>(&mut self, reader: &mut R) -> Result<(), bun_core::Error> {
-        #[cfg(any())] // TODO(b2-blocked): bun_io::Read trait + read_int_le
-        {
-        // TODO(port): narrow error set
-        self.cache_version = reader.read_int_le::<u32>()?;
+    /// PORT NOTE: Zig took `anytype reader`; both call sites
+    /// (`from_file_with_cache_file_path`, the debug round-trip in `Entry::save`)
+    /// drive it from a `fixedBufferStream`, so we accept a slice cursor
+    /// directly until `bun_io::Read` lands.
+    pub fn decode(&mut self, reader: &mut &[u8]) -> Result<(), bun_core::Error> {
+        self.cache_version = u32::from_le_bytes(read_int_le::<4>(reader)?);
         if self.cache_version != EXPECTED_VERSION {
-            return Err(bun_core::err!("StaleCache"));
+            return Err(bun_core::err!(StaleCache));
         }
 
         // PORT NOTE: reshaped for borrowck/enum-safety — Zig stored raw @enumFromInt then
         // validated at the end; here we validate immediately so ModuleType never holds an
         // out-of-range discriminant.
-        let module_type_raw = reader.read_int_le::<u8>()?;
-        let output_encoding_raw = reader.read_int_le::<u8>()?;
+        let [module_type_raw] = read_int_le::<1>(reader)?;
+        let [output_encoding_raw] = read_int_le::<1>(reader)?;
 
-        self.features_hash = reader.read_int_le::<u64>()?;
+        self.features_hash = u64::from_le_bytes(read_int_le::<8>(reader)?);
 
-        self.input_byte_length = reader.read_int_le::<u64>()?;
-        self.input_hash = reader.read_int_le::<u64>()?;
+        self.input_byte_length = u64::from_le_bytes(read_int_le::<8>(reader)?);
+        self.input_hash = u64::from_le_bytes(read_int_le::<8>(reader)?);
 
-        self.output_byte_offset = reader.read_int_le::<u64>()?;
-        self.output_byte_length = reader.read_int_le::<u64>()?;
-        self.output_hash = reader.read_int_le::<u64>()?;
+        self.output_byte_offset = u64::from_le_bytes(read_int_le::<8>(reader)?);
+        self.output_byte_length = u64::from_le_bytes(read_int_le::<8>(reader)?);
+        self.output_hash = u64::from_le_bytes(read_int_le::<8>(reader)?);
 
-        self.sourcemap_byte_offset = reader.read_int_le::<u64>()?;
-        self.sourcemap_byte_length = reader.read_int_le::<u64>()?;
-        self.sourcemap_hash = reader.read_int_le::<u64>()?;
+        self.sourcemap_byte_offset = u64::from_le_bytes(read_int_le::<8>(reader)?);
+        self.sourcemap_byte_length = u64::from_le_bytes(read_int_le::<8>(reader)?);
+        self.sourcemap_hash = u64::from_le_bytes(read_int_le::<8>(reader)?);
 
-        self.esm_record_byte_offset = reader.read_int_le::<u64>()?;
-        self.esm_record_byte_length = reader.read_int_le::<u64>()?;
-        self.esm_record_hash = reader.read_int_le::<u64>()?;
+        self.esm_record_byte_offset = u64::from_le_bytes(read_int_le::<8>(reader)?);
+        self.esm_record_byte_length = u64::from_le_bytes(read_int_le::<8>(reader)?);
+        self.esm_record_hash = u64::from_le_bytes(read_int_le::<8>(reader)?);
 
         self.module_type = match module_type_raw {
             1 => ModuleType::Esm,
             2 => ModuleType::Cjs,
             // Invalid module type
-            _ => return Err(bun_core::err!("InvalidModuleType")),
+            _ => return Err(bun_core::err!(InvalidModuleType)),
         };
 
         self.output_encoding = Encoding(output_encoding_raw);
         match self.output_encoding {
             Encoding::UTF8 | Encoding::UTF16 | Encoding::LATIN1 => {}
             // Invalid encoding
-            _ => return Err(bun_core::err!("UnknownEncoding")),
+            _ => return Err(bun_core::err!(UnknownEncoding)),
         }
 
-        return Ok(());
-        } // end #[cfg(any())]
-        let _ = reader;
-        Err(bun_core::err!("CacheDisabled"))
+        Ok(())
     }
 }
+
+// Static assert that `encode()` writes exactly `Metadata::SIZE` bytes — guards
+// against the hand-summed constant drifting from the field list.
+const _: () = assert!(Metadata::SIZE == 4 + 1 + 1 + 12 * 8);
 
 pub enum OutputCode {
     Utf8(Box<[u8]>),
@@ -216,10 +232,7 @@ impl OutputCode {
     pub fn byte_slice(&self) -> &[u8] {
         match self {
             OutputCode::Utf8(b) => b,
-            #[cfg(any())] // TODO(b2-blocked): bun_string::String::byte_slice
             OutputCode::String(s) => s.byte_slice(),
-            #[allow(unreachable_patterns)]
-            OutputCode::String(_) => &[],
         }
     }
 }
@@ -787,12 +800,7 @@ impl RuntimeTranspilerCache {
     }
 
     pub fn is_eligible(&self, path: &FsPath) -> bool {
-        #[cfg(any())] // TODO(b2-blocked): bun_resolver::fs::Path::is_file
-        {
-            return path.is_file();
-        }
-        let _ = path;
-        false
+        path.is_file()
     }
 
     pub fn to_file(

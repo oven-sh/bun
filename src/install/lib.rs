@@ -54,8 +54,8 @@ pub(crate) mod bun_json {
             if let ExprData::EObject(o) = &self.data { o.as_property(key.as_ref()) } else { None }
         }
         #[inline]
-        fn get(&self, key: impl AsRef<[u8]>) -> Option<Expr> {
-            if let ExprData::EObject(o) = &self.data { o.get(key.as_ref()) } else { None }
+        fn get(&self, _key: impl AsRef<[u8]>) -> Option<Expr> {
+            todo!("phase-b2: bun_json::ExprExt::get — E::Object::get(key) signature mismatch")
         }
     }
 }
@@ -113,7 +113,42 @@ macro_rules! gated_mod {
 pub mod npm;
 #[cfg(any())] #[path = "PackageManifestMap.rs"]
 pub mod package_manifest_map;
-pub mod resolution;
+#[cfg(any())] #[path = "resolution.rs"]
+pub mod resolution_real;
+/// Stub: `resolution.rs` — `Resolution` struct only (used as opaque field in
+/// `bun_jsc::AsyncModule::PendingResolution`). Full impl re-gated above
+/// (26 errors against `Repository` stub method shapes).
+pub mod resolution {
+    #[derive(Default, Clone, Copy)]
+    pub struct Resolution {
+        pub tag: Tag,
+        pub _padding: [u8; 7],
+        pub value: Value,
+    }
+    #[derive(Default, Clone, Copy)]
+    pub struct Value {
+        pub npm: NpmVersionInfo,
+        pub git: crate::repository::Repository,
+        pub github: crate::repository::Repository,
+        pub local_tarball: bun_semver::String,
+        pub remote_tarball: bun_semver::String,
+        pub folder: bun_semver::String,
+        pub workspace: bun_semver::String,
+        pub symlink: bun_semver::String,
+        pub single_file_module: bun_semver::String,
+    }
+    #[derive(Default, Clone, Copy)]
+    pub struct NpmVersionInfo {
+        pub version: bun_semver::Version,
+        pub url: bun_semver::String,
+    }
+    #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
+    #[repr(u8)]
+    pub enum Tag {
+        #[default] Uninitialized, Root, Npm, Folder, LocalTarball, Github, Git,
+        Symlink, Workspace, RemoteTarball, SingleFileModule,
+    }
+}
 #[path = "PnpmMatcher.rs"]
 pub mod pnpm_matcher;
 #[cfg(any())] pub mod postinstall_optimizer;
@@ -193,6 +228,10 @@ pub mod bin {
     }
     impl Value {
         pub fn init(_v: impl core::any::Any) -> Self { Self::default() }
+        pub fn init_file(_v: bun_semver::String) -> Self { Self::default() }
+        pub fn init_named_file(_v: [bun_semver::String; 2]) -> Self { Self::default() }
+        pub fn init_dir(_v: bun_semver::String) -> Self { Self::default() }
+        pub fn init_map(_v: crate::ExternalStringList) -> Self { Self::default() }
     }
     #[derive(Default, Clone, Copy, PartialEq, Eq)]
     #[repr(u8)]
@@ -666,11 +705,12 @@ pub use lockfile::{Lockfile, PatchedDep, LoadResult, LoadStep};
 #[derive(Default)] pub struct PackageInstall;
 #[derive(Default)] pub struct Store;
 #[derive(Default)] pub struct FileCopier;
-#[derive(Default)] pub struct Lockfile;
-#[derive(Default)] pub struct PatchedDep;
-#[derive(Default)] pub struct LoadResult;
-#[derive(Default)] pub struct LoadStep;
 #[derive(Default)] pub struct PatchTask;
+impl PackageManager {
+    pub fn verbose_install() -> bool { false }
+    pub fn get_cache_directory(&mut self) -> bun_sys::FD { todo!("phase-b2: PackageManager::get_cache_directory (gated)") }
+    pub fn get_temporary_directory(&mut self) -> bun_sys::FD { todo!("phase-b2: PackageManager::get_temporary_directory (gated)") }
+}
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub enum Subcommand { #[default] Install, Add, Remove, Update, Link, Unlink, Pm, Patch, PatchCommit, Outdated }
 
@@ -1343,9 +1383,6 @@ pub const INVALID_DEPENDENCY_ID: DependencyID = DependencyID::MAX;
 pub const invalid_package_id: PackageID = INVALID_PACKAGE_ID;
 pub const invalid_dependency_id: DependencyID = INVALID_DEPENDENCY_ID;
 pub const bun_hash_tag: &[u8] = BUN_HASH_TAG;
-// snake_case aliases — Phase-A drafts use Zig-style decl spellings.
-pub const invalid_package_id: PackageID = INVALID_PACKAGE_ID;
-pub const invalid_dependency_id: DependencyID = INVALID_DEPENDENCY_ID;
 
 pub type PackageNameAndVersionHash = u64;
 /// Use String.Builder.stringHash to compute this

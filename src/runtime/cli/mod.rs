@@ -1099,9 +1099,11 @@ pub mod command {
                             break;
                         }
                     }
-                    // PORT NOTE: borrows stack array; print() runs before the
-                    // frame returns, same lifetime as Zig stack-slice.
-                    completions.commands = prefilled_completions[0..prefilled_i].to_vec().into_boxed_slice();
+                    // PORT NOTE: ShellCompletions.commands is `&'static [&'static [u8]]`;
+                    // leak the prefilled slice (CLI process exits right after print()).
+                    completions.commands = Box::leak(
+                        prefilled_completions[0..prefilled_i].to_vec().into_boxed_slice(),
+                    );
                 }
             }
         }
@@ -1123,7 +1125,7 @@ pub mod command {
         // Create command wraps bunx
         // SAFETY: single-threaded startup.
         let ctx = unsafe { &mut *init(Tag::CreateCommand, log)? };
-        let args = bun::argv();
+        let args = argv_zslice();
 
         if args.len() <= 2 {
             tag_print_help(Tag::CreateCommand, false);

@@ -1680,7 +1680,8 @@ impl Terminal {
         };
         if let Some(callback) = js::gc::get(js::GcValue::Drain, this_jsvalue) {
             let global_this = self.global();
-            global_this.bun_vm().event_loop().run_callback(
+            // SAFETY: bun_vm()/event_loop() return live VM-owned pointers.
+            unsafe { &mut *(*global_this.bun_vm()).event_loop() }.run_callback(
                 callback,
                 global_this,
                 this_jsvalue,
@@ -1699,7 +1700,8 @@ impl Terminal {
     }
 
     fn on_write(&mut self, amount: usize, status: WriteStatus) {
-        bun_output::scoped_log!(Terminal, "onWrite: {} bytes, status: {:?}", amount, status);
+        let _ = status;
+        bun_output::scoped_log!(Terminal, "onWrite: {} bytes", amount);
         let _ = self;
     }
 
@@ -1751,16 +1753,19 @@ impl Terminal {
 
         let global_this = self.global();
         let signal_value: JSValue = if let Some(s) = signal {
-            ZigString::init(s.name().unwrap_or(b"unknown")).to_js(global_this)
+            // SignalCode derives Debug → "SIGTERM" etc.
+            let name = format!("{:?}", s);
+            ZigString::init(name.as_bytes()).to_js(global_this)
         } else {
             JSValue::NULL
         };
 
-        global_this.bun_vm().event_loop().run_callback(
+        // SAFETY: bun_vm()/event_loop() return live VM-owned pointers.
+        unsafe { &mut *(*global_this.bun_vm()).event_loop() }.run_callback(
             callback,
             global_this,
             this_jsvalue,
-            &[this_jsvalue, JSValue::js_number(exit_code), signal_value],
+            &[this_jsvalue, JSValue::js_number(exit_code as f64), signal_value],
         );
     }
 

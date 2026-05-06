@@ -996,7 +996,7 @@ impl FileSink {
                     self.ref_();
                 }
                 self.done = true;
-                self.pending.result = streams::Writable::Owned(pending_written as u32);
+                self.pending.result = streams::Writable::Owned(pending_written as u64);
 
                 let promise_result = self.pending.promise(global_this);
 
@@ -1126,15 +1126,15 @@ impl FileSink {
         match write_result {
             WriteResult::Done(amt) => {
                 if amt > 0 {
-                    return streams::Writable::OwnedAndDone(amt as u32);
+                    return streams::Writable::OwnedAndDone(amt as u64);
                 }
                 streams::Writable::Done
             }
             WriteResult::Wrote(amt) => {
                 if amt > 0 {
-                    return streams::Writable::Owned(amt as u32);
+                    return streams::Writable::Owned(amt as u64);
                 }
-                streams::Writable::Temporary(amt as u32)
+                streams::Writable::Temporary(amt as u64)
             }
             WriteResult::Err(err) => streams::Writable::Err(err),
             WriteResult::Pending(pending_written) => {
@@ -1142,8 +1142,8 @@ impl FileSink {
                     self.must_be_kept_alive_until_eof = true;
                     self.ref_();
                 }
-                self.pending.consumed += pending_written as u32; // @truncate
-                self.pending.result = streams::Writable::Owned(pending_written as u32);
+                self.pending.consumed += pending_written as u64; // @truncate
+                self.pending.result = streams::Writable::Owned(pending_written as u64);
                 streams::Writable::Pending(&mut self.pending as *mut _)
             }
         }

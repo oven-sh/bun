@@ -87,6 +87,7 @@ pub use super::done_callback::DoneCallback;
 pub mod js_fns {
     use super::*;
 
+    #[derive(Clone, Copy)]
     pub enum Signature<'a> {
         ScopeFunctions(&'a ScopeFunctions::ScopeFunctions),
         Str(&'static [u8]),
@@ -252,7 +253,8 @@ pub mod js_fns {
                             tag_name
                         )));
                     }
-                    let _ = bun_test.collection.active_scope.append_hook(
+                    // SAFETY: `active_scope` is a NonNull into the live collection tree.
+                    let _ = unsafe { bun_test.collection.active_scope.as_mut() }.append_hook(
                         tag.as_hook_tag().unwrap(),
                         args.callback,
                         cfg,

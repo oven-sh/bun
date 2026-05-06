@@ -47,7 +47,7 @@ pub struct NativeZlib {
     pub stream: Context,
     pub write_result: Option<*mut u32>,
     pub poll_ref: CountedKeepAlive,
-    pub this_value: Strong, // jsc.Strong.Optional
+    pub this_value: StrongOptional, // jsc.Strong.Optional
     pub write_in_progress: bool,
     pub pending_close: bool,
     pub pending_reset: bool,
@@ -95,7 +95,7 @@ impl NativeZlib {
             stream: Context::default(),
             write_result: None,
             poll_ref: CountedKeepAlive::default(),
-            this_value: Strong::empty(),
+            this_value: StrongOptional::empty(),
             write_in_progress: false,
             pending_close: false,
             pending_reset: false,
@@ -194,6 +194,8 @@ impl NativeZlib {
         }
     }
 }
+
+crate::__impl_compression_stream!(NativeZlib, super::Context);
 } // mod _impl
 
 pub use _impl::NativeZlib;

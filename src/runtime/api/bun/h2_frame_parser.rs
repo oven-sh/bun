@@ -1558,7 +1558,15 @@ impl Stream {
                 };
                 break 'brk data_header.write(&mut writer);
             } else {
-                let frame_slice = frame.slice();
+                // PORT NOTE: borrowck reshape — `frame.slice()` borrows `*frame`
+                // immutably, but we mutate `frame.offset` below while the slice
+                // is still live. Detach the lifetime via raw parts (the Vec
+                // backing is stable; no resize while this slice is read).
+                let frame_slice: &[u8] = {
+                    let s = frame.slice();
+                    // SAFETY: `frame.buffer` is not resized while `frame_slice` is live.
+                    unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) }
+                };
                 let max_size = frame_slice
                     .len()
                     .min((self.remote_window_size.saturating_sub(self.remote_used_window_size)) as usize)
@@ -3749,17 +3757,24 @@ impl H2FrameParser {
         })
     }
 
-    fn to_writer(&mut self) -> DirectWriterStruct<'_> {
-        DirectWriterStruct { writer: self }
+    fn to_writer(&mut self) -> DirectWriterStruct {
+        DirectWriterStruct { writer: self as *mut Self }
     }
 }
 
-struct DirectWriterStruct<'a> {
-    writer: &'a mut H2FrameParser,
+// PORT NOTE: holds a raw `*mut H2FrameParser` (not `&'a mut`) so the borrow of
+// the parser ends at `to_writer()`'s return — `Stream::flush_queue` interleaves
+// field reads/writes on the parser between `writer.write()` calls (Zig has no
+// borrowck). The parser outlives the writer at every call site.
+struct DirectWriterStruct {
+    writer: *mut H2FrameParser,
 }
-impl<'a> WireWriter for DirectWriterStruct<'a> {
+impl WireWriter for DirectWriterStruct {
     fn write(&mut self, data: &[u8]) -> Result<usize, bun_core::Error> {
-        Ok(if self.writer.write(data) { data.len() } else { 0 })
+        // SAFETY: `writer` was derived from `&mut H2FrameParser` in `to_writer()`;
+        // the parser outlives this struct and no other `&mut` to it overlaps the
+        // duration of this call.
+        Ok(if unsafe { (*self.writer).write(data) } { data.len() } else { 0 })
     }
 }
 

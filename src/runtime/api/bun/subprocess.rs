@@ -533,7 +533,9 @@ impl Subprocess<'_> {
                     self.stdin = Writable::Ignore;
                 }
                 Writable::Buffer(buffer) => {
-                    buffer.source.detach();
+                    // SAFETY: RefPtr has no DerefMut; StaticPipeWriter is single-thread
+                    // ref-counted and we hold the owning ref via `self.stdin`.
+                    unsafe { (*buffer.data.as_ptr()).source.detach() };
                     // PORT NOTE: Zig's `buffer.deref()` is the owner drop from the
                     // assignment below; do not deref explicitly.
                     self.stdin = Writable::Ignore;

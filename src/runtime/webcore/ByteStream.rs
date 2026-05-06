@@ -282,11 +282,11 @@ impl ByteStream {
         // was only used for `allocator.free(@constCast(base_address))`, which is implicit Drop
         // of the owned `stream` payload in Rust.
     ) -> Result<(), bun_alloc::AllocError> {
-        let mut stream_ = stream;
+        let stream_ = stream;
         let chunk = &stream_.slice()[offset..];
 
         if self.buffer.capacity() == 0 {
-            match &mut stream_ {
+            match &stream_ {
                 streams::Result::Owned(owned) => {
                     // TODO(port): blocked_on bun_collections::BabyList::into_vec — copying for now
                     // (Zig: `owned.listManaged(allocator).moveToUnmanaged()` moves the buffer).

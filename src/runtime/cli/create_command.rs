@@ -1488,8 +1488,10 @@ impl CreateCommand {
             ));
         }
 
-        // SAFETY: `filesystem` is the process-lifetime singleton from FileSystem::init.
-        let rel_destination = unsafe { (*filesystem).relative_to(destination) };
+        // PORT NOTE: Zig `filesystem.relativeTo(destination)` —
+        // `bun_resolver::fs::FileSystem` (the inline shim) has no `relative_to`; call
+        // the resolver path helper directly with the singleton's `top_level_dir`.
+        let rel_destination = bun_paths::resolve_path::relative(filesystem.top_level_dir, destination);
         let is_empty_destination = rel_destination.is_empty();
 
         if is_empty_destination {
@@ -1537,13 +1539,13 @@ impl CreateCommand {
     }
 
     pub fn extract_info(
-        ctx: Command::Context,
+        ctx: &Command::Context<'_>,
     ) -> Result<ExtractedInfo, bun_core::Error> {
         let mut example_tag = ExampleTag::Unknown;
         // SAFETY: process-lifetime singleton; init returns *mut.
         let filesystem = unsafe { &*fs::FileSystem::init(None)? };
 
-        let create_options = CreateOptions::parse(&ctx)?;
+        let create_options = CreateOptions::parse(ctx)?;
         let positionals = &create_options.positionals;
         if positionals.is_empty() {
             crate::cli::command::tag_print_help(crate::Command::Tag::CreateCommand, false);
@@ -1814,7 +1816,11 @@ fn file_copier_copy(
                 }
             };
             let _close_out = scopeguard::guard((), |_| { let _ = bun_sys::close(outfile); });
-            let _complete = scopeguard::guard((), |_| node_.complete_one());
+            // PORT NOTE: capture `node_` as a raw pointer so the scopeguard closure
+            // doesn't hold a unique borrow across the error-path `node_.end()` below.
+            let node_ptr: *mut ProgressNode = node_;
+            // SAFETY: `node_` outlives this loop body; single-threaded progress access.
+            let _complete = scopeguard::guard((), move |_| unsafe { (*node_ptr).complete_one() });
 
             let infile = bun_sys::openat(entry.dir, entry.basename, bun_sys::O::RDONLY, 0)?;
             let _close_in = scopeguard::guard((), |_| { let _ = bun_sys::close(infile); });
@@ -1880,15 +1886,10 @@ fn run_on_entry_point(
     let mut fetcher = bun_bundler::bundle_v2::__phase_a_draft::DependenciesScanner {
         ctx: &mut analyzer as *mut _ as *mut (),
         entry_points: vec![Box::<[u8]>::from(entry_point)].into_boxed_slice(),
-        // TODO(port): @ptrCast on fn pointer — verify ABI matches DependenciesScanner.on_fetch
-        // SAFETY: Analyzer::on_analyze has the same in-memory fn-pointer layout as on_fetch
-        // (ctx is *mut () downcast); mirrors Zig @ptrCast.
-        on_fetch: unsafe {
-            core::mem::transmute::<
-                fn(&mut Analyzer<'_>, &mut bun_bundler::bundle_v2::__phase_a_draft::DependenciesScannerResult<'_, '_>) -> Result<(), bun_core::Error>,
-                fn(*mut (), &mut bun_bundler::bundle_v2::__phase_a_draft::DependenciesScannerResult<'_, '_>) -> Result<(), bun_core::Error>,
-            >(Analyzer::on_analyze)
-        },
+        // PORT NOTE: Zig used `@ptrCast` on the fn pointer; in Rust the HRTB lifetime
+        // on `Analyzer<'_>` prevents a direct transmute, so route through a thin
+        // type-erased trampoline matching DependenciesScanner.on_fetch's exact signature.
+        on_fetch: analyzer_on_fetch_trampoline,
     };
     crate::cli::build_command::BuildCommand::exec(crate::cli::cli_body::command::get(), Some(&mut fetcher))
 }
@@ -2061,7 +2062,7 @@ impl Example {
                                 }
 
                                 examples.push(Example {
-                                    name: filesystem.filename_store.append(entry_name)?,
+                                    name: filesystem.filename_store.append_slice(entry_name)?,
                                     version: b"",
                                     local: true,
                                     description: b"",

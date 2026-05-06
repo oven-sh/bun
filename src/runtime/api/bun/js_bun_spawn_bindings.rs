@@ -196,11 +196,22 @@ unsafe fn process_mut(p: &core::mem::ManuallyDrop<std::sync::Arc<Process>>) -> &
 /// `MaxBuf` owner vtable for `Subprocess` — routes max-buffer-exceeded
 /// notifications back to `Subprocess::on_max_buffer`.
 static SUBPROCESS_MAXBUF_VTABLE: MaxBufOwnerVTable = MaxBufOwnerVTable {
-    on_max_buffer: |owner, kind| {
+    on_overflow: |owner: NonNull<()>, this: NonNull<MaxBuf>| {
         // SAFETY: `owner` was set from a live `*mut Subprocess<'static>` in
         // `MaxBuf::create_for_subprocess` below; the subprocess clears the
-        // maxbuf slot before drop.
-        unsafe { (*owner.cast::<SubprocessT<'static>>().as_ptr()).on_max_buffer(kind) };
+        // maxbuf slot before drop. Determine which slot (`stdout` / `stderr`)
+        // overflowed, drop that slot, then notify.
+        unsafe {
+            let sp = &mut *owner.cast::<SubprocessT<'static>>().as_ptr();
+            let kind = if sp.stdout_maxbuf == Some(this) {
+                MaxBuf::remove_from_subprocess(&mut sp.stdout_maxbuf);
+                bun_io::max_buf::Kind::Stdout
+            } else {
+                MaxBuf::remove_from_subprocess(&mut sp.stderr_maxbuf);
+                bun_io::max_buf::Kind::Stderr
+            };
+            sp.on_max_buffer(kind);
+        }
     },
 };
 
@@ -720,7 +731,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                         let timeout_int = global_this.validate_integer_range::<u64>(
                             timeout_value,
                             0,
-                            jsc::IntegerRange { min: 0, field_name: b"timeout", ..Default::default() },
+                            bun_sql_jsc::jsc::IntegerRange { min: 0, field_name: b"timeout", ..Default::default() },
                         )?;
                         if timeout_int > 0 {
                             timeout = Some(i32::try_from((timeout_int as u32) & 0x7FFF_FFFF).unwrap());
@@ -939,7 +950,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
     });
 
-    let loop_handle = EventLoopHandle::init(event_loop);
+    let loop_handle = EventLoopHandle::init(event_loop.cast::<()>());
 
     let spawn_options = SpawnOptions {
         cwd: cwd.to_vec().into_boxed_slice(),
@@ -1092,7 +1103,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         stdio_pipes: core::mem::take(&mut spawned.extra_pipes),
         ipc_data: None,
         flags: if IS_SYNC { Subprocess::Flags::IS_SYNC } else { Subprocess::Flags::empty() },
-        kill_signal,
+        // PORT NOTE: `bun_core::SignalCode` (repr(u8) enum) → `bun_sys::SignalCode(u8)`.
+        kill_signal: bun_sys::SignalCode(kill_signal as u8),
         stderr_maxbuf: None,
         stdout_maxbuf: None,
         terminal: existing_terminal
@@ -1104,7 +1116,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         weak_file_sink_stdin_ptr: None,
         abort_signal: None,
         event_loop_timer_refd: false,
-        event_loop_timer: Default::default(),
+        event_loop_timer: crate::timer::EventLoopTimer::init_paused(
+            crate::timer::EventLoopTimerTag::SubprocessTimeout,
+        ),
         exited_due_to_maxbuf: None,
     }));
     // SAFETY: subprocess_ptr is a freshly-boxed Subprocess; we hold the only reference.

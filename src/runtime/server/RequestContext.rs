@@ -2155,15 +2155,18 @@ where
                     let path = s3.path();
                     // SAFETY: bun_vm() returns the live VM raw ptr.
                     let env = unsafe { (*global_this.bun_vm()).transpiler.env };
+                    // SAFETY: env is a live *mut dotenv::Loader for the VM lifetime.
+                    let proxy_url = unsafe { (*env).get_http_proxy(true, None, None) }
+                        .map(|proxy| proxy.href);
 
-                    let _ = S3::client::stat(
-                        credentials,
-                        path,
-                        Self::on_s3_size_resolved_thunk,
-                        this as *mut Self as *mut c_void,
-                        env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
-                        s3.request_payer,
-                    ); // TODO: properly propagate exception upwards
+                    // `s3.get_credentials()` yields `&Arc<webcore::s3_stub::S3Credentials>`
+                    // but `S3::client::stat` wants `&mut bun_s3_signing::S3Credentials`.
+                    // The two are distinct opaque types until the real bun_s3 crate lands.
+                    let _ = (credentials, path, proxy_url, this as *mut Self as *mut c_void);
+                    let _ = (Self::on_s3_size_resolved_thunk, s3.request_payer);
+                    let _ = &S3::client::stat;
+                    todo!("blocked_on: bun_s3::S3Credentials vs webcore::s3_stub::S3Credentials");
+                    #[allow(unreachable_code)]
                     return;
                 }
                 this.render_metadata();

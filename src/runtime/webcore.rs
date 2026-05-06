@@ -101,24 +101,26 @@ pub mod jsc {
 
 // `bun_s3` is not a workspace crate (only `bun_s3_signing`). Webcore drafts
 // reference `bun_s3::{S3Credentials, ACL, ...}` for the S3-backed Blob store.
+// Forward the real `bun_s3_signing` types so `s3_stub::X` and
+// `bun_s3_signing::X` are the *same* type (avoids
+// `s3_stub::ACL`-vs-`bun_s3_signing::ACL` mismatches across modules).
+// Remaining names without a real definition stay as opaque unit structs.
 // TODO(b2-blocked): bun_s3 — replace with real crate once it exists.
 pub mod s3_stub {
     macro_rules! opaque { ($($n:ident),* $(,)?) => {$(
         #[derive(Debug, Default)] pub struct $n;
     )*};}
     opaque!(
-        S3Credentials, S3CredentialsWithOptions, S3DeleteResult,
-        S3ListObjectsResult, ACL, StorageClass,
+        S3DeleteResult, S3ListObjectsResult,
         S3SimpleRequestResult, S3DownloadStreamWrapper, S3HttpSimpleTask,
     );
+    // Real types now exist upstream — forward them.
+    pub use bun_s3_signing::{S3Credentials, S3CredentialsWithOptions, ACL, StorageClass};
     // Real type now exists in webcore/s3/list_objects.rs — forward it so
     // `s3_stub::S3ListObjectsOptions` and `s3::list_objects::S3ListObjectsOptions`
     // are the same type (Store.rs imports via this path).
     pub use crate::webcore::__s3_list_objects::S3ListObjectsOptions;
     pub use crate::webcore::s3::MultiPartUploadOptions;
-    impl S3Credentials {
-        pub fn estimated_size(&self) -> usize { 0 }
-    }
 }
 
 // `crate::node::types` is gated; provide the handful of path-like enums Blob

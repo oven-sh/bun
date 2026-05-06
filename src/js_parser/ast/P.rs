@@ -2361,6 +2361,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Substitution::Failure(expr)
     }
 
+    #[cfg(any())] // blocked_on: ScopeOrder Default, BabyList/ArrayHashMap allocator-arg surface,
+    //   options::JSX::Pragma raw-ptr text deref, ServerComponents variant set, hoist_symbols ungate.
+    //   DO NOT un-gate without fixing the body — concurrent wfs keep ripping this gate off and
+    //   re-breaking bun_js_parser → blocks bun_bin link. Fix the body instead.
     pub fn prepare_for_visit_pass(&mut self) -> Result<(), bun_core::Error> {
         {
             let mut i: usize = 0;

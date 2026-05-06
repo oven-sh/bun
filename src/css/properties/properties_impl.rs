@@ -1,13 +1,26 @@
+#![allow(dead_code)]
+
 use crate as css;
 
 use css::css_properties::CustomPropertyName;
 use css::Printer;
 use css::PrintErr;
 use css::VendorPrefix;
-use css::PropertyId;
-use css::Property;
+use css::css_properties::{Property, PropertyId};
 
-use bun_str::strings;
+use bun_string::strings;
+
+/// Ordered single-bit prefix flags for the `inline for (VendorPrefix.FIELDS)`
+/// Zig idiom. The crate-root `VendorPrefix::FIELDS` is a `&[&str]` name list;
+/// the to_css loops here need the bitflag values directly, in Zig declaration
+/// order (webkit, moz, ms, o, none).
+pub(super) const PREFIX_FLAGS: [VendorPrefix; 5] = [
+    VendorPrefix::WEBKIT,
+    VendorPrefix::MOZ,
+    VendorPrefix::MS,
+    VendorPrefix::O,
+    VendorPrefix::NONE,
+];
 
 pub mod property_id_mixin {
     use super::*;
@@ -18,12 +31,10 @@ pub mod property_id_mixin {
         let prefix_value = this.prefix().or_none();
 
         // PORT NOTE: Zig `inline for (VendorPrefix.FIELDS) |field|` + `@field` iterates each
-        // bitflag field and tests it. In Rust, `VendorPrefix::FIELDS` is a const slice of
-        // single-bit flags in the same declaration order; `contains` replaces the `@field` test.
-        for &flag in VendorPrefix::FIELDS {
-            if prefix_value.contains(flag) {
-                let prefix = flag;
-
+        // bitflag field and tests it. `PREFIX_FLAGS` is the same set in the same order;
+        // `contains` replaces the `@field` test.
+        for &prefix in &PREFIX_FLAGS {
+            if prefix_value.contains(prefix) {
                 if first {
                     first = false;
                 } else {
@@ -90,10 +101,8 @@ pub mod property_mixin {
         let mut first = true;
 
         // PORT NOTE: see property_id_mixin::to_css for the `inline for` + `@field` mapping.
-        for &flag in VendorPrefix::FIELDS {
-            if prefix.contains(flag) {
-                let p = flag;
-
+        for &p in &PREFIX_FLAGS {
+            if prefix.contains(p) {
                 if first {
                     first = false;
                 } else {

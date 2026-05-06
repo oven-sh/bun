@@ -525,19 +525,7 @@ impl ValueError {
         }
     }
 
-    // TODO(port): not a clean Drop — resets self to safe-empty in place. Renamed from `deinit`
-    // per PORTING.md (never expose `pub fn deinit(&mut self)`).
-    pub fn reset(&mut self) {
-        match self {
-            ValueError::SystemError(system_error) => system_error.deref(),
-            ValueError::Message(message) => message.deref(),
-            ValueError::TypeError(message) => message.deref(),
-            ValueError::JSValue(v) => v.deinit(),
-            ValueError::AbortReason(_) => {}
-        }
-        // safe empty value after deinit
-        *self = ValueError::JSValue(jsc::strong::Optional::empty());
-    }
+    // `reset` is un-gated above.
 }
 
 impl Value {

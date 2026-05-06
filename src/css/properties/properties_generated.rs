@@ -2667,7 +2667,7 @@ impl PropertyId {
     }
 
     #[inline]
-    pub fn deep_clone(&self, _allocator: &bun_allocators::Allocator) -> PropertyId { *self }
+    pub fn deep_clone(&self, _allocator: &bun_alloc::Arena) -> PropertyId { *self }
 
     pub fn to_css(&self, dest: &mut css::Printer) -> Result<(), css::PrintErr> {
         properties_impl::property_id_mixin::to_css(self, dest)
@@ -2685,7 +2685,9 @@ impl PropertyId {
 
 /// A parsed CSS declaration value, tagged by [`PropertyIdTag`]. Prefixed
 /// properties carry `(value, VendorPrefix)`.
-#[derive(Debug, Clone)]
+// PORT NOTE: no `#[derive(Clone)]` — several `css_values::*` payloads
+// (Image, Size2D, Rect, SmallList) intentionally lack `Clone` and use
+// `deep_clone(&Arena)` instead. `Property::deep_clone` is the public API.
 pub enum Property {
     BackgroundColor(css::css_values::color::CssColor),
     BackgroundImage(SmallList<css::css_values::image::Image, 1>),

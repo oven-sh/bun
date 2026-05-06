@@ -1950,19 +1950,189 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         })
     }
     fn e_arrow(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
-        let _ = (p, in_);
-        todo!("G-round-4: e_arrow body — see _draft");
-        #[allow(unreachable_code)] expr
+        let _ = in_;
+        let mut e_ = expr.data.e_arrow().unwrap();
+        if p.is_revisit_for_substitution {
+            return expr;
+        }
+
+        // Zig: `std.mem.toBytes(...)` then `bytesToValue(...)` to save/restore. In Rust the struct
+        // is `Copy`/`Clone`, so just copy it.
+        // PORT NOTE: reshaped — toBytes/bytesToValue → plain copy.
+        let old_fn_or_arrow_data = p.fn_or_arrow_data_visit;
+        p.fn_or_arrow_data_visit = FnOrArrowDataVisit {
+            is_arrow: true,
+            is_async: e_.is_async,
+            ..Default::default()
+        };
+
+        // Mark if we're inside an async arrow function. This value should be true
+        // even if we're inside multiple arrow functions and the closest inclosing
+        // arrow function isn't async, as long as at least one enclosing arrow
+        // function within the current enclosing function is async.
+        let old_inside_async_arrow_fn = p.fn_only_data_visit.is_inside_async_arrow_fn;
+        p.fn_only_data_visit.is_inside_async_arrow_fn =
+            e_.is_async || p.fn_only_data_visit.is_inside_async_arrow_fn;
+
+        p.push_scope_for_visit_pass(js_ast::scope::Kind::FunctionArgs, expr.loc)
+            .expect("unreachable");
+        // PERF(port): was arena dupe — profile in Phase B
+        // SAFETY: `body.stmts` is an arena-owned slice (StmtNodeList = *mut [Stmt]).
+        let body_slice: &[Stmt] = unsafe { &*e_.body.stmts };
+        let dupe: &'a mut [Stmt] = p.allocator.alloc_slice_copy(body_slice);
+
+        // PORT NOTE: `E::Arrow.args` is `&'static [G::Arg]` (arena-owned slice masquerading as
+        // 'static). visit_args wants `&mut [G::Arg]`; detach via raw cast (Zig: `[]G.Arg`).
+        // SAFETY: arena-owned, no aliasing &mut outstanding for this node during the visit pass.
+        let args_mut: &mut [G::Arg] = unsafe {
+            core::slice::from_raw_parts_mut(e_.args.as_ptr() as *mut G::Arg, e_.args.len())
+        };
+        p.visit_args(
+            args_mut,
+            VisitArgsOpts {
+                has_rest_arg: e_.has_rest_arg,
+                body: dupe,
+                is_unique_formal_parameters: true,
+            },
+        );
+        p.push_scope_for_visit_pass(js_ast::scope::Kind::FunctionBody, e_.body.loc)
+            .expect("unreachable");
+
+        // blocked_on: react_refresh.hook_ctx_storage is `Option<&'a mut Option<HookContext>>`;
+        //   a stack-local `react_hook_data` can't satisfy `'a`. Zig stores a raw ptr.
+        //   Hook tracking deferred — save/restore + emission preserved in `_draft::e_arrow`.
+        let mut react_hook_data: Option<crate::parser::HookContext> = None;
+
+        // TODO(port): Zig `ListManaged(Stmt).fromOwnedSlice(p.allocator, dupe)` takes ownership of
+        // the arena slice without copying. bumpalo Vec cannot adopt an existing slice; Phase B may
+        // want a custom arena Vec that can. Left as a copy with PERF note.
+        // PERF(port): was fromOwnedSlice (no copy) — profile in Phase B
+        let mut stmts_list =
+            bumpalo::collections::Vec::from_iter_in(dupe.iter().copied(), p.allocator);
+        let temp_opts = PrependTempRefsOpts {
+            kind: crate::parser::StmtsKind::FnBody,
+            ..Default::default()
+        };
+        p.visit_stmts_and_prepend_temp_refs(&mut stmts_list, temp_opts)
+            .expect("unreachable");
+        // Zig: `p.allocator.free(e_.body.stmts)` — arena-backed, no individual free in Rust.
+        p.pop_scope();
+        p.pop_scope();
+
+        p.fn_only_data_visit.is_inside_async_arrow_fn = old_inside_async_arrow_fn;
+        p.fn_or_arrow_data_visit = old_fn_or_arrow_data;
+
+        if let Some(hook) = react_hook_data.as_mut() {
+            'try_mark_hook: {
+                let Some(mut stmts) = p.nearest_stmt_list else {
+                    break 'try_mark_hook;
+                };
+                let decl = p.get_react_refresh_hook_signal_decl(hook.signature_cb);
+                // SAFETY: nearest_stmt_list points at a live ListManaged on a parent visit frame.
+                unsafe { stmts.as_mut().push(decl) };
+
+                p.handle_react_refresh_post_visit_function_body(&mut stmts_list, hook);
+                e_.body.stmts = stmts_list.into_bump_slice() as *mut [Stmt];
+
+                return p.get_react_refresh_hook_signal_init(hook, expr);
+            }
+        }
+        e_.body.stmts = stmts_list.into_bump_slice() as *mut [Stmt];
+        expr
     }
     fn e_function(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
-        let _ = (p, in_);
-        todo!("G-round-4: e_function body — see _draft");
-        #[allow(unreachable_code)] expr
+        let _ = in_;
+        let mut e_ = expr.data.e_function().unwrap();
+        if p.is_revisit_for_substitution {
+            return expr;
+        }
+
+        // blocked_on: react_refresh.hook_ctx_storage is `Option<&'a mut Option<HookContext>>`;
+        //   a stack-local `react_hook_data` can't satisfy `'a`. Zig stores a raw ptr.
+        //   Hook tracking deferred — save/restore preserved in `_draft::e_function`.
+        let mut react_hook_data: Option<crate::parser::HookContext> = None;
+
+        // visit.rs stub takes `&mut G::Fn` (in-place); Zig returns by value.
+        let open_parens_loc = e_.func.open_parens_loc;
+        p.visit_func(&mut e_.func, open_parens_loc);
+
+        // Remove unused function names when minifying (only when bundling is enabled)
+        // unless --keep-names is specified
+        if p.options.features.minify_syntax
+            && p.options.bundle
+            && !p.options.features.minify_keep_names
+            // SAFETY: current_scope is a live arena ptr while the parser exists.
+            && !unsafe { &*p.current_scope }.contains_direct_eval
+            && e_.func.name.is_some()
+            && e_.func.name.unwrap().ref_.is_some()
+            && p.symbols[e_.func.name.unwrap().ref_.unwrap().inner_index() as usize]
+                .use_count_estimate
+                == 0
+        {
+            e_.func.name = None;
+        }
+
+        let mut final_expr = expr;
+
+        if let Some(hook) = react_hook_data.as_mut() {
+            'try_mark_hook: {
+                let Some(mut stmts) = p.nearest_stmt_list else {
+                    break 'try_mark_hook;
+                };
+                let decl = p.get_react_refresh_hook_signal_decl(hook.signature_cb);
+                // SAFETY: nearest_stmt_list points at a live ListManaged on a parent visit frame.
+                unsafe { stmts.as_mut().push(decl) };
+                final_expr = p.get_react_refresh_hook_signal_init(hook, expr);
+            }
+        }
+
+        if let Some(name) = e_.func.name {
+            final_expr = p.keep_expr_symbol_name(
+                final_expr,
+                // SAFETY: original_name is arena-owned, valid for 'a.
+                unsafe { &*p.symbols[name.ref_.unwrap().inner_index() as usize].original_name },
+            );
+        }
+
+        final_expr
     }
     fn e_class(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
-        let _ = (p, in_);
-        todo!("G-round-4: e_class body — see _draft");
-        #[allow(unreachable_code)] expr
+        let _ = in_;
+        let mut e_ = expr.data.e_class().unwrap();
+        if p.is_revisit_for_substitution {
+            return expr;
+        }
+
+        // Save name from assignment context before visiting (nested visits may overwrite it)
+        let decorator_name_from_context = p.decorator_class_name;
+        p.decorator_class_name = None;
+
+        // PORT NOTE: Zig `p.visitClass(expr.loc, e_, Ref.None)` — un-gated visit.rs stub
+        // takes `&mut G::Class` only (loc/name_ref ignored until full body lands).
+        p.visit_class(&mut e_);
+
+        // Lower standard decorators for class expressions
+        if e_.should_lower_standard_decorators {
+            return p.lower_standard_decorators_expr(&mut e_, expr.loc, decorator_name_from_context);
+        }
+
+        // Remove unused class names when minifying (only when bundling is enabled)
+        // unless --keep-names is specified
+        if p.options.features.minify_syntax
+            && p.options.bundle
+            && !p.options.features.minify_keep_names
+            // SAFETY: current_scope is a live arena ptr while the parser exists.
+            && !unsafe { &*p.current_scope }.contains_direct_eval
+            && e_.class_name.is_some()
+            && e_.class_name.unwrap().ref_.is_some()
+            && p.symbols[e_.class_name.unwrap().ref_.unwrap().inner_index() as usize]
+                .use_count_estimate
+                == 0
+        {
+            e_.class_name = None;
+        }
+
+        expr
     }
 }
 

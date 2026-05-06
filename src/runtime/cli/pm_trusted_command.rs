@@ -493,7 +493,7 @@ impl TrustCommand {
                         info.scripts_list.print_scripts(
                             &resolution,
                             buf,
-                            Lockfile::Package::Scripts::PrintKind::Untrusted,
+                            lockfile::package::scripts::PrintFormat::Untrusted,
                         );
                         total_skipped_packages += 1;
                     } else {

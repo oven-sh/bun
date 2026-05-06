@@ -14,7 +14,8 @@ use crate::bake::dev_server::{
 };
 use crate::bake::dev_server::route_bundle::Index as RouteBundleIndex;
 use crate::bake::dev_server::source_map_store::Key as SourceMapStoreKey;
-use crate::bake::dev_server_body::{DevAllocator, HotUpdateContext};
+use crate::bake::dev_server_body::{self as dev_server_body, DevAllocator, HotUpdateContext, ig_log, debug_log};
+use crate::bake::dev_server::memory_cost_body::{memory_cost_array_hash_map, memory_cost_array_list, memory_cost_slice};
 use super::packed_map_body::{PackedMap, Shared as PackedMapShared, LineCount};
 use crate::bake::framework_router::{self as FrameworkRouter, Route};
 use bun_bundler::{self as bundle_v2, BundleV2, Chunk};
@@ -765,8 +766,8 @@ impl<S: GraphSide> IncrementalGraph<S> {
             bv2.enqueue_file_from_dev_server_incremental_graph_invalidation(
                 key,
                 match S::SIDE {
-                    Side::Client => bun_bundler::Target::Browser,
-                    Side::Server => bun_bundler::Target::Bun,
+                    Side::Client => bun_bundler::options::Target::Browser,
+                    Side::Server => bun_bundler::options::Target::Bun,
                 },
             )
             .unwrap_or_else(|e| bun_core::handle_oom(e));
@@ -774,7 +775,7 @@ impl<S: GraphSide> IncrementalGraph<S> {
 
         // Bust the resolution caches of the dir containing this file,
         // so that it cannot be resolved.
-        let dirname = bun_paths::dirname(abs_path).unwrap_or(abs_path);
+        let dirname = bun_core::dirname(abs_path).unwrap_or(abs_path);
         let _ = bv2.transpiler.resolver.bust_dir_cache(dirname);
 
         // Additionally, clear the cached entry of the file from the path to
@@ -822,14 +823,14 @@ impl IncrementalGraph<Client> {
         let mut graph: usize = 0;
         let mut code: usize = 0;
         let mut source_maps: usize = 0;
-        graph += DevServer::memory_cost_array_hash_map(&self.bundled_files);
+        graph += memory_cost_array_hash_map(&self.bundled_files);
         graph += self.stale_files.bytes().len();
-        graph += DevServer::memory_cost_array_list(&self.first_dep);
-        graph += DevServer::memory_cost_array_list(&self.first_import);
-        graph += DevServer::memory_cost_array_list(&self.edges);
-        graph += DevServer::memory_cost_array_list(&self.edges_free_list);
-        graph += DevServer::memory_cost_array_list(&self.current_chunk_parts);
-        graph += DevServer::memory_cost_array_list(&self.current_css_files);
+        graph += memory_cost_array_list(&self.first_dep);
+        graph += memory_cost_array_list(&self.first_import);
+        graph += memory_cost_array_list(&self.edges);
+        graph += memory_cost_array_list(&self.edges_free_list);
+        graph += memory_cost_array_list(&self.current_chunk_parts);
+        graph += memory_cost_array_list(&self.current_css_files);
         for packed_file in self.bundled_files.values() {
             let file = packed_file.unpack();
             match &file.content {
@@ -853,14 +854,14 @@ impl IncrementalGraph<Server> {
         let mut graph: usize = 0;
         let code: usize = 0;
         let mut source_maps: usize = 0;
-        graph += DevServer::memory_cost_array_hash_map(&self.bundled_files);
+        graph += memory_cost_array_hash_map(&self.bundled_files);
         graph += self.stale_files.bytes().len();
-        graph += DevServer::memory_cost_array_list(&self.first_dep);
-        graph += DevServer::memory_cost_array_list(&self.first_import);
-        graph += DevServer::memory_cost_array_list(&self.edges);
-        graph += DevServer::memory_cost_array_list(&self.edges_free_list);
-        graph += DevServer::memory_cost_array_list(&self.current_chunk_parts);
-        graph += DevServer::memory_cost_array_list(&self.current_chunk_source_maps);
+        graph += memory_cost_array_list(&self.first_dep);
+        graph += memory_cost_array_list(&self.first_import);
+        graph += memory_cost_array_list(&self.edges);
+        graph += memory_cost_array_list(&self.edges_free_list);
+        graph += memory_cost_array_list(&self.current_chunk_parts);
+        graph += memory_cost_array_list(&self.current_chunk_source_maps);
         for item in &self.current_chunk_source_maps {
             source_maps += item.source_map.memory_cost();
         }

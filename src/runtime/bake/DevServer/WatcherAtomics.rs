@@ -108,9 +108,10 @@ impl WatcherAtomics {
 
         // Initialize the timer if it is empty.
         if ev_ref.is_empty() {
-            // TODO(port): `std.time.Timer.start()` — map to whatever `HotReloadEvent.timer`'s
-            // Rust type provides (likely `std::time::Instant::now()` or a bun_core Timer).
-            ev_ref.timer = bun_core::Timer::start().expect("unreachable");
+            // PORT NOTE: Zig's `std.time.Timer.start()` records a monotonic start time;
+            // `HotReloadEvent.timer` is `MaybeUninit<std::time::Instant>`, so we capture
+            // `Instant::now()` here and compute elapsed at the read site.
+            ev_ref.timer = core::mem::MaybeUninit::new(std::time::Instant::now());
         }
 
         ev_ref.owner.bun_watcher.thread_lock.assert_locked();

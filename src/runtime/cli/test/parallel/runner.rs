@@ -7,15 +7,22 @@ use core::ffi::c_char;
 use std::io::Write as _;
 
 use bun_core::{Global, Output};
-use bun_jsc::VirtualMachine;
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_options_types::Context::MacroOptions;
+use bun_resolver::fs::{FileSystem, RealFS};
 use bun_str::{PathString, ZStr};
 use bun_sys::Fd;
 
 use super::aggregate;
 use super::channel::{Channel, ChannelOwner};
 use super::coordinator::Coordinator;
+use super::file_range::FileRange;
 use super::frame::{self, Frame};
-use super::worker::Worker;
+use super::worker::{PipeRole, Worker, WorkerPipe};
+#[cfg(unix)]
+use crate::api::bun::process::PosixStdio as Stdio;
+#[cfg(not(unix))]
+use crate::api::bun::process::WindowsStdio as Stdio;
 use crate::test_command::{self, CommandLineReporter, TestCommand};
 use crate::Command;
 use bun_options_types::CodeCoverageOptions::CodeCoverageOptions;

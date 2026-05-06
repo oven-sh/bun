@@ -127,14 +127,13 @@ impl DirectoryWatchStore {
             | Loader::Md => debug_assert!(false),
         }
 
-        let buf = path_buffer_pool().get();
-        let joined = path::join_abs_string_buf(
-            path::dirname(import_source, path::Platform::Auto),
-            &mut *buf,
+        let mut buf = path_buffer_pool::get();
+        let joined = path::resolve_path::join_abs_string_buf::<path::platform::Auto>(
+            path::resolve_path::dirname::<path::platform::Auto>(import_source),
+            &mut buf.0,
             &[specifier],
-            path::Platform::Auto,
         );
-        let dir = path::dirname(joined, path::Platform::Auto);
+        let dir = path::resolve_path::dirname::<path::platform::Auto>(joined);
 
         // The `import_source` parameter is not a stable string. Since the
         // import source will be added to IncrementalGraph anyways, this is a
@@ -194,7 +193,7 @@ impl DirectoryWatchStore {
         // calling self methods that need &mut self.
         let gop = self
             .watches
-            .get_or_put(strings::without_trailing_slash_windows_path(dir_name_to_watch))?;
+            .get_or_put(strings::paths::without_trailing_slash_windows_path(dir_name_to_watch))?;
         let gop_index = gop.index;
         let found_existing = gop.found_existing;
 
@@ -291,7 +290,7 @@ impl DirectoryWatchStore {
         // keep `dir_name` separately for addDirectory/getHash. Verify Watcher
         // does not retain `dir_name` beyond this call.
         let key: Box<[u8]> =
-            Box::<[u8]>::from(strings::without_trailing_slash_windows_path(&dir_name));
+            Box::<[u8]>::from(strings::paths::without_trailing_slash_windows_path(&dir_name));
 
         let watch_index = match dev
             .bun_watcher

@@ -48,11 +48,11 @@ pub struct Linker {
     // `&mut self` on every `transpiler.linker.link(...)` call. Use raw
     // pointers (matching Zig's `*T`) and dereference at use-site; same
     // contract as `transpiler::set_log`'s `linker.log = log as *mut _`.
-    pub options: *mut BundleOptions,
+    pub options: *mut BundleOptions<'static>,
     pub fs: *mut Fs::FileSystem,
     pub log: *mut Log,
     pub resolve_queue: *mut ResolveQueue,
-    pub resolver: *mut Resolver,
+    pub resolver: *mut Resolver<'static>,
     pub resolve_results: *mut ResolveResults,
     pub any_needs_runtime: bool,
     pub runtime_import_record: Option<ImportRecord>,
@@ -172,8 +172,8 @@ impl Linker {
     pub fn init(
         log: *mut Log,
         resolve_queue: *mut ResolveQueue,
-        options: *mut BundleOptions,
-        resolver: *mut Resolver,
+        options: *mut BundleOptions<'static>,
+        resolver: *mut Resolver<'static>,
         resolve_results: *mut ResolveResults,
         fs: *mut Fs::FileSystem,
     ) -> Self {

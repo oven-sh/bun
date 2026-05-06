@@ -605,7 +605,6 @@ impl CssColor {
     /// Mixes this color with another color, including the specified amount of each.
     /// Implemented according to the [`color-mix()`](https://www.w3.org/TR/css-color-5/#color-mix) function.
     // PERF: these little allocations feel bad
-    #[cfg(any())] // blocked_on: gated_full_impl (Colorspace/Interpolate/HueInterpolationMethod/map_gamut)
     pub fn interpolate<T>(
         &self,
         mut p1: f32,
@@ -870,7 +869,7 @@ pub trait Colorspace: Copy + Sized {
 
     fn resolve(&self) -> Self
     where
-        Self: ColorGamut + Into<OKLCH> + From<OKLCH>,
+        Self: ColorGamut + Into<OKLCH> + From<OKLCH> + Into<OKLAB>,
     {
         let mut resolved = self.resolve_missing();
         if !resolved.in_gamut() {
@@ -898,10 +897,6 @@ pub trait Colorspace: Copy + Sized {
     fn from_rgba(rgba: &RGBA) -> Self;
 
     fn into_css_color(self) -> CssColor;
-
-    fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
-        css::implement_hash(self, hasher);
-    }
 }
 
 /// Gamut behavior — replaces UnboundedColorGamut / BoundedColorGamut /
@@ -1356,10 +1351,6 @@ impl LABColor {
     pub fn into_lab(&self) -> LAB {
         LAB::from_lab_color(self)
     }
-
-    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
-        css::implement_hash(self, hasher);
-    }
 }
 
 impl FloatColor {
@@ -1369,10 +1360,6 @@ impl FloatColor {
 
     pub fn into_lab(&self) -> LAB {
         LAB::from_float_color(self)
-    }
-
-    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
-        css::implement_hash(self, hasher);
     }
 }
 

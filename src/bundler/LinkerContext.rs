@@ -158,7 +158,7 @@ pub struct LinkerContext<'a> {
     pub graph: LinkerGraph,
     pub log: &'a mut Log,
 
-    pub resolver: *mut Resolver,
+    pub resolver: *mut Resolver<'static>,
     pub cycle_detector: Vec<ImportTracker>,
 
     /// We may need to refer to the "__esm" and/or "__commonJS" runtime symbols

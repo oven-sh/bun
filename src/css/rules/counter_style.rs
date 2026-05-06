@@ -25,13 +25,14 @@ impl CounterStyleRule {
     }
 }
 
-// blocked_on: DeepClone derive.
-#[cfg(any())]
 impl CounterStyleRule {
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // TODO(port): css.implementDeepClone uses @typeInfo field reflection — replace with
-        // #[derive(DeepClone)] or hand-written per-field clone in Phase B.
-        crate::implement_deep_clone(self, bump)
+        // PORT NOTE: `css.implementDeepClone` field-walk.
+        Self {
+            name: self.name.deep_clone(bump),
+            declarations: super::dc::decl_block(&self.declarations, bump),
+            loc: self.loc,
+        }
     }
 }
 

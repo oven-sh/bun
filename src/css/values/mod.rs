@@ -1,71 +1,14 @@
 pub use crate::css_parser as css;
 
 pub mod css_modules {
-    /// Defines where the class names referenced in the `composes` property are located.
-    ///
-    /// See [Composes](Composes).
-    #[derive(Debug, Clone, Copy)]
-    pub enum Specifier {
-        /// The referenced name is global.
-        Global,
-        /// The referenced name comes from the specified file.
-        // TODO(port): arena-owned slice in CSS crate — verify lifetime/ownership in Phase B
-        File(*const [u8]),
-        /// The referenced name comes from a source index (used during bundling).
-        SourceIndex(u32),
-    }
-
-    // PORT NOTE: hand-written (not `#[derive]`) because the `File` payload is a
-    // raw `*const [u8]` arena pointer — generics blanket impls cover `&[u8]`
-    // but not raw slices. Mirrors Zig `css.implementEql/Hash/DeepClone`.
-    impl crate::generics::CssEql for Specifier {
-        fn eql(&self, other: &Self) -> bool {
-            match (self, other) {
-                (Specifier::Global, Specifier::Global) => true,
-                (Specifier::File(a), Specifier::File(b)) => {
-                    // SAFETY: arena-owned slices live for the parse session.
-                    unsafe { bun_string::strings::eql(&**a, &**b) }
-                }
-                (Specifier::SourceIndex(a), Specifier::SourceIndex(b)) => a == b,
-                _ => false,
-            }
-        }
-    }
-    impl Specifier {
-        pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash11) {
-            match self {
-                Specifier::Global => hasher.update(&0u32.to_ne_bytes()),
-                Specifier::File(f) => {
-                    hasher.update(&1u32.to_ne_bytes());
-                    // SAFETY: arena-owned slice.
-                    hasher.update(unsafe { &**f });
-                }
-                Specifier::SourceIndex(i) => {
-                    hasher.update(&2u32.to_ne_bytes());
-                    hasher.update(&i.to_ne_bytes());
-                }
-            }
-        }
-        #[inline]
-        pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-            *self
-        }
-
-        /// Parse a CSS-Modules `from` specifier (`global` | `"<file>"`).
-        // Zig: `Specifier.parse` (properties/css_modules.zig). The full body
-        // lives in the gated `properties::css_modules` leaf; this inline keeps
-        // `DashedIdentReference::parse` (custom.rs) un-gated without pulling
-        // the whole css_modules handler in.
-        pub fn parse(input: &mut crate::Parser) -> crate::Result<Self> {
-            if input.try_parse(|i| i.expect_ident_matching(b"global")).is_ok() {
-                return Ok(Specifier::Global);
-            }
-            let file = input.expect_string()?;
-            // SAFETY: arena-owned slice valid for the parse session (Phase-A
-            // `*const [u8]` lifetime placeholder — see field decl above).
-            Ok(Specifier::File(file as *const [u8]))
-        }
-    }
+    // B-2 round 9: `properties::css_modules` un-gated — the real `Specifier`
+    // (Global / ImportRecordIndex, with parse/to_css/eql/hash/deep_clone) now
+    // lives there. The earlier data-only stub here (Global / File / SourceIndex)
+    // pre-dated the import-record rewrite in the Zig source and diverged in
+    // shape; re-export the real type so `values::ident::DashedIdentReference`
+    // and `properties::custom::ext::dashed_ident_ref_parse` agree on a single
+    // `Specifier`.
+    pub use crate::properties::css_modules::Specifier;
 }
 
 // ─── B-2 round 2 status ───────────────────────────────────────────────────

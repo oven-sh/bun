@@ -2345,11 +2345,12 @@ pub mod IPCHandlers {
             let loop_ = unsafe {
                 (*(global_this.bun_vm() as *const _ as *mut VirtualMachine)).event_loop()
             };
-            loop_.enter();
+            // SAFETY: see `on_data` — VM-owned `*mut EventLoop`, per-use reborrow.
+            unsafe { (*loop_).enter() };
             // TODO(port): errdefer — scopeguard for loop.exit()
             log!("IPC call continueSend() from onWritable");
             send_queue.continue_send(global_this, ContinueSendReason::OnWritable);
-            loop_.exit();
+            unsafe { (*loop_).exit() };
         }
 
         pub fn on_timeout(_: &mut SendQueue, _: Socket) {
@@ -2427,7 +2428,10 @@ pub mod IPCHandlers {
             let loop_ = unsafe {
                 (*(global_this.bun_vm() as *const _ as *mut VirtualMachine)).event_loop()
             };
-            loop_.enter();
+            // SAFETY: `loop_` is the VM-owned `*mut EventLoop` (lives as long
+            // as the VM); reborrow at each enter/exit so `&mut EventLoop` isn't
+            // held across the decode loop or send_queue borrows below.
+            unsafe { (*loop_).enter() };
             // TODO(port): errdefer — scopeguard for loop.exit()
 
             match &mut send_queue.incoming {
@@ -2465,7 +2469,7 @@ pub mod IPCHandlers {
                             Ok(r) => r,
                             Err(IPCDecodeError::NotEnoughBytes) => {
                                 log!("hit NotEnoughBytes3");
-                                loop_.exit();
+                                unsafe { (*loop_).exit() };
                                 return;
                             }
                             Err(
@@ -2474,13 +2478,13 @@ pub mod IPCHandlers {
                                 | IPCDecodeError::JSTerminated,
                             ) => {
                                 send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
-                                loop_.exit();
+                                unsafe { (*loop_).exit() };
                                 return;
                             }
                             Err(IPCDecodeError::OutOfMemory) => {
                                 Output::print_errorln("IPC message is too long.");
                                 send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
-                                loop_.exit();
+                                unsafe { (*loop_).exit() };
                                 return;
                             }
                         };
@@ -2537,7 +2541,7 @@ pub mod IPCHandlers {
                                 debug_assert!(slice_len <= u32::MAX as usize);
                                 adv_buf.len = u32::try_from(slice_len).unwrap();
                                 log!("hit NotEnoughBytes3");
-                                loop_.exit();
+                                unsafe { (*loop_).exit() };
                                 return;
                             }
                             Err(
@@ -2546,13 +2550,13 @@ pub mod IPCHandlers {
                                 | IPCDecodeError::JSTerminated,
                             ) => {
                                 send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
-                                loop_.exit();
+                                unsafe { (*loop_).exit() };
                                 return;
                             }
                             Err(IPCDecodeError::OutOfMemory) => {
                                 Output::print_errorln("IPC message is too long.");
                                 send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
-                                loop_.exit();
+                                unsafe { (*loop_).exit() };
                                 return;
                             }
                         };
@@ -2569,14 +2573,14 @@ pub mod IPCHandlers {
                                 unreachable!()
                             };
                             adv_buf.len = 0;
-                            loop_.exit();
+                            unsafe { (*loop_).exit() };
                             return;
                         }
                     }
                 }
             }
             #[allow(unreachable_code)]
-            loop_.exit();
+            unsafe { (*loop_).exit() };
         }
 
         pub fn on_close(send_queue: &mut SendQueue) {

@@ -120,7 +120,7 @@ pub struct TranspileArgs<'a> {
 /// signature must be stable across the crate boundary.
 #[repr(C)]
 pub struct TranspileExtra {
-    pub path: bun_resolver::fs::Path,
+    pub path: bun_resolver::fs::Path<'static>,
     pub loader: bun_bundler::options::Loader,
     pub module_type: bun_bundler::options::ModuleType,
     /// `*js_printer.BufferPrinter` — the per-VM shared printer. Never null

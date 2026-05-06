@@ -1342,9 +1342,17 @@ unsafe extern "C" {
     fn JSC__VM__collectAsync(vm: *mut VM);
     fn JSC__VM__heapSize(vm: *mut VM) -> usize;
     fn JSC__VM__runGC(vm: *mut VM, sync: bool) -> usize;
+    fn JSC__VM__notifyNeedTermination(vm: *mut VM);
     fn JSC__JSGlobalObject__handleRejectedPromises(global: *mut JSGlobalObject);
 }
 impl VM {
+    /// `VM.notifyNeedTermination()` (VM.zig:115). Signals the VM to stop
+    /// execution at the next safepoint.
+    #[inline]
+    pub fn notify_need_termination(&self) {
+        // SAFETY: `self` is a live JSC::VM.
+        unsafe { JSC__VM__notifyNeedTermination(self as *const _ as *mut _) }
+    }
     pub fn throw_error(&self, global: &JSGlobalObject, value: JSValue) -> JsError {
         // SAFETY: `self` and `global` are live; throws into the VM's exception scope.
         unsafe { JSC__VM__throwError(self as *const _ as *mut _, global, value) };

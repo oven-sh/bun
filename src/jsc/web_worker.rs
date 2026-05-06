@@ -315,8 +315,8 @@ pub fn terminate_all_and_wait(timeout_ms: u64) {
                 let vm = unsafe { &*w.vm };
                 // SAFETY: jsc_vm is a valid JSC::VM*; notify_need_termination
                 // is documented thread-safe (VMTraps). Cast through the real
-                // opaque `crate::vm::VM` (the `crate::VM` stub is layout-only).
-                unsafe { (*(vm.jsc_vm as *const crate::vm::VM)).notify_need_termination() };
+                // opaque `crate::VM` (the `crate::VM` stub is layout-only).
+                unsafe { (*(vm.jsc_vm as *const crate::VM)).notify_need_termination() };
                 // SAFETY: event_loop() returns the live `*mut EventLoop` self-ptr.
                 unsafe { (*vm.event_loop()).wakeup() };
             }
@@ -478,8 +478,8 @@ impl WebWorker {
             let vm = unsafe { &*this.vm };
             // SAFETY: jsc_vm is a valid JSC::VM*; notify_need_termination is
             // documented thread-safe (VMTraps). Cast through the real opaque
-            // `crate::vm::VM` (the `crate::VM` stub is layout-only).
-            unsafe { (*(vm.jsc_vm as *const crate::vm::VM)).notify_need_termination() };
+            // `crate::VM` (the `crate::VM` stub is layout-only).
+            unsafe { (*(vm.jsc_vm as *const crate::VM)).notify_need_termination() };
             // SAFETY: event_loop() returns the live `*mut EventLoop` self-ptr.
             unsafe { (*vm.event_loop()).wakeup() };
         }
@@ -516,8 +516,8 @@ impl WebWorker {
         if !self.vm.is_null() {
             // SAFETY: vm non-null; jsc_vm is a valid JSC::VM*;
             // notify_need_termination is documented thread-safe (VMTraps).
-            // Cast through the real opaque `crate::vm::VM`.
-            unsafe { (*((*self.vm).jsc_vm as *const crate::vm::VM)).notify_need_termination() };
+            // Cast through the real opaque `crate::VM`.
+            unsafe { (*((*self.vm).jsc_vm as *const crate::VM)).notify_need_termination() };
         }
     }
 

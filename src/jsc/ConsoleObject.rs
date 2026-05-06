@@ -1060,7 +1060,7 @@ impl<'a> TablePrinter<'a> {
 // writeTrace
 // ───────────────────────────────────────────────────────────────────────────
 
-pub fn write_trace(_writer: &mut impl bun_io::Write, _global: &JSGlobalObject) {
+pub fn write_trace(_writer: &mut (impl bun_io::Write + ?Sized), _global: &JSGlobalObject) {
     // TODO(phase-c): body re-gated — `ZigString::to_error_instance` /
     // `VirtualMachine::{remap_zig_exception, print_stack_trace}` not yet
     // ported. `console.trace()` falls through to a no-op until then.
@@ -1646,7 +1646,7 @@ pub mod formatter {
             let tag = Tag::get(self.value, formatter.global_this)
                 .map_err(|_| core::fmt::Error)?;
             // TODO(port): need a `&mut dyn bun_io::Write` over `f`.
-            let mut sink = bun_io::FmtWriteAdapter::new(f);
+            let mut sink = bun_io::FmtAdapter::new(f);
             let global = formatter.global_this;
             formatter
                 .format::<false>(tag, &mut sink, self.value, global)
@@ -1661,10 +1661,17 @@ pub mod formatter {
 
         pub type Map = bun_collections::HashMap<JSValue, ()>;
         // TODO(port): Zig parameterizes `ObjectPool` with an `init` fn,
-        // `threadsafe = true`, and `max_count = 16`. Model as
-        // `ObjectPool<Map, 16>` with a `Default`-based init.
-        pub type Pool = ObjectPool<Map, 16>;
-        pub type PoolNode = <Pool as bun_collections::pool::ObjectPoolTrait>::Node;
+        // `threadsafe = true`, and `max_count = 16`. The Rust `ObjectPool`
+        // requires `T: ObjectPoolType` plus a per-monomorphization storage
+        // hook (see `object_pool!`); `Map` is a foreign type so we can't
+        // implement the trait here without a newtype. The only live user of
+        // the pool itself is the gated `print_as` body — keep `Pool` gated
+        // and name `PoolNode` directly so `Formatter::map_node` /
+        // `Drop` still type-check.
+        #[cfg(any())]
+        pub type Pool = ObjectPool<Map, true, 16>;
+        #[allow(unused_imports)] use ObjectPool as _;
+        pub type PoolNode = bun_collections::pool::Node<Map>;
     }
 
     // ───────────────────────────────────────────────────────────────────────
@@ -2118,7 +2125,10 @@ pub mod formatter {
         }
     }
 
-    type CellType = jsc::C::CellType;
+    // TODO(phase-c): `jsc::C::CellType` not yet exported; only used by gated
+    // `print_as` body, so alias to `JSType` to keep the type name resolvable.
+    #[allow(dead_code)]
+    type CellType = jsc::JSType;
 
     thread_local! {
         static NAME_BUF: RefCell<[u8; 512]> = const { RefCell::new([0; 512]) };
@@ -4870,9 +4880,7 @@ pub mod formatter {
             self.global_this = global_this;
             // Best-effort placeholder — mirrors `{value:?}` shape without
             // pulling in the unported tag machinery.
-            let _ = writer.write_all(b"[object ");
-            let _ = write!(bun_io::FmtAdapter::new(writer), "{:?}", value);
-            let _ = writer.write_all(b"]");
+            let _ = writer.print(format_args!("[object {value:?}]"));
             let _ = ENABLE_ANSI_COLORS;
             Ok(())
         }

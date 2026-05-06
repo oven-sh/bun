@@ -140,7 +140,7 @@ impl CallFrame {
     /// arguments(n).mut() -> `let mut args = arguments_as_array::<n>(); &mut args`
     pub fn arguments_old<const MAX: usize>(&self) -> Arguments<MAX> {
         let slice = self.arguments();
-        const _: () = assert!(MAX <= 15);
+        debug_assert!(MAX <= 15);
         // PERF(port): was `switch { inline 1...15 => |count| ... }` comptime monomorphization — profile in Phase B
         let count = slice.len().min(MAX);
         if count == 0 {
@@ -154,7 +154,7 @@ impl CallFrame {
     /// arguments_as_array::<n>()
     pub fn arguments_undef<const MAX: usize>(&self) -> Arguments<MAX> {
         let slice = self.arguments();
-        const _: () = assert!(MAX <= 9);
+        debug_assert!(MAX <= 9);
         // PERF(port): was `switch { inline 1...9 => |count| ... }` comptime monomorphization — profile in Phase B
         let count = slice.len().min(MAX);
         if count == 0 {

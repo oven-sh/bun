@@ -300,7 +300,7 @@ const TRANSPILER_JOB_HIVE_CAP: usize = 64;
 pub type TranspilerJobStore = ();
 
 pub struct TranspilerJob {
-    pub path: Fs::Path,
+    pub path: Fs::Path<'static>,
     pub non_threadsafe_input_specifier: String,
     pub non_threadsafe_referrer: String,
     pub loader: Loader,

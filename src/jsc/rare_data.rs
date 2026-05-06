@@ -3,7 +3,8 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU32;
 
 use crate as jsc;
-use crate::{JSGlobalObject, CallFrame, JSValue, JsResult, JsError, VirtualMachine};
+use crate::{JSGlobalObject, CallFrame, JSValue, JsResult, JsError};
+use crate::virtual_machine::VirtualMachine;
 use crate::strong::Optional as Strong;
 use bun_uws::{self as uws, SocketGroup, SslCtx};
 use bun_boringssl as boring_ssl;
@@ -1481,7 +1482,7 @@ impl RareData {
     }
 
     pub fn boring_engine(&mut self) -> *mut boring_sys::ENGINE {
-        extern "C" {
+        unsafe extern "C" {
             fn ENGINE_new() -> *mut boring_sys::ENGINE;
         }
         // SAFETY: BoringSSL is linked into the binary; ENGINE_new returns a

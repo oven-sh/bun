@@ -352,7 +352,7 @@ impl<'a> CopyFile<'a> {
                 // XDEV: cross-device copy not supported
                 // NOSYS: syscall not available
                 // OPNOTSUPP: filesystem doesn't support this operation
-                bun_sys::E::NOSYS | bun_sys::E::XDEV | bun_sys::E::OPNOTSUPP => {
+                bun_sys::E::ENOSYS | bun_sys::E::EXDEV | bun_sys::E::ENOTSUP => {
                     // TODO: this should use non-blocking I/O.
                     match node_fs::NodeFS::copy_file_using_read_write_loop(
                 bun_core::ZStr::EMPTY,
@@ -557,11 +557,11 @@ impl<'a> CopyFile<'a> {
 
             let mut stat_: Option<Stat> = None;
 
-            if let jsc::node::PathOrFileDescriptor::Fd(fd) = self.destination_file_store.pathlike {
+            if let PathOrFileDescriptor::Fd(fd) = self.destination_file_store.pathlike {
                 self.destination_fd = fd;
             }
 
-            if let jsc::node::PathOrFileDescriptor::Fd(fd) = self.source_file_store.pathlike {
+            if let PathOrFileDescriptor::Fd(fd) = self.source_file_store.pathlike {
                 self.source_fd = fd;
             }
 

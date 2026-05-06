@@ -2,7 +2,7 @@ use core::cell::Cell;
 use core::mem::MaybeUninit;
 
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{CallFrame, Debugger, EnsureStillAlive, JSGlobalObject, JSValue, JsClass, JsResult};
+use bun_jsc::{CallFrame, Debugger, EnsureStillAlive, JSGlobalObject, JSValue, JsResult};
 
 // bun.api.Timer.* — sibling modules under src/runtime/timer/
 // TODO(port): verify module path once crate layout is wired in Phase B

@@ -1,7 +1,6 @@
 use core::ffi::{c_uint, c_void};
 use core::ptr::NonNull;
 #[allow(unused_imports)]
-use std::rc::Rc;
 use std::sync::Arc;
 
 use bun_http_types::Method::Method;
@@ -2180,7 +2179,7 @@ where
                     let _ = S3::client::stat(
                         credentials,
                         path,
-                        Self::on_s3_size_resolved,
+                        Self::on_s3_size_resolved_thunk,
                         this as *mut Self as *mut c_void,
                         env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
                         s3.request_payer,
@@ -3227,7 +3226,7 @@ where
         }
     }
 
-    fn do_write_headers(&mut self, headers: &FetchHeaders) {
+    fn do_write_headers(&mut self, headers: &mut FetchHeaders) {
         ctx_log!("writeHeaders");
         headers.fast_remove(jsc::HTTPHeaderName::ContentLength);
         headers.fast_remove(jsc::HTTPHeaderName::TransferEncoding);

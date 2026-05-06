@@ -401,6 +401,18 @@ impl JestPrettyFormat {
         if options.flush {
             // TODO(port): writer.flush()
         }
+
+        // Mirrors Zig `defer { node.data = fmt.map; node.data.clearRetainingCapacity(); node.release(); }`
+        if let Some(node) = fmt.map_node.take() {
+            // SAFETY: `node` came from `visited::Pool::get_node()` and is exclusively
+            // owned for `fmt`'s lifetime; its `data` was initialized by `Map::INIT`.
+            unsafe {
+                let data = (*node.as_ptr()).data.assume_init_mut();
+                *data = core::mem::take(&mut fmt.map);
+                data.clear();
+                visited::Pool::release(node.as_ptr());
+            }
+        }
         Ok(())
     }
 }

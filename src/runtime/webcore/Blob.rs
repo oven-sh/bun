@@ -499,6 +499,14 @@ use crate::api::archive::Archive;
 // alias the module so `write_file_mod::WriteFile{,Task,Windows,Promise}` resolve.
 use super::write_file as write_file_mod;
 use super::write_file::{WriteFilePromise, WriteFileWaitFromLockedValueTask};
+#[allow(unused_imports)]
+use bun_jsc::{SysErrorJsc as _, StringJsc as _, JsClass as _};
+#[allow(unused_imports)]
+use bun_bundler::options_impl::LoaderExt as _;
+// Local: the `bun_jsc::zig_string::ZigString` (repr(C)-identical to
+// `bun_str::ZigString`) carries the `to_js`/`EMPTY` JSC-side methods.
+#[allow(unused_imports)]
+use bun_jsc::zig_string::ZigString as JscZigString;
 
 /// Local shim for `bun_jsc::dom_form_data::FormDataEntry` — that module is
 /// `#![cfg(any())]`-gated upstream and `bun_jsc::DOMFormData` is currently a

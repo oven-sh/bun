@@ -112,21 +112,21 @@ impl<'a> Snapshots<'a> {
         &mut self,
         expect: &mut Expect,
         hint: &[u8],
-    ) -> Result<(&[u8], usize), Error> {
+    ) -> Result<(Vec<u8>, usize), Error> {
         // TODO(port): narrow error set
         self.total += 1;
         let snapshot_name = expect.get_snapshot_name(hint)?;
         // PORT NOTE: reshaped for borrowck — Zig's getOrPut returns key_ptr/value_ptr together.
-        // bun_collections::StringHashMap::get_or_put takes ownership of the key on miss (frees on hit)
-        // and returns (&K, &mut V, found_existing) so we can return the interned key slice.
-        let (key, value, found_existing) = self.counts.get_or_put(snapshot_name);
-        if found_existing {
-            // dup'd name already dropped by get_or_put on hit
-            *value += 1;
+        // bun_collections::StringHashMap::get_or_put can't hand out `key_ptr`, so return the
+        // owned `snapshot_name` (same bytes as the interned key) instead.
+        let gop = self.counts.get_or_put(&snapshot_name).map_err(Error::from)?;
+        if gop.found_existing {
+            *gop.value_ptr += 1;
         } else {
-            *value = 1;
+            *gop.value_ptr = 1;
         }
-        Ok((key.as_slice(), *value))
+        let count = *gop.value_ptr;
+        Ok((snapshot_name, count))
     }
 
     pub fn get_or_put(

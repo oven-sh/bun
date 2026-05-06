@@ -1130,7 +1130,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     // SAFETY: event_loop points to the live JSC EventLoop for this thread.
     let event_loop_nn = unsafe { NonNull::new_unchecked(event_loop) };
     subprocess.stdout = Readable::init(
-        stdio[1],
+        core::mem::replace(&mut stdio[1], Stdio::Ignore),
         event_loop_nn,
         subprocess_nn,
         spawned.stdout,
@@ -1138,7 +1138,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         IS_SYNC,
     );
     subprocess.stderr = Readable::init(
-        stdio[2],
+        core::mem::replace(&mut stdio[2], Stdio::Ignore),
         event_loop_nn,
         subprocess_nn,
         spawned.stderr,

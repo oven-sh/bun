@@ -1294,11 +1294,10 @@ impl<'a> SpawnArgs<'a> {
     }
 
     pub fn fill_env_from_process(&mut self, global_this: &JSGlobalObject) {
-        let mut env_iter = EnvMapIter::init(global_this.bun_vm().transpiler.env.map);
         // TODO(port): Zig calls self.fill_env(globalThis, &env_iter, false) but fill_env
         // takes *bun.shell.EnvMap.Iterator, not EnvMapIter — type mismatch in original Zig
         // (dead code under lazy compilation). Mirrored as TODO.
-        let _ = (&mut env_iter, global_this);
+        let _ = global_this;
     }
 
     /// `object_iter` should be a some type with the following fields:

@@ -432,11 +432,8 @@ pub extern "C" fn CryptoObject__create(global: &JSGlobalObject) -> JSValue {
 
     // PORTING.md: allocator.create(T) → Box::new. Box::new aborts on OOM, so the
     // Zig `catch return globalThis.throwOutOfMemoryValue()` arm is unreachable.
-    // TODO(port): throwOutOfMemoryValue path unreachable, Box::new aborts.
-    let ptr = Box::into_raw(Box::new(Crypto::default()));
-
-    // SAFETY: `ptr` is a freshly-boxed Crypto; ownership transfers to the JS wrapper.
-    unsafe { Crypto::to_js(ptr, global) }
+    // `JsClass::to_js` boxes `self` internally and transfers ownership to the JS wrapper.
+    Crypto::default().to_js(global)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

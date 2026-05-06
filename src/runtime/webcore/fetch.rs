@@ -1500,7 +1500,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // TODO: make this async + lazy
             let res = node::fs::NodeFS::read_file(
                 global_this.bun_vm().node_fs(),
-                node::fs::args::ReadFile {
+                &node::fs::args::ReadFile {
                     encoding: node::Encoding::Buffer,
                     path: node::PathOrFileDescriptor::Fd(opened_fd),
                     offset: body.any_blob().blob().offset,

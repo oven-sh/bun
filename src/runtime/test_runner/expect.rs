@@ -2275,62 +2275,66 @@ impl ExpectCustomAsymmetricMatcher {
 
     #[bun_jsc::host_fn(method)]
     pub fn asymmetric_match(this: &mut Self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<1>().slice();
+        let arguments = callframe.arguments();
         let received_value = if arguments.is_empty() { JSValue::UNDEFINED } else { arguments[0] };
         let matched = Self::execute_impl(this, callframe.this(), global_this, received_value)?;
         Ok(JSValue::from(matched))
     }
 
-    fn maybe_clear<const DONT_THROW: bool>(global_this: &JSGlobalObject, err: JsError) -> JsResult<bool> {
-        if DONT_THROW {
-            global_this.clear_exception();
+    fn maybe_clear(global_this: &JSGlobalObject, err: JsError, dont_throw: bool) -> Result<bool, bun_core::Error> {
+        if dont_throw {
+            global_this.clear_exception_shim();
             return Ok(false);
         }
-        Err(err)
+        // TODO(port): narrow error set (JsError → bun_core::Error mapping)
+        match err {
+            JsError::OutOfMemory => Err(bun_core::Error::OUT_OF_MEMORY),
+            _ => Err(bun_core::Error::UNEXPECTED),
+        }
     }
 
     /// Calls a custom implementation (if provided) to stringify this asymmetric matcher, and returns true if it was provided and it succeed
-    pub fn custom_print<const DONT_THROW: bool>(
-        _this: &Self,
+    pub fn custom_print(
+        &self,
         this_value: JSValue,
         global_this: &JSGlobalObject,
         writer: &mut impl bun_io::Write,
+        dont_throw: bool,
     ) -> Result<bool, bun_core::Error> {
         // TODO(port): narrow error set (mixes JsError and io::Error)
-        let Some(matcher_fn) = Self::js::matcher_fn_get_cached(this_value) else { return Ok(false) };
+        let Some(matcher_fn) = expect_custom_asymmetric_matcher_js::matcher_fn_get_cached(this_value) else { return Ok(false) };
         let fn_value = match matcher_fn.get(global_this, "toAsymmetricMatcher") {
             Ok(v) => v,
-            Err(e) => return Ok(Self::maybe_clear::<DONT_THROW>(global_this, e)?),
+            Err(e) => return Self::maybe_clear(global_this, e, dont_throw),
         };
         if let Some(fn_value) = fn_value {
             if fn_value.js_type().is_function() {
-                let Some(captured_args) = Self::js::captured_args_get_cached(this_value) else { return Ok(false) };
+                let Some(captured_args) = expect_custom_asymmetric_matcher_js::captured_args_get_cached(this_value) else { return Ok(false) };
                 // PERF(port): was stack-fallback allocator — profile in Phase B
                 let args_len = match captured_args.get_length(global_this) {
                     Ok(n) => n,
-                    Err(e) => return Ok(Self::maybe_clear::<DONT_THROW>(global_this, e)?),
+                    Err(e) => return Self::maybe_clear(global_this, e, dont_throw),
                 };
-                let _ = args_len;
-                let mut args = bun_jsc::MarkedArgumentBuffer::new();
+                let mut args: Vec<JSValue> = Vec::with_capacity(args_len as usize);
                 let mut iter = match captured_args.array_iterator(global_this) {
                     Ok(it) => it,
-                    Err(e) => return Ok(Self::maybe_clear::<DONT_THROW>(global_this, e)?),
+                    Err(e) => return Self::maybe_clear(global_this, e, dont_throw),
                 };
                 loop {
                     match iter.next() {
-                        Ok(Some(arg)) => args.append(arg), // PERF(port): was assume_capacity
+                        Ok(Some(arg)) => args.push(arg), // PERF(port): was assume_capacity
                         Ok(None) => break,
-                        Err(e) => return Ok(Self::maybe_clear::<DONT_THROW>(global_this, e)?),
+                        Err(e) => return Self::maybe_clear(global_this, e, dont_throw),
                     }
                 }
 
-                let result = match matcher_fn.call(global_this, this_value, args.as_slice()) {
+                let result = match matcher_fn.call(global_this, this_value, &args) {
                     Ok(r) => r,
-                    Err(e) => return Ok(Self::maybe_clear::<DONT_THROW>(global_this, e)?),
+                    Err(e) => return Self::maybe_clear(global_this, e, dont_throw),
                 };
                 let s = match result.to_bun_string(global_this) {
                     Ok(s) => s,
-                    Err(e) => return Ok(Self::maybe_clear::<DONT_THROW>(global_this, e)?),
+                    Err(e) => return Self::maybe_clear(global_this, e, dont_throw),
                 };
                 write!(writer, "{}", s)?;
             }
@@ -2344,9 +2348,12 @@ impl ExpectCustomAsymmetricMatcher {
         let mut mutable_string = bun_str::MutableString::init_2048()?;
 
         // TODO(port): customPrint signature mismatch — Zig passes `dontThrow` but the call here omits it (Zig bug? defaults?)
-        let printed = Self::custom_print::<false>(this, callframe.this(), global_this, &mut mutable_string.writer())?;
+        let printed = this
+            .custom_print(callframe.this(), global_this, mutable_string.writer(), false)
+            .map_err(|_| global_this.throw_out_of_memory())?;
         if printed {
-            return bun_str::String::init(mutable_string.slice()).to_js(global_this);
+            let slice: &[u8] = mutable_string.slice();
+            return bun_str::String::init(slice).to_js(global_this);
         }
         ExpectMatcherUtils::print_value(global_this, /* TODO(port): Zig passes `this` here but printValue expects JSValue */ JSValue::UNDEFINED, None)
     }

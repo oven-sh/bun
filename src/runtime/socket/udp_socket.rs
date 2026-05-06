@@ -1031,7 +1031,7 @@ impl UDPSocket {
         // uninitialized slots (connected -> disconnected) in the arena buffers.
         let connected = this.connect_info.is_some();
 
-        let array_len = arg.get_length(global_this)?;
+        let array_len = arg.get_length(global_this)? as usize;
         if !connected && array_len % 3 != 0 {
             return Err(global_this.throw_invalid_arguments(format_args!("Expected 3 arguments for each packet")));
         }
@@ -1057,7 +1057,7 @@ impl UDPSocket {
         // could otherwise free or detach that storage.
         let mut i: u32 = 0;
         let mut port: JSValue = JSValue::ZERO;
-        while let Some(val) = iter.next(global_this)? {
+        while let Some(val) = iter.next()? {
             if (i as usize) >= array_len {
                 return Err(global_this.throw_invalid_arguments(format_args!(
                     "Mismatch between array length property and number of items"

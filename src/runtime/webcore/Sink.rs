@@ -15,6 +15,63 @@ use bun_sys::{self as sys, Error as SysError};
 #[derive(Debug, Default)]
 pub struct ArrayBufferSink;
 
+// PORT NOTE: `JsSinkAbi` impl for the stub so `JSSink<ArrayBufferSink>` /
+// `SinkSignal<ArrayBufferSink>` resolve for Body.rs. The extern symbols are the
+// codegen-emitted `ArrayBufferSink__*` C++ glue (same shape as FileSink's).
+#[allow(non_snake_case)]
+mod array_buffer_sink_abi {
+    use super::*;
+    unsafe extern "C" {
+        pub(super) fn ArrayBufferSink__fromJS(value: JSValue) -> usize;
+        pub(super) fn ArrayBufferSink__createObject(
+            global: *mut JSGlobalObject,
+            object: *mut c_void,
+            destructor: usize,
+        ) -> JSValue;
+        pub(super) fn ArrayBufferSink__setDestroyCallback(value: JSValue, callback: usize);
+        pub(super) fn ArrayBufferSink__assignToStream(
+            global: *mut JSGlobalObject,
+            stream: JSValue,
+            ptr: *mut c_void,
+            jsvalue_ptr: *mut *mut c_void,
+        ) -> JSValue;
+        pub(super) fn ArrayBufferSink__onClose(ptr: JSValue, reason: JSValue);
+        pub(super) fn ArrayBufferSink__onReady(ptr: JSValue, amount: JSValue, offset: JSValue);
+    }
+}
+
+impl JsSinkAbi for ArrayBufferSink {
+    unsafe fn from_js_extern(value: JSValue) -> usize {
+        unsafe { array_buffer_sink_abi::ArrayBufferSink__fromJS(value) }
+    }
+    unsafe fn create_object_extern(
+        global: *mut JSGlobalObject,
+        object: *mut c_void,
+        destructor: usize,
+    ) -> JSValue {
+        unsafe { array_buffer_sink_abi::ArrayBufferSink__createObject(global, object, destructor) }
+    }
+    unsafe fn set_destroy_callback_extern(value: JSValue, callback: usize) {
+        unsafe { array_buffer_sink_abi::ArrayBufferSink__setDestroyCallback(value, callback) }
+    }
+    unsafe fn assign_to_stream_extern(
+        global: *mut JSGlobalObject,
+        stream: JSValue,
+        ptr: *mut c_void,
+        jsvalue_ptr: *mut *mut c_void,
+    ) -> JSValue {
+        unsafe {
+            array_buffer_sink_abi::ArrayBufferSink__assignToStream(global, stream, ptr, jsvalue_ptr)
+        }
+    }
+    unsafe fn on_close_extern(ptr: JSValue, reason: JSValue) {
+        unsafe { array_buffer_sink_abi::ArrayBufferSink__onClose(ptr, reason) }
+    }
+    unsafe fn on_ready_extern(ptr: JSValue, amount: JSValue, offset: JSValue) {
+        unsafe { array_buffer_sink_abi::ArrayBufferSink__onReady(ptr, amount, offset) }
+    }
+}
+
 // Re-export FileSink so gated `streams::Start` references to
 // `crate::webcore::sink::{FileSink, FileSinkOptions, FileSinkInputPath}` resolve
 // once those callers un-gate. The Options/InputPath types live on FileSink.

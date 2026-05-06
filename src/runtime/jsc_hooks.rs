@@ -953,7 +953,9 @@ fn transpile_source_code_inner(
                 {
                     (*jsc_vm).transpiler.linker.log = args.log;
                     if let Some(pm) = (*jsc_vm).transpiler.resolver.package_manager {
-                        (*pm.as_ptr()).log = args.log;
+                        // TODO(blocked_on): bun_resolver::package_json::PackageManager::log
+                        // — the resolver-side stub only exposes `lockfile`/`on_wake`.
+                        let _ = pm;
                     }
                 }
             }
@@ -964,7 +966,8 @@ fn transpile_source_code_inner(
                     (*jsc_vm).transpiler.resolver.log = old_log;
                     (*jsc_vm).transpiler.linker.log = old_log;
                     if let Some(pm) = (*jsc_vm).transpiler.resolver.package_manager {
-                        (*pm.as_ptr()).log = old_log;
+                        // TODO(blocked_on): bun_resolver::package_json::PackageManager::log
+                        let _ = pm;
                     }
                 }
             });
@@ -2694,7 +2697,14 @@ unsafe fn transpile_file(
     // Spec :1085-1116.
     let mut promise: *mut JSInternalPromise = ptr::null_mut();
     let mut extra = TranspileExtra {
-        path: lr.path,
+        // SAFETY: `TranspileExtra::path` is typed `'static` for the cross-crate
+        // fn-ptr ABI; the borrow actually lives only for this synchronous call
+        // (the `extra` struct is consumed by `transpile_source_code_inner`
+        // before `_specifier` / `virtual_source_to_use` drop). Same erasure as
+        // `transpile_virtual_module` below.
+        path: unsafe {
+            core::mem::transmute::<Fs::Path<'_>, Fs::Path<'static>>(lr.path)
+        },
         loader: synchronous_loader,
         module_type,
         source_code_printer: printer_ptr,

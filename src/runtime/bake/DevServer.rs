@@ -5166,20 +5166,34 @@ impl DevServer<'_> {
         let _end = scopeguard::guard((), |_| debug_log!("onFileUpdate end"));
 
         let mut slice = watchlist.slice();
-        let file_paths = slice.items_file_path();
+        // PORT NOTE: SoA columns are disjoint, but `items_mut` borrows the whole
+        // slice mutably. Erase each column to a raw `*mut [T]` and reborrow at
+        // the use sites — the columns never alias (per `MultiArrayElement` layout).
+        let file_paths: *const [std::borrow::Cow<'static, [u8]>] = slice.items_file_path();
         // SAFETY: column 4 (`Count`) is `u32` per `WatchItemField`.
-        let counts: &mut [u32] =
+        let counts: *mut [u32] =
             unsafe { slice.items_mut::<u32>(bun_watcher::WatchItemField::Count) };
-        let kinds = slice.items_kind();
+        let kinds: *const [bun_watcher::Kind] = slice.items_kind();
+        // SAFETY: `file_paths`/`kinds`/`counts` point to disjoint SoA columns owned
+        // by `watchlist`, which outlives this fn; reborrow as slices for indexing.
+        let file_paths = unsafe { &*file_paths };
+        let counts = unsafe { &mut *counts };
+        let kinds = unsafe { &*kinds };
 
         let ev_ptr = self.watcher_atomics.watcher_acquire_event();
         // SAFETY: `watcher_acquire_event` returns a valid `*mut HotReloadEvent`
         // into `self.watcher_atomics.events`; exclusive on the watcher thread.
         let ev = unsafe { &mut *ev_ptr };
+        // PORT NOTE: erase `self` to a raw ptr in the deferred closures so the
+        // loop body can keep using `self.bun_watcher` (Zig `defer` had no
+        // aliasing check).
+        let self_ptr: *mut Self = self;
+        // SAFETY: `self_ptr` is live for the entire fn body; guards run at scope exit.
         let _release =
-            scopeguard::guard((), |_| self.watcher_atomics.watcher_release_and_submit_event(ev_ptr));
+            scopeguard::guard((), move |_| unsafe { (*self_ptr).watcher_atomics.watcher_release_and_submit_event(ev_ptr) });
 
-        let _flush = scopeguard::guard((), |_| self.bun_watcher.flush_evictions());
+        // SAFETY: see `self_ptr` SAFETY above.
+        let _flush = scopeguard::guard((), move |_| unsafe { (*self_ptr).bun_watcher.flush_evictions() });
 
         for event in events {
             // TODO: why does this out of bounds when you delete every file in the directory?

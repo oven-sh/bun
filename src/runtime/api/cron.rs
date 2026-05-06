@@ -1739,9 +1739,9 @@ pub fn cron_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
     let args = frame.arguments_as_array::<2>();
 
     if !args[0].is_string() {
-        return global.throw_invalid_arguments(format_args!(
+        return Err(global.throw_invalid_arguments(format_args!(
             "Bun.cron.parse() expects a string cron expression as the first argument"
-        ));
+        )));
     }
 
     let expr_str = args[0].to_bun_string(global)?;
@@ -1750,10 +1750,10 @@ pub fn cron_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
     let parsed = match CronExpression::parse(expr_slice.slice()) {
         Ok(p) => p,
         Err(e) => {
-            return global.throw_invalid_arguments(format_args!(
+            return Err(global.throw_invalid_arguments(format_args!(
                 "{}",
-                CronExpression::error_message(e)
-            ))
+                bstr::BStr::new(CronExpression::error_message(e))
+            )))
         }
     };
 

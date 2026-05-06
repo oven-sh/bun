@@ -2418,40 +2418,15 @@ impl IncrementalGraph<Client> {
     pub fn take_source_map(
         &mut self,
         _arena: &bun_alloc::Arena,
-        out: &mut SourceMapStore::Entry,
+        out: &mut SourceMapStoreEntry,
     ) -> Result<(), bun_alloc::AllocError> {
-        let paths = self.bundled_files.keys();
-        let files = self.bundled_files.values();
-
-        let _buf = path_buffer_pool::get();
-
-        let mut file_paths: Vec<*const [u8]> =
-            Vec::with_capacity(self.current_chunk_parts.len());
-        let mut contained_maps: MultiArrayList<PackedMapShared> = MultiArrayList::default();
-        contained_maps.ensure_total_capacity(self.current_chunk_parts.len())?;
-
-        let mut overlapping_memory_cost: usize = 0;
-
-        for file_index in &self.current_chunk_parts {
-            file_paths.push(&*paths[file_index.get() as usize] as *const [u8]); // PERF(port): was assume_capacity
-            let source_map = files[file_index.get() as usize].unpack().source_map.clone();
-            if let Some(map) = source_map.get() {
-                overlapping_memory_cost += map.memory_cost();
-            }
-            contained_maps.push(source_map); // PERF(port): was assume_capacity
-        }
-
-        overlapping_memory_cost +=
-            contained_maps.memory_cost() + memory_cost_slice(&file_paths);
-
-        let ref_count = out.ref_count;
-        *out = SourceMapStore::Entry {
-            dev_allocator: self.dev_allocator(),
-            ref_count,
-            paths: file_paths.into_boxed_slice(),
-            files: contained_maps,
-            overlapping_memory_cost: u32::try_from(overlapping_memory_cost).unwrap(),
-        };
+        let _ = out;
+        // TODO(port): blocked_on: bun_collections::MultiArrayElement for packed_map_body::Shared
+        //   `MultiArrayList<PackedMapShared>` requires `Shared: MultiArrayElement` (a derive
+        //   macro) which is not yet implemented for the body's enum. The keystone
+        //   `source_map_store::Entry` also lacks the `paths`/`dev_allocator` fields.
+        todo!("blocked_on: bun_collections::MultiArrayElement for PackedMap.Shared");
+        #[allow(unreachable_code)]
         Ok(())
     }
 }

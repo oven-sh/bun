@@ -718,6 +718,7 @@ impl AF {
 ///   while `sockaddr_storage` is 128 bytes.
 #[allow(non_camel_case_types)]
 #[repr(C)]
+#[derive(Copy, Clone)]
 pub union sockaddr {
     pub sin: inet::sockaddr_in,
     pub sin6: inet::sockaddr_in6,

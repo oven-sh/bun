@@ -813,7 +813,7 @@ impl UpgradeCommand {
                         filesystem.top_level_dir,
                         b"unzip",
                     ) else {
-                        let _ = save_dir.delete_file_z(tmpname);
+                        let _ = sys::unlinkat(save_dir.fd(), tmpname);
                         Output::pretty_errorln(format_args!(
                             "<r><red>error:<r> Failed to locate \"unzip\" in PATH. bun upgrade needs \"unzip\" to work."
                         ));

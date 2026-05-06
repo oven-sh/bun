@@ -670,11 +670,11 @@ impl BufferOutputSink {
         let result = Box::into_raw(Box::new(Response::init(
             webcore::response::Init { status_code: 200, ..Default::default() },
             webcore::Body {
-                value: webcore::body::Value::Locked(webcore::body::PendingValue {
-                    global: global_static,
-                    task: sink as *mut core::ffi::c_void,
-                    ..Default::default()
-                }),
+                value: {
+                    let mut pv = webcore::body::PendingValue::new(global_static);
+                    pv.task = Some(sink as *mut core::ffi::c_void);
+                    webcore::body::Value::Locked(pv)
+                },
                 ..Default::default()
             },
             BunString::empty(),

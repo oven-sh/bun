@@ -787,29 +787,47 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         && !stdio[1].is_piped()
         && !stdio[2].is_piped()
         && extra_fds.is_empty()
-        && !jsc_vm.auto_killer.enabled
-        && !jsc_vm.jsc_vm.has_execution_time_limit()
+        // TODO(port): `auto_killer` and `jsc_vm.has_execution_time_limit()` are
+        // gated cycle-breaker stubs on `VirtualMachineRef`; treat as disabled.
         && !jsc_vm.is_inspector_enabled()
-        && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH.get();
+        && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH
+            .get()
+            .unwrap_or(false);
 
     // For spawnSync, use an isolated event loop to prevent JavaScript timers from firing
-    // and to avoid interfering with the main event loop
-    let event_loop: &jsc::event_loop::EventLoop = if IS_SYNC {
-        &jsc_vm.rare_data().spawn_sync_event_loop(jsc_vm).event_loop
+    // and to avoid interfering with the main event loop.
+    //
+    // PORT NOTE: borrowck — `rare_data()` borrows `jsc_vm` mutably and the
+    // returned `&mut SpawnSyncEventLoop` keeps that borrow alive, so we cannot
+    // also pass `jsc_vm` into `spawn_sync_event_loop`/`prepare`/`cleanup` while
+    // holding it. Route through a raw `*mut VirtualMachineRef` for the duration.
+    let jsc_vm_ptr: *mut jsc::VirtualMachineRef = jsc_vm;
+    let event_loop: *mut jsc::event_loop::EventLoop = if IS_SYNC {
+        // SAFETY: `jsc_vm_ptr` is the same live VM reborrowed for the nested call.
+        let sync = jsc_vm.rare_data().spawn_sync_event_loop(unsafe { &mut *jsc_vm_ptr });
+        &mut sync.event_loop as *mut _
     } else {
         jsc_vm.event_loop()
     };
 
     if IS_SYNC {
-        jsc_vm.rare_data().spawn_sync_event_loop(jsc_vm).prepare(jsc_vm);
+        // SAFETY: see PORT NOTE above.
+        jsc_vm
+            .rare_data()
+            .spawn_sync_event_loop(unsafe { &mut *jsc_vm_ptr })
+            .prepare(unsafe { &mut *jsc_vm_ptr });
     }
 
-    let _sync_loop_cleanup = scopeguard::guard((), |_| {
+    let _sync_loop_cleanup = scopeguard::guard((), move |_| {
         if IS_SYNC {
-            jsc_vm
-                .rare_data()
-                .spawn_sync_event_loop(jsc_vm)
-                .cleanup(jsc_vm, jsc_vm.event_loop());
+            // SAFETY: scopeguard runs while `jsc_vm` (the thread VM) is still live.
+            unsafe {
+                let main_loop = (*jsc_vm_ptr).event_loop();
+                (*jsc_vm_ptr)
+                    .rare_data()
+                    .spawn_sync_event_loop(&mut *jsc_vm_ptr)
+                    .cleanup(&mut *jsc_vm_ptr, main_loop);
+            }
         }
     });
 

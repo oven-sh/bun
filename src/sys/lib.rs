@@ -1589,6 +1589,7 @@ mod windows_impl {
         pub fn page_size() -> usize;
         pub fn mkdirat(dir: Fd, path: &ZStr, mode: Mode) -> Maybe<()>;
         pub fn renameat(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr) -> Maybe<()>;
+        pub fn renameat2(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr, flags: Renameat2Flags) -> Maybe<()>;
         pub fn unlinkat(dir: Fd, path: &ZStr, flags: i32) -> Maybe<()>;
         pub fn mkdir_recursive_at(dir: Fd, sub: &[u8]) -> Maybe<()>;
         pub fn link(src: &ZStr, dest: &ZStr) -> Maybe<()>;

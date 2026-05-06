@@ -299,11 +299,10 @@ impl MySQLConnection {
             // The map holds an intrusive ref on every cached prepared statement;
             // release it here (mirrors PostgresSQLConnection::deinit). Silently
             // dropping the `*mut` would leak every MySQLStatement.
-            // TODO(b2-blocked): MySQLStatement has no inherent `deref()` — the
-            // intrusive-rc surface lives on `bun_ptr::IntrusiveRc`. Fail loudly
-            // until that impl lands so this does not leak silently.
-            let _ = stmt;
-            unimplemented!("b2-blocked: MySQLStatement::deref");
+            // SAFETY: every value inserted into `statements` is a live boxed
+            // `MySQLStatement` with the map holding one ref (Zig:
+            // `stmt.deref()`).
+            unsafe { MySQLStatement::deref(*stmt) };
         }
         drop(statements);
 

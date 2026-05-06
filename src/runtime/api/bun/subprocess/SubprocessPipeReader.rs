@@ -114,7 +114,7 @@ impl PipeReader {
         limit: Option<NonNull<MaxBuf>>,
     ) -> IntrusiveRc<PipeReader> {
         let mut this = Box::new(PipeReader {
-            ref_count: Cell::new(1),
+            ref_count: RefCount::init(),
             process: Some(process),
             reader: IOReader::init::<PipeReader>(),
             event_loop,

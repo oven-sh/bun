@@ -71,9 +71,30 @@ bun_output::declare_scope!(IncrementalGraph, visible);
 bun_output::declare_scope!(SourceMapStore, visible);
 
 // TODO(port): `debug` was a Scoped struct (capital S); the macro form differs.
-macro_rules! debug_log { ($($t:tt)*) => { bun_output::scoped_log!(DevServer, $($t)*) }; }
-macro_rules! ig_log { ($($t:tt)*) => { bun_output::scoped_log!(IncrementalGraph, $($t)*) }; }
-macro_rules! map_log { ($($t:tt)*) => { bun_output::scoped_log!(SourceMapStore, $($t)*) }; }
+// NOTE: `scoped_log!` takes an `ident`, so we alias the static via a local `use` in a
+// block — this lets call sites use `debug_log!` even when `DevServer`/`IncrementalGraph`/
+// `SourceMapStore` is shadowed by a module/type alias at the call site (e.g. IncrementalGraph.rs).
+macro_rules! debug_log {
+    ($($t:tt)*) => {{
+        #[allow(unused_imports)]
+        use $crate::bake::dev_server_body::DevServer as __DevServerScope;
+        bun_output::scoped_log!(__DevServerScope, $($t)*)
+    }};
+}
+macro_rules! ig_log {
+    ($($t:tt)*) => {{
+        #[allow(unused_imports)]
+        use $crate::bake::dev_server_body::IncrementalGraph as __IgScope;
+        bun_output::scoped_log!(__IgScope, $($t)*)
+    }};
+}
+macro_rules! map_log {
+    ($($t:tt)*) => {{
+        #[allow(unused_imports)]
+        use $crate::bake::dev_server_body::SourceMapStore as __SmsScope;
+        bun_output::scoped_log!(__SmsScope, $($t)*)
+    }};
+}
 pub(crate) use {debug_log, ig_log, map_log};
 
 pub struct Options<'a> {

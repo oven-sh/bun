@@ -245,11 +245,9 @@ impl Stringifier {
             return Ok(());
         }
 
-        // PORT NOTE: `bun.Environment.ci_assert` → `cfg!(debug_assertions)` (closest analogue).
-        #[cfg(debug_assertions)]
-        {
-            bun_core::assert_with_location(unwrapped.is_object(), core::panic::Location::caller());
-        }
+        // PORT NOTE: `bun.Environment.ci_assert` → `debug_assert!` (closest analogue;
+        // `bun.assertWithLocation(cond, @src())` is a debug-only assert with source location).
+        debug_assert!(unwrapped.is_object());
 
         let object_entry = self.known_collections.get_or_put(unwrapped)?;
         if object_entry.found_existing {
@@ -375,11 +373,9 @@ impl Stringifier {
             return Ok(());
         }
 
-        // PORT NOTE: `bun.Environment.ci_assert` → `cfg!(debug_assertions)` (closest analogue).
-        #[cfg(debug_assertions)]
-        {
-            bun_core::assert_with_location(unwrapped.is_object(), core::panic::Location::caller());
-        }
+        // PORT NOTE: `bun.Environment.ci_assert` → `debug_assert!` (closest analogue;
+        // `bun.assertWithLocation(cond, @src())` is a debug-only assert with source location).
+        debug_assert!(unwrapped.is_object());
 
         let has_anchor: Option<&mut AnchorAlias> = 'has_anchor: {
             let Some(anchor) = self.known_collections.get_ptr(&unwrapped) else {

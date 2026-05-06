@@ -260,7 +260,7 @@ impl Handlers {
     }
 
     fn protect(&mut self) {
-        #[cfg(feature = "ci_assert")]
+        #[cfg(debug_assertions)]
         {
             self.protection_count += 1;
         }

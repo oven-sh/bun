@@ -2243,8 +2243,8 @@ impl<'a> BundleOptions<'a> {
                 .collect();
         }
 
-        // PORT NOTE: reshaped for borrowck — pass opts.log via the existing
-        // `&mut logger::Log` borrow (Zig passed `log` directly).
+        // PORT NOTE: Zig passed `log` directly; reborrow the raw `*mut Log`
+        // for the duration of this call only.
         opts.external = ExternalModules::init(
             &mut fs.fs,
             fs.top_level_dir,
@@ -2253,7 +2253,9 @@ impl<'a> BundleOptions<'a> {
                 .iter()
                 .map(|s| s.as_ref())
                 .collect::<Vec<&[u8]>>(),
-            opts.log,
+            // SAFETY: `opts.log` is the caller's per-Transpiler `*mut Log`;
+            // sole live `&mut` for this call (struct not yet returned).
+            unsafe { &mut *opts.log },
             opts.target,
         );
         opts.out_extensions = opts.target.out_extensions();

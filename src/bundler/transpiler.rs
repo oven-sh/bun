@@ -221,7 +221,7 @@ impl<'a> Transpiler<'a> {
                     logger::Loc::EMPTY,
                     format_args!(
                         "{} resolving \"{}\" (entry point)",
-                        err.name(),
+                        err,
                         bstr::BStr::new(entry_point)
                     ),
                 ));

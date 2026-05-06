@@ -2388,7 +2388,7 @@ impl<'a> BundleV2<'a> {
         // We don't expose an option to disable this. Bake forbids tree-shaking
         // since every export must is always exist in case a future module
         // starts depending on it.
-        if this.transpiler.options.output_format == options::OutputFormat::InternalBakeDev {
+        if this.transpiler.options.output_format == options::Format::InternalBakeDev {
             this.transpiler.options.tree_shaking = false;
             this.transpiler.resolver.opts.tree_shaking = false;
         } else {

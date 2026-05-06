@@ -25,7 +25,9 @@ use crate::options::{self, Loader, Target};
 use crate::parse_task::{self, on_complete, ResultValue, Success, WatcherData};
 use crate::ungate_support::EventLoop;
 use crate::AstBuilder::AstBuilder;
-use crate::{ThreadPool, Worker};
+use crate::Worker;
+
+pub use crate::ThreadPool;
 
 pub use crate::parse_task::ParseTask;
 pub use crate::DeferredBatchTask::DeferredBatchTask;
@@ -95,7 +97,7 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
         value,
         external: ExternalFreeFunction::NONE,
         watcher_data: WatcherData::NONE,
-    }));
+    });
     let result = Box::into_raw(result);
 
     // CYCLEBREAK GENUINE: jsc::EventLoopHandle → vtable. PERF(port): was inline switch.

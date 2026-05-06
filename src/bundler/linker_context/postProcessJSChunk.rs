@@ -794,13 +794,14 @@ pub fn generate_entry_point_tail_js(
     // TODO(port): thread &'bump Bump from worker.allocator end-to-end in Phase B
     allocator: &Arena,
     temp_allocator: &Arena,
-    r: renamer::Renamer,
+    r: js_printer::renamer::Renamer,
     mut module_info: Option<&mut ModuleInfo>,
 ) -> CompileResult {
+    let _ = (&temp_allocator, &module_info, to_common_js_ref, to_esm_ref);
     let flags: crate::js_meta::Flags = c.graph.meta.items_flags()[source_index as usize];
     // PERF(port): was arena-backed ArrayList(Stmt) — profile in Phase B
     let mut stmts: Vec<Stmt> = Vec::new();
-    let ast: JSAst = c.graph.ast.get(source_index);
+    let ast: JSAst = c.graph.ast.get(source_index as usize);
 
     match c.options.output_format {
         options::OutputFormat::Esm => {
@@ -811,9 +812,9 @@ pub fn generate_entry_point_tail_js(
                         S::ExportDefault {
                             default_name: js_ast::LocRef {
                                 loc: Logger::Loc::EMPTY,
-                                r#ref: Some(ast.wrapper_ref),
+                                ref_: Some(ast.wrapper_ref),
                             },
-                            value: S::ExportDefault::Value::Expr(Expr::init(
+                            value: StmtOrExpr::Expr(Expr::init(
                                 E::Call {
                                     target: Expr::init_identifier(ast.wrapper_ref, Logger::Loc::EMPTY),
                                     ..Default::default()

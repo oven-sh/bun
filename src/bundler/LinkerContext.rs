@@ -2496,7 +2496,8 @@ impl<'a> LinkerContext<'a> {
     /// `&mut self.log` borrow; the underlying `parse_graph.input_files` slab
     /// is append-only and outlives the link step (LIFETIMES.tsv: GRAPHBACKED).
     #[inline]
-    pub fn get_source(&self, index: usize) -> &'static Source {
+    pub fn get_source(&self, index: u32) -> &'static Source {
+        let index = index as usize;
         // SAFETY: parse_graph backref into BundleV2.graph; the input_files SoA
         // is monotonically grown and never freed for the link step's lifetime,
         // so the element address is stable. `'static` is a white lie matching
@@ -2601,7 +2602,7 @@ impl<'a> LinkerContext<'a> {
                     for &part in common_js_parts {
                         deps.append_assume_capacity(Dependency {
                             part_index: part,
-                            source_index: Index::RUNTIME,
+                            source_index: js_ast::Index::RUNTIME,
                         });
                     }
                     deps
@@ -2691,10 +2692,10 @@ impl<'a> LinkerContext<'a> {
                 let mut dependencies =
                     BabyList::<Dependency>::init_capacity(esm_parts.len() + promise_all_parts.len()).expect("OOM");
                 for &part in esm_parts {
-                    dependencies.append_assume_capacity(Dependency { part_index: part, source_index: Index::RUNTIME });
+                    dependencies.append_assume_capacity(Dependency { part_index: part, source_index: js_ast::Index::RUNTIME });
                 }
                 for &part in promise_all_parts {
-                    dependencies.append_assume_capacity(Dependency { part_index: part, source_index: Index::RUNTIME });
+                    dependencies.append_assume_capacity(Dependency { part_index: part, source_index: js_ast::Index::RUNTIME });
                 }
 
                 let mut symbol_uses = PartSymbolUseMap::default();
@@ -3181,7 +3182,7 @@ impl<'a> LinkerContext<'a> {
                         for &dep in deps {
                             re_exports.push(Dependency {
                                 part_index: dep,
-                                source_index: Index::init(tracker.source_index.get()),
+                                source_index: js_ast::Index::init(tracker.source_index.get()),
                             });
                             // PERF(port): was assume_capacity
                         }
@@ -3488,7 +3489,7 @@ impl<'a> LinkerContext<'a> {
                 {
                     self.graph.generate_runtime_symbol_import_and_use(
                         source_index,
-                        crate::Index::part(1),
+                        crate::Index::part(1u32),
                         b"__require",
                         1,
                     )?;
@@ -3635,7 +3636,7 @@ impl<'a> LinkerContext<'a> {
 
     pub fn break_output_into_pieces(
         &self,
-        _alloc: &Bump,
+        _alloc: *const Bump,
         j: &mut StringJoiner,
         count: u32,
     ) -> Result<crate::chunk::IntermediateOutput, BunError> {
@@ -3839,7 +3840,7 @@ impl InsideWrapperPrefix {
         // PORT NOTE: deep AST mutation chain — `s_expr_mut`/`e_await_mut`/
         // `e_call_mut`/`e_array_mut` return `Option`; `.unwrap()` mirrors Zig's
         // untagged-union field reads (panic on shape mismatch).
-        let first_dep_call_expr = self.stmts[self.sync_dependencies_end]
+        let mut first_dep_call_expr = self.stmts[self.sync_dependencies_end]
             .data.s_expr_mut().unwrap().value.data.e_await_mut().unwrap().value;
         let call = first_dep_call_expr.data.e_call_mut().unwrap();
 

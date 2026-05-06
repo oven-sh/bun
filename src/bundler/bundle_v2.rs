@@ -1544,7 +1544,7 @@ impl<'a> BundleV2<'a> {
                         &file_map_result,
                         &Logger::Source {
                             path: path_primary,
-                            contents: &b""[..],
+                            contents: std::borrow::Cow::Borrowed(&b""[..]),
                             ..Default::default()
                         },
                         loader,
@@ -1614,7 +1614,7 @@ impl<'a> BundleV2<'a> {
                                     add_error(
                                         log, source, import_record.range, self.allocator(),
                                         format_args!("Browser build cannot {} Node.js module: \"{}\". To use Node.js builtins, set target to 'node' or 'bun'",
-                                            import_record.kind.error_label(), bstr::BStr::new(path_to_use)),
+                                            bstr::BStr::new(import_record.kind.error_label()), bstr::BStr::new(path_to_use)),
                                         import_record.kind,
                                     ).expect("unreachable");
                                 } else {
@@ -1681,7 +1681,7 @@ impl<'a> BundleV2<'a> {
             let idx = self.enqueue_parse_task(
                 &resolve_result,
                 &Logger::Source {
-                    path: path.dupe_alloc().expect("oom"),
+                    path: logger_path_from_fs(path),
                     contents: &b""[..],
                     ..Default::default()
                 },
@@ -2828,7 +2828,7 @@ impl<'a> BundleV2<'a> {
                     let loader = loaders[index];
 
                     additional_output_files.push(options::OutputFile::init(crate::output_file::Options {
-                        source_index: crate::output_file::IndexOptional::init(index as u32),
+                        source_index: crate::output_file::IndexOptional::some(crate::output_file::Index(index as u32)),
                         data: crate::output_file::OptionsData::Buffer {
                             data: source.contents.to_vec().into_boxed_slice(),
                         },
@@ -3665,7 +3665,7 @@ impl<'a> BundleV2<'a> {
                 content: chunk::Content::Css(chunk::CssChunk {
                     imports_in_chunk_in_order: order,
                     asts: (0..order.len as usize)
-                        .map(|_| crate::bun_css::BundlerStyleSheet::default())
+                        .map(|_| bun_css::BundlerStyleSheet::empty())
                         .collect::<Vec<_>>()
                         .into_boxed_slice(),
                 }),
@@ -4131,7 +4131,7 @@ impl<'a> BundleV2<'a> {
                         continue;
                     }
 
-                    (self.ssr_transpiler, bake::Graph::Ssr, Target::BakeServerComponentsSsr)
+                    (unsafe { &mut *self.ssr_transpiler }, bake::Graph::Ssr, Target::BakeServerComponentsSsr)
                 } else {
                     (self.transpiler_for_target(ctx.target), ctx.target.bake_graph(), ctx.target)
                 };
@@ -4153,18 +4153,18 @@ impl<'a> BundleV2<'a> {
 
                     let resolve_entry = resolve_queue.get_or_put(&path_primary.text).expect("oom");
                     if resolve_entry.found_existing {
-                        import_record.path = unsafe { &**resolve_entry.value_ptr }.path.dupe_alloc().expect("oom");
+                        import_record.path = ir_path_from_fs(&unsafe { &**resolve_entry.value_ptr }.path);
                         continue;
                     }
 
                     // For virtual files, use the path text as-is (no relative path computation needed).
                     path_primary.pretty = self.allocator().alloc_slice_copy(&path_primary.text);
-                    import_record.path = path_primary.clone();
-                    *resolve_entry.key_ptr = path_primary.text.clone();
+                    import_record.path = ir_path_from_fs(&path_primary);
+                    let _ = path_primary.text; // key already interned by get_or_put
                     bun_core::scoped_log!(Bundle, "created ParseTask from FileMap: {}", bstr::BStr::new(&path_primary.text));
                     let resolve_task = Box::leak(Box::new(ParseTask::default()));
                     file_map_result.path_pair.primary = path_primary;
-                    *resolve_task = ParseTask::init(&file_map_result, Index::INVALID, self);
+                    *resolve_task = ParseTask::init(&file_map_result, js_ast::Index::INVALID, self);
                     resolve_task.known_target = target;
                     // Use transpiler JSX options, applying force_node_env like the disk path does
                     resolve_task.jsx = transpiler.options.jsx.clone();
@@ -4196,7 +4196,7 @@ impl<'a> BundleV2<'a> {
                         if err == bun_core::err!("ModuleNotFound") {
                             if self.bun_watcher.is_some() {
                                 if !had_busted_dir_cache {
-                                    bun_core::scoped_log!(watcher, "busting dir cache {} -> {}",
+                                    bun_core::scoped_log!(Watcher, "busting dir cache {} -> {}",
                                         bstr::BStr::new(&source.path.text), bstr::BStr::new(&import_record.path.text));
                                     // Only re-query if we previously had something cached.
                                     if transpiler.resolver.bust_dir_cache_from_specifier(
@@ -4233,50 +4233,54 @@ impl<'a> BundleV2<'a> {
                                 if is_package_path(&import_record.path.text) {
                                     if ctx.target == Target::Browser && options::ExternalModules::is_node_builtin(&import_record.path.text) {
                                         add_error(
-                                            log, Some(source), import_record.range, self.allocator(),
+                                            log, Some(source), import_record.range,
                                             format_args!("Browser build cannot {} Node.js builtin: \"{}\"{}",
-                                                import_record.kind.error_label(),
+                                                bstr::BStr::new(import_record.kind.error_label()),
                                                 bstr::BStr::new(&import_record.path.text),
                                                 if self.dev_server.is_none() {
                                                     ". To use Node.js builtins, set target to 'node' or 'bun'"
                                                 } else { "" },
                                             ),
-                                            import_record.kind,
+                                            &import_record.path.text,
+                                            import_record.kind.into(),
                                         ).expect("oom");
                                     } else if !ctx.target.is_bun() && import_record.path.text == b"bun" {
                                         add_error(
-                                            log, Some(source), import_record.range, self.allocator(),
+                                            log, Some(source), import_record.range,
                                             format_args!("Browser build cannot {} Bun builtin: \"{}\"{}",
-                                                import_record.kind.error_label(),
+                                                bstr::BStr::new(import_record.kind.error_label()),
                                                 bstr::BStr::new(&import_record.path.text),
                                                 if self.dev_server.is_none() {
                                                     ". When bundling for Bun, set target to 'bun'"
                                                 } else { "" },
                                             ),
-                                            import_record.kind,
+                                            &import_record.path.text,
+                                            import_record.kind.into(),
                                         ).expect("oom");
                                     } else if !ctx.target.is_bun() && import_record.path.text.starts_with(b"bun:") {
                                         add_error(
-                                            log, Some(source), import_record.range, self.allocator(),
+                                            log, Some(source), import_record.range,
                                             format_args!("Browser build cannot {} Bun builtin: \"{}\"{}",
-                                                import_record.kind.error_label(),
+                                                bstr::BStr::new(import_record.kind.error_label()),
                                                 bstr::BStr::new(&import_record.path.text),
                                                 if self.dev_server.is_none() {
                                                     ". When bundling for Bun, set target to 'bun'"
                                                 } else { "" },
                                             ),
-                                            import_record.kind,
+                                            &import_record.path.text,
+                                            import_record.kind.into(),
                                         ).expect("oom");
                                     } else {
                                         add_error(
-                                            log, Some(source), import_record.range, self.allocator(),
+                                            log, Some(source), import_record.range,
                                             format_args!("Could not resolve: \"{}\". Maybe you need to \"bun install\"?",
                                                 bstr::BStr::new(&import_record.path.text)),
-                                            import_record.kind,
+                                            &import_record.path.text,
+                                            import_record.kind.into(),
                                         ).expect("oom");
                                     }
                                 } else {
-                                    let buf = bun_paths::path_buffer_pool::get().get();
+                                    let buf = bun_paths::path_buffer_pool::get();
                                     let specifier_to_use = if loader == Loader::Html
                                         && import_record.path.text.starts_with(&Fs::FileSystem::instance().top_level_dir)
                                     {
@@ -4293,9 +4297,10 @@ impl<'a> BundleV2<'a> {
                                         &import_record.path.text
                                     };
                                     add_error(
-                                        log, Some(source), import_record.range, self.allocator(),
+                                        log, Some(source), import_record.range,
                                         format_args!("Could not resolve: \"{}\"", bstr::BStr::new(specifier_to_use)),
-                                        import_record.kind,
+                                        specifier_to_use,
+                                        import_record.kind.into(),
                                     ).expect("oom");
                                 }
                             }
@@ -4326,7 +4331,7 @@ impl<'a> BundleV2<'a> {
                 if resolve_result.flags.is_external_and_rewrite_import_path()
                     && !strings::eql_long(&resolve_result.path_pair.primary.text, &import_record.path.text, true)
                 {
-                    import_record.path = resolve_result.path_pair.primary.clone();
+                    import_record.path = ir_path_from_fs(&resolve_result.path_pair.primary);
                 }
                 import_record.flags.set(
                     bun_options_types::import_record::Flags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS,
@@ -4361,24 +4366,24 @@ impl<'a> BundleV2<'a> {
                     import_record.source_index = Index::INVALID;
 
                     if let Some(entry) = dev_server.is_file_cached(&path.text, bake_graph) {
-                        let rel = bun_paths::resolve_path::relative_platform::<bun_paths::resolve_path::platform::Loose, false>(&self.transpiler.fs.top_level_dir, &path.text);
+                        let rel = bun_paths::resolve_path::relative_platform::<bun_paths::resolve_path::platform::Loose, false>(unsafe { &(*self.transpiler.fs).top_level_dir }, &path.text);
                         if loader == Loader::Html && entry.kind == bake_types::CacheKind::Asset {
                             // Overload `path.text` to point to the final URL
                             // This information cannot be queried while printing because a lock wouldn't get held.
                             let hash = dev_server.asset_hash(&path.text).expect("cached asset not found");
-                            import_record.path.text = path.text.to_vec().into_boxed_slice();
+                            import_record.path.text = path.text;
                             import_record.path.namespace = b"file";
                             import_record.path.pretty = self.allocator().alloc_str(&format!(
                                 "{}/{:016x}{}",
                                 bake_types::ASSET_PREFIX,
                                 hash,
                                 bstr::BStr::new(bun_paths::extension(&path.text)),
-                            ));
+                            )).as_bytes();
                             import_record.path.is_disabled = false;
                         } else {
-                            import_record.path.text = path.text.to_vec().into_boxed_slice();
+                            import_record.path.text = path.text;
                             import_record.path.pretty = rel.into();
-                            import_record.path = self.path_with_pretty_initialized(path.clone(), target).expect("oom");
+                            import_record.path = ir_path_from_fs(&self.path_with_pretty_initialized(path.clone(), target).expect("oom"));
                             if loader == Loader::Html || entry.kind == bake_types::CacheKind::Css {
                                 import_record.path.is_disabled = true;
                             }
@@ -4413,7 +4418,7 @@ impl<'a> BundleV2<'a> {
 
             if let Some(id) = self.path_to_source_index_map(target).get(&path.text) {
                 if self.dev_server.is_some() && loader != Loader::Html {
-                    import_record.path = self.graph.input_files.items_source()[id as usize].path.clone();
+                    import_record.path = ir_path_from_logger(&self.graph.input_files.items_source()[id as usize].path);
                 } else {
                     import_record.source_index = Index::init(id);
                 }
@@ -4426,16 +4431,16 @@ impl<'a> BundleV2<'a> {
 
             let resolve_entry = resolve_queue.get_or_put(&path.text).expect("oom");
             if resolve_entry.found_existing {
-                import_record.path = unsafe { &**resolve_entry.value_ptr }.path.dupe_alloc().expect("oom");
+                import_record.path = ir_path_from_fs(&unsafe { &**resolve_entry.value_ptr }.path);
                 continue;
             }
 
             *path = self.path_with_pretty_initialized(core::mem::take(path), target).expect("oom");
 
-            import_record.path = path.clone();
-            *resolve_entry.key_ptr = path.text.to_vec().into_boxed_slice();
+            import_record.path = ir_path_from_fs(path);
+            // key already interned by get_or_put — no key_ptr on StringHashMapGetOrPut
             bun_core::scoped_log!(Bundle, "created ParseTask: {}", bstr::BStr::new(&path.text));
-            let resolve_task = Box::leak(Box::new(ParseTask::init(&resolve_result, Index::INVALID, self)));
+            let resolve_task = Box::leak(Box::new(ParseTask::init(&resolve_result, js_ast::Index::INVALID, self)));
 
             resolve_task.known_target = if import_record.kind == ImportKind::HtmlManifest {
                 Target::Browser
@@ -4458,7 +4463,7 @@ impl<'a> BundleV2<'a> {
                     && !core::ptr::eq(secondary, path)
                     && !strings::eql_long(&secondary.text, &path.text, true)
                 {
-                    resolve_task.secondary_path_for_commonjs_interop = Some(secondary.dupe_alloc().expect("oom"));
+                    resolve_task.secondary_path_for_commonjs_interop = Some(secondary.clone());
                 }
             }
 
@@ -4492,19 +4497,19 @@ impl<'a> BundleV2<'a> {
                     source: Logger::Source::init_empty_file(&new_task.path.text),
                     side_effects: new_task.side_effects,
                     secondary_path: if let Some(secondary_path) = &new_task.secondary_path_for_commonjs_interop {
-                        secondary_path.text.clone()
+                        secondary_path.text.into()
                     } else {
-                        b"".into()
+                        Box::default()
                     },
                     ..Default::default()
                 };
 
                 graph.has_any_secondary_paths = graph.has_any_secondary_paths || !new_input_file.secondary_path.is_empty();
 
-                new_input_file.source.index = Index::source(graph.input_files.len());
-                new_input_file.source.path = new_task.path.clone();
+                new_input_file.source.index = bun_logger::Index(graph.input_files.len() as u32);
+                new_input_file.source.path = logger_path_from_fs(&new_task.path);
                 new_input_file.loader = loader;
-                new_task.source_index = new_input_file.source.index;
+                new_task.source_index = js_ast::Index { value: new_input_file.source.index.0 };
                 new_task.ctx = self;
                 *existing.value_ptr = new_task.source_index.get();
 
@@ -4515,7 +4520,7 @@ impl<'a> BundleV2<'a> {
 
                 if is_html_entrypoint {
                     self.ensure_client_transpiler();
-                    self.graph.entry_points.push(new_input_file.source.index);
+                    self.graph.entry_points.push(js_ast::Index { value: new_input_file.source.index.0 });
                 }
 
                 if self.enqueue_on_load_plugin_if_needed(new_task) {
@@ -4524,7 +4529,7 @@ impl<'a> BundleV2<'a> {
 
                 if loader.should_copy_for_bundling() {
                     let additional_files: &mut BabyList<crate::AdditionalFile> = &mut graph.input_files.items_additional_files_mut()[importer_source_index as usize];
-                    additional_files.push(crate::AdditionalFile::SourceIndex(new_task.source_index.get()));
+                    additional_files.append(crate::AdditionalFile::SourceIndex(new_task.source_index.get())).expect("oom");
                     graph.input_files.items_side_effects_mut()[new_task.source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsPureData;
                     graph.estimated_file_loader_count += 1;
                 }
@@ -4533,7 +4538,7 @@ impl<'a> BundleV2<'a> {
             } else {
                 if loader.should_copy_for_bundling() {
                     let additional_files: &mut BabyList<crate::AdditionalFile> = &mut graph.input_files.items_additional_files_mut()[importer_source_index as usize];
-                    additional_files.push(crate::AdditionalFile::SourceIndex(*existing.value_ptr)).expect("oom");
+                    additional_files.append(crate::AdditionalFile::SourceIndex(*existing.value_ptr)).expect("oom");
                     graph.estimated_file_loader_count += 1;
                 }
 
@@ -4582,8 +4587,8 @@ impl<'a> BundleV2<'a> {
             || ctx.loader == Loader::Html
             || ctx.loader.is_css();
 
-        if let Some(pending_entry) = self.resolve_tasks_waiting_for_import_source_index.swap_remove_entry(&ctx.source_index.get()) {
-            let value = pending_entry.value;
+        if let Some(idx) = self.resolve_tasks_waiting_for_import_source_index.get_index(&ctx.source_index.get()) {
+            let (_, value) = self.resolve_tasks_waiting_for_import_source_index.swap_remove_at(idx);
             for to_assign in value.slice() {
                 if save_import_record_source_index
                     || input_file_loaders[to_assign.to_source_index.get() as usize].is_css()
@@ -4617,27 +4622,27 @@ impl<'a> BundleV2<'a> {
         let graph = &mut self.graph;
         let empty_html_file_source = Logger::Source {
             path: path.dupe_alloc().expect("oom"),
-            index: Index::source(graph.input_files.len()),
+            index: bun_logger::Index(graph.input_files.len() as u32),
             contents: &b""[..],
             ..Default::default()
         };
-        let mut js_parser_options = bun_js_parser::Parser::Options::init(self.transpiler_for_target(target).options.jsx.clone(), Loader::Html);
+        let mut js_parser_options = bun_js_parser::ast::ParserOptions::init(self.transpiler_for_target(target).options.jsx.clone(), Loader::Html);
         js_parser_options.bundle = true;
 
         let unique_key = self.allocator().alloc_str(&format!(
             "{:x}H{:08}",
             self.unique_key,
-            graph.html_imports.server_source_indices.len(),
+            graph.html_imports.server_source_indices.len,
         ));
 
         let transpiler = self.transpiler_for_target(target);
 
         let ast_for_html_entrypoint = JSAst::init(bun_js_parser::new_lazy_export_ast(
             self.allocator(),
-            transpiler.options.define,
+            &mut *transpiler.options.define,
             js_parser_options,
-            transpiler.log,
-            Expr::init(E::EString { data: unique_key, ..Default::default() }, Logger::Loc::EMPTY),
+            unsafe { &mut *transpiler.log },
+            Expr::init(E::EString { data: unique_key.as_bytes(), ..Default::default() }, Logger::Loc::EMPTY),
             &empty_html_file_source,
             // We replace this runtime API call's ref later via .link on the Symbol.
             b"__jsonParse",

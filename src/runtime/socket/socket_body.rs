@@ -700,7 +700,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // `callback.call` — see `get_handlers` contract.
         log!(
             "onTimeout {}",
-            if unsafe { (*handlers).mode } == SocketMode::Server { "S" } else { "C" }
+            if unsafe { (*handlers).mode } == super::SocketMode::Server { "S" } else { "C" }
         );
         let callback = unsafe { (*handlers).on_timeout };
         if callback.is_empty() || self.flags.contains(Flags::FINALIZING) {
@@ -753,7 +753,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // `callback.call`/`reject` below — see `get_handlers` contract.
         log!(
             "onConnectError {} ({}, {})",
-            if unsafe { (*handlers).mode } == SocketMode::Server { "S" } else { "C" },
+            if unsafe { (*handlers).mode } == super::SocketMode::Server { "S" } else { "C" },
             errno,
             self.ref_count.get()
         );
@@ -814,7 +814,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             message: BunString::static_("Failed to connect"),
             syscall: BunString::static_("connect"),
             code: code_,
-            ..Default::default()
+            path: BunString::EMPTY,
+            hostname: BunString::EMPTY,
+            fd: c_int::MIN,
+            dest: BunString::EMPTY,
         };
 
         // the handlers must be kept alive for the duration of the function call
@@ -840,7 +843,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // Connection failed before open; allow the wrapper to be GC'd
             // regardless of whether this path is promise-backed (e.g. the
             // duplex TLS upgrade flow has no connect promise).
-            if !self.this_value.is_finalized() {
+            if !matches!(self.this_value, JsRef::Finalized) {
                 self.this_value.downgrade();
             }
             // SAFETY: re-derived; no `&mut Handlers` held across the
@@ -880,9 +883,12 @@ impl<const SSL: bool> NewSocket<SSL> {
         } else if let Some(val) = unsafe { (*handlers).promise.try_swap() } {
             // They've defined a `connectError` callback
             // The error is effectively handled, but we should still reject the promise.
-            let promise = val.as_promise().unwrap();
-            let err_ = err.to_error_instance_with_async_stack(global, promise);
-            promise.reject_as_handled(global, err_)?;
+            // UFCS so rustc can back-infer `val: JSValue` even if the
+            // `promise` field's `try_swap()` resolution is in flux upstream.
+            let promise: *mut jsc::JSPromise = JSValue::as_promise(val).unwrap();
+            // SAFETY: `as_promise` returned non-null; promise lives for this call.
+            let err_ = err.to_error_instance_with_async_stack(global, unsafe { &*promise });
+            unsafe { (*promise).reject_as_handled(global, err_) }?;
         }
 
         // `_scope_guard` (declared after `cleanup`) drops first → scope.exit();
@@ -950,8 +956,9 @@ impl<const SSL: bool> NewSocket<SSL> {
             // bookkeeping is irrelevant once the process is exiting, so
             // just release the event-loop ref and stop.
             let vm = VirtualMachine::get();
-            if vm.is_shutting_down() {
-                self.poll_ref.unref(vm);
+            // SAFETY: VM singleton is always live once initialized.
+            if unsafe { (*vm).is_shutting_down() } {
+                self.poll_ref.unref(js_loop_ctx());
                 return;
             }
             let handlers = self.get_handlers();
@@ -966,7 +973,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 // `getListener` don't dereference/destroy freed memory.
                 self.handlers = None;
             }
-            self.poll_ref.unref(vm);
+            self.poll_ref.unref(js_loop_ctx());
         }
     }
 
@@ -1003,19 +1010,22 @@ impl<const SSL: bool> NewSocket<SSL> {
         // Add SNI support for TLS (mongodb and others requires this)
         if SSL {
             if let Some(ssl_ptr) = self.socket.ssl() {
-                if !ssl_ptr.is_init_finished() {
+                // SAFETY: BoringSSL FFI; `ssl_ptr` is a live `*mut SSL`.
+                if unsafe { boringssl_ffi::SSL_is_init_finished(ssl_ptr) } == 0 {
                     if let Some(server_name) = &self.server_name {
-                        let host = server_name.as_ref();
+                        let host: &[u8] = server_name.as_ref();
                         if !host.is_empty() {
-                            let host_z = ZStr::from_bytes(host);
-                            ssl_ptr.set_hostname(host_z.as_cstr());
+                            let host_z = bun_core::ZBox::from_bytes(host);
+                            // SAFETY: `host_z` is NUL-terminated; FFI reads until NUL.
+                            unsafe { boringssl_ffi::SSL_set_tlsext_host_name(ssl_ptr, host_z.as_ptr()) };
                         }
                     } else if let Some(connection) = &self.connection {
-                        if let super::listener::UnixOrHost::Host(h) = connection {
-                            let host = h.host.as_slice();
+                        if let super::listener::UnixOrHost::Host { host, .. } = connection {
+                            let host: &[u8] = host.as_ref();
                             if !host.is_empty() {
-                                let host_z = ZStr::from_bytes(host);
-                                ssl_ptr.set_hostname(host_z.as_cstr());
+                                let host_z = bun_core::ZBox::from_bytes(host);
+                                // SAFETY: `host_z` is NUL-terminated; FFI reads until NUL.
+                                unsafe { boringssl_ffi::SSL_set_tlsext_host_name(ssl_ptr, host_z.as_ptr()) };
                             }
                         }
                     }
@@ -1026,12 +1036,12 @@ impl<const SSL: bool> NewSocket<SSL> {
                             // SAFETY: BoringSSL FFI; `self` outlives the SSL handshake.
                             unsafe {
                                 boringssl_ffi::SSL_set_ex_data(
-                                    ssl_ptr.as_ptr(),
+                                    ssl_ptr,
                                     0,
                                     self as *mut Self as *mut c_void,
                                 );
                                 boringssl_ffi::SSL_CTX_set_alpn_select_cb(
-                                    boringssl_ffi::SSL_get_SSL_CTX(ssl_ptr.as_ptr()),
+                                    boringssl_ffi::SSL_get_SSL_CTX(ssl_ptr),
                                     Some(select_alpn_callback),
                                     ptr::null_mut(),
                                 );
@@ -1040,7 +1050,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                             // SAFETY: BoringSSL FFI.
                             unsafe {
                                 boringssl_ffi::SSL_set_alpn_protos(
-                                    ssl_ptr.as_ptr(),
+                                    ssl_ptr,
                                     protos.as_ptr(),
                                     c_uint::try_from(protos.len()).unwrap(),
                                 );
@@ -1120,7 +1130,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Some(value) = self.this_value.try_get() {
             return value;
         }
-        if self.this_value.is_finalized() {
+        if matches!(self.this_value, JsRef::Finalized) {
             // The JS wrapper was already garbage-collected. Creating a new one
             // here would result in a second `finalize` (and double-deref) later.
             return JSValue::UNDEFINED;
@@ -1142,7 +1152,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // `callback.call` — see `get_handlers` contract.
         log!(
             "onEnd {}",
-            if unsafe { (*handlers).mode } == SocketMode::Server { "S" } else { "C" }
+            if unsafe { (*handlers).mode } == super::SocketMode::Server { "S" } else { "C" }
         );
         // Ensure the socket remains alive until this is finished
         self.ref_();
@@ -1150,7 +1160,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let callback = unsafe { (*handlers).on_end };
         let vm = unsafe { (*handlers).vm };
         if callback.is_empty() || vm.is_shutting_down() {
-            self.poll_ref.unref(vm);
+            self.poll_ref.unref(js_loop_ctx());
 
             // If you don't handle TCP fin, we assume you're done.
             self.mark_inactive();
@@ -1194,7 +1204,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // `callback.call` — see `get_handlers` contract.
         log!(
             "onHandshake {} ({})",
-            if unsafe { (*handlers).mode } == SocketMode::Server { "S" } else { "C" },
+            if unsafe { (*handlers).mode } == super::SocketMode::Server { "S" } else { "C" },
             success
         );
 
@@ -1237,7 +1247,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
             // only call onOpen once for clients
             // SAFETY: re-derived after the reentrant `callback.call` above.
-            if unsafe { (*handlers).mode } != SocketMode::Server {
+            if unsafe { (*handlers).mode } != super::SocketMode::Server {
                 // clean onOpen callback so only called in the first handshake and not in every renegotiation
                 // on servers this would require a different approach but it's not needed because our servers will not call handshake multiple times
                 // servers don't support renegotiation
@@ -1253,7 +1263,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             let authorization_error: JSValue = if ssl_error.error_no == 0 {
                 JSValue::NULL
             } else {
-                match ssl_error.to_js(global) {
+                match super::uws_jsc::verify_error_to_js(&ssl_error, global) {
                     Ok(v) => v,
                     Err(e) => {
                         // `Scope` has no Drop — balance event_loop().enter() and
@@ -1298,7 +1308,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // `callback.call` — see `get_handlers` contract.
         log!(
             "onClose {}",
-            if unsafe { (*handlers).mode } == SocketMode::Server { "S" } else { "C" }
+            if unsafe { (*handlers).mode } == super::SocketMode::Server { "S" } else { "C" }
         );
         self.detach_native_callback();
         self.socket.detach();
@@ -1328,7 +1338,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         let vm = unsafe { (*handlers).vm };
-        self.poll_ref.unref(vm);
+        self.poll_ref.unref(js_loop_ctx());
 
         let callback = unsafe { (*handlers).on_close };
 
@@ -1352,18 +1362,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         let mut js_error: JSValue = JSValue::UNDEFINED;
         if err != 0 {
             // errors here are always a read error
-            js_error = match sys::Error::from_code_int(err, sys::Tag::Read).to_js(global) {
-                Ok(v) => v,
-                Err(e) => {
-                    // `Scope` has no Drop — balance event_loop().enter() and
-                    // active_connections before propagating (Zig: `defer if (scope.exit()) ...`).
-                    if scope.exit() {
-                        self.handlers = None;
-                    }
-                    drop(cleanup);
-                    return Err(e);
-                }
-            };
+            js_error = <sys::Error as jsc::SysErrorJsc>::to_js(
+                &sys::Error::from_code_int(err, sys::Tag::read),
+                global,
+            );
         }
 
         if let Err(e) = callback.call(global, this_value, &[this_value, js_error]) {
@@ -1390,7 +1392,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // `callback.call` — see `get_handlers` contract.
         log!(
             "onData {} ({})",
-            if unsafe { (*handlers).mode } == SocketMode::Server { "S" } else { "C" },
+            if unsafe { (*handlers).mode } == super::SocketMode::Server { "S" } else { "C" },
             data.len()
         );
         if self.native_callback.on_data(data) {
@@ -1439,9 +1441,10 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     #[bun_jsc::host_fn(setter)]
-    pub fn set_data(this: &mut Self, global: &JSGlobalObject, value: JSValue) {
+    pub fn set_data(this: &mut Self, global: &JSGlobalObject, value: JSValue) -> bool {
         log!("setData()");
         Self::data_set_cached(this.get_this_value(global), global, value);
+        true
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1452,7 +1455,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let handlers: *const Handlers = handlers.as_ptr();
 
         // SAFETY: read-only field access; see `get_handlers` for the aliasing contract.
-        if unsafe { (*handlers).mode } != SocketMode::Server || this.socket.is_detached() {
+        if unsafe { (*handlers).mode } != super::SocketMode::Server || this.socket.is_detached() {
             return JSValue::UNDEFINED;
         }
 
@@ -1471,21 +1474,21 @@ impl<const SSL: bool> NewSocket<SSL> {
                 .sub(core::mem::offset_of!(Listener, handlers))
                 .cast::<Listener>()
         };
-        l.strong_self.get().unwrap_or(JSValue::UNDEFINED)
+        l.strong_self.get()
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_ready_state(this: &Self, _global: &JSGlobalObject) -> JSValue {
         if this.socket.is_detached() {
-            JSValue::js_number(-1i32)
+            JSValue::js_number_from_int32(-1)
         } else if this.socket.is_closed() {
-            JSValue::js_number(0i32)
+            JSValue::js_number_from_int32(0)
         } else if this.socket.is_established() {
-            JSValue::js_number(1i32)
+            JSValue::js_number_from_int32(1)
         } else if this.socket.is_shutdown() {
-            JSValue::js_number(-2i32)
+            JSValue::js_number_from_int32(-2)
         } else {
-            JSValue::js_number(2i32)
+            JSValue::js_number_from_int32(2)
         }
     }
 
@@ -1502,16 +1505,16 @@ impl<const SSL: bool> NewSocket<SSL> {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
-        let args = callframe.arguments_old(1);
+        let args = callframe.arguments_old::<1>();
         if this.socket.is_detached() {
             return Ok(JSValue::UNDEFINED);
         }
-        if args.len() == 0 {
-            return global.throw("Expected 1 argument, got 0", ());
+        if args.len == 0 {
+            return Err(global.throw("Expected 1 argument, got 0"));
         }
-        let t = args.ptr()[0].coerce::<i32>(global)?;
+        let t = args.ptr[0].coerce::<i32>(global)?;
         if t < 0 {
-            return global.throw("Timeout must be a positive integer", ());
+            return Err(global.throw("Timeout must be a positive integer"));
         }
         log!("timeout({})", t);
 
@@ -1554,9 +1557,14 @@ impl<const SSL: bool> NewSocket<SSL> {
         };
 
         let fallback = SystemError {
+            errno: 0,
             code: BunString::clone_utf8(code),
             message: BunString::clone_utf8(reason),
-            ..Default::default()
+            path: BunString::EMPTY,
+            syscall: BunString::EMPTY,
+            hostname: BunString::EMPTY,
+            fd: c_int::MIN,
+            dest: BunString::EMPTY,
         };
 
         Ok(fallback.to_error_instance(global))
@@ -1571,14 +1579,14 @@ impl<const SSL: bool> NewSocket<SSL> {
         jsc::mark_binding!();
 
         if this.socket.is_detached() {
-            return Ok(JSValue::js_number(-1i32));
+            return Ok(JSValue::js_number_from_int32(-1));
         }
 
-        let mut args = callframe.arguments_undef(5);
+        let mut args = callframe.arguments_undef::<5>();
 
         Ok(match this.write_or_end::<false>(global, args.mut_(), false) {
             WriteResult::Fail => JSValue::ZERO,
-            WriteResult::Success { wrote, .. } => JSValue::js_number(wrote),
+            WriteResult::Success { wrote, .. } => JSValue::js_number_from_int32(wrote),
         })
     }
 
@@ -1600,27 +1608,27 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_local_address(this: &Self, global: &JSGlobalObject) -> JSValue {
+    pub fn get_local_address(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         if this.socket.is_detached() {
-            return JSValue::UNDEFINED;
+            return Ok(JSValue::UNDEFINED);
         }
 
         let mut buf = [0u8; 64];
         let mut text_buf = [0u8; 512];
 
         let Some(address_bytes) = this.socket.local_address(&mut buf) else {
-            return JSValue::UNDEFINED;
+            return Ok(JSValue::UNDEFINED);
         };
         // TODO(port): Zig used `std.net.Address.initIp4/6`; `format_ip` only
         // needs `Display`, so use `std::net::IpAddr`.
         let address: std::net::IpAddr = match address_bytes.len() {
             4 => std::net::Ipv4Addr::from(<[u8; 4]>::try_from(address_bytes).unwrap()).into(),
             16 => std::net::Ipv6Addr::from(<[u8; 16]>::try_from(address_bytes).unwrap()).into(),
-            _ => return JSValue::UNDEFINED,
+            _ => return Ok(JSValue::UNDEFINED),
         };
 
         let text = bun_fmt::format_ip(&address, &mut text_buf).expect("unreachable");
-        ZigString::init(text).to_js(global)
+        jsc::bun_string_jsc::create_utf8_for_js(global, text)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1629,7 +1637,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return JSValue::UNDEFINED;
         }
 
-        JSValue::js_number(this.socket.local_port())
+        JSValue::js_number_from_int32(this.socket.local_port())
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1668,7 +1676,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         };
 
         let text = bun_fmt::format_ip(&address, &mut text_buf).expect("unreachable");
-        BunString::create_utf8_for_js(global, text)
+        jsc::bun_string_jsc::create_utf8_for_js(global, text)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1677,7 +1685,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return JSValue::UNDEFINED;
         }
 
-        JSValue::js_number(this.socket.remote_port())
+        JSValue::js_number_from_int32(this.socket.remote_port())
     }
 
     #[inline]

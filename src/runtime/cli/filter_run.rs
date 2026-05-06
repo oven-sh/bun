@@ -840,12 +840,12 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
             Global::exit(0);
         }
         if ctx.workspaces {
-            Output::err_generic(format_args!(
-                "No workspace packages have script \"{}\"",
-                bstr::BStr::new(script_name)
-            ));
+            Output::err_generic(
+                "No workspace packages have script \"{s}\"",
+                (bstr::BStr::new(script_name),),
+            );
         } else {
-            Output::err_generic(format_args!("No packages matched the filter"));
+            Output::err_generic("No packages matched the filter", ());
         }
         Global::exit(1);
     }

@@ -327,7 +327,7 @@ impl ReadableStream {
     
     pub fn from_owned_slice(
         global_this: &JSGlobalObject,
-        bytes: Box<[u8]>,
+        bytes: Vec<u8>,
         recommended_chunk_size: webcore::blob::SizeType,
     ) -> JsResult<JSValue> {
         let blob = Blob::init(bytes, global_this);

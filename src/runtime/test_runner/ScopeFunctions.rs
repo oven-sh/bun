@@ -2,7 +2,8 @@ use core::fmt;
 #[allow(unused_imports)] use crate::test_runner::expect::{JSValueTestExt, JSGlobalObjectTestExt, make_formatter};
 use core::sync::atomic::{AtomicI32, Ordering};
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, VirtualMachine};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult};
+#[allow(unused_imports)] use bun_jsc::{MarkedArgumentBuffer, VirtualMachine};
 use bun_str::String as BunString;
 
 use crate::test_runner::bun_test::{self, BaseScopeCfg, BunTest, DescribeScope};

@@ -68,7 +68,7 @@ pub extern "C" fn BakeResponseClass__constructForSSR(
     // SAFETY: caller (C++) guarantees `bake_ssr_has_jsx` is a valid, exclusive out-pointer for the call.
     let bake_ssr_has_jsx = unsafe { &mut *bake_ssr_has_jsx };
     match constructor(global_object, call_frame, bake_ssr_has_jsx, js_this) {
-        Ok(response) => Box::into_raw(response) as *mut c_void,
+        Ok(response) => response as *mut c_void,
         Err(JsError::Thrown) => core::ptr::null_mut(),
         Err(JsError::OutOfMemory) => {
             let _ = global_object.throw_out_of_memory();
@@ -83,16 +83,17 @@ pub fn constructor(
     callframe: &CallFrame,
     bake_ssr_has_jsx: &mut c_int,
     js_this: JSValue,
-) -> JsResult<Box<Response>> {
+) -> JsResult<*mut Response> {
     let arguments: [JSValue; 2] = callframe.arguments_as_array::<2>();
 
     // Allow `return new Response(<jsx> ... </jsx>, { ... }`
     // inside of a react component
     if !arguments[0].is_undefined_or_null() && arguments[0].is_object() {
         *bake_ssr_has_jsx = 0;
-        if arguments[0].is_jsx_element(global_this)? {
+        if is_jsx_element(arguments[0], global_this)? {
             let vm = global_this.bun_vm();
-            if let Some(async_local_storage) = vm.get_dev_server_async_local_storage()? {
+            // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
+            if let Some(async_local_storage) = unsafe { &mut *vm }.get_dev_server_async_local_storage()? {
                 assert_streaming_disabled(
                     global_this,
                     async_local_storage,

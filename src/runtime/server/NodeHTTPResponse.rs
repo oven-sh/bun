@@ -572,7 +572,8 @@ impl NodeHTTPResponse {
         // defer this.deref(); — moved to end of fn body.
         self.flags.remove(Flags::IS_REQUEST_PENDING);
 
-        self.clear_on_data_callback(self.get_this_value(), vm_get().global());
+        let vm = vm_get();
+        self.clear_on_data_callback(self.get_this_value(), vm.global());
         self.upgrade_context.reset();
 
         self.buffered_request_body_data_during_pause.clear_and_free();
@@ -916,9 +917,8 @@ impl NodeHTTPResponse {
             js_value
         };
         if let Some(on_aborted) = js::on_aborted_get_cached(js_this) {
-            let global_this = vm_get().global();
-
-            let vm = bun_vm_mut(global_this);
+            let vm = vm_get();
+            let global_this = vm.global();
             // SAFETY: event_loop() returns the live VM event-loop pointer.
             let event_loop = unsafe { &mut *vm.event_loop() };
 
@@ -1244,9 +1244,10 @@ impl NodeHTTPResponse {
 
         if let Some(callback) = js::on_data_get_cached(this_value) {
             if !callback.is_undefined() {
-                let global_this = vm_get().global();
+                let vm = vm_get();
+                let global_this = vm.global();
                 // SAFETY: event_loop() returns the live VM event-loop pointer.
-                let event_loop = unsafe { &mut *bun_vm_mut(global_this).event_loop() };
+                let event_loop = unsafe { &mut *vm.event_loop() };
 
                 let bytes = self.get_bytes(global_this, chunk);
 
@@ -1296,9 +1297,9 @@ impl NodeHTTPResponse {
             self.deref();
             return;
         };
-        let global_this = vm_get().global();
+        let vm = vm_get();
+        let global_this = vm.global();
         js::on_writable_set_cached(this_value, global_this, JSValue::UNDEFINED); // TODO(@heimskr): is this necessary?
-        let vm = bun_vm_mut(global_this);
 
         // SAFETY: event_loop() returns the live VM event-loop pointer.
         unsafe { &mut *vm.event_loop() }.run_callback(

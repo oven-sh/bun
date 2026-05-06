@@ -2,7 +2,7 @@ use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromise, JSPropertyIterator, JSValue, JsRef,
     JsResult,
 };
-use bun_jsc::node::BlobOrStringOrBuffer as JSArgument;
+use crate::node::BlobOrStringOrBuffer as JSArgument;
 use bun_str::strings;
 
 use super::js_valkey::{JSValkeyClient, SubscriptionCtx};

@@ -8,7 +8,7 @@ use bun_str::zig_string::Slice as ZigStringSlice;
 use bun_sys::Fd;
 use bun_uws as uws;
 
-use super::Listener;
+use super::Listener as SocketListener;
 use super::listener::ListenerType;
 use super::SSLConfig;
 use super::SocketMode;

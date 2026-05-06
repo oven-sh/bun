@@ -2601,8 +2601,10 @@ where
                             return;
                         }
 
-                        readable_stream::Source::Bytes(byte_stream) => {
-                            debug_assert!(byte_stream.pipe.ctx.is_null());
+                        readable_stream::Source::Bytes(byte_stream_ptr) => {
+                            // SAFETY: Source::Bytes stores a live *mut ByteStream
+                            let byte_stream = unsafe { &mut *byte_stream_ptr };
+                            debug_assert!(byte_stream.pipe.ctx.is_none());
                             debug_assert!(this.byte_stream.is_none());
                             if this.resp.is_none() {
                                 // we don't have a response, so we can discard the stream
@@ -2623,14 +2625,15 @@ where
                                 return;
                             }
                             this.ref_();
-                            byte_stream.pipe = WebCore::Pipe::wrap::<Self>(Self::on_pipe).init(this);
+                            byte_stream.pipe = WebCore::Wrap::<Self>::init(this);
                             // Deinit the old Strong reference before creating a new one
                             // to avoid leaking the Strong.Impl memory
                             this.response_body_readable_stream_ref.deinit();
                             this.response_body_readable_stream_ref =
                                 readable_stream::Strong::init(stream, global_this);
 
-                            this.byte_stream = Some(NonNull::from(byte_stream));
+                            // SAFETY: byte_stream_ptr came from Source::Bytes
+                            this.byte_stream = Some(unsafe { NonNull::new_unchecked(byte_stream_ptr) });
                             let response_buf = byte_stream.drain();
                             this.response_buf_owned = response_buf.move_to_list();
 
@@ -2665,7 +2668,7 @@ where
                         return;
                     }; // TODO: properly propagate exception upwards
                     readable.ensure_still_alive();
-                    this.do_render_with_body(value, None);
+                    Self::do_render_with_body(this, value, None);
                     return;
                 }
 

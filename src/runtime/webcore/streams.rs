@@ -25,17 +25,15 @@ bun_core::declare_scope!(NetworkSinkLog, visible);
 /// `HTTPServerWritable.pooled_buffer`.
 pub type ByteListPoolNode = bun_collections::pool::Node<bun_collections::ByteList>;
 
-// `bun_s3` is not a workspace crate yet (only `bun_s3_signing`). NetworkSink
-// stores a borrowed `*MultiPartUpload`; until the real type is wired, model it
-// as opaque `c_void` so the struct is name-able from RequestContext.
-// TODO(b2-blocked): swap to `crate::webcore::s3::multipart::MultiPartUpload`
-// once `webcore::s3` is un-gated in webcore.rs.
+// NetworkSink stores a borrowed `*MultiPartUpload`. Now that `webcore::s3` is
+// wired, alias the module to the real type so `bun_s3::MultiPartUpload` resolves
+// for callers that still spell it that way.
 pub mod bun_s3 {
-    pub type MultiPartUpload = core::ffi::c_void;
+    pub use crate::webcore::s3::MultiPartUpload;
 }
 
-/// `Blob.SizeType` is `u32` in Zig.
-type BlobSizeType = u32;
+/// `Blob.SizeType` is `u52` in Zig; the Rust port uses `u64` (see `webcore::blob::SizeType`).
+type BlobSizeType = u64;
 type ByteList = BabyList<u8>;
 
 // Compat: `webcore::Pipe` and Body refer to `streams::Result` / `streams::result::StreamError`.

@@ -1746,7 +1746,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
         let cache_key: &[u8] = abs_package_json_path.as_bytes();
         let _ = cache_key;
         // Re-read package.json from disk
-        json = todo!("blocked_on: bun_install::PackageManager::{workspace_package_json_cache,log}");
+        json = todo!("blocked_on: bun_install::PackageManager::workspace_package_json_cache + log");
 
         // Re-validate private flag after scripts may have modified it.
         if FOR_PUBLISH {

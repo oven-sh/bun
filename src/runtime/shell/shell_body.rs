@@ -5591,7 +5591,7 @@ pub mod testing_apis {
                     LexerAscii::new(&arena, &script[..], &mut jsstrings[..], jsobjs_len);
                 if let Err(err) = lexer.lex() {
                     return Err(global.throw_error(
-                        bun_core::err!("{}", <&'static str>::from(&err)),
+                        bun_core::Error::msg(<&'static str>::from(&err)),
                         "failed to lex shell",
                     ));
                 }
@@ -5601,7 +5601,7 @@ pub mod testing_apis {
                 LexerUnicode::new(&arena, &script[..], &mut jsstrings[..], jsobjs_len);
             if let Err(err) = lexer.lex() {
                 return Err(global.throw_error(
-                    bun_core::err!("{}", <&'static str>::from(&err)),
+                    bun_core::Error::msg(<&'static str>::from(&err)),
                     "failed to lex shell",
                 ));
             }

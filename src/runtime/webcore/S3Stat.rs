@@ -16,7 +16,7 @@ impl S3Stat {
     // bare `constructor(..)`, which can't resolve inside an `impl`. The
     // `#[bun_jsc::JsClass]` derive already emits the `<Self>::constructor` shim.
     pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<Box<Self>> {
-        Err(global.throw_invalid_arguments("S3Stat is not constructable", &[]))
+        Err(global.throw_invalid_arguments("S3Stat is not constructable"))
     }
 
     pub fn init(
@@ -26,9 +26,9 @@ impl S3Stat {
         last_modified: &[u8],
         global: &JSGlobalObject,
     ) -> JsResult<Box<Self>> {
-        let date_str = BunString::init(last_modified);
+        let mut date_str = BunString::init(last_modified);
         // `date_str` drops (derefs) at end of scope.
-        let last_modified = date_str.parse_date(global)?;
+        let last_modified = bun_jsc::bun_string_jsc::parse_date(&mut date_str, global)?;
 
         Ok(Box::new(S3Stat {
             size,
@@ -40,7 +40,7 @@ impl S3Stat {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_size(&self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(self.size)
+        JSValue::js_number(self.size as f64)
     }
 
     #[bun_jsc::host_fn(getter)]

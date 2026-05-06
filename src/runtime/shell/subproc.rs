@@ -393,7 +393,7 @@ impl ShellSubprocess {
                     }
                 }
             }
-            subproc.process.set_exit_handler_default();
+            subproc.proc().set_exit_handler_default();
             // SAFETY: `this` was created via Box::into_raw in spawn and is uniquely owned here.
             drop(unsafe { Box::from_raw(this) });
         }

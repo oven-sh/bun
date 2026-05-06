@@ -4534,9 +4534,9 @@ impl H2FrameParser {
 
     #[bun_jsc::host_fn(method)]
     pub fn send_trailers(this: &mut Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args_list = callframe.arguments_old(3);
+        let args_list = callframe.arguments_old::<3>();
         if args_list.len < 3 {
-            return global_object.throw("Expected stream, headers and sensitiveHeaders arguments");
+            return Err(global_object.throw("Expected stream, headers and sensitiveHeaders arguments"));
         }
 
         let stream_arg = args_list.ptr[0];
@@ -4544,32 +4544,32 @@ impl H2FrameParser {
         let sensitive_arg = args_list.ptr[2];
 
         if !stream_arg.is_number() {
-            return global_object.throw("Expected stream to be a number");
+            return Err(global_object.throw("Expected stream to be a number"));
         }
 
         let stream_id = stream_arg.to_u32();
         if stream_id == 0 || stream_id > MAX_STREAM_ID {
-            return global_object.throw("Invalid stream id");
+            return Err(global_object.throw("Invalid stream id"));
         }
 
         let Some(stream_ptr) = this.streams.get(&stream_id).copied() else {
-            return global_object.throw("Invalid stream id");
+            return Err(global_object.throw("Invalid stream id"));
         };
         // SAFETY: stream_ptr is a *mut Stream stored in self.streams (Box::into_raw); valid for the lifetime of the entry, exclusive access reshaped for borrowck
         let stream = unsafe { &mut *stream_ptr };
 
         let Some(headers_obj) = headers_arg.get_object() else {
-            return global_object.throw("Expected headers to be an object");
+            return Err(global_object.throw("Expected headers to be an object"));
         };
 
         if !sensitive_arg.is_object() {
-            return global_object.throw("Expected sensitiveHeaders to be an object");
+            return Err(global_object.throw("Expected sensitiveHeaders to be an object"));
         }
 
         // PERF(port): was BufferFallbackAllocator over shared_request_buffer — using plain Vec
         let mut encoded_headers: Vec<u8> = Vec::new();
         if encoded_headers.try_reserve(16384).is_err() {
-            return global_object.throw("Failed to allocate header buffer");
+            return Err(global_object.throw("Failed to allocate header buffer"));
         }
         // max header name length for lshpack
         let mut name_buffer = [0u8; 4096];
@@ -4878,23 +4878,23 @@ impl H2FrameParser {
         if this.handle_received_stream_id(id).is_none() {
             return Ok(JSValue::js_number(-1.0));
         }
-        Ok(JSValue::js_number(id))
+        Ok(JSValue::js_number(id as f64))
     }
 
     #[bun_jsc::host_fn(method)]
     pub fn get_stream_context(this: &mut Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let args_list = callframe.arguments_old::<1>();
         if args_list.len < 1 {
-            return global_object.throw("Expected stream_id argument");
+            return Err(global_object.throw("Expected stream_id argument"));
         }
 
         let stream_id_arg = args_list.ptr[0];
         if !stream_id_arg.is_number() {
-            return global_object.throw("Expected stream_id to be a number");
+            return Err(global_object.throw("Expected stream_id to be a number"));
         }
 
         let Some(stream) = this.streams.get(&stream_id_arg.to_u32()).copied() else {
-            return global_object.throw("Invalid stream id");
+            return Err(global_object.throw("Invalid stream id"));
         };
 
         // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
@@ -4903,21 +4903,21 @@ impl H2FrameParser {
 
     #[bun_jsc::host_fn(method)]
     pub fn set_stream_context(this: &mut Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args_list = callframe.arguments_old(2);
+        let args_list = callframe.arguments_old::<2>();
         if args_list.len < 2 {
-            return global_object.throw("Expected stream_id and context arguments");
+            return Err(global_object.throw("Expected stream_id and context arguments"));
         }
 
         let stream_id_arg = args_list.ptr[0];
         if !stream_id_arg.is_number() {
-            return global_object.throw("Expected stream_id to be a number");
+            return Err(global_object.throw("Expected stream_id to be a number"));
         }
         let Some(stream) = this.streams.get(&stream_id_arg.to_u32()).copied() else {
-            return global_object.throw("Invalid stream id");
+            return Err(global_object.throw("Invalid stream id"));
         };
         let context_arg = args_list.ptr[1];
         if !context_arg.is_object() {
-            return global_object.throw("Expected context to be an object");
+            return Err(global_object.throw("Expected context to be an object"));
         }
 
         // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
@@ -4985,7 +4985,7 @@ impl H2FrameParser {
     pub fn emit_error_to_all_streams(this: &mut Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let args_list = callframe.arguments_old::<1>();
         if args_list.len < 1 {
-            return global_object.throw("Expected error argument");
+            return Err(global_object.throw("Expected error argument"));
         }
 
         // PORT NOTE: StreamResumableIterator stores a raw *mut and only borrows the parser briefly
@@ -5023,9 +5023,9 @@ impl H2FrameParser {
     pub fn request(this: &mut Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         bun_output::scoped_log!(H2FrameParser, "request");
 
-        let args_list = callframe.arguments_old(5);
+        let args_list = callframe.arguments_old::<5>();
         if args_list.len < 4 {
-            return global_object.throw("Expected stream_id, stream_ctx, headers and sensitiveHeaders arguments");
+            return Err(global_object.throw("Expected stream_id, stream_ctx, headers and sensitiveHeaders arguments"));
         }
 
         let stream_id_arg = args_list.ptr[0];

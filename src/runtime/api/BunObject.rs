@@ -1720,15 +1720,13 @@ pub fn nanoseconds(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSVa
 #[bun_jsc::host_fn]
 pub fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments = callframe.arguments_old(2).slice();
-    let mut config: jsc::api::ServerConfig = 'brk: {
+    let mut config: crate::server::ServerConfig = 'brk: {
         let mut args = CallFrame::ArgumentsSlice::init(global_object.bun_vm(), arguments);
-        let mut config = jsc::api::ServerConfig::default();
 
-        jsc::api::ServerConfig::from_js(
+        let config = crate::server::ServerConfig::from_js(
             global_object,
-            &mut config,
             &mut args,
-            jsc::api::ServerConfigFromJSOptions {
+            crate::server::server_config::FromJSOptions {
                 allow_bake_config: bun_core::FeatureFlags::bake(),
                 is_fetch_required: true,
                 has_user_routes: false,

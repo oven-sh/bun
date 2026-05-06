@@ -14,7 +14,7 @@
 //! Note that we only check for potential updates ot this timer once per event loop tick.
 
 use bun_core::Timespec;
-use bun_jsc::VirtualMachine;
+use bun_jsc::virtual_machine::VirtualMachine;
 use bun_uws::Loop;
 
 use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};

@@ -78,7 +78,7 @@ pub fn to_contain_equal(
             // jest does not have a `typeof === "string"` check for `toContainEqual`.
             // it immediately spreads the value into an array.
 
-            let mut expected_codepoint_cursor = strings::codepoint_iterator::Cursor::default();
+            let mut expected_codepoint_cursor = strings::Cursor::default();
             let mut expected_iter = strings::CodepointIterator::init(expected_string.slice());
             let _ = expected_iter.next(&mut expected_codepoint_cursor);
 

@@ -87,7 +87,11 @@ pub struct SpawnSyncEventLoop {
 
     #[cfg(windows)]
     uv_timer: Option<NonNull<libuv::Timer>>,
-    did_timeout: bool,
+    // ALIASING: `Cell` because on Windows the libuv timer callback (`on_uv_timer`) writes this
+    // field re-entrantly from inside `tick_with_timeout`'s uws tick while that frame still holds
+    // `&mut self` (LLVM `noalias`). Zig's `*T` freely aliases; in Rust the field must be
+    // interior-mutable so the re-entrant write is sound under Stacked Borrows.
+    did_timeout: Cell<bool>,
 }
 
 /// Minimal handler for the isolated loop

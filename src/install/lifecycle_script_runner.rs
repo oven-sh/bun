@@ -956,20 +956,23 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             started_at: 0,
             heap: io_heap::IntrusiveField::default(),
         });
-        // SAFETY: `new` returned a freshly boxed non-null ptr; we hold the only reference.
-        let lifecycle_subprocess = unsafe { &mut *lifecycle_subprocess };
 
         if log_level.is_verbose() {
             Output::pretty_errorln(format_args!(
                 "<d>[Scripts]<r> Starting scripts for <b>\"{}\"<r>",
-                bstr::BStr::new(lifecycle_subprocess.scripts.package_name),
+                // SAFETY: `new` returned a freshly boxed non-null ptr; we hold the only reference.
+                bstr::BStr::new(unsafe { &(*lifecycle_subprocess).scripts }.package_name),
             ));
         }
 
-        lifecycle_subprocess.increment_pending_script_tasks();
+        // SAFETY: `new` returned a freshly boxed non-null ptr; we hold the only reference.
+        unsafe { &*lifecycle_subprocess }.increment_pending_script_tasks();
 
-        let first_index = lifecycle_subprocess.scripts.first_index;
-        if let Err(err) = lifecycle_subprocess.spawn_next_script(first_index) {
+        // SAFETY: as above.
+        let first_index = unsafe { &(*lifecycle_subprocess).scripts }.first_index;
+        // SAFETY: `lifecycle_subprocess` is the allocation-rooted `Box::into_raw` pointer
+        // from `Self::new`; passing it gives the stored backrefs stable provenance.
+        if let Err(err) = unsafe { Self::spawn_next_script(lifecycle_subprocess, first_index) } {
             Output::pretty_errorln(format_args!(
                 "<r><red>error<r>: Failed to run script <b>{}<r> due to error <b>{}<r>",
                 bstr::BStr::new(Lockfile::Scripts::NAMES[first_index as usize]),

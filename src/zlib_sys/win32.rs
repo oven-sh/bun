@@ -149,11 +149,11 @@ unsafe extern "C" {
     pub fn crc32(crc: uLong, buf: *const Bytef, len: uInt) -> uLong;
     pub fn crc32_z(crc: uLong, buf: *const Bytef, len: z_size_t) -> uLong;
     pub fn crc32_combine_op(crc1: uLong, crc2: uLong, op: uLong) -> uLong;
-    pub fn deflateInit_(strm: z_streamp, level: c_int, version: *const u8, stream_size: c_int) -> ReturnCode;
-    pub fn inflateInit_(strm: z_streamp, version: *const u8, stream_size: c_int) -> ReturnCode;
-    pub fn deflateInit2_(strm: z_streamp, level: c_int, method: c_int, windowBits: c_int, memLevel: c_int, strategy: c_int, version: *const u8, stream_size: c_int) -> ReturnCode;
-    pub fn inflateInit2_(strm: z_streamp, windowBits: c_int, version: *const u8, stream_size: c_int) -> ReturnCode;
-    pub fn inflateBackInit_(strm: z_streamp, windowBits: c_int, window: *mut u8, version: *const u8, stream_size: c_int) -> ReturnCode;
+    pub fn deflateInit_(strm: z_streamp, level: c_int, version: *const c_char, stream_size: c_int) -> ReturnCode;
+    pub fn inflateInit_(strm: z_streamp, version: *const c_char, stream_size: c_int) -> ReturnCode;
+    pub fn deflateInit2_(strm: z_streamp, level: c_int, method: c_int, windowBits: c_int, memLevel: c_int, strategy: c_int, version: *const c_char, stream_size: c_int) -> ReturnCode;
+    pub fn inflateInit2_(strm: z_streamp, windowBits: c_int, version: *const c_char, stream_size: c_int) -> ReturnCode;
+    pub fn inflateBackInit_(strm: z_streamp, windowBits: c_int, window: *mut u8, version: *const c_char, stream_size: c_int) -> ReturnCode;
     pub fn gzgetc_(file: gzFile) -> ReturnCode;
     pub fn gzopen(path: *const u8, mode: *const u8) -> gzFile;
     pub fn gzseek(file: gzFile, offset: c_long, whence: c_int) -> c_long;

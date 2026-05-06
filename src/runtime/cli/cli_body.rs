@@ -437,7 +437,7 @@ pub mod command {
 
         if Tag::USES_GLOBAL_OPTIONS.get(COMMAND) {
             // SAFETY: just initialized
-            unsafe { (*GLOBAL_CLI_CTX).args = arguments::parse::<COMMAND>(&mut *GLOBAL_CLI_CTX)? };
+            unsafe { (*GLOBAL_CLI_CTX).args = arguments::parse(COMMAND, &mut *GLOBAL_CLI_CTX)? };
         }
 
         #[cfg(windows)]

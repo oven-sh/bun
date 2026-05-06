@@ -1081,10 +1081,10 @@ impl Framework {
                                 let mut it_2 = array.array_iterator(global)?;
                                 let mut dirs =
                                     bun_alloc::ArenaVec::<&'static [u8]>::with_capacity_in(
-                                        len, arena,
+                                        len as usize, arena,
                                     );
                                 while let Some(array_item) = it_2.next()? {
-                                    dirs.push(refs.track(array_item.to_slice(global, arena)?));
+                                    dirs.push(refs.track(array_item.to_slice(global)?));
                                 }
                                 break 'exts arena_erase(dirs.into_bump_slice());
                             }
@@ -1124,7 +1124,7 @@ impl Framework {
             built_in_modules,
         };
 
-        if let Some(plugin_array) = opts.get_optional::<JSValue>(global, "plugins")? {
+        if let Some(plugin_array) = get_optional_value(opts, global, b"plugins")? {
             bundler_options.parse_plugin_array(plugin_array, global)?;
         }
 

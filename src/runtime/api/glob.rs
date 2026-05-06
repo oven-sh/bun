@@ -246,8 +246,8 @@ impl<'a> WalkTask<'a> {
 
         let js_strings = match glob_walk_result_to_js(&mut self.walker, self.global) {
             Ok(v) => v,
-            Err(_) => return promise.reject(self.global, bun_core::err!("JSError")),
-            // TODO(port): `error.JSError` value passed to promise.reject — verify bun_jsc API.
+            Err(e) => return promise.reject(self.global, Err(e)),
+            // PORT NOTE: `error.JSError` → pass the JsError through; reject() pulls the pending exception.
         };
         promise.resolve(self.global, js_strings)
     }

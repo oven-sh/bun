@@ -45,7 +45,7 @@ impl Default for Assets {
 
 // Zig: `bun.GenericIndex(u30, Assets)` — newtype index; the `Assets` type-tag is dropped.
 // PORT NOTE: Zig used `u30`; Rust has no u30, so we store u32 and debug-assert range in `init`.
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Default)]
 #[repr(transparent)]
 pub struct EntryIndex(u32);
 

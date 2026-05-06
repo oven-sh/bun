@@ -77,7 +77,7 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
         Global::crash();
     }
 
-    let mut cwd_buf = PathBuffer::uninit();
+    let mut cwd_buf = bun_core::PathBuffer::uninit();
     let cwd = match bun_core::getcwd(&mut cwd_buf) {
         Ok(cwd) => cwd.as_bytes(),
         Err(err) => {

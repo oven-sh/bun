@@ -498,6 +498,7 @@ pub struct MemoryCost {
 }
 
 #[repr(C)]
+#[derive(Default)]
 pub struct TempLookup {
     pub edge_index: EdgeIndex,
     pub seen: bool,

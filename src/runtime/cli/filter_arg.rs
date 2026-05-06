@@ -284,11 +284,11 @@ pub struct PackageFilterIterator {
 }
 
 impl PackageFilterIterator {
-    pub fn init(patterns: &[&[u8]], root_dir: &[u8]) -> Result<PackageFilterIterator, bun_core::Error> {
+    pub fn init(patterns: &[Box<[u8]>], root_dir: &[u8]) -> Result<PackageFilterIterator, bun_core::Error> {
         // TODO(port): narrow error set (Zig signature was `!PackageFilterIterator` but body is infallible)
         Ok(PackageFilterIterator {
             // SAFETY: caller keeps `patterns`/`root_dir` alive for the iterator's lifetime (see TODO above).
-            patterns: patterns as *const [&[u8]] as *const [*const [u8]],
+            patterns: patterns as *const [Box<[u8]>],
             pattern_idx: 0,
             root_dir: root_dir as *const [u8],
             walker: MaybeUninit::uninit(),

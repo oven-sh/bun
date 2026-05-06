@@ -48,16 +48,22 @@ pub struct ThreadPool {
     // dereference for `wake_for_idle_events()` without a borrow on `ThreadPool`.
     pub worker_pool: *mut ThreadPoolLib::ThreadPool,
     pub worker_pool_is_owned: bool,
-    pub workers_assignments: ArrayHashMap<ThreadId, *mut Worker>,
-    pub workers_assignments_lock: Mutex,
+    // PORT NOTE: Zig had `workers_assignments` + sibling `workers_assignments_lock`.
+    // Per PORTING.md §Concurrency ("Mutex<T> owns T"), the lock is folded into
+    // the field so `get_worker` can take `&self` — `Worker::get` is entered
+    // concurrently from arbitrary worker-pool threads, and a `&mut self` here
+    // would alias `&mut ThreadPool` across threads (UB before the lock is even
+    // reached).
+    pub workers_assignments: parking_lot::Mutex<ArrayHashMap<ThreadId, *mut Worker>>,
     // BACKREF (LIFETIMES.tsv row 170: ThreadPool.v2). `BundleV2` is generic
     // over `'a`; erase to `'static` behind the raw pointer like ParseTask.ctx.
     pub v2: *const BundleV2<'static>,
 }
 
-// SAFETY: `ThreadPool` is shared across worker threads guarded by
-// `workers_assignments_lock`; the raw-pointer fields are externally
-// synchronized exactly as in the Zig source.
+// SAFETY: `ThreadPool` is shared across worker threads; the only mutated
+// field (`workers_assignments`) is guarded by its `parking_lot::Mutex`, and
+// the raw-pointer fields are externally synchronized exactly as in the Zig
+// source.
 unsafe impl Send for ThreadPool {}
 unsafe impl Sync for ThreadPool {}
 
@@ -70,8 +76,7 @@ impl Default for ThreadPool {
             io_pool: None,
             worker_pool: ptr::null_mut(),
             worker_pool_is_owned: false,
-            workers_assignments: ArrayHashMap::default(),
-            workers_assignments_lock: Mutex::default(),
+            workers_assignments: parking_lot::Mutex::new(ArrayHashMap::default()),
             v2: ptr::null(),
         }
     }
@@ -216,8 +221,7 @@ impl ThreadPool {
             // BACKREF: lifetime erased behind the raw pointer.
             v2: (v2 as *const BundleV2<'_>).cast(),
             worker_pool_is_owned: false,
-            workers_assignments: ArrayHashMap::default(),
-            workers_assignments_lock: Mutex::default(),
+            workers_assignments: parking_lot::Mutex::new(ArrayHashMap::default()),
         }
     }
 
@@ -329,19 +333,19 @@ impl ThreadPool {
     }
 
     // PORT NOTE: returns `&'static mut` — the `Worker` is `Box::into_raw`'d
-    // below and lives until `Worker::deinit`; detaching from `&mut self` lets
+    // below and lives until `Worker::deinit`; detaching from `&self` lets
     // callers re-borrow `ThreadPool` while holding the worker (Zig: `*Worker`).
-    pub fn get_worker(&mut self, id: ThreadId) -> &'static mut Worker {
+    // Takes `&self` (not `&mut`) because this is called concurrently from
+    // worker-pool threads via `Worker::get`; mutation goes through the
+    // `parking_lot::Mutex` on `workers_assignments`.
+    pub fn get_worker(&self, id: ThreadId) -> &'static mut Worker {
         let worker: *mut Worker;
         {
-            self.workers_assignments_lock.lock();
-            // PORT NOTE: reshaped for borrowck — `scopeguard::guard(&mut lock)`
-            // would borrow `self` for the whole scope and conflict with
-            // `workers_assignments`. Unlock manually on each exit path instead.
-            match self.workers_assignments.entry(id) {
+            let mut map = self.workers_assignments.lock();
+            match map.entry(id) {
                 MapEntry::Occupied(o) => {
                     let w = *o.into_mut();
-                    self.workers_assignments_lock.unlock();
+                    drop(map);
                     // SAFETY: map only stores live Box::into_raw'd Workers (inserted below).
                     return unsafe { &mut *w };
                 }
@@ -353,7 +357,6 @@ impl ThreadPool {
                     v.insert(worker);
                 }
             }
-            self.workers_assignments_lock.unlock();
         }
 
         // SAFETY: `worker` is freshly Box::into_raw'd and exclusive on this
@@ -477,12 +480,12 @@ impl Worker {
     // borrow; Zig returned `*Worker`. Tying it to `ctx`'s lifetime would
     // forbid the `worker` ↔ `ctx` re-borrows in `ParseTask::run_*`.
     pub fn get(ctx: &BundleV2<'_>) -> &'static mut Worker {
-        // SAFETY: `ctx` is a BACKREF; `graph.pool` needs `&mut` but `BundleV2`
-        // owns it uniquely on the JS thread, and per-thread `get_worker` only
-        // touches the map under `workers_assignments_lock`.
-        // PORT NOTE: reshaped for borrowck — cast through raw ptr to reach
-        // `&mut pool` from a shared backref.
-        let pool: &mut ThreadPool = unsafe { ctx.graph.pool.as_ptr().as_mut().unwrap_unchecked() };
+        // SAFETY: `ctx` is a BACKREF; `graph.pool` is a `NonNull<ThreadPool>`
+        // pointing at the bundle-owned pool that outlives every worker. We only
+        // need a shared `&ThreadPool` — `get_worker` takes `&self` and serializes
+        // map mutation via the internal `parking_lot::Mutex`, so concurrent
+        // entry from multiple worker threads is sound.
+        let pool: &ThreadPool = unsafe { ctx.graph.pool.as_ref() };
         let worker = pool.get_worker(bun_threading::current_thread_id());
         if !worker.has_created {
             worker.create(ctx);
@@ -587,34 +590,50 @@ impl Worker {
             t.resolver.caches = CacheSet::Set::init();
         }
         let _ = (log, transpiler, from, allocator);
+        // PORT NOTE: §Forbidden — no silent no-op when the .zig has real logic.
+        // Falling through here would leave the `MaybeUninit<Transpiler>` slot
+        // unwritten and `transpiler_for_target` would `assume_init` UB. Fail
+        // loudly until the gated body above can un-gate.
+        todo!("Worker::initialize_transpiler: blocked on Transpiler::Clone/set_log/set_allocator + crate::Linker.resolver");
     }
 
     pub fn transpiler_for_target(&mut self, target: Target) -> &mut Transpiler<'static> {
-        // SAFETY: callers only invoke this after `Worker::get` → `create()`.
-        let data = unsafe { self.data.assume_init_mut() };
-        // SAFETY: `create()` wrote `data.transpiler` via `initialize_transpiler`.
-        let primary = unsafe { data.transpiler.assume_init_mut() };
-        if target == Target::Browser && primary.options.target != target {
-            if data.other_transpiler.is_none() {
-                // PORT NOTE: Zig wrote `undefined` into the Option payload then
-                // borrowed it; mirror with an uninit Box.
-                let mut slot: Box<MaybeUninit<Transpiler<'static>>> = Box::new_uninit();
-                // SAFETY: ctx is a valid backref; `client_transpiler` must be
-                // Some in this branch per Zig `.?`.
-                let client: &Transpiler<'_> =
-                    unsafe { (*self.ctx).client_transpiler.unwrap_unchecked().as_ref() };
-                Self::initialize_transpiler(data.log, &mut slot, client, self.allocator);
-                // SAFETY: `initialize_transpiler` fully writes the slot
-                // (once the body un-gates; until then this path is unreachable
-                // because `primary.options.target` is never populated).
-                data.other_transpiler = Some(unsafe { slot.assume_init() });
+        // TODO(b2-blocked): `data.transpiler` is only written by
+        // `initialize_transpiler`, whose body is `#[cfg(any())]`-gated on
+        // `Transpiler::Clone/set_log/set_allocator`. Until that un-gates, the
+        // `assume_init_mut()` below would read uninitialized memory — gate the
+        // whole body alongside it and fail loudly so the dependency is explicit.
+        #[cfg(any())]
+        {
+            // SAFETY: callers only invoke this after `Worker::get` → `create()`.
+            let data = unsafe { self.data.assume_init_mut() };
+            // SAFETY: `create()` wrote `data.transpiler` via `initialize_transpiler`.
+            let primary = unsafe { data.transpiler.assume_init_mut() };
+            if target == Target::Browser && primary.options.target != target {
+                if data.other_transpiler.is_none() {
+                    // PORT NOTE: Zig wrote `undefined` into the Option payload then
+                    // borrowed it; mirror with an uninit Box.
+                    let mut slot: Box<MaybeUninit<Transpiler<'static>>> = Box::new_uninit();
+                    // SAFETY: ctx is a valid backref; `client_transpiler` must be
+                    // Some in this branch per Zig `.?`.
+                    let client: &Transpiler<'_> =
+                        unsafe { (*self.ctx).client_transpiler.unwrap_unchecked().as_ref() };
+                    Self::initialize_transpiler(data.log, &mut slot, client, self.allocator);
+                    // SAFETY: `initialize_transpiler` fully writes the slot.
+                    data.other_transpiler = Some(unsafe { slot.assume_init() });
+                }
+                let other = data.other_transpiler.as_deref_mut().unwrap();
+                debug_assert!(other.options.target == target);
+                return other;
             }
-            let other = data.other_transpiler.as_deref_mut().unwrap();
-            debug_assert!(other.options.target == target);
-            return other;
-        }
 
-        primary
+            return primary;
+        }
+        #[allow(unreachable_code)]
+        {
+            let _ = target;
+            todo!("Worker::transpiler_for_target: blocked on initialize_transpiler (Transpiler::Clone/set_log/set_allocator)");
+        }
     }
 
     pub fn run(&mut self, ctx: &BundleV2<'_>) {

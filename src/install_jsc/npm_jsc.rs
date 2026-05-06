@@ -73,166 +73,165 @@ pub fn architecture_is_match(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
 pub struct ManifestBindings;
 
 impl ManifestBindings {
-    pub fn generate(_global: &JSGlobalObject) -> JSValue {
-        // TODO(b2-blocked): bun_jsc::host_fn — proc-macro exists but its
-        // `Free`-kind shim body emits `#fn_name(__g, __f)` (no `Self::`), so it
-        // does not yet support associated fns without a receiver. Either the
-        // macro grows a `Self::`-qualified arm or `js_parse_manifest` moves to
-        // module scope; until then `JSFunction::create` has no `JSHostFn`-ABI
-        // pointer to receive.
-        #[cfg(any())]
-        {
-            use bun_jsc::JSFunction;
-            let obj = JSValue::create_empty_object(_global, 1);
-            obj.put(
-                _global,
-                b"parseManifest",
-                JSFunction::create(
-                    _global,
-                    bun_string::String::static_(b"parseManifest"),
-                    Self::js_parse_manifest,
-                    2,
-                    Default::default(),
-                ),
-            );
-            return obj;
-        }
-        #[cfg(not(any()))]
-        todo!("npm_jsc::ManifestBindings::generate — gated on bun_jsc::host_fn proc-macro")
+    pub fn generate(global: &JSGlobalObject) -> JSValue {
+        use bun_jsc::JSFunction;
+        let obj = JSValue::create_empty_object(global, 1);
+        obj.put(
+            global,
+            b"parseManifest",
+            JSFunction::create(
+                global,
+                bun_string::String::static_(b"parseManifest"),
+                // `#[bun_jsc::host_fn]` on the module-scope `js_parse_manifest`
+                // emits this `JSHostFn`-ABI shim.
+                __jsc_host_js_parse_manifest,
+                2,
+                Default::default(),
+            ),
+        );
+        obj
+    }
+}
+
+// PORT NOTE: lives at module scope (not `impl ManifestBindings`) because the
+// `#[bun_jsc::host_fn]` Free-kind shim body emits `#fn_name(__g, __f)` without
+// a `Self::` qualifier, so the wrapped fn must resolve unqualified.
+#[bun_jsc::host_fn]
+pub fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    use std::io::Write as _;
+    use bstr::BStr;
+    use bun_jsc::JsError;
+    use bun_string::{strings, String as BunString};
+    use bun_install::npm;
+
+    let args = frame.arguments_old::<2>();
+    let args = args.slice();
+    if args.len() < 2 || !args[0].is_string() || !args[1].is_string() {
+        return Err(global.throw(format_args!(
+            "expected manifest filename and registry string arguments"
+        )));
     }
 
-    pub fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        use std::io::Write as _;
-        use bstr::BStr;
-        use bun_jsc::JsError;
-        use bun_string::{strings, String as BunString};
-        use bun_install::npm;
+    // `defer manifest_filename_str.deref()` — release the +1 WTFStringImpl ref
+    // returned by `toBunString`; `bun_string::String` has no `Drop` impl.
+    let manifest_filename_str =
+        scopeguard::guard(args[0].to_bun_string(global)?, |s| s.deref());
+    let manifest_filename = manifest_filename_str.to_utf8();
 
-        let args = frame.arguments_old::<2>();
-        let args = args.slice();
-        if args.len() < 2 || !args[0].is_string() || !args[1].is_string() {
+    // `defer registry_str.deref()` — see above.
+    let registry_str = scopeguard::guard(args[1].to_bun_string(global)?, |s| s.deref());
+    let registry = registry_str.to_utf8();
+
+    // PORT NOTE: Zig used `std.fs.cwd().openFile`; PORTING.md bans std::fs, so go
+    // through bun_sys (read-only open).
+    let manifest_file = match bun_sys::openat_a(
+        bun_sys::Fd::cwd(),
+        manifest_filename.slice(),
+        bun_sys::O::RDONLY,
+        0,
+    ) {
+        Ok(fd) => bun_sys::File::from_fd(fd),
+        Err(err) => {
             return Err(global.throw(format_args!(
-                "expected manifest filename and registry string arguments"
+                "failed to open manifest file \"{}\": {}",
+                BStr::new(manifest_filename.slice()),
+                BStr::new(err.name()),
             )));
         }
+    };
+    // `defer manifest_file.close()` — closed at fn return.
+    let manifest_file = scopeguard::guard(manifest_file, |f| { let _ = bun_sys::close(f.handle); });
 
-        let manifest_filename_str = args[0].to_bun_string(global)?;
-        let manifest_filename = manifest_filename_str.to_utf8();
-
-        let registry_str = args[1].to_bun_string(global)?;
-        let registry = registry_str.to_utf8();
-
-        // PORT NOTE: Zig used `std.fs.cwd().openFile`; PORTING.md bans std::fs, so go
-        // through bun_sys (read-only open).
-        let manifest_file = match bun_sys::openat_a(
-            bun_sys::Fd::cwd(),
-            manifest_filename.slice(),
-            bun_sys::O::RDONLY,
-            0,
-        ) {
-            Ok(fd) => bun_sys::File::from_fd(fd),
-            Err(err) => {
-                return Err(global.throw(format_args!(
-                    "failed to open manifest file \"{}\": {}",
-                    BStr::new(manifest_filename.slice()),
-                    BStr::new(err.name()),
-                )));
-            }
-        };
-        // `defer manifest_file.close()` — closed at fn return.
-        let manifest_file = scopeguard::guard(manifest_file, |f| { let _ = bun_sys::close(f.handle); });
-
-        // PORT NOTE: `npm::registry::Scope.url` is `bun_url::URL<'static>` (the
-        // Rust port hard-codes `'static` pending an `OwnedURL` — see TODO(b2) in
-        // npm.rs). Zig's `bun.URL` has no lifetime parameter, and `load_by_file`
-        // / `read_all` only read `scope.url_hash` and `scope.url.href.len()` and
-        // do not retain the slice past the call. Extend the borrow lifetime to
-        // satisfy the field type; `scope` is stack-local and dropped before
-        // `registry` (the borrowee).
-        #[inline(always)]
-        unsafe fn extend<'a>(url: bun_url::URL<'a>) -> bun_url::URL<'static> {
-            unsafe { core::mem::transmute(url) }
-        }
-        let scope = npm::registry::Scope {
-            url_hash: npm::registry::Scope::hash(strings::without_trailing_slash(registry.slice())),
-            // SAFETY: see PORT NOTE above — slices outlive `scope`, callee does not retain.
-            url: unsafe {
-                extend(bun_url::URL {
-                    host: strings::without_trailing_slash(strings::without_prefix(
-                        registry.slice(),
-                        b"http://",
-                    )),
-                    hostname: strings::without_trailing_slash(strings::without_prefix(
-                        registry.slice(),
-                        b"http://",
-                    )),
-                    href: registry.slice(),
-                    origin: strings::without_trailing_slash(registry.slice()),
-                    protocol: if let Some(colon) = strings::index_of_char(registry.slice(), b':') {
-                        &registry.slice()[..colon as usize]
-                    } else {
-                        b""
-                    },
-                    ..Default::default()
-                })
-            },
-            ..Default::default()
-        };
-
-        let maybe_package_manifest = match npm::package_manifest::Serializer::load_by_file(
-            &scope,
-            // PORT NOTE: Zig wrapped std.fs.File via `bun.sys.File.from(...)`; we already
-            // opened a bun_sys::File above, so pass directly.
-            &*manifest_file,
-        ) {
-            Ok(m) => m,
-            Err(err) => {
-                return Err(global.throw(format_args!(
-                    "failed to load manifest file: {}",
-                    BStr::new(err.name())
-                )));
-            }
-        };
-
-        let package_manifest: npm::PackageManifest = match maybe_package_manifest {
-            Some(m) => m,
-            None => {
-                return Err(global.throw(format_args!("manifest is invalid ")));
-            }
-        };
-
-        let mut buf: Vec<u8> = Vec::new();
-
-        // TODO: we can add more information. for now just versions is fine
-
-        write!(
-            &mut buf,
-            "{{\"name\":\"{}\",\"versions\":[",
-            BStr::new(package_manifest.name()),
-        )
-        .map_err(|_| JsError::OutOfMemory)?;
-
-        for (i, version) in package_manifest.versions.iter().enumerate() {
-            if i == package_manifest.versions.len() - 1 {
-                write!(
-                    &mut buf,
-                    "\"{}\"]}}",
-                    version.fmt(&package_manifest.string_buf),
-                )
-                .map_err(|_| JsError::OutOfMemory)?;
-            } else {
-                write!(
-                    &mut buf,
-                    "\"{}\",",
-                    version.fmt(&package_manifest.string_buf),
-                )
-                .map_err(|_| JsError::OutOfMemory)?;
-            }
-        }
-
-        let mut result = BunString::borrow_utf8(&buf);
-        bun_jsc::bun_string_jsc::to_js_by_parse_json(&mut result, global)
+    // PORT NOTE: `npm::registry::Scope.url` is `bun_url::URL<'static>` (the
+    // Rust port hard-codes `'static` pending an `OwnedURL` — see TODO(b2) in
+    // npm.rs). Zig's `bun.URL` has no lifetime parameter, and `load_by_file`
+    // / `read_all` only read `scope.url_hash` and `scope.url.href.len()` and
+    // do not retain the slice past the call. Extend the borrow lifetime to
+    // satisfy the field type; `scope` is stack-local and dropped before
+    // `registry` (the borrowee).
+    #[inline(always)]
+    unsafe fn extend<'a>(url: bun_url::URL<'a>) -> bun_url::URL<'static> {
+        unsafe { core::mem::transmute(url) }
     }
+    let scope = npm::registry::Scope {
+        url_hash: npm::registry::Scope::hash(strings::without_trailing_slash(registry.slice())),
+        // SAFETY: see PORT NOTE above — slices outlive `scope`, callee does not retain.
+        url: unsafe {
+            extend(bun_url::URL {
+                host: strings::without_trailing_slash(strings::without_prefix(
+                    registry.slice(),
+                    b"http://",
+                )),
+                hostname: strings::without_trailing_slash(strings::without_prefix(
+                    registry.slice(),
+                    b"http://",
+                )),
+                href: registry.slice(),
+                origin: strings::without_trailing_slash(registry.slice()),
+                protocol: if let Some(colon) = strings::index_of_char(registry.slice(), b':') {
+                    &registry.slice()[..colon as usize]
+                } else {
+                    b""
+                },
+                ..Default::default()
+            })
+        },
+        ..Default::default()
+    };
+
+    let maybe_package_manifest = match npm::package_manifest::Serializer::load_by_file(
+        &scope,
+        // PORT NOTE: Zig wrapped std.fs.File via `bun.sys.File.from(...)`; we already
+        // opened a bun_sys::File above, so pass directly.
+        &*manifest_file,
+    ) {
+        Ok(m) => m,
+        Err(err) => {
+            return Err(global.throw(format_args!(
+                "failed to load manifest file: {}",
+                BStr::new(err.name())
+            )));
+        }
+    };
+
+    let package_manifest: npm::PackageManifest = match maybe_package_manifest {
+        Some(m) => m,
+        None => {
+            return Err(global.throw(format_args!("manifest is invalid ")));
+        }
+    };
+
+    let mut buf: Vec<u8> = Vec::new();
+
+    // TODO: we can add more information. for now just versions is fine
+
+    write!(
+        &mut buf,
+        "{{\"name\":\"{}\",\"versions\":[",
+        BStr::new(package_manifest.name()),
+    )
+    .map_err(|_| JsError::OutOfMemory)?;
+
+    for (i, version) in package_manifest.versions.iter().enumerate() {
+        if i == package_manifest.versions.len() - 1 {
+            write!(
+                &mut buf,
+                "\"{}\"]}}",
+                version.fmt(&package_manifest.string_buf),
+            )
+            .map_err(|_| JsError::OutOfMemory)?;
+        } else {
+            write!(
+                &mut buf,
+                "\"{}\",",
+                version.fmt(&package_manifest.string_buf),
+            )
+            .map_err(|_| JsError::OutOfMemory)?;
+        }
+    }
+
+    let mut result = BunString::borrow_utf8(&buf);
+    bun_jsc::bun_string_jsc::to_js_by_parse_json(&mut result, global)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

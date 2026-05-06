@@ -2585,29 +2585,3 @@ mod pretty_fmt_tests {
 //   todos:      29
 //   notes:      pretty_fmt! proc-macro landed (bun_core_macros) — tested against pretty_fmt_runtime; Source self-ref *Writer fields replaced by accessors (TSV BORROW_FIELD); writer()/error_writer() escape raw ptrs and want a with_* closure API; per-scope buffered writer state deferred; many `static mut` need atomics/OnceLock in Phase B; Source::ZEROED relies on mem::zeroed() over QuietWriterAdapter/StreamType (hand-write once layouts fixed).
 // ──────────────────────────────────────────────────────────────────────────
-#[test]
-fn __probe_macros() {
-    // (a) note!/warn!/debug! basic usage
-    if false {
-        crate::note!("plain {}", 1);
-        crate::warn!("plain {}", 2);
-        crate::debug!("plain {}", 3);
-        crate::debug_warn!("plain {}", 4);
-        crate::err_generic!("plain {}", 5);
-    }
-    // (b) pretty! side-effecting arg evaluated once
-    if false {
-        let mut n = 0i32;
-        crate::pretty!("{}", { n += 1; n });
-        assert_eq!(n, 1);
-    }
-}
-#[test]
-fn __probe_macros2() {
-    if false {
-        // (a) concat! into note!/warn!/debug! — should compile (Zig allows comptime ++)
-        crate::note!(concat!("from ", "two parts {}"), 1);
-        crate::warn!(concat!("w"));
-        crate::debug!(concat!("d"));
-    }
-}

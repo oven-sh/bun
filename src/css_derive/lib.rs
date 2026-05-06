@@ -27,8 +27,8 @@ use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote};
 use syn::{
-    parse_macro_input, parse_quote, Data, DeriveInput, Fields, GenericParam, Lifetime,
-    LifetimeParam,
+    parse_macro_input, parse_quote, Attribute, Data, DeriveInput, Expr, ExprLit, Fields,
+    GenericParam, Lifetime, LifetimeParam, Lit, Meta,
 };
 
 #[proc_macro_derive(DeepClone)]

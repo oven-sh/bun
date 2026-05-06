@@ -532,6 +532,7 @@ dependencies = [
  "bun_base64",
  "bun_collections",
  "bun_core",
+ "bun_css_derive",
  "bun_io",
  "bun_logger",
  "bun_options_types",
@@ -547,6 +548,15 @@ dependencies = [
  "scopeguard",
  "strum",
  "typed-arena",
+]
+
+[[package]]
+name = "bun_css_derive"
+version = "0.0.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

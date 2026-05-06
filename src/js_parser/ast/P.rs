@@ -6581,15 +6581,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         // TODO(port): Zig used `p.source.path.pretty`; logger::fs::Path currently
         // has only `text` (Phase-A stub). Swap to `.pretty` once bun_paths' full
         // Path lands.
-        let label = strings::concat(&[
+        let label: &'a [u8] = self.allocator.alloc_slice_copy(&strings::concat(&[
             self.source.path.text,
             b":",
             match export_kind {
                 ReactRefreshExportKind::Named => original_name,
                 ReactRefreshExportKind::Default => b"default",
             },
-        ])?;
-        let label_expr = self.new_expr(E::String::init(&label), loc);
+        ])?);
+        let label_expr = self.new_expr(E::String::init(label), loc);
         let call = self.new_expr(
             E::Call {
                 target: Expr::init_identifier(self.react_refresh.register_ref, loc),
@@ -6895,12 +6895,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             // PORT NOTE: Zig held `&mut parts[last]` inside `hmr_transform_ctx`
             // while iterating `parts` — Rust borrowck rejects that aliasing.
             // Reshaped via `split_last_mut` so the head slice and tail part are
-            // disjoint borrows. `finalize()` then needs the full `parts` slice
-            // again while the ctx still holds `last_part`; capture a raw ptr
-            // up-front and rebuild the slice for `finalize` (matching the Zig
-            // aliasing semantics — `finalize` only reads `last_part` via ctx).
-            let all_parts_ptr: *mut js_ast::Part = parts.as_mut_ptr();
-            let all_parts_len: usize = parts.len();
+            // disjoint borrows; `finalize()` takes only the head prefix so the
+            // two `&mut` regions stay disjoint (Stacked-Borrows-clean).
             let (last_part, head_parts) = parts
                 .split_last_mut()
                 .expect("hot_module_reloading parse always has at least one part");
@@ -6949,12 +6945,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 )?;
             }
 
-            // SAFETY: see PORT NOTE above — `last_part` aliases `all_parts[len-1]`;
-            // `finalize` (round-E body) is responsible for treating the ctx-held
-            // `last_part` and `all_parts[len-1]` as the same slot (Zig did so freely).
-            hmr_transform_ctx.finalize(self, unsafe {
-                core::slice::from_raw_parts_mut(all_parts_ptr, all_parts_len)
-            })?;
+            hmr_transform_ctx.finalize(self, head_parts)?;
         } else {
             // Handle import paths after the whole file has been visited because we need
             // symbol usage counts to be able to remove unused type-only imports in

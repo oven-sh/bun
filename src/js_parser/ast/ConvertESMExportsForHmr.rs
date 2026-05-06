@@ -657,7 +657,12 @@ impl<'a> ConvertESMExportsForHmr<'a> {
     pub fn finalize<'p, const TS: bool, J: JsxT, const SCAN: bool>(
         &mut self,
         p: &mut P<'p, TS, J, SCAN>,
-        all_parts: &mut [js_ast::Part],
+        // PORT NOTE: Zig took `all_parts: []Part` and freely re-derived
+        // `&mut all_parts[len-1]` while `ctx.last_part` aliased the same slot.
+        // Rust forbids that aliasing (Stacked Borrows: `&mut [Part]` asserts
+        // exclusive access to every element). Caller passes the `[0..len-1]`
+        // prefix obtained via `split_last_mut`, disjoint from `self.last_part`.
+        head_parts: &mut [js_ast::Part],
     ) -> Result<(), AllocError> {
         if !self.export_star_props.is_empty() {
             if self.export_props.is_empty() {
@@ -757,8 +762,8 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         }
 
         // Merge all part metadata into the first part.
-        let last_idx = all_parts.len() - 1;
-        for part in all_parts[0..last_idx].iter_mut() {
+        let last_idx = head_parts.len();
+        for part in head_parts.iter_mut() {
             self.last_part
                 .declared_symbols
                 .append_list(core::mem::take(&mut part.declared_symbols))?;

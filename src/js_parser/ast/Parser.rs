@@ -1014,6 +1014,12 @@ impl<'a> Parser<'a> {
             }
         }
 
+        // reconciler-6: tail re-gated — ~148 port errors below (p.bump→allocator,
+        // js_ast::Stmt::Data paths, Tracer.end() on (), ArrayHashMap<Loc>.get bounds,
+        // b::Identifier.ref_ field, BumpVec<Part>::extend_from_slice Clone bound).
+        // Body preserved verbatim under #[cfg(any())]; runtime panics until un-gate.
+        #[cfg(any())]
+        {
         if parts.len() < 4 && parts.len() > 0 && p.options.features.unwrap_commonjs_to_esm {
             // Specially handle modules shaped like this:
             //
@@ -1885,6 +1891,9 @@ impl<'a> Parser<'a> {
         }
 
         Ok(js_ast::Result::Ast(p.to_ast(&mut parts, exports_kind, wrap_mode, hashbang)?))
+        } // end reconciler-6 #[cfg(any())] gate
+        let _ = (&mut parts, &mut p);
+        todo!("phase-b2: Parser::_parse tail (unwrap_commonjs_to_esm → to_ast) re-gated by reconciler-6")
     }
 
     #[allow(dead_code)] // called from gated `_parse` body above

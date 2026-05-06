@@ -2,7 +2,7 @@
 
 use core::ffi::c_char;
 
-use bun_jsc::{JSGlobalObject, JSValue, VirtualMachine, WebWorker};
+use bun_jsc::{JSGlobalObject, JSValue, WebWorker};
 use bun_jsc::zig_string::ZigString;
 use bun_core::{self, Environment, Global};
 use bun_core::env_var::feature_flag;
@@ -56,10 +56,7 @@ pub extern "C" fn get_exec_argv(global: &JSGlobalObject) -> JSValue {
 pub extern "C" fn exit(global_object: *const JSGlobalObject, code: u8) {
     // SAFETY: global_object is valid for the duration of this call
     let global_object = unsafe { &*global_object };
-    // PORT NOTE: `bun_vm()` returns `&VirtualMachine`; the Zig original mutates
-    // `exit_handler.exit_code` and calls `&mut self` methods. Cast through the
-    // shared pointer — the VM is per-thread and this matches the Zig semantics.
-    let vm = global_object.bun_vm() as *const VirtualMachine as *mut VirtualMachine;
+    let vm = global_object.bun_vm();
     // SAFETY: vm is the live per-thread VirtualMachine for this global.
     unsafe { (*vm).exit_handler.exit_code = code };
     // SAFETY: worker is either None or a valid `*const WebWorker` (BACKREF set

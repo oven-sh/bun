@@ -1129,6 +1129,10 @@ pub mod fs {
     // The Phase-A resolver body addresses types via `Fs::file_system::*` (the
     // Zig nesting was `FileSystem.RealFS.EntriesOption` etc.). Re-export the
     // flat types under the nested module paths the body expects.
+    /// Re-export `BOM` from the full `fs.rs` port so `cache::Fs::read_handle_into`
+    /// can strip/transcode without duplicating the detect tables here.
+    pub use super::fs_full::BOM;
+
     pub mod file_system {
         pub use super::{DirEntry, DirnameStore, Entry, EntryKind, FilenameStore, RealFS};
         pub mod entry {
@@ -2091,11 +2095,8 @@ trait FdExt: Sized {
 }
 impl FdExt for ::bun_sys::Fd {
     #[inline] fn close(self) { let _ = ::bun_sys::close(self); }
-    #[inline] fn cast(self) -> bun_sys::RawFd {
-        // TODO(b2-blocked): bun_sys::Fd::native — fd.rs has `from_native`/`.native()` only on the inner repr.
-        unimplemented!("Fd::cast (Phase B)")
-    }
-    #[inline] fn native(self) -> bun_sys::RawFd { self.cast() }
+    #[inline] fn cast(self) -> bun_sys::RawFd { ::bun_sys::Fd::native(self) }
+    #[inline] fn native(self) -> bun_sys::RawFd { ::bun_sys::Fd::native(self) }
     #[inline] fn get_fd_path<'b>(self, buf: &'b mut [u8]) -> core::result::Result<&'b [u8], ::bun_core::Error> {
         bun_sys::get_fd_path(self, buf)
     }
@@ -5502,35 +5503,25 @@ impl<'a> Resolver<'a> {
         dirname_fd: FD,
         package_id: Option<Install::PackageID>,
     ) -> core::result::Result<Option<&'static PackageJSON>, bun_core::Error> {
-        // TODO(b2-blocked): PackageJSON::parse takes `&mut Resolver` (cycle) and
-        // its signature is still in flux in package_json.rs. Re-gated.
-        #[cfg(any())]
-        {
-        let pkg = if !self.care_about_scripts {
-            PackageJSON::parse(
-                self,
-                file,
-                dirname_fd,
-                package_id,
-                crate::package_json::IncludeScripts::Ignore,
-                if ALLOW_DEPENDENCIES { crate::package_json::IncludeDependencies::Local } else { crate::package_json::IncludeDependencies::None },
-            )
+        use crate::package_json::{IncludeDependencies, IncludeScripts};
+        // PORT NOTE: Zig threaded both as comptime params; `IncludeDependencies` is a
+        // const generic on `PackageJSON::parse`, `IncludeScripts` is runtime (it only
+        // gates one branch).
+        let include_scripts = if self.care_about_scripts {
+            IncludeScripts::IncludeScripts
         } else {
-            PackageJSON::parse(
-                self,
-                file,
-                dirname_fd,
-                package_id,
-                crate::package_json::IncludeScripts::Include,
-                if ALLOW_DEPENDENCIES { crate::package_json::IncludeDependencies::Local } else { crate::package_json::IncludeDependencies::None },
-            )
+            IncludeScripts::IgnoreScripts
+        };
+        let pkg = if ALLOW_DEPENDENCIES {
+            PackageJSON::parse::<{ IncludeDependencies::Local }>(self, file, dirname_fd, package_id, include_scripts)
+        } else {
+            PackageJSON::parse::<{ IncludeDependencies::None }>(self, file, dirname_fd, package_id, include_scripts)
         };
         let Some(pkg) = pkg else { return Ok(None) };
 
-        return Ok(Some(PackageJSON::new(pkg)));
-        } // end #[cfg(any())]
-        let _ = (file, dirname_fd, package_id);
-        unimplemented!("Resolver::parse_package_json (Phase B)")
+        // PORT NOTE: Zig `PackageJSON.new` = `bun.TrivialNew` (heap-allocate, never freed —
+        // DirInfo cache holds &'static refs). Box::leak matches that lifetime contract.
+        Ok(Some(Box::leak(Box::new(pkg))))
     }
 
     fn dir_info_cached(&mut self, path: &[u8]) -> core::result::Result<Option<*mut DirInfo::DirInfo>, bun_core::Error> {

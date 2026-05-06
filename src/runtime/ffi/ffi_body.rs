@@ -2273,8 +2273,13 @@ impl Function {
         source_code.push(0);
         // defer source_code.deinit();
 
+        let tcc_options: &'static ZStr = if cfg!(debug_assertions) {
+            zstr!(b"-std=c11 -nostdlib -Wl,--export-all-symbols -g")
+        } else {
+            zstr!(b"-std=c11 -nostdlib -Wl,--export-all-symbols")
+        };
         let state = match TCC::State::init::<Function, false>(TCC::Config {
-            options: Some(NonNull::from(ZStr::from_static(Self::TCC_OPTIONS.as_bytes()))),
+            options: Some(NonNull::from(tcc_options)),
             output_type: TCC::OutputFormat::Memory,
             err: TCC::ConfigErr {
                 ctx: Some(self as *mut Function),
@@ -2302,9 +2307,9 @@ impl Function {
             // SAFETY: this_ptr is &mut self for the duration of compile_callback()
             let this = unsafe { &mut *this_ptr };
             if matches!(this.step, Step::Failed { .. }) {
-                if let Some(mut s) = this.state.take() {
+                if let Some(s) = this.state.take() {
                     // SAFETY: we own the state
-                    unsafe { s.as_mut().deinit() };
+                    unsafe { TCC::State::destroy(s.as_ptr()) };
                 }
             }
         });
@@ -2314,7 +2319,7 @@ impl Function {
         if self.needs_napi_env() {
             if state
                 .add_symbol(
-                    b"Bun__thisFFIModuleNapiEnv",
+                    zstr!(b"Bun__thisFFIModuleNapiEnv"),
                     js_context.make_napi_env_for_ffi() as *const c_void,
                 )
                 .is_err()
@@ -2352,7 +2357,7 @@ impl Function {
                 _ => FFI_Callback_call as *const c_void,
             }
         };
-        if state.add_symbol(b"FFI_Callback_call", callback_sym).is_err() {
+        if state.add_symbol(zstr!(b"FFI_Callback_call"), callback_sym).is_err() {
             self.fail(b"Failed to add FFI callback symbol");
             return Ok(());
         }

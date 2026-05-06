@@ -7,12 +7,14 @@
 
 use core::ffi::{c_int, c_void};
 use core::mem;
+use core::ptr::NonNull;
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, JsError};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, JsError, JsClass, StringJsc};
 use bun_str::{self as strings, String as BunString, ZStr};
 // TODO(port): move to <area>_sys — c-ares FFI lives in bun_cares_sys
 use bun_cares_sys::c_ares as ares;
 use bun_jsc::URL;
+use crate::test_runner::expect::JSValueTestExt;
 
 // `pub const js = jsc.Codegen.JSSocketAddress;` + toJS/fromJS/fromJSDirect
 // → handled by the JsClass derive; codegen wires toJS/fromJS/fromJSDirect.

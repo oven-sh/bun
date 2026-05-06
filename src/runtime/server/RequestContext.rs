@@ -1364,9 +1364,11 @@ where
         let resp = self.resp.unwrap();
 
         self.blob = AnyBlob::Blob(blob);
-        let file = &self.blob.store().unwrap().data.file;
+        let crate::webcore::blob::store::Data::File(file) = &self.blob.store().unwrap().data else {
+            unreachable!("do_sendfile called with non-file blob");
+        };
         let mut file_buf = PathBuffer::uninit();
-        let auto_close = !matches!(file.pathlike, crate::node::PathLike::Fd(_));
+        let auto_close = !matches!(file.pathlike, crate::webcore::PathOrFileDescriptor::Fd(_));
         let fd: bun_sys::Fd = if !auto_close {
             file.pathlike.fd()
         } else {

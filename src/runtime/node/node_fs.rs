@@ -424,17 +424,6 @@ fn with_path_like(err: sys::Error, p: &PathOrFileDescriptor) -> sys::Error {
     }
 }
 
-/// Convert the local `TimeLike` (libc::timespec on unix) into the
-/// `bun_sys::TimeLike` shape that `Syscall::utimens`/`lutimens` accept.
-#[cfg(not(windows))]
-#[inline]
-fn to_sys_time_like(t: TimeLike) -> sys::TimeLike {
-    sys::TimeLike { sec: t.tv_sec as i64, nsec: t.tv_nsec as i64 }
-}
-#[cfg(windows)]
-#[inline]
-fn to_sys_time_like(t: TimeLike) -> TimeLike { t }
-
 
 /// `bun.sys.PosixStat` — uv-shaped stat struct. `Stats::init` (from
 /// `super::stat`) takes its sibling `PosixStat` by reference, so route through

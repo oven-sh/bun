@@ -2168,7 +2168,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         // buffer, which `destroy()` after `write()` must not do.
         this.socket.close(uws::CloseCode::FastShutdown);
         this.socket.detach();
-        this.poll_ref.unref(global.bun_vm());
+        let _ = global;
+        this.poll_ref
+            .unref(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
         Ok(JSValue::UNDEFINED)
     }
 

@@ -1,12 +1,13 @@
 use std::rc::Rc;
 
-use bun_jsc::{JSFunction, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsClass as _, JsResult};
 use bun_str::String as BunString;
 
 use crate::test_runner::bun_test::{group_begin, BunTest, RefData};
 use crate::test_runner::debug;
+use crate::test_runner::expect::JSValueTestExt as _;
 
-#[bun_jsc::JsClass] // codegen wires to_js / from_js (Zig: jsc.Codegen.JSDoneCallback)
+#[bun_jsc::JsClass(no_construct)] // codegen wires to_js / from_js (Zig: jsc.Codegen.JSDoneCallback)
 pub struct DoneCallback {
     /// Some = not called yet. None = done already called, no-op.
     pub r#ref: Option<Rc<RefData>>,
@@ -18,9 +19,10 @@ impl DoneCallback {
         group_begin!();
         let _g = scopeguard::guard((), |_| debug::group::end());
 
-        // SAFETY: `this` was `Box::into_raw`'d in `create_unbound`; finalize is called
-        // exactly once by JSC lazy sweep. Dropping the Box drops `r#ref`
-        // (Rc::drop == deref) and frees the allocation (== allocator.destroy).
+        // SAFETY: `this` was `Box::into_raw`'d by `JsClass::to_js` in
+        // `create_unbound`; finalize is called exactly once by JSC lazy sweep.
+        // Dropping the Box drops `r#ref` (Rc::drop == deref) and frees the
+        // allocation (== allocator.destroy).
         drop(unsafe { Box::from_raw(this) });
     }
 
@@ -28,12 +30,13 @@ impl DoneCallback {
         group_begin!();
         let _g = scopeguard::guard((), |_| debug::group::end());
 
-        let done_callback = Box::new(DoneCallback {
+        let done_callback = DoneCallback {
             r#ref: None,
             called: false,
-        });
+        };
 
-        // Ownership of the Box transfers to the JS wrapper (m_ctx); freed in `finalize`.
+        // `JsClass::to_js` boxes `self` and hands the raw pointer to the JS
+        // wrapper (m_ctx); freed in `finalize`.
         let value = done_callback.to_js(global);
         value.ensure_still_alive();
         value
@@ -43,18 +46,28 @@ impl DoneCallback {
         let call_fn = JSFunction::create(
             global,
             "done",
-            BunTest::bun_test_done_callback,
+            __jsc_host_bun_test_done_callback,
             1,
             Default::default(),
         );
-        call_fn.bind(global, value, &BunString::static_str("done"), 1, &[])
+        call_fn.bind(global, value, &BunString::static_str("done"), 1.0, &[])
     }
+}
+
+/// Raw C-ABI shim for [`BunTest::bun_test_done_callback`] so it can be passed
+/// as a `JSHostFn` pointer to `JSFunction::create` (Zig used comptime
+/// `toJSHostFn`; Rust mints the thunk explicitly).
+unsafe extern "C" fn __jsc_host_bun_test_done_callback(
+    g: *mut JSGlobalObject,
+    f: *mut CallFrame,
+) -> JSValue {
+    bun_jsc::to_js_host_fn(BunTest::bun_test_done_callback)(g, f)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/test_runner/DoneCallback.zig (46 lines)
 //   confidence: medium
-//   todos:      2
+//   todos:      1
 //   notes:      LIFETIMES.tsv says Rc<RefData> but RefData uses intrusive bun.ptr.RefCount — Phase B may need IntrusiveRc; groupLog begin/end mapped to group_begin!() + scopeguard end()
 // ──────────────────────────────────────────────────────────────────────────

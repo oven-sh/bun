@@ -3304,12 +3304,12 @@ pub fn finalize_bundle(
         has_route_bits_set = true;
 
         for request in &dev.incremental_result.framework_routes_affected {
-            let route = dev.router.route_ptr(request.route_index);
-            if let Some(id) = route.bundle.unwrap_() {
+            let route = dev.router.route_ptr(request.route_index());
+            if let Some(id) = route.bundle {
                 route_bits.set(id.get() as usize);
             }
-            if request.should_recurse_when_visiting {
-                mark_all_route_children(&dev.router, &mut [&mut route_bits], request.route_index);
+            if request.should_recurse_when_visiting() {
+                mark_all_route_children(&dev.router, &mut [&mut route_bits], request.route_index());
             }
         }
         for route_bundle_index in &dev.incremental_result.html_routes_hard_affected {
@@ -3318,7 +3318,7 @@ pub fn finalize_bundle(
         }
 
         // List 1
-        let mut it = route_bits.iter_ones();
+        let mut it = route_bits.iterator::<true, true>();
         while let Some(bundled_route_index) = it.next() {
             let bundle = &dev.route_bundles[bundled_route_index];
             if bundle.active_viewers == 0 {
@@ -3345,39 +3345,49 @@ pub fn finalize_bundle(
         }
 
         for request in &dev.incremental_result.framework_routes_affected {
-            let route = dev.router.route_ptr(request.route_index);
-            if let Some(id) = route.bundle.unwrap_() {
+            let route = dev.router.route_ptr(request.route_index());
+            if let Some(id) = route.bundle {
                 route_bits.set(id.get() as usize);
                 route_bits_client.set(id.get() as usize);
             }
-            if request.should_recurse_when_visiting {
+            if request.should_recurse_when_visiting() {
                 mark_all_route_children(
                     &dev.router,
                     &mut [&mut route_bits, &mut route_bits_client],
-                    request.route_index,
+                    request.route_index(),
                 );
             }
         }
 
         // Free old bundles
-        let mut it = route_bits_client.iter_ones();
+        // PORT NOTE: reshaped for borrowck — capture `dev` raw before borrowing
+        // `route_bundles[i]` so the `&mut DevServer` and `&mut RouteBundle`
+        // borrows don't overlap (Zig had no aliasing check here).
+        let dev_ptr: *mut DevServer = dev;
+        let mut it = route_bits_client.iterator::<true, true>();
         while let Some(bundled_route_index) = it.next() {
-            let bundle = &mut dev.route_bundles[bundled_route_index];
-            bundle.invalidate_client_bundle(dev);
+            let bundle: &mut RouteBundle = &mut dev.route_bundles[bundled_route_index];
+            bundle.invalidate_client_bundle(dev_ptr.cast());
         }
     } else if !dev.incremental_result.html_routes_hard_affected.is_empty() {
         // Free old bundles
-        let mut it = route_bits_client.iter_ones();
+        let dev_ptr: *mut DevServer = dev;
+        let mut it = route_bits_client.iterator::<true, true>();
         while let Some(bundled_route_index) = it.next() {
-            let bundle = &mut dev.route_bundles[bundled_route_index];
-            bundle.invalidate_client_bundle(dev);
+            let bundle: &mut RouteBundle = &mut dev.route_bundles[bundled_route_index];
+            bundle.invalidate_client_bundle(dev_ptr.cast());
         }
     }
 
     // Softly affected HTML routes only need the bundle invalidated.
     if !dev.incremental_result.html_routes_soft_affected.is_empty() {
+        let dev_ptr: *mut DevServer = dev;
         for index in &dev.incremental_result.html_routes_soft_affected {
-            dev.route_bundle_ptr(*index).invalidate_client_bundle(dev);
+            // SAFETY: dev_ptr is live for the duration of this fn; reborrow to
+            // avoid overlapping `&mut dev` with `&mut RouteBundle`.
+            unsafe { &mut *dev_ptr }
+                .route_bundle_ptr(*index)
+                .invalidate_client_bundle(dev_ptr.cast());
             route_bits.set(index.get() as usize);
         }
         has_route_bits_set = true;
@@ -3385,7 +3395,7 @@ pub fn finalize_bundle(
 
     // `route_bits` will have all of the routes that were modified.
     if has_route_bits_set && (will_hear_hot_update || dev.incremental_result.had_adjusted_edges) {
-        let mut it = route_bits.iter_ones();
+        let mut it = route_bits.iterator::<true, true>();
         // List 2
         while let Some(i) = it.next() {
             let route_bundle = dev.route_bundle_ptr(route_bundle::Index::init(u32::try_from(i).unwrap()));
@@ -3396,7 +3406,8 @@ pub fn finalize_bundle(
                     }
                     route_bundle::Data::Html(html) => {
                         if let Some(blob) = html.cached_response.take() {
-                            blob.deref_();
+                            // Arc<StaticRoute> drop = .deref()
+                            drop(blob);
                         }
                     }
                 }
@@ -3416,7 +3427,9 @@ pub fn finalize_bundle(
 
                 w_int!(i32, i32::try_from(css_ids.len()).unwrap());
                 for css_id in css_ids {
-                    w_all!(&bun_core::fmt::bytes_to_hex_lower(&css_id.to_ne_bytes()));
+                    let mut hex = [0u8; 16];
+                    let n = bun_core::fmt::bytes_to_hex_lower(&css_id.to_ne_bytes(), &mut hex);
+                    w_all!(&hex[..n]);
                 }
             } else {
                 w_int!(i32, -1);
@@ -3431,13 +3444,16 @@ pub fn finalize_bundle(
             // Send CSS mutations
             let asset_values = dev.assets.files.values();
             w_int!(u32, u32::try_from(css_chunks.len()).unwrap());
+            use bun_bundler::Graph::InputFileListExt as _;
             let sources = bv2.graph.input_files.items_source();
             for chunk in css_chunks {
-                let key = sources[chunk.entry_point.source_index as usize]
+                let key = sources[chunk.entry_point.source_index() as usize]
                     .path
                     .key_for_incremental_graph();
-                w_all!(&bun_core::fmt::bytes_to_hex_lower(&hash(key).to_ne_bytes()));
-                let css_data = &asset_values[chunk.entry_point.entry_point_id as usize]
+                let mut hex = [0u8; 16];
+                let n = bun_core::fmt::bytes_to_hex_lower(&hash(key).to_ne_bytes(), &mut hex);
+                w_all!(&hex[..n]);
+                let css_data = &asset_values[chunk.entry_point.entry_point_id() as usize]
                     .blob
                     .internal_blob()
                     .bytes;

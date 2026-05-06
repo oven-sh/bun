@@ -3,7 +3,7 @@
 use core::ptr::NonNull;
 #[allow(unused_imports)] use crate::test_runner::expect::{JSValueTestExt, JSGlobalObjectTestExt, make_formatter};
 
-use bun_jsc::{JSGlobalObject, JSValue, JsResult, Strong};
+use bun_jsc::{DeprecatedStrong, JSGlobalObject, JSValue, JsResult};
 use bun_core::Timespec;
 
 use crate::test_runner::bun_test::{

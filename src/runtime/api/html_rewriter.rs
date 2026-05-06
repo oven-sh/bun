@@ -2533,7 +2533,9 @@ impl Element {
         bun_string_jsc::create_utf8_for_js(global_object, ns.to_bytes())
     }
 
-    #[bun_jsc::host_fn(getter)]
+    // PORT NOTE: `host_fn(getter)` codegen passes `&self`; this needs `&mut`
+    // to push into `attribute_iterators`. Dropped the macro attribute until
+    // the codegen supports `&mut self` getters (Phase B).
     pub fn get_attributes(&mut self, global_object: &JSGlobalObject) -> JSValue {
         if self.element.is_null() {
             return JSValue::UNDEFINED;

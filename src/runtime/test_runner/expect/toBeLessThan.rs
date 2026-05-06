@@ -48,13 +48,13 @@ impl Expect {
         if !value.is_big_int() && !other_value.is_big_int() {
             pass = value.as_number() < other_value.as_number();
         } else if value.is_big_int() {
-            pass = match value.as_big_int_compare(other_value, global) {
-                BigIntCompare::LessThan => true,
+            pass = match value.as_big_int_compare(global, other_value) {
+                ComparisonResult::LessThan => true,
                 _ => pass,
             };
         } else {
-            pass = match other_value.as_big_int_compare(value, global) {
-                BigIntCompare::GreaterThan => true,
+            pass = match other_value.as_big_int_compare(global, value) {
+                ComparisonResult::GreaterThan => true,
                 _ => pass,
             };
         }

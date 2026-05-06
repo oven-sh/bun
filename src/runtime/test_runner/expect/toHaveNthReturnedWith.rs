@@ -125,9 +125,11 @@ pub fn to_have_nth_returned_with(
     // Diff if possible
     if expected.is_string() && nth_return_value.is_string() {
         let diff_format = DiffFormatter {
-            expected,
-            received: nth_return_value,
-            global,
+            expected: Some(expected),
+            received: Some(nth_return_value),
+            expected_string: None,
+            received_string: None,
+            global_this: global,
             not: false,
         };
         return this.throw(

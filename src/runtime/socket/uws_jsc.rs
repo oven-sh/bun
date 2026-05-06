@@ -29,18 +29,17 @@ pub fn create_bun_socket_error_to_js(
                 bun_boringssl_sys::ERR_get_error()
             })
         }
-        // TODO(port): exact shape of `JSGlobalObject::ERR(code, fmt, args)` builder
         create_bun_socket_error_t::load_ca_file => global_object
-            .ERR(bun_jsc::ErrorCode::BORINGSSL, format_args!("Failed to load CA file"))
+            .err(bun_jsc::ErrorCode::BORINGSSL, format_args!("Failed to load CA file"))
             .to_js(),
         create_bun_socket_error_t::invalid_ca_file => global_object
-            .ERR(bun_jsc::ErrorCode::BORINGSSL, format_args!("Invalid CA file"))
+            .err(bun_jsc::ErrorCode::BORINGSSL, format_args!("Invalid CA file"))
             .to_js(),
         create_bun_socket_error_t::invalid_ca => global_object
-            .ERR(bun_jsc::ErrorCode::BORINGSSL, format_args!("Invalid CA"))
+            .err(bun_jsc::ErrorCode::BORINGSSL, format_args!("Invalid CA"))
             .to_js(),
         create_bun_socket_error_t::invalid_ciphers => global_object
-            .ERR(bun_jsc::ErrorCode::BORINGSSL, format_args!("Invalid ciphers"))
+            .err(bun_jsc::ErrorCode::BORINGSSL, format_args!("Invalid ciphers"))
             .to_js(),
     }
 }

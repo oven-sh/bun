@@ -22,9 +22,9 @@ impl Expect {
         let arguments: &[JSValue] = &_arguments.ptr[0.._arguments.len];
 
         if arguments.len() < 1 {
-            return global.throw_invalid_arguments(
+            return Err(global.throw_invalid_arguments(
                 format_args!("toStrictEqual() requires 1 argument"),
-            );
+            ));
         }
 
         this.increment_expect_call_counter();
@@ -45,8 +45,10 @@ impl Expect {
 
         // handle failure
         let diff_formatter = DiffFormatter {
-            received: value,
-            expected,
+            received: Some(value),
+            expected: Some(expected),
+            received_string: None,
+            expected_string: None,
             global_this: global,
             not,
         };

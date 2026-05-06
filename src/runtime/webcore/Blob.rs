@@ -822,7 +822,7 @@ fn _on_structured_clone_deserialize<R: bun_io::Read>(
                 let mut name_consumed = false;
                 if let Some(store) = &scopeguard::guard_ref(&guard).store {
                     if let Store::Data::Bytes(bytes_store) = &mut store.data_mut() {
-                        bytes_store.stored_name = bun_core::PathString::init(name);
+                        bytes_store.stored_name = bun_str::PathString::init(name);
                         name_consumed = true;
                     }
                 }
@@ -854,7 +854,7 @@ fn _on_structured_clone_deserialize<R: bun_io::Read>(
                     let path_len = reader.read_int_le::<u32>()?;
                     let path = read_slice(reader, path_len as usize)?;
                     let mut dest = PathOrFileDescriptor::Path(node::PathLike::String(
-                        bun_core::PathString::init(path),
+                        bun_str::PathString::init(path),
                     ));
                     break 'file Blob::new(Blob::find_or_create_file_from_path::<true>(
                         &mut dest,
@@ -1078,7 +1078,7 @@ pub extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &mut BunString) {
         if let Store::Data::Bytes(bytes) = &mut store.data_mut() {
             if bytes.stored_name.len() == 0 {
                 let utf8 = path_str.to_utf8_bytes();
-                bytes.stored_name = bun_core::PathString::init(utf8);
+                bytes.stored_name = bun_str::PathString::init(utf8);
             }
         }
     }
@@ -1272,7 +1272,7 @@ pub fn mkdir_if_not_exists<T: MkdirpTarget>(
         if let Some(dirname) = bun_paths::dirname(path_string.as_bytes(), bun_paths::Platform::Auto) {
             let mut node_fs = node::fs::NodeFS::default();
             match node_fs.mkdir_recursive(node::fs::MkdirArgs {
-                path: node::PathLike::String(bun_core::PathString::init_borrowed(dirname)),
+                path: node::PathLike::String(bun_str::PathString::init_borrowed(dirname)),
                 recursive: true,
                 always_return_none: true,
                 ..Default::default()
@@ -1373,7 +1373,7 @@ fn write_file_with_empty_source_to_destination(
                                     }
                                 };
                                 let mkdir_result = node_fs.mkdir_recursive(node::fs::MkdirArgs {
-                                    path: node::PathLike::String(bun_core::PathString::init_borrowed(dirpath)),
+                                    path: node::PathLike::String(bun_str::PathString::init_borrowed(dirpath)),
                                     recursive: true,
                                     always_return_none: true,
                                     ..Default::default()
@@ -1438,13 +1438,13 @@ fn write_file_with_empty_source_to_destination(
                 global: *const JSGlobalObject,
             }
             impl Wrapper {
-                fn resolve(result: S3::S3UploadResult, opaque_this: *mut c_void) -> jsc::JsTerminatedResult<()> {
+                fn resolve(result: S3UploadResult, opaque_this: *mut c_void) -> jsc::JsTerminatedResult<()> {
                     // SAFETY: opaque_this was Box::into_raw'd in the caller below.
                     let this = unsafe { Box::from_raw(opaque_this.cast::<Wrapper>()) };
                     let global = unsafe { &*this.global };
                     match result {
-                        S3::S3UploadResult::Success => this.promise.resolve(global, JSValue::js_number(0))?,
-                        S3::S3UploadResult::Failure(err) => {
+                        S3UploadResult::Success => this.promise.resolve(global, JSValue::js_number(0))?,
+                        S3UploadResult::Failure(err) => {
                             this.promise.reject(
                                 global,
                                 // SAFETY: sole `&mut JSPromise` borrow; consumed immediately.
@@ -1460,7 +1460,7 @@ fn write_file_with_empty_source_to_destination(
             let promise_value = promise.value();
             let proxy = ctx.bun_vm().transpiler.env.get_http_proxy(true, None, None);
             let proxy_url = proxy.map(|p| p.href);
-            S3::upload(
+            s3_client::upload(
                 &aws_options.credentials,
                 s3.path(),
                 b"",
@@ -1634,7 +1634,7 @@ pub fn write_file_with_source_destination(
                         ReadableStream::from_blob_copy_ref(ctx, source_blob, s3.options.part_size as u32)?,
                         ctx,
                     )? {
-                        return Ok(S3::upload_stream(
+                        return Ok(s3_client::upload_stream(
                             if options.extra_options.is_some() { aws_options.credentials.dupe() } else { s3.get_credentials() },
                             s3.path(),
                             stream,
@@ -1664,16 +1664,16 @@ pub fn write_file_with_source_destination(
                         global: *const JSGlobalObject,
                     }
                     impl Wrapper {
-                        fn resolve(result: S3::S3UploadResult, opaque_self: *mut c_void) -> jsc::JsTerminatedResult<()> {
+                        fn resolve(result: S3UploadResult, opaque_self: *mut c_void) -> jsc::JsTerminatedResult<()> {
                             // SAFETY: opaque_self is the Box::into_raw(Wrapper) we passed to S3::upload below.
                             let this = unsafe { Box::from_raw(opaque_self.cast::<Wrapper>()) };
                             // SAFETY: global was stored from a live &JSGlobalObject; the VM outlives this callback.
                             let global = unsafe { &*this.global };
                             match result {
-                                S3::S3UploadResult::Success => {
+                                S3UploadResult::Success => {
                                     this.promise.resolve(global, JSValue::js_number(this.store.data.as_bytes().len))?;
                                 }
-                                S3::S3UploadResult::Failure(err) => {
+                                S3UploadResult::Failure(err) => {
                                     // SAFETY: sole `&mut JSPromise` borrow; consumed immediately.
                                     this.promise.reject(global, err.to_js_with_async_stack(global, this.store.get_path(), unsafe { this.promise.get() }))?;
                                 }
@@ -1683,7 +1683,7 @@ pub fn write_file_with_source_destination(
                     }
                     let promise = jsc::JSPromiseStrong::init(ctx);
                     let promise_value = promise.value();
-                    S3::upload(
+                    s3_client::upload(
                         &aws_options.credentials,
                         s3.path(),
                         bytes.slice(),
@@ -1710,7 +1710,7 @@ pub fn write_file_with_source_destination(
                     ReadableStream::from_blob_copy_ref(ctx, source_blob, s3.options.part_size as u32)?,
                     ctx,
                 )? {
-                    return Ok(S3::upload_stream(
+                    return Ok(s3_client::upload_stream(
                         if options.extra_options.is_some() { aws_options.credentials.dupe() } else { s3.get_credentials() },
                         s3.path(),
                         stream,
@@ -1801,7 +1801,7 @@ pub fn write_file_internal(
                 if b.offset == 0 && !b.is_s3()
                     && !(b.store.is_some()
                         && matches!(b.store.as_ref().unwrap().data, Store::Data::File(ref f)
-                            if f.mode != 0 && bun_sys::is_regular_file(f.mode)))));
+                            if f.mode != 0 && bun_core::kind_from_mode(f.mode) == bun_core::FileKind::File))));
         if fast_path_ok {
             if data.is_string() {
                 let len = data.get_length(global_this)?;
@@ -2230,7 +2230,7 @@ pub fn jsdom_file_construct_(
             match &mut store_.data_mut() {
                 Store::Data::Bytes(bytes) => {
                     bytes.stored_name =
-                        bun_core::PathString::init(name_value_str.to_utf8_bytes());
+                        bun_str::PathString::init(name_value_str.to_utf8_bytes());
                 }
                 Store::Data::S3(_) | Store::Data::File(_) => {
                     blob.name = name_value_str.dupe_ref();
@@ -2240,7 +2240,7 @@ pub fn jsdom_file_construct_(
             // not store but we have a name so we need a store
             blob.store = Some(StoreRef::from(Store::new(Store {
                 data: store::Data::Bytes(store::Bytes::init_empty_with_name(
-                    bun_core::PathString::init(name_value_str.to_utf8_bytes()),
+                    bun_str::PathString::init(name_value_str.to_utf8_bytes()),
                 )),
                 ref_count: AtomicU32::new(1),
                 ..Default::default()
@@ -2402,7 +2402,7 @@ impl Blob {
                     let credentials = global_this.bun_vm().transpiler.env.get_s3_credentials();
                     let copy = core::mem::replace(
                         path_or_fd,
-                        PathOrFileDescriptor::Path(node::PathLike::String(bun_core::PathString::empty())),
+                        PathOrFileDescriptor::Path(node::PathLike::String(bun_str::PathString::empty())),
                     );
                     return Blob::init_with_store(
                         Store::init_s3(copy.into_path(), None, credentials),
@@ -2421,7 +2421,7 @@ impl Blob {
                     if slice == b"/dev/null" {
                         path_or_fd.deinit();
                         *path_or_fd = PathOrFileDescriptor::Path(node::PathLike::String(
-                            bun_core::PathString::init(b"\\\\.\\NUL".to_vec().into_boxed_slice()),
+                            bun_str::PathString::init(b"\\\\.\\NUL".to_vec().into_boxed_slice()),
                         ));
                         slice = path_or_fd.path().slice();
                     }

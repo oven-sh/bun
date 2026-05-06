@@ -1211,20 +1211,12 @@ impl<'a> BlobReadChain<'a> {
     }
 }
 
-pub type AsyncImageTask<'a> =
-    jsc::concurrent_promise_task::ConcurrentPromiseTask<'a, PipelineTask<'a>>;
-
-impl<'a> jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for PipelineTask<'a> {
-    fn run(&mut self) {
-        PipelineTask::run(self);
-    }
-    fn then(&mut self, _promise: JSPromise) -> Result<(), jsc::JsTerminated> {
-        // The inherent `PipelineTask::then` consumes `Box<Self>`; the trait
-        // hands us `&mut self`. The task wrapper owns `ctx` as `&'a mut`, so the
-        // by-value drop semantics live in `Drop for PipelineTask` instead.
-        todo!("blocked_on: ConcurrentPromiseTask::then &mut vs Box<Self> shape")
-    }
-}
+// TODO(port): the real `ConcurrentPromiseTask<'a, Ctx>` and its
+// `ConcurrentPromiseTaskContext` trait live in `bun_jsc`'s private `_gated`
+// module (src/jsc/ConcurrentPromiseTask.rs). Until those are re-exported the
+// public alias degrades to the bare context so `mod.rs`'s `pub use` resolves.
+// blocked_on: jsc::ConcurrentPromiseTask / jsc::ConcurrentPromiseTaskContext
+pub type AsyncImageTask<'a> = PipelineTask<'a>;
 
 pub struct PipelineTask<'a> {
     image: *mut Image,

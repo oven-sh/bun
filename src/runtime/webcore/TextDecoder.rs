@@ -347,11 +347,9 @@ impl TextDecoder {
                         }
                     }
                     let len = decoded.len();
-                    return Ok(ZigString::to_external_u16(
-                        Box::into_raw(decoded) as *mut u16,
-                        len,
-                        global_this,
-                    ));
+                    // PERF(port): Vec::leak may retain excess capacity vs Zig's items.ptr — profile in Phase B
+                    let ptr = decoded.leak().as_mut_ptr();
+                    return Ok(ZigString::to_external_u16(ptr, len, global_this));
                 }
 
                 debug_assert!(input.is_empty() || !deinit);

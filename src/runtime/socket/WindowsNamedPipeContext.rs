@@ -1,16 +1,21 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr;
+use core::ptr::NonNull;
 use std::sync::Arc;
 
 use bun_core::Output;
-use bun_jsc::{self as jsc, AnyTask, JSGlobalObject, Task, VirtualMachine};
-use bun_uws::{self as uws, us_bun_verify_error_t, WindowsNamedPipe};
+use bun_jsc::{self as jsc, JSGlobalObject};
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_event_loop::AnyTask::AnyTask;
+use bun_event_loop::Task;
+use bun_uws::{self as uws, us_bun_verify_error_t};
 use bun_sys::{self, Error as SysError, Fd, SystemErrno};
 use bun_boringssl_sys as boringssl;
 use bun_paths::PathBuffer;
 use bun_str::ZStr;
 use crate::socket::SSLConfig;
+use crate::socket::windows_named_pipe::{WindowsNamedPipe, Handlers as NamedPipeHandlers};
 use crate::api::{TCPSocket, TLSSocket};
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;

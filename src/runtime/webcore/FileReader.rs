@@ -846,14 +846,14 @@ impl FileReader {
                 ReadDuringJSOnPullResult::Temporary(buf) => {
                     bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer_len, buf.len());
                     if self.reader().is_done() {
-                        return streams::Result::TemporaryAndDone(mem::ManuallyDrop::into_inner(
-                            unsafe { ByteList::from_borrowed_slice_dangerous(buf) },
-                        ));
+                        return streams::Result::TemporaryAndDone(unsafe {
+                            ByteList::from_borrowed_slice_dangerous(buf)
+                        });
                     }
 
-                    return streams::Result::Temporary(mem::ManuallyDrop::into_inner(unsafe {
+                    return streams::Result::Temporary(unsafe {
                         ByteList::from_borrowed_slice_dangerous(buf)
-                    }));
+                    });
                 }
                 ReadDuringJSOnPullResult::UseBuffered(_) => {
                     bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer_len, self.buffered.len());

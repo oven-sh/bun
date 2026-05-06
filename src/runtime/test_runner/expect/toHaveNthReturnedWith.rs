@@ -80,6 +80,7 @@ pub fn to_have_nth_returned_with(
 
     // Handle failure
     let mut formatter = super::make_formatter(global);
+    let mut formatter2 = super::make_formatter(global);
     // defer formatter.deinit() — handled by Drop
 
     // TODO(port): get_signature should be a const fn returning &'static str (was `comptime getSignature(...)`)

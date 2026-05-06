@@ -1077,7 +1077,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     #[cfg(unix)]
     let posix_ipc_fd = if !IS_SYNC && maybe_ipc_mode.is_some() {
-        spawned.extra_pipes[usize::try_from(ipc_channel).unwrap()].fd()
+        spawned_extra_pipes[usize::try_from(ipc_channel).unwrap()].fd()
     } else {
         Fd::INVALID
     };
@@ -1110,7 +1110,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         // 1. JavaScript.
         // 2. Process.
         ref_count: bun_ptr::RefCount::init_exact_refs(2),
-        stdio_pipes: core::mem::take(&mut spawned.extra_pipes),
+        stdio_pipes: core::mem::take(&mut spawned_extra_pipes),
         ipc_data: None,
         flags: if IS_SYNC { Subprocess::Flags::IS_SYNC } else { Subprocess::Flags::empty() },
         // PORT NOTE: `bun_core::SignalCode` (repr(u8) enum) → `bun_sys::SignalCode(u8)`.
@@ -1175,7 +1175,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         // SAFETY: event_loop points to the live JSC EventLoop for this thread.
         unsafe { &*event_loop },
         subprocess,
-        spawned.stdin,
+        spawned_stdin,
         &mut promise_for_stream,
     ) {
         Ok(v) => v,

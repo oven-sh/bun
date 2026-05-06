@@ -558,6 +558,11 @@ impl ShellSubprocess {
         let stdio1 = core::mem::replace(&mut stdio_guard[1], Stdio::Ignore);
         let stdio2 = core::mem::replace(&mut stdio_guard[2], Stdio::Ignore);
 
+        // `to_process` consumes the result for pid/pidfd; pull the fd handles out first.
+        let spawn_stdin = spawn_result.stdin.take();
+        let spawn_stdout = spawn_result.stdout.take();
+        let spawn_stderr = spawn_result.stderr.take();
+
         let subprocess: *mut Subprocess = Box::into_raw(Box::new(Subprocess {
             event_loop,
             process: spawn_result.to_process(event_loop, IS_SYNC),
@@ -565,7 +570,7 @@ impl ShellSubprocess {
                 stdio0,
                 event_loop,
                 core::ptr::null_mut(), // filled below; see TODO
-                spawn_result.stdin,
+                spawn_stdin,
             ) {
                 Ok(w) => w,
                 Err(WritableInitError::UnexpectedCreatingStdin) => {
@@ -578,7 +583,7 @@ impl ShellSubprocess {
                 shellio.stdout.clone(),
                 event_loop,
                 core::ptr::null_mut(),
-                spawn_result.stdout,
+                spawn_stdout,
                 DEFAULT_MAX_BUFFER_SIZE,
                 true,
             ),

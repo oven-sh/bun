@@ -705,7 +705,13 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                             return Ok(JSValue::ZERO);
                         }
 
-                        match SSLConfig::from_js(vm, global_this, tls) {
+                        // TODO(port): `SSLConfig::from_js` lives in a private gated
+                        // module (`socket::ssl_config::_gated_from_js`).
+                        let from_js_result: JsResult<Option<SSLConfig>> = {
+                            let _ = (&*vm, tls);
+                            todo!("blocked_on: crate::socket::ssl_config::SSLConfig::from_js (gated)")
+                        };
+                        match from_js_result {
                             Err(_) => {
                                 is_error = true;
                                 return Ok(JSValue::ZERO);

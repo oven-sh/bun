@@ -6,9 +6,12 @@ use crate::options::Loader;
 use crate::options::{OutputKind, Side};
 use bun_core::Error;
 use bun_logger::fs;
-use bun_paths::{self as resolve_path, PathBuffer};
-use bun_string::String as BunString;
+use bun_paths::PathBuffer;
+use bun_paths::resolve_path::{self, platform};
+use bun_string::{PathString, String as BunString};
 use bun_sys::Fd;
+
+use crate::bun_fs::RealFS;
 
 // Instead of keeping files in-memory, we:
 // 1. Write directly to disk

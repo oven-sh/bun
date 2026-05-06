@@ -267,7 +267,11 @@ mod elf {
         pub fn Bun__getStandaloneModuleGraphELFVaddr() -> *mut u64; // align(1)
     }
 
-    pub fn get_data() -> Option<&'static [u8]> {
+    /// Returns `(base, len)` for the embedded ELF segment data. Kept as a raw
+    /// `*mut u8` so write-provenance is preserved end-to-end — collapsing to
+    /// `&[u8]` here would freeze it to read-only and make the later
+    /// `from_bytes` writable subslices UB under Stacked Borrows.
+    pub fn get_data() -> Option<(*mut u8, usize)> {
         // SAFETY: FFI call.
         let vaddr_ptr = unsafe { Bun__getStandaloneModuleGraphELFVaddr() };
         if vaddr_ptr.is_null() {
@@ -281,14 +285,17 @@ mod elf {
         // BUN_COMPILED.size holds the virtual address of the appended data.
         // The kernel mapped it via PT_LOAD, so we can dereference directly.
         // Format at target: [u64 payload_len][payload bytes]
-        let target = vaddr as *const u8;
+        // Synthesize a `*mut u8` directly so the provenance carries write
+        // permission for the in-place bytecode mutation done by JSC.
+        let target = vaddr as *mut u8;
         // SAFETY: target points to 8-byte little-endian length prefix.
-        let payload_len = u64::from_le_bytes(unsafe { *(target as *const [u8; 8]) });
+        let payload_len =
+            u64::from_le_bytes(unsafe { core::ptr::read_unaligned(target as *const [u8; 8]) });
         if payload_len < 8 {
             return None;
         }
         // SAFETY: payload_len bytes follow the 8-byte header at `target`.
-        Some(unsafe { core::slice::from_raw_parts(target.add(8), payload_len as usize) })
+        Some((unsafe { target.add(8) }, payload_len as usize))
     }
 }
 

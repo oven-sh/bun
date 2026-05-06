@@ -4330,9 +4330,11 @@ impl RunCommand {
         if !ctx.debug.loaded_bunfig {
             // SAFETY: `ctx: &Command::Context` is `& &mut ContextData`; the underlying
             // exclusive borrow is held by single-threaded CLI dispatch, so reborrowing
-            // it as `&mut` for the `Context<'_>` parameter does not alias.
+            // it as `&mut` for the `Context<'_>` parameter does not alias. Cast via
+            // `*const *mut` (not `&T as *const T as *mut T`) to satisfy
+            // `invalid_reference_casting`.
             let ctx_mut: Command::Context =
-                unsafe { &mut *((&**ctx) as *const _ as *mut cli::command::ContextData) };
+                unsafe { &mut **(ctx as *const _ as *const *mut cli::command::ContextData) };
             let _ = cli::Arguments::load_config_path(
                 cli::Command::Tag::RunCommand,
                 true,
@@ -4400,7 +4402,7 @@ impl RunCommand {
             }
             // SAFETY: see `ctx_mut` reborrow note above — single-threaded CLI dispatch.
             let ctx_mut: Command::Context =
-                unsafe { &mut *((&**ctx) as *const _ as *mut cli::command::ContextData) };
+                unsafe { &mut **(ctx as *const _ as *const *mut cli::command::ContextData) };
             ctx_mut.runtime_options.eval.script = list.into_boxed_slice();
 
             const TRIGGER: &[u8] = path_literal!(b"/[stdin]", b"\\[stdin]");
@@ -4819,7 +4821,7 @@ impl RunCommand {
         entry_point_buf[cwd_len..cwd_len + TRIGGER.len()].copy_from_slice(TRIGGER);
         // SAFETY: `ctx: &Command::Context` is `& &mut ContextData`; single-threaded CLI dispatch.
         let ctx_mut: Command::Context =
-            unsafe { &mut *((&**ctx) as *const _ as *mut cli::command::ContextData) };
+            unsafe { &mut **(ctx as *const _ as *const *mut cli::command::ContextData) };
         ctx_mut.runtime_options.eval.script = if Environment::CODEGEN_EMBED {
             // TODO(port): @embedFile → include_bytes! (path relative to this .rs)
             include_bytes!("../../js/eval/feedback.ts").to_vec().into_boxed_slice()

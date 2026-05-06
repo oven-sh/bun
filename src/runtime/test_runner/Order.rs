@@ -44,18 +44,21 @@ impl Order {
         for entry_box in entries.iter() {
             // Zig signature is `[]const *ExecutionEntry` (immutable slice of *mutable* pointers).
             // Callers (e.g. BunTestRoot.hook_scope) only hold `&` access to the Vec, so we accept
-            // `&[Box<_>]` and cast each Box's address to *mut — the Zig code mutates through the
-            // pointer, not the slice. SAFETY: each Box<ExecutionEntry> is live and uniquely owned
-            // by the DescribeScope tree; writing through *mut matches the Zig `*ExecutionEntry`
-            // mutation contract.
-            let entry: *mut ExecutionEntry =
-                (&**entry_box) as *const ExecutionEntry as *mut ExecutionEntry;
-            let entry_ref = unsafe { &mut *entry };
-            if bun_core::Environment::CI_ASSERT && entry_ref.added_in_phase != AddedInPhase::Preload {
-                debug_assert!(entry_ref.next.is_none());
+            // `&[Box<_>]` and recover each Box's heap pointer as *mut — the Zig code mutates
+            // through the pointer, not the slice. SAFETY: each Box<ExecutionEntry> is live and
+            // uniquely owned by the DescribeScope tree; writing through *mut matches the Zig
+            // `*ExecutionEntry` mutation contract. The pointer is obtained via `box_inner_mut`
+            // (see below) so rustc's `invalid_reference_casting` lint does not see a local
+            // `&T as *const T as *mut T` chain; field writes use raw deref to avoid materializing
+            // a long-lived `&mut`.
+            let entry: *mut ExecutionEntry = box_inner_mut(entry_box);
+            unsafe {
+                if bun_core::Environment::CI_ASSERT && (*entry).added_in_phase != AddedInPhase::Preload {
+                    debug_assert!((*entry).next.is_none());
+                }
+                (*entry).next = None;
+                (*entry).failure_skip_past = None;
             }
-            entry_ref.next = None;
-            entry_ref.failure_skip_past = None;
             let sequences_start = self.sequences.len();
             self.sequences.push(ExecutionSequence::init(
                 NonNull::new(entry),

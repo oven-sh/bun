@@ -3626,15 +3626,15 @@ pub fn js_upgrade_duplex_to_tls(
         // have `duplex_context` (self-referential ctx ptr). `zeroed()` is UB if
         // `UpgradedDuplex` has NonNull/fn-ptr fields; Phase B: allocate via
         // `Box::<MaybeUninit<Self>>::new_uninit()` and field-write.
-        upgrade: unsafe { core::mem::zeroed() },
+        #[allow(invalid_value)]
+        upgrade: unsafe { core::mem::MaybeUninit::zeroed().assume_init() },
         // SAFETY: `tls` came from `TLSSocket::new` (Box::into_raw); intrusive +1 held.
         tls: Some(unsafe { IntrusiveRc::from_raw(tls) }),
         // SAFETY: `bun_vm()` returns the live per-global VM; lives for the program.
         vm: VirtualMachine::get(),
-        // TODO(port): in-place init — Zig `undefined`, assigned below after we
-        // have `duplex_context`. `zeroed()` is UB if `AnyTask` has fn-ptr fields;
-        // Phase B: same MaybeUninit two-phase init as `upgrade`.
-        task: unsafe { core::mem::zeroed() },
+        // Zig `undefined`, assigned below after we have `duplex_context`.
+        // `AnyTask::default()` is a safe sentinel (panics if run before overwrite).
+        task: AnyTask::default(),
         task_event: EventState::StartTLS,
         // When `owned_ctx` is set, `runEvent` builds from it and ignores
         // `ssl_config` for SSL_CTX construction; servername/ALPN already

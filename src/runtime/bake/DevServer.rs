@@ -2642,9 +2642,12 @@ impl DevServer<'_> {
 
         let mut heap = bun_alloc::MimallocArena::new();
         // TODO(port): heap is moved into BundleV2; errdefer heap.deinit() handled by Drop
-        let alloc = heap.allocator();
+        // PORT NOTE: `MimallocArena = bumpalo::Bump` (no `.allocator()` accessor);
+        // `Bump::alloc` is the inherent method, and downstream `alloc` users
+        // expect the arena handle itself.
+        let alloc = &heap;
         // TODO(port): ASTMemoryAllocator scope — bake is an AST crate; arena threading required
-        let ast_memory_allocator = alloc.alloc(bun_js_parser::ASTMemoryAllocator::default());
+        let ast_memory_allocator = heap.alloc(bun_js_parser::ASTMemoryAllocator::default());
         let _ast_scope = ast_memory_allocator.enter();
         let _ = alloc; // PORT NOTE: `enter()` no longer takes the arena (T1 stub).
 

@@ -822,7 +822,7 @@ impl<'a> BunTest<'a> {
         // defer ref_in.deref() — RefPtr<T> currently has NO Drop impl, so decrement the
         // intrusive count explicitly at scope exit (mirrors .zig:472). Without this the
         // paired promise then/catch path never sees has_one_ref()==true and the RefData leaks.
-        let ref_in = scopeguard::guard(ref_in, |r| bun_ptr::IntrusiveRc::deref(&r));
+        let ref_in = scopeguard::guard(ref_in, |r: RefDataPtr| r.deref());
 
         // dupe the ref and enqueue a task to call the done callback.
         // this makes it so if you do something else after calling done(), the next test doesn't start running until the next tick.
@@ -834,7 +834,7 @@ impl<'a> BunTest<'a> {
             return Ok(JSValue::UNDEFINED);
         }
 
-        let Some(strong) = ref_in.buntest_weak.upgrade() else {
+        let Some(strong): Option<BunTestPtr> = ref_in.buntest_weak.upgrade() else {
             return Ok(JSValue::UNDEFINED);
         };
         // SAFETY: `&mut` derived via `UnsafeCell`; borrow ends before

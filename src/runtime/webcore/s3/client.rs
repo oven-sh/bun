@@ -60,7 +60,7 @@ bun_core::declare_scope!(S3UploadStream, visible);
 type JsTerminatedResult<T> = Result<T, bun_jsc::JsTerminated>;
 
 pub fn stat(
-    this: &mut S3Credentials,
+    this: &S3Credentials,
     path: &[u8],
     callback: fn(S3StatResult, *mut c_void) -> JsTerminatedResult<()>,
     callback_context: *mut c_void,
@@ -83,7 +83,7 @@ pub fn stat(
 }
 
 pub fn download(
-    this: &mut S3Credentials,
+    this: &S3Credentials,
     path: &[u8],
     callback: fn(S3DownloadResult, *mut c_void) -> JsTerminatedResult<()>,
     callback_context: *mut c_void,

@@ -1,6 +1,6 @@
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSPromise, JSPropertyIterator, JSValue, JsRef,
-    JsResult,
+    self as jsc, CallFrame, ErrorCode, JSGlobalObject, JSPromise, JSPropertyIterator, JSValue,
+    JsRef, JsResult,
 };
 use crate::node::BlobOrStringOrBuffer as JSArgument;
 use bun_str::strings;
@@ -11,6 +11,47 @@ use super::valkey;
 use super::valkey_command_body::{Args as CommandArgs, Command, Meta as CommandMeta};
 
 type Slice = bun_jsc::ZigStringSlice;
+
+// ──────────────────────────────────────────────────────────────────────────
+// Local `JSGlobalObject` extension shims.
+//
+// `bun_jsc/JSGlobalObject.rs` (which carries `throw_missing_arguments_value`
+// and `validate_integer_range`) is currently `#![cfg(any())]`-gated, so port
+// the two helpers Valkey needs against the `lib.rs` surface (`err()`/`throw()`).
+// TODO(port): drop once `bun_jsc::JSGlobalObject` un-gates these.
+// ──────────────────────────────────────────────────────────────────────────
+trait JSGlobalObjectValkeyExt {
+    fn throw_missing_arguments_value(&self, arg_names: &[&str]) -> jsc::JsError;
+    fn validate_integer_range<T: bun_core::Integer>(
+        &self,
+        value: JSValue,
+        default: T,
+        range: jsc::IntegerRange,
+    ) -> JsResult<T>;
+}
+
+impl JSGlobalObjectValkeyExt for JSGlobalObject {
+    #[inline]
+    fn throw_missing_arguments_value(&self, arg_names: &[&str]) -> jsc::JsError {
+        // Zig: `globalObject.throwMissingArgumentsValue(.{ arg0_name })` — Valkey
+        // only ever passes a single name.
+        debug_assert_eq!(arg_names.len(), 1);
+        self.err(
+            ErrorCode::MISSING_ARGS,
+            format_args!("The \"{}\" argument must be specified", arg_names[0]),
+        )
+        .throw()
+    }
+
+    fn validate_integer_range<T: bun_core::Integer>(
+        &self,
+        _value: JSValue,
+        _default: T,
+        _range: jsc::IntegerRange,
+    ) -> JsResult<T> {
+        todo!("blocked_on: bun_jsc::JSGlobalObject::validate_integer_range")
+    }
+}
 
 /// Reinterpret an ASCII byte-string literal as `&str` for the
 /// `throw_invalid_argument_type` family (which take `&'static str`).

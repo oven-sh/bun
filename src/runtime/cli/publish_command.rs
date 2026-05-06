@@ -663,10 +663,10 @@ impl PublishCommand {
 
                 // on another thread because pressing enter is not required
                 // TODO(port): Zig used std.Thread.spawn — bun_threading has no spawn; use std::thread::Builder
-                match std::thread::Builder::new().spawn(move || Self::press_enter_to_open_in_browser(&auth_url_str)) {
+                match std::thread::Builder::new().spawn(move || Self::press_enter_to_open_in_browser(auth_url_str)) {
                     Ok(_t) => { /* JoinHandle dropped → detached */ }
                     Err(_e) => {
-                        Output::err("ThreadSpawn", format_args!("failed to spawn thread for opening auth url"));
+                        Output::err("ThreadSpawn", "failed to spawn thread for opening auth url", ());
                         Global::crash();
                     }
                 }

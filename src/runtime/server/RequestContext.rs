@@ -2210,11 +2210,12 @@ where
     // - If you return a Promise, we drain the microtask queue once
     // - If you return a streaming Response, we drain the microtask queue (possibly the 2nd time this task!)
     pub fn on_response(
-        ctx: &mut Self,
+        &mut self,
         this: &ThisServer,
         request_value: JSValue,
         response_value: JSValue,
     ) {
+        let ctx = self;
         request_value.ensure_still_alive();
         response_value.ensure_still_alive();
         ctx.drain_microtasks();

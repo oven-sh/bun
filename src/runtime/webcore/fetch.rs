@@ -72,23 +72,94 @@ use std::io::Write as _;
 
 use bun_core::Output;
 use crate::webcore::jsc::{self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine};
-use bun_str::{strings, String as BunString, ZigString};
+use bun_jsc::{StringJsc as _, SysErrorJsc as _, HTTPHeaderName};
+use bun_sys::FdExt as _;
+use bun_str::{strings, String as BunString, ZigString, ZigStringSlice, Tag as BunStringTag};
 use bun_paths::{self, PathBuffer};
 use bun_http::{self as http, FetchRedirect, Headers, MimeType};
+use bun_http::headers::{Options as HeadersOptions, FetchHeadersRef};
 use bun_http_types::Method::Method;
 use bun_url::URL as ZigURL;
 use bun_url::PercentEncoding;
 use bun_resolver::data_url::DataURL;
-use crate::api::server::server_config::SSLConfig;
+use crate::socket::ssl_config::{self, SSLConfig};
 use crate::webcore::{AbortSignal, Blob, Body, FetchHeaders, ObjectURLRegistry, ReadableStream, Request, Response};
+use crate::webcore::{body, response, readable_stream, blob};
+use crate::webcore::body::{Value as BodyValue, Action as BodyValueLockedAction, InternalBlob};
+use crate::webcore::s3_client::S3CredentialsExt as _;
 use crate::node;
+#[cfg(windows)]
 use bun_paths::resolve_path::PosixToWinNormalizer;
 use bun_picohttp as picohttp;
 use crate::webcore::s3::client as s3;
-use bun_s3_signing::SignOptions;
+use bun_s3_signing::{SignOptions, SignResult};
 
 pub use super::fetch_tasklet::FetchTasklet;
-use super::fetch_tasklet::HTTPRequestBody;
+use super::fetch_tasklet::{HTTPRequestBody, FetchOptions};
+
+// ──────────────────────────────────────────────────────────────────────────
+// Local extension shims (upstream methods not yet ported / not in scope)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `JSGlobalObject::toTypeError` — produce (not throw) a TypeError JSValue
+/// with an `ErrorCode`. Upstream lives in a sibling-module trait
+/// (`h2_frame_parser_body::H2GlobalErrExt`); duplicated locally to avoid the
+/// cross-module reach-through.
+trait FetchGlobalErrExt {
+    fn to_type_error(&self, code: jsc::ErrorCode, msg: &'static str) -> JSValue;
+    fn to_type_error_fmt(&self, code: jsc::ErrorCode, args: core::fmt::Arguments<'_>) -> JSValue;
+}
+impl FetchGlobalErrExt for JSGlobalObject {
+    fn to_type_error(&self, code: jsc::ErrorCode, msg: &'static str) -> JSValue {
+        self.err(code, format_args!("{msg}")).to_js()
+    }
+    fn to_type_error_fmt(&self, code: jsc::ErrorCode, args: core::fmt::Arguments<'_>) -> JSValue {
+        self.err(code, args).to_js()
+    }
+}
+
+/// `JSValue::getOptionalEnum::<T>()` — upstream lives in `bun_jsc` but is
+/// gated behind a generic `JsEnum` trait that `FetchRedirect` doesn't impl yet.
+trait FetchJSValueExt {
+    fn get_optional_enum_fetch_redirect(
+        self,
+        global: &JSGlobalObject,
+        name: &'static str,
+    ) -> JsResult<Option<FetchRedirect>>;
+    fn as_fetch_headers(self) -> Option<*mut FetchHeaders>;
+    fn as_abort_signal(self) -> Option<*mut AbortSignal>;
+    fn to_slice_clone_with_allocator(self, global: &JSGlobalObject) -> JsResult<ZigStringSlice>;
+}
+impl FetchJSValueExt for JSValue {
+    fn get_optional_enum_fetch_redirect(
+        self,
+        _global: &JSGlobalObject,
+        _name: &'static str,
+    ) -> JsResult<Option<FetchRedirect>> {
+        todo!("blocked_on: bun_jsc::JSValue::get_optional_enum::<FetchRedirect>")
+    }
+    fn as_fetch_headers(self) -> Option<*mut FetchHeaders> {
+        todo!("blocked_on: bun_jsc::JSValue::as_::<FetchHeaders> (FetchHeaders: JsClass)")
+    }
+    fn as_abort_signal(self) -> Option<*mut AbortSignal> {
+        todo!("blocked_on: bun_jsc::JSValue::as_::<AbortSignal> (AbortSignal: JsClass)")
+    }
+    fn to_slice_clone_with_allocator(self, global: &JSGlobalObject) -> JsResult<ZigStringSlice> {
+        // PORT NOTE: Zig `toSliceCloneWithAllocator` ≈ `to_slice_clone` (no allocator arg).
+        self.to_slice_clone(global)
+    }
+}
+
+/// `Method::from_js` — upstream `bun_http::Method` has no JSC dep; shim here.
+fn method_from_js(_global: &JSGlobalObject, _value: JSValue) -> JsResult<Option<Method>> {
+    todo!("blocked_on: bun_http_jsc::Method::from_js")
+}
+
+/// Erase a `&FetchHeaders` (opaque C++ ref) into the vtable-based
+/// `bun_http::headers::FetchHeadersRef` expected by `Headers::from`.
+fn fetch_headers_ref<'a>(_h: &'a FetchHeaders) -> FetchHeadersRef<'a> {
+    todo!("blocked_on: bun_http::headers::FetchHeadersRef::from(&bun_jsc::FetchHeaders)")
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // dataURLResponse

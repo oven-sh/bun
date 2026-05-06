@@ -183,7 +183,7 @@ pub fn scan_imports_and_exports(
                 // is still gated upstream (`bun_css`); the validation body is
                 // preserved verbatim under `__css_validation` below and un-gates
                 // with `bun_css::BundlerStyleSheet`.
-                #[cfg(feature = "css")]
+                #[cfg(any())] // blocked_on(phase-c): __css_validation body type-mismatches; not on -e/run path
                 __css_validation::validate_css_import_composes(
                     this,
                     id,

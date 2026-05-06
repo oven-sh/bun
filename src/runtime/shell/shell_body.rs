@@ -4817,13 +4817,7 @@ pub fn handle_template_value(
             return Ok(());
         }
 
-        if {
-            // blocked_on: bun_jsc::JSValue::implements_to_string
-            let _ = global;
-            todo!("blocked_on: bun_jsc::JSValue::implements_to_string");
-            #[allow(unreachable_code)]
-            false
-        } {
+        if template_value.implements_to_string(global)? {
             if !builder.append_js_value_str::<true>(template_value)? {
                 return Err(global.throw(format_args!(
                     "Shell script string contains invalid UTF-16"

@@ -1888,6 +1888,12 @@ impl NetworkTask {
     ) -> Result<(), network_task::ForManifestError> {
         Ok(())
     }
+
+    /// Stub: `NetworkTask.schedule` (src/install/NetworkTask.zig). Real body
+    /// lives in `network_task::NetworkTask::schedule`; routed there once the
+    /// stub/real `NetworkTask` types unify.
+    // TODO(port): blocked_on network_task::NetworkTask un-gate (reconciler-6)
+    pub fn schedule(&mut self, _batch: &mut bun_threading::thread_pool::Batch) {}
 }
 // SAFETY: `next` is the sole intrusive link and is only ever read/written via
 // these accessors by `UnboundedQueue<NetworkTask>`. Mirrors Zig's

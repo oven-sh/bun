@@ -584,17 +584,31 @@ impl JSValueBooleanStrictExt for JSValue {
     }
 }
 
-/// Local shim: `AnyRoute::from_js` lives on the `server_body::AnyRoute` enum,
-/// which is a distinct type from `crate::server::AnyRoute` (the one
-/// `StaticRouteEntry` carries). Until the two enums unify, parse via this stub.
+/// `AnyRoute::fromJS` — parse via `server_body::AnyRoute::from_js` then
+/// convert to the `crate::server::AnyRoute` (mod.rs) enum that
+/// `StaticRouteEntry` stores. The two enums are nominally distinct (Phase-A
+/// duplication) but variant-isomorphic; this is the bridge until they unify.
 #[inline]
 fn any_route_from_js(
-    _global: &JSGlobalObject,
-    _path: &[u8],
-    _argument: JSValue,
-    _init_ctx: &mut super::super::server_body::ServerInitContext,
+    global: &JSGlobalObject,
+    path: &[u8],
+    argument: JSValue,
+    init_ctx: &mut super::super::server_body::ServerInitContext,
 ) -> JsResult<Option<AnyRoute>> {
-    todo!("blocked_on: crate::server::AnyRoute unification with server_body::AnyRoute::from_js")
+    use super::super::server_body::AnyRoute as BodyAnyRoute;
+    Ok(BodyAnyRoute::from_js(global, path, argument, init_ctx)?.map(|r| match r {
+        BodyAnyRoute::Static(rc) => AnyRoute::Static(rc),
+        BodyAnyRoute::File(rc) => AnyRoute::File(rc),
+        // RefPtr<Route> → *const Route: leak the RefPtr's strong ref into the
+        // raw pointer. `AnyRoute::deref_` (mod.rs) decrements via the intrusive
+        // refcount, so the count is balanced.
+        BodyAnyRoute::Html(refptr) => {
+            let raw = refptr.data.as_ptr() as *const _;
+            core::mem::forget(refptr);
+            AnyRoute::Html(raw)
+        }
+        BodyAnyRoute::FrameworkRouter(idx) => AnyRoute::FrameworkRouter(idx.get()),
+    }))
 }
 
 fn validate_route_name(global: &JSGlobalObject, path: &[u8]) -> JsResult<()> {

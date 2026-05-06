@@ -1172,14 +1172,18 @@ pub fn generate_entry_point_tail_js(
     if let Some(mi) = module_info.as_deref_mut() {
         for stmt in stmts.iter() {
             match &stmt.data {
-                Stmt::Data::SLocal(s) => {
-                    let var_kind: analyze_transpiled_module::VarKind = if s.kind == S::Local::Kind::KVar {
+                StmtData::SLocal(s) => {
+                    let var_kind: analyze_transpiled_module::VarKind = if s.kind == S::Kind::KVar {
                         analyze_transpiled_module::VarKind::Declared
                     } else {
                         analyze_transpiled_module::VarKind::Lexical
                     };
                     for decl in s.decls.slice() {
-                        add_binding_vars_to_module_info(mi, decl.binding, var_kind, r, &c.graph.symbols);
+                        // TODO(port): renamer threading — Zig passes `r` (Renamer) by value;
+                        // Rust `ChunkRenamer` lives on the chunk and isn't reachable here
+                        // without a back-reference. Defer until Phase B borrowck pass.
+                        let _ = (mi as *mut _, decl, var_kind);
+                        todo!("blocked_on: add_binding_vars_to_module_info renamer threading");
                     }
                 }
                 _ => {}
@@ -1188,15 +1192,14 @@ pub fn generate_entry_point_tail_js(
     }
 
     if stmts.is_empty() {
-        return CompileResult::Javascript(CompileResult::Javascript {
+        return CompileResult::Javascript {
             source_index,
-            result: PrintResult {
-                result: js_printer::PrintResult::Result { code: b"".into() },
-                ..Default::default()
-            },
-            ..Default::default()
-        });
-        // TODO(port): exact CompileResult variant shape — verify in Phase B
+            result: PrintResult::Result(js_printer::PrintResultSuccess {
+                code: Box::default(),
+                source_map: None,
+            }),
+            decls: Box::default(),
+        };
     }
 
     let print_options = js_printer::Options {
@@ -1204,44 +1207,40 @@ pub fn generate_entry_point_tail_js(
         indent: Default::default(),
         has_run_symbol_renamer: true,
 
-        // TODO(port): allocator field — AST crate
-        allocator,
         to_esm_ref,
         to_commonjs_ref: to_common_js_ref,
         require_or_import_meta_for_source_callback:
-            js_printer::RequireOrImportMeta::Callback::init::<LinkerContext>(
-                LinkerContext::require_or_import_meta_for_source,
-                c,
-            ),
+            js_printer::RequireOrImportMetaCallback::init::<LinkerContext>(c),
 
         minify_whitespace: c.options.minify_whitespace,
         print_dce_annotations: c.options.emit_dce_annotations,
         minify_syntax: c.options.minify_syntax,
-        mangled_props: &c.mangled_props,
+        mangled_props: Some(&c.mangled_props),
         module_info: module_info.as_deref_mut(),
         // .const_values = c.graph.const_values,
         ..Default::default()
     };
 
-    CompileResult::Javascript(CompileResult::Javascript {
-        result: js_printer::print(
+    let import_records = ast.import_records.slice();
+    let ast_view = ast.to_ast();
+
+    CompileResult::Javascript {
+        result: js_printer::print::<false>(
             allocator,
             unsafe { &(*c.resolver).opts }.target,
-            ast.to_ast(),
-            c.get_source(source_index),
+            &ast_view,
+            c.get_source(source_index as usize),
             print_options,
-            ast.import_records.slice(),
+            import_records,
             &[Part {
-                stmts: &stmts,
+                stmts: stmts.as_mut_slice() as *mut [Stmt],
                 ..Default::default()
             }],
             r,
-            false,
         ),
         source_index,
-        ..Default::default()
-    })
-    // TODO(port): exact CompileResult variant shape — verify in Phase B
+        decls: Box::default(),
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

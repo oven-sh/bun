@@ -2436,8 +2436,16 @@ impl<'a> BundleV2<'a> {
         })?;
         let task = self.allocator().alloc(ParseTask {
             ctx: self,
-            path: source.path.dupe_alloc().expect("oom"),
-            contents_or_fd: parse_task::ContentsOrFd::Contents(source.contents),
+            // PORT NOTE: Zig had a single `fs.Path`; Rust split it into
+            // `bun_logger::fs::Path` (on `Source`) and `bun_resolver::fs::Path`
+            // (on `ParseTask`). Reconstruct from the `text` slice — `pretty`/
+            // `namespace` are unset on a generated source anyway.
+            path: Fs::Path::init(source.path.text),
+            // SAFETY: `source.contents` borrows the bundler arena (`'a`); leak
+            // the borrowed-arm slice to `'static` to fit `ContentsOrFd::Contents`.
+            contents_or_fd: parse_task::ContentsOrFd::Contents(unsafe {
+                core::mem::transmute::<&[u8], &'static [u8]>(source.contents())
+            }),
             side_effects: _resolver::SideEffects::HasSideEffects,
             jsx: if known_target == Target::BakeServerComponentsSsr
                 && !self.framework.as_ref().unwrap().server_components.as_ref().unwrap().separate_ssr_graph
@@ -2446,7 +2454,7 @@ impl<'a> BundleV2<'a> {
             } else {
                 self.transpiler_for_target(known_target).options.jsx.clone()
             },
-            source_index,
+            source_index: js_ast::Index::init(source_index.get()),
             module_type: options::ModuleType::Unknown,
             emit_decorator_metadata: false, // TODO
             package_version: b"",

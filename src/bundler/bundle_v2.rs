@@ -2695,7 +2695,7 @@ impl<'a> BundleV2<'a> {
         let task = self.allocator().alloc(ParseTask {
             ctx: self,
             path: source.path.dupe_alloc().expect("oom"),
-            contents_or_fd: ParseTask::ContentsOrFd::Contents(source.contents),
+            contents_or_fd: parse_task::ContentsOrFd::Contents(source.contents),
             side_effects: _resolver::SideEffects::HasSideEffects,
             jsx: if known_target == Target::BakeServerComponentsSsr
                 && !self.framework.as_ref().unwrap().server_components.as_ref().unwrap().separate_ssr_graph
@@ -2759,7 +2759,8 @@ impl<'a> BundleV2<'a> {
 
         self.increment_scan_counter();
 
-        unsafe { (*self.graph.pool.as_ptr()).worker_pool }.schedule(ThreadPoolLib::Batch::from(&task.task));
+        // SAFETY: `pool` and its `worker_pool` are live for the bundle lifetime.
+        unsafe { (*(*self.graph.pool.as_ptr()).worker_pool).schedule(ThreadPoolLib::Batch::from(&task.task)) };
 
         Ok(u32::try_from(source_index).unwrap())
     }
@@ -3205,7 +3206,7 @@ impl<'a> BundleV2<'a> {
                 if !should_copy_for_bundling {
                     this.free_list.push(code.source_code);
                 }
-                parse_task.contents_or_fd = ParseTask::ContentsOrFd::Contents(code.source_code);
+                parse_task.contents_or_fd = parse_task::ContentsOrFd::Contents(code.source_code);
                 unsafe { this.graph.pool.as_mut() }.schedule(parse_task);
 
                 if let Some(watcher) = this.bun_watcher {
@@ -3397,7 +3398,7 @@ impl<'a> BundleV2<'a> {
                             ctx: this,
                             path,
                             // unknown at this point:
-                            contents_or_fd: ParseTask::ContentsOrFd::Fd {
+                            contents_or_fd: parse_task::ContentsOrFd::Fd {
                                 dir: bun_sys::Fd::INVALID,
                                 file: bun_sys::Fd::INVALID,
                             },
@@ -4002,7 +4003,7 @@ impl<'a> BundleV2<'a> {
             let Some(data_url) = maybe_data_url else { return false };
             let Ok(maybe_decoded) = data_url.decode_data() else { return false };
             self.free_list.push(maybe_decoded.clone());
-            parse.contents_or_fd = ParseTask::ContentsOrFd::Contents(maybe_decoded);
+            parse.contents_or_fd = parse_task::ContentsOrFd::Contents(maybe_decoded);
             parse.loader = Some(match data_url.decode_mime_type().category {
                 bun_http_types::mime_type::MimeType::Category::Javascript => Loader::Js,
                 bun_http_types::mime_type::MimeType::Category::Css => Loader::Css,

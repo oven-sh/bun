@@ -66,7 +66,7 @@ const results = await parallel(
 2. \`timeout 60 ./target/debug/bun-rs test ${area.glob} 2>&1 | tee /tmp/area-${area.id}.log\`
 3. Parse pass/fail. If all pass → goto BUGHUNT.
 4. Group failures by panic-loc/assertion message. For each unique failure: read .zig spec, fix-forward in src/${area.crate}/ (or wherever the panic is). Commit each fix.
-5. \`git pull --rebase origin claude/phase-a-port\` (absorb other worktrees' shared-infra fixes). Goto 1.
+5. \`git pull --no-rebase --no-edit -X ours origin claude/phase-a-port\` (absorb other worktrees' shared-infra fixes). Goto 1.
 
 **BUGHUNT (once all pass):**
 6. For each .rs file in src/${area.crate}/ with substantial logic: read it + its .zig spec, find divergences (silent-no-ops, aliased-&mut, transmute-to-enum, mem::forget/Box::leak, missing arms, ptr::read of Drop type, wrong-discriminant per docs/PORTING.md §Forbidden). Fix each, commit.
@@ -77,7 +77,7 @@ const results = await parallel(
 **HARD RULES:** Never git reset/checkout/restore. Never .zig. Edit src/ only. Compare against \`USE_SYSTEM_BUN=1 bun test ${area.glob}\` for expected behavior.
 
 Return {id:"${area.id}", pass, fail, total, all_pass, bughunt_bugs, commits:[sha...], branch:"<worktree-branch>", notes}.`,
-        { label: `area:${area.id}`, phase: "Spawn", schema: AREA_S, isolation: "worktree" },
+        { label: `area:${area.id}`, phase: "Spawn", schema: AREA_S,  },
       ),
   ),
 );

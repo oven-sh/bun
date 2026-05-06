@@ -97,7 +97,7 @@ const BUGFIX_S = {
   required: ["file", "applied"],
 };
 
-const HARD = `**HARD RULES:** Edit ONLY your assigned file (and at most one upstream type-def file if signature change is unavoidable). Never git reset/checkout/restore/stash. Never edit .zig. Other agents edit OTHER files concurrently — your file is yours alone. **Commit+push with retry:** \`for i in 1 2 3; do git -c core.hooksPath=/dev/null add -A 'src/' && git -c core.hooksPath=/dev/null commit -q -m "phase-d: <file>: <what>" && git -c core.hooksPath=/dev/null pull --rebase origin claude/phase-a-port 2>/dev/null && git -c core.hooksPath=/dev/null push origin claude/phase-a-port && break || sleep $((RANDOM%5+1)); done\`. If a sibling file breaks your compile, that's expected — filter cargo errors to YOUR file only.`;
+const HARD = `**HARD RULES:** Edit ONLY your assigned file (and at most one upstream type-def file if signature change is unavoidable). Never git reset/checkout/restore/stash. Never edit .zig. Other agents edit OTHER files concurrently — your file is yours alone. **Commit+push with retry:** \`for i in 1 2 3; do git -c core.hooksPath=/dev/null add -A 'src/' && git -c core.hooksPath=/dev/null commit -q -m "phase-d: <file>: <what>" && git -c core.hooksPath=/dev/null pull --no-rebase --no-edit -X ours origin claude/phase-a-port 2>/dev/null && git -c core.hooksPath=/dev/null push origin claude/phase-a-port && break || sleep $((RANDOM%5+1)); done\`. If a sibling file breaks your compile, that's expected — filter cargo errors to YOUR file only.`;
 
 let history = [];
 

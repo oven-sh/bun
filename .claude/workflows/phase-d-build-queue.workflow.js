@@ -62,7 +62,7 @@ const BUGFIX_S = {
   required: ["file", "applied"],
 };
 
-const HARD = `**HARD RULES:** Edit ONLY your assigned file (and at most one upstream type-def file if signature change is unavoidable — note it in fns_touched). Never git reset/checkout/restore/stash. Never .zig. Other agents own OTHER frontier files this round. **Commit+push with retry:** \`for i in 1 2 3 4 5; do git -c core.hooksPath=/dev/null add -A 'src/' && git -c core.hooksPath=/dev/null commit -q -m "phase-d: <file>: <what>" 2>/dev/null && git -c core.hooksPath=/dev/null pull --rebase origin claude/phase-a-port 2>/dev/null; git -c core.hooksPath=/dev/null push origin claude/phase-a-port && break || sleep $((RANDOM%6+1)); done\`. Filter cargo errors to YOUR file only — sibling breakage is expected mid-round.`;
+const HARD = `**HARD RULES:** Edit ONLY your assigned file (and at most one upstream type-def file if signature change is unavoidable — note it in fns_touched). Never git reset/checkout/restore/stash. Never .zig. Other agents own OTHER frontier files this round. **Commit+push with retry:** \`for i in 1 2 3 4 5; do git -c core.hooksPath=/dev/null add -A 'src/' && git -c core.hooksPath=/dev/null commit -q -m "phase-d: <file>: <what>" 2>/dev/null && git -c core.hooksPath=/dev/null pull --no-rebase --no-edit -X ours origin claude/phase-a-port 2>/dev/null; git -c core.hooksPath=/dev/null push origin claude/phase-a-port && break || sleep $((RANDOM%6+1)); done\`. Filter cargo errors to YOUR file only — sibling breakage is expected mid-round.`;
 
 let history = [];
 let seen_files = {};

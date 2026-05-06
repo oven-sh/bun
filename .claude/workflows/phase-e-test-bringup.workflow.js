@@ -123,7 +123,7 @@ const FIX_S = {
   required: ["loc", "fixed", "action"],
 };
 
-const HARD = `**HARD RULES:** Never git reset/checkout/restore/stash. Never .zig. Commit+push with retry: \`for i in 1 2 3 4 5; do git -c core.hooksPath=/dev/null add -A 'src/' && git -c core.hooksPath=/dev/null commit -q -m "phase-e: <what>" 2>/dev/null && git -c core.hooksPath=/dev/null pull --rebase origin claude/phase-a-port 2>/dev/null; git -c core.hooksPath=/dev/null push origin claude/phase-a-port && break || sleep $((RANDOM%5+1)); done\`.`;
+const HARD = `**HARD RULES:** Never git reset/checkout/restore/stash. Never .zig. Commit+push with retry: \`for i in 1 2 3 4 5; do git -c core.hooksPath=/dev/null add -A 'src/' && git -c core.hooksPath=/dev/null commit -q -m "phase-e: <what>" 2>/dev/null && git -c core.hooksPath=/dev/null pull --no-rebase --no-edit -X ours origin claude/phase-a-port 2>/dev/null; git -c core.hooksPath=/dev/null push origin claude/phase-a-port && break || sleep $((RANDOM%5+1)); done\`.`;
 
 let history = [];
 let rung_reached = 0;

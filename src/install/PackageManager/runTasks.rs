@@ -20,7 +20,11 @@ use crate::network_task::{Authorization, ForTarballError};
 use crate::package_manifest_map::Value as ManifestEntry;
 use bun_core::fmt::PathSep;
 
-use super::{Options, PackageInstaller, PackageManager, ProgressStrings};
+use super::{PackageInstaller, PackageManager, ProgressStrings};
+// `Options::LogLevel` etc. are namespaced types in Zig (`PackageManager.Options.LogLevel`);
+// import the *module* under the `Options` name so `Options::LogLevel` resolves as a path
+// (matches the `Task` module-alias pattern above and `CommandLineArguments.rs`).
+use super::package_manager_options as Options;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Callbacks trait
@@ -803,7 +807,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         // PORT NOTE: raw-ptr capture — borrowck would reject overlapping `&mut`
         // with the loop body. Guard runs on every `continue`/`?`/fallthrough.
         // Phase B: have the iterator yield a pool guard that puts back on Drop.
-        let task_ptr = task as *mut Task;
+        let task_ptr = task as *mut Task::Task<'static>;
         // SAFETY: shadow-reborrow so every body access to `task` is a child of
         // `task_ptr`'s tag — provenance is preserved for the guard derefs because
         // the body never touches the iterator's original `&mut`.

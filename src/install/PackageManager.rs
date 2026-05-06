@@ -248,7 +248,10 @@ use crate::package_manager_task as Task;
 pub use self::command_line_arguments as command_line_arguments_mod;
 pub use self::command_line_arguments::CommandLineArguments;
 pub use self::package_manager_options::Options;
-pub use self::package_json_editor::PackageJSONEditor;
+// Zig's `PackageJSONEditor` is a file-level namespace (no struct) — re-export
+// the module itself so `PackageJSONEditor::edit(...)` resolves to the free fns.
+#[allow(non_snake_case)]
+pub use self::package_json_editor as PackageJSONEditor;
 pub use self::update_request::UpdateRequest;
 pub use self::workspace_package_json_cache::WorkspacePackageJSONCache;
 pub use super::package_installer::PackageInstaller;
@@ -945,13 +948,13 @@ impl PackageManager {
 // TODO(port): bun.once returns a struct whose .call() runs the closure exactly once
 // and caches the result. Mapping to bun_core::Once with the run fn below.
 pub static CONFIGURE_ENV_FOR_SCRIPTS_ONCE: Once<
-    fn(&mut PackageManager, Command::Context, Options::LogLevel) -> Result<transpiler::Transpiler<'static>, Error>,
+    fn(&mut PackageManager, Command::Context, package_manager_options::LogLevel) -> Result<transpiler::Transpiler<'static>, Error>,
 > = Once::new(configure_env_for_scripts_run);
 
 fn configure_env_for_scripts_run(
     this: &mut PackageManager,
     ctx: Command::Context,
-    log_level: Options::LogLevel,
+    log_level: package_manager_options::LogLevel,
 ) -> Result<transpiler::Transpiler<'static>, Error> {
     // We need to figure out the PATH and other environment variables
     // to do that, we re-use the code from bun run
@@ -1312,7 +1315,7 @@ pub fn init(
         strings::without_suffix_comptime(original_package_json_path.as_bytes(), SEP_PACKAGE_JSON);
     let original_cwd_clone = Box::<[u8]>::from(original_cwd);
 
-    let mut workspace_names = Package::WorkspaceMap::init();
+    let mut workspace_names = Package::WorkspaceMap::WorkspaceMap::init();
     let mut workspace_package_json_cache = WorkspacePackageJSONCache {
         map: Default::default(),
     };

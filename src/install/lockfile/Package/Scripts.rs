@@ -2,7 +2,7 @@ use core::ffi::CStr;
 
 use bstr::BStr;
 
-use bun_core::output;
+use bun_core::{output, ZBox};
 use bun_install::lockfile::{Lockfile, StringBuilder as LockfileStringBuilder};
 use bun_install::lockfile::package::Package;
 use bun_install::lockfile::Scripts as LockfileScripts;
@@ -11,8 +11,10 @@ use bun_js_parser::Expr;
 use bun_logger as logger;
 use bun_paths::{self, AbsPath, PathBuffer, SEP_STR};
 use bun_semver::String as SemverString;
-use bun_str::{strings, ZString};
+use bun_str::strings;
 use bun_sys::{self, Fd};
+
+use crate::bun_json;
 
 bun_output::declare_scope!(Lockfile, hidden);
 

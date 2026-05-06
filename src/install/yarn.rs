@@ -718,17 +718,21 @@ pub fn migrate_yarn_lockfile<'a>(
         };
         package_json_fd.close();
 
-        let Ok(package_json_expr) = bun_json::parse_package_json_utf8_with_opts(
-            &package_json_source,
-            log,
-            bun_json::ParseOptions {
-                is_json: true,
-                allow_comments: true,
-                allow_trailing_commas: true,
-                guess_indentation: true,
-                ..Default::default()
-            },
-        ) else {
+        // PORT NOTE: Zig passes `comptime opts: js_lexer.JSONOptions`; the Rust
+        // port spells the 8 option flags out as const generics (stable Rust has
+        // no struct const-generics). Unspecified Zig fields default to false.
+        let json_bump = bun_alloc::Arena::new();
+        let Ok(package_json_expr) = bun_json::parse_package_json_utf8_with_opts::<
+            true,  // IS_JSON
+            true,  // ALLOW_COMMENTS
+            true,  // ALLOW_TRAILING_COMMAS
+            false, // IGNORE_LEADING_ESCAPE_SEQUENCES
+            false, // IGNORE_TRAILING_ESCAPE_SEQUENCES
+            false, // JSON_WARN_DUPLICATE_KEYS
+            false, // WAS_ORIGINALLY_MACRO
+            true,  // GUESS_INDENTATION
+        >(&package_json_source, log, &json_bump)
+        else {
             return Err(bun_core::err!("InvalidPackageJSON"));
         };
 

@@ -1476,11 +1476,11 @@ fn init_extract_task(
     this: &mut PackageManager,
     tarball: &ExtractTarball,
     network_task: *mut NetworkTask,
-) -> *mut Task {
+) -> *mut Task::Task<'static> {
     let task = this.preallocated_resolve_tasks.get();
     // SAFETY: task is a freshly acquired slot from the preallocated pool; we own the write.
     unsafe {
-        *task = Task {
+        *task = Task::Task {
             package_manager: this,
             log: logger::Log::init(),
             tag: Task::Tag::Extract,
@@ -1517,7 +1517,7 @@ pub fn create_extract_task_for_streaming(
     this: &mut PackageManager,
     tarball: &ExtractTarball,
     network_task: *mut NetworkTask,
-) -> *mut Task {
+) -> *mut Task::Task<'static> {
     init_extract_task(this, tarball, network_task)
 }
 
@@ -1535,7 +1535,7 @@ fn enqueue_git_clone(
     let task = this.preallocated_resolve_tasks.get();
     // SAFETY: task is a freshly acquired slot from the preallocated pool
     unsafe {
-        *task = Task {
+        *task = Task::Task {
             package_manager: this,
             log: logger::Log::init(),
             tag: Task::Tag::GitClone,
@@ -1600,7 +1600,7 @@ pub fn enqueue_git_checkout(
     let task = this.preallocated_resolve_tasks.get();
     // SAFETY: task is a freshly acquired slot from the preallocated pool
     unsafe {
-        *task = Task {
+        *task = Task::Task {
             package_manager: this,
             log: logger::Log::init(),
             tag: Task::Tag::GitCheckout,
@@ -1704,7 +1704,7 @@ fn enqueue_local_tarball(
     let task = this.preallocated_resolve_tasks.get();
     // SAFETY: task is a freshly acquired slot from the preallocated pool
     unsafe {
-        *task = Task {
+        *task = Task::Task {
             package_manager: this,
             log: logger::Log::init(),
             tag: Task::Tag::LocalTarball,

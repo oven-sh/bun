@@ -4,7 +4,7 @@ use bun_sys::walker_skippable::Walker;
 // TODO(port): `bun.AbsPath(.{ .sep = .auto, .unit = .os })` / `bun.Path(.{ .sep = .auto, .unit = .os })`
 // take a comptime config struct; Phase B decides whether these become const-generic
 // params or distinct type aliases. Using the bare types here.
-use bun_paths::{AbsPath, Path, OsPathSlice};
+use bun_paths::{AbsPath, Path, OSPathSlice};
 
 pub struct Hardlinker {
     pub src_dir: Fd,
@@ -18,14 +18,14 @@ impl Hardlinker {
         folder_dir: Fd,
         src: AbsPath,
         dest: Path,
-        skip_dirnames: &[OsPathSlice<'_>],
+        skip_dirnames: &[&OSPathSlice],
     ) -> Result<Hardlinker, AllocError> {
         Ok(Hardlinker {
             src_dir: folder_dir,
             src,
             dest,
             walker: {
-                let mut w = Walker::walk(
+                let mut w = bun_sys::walker_skippable::walk(
                     folder_dir,
                     // bun.default_allocator dropped — global mimalloc
                     &[],
@@ -42,7 +42,7 @@ impl Hardlinker {
 
     pub fn link(&mut self) -> Result<sys::Result<()>, AllocError> {
         if crate::PackageManager::verbose_install() {
-            bun_core::output::pretty_errorln!(
+            bun_core::pretty_errorln!(
                 "Hardlinking {} to {}",
                 bun_core::fmt::fmt_os_path(self.src.slice(), Default::default()),
                 bun_core::fmt::fmt_os_path(self.dest.slice(), Default::default()),
@@ -115,7 +115,7 @@ impl Hardlinker {
                             sys::Result::Err(link_err1) => match link_err1.get_errno() {
                                 sys::E::UV_EEXIST | sys::E::EXIST => {
                                     if crate::PackageManager::verbose_install() {
-                                        bun_core::output::pretty_errorln!(
+                                        bun_core::pretty_errorln!(
                                             "Hardlinking {} to a path that already exists: {}",
                                             bun_core::fmt::fmt_os_path(
                                                 self.src.slice(),

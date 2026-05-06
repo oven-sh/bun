@@ -796,98 +796,79 @@ impl PublishCommand {
     ) -> Result<Box<[u8]>, AllocError> {
         debug_assert!(json.is_object());
 
+        let bump = bun_alloc::Arena::new();
+        // PORT NOTE: `E::String` stores `&'static [u8]` (Phase-A erasure); leak the
+        // formatted buffers so they outlive the AST nodes through printing.
+        macro_rules! leak {
+            ($v:expr) => {
+                Box::leak($v.into_boxed_slice()) as &'static [u8]
+            };
+        }
+
         let registry = manager.scope_for_package_name(package_name);
 
-        let version_without_build_tag = Dependency::without_build_tag(package_version);
+        let version_without_build_tag = dependency::without_build_tag(package_version);
 
         let integrity_fmt = {
             let mut v = Vec::new();
-            write!(&mut v, "{}", bun_fmt::integrity::<false>(integrity))?;
-            v.into_boxed_slice()
+            write!(&mut v, "{}", bun_fmt::integrity::<false>(integrity)).map_err(|_| AllocError)?;
+            leak!(v)
+        };
+        let shasum_fmt = {
+            let mut v = Vec::new();
+            write!(&mut v, "{}", HexLower(&shasum)).map_err(|_| AllocError)?;
+            leak!(v)
         };
 
-        json.set_string(b"_id", {
+        Expr::set_string(json, &bump, b"_id", leak!({
             let mut v = Vec::new();
-            write!(&mut v, "{}@{}", bstr::BStr::new(package_name), bstr::BStr::new(version_without_build_tag))?;
-            v.into_boxed_slice()
-        })?;
-        json.set_string(b"_integrity", integrity_fmt.clone())?;
-        json.set_string(b"_nodeVersion", Environment::REPORTED_NODEJS_VERSION.as_bytes())?;
+            write!(&mut v, "{}@{}", bstr::BStr::new(package_name), bstr::BStr::new(version_without_build_tag)).map_err(|_| AllocError)?;
+            v
+        }))?;
+        Expr::set_string(json, &bump, b"_integrity", integrity_fmt)?;
+        Expr::set_string(json, &bump, b"_nodeVersion", Environment::REPORTED_NODEJS_VERSION.as_bytes())?;
         // TODO: npm version
-        json.set_string(b"_npmVersion", b"10.8.3")?;
-        json.set_string(b"integrity", integrity_fmt)?;
-        json.set_string(b"shasum", {
-            let mut v = Vec::new();
-            write!(&mut v, "{}", bun_fmt::bytes_to_hex_lower(&shasum))?;
-            v.into_boxed_slice()
-        })?;
+        Expr::set_string(json, &bump, b"_npmVersion", b"10.8.3")?;
+        Expr::set_string(json, &bump, b"integrity", integrity_fmt)?;
+        Expr::set_string(json, &bump, b"shasum", shasum_fmt)?;
 
-        let mut dist_props: Box<[G::Property]> = vec![G::Property::default(); 3].into_boxed_slice();
-        dist_props[0] = G::Property {
-            key: Some(Expr::init(
-                E::String { data: b"integrity".into() },
-                logger::Loc::EMPTY,
-            )),
+        let mut dist_props: Vec<G::Property> = Vec::with_capacity(3);
+        dist_props.push(G::Property {
+            key: Some(Expr::init(E::String::init(b"integrity"), logger::Loc::EMPTY)),
+            value: Some(Expr::init(E::String::init(integrity_fmt), logger::Loc::EMPTY)),
+            ..Default::default()
+        });
+        dist_props.push(G::Property {
+            key: Some(Expr::init(E::String::init(b"shasum"), logger::Loc::EMPTY)),
+            value: Some(Expr::init(E::String::init(shasum_fmt), logger::Loc::EMPTY)),
+            ..Default::default()
+        });
+        dist_props.push(G::Property {
+            key: Some(Expr::init(E::String::init(b"tarball"), logger::Loc::EMPTY)),
             value: Some(Expr::init(
-                E::String {
-                    data: {
-                        let mut v = Vec::new();
-                        write!(&mut v, "{}", bun_fmt::integrity::<false>(integrity))?;
-                        v.into_boxed_slice()
-                    },
-                },
+                E::String::init(leak!({
+                    let mut v = Vec::new();
+                    write!(
+                        &mut v,
+                        "http://{}/{}/-/{}",
+                        // always use replace https with http
+                        // https://github.com/npm/cli/blob/9281ebf8e428d40450ad75ba61bc6f040b3bf896/workspaces/libnpmpublish/lib/publish.js#L120
+                        bstr::BStr::new(strings::without_trailing_slash(
+                            strings::without_prefix(&registry.url.href, b"https://"),
+                        )),
+                        bstr::BStr::new(package_name),
+                        pack::fmt_tarball_filename(package_name, package_version, pack::TarballNameStyle::Raw),
+                    ).map_err(|_| AllocError)?;
+                    v
+                })),
                 logger::Loc::EMPTY,
             )),
             ..Default::default()
-        };
-        dist_props[1] = G::Property {
-            key: Some(Expr::init(
-                E::String { data: b"shasum".into() },
-                logger::Loc::EMPTY,
-            )),
-            value: Some(Expr::init(
-                E::String {
-                    data: {
-                        let mut v = Vec::new();
-                        write!(&mut v, "{}", bun_fmt::bytes_to_hex_lower(&shasum))?;
-                        v.into_boxed_slice()
-                    },
-                },
-                logger::Loc::EMPTY,
-            )),
-            ..Default::default()
-        };
-        dist_props[2] = G::Property {
-            key: Some(Expr::init(
-                E::String { data: b"tarball".into() },
-                logger::Loc::EMPTY,
-            )),
-            value: Some(Expr::init(
-                E::String {
-                    data: {
-                        let mut v = Vec::new();
-                        write!(
-                            &mut v,
-                            "http://{}/{}/-/{}",
-                            // always use replace https with http
-                            // https://github.com/npm/cli/blob/9281ebf8e428d40450ad75ba61bc6f040b3bf896/workspaces/libnpmpublish/lib/publish.js#L120
-                            bstr::BStr::new(strings::without_trailing_slash(
-                                strings::without_prefix(&registry.url.href, b"https://"),
-                            )),
-                            bstr::BStr::new(package_name),
-                            pack::fmt_tarball_filename(package_name, package_version, pack::TarballNameStyle::Raw),
-                        )?;
-                        v.into_boxed_slice()
-                    },
-                },
-                logger::Loc::EMPTY,
-            )),
-            ..Default::default()
-        };
+        });
 
-        json.set(b"dist", Expr::init(
+        Expr::set(json, &bump, b"dist", Expr::init(
             E::Object {
-                properties: G::Property::List::from_owned_slice(dist_props),
+                properties: G::PropertyList::move_from_list(dist_props),
                 ..Default::default()
             },
             logger::Loc::EMPTY,
@@ -895,22 +876,21 @@ impl PublishCommand {
 
         {
             let workspace_root = match bun_sys::open_a(
-                strings::without_suffix_comptime(&manager.original_package_json_path, b"package.json"),
+                strings::without_suffix_comptime(manager.original_package_json_path(), b"package.json"),
                 bun_sys::O::DIRECTORY,
                 0,
-            )
-            .unwrap()
-            {
+            ) {
                 Ok(fd) => fd,
                 Err(e) => {
-                    Output::err(e, format_args!("failed to open workspace directory"));
+                    Output::err(e, "failed to open workspace directory", ());
                     Global::crash();
                 }
             };
-            let _close = scopeguard::guard(workspace_root, |fd| fd.close());
+            let _close = scopeguard::guard(workspace_root, |fd| { let _ = fd.close(); });
 
             Self::normalize_bin(
                 json,
+                &bump,
                 package_name,
                 workspace_root,
             )?;
@@ -923,8 +903,8 @@ impl PublishCommand {
             &mut writer,
             *json,
             json_source,
+            // TODO(port): `minify_whitespace` not yet on `PrintJsonOptions` (gated upstream).
             bun_js_printer::PrintJsonOptions {
-                minify_whitespace: true,
                 mangled_props: None,
                 ..Default::default()
             },
@@ -934,16 +914,16 @@ impl PublishCommand {
                 if e == err!(OutOfMemory) {
                     return Err(AllocError);
                 }
-                Output::err_generic(format_args!(
+                Output::err_generic(
                     "failed to print normalized package.json: {}",
-                    e.name(),
-                ));
+                    (e.name(),),
+                );
                 Global::crash();
             }
         };
         let _ = written;
 
-        Ok(writer.ctx.written_without_trailing_zero())
+        Ok(writer.ctx.written_without_trailing_zero().into())
     }
 
     fn normalize_bin(

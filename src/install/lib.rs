@@ -231,27 +231,244 @@ pub mod versioned_url;
  pub mod pnpm;
  pub mod yarn;
 
-/// Stub: `repository.rs` — `Repository` struct shape + method stubs read by
-/// `resolution.rs` / `dependency.rs`.
+/// Port of `Repository` (src/install/repository.zig) — string-handle struct
+/// plus the comparison/serialise helpers `resolution.rs` / `dependency.rs`
+/// need. The git-spawning side (`exec`, `tryHTTPS`, `download`, `checkout`)
+/// stays in the gated `repository_real` module; only the lockfile-layout
+/// methods live here so the un-gated callers compile against real bodies.
 pub mod repository {
     use core::cmp::Ordering;
+    use core::fmt;
+    use bun_alloc::AllocError;
+    use bun_semver::{String, StringBuilder};
+    use bun_semver::semver_string::Buf as StringBuf;
+    use bun_string::strings;
+
     #[derive(Default, Clone, Copy)]
+    #[repr(C)]
     pub struct Repository {
-        pub owner: bun_semver::String,
-        pub repo: bun_semver::String,
-        pub committish: bun_semver::String,
-        pub resolved: bun_semver::String,
-        pub package_name: bun_semver::String,
+        pub owner: String,
+        pub repo: String,
+        pub committish: String,
+        pub resolved: String,
+        pub package_name: String,
     }
+
     impl Repository {
-        pub fn parse_append_git<B>(_b: &mut B, _s: bun_semver::SlicedString) -> Self { todo!("phase-b2: Repository::parse_append_git (gated)") }
-        pub fn parse_append_github<B>(_b: &mut B, _s: bun_semver::SlicedString) -> Self { todo!("phase-b2: Repository::parse_append_github (gated)") }
-        pub fn order(&self, _o: &Self, _a: &[u8], _b: &[u8]) -> Ordering { todo!("phase-b2: Repository::order (gated)") }
-        pub fn count<B>(&self, _b: &mut B, _s: &[u8]) { todo!("phase-b2: Repository::count (gated)") }
-        pub fn eql(&self, _o: &Self, _a: &[u8], _b: &[u8]) -> bool { todo!("phase-b2: Repository::eql (gated)") }
-        pub fn fmt_store_path<W: core::fmt::Write>(&self, _w: &mut W, _s: &[u8]) -> core::fmt::Result { todo!("phase-b2: Repository::fmt_store_path (gated)") }
-        pub fn format_as<'a>(&'a self, _label: &'a str, _buf: &'a [u8]) -> impl core::fmt::Display + 'a { struct F; impl core::fmt::Display for F { fn fmt(&self, _: &mut core::fmt::Formatter<'_>) -> core::fmt::Result { todo!("phase-b2: Repository::format_as (gated)") } } F }
-        pub fn clone<B>(&self, _b: &mut B, _s: &[u8]) -> Self { todo!("phase-b2: Repository::clone (gated)") }
+        /// Zig: `Repository.parseAppendGit(input, *String.Buf) OOM!Repository`
+        /// (src/install/repository.zig). Strips a leading `git+`, then splits
+        /// on the **last** `#` into `repo` / `committish`.
+        pub fn parse_append_git(
+            input: &[u8],
+            buf: &mut StringBuf<'_>,
+        ) -> Result<Self, AllocError> {
+            let mut remain = input;
+            if strings::has_prefix_comptime(remain, b"git+") {
+                remain = &remain[b"git+".len()..];
+            }
+            if let Some(hash) = strings::last_index_of_char(remain, b'#') {
+                return Ok(Self {
+                    repo: buf.append(&remain[..hash])?,
+                    committish: buf.append(&remain[hash + 1..])?,
+                    ..Self::default()
+                });
+            }
+            Ok(Self { repo: buf.append(remain)?, ..Self::default() })
+        }
+
+        /// Zig: `Repository.parseAppendGithub(input, *String.Buf) OOM!Repository`.
+        /// Strips a leading `github:`, then splits on the last `/` (owner/repo)
+        /// and last `#` (committish). Mirrors the single-pass Zig loop exactly
+        /// — it records the **last** of each, so `a/b/c#d#e` → owner=`a/b`,
+        /// repo=`c#d`, committish=`e` (matching Zig bug-for-bug).
+        pub fn parse_append_github(
+            input: &[u8],
+            buf: &mut StringBuf<'_>,
+        ) -> Result<Self, AllocError> {
+            let mut remain = input;
+            if strings::has_prefix_comptime(remain, b"github:") {
+                remain = &remain[b"github:".len()..];
+            }
+            let mut hash: usize = 0;
+            let mut slash: usize = 0;
+            for (i, &c) in remain.iter().enumerate() {
+                match c {
+                    b'/' => slash = i,
+                    b'#' => hash = i,
+                    _ => {}
+                }
+            }
+
+            let repo = if hash == 0 {
+                &remain[slash + 1..]
+            } else {
+                &remain[slash + 1..hash]
+            };
+
+            let mut result = Self {
+                owner: buf.append(&remain[..slash])?,
+                repo: buf.append(repo)?,
+                ..Self::default()
+            };
+
+            if hash != 0 {
+                result.committish = buf.append(&remain[hash + 1..])?;
+            }
+
+            Ok(result)
+        }
+
+        /// Zig: `Repository.order` — lexicographic on owner→repo→committish.
+        pub fn order(&self, rhs: &Self, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
+            let owner_order = self.owner.order(&rhs.owner, lhs_buf, rhs_buf);
+            if owner_order != Ordering::Equal {
+                return owner_order;
+            }
+            let repo_order = self.repo.order(&rhs.repo, lhs_buf, rhs_buf);
+            if repo_order != Ordering::Equal {
+                return repo_order;
+            }
+            self.committish.order(&rhs.committish, lhs_buf, rhs_buf)
+        }
+
+        /// Zig: `Repository.count(buf, comptime StringBuilder, builder)` —
+        /// register every string field with the two-phase builder.
+        pub fn count<B: StringBuilder>(&self, buf: &[u8], builder: &mut B) {
+            builder.count(self.owner.slice(buf));
+            builder.count(self.repo.slice(buf));
+            builder.count(self.committish.slice(buf));
+            builder.count(self.resolved.slice(buf));
+            builder.count(self.package_name.slice(buf));
+        }
+
+        /// Zig: `Repository.clone(buf, comptime StringBuilder, builder)`.
+        pub fn clone<B: StringBuilder>(&self, buf: &[u8], builder: &mut B) -> Self {
+            Self {
+                owner: builder.append::<String>(self.owner.slice(buf)),
+                repo: builder.append::<String>(self.repo.slice(buf)),
+                committish: builder.append::<String>(self.committish.slice(buf)),
+                resolved: builder.append::<String>(self.resolved.slice(buf)),
+                package_name: builder.append::<String>(self.package_name.slice(buf)),
+            }
+        }
+
+        /// Zig: `Repository.eql` — owner+repo must match; then `resolved` if
+        /// both non-empty, else fall back to `committish`.
+        pub fn eql(&self, rhs: &Self, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool {
+            if !self.owner.eql(rhs.owner, lhs_buf, rhs_buf) {
+                return false;
+            }
+            if !self.repo.eql(rhs.repo, lhs_buf, rhs_buf) {
+                return false;
+            }
+            if self.resolved.is_empty() || rhs.resolved.is_empty() {
+                return self.committish.eql(rhs.committish, lhs_buf, rhs_buf);
+            }
+            self.resolved.eql(rhs.resolved, lhs_buf, rhs_buf)
+        }
+
+        /// Zig: `Repository.formatAs(label, buf, writer)` — direct port of
+        /// `Repository.Formatter.format`.
+        pub fn format_as(
+            &self,
+            label: &str,
+            buf: &[u8],
+            writer: &mut fmt::Formatter<'_>,
+        ) -> fmt::Result {
+            debug_assert!(!label.is_empty());
+            writer.write_str(label)?;
+
+            let repo = self.repo.slice(buf);
+            if !self.owner.is_empty() {
+                write!(writer, "{}", bstr::BStr::new(self.owner.slice(buf)))?;
+                writer.write_str("/")?;
+            } else if crate::dependency::is_scp_like_path(repo) {
+                writer.write_str("ssh://")?;
+            }
+            write!(writer, "{}", bstr::BStr::new(repo))?;
+
+            if !self.resolved.is_empty() {
+                writer.write_str("#")?;
+                let mut resolved = self.resolved.slice(buf);
+                if let Some(i) = strings::last_index_of_char(resolved, b'-') {
+                    resolved = &resolved[i + 1..];
+                }
+                write!(writer, "{}", bstr::BStr::new(resolved))?;
+            } else if !self.committish.is_empty() {
+                writer.write_str("#")?;
+                write!(writer, "{}", bstr::BStr::new(self.committish.slice(buf)))?;
+            }
+            Ok(())
+        }
+
+        /// Zig: `Repository.fmt(label, buf) Formatter` — Display adapter over
+        /// `format_as`.
+        pub fn fmt<'a>(&'a self, label: &'a str, buf: &'a [u8]) -> Formatter<'a> {
+            Formatter { label, buf, repository: self }
+        }
+
+        /// Zig: `Repository.fmtStorePath(label, string_buf) StorePathFormatter`.
+        pub fn fmt_store_path<'a>(
+            &'a self,
+            label: &'a str,
+            string_buf: &'a [u8],
+        ) -> StorePathFormatter<'a> {
+            StorePathFormatter { repo: self, label, string_buf }
+        }
+    }
+
+    pub struct Formatter<'a> {
+        pub label: &'a str,
+        pub buf: &'a [u8],
+        pub repository: &'a Repository,
+    }
+    impl fmt::Display for Formatter<'_> {
+        fn fmt(&self, w: &mut fmt::Formatter<'_>) -> fmt::Result {
+            self.repository.format_as(self.label, self.buf, w)
+        }
+    }
+
+    /// Port of `Repository.StorePathFormatter` (src/install/repository.zig).
+    /// Filesystem-safe rendering: `/`→`+`, `#`→`+`, individual segments go
+    /// through `Install.fmtStorePath` (= `crate::fmt_store_path`).
+    pub struct StorePathFormatter<'a> {
+        pub repo: &'a Repository,
+        pub label: &'a str,
+        pub string_buf: &'a [u8],
+    }
+    impl fmt::Display for StorePathFormatter<'_> {
+        fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(writer, "{}", crate::fmt_store_path(self.label.as_bytes()))?;
+
+            if !self.repo.owner.is_empty() {
+                write!(writer, "{}", self.repo.owner.fmt_store_path(self.string_buf))?;
+                // would be '/' but that's a path separator
+                writer.write_str("+")?;
+            } else if crate::dependency::is_scp_like_path(self.repo.repo.slice(self.string_buf)) {
+                // would be "ssh://" but '/' is a path separator
+                writer.write_str("ssh++")?;
+            }
+
+            write!(writer, "{}", self.repo.repo.fmt_store_path(self.string_buf))?;
+
+            if !self.repo.resolved.is_empty() {
+                // would be '#' but that's not valid on windows
+                writer.write_str("+")?;
+                let mut resolved = self.repo.resolved.slice(self.string_buf);
+                if let Some(i) = strings::last_index_of_char(resolved, b'-') {
+                    resolved = &resolved[i + 1..];
+                }
+                write!(writer, "{}", crate::fmt_store_path(resolved))?;
+            } else if !self.repo.committish.is_empty() {
+                writer.write_str("+")?;
+                write!(
+                    writer,
+                    "{}",
+                    self.repo.committish.fmt_store_path(self.string_buf)
+                )?;
+            }
+            Ok(())
+        }
     }
 }
 /// Stub: `bin.rs` — `Bin` struct + Value union read by `npm.rs` parse.

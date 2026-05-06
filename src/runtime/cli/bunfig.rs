@@ -1531,7 +1531,7 @@ mod phase_a_draft {
             Ok(())
         }
 
-        fn phase_a_serve_static(&mut self, serve_obj: &Expr) -> Result<(), bun_core::Error> {
+        pub(super) fn phase_a_serve_static(&mut self, serve_obj: &Expr) -> Result<(), bun_core::Error> {
             if let Some(config_plugins) = expr_get(serve_obj, b"plugins") {
                 let plugins: Option<Box<[Box<[u8]>]>> = 'plugins: {
                     if let ExprData::EArray(arr) = &config_plugins.data {

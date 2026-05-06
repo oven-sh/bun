@@ -1602,11 +1602,11 @@ impl PublishCommand {
             headers.count(b"accept-encoding", b"gzip,deflate");
 
             if !registry.token.is_empty() {
-                write!(print_buf, "Bearer {}", bstr::BStr::new(&registry.token))?;
+                write!(print_buf, "Bearer {}", bstr::BStr::new(&registry.token)).ok();
                 headers.count(b"authorization", print_buf);
                 print_buf.clear();
             } else if !registry.auth.is_empty() {
-                write!(print_buf, "Basic {}", bstr::BStr::new(&registry.auth))?;
+                write!(print_buf, "Basic {}", bstr::BStr::new(&registry.auth)).ok();
                 headers.count(b"authorization", print_buf);
                 print_buf.clear();
             }

@@ -248,7 +248,7 @@ impl DirectoryWatchStore {
                 }
                 let mut zbuf = path_buffer_pool::get();
                 let zpath = path::resolve_path::z(dir_name_to_watch, &mut zbuf);
-                match bun_sys::open(zpath, O::DIRECTORY | bun_watcher::WATCH_OPEN_FLAGS, 0) {
+                match bun_sys::open(zpath, O::DIRECTORY | bun_watcher::watcher_impl::WATCH_OPEN_FLAGS, 0) {
                     bun_sys::Result::Ok(fd) => (fd, true),
                     bun_sys::Result::Err(err) => match err.get_errno() {
                         // If this directory doesn't exist, a watcher should be placed

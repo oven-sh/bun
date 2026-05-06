@@ -251,9 +251,10 @@ impl PmPkgCommand {
                 Err(e) => {
                     if e == err!("InvalidPath") {
                         if strings::index_of(key, b"[]").is_some() {
-                            Output::err_generic(format_args!(
-                                "Empty brackets are not valid syntax for retrieving values."
-                            ));
+                            Output::err_generic(
+                                "Empty brackets are not valid syntax for retrieving values.",
+                                (),
+                            );
                             Global::exit(1);
                         }
                     }

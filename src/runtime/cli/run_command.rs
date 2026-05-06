@@ -1282,7 +1282,10 @@ impl RunCommand {
             loader.or_else(|| Self::default_loader_for(path)),
             Some(Loader::Md)
         ) {
-            Self::render_markdown_file_and_exit(path);
+            // PORT NOTE: real impl lives in `phase_a_draft::render_markdown_file_and_exit`;
+            // blocked on `bun_md` + remote-image prefetch landing in this tier.
+            let _ = path;
+            todo!("blocked_on: RunCommand::render_markdown_file_and_exit");
         }
 
         Global::configure_allocator(core::Global::AllocatorConfiguration {

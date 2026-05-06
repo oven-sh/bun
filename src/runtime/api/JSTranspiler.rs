@@ -1167,7 +1167,7 @@ impl JSTranspiler {
 
         // PERF(port): was MimallocArena bulk-free — profile in Phase B
         let arena = Arena::new();
-        let prev_allocator = self.transpiler.allocator();
+        let prev_allocator = self.transpiler.allocator;
         self.transpiler.set_allocator(&arena);
         let mut log = logger::Log::init();
         // defer log.deinit() → Drop

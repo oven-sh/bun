@@ -89,7 +89,7 @@ impl HotReloadEvent {
             return;
         }
 
-        let platform = Platform::auto();
+        let platform = Platform::AUTO;
         let ends_with_sep = platform.is_separator(dir_path[dir_path.len() - 1]);
         let starts_with_sep = platform.is_separator(sub_path[0]);
         let sep_offset: i32 = if ends_with_sep && starts_with_sep { -1 } else { 1 };

@@ -1941,13 +1941,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 if unix.len() > 1 && unix[0] == 0 {
                     // abstract domain socket, let's give it an "abstract" URL
                     break 'brk bun_fmt::URLFormatter {
-                        proto: bun_fmt::Proto::Abstract,
+                        proto: bun_fmt::URLProto::Abstract,
                         hostname: Some(&unix[1..]),
                         port: None,
                     };
                 }
                 bun_fmt::URLFormatter {
-                    proto: bun_fmt::Proto::Unix,
+                    proto: bun_fmt::URLProto::Unix,
                     hostname: Some(unix),
                     port: None,
                 }

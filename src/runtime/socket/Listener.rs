@@ -670,8 +670,8 @@ impl Listener {
         if path.is_empty() || path[0] == 0 {
             return;
         }
-        let buf = bun_paths::path_buffer_pool().get();
-        let _ = bun_sys::unlink(bun_paths::z(path, &mut *buf));
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let _ = bun_sys::unlink(bun_paths::resolve_path::z(path, &mut buf));
     }
 
     fn deinit(this: *mut Self) {

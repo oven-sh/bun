@@ -2324,7 +2324,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // is live across the read/writes below (single-threaded event loop,
         // and `from_js` cannot reenter this socket's handlers).
         let prev_mode = unsafe { (*p).mode };
-        let handlers = Handlers::from_js(global, socket_obj, prev_mode == SocketMode::Server)?;
+        let handlers = Handlers::from_js(global, socket_obj, prev_mode == super::SocketMode::Server)?;
         // Preserve runtime state across the struct assignment. `Handlers.fromJS` returns a
         // fresh struct with `active_connections = 0` and `mode` limited to `.server`/`.client`,
         // but this socket (and any in-flight callback scope) still holds references that were

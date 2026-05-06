@@ -1168,7 +1168,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             return Err(JsError::Thrown);
         }
 
-        return global_this.throw_value(err);
+        return Err(global_this.throw_value(err));
     }
 
     // PORT NOTE: Zig left this `undefined` and only read it on the assigned path; Rust uses
@@ -1178,7 +1178,12 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     #[cfg(unix)]
     if !IS_SYNC {
         if let Some(mode) = maybe_ipc_mode {
-            if let Some(socket) = jsc_vm.rare_data().spawn_ipc_group(jsc_vm).from_fd(
+            // SAFETY: re-borrow `jsc_vm` through the raw pointer for the nested
+            // `vm` arg while `rare_data()` holds the outer &mut.
+            if let Some(socket) = unsafe { &mut *jsc_vm_ptr }
+                .rare_data()
+                .spawn_ipc_group(unsafe { &mut *jsc_vm_ptr })
+                .from_fd(
                 bun_uws::SocketKind::SpawnIpc,
                 None,
                 core::mem::size_of::<*mut IPC::SendQueue>(),

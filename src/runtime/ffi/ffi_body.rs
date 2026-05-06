@@ -3127,9 +3127,13 @@ impl CompilerRT {
     pub fn define(state: &mut TCC::State) {
         #[cfg(target_arch = "x86_64")]
         {
-            state.define_symbol(b"NEEDS_COMPILER_RT_FUNCTIONS", b"1");
+            state.define_symbol(zstr!(b"NEEDS_COMPILER_RT_FUNCTIONS"), zstr!(b"1"));
+            // SAFETY: `libtcc1.c` is embedded with a manual trailing NUL guaranteed
+            // by `include_bytes!` + the explicit length math below.
+            const LIBTCC1: &[u8] = include_bytes!("libtcc1.c");
+            let libtcc1_z = ZBox::from_bytes(LIBTCC1);
             if state
-                .compile_string(ZStr::from_static(include_bytes!("libtcc1.c")))
+                .compile_string(&libtcc1_z)
                 .is_err()
             {
                 if cfg!(debug_assertions) {

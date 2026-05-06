@@ -4370,8 +4370,13 @@ impl Resolver {
 
             // size = strlen(buf+1) + 1
             let size = unsafe { core::ffi::CStr::from_ptr(buf[1..].as_ptr() as *const c_char) }.to_bytes().len() + 1;
+            // PORT NOTE: `bun_str::ZigString` lacks `with_encoding`/`to_js` (those live
+            // on `bun_jsc::zig_string::ZigString`). The formatted bytes here are pure
+            // ASCII (IP address + optional port), so `with_encoding()` would be a no-op
+            // anyway — borrow as a `bun_str::String` and hand to JS.
+            use jsc::StringJsc as _;
             if port == IANA_DNS_PORT {
-                values.put_index(global_this, i, ZigString::init(&buf[1..size]).with_encoding().to_js(global_this))?;
+                values.put_index(global_this, i, bun_str::String::borrow_utf8(&buf[1..size]).to_js(global_this)?)?;
             } else if family == libc::AF_INET6 {
                 buf[0] = b'[';
                 buf[size] = b']';
@@ -4381,7 +4386,7 @@ impl Resolver {
                     write!(cursor, ":{}", port).expect("unreachable");
                     buf.len() - (size + 1) - cursor.len()
                 };
-                values.put_index(global_this, i, ZigString::init(&buf[0..size + 1 + port_len]).with_encoding().to_js(global_this))?;
+                values.put_index(global_this, i, bun_str::String::borrow_utf8(&buf[0..size + 1 + port_len]).to_js(global_this)?)?;
             } else {
                 use std::io::Write;
                 let port_len = {
@@ -4389,7 +4394,7 @@ impl Resolver {
                     write!(cursor, ":{}", port).expect("unreachable");
                     buf.len() - size - cursor.len()
                 };
-                values.put_index(global_this, i, ZigString::init(&buf[1..size + port_len]).with_encoding().to_js(global_this))?;
+                values.put_index(global_this, i, bun_str::String::borrow_utf8(&buf[1..size + port_len]).to_js(global_this)?)?;
             }
 
             i += 1;

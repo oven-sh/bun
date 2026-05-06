@@ -555,8 +555,10 @@ pub fn build_with_vm(
     // PORT NOTE: reshaped for borrowck — copy out so root_dir_buf can drop.
     let root_dir_path: Box<[u8]> = Box::from(root_dir_path);
 
+    // PORT NOTE: borrowck — `framework` is `&mut options.framework`; reborrow
+    // through it instead of `options.framework` to avoid stacking borrows.
     let mut router_types: Vec<fr::Type> =
-        Vec::with_capacity(options.framework.file_system_router_types.len());
+        Vec::with_capacity(framework.file_system_router_types.len());
 
     let mut entry_points: EntryPointMap = EntryPointMap {
         root: Box::from(cwd),
@@ -564,7 +566,7 @@ pub fn build_with_vm(
         owned_paths: Vec::new(),
     };
 
-    for fsr in &options.framework.file_system_router_types {
+    for fsr in &framework.file_system_router_types {
         let joined_root = resolve_path::join_abs::<platform::Auto>(cwd, fsr.root);
         let Some(entry) = server_transpiler
             .resolver

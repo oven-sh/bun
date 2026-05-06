@@ -3175,30 +3175,45 @@ pub mod sync {
             Box::new(v)
         }
 
-        pub fn on_process_exit(&mut self, status: Status, _: &Rusage) {
-            self.status = Some(status);
-            self.waiting_count -= 1;
-            // SAFETY: `self.process` is the sole live handle during sync spawn
-            // (single-threaded uv loop); no other `&mut Process` overlaps this
-            // borrow. Mirrors Zig: `this.process.detach(); this.process.deref();`
+        /// `process` is the *same* `*mut Process` that was threaded through
+        /// `Process::on_exit_uv` → `Process::on_exit` → `ProcessExitHandler::call`
+        /// (which holds a protector-guarded `&mut Process` in its frame).
+        /// Re-deriving a `&mut Process` from the independent `self.process`
+        /// root would pop that protected tag under Stacked Borrows, so we
+        /// take the already-live pointer instead. Mirrors Zig
+        /// `this.process.detach(); this.process.deref();` (process.zig:2037).
+        pub fn on_process_exit(
+            this: *mut SyncWindowsProcess,
+            process: *mut Process,
+            status: Status,
+            _: &Rusage,
+        ) {
+            // SAFETY: `this` is the Box::into_raw root from spawn_windows_with_pipes;
+            // single-threaded uv loop, no overlapping borrow of SyncWindowsProcess.
             unsafe {
-                (*self.process).detach();
-                (*self.process).deref();
+                (*this).status = Some(status);
+                (*this).waiting_count -= 1;
+            }
+            // SAFETY: `process` carries the provenance of the `&mut Process`
+            // already live in `ProcessExitHandler::call`; mutating through it
+            // re-uses that tag instead of conflicting with it.
+            unsafe {
+                (*process).detach();
+                (*process).deref();
             }
         }
 
         pub fn on_reader_done(
             this: *mut SyncWindowsProcess,
             tag: OutFd,
-            chunks: &[&[u8]],
+            chunks: Vec<Box<[u8]>>,
             err: bun_sys::E,
         ) {
             // SAFETY: this is valid (back-ref from SyncWindowsPipeReader)
             let this = unsafe { &mut *this };
-            let owned: Vec<Box<[u8]>> = chunks.iter().map(|c| Box::<[u8]>::from(*c)).collect();
             match tag {
-                OutFd::Stderr => this.stderr = owned,
-                OutFd::Stdout => this.stdout = owned,
+                OutFd::Stderr => this.stderr = chunks,
+                OutFd::Stdout => this.stdout = chunks,
             }
             if err != bun_sys::E::SUCCESS {
                 this.err = err;
@@ -3206,6 +3221,21 @@ pub mod sync {
             this.waiting_count -= 1;
         }
     }
+
+    /// §Dispatch vtable for `SyncWindowsProcess` — forwards the
+    /// `(owner, process, status, rusage)` quad straight through so
+    /// `on_process_exit` can use the caller-provenance `process` pointer.
+    #[cfg(windows)]
+    static SYNC_WINDOWS_EXIT_VTABLE: ProcessExitVTable = ProcessExitVTable {
+        on_process_exit: |owner, process, status, rusage| unsafe {
+            SyncWindowsProcess::on_process_exit(
+                owner.cast::<SyncWindowsProcess>(),
+                process,
+                status,
+                &*rusage,
+            )
+        },
+    };
 
     fn flatten_owned_chunks(chunks: Vec<Box<[u8]>>) -> Vec<u8> {
         let mut total_size: usize = 0;

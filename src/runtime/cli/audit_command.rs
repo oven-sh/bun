@@ -5,7 +5,7 @@ use std::io::Write as _;
 use bun_collections::StringHashMap;
 use bun_core::{Global, Output};
 use bun_http::{self as http, HeaderBuilder};
-use bun_install::package_manager::command_line_arguments::AuditLevel;
+use bun_install::package_manager_real::command_line_arguments::AuditLevel;
 use bun_install::PackageManager;
 use bun_js_parser::Expr;
 use bun_libdeflate_sys as libdeflate;

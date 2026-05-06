@@ -489,7 +489,7 @@ pub extern "C" fn JSPasswordObject__create(global_object: &JSGlobalObject) -> JS
 struct HashJob {
     algorithm: AlgorithmValue,
     password: Box<[u8]>,
-    promise: promise::Strong,
+    promise: JSPromiseStrong,
     event_loop: &'static EventLoop,
     global: *const JSGlobalObject,
     r#ref: KeepAlive,
@@ -498,7 +498,7 @@ struct HashJob {
 
 impl Drop for HashJob {
     fn drop(&mut self) {
-        // promise: Drop on promise::Strong handles deinit.
+        // promise: Drop on JSPromiseStrong handles deinit.
         // TODO(port): bun.freeSensitive — zero the buffer before the Box<[u8]> field drops.
         bun_core::secure_zero(&mut self.password);
     }
@@ -558,7 +558,7 @@ struct HashResult {
     r#ref: KeepAlive,
 
     task: AnyTask,
-    promise: promise::Strong,
+    promise: JSPromiseStrong,
     global: *const JSGlobalObject,
 }
 
@@ -572,7 +572,7 @@ impl HashResult {
         // SAFETY: `this` was produced by Box::into_raw and is uniquely owned here.
         let this_ref = unsafe { &mut *this };
         let promise = core::mem::take(&mut this_ref.promise);
-        // defer promise.deinit() — Drop on promise::Strong at scope exit.
+        // defer promise.deinit() — Drop on JSPromiseStrong at scope exit.
         // SAFETY: global was stored from a live &JSGlobalObject; VM outlives the task.
         let global = unsafe { &*this_ref.global };
         this_ref.r#ref.unref(global.bun_vm());
@@ -660,7 +660,7 @@ impl JSPasswordObject {
             }
         }
 
-        let promise = promise::Strong::init(global_object);
+        let promise = JSPromiseStrong::init(global_object);
         let promise_value = promise.value();
 
         let job = HashJob::new(HashJob {
@@ -709,7 +709,7 @@ impl JSPasswordObject {
             }
         }
 
-        let promise = promise::Strong::init(global_object);
+        let promise = JSPromiseStrong::init(global_object);
         let promise_value = promise.value();
 
         let job = VerifyJob::new(VerifyJob {
@@ -820,7 +820,7 @@ struct VerifyJob {
     algorithm: Option<Algorithm>,
     password: Box<[u8]>,
     prev_hash: Box<[u8]>,
-    promise: promise::Strong,
+    promise: JSPromiseStrong,
     event_loop: &'static EventLoop,
     global: *const JSGlobalObject,
     r#ref: KeepAlive,
@@ -829,7 +829,7 @@ struct VerifyJob {
 
 impl Drop for VerifyJob {
     fn drop(&mut self) {
-        // promise: Drop on promise::Strong handles deinit.
+        // promise: Drop on JSPromiseStrong handles deinit.
         // TODO(port): bun.freeSensitive — zero the buffers before the Box<[u8]> fields drop.
         bun_core::secure_zero(&mut self.password);
         bun_core::secure_zero(&mut self.prev_hash);
@@ -892,7 +892,7 @@ struct VerifyResult {
     r#ref: KeepAlive,
 
     task: AnyTask,
-    promise: promise::Strong,
+    promise: JSPromiseStrong,
     global: *const JSGlobalObject,
 }
 

@@ -1047,9 +1047,10 @@ pub fn install_with_manager(
 struct RunAndWaitClosure<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool> {
     // PORT NOTE: Zig stores `*PackageManager` here while the caller also holds the same
     // pointer to call `sleepUntil`. Storing `&mut PackageManager` would alias the outer
-    // `this: &mut PackageManager` borrow in `run_and_wait`. Keep a raw pointer and reborrow
-    // inside `is_done`; `sleep_until` only ever invokes `is_done` between event-loop ticks
-    // on this thread, so no two `&mut` to the manager are live simultaneously.
+    // borrow in `run_and_wait`. Keep a raw pointer; `run_and_wait` derives this pointer
+    // first and then reborrows *through it* for the `sleep_until` receiver, so both the
+    // receiver and the callback's reborrow share the same raw provenance root (Zig `*T`
+    // semantics). See `run_and_wait` for the remaining `tick`/`event_loop` overlap note.
     manager: *mut PackageManager,
     err: Option<bun_core::Error>,
 }
@@ -1058,9 +1059,14 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
     RunAndWaitClosure<CHECK_PEERS, ONLY_PRE_PATCH>
 {
     fn is_done(closure: &mut Self) -> bool {
-        // SAFETY: `closure.manager` was set from a live `&mut PackageManager` in
-        // `run_and_wait`; that borrow is parked inside `sleep_until` (which only touches
-        // `event_loop`) for the duration of this callback.
+        // SAFETY: `closure.manager` is the raw provenance root set in `run_and_wait`;
+        // `sleep_until`'s `&mut self` was itself reborrowed from this same raw pointer
+        // (not the other way round), so deriving a fresh `&mut PackageManager` here does
+        // not use an already-invalidated tag. The original `this: &mut` in `run_and_wait`
+        // is dead past the `let mgr = ...` line. NOTE: `AnyEventLoop::tick` still holds
+        // `&mut event_loop` across this callback — that overlap is the cross-file
+        // `sleep_until` aliasing issue tracked alongside the other callers
+        // (PackageManagerEnqueue, PopulateManifestCache, hoisted_install).
         let this = unsafe { &mut *closure.manager };
         if CHECK_PEERS {
             if let Err(err) = this.process_peer_dependency_list() {

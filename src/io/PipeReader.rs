@@ -39,19 +39,38 @@ pub struct BufferedReaderVTable {
 
 /// Trait that parent types implement to receive buffered-reader callbacks.
 /// Mirrors the duck-typed `Type.onReaderDone` / `Type.onReaderError` etc. in Zig.
+///
+/// ## Aliasing contract (raw `*mut Self`, not `&mut self`)
+///
+/// In the Zig spec these thunks receive `*anyopaque`, cast to `*Type`, and call
+/// the decl — Zig pointers freely alias. In Rust the parent `Self` *contains*
+/// the `BufferedReader` as a field, and these callbacks are invoked from inside
+/// `BufferedReader` methods that hold a live `&mut BufferedReader`. Taking
+/// `&mut self` here would therefore materialize a `&mut Self` overlapping that
+/// live borrow (Stacked-Borrows UB). Instead each callback receives the raw
+/// `*mut Self` registered via `set_parent`.
+///
+/// SAFETY requirements for implementors:
+/// - `this` is non-null, properly aligned, and points at a live `Self` for the
+///   duration of the call.
+/// - A `&mut` to the embedded reader field may be live on the caller's stack.
+///   Implementors must not assume unique access to that field while servicing
+///   the callback; access other fields via `&mut (*this).field` /
+///   `addr_of_mut!` or reborrow `&mut *this` only when the reader is known to
+///   be done with `self` (e.g. tail-position `on_reader_done`).
 pub trait BufferedReaderParent {
     /// Mirrors `@hasDecl(Type, "onReadChunk")`.
     const HAS_ON_READ_CHUNK: bool = true;
 
-    fn on_read_chunk(&mut self, chunk: &[u8], has_more: ReadState) -> bool {
-        let _ = (chunk, has_more);
+    unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], has_more: ReadState) -> bool {
+        let _ = (this, chunk, has_more);
         // Default: should not be called when HAS_ON_READ_CHUNK == false.
         true
     }
-    fn on_reader_done(&mut self);
-    fn on_reader_error(&mut self, err: sys::Error);
-    fn loop_(&mut self) -> *mut Loop;
-    fn event_loop(&mut self) -> EventLoopHandle;
+    unsafe fn on_reader_done(this: *mut Self);
+    unsafe fn on_reader_error(this: *mut Self, err: sys::Error);
+    unsafe fn loop_(this: *mut Self) -> *mut Loop;
+    unsafe fn event_loop(this: *mut Self) -> EventLoopHandle;
 }
 
 impl BufferedReaderVTable {

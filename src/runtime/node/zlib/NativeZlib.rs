@@ -87,7 +87,11 @@ impl NativeZlib {
 
         let mut ptr = Box::new(Self {
             ref_count: Cell::new(1),
-            global_this: global as *const _ as *mut JSGlobalObject,
+            // SAFETY: JSGlobalObject is an opaque FFI handle with UnsafeCell interior;
+            // `as_ptr()` derives `*mut` via `UnsafeCell::get()` so the stored pointer
+            // carries write provenance (C++ mutates the global). The global outlives
+            // this m_ctx payload (JSC_BORROW backref).
+            global_this: global.as_ptr(),
             stream: Context::default(),
             write_result: None,
             poll_ref: CountedKeepAlive::default(),

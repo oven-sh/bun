@@ -748,7 +748,15 @@ impl ExtractTarball {
     pub publish_config: PublishConfigStub,
 }
 #[derive(Default)] pub struct PublishConfigStub {
-    pub auth_type: Option<bun_options_types::schema::api::AuthType>,
+    pub auth_type: Option<AuthType>,
+}
+/// Port of `AuthType` (src/install/PackageManager/PackageManagerOptions.zig).
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum AuthType { Legacy, Web }
+impl From<AuthType> for &'static str {
+    fn from(a: AuthType) -> &'static str {
+        match a { AuthType::Legacy => "legacy", AuthType::Web => "web" }
+    }
 }
 #[derive(Default)] pub struct PackageManagerEnableStub {
     pub manifest_cache: bool,

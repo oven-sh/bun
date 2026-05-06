@@ -8,27 +8,27 @@ import { bunEnv, bunExe } from "harness";
 // release builds the exception is silently consumed, so this test only
 // observably regresses under ASAN — which is what `bun bd test` uses.
 test("Bun.jest() after stack overflow does not crash", async () => {
-    await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", `
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
             function cause_overflow() { cause_overflow(); }
             try { cause_overflow(); } catch (e) {}
             try {
                 const j = Bun.jest();
                 j.expect(j).toBeValidDate();
             } catch(e) {}
-        `],
-        env: bunEnv,
-        stderr: "pipe",
-        stdout: "pipe",
-    });
+        `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-    ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toBe("");
-    expect(stdout).toBe("");
-    expect(exitCode).toBe(0);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(0);
 });

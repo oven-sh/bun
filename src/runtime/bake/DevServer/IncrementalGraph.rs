@@ -2098,7 +2098,7 @@ impl<S: GraphSide> IncrementalGraph<S> {
         // the error list as it changes while also supporting a REPL
         let _ = log.print(Output::error_writer());
         let failure = {
-            let relative_path_buf = path_buffer_pool().get();
+            let mut relative_path_buf = path_buffer_pool::get();
             // this string is just going to be memcpy'd into the log buffer
             let owner_display_name =
                 dev.relative_path(&mut *relative_path_buf, &self.bundled_files.keys()[gop_index]);

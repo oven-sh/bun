@@ -585,6 +585,28 @@ pub mod lockfile {
 pub mod package_manager {
     pub use super::PackageManager;
     pub use super::Subcommand;
+    /// Stub: real body lives in `PackageManager/CommandLineArguments.rs`,
+    /// gated behind `package_manager_real` (`#![cfg(any())]` reconciler-6).
+    /// Only the `AuditLevel` enum is surfaced for `bun_runtime::cli::audit_command`.
+    pub mod command_line_arguments {
+        #[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord)]
+        pub enum AuditLevel { Low, Moderate, High, Critical }
+        impl AuditLevel {
+            pub fn from_string(str: &[u8]) -> Option<AuditLevel> {
+                match str {
+                    b"low" => Some(AuditLevel::Low),
+                    b"moderate" => Some(AuditLevel::Moderate),
+                    b"high" => Some(AuditLevel::High),
+                    b"critical" => Some(AuditLevel::Critical),
+                    _ => None,
+                }
+            }
+            pub fn should_include_severity(self, severity: &[u8]) -> bool {
+                let severity_level = AuditLevel::from_string(severity).unwrap_or(AuditLevel::Moderate);
+                (severity_level as u8) >= (self as u8)
+            }
+        }
+    }
     pub mod security_scanner {
         pub use crate::SecurityScanSubprocess;
 

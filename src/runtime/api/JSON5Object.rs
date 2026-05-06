@@ -69,16 +69,13 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         return global.throw_invalid_arguments("Expected a string to parse");
     }
 
-    let input: jsc::node::BlobOrStringOrBuffer = match jsc::node::BlobOrStringOrBuffer::from_js(
-        global,
-        input_value,
-    )? {
+    let input: BlobOrStringOrBuffer = match BlobOrStringOrBuffer::from_js(global, input_value)? {
         Some(v) => v,
         None => 'input: {
             let str = input_value.to_bun_string(global)?;
-            break 'input jsc::node::BlobOrStringOrBuffer::StringOrBuffer(
-                jsc::node::StringOrBuffer::String(str.to_slice()),
-            );
+            break 'input BlobOrStringOrBuffer::StringOrBuffer(StringOrBuffer::String(
+                str.to_slice(&bump),
+            ));
             // PORT NOTE: `str.deref()` handled by Drop on `BunString`; the slice
             // borrows/clones as needed inside `to_slice`.
         }
@@ -472,7 +469,7 @@ fn hex_digit(v: u16) -> u8 {
 
 fn expr_to_js(expr: Expr, global: &JSGlobalObject) -> JsResult<JSValue> {
     match expr.data {
-        ExprData::ENull => Ok(JSValue::NULL),
+        ExprData::ENull(_) => Ok(JSValue::NULL),
         ExprData::EBoolean(boolean) => Ok(JSValue::from(boolean.value)),
         ExprData::ENumber(number) => Ok(JSValue::js_number(number.value)),
         ExprData::EString(str) => {

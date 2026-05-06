@@ -2360,6 +2360,7 @@ pub extern "C" fn Bun__reportError(global_object: *mut JSGlobalObject, err: JSVa
 #[allow(non_snake_case)]
 pub mod JSZlib {
     use super::*;
+    use bun_libdeflate_sys::libdeflate as bun_libdeflate;
 
     #[unsafe(no_mangle)]
     pub extern "C" fn reader_deallocator(_: *mut c_void, ctx: *mut c_void) {

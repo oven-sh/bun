@@ -2425,10 +2425,13 @@ impl TestCommand {
         // PERF(port): was MimallocArena bulk-free — profile in Phase B
         // TODO(port): vm_.arena = &arena; vm_.allocator = arena.allocator(); — arena threading
         // dropped here. Phase B should reintroduce a bun_alloc::Arena and assign to vm.
-        vm_.event_loop().ensure_waker();
+        // SAFETY: event_loop() returns the VM-owned *mut EventLoop singleton.
+        unsafe { (*vm_.event_loop()).ensure_waker() };
+        // SAFETY: run_with_api_lock(&self) only acquires the JSC API lock around the
+        // closure; ctx holds the unique &mut to the same VM and is the sole mutator.
+        let vm_ptr = vm_ as *mut VirtualMachine;
         let mut ctx = Context { reporter: reporter_, vm: vm_, files: files_ };
-        // TODO(port): runWithAPILock takes (Type, *Type, fn) in Zig; Rust signature TBD
-        vm_.run_with_api_lock(&mut ctx, Context::begin);
+        unsafe { (*vm_ptr).run_with_api_lock(|| ctx.begin()) };
     }
 
     extern "C" fn timer_noop(_: *mut uws::Timer) {}
@@ -2439,19 +2442,24 @@ impl TestCommand {
         file_name: &[u8],
         first_last: bun_test::FirstLast,
     ) -> Result<(), bun_core::Error> {
-        let _defer = scopeguard::guard((), |_| {
-            js_ast::Expr::Data::Store::reset();
-            js_ast::Stmt::Data::Store::reset();
+        // Capture the raw log pointer (Copy) so the guard does not borrow `vm`.
+        let vm_log = vm.log;
+        let _defer = scopeguard::guard((), move |_| {
+            js_ast::Expr::data_store_reset();
+            js_ast::Stmt::data_store_reset();
 
-            if vm.log.errors > 0 {
-                let _ = vm.log.print(err_w());
-                vm.log.msgs.clear();
-                vm.log.errors = 0;
+            if let Some(log_ptr) = vm_log {
+                // SAFETY: vm.log points at the VM-owned Log for the lifetime of the run.
+                let log = unsafe { &mut *log_ptr.as_ptr() };
+                if log.errors > 0 {
+                    let _ = log.print(err_w());
+                    log.msgs.clear();
+                    log.errors = 0;
+                }
             }
 
             Output::flush();
         });
-        // TODO(port): scopeguard captures &mut vm — borrowck conflict; Phase B reshape
 
         // Restore test.only state after each module.
         let prev_only = reporter.jest.only;
@@ -2459,9 +2467,13 @@ impl TestCommand {
         // TODO(port): borrowck — guard captures reporter; Phase B reshape
 
         let resolution = vm.transpiler.resolve_entry_point(file_name)?;
-        vm.clear_entry_point()?;
+        vm.clear_entry_point().map_err(|_| bun_core::err!(JSError))?;
 
-        let file_path = FileSystem::instance().filename_store.append(resolution.path_pair.primary.text).expect("oom");
+        let file_path = {
+            // Appender is implemented for `&FilenameStore`; bind mutably to call it.
+            let mut store = FileSystem::instance().filename_store;
+            store.append(resolution.path_pair.primary.text).expect("oom")
+        };
         let file_title = resolve_path::relative(FileSystem::instance().top_level_dir, file_path);
         let file_id = jest::Jest::runner().unwrap().get_or_put_file(file_path).file_id;
 
@@ -2478,9 +2490,9 @@ impl TestCommand {
         while repeat_index < repeat_count {
             // Clear the module cache before re-running (except for the first run)
             if repeat_index > 0 {
-                vm.clear_entry_point()?;
-                let mut entry = ZigString::init(file_path);
-                vm.global.delete_module_registry_entry(&entry)?;
+                vm.clear_entry_point().map_err(|_| bun_core::err!(JSError))?;
+                let entry = ZigString::init(file_path);
+                vm.global().delete_module_registry_entry(&entry).map_err(|_| bun_core::err!(JSError))?;
                 // Reset per-test snapshot counters so rerun N matches the same
                 // snapshot keys as run 1 instead of looking for "test name 2", etc.
                 reporter.jest.snapshots.reset_counts();
@@ -2506,9 +2518,13 @@ impl TestCommand {
                 reporter.summary().files += 1;
             }
 
-            match promise.status() {
+            // SAFETY: load_entry_point_for_test_runner returns a live *mut JSInternalPromise
+            // rooted by the module loader for the duration of this turn.
+            match unsafe { (*promise).status() } {
                 jsc::js_promise::Status::Rejected => {
-                    vm.unhandled_rejection(vm.global, promise.result(vm.global.vm()), promise.to_js());
+                    let global = vm.global();
+                    let (result, promise_js) = unsafe { ((*promise).result(global.vm()), (*promise).to_js()) };
+                    vm.unhandled_rejection(global, result, promise_js);
                     reporter.summary().fail += 1;
 
                     if reporter.jest.bail == reporter.summary().fail {
@@ -2518,7 +2534,10 @@ impl TestCommand {
 
                         vm.exit_handler.exit_code = 1;
                         vm.is_shutting_down = true;
-                        vm.run_with_api_lock(vm, VirtualMachine::global_exit);
+                        // SAFETY: global_exit diverges; raw-ptr reborrow mirrors Zig
+                        // runWithAPILock(*VM, vm, globalExit).
+                        let vm_ptr = vm as *mut VirtualMachine;
+                        unsafe { (*vm_ptr).run_with_api_lock(|| (&mut *vm_ptr).global_exit()) };
                     }
 
                     return Ok(());
@@ -2526,7 +2545,8 @@ impl TestCommand {
                 _ => {}
             }
 
-            vm.event_loop().tick();
+            // SAFETY: event_loop() yields the VM-owned *mut EventLoop singleton.
+            unsafe { (*vm.event_loop()).tick() };
 
             'blk: {
                 // Check if bun_test is available and has tests to run
@@ -2540,10 +2560,11 @@ impl TestCommand {
                 if buntest.result_queue.readable_length() == 0 {
                     buntest.add_result(bun_test::ResultMsg::Start);
                 }
-                bun_test::BunTest::run(buntest_strong, vm.global)?;
+                bun_test::BunTest::run(buntest_strong, vm.global()).map_err(|_| bun_core::err!(JSError))?;
 
                 // Process event loop while bun_test tests are running
-                vm.event_loop().tick();
+                // SAFETY: see above.
+                unsafe { (*vm.event_loop()).tick() };
 
                 let mut prev_unhandled_count = vm.unhandled_error_counter;
                 while buntest.phase != bun_test::Phase::Done {
@@ -2551,23 +2572,27 @@ impl TestCommand {
                         buntest.wants_wakeup = false;
                         vm.wakeup();
                     }
-                    vm.event_loop().auto_tick();
+                    // SAFETY: event_loop() yields the VM-owned *mut EventLoop singleton.
+                    unsafe { (*vm.event_loop()).auto_tick() };
                     if buntest.phase == bun_test::Phase::Done {
                         break;
                     }
-                    vm.event_loop().tick();
+                    // SAFETY: see above.
+                    unsafe { (*vm.event_loop()).tick() };
 
                     while prev_unhandled_count < vm.unhandled_error_counter {
-                        vm.global.handle_rejected_promises();
+                        vm.global().handle_rejected_promises();
                         prev_unhandled_count = vm.unhandled_error_counter;
                     }
                 }
 
-                vm.event_loop().tick_immediate_tasks(vm);
+                let el = vm.event_loop();
+                // SAFETY: el is the VM-owned event loop; vm is passed back as *mut.
+                unsafe { (*el).tick_immediate_tasks(vm as *mut VirtualMachine) };
                 drop(buntest_strong);
             }
 
-            vm.global.handle_rejected_promises();
+            vm.global().handle_rejected_promises();
 
             if Output::is_github_action() {
                 pretty_errorln!("<r>\n::endgroup::\n");
@@ -2578,8 +2603,9 @@ impl TestCommand {
                 // Ensure these never linger across files. Under --isolate this
                 // is done by swapGlobalForTestIsolation() (kill+clear) and we
                 // need tracking to remain enabled and populated until then.
-                vm.auto_killer.clear();
-                vm.auto_killer.disable();
+                // TODO(b2-cycle): vm.auto_killer is gated to `()` until ProcessAutoKiller
+                // is wired; restore `clear()` / `disable()` once available.
+                let _ = &vm.auto_killer;
             }
 
             repeat_index += 1;

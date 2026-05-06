@@ -289,28 +289,25 @@ impl Entry {
         j.push_static(br#"],"names":[],"mappings":"AAAA"#);
         self.join_vlq(kind, &mut j, arena, side)?;
 
-        let json_bytes = j.done_with_end(b"\"}")?;
+        let json_bytes = j.done_with_end(b"\"}")?.into_vec();
         // errdefer @compileError("last try should be the final alloc") — no further fallible ops below.
 
+        #[cfg(feature = "bake_debugging_features")]
         if bun_core::feature_flags::BAKE_DEBUGGING_FEATURES {
-            if let Some(dump_dir) = &dev.dump_dir {
+            if let Some(dump_dir) = dev.dump_dir.as_mut() {
                 let rel_path_escaped: &[u8] = if side == Side::Client {
                     b"latest_chunk.js.map"
                 } else {
                     b"latest_hmr.js.map"
                 };
-                if let Err(err) = dump_bundle(
-                    dump_dir,
-                    if side == Side::Client { bake::Graph::Client } else { bake::Graph::Server },
-                    rel_path_escaped,
-                    &json_bytes,
-                    false,
-                ) {
-                    // TODO(port): bun.handleErrorReturnTrace — no Rust equivalent; dropped.
-                    Output::warn(format_args!("Could not dump bundle: {}", err.name()));
-                }
+                let _ = (dump_dir, rel_path_escaped, &json_bytes, dump_bundle as fn(_, _, _, _, _) -> _);
+                // TODO(port): `dump_bundle` takes `&mut sys::Dir` but `DevServer.dump_dir` is
+                // `Option<bun_sys::Fd>`; bridge once the Dir/Fd unification lands.
+                todo!("blocked_on: bun_sys::Dir from Fd for dump_bundle");
             }
         }
+        #[cfg(not(feature = "bake_debugging_features"))]
+        let _ = (dev, dump_bundle as fn(_, _, _, _, _) -> _);
 
         Ok(json_bytes)
     }

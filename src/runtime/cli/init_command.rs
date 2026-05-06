@@ -1577,12 +1577,14 @@ impl Template {
 
     fn is_cursor_installed() -> bool {
         // Give some way to opt-out.
-        if env_var::BUN_AGENT_RULE_DISABLED.get() || env_var::CURSOR_AGENT_RULE_DISABLED.get() {
+        if env_var::BUN_AGENT_RULE_DISABLED.get().unwrap_or(false)
+            || env_var::CURSOR_AGENT_RULE_DISABLED.get().unwrap_or(false)
+        {
             return false;
         }
 
         // Detect if they're currently using cursor.
-        if env_var::CURSOR_TRACE_ID.get() {
+        if env_var::CURSOR_TRACE_ID.get().unwrap_or(false) {
             return true;
         }
 

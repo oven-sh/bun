@@ -589,11 +589,21 @@ pub fn build_with_vm(
                 .iter()
                 .map(|s| Box::<[u8]>::from(*s))
                 .collect(),
-            style: fsr.style,
+            // PORT NOTE: `fsr.style` is the keystone `framework_router::Style`
+            // (no `JavascriptDefined` arm); `fr::Type.style` is the full
+            // `framework_router_body::Style`. Convert by variant name until the
+            // two enums unify in Phase B.
+            style: match fsr.style {
+                framework_router::Style::NextjsPages => fr::Style::NextjsPages,
+                framework_router::Style::NextjsAppUi => fr::Style::NextjsAppUi,
+                framework_router::Style::NextjsAppRoutes => fr::Style::NextjsAppRoutes,
+            },
             allow_layouts: fsr.allow_layouts,
             server_file: fr::OpaqueFileId::init(server_file.get()),
             client_file: client_file.map(|f| fr::OpaqueFileId::init(f.get())),
-            server_file_string: bun_jsc::Strong::empty(),
+            server_file_string: {
+                todo!("blocked_on: bun_jsc::Strong::empty");
+            },
         });
     }
 

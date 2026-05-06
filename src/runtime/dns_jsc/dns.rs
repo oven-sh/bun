@@ -1972,12 +1972,12 @@ pub mod internal {
 
     pub fn get_hints() -> libc::addrinfo {
         let mut hints_copy = default_hints();
-        if env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG.get() {
+        if env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG.get().unwrap_or(false) {
             hints_copy.ai_flags &= !libc::AI_ADDRCONFIG;
         }
-        if env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_IPV6.get() {
+        if env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_IPV6.get().unwrap_or(false) {
             hints_copy.ai_family = libc::AF_INET;
-        } else if env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_IPV4.get() {
+        } else if env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_IPV4.get().unwrap_or(false) {
             hints_copy.ai_family = libc::AF_INET6;
         }
         hints_copy

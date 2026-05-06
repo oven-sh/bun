@@ -1172,7 +1172,7 @@ enum FilesResult {
 // freeEntries deleted — Vec<FileEntry> drops each entry; FileEntry fields drop their boxes.
 
 struct FilesContext {
-    store: Arc<BlobStore>,
+    store: StoreRef,
     glob_patterns: Option<Vec<Box<[u8]>>>,
     result: FilesResult,
 }
@@ -1307,10 +1307,10 @@ pub type FilesTask = AsyncTask<FilesContext>;
 
 fn start_files_task(
     global: &JSGlobalObject,
-    store: &Arc<BlobStore>,
+    store: &StoreRef,
     glob_patterns: Option<Vec<Box<[u8]>>>,
 ) -> JsResult<JSValue> {
-    let store = Arc::clone(store);
+    let store = store.clone();
     // errdefer store.deref() — Drop handles it
     // Ownership: On error, caller's errdefer frees glob_patterns.
     // On success, ownership transfers to FilesContext, which frees them in deinit().

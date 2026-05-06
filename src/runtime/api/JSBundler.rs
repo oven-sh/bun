@@ -96,6 +96,9 @@ fn compile_target_from_slice(
 
 pub mod js_bundler {
     use super::*;
+    use bun_string::ZigStringSlice;
+    use bun_jsc::JSObject;
+    use bun_sys::FdExt;
 
     type OwnedString = MutableString;
 

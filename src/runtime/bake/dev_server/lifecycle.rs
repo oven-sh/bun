@@ -265,10 +265,10 @@ pub(super) fn init_impl(options: Options<'_>) -> jsc::JsResult<Box<DevServer>> {
     // (the std-Wyhash port) lands; see bun_wyhash/lib.rs TODO(b2).
     dev.configuration_hash_key = {
         let mut h = bun_wyhash::Wyhash11::init(128);
-        for fsr in dev.framework.file_system_router_types {
-            h.update(fsr.root);
+        for fsr in &dev.framework.file_system_router_types {
+            h.update(&fsr.root);
             h.update(&[0]);
-            h.update(fsr.prefix);
+            h.update(&fsr.prefix);
             h.update(&[0]);
             h.update(&[fsr.allow_layouts as u8, fsr.ignore_underscores as u8]);
         }

@@ -1553,7 +1553,7 @@ impl Stream {
                     client.dispatch_write_callback(old_callback);
                     last_frame.callback.deinit();
                 }
-                last_frame.callback = Strong::create(callback, global_this);
+                last_frame.callback = StrongOptional::create(callback, global_this);
                 return;
             }
             if last_frame.len == 0 {
@@ -1582,7 +1582,7 @@ impl Stream {
                         client.dispatch_write_callback(old_callback);
                         last_frame.callback.deinit();
                     }
-                    last_frame.callback = Strong::create(callback, global_this);
+                    last_frame.callback = StrongOptional::create(callback, global_this);
                     return;
                 }
                 // we keep the old callback because the new will be part of another frame
@@ -1632,7 +1632,7 @@ impl Stream {
         Stream {
             id: stream_identifier,
             state: StreamState::OPEN,
-            js_context: Strong::empty(),
+            js_context: StrongOptional::empty(),
             wait_for_trailers: false,
             close_after_drain: false,
             end_after_headers: false,
@@ -1681,7 +1681,7 @@ impl Stream {
     }
 
     pub fn set_context(&mut self, value: JSValue, global_object: &JSGlobalObject) {
-        let old = core::mem::replace(&mut self.js_context, Strong::create(value, global_object));
+        let old = core::mem::replace(&mut self.js_context, StrongOptional::create(value, global_object));
         drop(old);
     }
 

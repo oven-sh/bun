@@ -40,6 +40,24 @@ thread_local! {
     static PATH_BUF: RefCell<PathBuffer> = const { RefCell::new(PathBuffer::ZEROED) };
 }
 
+/// `bun_core::which` takes its own `PathBuffer` newtype; both wrap
+/// `[u8; MAX_PATH_BYTES]` so a pointer cast is layout-safe. Avoids retyping
+/// every `PathBuffer` use in this file.
+#[inline]
+fn as_core_path_buf(buf: &mut PathBuffer) -> &mut bun_core::PathBuffer {
+    // SAFETY: `bun_paths::PathBuffer` is `#[repr(transparent)]` over
+    // `[u8; MAX_PATH_BYTES]`; `bun_core::PathBuffer` is `#[repr(C)]` over the
+    // same array — identical layout.
+    unsafe { &mut *((buf as *mut PathBuffer).cast::<bun_core::PathBuffer>()) }
+}
+
+/// Process-lifetime bump arena for the package.json parser. Matches the
+/// `dummy_bump()` shim in `pm_pkg_command.rs`.
+fn bunx_bump() -> &'static bumpalo::Bump {
+    static BUMP: OnceLock<bumpalo::Bump> = OnceLock::new();
+    BUMP.get_or_init(bumpalo::Bump::new)
+}
+
 /// bunx-specific options parsed from argv.
 //
 // PORT NOTE: string fields borrow from `argv` (process-lifetime). Phase A forbids

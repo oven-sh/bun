@@ -285,7 +285,7 @@ impl CronRegisterJob {
                                  To fix this, either run Bun as a regular user account, or create the scheduled task manually with: \
                                  schtasks /create /xml <file> /tn <name> /ru SYSTEM /f"
                             ));
-                            self.finish();
+                            Self::finish(self);
                             return;
                         }
                     }

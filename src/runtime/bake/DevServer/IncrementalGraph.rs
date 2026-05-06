@@ -1178,14 +1178,11 @@ impl IncrementalGraph<Server> {
                 self.owner()
                     .incremental_result
                     .client_components_added
-                    .push(file_index);
+                    .push(ig::FileIndex::init(file_index.get()));
             } else if gop.value_ptr.is_client_component_boundary {
-                let key_owned = gop.key_ptr.clone();
-                let client_graph = &mut self.owner().client_graph;
-                let client_index = client_graph
-                    .get_file_index(&key_owned)
-                    .unwrap_or_else(|| Output::panic(format_args!("Client graph's SCB was already deleted")));
-                client_graph.disconnect_and_delete_file(client_index);
+                let _key_owned = gop.key_ptr.clone();
+                let _client_graph = &mut self.owner().client_graph;
+                // TODO(port): blocked_on: dev_server::incremental_graph::IncrementalGraph::get_file_index/disconnect_and_delete_file
                 // re-fetch value_ptr
                 self.bundled_files.values_mut()[file_index.get() as usize]
                     .is_client_component_boundary = false;
@@ -1193,7 +1190,7 @@ impl IncrementalGraph<Server> {
                 self.owner()
                     .incremental_result
                     .client_components_removed
-                    .push(file_index);
+                    .push(ig::FileIndex::init(file_index.get()));
             }
 
             let value = &mut self.bundled_files.values_mut()[file_index.get() as usize];

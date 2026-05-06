@@ -1700,8 +1700,8 @@ pub fn write_file_with_source_destination(
         #[cfg(not(windows))]
         {
             let file_copier = write_file_mod::WriteFile::create(
-                destination_blob.clone(),
-                source_blob.clone(),
+                destination_blob.dupe(),
+                source_blob.dupe(),
                 write_file_promise,
                 WriteFilePromise::run,
                 options.mkdirp_if_not_exists.unwrap_or(true),

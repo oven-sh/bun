@@ -2627,26 +2627,48 @@ impl<AtRule> StyleSheet<AtRule> {
 
         if let Some(config) = &self.options.css_modules {
             let mut references = CssModuleReferences::default();
+            // SAFETY: `'bump`-erasure — `Printer<'a>` stores `CssModule<'a>` which
+            // holds `&'a mut CssModuleReferences<'a>`; tying the borrow to `'a`
+            // (the printer's whole lifetime) makes the local `references`
+            // unmovable. Detach the borrow here and re-attach by clearing
+            // `printer.css_module` before moving `references` out below.
+            // Re-thread once `Printer<'a>` / `CssModule<'a>` split borrow vs.
+            // arena lifetimes (see rules/mod.rs `decl_block_static`).
+            let references_mut: &mut CssModuleReferences<'_> = unsafe {
+                &mut *(&mut references as *mut CssModuleReferences<'_>)
+            };
             printer.css_module = Some(CssModule::new(
                 printer.allocator,
                 config,
                 &self.sources,
                 project_root,
-                &mut references,
+                references_mut,
             ));
 
             self.rules.to_css(printer)?;
             printer.newline()?;
 
+            let dependencies = printer.dependencies.take().map(|v| v.into_iter().collect());
+            let exports = core::mem::take(
+                &mut printer.css_module.as_mut().unwrap().exports_by_source_index[0],
+            );
+            // Release the `&mut references` borrow held by `CssModule` before
+            // moving `references` into the result.
+            printer.css_module = None;
+
+            // SAFETY: `'bump`-erasure — `ToCssResultInternal` carries `'static`
+            // placeholders for `CssModuleExports`/`References` until the arena
+            // lifetime threads (see field TODO at the struct def).
             return Ok(ToCssResultInternal {
-                dependencies: printer.dependencies.take().map(|v| v.into_iter().collect()),
-                exports: {
-                    let val = core::mem::take(
-                        &mut printer.css_module.as_mut().unwrap().exports_by_source_index[0],
-                    );
-                    Some(val)
-                },
-                references: Some(references),
+                dependencies,
+                exports: Some(unsafe {
+                    core::mem::transmute::<CssModuleExports<'_>, CssModuleExports<'static>>(exports)
+                }),
+                references: Some(unsafe {
+                    core::mem::transmute::<CssModuleReferences<'_>, CssModuleReferences<'static>>(
+                        references,
+                    )
+                }),
             });
         } else {
             self.rules.to_css(printer)?;

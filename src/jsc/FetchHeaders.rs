@@ -62,10 +62,11 @@ impl FetchHeaders {
         buf: &ZigString,
         count_: u32,
     ) -> JSValue {
-        // SAFETY: forwarding caller-provided buffers to C++; global is a valid borrowed ref
+        // SAFETY: forwarding caller-provided buffers to C++; `global` is an opaque ZST handle
+        // passed by address only — C++ never dereferences it as Rust data.
         unsafe {
             WebCore__FetchHeaders__createValue(
-                global as *const _ as *mut _,
+                global,
                 names,
                 values,
                 buf,

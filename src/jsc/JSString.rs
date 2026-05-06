@@ -113,25 +113,14 @@ impl JSString {
     }
 
     pub fn eql(&self, global: &JSGlobalObject, other: &JSString) -> bool {
-        // SAFETY: all pointers are valid GC cells / borrowed refs.
-        unsafe {
-            JSC__JSString__eql(
-                self,
-                global as *const _ as *mut _,
-                other as *const _ as *mut _,
-            )
-        }
+        // SAFETY: `self`/`global`/`other` are valid opaque GC-cell handles.
+        unsafe { JSC__JSString__eql(self, global, other) }
     }
 
     pub fn iterator(&self, global_object: &JSGlobalObject, iter: *mut c_void) {
-        // SAFETY: iter points to a caller-owned Iterator (extern struct) passed through to C++.
-        unsafe {
-            JSC__JSString__iterator(
-                self as *const Self as *mut Self,
-                global_object as *const _ as *mut _,
-                iter,
-            )
-        }
+        // SAFETY: `self`/`global_object` are valid opaque GC-cell handles; `iter`
+        // points to a caller-owned `Iterator` (extern struct) passed through to C++.
+        unsafe { JSC__JSString__iterator(self, global_object, iter) }
     }
 
     pub fn length(&self) -> usize {

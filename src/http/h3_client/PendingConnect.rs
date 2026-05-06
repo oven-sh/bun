@@ -176,8 +176,8 @@ pub fn fail_session(session: *mut ClientSession, err: bun_core::Error) {
     }
     // Zig .monotonic == LLVM monotonic == Rust Relaxed
     let _ = super::super::LIVE_SESSIONS.fetch_sub(1, Ordering::Relaxed);
-    // SAFETY: session is intrusive-refcounted; this drops the connection-alive ref.
-    unsafe { (*session).deref() };
+    // session is intrusive-refcounted; this drops the connection-alive ref.
+    ClientSession::deref(session);
 }
 
 // TODO(port): bun.Mutex — assuming `bun_threading::Mutex` with const default + lock()/unlock()

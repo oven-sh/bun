@@ -635,12 +635,30 @@ pub mod codegen {
         };
     }
 
+    /// `getConstructor` is a one-line wrapper over the codegen-emitted
+    /// `extern fn {Type}__getConstructor(*JSGlobalObject) callconv(jsc.conv) JSValue`
+    /// (see src/codegen/generate-classes.ts:2449-2539). The C++ side caches the
+    /// constructor on the global; the wrapper just forwards.
+    macro_rules! get_constructor {
+        ($extern_name:ident) => {
+            extern "C" {
+                fn $extern_name(global: *mut JSGlobalObject) -> JSValue;
+            }
+            pub fn get_constructor(global: &JSGlobalObject) -> JSValue {
+                // SAFETY: `global` is a live JSGlobalObject; the codegen symbol
+                // is emitted alongside the JS class wrapper and never null.
+                unsafe { $extern_name(global as *const _ as *mut _) }
+            }
+        };
+    }
+
     #[allow(non_snake_case)]
     pub mod JSPostgresSQLConnection {
         use super::*;
         cached_slot!(queries_get_cached, queries_set_cached);
         cached_slot!(onconnect_get_cached, onconnect_set_cached);
         cached_slot!(onclose_get_cached, onclose_set_cached);
+        get_constructor!(PostgresSQLConnection__getConstructor);
         pub fn to_js(_ptr: *mut crate::postgres::PostgresSQLConnection, _g: &JSGlobalObject) -> JSValue {
             unimplemented!("b2-blocked: codegen::JSPostgresSQLConnection::to_js")
         }
@@ -659,6 +677,7 @@ pub mod codegen {
         cached_slot!(columns_get_cached, columns_set_cached);
         cached_slot!(pending_value_get_cached, pending_value_set_cached);
         cached_slot!(target_get_cached, target_set_cached);
+        get_constructor!(PostgresSQLQuery__getConstructor);
         pub fn to_js(_ptr: *mut crate::postgres::PostgresSQLQuery, _g: &JSGlobalObject) -> JSValue {
             unimplemented!("b2-blocked: codegen::JSPostgresSQLQuery::to_js")
         }
@@ -669,9 +688,7 @@ pub mod codegen {
         cached_slot!(queries_get_cached, queries_set_cached);
         cached_slot!(onconnect_get_cached, onconnect_set_cached);
         cached_slot!(onclose_get_cached, onclose_set_cached);
-        pub fn get_constructor(_g: &JSGlobalObject) -> JSValue {
-            unimplemented!("b2-blocked: codegen::JSMySQLConnection::get_constructor")
-        }
+        get_constructor!(MySQLConnection__getConstructor);
     }
     #[allow(non_snake_case)]
     pub use js_mysql_connection as JSMySQLConnection;
@@ -682,9 +699,7 @@ pub mod codegen {
         cached_slot!(columns_get_cached, columns_set_cached);
         cached_slot!(pending_value_get_cached, pending_value_set_cached);
         cached_slot!(target_get_cached, target_set_cached);
-        pub fn get_constructor(_g: &JSGlobalObject) -> JSValue {
-            unimplemented!("b2-blocked: codegen::JSMySQLQuery::get_constructor")
-        }
+        get_constructor!(MySQLQuery__getConstructor);
     }
     #[allow(non_snake_case)]
     pub use js_mysql_query as JSMySQLQuery;
@@ -701,20 +716,78 @@ pub mod codegen {
 #[repr(C)]
 pub struct JSFunction { _opaque: [u8; 0], _m: PhantomData<(*mut u8, core::marker::PhantomPinned)> }
 
+/// `jsc.JSHostFn` — the C-ABI host-function pointer JSC dispatches to.
+/// Zig: `fn(*JSGlobalObject, *CallFrame) callconv(jsc.conv) JSValue`.
+pub type JSHostFn = unsafe extern "C" fn(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue;
+
+/// Zig: `JSFunction.ImplementationVisibility` (src/jsc/JSFunction.zig:2-6).
+#[repr(u8)]
+#[derive(Clone, Copy, Default)]
+pub enum ImplementationVisibility {
+    #[default]
+    Public = 0,
+    Private = 1,
+    PrivateRecursive = 2,
+}
+
+/// Zig: `JSFunction.Intrinsic` (src/jsc/JSFunction.zig:9-12) — non-exhaustive
+/// `enum(u8)`; only `.none` is named on the Zig side.
+#[repr(u8)]
+#[derive(Clone, Copy, Default)]
+pub enum Intrinsic {
+    #[default]
+    None = 0,
+}
+
+/// Zig: `JSFunction.CreateJSFunctionOptions` (src/jsc/JSFunction.zig:14-18).
 #[derive(Default)]
 pub struct CreateJSFunctionOptions {
-    _priv: (),
+    pub implementation_visibility: ImplementationVisibility,
+    pub intrinsic: Intrinsic,
+    pub constructor: Option<JSHostFn>,
+}
+
+extern "C" {
+    /// Zig: `extern fn JSFunction__createFromZig(global, fn_name, impl,
+    /// arg_count, vis, intrinsic, constructor) JSValue` (JSFunction.zig:20-28).
+    fn JSFunction__createFromZig(
+        global: *mut JSGlobalObject,
+        fn_name: bun_string::String,
+        implementation: JSHostFn,
+        arg_count: u32,
+        implementation_visibility: ImplementationVisibility,
+        intrinsic: Intrinsic,
+        constructor: Option<JSHostFn>,
+    ) -> JSValue;
 }
 
 impl JSFunction {
-    pub fn create<F>(
-        _global: &JSGlobalObject,
-        _name: &str,
-        _implementation: F,
-        _arg_count: u32,
-        _opts: CreateJSFunctionOptions,
+    /// Zig: `JSFunction.create` (src/jsc/JSFunction.zig:30-53) — thin wrapper
+    /// over `JSFunction__createFromZig`. The Zig spec accepts either a
+    /// `JSHostFnZig` (wrapped via `toJSHostFn`) or a raw `JSHostFn`; on the
+    /// Rust side the `#[bun_jsc::host_fn]` proc-macro performs the wrapping at
+    /// the def-site, so callers pass a `JSHostFn` directly.
+    pub fn create(
+        global: &JSGlobalObject,
+        name: &str,
+        implementation: JSHostFn,
+        arg_count: u32,
+        opts: CreateJSFunctionOptions,
     ) -> JSValue {
-        unimplemented!("b2-blocked: bun_jsc::JSFunction::create")
+        let fn_name = bun_string::String::init(name);
+        // SAFETY: `global` is live; `implementation` is a valid C-ABI fn
+        // pointer; `fn_name` is moved by value (C++ side derefs on return).
+        unsafe {
+            JSFunction__createFromZig(
+                global as *const _ as *mut _,
+                fn_name,
+                implementation,
+                arg_count,
+                opts.implementation_visibility,
+                opts.intrinsic,
+                opts.constructor,
+            )
+        }
     }
 }
 

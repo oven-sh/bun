@@ -476,9 +476,13 @@ pub enum AnimationTimeline {
 impl AnimationTimeline {
     // Port of `css.DeriveParse(@This()).parse` — void variants (`auto`, `none`)
     // declared first → tried first via ident match; payloads follow in
-    // declaration order. Upstream `ScrollTimeline` / `ViewTimeline` carry no
-    // `parse` (Zig `generic.parseFor` would `@compileError` if reached), so the
-    // last payload — and terminal error — is `DashedIdent`.
+    // declaration order (`DashedIdent`, `ScrollTimeline`, `ViewTimeline`).
+    // Upstream `ScrollTimeline` / `ViewTimeline` carry no `parse`, so the Zig
+    // `DeriveParse` instantiation is dead code (`generic.parseFor` would
+    // `@compileError` if compiled — `Animation` is unreferenced in
+    // properties_generated.zig). We stop at `DashedIdent` here; if scroll()/
+    // view() ever become live they need real function-syntax parsing, not the
+    // derived field-sequence fallback.
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
         let state = input.state();
         if let Ok(ident) = input.expect_ident() {
@@ -503,17 +507,12 @@ impl AnimationTimeline {
             AnimationTimeline::DashedIdent(d) => d.to_css(dest),
             // Upstream Zig `ScrollTimeline` / `ViewTimeline` have no `toCss`;
             // `DeriveToCss` would delegate to `generic.toCss` → `T.toCss` and
-            // `@compileError`. Serialise their fields space-separated as the
-            // `__generateToCss` field-sequence printer would.
-            AnimationTimeline::Scroll(s) => {
-                s.scroller.to_css(dest)?;
-                dest.write_char(b' ')?;
-                s.axis.to_css(dest)
-            }
-            AnimationTimeline::View(v) => {
-                v.axis.to_css(dest)?;
-                dest.write_char(b' ')?;
-                v.inset.to_css(dest)
+            // `@compileError` if this arm were ever instantiated. Mirror that:
+            // these variants are currently unconstructible via `parse()`, and
+            // emitting bare space-separated fields here would be wrong CSS
+            // (spec syntax is `scroll(...)` / `view(...)`).
+            AnimationTimeline::Scroll(_) | AnimationTimeline::View(_) => {
+                unreachable!("ScrollTimeline / ViewTimeline have no toCss in spec (uninstantiated)")
             }
         }
     }

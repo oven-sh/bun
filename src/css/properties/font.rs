@@ -1214,13 +1214,18 @@ fn compatible_font_family(
     }
 
     if let Some(families) = family.as_mut() {
-        for (i, v) in families.slice_const().iter().enumerate() {
-            if is_system_ui(v) {
-                for (j, name) in DEFAULT_SYSTEM_FONTS.iter().enumerate() {
-                    // TODO(port): families.insert(allocator, idx, val) — BabyList::insert with arena
-                    let _ = families.insert(i + j + 1, FontFamily::FamilyName(*name as *const [u8]));
-                }
-                break;
+        // PORT NOTE: Zig (font.zig:1029-1035) iterates `families.sliceConst()`
+        // by value while inserting into `families` mid-loop, then `break`s.
+        // In Rust the immutable slice borrow would alias the &mut needed for
+        // `insert` (and `insert` may reallocate, invalidating the iterator).
+        // Reshape: capture the system-ui index first, drop the borrow, then
+        // perform the inserts using the captured index.
+        if let Some(i) = families.slice_const().iter().position(is_system_ui) {
+            for (j, name) in DEFAULT_SYSTEM_FONTS.iter().enumerate() {
+                // TODO(port): families.insert(allocator, idx, val) — BabyList::insert with arena
+                bun_core::handle_oom(
+                    families.insert(i + j + 1, FontFamily::FamilyName(*name as *const [u8])),
+                );
             }
         }
     }

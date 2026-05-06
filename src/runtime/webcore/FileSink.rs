@@ -271,7 +271,7 @@ impl FileSink {
         // scopeguard so the closure does not borrow `self`.
         self.ref_();
         let this_ptr = self as *mut FileSink;
-        let _guard = scopeguard::guard((), move |_| unsafe { (*this_ptr).deref() });
+        let _guard = scopeguard::guard((), move |_| unsafe { FileSink::deref(this_ptr) });
 
         self.done = true;
         let mut readable_stream = core::mem::take(&mut self.readable_stream);
@@ -310,7 +310,7 @@ impl FileSink {
     fn run_pending(&mut self) {
         self.ref_();
         let this_ptr = self as *mut FileSink;
-        let _guard = scopeguard::guard((), move |_| unsafe { (*this_ptr).deref() });
+        let _guard = scopeguard::guard((), move |_| unsafe { FileSink::deref(this_ptr) });
 
         self.run_pending_later.has = false;
         let l = self.event_loop();
@@ -334,7 +334,7 @@ impl FileSink {
         // for the rest of this function (same pattern as `runPending`/`onAutoFlush`).
         self.ref_();
         let this_ptr = self as *mut FileSink;
-        let _guard = scopeguard::guard((), move |_| unsafe { (*this_ptr).deref() });
+        let _guard = scopeguard::guard((), move |_| unsafe { FileSink::deref(this_ptr) });
 
         self.written += amount;
 
@@ -717,7 +717,7 @@ impl FileSink {
 
         self.ref_();
         let this_ptr = self as *mut FileSink;
-        let _guard = scopeguard::guard((), move |_| unsafe { (*this_ptr).deref() });
+        let _guard = scopeguard::guard((), move |_| unsafe { FileSink::deref(this_ptr) });
 
         let amount_buffered = self.writer.outgoing.size();
 
@@ -1218,7 +1218,7 @@ impl FileSink {
         *signal = SinkSignal::init(JSValue::ZERO);
         self.ref_();
         let this_ptr = self as *mut FileSink;
-        let _guard = scopeguard::guard((), move |_| unsafe { (*this_ptr).deref() });
+        let _guard = scopeguard::guard((), move |_| unsafe { FileSink::deref(this_ptr) });
 
         // explicitly set it to a dead pointer
         // we use this memory address to disable signals being sent

@@ -193,7 +193,11 @@ static IPC_HOOKS: AtomicPtr<IPCHooks> = AtomicPtr::new(core::ptr::null_mut());
 /// Register the `bun_runtime` cycle-break vtable. Must be called once at
 /// startup (from `bun_runtime::init`) with a `&'static IPCHooks`.
 pub fn set_ipc_hooks(hooks: &'static IPCHooks) {
-    IPC_HOOKS.store(hooks as *const IPCHooks as *mut IPCHooks, Ordering::Release);
+    // SAFETY: `AtomicPtr<T>` only stores `*mut T`, so the `&'static` is cast
+    // through `*const` → `*mut`. The pointer is never written through — the
+    // sole consumer (`ipc_hooks()`) loads it and reborrows as `&'static
+    // IPCHooks` — so no mutable access ever occurs and the cast is sound.
+    IPC_HOOKS.store((hooks as *const IPCHooks).cast_mut(), Ordering::Release);
 }
 
 #[inline]

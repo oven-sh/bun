@@ -1731,7 +1731,7 @@ impl FFI {
         });
 
         let js_object = lib.to_js(global);
-        jsc::codegen::JSFFI::symbols_value_set_cached(js_object, global, obj);
+        symbols_value_set_cached(js_object, global, obj);
         js_object
     }
 }

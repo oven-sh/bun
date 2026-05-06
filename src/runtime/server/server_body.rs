@@ -2307,7 +2307,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             global_this: global,
             config: mem::take(config),
             base_url_string_for_joining: base_url,
-            vm: VirtualMachine::get(),
+            // SAFETY: VirtualMachine::get() returns the live per-thread singleton
+            vm: unsafe { &*VirtualMachine::VirtualMachine::get() },
             dev_server,
             // defaults:
             app: None,

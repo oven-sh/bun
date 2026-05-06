@@ -758,8 +758,8 @@ impl<'a> CopyFile<'a> {
                 }
 
                 if bun_sys::S::ISREG(stat.mode)
-                    || bun_sys::S::ischr(stat.mode)
-                    || bun_sys::S::issock(stat.mode)
+                    || bun_sys::S::ISCHR(stat.mode)
+                    || bun_sys::S::ISSOCK(stat.mode)
                 {
                     if self.destination_file_store.is_atty.unwrap_or(false) {
                         let _ = self.do_copy_file_range::<{ TryWith::Sendfile }, true>();

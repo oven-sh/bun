@@ -218,7 +218,7 @@ impl SocketAddress {
     /// ### `SocketAddress.isSocketAddress(value: unknown): value is SocketAddress`
     /// Returns `true` if `value` is a `SocketAddress`. Subclasses and similarly-shaped
     /// objects are not considered `SocketAddress`s.
-    #[bun_jsc::host_fn]
+    // PORT NOTE: no `#[bun_jsc::host_fn]` — free-fn arm emits bare ident; see `parse`.
     pub fn is_socket_address(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let value = callframe.argument(0);
         Ok(JSValue::from(value.is_cell() && SocketAddress::from_js_direct(value).is_some()))

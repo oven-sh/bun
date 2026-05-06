@@ -5545,7 +5545,7 @@ impl Internal {
     // TODO(b2-blocked): bun_jsc::* — ZigString::to_external_u16/to_js_object.
     
     pub fn to_string_owned(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        let bytes_without_bom = strings::without_utf8_bom(&self.bytes);
+        let bytes_without_bom = strings::unicode::without_utf8_bom(&self.bytes);
         if let Some(out) = strings::to_utf16_alloc(bytes_without_bom, false, false).unwrap_or(Some(Vec::new())) {
             // TODO(port): Zig used `catch &[_]u16{}` to swallow alloc errors into empty.
             let return_value = ZigString::to_external_u16(out.as_ptr(), out.len(), global_this);

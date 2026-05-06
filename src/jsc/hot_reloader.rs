@@ -897,8 +897,9 @@ where
                                     .unwrap_or(bun_bundler::options::Loader::File);
                                 // PORT NOTE: Zig declares `prev_entry_id` per-iteration and
                                 // reassigns it just before `break`; the write is dead there
-                                // too. Keep the shape for fidelity, silence the lint.
-                                #[allow(unused_assignments)]
+                                // too (hot_reloader.zig:535/563). Keep the shape for
+                                // fidelity; the post-assignment `_ = prev_entry_id` below
+                                // documents the intentional dead store.
                                 let mut prev_entry_id: usize = usize::MAX;
                                 if loader != bun_bundler::options::Loader::File {
                                     // Zig leaves these `undefined` / overwritten; both arms
@@ -948,6 +949,7 @@ where
                                                     }
 
                                                     prev_entry_id = entry_id;
+                                                    _ = prev_entry_id;
                                                     break;
                                                 }
                                             }

@@ -1941,14 +1941,47 @@ pub mod WebCore {
     // in the bun_webcore crate (not available at this tier).
     crate::stub_ty!(Request, Response);
 
-    /// Opaque handle to `bun_runtime::webcore::Blob`. Lower-tier crates that
-    /// need to *read* blob bytes (e.g. `bun_http_jsc::websocket_client`) go
-    /// through the C-ABI trampolines below to avoid a `bun_runtime` forward-dep
-    /// cycle. Field access is never performed at this tier — only `from_js` /
-    /// `shared_view`.
+    /// `webcore.Blob` (src/runtime/webcore/Blob.zig). Ported to this tier so
+    /// lower-tier crates (e.g. `bun_bundler_jsc`) can construct Blob values
+    /// without a `bun_runtime` forward-dep cycle. Pointer-returning FFI
+    /// (`Blob__fromJS`) hands back the native `m_ctx` which is the
+    /// `bun_runtime::webcore::Blob` layout — field access on those pointers
+    /// must go through C-ABI trampolines (`shared_view`), not direct field
+    /// reads, until `bun_runtime` adopts this definition.
+    // TODO(port): unify with bun_runtime::webcore::Blob (single nominal type).
     #[repr(C)]
     pub struct Blob {
-        _opaque: [u8; 0],
+        pub reported_estimated_size: usize,
+        pub size: crate::webcore::blob::SizeType,
+        pub offset: crate::webcore::blob::SizeType,
+        /// Intrusively-refcounted backing store. Raw pointer at this tier
+        /// (the `StoreRef` smart-pointer lives in `bun_runtime`).
+        pub store: Option<core::ptr::NonNull<crate::webcore::blob::Store>>,
+        pub content_type: std::borrow::Cow<'static, [u8]>,
+        pub content_type_allocated: bool,
+        pub content_type_was_set: bool,
+        pub is_jsdom_file: bool,
+        pub global_this: *const crate::JSGlobalObject,
+        pub last_modified: f64,
+        pub name: bun_string::String,
+    }
+
+    impl Default for Blob {
+        fn default() -> Self {
+            Self {
+                reported_estimated_size: 0,
+                size: 0,
+                offset: 0,
+                store: None,
+                content_type: std::borrow::Cow::Borrowed(b""),
+                content_type_allocated: false,
+                content_type_was_set: false,
+                is_jsdom_file: false,
+                global_this: core::ptr::null(),
+                last_modified: 0.0,
+                name: bun_string::String::default(),
+            }
+        }
     }
 
     // Codegen externs (build/debug/codegen/ZigGeneratedClasses.zig:407-408) —
@@ -1976,13 +2009,14 @@ pub mod WebCore {
             unsafe { Blob__fromJSDirect(value) }.map(|p| p.as_ptr())
         }
         fn to_js(self, global: &crate::JSGlobalObject) -> crate::JSValue {
-            // PORT NOTE: opaque shim is zero-sized; real callers go through
-            // `bun_runtime::webcore::Blob::to_js` which boxes and hands the
-            // pointer to `Blob__create`. This path exists only to satisfy the
-            // trait — lower-tier crates never construct a `Blob` by value.
-            let _ = global;
-            // SAFETY: never called on the opaque shim (zero-sized, no state).
-            unsafe { core::hint::unreachable_unchecked() }
+            // `Blob.toJS` (src/runtime/webcore/Blob.zig:3686): heap-promote and
+            // hand the pointer to the codegen `Blob__create` extern.
+            // TODO(port): once bun_runtime adopts this `Blob` definition the
+            // S3File fast-path / ref-count nuances live there.
+            let boxed = Box::into_raw(Box::new(self));
+            // SAFETY: `boxed` is a freshly-allocated `*mut Blob`; codegen
+            // extern takes ownership and wraps it in a `JSBlob`.
+            unsafe { Blob__create(boxed, global.as_ptr()) }
         }
         fn get_constructor(global: &crate::JSGlobalObject) -> crate::JSValue {
             // SAFETY: `global` is live; codegen extern returns the cached ctor.

@@ -2893,7 +2893,10 @@ impl<'a> LinkerContext<'a> {
                         .get(&tracker.import_ref).unwrap();
 
                     if named_import.namespace_ref.is_some() && named_import.namespace_ref.unwrap().is_valid() {
-                        // SAFETY: get() returns a stable *mut Symbol; ref is valid.
+                        // SAFETY: get() yields a stable *mut into the symbols NestedList
+                        // (NonNull-backed heap, never reallocated during linking). Sole
+                        // live &mut into that allocation here — `named_import` borrows
+                        // `graph.ast`, a disjoint allocation.
                         let symbol = unsafe { &mut *self.graph.symbols.get(tracker.import_ref).unwrap() };
                         symbol.import_item_status = ImportItemStatus::Missing;
                         result.kind = MatchImportKind::NormalAndNamespace;

@@ -182,7 +182,7 @@ impl Default for Blob {
             charset: strings::AsciiStatus::Unknown,
             is_jsdom_file: false,
             ref_count: bun_ptr::RawRefCount::init(0),
-            global_this: core::ptr::null_mut(),
+            global_this: core::ptr::null(),
             last_modified: 0.0,
             name: BunString::dead(),
         }
@@ -4068,12 +4068,19 @@ pub use Lifetime as BlobLifetime;
 // ──────────────────────────────────────────────────────────────────────────
 
 impl Blob {
+    /// `raw_bytes` is a raw `*mut [u8]` (not `&[u8]`) so the
+    /// `LIFETIME == Temporary` branch can `Box::from_raw` it with the
+    /// caller's original allocation provenance — going through `&[u8]`
+    /// would narrow to read-only and make the dealloc UB.
     pub fn to_string_with_bytes<const LIFETIME: Lifetime>(
         &mut self,
         global: &JSGlobalObject,
-        raw_bytes: &[u8],
+        raw_bytes: *mut [u8],
     ) -> JsResult<JSValue> {
-        let (bom, buf) = strings::BOM::detect_and_split(raw_bytes);
+        // SAFETY: `raw_bytes` is valid for reads for the duration of this call
+        // (either a leaked Box for `Temporary` or a store-backed view otherwise).
+        let raw_slice: &[u8] = unsafe { &*raw_bytes };
+        let (bom, buf) = strings::BOM::detect_and_split(raw_slice);
 
         if buf.is_empty() {
             // If all it contained was the bom, we need to free the bytes

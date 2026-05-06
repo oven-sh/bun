@@ -512,7 +512,11 @@ pub enum GetOrStartLoadResult<'a> {
 }
 
 pub enum ServePluginsCallback<'a> {
-    HtmlBundleRoute(&'a html_bundle::Route),
+    /// Raw `*mut` because the route is stored in `ServePluginsState::Pending.html_bundle_routes`
+    /// and later mutated via `on_plugins_resolved`/`on_plugins_rejected`. A `&Route` would not
+    /// carry write provenance, making the later `&mut *route` deref UB. Callers pass `&mut self`,
+    /// which coerces to `*mut` here.
+    HtmlBundleRoute(*mut html_bundle::Route),
     DevServer(&'a DevServer),
 }
 
@@ -528,12 +532,22 @@ impl ServePlugins {
         self.ref_count.set(self.ref_count.get() + 1);
     }
 
-    pub fn deref_(&self) {
-        let n = self.ref_count.get() - 1;
-        self.ref_count.set(n);
+    /// Decrement the intrusive refcount, freeing the allocation when it hits zero.
+    ///
+    /// Takes a raw pointer (not `&self`) so the original `Box::into_raw` provenance
+    /// from [`ServePlugins::init`] is preserved for the final `Box::from_raw` — going
+    /// through `&self` would narrow provenance to read-only and make the drop UB.
+    ///
+    /// SAFETY: `this` must originate from [`ServePlugins::init`] and the caller must
+    /// hold a counted reference.
+    pub unsafe fn deref_(this: *const Self) {
+        // SAFETY: caller contract — `this` is live while refcount > 0
+        let rc = unsafe { &(*this).ref_count };
+        let n = rc.get() - 1;
+        rc.set(n);
         if n == 0 {
-            // SAFETY: intrusive refcount hit zero; this was Box::into_raw'd in init()
-            unsafe { drop(Box::from_raw(self as *const Self as *mut Self)) };
+            // SAFETY: refcount hit zero; `this` carries the Box::into_raw provenance from init()
+            unsafe { drop(Box::from_raw(this as *mut Self)) };
         }
     }
 

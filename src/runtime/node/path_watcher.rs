@@ -1353,5 +1353,5 @@ fn on_update_end_fn(ctx: Option<*mut c_void>) {
 //   source:     src/runtime/node/path_watcher.zig (958 lines)
 //   confidence: medium
 //   todos:      10
-//   notes:      manager needs UnsafeCell for mutex-guarded fields; WdOwner/KqEntry &'a lifetime per TSV is awkward for long-lived maps (likely *mut in Phase B); owned ZStr type, DirIterator API, InotifyEvent path, milli_timestamp() all guessed
+//   notes:      owned ZStr type, DirIterator API, InotifyEvent path, milli_timestamp() all guessed
 // ──────────────────────────────────────────────────────────────────────────

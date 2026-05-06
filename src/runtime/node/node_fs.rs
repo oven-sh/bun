@@ -1139,7 +1139,10 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         let _ = Self::_cp_async_directory(
             nodefs,
             args.flags,
-            this,
+            // Pass the raw `*mut Self` (Box::leak provenance) so spawned
+            // `CpSingleTask`s store a pointer that may later be promoted to
+            // `&mut` in `on_subtask_done`.
+            *_done,
             &mut src_buf,
             PathInt::try_from(src.len()).unwrap(),
             &mut dest_buf,
@@ -1151,12 +1154,18 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
     fn _cp_async_directory(
         nodefs: &mut NodeFS,
         args: args::CpFlags,
-        this: &Self,
+        this: *mut Self,
         src_buf: &mut OSPathBuffer,
         src_dir_len: PathInt,
         dest_buf: &mut OSPathBuffer,
         dest_dir_len: PathInt,
     ) -> bool {
+        // SAFETY: `this` is the live Box-leaked task. Shared borrow only — spawned
+        // `CpSingleTask`s on other workpool threads may concurrently hold `&Self`.
+        // The raw `*mut` is threaded through (instead of `&Self`) so that the
+        // `cp_task` pointers stored in subtasks retain mutable provenance for
+        // `on_subtask_done`'s eventual `&mut` promotion.
+        let this_ref = unsafe { &*this };
         // SAFETY: callers NUL-terminate at src_dir_len/dest_dir_len before calling
         let src = unsafe { ZStr::from_raw(src_buf.as_ptr().cast(), src_dir_len as usize) };
         // SAFETY: dest_buf[dest_dir_len] == 0 written by caller
@@ -1173,7 +1182,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
                 match err.get_errno() {
                     E::ACCES | E::NAMETOOLONG | E::ROFS | E::PERM | E::INVAL => {
                         nodefs.sync_error_buf[..src.len()].copy_from_slice(src.as_bytes());
-                        this.finish_concurrently(Maybe::Err(err.err.with_path(&nodefs.sync_error_buf[..src.len()])));
+                        this_ref.finish_concurrently(Maybe::Err(err.err.with_path(&nodefs.sync_error_buf[..src.len()])));
                         return false;
                     }
                     // Other errors may be due to clonefile() not being supported

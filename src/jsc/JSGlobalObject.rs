@@ -947,8 +947,11 @@ impl JSGlobalObject {
             // you most likely need to run
             //   make clean-jsc-bindings
             //   make bindings -j10
-            if let Some(vm_) = VirtualMachine::vm_holder_vm() {
-                debug_assert!(self.bun_vm_unsafe() == vm_ as *const _ as *mut c_void);
+            if let Some(vm_) = VirtualMachine::get_or_null() {
+                // SAFETY: address-equality only — neither pointer is dereferenced.
+                // `get_or_null()` yields `*mut VirtualMachine` (Zig `VMHolder.vm`),
+                // so no const→mut hop is needed to reach `*mut c_void`.
+                debug_assert!(self.bun_vm_unsafe() == vm_ as *mut c_void);
             } else {
                 panic!("This thread lacks a Bun VM");
             }

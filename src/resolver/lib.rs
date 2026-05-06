@@ -3206,7 +3206,11 @@ pub mod options {
         pub extra_cjs_extensions: Box<[Box<[u8]>]>,
         pub framework: Option<Framework>,
         pub global_cache: bun_options_types::GlobalCache::GlobalCache,
-        pub install: *mut (), // FORWARD_DECL: *Install.CommandLineArguments
+        // FORWARD_DECL: `?*api.BunInstall` (options.zig:1753). Spec consumer
+        // `PackageManagerOptions.zig:load` only reads through it, so `*const`
+        // — the bundler projects this from `Option<&api::BunInstall>` and a
+        // `*mut` here would launder read-only provenance into a writable ptr.
+        pub install: *const (),
         pub load_package_json: bool,
         pub load_tsconfig_json: bool,
         pub main_field_extension_order: Box<[Box<[u8]>]>,

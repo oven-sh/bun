@@ -253,7 +253,7 @@ impl<'a> Transpiler<'a> {
                 // BSS-backed `DirInfo` cache; entries live for process lifetime
                 // and are never freed (resolver/dir_info.rs).
                 let root_dir = unsafe { &*root_dir };
-                if let Some(tsconfig) = root_dir.tsconfig_json {
+                if let Some(tsconfig) = root_dir.tsconfig_json() {
                     // If we don't explicitly pass JSX, try to get it from the root tsconfig
                     if self.options.transform_options.jsx.is_none() {
                         self.options.jsx = jsx_pragma_from_resolver(&tsconfig.jsx);
@@ -317,7 +317,7 @@ impl<'a> Transpiler<'a> {
                 // SAFETY: BSS-backed `DirInfo` cache entry — process-lifetime.
                 let dir_info = unsafe { &*dir_info };
 
-                if let Some(tsconfig) = dir_info.tsconfig_json {
+                if let Some(tsconfig) = dir_info.tsconfig_json() {
                     merge_tsconfig_jsx_into(tsconfig, &mut self.options.jsx);
                 }
 
@@ -2540,7 +2540,7 @@ impl<'a> Transpiler<'a> {
         if auto_jsx {
             // Most of the time, this will already be cached
             if let Ok(Some(root_dir)) = self.resolver.read_dir_info(self.fs.top_level_dir) {
-                if let Some(tsconfig) = root_dir.tsconfig_json {
+                if let Some(tsconfig) = root_dir.tsconfig_json() {
                     // If we don't explicitly pass JSX, try to get it from the root tsconfig
                     if self.options.transform_options.jsx.is_none() {
                         self.options.jsx = tsconfig.jsx;
@@ -2583,7 +2583,7 @@ impl<'a> Transpiler<'a> {
                     _ => return Ok(()),
                 };
 
-                if let Some(tsconfig) = dir_info.tsconfig_json {
+                if let Some(tsconfig) = dir_info.tsconfig_json() {
                     self.options.jsx = tsconfig.merge_jsx(self.options.jsx);
                 }
 

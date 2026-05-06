@@ -114,8 +114,8 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
         b.resolver.opts.install = ctx
             .install
             .as_deref()
-            .map(|p| p as *const _ as *mut ())
-            .unwrap_or(core::ptr::null_mut());
+            .map(|p| p as *const _ as *const ())
+            .unwrap_or(core::ptr::null());
         b.resolver.opts.global_cache = ctx.debug.global_cache;
         b.resolver.opts.prefer_offline_install =
             ctx.debug.offline_mode_setting.unwrap_or(OfflineMode::Online) == OfflineMode::Offline;

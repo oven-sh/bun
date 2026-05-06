@@ -116,6 +116,22 @@ impl JSModuleLoader {
         }
         .ok_or(JsError::Thrown)
     }
+
+    /// Raw-pointer variant of [`Self::import`]. Returns the FFI
+    /// `*mut JSInternalPromise` directly so callers that need to store or pass
+    /// a mutable cell pointer (e.g. `VirtualMachine::pending_internal_promise`)
+    /// don't launder provenance through `&T -> *mut T`. Mirrors
+    /// [`Self::load_and_evaluate_module_ptr`].
+    pub fn import_ptr(
+        global_object: *mut JSGlobalObject,
+        module_name: &BunString,
+    ) -> JsResult<core::ptr::NonNull<JSInternalPromise>> {
+        // SAFETY: C++ side returns null iff an exception was thrown on the VM.
+        core::ptr::NonNull::new(unsafe {
+            JSModuleLoader__import(global_object, module_name as *const _)
+        })
+        .ok_or(JsError::Thrown)
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -3482,7 +3482,9 @@ impl Resolver {
         };
 
         self.ref_();
-        let _deref = scopeguard::guard((), |_| self.deref());
+        let this: *mut Self = self;
+        // SAFETY: `this` derived from `&mut self`; paired with `ref_()` above so count stays > 0.
+        let _deref = scopeguard::guard((), move |_| unsafe { Self::deref(this) });
 
         unsafe {
             (*channel).process(poll.fd.native(), poll.is_readable(), poll.is_writable());
@@ -3956,6 +3958,10 @@ impl Resolver {
             let mut buf = [0u8; INET6_ADDRSTRLEN + 2 + 6 + 1];
             let family = current.family;
 
+            // SAFETY: FFI; `src` is a `*const c_void` type-erasure of the in_addr/
+            // in6_addr union arm (read-only — `ares_inet_ntop` never writes `src`);
+            // `dst` is `buf[1..].as_mut_ptr()` which already yields `*mut u8` with
+            // write provenance over the stack buffer. No `*const → *mut` cast here.
             let ip = if family == libc::AF_INET6 {
                 unsafe { c_ares::ares_inet_ntop(family, &current.addr.addr6 as *const _ as *const c_void, buf[1..].as_mut_ptr() as *mut c_char, (buf.len() - 1) as _) }
             } else {
@@ -4141,7 +4147,10 @@ impl Resolver {
                 tcp_port: port,
             };
 
-            // SAFETY: FFI; address_buffer is NUL-terminated above; node.addr has space for in6_addr.
+            // SAFETY: FFI; `address_buffer` is NUL-terminated above; `node.addr` has space
+            // for in6_addr. `dst` is `&mut node.addr as *mut _ as *mut c_void` — a
+            // `*mut → *mut` type-erasure cast with write provenance from the `&mut`
+            // borrow of the local `node`. No `*const → *mut` cast here.
             if unsafe { c_ares::ares_inet_pton(af, address_buffer.as_ptr() as *const c_char, &mut node.addr as *mut _ as *mut c_void) } != 1 {
                 return jsc::Error::INVALID_IP_ADDRESS.throw(global_this, format_args!("Invalid IP address: \"{}\"", bstr::BStr::new(&address_slice)));
             }

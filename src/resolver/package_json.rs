@@ -279,7 +279,7 @@ pub mod install_stubs {
         /// links and replaces this body.
         pub fn init_with_runtime<E>(
             _log: &mut bun_logger::Log,
-            _install: *mut (),
+            _install: *const (),
             _: (),
             _env_loader: E,
         ) -> *mut PackageManager {

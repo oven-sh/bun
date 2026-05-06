@@ -1418,7 +1418,7 @@ impl<'a> PipelineTask<'a> {
             let file = match sys::File::openat(sys::Fd::cwd(), p, oflags, 0) {
                 sys::Result::Ok(f) => f,
                 sys::Result::Err(e) => {
-                    self.result = TaskResult::IoErr(e.with_path(p));
+                    self.result = TaskResult::IoErr(e.with_path(p.as_bytes()));
                     return;
                 }
             };
@@ -1426,7 +1426,7 @@ impl<'a> PipelineTask<'a> {
             let st = match file.stat() {
                 sys::Result::Ok(s) => s,
                 sys::Result::Err(e) => {
-                    self.result = TaskResult::IoErr(e.with_path(p));
+                    self.result = TaskResult::IoErr(e.with_path(p.as_bytes()));
                     return;
                 }
             };

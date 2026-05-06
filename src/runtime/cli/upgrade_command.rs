@@ -769,19 +769,19 @@ impl UpgradeCommand {
 
             // PORT NOTE: Zig used std.fs.Dir.createFileZ(.{ .truncate = true }); mapped to
             // bun_sys::openat with WRONLY|CREAT|TRUNC and wrapped in sys::File for write_all.
-            let mut zip_file = match sys::openat_a(
+            let zip_file = match sys::openat_a(
                 save_dir.fd(),
-                tmpname,
+                tmpname.as_bytes(),
                 sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
                 0o644,
             )
-            .map(sys::File::from)
+            .map(sys::File::from_fd)
             {
                 Ok(f) => f,
                 Err(err) => {
                     Output::pretty_errorln(format_args!(
                         "<r><red>error:<r> Failed to open temp file {}",
-                        err.name()
+                        bstr::BStr::new(err.name())
                     ));
                     Global::exit(1);
                 }
@@ -789,10 +789,10 @@ impl UpgradeCommand {
 
             {
                 if let Err(err) = zip_file.write_all(bytes) {
-                    let _ = save_dir.delete_file_z(tmpname);
+                    let _ = sys::unlinkat(save_dir.fd(), tmpname);
                     Output::pretty_errorln(format_args!(
                         "<r><red>error:<r> Failed to write to temp file {}",
-                        err.name()
+                        bstr::BStr::new(err.name())
                     ));
                     Global::exit(1);
                 }
@@ -801,7 +801,7 @@ impl UpgradeCommand {
 
             {
                 let _guard = scopeguard::guard((), |_| {
-                    let _ = save_dir.delete_file_z(tmpname);
+                    let _ = sys::unlinkat(save_dir.fd(), tmpname);
                 });
 
                 #[cfg(unix)]

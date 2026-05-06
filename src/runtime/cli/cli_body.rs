@@ -1294,7 +1294,7 @@ Full documentation is available at <magenta>https://bun.com/docs/installation#up
                 Output::flush();
             }
             Tag::InstallCompletionsCommand => {
-                Output::pretty("<b>Usage<r>: <b><green>bun completions<r>", format_args!(""));
+                Output::pretty(format_args!("<b>Usage<r>: <b><green>bun completions<r>"));
                 Output::flush();
             }
             Tag::PatchCommand => {

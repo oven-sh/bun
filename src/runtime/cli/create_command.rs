@@ -2233,7 +2233,7 @@ impl Example {
 
         // SAFETY: single-threaded CLI access to static URL_
         unsafe {
-            URL_ = URL::parse({
+            URL_ = Some(URL::parse({
                 let mut cursor: &mut [u8] = &mut url_buf[..];
                 let cap = cursor.len();
                 write!(
@@ -2243,17 +2243,17 @@ impl Example {
                 )?;
                 let written = cap - cursor.len();
                 &url_buf[..written]
-            });
+            }));
         }
 
-        // SAFETY: single-threaded CLI access to static URL_
-        let mut http_proxy: Option<URL> = unsafe { env_loader.get_http_proxy_for(&URL_) };
+        // SAFETY: single-threaded CLI access to static URL_ (set just above)
+        let mut http_proxy: Option<URL> = env_loader.get_http_proxy_for(unsafe { URL_.as_ref().unwrap() });
 
         // ensure very stable memory address
         let async_http: &mut HTTP::AsyncHTTP = Box::leak(Box::new(HTTP::AsyncHTTP::init_sync(
             HTTP::Method::GET,
-            // SAFETY: single-threaded CLI access to static URL_
-            unsafe { URL_.clone() },
+            // SAFETY: single-threaded CLI access to static URL_ (set just above)
+            unsafe { URL_.clone() }.unwrap(),
             Default::default(),
             b"",
             mutable,
@@ -2280,33 +2280,37 @@ impl Example {
         refresher.refresh();
         initialize_store();
         let source = logger::Source::init_path_string(b"package.json", mutable.list.as_slice());
-        let expr = match JSON::parse_utf8(&source, ctx.log) {
+        // SAFETY: ctx.log is set in single-threaded CLI startup; non-null for process lifetime.
+        let log = unsafe { &mut *ctx.log };
+        let bump = Box::leak(Box::new(bumpalo::Bump::new()));
+        let expr = match JSON::parse_utf8(&source, log, bump) {
             Ok(e) => e,
             Err(err) => {
                 progress.end();
                 refresher.refresh();
 
-                if ctx.log.errors > 0 {
-                    ctx.log.print(Output::error_writer())?;
+                if log.errors > 0 {
+                    log.print(Output::error_writer())?;
                     Global::exit(1);
                 } else {
-                    Output::pretty_errorln(
+                    Output::pretty_errorln(format_args!(
                         "Error parsing package: <r><red>{}<r>",
-                        format_args!("{}", err.name()),
-                    );
+                        err.name(),
+                    ));
                     Global::exit(1);
                 }
             }
         };
 
-        if ctx.log.errors > 0 {
+        if log.errors > 0 {
             progress.end();
             refresher.refresh();
 
-            ctx.log.print(Output::error_writer())?;
+            log.print(Output::error_writer())?;
             Global::exit(1);
         }
 
+        use bun_install::bun_json::ExprAccessors as _;
         let tarball_url: &[u8] = 'brk: {
             if let Some(q) = expr.as_property(b"dist") {
                 if let Some(p) = q.expr.as_property(b"tarball") {
@@ -2325,7 +2329,6 @@ impl Example {
 
             Output::pretty_errorln(
                 "package.json is missing tarball url. This is an internal error!",
-                format_args!(""),
             );
             Global::exit(1);
         };
@@ -2365,10 +2368,10 @@ impl Example {
         if response.status_code != 200 {
             progress.end();
             refresher.refresh();
-            Output::pretty_errorln(
+            Output::pretty_errorln(format_args!(
                 "Error fetching tarball: <r><red>{}<r>",
-                format_args!("{}", response.status_code),
-            );
+                response.status_code,
+            ));
             Global::exit(1);
         }
 

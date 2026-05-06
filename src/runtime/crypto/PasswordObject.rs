@@ -685,13 +685,10 @@ impl HashResultValue {
             }
         )
         .expect("unreachable"); // bun.handleOom
-        let instance = global_object.create_error_instance(
-            "Password hashing failed with error \"{s}\"",
-            format_args!(
-                "Password hashing failed with error \"{}\"",
-                err.name()
-            ),
-        );
+        let instance = global_object.create_error_instance(format_args!(
+            "Password hashing failed with error \"{}\"",
+            err.name()
+        ));
         instance.put(
             global_object,
             b"code",

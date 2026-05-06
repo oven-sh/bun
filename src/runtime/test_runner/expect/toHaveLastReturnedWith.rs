@@ -16,9 +16,11 @@ pub fn to_have_last_returned_with(
     bun_jsc::mark_binding!();
 
     let this_value = callframe.this();
-    // TODO(port): `defer this.postMatch(globalThis)` — scopeguard borrows `this` for the whole
-    // body; may need borrowck reshaping in Phase B (e.g. inner fn + post_match in caller).
-    let _post_match = scopeguard::guard((), |_| this.post_match(global_this));
+    // Zig: `defer this.postMatch(globalThis);`
+    // PORT NOTE: reshaped for borrowck — wrap `this` in a scopeguard and re-borrow through
+    // the guard's DerefMut so post_match runs at every exit without a raw-pointer alias.
+    let mut this = scopeguard::guard(this, |t| t.post_match(global_this));
+    let this: &mut Expect = &mut *this;
 
     let value: JSValue =
         this.get_value(global_this, this_value, "toHaveBeenLastReturnedWith", "<green>expected<r>")?;

@@ -189,7 +189,7 @@ fn embed_iccp(ctx: *mut spng_ctx, icc_profile: Option<&[u8]>) {
     let _ = unsafe { spng_set_iccp(ctx, &iccp) };
 }
 
-pub fn encode(rgba: &[u8], w: u32, h: u32, level: i8, icc_profile: Option<NonNull<[u8]>>) -> Result<codecs::Encoded, codecs::Error> {
+pub fn encode(rgba: &[u8], w: u32, h: u32, level: i8, icc_profile: Option<&[u8]>) -> Result<codecs::Encoded, codecs::Error> {
     // SAFETY: spng_ctx_new is safe to call; null return = OOM.
     let ctx = unsafe { spng_ctx_new(SPNG_CTX_ENCODER) };
     if ctx.is_null() {

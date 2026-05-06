@@ -90,7 +90,7 @@ pub fn to_match_inline_snapshot(
         "<green>properties<r><d>, <r>hint",
     )?;
     Expect::inline_snapshot(
-        this,
+        &mut **this,
         global,
         frame,
         value,

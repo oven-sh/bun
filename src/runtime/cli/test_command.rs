@@ -1208,8 +1208,9 @@ impl CommandLineReporter {
         // SAFETY: Zig stores `?*CommandLineReporter` and freely mutates; the
         // shared borrow is treated as a raw pointer here (single-threaded test
         // runner, sole writer for the duration of this completion callback).
+        #[allow(invalid_reference_casting)]
         let this: &mut CommandLineReporter =
-            unsafe { &mut *(this as *const CommandLineReporter as *mut CommandLineReporter) };
+            unsafe { &mut *(core::ptr::from_ref(this) as *mut CommandLineReporter) };
 
         if !this.reporters.dots && !this.reporters.only_failures {
             match sequence.result.basic_result() {

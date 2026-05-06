@@ -359,8 +359,8 @@ impl PackageFilterIterator {
         // TODO(port): narrow error set
         loop {
             if !self.valid {
-                // SAFETY: patterns slice kept alive by caller.
-                let patterns_len = unsafe { (*self.patterns).len() };
+                // Raw slice pointer `len()` reads only metadata — no deref/autoref needed.
+                let patterns_len = self.patterns.len();
                 if self.pattern_idx < patterns_len {
                     self.init_walker()?;
                     self.valid = true;

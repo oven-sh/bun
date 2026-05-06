@@ -876,11 +876,9 @@ fn print_node_modules_folder_structure(
     Ok(())
 }
 
-// Silence unused-import warnings for items only referenced in the gated bodies.
+// Items only referenced in the gated bodies.
 #[allow(dead_code)]
-const _: () = {
-    let _ = core::marker::PhantomData::<(PackageID, Lockfile, ZStr)>;
-};
+type _GatedRefs = (PackageID, Lockfile, &'static ZStr);
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

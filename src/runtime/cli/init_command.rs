@@ -514,7 +514,7 @@ impl InitCommand {
             'process_package_json: {
                 let source = logger::Source::init_path_string(
                     b"package.json",
-                    &package_json_contents.list,
+                    package_json_contents.list.as_slice(),
                 );
                 let mut log = logger::Log::init();
                 let mut package_json_expr =

@@ -1616,7 +1616,7 @@ impl<'a> Repl<'a> {
         let arena = bun_alloc::Arena::new();
 
         // Set up parser options with repl_mode enabled
-        let mut opts = bun_js_parser::ParserOptions::init(&vm.transpiler.options.jsx, bun_js_parser::options::Loader::Tsx);
+        let mut opts = bun_js_parser::ParserOptions::init(vm.transpiler.options.jsx.clone(), bun_js_parser::options::Loader::Tsx);
         opts.repl_mode = true;
         opts.features.dead_code_elimination = false; // REPL needs all code
         opts.features.top_level_await = true; // Enable top-level await in REPL

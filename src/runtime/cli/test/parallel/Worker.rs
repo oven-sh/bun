@@ -3,7 +3,7 @@
 //! routes IPC frames); this file holds only the per-process state and the
 //! spawn/dispatch/shutdown mechanics.
 
-use std::sync::Arc;
+use core::ffi::c_void;
 
 use bun_core::{self, Output};
 use bun_jsc as jsc;
@@ -12,7 +12,7 @@ use bun_io;
 use bun_sys;
 // `bun.spawn` lives under src/runtime/api/bun/process.zig → mounted at
 // `crate::api::bun_process`, re-exported as `crate::api::bun::process`.
-use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};
+use crate::api::bun::process::{self as spawn, Process, ProcessExitVTable, Rusage, SpawnOptions, Status};
 #[cfg(unix)]
 use crate::api::bun::process::PosixStdio as Stdio;
 #[cfg(not(unix))]

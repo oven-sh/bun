@@ -4406,7 +4406,7 @@ pub mod sync {
             let rc = unsafe { libc::poll(buf.as_mut_ptr(), pfds_len as _, timeout_ms) };
             match bun_sys::get_errno(rc as isize) {
                 bun_sys::E::SUCCESS => {}
-                bun_sys::E::AGAIN | bun_sys::E::INTR => {}
+                bun_sys::E::EAGAIN | bun_sys::E::EINTR => {}
                 err => {
                     return Some(Maybe::Err(bun_sys::Error::from_code(err, bun_sys::Tag::poll)))
                 }

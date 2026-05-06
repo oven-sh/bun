@@ -553,7 +553,7 @@ pub mod command {
         let first_arg_name = next_arg;
         type RootCommandMatcher = strings::ExactSizeMatcher<12>;
 
-        match RootCommandMatcher::match_(first_arg_name) {
+        match RootCommandMatcher::r#match(first_arg_name) {
             x if x == RootCommandMatcher::case(b"init") => Tag::InitCommand,
             x if x == RootCommandMatcher::case(b"build") || x == RootCommandMatcher::case(b"bun") => {
                 Tag::BuildCommand

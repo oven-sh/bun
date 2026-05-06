@@ -1001,13 +1001,12 @@ pub mod js_bundler {
                             this.jsx.development = dev;
                         }
                     } else {
-                        return global_this.throw_invalid_arguments(
+                        return Err(global_this.throw_invalid_arguments(
                             &format!(
                                 "Invalid jsx.runtime: '{}'. Must be one of: 'classic', 'automatic', 'react', 'react-jsx', or 'react-jsxdev'",
                                 bstr::BStr::new(slice.slice())
                             ),
-                            &[],
-                        );
+                        ));
                     }
                     drop(slice);
                 }

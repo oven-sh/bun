@@ -58,11 +58,14 @@ pub const API_NAME: &str = "app";
 pub use bun_bundler::bake_types::{Graph, Side};
 pub use bun_bundler::bake_types::BuiltInModule;
 
-// PORT NOTE: `Mode` was a keystone stub duplicating `bake_body::Mode`; the
-// duplicate caused E0308 at every `init_transpiler_with_options` /
-// `add_import_meta_defines` call site. Re-export the canonical body type so
-// `bake::Mode` ≡ `bake_body::Mode`.
-pub use bake_body::Mode;
+/// `bake.Mode` — canonical definition. `bake_body::Mode` re-exports this
+/// (`pub use super::Mode;`) so both paths name the same nominal type.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum Mode {
+    Development,
+    ProductionDynamic,
+    ProductionStatic,
+}
 
 /// `bake.Framework.ServerComponents`.
 ///

@@ -1630,9 +1630,10 @@ impl napi_async_work {
     }
 
     pub fn run_from_js(&mut self, vm: &VirtualMachine, global: &JSGlobalObject) {
+        let _ = vm;
         // Note: the "this" value here may already be freed by the user in `complete`
         let mut poll_ref = self.poll_ref;
-        let _guard = scopeguard::guard((), |_| poll_ref.unref(vm));
+        let _guard = scopeguard::guard((), |_| poll_ref.unref(vm_ctx()));
 
         // https://github.com/nodejs/node/blob/a2de5b9150da60c77144bb5333371eaca3fab936/src/node_api.cc#L1201
         let Some(complete) = self.complete else {
@@ -1803,7 +1804,7 @@ pub extern "C" fn napi_create_buffer_copy(
     bun_output::scoped_log!(napi, "napi_create_buffer_copy: {}", length);
     let env = get_env!(env_);
     let result = get_out!(env, result_);
-    let buffer = match JSValue::create_buffer_from_length(env.to_js(), length) {
+    let buffer: JSValue = match JSValue::create_buffer_from_length(env.to_js(), length) {
         Ok(b) => b,
         Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::pending_exception),
     };
@@ -1964,7 +1965,8 @@ pub extern "C" fn napi_get_uv_event_loop(env_: napi_env, loop_: *mut napi_event_
         // there is no uv event loop on posix, we use our event loop handle.
         // SAFETY: `VirtualMachine::event_loop` already yields `*mut EventLoop`;
         // no const→mut cast needed.
-        *loop_out = env.to_js().bun_vm().event_loop();
+        // SAFETY: bun_vm() never null for a Bun-owned global.
+        *loop_out = unsafe { &*env.to_js().bun_vm() }.event_loop();
     }
     env.ok()
 }

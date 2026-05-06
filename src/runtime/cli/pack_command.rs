@@ -1547,9 +1547,12 @@ pub fn pack<const FOR_PUBLISH: bool>(
     let log_level = manager.options.log_level;
     let bump = pack_bump();
     // PORT NOTE: `manager.workspace_package_json_cache` / `manager.log` are not on
-    // the upstream `PackageManager` stub yet — routed via `pm_*` shims.
+    // the upstream `PackageManager` stub yet — routed via `pm_*` shims. The two
+    // accessors can't both borrow `manager` mutably across the same call, so the
+    // `log` slot is `todo!()`-ed inline (the cache shim already gates the whole
+    // expression at runtime).
     let mut json = match pm_workspace_cache(manager).get_with_path(
-        pm_log(manager),
+        todo!("blocked_on: bun_install::PackageManager::log"),
         abs_package_json_path.as_bytes(),
         WorkspacePackageJSONCache::GetJSONOptions { guess_indentation: true, ..Default::default() },
     ) {

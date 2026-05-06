@@ -4075,11 +4075,25 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         unsafe { uws::H3::App::destroy(h3a) };
                     }
                 }
+                extern "C" fn on_listen_unix_cb<const SSL: bool, const DEBUG: bool>(
+                    socket: *mut uws_sys::ListenSocket,
+                    _domain: *const c_char,
+                    _flags: i32,
+                    user_data: *mut c_void,
+                ) {
+                    // SAFETY: user_data is the `*mut NewServer<..>` passed to listen_on_unix_socket.
+                    let server = unsafe { &mut *(user_data as *mut NewServer<SSL, DEBUG>) };
+                    server.on_listen(if socket.is_null() { None } else { Some(socket) });
+                }
+                // SAFETY: `unix` is a CString — bytes are NUL-terminated with no interior NUL.
+                let unix_z = unsafe {
+                    ZStr::from_raw(unix.as_bytes().as_ptr(), unix.as_bytes().len())
+                };
                 // SAFETY: app is a live uws App FFI handle owned by this server
-                unsafe { &*app }.listen_on_unix_socket(
-                    self,
-                    Self::on_listen,
-                    unix,
+                unsafe { &mut *app }.listen_on_unix_socket(
+                    on_listen_unix_cb::<SSL, DEBUG>,
+                    self as *mut Self as *mut c_void,
+                    unix_z,
                     self.config.get_usockets_options(),
                 );
             }

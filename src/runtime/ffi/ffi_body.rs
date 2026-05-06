@@ -1548,7 +1548,7 @@ impl FFI {
             // PERF(port): was appendAssumeCapacity
         }
 
-        let ret = bun_str::String::to_js_array(global, &strs)?;
+        let ret = strings_to_js_array(global, &strs)?;
 
         for str in strs.iter() {
             str.deref();

@@ -288,23 +288,41 @@ mod shim {
         r.detach_readable_stream(g)
     }
     #[inline] pub fn signal_aborted(s: &Arc<AbortSignal>) -> bool {
-        // Arc derefs to &AbortSignal; method takes &self.
-        AbortSignal::aborted(s)
+        let _ = s;
+        // `bun_jsc::AbortSignal` is currently a `stub_ty!` opaque; the real
+        // impl with `aborted()` lives in `bun_jsc::abort_signal` but isn't
+        // re-exported as the canonical type yet.
+        todo!("blocked_on: bun_jsc::AbortSignal::aborted")
     }
     #[inline] pub fn signal_fire(s: &Arc<AbortSignal>, g: &JSGlobalObject, r: jsc::CommonAbortReason) {
-        AbortSignal::signal(s, g, r)
+        let _ = (s, g, r);
+        todo!("blocked_on: bun_jsc::AbortSignal::signal")
     }
     #[inline] pub fn signal_unref(s: &Arc<AbortSignal>) {
-        AbortSignal::pending_activity_unref(s)
+        let _ = s;
+        todo!("blocked_on: bun_jsc::AbortSignal::pending_activity_unref")
     }
     #[inline] pub fn iec_trigger(cb: &mut request::InternalJSEventCallback, ev: request::EventType, g: &JSGlobalObject) -> bool {
-        cb.trigger(ev, g)
+        // Two identical `impl InternalJSEventCallback` blocks in
+        // webcore/Request.rs make method dispatch ambiguous (E0034); shim
+        // until the duplicate impl is collapsed.
+        let _ = (cb, ev, g);
+        todo!("blocked_on: webcore::request::InternalJSEventCallback::trigger (duplicate impl)")
     }
     #[inline] pub fn iec_deinit(cb: &mut request::InternalJSEventCallback) {
         cb.deinit()
     }
     #[inline] pub fn iec_has_callback(cb: &request::InternalJSEventCallback) -> bool {
-        cb.has_callback()
+        let _ = cb;
+        todo!("blocked_on: webcore::request::InternalJSEventCallback::has_callback (duplicate impl)")
+    }
+    /// `Blob::is_s3()` / `Blob::needs_to_read_file()` have duplicate impls
+    /// (E0034); inline the body here.
+    #[inline] pub fn blob_is_s3(b: &Blob) -> bool {
+        b.store.as_ref().is_some_and(|s| matches!(s.data, crate::webcore::blob::store::Data::S3(_)))
+    }
+    #[inline] pub fn blob_needs_to_read_file(b: &Blob) -> bool {
+        b.store.as_ref().is_some_and(|s| matches!(s.data, crate::webcore::blob::store::Data::File(_)))
     }
     #[inline] pub fn byte_stream_unpipe(mut s: NonNull<ByteStream>) {
         // SAFETY: the lone caller has just `take()`n the pointer out of

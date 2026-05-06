@@ -72,4 +72,10 @@ impl Assets {
         debug_assert!(self.owner().magic == Magic::Valid);
         self.path_map.get(path).map(|idx| self.files.keys()[idx.get()])
     }
+
+    /// Look up a `StaticRoute` by content hash.
+    pub fn get(&self, hash: u64) -> Option<*mut StaticRoute> {
+        debug_assert!(self.owner().magic == Magic::Valid);
+        self.files.get(&hash).copied()
+    }
 }

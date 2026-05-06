@@ -554,10 +554,10 @@ impl NodeHTTPResponse {
     pub fn dump_request_body(
         &mut self,
         global_object: &JSGlobalObject,
-        _frame: &CallFrame,
-        this_value: JSValue,
+        callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        if self.buffered_request_body_data_during_pause.cap() > 0 {
+        let this_value = callframe.this();
+        if self.buffered_request_body_data_during_pause.cap > 0 {
             self.buffered_request_body_data_during_pause.clear_and_free();
         }
         if !self.flags.contains(Flags::REQUEST_HAS_COMPLETED) {
@@ -572,12 +572,12 @@ impl NodeHTTPResponse {
         // defer this.deref(); — moved to end of fn body.
         self.flags.remove(Flags::IS_REQUEST_PENDING);
 
-        self.clear_on_data_callback(self.get_this_value(), VirtualMachine::get().global());
+        self.clear_on_data_callback(self.get_this_value(), vm_get().global());
         self.upgrade_context.reset();
 
         self.buffered_request_body_data_during_pause.clear_and_free();
-        let server = self.server;
-        self.poll_ref.unref(VirtualMachine::get());
+        let mut server = self.server;
+        self.poll_ref.unref(vm_get());
         self.unregister_auto_flush();
 
         server.on_request_complete();
@@ -606,7 +606,7 @@ impl NodeHTTPResponse {
         // Don't overwrite WebSocket user data
         if !self.flags.contains(Flags::UPGRADED) {
             if let Some(raw_response) = &self.raw_response {
-                raw_response.on_timeout::<NodeHTTPResponse>(Self::on_timeout, self);
+                raw_response.on_timeout(on_timeout_shim, self as *mut Self);
             }
         }
         // detach and

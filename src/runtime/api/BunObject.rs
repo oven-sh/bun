@@ -2214,7 +2214,11 @@ pub fn get_unsafe(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
 
 #[bun_jsc::host_fn]
 pub fn string_width(global_object: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-    bun_jsc::bun_string_jsc::js_get_string_width(global_object, call_frame)
+    // The real impl lives in `bun_jsc::bun_string_jsc::js_get_string_width`
+    // (src/jsc/bun_string_jsc.rs:157) but that module is currently inside the
+    // `#[cfg(any())] _gated` block of bun_jsc.
+    let _ = (global_object, call_frame);
+    todo!("blocked_on: bun_jsc::bun_string_jsc::js_get_string_width (gated)")
 }
 
 /// EnvironmentVariables is runtime defined.

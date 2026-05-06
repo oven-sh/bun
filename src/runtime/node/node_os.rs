@@ -584,18 +584,18 @@ pub fn get_priority(global: &JSGlobalObject, pid: i32) -> JsResult<i32> {
             message: BunString::static_("no such process"),
             code: BunString::static_("ESRCH"),
             #[cfg(not(windows))]
-            errno: -(bun_sys::posix::E::SRCH as c_int),
+            errno: -(bun_sys::posix::E::ESRCH as c_int),
             #[cfg(windows)]
             errno: libuv::UV_ESRCH,
             syscall: BunString::static_("uv_os_getpriority"),
-            ..Default::default()
+            ..system_error_default()
         };
-        return global.throw_value(err.to_error_instance_with_info_object(global));
+        return Err(global.throw_value(err.to_error_instance_with_info_object(global)));
     }
     Ok(result)
 }
 
-pub fn homedir(global: &JSGlobalObject) -> Result<BunString, bun_core::Error> {
+pub fn homedir(global: &JSGlobalObject) -> JsResult<BunString> {
     // In Node.js, this is a wrapper around uv_os_homedir.
     #[cfg(windows)]
     {
@@ -645,12 +645,12 @@ pub fn homedir(global: &JSGlobalObject) -> Result<BunString, bun_core::Error> {
                 )
             };
 
-            if ret == bun_sys::E::INTR as c_int {
+            if ret == bun_sys::E::EINTR as c_int {
                 continue;
             }
 
             // If the system call wants more memory, double it.
-            if ret == bun_sys::E::RANGE as c_int {
+            if ret == bun_sys::E::ERANGE as c_int {
                 let len = string_bytes.len();
                 heap_bytes = vec![0u8; len * 2];
                 string_bytes = &mut heap_bytes[..];

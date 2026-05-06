@@ -339,28 +339,25 @@ impl CryptoHasher {
         // `defer evp.deinit()` — handled by Drop on `evp`.
 
         if let Some(string_or_buffer) = output {
-            match string_or_buffer {
-                StringOrBuffer::Buffer(buffer) => {
-                    Self::hash_to_bytes(global, &mut evp, input, Some(buffer.buffer))
-                }
-                // `inline else => |*str|` — every non-buffer arm yields a string-like
-                other => {
-                    // `defer str.deinit()` — handled by Drop.
-                    let Some(encoding) = Encoding::from(other.slice()) else {
-                        return Err(global
-                            .err(
-                                ErrorCode::INVALID_ARG_VALUE,
-                                format_args!(
-                                    "Unknown encoding: {}",
-                                    bstr::BStr::new(other.slice())
-                                ),
-                            )
-                            .throw());
-                    };
-
-                    Self::hash_to_encoding(global, &mut evp, input, encoding)
-                }
+            if let StringOrBuffer::Buffer(buffer) = &string_or_buffer {
+                let ab = buffer.buffer;
+                return Self::hash_to_bytes(global, &mut evp, input, Some(ab));
             }
+            // `inline else => |*str|` — every non-buffer arm yields a string-like
+            // `defer str.deinit()` — handled by Drop.
+            let Some(encoding) = Encoding::from(string_or_buffer.slice()) else {
+                return Err(global
+                    .err(
+                        ErrorCode::INVALID_ARG_VALUE,
+                        format_args!(
+                            "Unknown encoding: {}",
+                            bstr::BStr::new(string_or_buffer.slice())
+                        ),
+                    )
+                    .throw());
+            };
+
+            Self::hash_to_encoding(global, &mut evp, input, encoding)
         } else {
             Self::hash_to_bytes(global, &mut evp, input, None)
         }

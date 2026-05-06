@@ -550,6 +550,9 @@ impl CacheConfig {
 // TODO(port): proc-macro — Zig instantiated this per (type, "name") pair via comptime.
 pub trait CAresRecordType: Sized {
     const TYPE_NAME: &'static str;
+    /// `"query" ++ ucfirst(TYPE_NAME)` — Zig built this at comptime; each impl
+    /// carries the precomputed literal so error paths report the right syscall.
+    const SYSCALL: &'static str;
     /// `"pending_{TYPE_NAME}_cache_cares"` — used to reach the matching HiveArray on `Resolver`.
     const CACHE_FIELD: PendingCacheField;
     fn to_js_response(&mut self, global: &JSGlobalObject, type_name: &'static str) -> JsResult<JSValue>;

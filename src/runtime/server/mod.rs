@@ -318,6 +318,21 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.pending_requests += 1;
     }
 
+    /// Dispatch the user `fetch` handler for an incoming request.
+    // TODO(b2-blocked): full body in `server_body.rs::NewServer::on_request`
+    // (server.zig:2720-2830) — depends on Request::new_/WebCore::Body and the
+    // JS RouteList codegen extern. Until that wiring lands, fall through to a
+    // 404 so the listen socket stays usable for smoke tests (matches the
+    // `trampoline::on_request` behaviour).
+    pub fn on_request(
+        &mut self,
+        _req: &mut uws_sys::Request,
+        resp: &mut uws_sys::NewAppResponse<SSL>,
+    ) {
+        resp.write_status(b"404 Not Found");
+        resp.end(b"", false);
+    }
+
     pub fn on_static_request_complete(&mut self) {
         self.pending_requests -= 1;
         self.deinit_if_we_can();

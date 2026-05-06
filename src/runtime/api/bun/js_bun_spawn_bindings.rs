@@ -909,7 +909,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             } else {
                 -UV_E::NFILE
             };
-            return Err(global_this.throw_value(SystemError::from(systemerror).to_error_instance(global_this)));
+            return Err(global_this.throw_value(sys_system_error_to_js(systemerror, global_this)));
         }
         Err(err) => {
             drop(spawn_options);

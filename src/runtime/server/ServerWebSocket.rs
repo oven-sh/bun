@@ -910,17 +910,19 @@ impl ServerWebSocket {
         &mut self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
-        this_value: JSValue,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old(1);
+        let this_value = callframe.this();
+        let args = callframe.arguments_old::<1>();
 
-        if args.len() < 1 {
-            return global_this.throw_not_enough_arguments("cork", 1, 0);
+        if args.len < 1 {
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "Not enough arguments to 'cork'. Expected 1, got 0."
+            )));
         }
 
-        let callback = args.ptr(0);
+        let callback = args.ptr[0];
         if callback.is_empty_or_undefined_or_null() || !callback.is_callable() {
-            return global_this.throw_invalid_argument_type_value("cork", "callback", callback);
+            return Err(global_this.throw_invalid_argument_type_value("cork", "callback", callback));
         }
 
         if self.is_closed() {

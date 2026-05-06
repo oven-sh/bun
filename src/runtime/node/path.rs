@@ -3679,7 +3679,7 @@ pub fn to_namespaced_path(
         return Ok(path_ptr);
     }
     let path_zstr = path_ptr.get_zig_string(global_object)?;
-    let len = path_zstr.len();
+    let len = path_zstr.len;
     if len == 0 {
         return Ok(path_ptr);
     }

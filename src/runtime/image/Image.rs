@@ -1848,9 +1848,21 @@ fn make_placeholder(rgba: &[u8], sw: u32, sh: u32) -> Result<TaskResult, codecs:
     // `defer bun.default_allocator.free(rendered.rgba)` — owned, drops at scope exit.
     // Placeholder is a synthetic ThumbHash render, not the source image —
     // no ICC profile attaches to it.
-    let png_out = codecs::png::encode(&rendered.rgba, rendered.w, rendered.h, -1, None)?;
+    // PORT NOTE: `codec_png::encode` returns the mod.rs-shaped `Encoded`/`Error`;
+    // both types are field-identical to `codecs_body::*` so map across by value.
+    let png_out = codecs::png::encode(&rendered.rgba, rendered.w, rendered.h, -1, None)
+        .map_err(|e| match e {
+            super::codecs::Error::UnknownFormat => codecs::Error::UnknownFormat,
+            super::codecs::Error::DecodeFailed => codecs::Error::DecodeFailed,
+            super::codecs::Error::EncodeFailed => codecs::Error::EncodeFailed,
+            super::codecs::Error::TooManyPixels => codecs::Error::TooManyPixels,
+            super::codecs::Error::UnsupportedOnPlatform => codecs::Error::UnsupportedOnPlatform,
+            super::codecs::Error::OutOfMemory => codecs::Error::OutOfMemory,
+        })?;
+    let png_out = mem::ManuallyDrop::new(png_out);
+    let out = codecs::Encoded { bytes: png_out.bytes, free: png_out.free };
     let _ = owned; // PERF(port): explicit lifetime hint; drops here.
-    Ok(TaskResult::Encoded { out: png_out, format: codecs::Format::Png, w: rendered.w, h: rendered.h })
+    Ok(TaskResult::Encoded { out, format: codecs::Format::Png, w: rendered.w, h: rendered.h })
 }
 
 /// Map a resize spec to concrete output dims given the current dims.

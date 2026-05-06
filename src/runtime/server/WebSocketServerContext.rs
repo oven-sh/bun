@@ -175,8 +175,35 @@ impl WebSocketServerContext {
         }
     }
 
-    // protect/unprotect → see gated `impl Handler` above; thin forwarders kept
-    // gated alongside since they only call gated methods.
+    pub fn protect(&self) {
+        self.handler.protect();
+    }
+
+    pub fn unprotect(&self) {
+        self.handler.unprotect();
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Local extension shim — `JSValue::withAsyncContextIfNeeded` (JSValue.zig)
+// is not yet on `bun_jsc::JSValue`; forward to the C++ symbol directly.
+// ──────────────────────────────────────────────────────────────────────────
+trait JsValueAsyncContextExt {
+    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue;
+}
+impl JsValueAsyncContextExt for JSValue {
+    #[inline]
+    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue {
+        unsafe extern "C" {
+            fn AsyncContextFrame__withAsyncContextIfNeeded(
+                global: *const JSGlobalObject,
+                callback: JSValue,
+            ) -> JSValue;
+        }
+        debug_assert!(self.is_cell());
+        // SAFETY: FFI call into JSC bindings; `global` is a valid live JSGlobalObject.
+        unsafe { AsyncContextFrame__withAsyncContextIfNeeded(global, self) }
+    }
 }
 
 

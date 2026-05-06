@@ -1646,12 +1646,11 @@ Then select \"React\" from the list of frameworks.
 <yellow>warn: No template <b>create-next<r> found.
 To create a project with the official Next.js scaffolding tool, run
   <b>bun create next-app <cyan>[destination]<r>",
-                format_args!(""),
             );
             Global::exit(1);
         }
 
-        let create_command_info = CreateCommand::extract_info(ctx)?;
+        let create_command_info = CreateCommand::extract_info(&ctx)?;
         let template = create_command_info.template;
         let example_tag = create_command_info.example_tag;
 

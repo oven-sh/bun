@@ -1576,7 +1576,9 @@ impl WrapperLike for TextChunk {
     fn init(v: *mut Self::Raw) -> *mut Self { Self::init(v) }
     fn ref_(&self) { self.ref_() }
     fn deref(this: *mut Self) { Self::deref(this) }
-    fn to_js(&self, g: &JSGlobalObject) -> JSValue { self.to_js(g) }
+    fn to_js(&self, _g: &JSGlobalObject) -> JSValue {
+        todo!("blocked_on: bun_jsc::JsClass to_js for *mut Self (intrusive-rc wrapper)")
+    }
 }
 
 // ──────────────────────────── DocType ────────────────────────────────────

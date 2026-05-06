@@ -1548,17 +1548,18 @@ impl FileSystemFlags {
                     }
                 }
 
-                // TODO(port): ComptimeStringMap::getWithEql with ZigString::eqlComptime — needs custom comparator over phf
-                break 'brk FILE_SYSTEM_FLAGS_MAP
-                    .get_with_eql(&str, ZigString::eql_comptime)
-                    .copied();
+                // PORT NOTE: Zig used `ComptimeStringMap.getWithEql(str, ZigString.eqlComptime)`.
+                // phf::Map keys are &[u8]; convert the ZigString (≤12 bytes here)
+                // to a UTF-8 slice and look it up directly.
+                let key_slice = str.to_slice();
+                break 'brk FILE_SYSTEM_FLAGS_MAP.get(key_slice.slice()).copied();
             };
 
             let Some(flags) = flags else {
-                return ctx.throw_invalid_arguments(
-                    "Invalid flag '{any}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
-                    format_args!("{}", str),
-                );
+                return Err(ctx.throw_invalid_arguments(format_args!(
+                    "Invalid flag '{}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
+                    str
+                )));
             };
 
             return Ok(Some(FileSystemFlags(flags)));

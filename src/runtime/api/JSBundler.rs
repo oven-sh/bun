@@ -1752,7 +1752,7 @@ pub mod js_bundler {
                         ));
                     }
                     jsc::AnyEventLoop::Mini(mini) => {
-                        mini.enqueue_task_concurrent_with_extra_ctx::<Load, BundleV2>(
+                        mini.enqueue_task_concurrent_with_extra_ctx::<Load, BundleV2<'static>>(
                             this,
                             BundleV2::on_notify_defer_mini,
                             // TODO(port): .task field selector

@@ -128,8 +128,8 @@ pub enum UnresolvedIndex<'a> {
 // No explicit `impl Drop for RouteBundle` needed.
 
 impl RouteBundle {
-    pub fn source_map_id(&self) -> SourceMapStore::Key {
-        SourceMapStore::Key::init(u64::from(self.client_script_generation) << 32)
+    pub fn source_map_id(&self) -> source_map_store::Key {
+        source_map_store::Key::init(u64::from(self.client_script_generation) << 32)
     }
 
     pub fn invalidate_client_bundle(&mut self, dev: &mut DevServer) {

@@ -472,7 +472,7 @@ pub fn to_throw(
             format_args!(
                 "{}{}",
                 expected_message.to_fmt(&mut formatter),
-                result.to_fmt(&mut formatter),
+                result.to_fmt(&mut formatter2),
             ),
         );
     }

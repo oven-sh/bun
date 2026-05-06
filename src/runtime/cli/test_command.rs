@@ -1512,7 +1512,7 @@ impl CommandLineReporter {
             None
         };
         // TODO(port): errdefer lcov cleanup — using scopeguard with disarm on success
-        let lcov_guard = scopeguard::guard(&mut lcov_state, |s: &mut Option<(File, &bun_str::ZStr, Vec<u8>)>| {
+        let mut lcov_guard = scopeguard::guard(&mut lcov_state, |s: &mut Option<(File, &bun_str::ZStr, Vec<u8>)>| {
             if REPORTERS_LCOV {
                 if let Some((file, name, _)) = s.take() {
                     file.close();
@@ -1560,7 +1560,7 @@ impl CommandLineReporter {
             }
 
             if REPORTERS_LCOV {
-                if let Some((_, _, ref mut buffered)) = lcov_guard.as_mut() {
+                if let Some((_, _, buffered)) = lcov_guard.as_mut() {
                     if coverage::Lcov::write_format(&report, relative_dir, buffered).is_err() {
                         continue;
                     }
@@ -1885,7 +1885,9 @@ impl TestCommand {
 
         if ctx.test_options.isolate {
             vm.test_isolation_enabled = true;
-            vm.auto_killer.enabled = true;
+            // TODO(b2-cycle): vm.auto_killer is gated to `()` until ProcessAutoKiller
+            // un-gates upstream. Zig: `vm.auto_killer.enabled = true;`
+            let _ = &vm.auto_killer;
         }
 
         if ctx.test_options.coverage.enabled {
@@ -1895,7 +1897,9 @@ impl TestCommand {
             vm.transpiler.options.minify_whitespace = false;
             vm.transpiler.options.dead_code_elimination = false;
             // SAFETY: `vm.global` initialised by `VirtualMachine::init`.
-            unsafe { (*vm.global).vm().set_control_flow_profiler(true) };
+            // blocked_on: bun_jsc::VM::set_control_flow_profiler — VM.rs is cfg-gated upstream.
+            // Zig: `vm.global.vm().setControlFlowProfiler(true)`
+            let _ = unsafe { (*vm.global).vm() };
         }
 
         // For tests, we default to UTC time zone

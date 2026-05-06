@@ -626,13 +626,13 @@ impl PublishCommand {
 
         if let Some(json) = res_json {
             'try_web: {
-                let Some(auth_url_str) = Expr::get_string_cloned_z(&json, &bump, b"authUrl")? else {
+                let Some(auth_url_str) = json_get_string_cloned(&json, &bump, b"authUrl")? else {
                     break 'try_web;
                 };
-                // PORT NOTE: bump-owned `&ZStr` — leak a heap copy so the spawned thread
+                // PORT NOTE: bump-owned `&[u8]` — leak a heap copy so the spawned thread
                 // (which outlives `bump`) can borrow it `'static`.
                 let auth_url_str: &'static ZStr = {
-                    let mut v = auth_url_str.as_bytes().to_vec();
+                    let mut v = auth_url_str.to_vec();
                     v.push(0);
                     let len = v.len() - 1;
                     let leaked = Box::leak(v.into_boxed_slice());
@@ -642,7 +642,7 @@ impl PublishCommand {
 
                 // important to clone because it belongs to `response_buf`, and `response_buf` will be
                 // reused with the following requests
-                let Some(done_url_str) = Expr::get_string_cloned(&json, &bump, b"doneUrl")? else {
+                let Some(done_url_str) = json_get_string_cloned(&json, &bump, b"doneUrl")? else {
                     break 'try_web;
                 };
                 let done_url_str: Box<[u8]> = done_url_str.into();
@@ -765,7 +765,7 @@ impl PublishCommand {
                                 }
                             };
 
-                            let token = Expr::get_string_cloned(&otp_done_json, &done_bump, b"token")?.unwrap_or_else(|| {
+                            let token = json_get_string_cloned(&otp_done_json, &done_bump, b"token")?.unwrap_or_else(|| {
                                 Output::err("WebLogin", "missing `token` field in reponse json", ());
                                 Global::crash();
                             });
@@ -986,7 +986,7 @@ impl PublishCommand {
                     });
 
                     // TODO(port): direct mutation of e_object.properties[i] — borrowck reshape may be needed
-                    json.data.e_object_mut().unwrap().properties.slice_mut()[bin_query.i].value = Some(Expr::init(
+                    json.data.e_object_mut().unwrap().properties.slice_mut()[bin_query.i as usize].value = Some(Expr::init(
                         E::Object {
                             properties: G::PropertyList::move_from_list(bin_props),
                             ..Default::default()
@@ -1061,7 +1061,7 @@ impl PublishCommand {
                     }
 
                     // TODO(port): direct mutation of e_object.properties[i] — borrowck reshape may be needed
-                    json.data.e_object_mut().unwrap().properties.slice_mut()[bin_query.i].value = Some(Expr::init(
+                    json.data.e_object_mut().unwrap().properties.slice_mut()[bin_query.i as usize].value = Some(Expr::init(
                         E::Object {
                             properties: G::PropertyList::move_from_list(bin_props),
                             ..Default::default()

@@ -1626,15 +1626,19 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             let has_timespec = !absolute_timespec.eql(&Timespec::EPOCH);
 
             if let Writable::Buffer(buffer) = &mut subprocess.stdin {
-                buffer.watch();
+                // SAFETY: RefPtr has no DerefMut; StaticPipeWriter is single-thread
+                // ref-counted and we hold the owning ref via `subprocess.stdin`.
+                unsafe { (*buffer.data.as_ptr()).watch() };
             }
 
             if let Readable::Pipe(pipe) = &mut subprocess.stderr {
-                pipe.watch();
+                // SAFETY: RefPtr<PipeReader> has no DerefMut; mutator-thread-only.
+                unsafe { (*pipe.data.as_ptr()).watch() };
             }
 
             if let Readable::Pipe(pipe) = &mut subprocess.stdout {
-                pipe.watch();
+                // SAFETY: RefPtr<PipeReader> has no DerefMut; mutator-thread-only.
+                unsafe { (*pipe.data.as_ptr()).watch() };
             }
 
             // Tick the isolated event loop without passing timeout to avoid blocking

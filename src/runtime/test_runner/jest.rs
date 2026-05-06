@@ -146,7 +146,10 @@ pub struct TestRunner<'a> {
     /// from `setDefaultTimeout() or jest.setTimeout()`. maxInt(u32) means override not set.
     pub default_timeout_override: u32,
 
-    pub test_options: &'a TestOptions,
+    // PORT NOTE: Zig `*const ... = undefined`. Kept as a raw pointer so the
+    // struct can be partially constructed before `test_options` is wired in
+    // (see test_command.rs `exec`). Access via `test_options()` below.
+    pub test_options: *const TestOptions,
 
     /// Used for --test-name-pattern to reduce allocations
     pub filter_regex: Option<&'a RegularExpression>,
@@ -158,6 +161,16 @@ pub struct TestRunner<'a> {
 }
 
 impl<'a> TestRunner<'a> {
+    /// SAFETY: caller must have assigned `test_options` (it is `= undefined`
+    /// in the Zig source until `test_command` wires it). All call sites are
+    /// reached only after `exec()` sets it.
+    #[inline]
+    pub fn test_options(&self) -> &TestOptions {
+        debug_assert!(!self.test_options.is_null());
+        // SAFETY: see doc comment — pointer is set before any reader runs.
+        unsafe { &*self.test_options }
+    }
+
     pub fn get_active_timeout(&self) -> bun_core::Timespec {
         let Some(active_file) = self.bun_test_root.active_file.as_deref() else {
             return bun_core::Timespec::EPOCH;
@@ -226,7 +239,7 @@ impl<'a> TestRunner<'a> {
         false
     }
 
-    pub fn get_or_put_file(&mut self, file_path: &[u8]) -> GetOrPutFileResult {
+    pub fn get_or_put_file(&mut self, file_path: &'static [u8]) -> GetOrPutFileResult {
         // TODO: this is wrong. you can't put a hash as the key in a hashmap.
         let entry = self
             .index
@@ -473,7 +486,8 @@ pub mod Jest {
         if unsafe { (*vm).is_in_preload } || runner().is_none() {
             // in preload, no arguments needed
         } else {
-            let arguments = callframe.arguments_old::<2>().slice();
+            let arguments = callframe.arguments_old::<2>();
+            let arguments = arguments.slice();
 
             if arguments.len() < 1 || !arguments[0].is_string() {
                 return Err(global_object.throw(format_args!("Bun.jest() expects a string filename")));
@@ -501,7 +515,8 @@ pub mod Jest {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<1>().slice();
+        let arguments = callframe.arguments_old::<1>();
+        let arguments = arguments.slice();
         if arguments.len() < 1 || !arguments[0].is_number() {
             return Err(global_object.throw(format_args!("setTimeout() expects a number (milliseconds)")));
         }
@@ -755,7 +770,7 @@ pub fn format_label(
 
 pub fn capture_test_line_number(callframe: &CallFrame, global_this: &JSGlobalObject) -> u32 {
     if let Some(runner) = Jest::runner() {
-        if runner.test_options.reporters.junit {
+        if runner.test_options().reporters.junit {
             // TODO(port): move to <area>_sys
             unsafe extern "C" {
                 fn Bun__CallFrame__getLineNumber(

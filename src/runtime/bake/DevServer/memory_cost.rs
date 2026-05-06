@@ -113,7 +113,7 @@ pub fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     // .incremental_result
     // TODO(port): exhaustiveness check for IncrementalResult fields (was bun.meta.useAllFields)
     {
-        let _ = IncrementalResult::default; // anchor for grep
+        let _ = core::mem::size_of::<IncrementalResult>(); // anchor for grep
         // .had_adjusted_edges
         // .client_components_added
         other_bytes += memory_cost_array_list(&dev.incremental_result.client_components_added);

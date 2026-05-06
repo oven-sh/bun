@@ -1267,8 +1267,9 @@ impl<'a, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
             }
         }
 
+        let global_ref = this.global_this;
         if this
-            .format::<W, ENABLE_ANSI_COLORS>(tag, writer.ctx, value, global_this)
+            .format::<W, ENABLE_ANSI_COLORS>(tag, writer.ctx, value, global_ref)
             .is_err()
         {
             ctx.i += 1;

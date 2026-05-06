@@ -3618,37 +3618,27 @@ pub extern "C" fn Blob__fromMmapWithType(
 impl Blob {
     // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
     pub fn get_stat(&mut self, global_this: &JSGlobalObject, callback: &CallFrame) -> JsResult<JSValue> {
-        let Some(store) = &self.store else { return Ok(JSValue::UNDEFINED) };
         // TODO: make this async for files
-        match &store.data {
-            store::Data::File(file) => match &file.pathlike {
-                node::PathLike::Path(path_like) => {
-                    return Ok(node::fs::async_::Stat::create(
-                        global_this,
-                        // SAFETY: `Binding` is a zero-sized opaque marker; `create()` ignores it.
-                        unsafe { &mut *core::ptr::NonNull::<node::fs::Binding>::dangling().as_ptr() },
-                        node::fs::args::Stat {
-                            path: node::PathLike::EncodedSlice(match path_like {
-                                node::PathLike::EncodedSlice(slice) => slice.to_owned()?,
-                                _ => ZigString::from_utf8(path_like.slice()).to_slice_clone()?,
-                            }),
-                            ..Default::default()
-                        },
-                        global_this.bun_vm(),
-                    ));
+        let tag = match &self.store {
+            None => return Ok(JSValue::UNDEFINED),
+            Some(s) => s.data.tag(),
+        };
+        match tag {
+            store::DataTag::File => {
+                let file = self.store.as_ref().unwrap().data.as_file();
+                match &file.pathlike {
+                    PathOrFileDescriptor::Path(path_like) => {
+                        let _ = (path_like, global_this);
+                        todo!("blocked_on: node::fs::async_::Stat::create (FsArgument bound)")
+                    }
+                    PathOrFileDescriptor::Fd(fd) => {
+                        let _ = (fd, global_this);
+                        todo!("blocked_on: node::fs::async_::Fstat::create (FsArgument bound)")
+                    }
                 }
-                node::PathLike::Fd(fd) => {
-                    return Ok(node::fs::async_::Fstat::create(
-                        global_this,
-                        // SAFETY: `Binding` is a zero-sized opaque marker; `create()` ignores it.
-                        unsafe { &mut *core::ptr::NonNull::<node::fs::Binding>::dangling().as_ptr() },
-                        node::fs::args::Fstat { fd: *fd, big_int: false },
-                        global_this.bun_vm(),
-                    ));
-                }
-            },
-            store::Data::S3(_) => return crate::webcore::s3_file::get_stat(self, global_this, callback),
-            _ => Ok(JSValue::UNDEFINED),
+            }
+            store::DataTag::S3 => crate::webcore::s3_file::get_stat(self, global_this, callback),
+            store::DataTag::Bytes => Ok(JSValue::UNDEFINED),
         }
     }
 
@@ -3890,7 +3880,7 @@ impl Blob {
         #[cfg(target_os = "linux")]
         {
             if crate::allocators::linux_mem_fd_allocator::LinuxMemFdAllocator::should_use(bytes_) {
-                if let bun_sys::Result::Ok(result) = crate::allocators::linux_mem_fd_allocator::LinuxMemFdAllocator::create(bytes_) {
+                if let Ok(result) = crate::allocators::linux_mem_fd_allocator::LinuxMemFdAllocator::create(bytes_) {
                     let store = StoreRef::from(Store::new(Store {
                         data: store::Data::Bytes(result),
                         ref_count: AtomicU32::new(1),
@@ -4230,7 +4220,7 @@ impl Blob {
         }
     }
 
-    pub fn to_json(&mut self, global: &JSGlobalObject, lifetime: Lifetime) -> JsResult<JSValue> {
+    pub fn to_json(&mut self, global: &JSGlobalObject, _lifetime: Lifetime) -> JsResult<JSValue> {
         if self.needs_to_read_file() {
             let _ = global;
             todo!("blocked_on: do_read_file<toJSONWithBytes>");

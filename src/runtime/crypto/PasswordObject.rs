@@ -881,7 +881,7 @@ struct VerifyJob {
     password: Box<[u8]>,
     prev_hash: Box<[u8]>,
     promise: JSPromiseStrong,
-    event_loop: &'static EventLoop,
+    event_loop: *mut EventLoop,
     global: *const JSGlobalObject,
     r#ref: KeepAlive,
     task: WorkPoolTask,

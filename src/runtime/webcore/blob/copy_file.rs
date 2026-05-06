@@ -1257,7 +1257,7 @@ impl<'a> CopyFileWindows<'a> {
         // mkdirp(), we don't spend extra time opening the file handle for
         // the source.
         self.read_write_loop.destination_fd = match Self::prepare_pathlike(
-            &mut self.destination_file_store.data.file.pathlike,
+            &mut self.destination_file_store.data.as_file().pathlike,
             &mut self.read_write_loop.must_close_destination_fd,
             false,
         ) {
@@ -1274,7 +1274,7 @@ impl<'a> CopyFileWindows<'a> {
         };
 
         self.read_write_loop.source_fd = match Self::prepare_pathlike(
-            &mut self.source_file_store.data.file.pathlike,
+            &mut self.source_file_store.data.as_file().pathlike,
             &mut self.read_write_loop.must_close_source_fd,
             true,
         ) {
@@ -1308,8 +1308,8 @@ impl<'a> CopyFileWindows<'a> {
         let mut pathbuf1 = PathBuffer::uninit();
         let mut pathbuf2 = PathBuffer::uninit();
         // PORT NOTE: reshaped for borrowck — borrow file stores after computing paths
-        let destination_file_store = &mut self.destination_file_store.data.file;
-        let source_file_store = &mut self.source_file_store.data.file;
+        let destination_file_store = &mut self.destination_file_store.data.as_file();
+        let source_file_store = &mut self.source_file_store.data.as_file();
 
         let new_path: &bun_str::ZStr = 'brk: {
             match &destination_file_store.pathlike {
@@ -1457,7 +1457,7 @@ impl<'a> CopyFileWindows<'a> {
         // Apply destination mode if specified (async)
         if let Some(mode) = self.destination_mode {
             if matches!(
-                self.destination_file_store.data.file.pathlike,
+                self.destination_file_store.data.as_file().pathlike,
                 PathOrFileDescriptor::Path(_)
             ) {
                 self.written_bytes = written;
@@ -1490,7 +1490,7 @@ impl<'a> CopyFileWindows<'a> {
                         unsafe { core::mem::transmute::<c_int, bun_sys::SystemErrno>(errno) },
                         bun_sys::Tag::chmod,
                     );
-                    let destination = &self.destination_file_store.data.file;
+                    let destination = &self.destination_file_store.data.as_file();
                     if let PathOrFileDescriptor::Path(p) = &destination.pathlike {
                         err = err.with_path(p.slice());
                     }
@@ -1524,7 +1524,7 @@ impl<'a> CopyFileWindows<'a> {
         let mut node_fs_ = node_fs::NodeFS::default();
         let _ = node_fs_.truncate(
             node_fs::TruncateArgs {
-                path: self.destination_file_store.data.file.pathlike.clone(),
+                path: self.destination_file_store.data.as_file().pathlike.clone(),
                 len: i64::try_from(self.size).unwrap(),
                 ..Default::default()
             },
@@ -1545,7 +1545,7 @@ impl<'a> CopyFileWindows<'a> {
     fn mkdirp(&mut self) {
         bun_sys::syslog!("mkdirp");
         self.mkdirp_if_not_exists = false;
-        let destination = &self.destination_file_store.data.file;
+        let destination = &self.destination_file_store.data.as_file();
         if !matches!(
             destination.pathlike,
             PathOrFileDescriptor::Path(_)
@@ -1618,7 +1618,7 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
                 },
                 bun_sys::Tag::copyfile,
             );
-            let destination = &this.destination_file_store.data.file;
+            let destination = &this.destination_file_store.data.as_file();
 
             // we don't really know which one it is
             match &destination.pathlike {
@@ -1658,7 +1658,7 @@ extern "C" fn on_chmod(req: *mut libuv::fs_t) {
     let rc = unsafe { (*req).result };
     if let Some(errno) = rc.err_enum() {
         let mut err = bun_sys::Error::from_code(errno, bun_sys::Tag::chmod);
-        let destination = &this.destination_file_store.data.file;
+        let destination = &this.destination_file_store.data.as_file();
         if let PathOrFileDescriptor::Path(p) = &destination.pathlike {
             err = err.with_path(p.slice());
         }

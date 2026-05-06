@@ -3,7 +3,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::mock;
 use super::Expect;
 
-#[derive(core::marker::ConstParamTy, PartialEq, Eq, Clone, Copy)]
+#[derive(PartialEq, Eq, Clone, Copy)]
 enum Mode {
     ToHaveReturned,
     ToHaveReturnedTimes,
@@ -19,34 +19,41 @@ impl Mode {
     }
 }
 
+// PERF(port): Zig used a `comptime mode` parameter (anonymous enum) so the two callers were
+// monomorphized; stable Rust forbids enum const-generic params (`adt_const_params`). Passed as a
+// runtime value here — the body branches on it only on cold/error paths.
 #[inline]
-fn to_have_returned_times_fn<const MODE: Mode>(
+fn to_have_returned_times_fn(
     this: &mut Expect,
     global: &JSGlobalObject,
     callframe: &CallFrame,
+    mode: Mode,
 ) -> JsResult<JSValue> {
     bun_jsc::mark_binding!();
 
     let this_value = callframe.this();
     let arguments = callframe.arguments();
     // Zig: `defer this.postMatch(globalThis);`
-    // TODO(port): defer with side effect — borrowck may require reshaping (this: &mut Expect is
-    // used below). Phase B: consider an inner-fn + post_match-after pattern or raw-ptr scopeguard.
-    let _post_match = scopeguard::guard((), |_| this.post_match(global));
+    // SAFETY: `this` outlives this stack frame; the guard fires before return while we still hold
+    // the exclusive borrow. Raw-ptr capture avoids the borrowck conflict with later uses of `this`.
+    let this_ptr: *mut Expect = this;
+    let _post_match = scopeguard::guard((), move |_| unsafe {
+        (*this_ptr).post_match(global);
+    });
 
     let value: JSValue =
-        this.get_value(global, this_value, MODE.tag_name(), "<green>expected<r>")?;
+        this.get_value(global, this_value, mode.tag_name(), "<green>expected<r>")?;
 
     this.increment_expect_call_counter();
 
     let mut returns = mock::jest_mock_iterator(global, value)?;
 
-    let expected_success_count: i32 = if MODE == Mode::ToHaveReturned {
+    let expected_success_count: i32 = if mode == Mode::ToHaveReturned {
         if arguments.len() > 0 && !arguments[0].is_undefined() {
             // PERF(port): Zig used comptime `@tagName(mode) ++ "..."`; runtime fmt on error path.
             return global.throw_invalid_arguments(format_args!(
                 "{}() must not have an argument",
-                MODE.tag_name()
+                mode.tag_name()
             ));
         }
         1
@@ -54,7 +61,7 @@ fn to_have_returned_times_fn<const MODE: Mode>(
         if arguments.len() < 1 || !arguments[0].is_uint32_as_any_int() {
             return global.throw_invalid_arguments(format_args!(
                 "{}() requires 1 non-negative integer argument",
-                MODE.tag_name()
+                mode.tag_name()
             ));
         }
 
@@ -65,15 +72,15 @@ fn to_have_returned_times_fn<const MODE: Mode>(
 
     let mut actual_success_count: i32 = 0;
     let mut total_call_count: i32 = 0;
-    while let Some(item) = returns.next(global)? {
+    while let Some(item) = returns.next()? {
         match mock::jest_mock_return_object_type(global, item)? {
-            mock::ReturnObjectType::Return => actual_success_count += 1,
+            mock::ReturnStatus::Return => actual_success_count += 1,
             _ => {}
         }
         total_call_count += 1;
     }
 
-    pass = match MODE {
+    pass = match mode {
         Mode::ToHaveReturned => actual_success_count >= expected_success_count,
         Mode::ToHaveReturnedTimes => actual_success_count == expected_success_count,
     };
@@ -87,11 +94,9 @@ fn to_have_returned_times_fn<const MODE: Mode>(
     }
 
     // Zig: `switch (not) { inline else => |is_not| ... }` — runtime bool → comptime dispatch.
-    // PERF(port): was comptime bool dispatch — profile in Phase B.
-    let is_not = not;
     // PERF(port): Zig computed `getSignature` at comptime; runtime here (error path, cold).
-    let signature = Expect::get_signature(MODE.tag_name(), "<green>expected<r>", is_not);
-    let (str_, spc): (&'static str, &'static str) = match MODE {
+    let signature = Expect::get_signature(mode.tag_name(), "<green>expected<r>", not);
+    let (str_, spc): (&'static str, &'static str) = match mode {
         Mode::ToHaveReturned => match not {
             false => (">= ", "   "),
             true => ("< ", "  "),
@@ -114,28 +119,30 @@ fn to_have_returned_times_fn<const MODE: Mode>(
     )
 }
 
-#[bun_jsc::host_fn(method)]
-pub fn to_have_returned(
-    this: &mut Expect,
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    to_have_returned_times_fn::<{ Mode::ToHaveReturned }>(this, global, callframe)
-}
+impl Expect {
+    #[bun_jsc::host_fn(method)]
+    pub fn to_have_returned(
+        this: &mut Self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        to_have_returned_times_fn(this, global, callframe, Mode::ToHaveReturned)
+    }
 
-#[bun_jsc::host_fn(method)]
-pub fn to_have_returned_times(
-    this: &mut Expect,
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    to_have_returned_times_fn::<{ Mode::ToHaveReturnedTimes }>(this, global, callframe)
+    #[bun_jsc::host_fn(method)]
+    pub fn to_have_returned_times(
+        this: &mut Self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        to_have_returned_times_fn(this, global, callframe, Mode::ToHaveReturnedTimes)
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/test_runner/expect/toHaveReturned.zig (90 lines)
 //   confidence: medium
-//   todos:      1
-//   notes:      `defer post_match` scopeguard will fight borrowck; mock iterator/ReturnObjectType names are guesses; get_signature/throw_invalid_arguments arg shapes need verification.
+//   todos:      0
+//   notes:      comptime enum param lowered to runtime arg (adt_const_params unstable); raw-ptr scopeguard for `defer post_match`.
 // ──────────────────────────────────────────────────────────────────────────

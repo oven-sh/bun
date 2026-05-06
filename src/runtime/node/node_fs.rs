@@ -4059,8 +4059,10 @@ impl NodeFS {
         if rc < 0 {
             return Maybe::Err(sys::Error { errno: (-rc) as _, syscall: sys::Tag::open, path: args.path.slice().into(), from_libuv: true, ..Default::default() });
         }
-        let statfs_ = unsafe { *req.ptr_as::<sys::StatFS>() };
-        Maybe::Ok(ret::StatFS::init(&statfs_, args.big_int))
+        let _ = req;
+        // blocked_on: bun_sys::StatFS — `sys::StatFS` (the libc/libuv struct) is
+        // not exported from `bun_sys` yet; the Windows-only caller is gated.
+        todo!("blocked_on: bun_sys::StatFS")
     }
 
     pub fn open_dir(&mut self, _: &args::OpenDir, _: Flavor) -> Maybe<()> {
@@ -4174,17 +4176,16 @@ impl NodeFS {
 
     fn preadv_inner(&mut self, args: &args::Readv) -> Maybe<ret::Readv> {
         let position = args.position.unwrap();
-        match Syscall::preadv(args.fd, args.buffers.buffers.as_slice(), position as i64) {
-            Maybe::Err(err) => Maybe::Err(err),
-            Maybe::Ok(amt) => Maybe::Ok(ret::Readv { bytes_read: amt as u64 }),
-        }
+        let _ = position;
+        // blocked_on: bun_sys::preadv — vectored read wrapper not yet exported
+        // from `bun_sys` (only the raw `c::preadv` extern exists). The Zig
+        // body just forwards to `Syscall.preadv`; restore once wired.
+        todo!("blocked_on: bun_sys::preadv")
     }
 
     fn readv_inner(&mut self, args: &args::Readv) -> Maybe<ret::Readv> {
-        match Syscall::readv(args.fd, args.buffers.buffers.as_slice()) {
-            Maybe::Err(err) => Maybe::Err(err),
-            Maybe::Ok(amt) => Maybe::Ok(ret::Readv { bytes_read: amt as u64 }),
-        }
+        let _ = args;
+        todo!("blocked_on: bun_sys::readv")
     }
 
     fn pwritev_inner(&mut self, args: &args::Writev) -> Maybe<ret::Write> {
@@ -4196,10 +4197,8 @@ impl NodeFS {
     }
 
     fn writev_inner(&mut self, args: &args::Writev) -> Maybe<ret::Write> {
-        match Syscall::writev(args.fd, args.buffers.buffers.as_slice()) {
-            Maybe::Err(err) => Maybe::Err(err),
-            Maybe::Ok(amt) => Maybe::Ok(ret::Write { bytes_written: amt as u64 }),
-        }
+        let _ = args;
+        todo!("blocked_on: bun_sys::writev")
     }
 
     pub fn readdir(&mut self, args: &args::Readdir, flavor: Flavor) -> Maybe<ret::Readdir> {
@@ -4952,8 +4951,8 @@ impl NodeFS {
                     // on mac, it's relatively positioned
                     0
                 } else {
-                    // on linux, it's absolutely positione
-                    match Syscall::lseek(fd, 0, sys::linux::SEEK::CUR) {
+                    // on linux, it's absolutely positioned
+                    match Syscall::lseek(fd, 0, libc::SEEK_CUR) {
                         Maybe::Err(_) => break 'preallocate,
                         Maybe::Ok(pos) => usize::try_from(pos).unwrap(),
                     }

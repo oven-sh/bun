@@ -1202,10 +1202,14 @@ pub struct RunTestsTask {
     pub phase: RefDataValue,
 }
 impl RunTestsTask {
-    pub fn call(this: Box<RunTestsTask>) {
+    /// `ManagedTask` callback ABI: `fn(*mut T) -> JsResult<()>`. The pointer
+    /// was `Box::into_raw`'d in `run_next_tick`; reconstitute and drop here.
+    pub fn call(this: *mut RunTestsTask) -> JsResult<()> {
+        // SAFETY: `this` was produced by `Box::into_raw` in `run_next_tick`.
+        let this = unsafe { Box::from_raw(this) };
         // defer bun.destroy(this) → Box drops at end of scope
         // defer this.weak.deinit() → Weak drops with Box
-        let Some(strong) = this.weak.upgrade() else { return };
+        let Some(strong) = this.weak.upgrade() else { return Ok(()) };
         if let Err(e) = BunTest::run(strong.clone(), this.global_this) {
             // SAFETY: see BunTestPtr TODO
             let bt = unsafe { &mut *(Rc::as_ptr(&strong) as *mut BunTest) };
@@ -1216,6 +1220,7 @@ impl RunTestsTask {
                 this.phase.clone(),
             );
         }
+        Ok(())
     }
 }
 

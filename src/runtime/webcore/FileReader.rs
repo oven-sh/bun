@@ -3,11 +3,12 @@ use core::mem;
 use bun_aio as aio;
 use bun_collections::ByteList;
 use bun_io::{BufferedReader, FileType, ReadState};
-use bun_sys::{self as sys, Fd};
+use bun_sys::{self as sys, Fd, FdExt};
 
 use crate::webcore::jsc::{self as jsc, EventLoopHandle, JSValue};
 use crate::webcore::jsc::{EnsureStillAlive, strong::Optional as Strong};
 use crate::webcore::blob::{self, Blob};
+use crate::webcore::node_types::PathOrFileDescriptor;
 use crate::webcore::readable_stream::{self, ReadableStream};
 use crate::webcore::streams;
 
@@ -116,23 +117,23 @@ impl Lazy {
         let mut file_buf = bun_paths::PathBuffer::uninit();
         let mut is_nonblocking = false;
 
-        let fd: Fd = if let blob::PathLike::Fd(pl_fd) = &file.pathlike {
-            if pl_fd.stdio_tag().is_some() {
-                'brk: {
-                    #[cfg(unix)]
-                    {
-                        // SAFETY: FFI call with valid native fd and O_RDONLY flag
-                        let rc = unsafe { open_as_nonblocking_tty(pl_fd.native(), sys::O::RDONLY) };
-                        if rc > -1 {
-                            is_nonblocking = true;
-                            file.is_atty = Some(true);
-                            break 'brk Fd::from_native(rc);
+        let fd: Fd = match &file.pathlike {
+            PathOrFileDescriptor::Fd(pl_fd) => {
+                if pl_fd.stdio_tag().is_some() {
+                    'brk: {
+                        #[cfg(unix)]
+                        {
+                            // SAFETY: FFI call with valid native fd and O_RDONLY flag
+                            let rc = unsafe { open_as_nonblocking_tty(pl_fd.native(), sys::O::RDONLY) };
+                            if rc > -1 {
+                                is_nonblocking = true;
+                                file.is_atty = Some(true);
+                                break 'brk Fd::from_native(rc);
+                            }
                         }
+                        break 'brk *pl_fd;
                     }
-                    break 'brk *pl_fd;
-                }
-            } else {
-                'brk: {
+                } else {
                     let duped = sys::dup_with_flags(*pl_fd, 0);
 
                     let fd: Fd = match duped {
@@ -143,34 +144,35 @@ impl Lazy {
                     #[cfg(unix)]
                     {
                         if fd.stdio_tag().is_none() {
-                            is_nonblocking = match fd.get_fcntl_flags() {
+                            is_nonblocking = match sys::get_fcntl_flags(fd) {
                                 Ok(flags) => (flags & sys::O::NONBLOCK) != 0,
                                 Err(_) => false,
                             };
                         }
                     }
 
-                    break 'brk match fd.make_libuv_owned_for_syscall(sys::Tag::dup, sys::CloseOnFail::CloseOnFail) {
+                    match fd.make_lib_uv_owned_for_syscall(sys::Tag::dup, sys::ErrorCase::CloseOnFail) {
                         Ok(owned_fd) => owned_fd,
                         Err(err) => return Err(err),
-                    };
+                    }
                 }
             }
-        } else {
-            match sys::open(
-                file.pathlike.path().slice_z(&mut file_buf),
-                sys::O::RDONLY | sys::O::NONBLOCK | sys::O::CLOEXEC,
-                0,
-            ) {
-                Ok(fd) => {
-                    #[cfg(unix)]
-                    {
-                        is_nonblocking = true;
+            PathOrFileDescriptor::Path(path) => {
+                match sys::open(
+                    bun_paths::resolve_path::z(path.slice(), &mut file_buf),
+                    sys::O::RDONLY | sys::O::NONBLOCK | sys::O::CLOEXEC,
+                    0,
+                ) {
+                    Ok(fd) => {
+                        #[cfg(unix)]
+                        {
+                            is_nonblocking = true;
+                        }
+                        fd
                     }
-                    fd
-                }
-                Err(err) => {
-                    return Err(err.with_path(file.pathlike.path().slice()));
+                    Err(err) => {
+                        return Err(err.with_path(path.slice()));
+                    }
                 }
             }
         };

@@ -5,13 +5,14 @@ use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use bun_aio::KeepAlive;
 use bun_core::Error;
 use bun_http::{AsyncHTTP, HTTPClientResult, Headers, Signals};
-use bun_jsc::{ConcurrentTask, VirtualMachine};
+use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
+use bun_jsc::virtual_machine::VirtualMachine;
 use bun_s3_signing::credentials::SignResult;
 use bun_s3_signing::error::S3Error;
 use bun_str::{strings, MutableString};
 use bun_threading::Mutex;
 
-bun_output::declare_scope!(S3, hidden);
+bun_core::declare_scope!(S3, hidden);
 
 pub struct S3HttpDownloadStreamingTask {
     pub http: AsyncHTTP,
@@ -113,7 +114,7 @@ impl S3HttpDownloadStreamingTask {
                 break 'brk buffer;
             }
         };
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             S3,
             "reportProgres failed: {} has_more: {} len: {}",
             failed,
@@ -228,7 +229,7 @@ impl S3HttpDownloadStreamingTask {
         let is_done = !result.has_more;
         let wait_until_done = self.update_state(async_http, &result, &mut state);
         let should_enqueue = !wait_until_done || is_done;
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             S3,
             "state err: {} status_code: {} has_more: {} should_enqueue: {}",
             state.request_error(),
@@ -285,13 +286,12 @@ impl S3HttpDownloadStreamingTask {
         let self_ = unsafe { &mut *this };
         if self_.process_http_callback(async_http, result) {
             // we are always unlocked here and its safe to enqueue
-            // TODO(port): `.manual_deinit` is a Zig enum literal arg to ConcurrentTask.from;
-            // map to the Rust equivalent (likely `ConcurrentTaskDeinit::Manual`).
-            self_.vm.event_loop().enqueue_task_concurrent(
-                self_
-                    .concurrent_task
-                    .from(this, bun_jsc::ConcurrentTaskDeinit::Manual),
-            );
+            let task = self_
+                .concurrent_task
+                .from(this, AutoDeinit::ManualDeinit) as *mut ConcurrentTask;
+            // SAFETY: `vm` is the live per-thread VM pointer captured at task creation; event_loop
+            // is initialized for the request's lifetime and enqueue is thread-safe.
+            unsafe { (*self_.vm.event_loop()).enqueue_task_concurrent(task) };
         }
     }
 }

@@ -18,6 +18,10 @@ use crate::node::StringOrBuffer;
 use crate::crypto::create_crypto_error;
 use crate::crypto::evp::{self, Algorithm};
 
+// BoringSSL error code; not yet exported by `bun_boringssl_sys`
+// (Zig: src/boringssl_sys/boringssl.zig:6422).
+const EVP_R_MEMORY_LIMIT_EXCEEDED: u32 = 132;
+
 pub struct PBKDF2 {
     pub password: StringOrBuffer,
     pub salt: StringOrBuffer,

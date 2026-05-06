@@ -417,13 +417,13 @@ pub fn install_isolated_packages(
 
                 let mut curr_id = entry.parent_id;
                 while curr_id != store::node::Id::INVALID {
-                    if node_pkg_ids[curr_id.get()] == entry.pkg_id {
+                    if node_pkg_ids[curr_id.get() as usize] == entry.pkg_id {
                         // skip the new node, and add the previously added node to parent so it appears in
                         // 'node_modules/.bun/parent@version/node_modules'.
 
-                        let dep_id = node_dep_ids[curr_id.get()];
+                        let dep_id = node_dep_ids[curr_id.get() as usize];
                         if dep_id == invalid_dependency_id && entry.dep_id == invalid_dependency_id {
-                            node_nodes[entry.parent_id.get()].push(curr_id);
+                            node_nodes[entry.parent_id.get() as usize].push(curr_id);
                             // PERF(port): was appendAssumeCapacity — profile in Phase B
                             continue 'next_node;
                         }
@@ -444,12 +444,12 @@ pub fn install_isolated_packages(
                             // implicit workspace dep != explicit workspace dep
                             curr_dep.behavior.is_workspace() == entry_dep.behavior.is_workspace()
                         {
-                            node_nodes[entry.parent_id.get()].push(curr_id);
+                            node_nodes[entry.parent_id.get() as usize].push(curr_id);
                             // PERF(port): was appendAssumeCapacity — profile in Phase B
                             continue 'next_node;
                         }
                     }
-                    curr_id = node_parent_ids[curr_id.get()];
+                    curr_id = node_parent_ids[curr_id.get() as usize];
                 }
             }
 
@@ -512,19 +512,19 @@ pub fn install_isolated_packages(
                                 let resolved: PackageID = 'resolved: {
                                     let mut curr_id = entry.parent_id;
                                     while curr_id != store::node::Id::INVALID {
-                                        for ids in &node_dependencies[curr_id.get()] {
+                                        for ids in &node_dependencies[curr_id.get() as usize] {
                                             if dependencies[ids.dep_id as usize].name_hash == peer_name_hash {
                                                 break 'resolved ids.pkg_id;
                                             }
                                         }
-                                        for ids in &node_peers[curr_id.get()].list {
+                                        for ids in &node_peers[curr_id.get() as usize].list {
                                             if !ids.auto_installed
                                                 && dependencies[ids.dep_id as usize].name_hash == peer_name_hash
                                             {
                                                 break 'resolved ids.pkg_id;
                                             }
                                         }
-                                        curr_id = node_parent_ids[curr_id.get()];
+                                        curr_id = node_parent_ids[curr_id.get() as usize];
                                     }
                                     break 'resolved invalid_package_id;
                                 };
@@ -548,7 +548,7 @@ pub fn install_isolated_packages(
                     if dedupe_entry.found_existing {
                         let dedupe_node_id = *dedupe_entry.value_ptr;
 
-                        let dedupe_dep_id = node_dep_ids[dedupe_node_id.get()];
+                        let dedupe_dep_id = node_dep_ids[dedupe_node_id.get() as usize];
                         if dedupe_dep_id == invalid_dependency_id {
                             break 'dont_dedupe;
                         }
@@ -582,22 +582,22 @@ pub fn install_isolated_packages(
                         };
                         // PORT NOTE: reshaped for borrowck — clone the dedupe peers slice
                         // before mutating node_peers.
-                        let dedupe_peers: Vec<_> = node_peers[dedupe_node_id.get()].list.iter().copied().collect();
+                        let dedupe_peers: Vec<_> = node_peers[dedupe_node_id.get() as usize].list.iter().copied().collect();
                         for peer in dedupe_peers {
                             let peer_name_hash = dependencies[peer.dep_id as usize].name_hash;
                             let mut curr_id = entry.parent_id;
                             'walk: while curr_id != store::node::Id::INVALID {
-                                for ids in &node_dependencies[curr_id.get()] {
+                                for ids in &node_dependencies[curr_id.get() as usize] {
                                     if dependencies[ids.dep_id as usize].name_hash == peer_name_hash {
                                         break 'walk;
                                     }
                                 }
-                                node_peers[curr_id.get()].insert(peer, &set_ctx)?;
-                                curr_id = node_parent_ids[curr_id.get()];
+                                node_peers[curr_id.get() as usize].insert(peer, &set_ctx)?;
+                                curr_id = node_parent_ids[curr_id.get() as usize];
                             }
                         }
 
-                        node_nodes[entry.parent_id.get()].push(dedupe_node_id);
+                        node_nodes[entry.parent_id.get() as usize].push(dedupe_node_id);
                         // PERF(port): was appendAssumeCapacity — profile in Phase B
                         continue 'next_node;
                     }
@@ -695,7 +695,7 @@ pub fn install_isolated_packages(
 
                             for &package_to_install in packages {
                                 if package_to_install == pkg_id {
-                                    node_dependencies[node_id.get()].push(store::node::DependencyIds {
+                                    node_dependencies[node_id.get() as usize].push(store::node::DependencyIds {
                                         dep_id,
                                         pkg_id,
                                     });
@@ -735,7 +735,7 @@ pub fn install_isolated_packages(
                         // simple case:
                         // - add it as a dependency
                         // - queue it
-                        node_dependencies[node_id.get()].push(store::node::DependencyIds { dep_id, pkg_id });
+                        node_dependencies[node_id.get() as usize].push(store::node::DependencyIds { dep_id, pkg_id });
                         // PERF(port): was appendAssumeCapacity — profile in Phase B
                         node_queue.push(QueuedNode {
                             parent_id: node_id,
@@ -765,7 +765,7 @@ pub fn install_isolated_packages(
 
                     visited_parent_node_ids.clear();
                     while curr_id != store::node::Id::INVALID {
-                        for ids in &node_dependencies[curr_id.get()] {
+                        for ids in &node_dependencies[curr_id.get() as usize] {
                             let dep = &dependencies[ids.dep_id as usize];
 
                             if dep.name_hash != peer_dep.name_hash {
@@ -790,7 +790,7 @@ pub fn install_isolated_packages(
                             break 'resolved_pkg_id (ids.pkg_id, false);
                         }
 
-                        let curr_peers = &node_peers[curr_id.get()];
+                        let curr_peers = &node_peers[curr_id.get() as usize];
                         for ids in &curr_peers.list {
                             let transitive_peer_dep = &dependencies[ids.dep_id as usize];
 
@@ -827,7 +827,7 @@ pub fn install_isolated_packages(
                             // add the remaining parent ids
                             while curr_id != store::node::Id::INVALID {
                                 visited_parent_node_ids.push(curr_id);
-                                curr_id = node_parent_ids[curr_id.get()];
+                                curr_id = node_parent_ids[curr_id.get() as usize];
                             }
 
                             break 'resolved_pkg_id (best_version, true);
@@ -838,7 +838,7 @@ pub fn install_isolated_packages(
                         // add to visited parents after searching for a peer resolution.
                         // if a node resolves a transitive peer, it can still be deduplicated
                         visited_parent_node_ids.push(curr_id);
-                        curr_id = node_parent_ids[curr_id.get()];
+                        curr_id = node_parent_ids[curr_id.get() as usize];
                     }
 
                     // choose the current best version
@@ -861,13 +861,13 @@ pub fn install_isolated_packages(
                         pkg_id: resolved_pkg_id,
                         auto_installed,
                     };
-                    node_peers[visited_parent_id.get()].insert(peer, &ctx)?;
+                    node_peers[visited_parent_id.get() as usize].insert(peer, &ctx)?;
                 }
 
                 if !visited_parent_node_ids.is_empty() {
                     // visited parents length == 0 means the node satisfied it's own
                     // peer. don't queue.
-                    node_dependencies[node_id.get()].push(store::node::DependencyIds {
+                    node_dependencies[node_id.get() as usize].push(store::node::DependencyIds {
                         dep_id: peer_dep_id,
                         pkg_id: resolved_pkg_id,
                     });
@@ -919,14 +919,14 @@ pub fn install_isolated_packages(
 
         // Second pass: Deduplicate nodes when the pkg_id and peer set match an existing entry.
         'next_entry: while let Some(entry) = entry_queue.read_item() {
-            let pkg_id = node_pkg_ids[entry.node_id.get()];
+            let pkg_id = node_pkg_ids[entry.node_id.get() as usize];
 
             let dedupe_entry = dedupe.get_or_put(pkg_id)?;
             if !dedupe_entry.found_existing {
                 *dedupe_entry.value_ptr = Vec::new();
             } else {
-                let curr_peers = &node_peers[entry.node_id.get()];
-                let curr_dep_id = node_dep_ids[entry.node_id.get()];
+                let curr_peers = &node_peers[entry.node_id.get() as usize];
+                let curr_dep_id = node_dep_ids[entry.node_id.get() as usize];
 
                 for info in dedupe_entry.value_ptr.iter() {
                     if info.dep_id == invalid_dependency_id || curr_dep_id == invalid_dependency_id {
@@ -971,7 +971,7 @@ pub fn install_isolated_packages(
                             )
                         };
 
-                        let parents = &mut entry_parents[info.entry_id.get()];
+                        let parents = &mut entry_parents[info.entry_id.get() as usize];
 
                         if curr_dep_id != invalid_dependency_id
                             && dependencies[curr_dep_id as usize].behavior.is_workspace()
@@ -983,7 +983,7 @@ pub fn install_isolated_packages(
                             string_buf,
                             dependencies,
                         };
-                        entry_dependencies[entry.entry_parent_id.get()].insert(
+                        entry_dependencies[entry.entry_parent_id.get() as usize].insert(
                             store::entry::DependenciesItem {
                                 entry_id: info.entry_id,
                                 dep_id: curr_dep_id,
@@ -999,7 +999,7 @@ pub fn install_isolated_packages(
             }
 
             let new_entry_peer_hash: store::entry::PeerHash = 'peer_hash: {
-                let peers = &node_peers[entry.node_id.get()];
+                let peers = &node_peers[entry.node_id.get() as usize];
                 if peers.len() == 0 {
                     break 'peer_hash store::entry::PeerHash::NONE;
                 }
@@ -1016,7 +1016,7 @@ pub fn install_isolated_packages(
                 break 'peer_hash store::entry::PeerHash::from(hasher.final_());
             };
 
-            let new_entry_dep_id = node_dep_ids[entry.node_id.get()];
+            let new_entry_dep_id = node_dep_ids[entry.node_id.get() as usize];
 
             let new_entry_is_root = new_entry_dep_id == invalid_dependency_id;
             let new_entry_is_workspace =
@@ -1119,10 +1119,10 @@ pub fn install_isolated_packages(
             dedupe_entry.value_ptr.push(DedupeInfo {
                 entry_id: new_entry_id,
                 dep_id: new_entry_dep_id,
-                peers: node_peers[entry.node_id.get()].clone(),
+                peers: node_peers[entry.node_id.get() as usize].clone(),
             });
 
-            for &child_node_id in &node_nodes[entry.node_id.get()] {
+            for &child_node_id in &node_nodes[entry.node_id.get() as usize] {
                 entry_queue.write_item(QueuedEntry {
                     node_id: child_node_id,
                     entry_parent_id: new_entry_id,
@@ -1207,8 +1207,8 @@ pub fn install_isolated_packages(
                         states[idx] = State::InProgress;
 
                         let node_id = entry_node_ids[idx];
-                        let pkg_id = node_pkg_ids[node_id.get()];
-                        let dep_id = node_dep_ids[node_id.get()];
+                        let pkg_id = node_pkg_ids[node_id.get() as usize];
+                        let dep_id = node_dep_ids[node_id.get() as usize];
                         let pkg_res = &pkg_resolutions[pkg_id as usize];
 
                         let eligible = match pkg_res.tag {
@@ -1492,7 +1492,7 @@ pub fn install_isolated_packages(
                                         .expect("unreachable");
                                     }
                                     sub.update(bytes_of(
-                                        &pkg_metas[node_pkg_ids[entry_node_ids[m as usize].get()] as usize].integrity,
+                                        &pkg_metas[node_pkg_ids[entry_node_ids[m as usize].get() as usize] as usize].integrity,
                                     ));
                                     let mut poisoned = false;
                                     for dep in entry_dependencies[m as usize].slice() {
@@ -1544,7 +1544,7 @@ pub fn install_isolated_packages(
                                         .expect("unreachable");
                                     }
                                     sub.update(bytes_of(
-                                        &pkg_metas[node_pkg_ids[entry_node_ids[m as usize].get()] as usize]
+                                        &pkg_metas[node_pkg_ids[entry_node_ids[m as usize].get() as usize] as usize]
                                             .integrity,
                                     ));
                                     member_sub.push(sub.final_());
@@ -1950,9 +1950,9 @@ pub fn install_isolated_packages(
         for _entry_id in 0..store.entries.len() {
             let entry_id = store::entry::Id::from(u32::try_from(_entry_id).unwrap());
 
-            let node_id = entry_node_ids[entry_id.get()];
-            let pkg_id = node_pkg_ids[node_id.get()];
-            let dep_id = node_dep_ids[node_id.get()];
+            let node_id = entry_node_ids[entry_id.get() as usize];
+            let pkg_id = node_pkg_ids[node_id.get() as usize];
+            let dep_id = node_dep_ids[node_id.get() as usize];
 
             let pkg_name = pkg_names[pkg_id as usize];
             let pkg_name_hash = pkg_name_hashes[pkg_id as usize];
@@ -1963,7 +1963,7 @@ pub fn install_isolated_packages(
                     if dep_id == invalid_dependency_id {
                         // .monotonic is okay in this block because the task isn't running on another
                         // thread.
-                        entry_steps[entry_id.get()].store(installer::Step::SymlinkDependencies, Ordering::Relaxed);
+                        entry_steps[entry_id.get() as usize].store(installer::Step::SymlinkDependencies, Ordering::Relaxed);
                     } else {
                         // dep_id is valid meaning this was a dependency that resolved to the root
                         // package. it gets an entry in the store.
@@ -1977,19 +1977,19 @@ pub fn install_isolated_packages(
 
                     // if injected=true this might be false
                     if !seen_workspace_ids.get_or_put(pkg_id)?.found_existing {
-                        entry_steps[entry_id.get()].store(installer::Step::SymlinkDependencies, Ordering::Relaxed);
+                        entry_steps[entry_id.get() as usize].store(installer::Step::SymlinkDependencies, Ordering::Relaxed);
                         installer.start_task(entry_id);
                         continue;
                     }
-                    entry_steps[entry_id.get()].store(installer::Step::Done, Ordering::Relaxed);
+                    entry_steps[entry_id.get() as usize].store(installer::Step::Done, Ordering::Relaxed);
                     installer.on_task_complete(entry_id, installer::CompleteState::Skipped);
                     continue;
                 }
                 ResolutionTag::Symlink => {
                     // no installation required, will only need to be linked to packages that depend on it.
-                    debug_assert!(entry_dependencies[entry_id.get()].list.is_empty());
+                    debug_assert!(entry_dependencies[entry_id.get() as usize].list.is_empty());
                     // .monotonic is okay because the task isn't running on another thread.
-                    entry_steps[entry_id.get()].store(installer::Step::Done, Ordering::Relaxed);
+                    entry_steps[entry_id.get() as usize].store(installer::Step::Done, Ordering::Relaxed);
                     installer.on_task_complete(entry_id, installer::CompleteState::Skipped);
                     continue;
                 }
@@ -2100,17 +2100,17 @@ pub fn install_isolated_packages(
                             match installer.link_project_to_global_store(entry_id) {
                                 bun_sys::Result::Ok(()) => {}
                                 bun_sys::Result::Err(err) => {
-                                    entry_steps[entry_id.get()].store(installer::Step::Done, Ordering::Relaxed);
+                                    entry_steps[entry_id.get() as usize].store(installer::Step::Done, Ordering::Relaxed);
                                     installer.on_task_fail(entry_id, installer::TaskError::SymlinkDependencies(err));
                                     continue;
                                 }
                             }
                         }
-                        if entry_hoisted[entry_id.get()] {
+                        if entry_hoisted[entry_id.get() as usize] {
                             installer.link_to_hidden_node_modules(entry_id);
                         }
                         // .monotonic is okay because the task isn't running on another thread.
-                        entry_steps[entry_id.get()].store(installer::Step::Done, Ordering::Relaxed);
+                        entry_steps[entry_id.get() as usize].store(installer::Step::Done, Ordering::Relaxed);
                         installer.on_task_complete(entry_id, installer::CompleteState::Skipped);
                         continue;
                     }
@@ -2172,7 +2172,7 @@ pub fn install_isolated_packages(
                             if patch_log.has_errors() {
                                 // monotonic is okay because we haven't started the task yet (it isn't running
                                 // on another thread)
-                                entry_steps[entry_id.get()].store(installer::Step::Done, Ordering::Relaxed);
+                                entry_steps[entry_id.get() as usize].store(installer::Step::Done, Ordering::Relaxed);
                                 installer.on_task_fail(entry_id, installer::TaskError::Patching(patch_log));
                                 continue;
                             }
@@ -2215,7 +2215,7 @@ pub fn install_isolated_packages(
                                     }
                                     // .monotonic is okay because an error means the task isn't
                                     // running on another thread.
-                                    entry_steps[entry_id.get()].store(installer::Step::Done, Ordering::Relaxed);
+                                    entry_steps[entry_id.get() as usize].store(installer::Step::Done, Ordering::Relaxed);
                                     installer.on_task_complete(entry_id, installer::CompleteState::Fail);
                                     continue;
                                 }
@@ -2258,7 +2258,7 @@ pub fn install_isolated_packages(
                                     }
                                     // .monotonic is okay because an error means the task isn't
                                     // running on another thread.
-                                    entry_steps[entry_id.get()].store(installer::Step::Done, Ordering::Relaxed);
+                                    entry_steps[entry_id.get() as usize].store(installer::Step::Done, Ordering::Relaxed);
                                     installer.on_task_complete(entry_id, installer::CompleteState::Fail);
                                     continue;
                                 }
@@ -2299,7 +2299,7 @@ pub fn install_isolated_packages(
                                     }
                                     // .monotonic is okay because an error means the task isn't
                                     // running on another thread.
-                                    entry_steps[entry_id.get()].store(installer::Step::Done, Ordering::Relaxed);
+                                    entry_steps[entry_id.get() as usize].store(installer::Step::Done, Ordering::Relaxed);
                                     installer.on_task_complete(entry_id, installer::CompleteState::Fail);
                                     continue;
                                 }
@@ -2313,7 +2313,7 @@ pub fn install_isolated_packages(
                     // this is `uninitialized` or `single_file_module`.
                     debug_assert!(false);
                     // .monotonic is okay because the task isn't running on another thread.
-                    entry_steps[entry_id.get()].store(installer::Step::Done, Ordering::Relaxed);
+                    entry_steps[entry_id.get() as usize].store(installer::Step::Done, Ordering::Relaxed);
                     installer.on_task_complete(entry_id, installer::CompleteState::Skipped);
                     continue;
                 }
@@ -2359,7 +2359,7 @@ pub fn install_isolated_packages(
                 let deps = &store.entries.items_dependencies()[entry_id.get() as usize];
                 for dep in deps.slice() {
                     // .monotonic is okay because `Wait.isDone` already synchronized with the tasks.
-                    let dep_step = entry_steps[dep.entry_id.get()].load(Ordering::Relaxed);
+                    let dep_step = entry_steps[dep.entry_id.get() as usize].load(Ordering::Relaxed);
                     if dep_step != installer::Step::Done {
                         log!(", parents:\n - ");
                         let parent_ids = store::entry::debug_gather_all_parents(entry_id, installer.store);

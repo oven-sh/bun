@@ -694,14 +694,10 @@ pub fn migrate_yarn_lockfile<'a>(
         else {
             return Err(bun_core::err!("InvalidPackageJSON"));
         };
-        // PORT NOTE: `File::read_to_end` returns the `{ err, bytes }` pair
-        // (Zig: `Maybe(ArrayList(u8))`-like) rather than `Result`.
-        let read = package_json_fd.read_to_end();
-        if read.err.is_some() {
+        let Ok(package_json_contents) = package_json_fd.read_to_end() else {
             package_json_fd.close();
             return Err(bun_core::err!("InvalidPackageJSON"));
-        }
-        let package_json_contents = read.bytes;
+        };
         // package_json_fd closed on drop / explicit close below
         // TODO(port): explicit close ordering — Zig closes fd via defer after readToEnd
 

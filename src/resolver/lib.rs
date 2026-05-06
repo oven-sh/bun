@@ -207,10 +207,20 @@ pub mod fs {
         pub fn init(
             top_level_dir: Option<&'static [u8]>,
         ) -> core::result::Result<*mut FileSystem, bun_core::Error> {
+            Self::init_with_force::<false>(top_level_dir)
+        }
+
+        /// Port of `FileSystem.initWithForce` (fs.zig). When `FORCE`, re-seeds
+        /// the singleton even if already loaded — used by the router test
+        /// harness which `chdir`s between fixtures and needs a fresh
+        /// `top_level_dir`.
+        pub fn init_with_force<const FORCE: bool>(
+            top_level_dir: Option<&'static [u8]>,
+        ) -> core::result::Result<*mut FileSystem, bun_core::Error> {
             // SAFETY: matches Zig global singleton init pattern; called from
             // `Transpiler::init` before any worker spawn.
             unsafe {
-                if *(&raw const INSTANCE_LOADED) {
+                if *(&raw const INSTANCE_LOADED) && !FORCE {
                     return Ok((*(&raw mut INSTANCE)).as_mut_ptr());
                 }
             }

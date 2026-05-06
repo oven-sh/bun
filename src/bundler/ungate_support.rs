@@ -383,38 +383,62 @@ pub mod bun_renamer {
     pub type ChunkRenamer = Option<Box<bun_js_printer::renamer::NumberRenamer>>;
 }
 
-/// `HTMLImportManifest` — gated module; minimal callable surface so
-/// `Chunk.rs::IntermediateOutput::code` typechecks.
-// TODO(b2-blocked): real `HTMLImportManifest.rs` is gated. Call sites in
-// `Chunk.rs::code_with_source_map_shifts` are likewise ``-gated
-// (PORTING.md §Forbidden: no `unimplemented!()` in live code).
-
+/// `HTMLImportManifest` — bundler-calling-convention adapter over the real
+/// `crate::HTMLImportManifest` module so `Chunk.rs::IntermediateOutput::code`
+/// can call free functions matching the Zig surface (`std.fmt.count` /
+/// `std.io.fixedBufferStream`).
 pub mod html_import_manifest {
     use crate::Graph::Graph;
     use crate::{chunk::Chunk, LinkerGraph};
+    use crate::HTMLImportManifest as real;
+
+    pub use real::{EscapedJson, HTMLImportManifest};
+
+    /// HTMLImportManifest.zig:116 `formatEscapedJSON` — returns a `Display`
+    /// adapter that writes the manifest JSON, then re-escapes it as a JS string
+    /// literal body (`writePreQuotedString`). Chunk.rs uses this with
+    /// `bun_core::fmt::count` for the counting pass.
+    #[inline]
     pub fn format_escaped_json<'a>(
-        _idx: u32,
-        _graph: &'a Graph,
-        _chunks: &'a [Chunk],
-        _linker_graph: &'a LinkerGraph,
-    ) -> impl core::fmt::Display + 'a {
-        // TODO(b2-blocked): real HTMLImportManifest module is gated.
-        struct D;
-        impl core::fmt::Display for D {
-            fn fmt(&self, _: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-                unimplemented!("b2-blocked: HTMLImportManifest")
+        index: u32,
+        graph: &'a Graph,
+        chunks: &'a [Chunk],
+        linker_graph: &'a LinkerGraph,
+    ) -> real::EscapedJson<'a> {
+        real::HTMLImportManifest { index, graph, chunks, linker_graph }.format_escaped_json()
+    }
+
+    /// HTMLImportManifest.zig:98 `writeEscapedJSON` — fixed-buffer variant.
+    /// `Chunk.rs` passes a `&mut &mut [u8]` cursor (Zig `fixedBufferStream`);
+    /// this adapter implements `fmt::Write` over that cursor and forwards to
+    /// the generic [`real::write_escaped_json`].
+    pub fn write_escaped_json(
+        index: u32,
+        graph: &Graph,
+        linker_graph: &LinkerGraph,
+        chunks: &[Chunk],
+        w: &mut &mut [u8],
+    ) -> Result<(), core::fmt::Error> {
+        // PORT NOTE: Zig's `std.io.fixedBufferStream(remain).writer()` advances
+        // the slice in place; mirror that with a `fmt::Write` adapter so the
+        // caller can recover `pos = before_len - cursor.len()`.
+        struct FixedBufWriter<'a, 'b>(&'a mut &'b mut [u8]);
+        impl core::fmt::Write for FixedBufWriter<'_, '_> {
+            fn write_str(&mut self, s: &str) -> core::fmt::Result {
+                let bytes = s.as_bytes();
+                if bytes.len() > self.0.len() {
+                    // Zig: error.NoSpaceLeft => unreachable (buffer was sized
+                    // by the counting pass).
+                    return Err(core::fmt::Error);
+                }
+                let (head, tail) = core::mem::take(self.0).split_at_mut(bytes.len());
+                head.copy_from_slice(bytes);
+                *self.0 = tail;
+                Ok(())
             }
         }
-        D
-    }
-    pub fn write_escaped_json(
-        _idx: u32,
-        _graph: &Graph,
-        _linker_graph: &LinkerGraph,
-        _chunks: &[Chunk],
-        _w: &mut &mut [u8],
-    ) -> Result<(), core::fmt::Error> {
-        unimplemented!("b2-blocked: HTMLImportManifest")
+        real::write_escaped_json(index, graph, linker_graph, chunks, &mut FixedBufWriter(w))
+            .map_err(|_| core::fmt::Error)
     }
 }
 

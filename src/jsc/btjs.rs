@@ -1110,50 +1110,52 @@ fn replace_scalar(slice: &mut [u8], from: u8, to: u8) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// TODO(port): stubs for Zig std.debug.* — no crate-map equivalent. Phase B
-// must replace with real unwinder (bun_crash_handler / backtrace / addr2line).
+// Thin forwarders to the `zig_std_debug` port — keep the call-site shape
+// matching the Zig (`std.debug.getSelfDebugInfo()`, `it.getLastError()`, …).
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(debug_assertions)]
+#[inline]
 fn get_self_debug_info() -> Result<&'static mut SelfInfo, Error> {
-    todo!("std.debug.getSelfDebugInfo")
+    zig_std_debug::get_self_debug_info()
 }
 #[cfg(debug_assertions)]
-fn get_context(_ctx: &mut ThreadContext) -> bool {
-    todo!("std.debug.getContext")
+#[inline(always)]
+fn get_context(ctx: &mut ThreadContext) -> bool {
+    zig_std_debug::get_context(ctx)
 }
 #[cfg(debug_assertions)]
+#[inline(always)]
 fn stack_iterator_init_with_context(
-    _first: Option<usize>,
-    _di: &mut SelfInfo,
-    _ctx: &mut ThreadContext,
+    first: Option<usize>,
+    di: &mut SelfInfo,
+    ctx: &mut ThreadContext,
 ) -> Result<StackIterator, Error> {
-    todo!("StackIterator.initWithContext")
+    StackIterator::init_with_context(first, di, ctx)
 }
 #[cfg(debug_assertions)]
-fn stack_iterator_init(_first: Option<usize>, _fp: Option<usize>) -> StackIterator {
-    todo!("StackIterator.init")
+#[inline(always)]
+fn stack_iterator_init(first: Option<usize>, fp: Option<usize>) -> StackIterator {
+    StackIterator::init(first, fp)
 }
 #[cfg(debug_assertions)]
-impl StackIterator {
-    fn next(&mut self) -> Option<usize> {
-        todo!("StackIterator.next")
-    }
+#[inline]
+fn stack_iterator_get_last_error(it: &mut StackIterator) -> Option<zig_std_debug::LastUnwindError> {
+    it.get_last_error()
 }
 #[cfg(debug_assertions)]
-fn stack_iterator_get_last_error(_it: &mut StackIterator) -> Option<zig_std_debug::LastUnwindError> {
-    todo!("StackIterator.getLastError")
+#[inline]
+fn get_module_for_address<'a>(di: &'a mut SelfInfo, addr: usize) -> Result<&'a mut Module, Error> {
+    di.get_module_for_address(addr)
 }
 #[cfg(debug_assertions)]
-fn get_module_for_address(_di: &mut SelfInfo, _addr: usize) -> Result<*mut core::ffi::c_void, Error> {
-    todo!("SelfInfo.getModuleForAddress")
+#[inline]
+fn get_symbol_at_address(module: &mut Module, addr: usize) -> Result<SymbolInfo, Error> {
+    module.get_symbol_at_address(addr)
 }
 #[cfg(debug_assertions)]
-fn get_symbol_at_address(_module: *mut core::ffi::c_void, _addr: usize) -> Result<SymbolInfo, Error> {
-    todo!("Module.getSymbolAtAddress")
-}
-#[cfg(debug_assertions)]
-fn get_module_name_for_address(_di: &mut SelfInfo, _addr: usize) -> Option<Box<[u8]>> {
-    todo!("SelfInfo.getModuleNameForAddress")
+#[inline]
+fn get_module_name_for_address(di: &mut SelfInfo, addr: usize) -> Option<Box<[u8]>> {
+    di.get_module_name_for_address(addr)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

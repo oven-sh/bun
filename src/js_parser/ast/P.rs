@@ -4426,15 +4426,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         }
     }
 
-    #[cfg(any())] // blocked_on: fn_only_data_visit.class_name_ref deref; null_value_expr() (Prefill gate)
     pub fn value_for_this(&mut self, loc: logger::Loc) -> Option<Expr> {
         // Substitute "this" if we're inside a static class property initializer
         if self.fn_only_data_visit.should_replace_this_with_class_name_ref {
-            if let Some(r#ref) = self.fn_only_data_visit.class_name_ref {
-                // SAFETY: class_name_ref points at stack-owned Ref in enclosing visit frame
-                let r = unsafe { *r#ref };
+            // class_name_ref is `Option<&'a mut Ref>` (points at stack-owned Ref in the
+            // enclosing visit frame); copy the Ref out so the &mut self borrow is released
+            // before record_usage/new_expr.
+            if let Some(r) = self.fn_only_data_visit.class_name_ref.as_deref().copied() {
                 self.record_usage(r);
-                return Some(self.new_expr(E::Identifier { r#ref: r, ..Default::default() }, loc));
+                return Some(self.new_expr(E::Identifier { ref_: r, ..Default::default() }, loc));
             }
         }
 
@@ -4449,9 +4449,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 // In a CommonJS module, "this" is supposed to be the same as "exports".
                 // Instead of doing this at runtime using "fn.call(module.exports)", we
                 // do it at compile time using expression substitution here.
-                self.record_usage(self.exports_ref);
+                let exports_ref = self.exports_ref;
+                self.record_usage(exports_ref);
                 self.deoptimize_common_js_named_exports();
-                return Some(self.new_expr(E::Identifier { r#ref: self.exports_ref, ..Default::default() }, loc));
+                return Some(self.new_expr(E::Identifier { ref_: exports_ref, ..Default::default() }, loc));
             }
         }
 

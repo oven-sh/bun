@@ -437,12 +437,17 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     /// Full body in `server_body.rs::on_listen_failed()` — drains BoringSSL
     /// error stack, formats the bind/listen failure, and `globalThis.throwValue`s
-    /// it. Gated on `bun_jsc`; until then this stub records the failure so
-    /// `on_listen` is not a silent no-op (server.zig:1955-1957).
+    /// it. Until that detailed formatting is ported, throw the spec's fallback
+    /// message (server.zig:1933) so `listen()`'s `has_exception()` gate fires
+    /// and the server is `deinit()`ed instead of silently coming up listenerless.
     #[cold]
     pub fn on_listen_failed(&mut self) {
         self.listener = None;
-        // TODO(b2-blocked): globalThis.throwValue(error_instance) — see server_body.rs.
+        // SAFETY: global_this is STATIC per LIFETIMES.tsv; non-null once init() ran.
+        let global = unsafe { &*self.global_this };
+        // TODO(b2-blocked): full error_instance (EADDRINUSE/EACCES/OpenSSL string)
+        // per server.zig:1847-1952 — see server_body.rs::on_listen_failed.
+        let _ = global.throw(format_args!("Failed to start server. Is port in use?"));
     }
 
     pub fn on_h3_listen(&mut self, socket: Option<*mut uws_sys::h3::ListenSocket>) {

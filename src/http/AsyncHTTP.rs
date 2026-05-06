@@ -732,66 +732,77 @@ impl AsyncHTTP {
         async_http: *mut AsyncHTTP,
         result: HTTPClientResult<'_>,
     ) {
+        // PORT NOTE: kept as raw `*mut` throughout — `this == async_http` (set in
+        // `on_start`) and the `!has_more` branch frees that allocation, so a
+        // `&mut self` would be left dangling across the tail of the function
+        // (UB under stacked borrows).
         // SAFETY: `this` is the HTTP-thread copy set in `on_start`; lives in a
         // `ThreadlocalAsyncHTTP` heap allocation owned by the HTTP thread.
-        unsafe { (*this).on_async_http_callback(async_http, result) }
-    }
+        unsafe {
+            debug_assert!((*this).real.is_some());
 
-    pub fn on_async_http_callback(
-        &mut self,
-        async_http: *mut AsyncHTTP,
-        result: HTTPClientResult<'_>,
-    ) {
-        debug_assert!(self.real.is_some());
+            let callback = (*this).result_callback;
+            (*this).elapsed = http_thread_timer_read().saturating_sub((*this).elapsed);
 
-        let callback = self.result_callback;
-        self.elapsed = http_thread_timer_read().saturating_sub(self.elapsed);
-
-        // TODO: this condition seems wrong: if we started with a non-default value, we might
-        // report a redirect even if none happened
-        self.redirected = self.client.flags.redirected;
-        if result.is_success() {
-            self.err = None;
-            if let Some(metadata) = &result.metadata {
-                self.response = Some(metadata.response);
+            // TODO: this condition seems wrong: if we started with a non-default value, we might
+            // report a redirect even if none happened
+            (*this).redirected = (*this).client.flags.redirected;
+            if result.is_success() {
+                (*this).err = None;
+                if let Some(metadata) = &result.metadata {
+                    (*this).response = Some(metadata.response);
+                }
+                (*this).state.store(State::Success, Ordering::Relaxed);
+            } else {
+                (*this).err = result.fail;
+                (*this).response = None;
+                (*this).state.store(State::Fail, Ordering::Relaxed);
             }
-            self.state.store(State::Success, Ordering::Relaxed);
-        } else {
-            self.err = result.fail;
-            self.response = None;
-            self.state.store(State::Fail, Ordering::Relaxed);
-        }
 
-        // PORT NOTE: Zig logged + shrank `socket_async_http_abort_tracker` here.
-        // The Rust `ArrayHashMap` doesn't expose `shrink_and_free` yet; the
-        // tracker is bounded by `max_simultaneous_requests` so growth is capped.
-        // TODO(port): wire `bun_collections::ArrayHashMap::shrink_to` once it exists.
-
-        let has_more = result.has_more;
-        if has_more {
-            callback.run(async_http, result);
-        } else {
             {
-                // PORT NOTE: Zig `self.client.deinit()` — handled by `Drop for
-                // HTTPClient` when the `ThreadlocalAsyncHTTP` box is reclaimed below.
-                bun_core::scoped_log!(AsyncHTTP, "onAsyncHTTPCallback: {:?}", self.elapsed);
+                let tracker = crate::socket_async_http_abort_tracker();
+                if tracker.count() > 0 {
+                    bun_core::scoped_log!(
+                        AsyncHTTP,
+                        "bun.http.socket_async_http_abort_tracker count: {}",
+                        tracker.count()
+                    );
+                }
+                // PORT NOTE: Zig also did `tracker.shrinkAndFree(count)` when
+                // `capacity()>10_000 && count()<100`. `bun_collections::ArrayHashMap`
+                // does not yet expose `capacity()`/`shrink_and_free()`.
+                // TODO(port): wire `bun_collections::ArrayHashMap::shrink_and_free` once it exists.
+            }
+
+            let has_more = result.has_more;
+            if has_more {
+                callback.run(async_http, result);
+            } else {
+                // PORT NOTE: Zig `this.client.deinit()` runs BEFORE the user
+                // callback. Swap in a drop-safe blank so the real client's `Drop`
+                // runs now and the later Box reclaim doesn't double-drop.
+                drop(core::ptr::replace(
+                    core::ptr::addr_of_mut!((*this).client),
+                    blank_client(),
+                ));
+                let elapsed = (*this).elapsed;
+                bun_core::scoped_log!(AsyncHTTP, "onAsyncHTTPCallback: {:?}", elapsed);
                 callback.run(async_http, result);
 
                 // SAFETY: `async_http` is the `async_http` field of a
                 // `ThreadlocalAsyncHTTP` heap-allocated by HTTPThread via
                 // `ThreadlocalAsyncHTTP::new` (Box::into_raw); recover the parent
-                // via field offset and reclaim the Box.
-                let threadlocal_http: *mut ThreadlocalAsyncHTTP = unsafe {
-                    (async_http as *mut u8)
-                        .sub(offset_of!(ThreadlocalAsyncHTTP, async_http))
-                        .cast::<ThreadlocalAsyncHTTP>()
-                };
+                // via field offset and reclaim the Box. This is the LAST access
+                // to `this`/`async_http`; only static state is touched afterward.
+                let threadlocal_http: *mut ThreadlocalAsyncHTTP = (async_http as *mut u8)
+                    .sub(offset_of!(ThreadlocalAsyncHTTP, async_http))
+                    .cast::<ThreadlocalAsyncHTTP>();
                 // PORT NOTE: Zig `defer threadlocal_http.deinit()` — explicit Box reclaim.
-                drop(unsafe { Box::from_raw(threadlocal_http) });
-            }
+                drop(Box::from_raw(threadlocal_http));
 
-            let active_requests = ACTIVE_REQUESTS_COUNT.fetch_sub(1, Ordering::Relaxed);
-            debug_assert!(active_requests > 0);
+                let active_requests = ACTIVE_REQUESTS_COUNT.fetch_sub(1, Ordering::Relaxed);
+                debug_assert!(active_requests > 0);
+            }
         }
 
         let thread = crate::http_thread();
@@ -801,6 +812,16 @@ impl AsyncHTTP {
         {
             thread.wakeup();
         }
+    }
+
+    /// Thin wrapper kept for API parity; the body is raw-pointer based to avoid
+    /// holding `&mut self` across the dealloc of `self`'s storage.
+    pub fn on_async_http_callback(
+        &mut self,
+        async_http: *mut AsyncHTTP,
+        result: HTTPClientResult<'_>,
+    ) {
+        Self::on_async_http_callback_raw(self as *mut AsyncHTTP, async_http, result);
     }
 }
 

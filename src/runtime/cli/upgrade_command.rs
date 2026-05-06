@@ -1003,8 +1003,9 @@ impl UpgradeCommand {
                 }
             }
 
-            let destination_executable = bun_core::self_exe_path()
-                .map_err(|_| bun_core::err!("UpgradeFailedMissingExecutable"))?;
+            let destination_executable: &[u8] = bun_core::self_exe_path()
+                .map_err(|_| bun_core::err!("UpgradeFailedMissingExecutable"))?
+                .as_bytes();
             // PORT NOTE: reshaped for borrowck — use stack-local buffer
             let mut current_executable_buf = PathBuffer::uninit();
             current_executable_buf[..destination_executable.len()]

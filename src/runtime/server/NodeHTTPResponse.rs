@@ -8,7 +8,7 @@ use bun_collections::BabyList;
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 
-use crate::server::jsc::{self, JSGlobalObject, JSValue, JsResult, Strong, VirtualMachine};
+use crate::server::jsc::{self, JSGlobalObject, JSValue, JsResult, StrongOptional, VirtualMachine};
 use crate::server::{AnyServer, HTTPStatusText, ServerWebSocket};
 use crate::webcore::AutoFlusher;
 

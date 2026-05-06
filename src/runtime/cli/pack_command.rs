@@ -1391,6 +1391,7 @@ use bun_sys::FdDirExt as _;
 /// `Expr::as_string`/`as_string_cloned` now require a `&Bump`; package.json
 /// JSON strings are always UTF-8 literals, so route through
 /// `as_utf8_string_literal` until an arena is threaded through.
+#[allow(dead_code)]
 trait PackExprExt {
     fn pack_as_string(&self) -> Option<&[u8]>;
     fn pack_as_string_cloned(&self) -> Result<Option<Box<[u8]>>, AllocError>;
@@ -1704,17 +1705,17 @@ pub fn pack<const FOR_PUBLISH: bool>(
 
         let mut postpack_script: Option<Box<[u8]>> = None;
         if let Some(postpack) = scripts.expr.get(b"postpack") {
-            postpack_script = postpack.pack_as_string().map(Box::from);
+            postpack_script = postpack.as_string(bump).map(Box::from);
         }
 
         if FOR_PUBLISH {
             let mut publish_script: Option<Box<[u8]>> = None;
             let mut postpublish_script: Option<Box<[u8]>> = None;
             if let Some(publish) = scripts.expr.get(b"publish") {
-                publish_script = publish.pack_as_string_cloned()?;
+                publish_script = publish.as_string_cloned(bump)?.map(Box::from);
             }
             if let Some(postpublish) = scripts.expr.get(b"postpublish") {
-                postpublish_script = postpublish.pack_as_string_cloned()?;
+                postpublish_script = postpublish.as_string_cloned(bump)?.map(Box::from);
             }
 
             break 'post_scripts (postpack_script, publish_script, postpublish_script, did_run_scripts);
@@ -1758,13 +1759,13 @@ pub fn pack<const FOR_PUBLISH: bool>(
         // Re-read name and version from the updated package.json, since lifecycle
         // scripts (e.g. prepublishOnly, prepack) may have modified them.
         package_name_expr = json.root.get(b"name").ok_or(PackError::MissingPackageName)?;
-        package_name = package_name_expr.pack_as_string_cloned()?.ok_or(PackError::InvalidPackageName)?;
+        package_name = package_name_expr.as_string_cloned(bump)?.ok_or(PackError::InvalidPackageName)?;
         if package_name.is_empty() {
             return Err(PackError::InvalidPackageName);
         }
 
         package_version_expr = json.root.get(b"version").ok_or(PackError::MissingPackageVersion)?;
-        package_version = package_version_expr.pack_as_string_cloned()?.ok_or(PackError::InvalidPackageVersion)?;
+        package_version = package_version_expr.as_string_cloned(bump)?.ok_or(PackError::InvalidPackageVersion)?;
         if package_version.is_empty() {
             return Err(PackError::InvalidPackageVersion);
         }
@@ -1833,7 +1834,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
 
                     let mut path_buf = PathBuffer::uninit();
                     while let Some(files_entry) = files_array.next() {
-                        if let Some(file_entry_str) = files_entry.pack_as_string() {
+                        if let Some(file_entry_str) = files_entry.as_string(bump) {
                             let normalized = resolve_path::normalize_buf::<resolve_path::platform::Posix>(file_entry_str, &mut path_buf);
                             let Some(parsed) = Pattern::from_utf8(normalized)? else { continue };
                             if parsed.flags.contains(PatternFlags::NEGATED) {
@@ -2158,7 +2159,8 @@ pub fn pack<const FOR_PUBLISH: bool>(
         }
     }
 
-    entry.free();
+    // SAFETY: entry came from `ArchiveEntry::new()` and is valid.
+    unsafe { &*entry }.free();
 
     match archive.write_close() {
         ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {

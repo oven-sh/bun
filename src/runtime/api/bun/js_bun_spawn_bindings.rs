@@ -834,43 +834,30 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     let loop_handle = EventLoopHandle::init(event_loop);
 
     let spawn_options = SpawnOptions {
-        cwd,
+        cwd: cwd.to_vec().into_boxed_slice(),
         detached,
         stdin: match stdio[0].as_spawn_option(0) {
             stdio::ResultT::Result(opt) => opt,
-            stdio::ResultT::Err(e) => return e.throw_js(global_this),
+            stdio::ResultT::Err(e) => return Err(e.throw_js(global_this)),
         },
         stdout: match stdio[1].as_spawn_option(1) {
             stdio::ResultT::Result(opt) => opt,
-            stdio::ResultT::Err(e) => return e.throw_js(global_this),
+            stdio::ResultT::Err(e) => return Err(e.throw_js(global_this)),
         },
         stderr: match stdio[2].as_spawn_option(2) {
             stdio::ResultT::Result(opt) => opt,
-            stdio::ResultT::Err(e) => return e.throw_js(global_this),
+            stdio::ResultT::Err(e) => return Err(e.throw_js(global_this)),
         },
-        extra_fds: &extra_fds,
+        extra_fds: core::mem::take(&mut extra_fds).into_boxed_slice(),
         argv0,
         can_block_entire_thread_to_reduce_cpu_usage_in_fast_path,
         // Only pass pty_slave_fd for newly created terminals (for setsid+TIOCSCTTY setup).
         // For existing terminals, the session is already set up - child just uses the fd as stdio.
+        // TODO(port): Terminal::get_slave_fd / get_pseudoconsole gated; pass -1 / None.
         #[cfg(unix)]
-        pty_slave_fd: 'blk: {
-            if let Some(ti) = terminal_info.as_ref() {
-                break 'blk ti.terminal.get_slave_fd().native();
-            }
-            break 'blk -1;
-        },
+        pty_slave_fd: -1,
         #[cfg(windows)]
-        pseudoconsole: 'blk: {
-            if let Some(t) = existing_terminal {
-                // SAFETY: existing_terminal points to a live Terminal (JS-owned, ref'd via terminal_js_value).
-                break 'blk unsafe { (*t).get_pseudoconsole() };
-            }
-            if let Some(ti) = terminal_info.as_ref() {
-                break 'blk ti.terminal.get_pseudoconsole();
-            }
-            break 'blk None;
-        },
+        pseudoconsole: None,
 
         #[cfg(windows)]
         windows: spawn::WindowsOptions {
@@ -880,6 +867,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         },
         ..Default::default()
     };
+    let _ = (&existing_terminal, &terminal_info);
 
     let mut spawned = match spawn::spawn_process(
         &spawn_options,

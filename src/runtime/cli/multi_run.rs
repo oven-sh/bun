@@ -828,22 +828,24 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
             &mut root_buf,
         )?;
 
+        // PackageFilterIterator wants `&[&[u8]]`; build a borrowed view.
+        let pattern_refs: Vec<&[u8]> = patterns.iter().map(|p| &**p).collect();
         let mut package_json_iter =
-            FilterArg::PackageFilterIterator::init(&patterns, resolve_root)?;
+            FilterArg::PackageFilterIterator::init(&pattern_refs, resolve_root)?;
         // Drop handles deinit
 
         // Phase 1: Collect matching packages (filesystem order is nondeterministic)
-        struct MatchedPackage<'a> {
+        struct MatchedPackage {
             name: Box<[u8]>,
             dirpath: Box<[u8]>,
-            scripts: &'a StringArrayHashMap<String>,
+            scripts: Box<ScriptsMap>,
             path: Box<[u8]>,
         }
         let mut matched_packages: Vec<MatchedPackage> = Vec::new();
 
         while let Some(package_json_path) = package_json_iter.next()? {
             let dirpath: Box<[u8]> = Box::from(
-                bun_core::dirname(package_json_path).unwrap_or_else(|| Global::crash()),
+                bun_core::dirname(&package_json_path).unwrap_or_else(|| Global::crash()),
             );
             let pkg_path = strings::without_trailing_slash(&dirpath);
 

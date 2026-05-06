@@ -536,17 +536,19 @@ impl<'a> Coordinator<'a> {
             if !other.alive {
                 continue;
             }
-            if let Some(p) = &other.process {
+            if let Some(p) = other.process {
                 #[cfg(unix)]
                 {
-                    // SAFETY: FFI call; -pid targets the worker's process group.
+                    // SAFETY: `p` is the live intrusive-refcounted *mut Process;
+                    // FFI call; -pid targets the worker's process group.
                     unsafe {
-                        let _ = libc::kill(-(p.pid as libc::pid_t), libc::SIGTERM);
+                        let _ = libc::kill(-((*p).pid as libc::pid_t), libc::SIGTERM);
                     }
                 }
                 #[cfg(not(unix))]
                 {
-                    let _ = p.kill(1);
+                    // SAFETY: `p` is the live intrusive-refcounted *mut Process.
+                    let _ = unsafe { (*p).kill(1) };
                 }
             }
         }

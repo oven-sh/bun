@@ -200,15 +200,15 @@ impl<T: Copy> SSLWrapper<T> {
     }
 
     pub fn init(
-        ssl_options: &crate::server::server_config::SSLConfig,
+        ssl_options: crate::server::server_config::SSLConfig,
         is_client: bool,
         handlers: Handlers<T>,
     ) -> Result<Self, bun_core::Error> {
         bun_boringssl::load();
 
         let ctx_opts: uws::socket_context::BunSocketContextOptions = ssl_options.as_usockets();
-        let mut err: uws::create_bun_socket_error_t = uws::create_bun_socket_error_t::None;
-        let Some(ssl_ctx) = NonNull::new(ctx_opts.create_ssl_context(&mut err)) else {
+        let mut err: uws::create_bun_socket_error_t = uws::create_bun_socket_error_t::none;
+        let Some(ssl_ctx) = ctx_opts.create_ssl_context(&mut err).and_then(NonNull::new) else {
             return Err(bun_core::err!("InvalidOptions"));
         };
         // initWithCTX adopts the SSL_CTX* (one ref). The passphrase was

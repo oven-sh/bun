@@ -1721,7 +1721,11 @@ impl Msg {
                 resolve: if let Metadata::Resolve(r) = &self.metadata {
                     Some(r.specifier.slice(&self.data.text).to_vec())
                 } else {
-                    None
+                    // Zig (logger.zig:457): `else ""` — coerces to a NON-NULL
+                    // `?[]const u8`, so peechy `MessageMeta.encode` still emits
+                    // field-ID 1 with an empty string. `None` would skip the
+                    // field entirely on the wire.
+                    Some(Vec::new())
                 },
                 build: Some(matches!(self.metadata, Metadata::Build)),
             },
@@ -2933,7 +2937,12 @@ pub fn usize2loc(loc: usize) -> Loc {
 pub struct Source {
     pub path: fs::Path,
 
-    pub contents: Str,
+    /// PORT NOTE: `Cow` so `source_from_file` / `File::to_source_at` can hand
+    /// back a heap buffer without `Box::leak` (PORTING.md §Forbidden). Borrowed
+    /// arm covers the Zig `[]const u8`-field default (parser/transpiler feed
+    /// arena slices via `IntoStr`). Prefer the `.contents()` accessor at
+    /// call-sites — it derefs to `&[u8]` regardless of arm.
+    pub contents: Cow<'static, [u8]>,
     pub contents_is_recycled: bool,
 
     /// Lazily-generated human-readable identifier name that is non-unique
@@ -2952,7 +2961,7 @@ impl Default for Source {
     fn default() -> Self {
         Source {
             path: fs::Path::default(),
-            contents: b"",
+            contents: Cow::Borrowed(b""),
             contents_is_recycled: false,
             identifier_name: Cow::Borrowed(b""),
             index: Index::source(0),
@@ -2974,7 +2983,7 @@ impl Source {
     /// don't need to change when the field type flips in Phase B.
     #[inline]
     pub fn contents(&self) -> &[u8] {
-        self.contents
+        &self.contents
     }
 
     /// Owned copy of the source bytes. Mirrors the Zig pattern of
@@ -3007,7 +3016,7 @@ impl Source {
         // CYCLEBREAK(b0): MOVE_DOWN bun_js_parser::lexer::range_of_identifier → logger.
         // Local impl mirrors src/js_parser/lexer.zig:range_of_identifier — scan from `loc`
         // while bytes are JS identifier-part.
-        range_of_identifier(self.contents, loc)
+        range_of_identifier(&self.contents, loc)
     }
 
     pub fn is_web_assembly(&self) -> bool {
@@ -3021,13 +3030,13 @@ impl Source {
 
     pub fn init_empty_file(filepath: Str) -> Source {
         let path = fs::Path::init(filepath);
-        Source { path, contents: b"", ..Default::default() }
+        Source { path, contents: Cow::Borrowed(b""), ..Default::default() }
     }
 
     pub fn init_file(file: PathContentsPair) -> Result<Source, bun_core::Error> {
         let mut source = Source {
             path: file.path,
-            contents: file.contents,
+            contents: Cow::Borrowed(file.contents),
             ..Default::default()
         };
         source.path.namespace = b"file";
@@ -3037,7 +3046,7 @@ impl Source {
     pub fn init_recycled_file(file: PathContentsPair) -> Result<Source, bun_core::Error> {
         let mut source = Source {
             path: file.path,
-            contents: file.contents,
+            contents: Cow::Borrowed(file.contents),
             contents_is_recycled: true,
             ..Default::default()
         };
@@ -3047,7 +3056,14 @@ impl Source {
 
     pub fn init_path_string(path_string: impl IntoStr, contents: impl IntoStr) -> Source {
         let path = fs::Path::init(path_string.into_str());
-        Source { path, contents: contents.into_str(), ..Default::default() }
+        Source { path, contents: Cow::Borrowed(contents.into_str()), ..Default::default() }
+    }
+
+    /// `init_path_string` with heap-owned contents — used by `source_from_file`
+    /// so the read buffer is dropped with the `Source` instead of leaked.
+    pub fn init_path_string_owned(path_string: impl IntoStr, contents: Vec<u8>) -> Source {
+        let path = fs::Path::init(path_string.into_str());
+        Source { path, contents: Cow::Owned(contents), ..Default::default() }
     }
 
     pub fn text_for_range(&self, r: Range) -> &[u8] {
@@ -3118,7 +3134,7 @@ impl Source {
         let offset: usize =
             (usize::try_from(offset_loc.start).unwrap()).min(self.contents.len().max(1) - 1);
 
-        let contents = self.contents;
+        let contents: &[u8] = &self.contents;
 
         let mut iter_ = CodepointIterator::init(&self.contents[0..offset]);
         let mut iter = Cursor::default();

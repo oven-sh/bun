@@ -4,7 +4,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 
 use bun_core::{self, Output};
 use bun_string::{self as bstr_mod, strings, String as BunString};
-use crate::jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, VirtualMachine};
+use crate::jsc::{self as jsc, CallFrame, JSGlobalObject, JSGlobalObjectSqlExt as _, JSValue, JsResult, VirtualMachine};
 use bun_uws as uws;
 use bun_aio::KeepAlive;
 use bun_boringssl as BoringSSL;
@@ -58,8 +58,18 @@ pub mod js {
 pub use js::{from_js, from_js_direct, to_js};
 
 impl jsc::JsClass for PostgresSQLConnection {
+    fn to_js(self, global: &JSGlobalObject) -> JSValue {
+        // Ownership transfers to the JSC wrapper's m_ctx; freed via `finalize`.
+        js::to_js(Box::into_raw(Box::new(self)), global)
+    }
     fn from_js(value: JSValue) -> Option<*mut Self> {
         js::from_js(value)
+    }
+    fn from_js_direct(value: JSValue) -> Option<*mut Self> {
+        js::from_js_direct(value)
+    }
+    fn get_constructor(global: &JSGlobalObject) -> JSValue {
+        js::get_constructor(global)
     }
 }
 
@@ -81,7 +91,7 @@ fn verify_error_to_js(
 // TODO(port): once `bun_jsc::JSGlobalObject::queue_microtask` is un-gated,
 // drop this and call it directly.
 fn queue_microtask(global: &JSGlobalObject, function: JSValue, args: &[JSValue]) {
-    extern "C" {
+    unsafe extern "C" {
         fn JSC__JSGlobalObject__queueMicrotaskJob(
             global: *const JSGlobalObject,
             function: JSValue,
@@ -424,10 +434,13 @@ impl PostgresSQLConnection {
 
         // SAFETY: `raw` is a live connected `us_socket_t*`; `tls_group` is a
         // live SocketGroup; adopt_tls may realloc and return a different ptr.
+        // PORT NOTE: `adopt_tls` lives in `bun_uws_sys` and takes the sys-level
+        // `SocketGroup`/`SocketKind`; both are `#[repr(C)]`-layout-identical to the
+        // `bun_uws` mirrors, so cast the group pointer through.
         let Some(new_socket) = (unsafe { &mut *raw }).adopt_tls(
             // SAFETY: `tls_group` is non-null (lazy-init in `postgres_group`).
-            unsafe { &mut *tls_group },
-            uws::SocketKind::PostgresTls,
+            unsafe { &mut *(tls_group as *mut bun_uws_sys::SocketGroup) },
+            bun_uws_sys::SocketKind::PostgresTls,
             ssl_ctx,
             sni,
             ext_size,
@@ -780,7 +793,8 @@ impl PostgresSQLConnection {
                         if let Some(servername) = unsafe { BoringSSL::c::SSL_get_servername(ssl_ptr, 0).as_ref() } {
                             // SAFETY: SSL_get_servername returns a NUL-terminated C string.
                             let hostname = unsafe { core::ffi::CStr::from_ptr(servername as *const _ as *const core::ffi::c_char) }.to_bytes();
-                            if !BoringSSL::check_server_identity(ssl_ptr, hostname) {
+                            // SAFETY: `ssl_ptr` is the live SSL* of a connected TLS socket.
+                            if !BoringSSL::check_server_identity(unsafe { &mut *ssl_ptr }, hostname) {
                                 let Ok(v) = verify_error_to_js(&ssl_error, self.global()) else { return };
                                 self.fail_with_js_value(v);
                             }
@@ -866,7 +880,7 @@ impl PostgresSQLConnection {
             match PostgresRequest::on_data(self, reader) {
                 Ok(()) => {}
                 Err(err) => {
-                    if err == bun_core::Error::from(AnyPostgresError::ShortRead) {
+                    if err == AnyPostgresError::ShortRead {
                         #[cfg(debug_assertions)]
                         debug!(
                             "read_buffer: empty and received short read: last_message_start: {}, head: {}, len: {}",
@@ -879,7 +893,7 @@ impl PostgresSQLConnection {
                         self.read_buffer.get_mut().write(&data[offset..]).expect("failed to write to read buffer");
                     } else {
                         { let _ = err; /* TODO(port): bun_crash_handler::handle_error_return_trace */ };
-                        self.fail_err(b"Failed to read data", err);
+                        self.fail_err(b"Failed to read data", err.into());
                     }
                 }
             }
@@ -899,9 +913,9 @@ impl PostgresSQLConnection {
                     self.read_buffer.get_mut().head = 0;
                 }
                 Err(err) => {
-                    if err != bun_core::Error::from(AnyPostgresError::ShortRead) {
+                    if err != AnyPostgresError::ShortRead {
                         { let _ = err; /* TODO(port): bun_crash_handler::handle_error_return_trace */ };
-                        self.fail_err(b"Failed to read data", err);
+                        self.fail_err(b"Failed to read data", err.into());
                     } else {
                         #[cfg(debug_assertions)]
                         {
@@ -959,7 +973,7 @@ pub extern "C" fn PostgresSQLConnection__createInstance(
 pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM via raw ptr,
     // no other live borrow in this scope.
-    let vm = unsafe { &mut *global_object.bun_vm_ptr() };
+    let vm = unsafe { &mut *global_object.bun_vm() };
     let arguments = callframe.arguments();
     let hostname_str = arguments[0].to_bun_string(global_object)?;
     let port = arguments[1].coerce::<i32>(global_object)?;
@@ -1128,7 +1142,7 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
         statements: PreparedStatementsMap::default(),
         prepared_statement_id: 0,
         pending_activity_count: AtomicU32::new(0),
-        js_value: crate::jsc::JsRef::weak(JSValue::UNDEFINED),
+        js_value: crate::jsc::JsRef::init_weak(JSValue::UNDEFINED),
         backend_parameters: StringMap::init(true),
         backend_key_data: protocol::BackendKeyData::default(),
         database: database as *const [u8],
@@ -1188,7 +1202,7 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
             Ok(s) => s,
             Err(err) => {
                 PostgresSQLConnection::deinit(ptr);
-                return global_object.throw_error(err, "failed to connect to postgresql");
+                return global_object.throw_error(err.into(), "failed to connect to postgresql");
             }
         });
     }
@@ -1199,7 +1213,7 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
     this.poll_ref.ref_(this.vm_ctx());
     let js_value = js::to_js(ptr, global_object);
     js_value.ensure_still_alive();
-    this.js_value = crate::jsc::JsRef::weak(js_value);
+    this.js_value = crate::jsc::JsRef::init_weak(js_value);
     js::onconnect_set_cached(js_value, global_object, on_connect);
     js::onclose_set_cached(js_value, global_object, on_close);
     /* TODO(port): bun_core::analytics::Features::POSTGRES_CONNECTIONS counter */ ();
@@ -1481,7 +1495,7 @@ impl PostgresSQLConnection {
             && !self.flags.contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS) // unnamed statements are not pipelinable
             && !self.flags.contains(ConnectionFlags::WAITING_TO_PREPARE) // cannot pipeline when waiting prepare
             && !self.flags.contains(ConnectionFlags::HAS_BACKPRESSURE) // dont make sense to buffer more if we have backpressure
-            && self.write_buffer.len() < MAX_PIPELINE_SIZE // buffer is too big need to flush before pipeline more
+            && (self.write_buffer.len() as usize) < MAX_PIPELINE_SIZE // buffer is too big need to flush before pipeline more
     }
 }
 
@@ -1644,9 +1658,9 @@ impl PostgresSQLConnection {
             QueryStatus::Running
             | QueryStatus::Binding
             | QueryStatus::PartialResponse => {
-                if item.flags.simple() {
+                if item.flags.simple {
                     self.nonpipelinable_requests -= 1;
-                } else if item.flags.pipelined() {
+                } else if item.flags.pipelined {
                     self.pipelined_requests -= 1;
                 }
             }
@@ -1795,8 +1809,11 @@ impl PostgresSQLConnection {
                                         // other connection poolers in transaction mode.
                                         debug!("parse, bind and execute unnamed stmt");
                                         let query_str = req.query.to_utf8();
+                                        // PORT NOTE: hoist global to avoid &self/&mut self overlap
+                                        // with `self.writer()` (JSC_BORROW — global outlives self).
+                                        let global = unsafe { &*self.global_object };
                                         if let Err(err) = PostgresRequest::parse_and_bind_and_execute(
-                                            self.global(),
+                                            global,
                                             query_str.slice(),
                                             statement,
                                             binding_value,
@@ -1822,8 +1839,10 @@ impl PostgresSQLConnection {
                                         }
                                     } else {
                                         debug!("binding and executing stmt");
+                                        // PORT NOTE: hoist global (JSC_BORROW) — see above.
+                                        let global = unsafe { &*self.global_object };
                                         if let Err(err) = PostgresRequest::bind_and_execute(
-                                            self.global(),
+                                            global,
                                             statement,
                                             binding_value,
                                             columns_value,
@@ -1888,8 +1907,10 @@ impl PostgresSQLConnection {
                                         // prepareAndQueryWithSignature will write + bind + execute, it will change to running after binding is complete
                                         let binding_value = postgres_sql_query::js::binding_get_cached(this_value).unwrap_or(JSValue::ZERO);
                                         debug!("prepareAndQueryWithSignature");
+                                        // PORT NOTE: hoist global (JSC_BORROW) — see above.
+                                        let global = unsafe { &*self.global_object };
                                         if let Err(err) = PostgresRequest::prepare_and_query_with_signature(
-                                            self.global(),
+                                            global,
                                             query_str.slice(),
                                             binding_value,
                                             self.writer(),
@@ -2087,7 +2108,7 @@ impl PostgresSQLConnection {
     pub fn on<Context: protocol::ReaderContext>(
         &mut self,
         message_type: MessageType,
-        reader: &mut protocol::NewReader<Context>,
+        mut reader: protocol::NewReader<Context>,
     ) -> Result<(), AnyPostgresError> {
         // PORT NOTE: protocol `decode_internal` returns `bun_core::Error`;
         // round-trip through the name-based `From` impl.
@@ -2612,7 +2633,10 @@ impl PostgresSQLConnection {
                         stmt.error_response =
                             Some(crate::postgres::postgres_sql_statement::Error::Protocol(err));
                         if self.statements.remove(&bun_wyhash::hash(&stmt.signature.name)).is_some() {
-                            stmt.deref();
+                            // TODO(port): blocked_on PostgresSQLStatement::deref — intrusive
+                            // refcount decrement (see `deinit` for the same workaround).
+                            let rc = &stmt.ref_count;
+                            rc.set(rc.get().saturating_sub(1));
                         }
                     }
                 }

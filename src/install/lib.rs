@@ -240,7 +240,12 @@ pub mod bin {
 /// Stub: `lockfile.rs` — type surface for `dependency.rs` / `npm.rs`.
 pub mod lockfile {
     pub use bun_semver::StringBuilder;
-    #[derive(Default)] pub struct Lockfile;
+    #[derive(Default)] pub struct Lockfile {
+        pub buffers: Buffers,
+    }
+    #[derive(Default)] pub struct Buffers {
+        pub string_bytes: Vec<u8>,
+    }
     #[derive(Default)] pub struct PatchedDep;
     #[derive(Default)] pub struct LoadResult;
     #[derive(Default)] pub struct LoadStep;
@@ -717,8 +722,8 @@ pub use lockfile::{Lockfile, PatchedDep, LoadResult, LoadStep};
 #[derive(Default)] pub struct PatchTask;
 impl PackageManager {
     pub fn verbose_install() -> bool { false }
-    pub fn get_cache_directory(&mut self) -> bun_sys::FD { todo!("phase-b2: PackageManager::get_cache_directory (gated)") }
-    pub fn get_temporary_directory(&mut self) -> bun_sys::FD { todo!("phase-b2: PackageManager::get_temporary_directory (gated)") }
+    pub fn get_cache_directory(&mut self) -> bun_sys::Fd { todo!("phase-b2: PackageManager::get_cache_directory (gated)") }
+    pub fn get_temporary_directory(&mut self) -> bun_sys::Fd { todo!("phase-b2: PackageManager::get_temporary_directory (gated)") }
 }
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub enum Subcommand { #[default] Install, Add, Remove, Update, Link, Unlink, Pm, Patch, PatchCommit, Outdated }

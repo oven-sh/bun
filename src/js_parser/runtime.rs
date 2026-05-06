@@ -105,8 +105,8 @@ impl Fallback {
         let _fallback = Self::fallback_decoder_js();
         let _entry_point = entry_point;
         let _ = writer;
-        // TODO(port): emit HTML_TEMPLATE with substitutions
-        Ok(())
+        // spec: writer.print(HTMLTemplate, PrintArgs{...}) — must NOT silently no-op.
+        todo!("port: Fallback::render HTMLTemplate substitution (writer.print)")
     }
 
     // TODO(port): narrow error set
@@ -120,8 +120,8 @@ impl Fallback {
         let _bun_error_page_css: &[u8] = b"";
         let _fallback = Self::fallback_decoder_js();
         let _ = writer;
-        // TODO(port): emit HTML_BACKEND_TEMPLATE with substitutions (see render())
-        Ok(())
+        // spec: writer.print(HTMLBackendTemplate, PrintArgs{...}) — must NOT silently no-op.
+        todo!("port: Fallback::render_backend HTMLBackendTemplate substitution (writer.print)")
     }
 }
 

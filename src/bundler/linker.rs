@@ -597,7 +597,7 @@ impl Linker {
 
                     if !opts.preserve_extensions {
                         if let Some(ext) = opts.out_extensions.get(absolute_pathname.ext) {
-                            absolute_pathname.ext = ext;
+                            absolute_pathname.ext = *ext;
                         }
                     }
 

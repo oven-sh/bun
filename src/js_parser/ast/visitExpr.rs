@@ -2351,8 +2351,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         //   Hook tracking deferred — save/restore preserved in `_draft::e_function`.
         let mut react_hook_data: Option<crate::parser::HookContext> = None;
 
-        let open_parens_loc = e_.func.open_parens_loc;
-        e_.func = p.visit_func(core::mem::take(&mut e_.func), open_parens_loc);
+        // Spec (visitExpr.zig e_function): visitFunc(e_.func, expr.loc) — for function
+        // *expressions* the .function_args scope is pushed at the `function` keyword loc
+        // (parseFn.zig:364), not at open_parens_loc. (s_function correctly uses open_parens_loc.)
+        e_.func = p.visit_func(core::mem::take(&mut e_.func), expr.loc);
 
         // Remove unused function names when minifying (only when bundling is enabled)
         // unless --keep-names is specified

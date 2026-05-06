@@ -671,7 +671,8 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn _parse<const TS: bool, JX: JsxT>(&mut self) -> Result<js_ast::Result, Error> {
+    #[cfg(any())] // reconciler-6: full _parse body re-gated (duplicate of stub above; ~60 port errors)
+    fn _parse_full<const TS: bool, JX: JsxT>(&mut self) -> Result<js_ast::Result, Error> {
         // TODO(port): narrow error set
         // TODO(b2-blocked): bun_crash_handler::current_action — `Action` stores
         // `&'static [u8]` but `self.source.path.text` is `'a`; Phase B widens

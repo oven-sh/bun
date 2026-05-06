@@ -543,8 +543,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         //   Until it un-gates, emit the class statement unchanged (Zig's no-decorator
         //   fast path is `&[stmt]` anyway). Gate loud when lowering would actually
         //   rewrite — silently emitting the un-lowered class is wrong output.
-        if data.class.has_decorators || data.class.should_lower_standard_decorators {
-            todo!("s_class: lower_class for decorators — see _draft");
+        //   Spec (P.zig:4949-4958): the `&[stmt]` fast-path is only taken when
+        //   `!should_lower_standard_decorators && !is_typescript_enabled && !has_decorators`;
+        //   under TYPESCRIPT the full TS-legacy lowering runs even with no class-level decorators.
+        if TYPESCRIPT || data.class.has_decorators || data.class.should_lower_standard_decorators {
+            todo!("s_class: lower_class (TS-legacy / decorators) — see _draft");
         }
         let lowered: &[Stmt] = core::slice::from_ref(&*stmt);
 
@@ -601,6 +604,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         } else {
             p.visit_decls::<true>(data.decls.slice_mut(), was_const)
         };
+        // Spec (visitStmt.zig:724-727): drop the whole statement when every decl was
+        // eliminated; otherwise we'd emit an empty `var;`/`let;`/`const;`.
+        if data.decls.len > 0 && new_len == 0 {
+            return Ok(());
+        }
         data.decls.len = new_len as u32;
 
         // Handle being exported inside a namespace

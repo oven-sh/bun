@@ -121,11 +121,26 @@ fn expand_css_eql(input: DeriveInput) -> syn::Result<TokenStream2> {
         Data::Struct(s) => match &s.fields {
             Fields::Unit => quote! { true },
             Fields::Unnamed(fs) => {
-                let idx = (0..fs.unnamed.len()).map(syn::Index::from);
-                quote! { #( self.#idx.eql(&__other.#idx) )&&* }
+                let idx: Vec<_> = fs
+                    .unnamed
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, f)| !has_css_skip(&f.attrs))
+                    .map(|(i, _)| syn::Index::from(i))
+                    .collect();
+                if idx.is_empty() {
+                    quote! { true }
+                } else {
+                    quote! { #( self.#idx.eql(&__other.#idx) )&&* }
+                }
             }
             Fields::Named(fs) => {
-                let names: Vec<_> = fs.named.iter().map(|f| f.ident.clone().unwrap()).collect();
+                let names: Vec<_> = fs
+                    .named
+                    .iter()
+                    .filter(|f| !has_css_skip(&f.attrs))
+                    .map(|f| f.ident.clone().unwrap())
+                    .collect();
                 if names.is_empty() {
                     quote! { true }
                 } else {
@@ -141,16 +156,22 @@ fn expand_css_eql(input: DeriveInput) -> syn::Result<TokenStream2> {
                         (Self::#vname, Self::#vname) => true,
                     },
                     Fields::Unnamed(fs) => {
-                        let la: Vec<_> = (0..fs.unnamed.len())
-                            .map(|i| format_ident!("__l{}", i))
+                        let n = fs.unnamed.len();
+                        let la: Vec<_> = (0..n).map(|i| format_ident!("__l{}", i)).collect();
+                        let ra: Vec<_> = (0..n).map(|i| format_ident!("__r{}", i)).collect();
+                        let kept: Vec<_> = fs
+                            .unnamed
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, f)| !has_css_skip(&f.attrs))
+                            .map(|(i, _)| i)
                             .collect();
-                        let ra: Vec<_> = (0..fs.unnamed.len())
-                            .map(|i| format_ident!("__r{}", i))
-                            .collect();
-                        let cmp = if la.is_empty() {
+                        let cmp = if kept.is_empty() {
                             quote! { true }
                         } else {
-                            quote! { #( #la.eql(#ra) )&&* }
+                            let lk = kept.iter().map(|&i| &la[i]);
+                            let rk = kept.iter().map(|&i| &ra[i]);
+                            quote! { #( #lk.eql(#rk) )&&* }
                         };
                         quote! {
                             (Self::#vname( #(#la),* ), Self::#vname( #(#ra),* )) => #cmp,
@@ -163,10 +184,19 @@ fn expand_css_eql(input: DeriveInput) -> syn::Result<TokenStream2> {
                             fnames.iter().map(|n| format_ident!("__l_{}", n)).collect();
                         let ra: Vec<_> =
                             fnames.iter().map(|n| format_ident!("__r_{}", n)).collect();
-                        let cmp = if fnames.is_empty() {
+                        let kept: Vec<_> = fs
+                            .named
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, f)| !has_css_skip(&f.attrs))
+                            .map(|(i, _)| i)
+                            .collect();
+                        let cmp = if kept.is_empty() {
                             quote! { true }
                         } else {
-                            quote! { #( #la.eql(#ra) )&&* }
+                            let lk = kept.iter().map(|&i| &la[i]);
+                            let rk = kept.iter().map(|&i| &ra[i]);
+                            quote! { #( #lk.eql(#rk) )&&* }
                         };
                         quote! {
                             (Self::#vname { #(#fnames: #la),* },
@@ -215,11 +245,21 @@ fn expand_css_hash(input: DeriveInput) -> syn::Result<TokenStream2> {
         Data::Struct(s) => match &s.fields {
             Fields::Unit => quote! {},
             Fields::Unnamed(fs) => {
-                let idx = (0..fs.unnamed.len()).map(syn::Index::from);
+                let idx = fs
+                    .unnamed
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, f)| !has_css_skip(&f.attrs))
+                    .map(|(i, _)| syn::Index::from(i));
                 quote! { #( self.#idx.hash(__hasher); )* }
             }
             Fields::Named(fs) => {
-                let names: Vec<_> = fs.named.iter().map(|f| f.ident.clone().unwrap()).collect();
+                let names: Vec<_> = fs
+                    .named
+                    .iter()
+                    .filter(|f| !has_css_skip(&f.attrs))
+                    .map(|f| f.ident.clone().unwrap())
+                    .collect();
                 quote! { #( self.#names.hash(__hasher); )* }
             }
         },
@@ -237,20 +277,33 @@ fn expand_css_hash(input: DeriveInput) -> syn::Result<TokenStream2> {
                         let binds: Vec<_> = (0..fs.unnamed.len())
                             .map(|j| format_ident!("__f{}", j))
                             .collect();
+                        let kept: Vec<_> = fs
+                            .unnamed
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, f)| !has_css_skip(&f.attrs))
+                            .map(|(j, _)| binds[j].clone())
+                            .collect();
                         quote! {
                             Self::#vname( #(#binds),* ) => {
                                 #tag
-                                #( #binds.hash(__hasher); )*
+                                #( #kept.hash(__hasher); )*
                             }
                         }
                     }
                     Fields::Named(fs) => {
                         let fnames: Vec<_> =
                             fs.named.iter().map(|f| f.ident.clone().unwrap()).collect();
+                        let kept: Vec<_> = fs
+                            .named
+                            .iter()
+                            .filter(|f| !has_css_skip(&f.attrs))
+                            .map(|f| f.ident.clone().unwrap())
+                            .collect();
                         quote! {
                             Self::#vname { #(#fnames),* } => {
                                 #tag
-                                #( #fnames.hash(__hasher); )*
+                                #( #kept.hash(__hasher); )*
                             }
                         }
                     }

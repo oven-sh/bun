@@ -7,7 +7,7 @@
 use core::fmt;
 
 use bun_alloc::Arena as Bump;
-use bun_collections::{ArrayHashMap, BabyList, StaticBitSet};
+use bun_collections::{ArrayHashMap, BabyList, MapEntry, StaticBitSet};
 use bun_logger::{self as logger, Log};
 use bun_string::strings;
 

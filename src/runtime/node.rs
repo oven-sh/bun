@@ -358,24 +358,30 @@ impl<R> Maybe<R, bun_sys::Error> {
         })
     }
 
-    pub fn to_array_buffer(self, global_object: &crate::jsc::JSGlobalObject) -> crate::jsc::JSValue
+    pub fn to_array_buffer(
+        self,
+        global_object: &crate::jsc::JSGlobalObject,
+    ) -> bun_jsc::JsResult<crate::jsc::JSValue>
     where
         R: Into<Vec<u8>>,
     {
-        
-        {
-            // TODO(b2-blocked): bun_jsc::ArrayBuffer::from_bytes
-            // TODO(b2-blocked): bun_jsc::TypedArrayType
-            return match self {
-                Maybe::Result(r) => {
-                    bun_jsc::ArrayBuffer::from_bytes(r.into(), bun_jsc::TypedArrayType::ArrayBuffer)
-                        .to_js(global_object, None)
-                }
-                Maybe::Err(e) => e.to_js(global_object),
-            };
+        use bun_jsc::SysErrorJsc as _;
+        match self {
+            Maybe::Result(r) => {
+                // PORT NOTE: Zig hands the result slice straight to
+                // `ArrayBuffer.fromBytes` and ownership transfers to JSC — the
+                // GC-installed deallocator (`MarkedArrayBuffer_deallocator`)
+                // calls `mi_free` on the buffer when the JS object is
+                // collected. Leak the `Vec` here to hand the allocation to
+                // JSC; Bun's global allocator is mimalloc, so `to_js`'s
+                // `mi_is_in_heap_region` check succeeds and the buffer is
+                // freed by JSC, not Rust.
+                let bytes: &mut [u8] = Vec::leak(r.into());
+                bun_jsc::ArrayBuffer::from_bytes(bytes, bun_jsc::JSType::ArrayBuffer)
+                    .to_js(global_object)
+            }
+            Maybe::Err(e) => Ok(e.to_js(global_object)),
         }
-        let _ = (self, global_object);
-        todo!("Maybe::to_array_buffer: blocked on bun_jsc::ArrayBuffer")
     }
 
     pub fn get_errno(self) -> bun_sys::posix::E {

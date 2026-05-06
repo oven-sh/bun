@@ -358,6 +358,6 @@ impl PackageManager {
 // PORT STATUS
 //   source:     src/install/PackageManager/PackageManagerResolution.zig (243 lines)
 //   confidence: medium
-//   todos:      4
-//   notes:      MultiArrayList field accessors (.items(.field)) ported as items_<field>(); FolderResolution/Dependency variant paths and manifests.by_name_hash enum literal need Phase-B fixup; arena/stack-fallback dropped per guide.
+//   todos:      3
+//   notes:      MultiArrayList field accessors (.items(.field)) ported as items_<field>(); FolderResolution/Dependency variant paths need Phase-B fixup; arena/stack-fallback dropped per guide.
 // ──────────────────────────────────────────────────────────────────────────

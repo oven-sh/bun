@@ -871,6 +871,7 @@ unsafe extern "C" {
     fn JSC__JSValue__putToPropertyKey(target: JSValue, global: *const JSGlobalObject, key: JSValue, value: JSValue);
     fn JSC__JSValue__toStringOrNull(this: JSValue, global: *const JSGlobalObject) -> *mut JSString;
     fn JSC__JSValue__asString(this: JSValue) -> *mut JSString;
+    fn JSC__jsTypeStringForValue(global: *const JSGlobalObject, value: JSValue) -> *mut JSString;
     fn JSC__JSValue__asArrayBuffer(this: JSValue, global: *const JSGlobalObject, out: *mut ArrayBuffer) -> bool;
     fn JSC__JSValue__asPromise(this: JSValue) -> *mut JSPromise;
     fn JSC__JSValue__asInternalPromise(this: JSValue) -> *mut JSInternalPromise;

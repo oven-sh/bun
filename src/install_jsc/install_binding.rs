@@ -3,32 +3,29 @@ use bun_jsc::{JSGlobalObject, JSValue};
 pub mod bun_install_js_bindings {
     use super::*;
 
-    pub fn generate(_global: &JSGlobalObject) -> JSValue {
-        // TODO(b2-blocked): bun_jsc::host_fn (proc-macro) — `JSFunction::create`
-        // takes a raw-ABI `JSHostFn`; the proc-macro lowers a `JSHostFnZig`-shaped
-        // fn to that ABI. Until it lands, `js_parse_lockfile` has the wrong
-        // fn-pointer type to pass here.
-        
-        {
-            use bun_jsc::JSFunction;
-            let obj = JSValue::create_empty_object(_global, 1);
-            obj.put(
-                _global,
-                b"parseLockfile",
-                JSFunction::create(
-                    _global,
-                    bun_string::String::static_(b"parseLockfile"),
-                    js_parse_lockfile,
-                    1,
-                    Default::default(),
-                ),
-            );
-            return obj;
-        }
-        #[cfg(any())]
-        todo!("install_binding::generate — gated on bun_jsc::host_fn proc-macro")
+    pub fn generate(global: &JSGlobalObject) -> JSValue {
+        use bun_jsc::JSFunction;
+        let obj = JSValue::create_empty_object(global, 1);
+        obj.put(
+            global,
+            b"parseLockfile",
+            JSFunction::create(
+                global,
+                bun_string::String::static_(b"parseLockfile"),
+                // `#[bun_jsc::host_fn]` on the module-scope `js_parse_lockfile`
+                // emits this `JSHostFn`-ABI shim.
+                __jsc_host_js_parse_lockfile,
+                1,
+                Default::default(),
+            ),
+        );
+        obj
     }
 
+    // PORT NOTE: lives at module scope (not in an `impl`) because the
+    // `#[bun_jsc::host_fn]` Free-kind shim body emits `#fn_name(__g, __f)` without
+    // a `Self::` qualifier, so the wrapped fn must resolve unqualified.
+    #[bun_jsc::host_fn]
     pub fn js_parse_lockfile(global: &JSGlobalObject, frame: &bun_jsc::CallFrame) -> bun_jsc::JsResult<JSValue> {
         use std::io::Write as _;
         use bstr::BStr;

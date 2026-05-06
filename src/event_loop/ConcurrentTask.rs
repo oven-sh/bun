@@ -379,7 +379,7 @@ impl ConcurrentTask {
         })
     }
 
-    pub fn create_from<T>(task: T) -> *mut ConcurrentTask {
+    pub fn create_from<T: Taskable>(task: *mut T) -> *mut ConcurrentTask {
         // TODO(port): re-enable once `mark_binding!` macro arity matches
         // `ScopedLogger::log` (concurrent bun_core edit changed it to 1-arg).
         // bun_core::mark_binding!();

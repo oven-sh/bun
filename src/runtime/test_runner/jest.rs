@@ -615,20 +615,20 @@ pub fn format_label(
             let var_start = idx + 1;
             let mut var_end = var_start;
 
-            if bun_js_parser::js_lexer::is_identifier_start(label[var_end]) {
+            if bun_js_parser::js_lexer::is_identifier_start(label[var_end] as i32) {
                 var_end += 1;
 
                 while var_end < label.len() {
                     let c = label[var_end];
                     if c == b'.' {
                         if var_end + 1 < label.len()
-                            && bun_js_parser::js_lexer::is_identifier_continue(label[var_end + 1])
+                            && bun_js_parser::js_lexer::is_identifier_continue(label[var_end + 1] as i32)
                         {
                             var_end += 1;
                         } else {
                             break;
                         }
-                    } else if bun_js_parser::js_lexer::is_identifier_continue(c) {
+                    } else if bun_js_parser::js_lexer::is_identifier_continue(c as i32) {
                         var_end += 1;
                     } else {
                         break;
@@ -657,7 +657,7 @@ pub fn format_label(
                 }
             } else {
                 while var_end < label.len()
-                    && (bun_js_parser::js_lexer::is_identifier_continue(label[var_end])
+                    && (bun_js_parser::js_lexer::is_identifier_continue(label[var_end] as i32)
                         && label[var_end] != b'$')
                 {
                     var_end += 1;

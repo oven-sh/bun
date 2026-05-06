@@ -16,6 +16,19 @@ use bun_sys::windows::libuv as uv;
 
 bun_core::declare_scope!(FileSink, visible);
 
+/// Local shim for `JSValue.asPromisePtr` (not yet exported from `bun_jsc`):
+/// recover the `*mut T` smuggled through `Promise.then`'s trailing context arg.
+trait JSValuePromisePtrExt {
+    fn as_promise_ptr<T>(self) -> *mut T;
+}
+impl JSValuePromisePtrExt for JSValue {
+    #[inline]
+    fn as_promise_ptr<T>(self) -> *mut T {
+        // PORT NOTE: Zig `asPromisePtr` does `@ptrFromInt(@intFromFloat(asNumber()))`.
+        self.as_number() as usize as *mut T
+    }
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // FileSink
 // ───────────────────────────────────────────────────────────────────────────

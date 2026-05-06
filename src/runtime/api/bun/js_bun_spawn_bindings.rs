@@ -1383,9 +1383,14 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         // SAFETY: signal is a valid *mut AbortSignal ref'd above.
         unsafe {
             (*signal).pending_activity_ref();
-            subprocess.abort_signal =
-                Some((*signal).add_listener(subprocess, Subprocess::on_abort_signal));
+            (*signal).add_listener(subprocess_ptr.cast(), Subprocess::on_abort_signal);
         }
+        // TODO(port): `subprocess.abort_signal` is `Option<Arc<AbortSignal>>`
+        // but `AbortSignal` is an opaque FFI handle (cannot be Arc-wrapped
+        // from a borrowed `&AbortSignal`). Retype the field to
+        // `Option<NonNull<AbortSignal>>` in subprocess.rs once its other call
+        // sites are reconciled.
+        let _ = signal;
     }
 
     if !IS_SYNC {

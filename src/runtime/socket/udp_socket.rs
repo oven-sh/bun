@@ -613,17 +613,19 @@ impl UDPSocket {
         let callback = Self::js().gc.on_error.get(this_value).unwrap_or(JSValue::ZERO);
         // SAFETY: global_this stored at construction; VM outlives socket.
         let global_this = unsafe { &*self.global_this };
-        let vm = global_this.bun_vm();
+        let vm = global_this.bun_vm_ptr();
 
         if err.is_termination_exception() {
             return;
         }
         if callback.is_empty_or_undefined_or_null() {
-            let _ = vm.uncaught_exception(global_this, err, false);
+            // SAFETY: VM pointer obtained from live global; single JS thread.
+            let _ = unsafe { (*vm).uncaught_exception(global_this, err, false) };
             return;
         }
 
-        let event_loop = vm.event_loop();
+        // SAFETY: VM pointer obtained from live global; event_loop outlives this call.
+        let event_loop = unsafe { &mut *(*vm).event_loop() };
         event_loop.enter();
         let result = callback.call(global_this, this_value, &[err.to_error().unwrap_or(err)]);
         if let Err(e) = result {

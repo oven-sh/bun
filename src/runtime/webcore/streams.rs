@@ -2294,30 +2294,41 @@ impl BufferAction {
     // BufferActionTag)`; `swap()` here yields `*mut JSPromise`. Un-gate once an
     // `AnyPromise::from(*mut JSPromise)` adapter exists.
     
-    pub fn fulfill(&mut self, global: &JSGlobalObject, blob: &mut AnyBlob) -> JsResult<()> {
-        // TODO(port): narrow error set — Zig: bun.JSTerminated!void
-        Ok(blob.wrap(
-            jsc::AnyPromise::Normal(self.swap()),
-            global,
-            self.tag(),
-        )?)
+    // PORT NOTE: callers (ByteStream) hold `*const JSGlobalObject` on a heap
+    // struct (JSC_BORROW). Accept the raw pointer here and re-borrow at the
+    // call boundary so callers don't need an `unsafe { &* }` at each site.
+    pub fn fulfill(
+        &mut self,
+        global: *const JSGlobalObject,
+        blob: &mut AnyBlob,
+    ) -> core::result::Result<(), jsc::JsTerminated> {
+        // SAFETY: `global` is a JSC_BORROW stored from a live `&JSGlobalObject`;
+        // valid for the program lifetime of the JS VM thread.
+        let global = unsafe { &*global };
+        blob.wrap(jsc::AnyPromise::Normal(self.swap()), global, self.tag())
         // TODO(port): Zig passed `this.*` (full enum) as 3rd arg; using tag()
     }
 
-    pub fn reject(&mut self, global: &JSGlobalObject, err: StreamError) -> JsResult<()> {
-        // TODO(port): narrow error set — Zig: bun.JSTerminated!void
+    pub fn reject(
+        &mut self,
+        global: *const JSGlobalObject,
+        err: StreamError,
+    ) -> core::result::Result<(), jsc::JsTerminated> {
+        // SAFETY: see `fulfill`.
+        let global = unsafe { &*global };
         // SAFETY: swap returns valid promise ptr
-        unsafe { &mut *self.swap() }
-            .reject(global, Ok(err.to_js_weak(global).0))
-            .map_err(|_| JsError::Terminated)
+        unsafe { &mut *self.swap() }.reject(global, Ok(err.to_js_weak(global).0))
     }
 
-    pub fn resolve(&mut self, global: &JSGlobalObject, result: JSValue) -> JsResult<()> {
-        // TODO(port): narrow error set — Zig: bun.JSTerminated!void
+    pub fn resolve(
+        &mut self,
+        global: *const JSGlobalObject,
+        result: JSValue,
+    ) -> core::result::Result<(), jsc::JsTerminated> {
+        // SAFETY: see `fulfill`.
+        let global = unsafe { &*global };
         // SAFETY: swap returns valid promise ptr
-        unsafe { &mut *self.swap() }
-            .resolve(global, result)
-            .map_err(|_| JsError::Terminated)
+        unsafe { &mut *self.swap() }.resolve(global, result)
     }
 
     pub fn value(&self) -> JSValue {

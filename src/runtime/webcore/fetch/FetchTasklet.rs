@@ -132,10 +132,10 @@ pub struct FetchTasklet {
     pub has_schedule_callback: AtomicBool,
 
     // must be stored because AbortSignal stores reason weakly
-    pub abort_reason: Strong,
+    pub abort_reason: StrongOptional,
 
     // custom checkServerIdentity
-    pub check_server_identity: Strong,
+    pub check_server_identity: StrongOptional,
     pub reject_unauthorized: bool,
     pub upgraded_connection: bool,
     // Custom Hostname
@@ -156,9 +156,15 @@ pub enum HTTPRequestBody {
     ReadableStream(ReadableStreamStrong),
 }
 
-impl HTTPRequestBody {
-    pub const EMPTY: HTTPRequestBody = HTTPRequestBody::AnyBlob(AnyBlob::Blob(Blob::EMPTY));
+impl Default for HTTPRequestBody {
+    fn default() -> Self {
+        // PORT NOTE: Zig `= .{ .AnyBlob = .{} }`; `Blob` has no `const EMPTY`
+        // (non-Copy fields), so use the runtime `Default` instead of a const.
+        HTTPRequestBody::AnyBlob(AnyBlob::Blob(Blob::default()))
+    }
+}
 
+impl HTTPRequestBody {
     pub fn store(&self) -> Option<&BlobStore> {
         match self {
             HTTPRequestBody::AnyBlob(blob) => blob.store(),

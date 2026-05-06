@@ -1807,7 +1807,7 @@ impl JSValkeyClient {
             // unsubscribing from all channels.
             // PERF(port): was assume_capacity
             let Some(ch) = from_js(global, channel)? else {
-                return global.throw_invalid_argument_type("unsubscribe", "channel", "string");
+                return Err(global.throw_invalid_argument_type("unsubscribe", "channel", "string"));
             };
             redis_channels.push(ch);
 

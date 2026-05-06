@@ -6,11 +6,11 @@ use bun_io::Write as _;
 use bun_collections::HashMap;
 use bun_core::{fmt as bun_fmt, Output};
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSObject, JSPropertyIterator, JSType,
-    JSValue, JsError, JsResult, VM,
+    self as jsc, CallFrame, ComptimeStringMapExt as _, JSGlobalObject, JSObject,
+    JSPropertyIterator, JSType, JSValue, JsError, JsResult, VM,
 };
 use bun_js_parser::js_lexer as JSLexer;
-use bun_str::{strings, ZigString};
+use bun_str::{strings, ZigString, ZigStringSlice};
 
 use super::expect;
 
@@ -21,7 +21,7 @@ use super::expect;
 /// (`format_args!("{}", …)`, `writer.write_all(&…)`, `….as_bytes()`).
 #[inline]
 fn pretty_fmt_const<const ENABLE_ANSI_COLORS: bool>(s: &str) -> PrettyStr {
-    PrettyStr(Output::pretty_fmt(s, ENABLE_ANSI_COLORS).0)
+    PrettyStr(Output::pretty_fmt_rt(s, ENABLE_ANSI_COLORS).0)
 }
 #[repr(transparent)]
 pub struct PrettyStr(Vec<u8>);

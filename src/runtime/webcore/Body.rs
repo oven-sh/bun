@@ -1776,7 +1776,12 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
         }
 
         let mut blob: AnyBlob = value.use_as_any_blob();
-        let encoding = encoder.encoding;
+        // PORT NOTE: `encoder.encoding` is `bun_core::form_data::Encoding`; convert
+        // to the `webcore::form_data::Encoding` shape FormData::to_js expects.
+        let encoding = match encoder.encoding {
+            bun_core::form_data::Encoding::URLEncoded => webcore::form_data::Encoding::URLEncoded,
+            bun_core::form_data::Encoding::Multipart(b) => webcore::form_data::Encoding::Multipart(b),
+        };
         // encoder dropped at end of scope (replaces defer encoder.deinit())
 
         let js_value = match webcore::form_data::FormData::to_js(global_object, blob.slice(), &encoding) {
@@ -1784,8 +1789,10 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
             Err(err) => {
                 blob.detach();
                 return Ok(global_object
-                    .err(jsc::ErrorCode::FORMDATA_PARSE_ERROR)
-                    .message(format_args!("FormData parse error {}", err.name()))
+                    .err(
+                        jsc::ErrorCode::FORMDATA_PARSE_ERROR,
+                        format_args!("FormData parse error {}", err.name()),
+                    )
                     .reject());
             }
         };

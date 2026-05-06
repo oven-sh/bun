@@ -17,17 +17,75 @@ declare_scope!(FormData, visible);
 // has no `resolve`/`reject` yet; thin local helpers dispatch to the underlying
 // `JSPromise` / `JSInternalPromise`.
 #[inline]
-fn any_promise_reject(p: AnyPromise, global: &JSGlobalObject, value: JSValue) {
+fn any_promise_reject(p: AnyPromise, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
     match p {
-        AnyPromise::Normal(ptr) => unsafe { (*ptr).reject(global, value) },
-        AnyPromise::Internal(ptr) => unsafe { (*ptr).reject(global, value) },
+        AnyPromise::Normal(ptr) => unsafe { (*ptr).reject(global, Ok(value))? },
+        AnyPromise::Internal(ptr) => unsafe { (*ptr).reject(global, Ok(value))? },
     }
+    Ok(())
 }
 #[inline]
-fn any_promise_resolve(p: AnyPromise, global: &JSGlobalObject, value: JSValue) {
+fn any_promise_resolve(p: AnyPromise, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
     match p {
-        AnyPromise::Normal(ptr) => unsafe { (*ptr).resolve(global, value) },
-        AnyPromise::Internal(ptr) => unsafe { (*ptr).resolve(global, value) },
+        AnyPromise::Normal(ptr) => unsafe { (*ptr).resolve(global, value)? },
+        AnyPromise::Internal(ptr) => unsafe { (*ptr).resolve(global, value)? },
+    }
+    Ok(())
+}
+
+// PORT NOTE: `bun_jsc::DOMFormData` is currently an opaque `stub_ty!` (real impl
+// gated behind `#[cfg(any())]` in jsc/lib.rs). Declare the underlying C++ externs
+// locally and dispatch through free fns so this file compiles independently.
+mod dom_form_data_shim {
+    use super::{DOMFormData, JSGlobalObject, JSValue, ZigString};
+    use core::ffi::c_void;
+
+    unsafe extern "C" {
+        fn WebCore__DOMFormData__create(arg0: *mut JSGlobalObject) -> JSValue;
+        fn WebCore__DOMFormData__createFromURLQuery(
+            arg0: *mut JSGlobalObject,
+            arg1: *const ZigString,
+        ) -> JSValue;
+        fn WebCore__DOMFormData__fromJS(js_value0: JSValue) -> *mut DOMFormData;
+        fn WebCore__DOMFormData__append(
+            arg0: *mut DOMFormData,
+            arg1: *const ZigString,
+            arg2: *const ZigString,
+        );
+        fn WebCore__DOMFormData__appendBlob(
+            arg0: *mut DOMFormData,
+            arg1: *mut JSGlobalObject,
+            arg2: *const ZigString,
+            arg3: *mut c_void,
+            arg4: *const ZigString,
+        );
+    }
+
+    #[inline]
+    pub fn create(global: &JSGlobalObject) -> JSValue {
+        unsafe { WebCore__DOMFormData__create(global.as_ptr()) }
+    }
+    #[inline]
+    pub fn create_from_url_query(global: &JSGlobalObject, query: &ZigString) -> JSValue {
+        unsafe { WebCore__DOMFormData__createFromURLQuery(global.as_ptr(), query) }
+    }
+    #[inline]
+    pub fn from_js<'a>(value: JSValue) -> Option<&'a mut DOMFormData> {
+        unsafe { WebCore__DOMFormData__fromJS(value).as_mut() }
+    }
+    #[inline]
+    pub fn append(form: *mut DOMFormData, name_: &ZigString, value_: &ZigString) {
+        unsafe { WebCore__DOMFormData__append(form, name_, value_) }
+    }
+    #[inline]
+    pub fn append_blob(
+        form: *mut DOMFormData,
+        global: &JSGlobalObject,
+        name_: &ZigString,
+        blob: *mut c_void,
+        filename_: &ZigString,
+    ) {
+        unsafe { WebCore__DOMFormData__appendBlob(form, global.as_ptr(), name_, blob, filename_) }
     }
 }
 

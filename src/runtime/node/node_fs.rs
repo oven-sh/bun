@@ -4547,7 +4547,11 @@ impl NodeFS {
 
     fn read_inner(&mut self, args: &args::Read) -> Maybe<ret::Read> {
         debug_assert!(args.position.is_none());
-        let mut buf = args.buffer.slice_mut();
+        // SAFETY: the ArrayBuffer's backing store is JS-owned heap memory that
+        // `read(2)` writes into; `&args` only borrows the *handle* immutably,
+        // not the bytes (matches Zig's `args.buffer.slice()` returning `[]u8`).
+        let s = args.buffer.slice();
+        let mut buf = unsafe { core::slice::from_raw_parts_mut(s.as_ptr() as *mut u8, s.len()) };
         let off = (args.offset as usize).min(buf.len());
         buf = &mut buf[off..];
         let l = (args.length as usize).min(buf.len());

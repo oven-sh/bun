@@ -2972,7 +2972,9 @@ impl NativeCallbacks {
         match self {
             NativeCallbacks::H2(h2) => {
                 // TODO: properly propagate exception upwards
-                if h2.on_native_read(data).is_err() {
+                // SAFETY: intrusive refcount keeps `h2` alive; `RefPtr` lacks
+                // `DerefMut`, so reach the pointee via the raw NonNull.
+                if unsafe { (*h2.data.as_ptr()).on_native_read(data) }.is_err() {
                     return false;
                 }
                 true
@@ -2983,7 +2985,8 @@ impl NativeCallbacks {
     pub fn on_writable(&self) -> bool {
         match self {
             NativeCallbacks::H2(h2) => {
-                h2.on_native_writable();
+                // SAFETY: see `on_data`.
+                unsafe { (*h2.data.as_ptr()).on_native_writable() };
                 true
             }
             NativeCallbacks::None => false,

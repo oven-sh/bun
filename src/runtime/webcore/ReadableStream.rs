@@ -729,7 +729,19 @@ impl<C: SourceContext> NewSource<C> {
     pub fn new(init: Self) -> Box<Self> {
         Box::new(init)
     }
-    // `bun.TrivialDeinit(@This())` → drop(Box<Self>)
+
+    /// `bun.TrivialDeinit(@This())` — frees the heap allocation owned by `Self::new`.
+    /// Called from `C::deinit_fn` (via `context.parent().deinit()`); after this returns,
+    /// `self` is dangling.
+    ///
+    /// # Safety
+    /// `self` must be the unique owner of a `Box<Self>` allocated via `Self::new`. The
+    /// caller must not touch `self` (or the embedded `context`) after this call.
+    pub unsafe fn deinit(&mut self) {
+        // SAFETY: per contract, `self` was `Box::into_raw`'d (or `Box::new`'d and leaked into
+        // the JS wrapper as `m_ctx`). Reconstitute and drop.
+        drop(unsafe { Box::from_raw(self as *mut Self) });
+    }
 
     pub fn pull(&mut self, buf: &mut [u8]) -> streams::Result {
         self.context.on_pull(buf, JSValue::ZERO)

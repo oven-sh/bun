@@ -633,42 +633,53 @@ impl S3BlobStatTask {
     // deinit: store.deref() + promise.deinit() + bun.destroy(this) — all handled by Box<Self> Drop
 }
 
+// PORT NOTE: local shim for `Method::from_js` — `bun_http::Method` has no JSC dep.
+// Mirrors the shim in `webcore/Response.rs` / `webcore/fetch.rs`.
+fn method_from_js(_global: &JSGlobalObject, _value: JSValue) -> JsResult<Option<Method>> {
+    todo!("blocked_on: bun_http_jsc::Method::from_js")
+}
+
 pub fn get_presign_url_from(this: &mut Blob, global: &JSGlobalObject, extra_options: Option<JSValue>) -> JsResult<JSValue> {
     if !this.is_s3() {
-        return global.err(bun_jsc::ErrorCode::INVALID_THIS, "presign is only possible for s3:// files", &[]).throw();
+        return Err(global
+            .err(bun_jsc::ErrorCode::INVALID_THIS, format_args!("presign is only possible for s3:// files"))
+            .throw());
     }
 
     let mut method: Method = Method::GET;
     let mut expires: usize = 86400; // 1 day default
 
     let s3 = this.store.as_ref().unwrap().data.as_s3();
-    let mut credentials_with_options = s3::S3CredentialsWithOptions {
-        credentials: s3.get_credentials().clone(),
-        request_payer: s3.request_payer,
-        ..Default::default()
-    };
+    // PORT NOTE: `S3CredentialsWithOptions` is not `Default` (raw-ptr fields). When no
+    // `extra_options` are passed we only need `.credentials`, `.request_payer`, `.acl`,
+    // `.storage_class`, `.content_*` from it. Compute it via the same code path as the
+    // options branch by passing `None` so the struct is fully initialized.
+    let mut credentials_with_options = s3.get_credentials_with_options(None, global)?;
+    credentials_with_options.credentials = (**s3.get_credentials()).clone();
+    credentials_with_options.request_payer = s3.request_payer;
 
     if let Some(options) = extra_options {
         if options.is_object() {
             if let Some(method_) = options.get_truthy(global, "method")? {
-                method = match Method::from_js(global, method_)? {
+                method = match method_from_js(global, method_)? {
                     Some(m) => m,
                     None => {
-                        return global.throw_invalid_arguments(
+                        return Err(global.throw_invalid_arguments(
                             "method must be GET, PUT, DELETE or HEAD when using s3 protocol",
-                            &[],
-                        );
+                        ));
                     }
                 };
             }
-            if let Some(expires_) = options.get_optional::<i32>(global, "expiresIn")? {
+            if let Some(expires_js) = options.get_truthy(global, "expiresIn")? {
+                // TODO(port): blocked_on bun_jsc::JSValue::get_optional::<i32>
+                let expires_ = expires_js.coerce_to_int32(global)?;
                 if expires_ <= 0 {
-                    return global.throw_invalid_arguments("expiresIn must be greather than 0", &[]);
+                    return Err(global.throw_invalid_arguments("expiresIn must be greather than 0"));
                 }
                 expires = usize::try_from(expires_).unwrap();
             }
         }
-        credentials_with_options = s3.get_credentials_with_options(options, global)?;
+        credentials_with_options = s3.get_credentials_with_options(Some(options), global)?;
     }
     let path = s3.path();
 
@@ -691,9 +702,10 @@ pub fn get_presign_url_from(this: &mut Blob, global: &JSGlobalObject, extra_opti
         Some(bun_s3_signing::SignQueryOptions { expires }),
     ) {
         Ok(r) => r,
-        Err(sign_err) => return s3::throw_sign_error(sign_err, global),
+        Err(sign_err) => return Err(s3::throw_sign_error(sign_err, global)),
     };
-    bun_str::String::create_utf8_for_js(this.global_this, &result.url)
+    // SAFETY: `Blob.global_this` is the JSGlobalObject the blob was created with; live for VM lifetime.
+    bun_jsc::bun_string_jsc::create_utf8_for_js(unsafe { &*this.global_this }, &result.url)
 }
 
 pub fn get_bucket_name(this: &Blob) -> Option<&[u8]> {

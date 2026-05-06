@@ -591,9 +591,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
                 needs_reindex: false,
             }
         );
-        w!(source_maps, SourceMapStore::EMPTY);
-        // TODO(port): blocked_on: SourceMapStore::EMPTY const — needs Default
-        // for inner LinearFifo/EventLoopTimer; see source_map_store.rs
+        w!(source_maps, SourceMapStore::empty());
         w!(plugin_state, PluginState::Unknown);
         w!(bundling_failures, Default::default());
         w!(
@@ -648,7 +646,8 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     // not dereference it until `start()` spawns the watcher thread, by which point
     // every `DevServer` field is initialized (`assume_init` below precedes
     // `bun_watcher.start()`).
-    let bun_watcher = match Watcher::init::<DevServer>(p, fs) {
+    // SAFETY: `FileSystem::init` returns a 'static singleton; reborrow as `&'static`.
+    let bun_watcher = match Watcher::init::<DevServer>(p, unsafe { &*fs }) {
         Ok(w) => w,
         Err(err) => {
             return Err(
@@ -736,9 +735,11 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     let mut dev: Box<DevServer> = unsafe { dev_uninit.assume_init() };
     let dev_ptr: *mut DevServer = &mut *dev;
 
-    debug_assert!(::core::ptr::eq(dev.server_graph.owner(), &*dev));
-    debug_assert!(::core::ptr::eq(dev.client_graph.owner(), &*dev));
-    debug_assert!(::core::ptr::eq(dev.directory_watchers.owner(), &*dev));
+    // PORT NOTE: Zig asserted `*.owner() == dev` (intrusive parent-ptr derived
+    // via `@fieldParentPtr`). The Rust port stores these by value with no back-
+    // pointer; the assertion is moot until `owner()` is wired (blocked_on:
+    // IncrementalGraph/DirectoryWatchStore::owner).
+    let _ = (&dev.server_graph, &dev.client_graph, &dev.directory_watchers);
 
     dev.graph_safety_lock.lock();
     let _unlock = scopeguard::guard((), |_| dev.graph_safety_lock.unlock());

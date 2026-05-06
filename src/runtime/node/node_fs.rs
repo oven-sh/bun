@@ -3690,10 +3690,10 @@ pub mod ret {
     impl Readdir {
         pub fn to_js(self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
             match self {
-                Readdir::WithFileTypes(items) => {
+                Readdir::WithFileTypes(mut items) => {
                     let array = JSValue::create_empty_array(global_object, items.len())?;
                     let mut previous_jsstring: Option<*mut bun_jsc::JSString> = None;
-                    for (i, item) in items.iter().enumerate() {
+                    for (i, item) in items.iter_mut().enumerate() {
                         let res = item.to_js_newly_created(global_object, Some(&mut previous_jsstring))?;
                         array.put_index(global_object, i as u32, res)?;
                     }
@@ -3840,11 +3840,12 @@ impl NodeFS {
         src: &ZStr, dest: &ZStr, src_fd: FD, dest_fd: FD, stat_size: usize, wrote: &mut u64,
     ) -> Maybe<ret::CopyFile> {
         let mut stack_buf = [0u8; 64 * 1024];
+        let stack_buf_len = stack_buf.len();
         let mut buf_to_free: Vec<u8> = Vec::new();
         let mut buf: &mut [u8] = &mut stack_buf;
 
         'maybe_allocate_large_temp_buf: {
-            if stat_size > stack_buf.len() * 16 {
+            if stat_size > stack_buf_len * 16 {
                 // Don't allocate more than 8 MB at a time
                 let clamped_size: usize = stat_size.min(8 * 1024 * 1024);
                 let Ok(()) = (|| { buf_to_free.try_reserve_exact(clamped_size)?; buf_to_free.resize(clamped_size, 0); Ok::<(), std::collections::TryReserveError>(()) })()

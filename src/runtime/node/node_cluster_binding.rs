@@ -118,7 +118,8 @@ pub fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
 
     #[bun_jsc::host_fn]
     fn impl_(global_: &JSGlobalObject, frame_: &CallFrame) -> JsResult<JSValue> {
-        let arguments_ = frame_.arguments_old::<1>().slice();
+        let arguments_ = frame_.arguments_old::<1>();
+        let arguments_ = arguments_.slice();
         let ex = arguments_[0];
         // SAFETY: FFI call into C++; `global_` is a live JSGlobalObject* for the duration
         // of the call. Passed as `*const` — mutation happens behind the FFI boundary, so
@@ -300,7 +301,7 @@ pub fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
         return Err(global.throw_missing_arguments_value(&["message"]));
     }
     if !message.is_object() {
-        return Err(global.throw_invalid_argument_type_value(b"message", b"object", message));
+        return Err(global.throw_invalid_argument_type_value("message", "object", message));
     }
     if callback.is_function() {
         // TODO(port): blocked — `SendQueue.internal_msg_queue` is an opaque
@@ -380,7 +381,7 @@ pub fn set_ref(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> 
         return Err(global.throw_missing_arguments_value(&["enabled"]));
     }
     if !arguments[0].is_boolean() {
-        return Err(global.throw_invalid_argument_type_value(b"enabled", b"boolean", arguments[0]));
+        return Err(global.throw_invalid_argument_type_value("enabled", "boolean", arguments[0]));
     }
 
     let enabled = arguments[0].to_boolean();

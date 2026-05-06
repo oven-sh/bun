@@ -1858,7 +1858,7 @@ pub fn do_send(
     call_frame: &CallFrame,
     from: FromEnum,
 ) -> JsResult<JSValue> {
-    let [mut message, mut handle, mut options_, mut callback] =
+    let [mut message, mut handle, options_, mut callback] =
         call_frame.arguments_as_array::<4>();
 
     if handle.is_callable() {

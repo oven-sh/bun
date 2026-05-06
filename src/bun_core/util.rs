@@ -2029,7 +2029,7 @@ pub fn maybe_handle_panic_during_process_reload() {
     if is_process_reload_in_progress_on_another_thread() {
         crate::output::flush();
         #[cfg(debug_assertions)]
-        crate::output::debug_warn(format_args!("panic() called during process reload, ignoring\n"));
+        crate::output::debug_warn("panic() called during process reload, ignoring\n", ());
         // Zig: `bun.exitThread()`. POSIX `pthread_exit`; Windows `ExitThread`.
         #[cfg(unix)]
         unsafe { libc::pthread_exit(core::ptr::null_mut()); }
@@ -2071,7 +2071,7 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         const WATCHER_RELOAD_EXIT: u32 = 0xC037_0332; // bun.windows.watcher_reload_exit
         let rc = unsafe { TerminateProcess(GetCurrentProcess(), WATCHER_RELOAD_EXIT) };
         if may_return {
-            crate::output::pretty_errorln(format_args!("error: Failed to reload process"));
+            crate::output::pretty_errorln("error: Failed to reload process", ());
             return;
         }
         panic!("Unexpected error while reloading process");
@@ -2102,7 +2102,7 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         // execve only returns on error.
         let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(-1);
         if may_return {
-            crate::output::pretty_errorln(format_args!("error: Failed to reload process: errno {}", errno));
+            crate::output::pretty_errorln("error: Failed to reload process: errno {}", (errno,));
             return;
         }
         panic!("Unexpected error while reloading: errno {}", errno);

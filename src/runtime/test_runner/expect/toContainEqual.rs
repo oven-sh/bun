@@ -1,5 +1,5 @@
 use core::ffi::c_void;
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, BigIntCompare, make_formatter};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 
 use bun_jsc::console_object::Formatter;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, VM};
@@ -15,7 +15,7 @@ struct ExpectedEntry<'a> {
 
 extern "C" fn deep_equals_iterator(
     _: *mut Vm,
-    _: *mut JSGlobalObject,
+    _: &JSGlobalObject,
     entry_: *mut c_void,
     item: JSValue,
 ) {

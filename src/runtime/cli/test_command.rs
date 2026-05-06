@@ -295,15 +295,26 @@ impl JunitReporter {
 
             #[cfg(not(windows))]
             {
-                let mut name_buffer = [0u8; bun::HOST_NAME_MAX];
-                let hostname = match bun_sys::posix::gethostname(&mut name_buffer) {
-                    // TODO(port): std.posix.gethostname → bun_sys equivalent
-                    Ok(h) => h,
-                    Err(_) => {
-                        self.hostname_value = Some(Box::default());
-                        return None;
-                    }
+                // TODO(b2-blocked): `bun_sys::posix::gethostname` /
+                // `bun_core::HOST_NAME_MAX` are not yet on the lower-tier
+                // surface. Hardcode the libc max and call libc directly so
+                // the JUnit hostname attribute still works.
+                const HOST_NAME_MAX: usize = 256;
+                let mut name_buffer = [0u8; HOST_NAME_MAX];
+                // SAFETY: `name_buffer` is HOST_NAME_MAX bytes; libc writes a
+                // NUL-terminated hostname or returns -1.
+                let rc = unsafe {
+                    libc::gethostname(
+                        name_buffer.as_mut_ptr() as *mut libc::c_char,
+                        name_buffer.len(),
+                    )
                 };
+                if rc != 0 {
+                    self.hostname_value = Some(Box::default());
+                    return None;
+                }
+                let len = name_buffer.iter().position(|&b| b == 0).unwrap_or(0);
+                let hostname = &name_buffer[..len];
 
                 let mut arraylist_writer: Vec<u8> = Vec::new();
                 if escape_xml(hostname, &mut arraylist_writer).is_err() {

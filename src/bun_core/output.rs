@@ -424,7 +424,8 @@ impl Source {
         // are gated in bun_alloc; re-enable once bun_alloc/basic.rs is un-gated.
         
         if cfg!(debug_assertions) && bun_alloc::USE_MIMALLOC && !SOURCE_SET.get() {
-            bun_alloc::mimalloc::mi_option_set(bun_alloc::mimalloc::Option::ShowErrors, 1);
+            // SAFETY: FFI call with no preconditions; sets a global mimalloc option.
+            unsafe { bun_alloc::mimalloc::mi_option_set(bun_alloc::mimalloc::Option::show_errors, 1) };
         }
         SOURCE_SET.set(true);
 
@@ -2524,8 +2525,9 @@ pub fn init_scoped_debug_writer_at_startup() {
                 )),
             };
             // TODO(b2-blocked): bun_sys::Fd::truncate (Windows-only); add to OutputSinkVTable.
-            
-            let _ = fd.truncate(0); // windows
+            // `create_file` above already opens for writing with truncate, so the explicit
+            // `fd.truncate(0)` from Zig is a no-op here until the vtable entry lands.
+            let _ = &fd; // windows
             // SAFETY: single-threaded startup.
             unsafe {
                 scoped_debug_writer::SCOPED_FILE_WRITER =

@@ -26,7 +26,6 @@ mod _gated_submods {
     pub use s3_client::S3Client;
     pub mod cookie_map;
     pub use cookie_map::CookieMap;
-    pub mod object_url_registry;
     pub mod byte_blob_loader;
     pub mod byte_stream;
 
@@ -36,6 +35,10 @@ mod _gated_submods {
     pub use streams::H3ResponseSink;
     pub use streams::HTTPServerWritable;
 }
+
+#[path = "webcore/ObjectURLRegistry.rs"]
+pub mod object_url_registry;
+pub use object_url_registry::ObjectURLRegistry;
 
 // ─── webcore-local jsc re-export ─────────────────────────────────────────────
 // `bun_jsc` is now a dep of `bun_runtime`; forward to it. The local `codegen`

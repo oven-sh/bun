@@ -337,7 +337,7 @@ impl Expect {
         matcher_params_fmt: &'static str,
     ) -> JsResult<JSValue> {
         let Some(value) = Self::js::captured_value_get_cached(this_value) else {
-            return Err(global_this.throw(
+            return Err(global_this.throw2(
                 "Internal error: the expect(value) was garbage collected but it should not have been!",
                 format_args!(""),
             ));
@@ -1108,7 +1108,7 @@ impl Expect {
 
         if value.jest_snapshot_pretty_format(pretty_value, global_this).is_err() {
             let mut formatter = ConsoleObject::Formatter::new(global_this);
-            return Err(global_this.throw(
+            return Err(global_this.throw2(
                 "Failed to pretty format value: {f}",
                 format_args!("{}", value.to_fmt(&mut formatter)),
             ));
@@ -1138,16 +1138,16 @@ impl Expect {
                 let test_file_path = runner.files.get(buntest.file_id).source.path.text;
                 return Err(match err {
                     e if e == bun_core::err!("FailedToOpenSnapshotFile") => {
-                        global_this.throw("Failed to open snapshot file for test file: {s}", format_args!("{}", bstr::BStr::new(test_file_path)))
+                        global_this.throw2("Failed to open snapshot file for test file: {s}", format_args!("{}", bstr::BStr::new(test_file_path)))
                     }
                     e if e == bun_core::err!("FailedToMakeSnapshotDirectory") => {
-                        global_this.throw("Failed to make snapshot directory for test file: {s}", format_args!("{}", bstr::BStr::new(test_file_path)))
+                        global_this.throw2("Failed to make snapshot directory for test file: {s}", format_args!("{}", bstr::BStr::new(test_file_path)))
                     }
                     e if e == bun_core::err!("FailedToWriteSnapshotFile") => {
-                        global_this.throw("Failed write to snapshot file: {s}", format_args!("{}", bstr::BStr::new(test_file_path)))
+                        global_this.throw2("Failed write to snapshot file: {s}", format_args!("{}", bstr::BStr::new(test_file_path)))
                     }
                     e if e == bun_core::err!("SyntaxError") || e == bun_core::err!("ParseError") => {
-                        global_this.throw("Failed to parse snapshot file for: {s}", format_args!("{}", bstr::BStr::new(test_file_path)))
+                        global_this.throw2("Failed to parse snapshot file for: {s}", format_args!("{}", bstr::BStr::new(test_file_path)))
                     }
                     e if e == bun_core::err!("SnapshotCreationNotAllowedInCI") => {
                         let snapshot_name = runner.snapshots.last_error_snapshot_name.take();
@@ -1157,9 +1157,9 @@ impl Expect {
                                 format_args!("{} {}", bstr::BStr::new(&name), bstr::BStr::new(&pretty_value)),
                             )
                         } else {
-                            global_this.throw(
-                                "Snapshot creation is disabled in CI environments unless --update-snapshots is used\nTo override, set the environment variable CI=false.\n\nReceived: {s}",
-                                format_args!("{}", bstr::BStr::new(&pretty_value)),
+                            global_this.throw2(
+                "Snapshot creation is disabled in CI environments unless --update-snapshots is used\nTo override, set the environment variable CI=false.\n\nReceived: {s}",
+                format_args!("{}", bstr::BStr::new(&pretty_value)),
                             )
                         }
                     }
@@ -1171,7 +1171,7 @@ impl Expect {
                     }
                     _ => {
                         let mut formatter = ConsoleObject::Formatter::new(global_this);
-                        global_this.throw("Failed to snapshot value: {f}", format_args!("{}", value.to_fmt(&mut formatter)))
+                        global_this.throw2("Failed to snapshot value: {f}", format_args!("{}", value.to_fmt(&mut formatter)))
                     }
                 });
             }
@@ -1391,9 +1391,9 @@ impl Expect {
                     // TODO: rewrite this code to use .then() instead of blocking the event loop
                     // SAFETY: per-use reborrow of the thread-local VM (see VirtualMachine::get docs).
                     unsafe { &mut *VirtualMachine::get() }.run_error_handler(result, None);
-                    return Err(global_this.throw(
-                        "Matcher `{f}` returned a promise that rejected",
-                        format_args!("{}", matcher_name),
+                    return Err(global_this.throw2(
+                "Matcher `{f}` returned a promise that rejected",
+                format_args!("{}", matcher_name),
                     ));
                 }
             }
@@ -1475,7 +1475,7 @@ impl Expect {
         let func: JSValue = call_frame.callee();
         let mut matcher_fn: JSValue = get_custom_matcher_fn(func, global_this).unwrap_or(JSValue::UNDEFINED);
         if !matcher_fn.js_type().is_function() {
-            return Err(global_this.throw(
+            return Err(global_this.throw2(
                 "Internal consistency error: failed to retrieve the matcher function for a custom matcher!",
                 format_args!(""),
             ));
@@ -1503,7 +1503,7 @@ impl Expect {
 
         // retrieve the captured expected value
         let Some(mut value) = Self::js::captured_value_get_cached(this_value) else {
-            return Err(global_this.throw(
+            return Err(global_this.throw2(
                 "Internal consistency error: failed to retrieve the captured value",
                 format_args!(""),
             ));
@@ -1572,7 +1572,7 @@ impl Expect {
 
         if !expected.is_number() {
             let mut fmt = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
-            return Err(global_this.throw(
+            return Err(global_this.throw2(
                 "Expected value must be a non-negative integer: {f}",
                 format_args!("{}", expected.to_fmt(&mut fmt)),
             ));
@@ -1586,7 +1586,7 @@ impl Expect {
             || expected_assertions > u32::MAX as f64
         {
             let mut fmt = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
-            return Err(global_this.throw(
+            return Err(global_this.throw2(
                 "Expected value must be a non-negative integer: {f}",
                 format_args!("{}", expected.to_fmt(&mut fmt)),
             ));
@@ -1760,9 +1760,9 @@ impl ExpectStatic {
             Promise::Rejects => "rejectsTo",
             _ => unreachable!(),
         };
-        global_this.throw(
-            "expect.{s}: already called expect.{s} on this chain",
-            format_args!("{} {}", bstr::BStr::new(name), str),
+        global_this.throw2(
+                "expect.{s}: already called expect.{s} on this chain",
+                format_args!("{} {}", bstr::BStr::new(name), str),
         )
     }
 
@@ -2019,7 +2019,7 @@ impl ExpectAny {
         let arguments: &[JSValue] = &_arguments.ptr[.._arguments.len];
 
         if arguments.is_empty() {
-            return Err(global_this.throw(
+            return Err(global_this.throw2(
                 "any() expects to be passed a constructor function. Please pass one or use anything() to match any object.",
                 format_args!(""),
             ));
@@ -2154,14 +2154,14 @@ impl ExpectCustomAsymmetricMatcher {
     ) -> JsResult<bool> {
         // retrieve the user-provided matcher implementation function (the function passed to expect.extend({ ... }))
         let Some(matcher_fn) = Self::js::matcher_fn_get_cached(this_value) else {
-            return Err(global_this.throw(
+            return Err(global_this.throw2(
                 "Internal consistency error: the ExpectCustomAsymmetricMatcher(matcherFn) was garbage collected but it should not have been!",
                 format_args!(""),
             ));
         };
         matcher_fn.ensure_still_alive();
         if !matcher_fn.js_type().is_function() {
-            return Err(global_this.throw(
+            return Err(global_this.throw2(
                 "Internal consistency error: the ExpectCustomMatcher(matcherFn) is not a function!",
                 format_args!(""),
             ));
@@ -2173,7 +2173,7 @@ impl ExpectCustomAsymmetricMatcher {
         // retrieve the asymmetric matcher args
         // if null, it means the function has not yet been called to capture the args, which is a misuse of the matcher
         let Some(captured_args) = Self::js::captured_args_get_cached(this_value) else {
-            return Err(global_this.throw(
+            return Err(global_this.throw2(
                 "expect.{f} misused, it needs to be instantiated by calling it with 0 or more arguments",
                 format_args!("{}", matcher_name),
             ));
@@ -2326,7 +2326,7 @@ impl ExpectMatcherContext {
     pub fn equals(_this: &mut Self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<3>();
         if arguments.len < 2 {
-            return Err(global_this.throw(
+            return Err(global_this.throw2(
                 "expect.extends matcher: this.util.equals expects at least 2 arguments",
                 format_args!(""),
             ));
@@ -2423,7 +2423,7 @@ impl ExpectMatcherUtils {
         let arguments = callframe.arguments_old::<4>().slice();
 
         if arguments.is_empty() || !arguments[0].is_string() {
-            return Err(global_this.throw(
+            return Err(global_this.throw2(
                 "matcherHint: the first argument (matcher name) must be a string",
                 format_args!(""),
             ));
@@ -2445,9 +2445,9 @@ impl ExpectMatcherUtils {
 
         if !options.is_undefined_or_null() {
             if !options.is_object() {
-                return Err(global_this.throw(
-                    "matcherHint: options must be an object (or undefined)",
-                    format_args!(""),
+                return Err(global_this.throw2(
+                "matcherHint: options must be an object (or undefined)",
+                format_args!(""),
                 ));
             }
             if let Some(val) = options.get(global_this, "isNot")? {
@@ -2559,7 +2559,7 @@ pub mod mock {
         let returns: JSValue = JSMockFunction__getReturns(global_this, value)?;
         if !returns.js_type().is_array() {
             let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
-            return Err(global_this.throw(
+            return Err(global_this.throw2(
                 "Expected value must be a mock function: {f}",
                 format_args!("{}", value.to_fmt(&mut formatter)),
             ));
@@ -2577,9 +2577,9 @@ pub mod mock {
             }
         }
         let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
-        Err(global_this.throw(
-            "Expected value must be a mock function with returns: {f}",
-            format_args!("{}", value.to_fmt(&mut formatter)),
+        Err(global_this.throw2(
+                "Expected value must be a mock function with returns: {f}",
+                format_args!("{}", value.to_fmt(&mut formatter)),
         ))
     }
 

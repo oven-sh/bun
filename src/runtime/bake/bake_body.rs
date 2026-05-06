@@ -604,9 +604,9 @@ impl Framework {
                 )
                 .as_bytes(),
             );
+            let _ = arena;
             fw.built_in_modules.put(
-                arena,
-                b"react-refresh/runtime/index.js",
+                b"react-refresh/runtime/index.js" as &[u8],
                 react_refresh_code,
             )?;
         }
@@ -614,31 +614,51 @@ impl Framework {
         Ok(fw)
     }
 
-    /// Unopiniated default.
-    pub const NONE: Framework = Framework {
-        is_built_in_react: false,
-        file_system_router_types: Vec::new(),
-        server_components: None,
-        react_fast_refresh: None,
-        built_in_modules: ArrayHashMap::new(),
-    };
+    /// Unopinionated default. PORT NOTE: was `pub const NONE` —
+    /// `ArrayHashMap::new()` is not `const fn`.
+    pub fn none() -> Framework {
+        Framework {
+            is_built_in_react: false,
+            file_system_router_types: Vec::new(),
+            server_components: None,
+            react_fast_refresh: None,
+            built_in_modules: ArrayHashMap::new(),
+        }
+    }
+
+    /// `Framework.clone()` — manual because `ArrayHashMap` exposes a
+    /// fallible inherent `clone()` rather than `impl Clone`.
+    pub fn clone(&self) -> Framework {
+        Framework {
+            is_built_in_react: self.is_built_in_react,
+            file_system_router_types: self.file_system_router_types.clone(),
+            server_components: self.server_components.clone(),
+            react_fast_refresh: self.react_fast_refresh.clone(),
+            built_in_modules: bun_core::handle_oom(self.built_in_modules.clone()),
+        }
+    }
 
     pub const REACT_INSTALL_COMMAND: &'static str =
         "bun i react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental";
 
     pub fn add_react_install_command_note(log: &mut logger::Log) -> Result<(), bun_core::Error> {
+        let clone_line_text = log.clone_line_text;
         log.add_msg(logger::Msg {
             kind: logger::Kind::Note,
             data: logger::range_data(
                 None,
                 logger::Range::NONE,
+                // `range_data` takes `impl Into<Cow<'static, [u8]>>`;
+                // `concat!` yields `&'static str` — go via `.as_bytes()`.
                 concat!(
                     "Install the built in react integration with \"",
                     "bun i react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental",
                     "\""
-                ),
+                )
+                .as_bytes(),
             )
-            .clone_line_text(log.clone_line_text, log.msgs_allocator())?,
+            .clone_line_text(clone_line_text)?,
+            ..Default::default()
         })?;
         Ok(())
     }
@@ -677,9 +697,12 @@ impl Framework {
         }
 
         for fsr in clone.file_system_router_types.iter_mut() {
+            // SAFETY: `Resolver.fs` is a `*mut FileSystem` singleton (LIFETIMES.tsv
+            // JSC_BORROW), live for the resolver's lifetime.
+            let top_level_dir = unsafe { (*server.fs).top_level_dir };
             fsr.root = arena_erase(arena.alloc_slice_copy(
                 paths::resolve_path::join_abs::<paths::platform::Auto>(
-                    server.fs.top_level_dir,
+                    top_level_dir,
                     fsr.root,
                 ),
             ));

@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, BigIntCompare, make_formatter};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::console_object::Formatter;
 
 use super::{Expect, get_signature};

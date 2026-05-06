@@ -275,7 +275,10 @@ unsafe fn load_preloads(
     // ── is_in_preload guard ─────────────────────────────────────────────
     // SAFETY: per fn contract — `vm` is the live per-thread VM.
     unsafe { (*vm).is_in_preload = true };
-    let _preload_guard = scopeguard::guard((), |_| {
+    // PORT NOTE: `move` so the closure captures the `Copy` raw ptr by value
+    // instead of borrowing the local — otherwise borrowck rejects later
+    // `(*vm).pending_internal_promise = …` while the guard is live.
+    let _preload_guard = scopeguard::guard((), move |_| {
         // SAFETY: per fn contract.
         unsafe { (*vm).is_in_preload = false };
     });
@@ -586,7 +589,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
             // `timer` field address is stable for the VM lifetime.
             let have_timeout = unsafe {
                 timer::All::get_timeout(
-                    ptr::addr_of_mut!((*state).timer),
+                    &mut (*state).timer,
                     &mut timespec,
                     has_pending_immediate,
                     quic_next_tick_us,
@@ -618,7 +621,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         // `drain_timers` forms short-lived `&mut` only around heap pop/peek.
         // SAFETY: `state` is the live per-thread `RuntimeState`; the `timer`
         // field address is stable for the VM lifetime.
-        unsafe { timer::All::drain_timers(ptr::addr_of_mut!((*state).timer), vm.cast()) };
+        unsafe { timer::All::drain_timers(&mut (*state).timer, vm.cast()) };
     }
     #[cfg(not(unix))]
     let _ = state;

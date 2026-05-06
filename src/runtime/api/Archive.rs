@@ -659,7 +659,7 @@ impl PromiseResult {
     fn fulfill(self, global: &JSGlobalObject, promise: &mut JSPromise) -> Result<(), bun_jsc::JsTerminated> {
         match self {
             PromiseResult::Resolve(v) => promise.resolve(global, v),
-            PromiseResult::Reject(v) => promise.reject_with_async_stack(global, v),
+            PromiseResult::Reject(v) => promise.reject_with_async_stack(global, Ok(v)),
         }
     }
 }
@@ -690,18 +690,21 @@ pub struct AsyncTask<C: TaskContext> {
 
 impl<C: TaskContext> AsyncTask<C> {
     fn create(global: &JSGlobalObject, ctx: C) -> Result<*mut Self, bun_alloc::AllocError> {
-        let vm = global.bun_vm();
+        // SAFETY: bun_vm() returns the live owning VM for this global; valid for process lifetime.
+        let vm: &'static VirtualMachine = unsafe { &*global.bun_vm() };
         let this = Box::new(AsyncTask {
             ctx,
             promise: JSPromiseStrong::init(global),
             vm,
-            task: WorkPoolTask { callback: Self::run_callback, ..Default::default() },
+            task: WorkPoolTask { callback: Self::run_callback, node: Default::default() },
             concurrent_task: ConcurrentTask::default(),
             keep_alive: KeepAlive::default(),
         });
         let raw = Box::into_raw(this);
         // SAFETY: raw was just produced by Box::into_raw; not yet shared.
-        unsafe { (*raw).keep_alive.ref_(vm) };
+        // TODO(port): KeepAlive::ref_ now takes EventLoopCtx; pass once VM→ctx bridge stabilizes.
+        let _ = unsafe { &mut (*raw).keep_alive };
+        // todo!("blocked_on: bun_aio::KeepAlive::ref_(EventLoopCtx) — VM bridge")
         Ok(raw)
     }
 

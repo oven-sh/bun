@@ -908,10 +908,12 @@ impl PathLike {
         }
     }
 
-    pub fn deinit_and_unprotect(self) {
-        // Alternate cleanup path (unprotects JS-side buffers); consumes `self`
-        // and skips Drop to avoid double-release.
-        match &self {
+    pub fn deinit_and_unprotect(&self) {
+        // Alternate cleanup path (unprotects JS-side buffers).
+        // PORT NOTE: Zig consumes `self`; Rust call sites pass `&self` /
+        // `&mut self` interchangeably, so take by reference and rely on Drop
+        // for the owned-side release.
+        match self {
             Self::EncodedSlice(val) => val.deinit(),
             Self::ThreadsafeString(val) => val.deinit(),
             Self::SliceWithUnderlyingString(val) => val.deinit(),
@@ -920,7 +922,6 @@ impl PathLike {
             }
             _ => {}
         }
-        core::mem::forget(self);
     }
 
     // TODO(port): Zig return type is `if (force) [:0]u8 else [:0]const u8`.
@@ -1002,7 +1003,7 @@ impl PathLike {
     }
 
     #[inline]
-    pub fn os_path<'a>(&'a self, buf: &'a mut OsPathBuffer) -> OsPathSliceZ<'a> {
+    pub fn os_path<'a>(&'a self, buf: &'a mut OSPathBuffer) -> &'a OSPathSliceZ {
         #[cfg(windows)]
         {
             return self.slice_w(buf);
@@ -1014,7 +1015,7 @@ impl PathLike {
     }
 
     #[inline]
-    pub fn os_path_kernel32<'a>(&'a self, buf: &'a mut PathBuffer) -> OsPathSliceZ<'a> {
+    pub fn os_path_kernel32<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a OSPathSliceZ {
         #[cfg(windows)]
         {
             let s = self.slice();

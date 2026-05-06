@@ -428,7 +428,7 @@ unsafe fn fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, vm: *mut ()
             // SAFETY: §Dispatch — `t.tag` was set together with the container
             // at construction; tag uniquely identifies the embedding type and
             // `$field` is the `EventLoopTimer` slot `t` points into.
-            (t as *mut u8).sub(offset_of!($ty, $field)).cast::<$ty>()
+            unsafe { (t as *mut u8).sub(offset_of!($ty, $field)).cast::<$ty>() }
         }};
     }
 

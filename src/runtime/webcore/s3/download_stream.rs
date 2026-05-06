@@ -81,7 +81,7 @@ impl S3HttpDownloadStreamingTask {
                         code = req_err.name().as_bytes();
                         _has_body_code = true;
                     } else {
-                        let bytes = self.reported_response_buffer.as_slice();
+                        let bytes = self.reported_response_buffer.list.as_slice();
                         if !bytes.is_empty() {
                             message = bytes;
 
@@ -106,11 +106,11 @@ impl S3HttpDownloadStreamingTask {
                 }
                 break 'brk MutableString::default();
             } else {
-                // TODO(port): Zig copies the MutableString struct by value here (shallow copy of
-                // ptr+len+cap). Ownership of the buffer is effectively shared with
-                // `self.reported_response_buffer` until `.reset()` below. Phase B: confirm
-                // MutableString move/clone semantics.
-                let buffer = self.reported_response_buffer.shallow_copy();
+                // PORT NOTE: Zig copies the MutableString struct by value here (shallow copy of
+                // ptr+len+cap), then `.reset()` zeros the source — i.e. an ownership transfer.
+                // `core::mem::take` gives the same observable semantics in Rust without the
+                // transient aliasing the Zig code relied on.
+                let buffer = core::mem::take(&mut self.reported_response_buffer);
                 break 'brk buffer;
             }
         };
@@ -178,20 +178,17 @@ impl S3HttpDownloadStreamingTask {
             state.set_has_more(!is_done);
 
             state.set_request_error(if let Some(err) = result.fail {
-                err.into_raw()
+                err.as_u16()
             } else {
                 0
             });
             if state.status_code() == 0 {
-                if let Some(certificate) = &result.certificate_info {
-                    // TODO(port): Zig passes `bun.default_allocator`; Rust Drop on CertificateInfo
-                    // should handle this. Phase B: confirm whether explicit deinit is needed here.
-                    certificate.deinit();
-                }
-                if let Some(m) = result.metadata {
-                    let mut metadata = m;
-                    state.set_status_code(metadata.response.status_code);
-                    metadata.deinit();
+                // PORT NOTE: Zig explicitly `deinit()`s `certificate_info` / `metadata` here.
+                // In the Rust port both types free their owned buffers via `Drop`, and
+                // `HTTPClientResult` is dropped by the caller after this returns, so the
+                // explicit-free calls become no-ops.
+                if let Some(m) = &result.metadata {
+                    state.set_status_code(m.response.status_code);
                 }
             }
             match state.status_code() {
@@ -247,11 +244,11 @@ impl S3HttpDownloadStreamingTask {
                 // freshly-stored value) still point at — a use-after-free / double-free. The net
                 // effect of .zig:207-211 is: append `body`'s bytes to `reported_response_buffer`,
                 // then reset the buffer. Do exactly that, operating on `body` directly.
-                if !body.as_slice().is_empty() {
-                    self.reported_response_buffer.write(body.as_slice());
+                if !body.list.as_slice().is_empty() {
+                    let _ = self.reported_response_buffer.write(body.list.as_slice());
                 }
                 body.reset();
-                if self.reported_response_buffer.as_slice().is_empty() && !is_done {
+                if self.reported_response_buffer.list.as_slice().is_empty() && !is_done {
                     unlock(self);
                     return false;
                 }
@@ -300,7 +297,11 @@ impl S3HttpDownloadStreamingTask {
 
 impl Drop for S3HttpDownloadStreamingTask {
     fn drop(&mut self) {
-        self.poll_ref.unref(self.vm);
+        // PORT NOTE: KeepAlive::unref now takes an aio EventLoopCtx; the JS-loop ctx is fetched
+        // via the global hook (registered by bun_runtime::init) — same pattern as
+        // `S3HttpSimpleTask::drop` in simple_request.rs.
+        self.poll_ref
+            .unref(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
         // response_buffer, reported_response_buffer, headers, sign_result, range, proxy_url:
         // dropped automatically (Box/Vec-backed fields).
         self.http.clear_data();

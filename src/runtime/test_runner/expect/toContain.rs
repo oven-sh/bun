@@ -1,5 +1,5 @@
 use core::ffi::c_void;
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, BigIntCompare, make_formatter};
+#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, VM};
 use bun_jsc::console_object::Formatter;
@@ -75,7 +75,7 @@ impl Expect {
 
             extern "C" fn same_value_iterator(
                 _: *mut VM,
-                _: *mut JSGlobalObject,
+                _: &JSGlobalObject,
                 entry_: *mut c_void,
                 item: JSValue,
             ) {

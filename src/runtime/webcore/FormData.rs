@@ -2,15 +2,45 @@
 //! struct is webcore (fetch Body) and JSC-heavy; `url/` is JSC-free.
 
 use bun_collections::{ArrayHashMap, BabyList};
-use bun_core::{self, err};
-use bun_jsc::{AnyPromise, CallFrame, DOMFormData, JSGlobalObject, JSValue, JsError, JsResult};
-use bun_output::{declare_scope, scoped_log};
+use bun_core::{self, declare_scope, err, scoped_log};
+use bun_jsc::{
+    AnyPromise, CallFrame, DOMFormData, JSGlobalObject, JSValue, JsError, JsResult, ZigStringJsc as _,
+};
 use bun_semver::{self, SlicedString};
-use bun_str::{strings, ZigString};
+use bun_str::{strings, ZigString, ZigStringSlice};
 
 use crate::webcore::Blob;
 
 declare_scope!(FormData, visible);
+
+// PORT NOTE: `bun.strings.withoutUTF8BOM` lives in `immutable/unicode.rs` but
+// is not re-exported through `bun_str::strings` yet. Tiny enough to inline.
+#[inline]
+fn without_utf8_bom(bytes: &[u8]) -> &[u8] {
+    if bytes.len() >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF {
+        &bytes[3..]
+    } else {
+        bytes
+    }
+}
+
+// PORT NOTE: `bun_jsc::AnyPromise` (the pointer-variant exported from lib.rs)
+// has no `resolve`/`reject` yet; thin local helpers dispatch to the underlying
+// `JSPromise` / `JSInternalPromise`.
+#[inline]
+fn any_promise_reject(p: AnyPromise, global: &JSGlobalObject, value: JSValue) {
+    match p {
+        AnyPromise::Normal(ptr) => unsafe { (*ptr).reject(global, value) },
+        AnyPromise::Internal(ptr) => unsafe { (*ptr).reject(global, value) },
+    }
+}
+#[inline]
+fn any_promise_resolve(p: AnyPromise, global: &JSGlobalObject, value: JSValue) {
+    match p {
+        AnyPromise::Normal(ptr) => unsafe { (*ptr).resolve(global, value) },
+        AnyPromise::Internal(ptr) => unsafe { (*ptr).resolve(global, value) },
+    }
+}
 
 pub struct FormData {
     pub fields: Map,

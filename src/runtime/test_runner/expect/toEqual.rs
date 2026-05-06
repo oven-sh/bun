@@ -45,7 +45,7 @@ impl Expect {
             expected: Some(expected),
             received_string: None,
             expected_string: None,
-            global_this: global,
+            global_this: Some(global),
             not,
         };
 

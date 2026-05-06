@@ -10,8 +10,9 @@ pub fn to_contain_any_keys(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // TODO(port): borrowck — `defer this.postMatch(globalThis)` captures &mut self for scope; Phase B may need a guard newtype on Expect
-    let _post = scopeguard::guard((), |_| this.post_match(global));
+    // PORT NOTE: reshaped for borrowck — Zig `defer this.postMatch(global)` becomes a
+    // scopeguard that owns the &mut and DerefMut's it for the body.
+    let mut this = scopeguard::guard(this, |this| this.post_match(global));
 
     let this_value = frame.this();
     let arguments_ = frame.arguments_old::<1>();

@@ -602,8 +602,8 @@ impl<'a> Snapshots<'a> {
                     let after_expr_loc = parser.lexer.loc().start;
 
                     let mut is_one_arg = false;
-                    if parser.lexer.token == js_lexer::T::Comma {
-                        parser.lexer.expect(js_lexer::T::Comma)?;
+                    if parser.lexer.token == js_lexer::T::TComma {
+                        parser.lexer.expect(js_lexer::T::TComma)?;
                         if parser.lexer.token == js_lexer::T::TCloseParen {
                             is_one_arg = true;
                         }
@@ -661,8 +661,8 @@ impl<'a> Snapshots<'a> {
                         continue 'ils;
                     }
 
-                    if parser.lexer.token == js_lexer::T::Comma {
-                        parser.lexer.expect(js_lexer::T::Comma)?;
+                    if parser.lexer.token == js_lexer::T::TComma {
+                        parser.lexer.expect(js_lexer::T::TComma)?;
                     }
                     if parser.lexer.token != js_lexer::T::TCloseParen {
                         log.add_error_fmt(

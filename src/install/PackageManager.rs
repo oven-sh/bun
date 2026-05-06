@@ -763,11 +763,16 @@ impl PackageManager {
             is_done: fn(&mut C) -> bool,
         }
         fn trampoline<C>(p: *mut c_void) -> bool {
-            // SAFETY: `p` is the `&mut Erased<C>` we pass to `tick` below; `ctx` outlives
-            // the `tick` call and is only accessed from this thread.
-            let erased = unsafe { &mut *(p as *mut Erased<C>) };
-            let ctx = unsafe { &mut *erased.ctx };
-            (erased.is_done)(ctx)
+            // SAFETY: `p` is the `Erased<C>` local we pass to `tick` below. We only
+            // read its two POD fields here (no `&mut Erased` materialized — the local
+            // `&mut erased` borrow in the caller is still notionally live across `tick`).
+            let erased = p as *const Erased<C>;
+            let (ctx_ptr, is_done) = unsafe { ((*erased).ctx, (*erased).is_done) };
+            // SAFETY: `ctx_ptr` was derived from the caller's exclusive `closure: &mut C`
+            // and the caller does not touch `closure` again until `tick` returns, so this
+            // is the unique live `&mut C` for the duration of the callback.
+            let ctx = unsafe { &mut *ctx_ptr };
+            is_done(ctx)
         }
         let mut erased = Erased::<C> {
             ctx: closure as *mut C,
@@ -820,8 +825,7 @@ fn configure_env_for_scripts_run(
     let mut this_transpiler_slot = core::mem::MaybeUninit::<transpiler::Transpiler>::uninit();
     let _ = RunCommand::configure_env_for_run(
         ctx,
-        // SAFETY: configure_env_for_run writes the full Transpiler value before reading it
-        unsafe { &mut *this_transpiler_slot.as_mut_ptr() },
+        &mut this_transpiler_slot,
         this.env_mut(),
         log_level != Options::LogLevel::Silent,
         false,

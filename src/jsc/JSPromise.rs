@@ -336,9 +336,11 @@ impl JSPromise {
         let mut ctx = Wrapper { f: Some(f) };
         // SAFETY: `ctx` outlives the synchronous FFI call; `call::<F>` matches the
         // expected `extern "C" fn(*mut c_void, *mut JSGlobalObject) -> JSValue` signature.
+        // `global.as_ptr()` yields the FFI `*mut` for the opaque ZST handle — no
+        // Rust-visible bytes are aliased (see JSGlobalObject::as_ptr).
         let promise = unsafe {
             JSC__JSPromise__wrap(
-                global as *const _ as *mut _,
+                global.as_ptr(),
                 &mut ctx as *mut _ as *mut c_void,
                 call::<F>,
             )
@@ -400,14 +402,16 @@ impl JSPromise {
     /// Note: If you want the result as a `JSValue`, use `resolved_promise_value` instead.
     pub fn resolved_promise(global: &JSGlobalObject, value: JSValue) -> &mut JSPromise {
         // SAFETY: FFI returns a non-null GC-managed cell tied to `global`'s VM.
-        unsafe { &mut *JSC__JSPromise__resolvedPromise(global as *const _ as *mut _, value) }
+        // `global.as_ptr()` is the canonical opaque-handle → `*mut` cast for FFI;
+        // `JSGlobalObject` is a ZST so no Rust-side bytes are written through.
+        unsafe { &mut *JSC__JSPromise__resolvedPromise(global.as_ptr(), value) }
     }
 
     /// Create a new promise with an already fulfilled value.
     /// This is the faster function for doing that.
     pub fn resolved_promise_value(global: &JSGlobalObject, value: JSValue) -> JSValue {
-        // SAFETY: trivial FFI call.
-        unsafe { JSC__JSPromise__resolvedPromiseValue(global as *const _ as *mut _, value) }
+        // SAFETY: trivial FFI call; `global.as_ptr()` is the opaque-ZST-handle cast.
+        unsafe { JSC__JSPromise__resolvedPromiseValue(global.as_ptr(), value) }
     }
 
     /// Create a new rejected promise rejecting to a given value.
@@ -415,7 +419,9 @@ impl JSPromise {
     /// Note: If you want the result as a `JSValue`, use `rejected_promise().to_js()` instead.
     pub fn rejected_promise(global: &JSGlobalObject, value: JSValue) -> &mut JSPromise {
         // SAFETY: FFI returns a non-null GC-managed cell tied to `global`'s VM.
-        unsafe { &mut *JSC__JSPromise__rejectedPromise(global as *const _ as *mut _, value) }
+        // `global.as_ptr()` is the canonical opaque-handle → `*mut` cast for FFI;
+        // `JSGlobalObject` is a ZST so no Rust-side bytes are written through.
+        unsafe { &mut *JSC__JSPromise__rejectedPromise(global.as_ptr(), value) }
     }
 
     /// **DEPRECATED** use `rejected_promise` instead.
@@ -426,8 +432,8 @@ impl JSPromise {
         global: &JSGlobalObject,
         value: JSValue,
     ) -> JSValue {
-        // SAFETY: trivial FFI call.
-        unsafe { JSC__JSPromise__rejectedPromiseValue(global as *const _ as *mut _, value) }
+        // SAFETY: trivial FFI call; `global.as_ptr()` is the opaque-ZST-handle cast.
+        unsafe { JSC__JSPromise__rejectedPromiseValue(global.as_ptr(), value) }
     }
 
     /// Fulfill an existing promise with the value.
@@ -447,7 +453,8 @@ impl JSPromise {
         }
 
         // SAFETY: `self` and `global` are valid; FFI may run JS (microtasks).
-        let ok = unsafe { JSC__JSPromise__resolve(self, global as *const _ as *mut _, value) };
+        // `global.as_ptr()` is the opaque-ZST-handle cast (no Rust-side write-through).
+        let ok = unsafe { JSC__JSPromise__resolve(self, global.as_ptr(), value) };
         if !ok {
             return Err(JsTerminated::JSTerminated);
         }
@@ -484,7 +491,8 @@ impl JSPromise {
         };
 
         // SAFETY: `self` and `global` are valid; FFI may run JS (microtasks).
-        let ok = unsafe { JSC__JSPromise__reject(self, global as *const _ as *mut _, err) };
+        // `global.as_ptr()` is the opaque-ZST-handle cast (no Rust-side write-through).
+        let ok = unsafe { JSC__JSPromise__reject(self, global.as_ptr(), err) };
         if !ok {
             return Err(JsTerminated::JSTerminated);
         }
@@ -493,7 +501,8 @@ impl JSPromise {
 
     pub fn reject_as_handled(&mut self, global: &JSGlobalObject, value: JSValue) -> Result<(), JsTerminated> {
         // SAFETY: `self` and `global` are valid; FFI may run JS.
-        let ok = unsafe { JSC__JSPromise__rejectAsHandled(self, global as *const _ as *mut _, value) };
+        // `global.as_ptr()` is the opaque-ZST-handle cast (no Rust-side write-through).
+        let ok = unsafe { JSC__JSPromise__rejectAsHandled(self, global.as_ptr(), value) };
         if !ok {
             return Err(JsTerminated::JSTerminated);
         }
@@ -523,7 +532,9 @@ impl JSPromise {
     /// to create a promise that is already resolved or rejected.
     pub fn create(global: &JSGlobalObject) -> &mut JSPromise {
         // SAFETY: FFI returns a non-null GC-managed cell tied to `global`'s VM.
-        unsafe { &mut *JSC__JSPromise__create(global as *const _ as *mut _) }
+        // `global.as_ptr()` is the canonical opaque-handle → `*mut` cast for FFI;
+        // `JSGlobalObject` is a ZST so no Rust-side bytes are written through.
+        unsafe { &mut *JSC__JSPromise__create(global.as_ptr()) }
     }
 
     /// **DEPRECATED** use `to_js` instead.

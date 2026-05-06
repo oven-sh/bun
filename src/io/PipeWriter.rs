@@ -427,7 +427,9 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     }
 
     fn get_buffer_internal(&self) -> &[u8] {
-        self.parent().get_buffer()
+        // SAFETY: parent is a BACKREF set via set_parent; valid while writer is
+        // alive. Shared-only access via raw ptr — no `&mut` materialized.
+        unsafe { (*self.parent).get_buffer() }
     }
 
     pub fn end(&mut self) {
@@ -594,7 +596,6 @@ impl<Parent: PosixStreamingWriterParent> PosixPipeWriter for PosixStreamingWrite
 impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
     // TODO: configurable?
     // TODO(port): std.heap.page_size_min — pick correct const for target.
-    const CHUNK_SIX_SIZE_PLACEHOLDER: () = ();
     const CHUNK_SIZE: usize = 4096;
 
     #[inline]
@@ -1292,8 +1293,11 @@ impl<Parent: WindowsBufferedWriterParent> BaseWindowsPipeWriter for WindowsBuffe
 #[cfg(windows)]
 impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
     #[inline]
-    fn parent(&self) -> &mut Parent {
-        // SAFETY: parent is BACKREF set via set_parent; valid while writer alive.
+    fn parent(&mut self) -> &mut Parent {
+        // SAFETY: parent is a BACKREF set via set_parent; valid while writer is
+        // alive. Zig's `*Parent` aliases freely; in Rust we gate this behind
+        // `&mut self` so borrowck enforces at most one live `&mut Parent` and
+        // forbids interleaving with other `&self`/`&mut self` borrows.
         unsafe { &mut *self.parent }
     }
 
@@ -1343,7 +1347,9 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
             return;
         }
 
-        // SAFETY: data was set to *mut Self in write().
+        // SAFETY: data was set to `self as *mut Self` in write(); libuv invokes
+        // this callback on the single-threaded event loop with no other Rust
+        // borrow of `*this` live, so this is the sole `&mut` at this point.
         let this = unsafe { &mut *(parent_ptr as *mut Self) };
 
         if was_canceled {
@@ -1423,7 +1429,9 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
     }
 
     fn get_buffer_internal(&self) -> &[u8] {
-        self.parent().get_buffer()
+        // SAFETY: parent is a BACKREF set via set_parent; valid while writer is
+        // alive. Shared-only access via raw ptr — no `&mut` materialized.
+        unsafe { (*self.parent).get_buffer() }
     }
 
     pub fn end(&mut self) {
@@ -1674,8 +1682,11 @@ impl<Parent: WindowsStreamingWriterParent> BaseWindowsPipeWriter for WindowsStre
 #[cfg(windows)]
 impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
     #[inline]
-    fn parent(&self) -> &mut Parent {
-        // SAFETY: parent is BACKREF set via set_parent; valid while writer alive.
+    fn parent(&mut self) -> &mut Parent {
+        // SAFETY: parent is a BACKREF set via set_parent; valid while writer is
+        // alive. Zig's `*Parent` aliases freely; in Rust we gate this behind
+        // `&mut self` so borrowck enforces at most one live `&mut Parent` and
+        // forbids interleaving with other `&self`/`&mut self` borrows.
         unsafe { &mut *self.parent }
     }
 

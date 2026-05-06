@@ -1276,50 +1276,51 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
     fn append_overflow(
         &mut self,
         value: ValueType,
-    ) -> core::result::Result<&mut ValueType, AllocError>
-    where
-        ValueType: Clone,
-    {
+    ) -> core::result::Result<&mut ValueType, AllocError> {
         self.used += 1;
         // SAFETY: head is always non-null after init() (points at self.tail or heap block).
-        let head_ptr = self.head.unwrap();
-        match unsafe { (*head_ptr.as_ptr()).append(value.clone()) } {
-            Ok(v) => Ok(v),
-            Err(_) => {
-                let mut new_block: Box<core::mem::MaybeUninit<BSSListOverflowBlock<ValueType>>> =
-                    Box::new_uninit();
-                // SAFETY: `as_mut_ptr()` is a valid, exclusive, aligned `*mut`; zero() initializes
-                // `used` and `prev` via raw writes; `data` is `[MaybeUninit; N]` (always valid).
-                unsafe { BSSListOverflowBlock::zero(new_block.as_mut_ptr()) };
-                // SAFETY: all non-`MaybeUninit` fields are now initialized.
-                let mut new_block = unsafe { new_block.assume_init() };
-                // Preserve the chain (Zig: `new_block.prev = self.head`). The inline `self.tail`
-                // is not Boxed, so represent it as `prev = None`; heap heads were
-                // `Box::into_raw`'d by an earlier call here and are reclaimed as `Box`.
-                let tail_ptr: *const BSSListOverflowBlock<ValueType> = core::ptr::addr_of!(self.tail);
-                new_block.prev = if core::ptr::eq(head_ptr.as_ptr() as *const _, tail_ptr) {
-                    None
-                } else {
-                    // SAFETY: the previous head was `Box::into_raw`'d by an earlier
-                    // `append_overflow` and is exclusively owned via `self.head`.
-                    Some(unsafe { Box::from_raw(head_ptr.as_ptr()) })
-                };
-                let raw = Box::into_raw(new_block);
-                // SAFETY: raw came from Box::into_raw on the line above; non-null and exclusively owned.
-                self.head = Some(unsafe { NonNull::new_unchecked(raw) });
-                // SAFETY: raw is the freshly-allocated head block; no other alias exists yet.
-                unsafe { (*raw).append(value) }
-            }
+        let mut head_ptr = self.head.unwrap();
+        // Zig: `self.head.append(value) catch { allocate new block; retry }`.
+        // Restructured to avoid consuming `value` twice (no `Clone` bound, per
+        // PORTING.md §Forbidden): check capacity first, allocate the new block
+        // if needed, then `append(value)` exactly once. Safe under `self.mutex`.
+        // SAFETY: `head_ptr` is a valid exclusive ref (mutex held).
+        let head_full = unsafe {
+            (*head_ptr.as_ptr()).used.load(Ordering::Acquire) as usize >= BSS_LIST_CHUNK_SIZE
+        };
+        if head_full {
+            let mut new_block: Box<core::mem::MaybeUninit<BSSListOverflowBlock<ValueType>>> =
+                Box::new_uninit();
+            // SAFETY: `as_mut_ptr()` is a valid, exclusive, aligned `*mut`; zero() initializes
+            // `used` and `prev` via raw writes; `data` is `[MaybeUninit; N]` (always valid).
+            unsafe { BSSListOverflowBlock::zero(new_block.as_mut_ptr()) };
+            // SAFETY: all non-`MaybeUninit` fields are now initialized.
+            let mut new_block = unsafe { new_block.assume_init() };
+            // Preserve the chain (Zig: `new_block.prev = self.head`). The inline `self.tail`
+            // is not Boxed, so represent it as `prev = None`; heap heads were
+            // `Box::into_raw`'d by an earlier call here and are reclaimed as `Box`.
+            let tail_ptr: *const BSSListOverflowBlock<ValueType> = core::ptr::addr_of!(self.tail);
+            new_block.prev = if core::ptr::eq(head_ptr.as_ptr() as *const _, tail_ptr) {
+                None
+            } else {
+                // SAFETY: the previous head was `Box::into_raw`'d by an earlier
+                // `append_overflow` and is exclusively owned via `self.head`.
+                Some(unsafe { Box::from_raw(head_ptr.as_ptr()) })
+            };
+            let raw = Box::into_raw(new_block);
+            // SAFETY: raw came from Box::into_raw on the line above; non-null and exclusively owned.
+            head_ptr = unsafe { NonNull::new_unchecked(raw) };
+            self.head = Some(head_ptr);
         }
+        // SAFETY: `head_ptr` is the (possibly freshly-allocated) head block with
+        // free capacity; no other alias exists (mutex held).
+        unsafe { (*head_ptr.as_ptr()).append(value) }
     }
 
     pub fn append(
         &mut self,
         value: ValueType,
-    ) -> core::result::Result<&mut ValueType, AllocError>
-    where
-        ValueType: Clone,
-    {
+    ) -> core::result::Result<&mut ValueType, AllocError> {
         self.mutex.lock();
         // Hold the lock across the body via raw-ptr scopeguard so the guard
         // doesn't borrow `self` (Zig: `defer self.mutex.unlock()`).
@@ -1575,17 +1576,17 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
             static LOWERCASE_BUF: core::cell::RefCell<crate::stubs::PathBuffer> =
                 const { core::cell::RefCell::new([0u8; 4096]) };
         }
-        // TODO(port): can't return a borrow of thread_local across `with_borrow_mut`; copy into
-        // backing_buf inside the closure then return that. Phase B reshape.
         LOWERCASE_BUF.with_borrow_mut(|buf| {
             for (i, &c) in value.iter().enumerate() {
                 buf[i] = c.to_ascii_lowercase();
             }
+            // `do_append` only reads `slice` via `BSSAppendable::copy_into`
+            // (copies into `self.backing_buf` / a fresh heap alloc) and returns
+            // a borrow of that owned storage, not of `slice` — so the
+            // thread-local borrow does not escape the closure. PORTING.md
+            // §Forbidden: no `&*(p as *const _)` lifetime extension.
             let slice: &[u8] = &buf[..value.len()];
-            // SAFETY: do_append copies `slice` into owned storage before returning.
-            let slice_static: &'static [u8] =
-                unsafe { core::slice::from_raw_parts(slice.as_ptr(), slice.len()) };
-            self.do_append(slice_static)
+            self.do_append(slice)
         })
     }
 

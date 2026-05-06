@@ -1,4 +1,3 @@
-#![cfg(any())]
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 use std::sync::OnceLock;

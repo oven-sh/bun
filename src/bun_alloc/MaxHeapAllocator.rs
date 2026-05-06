@@ -1,4 +1,3 @@
-#![cfg(any())]
 //! Single allocation only.
 
 use core::ffi::c_void;

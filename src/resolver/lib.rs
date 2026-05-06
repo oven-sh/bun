@@ -3354,15 +3354,18 @@ pub use ::bun_options_types::GlobalCache::GlobalCache;
 // address is stable across `Vec` growth, so handing out `&'static T` is sound.
 
 /// Intern a parsed `PackageJSON` into the process-lifetime DirInfo arena.
-fn intern_package_json(pkg: PackageJSON) -> &'static PackageJSON {
+/// Returns `NonNull` (not `&'static`) so the mut-provenance survives into
+/// `DirInfo::reset()`'s `drop_in_place` -- handing out `&T` here and casting
+/// back to `*mut T` at the drop site would be UB under Stacked Borrows.
+fn intern_package_json(pkg: PackageJSON) -> core::ptr::NonNull<PackageJSON> {
     static ARENA: std::sync::LazyLock<parking_lot::Mutex<Vec<Box<PackageJSON>>>> =
         std::sync::LazyLock::new(Default::default);
     let mut guard = ARENA.lock();
     guard.push(Box::new(pkg));
-    let last: &PackageJSON = guard.last().unwrap();
     // SAFETY: ARENA is `'static` (LazyLock); entries are never removed; the
     // `Box<PackageJSON>` heap address is stable across `Vec` reallocation.
-    unsafe { &*(last as *const PackageJSON) }
+    // Derive from `&mut **last` so the returned pointer carries mut-provenance.
+    core::ptr::NonNull::from(&mut **guard.last_mut().unwrap())
 }
 
 /// Intern tsconfig.json source bytes into the process-lifetime DirInfo arena.
@@ -6308,7 +6311,7 @@ impl<'a> Resolver<'a> {
                     dir_entries_option = cached_entry;
                     needs_iter = false;
                 } else {
-                    in_place = Some(entries as *mut _);
+                    in_place = Some(*entries as *mut _);
                 }
             }
         }
@@ -6328,7 +6331,7 @@ impl<'a> Resolver<'a> {
             );
 
             let mut dir_iterator = bun_sys::iterate_dir(open_dir);
-            while let Ok(Some(_value)) = dir_iterator.next().unwrap() {
+            while let Ok(Some(_value)) = dir_iterator.next() {
                 new_entry
                     .add_entry(
                         // SAFETY: see block-wide note above.
@@ -6805,7 +6808,7 @@ impl<'a> Resolver<'a> {
         file: &[u8],
         dirname_fd: FD,
         package_id: Option<Install::PackageID>,
-    ) -> core::result::Result<Option<&'static PackageJSON>, bun_core::Error> {
+    ) -> core::result::Result<Option<core::ptr::NonNull<PackageJSON>>, bun_core::Error> {
         use crate::package_json::{IncludeDependencies, IncludeScripts};
         // PORT NOTE: Zig threaded both as comptime params; `IncludeDependencies` is a
         // const generic on `PackageJSON::parse`, `IncludeScripts` is runtime (it only
@@ -8734,9 +8737,9 @@ impl<'a> Resolver<'a> {
                         drop(unsafe { Box::from_raw(parent_config_ptr) });
                     }
                     // SAFETY: `merged_config` is a leaked Box (Box::into_raw) interned into DirInfo; outlives the resolver.
-                    info.tsconfig_json = Some(unsafe { &*merged_config });
+                    info.tsconfig_json = Some(unsafe { core::ptr::NonNull::new_unchecked(merged_config) });
                 }
-                info.enclosing_tsconfig_json = info.tsconfig_json.map(|p| &*p);
+                info.enclosing_tsconfig_json = info.tsconfig_json();
             }
         }
 

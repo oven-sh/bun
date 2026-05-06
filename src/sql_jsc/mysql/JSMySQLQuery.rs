@@ -166,7 +166,10 @@ impl JSMySQLQuery {
             unsafe { (*p).deref() };
         });
         // PORT NOTE: reshaped for borrowck — re-borrow through guard pointer.
-        // SAFETY: guard holds the only raw alias; no concurrent access.
+        // SAFETY: `*_guard` was derived from the `&mut Self` param above; this
+        // re-borrow is a stacked descendant. The original `this` is shadowed and
+        // never accessed again; the guard's drop-closure runs only after this
+        // borrow ends (reverse local drop order), so no two `&mut` overlap.
         let this = unsafe { &mut **_guard };
 
         let arguments = callframe.arguments();
@@ -262,7 +265,10 @@ impl JSMySQLQuery {
             }
         });
         // PORT NOTE: reshaped for borrowck — re-borrow through guard pointer.
-        // SAFETY: see above.
+        // SAFETY: `*_guard` was derived from `self as *mut Self`; this re-borrow
+        // is a stacked descendant of the incoming `&mut self`. `self` is not
+        // accessed again below, and `_guard`'s drop-closure (raw-ptr access)
+        // runs only after `this` is dropped (reverse local drop order).
         let this = unsafe { &mut **_guard };
 
         if !this.query.result(is_last_result) {

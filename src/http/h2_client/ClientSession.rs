@@ -757,7 +757,8 @@ impl ClientSession {
             }
         }
         self.streams.clear_retaining_capacity();
-        self.deref();
+        // SAFETY: `self: &mut Self` carries write provenance to the Box alloc.
+        unsafe { ClientSession::deref(self) };
     }
 
     fn fail_all(&mut self, err: Error) {
@@ -863,7 +864,8 @@ impl ClientSession {
             );
         } else {
             NewHTTPContext::<true>::close_socket(self.socket);
-            self.deref();
+            // SAFETY: `self: &mut Self` carries write provenance to the Box alloc.
+            unsafe { ClientSession::deref(self) };
         }
     }
 

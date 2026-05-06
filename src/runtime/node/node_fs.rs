@@ -415,7 +415,7 @@ pub type UVFSRequest<R, A, const F: NodeFSFunctionEnum> = AsyncFSTask<R, A, F>;
 pub struct UVFSRequest<R, A, const F: NodeFSFunctionEnum> {
     pub promise: JSPromiseStrong,
     pub args: A,
-    pub global_object: *mut JSGlobalObject,
+    pub global_object: *const JSGlobalObject,
     pub req: uv::fs_t,
     pub result: Maybe<R>,
     pub r#ref: KeepAlive,
@@ -438,7 +438,7 @@ impl<R, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, F> {
             args: task_args,
             // SAFETY: all-zero is a valid Maybe<R>; written before read
             result: unsafe { core::mem::zeroed() },
-            global_object: global_object as *const _ as *mut _,
+            global_object: global_object as *const _,
             // SAFETY: all-zero is a valid uv::fs_t (libuv POD)
             req: unsafe { core::mem::zeroed() },
             r#ref: KeepAlive::default(),

@@ -639,14 +639,29 @@ pub use lockfile::{Lockfile, PatchedDep, LoadResult, LoadStep};
     /// here so the stub doesn't need a global `bun.once`.
     temp_directory_: Option<bun_sys::Fd>,
     temp_directory_path: Vec<u8>,
+    /// Zig: `known_npm_aliases: std.AutoHashMapUnmanaged(u64, void)`.
+    pub known_npm_aliases: std::collections::HashMap<u64, ()>,
+    /// Zig: `resolve_tasks: bun.UnboundedQueue(Task, .next)` — completed
+    /// off-thread tasks awaiting main-thread `runTasks` drain.
+    pub resolve_tasks: bun_threading::UnboundedQueue<package_manager_task::Task>,
+    /// Zig: `thread_pool: ThreadPool`.
+    pub thread_pool: bun_threading::ThreadPool,
 }
 #[derive(Default)] pub struct PackageManagerOptionsStub {
     pub enable: PackageManagerEnableStub,
     /// Zig: `Options.cache_directory` — bunfig override.
     pub cache_directory: Vec<u8>,
+    /// Zig: `Options.scope: Npm.Registry.Scope`.
+    pub scope: npm::registry::Scope,
+    /// Zig: `Options.publish_config`.
+    pub publish_config: PublishConfigStub,
+}
+#[derive(Default)] pub struct PublishConfigStub {
+    pub auth_type: Option<bun_options_types::schema::api::AuthType>,
 }
 #[derive(Default)] pub struct PackageManagerEnableStub {
     pub manifest_cache: bool,
+    pub manifest_cache_control: bool,
     /// Zig: `Options.Enable.cache` — drives the `ensureCacheDirectory`
     /// fallback to `node_modules/.cache`.
     pub cache: bool,

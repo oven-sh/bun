@@ -30,7 +30,8 @@ impl ListenSocket {
 
     pub fn get_socket(&mut self) -> &mut us_socket_t {
         // SAFETY: ListenSocket is layout-compatible with us_socket_t on the C side
-        // (a listen socket IS a us_socket_t); Zig does `@ptrCast(this)`.
+        // (a listen socket IS a us_socket_t); Zig does `@ptrCast(this)`. The returned
+        // borrow reborrows `&mut self` exclusively — no alias is live while it exists.
         unsafe { &mut *(self as *mut ListenSocket).cast::<us_socket_t>() }
     }
 
@@ -59,21 +60,20 @@ impl ListenSocket {
     /// `ssl_ctx` is `SSL_CTX_up_ref`'d for the SNI node; the listener drops
     /// that ref on close / `remove_server_name`. `user` is the per-domain handle
     /// `find_server_name_userdata` recovers (uWS uses an `HttpRouter*`; Bun.listen
-    /// passes `None`).
-    pub fn add_server_name<U>(
+    /// passes null).
+    ///
+    /// `user` is taken as a raw `*mut` (not `&U`) because the C side stores it
+    /// and `find_server_name_userdata` later hands it back as a mutable pointer;
+    /// accepting `&U` here and const-casting would make that round-trip UB.
+    pub fn add_server_name(
         &mut self,
         hostname: &core::ffi::CStr,
         ssl_ctx: &mut SslCtx,
-        user: Option<&U>,
+        user: *mut c_void,
     ) -> bool {
-        let erased: *mut c_void = match user {
-            None => core::ptr::null_mut(),
-            // SAFETY: erasing a borrowed pointer to opaque userdata; C side never
-            // mutates through it (matches Zig `@ptrCast(@constCast(user))`).
-            Some(u) => u as *const U as *mut c_void,
-        };
-        // SAFETY: self, hostname, ssl_ctx are valid for the duration of the call.
-        unsafe { us_listen_socket_add_server_name(self, hostname.as_ptr(), ssl_ctx, erased) == 0 }
+        // SAFETY: self, hostname, ssl_ctx are valid for the duration of the call;
+        // `user` is an opaque caller-owned pointer stored verbatim by C.
+        unsafe { us_listen_socket_add_server_name(self, hostname.as_ptr(), ssl_ctx, user) == 0 }
     }
 
     pub fn remove_server_name(&mut self, hostname: &core::ffi::CStr) {

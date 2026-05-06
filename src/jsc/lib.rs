@@ -697,11 +697,53 @@ pub mod ffi {
 stub_ty!(
     CachedBytecode,
     DOMFormData, DeferredError,
-    JSGlobalObject,
-    URL, VM,
+    URL,
     ZigStackTrace, ZigStackFrame,
     AbortSignal, JSBundler,
 );
+
+// ──────────────────────────────────────────────────────────────────────────
+// `VM` / `JSGlobalObject` — opaque FFI handles to C++-owned objects.
+//
+// Unlike the `stub_ty!` placeholders above, these carry an `UnsafeCell`
+// marker so a shared `&VM` / `&JSGlobalObject` does **not** assert
+// immutability of the pointee. The Zig spec (`VM.zig`, `JSGlobalObject.zig`)
+// passes `*VM` / `*JSGlobalObject` everywhere — Zig pointers freely alias and
+// the C++ side mutates through them. Modelling that in Rust as `&T` without
+// interior mutability would make every `&T -> *mut T` cast (and any C++ write
+// behind it) UB under Stacked Borrows. The `UnsafeCell` field opts the bytes
+// out of the noalias/readonly guarantee so `as_mut_ptr()` is sound.
+//
+// Rust never reads or writes these bytes directly; all access is via FFI.
+// ──────────────────────────────────────────────────────────────────────────
+#[repr(C)]
+pub struct VM {
+    _opaque: core::cell::UnsafeCell<[u8; 0]>,
+    _marker: PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+}
+#[repr(C)]
+pub struct JSGlobalObject {
+    _opaque: core::cell::UnsafeCell<[u8; 0]>,
+    _marker: PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+}
+impl VM {
+    /// Raw `*mut VM` for FFI. Sound for callees that mutate: `VM` contains
+    /// `UnsafeCell`, so `&VM` carries interior-mutable provenance and the
+    /// `*const -> *mut` cast does not launder a read-only pointer.
+    #[inline]
+    pub fn as_mut_ptr(&self) -> *mut VM {
+        // UnsafeCell::get yields `*mut` with write provenance from `&self`.
+        self._opaque.get() as *mut VM
+    }
+}
+impl JSGlobalObject {
+    /// Raw `*mut JSGlobalObject` for FFI. See [`VM::as_mut_ptr`] for the
+    /// soundness argument (interior mutability via `UnsafeCell`).
+    #[inline]
+    pub fn as_mut_ptr(&self) -> *mut JSGlobalObject {
+        self._opaque.get() as *mut JSGlobalObject
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // ResolvedSource — un-gated (B-2). `#[repr(C)]` mirror of the C struct in
@@ -1078,9 +1120,9 @@ impl AnyPromise {
     }
     /// `AnyPromise.unwrap` (AnyPromise.zig:14).
     #[inline] pub fn unwrap(self, vm: &VM, mode: PromiseUnwrapMode) -> PromiseResult {
-        // SAFETY: variants hold a live JSC heap cell; `vm` is the owning VM and
-        // `JSPromise::unwrap` only reads status/result (no aliased &mut escapes).
-        let vm = unsafe { &mut *(vm as *const VM as *mut VM) };
+        // SAFETY: variants hold a live JSC heap cell; `vm` is the owning VM.
+        // `JSPromise::unwrap` takes `&VM` (interior-mutable opaque handle) — no
+        // `&mut VM` is materialized, so no aliased exclusive borrow exists.
         match self {
             Self::Normal(p) => unsafe { (*p).unwrap(vm, mode) },
             Self::Internal(p) => unsafe { (*p).unwrap(vm, mode) },
@@ -1214,7 +1256,10 @@ impl JSGlobalObject {
     /// Raw pointer for FFI (JSGlobalObject is always passed by reference).
     #[inline]
     pub fn as_ptr(&self) -> *mut JSGlobalObject {
-        self as *const _ as *mut _
+        // SAFETY: `JSGlobalObject` is an opaque FFI handle with `UnsafeCell`
+        // interior, so `&self` does not carry a read-only/noalias guarantee
+        // and the resulting `*mut` may be written through by C++.
+        self.as_mut_ptr()
     }
 
     pub fn vm(&self) -> &VM {

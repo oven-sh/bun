@@ -293,18 +293,19 @@ impl<const SSL: bool> HTTPContext<SSL> {
         false
     }
 
-    pub fn unregister_h2(&mut self, session: &h2::ClientSession) {
+    pub fn unregister_h2(&mut self, session: *const h2::ClientSession) {
         if !SSL {
             return;
         }
-        // `registry_index` is a `Cell<u32>` and `deref()` takes `&self`, so a
-        // shared borrow is sufficient — mirrors the Zig `*ClientSession`
-        // (which aliases freely) without forging a `*mut` from `&`.
-        let idx = session.registry_index();
+        // `session` is the raw heap pointer (Box::into_raw provenance) passed
+        // through from the ClientSession `&mut self` callers; keeping it raw
+        // lets `deref()` reclaim the Box without a `&T → *mut T` cast.
+        // SAFETY: caller guarantees `session` is live for this call.
+        let idx = unsafe { (*session).registry_index() };
         if idx == u32::MAX {
             return;
         }
-        session.set_registry_index(u32::MAX);
+        unsafe { (*session).set_registry_index(u32::MAX) };
         let list = &mut self.active_h2_sessions;
         debug_assert!(
             (idx as usize) < list.len()
@@ -314,12 +315,12 @@ impl<const SSL: bool> HTTPContext<SSL> {
         if (idx as usize) < list.len() {
             // SAFETY: list entries are live ClientSession pointers; the swapped
             // entry is a distinct allocation from `session` (the entry at `idx`
-            // was just removed), so this `&*` does not alias the caller's
-            // borrow. `set_registry_index` only touches a `Cell<u32>`.
+            // was just removed). `set_registry_index` only touches a `Cell<u32>`.
             unsafe { (*list[idx as usize]).set_registry_index(idx) };
         }
         // Releases the strong ref taken in register_h2.
-        session.deref();
+        // SAFETY: `session` carries write provenance from the original Box.
+        unsafe { h2::ClientSession::deref(session) };
     }
 
     pub fn tag_as_h2(socket: HTTPSocket<SSL>, session: *const h2::ClientSession) {

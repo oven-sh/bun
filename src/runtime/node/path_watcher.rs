@@ -1147,8 +1147,7 @@ impl Kqueue {
         is_file: bool,
     ) -> sys::Result<()> {
         use bun_sys::c::{Kevent, EV, EVFILT, NOTE};
-        // SAFETY: caller holds manager.mutex.
-        let plat = unsafe { &mut *(&manager.platform as *const _ as *mut Kqueue) };
+        let plat: *mut Kqueue = manager.platform.get();
         // O_EVTONLY: we only need the fd for kevent registration, never for I/O.
         // (No-op on FreeBSD where EVTONLY is 0; semantic here for kqueue-on-macOS.)
         let fd = match sys::open(abs_path, sys::O::EVTONLY | sys::O::RDONLY | sys::O::CLOEXEC, 0) {
@@ -1161,8 +1160,15 @@ impl Kqueue {
             Ok(f) => f,
         };
 
-        let gen = plat.next_gen;
-        plat.next_gen = plat.next_gen.wrapping_add(1);
+        // SAFETY: caller holds manager.mutex; exclusive access to `next_gen`/`entries`.
+        // `kq` is immutable after init. Project fields via raw ptr (never `&mut Kqueue`)
+        // so this can coexist with the reader thread's `&AtomicBool` borrow of `running`.
+        let gen = unsafe {
+            let g = (*plat).next_gen;
+            (*plat).next_gen = g.wrapping_add(1);
+            g
+        };
+        let kq = unsafe { (*plat).kq };
 
         // SAFETY: all-zero is a valid Kevent (#[repr(C)] POD).
         let mut kev: Kevent = unsafe { core::mem::zeroed() };
@@ -1173,7 +1179,7 @@ impl Kqueue {
             NOTE::WRITE | NOTE::DELETE | NOTE::RENAME | NOTE::EXTEND | NOTE::ATTRIB | NOTE::LINK | NOTE::REVOKE;
         kev.udata = gen;
         let mut changes = [kev];
-        let krc = sys::syscall::kevent(plat.kq.native(), changes.as_mut_ptr(), 1, changes.as_mut_ptr(), 0, core::ptr::null());
+        let krc = sys::syscall::kevent(kq.native(), changes.as_mut_ptr(), 1, changes.as_mut_ptr(), 0, core::ptr::null());
         if krc < 0 {
             // Registration failed (ENOMEM/EINVAL on a bad fd, etc.). Don't leave a
             // dead entry in the map that will never deliver events.
@@ -1189,17 +1195,19 @@ impl Kqueue {
             });
         }
 
-        plat.entries.put(
-            i32::try_from(fd.native()).unwrap(),
-            KqEntry {
-                // SAFETY: watcher outlives its kqueue entries (removed before destroy).
-                watcher: unsafe { &*(watcher as *const PathWatcher) },
-                fd,
-                subpath: ZStr::from_bytes(subpath),
-                gen,
-                is_file,
-            },
-        );
+        // SAFETY: caller holds manager.mutex; exclusive access to `entries`.
+        unsafe {
+            (*plat).entries.put(
+                i32::try_from(fd.native()).unwrap(),
+                KqEntry {
+                    watcher: watcher as *mut PathWatcher,
+                    fd,
+                    subpath: ZStr::from_bytes(subpath),
+                    gen,
+                    is_file,
+                },
+            );
+        }
         watcher.platform.fds.push(i32::try_from(fd.native()).unwrap());
         Ok(())
     }

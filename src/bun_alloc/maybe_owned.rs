@@ -1,4 +1,3 @@
-#![cfg(any())]
 //! This type can be used with `bun_ptr::Owned` to model "maybe owned" pointers:
 //!
 //! ```ignore

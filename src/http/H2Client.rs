@@ -166,10 +166,9 @@ pub(crate) mod bridge {
             self.register_h2(session);
         }
         #[inline]
-        pub fn h2_unregister(&mut self, session: &super::ClientSession) {
-            // `unregister_h2` only touches `Cell<u32>` registry_index and the
-            // intrusive `&self` refcount, so a shared borrow suffices — no
-            // const→mut provenance laundering.
+        pub fn h2_unregister(&mut self, session: *const super::ClientSession) {
+            // Forward the raw heap pointer so `deref()` can reclaim the Box
+            // with its original write-capable provenance intact.
             self.unregister_h2(session);
         }
     }

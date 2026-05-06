@@ -1,12 +1,14 @@
-use crate as css;
-use crate::css_values::angle::Angle;
-use crate::css_values::calc::{Calc, MathFunction};
-use crate::css_values::number::CSSNumber;
-use crate::css_values::percentage::DimensionPercentage;
+use crate::css_parser as css;
+use crate::css_parser::{CssResult, Maybe, Parser, PrintErr, Printer, Token};
+use crate::values::angle::Angle;
+use crate::values::calc::{Calc, MathFunction};
+use crate::values::number::CSSNumber;
+use crate::values::percentage::DimensionPercentage;
+use crate::values::protocol;
 use crate::targets::Browsers;
-use crate::{Feature, Maybe, Parser, PrintErr, Printer, Result as CssResult, Token};
+use crate::compat::Feature;
 
-use bun_str::strings;
+use bun_string::strings;
 use core::cmp::Ordering;
 
 /// Either a [`<length>`](https://www.w3.org/TR/css-values-4/#lengths) or a [`<number>`](https://www.w3.org/TR/css-values-4/#numbers).
@@ -281,21 +283,18 @@ define_length_units! {
 impl LengthValue {
     pub fn parse(input: &mut Parser) -> CssResult<Self> {
         let location = input.current_source_location();
-        let token = match input.next() {
-            CssResult::Ok(vv) => vv,
-            CssResult::Err(e) => return CssResult::Err(e),
-        };
-        match token {
+        let token = input.next()?.clone();
+        match &token {
             Token::Dimension(dim) => {
                 // todo_stuff.match_ignore_ascii_case
                 if let Some(v) = Self::from_unit_ci(dim.unit, dim.num.value) {
-                    return CssResult::Ok(v);
+                    return Ok(v);
                 }
             }
-            Token::Number(num) => return CssResult::Ok(Self::Px(num.value)),
+            Token::Number(num) => return Ok(Self::Px(num.value)),
             _ => {}
         }
-        CssResult::Err(location.new_unexpected_token_error(token.clone()))
+        Err(location.new_unexpected_token_error(token))
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -388,13 +387,13 @@ impl LengthValue {
         if core::mem::discriminant(self) == core::mem::discriminant(other) {
             let a = self.value();
             let b = other.value();
-            return css::generic::partial_cmp_f32(&a, &b);
+            return crate::generic::partial_cmp_f32(&a, &b);
         }
 
         let a = self.to_px();
         let b = other.to_px();
         if let (Some(a), Some(b)) = (a, b) {
-            return css::generic::partial_cmp_f32(&a, &b);
+            return crate::generic::partial_cmp_f32(&a, &b);
         }
         None
     }
@@ -440,9 +439,11 @@ impl LengthValue {
         None
     }
 
+    // TODO(port): css.implementHash — f32 is not std::hash::Hash; needs bit-pattern hash helper.
+    // Gated until `generics::CssHash` covers `LengthValue` (or a derive lands).
+    #[cfg(any())] // blocked_on: generics::CssHash impl for LengthValue
     pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
-        // TODO(port): css.implementHash — f32 is not std::hash::Hash; needs bit-pattern hash helper
-        css::implement_hash(self, hasher)
+        crate::generic::implement_hash(self, hasher)
     }
 
     pub fn try_add(&self, rhs: &LengthValue) -> Option<LengthValue> {
@@ -496,19 +497,16 @@ impl Length {
     // Zig `deinit` → Drop on Box<Calc<Length>> handles this.
 
     pub fn parse(input: &mut Parser) -> CssResult<Length> {
-        if let Some(calc_value) = input.try_parse(Calc::<Length>::parse).as_value() {
+        if let Ok(calc_value) = input.try_parse(Calc::<Length>::parse) {
             // PERF: I don't like this redundant allocation
             if let Calc::Value(v) = calc_value {
-                return CssResult::Ok(*v);
+                return Ok(*v);
             }
-            return CssResult::Ok(Self::Calc(Box::new(calc_value)));
+            return Ok(Self::Calc(Box::new(calc_value)));
         }
 
-        let len = match LengthValue::parse(input) {
-            CssResult::Ok(vv) => vv,
-            CssResult::Err(e) => return CssResult::Err(e),
-        };
-        CssResult::Ok(Self::Value(len))
+        let len = LengthValue::parse(input)?;
+        Ok(Self::Value(len))
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -697,7 +695,7 @@ impl Length {
 
     pub fn partial_cmp(&self, other: &Length) -> Option<Ordering> {
         if let (Self::Value(a), Self::Value(b)) = (self, other) {
-            return css::generic::partial_cmp(a, b);
+            return LengthValue::partial_cmp(a, b);
         }
         None
     }

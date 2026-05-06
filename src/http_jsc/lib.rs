@@ -8,21 +8,20 @@
 // `NewSocketHandler` API are sufficient for the full method surface:
 //   - method_jsc       → un-gated, compiles
 //   - fetch_enums_jsc  → un-gated, compiles
-//   - headers_jsc      → un-gated; `live_counts`/`quic_live_counts` bodies
-//                        compile against `bun_http::{h2,h3}_client` atomics.
-//                        `to_fetch_headers` stays whole-fn gated (FetchHeaders
-//                        is in bun_jsc's `_gated` block).
-//   - websocket_client → `impl WebSocket<SSL>` fully un-gated and compiles
-//                        (~40 methods: handle_data/send_data/close/init/
-//                        init_with_tunnel/dispatch_*/…). `Mask::fill*`,
-//                        `InitialDataHandler::handle*`, `cpp_websocket::did_*`
-//                        un-gated. Residual body-level gates:
-//                        `vm_loop_ctx` (bun_jsc VM→EventLoopCtx adapter),
-//                        `handle_handshake` server-identity check
-//                        (bun_boringssl::SSL_get_servername),
-//                        `write_blob` (bun_jsc::webcore::Blob),
-//                        `close` 16-bit reason fmt (ZigString: Display),
-//                        `export_websocket_client!` (paste workspace dep).
+//   - headers_jsc      → fully un-gated. `to_fetch_headers` now uses
+//                        `bun_jsc::FetchHeaders` (moved out of bun_runtime);
+//                        `live_counts`/`quic_live_counts` compile against
+//                        `bun_http::{h2,h3}_client` atomics.
+//   - websocket_client → `impl WebSocket<SSL>` fully un-gated (~40 methods).
+//                        `vm_loop_ctx` un-gated via local `EventLoopCtxVTable`
+//                        (only `platform_event_loop` is hot; hoist into
+//                        `bun_jsc` once a canonical adapter lands).
+//                        `handle_handshake` un-gated via local extern decl for
+//                        `SSL_get_servername`. `close` 16-bit reason un-gated
+//                        via `ZigString::to_owned_slice`. C-ABI exports
+//                        un-gated (declare-site macro replaces `paste`).
+//                        Residual body-level gate: `write_blob`
+//                        (bun_runtime::webcore::Blob — dep cycle).
 //                        Submodules: cpp_websocket + websocket_proxy un-gated;
 //                        deflate/proxy_tunnel/upgrade_client re-gated behind
 //                        stubs (see websocket_client.rs header for blockers).

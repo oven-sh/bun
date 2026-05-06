@@ -528,7 +528,7 @@ impl<'a> BundleV2<'a> {
                                 format_args!(
                                     "{} while {}",
                                     err.err.name(),
-                                    parse_task::step_name(err.step)
+                                    parse_task_step_name(err.step)
                                 ),
                             )
                             .expect("unreachable");
@@ -608,13 +608,6 @@ fn parse_task_step_name(step: parse_task::Step) -> &'static str {
         parse_task::Step::Resolve => "resolving",
     }
 }
-// Re-export under the path the body above uses (keeps the diff vs. the gated
-// draft minimal — `<&'static str>::from(err.step)` in Zig was `@tagName`).
-pub(crate) use parse_task_step_name as step_name_for_err;
-mod parse_task_step {
-    pub use super::parse_task_step_name as name;
-}
-
 // ══════════════════════════════════════════════════════════════════════════
 // Phase-A draft body — gated until lower-tier crate surfaces solidify.
 // (`bun_fs`/`bun_str`/`bun_node_fallbacks` crate aliases, full `dispatch`

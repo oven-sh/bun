@@ -136,6 +136,11 @@ impl<T: MultiArrayElement> Slice<T> {
         _marker: PhantomData,
     };
 
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
     /// Returns the column slice for `field` typed as `&mut [F]`.
     ///
     /// # Safety
@@ -920,6 +925,37 @@ mod tests {
         assert_eq!(s.c()[7], 700);
         assert_eq!(s.a()[3], 3);
         assert_eq!(list.get(5), Foo { a: 5, b: 5, c: 500 });
+    }
+
+    #[test]
+    fn derive_list_ext() {
+        // Typed `items_<field>()` accessors directly on `MultiArrayList<T>`.
+        use self::FooListExt;
+        let mut list = MultiArrayList::<Foo>::default();
+        for i in 0..4u32 {
+            list.append(Foo { a: i, b: i as u8, c: i as u64 * 10 }).unwrap();
+        }
+        assert_eq!(list.items_c(), &[0u64, 10, 20, 30]);
+        list.items_a_mut()[2] = 99;
+        assert_eq!(list.get(2).a, 99);
+    }
+
+    // Exercise the generic-struct path: field types referencing a lifetime
+    // param must still resolve in the generated `__MAL_SIZES` const and the
+    // ext-trait signatures.
+    #[derive(MultiArrayElement)]
+    struct Borrowed<'a> {
+        name: &'a [u8],
+        n: u32,
+    }
+
+    #[test]
+    fn derive_generic_lifetime() {
+        use self::BorrowedListExt;
+        let mut list = MultiArrayList::<Borrowed<'static>>::default();
+        list.append(Borrowed { name: b"hi", n: 7 }).unwrap();
+        assert_eq!(list.items_name()[0], b"hi");
+        assert_eq!(list.items_n()[0], 7);
     }
 }
 

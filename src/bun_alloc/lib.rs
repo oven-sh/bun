@@ -1386,14 +1386,17 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
     /// SAFETY: `slot` must point to writable, properly-aligned, uninitialized
     /// storage of `size_of::<Self>()` bytes that lives for `'static`.
     pub unsafe fn init_at(slot: *mut Self) {
-        addr_of_mut!((*slot).mutex).write(Mutex::new());
-        addr_of_mut!((*slot).backing_buf).write(vec![0u8; COUNT * ITEM_LENGTH].into_boxed_slice());
-        addr_of_mut!((*slot).backing_buf_used).write(0);
-        addr_of_mut!((*slot).slice_buf).write(vec![&[][..]; COUNT].into_boxed_slice());
-        addr_of_mut!((*slot).slice_buf_used).write(0);
-        // SAFETY: `OverflowList` is `{ count: u32, list: { used,allocated: u16, ptrs: [Option<Box<_>>; N] } }`.
-        // `Option<Box<_>>` is null-niche-optimized → all-zeros is `[None; N]`; integers zero is valid.
-        core::ptr::write_bytes(addr_of_mut!((*slot).overflow_list), 0u8, 1);
+        // SAFETY: caller contract — `slot` is a valid, exclusive, aligned `*mut Self`.
+        unsafe {
+            addr_of_mut!((*slot).mutex).write(Mutex::new());
+            addr_of_mut!((*slot).backing_buf).write(vec![0u8; COUNT * ITEM_LENGTH].into_boxed_slice());
+            addr_of_mut!((*slot).backing_buf_used).write(0);
+            addr_of_mut!((*slot).slice_buf).write(vec![&[][..]; COUNT].into_boxed_slice());
+            addr_of_mut!((*slot).slice_buf_used).write(0);
+            // SAFETY: `OverflowList` is `{ count: u32, list: { used,allocated: u16, ptrs: [Option<Box<_>>; N] } }`.
+            // `Option<Box<_>>` is null-niche-optimized → all-zeros is `[None; N]`; integers zero is valid.
+            core::ptr::write_bytes(addr_of_mut!((*slot).overflow_list), 0u8, 1);
+        }
     }
 
     /// Heap-allocate and initialize a fresh instance. Once-guard is the caller's
@@ -1584,11 +1587,14 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
     /// storage of `size_of::<Self>()` bytes that lives for `'static`.
     /// `backing_buf` is intentionally left uninitialized; only `[0..used]` is read.
     pub unsafe fn init_at(slot: *mut Self) {
-        addr_of_mut!((*slot).mutex).write(Mutex::new());
-        addr_of_mut!((*slot).index).write(IndexMap::default());
-        addr_of_mut!((*slot).backing_buf_used).write(0);
-        // SAFETY: `OverflowList` is all-zeros-valid (see BSSStringList::init_at note).
-        core::ptr::write_bytes(addr_of_mut!((*slot).overflow_list), 0u8, 1);
+        // SAFETY: caller contract — `slot` is a valid, exclusive, aligned `*mut Self`.
+        unsafe {
+            addr_of_mut!((*slot).mutex).write(Mutex::new());
+            addr_of_mut!((*slot).index).write(IndexMap::default());
+            addr_of_mut!((*slot).backing_buf_used).write(0);
+            // SAFETY: `OverflowList` is all-zeros-valid (see BSSStringList::init_at note).
+            core::ptr::write_bytes(addr_of_mut!((*slot).overflow_list), 0u8, 1);
+        }
     }
 
     /// Heap-allocate and initialize a fresh instance. Once-guard is the caller's
@@ -1774,16 +1780,19 @@ impl<ValueType, const COUNT: usize, const ESTIMATED_KEY_LENGTH: usize, const REM
     /// SAFETY: `slot` must point to writable, properly-aligned, uninitialized
     /// storage of `size_of::<Self>()` bytes that lives for `'static`.
     pub unsafe fn init_at(slot: *mut Self) {
-        // Inner map: heap via Box<MaybeUninit> + init_at (backing_buf left uninit).
-        let mut inner: Box<MaybeUninit<BSSMapInner<ValueType, COUNT, REMOVE_TRAILING_SLASHES>>> =
-            Box::new_uninit();
-        BSSMapInner::init_at(inner.as_mut_ptr());
-        addr_of_mut!((*slot).map).write(inner.assume_init());
-        addr_of_mut!((*slot).key_list_buffer)
-            .write(vec![0u8; COUNT * ESTIMATED_KEY_LENGTH].into_boxed_slice());
-        addr_of_mut!((*slot).key_list_buffer_used).write(0);
-        addr_of_mut!((*slot).key_list_slices).write(vec![&[][..]; COUNT].into_boxed_slice());
-        addr_of_mut!((*slot).key_list_overflow).write(Vec::new());
+        // SAFETY: caller contract — `slot` is a valid, exclusive, aligned `*mut Self`.
+        unsafe {
+            // Inner map: heap via Box<MaybeUninit> + init_at (backing_buf left uninit).
+            let mut inner: Box<MaybeUninit<BSSMapInner<ValueType, COUNT, REMOVE_TRAILING_SLASHES>>> =
+                Box::new_uninit();
+            BSSMapInner::init_at(inner.as_mut_ptr());
+            addr_of_mut!((*slot).map).write(inner.assume_init());
+            addr_of_mut!((*slot).key_list_buffer)
+                .write(vec![0u8; COUNT * ESTIMATED_KEY_LENGTH].into_boxed_slice());
+            addr_of_mut!((*slot).key_list_buffer_used).write(0);
+            addr_of_mut!((*slot).key_list_slices).write(vec![&[][..]; COUNT].into_boxed_slice());
+            addr_of_mut!((*slot).key_list_overflow).write(Vec::new());
+        }
     }
 
     /// Heap-allocate and initialize a fresh instance. Once-guard is the caller's

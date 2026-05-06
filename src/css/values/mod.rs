@@ -60,22 +60,69 @@ pub mod resolution;
 pub mod time;
 pub mod calc;
 pub mod percentage;
-gated_value!(length);
-gated_value!(position); // blocked_on: length::LengthPercentage
-gated_value!(size);
-gated_value!(rect);
-gated_value!(easing);
-gated_value!(syntax);
-gated_value!(gradient);
-gated_value!(image);
-// color/ident/url: re-export the crate-root data-only stub sets so
-// `crate::values::color::{CssColor, RGBA, LAB, ...}` and
-// `crate::values::ident::{Ident, DashedIdent, ...}` resolve for printer.rs /
-// css_parser.rs. Real impls (3.5kL color.rs colorspace traits + into_hsl/
-// into_lab matrix chains; ident.rs IdentOrRef) un-gate with the calc lattice.
-gated_value!(color, { pub use crate::values_stub::color::*; });
+// ─── B-2 round 5: remaining lattice leaves un-gated ──────────────────────
+// length/position/size/rect/easing/syntax/gradient/image/color now compile
+// for real. The `protocol` submodule below supplies the handful of numeric
+// protocol traits (`Zero`/`MulF32`/`TryAdd`/`Parse`) that
+// `DimensionPercentage<D>` and the calc-lattice CalcValue impls bound on but
+// which `crate::generics` only defines inside its still-gated
+// `parse_tocss_numeric_gated` block. Defining them here keeps the edit
+// surface inside `values/` (generics.rs is owned by another track).
+pub mod length;
+pub mod position;
+pub mod size;
+pub mod rect;
+pub mod easing;
+pub mod syntax;
+pub mod gradient;
+pub mod image;
+pub mod color;
+// `color_generated.rs` is the codegen'd named-color tables (47KB). Its parent
+// in Zig was `color.zig`'s `pub usingnamespace`; here it's a sibling module
+// re-exported through `color::*` so the stub-set re-export at crate root
+// (`pub use values::color::{CssColor, RGBA, ...}`) keeps resolving.
+#[path = "color_generated.rs"]
+pub mod color_generated;
 pub mod ident;
 pub mod url;
+
+/// Numeric protocol traits referenced by `DimensionPercentage<D>` and the
+/// `CalcValue for DimensionPercentage<D>` impls. These mirror the shapes in
+/// `crate::generics::parse_tocss_numeric_gated` (still `#[cfg(any())]`-gated);
+/// once that block un-gates these become `pub use crate::generics::{...}`.
+pub mod protocol {
+    use crate::css_parser as css;
+    use crate::values::angle::Angle;
+
+    /// `D::zero()` / `d.is_zero()` — additive identity.
+    pub trait Zero: Sized {
+        fn zero() -> Self;
+        fn is_zero(&self) -> bool;
+    }
+    /// `d.mul_f32(rhs)` — scalar multiplication.
+    pub trait MulF32: Sized {
+        fn mul_f32(self, rhs: f32) -> Self;
+    }
+    /// `d.try_add(&rhs)` — same-unit addition, `None` if incompatible.
+    pub trait TryAdd: Sized {
+        fn try_add(&self, rhs: &Self) -> Option<Self>;
+    }
+    /// `D::try_from_angle(a)` — convert an angle into `D`, if representable.
+    pub trait TryFromAngle: Sized {
+        fn try_from_angle(angle: Angle) -> Option<Self>;
+    }
+    /// Minimal `Parse` shape so `DimensionPercentage<D>::parse` can bound `D`.
+    /// Intentionally lifetime-free: the value-type parsers all take
+    /// `&mut Parser` (Phase-A `'static`-slice placeholder) and return owned
+    /// values. Phase B threads `'bump` and this aliases `generics::Parse`.
+    pub trait Parse: Sized {
+        fn parse(input: &mut css::Parser) -> css::CssResult<Self>;
+    }
+
+    // Re-export the un-gated shapes from `crate::generics` so
+    // `crate::values::protocol::*` is a one-stop bound set.
+    pub use crate::generics::{IsCompatible, PartialCmp, ToCss, TryMap, TryOp, TryOpTo, TrySign};
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

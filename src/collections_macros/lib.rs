@@ -21,6 +21,11 @@
 //!   * `trait FooSliceExt` with `fn a(&self) -> &mut [u32]` etc. — the safe
 //!     typed wrappers around `Slice::items` that Zig got for free from
 //!     `FieldType(field)`.
+//!   * `trait FooListExt` with `fn items_a(&self) -> &[u32]` /
+//!     `fn items_a_mut(&mut self) -> &mut [u32]` etc. — the safe typed
+//!     wrappers around `MultiArrayList::items`, matching the Zig
+//!     `.items(.field)` calling convention used pervasively by the bundler
+//!     (`LinkerGraph`, `scanImportsAndExports`, `LinkerContext`).
 //!
 //! The Zig also special-cases `union(enum)` by synthesizing a
 //! `{ tags: Tag, data: Bare }` wrapper struct. That wrapper is *not*
@@ -43,7 +48,6 @@ fn expand(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let name = &input.ident;
     let vis = &input.vis;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
-    let has_generics = !input.generics.params.is_empty();
 
     let Data::Struct(data) = &input.data else {
         return Err(syn::Error::new_spanned(
@@ -76,11 +80,13 @@ fn expand(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     // alignment descending. `size_of`/`align_of` are const fns, so a simple
     // stable bubble sort in a `const` initializer reproduces it exactly,
     // including the ZST → align=1 special case.
-    let sorted_const = format_ident!("__{}_MAL_SIZES", name.to_string().to_uppercase());
-    let sizes_block = quote! {
-        #[doc(hidden)]
-        #[allow(non_upper_case_globals)]
-        const #sorted_const: ([usize; #n_lit], [usize; #n_lit]) = {
+    //
+    // Emitted as an *inherent associated const* (`Self::__MAL_SIZES`) rather
+    // than a free-standing `const` so generic field types (`&'arena [u8]`,
+    // `PhantomData<T>`, …) resolve — a free `const` can't name the struct's
+    // generic params.
+    let sizes_body = quote! {
+        {
             // (size, effective_align, original field index)
             let mut data: [(usize, usize, usize); #n_lit] = [
                 #(
@@ -118,7 +124,7 @@ fn expand(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
                 k += 1;
             }
             (bytes, fields)
-        };
+        }
     };
 
     // ── scatter / gather ───────────────────────────────────────────────
@@ -138,35 +144,91 @@ fn expand(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
 
     // ── per-field typed accessors ──────────────────────────────────────
     // Zig: `slice.items(.field)` returns `[]FieldType(field)` because the
-    // compiler maps the comptime enum value to a type. Rust can't, so emit a
-    // `*SliceExt` trait with one safe method per field that calls the unsafe
-    // `Slice::items::<F>` with the correct `F`. Skipped for generic structs
-    // (would require a generic extension trait); callers use `items` directly.
-    let slice_ext = if has_generics {
-        quote! {}
-    } else {
-        let ext = format_ident!("{}SliceExt", name);
-        let sigs = field_idents.iter().zip(&field_tys).map(|(id, ty)| {
-            quote! { fn #id(&self) -> &mut [#ty]; }
-        });
-        let impls = field_idents.iter().zip(&field_tys).map(|(id, ty)| {
+    // compiler maps the comptime enum value to a type. Rust can't, so emit
+    // two extension traits with one safe method per field that wraps the
+    // unsafe `items::<F>` with the correct `F`:
+    //   * `*SliceExt` on `Slice<T>`: bare `field()` → `&mut [F]` (Zig's
+    //     `slice.items(.field)`, used after a single `.slice()`).
+    //   * `*ListExt` on `MultiArrayList<T>`: `items_field()` → `&[F]` and
+    //     `items_field_mut()` → `&mut [F]` (Zig's `list.items(.field)`,
+    //     the bundler's dominant convention).
+    // Both traits carry the struct's generic parameters so field types that
+    // mention them (e.g. `&'arena [u8]`) are nameable in the signatures.
+    let slice_ext = format_ident!("{}SliceExt", name);
+    let list_ext = format_ident!("{}ListExt", name);
+    let items_names: Vec<Ident> =
+        field_idents.iter().map(|id| format_ident!("items_{}", id)).collect();
+    let items_mut_names: Vec<Ident> =
+        field_idents.iter().map(|id| format_ident!("items_{}_mut", id)).collect();
+
+    let slice_sigs = field_idents.iter().zip(&field_tys).map(|(id, ty)| {
+        quote! { fn #id(&self) -> &mut [#ty]; }
+    });
+    let slice_impls = field_idents.iter().zip(&field_tys).map(|(id, ty)| {
+        quote! {
+            #[inline]
+            fn #id(&self) -> &mut [#ty] {
+                // SAFETY: `#ty` is exactly the type of field `#id`;
+                // `#field_enum::#id as usize` is its column index.
+                unsafe { self.items::<#ty>(#field_enum::#id) }
+            }
+        }
+    });
+
+    let list_sigs =
+        items_names
+            .iter()
+            .zip(&items_mut_names)
+            .zip(&field_tys)
+            .map(|((get, get_mut), ty)| {
+                quote! {
+                    fn #get(&self) -> &[#ty];
+                    fn #get_mut(&mut self) -> &mut [#ty];
+                }
+            });
+    let list_impls = items_names
+        .iter()
+        .zip(&items_mut_names)
+        .zip(&field_idents)
+        .zip(&field_tys)
+        .map(|(((get, get_mut), id), ty)| {
             quote! {
                 #[inline]
-                fn #id(&self) -> &mut [#ty] {
-                    // SAFETY: `#ty` is exactly the type of field `#id`;
-                    // `#field_enum::#id as usize` is its column index.
+                fn #get(&self) -> &[#ty] {
+                    // SAFETY: `#ty` is exactly the column type for field `#id`.
+                    unsafe { &*self.items::<#ty>(#field_enum::#id) }
+                }
+                #[inline]
+                fn #get_mut(&mut self) -> &mut [#ty] {
+                    // SAFETY: see above. `&mut self` enforces exclusive column access.
                     unsafe { self.items::<#ty>(#field_enum::#id) }
                 }
             }
         });
-        quote! {
-            #[allow(non_camel_case_types)]
-            #vis trait #ext {
-                #(#sigs)*
-            }
-            impl #ext for bun_collections::multi_array_list::Slice<#name> {
-                #(#impls)*
-            }
+
+    let ext_traits = quote! {
+        #[allow(non_camel_case_types, dead_code)]
+        #vis trait #slice_ext #impl_generics #where_clause {
+            #(#slice_sigs)*
+        }
+        #[allow(dead_code)]
+        impl #impl_generics #slice_ext #ty_generics
+            for bun_collections::multi_array_list::Slice<#name #ty_generics>
+            #where_clause
+        {
+            #(#slice_impls)*
+        }
+
+        #[allow(non_camel_case_types, dead_code)]
+        #vis trait #list_ext #impl_generics #where_clause {
+            #(#list_sigs)*
+        }
+        #[allow(dead_code)]
+        impl #impl_generics #list_ext #ty_generics
+            for bun_collections::MultiArrayList<#name #ty_generics>
+            #where_clause
+        {
+            #(#list_impls)*
         }
     };
 
@@ -178,8 +240,6 @@ fn expand(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
             #(#variants,)*
         }
 
-        #sizes_block
-
         #[allow(clippy::all)]
         const _: () = {
             // Zig has no bound (comptime array); see `MAX_FIELDS` in
@@ -190,13 +250,19 @@ fn expand(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
             );
         };
 
+        #[doc(hidden)]
+        #[allow(non_upper_case_globals, dead_code)]
+        impl #impl_generics #name #ty_generics #where_clause {
+            const __MAL_SIZES: ([usize; #n_lit], [usize; #n_lit]) = #sizes_body;
+        }
+
         impl #impl_generics bun_collections::MultiArrayElement for #name #ty_generics #where_clause {
             type Field = #field_enum;
 
             const FIELD_COUNT: usize = #n_lit;
             const ALIGN: usize = ::core::mem::align_of::<Self>();
-            const SIZES_BYTES: &'static [usize] = &#sorted_const.0;
-            const SIZES_FIELDS: &'static [usize] = &#sorted_const.1;
+            const SIZES_BYTES: &'static [usize] = &Self::__MAL_SIZES.0;
+            const SIZES_FIELDS: &'static [usize] = &Self::__MAL_SIZES.1;
 
             #[inline]
             fn field_index(field: Self::Field) -> usize {
@@ -218,7 +284,7 @@ fn expand(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
             }
         }
 
-        #slice_ext
+        #ext_traits
     })
 }
 

@@ -94,9 +94,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 
     fn e_this(p: &mut Self, expr: Expr, _: ExprIn) -> Expr {
-        if let Some(exp) = p.value_for_this(expr.loc) {
-            return exp;
-        }
+        // TODO(G-round-4): P::value_for_this is still individually gated
+        // (`#[cfg(any())] // blocked_on: fn_only_data_visit.class_name_ref deref`).
+        // Re-enable once that helper compiles:
+        //   if let Some(exp) = p.value_for_this(expr.loc) { return exp; }
+        let _ = p;
 
         //                 // Capture "this" inside arrow functions that will be lowered into normal
         // // function expressions for older language environments

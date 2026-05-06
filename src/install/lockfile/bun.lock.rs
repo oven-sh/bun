@@ -108,13 +108,14 @@ impl Stringifier {
         let deps_buf = lockfile.buffers.dependencies.as_slice();
         let resolution_buf = lockfile.buffers.resolutions.as_slice();
         let pkgs = lockfile.packages.slice();
-        let pkg_dep_lists: &[DependencySlice] = pkgs.items(.dependencies);
-        let pkg_resolutions: &[Resolution] = pkgs.items(.resolution);
-        let pkg_names: &[String] = pkgs.items(.name);
-        let pkg_name_hashes: &[PackageNameHash] = pkgs.items(.name_hash);
-        let pkg_metas: &[Meta] = pkgs.items(.meta);
-        let pkg_bins = pkgs.items(.bin);
-        // TODO(port): MultiArrayList .items(field) API in bun_collections
+        // PORT NOTE: Zig `pkgs.items(.field)` → derive(MultiArrayElement)-generated
+        // `items_<field>()` column accessors on `Slice<Package>`.
+        let pkg_dep_lists: &[DependencySlice] = pkgs.items_dependencies();
+        let pkg_resolutions: &[Resolution] = pkgs.items_resolution();
+        let pkg_names: &[String] = pkgs.items_name();
+        let pkg_name_hashes: &[PackageNameHash] = pkgs.items_name_hash();
+        let pkg_metas: &[Meta] = pkgs.items_meta();
+        let pkg_bins = pkgs.items_bin();
 
         let mut temp_buf: Vec<u8> = Vec::new();
 
@@ -1930,9 +1931,8 @@ pub fn parse_into_binary_lockfile(
                     }
 
                     let pkgs = lockfile.packages.slice();
-                    let pkg_names = pkgs.items(.name);
-                    let pkg_resolutions = pkgs.items(.resolution);
-                    // TODO(port): MultiArrayList .items(field)
+                    let pkg_names = pkgs.items_name();
+                    let pkg_resolutions = pkgs.items_resolution();
 
                     // new entry, a matching workspace MUST exist
                     for _workspace_pkg_id in workspace_pkgs_off..workspace_pkgs_off + workspace_pkgs_len {
@@ -2150,11 +2150,10 @@ pub fn parse_into_binary_lockfile(
         // TODO(port): bun.StringArrayHashMapUnmanaged(void) — confirm bun_collections type
 
         let pkgs = lockfile.packages.slice();
-        let pkg_deps = pkgs.items(.dependencies);
-        let pkg_names = pkgs.items(.name);
-        let pkg_metas = pkgs.items_mut(.meta);
-        let pkg_resolutions = pkgs.items_mut(.resolution);
-        // TODO(port): MultiArrayList .items(field)
+        let pkg_deps = pkgs.items_dependencies();
+        let pkg_names = pkgs.items_name();
+        let pkg_metas = pkgs.items_meta_mut();
+        let pkg_resolutions = pkgs.items_resolution_mut();
 
         {
             // first the root dependencies are resolved

@@ -120,7 +120,8 @@ impl SocketGroup {
     /// `this` must point to a group previously passed to `init`; not called
     /// concurrently with the loop walking this group.
     pub unsafe fn destroy(this: *mut Self) {
-        us_socket_group_deinit(this)
+        // SAFETY: caller upholds the contract above.
+        unsafe { us_socket_group_deinit(this) }
     }
 
     pub fn close_all(&mut self) {

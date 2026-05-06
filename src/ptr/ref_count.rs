@@ -1104,11 +1104,7 @@ fn offset_of_ref_count_ts<T: ThreadSafeRefCounted, Rc>() -> usize {
 // comptime assertion in `RefPtr`. Replaced by `AnyRefCounted` trait bound.
 
 #[allow(non_upper_case_globals)]
-mod scope {
-    bun_core::declare_scope!(ref_count, hidden);
-}
-#[allow(unused_imports)]
-use scope::ref_count;
+bun_core::declare_scope!(ref_count, hidden);
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

@@ -169,46 +169,6 @@ impl UpgradedDuplex {
 
 #[path = "socket.rs"]
 pub mod socket;
-#[cfg(any())]
-pub mod socket {
-    use crate::{us_socket_t, ConnectingSocket, UpgradedDuplex};
-    pub enum InternalSocket<'a> {
-        Connected(*mut us_socket_t),
-        Connecting(*mut ConnectingSocket),
-        UpgradedDuplex(&'a mut UpgradedDuplex),
-        #[cfg(windows)]
-        Pipe(&'a mut crate::WindowsNamedPipe),
-        #[cfg(not(windows))]
-        Pipe,
-        Detached,
-    }
-    pub struct NewSocketHandler<'a, const IS_SSL: bool> {
-        pub socket: InternalSocket<'a>,
-    }
-    impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
-        pub const DETACHED: Self = Self { socket: InternalSocket::Detached };
-        #[inline]
-        pub fn from(socket: *mut us_socket_t) -> Self {
-            Self { socket: InternalSocket::Connected(socket) }
-        }
-        #[inline]
-        pub fn from_connecting(connecting: *mut ConnectingSocket) -> Self {
-            Self { socket: InternalSocket::Connecting(connecting) }
-        }
-        #[inline]
-        pub fn from_any(socket: InternalSocket<'a>) -> Self {
-            Self { socket }
-        }
-    }
-    pub type SocketTCP<'a> = NewSocketHandler<'a, false>;
-    pub type SocketTLS<'a> = NewSocketHandler<'a, true>;
-    pub type SocketTcp<'a> = NewSocketHandler<'a, false>;
-    pub type SocketTls<'a> = NewSocketHandler<'a, true>;
-    pub enum AnySocket<'a> {
-        Tcp(SocketTCP<'a>),
-        Tls(SocketTLS<'a>),
-    }
-}
 
 // ───────────────────────────── re-exports ────────────────────────────────────
 

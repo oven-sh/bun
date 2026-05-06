@@ -871,8 +871,12 @@ impl<'a> Lexer<'a> {
                                     self.step();
 
                                     self.token = T::t_string_literal;
-                                    self.string_literal_slice =
-                                        &self.source.contents[start + 2..end];
+                                    // SAFETY: detach from `&self.source.contents` so the
+                                    // slow-pass `decode_escape_sequences(&mut self, ..)` below
+                                    // can borrow `self` mutably; contents is not mutated there.
+                                    self.string_literal_slice = unsafe {
+                                        &*(&self.source.contents[start + 2..end] as *const [u8])
+                                    };
                                     if needs_slow_pass {
                                         break;
                                     }

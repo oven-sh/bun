@@ -844,6 +844,20 @@ pub trait GetFallbacks<const N: usize>: Sized {
     fn get_fallbacks(this: &mut SmallList<Self, N>, targets: crate::targets::Targets) -> Self::Output;
 }
 
+/// Duck-typed protocol from the Zig source (`@hasDecl(T, "getImage")`): any
+/// value type that carries an `Image` and can produce color/prefix fallbacks
+/// of itself. Implemented by `values::image::Image` and
+/// `properties::background::Background`.
+pub trait ImageFallback: Sized {
+    fn get_image(&self) -> &crate::values::image::Image;
+    fn with_image(&self, image: crate::values::image::Image) -> Self;
+    fn get_fallback(&self, kind: crate::values::color::ColorFallbackKind) -> Self;
+    fn get_necessary_fallbacks(
+        &self,
+        targets: crate::targets::Targets,
+    ) -> crate::values::color::ColorFallbackKind;
+}
+
 // `get_fallbacks_image` / `get_fallbacks_text_shadow` depend on still-gated
 // values::color, properties::text, css_parser::ImageFallback. Re-enable with
 // those modules.

@@ -16,7 +16,7 @@ bun_core::declare_scope!(MySQLDecodeBinaryValue, visible);
 pub const BINARY_CHARSET: u16 = 63;
 
 // TODO(port): narrow error set
-pub fn decode_binary_value<Context>(
+pub fn decode_binary_value<Context: ReaderContext>(
     global_object: &JSGlobalObject,
     field_type: types::FieldType,
     column_length: u32,
@@ -27,7 +27,7 @@ pub fn decode_binary_value<Context>(
     character_set: u16,
     reader: NewReader<Context>,
 ) -> Result<SQLDataCell, bun_core::Error> {
-    bun_output::scoped_log!(
+    bun_core::scoped_log!(
         MySQLDecodeBinaryValue,
         "decodeBinaryValue: {}",
         <&'static str>::from(field_type)

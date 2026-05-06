@@ -1682,8 +1682,10 @@ impl<'a> PipelineTask<'a> {
     }
 
     /// Back on the JS thread.
-    pub fn then(mut self: Box<Self>, promise: &mut JSPromise) -> Result<(), jsc::JsTerminated> {
-        // `defer self.deinit()` → handled by `Drop for PipelineTask` at scope exit.
+    pub fn then(&mut self, promise: &mut JSPromise) -> Result<(), jsc::JsTerminated> {
+        // `defer self.deinit()` → handled by `Drop for PipelineTask` when the
+        // owning `ConcurrentPromiseTask` Box is destroyed by the event-loop
+        // dispatch (`run_from_js` → `destroy`), immediately after this returns.
         // JS thread again — release the per-task pin so user code can
         // transfer/detach the source now.
         // PORT NOTE: reshaped for borrowck — `PipelineTask: Drop` forbids

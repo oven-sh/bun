@@ -2294,16 +2294,19 @@ pub fn init_with_runtime_once(
             // When using bun, we only do staleness checks once per day
             .saturating_sub(bun_core::time::S_PER_DAY);
 
-    // PORT NOTE: `manager.lockfile` is `Box<crate::lockfile::Lockfile>` (the
-    // stub shape); `load_from_cwd` is impl'd on `crate::lockfile_real::Lockfile`.
-    // The two are distinct types until reconciler-6 unifies the lockfile module.
-    // For the runtime-init path (auto-install during `bun run`), fall back to an
-    // empty lockfile — matches the `else` arm below.
-    // TODO(port): blocked_on lockfile stub/real unification (reconciler-6) —
-    // wire `load_from_cwd::<true>` once `Box<lockfile::Lockfile>` ==
-    // `Box<lockfile_real::Lockfile>`.
-    let _ = root_dir;
-    manager.lockfile.init_empty();
+    if root_dir.has_comptime_query(b"bun.lockb") {
+        // PORT NOTE: `manager.lockfile` is `Box<crate::lockfile::Lockfile>` (the
+        // stub shape); `load_from_cwd` is impl'd on `crate::lockfile_real::Lockfile`.
+        // The two are distinct types until reconciler-6 unifies them. For the
+        // runtime-init path (auto-install during `bun run`), fall back to an
+        // empty lockfile — matches the `else` arm in Zig.
+        // TODO(port): blocked_on lockfile stub/real unification (reconciler-6) —
+        // wire `load_from_cwd::<true>` once `Box<lockfile::Lockfile>` ==
+        // `Box<lockfile_real::Lockfile>`.
+        manager.lockfile.init_empty();
+    } else {
+        manager.lockfile.init_empty();
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

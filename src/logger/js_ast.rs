@@ -937,6 +937,94 @@ pub mod expr {
         pub fn as_e_number(&self) -> Option<E::Number> {
             if let Data::ENumber(n) = *self { Some(n) } else { None }
         }
+        /// Zig: `Expr.Data.deepClone(allocator)` — T2 subset (only the
+        /// value-shaped variants that JSON/YAML/TOML produce). Parser-only
+        /// variants live in `bun_js_parser::ast::expr::Data::deep_clone`.
+        pub fn deep_clone(&self) -> Result<Data, AllocError> {
+            Ok(match *self {
+                Data::EArray(el) => {
+                    let src = el.get();
+                    let mut items = ExprNodeList::init_capacity(src.items.len())?;
+                    for item in src.items.slice() {
+                        items.append(item.deep_clone()?)?;
+                    }
+                    E::Array {
+                        items,
+                        comma_after_spread: src.comma_after_spread,
+                        was_originally_macro: src.was_originally_macro,
+                        is_single_line: src.is_single_line,
+                        is_parenthesized: src.is_parenthesized,
+                        close_bracket_loc: src.close_bracket_loc,
+                    }
+                    .into_data_store()
+                }
+                Data::EObject(el) => {
+                    let src = el.get();
+                    let mut properties =
+                        G::PropertyList::init_capacity(src.properties.len())?;
+                    for prop in src.properties.slice() {
+                        properties.append(G::Property {
+                            initializer: match prop.initializer {
+                                Some(e) => Some(e.deep_clone()?),
+                                None => None,
+                            },
+                            kind: prop.kind,
+                            flags: prop.flags,
+                            key: match prop.key {
+                                Some(e) => Some(e.deep_clone()?),
+                                None => None,
+                            },
+                            value: match prop.value {
+                                Some(e) => Some(e.deep_clone()?),
+                                None => None,
+                            },
+                        })?;
+                    }
+                    E::Object {
+                        properties,
+                        comma_after_spread: src.comma_after_spread,
+                        is_single_line: src.is_single_line,
+                        is_parenthesized: src.is_parenthesized,
+                        was_originally_macro: src.was_originally_macro,
+                        close_brace_loc: src.close_brace_loc,
+                    }
+                    .into_data_store()
+                }
+                Data::EString(el) => {
+                    // Zig clones the string bytes into the target allocator;
+                    // here re-intern into `DATA_STORE` so the slice outlives
+                    // any source bump that may be dropped.
+                    let src = el.get();
+                    let data: Str = DATA_STORE.with(|s| {
+                        let bump = s.borrow();
+                        let buf = bump.alloc_slice_copy(src.data);
+                        // SAFETY: arena-owned slice; lifetime erased per
+                        // Phase-A `Str` alias convention (`&'static [u8]`
+                        // standing in for `'bump`).
+                        unsafe { core::mem::transmute::<&[u8], &'static [u8]>(buf) }
+                    });
+                    E::EString {
+                        data,
+                        prefer_template: src.prefer_template,
+                        // Rope segments are flattened before any deepClone
+                        // call site in Zig; preserve the chain pointers as-is
+                        // (they already point into `DATA_STORE`).
+                        next: src.next,
+                        end: src.end,
+                        rope_len: src.rope_len,
+                        is_utf16: src.is_utf16,
+                    }
+                    .into_data_store()
+                }
+                // Inline (Copy) variants — bitwise copy is the deep clone.
+                Data::EBoolean(v) => Data::EBoolean(v),
+                Data::ENumber(v) => Data::ENumber(v),
+                Data::ENull(v) => Data::ENull(v),
+                Data::EUndefined(v) => Data::EUndefined(v),
+                Data::EMissing(v) => Data::EMissing(v),
+            })
+        }
+
         #[inline]
         pub fn is_e_string(&self) -> bool { matches!(self, Data::EString(_)) }
         #[inline]

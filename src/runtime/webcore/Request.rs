@@ -1321,10 +1321,21 @@ impl Request {
                 match value.get_truthy(global_this, b"signal") {
                     Ok(Some(signal_)) => {
                         fields.insert(Fields::Signal);
-                        // Keep it alive
-                        signal_.ensure_still_alive();
-                        let _ = signal_;
-                        todo!("blocked_on: bun_jsc::AbortSignal::from_js");
+                        if let Some(signal) = AbortSignal::from_js(signal_) {
+                            // Keep it alive
+                            signal_.ensure_still_alive();
+                            // SAFETY: `from_js` returns a live AbortSignal* borrowed
+                            // from the JS wrapper rooted by `signal_` on the stack;
+                            // `ref_()` bumps the C++ intrusive refcount.
+                            req.signal = NonNull::new(unsafe { (*signal).ref_() });
+                        } else {
+                            if !global_this.has_exception() {
+                                bail!(Err(global_this.throw(format_args!(
+                                    "Failed to construct 'Request': signal is not of type AbortSignal."
+                                ))));
+                            }
+                            bail!(Err(JsError::Thrown));
+                        }
                     }
                     Ok(None) => {}
                     Err(e) => bail!(Err(e)),

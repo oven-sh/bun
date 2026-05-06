@@ -2396,10 +2396,10 @@ impl Package<u64> {
 
         if !FEATURES.is_main {
             if !R::IS_VOID {
-                self.resolution = resolver.resolve::<SemverIntType>(&mut string_builder, &json)?;
+                self.resolution = resolver.resolve::<u64>(&mut string_builder, &json)?;
             }
         } else {
-            self.resolution = Resolution::<SemverIntType>::init(TaggedValue::Root);
+            self.resolution = Resolution::<u64>::init(TaggedValue::Root);
         }
 
         if let Some(patched_deps) = json.as_property(b"patchedDependencies") {

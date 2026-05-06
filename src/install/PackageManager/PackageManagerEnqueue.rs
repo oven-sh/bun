@@ -999,9 +999,14 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     this.options.minimum_release_age_ms.is_some();
                                 if this.options.enable.manifest_cache() {
                                     let mut expired = false;
+                                    // PORT NOTE: reshaped for borrowck — `this.manifests`
+                                    // borrows `*this`; pass `*mut PackageManager` for the
+                                    // disk-load callback (Zig passes the aliased `*this`).
+                                    let scope = this.scope_for_package_name(name_str);
+                                    let this_ptr: *mut PackageManager = this;
                                     if let Some(manifest) = this.manifests.by_name_hash_allow_expired(
-                                        this,
-                                        this.scope_for_package_name(name_str),
+                                        this_ptr,
+                                        scope,
                                         name_hash,
                                         &mut expired,
                                         ManifestLoad::LoadFromMemoryFallbackToDisk,
@@ -1028,7 +1033,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                         .as_ref()
                                                         .unwrap()
                                                         .should_exclude_from_age_filter(
-                                                            &this.options.minimum_release_age_excludes,
+                                                            this.options.minimum_release_age_excludes,
                                                         )
                                                         && Npm::PackageManifest::is_package_version_too_recent(
                                                             find_result.package, min_age_ms,

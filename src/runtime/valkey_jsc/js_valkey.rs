@@ -438,14 +438,10 @@ impl JSValkeyClient {
         Box::into_raw(Box::new(init))
     }
 
-    /// `self.client.vm` is type-erased to `*mut c_void` in the Phase-A struct;
-    /// recover the typed `&mut VirtualMachine` here for method calls.
+    /// Shorthand for the per-thread JS VM stored on the inner client.
     #[inline]
-    fn vm(&self) -> &'static mut VirtualMachine {
-        // SAFETY: `vm` was stored via `global_object.bun_vm().cast()` in
-        // `create_no_js_no_pubsub` and is the per-thread JS VM, alive for the
-        // process lifetime.
-        unsafe { &mut *self.client.vm.cast::<VirtualMachine>() }
+    fn vm(&self) -> &'static VirtualMachine {
+        self.client.vm
     }
 
     // Factory function to create a new Valkey client from JS

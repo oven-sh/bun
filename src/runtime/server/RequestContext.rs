@@ -1428,20 +1428,28 @@ where
                     crate::webcore::node_types::PathOrFileDescriptor::Path(p) => p.slice(),
                     crate::webcore::node_types::PathOrFileDescriptor::Fd(_) => b"",
                 };
-                let mut sys = bun_sys::Error {
+                let sys = bun_sys::Error {
                     errno: bun_sys::E::EISDIR as _,
                     syscall: bun_sys::Tag::read,
                     ..Default::default()
                 }
                 .with_path(path_bytes)
                 .to_system_error();
-                sys.message = BunString::static_("Cannot stream a directory as a response body");
-                let _ = (sys, global_this);
-                // `bun_sys::SystemError` is a local sys-crate struct; the JS
-                // conversion lives on `bun_jsc::SystemError`.
-                return self.run_error_handler(
-                    todo!("blocked_on: bun_sys::SystemError::to_error_instance"),
-                );
+                // PORT NOTE: in Zig `jsc.SystemError` *is* `bun.sys.SystemError`;
+                // here the two crates have distinct structs (different field
+                // order). Reshape into the extern layout, override the message,
+                // then call through the C++ bridge.
+                let sys = jsc::SystemError {
+                    errno: sys.errno,
+                    code: sys.code,
+                    message: BunString::static_("Cannot stream a directory as a response body"),
+                    path: sys.path,
+                    syscall: sys.syscall,
+                    hostname: sys.hostname,
+                    fd: sys.fd,
+                    dest: sys.dest,
+                };
+                return self.run_error_handler(sys.to_error_instance(global_this));
             }
             (bun_io::FileType::File, false)
         };

@@ -251,6 +251,41 @@ static SUBPROCESS_MAXBUF_VTABLE: MaxBufOwnerVTable = MaxBufOwnerVTable {
     on_overflow: subprocess_maxbuf_on_overflow,
 };
 
+/// `IPC.SendQueue` owner dispatch for the parent-side `Subprocess`. The Zig
+/// code stored `.{ .subprocess = subprocess }` and switched on the union tag;
+/// the Rust port routes through this static vtable so `bun_jsc::ipc` stays
+/// type-erased over `bun_runtime` types.
+static SUBPROCESS_IPC_OWNER_VTABLE: IPC::SendQueueOwnerVTable = IPC::SendQueueOwnerVTable {
+    global_this: |ptr| {
+        // SAFETY: `ptr` was set from a live `*mut Subprocess` in `SendQueue::init`
+        // below; the SendQueue is stored inline in `Subprocess.ipc_data` and
+        // dropped before the Subprocess is freed.
+        unsafe { (*ptr.cast::<SubprocessT<'static>>()).global_this }
+    },
+    handle_ipc_close: |ptr| {
+        // SAFETY: see `global_this`.
+        unsafe { (*ptr.cast::<SubprocessT<'static>>()).handle_ipc_close() }
+    },
+    handle_ipc_message: |ptr, msg, handle| {
+        // SAFETY: see `global_this`.
+        unsafe { (*ptr.cast::<SubprocessT<'static>>()).handle_ipc_message(msg, handle) }
+    },
+    this_jsvalue: |ptr| {
+        // SAFETY: see `global_this`.
+        unsafe { (*ptr.cast::<SubprocessT<'static>>()).this_value.try_get() }
+            .unwrap_or(JSValue::ZERO)
+    },
+};
+
+#[inline]
+fn subprocess_ipc_owner(subprocess: *mut SubprocessT<'_>) -> IPC::SendQueueOwner {
+    IPC::SendQueueOwner {
+        ptr: subprocess.cast(),
+        kind: IPC::SendQueueOwnerKind::Subprocess,
+        vtable: &SUBPROCESS_IPC_OWNER_VTABLE,
+    }
+}
+
 bun_output::declare_scope!(Subprocess, hidden);
 
 // `SpawnOptions.Stdio` in Zig is a platform-dependent nested decl. Rust enums

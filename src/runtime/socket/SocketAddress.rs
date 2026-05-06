@@ -223,34 +223,34 @@ impl SocketAddress {
     // bare `parse(__g, __f)` call which doesn't resolve inside an `impl` block.
     // The C-ABI shim is wired by the `.classes.ts` codegen / `JsClass` derive.
     pub fn parse(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let input = {
+        // `defer input.deref()` → OwnedString releases the +1 from BunString::from_js
+        let input: OwnedString = {
             let input_arg = callframe.argument(0);
             if !input_arg.is_string() {
                 return Err(global.throw_invalid_argument_type_value("input", "string", input_arg));
             }
-            BunString::from_js(input_arg, global)?
+            OwnedString::new(BunString::from_js(input_arg, global)?)
         };
-        // `defer input.deref()` → drops at scope exit
 
         const PREFIX: &str = "http://";
         // PERF(port): was comptime bool dispatch (`switch (input.is8Bit()) { inline else => |is_8_bit| ... }`) — profile in Phase B
-        let url_str = if input.is_8bit() {
+        // `defer url_str.deref()` → OwnedString releases the +1 from create_uninitialized_*
+        let url_str: OwnedString = if input.is_8bit() {
             let from_chars = input.latin1();
             let (str, to_chars) = BunString::create_uninitialized_latin1(from_chars.len() + PREFIX.len());
             to_chars[..PREFIX.len()].copy_from_slice(PREFIX.as_bytes());
             to_chars[PREFIX.len()..].copy_from_slice(from_chars);
-            str
+            OwnedString::new(str)
         } else {
             let from_chars = input.utf16();
             let (str, to_chars) = BunString::create_uninitialized_utf16(from_chars.len() + PREFIX.len());
             // bun.strings.literal(u16, "http://")
             to_chars[..PREFIX.len()].copy_from_slice(bun_str::w!("http://"));
             to_chars[PREFIX.len()..].copy_from_slice(from_chars);
-            str
+            OwnedString::new(str)
         };
-        // `defer url_str.deref()` → drops at scope exit
 
-        let Some(url_ptr) = <URL as UrlExt>::from_string(url_str) else {
+        let Some(url_ptr) = <URL as UrlExt>::from_string(url_str.get()) else {
             return Ok(JSValue::UNDEFINED);
         };
         // `defer url.deinit()`

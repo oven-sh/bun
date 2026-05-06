@@ -33,106 +33,33 @@ pub use store::{Store, StoreRef};
 // name in the Phase-A draft. Alias the module form so `Store::Data` resolves.
 pub use store as Store_;
 
-// blob/{read_file,write_file}.rs un-gated (heavy bodies re-gated inside each
-// file). copy_file.rs remains gated — depends on `ConstParamTy` adt const
-// generics + node_fs/NodeFS surface not yet wired.
 #[path = "blob/read_file.rs"]  pub mod read_file;
 #[path = "blob/write_file.rs"] pub mod write_file;
- #[path = "blob/copy_file.rs"]  pub mod copy_file;
+#[path = "blob/copy_file.rs"]  pub mod copy_file;
 
-// deps), which cfg's out the `mod` *item itself* — so `read_file::` is an
-// unresolved path everywhere. Body.rs / Image.rs / this file only need the
-// public result types, so re-declare a thin module with those until the real
-// `#[path]`-decl above win and this becomes a duplicate to delete).
-#[allow(dead_code)]
-pub mod read_file {
-    use super::SizeType;
-    use bun_jsc::SystemError;
+pub use read_file::{ReadFileRead, ReadFileResultType};
+pub use write_file::{WriteFileResultType, WriteFilePromise, WriteFileWaitFromLockedValueTask};
 
-    /// Zig: `ReadFile.Read` payload handed to the on-read callback.
-    pub struct ReadFileRead {
-        // TODO(port): Zig `[]u8` owned-if-`is_temporary`; modeled as Vec for
-        // uniform ownership on the Rust side.
-        pub buf: Vec<u8>,
-        pub is_temporary: bool,
-        pub total_size: SizeType,
-    }
-
-    /// Zig: `SystemError.Maybe(ReadFileRead)`
-    pub enum ReadFileResultType {
-        Result(ReadFileRead),
-        Err(SystemError),
-    }
+/// JS-thread `EventLoopCtx` for `KeepAlive::ref_/unref`. Zig passed the
+/// `*VirtualMachine` directly (anytype dispatch); the Rust split routes through
+/// the aio hook registered by `crate::init()`.
+#[inline]
+fn vm_ctx() -> bun_aio::EventLoopCtx {
+    bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js)
 }
 
-// + WorkTask deps), which cfg's out the `mod` *item itself* — so
-// `super::write_file` resolves to the *function* `write_file` below instead of
-// the module. `_jsc_gated` only needs the public façade types
-// (`WriteFilePromise`, `WriteFileWaitFromLockedValueTask`, `WriteFile{,Task}`),
-// so re-declare a thin module with `todo!()` bodies until the real body
-#[allow(dead_code, unused_variables)]
-pub mod write_file {
-    use super::{jsc, Blob, JSGlobalObject, SizeType};
-    use core::ffi::c_void;
-
-    /// Zig: `SystemError.Maybe(SizeType)`
-    pub enum WriteFileResultType {
-        Result(SizeType),
-        Err(bun_jsc::SystemError),
-    }
-
-    pub type WriteFileOnWriteFileCallback<C> =
-        fn(ctx: *mut C, count: WriteFileResultType) -> Result<(), bun_jsc::JsTerminated>;
-
-    pub struct WriteFilePromise<'a> {
-        pub promise: jsc::JSPromiseStrong,
-        pub global_this: &'a JSGlobalObject,
-    }
-    impl<'a> WriteFilePromise<'a> {
-        pub fn run(
-            _handler: *mut Self,
-            _count: WriteFileResultType,
-        ) -> Result<(), bun_jsc::JsTerminated> {
-            todo!("blocked_on: write_file::WriteFilePromise::run")
-        }
-    }
-
-    pub struct WriteFileWaitFromLockedValueTask<'a> {
-        pub file_blob: Blob,
-        pub global_this: &'a JSGlobalObject,
-        pub promise: jsc::JSPromiseStrong,
-        pub mkdirp_if_not_exists: bool,
-    }
-    impl<'a> WriteFileWaitFromLockedValueTask<'a> {
-        pub fn then_wrap(_this: *mut c_void, _value: &mut crate::webcore::body::Value) {
-            todo!("blocked_on: write_file::WriteFileWaitFromLockedValueTask::then_wrap")
-        }
-    }
-
-    pub struct WriteFile;
-    impl WriteFile {
-        pub fn create<C>(
-            _dest: Blob,
-            _src: Blob,
-            _ctx: *mut C,
-            _cb: WriteFileOnWriteFileCallback<C>,
-            _mkdirp: bool,
-        ) -> Result<Box<WriteFile>, bun_core::Error> {
-            todo!("blocked_on: write_file::WriteFile::create")
-        }
-    }
-
-    pub struct WriteFileTask;
-    impl WriteFileTask {
-        pub fn create_on_js_thread(
-            _global: &JSGlobalObject,
-            _wf: Box<WriteFile>,
-        ) -> Box<WriteFileTask> {
-            todo!("blocked_on: write_file::WriteFileTask::create_on_js_thread")
-        }
-        pub fn schedule(&self) {
-            todo!("blocked_on: write_file::WriteFileTask::schedule")
-        }
+/// `globalThis.bunVM().transpiler.env.getHttpProxy(true, null, null)?.href` —
+/// pulled out so call sites stay readable. Returns an owned copy because the
+/// `URL<'_>` view borrows from the env loader's internal map and we hand the
+/// bytes off to async S3 tasks.
+fn http_proxy_href(global_this: &JSGlobalObject) -> Option<Vec<u8>> {
+    // SAFETY: `bun_vm()` returns the live per-global VM pointer (JS thread);
+    // `transpiler.env` is the process-singleton dotenv loader, never null
+    // once the VM is initialised.
+    unsafe {
+        (*(*global_this.bun_vm()).transpiler.env)
+            .get_http_proxy(true, None, None)
+            .map(|p| p.href.to_vec())
     }
 }
 

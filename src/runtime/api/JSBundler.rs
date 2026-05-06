@@ -1679,46 +1679,12 @@ pub mod js_bundler {
         pub prefix: OwnedString,
     }
 
-    fn build(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<JSValue> {
-        if arguments.is_empty() || !arguments[0].is_object() {
-            return Err(global_this
-                    .throw_invalid_arguments("Expected a config object to be passed to Bun.build"));
-        }
-
-        let vm = global_this.bun_vm();
-
-        // Detect and prevent calling Bun.build from within a macro during bundling.
-        // This would cause a deadlock because:
-        // 1. The bundler thread (singleton) is processing the outer Bun.build
-        // 2. During parsing, it encounters a macro and evaluates it
-        // 3. The macro calls Bun.build, which tries to enqueue to the same singleton thread
-        // 4. The singleton thread is blocked waiting for the macro to complete -> deadlock
-        // SAFETY: bun_vm() returns the live process VirtualMachine pointer.
-        if unsafe { (*vm).macro_mode } {
-            return Err(global_this.throw(
-                "Bun.build cannot be called from within a macro during bundling.\n\n\
-                 This would cause a deadlock because the bundler is waiting for the macro to complete,\n\
-                 but the macro's Bun.build call is waiting for the bundler.\n\n\
-                 To bundle code at compile time in a macro, use Bun.spawnSync to invoke the CLI:\n  \
-                 const result = Bun.spawnSync([\"bun\", \"build\", entrypoint, \"--format=esm\"]);",
-            ));
-        }
-
-        let mut plugins: Option<*mut Plugin> = None;
-        let config = Config::from_js(global_this, arguments[0], &mut plugins)?;
-
-        // SAFETY: bun_vm() returns the live process VirtualMachine pointer.
-        let event_loop = unsafe { (*vm).event_loop() };
-        let _ = (config, plugins, event_loop);
-        todo!("blocked_on: bun_bundler::BundleV2::generate_from_javascript")
-    }
-
-    /// `Bun.build(config)`
-    #[bun_jsc::host_fn]
-    pub fn build_fn(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<1>();
-        build(global_this, arguments.slice())
-    }
+    // PORT NOTE: `JSBundler.build` / `JSBundler.buildFn` (the `Bun.build` host
+    // call) live in `bun_bundler_jsc::JSBundleCompletionTask` — they need
+    // `BundleV2::generate_from_javascript` (higher tier; depends on this
+    // crate's `Config`/`Plugin`). Keeping them here would create a crate-tier
+    // cycle (PORTING.md §Dispatch). The `#[no_mangle] BunObject_callback_build`
+    // export is emitted from `bun_bundler_jsc` accordingly.
 
     // PORT NOTE: `Resolve`/`Load`/`MiniImportRecord`/etc. are owned by
     // `bun_bundler::bundle_v2::api::JSBundler` so that `BundleV2` can operate

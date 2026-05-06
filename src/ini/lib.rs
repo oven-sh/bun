@@ -1536,10 +1536,15 @@ pub fn load_npmrc(
 
     let mut registry_map = install.scoped.take().unwrap_or_else(NpmRegistryMap::default);
 
+    // SAFETY: `parser.out` is an `E::Object` produced by `Parser::parse`; the
+    // arena pointee lives until `parser` drops at end of fn.
+    let out_obj: &E::Object =
+        unsafe { &*parser.out.data.e_object().expect("ini parser always yields object").as_ptr() };
+
     // Process scopes
     {
         let mut iter = ScopeIterator {
-            config: parser.out.data.e_object(),
+            config: out_obj,
             count: true,
             source,
             log,

@@ -344,18 +344,22 @@ pub fn enqueue_parse_npm_package(
     let task = this.preallocated_resolve_tasks.get();
     // SAFETY: task is a freshly acquired slot from the preallocated pool; we own the write.
     unsafe {
-        *task = Task::Task {
-            package_manager: this,
+        task.write(Task::Task {
+            package_manager: pm_stub(),
             log: logger::Log::init(),
             tag: crate::package_manager_task::Tag::PackageManifest,
-            request: crate::package_manager_task::Request::PackageManifest {
-                network: network_task,
-                name,
+            request: crate::package_manager_task::Request {
+                package_manifest: ManuallyDrop::new(crate::package_manager_task::PackageManifestRequest {
+                    // SAFETY: `network_task` is a freshly-vended pool slot; the
+                    // `'static` reborrow matches the `Task<'static>` slot lifetime.
+                    network: &mut *network_task,
+                    name,
+                }),
             },
             id: task_id,
             // TODO(port): `data: undefined` — Task::data left uninitialized in Zig
             ..Task::uninit()
-        };
+        });
         &mut (*task).threadpool_task
     }
 }

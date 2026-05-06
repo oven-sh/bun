@@ -37,7 +37,7 @@ pub fn get_cache_directory(this: &mut PackageManager) -> Dir {
 pub fn get_cache_directory_and_abs_path(this: &mut PackageManager) -> (Fd, AbsPath) {
     let cache_dir = get_cache_directory(this);
     (
-        Fd::from_std_dir(cache_dir),
+        Fd::from_std_dir(&cache_dir),
         AbsPath::from(this.cache_directory_path.as_bytes()).expect("cache_directory_path is absolute"),
     )
 }

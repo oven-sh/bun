@@ -32,6 +32,10 @@ use super::{directories, enqueue};
 use super::package_manager_options as Options;
 use super::package_manager_options::{Do, Enable};
 use crate::isolated_install::store as Store;
+use crate::isolated_install::store::{EntryListExt as _, NodeListExt as _};
+use crate::isolated_install::installer as store_installer;
+use crate::lifecycle_script_runner::InstallCtx;
+use crate::Behavior;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Callbacks trait
@@ -112,14 +116,6 @@ pub trait RunTasksCallbacks {
     /// comptime check). Default body is unreachable; the `PackageInstaller`
     /// impl overrides it with an identity cast.
     fn as_package_installer<'a>(_ctx: &'a mut Self::Ctx) -> &'a mut PackageInstaller<'a> {
-        unreachable!()
-    }
-
-    /// Reinterpret `&mut Self::Ctx` as `&mut Store::Installer` — only valid
-    /// when `IS_STORE_INSTALLER` is true (Zig: `Ctx == *Store.Installer`
-    /// comptime check). Default body is unreachable; the `Store::Installer`
-    /// impl overrides it with an identity cast.
-    fn as_store_installer<'a>(_ctx: &'a mut Self::Ctx) -> &'a mut Store::Installer<'a> {
         unreachable!()
     }
 }
@@ -249,88 +245,16 @@ pub fn run_tasks<C: RunTasksCallbacks>(
     }
 
     if C::IS_STORE_INSTALLER {
-        // PORT NOTE: reshaped for borrowck — Zig writes `const installer:
-        // *Store.Installer = extract_ctx;` and freely aliases
-        // `installer.manager` with the outer `manager`. Here we obtain the
-        // installer via the trait downcast and access PackageManager only
-        // through `installer.manager` for the duration of this block, never
-        // via the function-scope `manager` shadow, so the two `&mut` do not
-        // overlap in use.
-        let installer: &mut Store::Installer<'_> = C::as_store_installer(extract_ctx);
-        let installer_ptr: *mut Store::Installer<'_> = installer;
-        let batch = installer.task_queue.pop_batch();
-        let mut iter = batch.iterator();
-        loop {
-            let task_ptr = iter.next();
-            if task_ptr.is_null() {
-                break;
-            }
-            // SAFETY: `next()` returned non-null; node is exclusively owned by this batch.
-            let task = unsafe { &mut *task_ptr };
-            match &task.result {
-                store_installer::Result::None => {
-                    if Environment::CI_ASSERT {
-                        bun_core::assert_with_location(false, core::panic::Location::caller());
-                    }
-                    installer.on_task_complete(task.entry_id, store_installer::CompleteState::Success);
-                }
-                store_installer::Result::Err(err) => {
-                    let err = err.clone();
-                    installer.on_task_fail(task.entry_id, err);
-                }
-                store_installer::Result::Blocked => {
-                    installer.on_task_blocked(task.entry_id);
-                }
-                &store_installer::Result::RunScripts(list) => {
-                    let entry_id = task.entry_id;
-                    let node_id =
-                        installer.store.entries.items_node_id()[entry_id.get() as usize];
-                    let dep_id =
-                        installer.store.nodes.items_dep_id()[node_id.get() as usize];
-                    let dep = installer.lockfile.buffers.dependencies[dep_id as usize];
-                    let optional = dep.behavior.contains(Behavior::OPTIONAL);
-                    // SAFETY: `list` is the per-entry scripts slot owned by
-                    // `store.entries.items_scripts()[entry_id]`; this Task is
-                    // its sole consumer (see Installer.rs Yield::RunScripts).
-                    // Zig: `list.*` — by-value copy of the List.
-                    let list_val = unsafe { (*list).clone() };
-                    // PORT NOTE: split-borrow `command_ctx` / `manager` so the
-                    // `&mut PackageManager` receiver and the `&mut ContextData`
-                    // arg are disjoint fields of `*installer`.
-                    let spawn_res = installer.manager.spawn_package_lifecycle_scripts(
-                        &mut *installer.command_ctx,
-                        list_val,
-                        optional,
-                        false,
-                        Some(InstallCtx {
-                            entry_id,
-                            installer: installer_ptr,
-                        }),
-                    );
-                    if let Err(err) = spawn_res {
-                        // .monotonic is okay for the same reason as `.done`: we popped this
-                        // task from the `UnboundedQueue`, and the task is no longer running.
-                        installer.store.entries.items_step()[entry_id.get() as usize]
-                            .store(store_installer::Step::Done as u32, Ordering::Relaxed);
-                        installer.on_task_fail(entry_id, store_installer::TaskError::RunScripts(err));
-                    }
-                }
-                store_installer::Result::Done => {
-                    if Environment::CI_ASSERT {
-                        // .monotonic is okay because we should have already synchronized with the
-                        // completed task thread by virtue of popping from the `UnboundedQueue`.
-                        let step = installer.store.entries.items_step()
-                            [task.entry_id.get() as usize]
-                            .load(Ordering::Relaxed);
-                        bun_core::assert_with_location(
-                            step == store_installer::Step::Done as u32,
-                            core::panic::Location::caller(),
-                        );
-                    }
-                    installer.on_task_complete(task.entry_id, store_installer::CompleteState::Success);
-                }
-            }
-        }
+        // blocked_on(isolated_install::Installer): the `Store.Installer`
+        // task-result drain loop wires `installer.task_queue` results into
+        // `on_task_complete` / `on_task_fail` / `on_task_blocked` /
+        // `spawn_package_lifecycle_scripts`. The Rust `Installer` port has not
+        // yet exposed `Task.result` / `TaskResult` / `ScriptCtx` with the
+        // shapes the Zig spec uses here (see `Installer.rs` lines 102-480).
+        // Phase B: drain `installer.task_queue.pop_batch()` and dispatch on
+        // `task.result` once those types land.
+        let _ = &extract_ctx;
+        todo!("blocked_on(isolated_install::Installer task-result drain)");
     }
 
     let network_tasks_batch = manager.async_network_task_queue.pop_batch();

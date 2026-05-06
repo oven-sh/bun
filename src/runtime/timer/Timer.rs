@@ -21,9 +21,9 @@ use crate::jsc::generated::{JSImmediate, JSTimeout};
 use crate::jsc::{Debugger, EnsureStillAlive};
 
 use super::{
-    All, CountdownOverflowBehavior, DateHeaderTimer, ElTimespec, EventLoopTimer,
-    EventLoopTimerState, EventLoopTimerTag, ImmediateObject, Kind, KindBig, TimeoutObject,
-    TimeoutWarning, TimerObjectInternals, ID,
+    All, CountdownOverflowBehavior, DateHeaderTimer, EventLoopTimer, EventLoopTimerState,
+    EventLoopTimerTag, ImmediateObject, Kind, KindBig, TimeoutObject, TimeoutWarning,
+    TimerObjectInternals, ID,
 };
 
 // ─── local FFI shims (blocked_on: bun_jsc crate-root JSGlobalObject lacks

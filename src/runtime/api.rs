@@ -289,43 +289,11 @@ pub mod bun {
     }
     pub use terminal::Terminal;
 
-    pub mod h2_frame_parser {
-        // TODO(b2-blocked): bun_jsc::{Strong,JsRef,AbortSignal,host_fn} — full body in h2_frame_parser_body.
-        /// Opaque surface — full struct (~5.3k lines) gated in `h2_frame_parser_body`.
-        /// Carries an intrusive ref-count so `socket::NativeCallbacks::H2(IntrusiveRc<_>)`
-        /// type-checks; method bodies are stubs until the JSC-backed body is un-gated.
-        pub struct H2FrameParser {
-            ref_count: bun_ptr::RefCount<H2FrameParser>,
-        }
-        impl bun_ptr::RefCounted for H2FrameParser {
-            type DestructorCtx = ();
-            unsafe fn get_ref_count(this: *mut Self) -> *mut bun_ptr::RefCount<Self> {
-                unsafe { &raw mut (*this).ref_count }
-            }
-            unsafe fn destructor(_this: *mut Self, _ctx: ()) {
-                todo!("blocked_on: h2_frame_parser_body::H2FrameParser::deinit")
-            }
-        }
-        impl H2FrameParser {
-            pub fn on_native_read(&mut self, _data: &[u8]) -> bun_jsc::JsResult<()> {
-                todo!("blocked_on: h2_frame_parser_body::H2FrameParser::on_native_read")
-            }
-            pub fn on_native_writable(&mut self) {
-                todo!("blocked_on: h2_frame_parser_body::H2FrameParser::on_native_writable")
-            }
-            pub fn on_native_close(&mut self) {
-                todo!("blocked_on: h2_frame_parser_body::H2FrameParser::on_native_close")
-            }
-        }
-        /// RFC 7540 §6.5.2 setting identifiers.
-        #[repr(transparent)]
-        #[derive(Clone, Copy, PartialEq, Eq)]
-        pub struct SettingsType(pub u16);
-        /// RFC 7540 §7 error codes.
-        #[repr(transparent)]
-        #[derive(Clone, Copy, PartialEq, Eq)]
-        pub struct ErrorCode(pub u32);
-    }
+    // Full H2FrameParser body — intrusive RefCount + on_native_* callbacks live
+    // in `api/bun/h2_frame_parser.rs`. Re-export here so
+    // `crate::api::bun::h2_frame_parser::H2FrameParser` (used by
+    // `socket::NativeCallbacks::H2(IntrusiveRc<_>)`) resolves to the real type.
+    pub use super::h2_frame_parser_body as h2_frame_parser;
     pub use h2_frame_parser::H2FrameParser;
 }
 pub use bun::process::Process as SpawnProcess;
@@ -372,11 +340,8 @@ pub use bun_sql_jsc::postgres as Postgres;
 pub use bun_sql_jsc::mysql as MySQL;
 pub use crate::valkey_jsc::js_valkey::JSValkeyClient as Valkey;
 
-// ─── gated re-exports (target modules not yet declared in lib.rs) ────────────
-mod _gated_reexports {
-    pub use crate::webview::host_process as WebViewHostProcess;
-    pub use crate::webview::chrome_process as ChromeProcess;
-}
+pub use crate::webview::host_process as WebViewHostProcess;
+pub use crate::webview::chrome_process as ChromeProcess;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

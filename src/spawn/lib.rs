@@ -17,8 +17,89 @@
 #![allow(dead_code)]
 
 use core::ffi::c_char;
+use core::ffi::c_void;
+use core::sync::atomic::{AtomicPtr, Ordering};
 
 use bun_sys::Fd;
+
+// ──────────────────────────────────────────────────────────────────────────
+// hooks — one-shot dispatch slots populated by `bun_runtime::init()`.
+//
+// CYCLEBREAK (PORTING.md §Dispatch, cold-path / debug-hook pattern): the full
+// spawn machinery (`PosixSpawn` FFI, `bun_io::BufferedWriter`, libuv process
+// loop) lives in `bun_runtime`, which sits above every crate that needs to
+// *call* spawn (`bun_install`, `bun_patch`, `bun_jsc`). Low tier exposes a
+// `static AtomicPtr<()>` per entry point; high tier writes the fn-ptr at
+// startup. Spawns are per-process, not per-tick, so the indirect call is
+// acceptable (`// PERF(port): was direct call`).
+// ──────────────────────────────────────────────────────────────────────────
+pub mod hooks {
+    use super::*;
+
+    /// `fn(&SpawnOptions, argv, envp) -> !Maybe(SpawnResult)`. Registered by
+    /// `bun_runtime::api::bun::process::install_hooks`.
+    pub type SpawnProcessFn = for<'a> unsafe fn(
+        &SpawnOptions<'a>,
+        *mut *const c_char,
+        *const *const c_char,
+    ) -> Result<bun_sys::Maybe<SpawnResult>, bun_core::Error>;
+    pub static SPAWN_PROCESS: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+
+    /// `fn(&sync::Options) -> !Maybe(sync::Result)` — `bun.spawnSync`.
+    pub type SyncSpawnFn =
+        unsafe fn(&sync::Options) -> Result<bun_sys::Maybe<sync::Result>, bun_core::Error>;
+    pub static SYNC_SPAWN: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+
+    /// `fn(RunOptions) -> !RunResult` — `std.process.Child.run` shim.
+    pub type RunFn = for<'a> unsafe fn(RunOptions<'a>) -> Result<RunResult, bun_core::Error>;
+    pub static RUN: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+
+    /// Vtable for `subprocess::StaticPipeWriter` — the comptime-parameterized
+    /// async writer is monomorphized in `bun_runtime` (it depends on
+    /// `bun_io::BufferedWriter` + `bun_ptr::RefCount`); this leaf crate stores
+    /// only an opaque handle and round-trips through these slots.
+    ///
+    /// Type-erasure contract:
+    /// - `event_loop` points to the caller's by-value `EventLoopHandle` (the
+    ///   runtime registrant casts back; the pointee is only read during
+    ///   `create`, never retained).
+    /// - `parent` is `*mut P` for the caller's `P`; the runtime stores it
+    ///   alongside `on_close_io` and never dereferences it as a concrete type.
+    /// - `source` points into the low-tier wrapper's `Source.bytes` storage
+    ///   (`Box<[u8]>`-backed, address-stable). The wrapper's `Drop` calls
+    ///   `deref` *before* dropping `source`, so the runtime's borrowed slice
+    ///   never dangles.
+    pub struct StaticPipeWriterVTable {
+        pub create: unsafe fn(
+            event_loop: *const c_void,
+            parent: *mut c_void,
+            on_close_io: unsafe fn(*mut c_void, super::StdioKind),
+            result: super::subprocess::StdioResult,
+            source: *const [u8],
+        ) -> *mut c_void,
+        pub start: unsafe fn(*mut c_void) -> bun_sys::Maybe<()>,
+        pub deref: unsafe fn(*mut c_void),
+    }
+    pub static STATIC_PIPE_WRITER: AtomicPtr<StaticPipeWriterVTable> =
+        AtomicPtr::new(core::ptr::null_mut());
+
+    /// Load a fn-ptr hook or fail with a deterministic error if `bun_runtime`
+    /// has not registered it yet. The error path is unreachable in a linked
+    /// binary (registration happens before any `spawn` is reachable) but
+    /// avoids UB if a unit test calls into this crate in isolation.
+    #[inline]
+    pub(crate) fn load<F: Copy>(slot: &AtomicPtr<()>) -> Result<F, bun_core::Error> {
+        let p = slot.load(Ordering::Acquire);
+        if p.is_null() {
+            return Err(bun_core::err!("SpawnHookNotRegistered"));
+        }
+        debug_assert_eq!(core::mem::size_of::<F>(), core::mem::size_of::<*mut ()>());
+        // SAFETY: `F` is a thin fn-pointer type whose signature matches the
+        // value the high tier stored (see per-slot type aliases above). The
+        // size assert guards against accidental fat-pointer use.
+        Ok(unsafe { core::mem::transmute_copy::<*mut (), F>(&p) })
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // MOVE_DOWN(b0): `bun.jsc.Subprocess` data shapes that mid-tier crates

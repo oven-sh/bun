@@ -748,6 +748,21 @@ impl JSValue {
         unsafe { JSC__JSValue__putIndex(self, global, i, out) };
         if global.has_exception() { Err(JsError::Thrown) } else { Ok(()) }
     }
+    /// `JSValue.putBunStringOneOrArray` (JSValue.zig) — put `key`/`value` into
+    /// `self`. If `key` is already present on the object, create an array for
+    /// the values (used by FrameworkRouter catch-all params).
+    pub fn put_bun_string_one_or_array(
+        self,
+        global: &JSGlobalObject,
+        key: &bun_string::String,
+        value: JSValue,
+    ) -> JsResult<JSValue> {
+        // SAFETY: `global` is live; `key` is a valid `*const bun.String` for the call.
+        host_fn::from_js_host_call(global, || unsafe {
+            JSC__JSValue__upsertBunStringArray(self, global, key, value)
+        })
+    }
+
 
     /// `JSValue.push` (JSValue.zig:404) — append to an array-typed JS value.
     pub fn push(self, global: &JSGlobalObject, out: JSValue) -> JsResult<()> {
@@ -993,6 +1008,7 @@ unsafe extern "C" {
     fn JSC__JSValue__getOwnByValue(this: JSValue, global: *const JSGlobalObject, key: JSValue) -> JSValue;
     fn JSC__JSValue__put(this: JSValue, global: *const JSGlobalObject, key: *const bun_string::ZigString, value: JSValue);
     fn JSC__JSValue__putIndex(this: JSValue, global: *const JSGlobalObject, i: u32, value: JSValue);
+    fn JSC__JSValue__upsertBunStringArray(this: JSValue, global: *const JSGlobalObject, key: *const bun_string::String, value: JSValue) -> JSValue;
     fn JSC__JSValue__push(this: JSValue, global: *const JSGlobalObject, value: JSValue);
     fn JSC__JSValue__putToPropertyKey(target: JSValue, global: *const JSGlobalObject, key: JSValue, value: JSValue);
     fn JSC__JSValue__toStringOrNull(this: JSValue, global: *const JSGlobalObject) -> *mut JSString;

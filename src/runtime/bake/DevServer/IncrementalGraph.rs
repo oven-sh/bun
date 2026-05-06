@@ -14,8 +14,9 @@ use crate::bake::dev_server::{
     TraceImportGoal,
 };
 use crate::bake::dev_server::incremental_graph as ig;
+use crate::bake::dev_server::serialized_failure;
 use crate::bake::dev_server_body::CachedFileIndex;
-use super::serialized_failure_body::Owner as FailureOwner;
+use super::serialized_failure_body::{self, Owner as FailureOwner};
 use super::source_map_store_body::Entry as SourceMapStoreEntry;
 use crate::bake::dev_server::route_bundle::Index as RouteBundleIndex;
 use crate::bake::dev_server::source_map_store::Key as SourceMapStoreKey;

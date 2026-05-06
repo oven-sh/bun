@@ -1210,11 +1210,16 @@ impl<'a> Linker<'a> {
                         return;
                     }
 
-                    let node_modules_path_save = self.node_modules_path.save();
-                    self.node_modules_path.append(b".bin");
-                    // TODO(port): bun.makePath(std.fs.cwd(), ...)
-                    let _ = sys::make_path(sys::Dir { fd: Fd::cwd() }, self.node_modules_path.slice());
-                    node_modules_path_save.restore();
+                    {
+                        // PORT NOTE: ResetScope holds the &mut Path; access through Deref.
+                        let mut node_modules_path_save = self.node_modules_path.save();
+                        node_modules_path_save.append(b".bin");
+                        let _ = sys::make_path(
+                            sys::Dir { fd: Fd::cwd() },
+                            node_modules_path_save.slice(),
+                        );
+                        node_modules_path_save.restore();
+                    }
 
                     match sys::symlink_running_executable(rel_target, abs_dest) {
                         sys::Result::Err(real_error) => {

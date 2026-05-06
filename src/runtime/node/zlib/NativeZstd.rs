@@ -481,6 +481,10 @@ impl CompressionContext for Context {
     }
 }
 
+impl bun_event_loop::Taskable for NativeZstd {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::NativeZstd;
+}
+
 impl CompressionStreamImpl for NativeZstd {
     type Stream = Context;
 

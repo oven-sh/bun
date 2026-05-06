@@ -1,27 +1,17 @@
 //! Port of `src/runtime/cli/run_command.zig`.
 //!
-//! B-2 round 3: dispatch un-gate. `RunCommand::exec` / `exec_as_if_node` are
-//! now real — they classify the positional as a file path vs. a package.json
-//! script and, for the file-path arm, boot the JS VM directly via the now-real
-//! `bun_jsc::VirtualMachine::{init, load_entry_point}` hooks.
-//!
-//! `configure_env_for_run` + `run_package_script_foreground` are now real:
-//! Transpiler/DotEnv/Resolver are direct deps and the package.json `scripts`
-//! lookup arm in `exec()` calls them. Sub-gated inside those bodies:
-//! `Transpiler::{configure_linker,run_env_loader}`, the bun-shell
-//! `Interpreter::init_and_run_from_source` path, the full `bun.spawnSync`
-//! options struct, and `ParentDeathWatchdog` — all blocked on lower-tier
-//! surfaces, not on this file.
-//!
-//! Still re-gated inside `exec()` with ``: `configure_path_for_run`
-//! (bun-node fake-exe + PATH stitching), `node_modules/.bin` `which()` fallback,
-//! the markdown renderer, and the full `Run::start` run-loop (`hold_api_lock` +
-//! `globalExit`); their bodies are preserved verbatim in `phase_a_draft` below.
+//! `RunCommand::exec` classifies the first positional as a file path vs. a
+//! package.json script and either boots the JS VM directly (via `Run::boot` →
+//! `VirtualMachine::init` → `Run::start`) or spawns the script body through the
+//! bun-shell / system shell. PATH stitching, `node_modules/.bin` lookup,
+//! markdown rendering, and the Windows bunx fast-path are all handled here.
 
-use ::core::ffi::{c_char, c_void, CStr};
+use ::core::ffi::{c_char, c_void};
 use ::core::sync::atomic::{AtomicBool, Ordering};
+use std::io::Write as _;
 
 use bun_bundler::Transpiler;
+use bun_collections::{ArrayHashMap, StringHashMap};
 use bun_core::{self as core, Environment, Global, Output, ZStr};
 use bun_core::{pretty, pretty_errorln, prettyln};
 use bun_dotenv as DotEnv;

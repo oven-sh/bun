@@ -517,7 +517,7 @@ impl Lockfile {
             match File::openat(dir, b"bun.lock", sys::O::RDONLY, 0) {
                 Ok(f) => break 'file f,
                 Err(text_open_err) => {
-                    if text_open_err.get_errno() != sys::E::ENOENT {
+                    if text_open_err.errno != sys::SystemErrno::ENOENT {
                         return LoadResult::Err(LoadResultErr {
                             step: LoadStep::OpenFile,
                             value: BunError::from(text_open_err),
@@ -531,7 +531,7 @@ impl Lockfile {
                     match File::openat(dir, b"bun.lockb", sys::O::RDONLY, 0) {
                         Ok(f) => break 'file f,
                         Err(binary_open_err) => {
-                            if binary_open_err.get_errno() != sys::E::ENOENT {
+                            if binary_open_err.errno != sys::SystemErrno::ENOENT {
                                 return LoadResult::Err(LoadResultErr {
                                     step: LoadStep::OpenFile,
                                     value: BunError::from(binary_open_err),

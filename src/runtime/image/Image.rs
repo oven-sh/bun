@@ -19,8 +19,12 @@ use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, JSGlobalObject, JSPromise, JSValue, JsRef, JsResult,
     Strong, JsClass as _, StringJsc as _, SysErrorJsc as _,
 };
+use bun_jsc::concurrent_promise_task::{ConcurrentPromiseTask, ConcurrentPromiseTaskContext};
 use bun_string::ZigString;
 use crate::webcore::Blob;
+use crate::webcore::blob::{ReadBytesHandler, ReadBytesResult};
+use crate::webcore::blob::store as blob_store;
+use crate::webcore::node_types::PathOrFileDescriptor;
 use bun_str::{self as strings, ZStr};
 use bun_core::ZBox;
 use bun_sys as sys;
@@ -28,14 +32,6 @@ use bun_sys as sys;
 use super::codecs_body as codecs;
 use super::exif;
 use super::thumbhash;
-
-// TODO(port): `crate::webcore::blob::ReadBytesResult` lives in Blob.rs's
-// private `_jsc_gated` module — local stand-in until that's `pub use`-d.
-// Shape mirrors the gated enum so the body of `on_read_bytes` type-checks.
-pub enum ReadBytesResult {
-    Ok(Vec<u8>),
-    Err(sys::Error),
-}
 
 // ─── local shims for upstream-missing methods (see PORTING notes) ───────────
 

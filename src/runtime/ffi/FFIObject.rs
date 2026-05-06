@@ -732,45 +732,163 @@ pub fn getter(global_object: &JSGlobalObject, _: &JSObject) -> JSValue {
     to_js(global_object)
 }
 
-// Zig `fields` is an anonymous struct of `jsc.host_fn.wrapStaticMethod(...)` values
-// iterated via comptime reflection in `toJS`. `wrapStaticMethod` is a comptime
-// type-level wrapper that adapts a Zig fn into the JSHostFnZig signature.
-// TODO(port): proc-macro — `#[bun_jsc::host_fn(static)]` replaces `wrapStaticMethod`;
-// the per-param decode table (see src/jsc/host_fn.rs) is not yet implemented in the
-// proc-macro crate. Until it lands, the wrapper is a runtime stub so the static
-// `FIELDS` table type-checks. The wrapped paths are preserved verbatim in the macro
-// invocations for the eventual proc-macro pass.
-fn wrap_static_method_stub(_: &jsc::JSGlobalObject, _: &jsc::CallFrame) -> jsc::JsResult<jsc::JSValue> {
-    todo!("blocked_on: bun_jsc::host_fn::wrap_static_method proc-macro")
-}
-macro_rules! wrap_static_method {
-    ($($path:tt)*) => { wrap_static_method_stub };
+// Zig `fields` is an anonymous struct of `jsc.host_fn.wrapStaticMethod(...)`
+// values iterated via comptime reflection in `toJS`. `wrapStaticMethod` is a
+// comptime adapter that reads CallFrame args and decodes each one according to
+// the wrapped fn's parameter types (host_fn.zig:654). Every entry here passes
+// `auto_protect = false`, so the eater is `ArgumentsSlice.nextEat` (no GC
+// protect, no arena use) and the per-type decode reduces to:
+//
+//   *JSGlobalObject  → `globalThis` (not consumed from iter)
+//   JSValue          → `next_eat()` or throw "Missing argument"
+//   ?JSValue         → `next_eat()` (None if absent)
+//   ZigString        → `next_eat()`, reject undefined/null, `getZigString()`
+//
+// With no protect/arena the `ArgumentsSlice` machinery is dead weight; a plain
+// slice walk over `arguments_old(N).slice()` is observationally identical.
+mod fields {
+    use super::*;
+    // PORT NOTE: `print`/`callback`/`link_symbols`/`close_callback` are
+    // associated fns (no `self`), so which `FFI` type carries them is
+    // immaterial. They live on the full Phase-A draft `ffi_body::FFI` until
+    // the TinyCC paths un-gate on `super::FFI`.
+    use super::super::ffi_body::FFI as FFIBody;
+
+    #[inline(always)]
+    fn require(
+        global: &JSGlobalObject,
+        iter: &mut core::slice::Iter<'_, JSValue>,
+    ) -> JsResult<JSValue> {
+        iter.next()
+            .copied()
+            .ok_or_else(|| global.throw_invalid_arguments(format_args!("Missing argument")))
+    }
+
+    #[inline(always)]
+    fn require_zig_string(
+        global: &JSGlobalObject,
+        iter: &mut core::slice::Iter<'_, JSValue>,
+    ) -> JsResult<ZigString> {
+        let v = require(global, iter)?;
+        if v.is_undefined_or_null() {
+            return Err(global.throw_invalid_arguments(format_args!("Expected string")));
+        }
+        v.get_zig_string(global)
+    }
+
+    /// Mint a `JSHostFn` (raw ABI) thunk that calls a `JSHostFnZig` body via
+    /// `to_js_host_fn_result` — the runtime half of Zig `jsc.toJSHostFn`.
+    macro_rules! to_js_host_fn {
+        ($body:path) => {{
+            unsafe extern "C" fn thunk(g: *mut JSGlobalObject, cf: *mut CallFrame) -> JSValue {
+                // SAFETY: JSC guarantees both pointers are live for the host call.
+                let (g, cf) = unsafe { (&*g, &*cf) };
+                jsc::to_js_host_fn_result(g, $body(g, cf))
+            }
+            thunk as jsc::JSHostFn
+        }};
+    }
+
+    // ── per-entry monomorphised bodies (one per `fields.*` in Zig) ────────────
+
+    fn view_source(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let args = callframe.arguments_old::<3>();
+        let mut iter = args.slice().iter();
+        let object = require(global, &mut iter)?;
+        let is_callback_val = iter.next().copied();
+        FFIBody::print(global, object, is_callback_val)
+    }
+
+    fn dlopen(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let args = callframe.arguments_old::<3>();
+        let mut iter = args.slice().iter();
+        let name_str = require_zig_string(global, &mut iter)?;
+        let object_value = require(global, &mut iter)?;
+        Ok(FFI::open(global, name_str, object_value))
+    }
+
+    fn callback(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let args = callframe.arguments_old::<3>();
+        let mut iter = args.slice().iter();
+        let interface = require(global, &mut iter)?;
+        let js_callback = require(global, &mut iter)?;
+        FFIBody::callback(global, interface, js_callback)
+    }
+
+    fn link_symbols(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let args = callframe.arguments_old::<2>();
+        let mut iter = args.slice().iter();
+        let object_value = require(global, &mut iter)?;
+        Ok(FFIBody::link_symbols(global, object_value))
+    }
+
+    fn to_buffer(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let args = callframe.arguments_old::<6>();
+        let mut iter = args.slice().iter();
+        let value = require(global, &mut iter)?;
+        let byte_offset = iter.next().copied();
+        let value_length = iter.next().copied();
+        let finalization_ctx_or_ptr = iter.next().copied();
+        let finalization_callback = iter.next().copied();
+        super::to_buffer(
+            global,
+            value,
+            byte_offset,
+            value_length,
+            finalization_ctx_or_ptr,
+            finalization_callback,
+        )
+    }
+
+    fn to_array_buffer(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let args = callframe.arguments_old::<6>();
+        let mut iter = args.slice().iter();
+        let value = require(global, &mut iter)?;
+        let byte_offset = iter.next().copied();
+        let value_length = iter.next().copied();
+        let finalization_ctx_or_ptr = iter.next().copied();
+        let finalization_callback = iter.next().copied();
+        super::to_array_buffer(
+            global,
+            value,
+            byte_offset,
+            value_length,
+            finalization_ctx_or_ptr,
+            finalization_callback,
+        )
+    }
+
+    fn close_callback(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let args = callframe.arguments_old::<2>();
+        let mut iter = args.slice().iter();
+        let ctx = require(global, &mut iter)?;
+        Ok(FFIBody::close_callback(global, ctx))
+    }
+
+    fn cstring(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let args = callframe.arguments_old::<4>();
+        let mut iter = args.slice().iter();
+        let value = require(global, &mut iter)?;
+        let byte_offset = iter.next().copied();
+        let length_value = iter.next().copied();
+        super::new_cstring(global, value, byte_offset, length_value)
+    }
+
+    /// Represented as a const slice of (name, raw-ABI host fn) so `to_js` can
+    /// iterate — the runtime equivalent of Zig's `inline for (fieldNames)`.
+    pub(super) const TABLE: &[(&str, jsc::JSHostFn)] = &[
+        ("viewSource", to_js_host_fn!(view_source)),
+        ("dlopen", to_js_host_fn!(dlopen)),
+        ("callback", to_js_host_fn!(callback)),
+        ("linkSymbols", to_js_host_fn!(link_symbols)),
+        ("toBuffer", to_js_host_fn!(to_buffer)),
+        ("toArrayBuffer", to_js_host_fn!(to_array_buffer)),
+        ("closeCallback", to_js_host_fn!(close_callback)),
+        ("CString", to_js_host_fn!(cstring)),
+    ];
 }
 
-/// Shared `JSHostFn` thunk for the `FIELDS` table — see PORT NOTE in `to_js`.
-/// All entries currently resolve to `wrap_static_method_stub`, so a single
-/// extern-"C" trampoline suffices until `#[bun_jsc::host_fn]` mints per-entry
-/// fn pointers.
-unsafe extern "C" fn fields_host_fn_thunk(
-    global: *mut JSGlobalObject,
-    callframe: *mut CallFrame,
-) -> JSValue {
-    // SAFETY: JSC guarantees both pointers are live for the host call.
-    let (global, callframe) = unsafe { (&*global, &*callframe) };
-    jsc::to_js_host_fn_result(global, wrap_static_method_stub(global, callframe))
-}
-
-// Represented here as a const slice of (name, host_fn) so `to_js` can iterate.
-const FIELDS: &[(&str, jsc::JSHostFnZig)] = &[
-    ("viewSource", wrap_static_method!(FFI::print)),
-    ("dlopen", wrap_static_method!(FFI::open)),
-    ("callback", wrap_static_method!(FFI::callback)),
-    ("linkSymbols", wrap_static_method!(FFI::link_symbols)),
-    ("toBuffer", wrap_static_method!(to_buffer)),
-    ("toArrayBuffer", wrap_static_method!(to_array_buffer)),
-    ("closeCallback", wrap_static_method!(FFI::close_callback)),
-    ("CString", wrap_static_method!(new_cstring)),
-];
+const FIELDS: &[(&str, jsc::JSHostFn)] = fields::TABLE;
 
 const MAX_ADDRESSABLE_MEMORY: usize = u56_max();
 

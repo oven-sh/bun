@@ -43,6 +43,19 @@ const PORT_S = {
     file: { type: "string" },
     ported_fns: { type: "array", items: { type: "string" } },
     upstream_added: { type: "array", items: { type: "string" } },
+    layering_moves: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          what: { type: "string" },
+          from: { type: "string" },
+          to: { type: "string" },
+          why: { type: "string" },
+        },
+        required: ["what", "from", "to"],
+      },
+    },
     draft_dissolved: { type: "boolean" },
     slop_after: { type: "number" },
     notes: { type: "string" },
@@ -72,7 +85,20 @@ const VERIFY_S = {
   required: ["file", "accept", "bugs", "slop_found"],
 };
 
-const BANS = `
+const LAYERING = `
+**LAYERING IS THE ROOT FIX (do this FIRST, not last):**
+Most \`todo!("blocked_on: X")\` exist because crate A needs symbol X from crate B but B depends on A. The fix is NOT a stub — it's MOVING X (or its type) to a crate both depend on.
+
+Step 0 (before porting any fn body): identify WHY the symbol is unreachable.
+- **Symbol exists in higher-tier crate** (e.g. runtime/ needs jsc/ symbol but jsc/ depends on runtime/): MOVE the type/fn to a shared lower crate. Common targets: bun_core, bun_jsc (if no runtime dep), or a new bun_<feature>_types crate. Update both crates' imports. This is the WORK.
+- **Symbol exists in same-tier sibling** (e.g. http_jsc needs sql_jsc type): both should depend on the type via a lower crate, OR pass it as a parameter/vtable.
+- **Symbol genuinely doesn't exist yet** (.zig has it, .rs doesn't): PORT it to where the .zig version lives.
+- **Type is used opaquely** (only as \`*mut T\`, never deref'd): use \`*mut c_void\` + a typed-pointer newtype in the lower crate.
+
+NEVER: local extern "C" shim that re-declares the symbol, opaque ZST stub structs ("opaque_default!"), trait-with-unimplemented-default. These are all layering workarounds.
+`;
+
+const BANS = `${LAYERING}
 **BANNED (will be rejected by verify):**
 - \`todo!()\` / \`unimplemented!()\` / \`unreachable!("stub")\` — ZERO tolerance. Port the real body.
 - \`#[cfg(any())]\` / \`#![cfg(any())]\` / \`mod _gated\` / \`mod phase_a_draft\` — ZERO tolerance.
@@ -131,7 +157,7 @@ Return {files:[{file,todos,unimpls,gates,has_draft,compile_errs}], total_slop, t
     // Stage 1: Port
     f =>
       agent(
-        `Port **${f.file}** PROPERLY. Repo /root/bun-5 @ HEAD.\n\nState: ${f.compile_errs || 0} compile errors, ${f.todos || 0} todo!(), ${f.unimpls || 0} unimplemented!(), ${f.gates || 0} gates${f.has_draft ? ", has phase_a_draft mod" : ""}.\n\n**Process:**\n1. Read ${f.file}. Read .zig spec at same path (e.g. \`src/runtime/X.rs\` → \`src/runtime/X.zig\` or per repo layout).\n2. ${f.has_draft ? "**Dissolve phase_a_draft mod**: it holds the REAL port. Replace top-level stubs with draft impls, delete the mod wrapper, dedup." : ""}\n3. For EVERY \`todo!()\`/\`unimplemented!()\`: find matching fn in .zig, port the FULL body. Semantics must match (errors, allocs, side effects).\n4. Missing upstream symbol → port it in its .rs file from its .zig. Transitively until done. Dep cycle → move type per docs/PORTING.md.\n5. Fix compile errors by REAL fixes (not type-gymnastics to silence rustc).\n6. After: \`grep -c 'todo!(\\|unimplemented!(\\|#\\[cfg(any())\\]\\|phase_a_draft' ${f.file}\` → MUST be 0.\n7. \`cargo check -p <crate>\` → fix until 0 errors in YOUR file.\n8. Commit.\n\n${HARD}\n\nReturn {file:"${f.file}", ported_fns:[...], upstream_added:[...], draft_dissolved:bool, slop_after:N, notes}.`,
+        `Port **${f.file}** PROPERLY by FIXING LAYERING. Repo /root/bun-5 @ HEAD.\n\nState: ${f.compile_errs || 0} compile errors, ${f.todos || 0} todo!(), ${f.unimpls || 0} unimplemented!(), ${f.gates || 0} gates${f.has_draft ? ", has phase_a_draft mod" : ""}.\n\n**Process:**\n0. **LAYERING DIAGNOSIS FIRST:** For each todo!/unimplemented!/compile-error, identify: is this a dep-cycle (symbol in wrong crate)? If yes, the fix is MOVING the type/fn, not stubbing. Read docs/PORTING.md §Layering. Record each move in layering_moves.\n1. Read ${f.file} + .zig spec at same path.\n2. ${f.has_draft ? "**Dissolve phase_a_draft mod**: replace top-level stubs with draft impls, delete wrapper, dedup." : ""}\n3. For EVERY \`todo!()\`/\`unimplemented!()\`: if blocked on dep-cycle → MOVE the blocking type/fn to a lower crate (do the move, update imports in both crates). Then port the FULL body from .zig.\n4. Missing upstream symbol (no cycle) → port it in its .rs file from its .zig. Transitively.\n5. Fix compile errors by REAL fixes. Never opaque-stub a type to break a cycle — MOVE it.\n6. After: \`grep -c 'todo!(\\|unimplemented!(\\|#\\[cfg(any())\\]\\|phase_a_draft\\|opaque_default!\\|stub_ty!' ${f.file}\` → MUST be 0.\n7. \`cargo check -p <crate>\` → 0 errors in your file.\n8. Commit.\n\n${HARD}\n\nReturn {file:"${f.file}", ported_fns:[...], upstream_added:[...], layering_moves:[{what,from,to,why}], draft_dissolved:bool, slop_after:N, notes}.`,
         { label: `port:${f.file.replace("src/", "")}`, phase: "Port", schema: PORT_S },
       ),
     // Stage 2: 2-vote Verify

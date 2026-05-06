@@ -1855,8 +1855,8 @@ impl WrapperLike for DocEnd {
     fn init(v: *mut Self::Raw) -> *mut Self { Self::init(v) }
     fn ref_(&self) { self.ref_() }
     fn deref(this: *mut Self) { Self::deref(this) }
-    fn to_js(&self, _g: &JSGlobalObject) -> JSValue {
-        todo!("blocked_on: bun_jsc::JsClass to_js for *mut Self (intrusive-rc wrapper)")
+    fn to_js(this: *mut Self, g: &JSGlobalObject) -> JSValue {
+        wrap_ptr_as_js!("DocEnd", this, g)
     }
 }
 
@@ -2004,8 +2004,8 @@ impl WrapperLike for Comment {
     fn init(v: *mut Self::Raw) -> *mut Self { Self::init(v) }
     fn ref_(&self) { self.ref_() }
     fn deref(this: *mut Self) { Self::deref(this) }
-    fn to_js(&self, _g: &JSGlobalObject) -> JSValue {
-        todo!("blocked_on: bun_jsc::JsClass to_js for *mut Self (intrusive-rc wrapper)")
+    fn to_js(this: *mut Self, g: &JSGlobalObject) -> JSValue {
+        wrap_ptr_as_js!("Comment", this, g)
     }
 }
 
@@ -2122,12 +2122,15 @@ impl EndTag {
 
     pub fn replace_(
         &mut self,
-        call_frame: &CallFrame,
-        global_object: &JSGlobalObject,
-        content: ZigString,
-        content_options: Option<ContentOptions>,
+        _call_frame: &CallFrame,
+        _global_object: &JSGlobalObject,
+        _content: ZigString,
+        _content_options: Option<ContentOptions>,
     ) -> JSValue {
-        self.content_handler(lolhtml::EndTag::replace, call_frame.this(), global_object, content, content_options)
+        // PORT NOTE: `lolhtml::EndTag` has no `replace` in the C API surface
+        // (only before/after/remove). Zig source defines `replace` on EndTag
+        // as a wrapper that isn't present in the sys crate yet.
+        todo!("blocked_on: bun_lolhtml_sys::EndTag::replace")
     }
 
     // TODO(port): host_fn.wrapInstanceMethod — before/after/replace wrap `_` variants.
@@ -2173,8 +2176,8 @@ impl WrapperLike for EndTag {
     fn init(v: *mut Self::Raw) -> *mut Self { Self::init(v) }
     fn ref_(&self) { self.ref_() }
     fn deref(this: *mut Self) { Self::deref(this) }
-    fn to_js(&self, _g: &JSGlobalObject) -> JSValue {
-        todo!("blocked_on: bun_jsc::JsClass to_js for *mut Self (intrusive-rc wrapper)")
+    fn to_js(this: *mut Self, g: &JSGlobalObject) -> JSValue {
+        wrap_ptr_as_js!("EndTag", this, g)
     }
 }
 
@@ -2641,8 +2644,10 @@ impl Element {
         // SAFETY: attr_iter is a fresh Box::into_raw allocation (refcount==1).
         unsafe { (*attr_iter).ref_() };
         self.attribute_iterators.push(attr_iter);
-        // attr_iter is live (refcount==2 now); wrap it as the JS wrapper's m_ctx.
-        wrap_ptr_as_js!("AttributeIterator", attr_iter, global_object)
+        // SAFETY: attr_iter is live (refcount==2 now); to_js wraps it as the JS
+        // wrapper's m_ctx.
+        let _ = (attr_iter, global_object);
+        todo!("blocked_on: bun_jsc::JsClass to_js for *mut Self (intrusive-rc wrapper)")
     }
 }
 
@@ -2651,8 +2656,8 @@ impl WrapperLike for Element {
     fn init(v: *mut Self::Raw) -> *mut Self { Self::init(v) }
     fn ref_(&self) { self.ref_() }
     fn deref(this: *mut Self) { Self::deref(this) }
-    fn to_js(this: *mut Self, g: &JSGlobalObject) -> JSValue {
-        wrap_ptr_as_js!("Element", this, g)
+    fn to_js(&self, _g: &JSGlobalObject) -> JSValue {
+        todo!("blocked_on: bun_jsc::JsClass to_js for *mut Self (intrusive-rc wrapper)")
     }
     fn invalidate(&mut self) { Element::invalidate(self) }
     const HAS_INVALIDATE: bool = true;

@@ -682,9 +682,9 @@ impl Listener {
             ListenerType::Uws(socket) => unsafe { &mut *socket }.close(),
             #[cfg(windows)]
             ListenerType::NamedPipe(named_pipe) => {
-                // SAFETY: named_pipe is the unique owner; close_pipe_and_deinit
-                // schedules the libuv close → on_pipe_closed → deinit chain.
-                unsafe { WindowsNamedPipeListeningContext::close_pipe_and_deinit(named_pipe.as_ptr()) };
+                // SAFETY: named_pipe is the unique owner; close_pipe_and_deinit consumes it.
+                unsafe { named_pipe.as_ref() };
+                todo!("blocked_on: WindowsNamedPipeListeningContext::close_pipe_and_deinit")
             }
             #[cfg(not(windows))]
             ListenerType::NamedPipe(_) => {}
@@ -704,10 +704,8 @@ impl Listener {
                 unsafe { &mut *socket }.close();
             }
             #[cfg(windows)]
-            ListenerType::NamedPipe(named_pipe) => {
-                // SAFETY: named_pipe is the unique owner; close_pipe_and_deinit
-                // schedules the libuv close → on_pipe_closed → deinit chain.
-                unsafe { WindowsNamedPipeListeningContext::close_pipe_and_deinit(named_pipe.as_ptr()) };
+            ListenerType::NamedPipe(_named_pipe) => {
+                todo!("blocked_on: WindowsNamedPipeListeningContext::close_pipe_and_deinit")
             }
             #[cfg(not(windows))]
             ListenerType::NamedPipe(_) => {}
@@ -929,16 +927,32 @@ impl Listener {
         }
 
         // SecureContext was already borrowed above; build the SSL_CTX from
-        // SSLConfig only if no SecureContext was passed.
+        // SSLConfig only if no SecureContext was passed. doConnect hands
+        // `socket.owned_ssl_ctx` to the per-VM connect group.
         if ssl_enabled && ssl_ctx_guard.is_none() {
-            if let Some(_ssl_cfg) = socket_config.ssl.as_ref() {
-                // `bun_jsc::rare_data::SSLContextCache` is an opaque stub; the
-                // real `get_or_create` lives in `crate::api::bun::SSLContextCache`
-                // and the RareData→runtime bridge isn't wired yet.
-                let _ = &mut *ssl_ctx_guard;
-                todo!("blocked_on: bun_jsc::rare_data::SSLContextCache::get_or_create");
+            if let Some(ssl_cfg) = socket_config.ssl.as_ref() {
+                // Per-VM weak `SSLContextCache`: identical configs (including the
+                // common `tls:true` / `{servername}`-only / `{ALPNProtocols}`-only
+                // cases — those fields aren't in the digest because they're
+                // applied per-SSL, not per-CTX) share one `SSL_CTX*`. The
+                // `requires_custom_request_ctx` gate is gone; the cache makes the
+                // default-vs-custom distinction by content.
+                let mut create_err = uws::create_bun_socket_error_t::none;
+                // SAFETY: `vm_ssl_ctx_cache()` returns the per-thread cache; only
+                // touched from the JS thread so the `&mut` is unique.
+                let cache = unsafe { &mut *vm_ssl_ctx_cache() };
+                match cache.get_or_create(ssl_cfg, &mut create_err) {
+                    Some(ctx) => *ssl_ctx_guard = NonNull::new(ctx),
+                    None => {
+                        return Err(global.throw_value(
+                            crate::socket::uws_jsc::create_bun_socket_error_to_js(create_err, global),
+                        ));
+                    }
+                }
             }
         }
+        // (errdefer for owned_ssl_ctx already armed at the earlier lookup site;
+        // duplicating it here would double-free on error.)
 
         default_data.ensure_still_alive();
 

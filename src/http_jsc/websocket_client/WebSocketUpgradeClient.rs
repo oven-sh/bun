@@ -146,29 +146,48 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
 impl<const SSL: bool> HTTPClient<SSL> {
     /// Intrusive refcount increment.
+    ///
+    /// Takes `&self` (not `*mut`) because it only touches `ref_count: Cell<u32>`,
+    /// which is `UnsafeCell`-backed and sound to mutate through a shared ref.
     pub fn r#ref(&self) {
         self.ref_count.set(self.ref_count.get() + 1);
     }
 
     /// Intrusive refcount decrement; runs `deinit` (clearData + free) on 0.
-    pub fn deref(&self) {
-        let n = self.ref_count.get() - 1;
-        self.ref_count.set(n);
+    ///
+    /// Zig: `RefCount.deref(self: *Self)`. Takes a raw `*mut Self` because the
+    /// zero-count path mutates non-`UnsafeCell` fields and frees the allocation;
+    /// deriving that pointer from a `&self` (`as *const Self as *mut Self`) and
+    /// writing through it is UB under Stacked Borrows.
+    ///
+    /// # Safety
+    /// `this` must point to a live `Self` allocated via `Box::into_raw` in
+    /// `connect`. If the refcount reaches zero, `this` is freed and must not be
+    /// accessed afterward.
+    pub unsafe fn deref(this: *mut Self) {
+        // SAFETY: caller contract — `this` is live; `ref_count` is a `Cell`.
+        let rc = unsafe { &(*this).ref_count };
+        let n = rc.get() - 1;
+        rc.set(n);
         if n == 0 {
-            // SAFETY: refcount hit zero; `self` was allocated via `Box::into_raw`
-            // in `connect` and no other live references remain.
-            unsafe { Self::deinit(self as *const Self as *mut Self) };
+            // SAFETY: refcount hit zero; no other live references remain.
+            unsafe { Self::deinit(this) };
         }
     }
 
     /// Called by `RefCount` when the count hits zero.
+    ///
+    /// # Safety
+    /// `this` must be the unique remaining pointer to a `Self` allocated via
+    /// `Box::into_raw` in `connect`.
     unsafe fn deinit(this: *mut Self) {
         // SAFETY: caller guarantees `this` is the unique remaining ref.
-        let this_ref = unsafe { &mut *this };
-        this_ref.clear_data();
-        debug_assert!(this_ref.tcp.is_detached());
-        // SAFETY: allocated via Box::into_raw in `connect`.
-        drop(unsafe { Box::from_raw(this) });
+        unsafe {
+            (*this).clear_data();
+            debug_assert!((*this).tcp.is_detached());
+            // allocated via Box::into_raw in `connect`.
+            drop(Box::from_raw(this));
+        }
     }
 
     /// Suffix of `input_body_buf` still pending write.
@@ -397,7 +416,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
                                     <&'static str>::from(err)
                                 );
                                 client_ref.poll_ref.unref(vm);
-                                client_ref.deref();
+                                // SAFETY: `client` from Box::into_raw above; sole owner.
+                                unsafe { Self::deref(client) };
                                 return None;
                             }
                         };
@@ -422,7 +442,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 Ok(socket) => {
                     client_ref.tcp = socket;
                     if client_ref.state == State::Failed {
-                        client_ref.deref();
+                        // SAFETY: `client` from Box::into_raw above; sole owner.
+                        unsafe { Self::deref(client) };
                         return None;
                     }
                     bun_analytics::Features::WEB_SOCKET.increment();

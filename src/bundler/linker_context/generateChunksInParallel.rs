@@ -624,7 +624,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     chunks,
                     &mut display_size,
                     c.resolver.opts.compile && !chunk.flags.is_browser_chunk_from_server_build,
-                    chunk.content.sourcemap(c.options.source_maps) != SourceMapMode::None,
+                    chunk.content.sourcemap(c.options.source_maps) != SourceMapOption::None,
                 )
             };
             let mut code_result = _code_result;
@@ -650,11 +650,11 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     source_map_final_rel_path.extend_from_slice(&chunk.final_rel_path);
                     source_map_final_rel_path.extend_from_slice(b".map");
 
-                    if tag == SourceMapMode::Linked {
-                        let (a, b): (&[u8], &[u8]) = if public_path.len() > 0 {
+                    if tag == SourceMapOption::Linked {
+                        let [a, b]: [&[u8]; 2] = if public_path.len() > 0 {
                             cheap_prefix_normalizer(public_path, &source_map_final_rel_path)
                         } else {
-                            (b"", path::basename(&source_map_final_rel_path))
+                            [b"", path::basename(&source_map_final_rel_path)]
                         };
 
                         let source_map_start = b"//# sourceMappingURL=";
@@ -682,14 +682,14 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         input_loader: Loader::File,
                         output_path: source_map_final_rel_path.into_boxed_slice(),
                         output_kind: options::OutputKind::Sourcemap,
-                        input_path: strings::concat(&[&input_path, b".map"]),
+                        input_path: bun_core::handle_oom(strings::concat(&[&input_path[..], b".map"])),
                         side: None,
                         entry_point_index: None,
                         is_executable: false,
                         ..Default::default()
                     }));
                 }
-                SourceMapMode::Inline => {
+                SourceMapOption::Inline => {
                     let output_source_map = chunk
                         .output_source_map
                         .finalize(&code_result.shifts)
@@ -715,7 +715,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     code_result.buffer = buf.into_boxed_slice();
                     drop(output_source_map);
                 }
-                SourceMapMode::None => {}
+                SourceMapOption::None => {}
             }
 
             // Compute side early so it can be used for bytecode, module_info, and main chunk output files
@@ -739,7 +739,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
                     // CYCLEBREAK GENUINE: jsc::{VirtualMachine, initialize, CachedBytecode}
                     // → AtomicPtr hook (BYTECODE_HOOK). Null = bytecode disabled.
-                    let bytecode_vt = crate::dispatch::BYTECODE_HOOK
+                    let bytecode_vt = BYTECODE_HOOK
                         .load(core::sync::atomic::Ordering::Acquire);
                     if matches!(chunk.content, Chunk::Content::Javascript(_))
                         && loader.is_javascript_like()

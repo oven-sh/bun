@@ -316,6 +316,14 @@ impl<'a, A> Borrowed<'a, A> {
         {
             // TODO(port): construct the `StdAllocator { ptr: self.state, vtable: &VTABLE }` fat
             // pointer once `StdAllocator`'s shape is fixed in Phase B.
+            //
+            // SAFETY: `StdAllocator.ptr` is an opaque `*anyopaque` context handle (Zig:
+            // `.{ .ptr = self.#state, .vtable = &vtable }`). The const→mut cast here is
+            // type-erasure only — `VTABLE`'s consumers (`vtable_alloc` / `vtable_free`) cast
+            // `ctx` back to `*const State` and form a `&State`; they never write through
+            // `*mut State`. All mutation of `State` flows through `Guarded<History>::lock`,
+            // i.e. the mutex's interior-mutability path, so no exclusive provenance is
+            // required here.
             StdAllocator::from_raw(self.state as *const State as *mut c_void, &VTABLE)
         }
         #[cfg(not(feature = "alloc_scopes"))]

@@ -316,8 +316,9 @@ impl WebSocketProxyTunnel {
     /// SSLWrapper callback: Called when connection is closing
     fn on_close(this: *mut WebSocketProxyTunnel) {
         // SAFETY: ctx pointer set in `start`; SSLWrapper guarantees it is live during callbacks.
+        let _guard = unsafe { Self::ref_scope(this) };
+        // SAFETY: ref_scope holds a ref; `this` is live for the rest of this scope.
         let this = unsafe { &mut *this };
-        let _guard = this.ref_scope();
 
         bun_output::scoped_log!(WebSocketProxyTunnel, "onClose");
 
@@ -390,7 +391,8 @@ impl WebSocketProxyTunnel {
 
     /// Called when the socket becomes writable - flush buffered encrypted data
     pub fn on_writable(&mut self) {
-        let _guard = self.ref_scope();
+        // SAFETY: `&mut self` is live; raw ptr inherits its write provenance.
+        let _guard = unsafe { Self::ref_scope(self as *mut Self) };
 
         // Flush the SSL state machine
         if let Some(wrapper) = self.wrapper.as_mut() {
@@ -425,7 +427,8 @@ impl WebSocketProxyTunnel {
 
     /// Feed encrypted data from the network to the SSL wrapper for decryption
     pub fn receive(&mut self, data: &[u8]) {
-        let _guard = self.ref_scope();
+        // SAFETY: `&mut self` is live; raw ptr inherits its write provenance.
+        let _guard = unsafe { Self::ref_scope(self as *mut Self) };
 
         if let Some(wrapper) = self.wrapper.as_mut() {
             wrapper.receive_data(data);

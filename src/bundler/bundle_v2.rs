@@ -1170,7 +1170,7 @@ pub mod api {
             pub fn init(bv2: &mut BundleV2<'_>, parse: &mut ParseTask) -> Self {
                 let default_loader = parse
                     .path
-                    .loader(&unsafe { &*((bv2) as *const BundleV2<'_>) }.transpiler.options.loaders)
+                    .loader(&bv2.transpiler.options.loaders)
                     .unwrap_or(Loader::Js);
                 Self {
                     bv2: bv2 as *mut BundleV2<'_> as *mut BundleV2<'static>,
@@ -1178,8 +1178,8 @@ pub mod api {
                     source_index: parse.source_index,
                     default_loader,
                     value: LoadValue::Pending,
-                    path: parse.path.text.clone(),
-                    namespace: parse.path.namespace.into(),
+                    path: parse.path.text.to_vec().into_boxed_slice(),
+                    namespace: parse.path.namespace.to_vec().into_boxed_slice(),
                     was_file: false,
                     called_defer: false,
                     js_task: [0; 2],
@@ -1192,7 +1192,7 @@ pub mod api {
                 unsafe { (*self.parse_task).known_target.bake_graph() }
             }
             pub fn dispatch(&mut self) {
-                let hook = crate::dispatch::PLUGIN_LOAD_HOOK
+                let hook = super::super::dispatch::PLUGIN_LOAD_HOOK
                     .load(core::sync::atomic::Ordering::Acquire);
                 if !hook.is_null() {
                     // SAFETY: hook was registered by runtime with matching sig.

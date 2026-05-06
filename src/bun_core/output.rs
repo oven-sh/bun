@@ -2249,21 +2249,9 @@ fn scoped_writer() -> QuietWriter {
 #[macro_export]
 macro_rules! err_generic {
     ($fmt:literal $(, $arg:expr)* $(,)?) => {
-        // B-1: `pretty_errorln!` requires `:literal`; can't pass `concat!(..)`.
-        // Prefix is applied at runtime instead (slightly less compile-time, same output).
-        $crate::output::pretty_to(
-            $crate::output::Destination::Stderr,
-            ::core::format_args!(
-                "{}{}\n",
-                $crate::pretty_fmt!("<r><red>error<r><d>:<r> ", true),
-                ::core::format_args!($crate::pretty_fmt!($fmt, true) $(, $arg)*),
-            ),
-            ::core::format_args!(
-                "{}{}\n",
-                $crate::pretty_fmt!("<r><red>error<r><d>:<r> ", false),
-                ::core::format_args!($crate::pretty_fmt!($fmt, false) $(, $arg)*),
-            ),
-        )
+        // `pretty_errorln!` accepts `:expr` and `pretty_fmt!` flattens `concat!`,
+        // so the prefix is folded into the template at compile time.
+        $crate::pretty_errorln!(concat!("<r><red>error<r><d>:<r> ", $fmt) $(, $arg)*)
     };
 }
 

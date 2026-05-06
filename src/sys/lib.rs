@@ -1195,7 +1195,6 @@ macro_rules! syslog {
         if cfg!(feature = "debug_logs") && $crate::fd::SYS.is_visible() {
             $crate::fd::SYS.log(
                 ::core::format_args!($fmt $(, $arg)*),
-                ::core::format_args!($fmt $(, $arg)*),
             );
         }
     };

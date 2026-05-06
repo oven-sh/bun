@@ -794,6 +794,7 @@ pub enum EFlags {
     TsDecorator,
 }
 
+#[allow(dead_code)] // see gated `json_stringify` below
 struct Serializable {
     type_: Tag,
     object: &'static [u8],

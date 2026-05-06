@@ -421,14 +421,13 @@ impl PublishCommand {
                 if e == err!(OutOfMemory) {
                     return Err(PublishError::OutOfMemory);
                 }
-                Output::err(e, format_args!("failed to publish package"));
+                Output::err(e, "failed to publish package", ());
                 Global::crash();
             }
         };
 
         match res.status_code {
-            400..=u16::MAX => {
-                // TODO(port): Zig used @TypeOf(res.status_code); assuming u16
+            400..=u32::MAX => {
                 let prompt_for_otp = 'prompt_for_otp: {
                     if res.status_code != 401 {
                         break 'prompt_for_otp false;
@@ -437,21 +436,19 @@ impl PublishCommand {
                     if let Some(www_authenticate) = res.headers.get(b"www-authenticate") {
                         let mut iter = strings::split(www_authenticate, b",");
                         while let Some(part) = iter.next() {
-                            let trimmed = strings::trim(part, strings::WHITESPACE_CHARS);
+                            let trimmed = strings::trim(part, &strings::WHITESPACE_CHARS);
                             if strings::eql_case_insensitive_ascii(trimmed, b"ipaddress", true) {
-                                Output::err_generic(format_args!(
-                                    "login is not allowed from your IP address",
-                                ));
+                                Output::err_generic("login is not allowed from your IP address", ());
                                 Global::crash();
                             } else if strings::eql_case_insensitive_ascii(trimmed, b"otp", true) {
                                 break 'prompt_for_otp true;
                             }
                         }
 
-                        Output::err_generic(format_args!(
+                        Output::err_generic(
                             "unable to authenticate, need: {}",
-                            bstr::BStr::new(www_authenticate),
-                        ));
+                            (bstr::BStr::new(www_authenticate),),
+                        );
                         Global::crash();
                     } else if strings::contains(&response_buf.list, b"one-time pass") {
                         // missing www-authenicate header but one-time pass is still included
@@ -463,13 +460,11 @@ impl PublishCommand {
 
                 if !prompt_for_otp {
                     // general error
-                    let otp_response = false;
-                    Npm::response_error(
+                    Npm::response_error::<false>(
                         &req,
                         &res,
-                        (&ctx.package_name, &ctx.package_version),
+                        Some((&ctx.package_name, &ctx.package_version)),
                         &mut response_buf,
-                        otp_response,
                     )?;
                 }
 

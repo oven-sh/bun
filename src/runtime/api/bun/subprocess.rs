@@ -1570,9 +1570,11 @@ pub mod testing_apis {
         let fake_err = bun_sys::Error::from_code(bun_sys::Errno::EBADF, bun_sys::Tag::read);
         #[cfg(windows)]
         {
-            let _ = pipe.reader.stop_reading();
+            // SAFETY: RefPtr<PipeReader> has no DerefMut; mutator-thread-only.
+            let _ = unsafe { (*pipe.data.as_ptr()).reader.stop_reading() };
         }
-        pipe.reader.on_error(fake_err);
+        // SAFETY: RefPtr<PipeReader> has no DerefMut; mutator-thread-only.
+        unsafe { (*pipe.data.as_ptr()).reader.on_error(fake_err) };
         Ok(JSValue::TRUE)
     }
 }

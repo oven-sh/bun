@@ -945,9 +945,9 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
         Err(err) => {
             // tcgetattr failed, log in debug builds but continue without modifying termios
             sys::syslog!(
-                "tcgetattr(slave_fd={}) failed: {}",
+                "tcgetattr(slave_fd={}) failed: {:?}",
                 slave_fd,
-                <&'static str>::from(err),
+                err,
             );
         }
     }

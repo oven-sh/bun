@@ -505,12 +505,12 @@ impl ByteStream {
         action: streams::BufferActionTag,
     ) -> bun_jsc::JsResult<JSValue> {
         if self.buffer_action.is_some() {
-            return global_this.throw("Cannot buffer value twice");
+            return Err(global_this.throw("Cannot buffer value twice"));
         }
 
         if let streams::Result::Err(err) = &self.pending.result {
             let (err_js, _) = err.to_js_weak(global_this);
-            self.pending.result.deinit();
+            self.pending.result.release();
             self.done = true;
             self.buffer.clear();
             self.buffer.shrink_to_fit();

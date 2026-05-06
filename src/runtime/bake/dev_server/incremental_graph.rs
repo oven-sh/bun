@@ -256,7 +256,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     /// `IncrementalGraph(side).takeSourceMap` — full body in gated draft.
     pub fn take_source_map(
         &mut self,
-        _entry: &mut super::source_map_store_body::Entry,
+        _entry: &mut super::source_map_store::Entry,
     ) -> Result<(), bun_core::Error> {
         todo!("blocked_on: dev_server::IncrementalGraph::take_source_map body un-gate")
     }

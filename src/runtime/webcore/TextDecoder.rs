@@ -485,7 +485,7 @@ impl TextDecoder {
             if let Some(label) = EncodingLabel::which(str.slice()) {
                 decoder.encoding = label;
             } else {
-                return global_this
+                return Err(global_this
                     .err(
                         jsc::ErrorCode::ERR_ENCODING_NOT_SUPPORTED,
                         format_args!(
@@ -493,7 +493,7 @@ impl TextDecoder {
                             bstr::BStr::new(str.slice())
                         ),
                     )
-                    .throw();
+                    .throw());
             }
         } else if encoding_value.is_undefined() {
             // default to utf-8

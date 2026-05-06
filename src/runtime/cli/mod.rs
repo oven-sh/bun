@@ -503,6 +503,15 @@ pub mod command {
     // Self-referential alias so `crate::command::Command` resolves (Zig: `pub const Command = struct {…}`).
     pub use super::Command;
 
+    /// Collect `bun::argv()` into an indexable slice of `&'static ZStr`.
+    /// `Argv` only exposes `.get(i)` / `.iter() -> &[u8]`; several Zig call
+    /// sites (`bun.argv[n..]`) need a sliceable `&[&ZStr]`.
+    #[inline]
+    pub(super) fn argv_zslice() -> Vec<&'static bun_core::ZStr> {
+        let a = bun::argv();
+        (0..a.len()).map(|i| a.get(i).unwrap()).collect()
+    }
+
     pub use bun_options_types::CommandTag::Tag;
     pub use bun_options_types::CommandTag::{
         ALWAYS_LOADS_CONFIG, LOADS_CONFIG, USES_GLOBAL_OPTIONS,

@@ -3724,26 +3724,31 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     #[cold]
     fn validate_and_set_import_type(&mut self, path: &ParsedPath, stmt: &mut S::Import) -> Result<(), bun_core::Error> {
         if let Some(loader) = path.loader {
-            self.import_records.items_mut()[stmt.import_record_index as usize].loader = loader;
+            self.import_records.items_mut()[stmt.import_record_index as usize].loader = Some(loader);
 
             if loader == options::Loader::Sqlite || loader == options::Loader::SqliteEmbedded {
-                for item in stmt.items.iter() {
-                    if !(item.alias == b"default" || item.alias == b"db") {
+                // SAFETY: arena-owned `*mut [ClauseItem]` valid for parser 'a lifetime.
+                for item in unsafe { &*stmt.items }.iter() {
+                    // SAFETY: ClauseItem.alias is `*const [u8]` arena-owned for 'a.
+                    let alias: &[u8] = unsafe { &*item.alias };
+                    if !(alias == b"default" || alias == b"db") {
                         self.log.add_error(
-                            self.source,
+                            Some(self.source),
                             item.name.loc,
-                            "sqlite imports only support the \"default\" or \"db\" imports",
+                            b"sqlite imports only support the \"default\" or \"db\" imports",
                         )?;
                         break;
                     }
                 }
             } else if loader == options::Loader::File || loader == options::Loader::Text {
-                for item in stmt.items.iter() {
-                    if item.alias != b"default" {
+                // SAFETY: arena-owned `*mut [ClauseItem]` valid for parser 'a lifetime.
+                for item in unsafe { &*stmt.items }.iter() {
+                    // SAFETY: ClauseItem.alias is `*const [u8]` arena-owned for 'a.
+                    if unsafe { &*item.alias } != b"default" {
                         self.log.add_error(
-                            self.source,
+                            Some(self.source),
                             item.name.loc,
-                            "This loader type only supports the \"default\" import",
+                            b"This loader type only supports the \"default\" import",
                         )?;
                         break;
                     }

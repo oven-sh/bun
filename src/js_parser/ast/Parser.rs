@@ -447,7 +447,11 @@ impl<'a> Parser<'a> {
         // in the `symbols` array.
         debug_assert!(p.symbols.len() == 0);
         let mut symbols_ = symbols;
-        p.symbols = symbols_.move_to_list_managed(p.allocator);
+        // PORT NOTE: Zig `moveToListManaged(allocator)` rebinds the same
+        // backing storage to an `ArrayList(allocator)`. The Rust BabyList
+        // adapter returns a `std::Vec`; `p.symbols` is a bump-backed Vec, so
+        // copy elements into the arena. Phase B may grow a zero-copy adapter.
+        p.symbols = BumpVec::from_iter_in(symbols_.move_to_list_managed().into_iter(), p.allocator);
 
         p.prepare_for_visit_pass()?;
 
@@ -455,7 +459,9 @@ impl<'a> Parser<'a> {
 
         // Optionally call a runtime API function to transform the expression
         if !runtime_api_call.is_empty() {
-            let args = p.allocator.alloc_slice_fill_with(1, |_| expr);
+            let args_slice: &mut [Expr] = p.allocator.alloc_slice_fill_with(1, |_| expr);
+            // SAFETY: arena slice outlives the returned `Ast`; BabyList::Borrowed → no-op Drop.
+            let args = unsafe { BabyList::from_bump_slice(args_slice) };
             final_expr = p.call_runtime(expr.loc, runtime_api_call, args);
         }
 

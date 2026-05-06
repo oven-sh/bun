@@ -40,6 +40,8 @@ use std::sync::Arc;
 use bun_alloc::Arena as ArenaAllocator;
 use bun_core::Environment;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSObject, JSValue, JsResult};
+use bun_jsc::ref_string::RefString;
+use bun_jsc::virtual_machine::VirtualMachine;
 use bun_str::{ZigString, ZigStringSlice};
 use bun_logger as Log;
 use bun_paths::{self as path, PathBuffer, MAX_PATH_BYTES};
@@ -48,8 +50,8 @@ use bun_str::strings;
 use bun_http_types::URLPath;
 use bun_resolver::fs as Fs;
 use bun_resolver::Resolver;
-use bun_router::{self as Router, Match as RouterMatch};
-use bun_url::{CombinedScanner, QueryStringMap, URL};
+use bun_router::{self as Router, Match as RouterMatch, RouteConfig};
+use bun_url::{CombinedScanner, ParamList, QueryStringMap, URL};
 
 // TODO(port): `jsc.WebCore.{Request,Response}` live in `src/runtime/webcore/`; confirm crate path.
 use crate::webcore::{Request, Response};

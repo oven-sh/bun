@@ -183,9 +183,7 @@ impl InitCommand {
             Output::flush();
 
             // Read a single character
-            // TODO(port): Zig uses `std.fs.File.stdin().readerStreaming(&stdin_b)` then
-            // `takeByte()`. Map to a bun_sys stdin byte reader.
-            let byte = match bun_sys::stdin_read_byte() {
+            let byte = match stdin.take_byte() {
                 Ok(b) => b,
                 Err(_) => {
                     finish!(reprint_menu, selected);
@@ -231,7 +229,7 @@ impl InitCommand {
                 27 => {
                     // ESC sequence
                     // Return immediately on plain ESC
-                    let next = match bun_sys::stdin_read_byte() {
+                    let next = match stdin.take_byte() {
                         Ok(b) => b,
                         Err(_) => {
                             reprint_menu = false;

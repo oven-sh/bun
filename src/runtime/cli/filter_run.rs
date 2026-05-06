@@ -768,8 +768,7 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
     // --no-orphans: register the macOS kqueue parent watch on this MiniEventLoop
     // (the VirtualMachine.init path is never reached for --filter). Linux is
     // already covered by prctl in enable() + linux_pdeathsig on each spawn.
-    bun_core::ParentDeathWatchdog::install_on_event_loop(EventLoopHandle::init(event_loop));
-    // TODO(port): ParentDeathWatchdog crate location.
+    bun_aio::ParentDeathWatchdog::install_on_event_loop(EventLoopHandle::init(event_loop));
     let shell_bin: ZStr<'static> = {
         #[cfg(unix)]
         {

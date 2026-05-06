@@ -3073,7 +3073,7 @@ where
         });
         let mut has_content_disposition = false;
         let mut has_content_range = false;
-        if let Some(headers_) = response.swap_init_headers() {
+        if let Some(mut headers_) = response.swap_init_headers() {
             has_content_disposition = headers_.fast_has(jsc::HTTPHeaderName::ContentDisposition);
             has_content_range = headers_.fast_has(jsc::HTTPHeaderName::ContentRange);
             // For .slice()-driven ranges, only promote to 206 if the user

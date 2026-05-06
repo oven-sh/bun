@@ -384,6 +384,7 @@ impl<'a> Snapshots<'a> {
         // PORT NOTE: reshaped for borrowck — iterate by index to allow &mut access to values while reading keys.
         let file_ids: Vec<FileId> = self.inline_snapshots_to_write.keys().to_vec();
         for file_id in file_ids {
+            arena.reset();
             let ils_info = self
                 .inline_snapshots_to_write
                 .get_mut(&file_id)

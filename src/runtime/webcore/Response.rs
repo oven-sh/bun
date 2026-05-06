@@ -871,8 +871,18 @@ impl Response {
             }
 
             if !str.is_empty() {
-                if let Some(bytes) = str.value.wtf_string_impl().to_utf8_if_needed() {
-                    // str dropped (deref'd) at end of this arm
+                // PORT NOTE: `bun_str::String.value` is private; use
+                // `leak_wtf_impl()` to take ownership of the +1 ref as a raw
+                // `*mut WTFStringImplStruct`. `String` is intentionally
+                // non-`Drop`, so consuming it here is the same as Zig's
+                // bitwise field read.
+                let wtf = str.leak_wtf_impl();
+                debug_assert!(!wtf.is_null());
+                // SAFETY: `json_stringify_fast` populated a WTF-backed string;
+                // `wtf` is a live impl pointer until we deref it below.
+                if let Some(bytes) = unsafe { (*wtf).to_utf8_if_needed() } {
+                    // We took +1 via leak_wtf_impl; release it now (Zig: `defer str.deref()`).
+                    unsafe { (*wtf).deref() };
                     response.body.value = BodyValue::InternalBlob(InternalBlob {
                         // TODO(port): Zig used Managed(u8).fromOwnedSlice; bytes.slice() ownership
                         // transfers here as Vec<u8>.
@@ -881,10 +891,10 @@ impl Response {
                     });
                 } else {
                     // Zig moves the WTFStringImpl pointer bitwise (no ref/deref).
-                    // `.clone()` already bumps the impl refcount (+1); letting `str`
-                    // drop normally at end of scope balances it (-1). Net 0 — no leak.
-                    // (Previously paired `.clone()` with `mem::forget(str)`, leaking +1.)
-                    response.body.value = BodyValue::WTFStringImpl(str.value.wtf_string_impl().clone());
+                    // We already hold the +1 from `leak_wtf_impl`; transfer it
+                    // into the body value. `BodyValue::WTFStringImpl` wraps in
+                    // `Arc` per its current Rust shape.
+                    response.body.value = BodyValue::WTFStringImpl(std::sync::Arc::new(wtf));
                 }
             }
         }

@@ -948,37 +948,35 @@ fn transpile_source_code_inner(
             // Transpiler::parse — the read-file step happens inside
             // `parse_maybe_return_file_only` (it opens `path` itself when
             // `virtual_source` is `None`). Spec :225-297.
-            //
-            // TODO(b2-blocked): `bun_bundler::transpiler::{ParseOptions,
-            // ParseResult, Transpiler::parse_maybe_return_file_only,
-            // print_with_source_map}` are gated behind `__phase_a_draft`. The
-            // entire parse→print arm below is preserved verbatim and un-gates
-            // as a unit once that module compiles.
             // ════════════════════════════════════════════════════════════════
-            #[cfg(any())]
             {
-                use bun_bundler::analyze_transpiled_module;
                 use bun_bundler::transpiler::{ParseOptions, ParseResult, AlreadyBundled};
+                use bun_bundler::cache::RuntimeTranspilerCache;
                 use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
-                use bun_jsc::RuntimeTranspilerCache;
 
-                let set_breakpoint_on_first_line = is_main
-                    && unsafe { (*jsc_vm).debugger.is_some() }
-                    // TODO(b2-cycle): `Debugger::set_breakpoint_on_first_line` +
-                    // `runtime_transpiler_store::set_break_point_on_first_line`.
-                    && false;
+                // TODO(b2-cycle): `Debugger::set_breakpoint_on_first_line` +
+                // `runtime_transpiler_store::set_break_point_on_first_line` —
+                // gated; spec gates on `vm.debugger != null && debugger.set_...`.
+                let set_breakpoint_on_first_line = false;
+                let _ = is_main;
 
-                let arena: &mut bun_alloc::Arena = &mut arena_guard.1;
-                let _fd_guard = scopeguard::guard((), |()| {
-                    if should_close_input_file_fd && input_file_fd != bun_sys::Fd::INVALID {
-                        input_file_fd.close();
-                    }
-                });
+                // PORT NOTE: spec :251-256 `defer { if should_close ... close() }`
+                // — capturing `should_close_input_file_fd` / `input_file_fd` in
+                // a `scopeguard` closure here would alias the later
+                // `&mut input_file_fd` (file_fd_ptr) and the `maybe_watch_file`
+                // by-value read. The close runs at the very end of the success
+                // path instead (see `// fd close` below); the early-error
+                // `return Err(ParseError)` arms leave the fd to the caller's
+                // `process_fetch_log`, matching Zig where `give_back_arena =
+                // false` paths skip the defer too.
+                // TODO(port): re-express as a raw-ptr scopeguard once the
+                // borrowck story for the watcher hand-off settles.
+
                 let parse_options = ParseOptions {
-                    allocator: arena,
+                    allocator: &arena_guard.1,
                     path: path.clone(),
                     loader,
-                    dirname_fd: bun_sys::Fd::INVALID,
+                    dirname_fd: bun_sys::Fd::invalid(),
                     file_descriptor: fd,
                     file_fd_ptr: Some(&mut input_file_fd),
                     file_hash: Some(hash),
@@ -1001,23 +999,25 @@ fn transpile_source_code_inner(
                     allow_bytecode_cache: true,
                     set_breakpoint_on_first_line,
                     runtime_transpiler_cache: if !disable_transpilying
-                        && !RuntimeTranspilerCache::is_disabled()
+                        && !RuntimeTranspilerCache::disabled()
                     {
                         Some(&mut cache)
                     } else {
                         None
                     },
-                    remove_cjs_module_wrapper: is_main
-                        && unsafe { (*jsc_vm).module_loader.eval_source.is_some() },
+                    // TODO(b2-cycle): `vm.module_loader.eval_source` — field
+                    // not surfaced on `ModuleLoader` yet. Spec :247.
+                    remove_cjs_module_wrapper: false,
                     macro_js_ctx: core::ptr::null_mut(),
                     replace_exports: Default::default(),
                 };
 
-                // PORT NOTE: spec uses `comptime switch (disable_transpilying or loader == .json)`
-                // to monomorphize; Rust dispatches at runtime (PERF(port): const-generic
-                // specialization once `parse_maybe_return_file_only` is callable).
+                // PORT NOTE: spec uses `comptime switch (disable_transpilying or
+                // loader == .json)` to monomorphize; both arms hit the same
+                // `parse_maybe_return_file_only_allow_shared_buffer` body, so
+                // dispatch at runtime via the const-generic bool.
                 let return_file_only = disable_transpilying || loader == L::Json;
-                let parse_result: Option<ParseResult<'_>> = if return_file_only {
+                let parse_result: Option<ParseResult> = if return_file_only {
                     unsafe {
                         (*jsc_vm)
                             .transpiler
@@ -1058,13 +1058,20 @@ fn transpile_source_code_inner(
                     }
                     // PORT NOTE: reshaped — spec passes `&parse_result.source`
                     // as `virtual_source`; we re-enter via the hook with a
-                    // patched `TranspileArgs`. Gated until `TranspileArgs` can
-                    // borrow `parse_result.source` without lifetime gymnastics.
+                    // patched `TranspileArgs`. `TranspileArgs` is not `Copy`
+                    // (`input_specifier: bun.String`), so rebuild field-wise
+                    // with a `dupe_ref` instead of `..*args`.
                     return transpile_source_code_inner(
                         jsc_vm,
                         &TranspileArgs {
+                            specifier: args.specifier,
+                            referrer: args.referrer,
+                            input_specifier: args.input_specifier.dupe_ref(),
+                            log: args.log,
                             virtual_source: Some(&parse_result.source),
-                            ..*args
+                            global_object: args.global_object,
+                            flags: args.flags,
+                            extra: args.extra,
                         },
                         extra,
                     );

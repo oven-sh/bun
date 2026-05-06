@@ -234,7 +234,9 @@ impl Mv {
                         let sig = error_signal as *const AtomicBool;
                         for t in tasks.iter_mut() {
                             t.error_signal = sig;
-                            t.task.schedule();
+                            // SAFETY: `t` is a `Box<ShellMvBatchedTask>` held by
+                            // `MvState::Executing` for the worker call's lifetime.
+                            unsafe { ShellTask::schedule(&mut **t as *mut ShellMvBatchedTask) };
                         }
                     }
                     return Yield::suspended();

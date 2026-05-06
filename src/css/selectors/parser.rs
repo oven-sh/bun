@@ -2013,8 +2013,20 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
     }
 
     pub fn hash(&self, hasher: &mut Wyhash) {
-        protocol_shims::implement_hash(self, hasher)
+        self.specificity_and_flags.hash(hasher);
+        for c in &self.components {
+            c.hash(hasher);
+        }
     }
+}
+
+impl<Impl: BunSelectorImpl> CssEql for GenericSelector<Impl> {
+    #[inline]
+    fn eql(&self, other: &Self) -> bool { self.eql(other) }
+}
+impl<Impl: BunSelectorImpl> CssHash for GenericSelector<Impl> {
+    #[inline]
+    fn hash(&self, hasher: &mut Wyhash) { self.hash(hasher) }
 }
 
 pub struct RawMatchOrderIterator<'a, Impl: SelectorImpl> {

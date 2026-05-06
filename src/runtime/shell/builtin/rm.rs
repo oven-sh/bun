@@ -490,6 +490,14 @@ impl ShellRmTask {
     }
 }
 
+impl crate::shell::interpreter::ShellTaskCtx for ShellRmTask {
+    const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
+    fn run_from_thread_pool(this: *mut Self) { Self::run_from_thread_pool(this) }
+    fn run_from_main_thread(this: *mut Self, interp: &mut Interpreter) {
+        Self::run_from_main_thread(this, interp)
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/shell/builtin/rm.zig (1268 lines)

@@ -1232,12 +1232,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     options.fast_get(global_this, jsc::BuiltinName::Headers)?
                 {
                     if !headers_value.is_undefined() {
-                        if let Some(headers__) = headers_value.as_fetch_headers() {
-                            // SAFETY: as_fetch_headers returns a live FetchHeaders*.
-                            if unsafe { (*headers__).is_empty() } {
+                        if let Some(headers__) = FetchHeaders::cast(headers_value) {
+                            // SAFETY: cast returns a live FetchHeaders*.
+                            if unsafe { (*headers__.as_ptr()).is_empty() } {
                                 break 'brk None;
                             }
-                            break 'brk Some(headers__);
+                            break 'brk Some(headers__.as_ptr());
                         }
 
                         if let Some(headers__) = FetchHeaders::create_from_js(ctx, headers_value)?
@@ -1268,12 +1268,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     options.fast_get(global_this, jsc::BuiltinName::Headers)?
                 {
                     if !headers_value.is_undefined() {
-                        if let Some(headers__) = headers_value.as_fetch_headers() {
-                            // SAFETY: as_fetch_headers returns a live FetchHeaders*.
-                            if unsafe { (*headers__).is_empty() } {
+                        if let Some(headers__) = FetchHeaders::cast(headers_value) {
+                            // SAFETY: cast returns a live FetchHeaders*.
+                            if unsafe { (*headers__.as_ptr()).is_empty() } {
                                 break 'brk None;
                             }
-                            break 'brk Some(headers__);
+                            break 'brk Some(headers__.as_ptr());
                         }
 
                         if let Some(headers__) = FetchHeaders::create_from_js(ctx, headers_value)?

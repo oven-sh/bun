@@ -938,6 +938,7 @@ pub mod lockfile {
         #[inline] pub fn slice_mut(&mut self) -> &mut Self { self }
         #[inline] pub fn items_dependencies_mut(&mut self) -> &mut [ExternalSlice<Dependency>] { &mut self.dependencies }
         #[inline] pub fn items_resolutions_mut(&mut self) -> &mut [ExternalSlice<PackageID>] { &mut self.resolutions }
+        #[inline] pub fn items_resolution_mut(&mut self) -> &mut [Resolution] { &mut self.resolution }
         #[inline] pub fn items_scripts_mut(&mut self) -> &mut [package::scripts::Scripts] { &mut self.scripts }
         /// Reserve capacity across all column vecs (Zig: `MultiArrayList.ensureUnusedCapacity`).
         pub fn reserve(&mut self, additional: usize) {

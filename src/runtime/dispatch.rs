@@ -134,7 +134,7 @@ impl crate::api::bun_subprocess::static_pipe_writer::StaticPipeWriterProcess
 {
     unsafe fn on_close_io(
         _this: *mut Self,
-        _kind: crate::api::bun_subprocess::stdio::StdioKind,
+        _kind: crate::api::bun_subprocess::StdioKind,
     ) {
         // Zig: `this.json_writer = null;` — the lower-tier
         // `SecurityScanSubprocess` placeholder has no `json_writer` slot yet

@@ -1148,17 +1148,10 @@ where
         }
 
         // if have sink, call onAborted on sink
-        // TODO(b2-blocked): `wrapper.sink.abort()` once
-        // `webcore::streams::HTTPServerWritable<SSL,H3>` is real (currently
-        // aliased to c_void; see ResponseStreamJSSink note at top of file).
-        // Until then, no path populates `sink` (the only writer is the gated
-        // `_gated_do_render_stream`); enforce that assumption so we don't
-        // silently skip the abort if another path starts setting it.
-        debug_assert!(
-            this.sink.is_none(),
-            "ResponseStreamJSSink populated but abort() is still stubbed"
-        );
-        if this.sink.is_some() {
+        if let Some(wrapper) = this.sink {
+            // SAFETY: `sink` is the Box::into_raw'd JSSink set by do_render_stream;
+            // sole live mutable view in this scope.
+            unsafe { (*wrapper.as_ptr()).sink.abort() };
             return;
         }
 
@@ -2370,21 +2363,24 @@ where
     pub fn handle_resolve_stream(req: &mut Self) {
         stream_log!("handleResolveStream");
 
-        let wrote_anything = false;
-        // TODO(b2-blocked): once `ResponseStreamJSSink` is real:
-        //   req.flags.set_aborted(req.flags.aborted() || wrapper.sink.aborted);
-        //   wrote_anything = wrapper.sink.wrote > 0;
-        //   wrapper.sink.finalize();
-        //   wrapper.detach(wrapper.sink.global_this);
-        // The aborted-flag propagation is load-bearing for the
-        // `is_aborted_or_ended()` check below. Until the sink type is real,
-        // no path populates `sink`; enforce that so we don't silently leak
-        // the wrapper or skip the aborted propagation.
-        debug_assert!(
-            req.sink.is_none(),
-            "ResponseStreamJSSink populated but finalize/detach is still stubbed"
-        );
-        req.sink = None;
+        let mut wrote_anything = false;
+        if let Some(wrapper_ptr) = req.sink.take() {
+            // SAFETY: `sink` is the Box::into_raw'd JSSink set by do_render_stream;
+            // sole live mutable view in this scope.
+            let wrapper = unsafe { &mut *wrapper_ptr.as_ptr() };
+            let aborted = req.flags.aborted() || wrapper.sink.aborted;
+            req.flags.set_aborted(aborted);
+            wrote_anything = wrapper.sink.wrote > 0;
+
+            wrapper.sink.finalize();
+            // SAFETY: global_this set in do_render_stream before sink was stored.
+            let sink_global = unsafe { &*wrapper.sink.global_this };
+            ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
+                &mut wrapper.sink.signal,
+                sink_global,
+            );
+            Self::destroy_sink(wrapper_ptr);
+        }
 
         if let Some(resp) = req.response_weakref.get() {
             debug_assert!(req.server.is_some());

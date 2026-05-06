@@ -2254,9 +2254,67 @@ pub mod js_bundler {
         /// is still called and the bundler's pending-item counter is decremented. Returning
         /// early here would cause `Bun.build` to hang forever waiting on the counter.
         fn msg_from_js(plugin: &mut Plugin, file: &[u8], exception: JSValue) -> logger::Msg {
-            // TODO(port): blocked_on: bun_logger::Msg::from_js — see logger.zig `Msg.fromJS`.
-            let _ = (plugin, file, exception);
-            todo!("blocked_on: bun_logger::Msg::from_js")
+            // SAFETY: `file` borrows from `Resolve.import_record.source_file` /
+            // `Load.path` — sibling fields of the `Msg` slot it is stored into
+            // (`ResolveValue::Err` / `LoadValue::Err`). Both live for the rest
+            // of the build, so the `'static` constraint on `logger::Location.file`
+            // is satisfied for the message's actual lifetime.
+            let file: &'static [u8] =
+                unsafe { core::mem::transmute::<&[u8], &'static [u8]>(file) };
+            let global = plugin.global_object();
+            match Self::msg_from_js_inner(global, file, exception) {
+                Ok(msg) => msg,
+                Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
+                Err(_) => {
+                    // We are already producing a build error for the original plugin
+                    // exception; the secondary exception from string conversion is not
+                    // useful to the user and should not be treated as unhandled.
+                    let _ = global.clear_exception_except_termination();
+                    logger::Msg {
+                        data: logger::Data {
+                            text: std::borrow::Cow::Owned(
+                                b"A bundler plugin threw a value that could not be converted to a string"
+                                    .to_vec(),
+                            ),
+                            location: Some(logger::Location {
+                                file,
+                                line: -1,
+                                column: -1,
+                                ..Default::default()
+                            }),
+                        },
+                        ..Default::default()
+                    }
+                }
+            }
+        }
+
+        /// `logger.Msg.fromJS` — inlined here because `bun_logger_jsc` is a
+        /// lower-tier crate whose `msg_from_js` requires `&'static` for `file`;
+        /// the body is small enough that the dependency edge isn't worth it.
+        fn msg_from_js_inner(
+            global: &JSGlobalObject,
+            file: &'static [u8],
+            err: JSValue,
+        ) -> JsResult<logger::Msg> {
+            let mut holder = jsc::zig_exception::Holder::init();
+            if let Some(value) = err.to_error() {
+                value.to_zig_exception(global, holder.zig_exception());
+            } else {
+                holder.zig_exception().message = err.to_bun_string(global)?;
+            }
+            Ok(logger::Msg {
+                data: logger::Data {
+                    text: std::borrow::Cow::Owned(
+                        holder.zig_exception().message.to_owned_slice(),
+                    ),
+                    location: Some(logger::Location {
+                        file,
+                        ..Default::default()
+                    }),
+                },
+                ..Default::default()
+            })
         }
     }
 

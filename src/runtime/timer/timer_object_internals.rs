@@ -150,7 +150,7 @@ impl TimerObjectInternals {
 
     #[inline]
     pub fn async_id(&self) -> u64 {
-        ID { id: self.id, kind: self.flags.kind().big() }.async_id()
+        ID { id: self.id, kind: self.flags.kind().into() }.async_id()
     }
 
     /// Spec TimerObjectInternals.zig `setEnableKeepingEventLoopAlive`.

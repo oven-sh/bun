@@ -892,10 +892,14 @@ impl Value {
                     _ => {}
                 }
 
-                // PORT NOTE: `reader` is `Box<NewSource<ByteStream>>`; the JS wrapper takes
-                // ownership via `to_readable_stream`. Leak the Box and hand the raw context
-                // pointer to `Source::Bytes` (lifetime now tied to the JS wrapper's GC).
-                let reader = Box::leak(reader);
+                // PORT NOTE: `reader` is `Box<NewSource<ByteStream>>`; `to_readable_stream`
+                // transfers ownership of the heap allocation to the JS wrapper's `m_ctx`
+                // (freed by the GC finalizer). Release the Box via `into_raw` — this is
+                // an FFI ownership hand-off, not a leak.
+                let reader: *mut webcore::readable_stream::NewSource<ByteStream> =
+                    Box::into_raw(reader);
+                // SAFETY: freshly allocated; JS wrapper takes ownership below.
+                let reader = unsafe { &mut *reader };
                 let context_ptr: *mut ByteStream = &mut reader.context;
                 locked.readable = webcore::readable_stream::Strong::init(
                     ReadableStream {
@@ -2119,10 +2123,12 @@ impl<'a> Drop for ValueBufferer<'a> {
 
         if let Some(mut buffer_stream) = self.js_sink.take() {
             buffer_stream.detach(self.global);
-            // SAFETY: `buffer_stream` is a `Box<JSSink<ArrayBufferSink>>`; `destroy`
-            // takes the raw pointer and frees both the inner sink and the box.
-            unsafe { ArrayBufferSink::destroy(&mut buffer_stream.sink as *mut ArrayBufferSink) };
-            core::mem::forget(buffer_stream);
+            // PORT NOTE: Zig `wrapper.sink.destroy()` frees the JSSink wrapper
+            // allocation (sink is at offset 0). In Rust the wrapper is a
+            // `Box<JSSink<ArrayBufferSink>>`; dropping it frees the box and
+            // runs `ByteList`'s Drop — equivalent without the fragile
+            // sub-field-pointer free.
+            drop(buffer_stream);
         }
     }
 }
@@ -2290,9 +2296,9 @@ impl<'a> ValueBufferer<'a> {
     fn handle_reject_stream(&mut self, err: JSValue, is_async: bool) {
         if let Some(mut wrapper) = self.js_sink.take() {
             wrapper.detach(self.global);
-            // SAFETY: see `Drop` impl — `destroy` consumes the inner sink.
-            unsafe { ArrayBufferSink::destroy(&mut wrapper.sink as *mut ArrayBufferSink) };
-            core::mem::forget(wrapper);
+            // PORT NOTE: see `Drop` impl — dropping the Box frees the wrapper
+            // and runs `ByteList`'s Drop (≡ Zig `wrapper.sink.destroy()`).
+            drop(wrapper);
         }
         // Zig: `var ref = ...; defer ref.deinit(); sink.onFinishedBuffering(..., .{ .JSValue = ref }, ...);`
         // — Zig's bitwise pass + `defer deinit` is only safe because Zig has no Drop. In
@@ -2328,15 +2334,13 @@ impl<'a> ValueBufferer<'a> {
                 ..Default::default()
             },
         });
-        // Hand the box over to JS (lifetime now tied to the stream/signal); recover
-        // a raw pointer for `assign_to_stream` and `self.js_sink`.
-        let buffer_stream_ptr: *mut ArrayBufferJSSink = Box::into_raw(buffer_stream);
-        // SAFETY: freshly allocated; sole owner until handed to JS.
-        let buffer_stream = unsafe { &mut *buffer_stream_ptr };
+        // Stash the Box in `self.js_sink` first (so error paths / Drop find it),
+        // then re-borrow mutably through the slot for `assign_to_stream`.
+        self.js_sink = Some(buffer_stream);
+        // SAFETY: just inserted; `Some` guaranteed.
+        let buffer_stream: &mut ArrayBufferJSSink =
+            unsafe { self.js_sink.as_mut().unwrap_unchecked() };
         let signal = &mut buffer_stream.sink.signal;
-        // SAFETY: re-box for the `Option<Box<…>>` slot; ownership tracked manually
-        // to mirror Zig's `allocator.create` + explicit `destroy`.
-        self.js_sink = Some(unsafe { Box::from_raw(buffer_stream_ptr) });
 
         *signal = sink::SinkSignal::<ArrayBufferSink>::init(JSValue::ZERO);
 

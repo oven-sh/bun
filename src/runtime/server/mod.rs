@@ -1487,7 +1487,10 @@ impl AnyServer {
 
 // ─── SavedRequest ────────────────────────────────────────────────────────────
 pub struct SavedRequest {
-    pub js_request: jsc::Strong,
+    /// Spec server.zig:3261 — `jsc.Strong.Optional`. May be `.empty` until
+    /// `prepare_js_request_context` populates it; `deinit` must tolerate the
+    /// empty state.
+    pub js_request: jsc::StrongOptional,
     pub request: *mut crate::webcore::Request,
     pub ctx: AnyRequestContext,
     pub response: uws::AnyResponse,

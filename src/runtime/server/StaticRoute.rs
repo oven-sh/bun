@@ -285,70 +285,83 @@ impl StaticRoute {
         resp.end_without_body(resp.should_close_connection());
     }
 
-    pub fn on_request(&self, req: AnyRequest, resp: AnyResponse) {
+    /// # Safety
+    /// See [`on_head_request`].
+    pub unsafe fn on_request(this: *mut Self, req: AnyRequest, resp: AnyResponse) {
         let method = Method::find(req.method()).unwrap_or(Method::GET);
         if method == Method::GET {
-            self.on_get(req, resp);
+            Self::on_get(this, req, resp);
         } else if method == Method::HEAD {
-            self.on_head_request(req, resp);
+            Self::on_head_request(this, req, resp);
         } else {
             // For other methods, use the original behavior
             req.set_yield(false);
-            self.on(resp);
+            Self::on(this, resp);
         }
     }
 
-    pub fn on_get(&self, req: AnyRequest, resp: AnyResponse) {
+    /// # Safety
+    /// See [`on_head_request`].
+    pub unsafe fn on_get(this: *mut Self, req: AnyRequest, resp: AnyResponse) {
         // Check If-None-Match for GET requests with 200 status
-        if self.status_code == 200 {
-            if self.render_304_not_modified_if_none_match(req, resp) {
+        if (*this).status_code == 200 {
+            if Self::render_304_not_modified_if_none_match(this, req, resp) {
                 return;
             }
         }
 
         // Continue with normal GET request handling
         req.set_yield(false);
-        self.on(resp);
+        Self::on(this, resp);
     }
 
-    pub fn on(&self, resp: AnyResponse) {
-        debug_assert!(self.server.is_some());
-        self.ref_();
-        if let Some(server) = self.server {
+    /// # Safety
+    /// See [`on_head_request`].
+    pub unsafe fn on(this: *mut Self, resp: AnyResponse) {
+        debug_assert!((*this).server.is_some());
+        (*this).ref_();
+        if let Some(server) = (*this).server {
             server.on_pending_request();
             resp.timeout(server.config().idle_timeout);
         }
         let mut finished = false;
-        self.do_render_blob(resp, &mut finished);
+        (*this).do_render_blob(resp, &mut finished);
         if finished {
-            self.on_response_complete(resp);
+            Self::on_response_complete(this, resp);
             return;
         }
 
-        self.to_async(resp);
+        Self::to_async(this, resp);
     }
 
-    fn to_async(&self, resp: AnyResponse) {
-        // SAFETY: self has ref_count >= 1 held until on_response_complete; uws stores
-        // the raw pointer and calls back on the same thread.
-        let this = self as *const StaticRoute as *mut StaticRoute;
+    /// # Safety
+    /// `this` has ref_count >= 1 held until `on_response_complete`; uws stores the
+    /// raw pointer and calls back on the same thread. Receiving `*mut Self` (rather
+    /// than `&self`) preserves write provenance through the FFI userdata round-trip
+    /// so the eventual `Box::from_raw` in `deref_` is sound.
+    unsafe fn to_async(this: *mut Self, resp: AnyResponse) {
         resp.on_aborted::<StaticRoute>(Self::on_aborted, this);
         resp.on_writable::<StaticRoute>(Self::on_writable, this);
         // TODO(port): exact bun_uws::AnyResponse callback registration API
     }
 
-    fn on_aborted(&self, resp: AnyResponse) {
-        self.on_response_complete(resp);
+    /// # Safety
+    /// uws callback: `this` is the userdata registered in `to_async`.
+    unsafe fn on_aborted(this: *mut Self, resp: AnyResponse) {
+        Self::on_response_complete(this, resp);
     }
 
-    fn on_response_complete(&self, resp: AnyResponse) {
+    /// # Safety
+    /// `this` must be a live heap-allocated route with write provenance; may free
+    /// `*this` via `deref_` when the refcount reaches zero.
+    unsafe fn on_response_complete(this: *mut Self, resp: AnyResponse) {
         resp.clear_aborted();
         resp.clear_on_writable();
         resp.clear_timeout();
-        if let Some(server) = self.server {
+        if let Some(server) = (*this).server {
             server.on_static_request_complete();
         }
-        self.deref_();
+        Self::deref_(this);
     }
 
     fn do_render_blob(&self, resp: AnyResponse, did_finish: &mut bool) {
@@ -369,16 +382,18 @@ impl StaticRoute {
         self.render_bytes(resp, did_finish);
     }
 
-    fn on_writable(&self, write_offset: u64, resp: AnyResponse) -> bool {
-        if let Some(server) = self.server {
+    /// # Safety
+    /// uws callback: `this` is the userdata registered in `to_async`.
+    unsafe fn on_writable(this: *mut Self, write_offset: u64, resp: AnyResponse) -> bool {
+        if let Some(server) = (*this).server {
             resp.timeout(server.config().idle_timeout);
         }
 
-        if !self.on_writable_bytes(write_offset, resp) {
+        if !(*this).on_writable_bytes(write_offset, resp) {
             return false;
         }
 
-        self.on_response_complete(resp);
+        Self::on_response_complete(this, resp);
         true
     }
 

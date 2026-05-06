@@ -1261,5 +1261,5 @@ use crate::package_manager_task::{TaskData, TaskStatus};
 //   source:     src/install/TarballStream.zig (940 lines)
 //   confidence: medium
 //   todos:      11
-//   notes:      intrusive thread-pool task + self-destroy-in-method (`finish`); &'a borrows from LIFETIMES.tsv likely need raw ptrs; tokenizeScalar.rest() and OS-path Z-slice types are placeholders.
+//   notes:      intrusive thread-pool task + self-destroy-in-method (`finish`); extract_task/package_manager demoted to raw ptrs (Zig `*T`); tokenizeScalar.rest() and OS-path Z-slice types are placeholders.
 // ──────────────────────────────────────────────────────────────────────────

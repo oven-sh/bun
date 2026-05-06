@@ -542,7 +542,8 @@ impl StatWatcher {
     pub fn swap_and_call_listener_on_main_thread(this: *mut StatWatcher) {
         // SAFETY: this is alive — ref'd in restat()
         let this_ref = unsafe { &mut *this };
-        let _deref_on_exit = scopeguard::guard((), |_| this_ref.deref()); // Balance the ref from restat().
+        // SAFETY: balance the ref from restat(); raw ptr captured (not `&self`).
+        let _deref_on_exit = scopeguard::guard((), move |_| unsafe { Self::deref(this) });
         // PORT NOTE: reshaped for borrowck
         let Some(js_this) = this_ref.this_value.try_get() else {
             return;

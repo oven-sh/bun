@@ -53,8 +53,7 @@ struct PipeReader<'a> {
 impl<'a> PipeReader<'a> {
     fn new(is_stderr: bool) -> Self {
         Self {
-            // TODO(port): BufferedReader::init(This) — Zig passes the parent type for vtable;
-            // Rust BufferedReader likely takes a trait object or callback set.
+            // BufferedReader::init(This) — Zig passes the parent type for vtable.
             reader: BufferedReader::init::<Self>(),
             handle: ptr::null(),
             is_stderr,
@@ -62,39 +61,47 @@ impl<'a> PipeReader<'a> {
         }
     }
 
-    pub fn on_read_chunk(&mut self, chunk: &[u8], _has_more: ReadState) -> bool {
+    fn event_loop_ptr(&self) -> *mut MiniEventLoop<'static> {
         // SAFETY: handle is a backref set in ProcessHandle::start() before any read; State
         // outlives all handles (lives on `run`'s stack frame for the whole event loop).
-        let state = unsafe { &mut *((*self.handle).state as *mut State) };
-        let _ = state.read_chunk(self, chunk);
+        unsafe { (*(*self.handle).state).event_loop }
+    }
+}
+
+// SAFETY (all): see `BufferedReaderParent` aliasing contract — `this` is the
+// `*mut Self` registered via `set_parent`; a `&mut` to the embedded reader may
+// be live on the caller's stack. Callbacks here touch only `line_buffer` /
+// `handle` / the State backref, never `reader`.
+impl<'a> bun_io::pipe_reader::BufferedReaderParent for PipeReader<'a> {
+    const HAS_ON_READ_CHUNK: bool = true;
+
+    unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], _has_more: ReadState) -> bool {
+        // SAFETY: backrefs set in ProcessHandle::start(); State outlives all handles.
+        let state = unsafe { &mut *((*(*this).handle).state as *mut State) };
+        let _ = state.read_chunk(unsafe { &mut *this }, chunk);
         true
     }
 
-    pub fn on_reader_done(&mut self) {}
+    unsafe fn on_reader_done(_this: *mut Self) {}
 
-    pub fn on_reader_error(&mut self, _err: bun_sys::Error) {}
+    unsafe fn on_reader_error(_this: *mut Self, _err: bun_sys::Error) {}
 
-    pub fn event_loop(&self) -> &'static MiniEventLoop<'static> {
-        // SAFETY: backref; see on_read_chunk
-        unsafe { (*(*self.handle).state).event_loop }
+    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
+        // SAFETY: backref; see on_read_chunk. Erase to the io-level opaque handle.
+        let (_, ptr) = EventLoopHandle::init_mini(unsafe { (*this).event_loop_ptr() }).into_tag_ptr();
+        bun_io::EventLoopHandle(ptr)
     }
 
-    pub fn r#loop(&self) -> &bun_aio::Loop {
-        #[cfg(windows)]
-        {
-            // SAFETY: backref; see on_read_chunk
-            unsafe { (*(*self.handle).state).event_loop.loop_.uv_loop }
-        }
-        #[cfg(not(windows))]
-        {
-            // SAFETY: backref; see on_read_chunk
-            unsafe { (*(*self.handle).state).event_loop.loop_ }
-        }
+    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
+        // SAFETY: backref; see on_read_chunk.
+        unsafe { (*(*this).event_loop_ptr()).loop_.cast() }
     }
 }
 
 struct ProcessSlot {
-    ptr: Arc<Process>,
+    /// Intrusively ref-counted; allocated via `Box::into_raw` in
+    /// `PosixSpawnResult::to_process`. Freed via `Process::deref`.
+    ptr: *mut Process,
     status: Status,
 }
 

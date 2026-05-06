@@ -473,7 +473,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         w!(incremental_result, IncrementalResult::EMPTY);
         w!(route_lookup, Default::default());
         w!(route_bundles, Vec::new());
-        w!(html_router, HTMLRouter::EMPTY);
+        w!(html_router, HTMLRouter::empty());
         w!(active_websocket_connections, Default::default());
         w!(current_bundle, None);
         w!(
@@ -950,7 +950,7 @@ impl Drop for DevServer<'_> {
         }
 
         if let TestingBatchEvents::Enabled(batch) = &mut self.testing_batch_events {
-            drop(std::mem::replace(&mut batch.entry_points, EntryPointList::EMPTY));
+            drop(std::mem::replace(&mut batch.entry_points, EntryPointList::empty()));
         }
 
         debug_assert!(self.magic == Magic::Valid);
@@ -1467,7 +1467,7 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
 
                 // Prepare a bundle with just this route.
                 // PERF(port): was stack-fallback alloc
-                let mut entry_points = EntryPointList::EMPTY;
+                let mut entry_points = EntryPointList::empty();
                 dev.append_route_entry_points_if_not_stale(&mut entry_points, route_bundle_index)?;
 
                 // If all files were already bundled (possible with layouts),
@@ -2872,7 +2872,7 @@ pub fn finalize_bundle(
 
         // Signal for testing framework where it is in synchronization
         if matches!(dev.testing_batch_events, TestingBatchEvents::EnableAfterBundle) {
-            dev.testing_batch_events = TestingBatchEvents::Enabled(TestingBatch::EMPTY);
+            dev.testing_batch_events = TestingBatchEvents::Enabled(TestingBatch::empty());
             dev.publish(
                 HmrTopic::TestingWatchSynchronization,
                 &[MessageId::TestingWatchSynchronization.char(), 0],
@@ -3725,7 +3725,7 @@ impl DevServer<'_> {
             || self.next_bundle.promise.strong.has_value()
         {
             // PERF(port): was stack-fallback (4096)
-            let mut entry_points = EntryPointList::EMPTY;
+            let mut entry_points = EntryPointList::empty();
 
             let (is_reload, timer) = if let Some(event) = self.next_bundle.reload_event.take() {
                 'brk: {
@@ -5155,11 +5155,13 @@ fn dump_state_due_to_crash(dev: &mut DevServer) -> Result<(), bun_core::Error> {
             bun_core::time::timestamp()
         );
         // TODO(port): bufPrintZ; falls back to literal on failure
-        ZStr::from_bytes_until_nul(&filepath_buf)
-            .unwrap_or_else(|_| ZStr::from_static("incremental-graph-crash-dump.html"))
+        match memchr::memchr(0, &filepath_buf) {
+            Some(nul) => &filepath_buf[..nul],
+            None => b"incremental-graph-crash-dump.html".as_slice(),
+        }
     };
     // TODO(port): std.fs.cwd().createFileZ — use bun_sys
-    let file = match sys::File::create(sys::Fd::cwd(), filepath) {
+    let file = match sys::File::create(sys::Fd::cwd(), filepath, true) {
         Ok(f) => f,
         Err(err) => {
             Output::warn(format_args!(
@@ -5183,7 +5185,8 @@ fn dump_state_due_to_crash(dev: &mut DevServer) -> Result<(), bun_core::Error> {
     let mut payload: Vec<u8> = Vec::with_capacity(4096);
     dev.write_visualizer_message(&mut payload)?;
 
-    let mut buf = [0u8; bun_base64::encode_len_from_size(4096)];
+    // bun_base64::encode_len_from_size(4096) == ((4096 + 2) / 3) * 4 == 5464
+    let mut buf = [0u8; 5464];
     for chunk in payload.chunks(4096) {
         file.write_all(&buf[..bun_base64::encode(&mut buf, chunk)])?;
     }
@@ -5192,8 +5195,8 @@ fn dump_state_due_to_crash(dev: &mut DevServer) -> Result<(), bun_core::Error> {
     file.write_all(end)?;
 
     Output::note(format_args!(
-        "Dumped incremental bundler graph to {:?}",
-        bun_core::fmt::quote(filepath.as_bytes())
+        "Dumped incremental bundler graph to {}",
+        bun_core::fmt::quote(filepath)
     ));
     Ok(())
 }
@@ -5238,7 +5241,7 @@ pub mod entry_point_list {
 }
 
 impl EntryPointList {
-    pub const EMPTY: EntryPointList = EntryPointList { set: ArrayHashMap::new() };
+    pub fn empty() -> EntryPointList { EntryPointList { set: ArrayHashMap::new() } }
 
     pub fn append_js(&mut self, abs_path: &[u8], side: bake::Graph) -> Result<(), bun_core::Error> {
         self.append(
@@ -5257,11 +5260,11 @@ impl EntryPointList {
 
     /// Deduplictes requests to bundle the same file twice.
     pub fn append(&mut self, abs_path: &[u8], flags: entry_point_list::Flags) -> Result<(), bun_core::Error> {
-        let gop = self.set.get_or_put(abs_path)?;
+        let gop = self.set.get_or_put(Box::<[u8]>::from(abs_path))?;
         if gop.found_existing {
-            *gop.value |= flags;
+            *gop.value_ptr |= flags;
         } else {
-            *gop.value = flags;
+            *gop.value_ptr = flags;
         }
         Ok(())
     }
@@ -5276,7 +5279,7 @@ pub struct HTMLRouter<'a> {
 }
 
 impl<'a> HTMLRouter<'a> {
-    pub const EMPTY: HTMLRouter<'a> = HTMLRouter { map: StringHashMap::new(), fallback: None };
+    pub fn empty() -> HTMLRouter<'a> { HTMLRouter { map: StringHashMap::new(), fallback: None } }
 
     pub fn get(&self, path: &[u8]) -> Option<&'a HTMLBundleRoute> {
         self.map.get(path).copied().or(self.fallback)
@@ -5432,7 +5435,7 @@ pub struct TestingBatch {
 }
 
 impl TestingBatch {
-    pub const EMPTY: TestingBatch = TestingBatch { entry_points: EntryPointList::EMPTY };
+    pub fn empty() -> TestingBatch { TestingBatch { entry_points: EntryPointList::empty() } }
 
     pub fn append(
         &mut self,

@@ -823,14 +823,14 @@ impl CreateCommand {
                 if let Some(q) = package_json_expr.as_property(b"devDependencies") {
                     let property = q.expr;
 
-                    if property.data.is_e_object() && property.data.e_object().properties.len() > 0 {
+                    if property.data.is_e_object() && property.data.e_object().unwrap().properties.len > 0 {
                         // unsupported_packages.update(property);
                         // has_react_scripts = has_react_scripts or property.hasAnyPropertyNamed(&.{"react-scripts"});
                         // has_relay = has_relay or property.hasAnyPropertyNamed(&.{ "react-relay", "relay-runtime", "babel-plugin-relay" });
                         // property.data.e_object.properties = js_ast.G.Property.List.fromBorrowedSliceDangerous(Prune.prune(property.data.e_object.properties.slice()));
-                        if property.data.e_object().properties.len() > 0 {
+                        if property.data.e_object().unwrap().properties.len > 0 {
                             has_dependencies = true;
-                            dev_dependencies = Some(q.expr);
+                            dev_dependencies = Some(q.expr.into());
 
                             // has_bun_framework_next = has_bun_framework_next or property.hasAnyPropertyNamed(&.{"bun-framework-next"});
                             // has_react = has_react or property.hasAnyPropertyNamed(&.{ "react", "react-dom", "react-relay", "@emotion/react" });

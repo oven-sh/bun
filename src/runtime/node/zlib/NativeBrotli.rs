@@ -58,8 +58,7 @@ use super::*;
 use core::cell::Cell;
 use core::ffi::c_uint;
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, Strong, WorkPoolTask};
-use bun_str::ZStr;
+use bun_jsc::{CallFrame, ErrorCode, JSGlobalObject, JSValue, JsResult, RangeErrorOptions, StrongOptional, WorkPoolTask};
 
 use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive, Error};
 use crate::node::util::validators;

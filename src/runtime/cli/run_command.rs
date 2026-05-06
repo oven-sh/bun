@@ -1925,6 +1925,7 @@ use bun_core::{note, pretty_errorln};
 use bun_dotenv as DotEnv;
 use bun_http as http;
 use bun_jsc as jsc;
+use super::runner_arena;
 // TODO(b2-blocked): `bun_md` is a workspace crate but not yet a dep of
 // `bun_runtime`. The markdown render path is preserved verbatim below; once
 // `bun_md` is wired into `runtime/Cargo.toml` swap this stub back to

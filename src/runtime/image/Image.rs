@@ -288,19 +288,18 @@ impl Image {
     pub fn constructor(
         global: &JSGlobalObject,
         callframe: &CallFrame,
-        this_value: JSValue,
     ) -> JsResult<Box<Image>> {
         let args = callframe.arguments();
         if args.len() < 1 || args[0].is_undefined_or_null() {
-            return global.throw_invalid_arguments(
+            return Err(global.throw_invalid_arguments(
                 "Image() expects a path, ArrayBuffer, TypedArray, Blob or data: URL",
-            );
+            ));
         }
         from_input_js(
             global,
             args[0],
             if args.len() > 1 { args[1] } else { JSValue::UNDEFINED },
-            this_value,
+            callframe.this(),
         )
     }
 

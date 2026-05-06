@@ -2103,27 +2103,21 @@ impl<S: GraphSide> IncrementalGraph<S> {
 
         let dev = self.owner();
 
-        let fail_owner: SerializedFailure::Owner = match S::SIDE {
-            Side::Server => SerializedFailure::Owner::Server(file_index),
-            Side::Client => SerializedFailure::Owner::Client(file_index),
+        let fail_owner: FailureOwner = match S::SIDE {
+            Side::Server => FailureOwner::Server(ig::ServerFileIndex::init(file_index.get())),
+            Side::Client => FailureOwner::Client(ig::ClientFileIndex::init(file_index.get())),
         };
         // TODO: DevServer should get a stdio manager which can process
         // the error list as it changes while also supporting a REPL
-        let _ = log.print(Output::error_writer());
-        let failure = {
-            let mut relative_path_buf = path_buffer_pool::get();
-            // this string is just going to be memcpy'd into the log buffer
-            let owner_display_name =
-                dev.relative_path(&mut *relative_path_buf, &self.bundled_files.keys()[gop_index]);
-            SerializedFailure::init_from_log(dev, fail_owner, owner_display_name, &log.msgs)?
-        };
-        let fail_gop = dev.bundling_failures.get_or_put(failure.clone())?;
-        dev.incremental_result.failures_added.push(failure.clone());
-        if fail_gop.found_existing {
-            dev.incremental_result
-                .failures_removed
-                .push(core::mem::replace(fail_gop.key_ptr, failure));
-        }
+        let _ = log.print(Output::error_writer() as *mut _);
+        let _ = (dev, fail_owner, gop_index, &log.msgs);
+        // TODO(port): blocked_on: dev_server::DevServer::relative_path / SerializedFailure::init_from_log dispatch
+        //   `init_from_log` exists on `serialized_failure_body::SerializedFailure` but
+        //   takes `&mut dev_server_body::DevServer<'_>`, while `dev` here is the
+        //   keystone `dev_server::DevServer`. Also `bundling_failures.get_or_put`
+        //   requires `SerializedFailure: Default`.
+        todo!("blocked_on: dev_server::DevServer::relative_path");
+        #[allow(unreachable_code)]
         Ok(())
     }
 }

@@ -1104,16 +1104,14 @@ impl CronRemoveJob {
             self.tmp_path.as_ref().unwrap(),
             sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL,
             0o600,
-        )
-        .unwrap_result()
-        {
+        ) {
             Ok(f) => f,
             Err(_) => {
                 self.set_err(format_args!("Failed to create temp file"));
                 return Self::finish(self);
             }
         };
-        if file.write_all(&result).unwrap_result().is_err() {
+        if file.write_all(&result).is_err() {
             file.close();
             self.set_err(format_args!("Failed to write temp file"));
             return Self::finish(self);

@@ -747,10 +747,10 @@ impl Subprocess<'_> {
         // The finalizer only runs when the object becomes unreachable
         this.this_value.update(global_this, callframe.this());
 
-        let arguments = callframe.arguments_old(1);
+        let arguments = callframe.arguments_old::<1>();
         // If signal is 0, then no actual signal is sent, but error checking
         // is still performed.
-        let sig: SignalCode = SignalCode::from_js(arguments.ptr[0], global_this)?;
+        let sig: SignalCode = signal_code_from_js(arguments.ptr[0], global_this)?;
 
         if global_this.has_exception() {
             return Ok(JSValue::ZERO);
@@ -760,7 +760,7 @@ impl Subprocess<'_> {
             bun_sys::Result::Ok(()) => {}
             bun_sys::Result::Err(err) => {
                 // EINVAL or ENOSYS means the signal is not supported in the current platform (most likely unsupported on windows)
-                return Err(global_this.throw_value(err.to_js(global_this)?));
+                return Err(global_this.throw_value(err.to_js(global_this)));
             }
         }
 

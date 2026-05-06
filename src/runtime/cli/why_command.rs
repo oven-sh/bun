@@ -1,3 +1,7 @@
+#![allow(dead_code, unused_imports)]
+// PORT NOTE: dead_code/unused_imports suppressed while exec bodies are
+// `todo!()`-gated on bun_install::package_manager_real un-gating.
+
 use core::cmp::Ordering;
 use core::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::io::Write as _;

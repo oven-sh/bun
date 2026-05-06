@@ -1959,12 +1959,12 @@ pub mod internal {
 
     pub fn get_hints() -> libc::addrinfo {
         let mut hints_copy = default_hints();
-        if feature_flag::BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG.get() {
+        if env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG.get() {
             hints_copy.ai_flags &= !libc::AI_ADDRCONFIG;
         }
-        if feature_flag::BUN_FEATURE_FLAG_DISABLE_IPV6.get() {
+        if env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_IPV6.get() {
             hints_copy.ai_family = libc::AF_INET;
-        } else if feature_flag::BUN_FEATURE_FLAG_DISABLE_IPV4.get() {
+        } else if env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_IPV4.get() {
             hints_copy.ai_family = libc::AF_INET6;
         }
         hints_copy
@@ -2355,7 +2355,7 @@ pub mod internal {
         GETADDRINFO_CALLS.fetch_add(1, Ordering::Relaxed);
         let mut timestamp_to_store: u32 = 0;
         // is there a cache hit?
-        if !feature_flag::BUN_FEATURE_FLAG_DISABLE_DNS_CACHE.get() {
+        if !env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_DNS_CACHE.get() {
             if let Some(entry) = guard.get(&key, &mut timestamp_to_store) {
                 if preload {
                     drop(guard);

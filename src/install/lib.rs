@@ -755,6 +755,7 @@ pub use patch_install as patch;
 pub use bin::Bin;
 pub use repository::Repository;
 pub use lockfile::{Lockfile, PatchedDep, LoadResult, LoadStep};
+pub use package_manager::Options::LogLevel;
 #[derive(Default)] pub struct ExtractTarball;
 impl ExtractTarball {
     /// Stub for `ExtractTarball.run` (src/install/extract_tarball.zig). Real

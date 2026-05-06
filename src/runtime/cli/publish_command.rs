@@ -557,7 +557,7 @@ impl PublishCommand {
                     abs_workspace_path,
                     context.script_env.as_ref().unwrap(),
                     &[],
-                    context.manager.options.log_level == install::package_manager::LogLevel::Silent,
+                    context.manager.options.log_level == LogLevel::Silent,
                     context.command_ctx.debug.use_system_shell,
                 ) {
                     if e == err!(MissingShell) {
@@ -579,7 +579,7 @@ impl PublishCommand {
                     abs_workspace_path,
                     context.script_env.as_ref().unwrap(),
                     &[],
-                    context.manager.options.log_level == install::package_manager::LogLevel::Silent,
+                    context.manager.options.log_level == LogLevel::Silent,
                     context.command_ctx.debug.use_system_shell,
                 ) {
                     if e == err!(MissingShell) {

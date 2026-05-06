@@ -5,7 +5,8 @@ use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
 use core::marker::PhantomData;
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, Strong, VirtualMachine};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, Strong};
+use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::AbortSignal;
 use bun_jsc::BinaryType;
 use crate::webcore::AutoFlusher;

@@ -206,7 +206,7 @@ impl History {
         }
 
         let mut path_buf = PathBuffer::uninit();
-        let path = path::join_z_buf(&mut path_buf, &[home_path, HISTORY_FILENAME], path::Platform::Auto);
+        let path = path::resolve_path::join_z_buf::<path::platform::Auto>(&mut path_buf, &[home_path, HISTORY_FILENAME]);
         self.file_path = Some(Box::<[u8]>::from(path.as_bytes()));
 
         let content: Box<[u8]> = match sys::File::read_from(Fd::cwd(), path) {
@@ -583,7 +583,7 @@ fn cmd_load(repl: &mut Repl, args: &[u8]) -> ReplResult {
     }
 
     let mut path_buf = PathBuffer::uninit();
-    let path_z = path::z(filename, &mut path_buf);
+    let path_z = path::resolve_path::z(filename, &mut path_buf);
     let content: Box<[u8]> = match sys::File::read_from(Fd::cwd(), path_z) {
         sys::Result::Ok(bytes) => bytes,
         sys::Result::Err(err) => {

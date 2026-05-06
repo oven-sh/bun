@@ -359,10 +359,13 @@ pub fn init_watch_trigger() {
         };
 
         let set: &'static mut StringSet = Box::leak(Box::new(StringSet::new()));
-        jsc::hot_reloader::set_watch_changed_paths(set);
-        jsc::hot_reloader::set_watch_changed_trigger_file(Box::leak(path));
-        // TODO(port): hot_reloader globals — Zig assigns `jsc.hot_reloader.watch_changed_paths = set`
-        // and `..._trigger_file = path` directly; confirm Rust setter API.
+        // SAFETY: written once on the main thread before the watcher thread
+        // starts; after that only the watcher thread touches these. See doc
+        // on `hot_reloader::WATCH_CHANGED_PATHS`.
+        unsafe {
+            jsc::hot_reloader::WATCH_CHANGED_PATHS = Some(set as *mut StringSet);
+            jsc::hot_reloader::WATCH_CHANGED_TRIGGER_FILE = Some(Box::leak(path));
+        }
     }
 }
 

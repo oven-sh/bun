@@ -22,7 +22,7 @@ use bun_sys::{self, Fd};
 // Generate project files based on the entry point and dependencies
 pub fn generate(
     _ctx: &Command::Context,
-    _example: Example::Tag,
+    _example: ExampleTag,
     entry_point: &[u8],
     result: &mut DependenciesScannerResult,
 ) -> Result<(), bun_core::Error> {

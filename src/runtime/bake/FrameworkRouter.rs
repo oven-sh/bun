@@ -1721,7 +1721,13 @@ impl JSFrameworkRouter {
         obj.put(
             global,
             "parseRoutePattern",
-            bun_jsc::JSFunction::create(global, "parseRoutePattern", Self::parse_route_pattern, 1),
+            bun_jsc::JSFunction::create(
+                global,
+                "parseRoutePattern",
+                __jsc_host_parse_route_pattern,
+                1,
+                Default::default(),
+            ),
         );
         obj.put(global, "FrameworkRouter", Self::js_get_constructor(global));
         Ok(obj.to_js())

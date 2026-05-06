@@ -2543,25 +2543,6 @@ fn buf_print<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> Result<&'
     Ok(unsafe { core::slice::from_raw_parts(buf.as_ptr(), written) })
 }
 
-/// Create a temp file path with a random suffix to avoid TOCTOU/symlink attacks.
- // moved into _jsc_gated above (bun_fs::FileSystem + bun_str::ZString)
-fn make_temp_path(prefix: &'static str) -> Result<ZString, bun_alloc::AllocError> {
-    let mut name_buf = PathBuffer::uninit();
-    // PORT NOTE: Zig used `prefix ++ "tmp"` at comptime; concat at runtime here.
-    // TODO(port): use const_format::concatcp! once call sites pass a const.
-    let mut full_prefix = Vec::with_capacity(prefix.len() + 3);
-    full_prefix.extend_from_slice(prefix.as_bytes());
-    full_prefix.extend_from_slice(b"tmp");
-    let name = bun_fs::FileSystem::tmpname(&full_prefix, &mut name_buf, bun_core::fast_random())
-        .map_err(|_| bun_alloc::AllocError)?;
-    let joined = path::join_abs_string(
-        bun_fs::FileSystem::RealFS::platform_temp_dir(),
-        &[name],
-        path::Platform::Auto,
-    );
-    Ok(ZString::from_bytes(joined))
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/api/cron.zig (1772 lines)

@@ -92,7 +92,7 @@ pub enum FreeError {
     NotAllocated,
 }
 
-impl From<FreeError> for crate::stubs::CoreError {
+impl From<FreeError> for bun_core::Error {
     fn from(e: FreeError) -> Self {
         match e {
             FreeError::NotAllocated => bun_core::err!("NotAllocated"),

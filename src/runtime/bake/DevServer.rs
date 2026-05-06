@@ -1882,11 +1882,10 @@ impl DevServer<'_> {
             true,
         )?;
 
-        self.server.as_ref().unwrap().on_saved_request(
+        let _ = (
             req,
             resp,
             server_request_callback,
-            8,
             &[
                 args.router_type_main,
                 args.route_modules,
@@ -1898,6 +1897,8 @@ impl DevServer<'_> {
                 args.new_route_params,
             ],
         );
+        todo!("blocked_on: AnyServer::on_saved_request (crate::server::SavedRequestUnion is unnameable)");
+        #[allow(unreachable_code)]
         Ok(())
     }
 
@@ -1952,7 +1953,7 @@ impl DevServer<'_> {
         &mut self,
         route_bundle_index: route_bundle::Index,
         route_bundle: &mut RouteBundle,
-        html: &mut route_bundle::HTML,
+        html: &mut route_bundle::Html,
     ) -> Result<Vec<u8>, AllocError> {
         debug_assert!(route_bundle.server_state == route_bundle::State::Loaded);
         debug_assert!(html.html_bundle.data.dev_server_id.unwrap_() == Some(route_bundle_index));
@@ -1966,7 +1967,7 @@ impl DevServer<'_> {
         let before_head_end = &bundled_html[..script_injection_offset];
         let after_head_end = &bundled_html[script_injection_offset..];
 
-        let mut display_name = strings::without_suffix(
+        let mut display_name = strings::without_suffix_comptime(
             paths::basename(&html.html_bundle.data.bundle.data.path),
             b".html",
         );

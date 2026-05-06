@@ -1221,9 +1221,9 @@ impl Terminal {
             };
             // TODO(port): Zig computed maxInt of the packed-struct backing integer
             // via @typeInfo. Using tcflag_t::MAX (platform-dependent width).
-            let max_val: f64 = sys::posix::tcflag_t::MAX as f64;
+            let max_val: f64 = libc::tcflag_t::MAX as f64;
             let clamped = num.max(0.0).min(max_val);
-            let bits = clamped as sys::posix::tcflag_t;
+            let bits = clamped as libc::tcflag_t;
             match FIELD {
                 TermiosField::Iflag => termios_data.c_iflag = bits,
                 TermiosField::Oflag => termios_data.c_oflag = bits,

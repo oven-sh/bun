@@ -1956,7 +1956,7 @@ impl<'a> LinkerContext<'a> {
             } else {
                 Vec::new()
             };
-        let final_rel_path = chunk.final_rel_path.clone();
+        let final_rel_path = chunk.final_rel_path;
 
         for (kind, piece_index) in piece_queries {
             match kind {
@@ -3784,7 +3784,9 @@ impl<'a> LinkerContext<'a> {
 // PartialEq for MatchImport (needed for std.meta.eql in match_import_with_export)
 impl PartialEq for MatchImport {
     fn eq(&self, other: &Self) -> bool {
-        self.alias == other.alias
+        // PORT NOTE: Zig `std.meta.eql` on a slice compares ptr+len, not contents —
+        // `std::ptr::eq` on `*const [u8]` matches that (address + length metadata).
+        std::ptr::eq(self.alias, other.alias)
             && self.kind == other.kind
             && self.namespace_ref == other.namespace_ref
             && self.source_index == other.source_index

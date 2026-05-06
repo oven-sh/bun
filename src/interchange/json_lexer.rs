@@ -153,11 +153,13 @@ impl Default for IndentInfo {
 /// the JSON parser reads directly (`token`, `number`, `has_newline_before`,
 /// `source`, `end`, `is_ascii_only`, `identifier`, `indent_info`).
 ///
-/// PORT NOTE — borrowck: Zig stored both `log: *logger.Log` and the parser
-/// held a second `*logger.Log`. In Rust the parser owns the `&mut Log`; the
-/// lexer keeps a raw `*mut Log` and only dereferences it inside the
-/// error-reporting cold paths, never while the parser is simultaneously
-/// borrowing the log. This matches the toml lexer's shape.
+/// PORT NOTE — borrowck/Stacked Borrows: Zig stored `log: *logger.Log` on
+/// both the lexer *and* the parser (json.zig:103,119). The Rust port keeps a
+/// single `*mut Log` here as the sole provenance chain; the parser does **not**
+/// hold its own `&mut Log` (that would alias this pointer and any parser-side
+/// `&mut` deref would invalidate the lexer's SharedReadWrite tag — UB the next
+/// time the lexer reports an error). Parser-side log writes go through
+/// `log_mut()`. Matches the toml lexer's shape.
 pub struct Lexer<'a, 'bump> {
     // PORT NOTE: raw ptr — see struct doc.
     log: *mut logger::Log,

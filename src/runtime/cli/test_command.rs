@@ -1816,7 +1816,7 @@ impl TestCommand {
                 // SAFETY: lifetime-erase to `'static`; `ctx` is the
                 // process-lifetime CLI context and `exec()` never returns.
                 test_options: unsafe {
-                    &*(&ctx.test_options as *const bun_options_types::TestOptions)
+                    &*(&ctx.test_options as *const bun_options_types::Context::TestOptions)
                 },
                 unhandled_errors_between_tests: 0,
                 summary: Summary::default(),

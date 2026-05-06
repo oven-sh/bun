@@ -704,7 +704,7 @@ mod _gated_from_js {
         let result = match maybe {
             bun_sys::Result::Ok(result) => result,
             bun_sys::Result::Err(err) => {
-                return Err(global.throw_value(err.to_js(global)?).into());
+                return Err(global.throw_value(err.to_js(global)).into());
             }
         };
         // `read_file_with_options(NullTerminated)` transfers ownership of the
@@ -911,7 +911,7 @@ mod _gated_from_js {
         }
         let mut result: Vec<CString> = Vec::with_capacity(elements.len());
         // errdefer { free_sensitive each; drop result } — need zeroing on error:
-        let guard = scopeguard::guard(&mut result, |r| {
+        let mut guard = scopeguard::guard(&mut result, |r| {
             for string in r.drain(..) {
                 free_sensitive_bytes(string.into_bytes_with_nul());
             }

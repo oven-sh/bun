@@ -718,16 +718,19 @@ impl ServerConfig {
             };
             args.had_routes_object = true;
 
-            // PORT NOTE: JSPropertyIterator carries its options as a const generic.
-            const ROUTE_ITER_OPTS: bun_jsc::JSPropertyIteratorOptions =
-                bun_jsc::JSPropertyIteratorOptions::new(
-                    /* skip_empty_name */ true,
-                    /* include_value   */ true,
-                );
+            // PORT NOTE: in Zig the iterator options are a comptime struct; the
+            // Rust port carries them as a runtime arg to `init()`.
             // SAFETY: `get_object()` returned Some, so the pointer is a live JSObject.
             let static_obj: &bun_jsc::JSObject = unsafe { &*static_obj };
-            let mut iter =
-                JSPropertyIterator::<ROUTE_ITER_OPTS>::init(global, static_obj)?;
+            let mut iter = JSPropertyIterator::init(
+                global,
+                static_obj,
+                bun_jsc::JSPropertyIteratorOptions {
+                    skip_empty_name: true,
+                    include_value: true,
+                    ..Default::default()
+                },
+            )?;
             // iter drops at scope end
 
             let mut init_ctx_ = super::super::server_body::ServerInitContext {

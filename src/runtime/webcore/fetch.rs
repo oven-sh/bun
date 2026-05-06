@@ -618,7 +618,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
         }
 
-        if let Some(req) = request.as_deref() {
+        if let Some(req) = request_mut!() {
             break 'extract_method Some(req.method);
         }
 
@@ -830,7 +830,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // redirect: "follow" | "error" | "manual" | undefined;
     redirect_type = 'extract_redirect_type: {
         // First, try to use the Request object's redirect if available
-        if let Some(req) = request.as_deref() {
+        if let Some(req) = request_mut!() {
             redirect_type = req.flags.redirect;
         }
 
@@ -1097,7 +1097,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
         }
 
-        if let Some(req) = request.as_deref() {
+        if let Some(req) = request_mut!() {
             if let Some(signal_) = &req.signal {
                 break 'extract_signal NonNull::new(signal_.ref_());
             }

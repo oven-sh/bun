@@ -148,6 +148,11 @@ impl SSLContextCache {
 
         let _guard = self.mutex.lock();
 
+        // Capture raw self pointer before the mutable borrow of `self.map` so the
+        // borrow checker doesn't see an overlapping immutable borrow at the
+        // `Entry { owner: ... }` site below.
+        let owner_ptr: *const SSLContextCache = self as *const SSLContextCache;
+
         // Re-check: another caller may have inserted while we were building.
         // Prefer the already-cached one and drop ours so callers converge.
         let gop = bun_core::handle_oom(self.map.get_or_put(d));
@@ -184,7 +189,7 @@ impl SSLContextCache {
 
         let entry = Box::into_raw(Box::new(Entry {
             ctx,
-            owner: self as *const SSLContextCache,
+            owner: owner_ptr,
         }));
         *gop.value_ptr = entry;
         // SAFETY: ctx is a valid SSL_CTX*; entry is a fresh non-null heap pointer.

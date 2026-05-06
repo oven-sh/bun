@@ -683,7 +683,7 @@ macro_rules! maybe_verbose_error_trace { () => { [clap::parse_param!("--verbose-
 #[cfg(not(feature = "error_return_tracing"))]
 macro_rules! maybe_verbose_error_trace { () => { [] }; }
 
-pub static BASE_PARAMS_: &[ParamType] = clap::concat_params!(
+pub static BASE_PARAMS_: LazyLock<Vec<ParamType>> = LazyLock::new(|| concat_params!(
     maybe_debug_params!(),
     [
         clap::parse_param!("--env-file <STR>...               Load environment variables from the specified file(s)"),

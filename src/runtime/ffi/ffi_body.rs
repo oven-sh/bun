@@ -14,7 +14,7 @@ use bun_jsc::{
     self as jsc, host_fn, CallFrame, JSGlobalObject, JSObject, JSPropertyIterator, JSValue,
     JsError, JsResult, ModuleLoader, SystemError, VirtualMachine,
 };
-use bun_napi as napi;
+use crate::napi;
 use bun_paths::{self as path, PathBuffer, MAX_PATH_BYTES};
 use bun_resolver::fs as Fs;
 use bun_str::{strings, ZStr, ZigString};

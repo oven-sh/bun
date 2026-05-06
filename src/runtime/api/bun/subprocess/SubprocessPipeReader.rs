@@ -131,7 +131,7 @@ impl PipeReader {
 
     pub fn start(
         &mut self,
-        process: NonNull<Subprocess>,
+        process: NonNull<Subprocess<'static>>,
         event_loop: NonNull<EventLoop>,
     ) -> bun_sys::Result<()> {
         self.r#ref();
@@ -206,7 +206,7 @@ impl PipeReader {
         }
     }
 
-    pub fn kind(&self, process: &Subprocess) -> StdioKind {
+    pub fn kind(&self, process: &Subprocess<'_>) -> StdioKind {
         if process.stdout.is_pipe() && core::ptr::eq(process.stdout.pipe(), self) {
             return StdioKind::Stdout;
         }

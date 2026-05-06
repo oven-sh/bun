@@ -40,11 +40,13 @@ mod _exit_handler_variants {
     use crate::cli::filter_run::ProcessHandle;
     use crate::cli::multi_run::ProcessHandle as MultiRunProcessHandle;
     use crate::cli::test::parallel_runner::Worker as TestWorkerHandle;
-    use crate::api::cron::{CronRegisterJob, CronRemoveJob};
-    use crate::api::{ChromeProcess, WebViewHostProcess};
+    // crate::api::cron::{CronRegisterJob, CronRemoveJob} — gated behind
+    // cron::_jsc_gated (bun_jsc surface); vtable wired from there once un-gated.
+    // crate::webview::{ChromeProcess, HostProcess} — `webview` module not yet
+    // declared in runtime/lib.rs (blocked on bun_jsc method surface).
     use bun_install::{LifecycleScriptSubprocess, SecurityScanSubprocess};
-    use crate::shell::ShellSubprocess;
-    use crate::api::bun::subprocess::Subprocess;
+    use crate::shell::Subprocess as ShellSubprocess;
+    use crate::api::bun_subprocess::Subprocess;
 }
 
 // posix_spawn(2) wrappers live in the sibling `bun_spawn` module

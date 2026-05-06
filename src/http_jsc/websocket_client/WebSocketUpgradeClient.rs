@@ -783,13 +783,20 @@ impl<const SSL: bool> HTTPClient<SSL> {
         socket.socket().eq(&self.tcp.socket())
     }
 
-    pub fn handle_data(&mut self, socket: Socket<SSL>, data: &[u8]) {
+    /// # Safety
+    /// `this` must point to a live `Self`. Takes `*mut Self` because
+    /// `socket.close()` synchronously dispatches `handle_close` (aliased
+    /// `&mut`), and `terminate`/`process_response`/the trailing `deref` may
+    /// free `this` (argument-protector UB on `&mut self`).
+    pub unsafe fn handle_data(this: *mut Self, socket: Socket<SSL>, data: &[u8]) {
         log!("onData");
 
         // For tunnel mode after successful upgrade, forward all data to the tunnel
         // The tunnel will decrypt and pass to the WebSocket client
-        if self.state == State::Done {
-            if let Some(p) = &mut self.proxy {
+        // SAFETY: short-lived read.
+        if unsafe { (*this).state } == State::Done {
+            // SAFETY: short-lived `&mut` for the proxy borrow; ends before return.
+            if let Some(p) = unsafe { &mut (*this).proxy } {
                 if let Some(tunnel) = p.get_tunnel() {
                     // Ref the tunnel to keep it alive during this call
                     // (in case the WebSocket client closes during processing)
@@ -801,70 +808,85 @@ impl<const SSL: bool> HTTPClient<SSL> {
             return;
         }
 
-        if self.outgoing_websocket.is_none() {
-            self.state = State::Failed;
-            self.clear_data();
+        // SAFETY: short-lived read.
+        if unsafe { (*this).outgoing_websocket.is_none() } {
+            // SAFETY: short-lived `&mut` writes; each ends before `socket.close`.
+            unsafe { (*this).state = State::Failed };
+            unsafe { (*this).clear_data() };
+            // No `&mut Self` is live across this call (handle_close reenters).
             socket.close(uws::CloseCode::Failure);
             return;
         }
-        self.r#ref();
+        // SAFETY: `ref_count` is a `Cell`; short-lived `&self`.
+        unsafe { (*this).r#ref() };
         // TODO(port): defer self.deref() — placed at all return points below.
 
-        debug_assert!(self.is_same_socket(socket));
+        // SAFETY: short-lived `&self` for the comparison.
+        debug_assert!(unsafe { (*this).is_same_socket(socket) });
 
         #[cfg(debug_assertions)]
         debug_assert!(!socket.is_shutdown());
 
         // Handle proxy handshake response
-        if self.state == State::ProxyHandshake {
-            self.handle_proxy_response(socket, data);
-            // SAFETY: `self: &mut Self`; balances the r#ref() above; last use.
-            unsafe { Self::deref(self) };
+        // SAFETY: short-lived read.
+        if unsafe { (*this).state } == State::ProxyHandshake {
+            // SAFETY: forwards `this` with root provenance; no `&mut Self` is live.
+            unsafe { Self::handle_proxy_response(this, socket, data) };
+            // SAFETY: balances the r#ref() above; may free `this`.
+            unsafe { Self::deref(this) };
             return;
         }
 
         // Route through proxy tunnel if TLS handshake is in progress or complete
-        if let Some(p) = &mut self.proxy {
-            if let Some(tunnel) = p.get_tunnel() {
-                tunnel.receive(data);
-                // SAFETY: `self: &mut Self`; balances the r#ref() above; last use.
-                unsafe { Self::deref(self) };
-                return;
+        {
+            // SAFETY: short-lived `&mut` for the proxy borrow.
+            if let Some(p) = unsafe { &mut (*this).proxy } {
+                if let Some(tunnel) = p.get_tunnel() {
+                    tunnel.receive(data);
+                    // SAFETY: balances the r#ref() above; may free `this`.
+                    unsafe { Self::deref(this) };
+                    return;
+                }
             }
         }
 
+        // SAFETY: short-lived `&mut` for body buffering; no reentrant calls in
+        // this region until `terminate`/`process_response` below.
+        let me = unsafe { &mut *this };
         let mut body = data;
-        if !self.body.is_empty() {
-            self.body.extend_from_slice(data);
-            body = &self.body;
+        if !me.body.is_empty() {
+            me.body.extend_from_slice(data);
+            body = &me.body;
         }
 
-        let is_first = self.body.is_empty();
+        let is_first = me.body.is_empty();
         const HTTP_101: &[u8] = b"HTTP/1.1 101 ";
         if is_first && body.len() > HTTP_101.len() {
             // fail early if we receive a non-101 status code
             if !body.starts_with(HTTP_101) {
-                self.terminate(ErrorCode::Expected101StatusCode);
-                // SAFETY: `self: &mut Self`; balances the r#ref() above; last use.
-                unsafe { Self::deref(self) };
+                // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
+                unsafe { Self::terminate(this, ErrorCode::Expected101StatusCode) };
+                // SAFETY: balances the r#ref() above; may free `this`.
+                unsafe { Self::deref(this) };
                 return;
             }
         }
 
-        let response = match picohttp::Response::parse(body, &mut self.headers_buf) {
+        let response = match picohttp::Response::parse(body, &mut me.headers_buf) {
             Ok(r) => r,
             Err(picohttp::ParseError::MalformedHttpResponse) => {
-                self.terminate(ErrorCode::InvalidResponse);
-                // SAFETY: `self: &mut Self`; balances the r#ref() above; last use.
-                unsafe { Self::deref(self) };
+                // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
+                unsafe { Self::terminate(this, ErrorCode::InvalidResponse) };
+                // SAFETY: balances the r#ref() above; may free `this`.
+                unsafe { Self::deref(this) };
                 return;
             }
             Err(picohttp::ParseError::ShortRead) => {
-                if self.body.is_empty() {
-                    self.body.extend_from_slice(data);
+                if me.body.is_empty() {
+                    me.body.extend_from_slice(data);
                 }
-                // SAFETY: `self: &mut Self`; balances the r#ref() above; last use.
-                unsafe { Self::deref(self) };
+                // SAFETY: balances the r#ref() above; may free `this`.
+                unsafe { Self::deref(this) };
                 return;
             }
         };
@@ -873,9 +895,11 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // PORT NOTE: reshaped for borrowck — copy remain_buf out before mutating self.
         let remain_buf: Vec<u8> = body[bytes_read..].to_vec();
         // PERF(port): was zero-copy slice into self.body — profile in Phase B.
-        self.process_response(response, &remain_buf);
-        // SAFETY: `self: &mut Self`; balances the r#ref() above; last use.
-        unsafe { Self::deref(self) };
+        // SAFETY: `me`'s last use is the `body` slice above (now copied out);
+        // no `&mut Self` spans this call.
+        unsafe { Self::process_response(this, response, &remain_buf) };
+        // SAFETY: balances the r#ref() above; may free `this`.
+        unsafe { Self::deref(this) };
     }
 
     fn handle_proxy_response(&mut self, socket: Socket<SSL>, data: &[u8]) {

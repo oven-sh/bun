@@ -127,8 +127,13 @@ pub fn post_process_css_chunk(
     //     j.AddString("\n")
     // }
 
-    // TODO(port): worker.allocator is a per-worker arena — thread `&'bump Bump` to break_output_into_pieces in Phase B; `catch |err| bun.handleOom(err)` → Rust aborts on OOM
-    chunk.intermediate_output = c.break_output_into_pieces(&mut j, ctx.chunks.len() as u32);
+    // SAFETY: `worker.allocator` set by `Worker::create`, outlives the worker step.
+    let alloc = unsafe { &*worker.allocator };
+    chunk.intermediate_output = bun_core::handle_oom(c.break_output_into_pieces(
+        alloc,
+        &mut j,
+        ctx.chunks.len() as u32,
+    ));
     // TODO: meta contents
 
     chunk.isolated_hash = c.generate_isolated_hash(chunk);
@@ -136,11 +141,13 @@ pub fn post_process_css_chunk(
 
     if c.options.source_maps != options::SourceMapOption::None {
         let can_have_shifts = matches!(chunk.intermediate_output, IntermediateOutput::Pieces(_));
+        // SAFETY: `c.resolver` backref valid for the link pass.
+        let output_dir = unsafe { &(*c.resolver).opts.output_dir };
         chunk.output_source_map = c.generate_source_map_for_chunk(
             chunk.isolated_hash,
             worker,
             compile_results_for_source_map,
-            &c.resolver.opts.output_dir,
+            output_dir,
             can_have_shifts,
         )?;
     }

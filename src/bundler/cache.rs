@@ -1,4 +1,3 @@
-use core::ffi::c_void;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_alloc::Arena as Bump;
@@ -209,7 +208,11 @@ pub struct Set {
 }
 
 impl Set {
-    pub fn init() -> Set {
+    /// Port of `Set.init` (cache.zig:6). PORT NOTE: `allocator` is unused —
+    /// `MutableString::init`/`JavaScript::init` source from the global heap in
+    /// the Rust port; param kept so callers match the Zig signature
+    /// (`crate::cache::Set::init(alloc)`).
+    pub fn init(_allocator: &Bump) -> Set {
         Set {
             js: JavaScript::init(),
             fs: Fs {

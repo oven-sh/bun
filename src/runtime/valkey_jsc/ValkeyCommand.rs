@@ -42,8 +42,24 @@ pub struct Command<'a> {
 
 pub enum Args<'a> {
     Slices(&'a [Slice]),
-    Args(&'a [node::BlobOrStringOrBuffer]),
+    Args(&'a [BlobOrStringOrBuffer]),
     Raw(&'a [&'a [u8]]),
+}
+
+impl<'a> Default for Args<'a> {
+    fn default() -> Self {
+        Args::Raw(&[])
+    }
+}
+
+impl<'a> Default for Command<'a> {
+    fn default() -> Self {
+        Command {
+            command: b"",
+            args: Args::default(),
+            meta: Meta::default(),
+        }
+    }
 }
 
 impl<'a> Args<'a> {

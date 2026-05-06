@@ -1971,22 +1971,20 @@ impl ExpectCloseTo {
             ));
         }
 
-        let instance = Box::into_raw(Box::new(ExpectCloseTo { flags: Flags::default() }));
-
-        // SAFETY: freshly leaked Box; wrapper takes ownership, freed in finalize
-        let instance_jsvalue = unsafe { (*instance).to_js(global_this) };
+        let instance_jsvalue = ExpectCloseTo { flags: Flags::default() }.to_js(global_this);
         number_value.ensure_still_alive();
         precision_value.ensure_still_alive();
-        Self::js::number_value_set_cached(instance_jsvalue, global_this, number_value);
-        Self::js::digits_value_set_cached(instance_jsvalue, global_this, precision_value);
+        expect_close_to_js::number_value_set_cached(instance_jsvalue, global_this, number_value);
+        expect_close_to_js::digits_value_set_cached(instance_jsvalue, global_this, precision_value);
 
         let vm = global_this.bun_vm();
-        vm.auto_garbage_collect();
+        // SAFETY: bun_vm() returns the live VM pointer for this global.
+        unsafe { (*vm).auto_garbage_collect() };
         Ok(instance_jsvalue)
     }
 }
 
-#[bun_jsc::JsClass]
+#[bun_jsc::JsClass(no_construct)]
 pub struct ExpectObjectContaining {
     pub flags: Flags,
 }

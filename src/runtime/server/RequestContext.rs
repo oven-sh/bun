@@ -341,6 +341,35 @@ mod shim {
     #[inline] pub fn request_ensure_url(r: &mut Request) -> Result<(), bun_alloc::AllocError> {
         r.ensure_url()
     }
+    /// Erase `AnyResponse` to the opaque `*mut c_void` that
+    /// `FetchHeaders::to_uws_response` / `CookieMap::write` expect (paired
+    /// with the `ResponseKind` discriminant on the other side).
+    #[inline] pub fn resp_as_void(resp: uws::AnyResponse) -> *mut c_void {
+        match resp {
+            uws::AnyResponse::SSL(p) => p as *mut c_void,
+            uws::AnyResponse::TCP(p) => p as *mut c_void,
+            uws::AnyResponse::H3(p) => p as *mut c_void,
+        }
+    }
+    /// `vm.event_loop()` returns `*mut EventLoop`; project to `&mut` for
+    /// `enter()`/`exit()`.
+    /// # Safety
+    /// `vm` and its EventLoop outlive the returned reference; no other `&mut`
+    /// to the EventLoop is live for the borrow.
+    #[inline] pub unsafe fn event_loop_mut<'a>(vm: &'a VirtualMachine) -> &'a mut jsc::event_loop::EventLoop {
+        // SAFETY: per fn contract.
+        unsafe { &mut *vm.event_loop() }
+    }
+    /// `readable_stream::Source::Bytes(*mut ByteStream)` accessor — the enum
+    /// has no method, so unwrap it locally.
+    #[inline] pub fn source_bytes(src: &readable_stream::Source) -> &mut ByteStream {
+        match src {
+            // SAFETY: variant carries a live ByteStream pointer; caller has
+            // exclusive access for the duration of the borrow.
+            readable_stream::Source::Bytes(p) => unsafe { &mut **p },
+            _ => unreachable!("source_bytes called on non-Bytes variant"),
+        }
+    }
 }
 // `Api::FallbackMessageContainer`/`JsException`/`Problems`/`Fallback::render_backend`
 // live in `bun_options_types::schema::api` + `bun_js_parser::runtime`; both are

@@ -94,7 +94,7 @@ pub fn to_throw_error_matching_snapshot(
 
     // PORT NOTE: reshaped for borrowck — Zig deferred post_match to scope exit; here we run it
     // explicitly after computing the result on the success path (see TODO above for error paths).
-    let result = this.snapshot(global, value, None, hint.slice(), "toThrowErrorMatchingSnapshot");
+    let result = Expect::snapshot(this, global, value, None, hint.slice(), "toThrowErrorMatchingSnapshot");
     this.post_match(global);
     result
 }

@@ -430,9 +430,9 @@ fn cpus_impl_freebsd(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
             idle: u64::try_from(times_buf[off + 4].max(0)).unwrap() * mult,
         };
         let cpu = JSValue::create_empty_object(global_this, 3);
-        cpu.put(global_this, ZigString::static_("model"), model);
-        cpu.put(global_this, ZigString::static_("speed"), JSValue::js_number(speed_mhz));
-        cpu.put(global_this, ZigString::static_("times"), times.to_value(global_this));
+        cpu.put(global_this, b"model", model);
+        cpu.put(global_this, b"speed", JSValue::js_number(speed_mhz as f64));
+        cpu.put(global_this, b"times", times.to_value(global_this));
         values.put_index(global_this, i, cpu)?;
         i += 1;
     }

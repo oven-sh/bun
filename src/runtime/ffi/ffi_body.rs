@@ -1420,7 +1420,7 @@ impl FFI {
         }
 
         // TODO: WeakRefHandle that automatically frees it?
-        func.base_name = Some(ZStr::empty());
+        func.base_name = Some(ZBox::from_bytes(b""));
         js_callback.ensure_still_alive();
 
         if func

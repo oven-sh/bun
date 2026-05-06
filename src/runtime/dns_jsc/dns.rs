@@ -1686,7 +1686,7 @@ impl DNSLookup {
     pub unsafe fn on_complete(this: *mut Self, result: *mut c_ares::AddrInfo) {
         bun_output::scoped_log!(DNSLookup, "onComplete");
         // SAFETY: result is a live c-ares AddrInfo owned by the caller's scopeguard.
-        let array = (*result).to_js_array(&*(*this).global_this)
+        let array = super::cares_jsc::addr_info_to_js_array(&mut *result, &*(*this).global_this)
             .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
         Self::on_complete_with_array(this, array);
     }

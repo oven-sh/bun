@@ -904,7 +904,7 @@ pub fn dirname(
     validate_string(global_object, path_ptr, format_args!("path"))?;
 
     let path_zstr = path_ptr.get_zig_string(global_object)?;
-    if path_zstr.len() == 0 {
+    if path_zstr.len == 0 {
         return BunString::create_utf8_for_js(global_object, CHAR_STR_DOT);
     }
 

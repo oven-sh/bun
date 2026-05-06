@@ -11,6 +11,8 @@ use bun_str::{self as strings, ZigString};
 // TODO(port): `bun.api.FFI` lives in `src/runtime/ffi/FFI.zig` → `crate::ffi::FFI`
 #[allow(unused_imports)]
 use crate::ffi::FFI;
+// Non-throwing `toInvalidArguments` shim — see ffi_body.rs for rationale.
+use super::ffi_body::GlobalObjectFfiExt as _;
 
 // ── Local JSValue extension shims (upstream `bun_jsc::JSValue` has not yet ──
 // ported `asPtrAddress` / `toUInt64NoTruncate` / `fromUInt64NoTruncate`).

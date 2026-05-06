@@ -608,19 +608,21 @@ impl<'a> BunTest<'a> {
         Ok(())
     }
 
-    #[bun_jsc::host_fn]
+    // PORT NOTE: `#[bun_jsc::host_fn]` proc-macro emits a free-fn wrapper that
+    // calls the annotated item by bare name; that lookup fails for associated
+    // fns inside `impl` blocks. The extern-"C" trampoline is wired separately
+    // (see the gated `Bun__TestScope__Describe2__*` statics below), so the
+    // attribute is dropped here — these are plain JsResult fns.
     fn bun_test_then(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         Self::bun_test_then_or_catch(global_this, callframe, false)?;
         Ok(JSValue::UNDEFINED)
     }
 
-    #[bun_jsc::host_fn]
     fn bun_test_catch(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         Self::bun_test_then_or_catch(global_this, callframe, true)?;
         Ok(JSValue::UNDEFINED)
     }
 
-    #[bun_jsc::host_fn]
     pub fn bun_test_done_callback(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
@@ -700,13 +702,14 @@ impl<'a> BunTest<'a> {
     }
 
     pub fn run_next_tick(weak: &BunTestPtrWeak, global_this: &JSGlobalObject, phase: RefDataValue) {
-        let done_callback_test = Box::new(RunTestsTask {
+        let done_callback_test = Box::into_raw(Box::new(RunTestsTask {
             weak: weak.clone(),
             global_this,
             phase,
-        });
-        // errdefer bun.destroy(done_callback_test) → Box drops on early return
-        let task = jsc::ManagedTask::new::<RunTestsTask>(done_callback_test, RunTestsTask::call);
+        }));
+        // errdefer bun.destroy(done_callback_test) → ManagedTask::run reconstitutes the Box
+        // PORT NOTE: `jsc::ManagedTask` re-exports the *module*; struct is `ManagedTask::ManagedTask`.
+        let task = jsc::ManagedTask::ManagedTask::new::<RunTestsTask>(done_callback_test, RunTestsTask::call);
         let vm = global_this.bun_vm();
         let Some(strong) = weak.upgrade() else {
             if cfg!(feature = "ci_assert") {
@@ -1077,12 +1080,18 @@ impl<'a> Drop for BunTest<'a> {
 
 // `export const Bun__TestScope__Describe2__bunTestThen = jsc.toJSHostFn(bunTestThen);`
 // TODO(port): move to <area>_sys
+// TODO(b2-blocked): bun_jsc::host_fn::to_js_host_fn is a no-arg stub; the
+// `#[bun_jsc::host_fn]` proc-macro already emits the extern-"C" wrapper for
+// `bun_test_then`/`bun_test_catch`, but its mangled name isn't stable yet.
+// Gate the C++-linked statics until the proc-macro exposes a named symbol.
+#[cfg(any())]
 #[unsafe(no_mangle)]
-pub static Bun__TestScope__Describe2__bunTestThen: jsc::JSHostFn =
-    jsc::to_js_host_fn(BunTest::bun_test_then);
+pub static Bun__TestScope__Describe2__bunTestThen: jsc::host_fn::JSHostFn =
+    jsc::host_fn::to_js_host_fn(BunTest::bun_test_then);
+#[cfg(any())]
 #[unsafe(no_mangle)]
-pub static Bun__TestScope__Describe2__bunTestCatch: jsc::JSHostFn =
-    jsc::to_js_host_fn(BunTest::bun_test_catch);
+pub static Bun__TestScope__Describe2__bunTestCatch: jsc::host_fn::JSHostFn =
+    jsc::host_fn::to_js_host_fn(BunTest::bun_test_catch);
 
 #[derive(Copy, Clone)]
 pub struct EntryData {
@@ -1166,19 +1175,21 @@ impl fmt::Display for RefDataValue {
 pub struct RefData {
     pub buntest_weak: BunTestPtrWeak,
     pub phase: RefDataValue,
-    pub ref_count: Cell<u32>,
+    pub ref_count: bun_ptr::RefCount<RefData>,
 }
 // `bun.ptr.RefCount(RefData, "ref_count", #destroy, .{})` — intrusive single-thread refcount.
-// `*RefData` crosses FFI (asPromisePtr), so this MUST be `bun_ptr::IntrusiveRc`, never `Rc`.
+// `*RefData` crosses FFI (asPromisePtr), so this MUST be `bun_ptr::IntrusiveRc` (= `RefPtr`), never `Rc`.
 pub type RefDataPtr = bun_ptr::IntrusiveRc<RefData>;
-impl bun_ptr::IntrusiveRefCounted for RefData {
-    fn ref_count(&self) -> &Cell<u32> {
-        &self.ref_count
+impl bun_ptr::RefCounted for RefData {
+    type DestructorCtx = ();
+    unsafe fn get_ref_count(this: *mut Self) -> *mut bun_ptr::RefCount<Self> {
+        // SAFETY: `this` points to a live RefData; field projection is in-bounds.
+        unsafe { core::ptr::addr_of_mut!((*this).ref_count) }
     }
-    fn destroy(this: *mut RefData) {
+    unsafe fn destructor(this: *mut Self, _ctx: ()) {
         debug::group::begin();
         let _g = scopeguard::guard((), |_| debug::group::end());
-        // SAFETY: refcount hit zero; we own the allocation
+        // SAFETY: refcount hit zero; we own the allocation (boxed by RefPtr::new)
         unsafe {
             bun_core::scoped_log!(bun_test_group, "refData: {}", (*this).phase);
             // buntest_weak.deinit() → Weak::drop
@@ -1188,7 +1199,7 @@ impl bun_ptr::IntrusiveRefCounted for RefData {
 }
 impl RefData {
     pub fn has_one_ref(&self) -> bool {
-        self.ref_count.get() == 1
+        self.ref_count.has_one_ref()
     }
     pub fn bun_test(&self) -> Option<BunTestPtr> {
         self.buntest_weak.upgrade()
@@ -1236,8 +1247,8 @@ pub enum HandleUncaughtExceptionResult {
     ShowUnhandledErrorInDescribe,
 }
 
-pub type ResultQueue = LinearFifo<RefDataValue>;
-// TODO(port): bun.LinearFifo(.Dynamic) — confirm bun_collections has this; else VecDeque
+pub type ResultQueue = LinearFifo<RefDataValue, bun_collections::linear_fifo::DynamicBuffer<RefDataValue>>;
+// PORT NOTE: bun.LinearFifo(.Dynamic) → second generic is the buffer strategy.
 
 pub enum StepResult {
     Waiting { timeout: Timespec },

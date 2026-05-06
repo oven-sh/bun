@@ -454,6 +454,26 @@ pub struct ParseResult {
     pub source_contents_backing: resolver::cache::Contents,
 }
 
+impl Default for ParseResult {
+    /// Spec transpiler.zig — `ParseResult` is value-copied (e.g.
+    /// `AsyncModule.resumeLoadingModule` reads/writes `this.parse_result` by
+    /// value). `Default` lets the Rust port `mem::take` it across that
+    /// boundary; see `AsyncModule::resume_loading_module`.
+    fn default() -> Self {
+        ParseResult {
+            source: Default::default(),
+            loader: Default::default(),
+            ast: js_ast::Ast::empty(),
+            already_bundled: Default::default(),
+            input_fd: None,
+            empty: true,
+            pending_imports: Default::default(),
+            runtime_transpiler_cache: None,
+            source_contents_backing: Default::default(),
+        }
+    }
+}
+
 impl ParseResult {
     #[inline]
     fn empty_with(

@@ -263,6 +263,25 @@ impl Pipeline {
         interp.start_node(child)
     }
 
+    /// Spec: Pipeline.zig `onIOWriterChunk` (lines 206-217).
+    pub fn on_io_writer_chunk(
+        interp: &mut Interpreter,
+        this: NodeId,
+        _written: usize,
+        err: Option<bun_sys::SystemError>,
+    ) -> Yield {
+        debug_assert!(matches!(
+            interp.as_pipeline(this).state,
+            PipelineState::WaitingWriteErr
+        ));
+        if let Some(e) = err {
+            interp.throw(&ShellErr::from_system(&e));
+            return Yield::failed();
+        }
+        let parent = interp.as_pipeline(this).base.parent;
+        interp.child_done(parent, this, 1)
+    }
+
     pub fn child_done(
         interp: &mut Interpreter,
         this: NodeId,

@@ -44,15 +44,9 @@ impl PendingConnect {
         unsafe { (*session).ref_() };
         // TODO(port): `ref` is a Rust keyword — assuming ClientSession exposes `ref_()`/`deref()`
         // SAFETY: pc is a live quic::PendingConnect C handle; addrinfo() yields its addrinfo
-        // request slot which the DNS layer fills. self_ is the Box we just leaked above.
-        // TODO(b2-blocked): bun_dns::internal::register_quic — `internal` module
-        // is gated in bun_dns; wire once that crate un-gates its DNS cache.
-        // Intended call:
-        //   bun_dns::internal::register_quic((*pc).addrinfo().cast(), self_);
-        // Until then, panic loudly rather than silently leaking `self_` + the
-        // session ref and hanging the connection forever (PORTING.md §Forbidden).
-        let _ = (self_, unsafe { (*pc).addrinfo() });
-        todo!("b2-blocked: bun_dns::internal::register_quic");
+        // request slot which the DNS layer fills. self_ is the Box we just leaked above and
+        // is consumed by on_dns_resolved (via the global cache's notify path).
+        unsafe { bun_dns::internal::register_quic((*pc).addrinfo(), self_.cast()) };
     }
 
     pub fn r#loop(&self) -> *mut uws::Loop {

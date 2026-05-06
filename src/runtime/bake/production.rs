@@ -904,19 +904,21 @@ pub fn build_with_vm(
         let mut pattern = PatternBuffer::EMPTY;
 
         let route = router.route_ptr(route_index);
-        let main_file_route_index = route.file_page.unwrap();
+        // PORT NOTE: `fr::OpaqueFileId` ↔ `framework_router::OpaqueFileId`
+        // round-trip (see Type construction above).
+        let main_file_route_index = OpaqueFileId::init(route.file_page.unwrap().get());
         let main_file = pt.output_file(main_file_route_index);
 
         // Count how many JS+CSS files associated with this route and prepare `pattern`
         pattern.prepend_part(route.part);
         match route.part {
-            framework_router::Part::Param(name) => {
+            fr::Part::Param(name) => {
                 params_buf.push(name);
             }
-            framework_router::Part::CatchAll(name) => {
+            fr::Part::CatchAll(name) => {
                 params_buf.push(name);
             }
-            framework_router::Part::CatchAllOptional(_) => {
+            fr::Part::CatchAllOptional(_) => {
                 return Err(global
                     .throw(
                         "catch-all routes are not supported in static site generation",
@@ -930,22 +932,23 @@ pub fn build_with_vm(
         let mut css_file_count: u32 =
             u32::try_from(main_file.referenced_css_chunks.len()).unwrap();
         if let Some(file) = route.file_layout {
+            let file = OpaqueFileId::init(file.get());
             css_file_count +=
                 u32::try_from(pt.output_file(file).referenced_css_chunks.len()).unwrap();
             file_count += 1;
         }
-        let mut next: Option<framework_router::RouteIndex> = route.parent;
+        let mut next: Option<fr::RouteIndex> = route.parent;
         while let Some(parent_index) = next {
             let parent = router.route_ptr(parent_index);
             pattern.prepend_part(parent.part);
             match parent.part {
-                framework_router::Part::Param(name) => {
+                fr::Part::Param(name) => {
                     params_buf.push(name);
                 }
-                framework_router::Part::CatchAll(name) => {
+                fr::Part::CatchAll(name) => {
                     params_buf.push(name);
                 }
-                framework_router::Part::CatchAllOptional(_) => {
+                fr::Part::CatchAllOptional(_) => {
                     return Err(global
                         .throw(
                             "catch-all routes are not supported in static site generation",
@@ -956,6 +959,7 @@ pub fn build_with_vm(
                 _ => {}
             }
             if let Some(file) = parent.file_layout {
+                let file = OpaqueFileId::init(file.get());
                 css_file_count +=
                     u32::try_from(pt.output_file(file).referenced_css_chunks.len()).unwrap();
                 file_count += 1;

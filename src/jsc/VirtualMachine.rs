@@ -2021,22 +2021,22 @@ impl VirtualMachine {
     }
 
     /// Spec VirtualMachine.zig:302 `onSubprocessSpawn`.
-    pub fn on_subprocess_spawn(&mut self, process: *mut bun_spawn::Process) {
-        // TODO(b2-cycle): `auto_killer` is a `()` placeholder; widen to
-        // `ProcessAutoKiller` when the sibling crate un-gates. The body is
-        // a one-liner forward.
-        crate::process_auto_killer::ProcessAutoKiller::on_subprocess_spawn(
-            self.runtime_state,
-            process,
-        );
+    ///
+    /// TODO(b2-cycle): `process` is `*mut bun_spawn::Process`; `auto_killer`
+    /// is a `()` placeholder. Widen to `ProcessAutoKiller` when the sibling
+    /// crate un-gates — body is a one-liner forward to
+    /// `self.auto_killer.on_subprocess_spawn(process)`.
+    pub fn on_subprocess_spawn(&mut self, process: *mut c_void) {
+        let _ = process;
+        todo!("blocked_on: ProcessAutoKiller / bun_spawn::Process (b2-cycle)")
     }
 
     /// Spec VirtualMachine.zig:306 `onSubprocessExit`.
-    pub fn on_subprocess_exit(&mut self, process: *mut bun_spawn::Process) {
-        crate::process_auto_killer::ProcessAutoKiller::on_subprocess_exit(
-            self.runtime_state,
-            process,
-        );
+    ///
+    /// TODO(b2-cycle): see [`on_subprocess_spawn`].
+    pub fn on_subprocess_exit(&mut self, process: *mut c_void) {
+        let _ = process;
+        todo!("blocked_on: ProcessAutoKiller / bun_spawn::Process (b2-cycle)")
     }
 
     /// Spec VirtualMachine.zig:310 `getVerboseFetch`.
@@ -2066,7 +2066,7 @@ impl VirtualMachine {
     }
 
     /// Spec VirtualMachine.zig:369 `mimeType`.
-    pub fn mime_type(&mut self, str_: &[u8]) -> Option<bun_http::MimeType> {
+    pub fn mime_type(&mut self, str_: &[u8]) -> Option<bun_http::MimeType::MimeType> {
         self.rare_data().mime_type_from_string(str_)
     }
 
@@ -2088,18 +2088,19 @@ impl VirtualMachine {
             // `.enabled = false` once `RuntimeTranspilerStore` un-gates.
         }
 
-        if let Some(kv) = map.map.swap_remove_entry(b"NODE_CHANNEL_FD" as &[u8]) {
-            let fd_s = kv.1.value;
+        if let Some(idx) = map.map.get_index(b"NODE_CHANNEL_FD") {
+            let (_, kv) = map.map.swap_remove_at(idx);
+            let fd_s = kv.value;
             let mode = map
                 .map
-                .swap_remove_entry(b"NODE_CHANNEL_SERIALIZATION_MODE" as &[u8])
-                .and_then(|(_, v)| crate::ipc::Mode::from_string(&v.value))
+                .get_index(b"NODE_CHANNEL_SERIALIZATION_MODE")
+                .map(|i| map.map.swap_remove_at(i).1)
+                .and_then(|v| crate::ipc::Mode::from_string(&v.value))
                 .unwrap_or(crate::ipc::Mode::Json);
-            crate::ipc::log!(
-                "IPC environment variables: NODE_CHANNEL_FD={}, NODE_CHANNEL_SERIALIZATION_MODE={:?}",
-                bun_string::strings::FmtBytes(&fd_s),
-                mode
-            );
+            // PORT NOTE: Zig `IPC.log()` debug-only; the `IPC` scope static
+            // lives in `crate::ipc` and `scoped_log!` requires a bare ident
+            // — log dropped to keep the ipc module's macro local.
+            let _ = mode;
             match core::str::from_utf8(&fd_s)
                 .ok()
                 .and_then(|s| s.parse::<u32>().ok())
@@ -2107,7 +2108,7 @@ impl VirtualMachine {
                 Some(fd) => self.init_ipc_instance(bun_sys::Fd::from_uv(fd as i32), mode),
                 None => bun_core::warn!(
                     "Failed to parse IPC channel number '{}'",
-                    bun_string::strings::FmtBytes(&fd_s)
+                    bstr::BStr::new(&fd_s[..])
                 ),
             }
         }
@@ -2122,7 +2123,9 @@ impl VirtualMachine {
             // lookups on start for obscure flags which we do not want others to
             // depend on.
             if map.get(b"BUN_FEATURE_FLAG_FORCE_WAITER_THREAD").is_some() {
-                bun_spawn::process::WaiterThread::set_should_use_waiter_thread();
+                // TODO(b2-cycle): `bun_spawn::process::WaiterThread::set_should_use_waiter_thread()`
+                // — `bun_spawn` is not at this tier.
+                todo!("blocked_on: bun_spawn::process::WaiterThread (b2-cycle)");
             }
             // Only allowed for testing
             if map.get(b"BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING").is_some() {
@@ -2149,9 +2152,9 @@ impl VirtualMachine {
                             STRING_ALLOCATION_LIMIT = limit;
                         }
                     }
-                    None => bun_core::Output::panic_fmt(
-                        "BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT must be a positive integer",
-                    ),
+                    None => bun_core::Output::panic(format_args!(
+                        "BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT must be a positive integer"
+                    )),
                 }
             }
         }

@@ -1109,6 +1109,14 @@ impl AnyPromise {
             Self::Internal(p) => JSValue::from_cell(p),
         }
     }
+    /// `AnyPromise.status` (AnyPromise.zig:24).
+    #[inline] pub fn status(self) -> self::js_promise::Status {
+        // SAFETY: variants hold a live JSC heap cell created via `as_any_promise`.
+        match self {
+            Self::Normal(p) => unsafe { (*p).status() },
+            Self::Internal(p) => unsafe { (*p).status() },
+        }
+    }
     /// `AnyPromise.setHandled` (AnyPromise.zig:42).
     #[inline] pub fn set_handled(self, vm: &VM) {
         let _ = vm;

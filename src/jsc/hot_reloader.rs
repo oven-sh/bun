@@ -11,8 +11,9 @@ use bun_paths::{self, PathBuffer, SEP, SEP_STR};
 use bun_resolver::__phase_a_body::ResolveWatcher;
 use bun_string::{strings, ZStr};
 use bun_sys::{self, Fd};
-use bun_watcher::Watcher;
+use bun_watcher::{ChangedFilePath, Op as WatchOp, WatchItemColumns, WatchItemField, Watcher};
 
+use bun_event_loop::task_tag;
 use crate::{MarkedArrayBuffer, Task as JscTask};
 use crate::event_loop::{ConcurrentTaskItem as ConcurrentTask, EventLoop};
 use crate::virtual_machine::VirtualMachine;
@@ -53,13 +54,11 @@ impl ImportWatcher {
     }
 
     #[inline]
-    pub fn watchlist(&self) -> bun_watcher::WatchList {
-         // TODO(b2-blocked): bun_watcher::Watcher.watchlist field
+    pub fn watchlist(&self) -> Option<&bun_watcher::WatchList> {
         match self {
-            ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => return w.watchlist,
-            ImportWatcher::None => {}
+            ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => Some(&w.watchlist),
+            ImportWatcher::None => None,
         }
-        bun_watcher::WatchList::default()
     }
 
     #[inline]
@@ -79,15 +78,14 @@ impl ImportWatcher {
         file_path: &[u8],
         loader: bun_bundler::options::Loader,
     ) -> bool {
-         // TODO(b2-blocked): bun_watcher::Watcher::add_file_by_path_slow
+        // PORT NOTE: bun_watcher::Loader is an opaque newtype over u8 (CYCLEBREAK);
+        // wrap the bun_options_types::Loader discriminant.
         match self {
             ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => {
-                return w.add_file_by_path_slow(file_path, loader)
+                w.add_file_by_path_slow(file_path, bun_watcher::Loader(loader as u8))
             }
-            ImportWatcher::None => {}
+            ImportWatcher::None => true,
         }
-        let _ = (file_path, loader);
-        true
     }
 
     #[inline]

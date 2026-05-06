@@ -44,6 +44,12 @@ macro_rules! gated_value {
 // CalcValue impls until length.rs un-gates; percentage.rs likewise gates the
 // generic-D `DimensionPercentage<D>` method block on the missing
 // Zero/MulF32/TryAdd protocol traits.
+// ─── B-2 round 4: scalar leaves + ident/url un-gated ─────────────────────
+// alpha/ratio/resolution are real. ident.rs is real (Ident/DashedIdent/
+// CustomIdent parse + IdentOrRef packing); to_css/deep_clone stay gated on
+// Printer::write_ident/write_dashed_ident. url.rs is real (struct +
+// is_absolute); parse/to_css gated on Parser::add_import_record + WriteAll
+// for Vec<u8>. position.rs stays gated on length::LengthPercentage.
 pub mod number;
 pub mod angle;
 pub mod css_string;
@@ -55,7 +61,7 @@ pub mod time;
 pub mod calc;
 pub mod percentage;
 gated_value!(length);
-gated_value!(position);
+gated_value!(position); // blocked_on: length::LengthPercentage
 gated_value!(size);
 gated_value!(rect);
 gated_value!(easing);

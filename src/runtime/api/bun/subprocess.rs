@@ -1053,9 +1053,8 @@ impl Subprocess<'_> {
             #[cfg(not(windows))]
             {
                 match item {
-                    PosixSpawnResult::ExtraPipe::OwnedFd(fd) => fd.close(),
-                    PosixSpawnResult::ExtraPipe::UnownedFd(_)
-                    | PosixSpawnResult::ExtraPipe::Unavailable => {}
+                    ExtraPipe::OwnedFd(fd) => fd.close(),
+                    ExtraPipe::UnownedFd(_) | ExtraPipe::Unavailable => {}
                 }
             }
         }

@@ -1945,6 +1945,23 @@ impl Default for DirEntryResolveQueueItem {
     }
 }
 
+// `bun_alloc::Result` doesn't derive Clone (yet); all its fields are Copy, so
+// hand-roll Clone here for the queue-item move at `dir_info_cached`.
+impl Clone for DirEntryResolveQueueItem {
+    fn clone(&self) -> Self {
+        Self {
+            result: allocators::Result {
+                hash: self.result.hash,
+                index: self.result.index,
+                status: self.result.status,
+            },
+            unsafe_path: self.unsafe_path,
+            safe_path: self.safe_path,
+            fd: self.fd,
+        }
+    }
+}
+
 pub struct DebugLogs {
     pub what: Vec<u8>,
     pub indent: MutableString,

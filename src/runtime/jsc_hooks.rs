@@ -606,10 +606,12 @@ pub fn install_jsc_hooks() {
 //               src/jsc/event_loop.zig autoTick() +
 //               src/jsc/ModuleLoader.zig transpileSourceCode/fetchBuiltinModule
 //   confidence: low — vtable wiring + Timer::All/ServerEntryPoint real;
-//               loader bodies + uws Loop polling gated.
-//   todos:      see TODO(b2-cycle)/TODO(b2-blocked) markers — uws::Loop
-//               surface, HiveAllocator, Debugger, RuntimeTranspilerStore,
-//               ResolvedSource ctor for builtins.
+//               fetch_builtin_module HardcodedModule lookup real;
+//               transpile bodies + uws Loop polling gated.
+//   todos:      see TODO(b2-cycle) markers — uws::Loop surface,
+//               HiveAllocator, Debugger, RuntimeTranspilerStore,
+//               ResolvedSource #[repr(C)] ctor + resolved_source_tag::Tag,
+//               StandaloneModuleGraph, MacroEntryPoint.
 //   notes:      §Dispatch cold-path — fn-ptr indirection acceptable, each
 //               hook does real work (alloc/syscall/parse).
 // ──────────────────────────────────────────────────────────────────────────

@@ -150,6 +150,14 @@ pub mod lib {
         unsafe { bun_core::WStr::from_raw(p, len) }
     }
 
+    /// One block from `archive_read_data_block`. `bytes` borrows libarchive's
+    /// internal buffer (valid until the next read call on the owning archive).
+    pub struct Block<'a> {
+        pub bytes: &'a [u8],
+        pub offset: i64,
+        pub result: Result,
+    }
+
     impl Archive {
         #[inline]
         fn as_mut_ptr(&self) -> *mut Archive {

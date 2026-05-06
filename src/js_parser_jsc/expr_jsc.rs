@@ -143,20 +143,20 @@ pub fn string_to_js(s: &E::String, global: &JSGlobalObject) -> Result<JSValue, T
             let (mut out, chars) = BunString::create_uninitialized_utf16(utf16.len());
             // SAFETY: `chars` points at `utf16.len()` writable u16s freshly
             // allocated by WTF; `utf16` is the same length.
-            unsafe { core::ptr::copy_nonoverlapping(utf16.as_ptr(), chars, utf16.len()) };
+            unsafe { core::ptr::copy_nonoverlapping(utf16.as_ptr(), chars.as_mut_ptr(), utf16.len()) };
             bun_string_jsc::transfer_to_js(&mut out, global).map_err(js_err)
         } else {
             let bytes = s.slice8();
             let (mut out, chars) = BunString::create_uninitialized_latin1(bytes.len());
             // SAFETY: `chars` points at `bytes.len()` writable bytes.
-            unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), chars, bytes.len()) };
+            unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), chars.as_mut_ptr(), bytes.len()) };
             bun_string_jsc::transfer_to_js(&mut out, global).map_err(js_err)
         }
     } else {
         let utf16 = s.slice16();
         let (mut out, chars) = BunString::create_uninitialized_utf16(utf16.len());
         // SAFETY: `chars` points at `utf16.len()` writable u16s.
-        unsafe { core::ptr::copy_nonoverlapping(utf16.as_ptr(), chars, utf16.len()) };
+        unsafe { core::ptr::copy_nonoverlapping(utf16.as_ptr(), chars.as_mut_ptr(), utf16.len()) };
         bun_string_jsc::transfer_to_js(&mut out, global).map_err(js_err)
     }
 }

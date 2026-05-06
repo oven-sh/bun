@@ -28,6 +28,15 @@ use bun_jsc::{BuildMessage, ResolveMessage};
 // TODO(b2-blocked): bun_resolver::Result (real fields — currently opaque stub)
 use bun_resolver::Result as ResolveResult;
 
+/// Swallows tokens for fn-body regions that are still blocked on lower-tier
+/// crate surfaces (see `// TODO(b2-blocked)` markers above each use). The
+/// fallback expression after each `b2_blocked! { ... }` keeps the public
+/// signature compiling so the 8 dependent runtime shards can build. Phase B:
+/// delete this macro and un-gate each block once the listed deps land.
+macro_rules! b2_blocked {
+    ($($t:tt)*) => {};
+}
+
 pub const NAMESPACE: &[u8] = b"macro";
 pub const NAMESPACE_WITH_COLON: &[u8] = b"macro:";
 
@@ -40,7 +49,7 @@ pub fn is_macro_path(str: &[u8]) -> bool {
 // ══════════════════════════════════════════════════════════════════════════
 
 pub struct MacroContext<'a> {
-    pub resolver: &'a mut Resolver,
+    pub resolver: &'a mut Resolver<'a>,
     pub env: &'a mut DotEnvLoader<'a>,
     pub macros: MacroMap,
     pub remap: MacroRemap,
@@ -62,13 +71,17 @@ impl<'a> MacroContext<'a> {
     // TODO(b2-blocked): bun_bundler::Transpiler (real fields — currently opaque stub)
     
     pub fn init(transpiler: &'a mut Transpiler) -> MacroContext<'a> {
-        MacroContext {
+        b2_blocked! {
+        return MacroContext {
             macros: MacroMap::new(),
             resolver: &mut transpiler.resolver,
             env: transpiler.env,
             remap: transpiler.options.macro_remap,
             javascript_object: JSValue::ZERO,
+        };
         }
+        let _ = transpiler;
+        todo!("blocked_on: bun_bundler::Transpiler real fields (resolver/env/options)")
     }
 
     pub fn call(
@@ -85,8 +98,7 @@ impl<'a> MacroContext<'a> {
         // TODO(b2-blocked): bun_resolver::Resolver::resolve (opaque stub)
         // TODO(b2-blocked): bun_resolver::Result (path_pair field — opaque stub)
         // TODO(b2-blocked): bun_jsc::VirtualMachine::VirtualMachine (run_with_api_lock ctx-ptr form / event_loop().ensure_waker)
-        
-        {
+        b2_blocked! {
         Expr::Data::Store::set_disable_reset(true);
         Stmt::Data::Store::set_disable_reset(true);
         let _reset_guard = scopeguard::guard((), |_| {
@@ -258,7 +270,11 @@ pub struct MacroResult {
 // are `Some` for every live macro and `None` only when `disabled == true`, which is
 // checked before any access (see `MacroContext::call`).
 pub struct Macro {
-    pub resolver: Option<NonNull<Resolver>>,
+    // PORT NOTE: `Resolver<'a>` carries a borrow lifetime, but `Macro` is stored
+    // by value in a `MacroMap` keyed by hash and outlives any single call frame.
+    // The Zig original stores a raw `*Resolver`; `NonNull` already erases borrow
+    // tracking, so `'static` here is the lifetime-erased moral equivalent.
+    pub resolver: Option<NonNull<Resolver<'static>>>,
     pub vm: Option<&'static VirtualMachine>,
 
     pub resolved: ResolveResult,
@@ -301,8 +317,7 @@ impl Macro {
         // TODO(b2-blocked): bun_jsc::VirtualMachine::VirtualMachine (init / jsc_vm / load_macro_entry_point byte-slice sig)
         // TODO(b2-blocked): bun_jsc::PromiseResult
         // TODO(b2-blocked): bun_resolver::Resolver (real `opts` field — currently opaque stub)
-        
-        {
+        b2_blocked! {
         // TODO(port): narrow error set
         let vm: &'static VirtualMachine = if VirtualMachine::is_loaded() {
             VirtualMachine::get()
@@ -447,8 +462,7 @@ impl<'a> Run<'a> {
     ) -> Result<Expr, MacroError> {
         // TODO(b2-blocked): bun_jsc::VirtualMachine::VirtualMachine (macros / global fields)
         // TODO(b2-blocked): bun_jsc::MarkedArgumentBuffer (len / as_ptr — opaque FFI handle)
-        
-        {
+        b2_blocked! {
         let Some(macro_callback) = macro_.vm().macros.get(id) else {
             return Ok(caller);
         };
@@ -542,8 +556,7 @@ impl<'a> Run<'a> {
         // TODO(b2-blocked): bun_jsc::PromiseStatus (no crate-root re-export of `js_promise::Status`)
         // TODO(b2-blocked): bun_js_parser::Expr::from_blob (live shadow stub takes `&[u8]` mime, not `MimeType`)
         // TODO(b2-blocked): bun_jsc::JSPropertyIterator (const-generic shape changed: 3×bool, init takes JSValue not *mut JSObject)
-        
-        {
+        b2_blocked! {
         use ConsoleObject::formatter::Tag as T;
         match tag {
             T::Error => {
@@ -821,7 +834,9 @@ impl Runner {
         // constructor (the C++ type is non-movable), so the entire body runs inside
         // the scoped `MarkedArgumentBuffer::new` closure.
         MarkedArgumentBuffer::new(|js_args: &mut MarkedArgumentBuffer| -> Result<Expr, MacroError> {
-            let global_object = VirtualMachine::get().global();
+            // SAFETY: `Runner::run` is only reached via `MacroContext::call` after
+            // `VirtualMachine::is_loaded()` / `Macro::init` guarantee a live VM.
+            let global_object = unsafe { &*(*VirtualMachine::get()).global };
 
             match &caller.data {
                 js_ast::ExprData::ECall(call) => {
@@ -893,7 +908,7 @@ impl Runner {
                 result: Err(MacroError::MacroFailed),
             };
 
-            jsc::mark_binding(core::panic::Location::caller());
+            jsc::mark_binding();
             CALL_STATE.with(|s| s.set(&mut data as *mut _ as *mut c_void));
             unsafe {
                 // SAFETY: `call` only reads CALL_STATE which we just set. Spec Macro.zig:581

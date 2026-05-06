@@ -124,7 +124,7 @@ Capture stdout+stderr (first 4000 chars). Extract panic location (regex \`panick
 DO NOT edit files. DO NOT commit. Just probe and report.
 
 Return {name:${JSON.stringify(c.name)}, exit, stdout, stderr, panic_loc, panic_msg, passed}.`,
-            { label: `probe:${c.name}`, phase: "Probe", schema: PROBE_SCHEMA, model: "haiku" },
+            { label: `probe:${c.name}`, phase: "Probe", schema: PROBE_SCHEMA },
           ),
       ),
     )

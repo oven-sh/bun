@@ -28,6 +28,15 @@ impl ContainerName {
 }
 
 // ─── ContainerName parse ──────────────────────────────────────────────────
+// Stub so css_parser's now-un-gated `@container` prelude path type-checks.
+// Real body is the `#[cfg(any())]` port below.
+#[cfg(not(any()))]
+impl ContainerName {
+    pub fn parse(_input: &mut css::Parser) -> css::Result<ContainerName> {
+        todo!("port: ContainerName::parse — gated body below")
+    }
+}
+
 // blocked_on: Parser::new_unexpected_token_error.
 #[cfg(any())]
 impl ContainerName {
@@ -323,6 +332,15 @@ impl ContainerCondition {
 }
 
 // ─── ContainerCondition parse ─────────────────────────────────────────────
+// Stub so css_parser's now-un-gated `@container` prelude path type-checks.
+// Real body is the `#[cfg(any())]` port below.
+#[cfg(not(any()))]
+impl ContainerCondition {
+    pub fn parse(_input: &mut css::Parser) -> css::Result<ContainerCondition> {
+        todo!("port: ContainerCondition::parse — gated body below")
+    }
+}
+
 // blocked_on: media_query::{parse_query_condition,QueryConditionFlags
 // constructors}, QueryFeature::parse, Parser::{try_parse,parse_nested_block}.
 #[cfg(any())]

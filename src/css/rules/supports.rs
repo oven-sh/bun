@@ -231,6 +231,19 @@ impl SupportsCondition {
 // parse_nested_block,allocator,current_source_location} signatures and
 // PropertyId::{parse,with_prefix,prefix,add_prefix}. The grammar body below is
 // the full port of supports.zig:73-244 and re-lands when those siblings un-gate.
+// Stub so css_parser's now-un-gated `@supports` / `@import supports(..)`
+// prelude paths type-check. Real bodies are in the `#[cfg(any())]` impl
+// below; un-gate when its blocked_on list clears.
+#[cfg(not(any()))]
+impl SupportsCondition {
+    pub fn parse(_input: &mut css::Parser) -> css::Result<SupportsCondition> {
+        todo!("port: SupportsCondition::parse — gated body below")
+    }
+    pub fn parse_declaration(_input: &mut css::Parser) -> css::Result<SupportsCondition> {
+        todo!("port: SupportsCondition::parse_declaration — gated body below")
+    }
+}
+
 #[cfg(any())]
 impl SupportsCondition {
     pub fn parse<'i>(input: &mut css::Parser<'i, '_>) -> css::Result<SupportsCondition> {

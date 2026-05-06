@@ -103,6 +103,19 @@ impl PropertyRule {
 // blocked_on: RuleBodyParser, ParserInput, Parser::new signature,
 // SyntaxString::{parse,parse_value}, ParsedComponent::TokenList,
 // ParserError variants.
+// Stub so css_parser's now-un-gated `@property` block path type-checks.
+// Real body is the `#[cfg(any())]` port below.
+#[cfg(not(any()))]
+impl PropertyRule {
+    pub fn parse(
+        _name: DashedIdent,
+        _input: &mut css::Parser,
+        _loc: Location,
+    ) -> css::Result<PropertyRule> {
+        todo!("port: PropertyRule::parse — gated body below")
+    }
+}
+
 #[cfg(any())]
 impl PropertyRule {
     pub fn parse(

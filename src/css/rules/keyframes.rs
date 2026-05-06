@@ -115,6 +115,15 @@ impl KeyframesName {
 }
 
 // ─── KeyframesName parse ──────────────────────────────────────────────────
+// Stub so css_parser's now-un-gated `@keyframes` prelude path type-checks.
+// Real body is the `#[cfg(any())]` port below.
+#[cfg(not(any()))]
+impl KeyframesName {
+    pub fn parse(_input: &mut css::Parser) -> css::Result<KeyframesName> {
+        todo!("port: KeyframesName::parse — gated body below")
+    }
+}
+
 // blocked_on: Parser::next/Token shape (css_parser.rs).
 #[cfg(any())]
 impl KeyframesName {

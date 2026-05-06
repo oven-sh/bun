@@ -64,6 +64,14 @@ impl LayerName {
         true
     }
 
+    // Stub so css_parser's now-un-gated `@layer` prelude path type-checks.
+    // Real body is the `#[cfg(any())]` port below; un-gate when its
+    // blocked_on list clears.
+    #[cfg(not(any()))]
+    pub fn parse(_input: &mut css::css_parser::Parser<'_>) -> css::css_parser::CssResult<LayerName> {
+        todo!("port: LayerName::parse — gated body below")
+    }
+
     // blocked_on: rule_parsers (only caller) is `#[cfg(any())]`-gated; parse
     // body re-enables alongside it. Kept here so the port is preserved.
     #[cfg(any())]

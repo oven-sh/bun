@@ -51,6 +51,15 @@ impl PageSelector {
 // blocked_on: Parser::{try_parse,expect_ident,next_including_whitespace,
 // state,reset,new_custom_error,allocator} surface, ParserError::
 // InvalidPageSelector, PagePseudoClass::parse.
+// Stub so css_parser's now-un-gated `@page` prelude path type-checks.
+// Real body is the `#[cfg(any())]` port below.
+#[cfg(not(any()))]
+impl PageSelector {
+    pub fn parse(_input: &mut css::Parser) -> css::Result<PageSelector> {
+        todo!("port: PageSelector::parse — gated body below")
+    }
+}
+
 #[cfg(any())]
 impl PageSelector {
     pub fn parse(input: &mut css::Parser) -> css::Result<PageSelector> {
@@ -218,6 +227,20 @@ impl PageRule {
 }
 
 // ─── PageRule parse ───────────────────────────────────────────────────────
+// Stub so css_parser's now-un-gated `@page` block path type-checks.
+// Real body is the `#[cfg(any())]` port below.
+#[cfg(not(any()))]
+impl PageRule {
+    pub fn parse(
+        _selectors: ArrayList<PageSelector>,
+        _input: &mut css::Parser,
+        _loc: Location,
+        _options: &css::ParserOptions,
+    ) -> css::Result<PageRule> {
+        todo!("port: PageRule::parse — gated body below")
+    }
+}
+
 // blocked_on: RuleBodyParser.
 #[cfg(any())]
 impl PageRule {

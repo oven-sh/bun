@@ -283,7 +283,13 @@ impl<'a> Transpiler<'a> {
                     // touches that exists there is `jsx.development`. Mirror
                     // that one write so resolver-side JSX import-source
                     // selection (`Pragma::import_source`) stays in sync.
-                    self.resolver.opts.jsx.development = false;
+                    // Guard on `self.options.force_node_env` (kept in lockstep
+                    // with resolver opts per transpiler.zig:350-351) so this
+                    // matches the `setProduction` precondition in
+                    // options.zig:1825 rather than clobbering a forced env.
+                    if self.options.force_node_env == options::ForceNodeEnv::Unspecified {
+                        self.resolver.opts.jsx.development = false;
+                    }
                 }
 
                 // Load the project root for .env file discovery. If the cwd
@@ -336,7 +342,9 @@ impl<'a> Transpiler<'a> {
                 if env.is_production() {
                     self.options.set_production(true);
                     // TODO(b2-blocked): see note in the `.prefix` arm above.
-                    self.resolver.opts.jsx.development = false;
+                    if self.options.force_node_env == options::ForceNodeEnv::Unspecified {
+                        self.resolver.opts.jsx.development = false;
+                    }
                 }
             }
             DotEnvBehavior::_none => {}

@@ -46,6 +46,15 @@ impl FontPaletteValuesRule {
     }
 }
 
+// Stub so css_parser's now-un-gated `@font-palette-values` block path
+// type-checks. Real body is the `#[cfg(any())]` port below.
+#[cfg(not(any()))]
+impl FontPaletteValuesRule {
+    pub fn parse(_name: DashedIdent, _input: &mut css::Parser, _loc: Location) -> css::Result<FontPaletteValuesRule> {
+        todo!("port: FontPaletteValuesRule::parse — gated body below")
+    }
+}
+
 // blocked_on: RuleBodyParser, FontPaletteValuesDeclarationParser trait impls,
 // DeepClone.
 #[cfg(any())]

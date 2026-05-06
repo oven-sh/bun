@@ -1298,9 +1298,11 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> AtRuleParser for TopLevelRuleParser<
                 return Err(input.new_custom_error(ParserError::unexpected_namespace_rule));
             }
             let prefix = input
-                .try_parse(Parser::expect_ident)
-                .ok()
-                .map(|s| -> &'static [u8] { unsafe { &*(s as *const [u8]) } });
+                .try_parse(|p| {
+                    p.expect_ident()
+                        .map(|s| -> &'static [u8] { unsafe { &*(s as *const [u8]) } })
+                })
+                .ok();
             let namespace: &'static [u8] =
                 unsafe { &*(input.expect_url_or_string()? as *const [u8]) };
             return Ok(AtRulePrelude::Namespace { prefix, url: namespace });
@@ -1499,10 +1501,11 @@ impl<'a, T: CustomAtRuleParser> NestedRuleParser<'a, T> {
             composes_refs: &mut *self.composes_refs,
             local_properties: &mut *self.local_properties,
         };
-        // PORT NOTE: reshaped for borrowck — Zig held `self.*` aliased.
-
+        // PORT NOTE: reshaped for borrowck — Zig held `self.*` aliased. Spell
+        // out the impl with a fresh lifetime so `nested_parser` isn't forced
+        // to borrow `rules` for `'a`.
         let parse_declarations =
-            <Self as RuleBodyItemParser>::parse_declarations(&nested_parser);
+            <NestedRuleParser<'_, T> as RuleBodyItemParser>::parse_declarations(&nested_parser);
         // TODO: think about memory management
         // PERF(port): was arena bulk-free — profile in Phase B
         let mut errors: Vec<ParseError<ParserError>> = Vec::new();
@@ -1705,7 +1708,7 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                     is_nesting_allowed: true,
                     options: this.options,
                 };
-                let scope_start = if input.try_parse(Parser::expect_parenthesis_block).is_ok() {
+                let scope_start = if input.try_parse(|p| p.expect_parenthesis_block()).is_ok() {
                     Some(input.parse_nested_block(|input2| {
                         SelectorList::parse_relative(
                             &mut selector_parser,

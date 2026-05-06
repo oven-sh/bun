@@ -286,8 +286,8 @@ impl<'a> PatchTask<'a> {
                             pkg,
                             calc_hash.name_and_version_hash,
                             match pkg.resolution.tag {
-                                Resolution::Tag::Npm => Authorization::Allow,
-                                _ => Authorization::No,
+                                Resolution::Tag::Npm => Authorization::AllowAuthorization,
+                                _ => Authorization::NoAuthorization,
                             },
                         )?
                         .unwrap_or_else(|| unreachable!());
@@ -346,10 +346,9 @@ impl<'a> PatchTask<'a> {
 
         let mut absolute_patchfile_path_buf = PathBuffer::uninit();
         // 1. Parse the patch file
-        let absolute_patchfile_path = path::join_z_buf(
-            &mut absolute_patchfile_path_buf,
+        let absolute_patchfile_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
+            &mut absolute_patchfile_path_buf.0,
             &[dir, patchfile_path],
-            path::Style::Auto,
         );
         // TODO: can the patch file be anything other than utf-8?
 
@@ -404,7 +403,7 @@ impl<'a> PatchTask<'a> {
                 "{}",
                 resolution.fmt(
                     &self.manager.lockfile.buffers.string_bytes,
-                    path::Style::Posix
+                    bun_core::fmt::PathSep::Posix,
                 )
             )
             .expect("OOM");
@@ -508,16 +507,15 @@ impl<'a> PatchTask<'a> {
 
         // 6. rename to cache dir
         let mut path_in_tmpdir_buf = PathBuffer::uninit();
-        let path_in_tmpdir = path::join_z_buf(
-            &mut path_in_tmpdir_buf,
+        let path_in_tmpdir = path::resolve_path::join_z_buf::<path::platform::Auto>(
+            &mut path_in_tmpdir_buf.0,
             &[
                 tempdir_name.as_bytes(),
                 // tempdir_name,
             ],
-            path::Style::Auto,
         );
 
-        if let Some(e) = sys::renameat_concurrently(
+        if let Err(e) = sys::renameat_concurrently(
             Fd::from_std_dir(system_tmpdir),
             path_in_tmpdir,
             Fd::from_std_dir(patch.cache_dir),
@@ -527,7 +525,6 @@ impl<'a> PatchTask<'a> {
                 ..Default::default()
             },
         )
-        .as_err()
         {
             return log.add_error_fmt_opts(
                 format_args!(
@@ -551,10 +548,9 @@ impl<'a> PatchTask<'a> {
 
         let mut absolute_patchfile_path_buf = PathBuffer::uninit();
         // parse the patch file
-        let absolute_patchfile_path = path::join_z_buf(
-            &mut absolute_patchfile_path_buf,
+        let absolute_patchfile_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
+            &mut absolute_patchfile_path_buf.0,
             &[dir, patchfile_path],
-            path::Style::Auto,
         );
 
         let stat: sys::Stat = match sys::stat(absolute_patchfile_path) {
@@ -783,8 +779,10 @@ fn dupe_z(s: &[u8]) -> Box<[u8]> {
 // TODO(port): these enum/type references are placeholders for cross-file types that live in
 // `bun_install`. Phase B should replace with the real paths once those modules are ported.
 use crate::PreinstallState;
-use crate::package_install::{InstallMethod, InstallResult};
-use crate::network::Authorization;
+use crate::package_install::{Method as InstallMethod, InstallResult};
+use crate::network_task::Authorization;
+use crate::package_manager::Options::LogLevel;
+use crate::package_manager_task::Id as TaskId;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

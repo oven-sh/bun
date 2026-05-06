@@ -129,7 +129,7 @@ fn update_package_json_and_install_with_manager_with_updates(
     let current_package_json = match manager.workspace_package_json_cache.get_with_path(
         &mut manager.log,
         &manager.original_package_json_path,
-        GetWithPathOptions {
+        GetJSONOptions {
             guess_indentation: true,
             ..Default::default()
         },
@@ -403,7 +403,7 @@ fn update_package_json_and_install_with_manager_with_updates(
         let root_package_json = match manager.workspace_package_json_cache.get_with_path(
             &mut manager.log,
             root_package_json_path,
-            GetWithPathOptions {
+            GetJSONOptions {
                 guess_indentation: true,
                 ..Default::default()
             },
@@ -567,7 +567,7 @@ fn update_package_json_and_install_with_manager_with_updates(
                         .get_with_path(
                             &mut manager.log,
                             root_package_json_path.as_bytes(),
-                            GetWithPathOptions::default(),
+                            GetJSONOptions::default(),
                         )
                         .unwrap()
                     {
@@ -1079,29 +1079,24 @@ impl Analyzer<'_> {
         Global::exit(0);
     }
 
-    // TODO(port): type-erased thunk for `DependenciesScanner.onFetch` — exact signature TBD.
-    // Zig `anyerror!void` over FFI: `bun_core::Error` is `NonZeroU16`, so `Option<Error>` niche-packs
-    // to a plain `u16` where `0` == `None` == success — matching Zig's error-union ABI for `!void`.
-    extern "C" fn on_analyze_erased(
-        ctx: *mut core::ffi::c_void,
-        result: *mut bun_bundler::bundle_v2::BundleV2::DependenciesScanner::Result,
-    ) -> Option<Error> {
+    // Type-erased thunk matching `DependenciesScanner.on_fetch`'s
+    // `fn(*mut (), &mut DependenciesScannerResult) -> Result<(), Error>` signature.
+    fn on_analyze_erased(
+        ctx: *mut (),
+        result: &mut DependenciesScannerResult,
+    ) -> Result<(), Error> {
         // SAFETY: `ctx` is `addr_of_mut!(analyzer)` from `update_package_json_and_install`; the
         // `analyzer` local outlives this callback and is not otherwise borrowed (the only other
         // handle is the raw `fetcher.ctx` we were just passed), so materializing `&mut` is unique.
         let this = unsafe { &mut *(ctx as *mut Analyzer) };
-        // SAFETY: caller (bundler `DependenciesScanner`) passes a unique `*mut Result` valid for
-        // the duration of this callback; no other reference to it is live.
-        let result = unsafe { &mut *result };
-        this.on_analyze(result).err()
+        this.on_analyze(result)
     }
 }
 
-// TODO(port): these are placeholder names for cross-module enums/structs referenced from Zig.
-// Resolve to their real Rust paths in Phase B.
-use super::options::{LogLevel, PatchFeatures, TrackInstalledBin};
+use super::options::{LogLevel, PatchFeatures};
+use super::TrackInstalledBin;
 use super::package_json_editor::EditOptions;
-use super::workspace_package_json_cache::{GetResult, GetWithPathOptions};
+use super::workspace_package_json_cache::{GetResult, GetJSONOptions};
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

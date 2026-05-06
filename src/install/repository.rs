@@ -10,9 +10,11 @@ use bun_core::{self, err, Error};
 use bun_paths::{self as Path, PathBuffer};
 use bun_semver::String;
 use bun_str::strings;
+#[allow(unused_imports)]
 use bun_sys::File;
 
 use crate::dependency as Dependency;
+use crate::dependency::StringBuilderLike;
 use crate::hosted_git_info;
 use crate::install::{self as Install, ExtractData, PackageManager};
 
@@ -87,19 +89,15 @@ impl SloppyGlobalGitConfig {
         };
 
         let mut config_file_path_buf = PathBuffer::uninit();
-        let config_file_path = bun_paths::join_abs_string_buf_z(
-            home_dir,
-            &mut config_file_path_buf,
-            &[b".gitconfig"],
-            bun_paths::Style::Auto,
-        );
+        let config_file_path = bun_paths::resolve_path::join_abs_string_buf_z::<
+            bun_paths::platform::Auto,
+        >(home_dir, &mut config_file_path_buf, &[b".gitconfig"]);
         // PERF(port): was stack-fallback alloc (4096) — profile in Phase B
-        let Ok(source) = File::to_source(
+        // MOVE_DOWN: `File::toSource` lives in `bun_logger` (T1→T2 cyclebreak).
+        let Ok(source) = bun_logger::to_source(
             config_file_path,
-            bun_sys::ToSourceOptions { convert_bom: true },
-        )
-        .unwrap()
-        else {
+            bun_logger::ToSourceOptions { convert_bom: true },
+        ) else {
             return;
         };
         // `defer allocator.free(source.contents)` — handled by Drop on `source`.
@@ -378,7 +376,7 @@ impl Repository {
     // with `count(&[u8])` and `append<T>(&[u8]) -> T` in bun_install and bound here.
     pub fn count<B>(&self, buf: &[u8], builder: &mut B)
     where
-        B: Install::StringBuilderLike,
+        B: StringBuilderLike,
     {
         builder.count(self.owner.slice(buf));
         builder.count(self.repo.slice(buf));
@@ -389,7 +387,7 @@ impl Repository {
 
     pub fn clone<B>(&self, buf: &[u8], builder: &mut B) -> Repository
     where
-        B: Install::StringBuilderLike,
+        B: StringBuilderLike,
     {
         Repository {
             owner: builder.append::<String>(self.owner.slice(buf)),
@@ -502,14 +500,14 @@ impl Repository {
 
             // Fix malformed ssh:// URLs with colons using hosted_git_info.correctUrl
             // ssh://git@github.com:user/repo -> ssh://git@github.com/user/repo
-            let mut pair = hosted_git_info::UrlProtocolPair {
-                url: hosted_git_info::Url::Unmanaged(url),
-                protocol: hosted_git_info::Protocol::WellFormed(
-                    hosted_git_info::WellFormedProtocol::GitPlusSsh,
+            let pair = hosted_git_info::UrlProtocolPair {
+                url: hosted_git_info::UrlProtocolPairUrl::Unmanaged(url),
+                protocol: hosted_git_info::UrlProtocol::WellFormed(
+                    hosted_git_info::WellDefinedProtocol::GitPlusSsh,
                 ),
             };
 
-            let Ok(corrected) = hosted_git_info::correct_url(&mut pair) else {
+            let Ok(corrected) = hosted_git_info::correct_url(&pair) else {
                 return Some(url); // If correction fails, return original
             };
 
@@ -603,13 +601,13 @@ impl Repository {
         env: bun_dotenv::Map,
         log: &mut bun_logger::Log,
         cache_dir: bun_sys::Dir,
-        task_id: Install::task::Id,
+        task_id: crate::package_manager_task::Id,
         name: &[u8],
         url: &[u8],
         attempt: u8,
     ) -> Result<bun_sys::Dir, Error> {
         // TODO(port): std::fs::Dir is banned — using bun_sys::Dir placeholder; verify API in Phase B.
-        bun_analytics::Features::git_dependencies_inc();
+        bun_analytics::features::git_dependencies.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         // SAFETY: raw-ptr field projection — retags only `folder_name_buf`, leaving any
         // live shared borrow of `final_path_buf`/`ssh_path_buf` (the `url` argument, per
         // PackageManagerTask.zig:179,206) valid under Stacked Borrows. See tl_bufs().
@@ -631,10 +629,9 @@ impl Repository {
 
         match cache_dir.open_dir_z(folder_name) {
             Ok(dir) => {
-                let path = Path::join_abs_string(
-                    PackageManager::get().cache_directory_path,
+                let path = Path::resolve_path::join_abs_string::<Path::platform::Auto>(
+                    &PackageManager::get().cache_directory_path,
                     &[folder_name.as_bytes()],
-                    Path::Style::Auto,
                 );
 
                 if let Err(err) = Self::exec(

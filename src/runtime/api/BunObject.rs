@@ -1210,7 +1210,7 @@ pub fn get_main(global_this: &JSGlobalObject) -> JSValue {
     ZigString::init(vm.main).to_js(global_this)
 }
 
-fn set_main(global_this: &JSGlobalObject, new_value: JSValue) -> bool {
+pub fn set_main(global_this: &JSGlobalObject, new_value: JSValue) -> bool {
     global_this.bun_vm().overridden_main.set(global_this, new_value);
     true
 }

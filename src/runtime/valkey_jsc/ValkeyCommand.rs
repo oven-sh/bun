@@ -100,9 +100,13 @@ pub struct Entry {
     pub promise: Promise,
 }
 
-impl Entry {
-    pub type Queue = LinearFifo<Entry>; // TODO(port): bun.LinearFifo(.Dynamic) mapping
+// Zig: `pub const Queue = bun.LinearFifo(Entry, .Dynamic);` — inherent associated
+// types are unstable on stable Rust, so expose as a sibling module alias instead.
+pub mod entry {
+    pub type Queue = super::LinearFifo<super::Entry, super::DynamicBuffer<super::Entry>>;
+}
 
+impl Entry {
     // Create an Offline by serializing the Valkey command directly
     pub fn create(command: &Command<'_>, promise: Promise) -> Result<Entry, bun_core::Error> {
         // TODO(port): narrow error set

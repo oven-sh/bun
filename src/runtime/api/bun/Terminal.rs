@@ -353,23 +353,18 @@ impl Terminal {
     }
 
     pub fn ref_(&self) {
-        self.ref_count.set(self.ref_count.get() + 1);
+        // SAFETY: `self` derived from a Box::into_raw'd allocation; intrusive
+        // refcount mixin only reads/writes the `ref_count` field via shared
+        // access (Cell), so the &T→*mut cast is sound for `ref_` (no &mut
+        // materialized).
+        unsafe { bun_ptr::RefCount::<Terminal>::ref_(self as *const Self as *mut Self) };
     }
 
     pub fn deref_(&mut self) {
-        let n = self.ref_count.get() - 1;
-        self.ref_count.set(n);
-        if n == 0 {
-            // TODO(port): intrusive refcount drop path — Zig `deinit` calls
-            // `bun.destroy(this)`. With IntrusiveRc this becomes
-            // `IntrusiveRc::drop_in_place(self)`.
-            // SAFETY: ref_count == 0 so this is the last live reference; `self`
-            // was Box::into_raw'd in init_terminal and every caller holds an
-            // exclusive `&mut Terminal` derived from that raw pointer, so
-            // recovering `*mut Self` here preserves provenance without a
-            // shared→mut cast.
-            unsafe { deinit_and_destroy(self as *mut Self) };
-        }
+        // SAFETY: `self` is the unique live reference at this call site; the
+        // RefCount mixin runs `destructor()` (→ deinit_and_destroy) iff the
+        // count hits zero.
+        unsafe { bun_ptr::RefCount::<Terminal>::deref(self as *mut Self) };
     }
 
     /// Internal initialization - shared by constructor and createFromSpawn

@@ -6,7 +6,7 @@ use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
 use crate::webcore::blob::{self, Blob};
 use crate::webcore::blob::Store as BlobStore;
-use crate::webcore::readable_stream::{self, ReadableStreamSource};
+use crate::webcore::readable_stream;
 use crate::webcore::streams;
 
 pub struct ByteBlobLoader {
@@ -48,7 +48,7 @@ pub const TAG: readable_stream::Tag = readable_stream::Tag::Blob;
 // Zig `NewSource(@This(), "Blob", onStart, onPull, onCancel, deinit, null, drain,
 // memoryCost, toBufferedValue)` is a comptime type-returning fn that wires callbacks. In Rust
 // this becomes a generic `ReadableStreamSource<Ctx>` where `Ctx` impls `SourceContext`.
-pub type Source = ReadableStreamSource<ByteBlobLoader>;
+pub type Source = readable_stream::NewSource<ByteBlobLoader>;
 
 impl readable_stream::SourceContext for ByteBlobLoader {
     const NAME: &'static str = "Blob";

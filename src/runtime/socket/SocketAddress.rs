@@ -16,6 +16,68 @@ use bun_cares_sys::c_ares as ares;
 use bun_jsc::URL;
 use crate::test_runner::expect::JSValueTestExt;
 
+// ─── Local upstream shims (gated bun_jsc modules) ─────────────────────────
+// `bun_jsc::URL.rs` and `JSGlobalObject.rs` are still `#![cfg(any())]`-gated;
+// declare the FFI symbols and extension methods we need locally until they
+// land in the active stub.
+// TODO(port): drop once bun_jsc un-gates URL.rs / JSGlobalObject.rs.
+mod url_ffi {
+    use super::*;
+    unsafe extern "C" {
+        pub(super) fn URL__fromString(input: *mut BunString) -> *mut URL;
+        pub(super) fn URL__host(url: *const URL) -> BunString;
+        pub(super) fn URL__port(url: *const URL) -> u32;
+        pub(super) fn URL__deinit(url: *mut URL);
+    }
+}
+trait UrlExt {
+    fn from_string(str: BunString) -> Option<NonNull<URL>>;
+    fn host_(this: &URL) -> BunString;
+    fn port_(this: &URL) -> u32;
+    unsafe fn destroy(this: *mut URL);
+}
+impl UrlExt for URL {
+    fn from_string(str: BunString) -> Option<NonNull<URL>> {
+        let mut input = str;
+        // SAFETY: input lives for the duration of the call.
+        NonNull::new(unsafe { url_ffi::URL__fromString(&mut input) })
+    }
+    fn host_(this: &URL) -> BunString {
+        // SAFETY: `this` is a valid opaque *URL handle from C++.
+        unsafe { url_ffi::URL__host(this) }
+    }
+    fn port_(this: &URL) -> u32 {
+        // SAFETY: `this` is a valid opaque *URL handle from C++.
+        unsafe { url_ffi::URL__port(this) }
+    }
+    unsafe fn destroy(this: *mut URL) {
+        // SAFETY: caller guarantees `this` is a valid *URL freed exactly once.
+        unsafe { url_ffi::URL__deinit(this) }
+    }
+}
+
+/// Local shim for `JSGlobalObject::throwInvalidArgumentPropertyValue` (gated upstream).
+fn throw_invalid_argument_property_value(
+    global: &JSGlobalObject,
+    argname: &str,
+    expected: &str,
+    value: JSValue,
+) -> JsError {
+    let actual = match global.determine_specific_type(value) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    global
+        .err(
+            bun_jsc::ErrorCode::INVALID_ARG_VALUE,
+            format_args!(
+                "The property \"{argname}\" is invalid. Expected {expected}, received {actual}"
+            ),
+        )
+        .throw()
+}
+// ──────────────────────────────────────────────────────────────────────────
+
 // `pub const js = jsc.Codegen.JSSocketAddress;` + toJS/fromJS/fromJSDirect
 // → handled by the JsClass derive; codegen wires toJS/fromJS/fromJSDirect.
 #[bun_jsc::JsClass]

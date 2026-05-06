@@ -759,7 +759,7 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
             None,
             IncludeScripts::IncludeScripts,
         ) else {
-            Output::warn("Failed to read package.json\n", ());
+            Output::warn("Failed to read package.json\n");
             continue;
         };
         // TODO(port): PackageJSON::parse signature — enum args are placeholders.

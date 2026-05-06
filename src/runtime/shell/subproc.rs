@@ -225,11 +225,11 @@ impl ShellSubprocess {
     }
 
     pub fn has_exited(&self) -> bool {
-        self.process.has_exited()
+        self.proc().has_exited()
     }
 
     pub fn r#ref(&mut self) {
-        self.process.enable_keeping_event_loop_alive();
+        self.proc().enable_keeping_event_loop_alive();
 
         // self.stdin.ref();
         // }

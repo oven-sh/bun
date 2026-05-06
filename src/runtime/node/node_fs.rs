@@ -2872,7 +2872,7 @@ pub mod args {
     }
     impl Write {
         pub fn deinit(&self) { self.buffer.deinit(); }
-        pub fn deinit_and_unprotect(&mut self) { self.buffer.deinit_and_unprotect(); }
+        pub fn deinit_and_unprotect(&mut self) { core::mem::take(&mut self.buffer).deinit_and_unprotect(); }
         pub fn to_thread_safe(&mut self) { self.buffer.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Write> {
             let fd_value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
@@ -2895,12 +2895,12 @@ pub mod args {
                     // fs.write(fd, buffer[, offset[, length[, position]]], callback)
                     StringOrBuffer::Buffer(_) => {
                         if current.is_undefined_or_null() || current.is_function() { break 'parse; }
-                        args.offset = u64::try_from(validators::validate_integer(ctx, current, "offset", Some(0), Some(9007199254740991))?).unwrap();
+                        args.offset = u64::try_from(validators::validate_integer(ctx, current, b"offset", Some(0), Some(9007199254740991))?).unwrap();
                         arguments.eat();
                         let Some(next) = arguments.next() else { break 'parse }; current = next;
                         if !(current.is_number() || current.is_big_int()) { break 'parse; }
-                        let length = current.to::<i64>();
-                        let buf_len = args.buffer.buffer().slice().len();
+                        let length = current.to_int64();
+                        let buf_len = args.buffer.buffer().map(|b| b.slice().len()).unwrap_or(0);
                         let max_offset = (buf_len as i64).min(i64::MAX);
                         if args.offset as i64 > max_offset {
                             return Err(ctx.throw_range_error(args.offset as f64, bun_jsc::RangeErrorOptions { field_name: b"offset", max: max_offset, ..Default::default() }));
@@ -2913,14 +2913,14 @@ pub mod args {
                         arguments.eat();
                         let Some(next) = arguments.next() else { break 'parse }; current = next;
                         if !(current.is_number() || current.is_big_int()) { break 'parse; }
-                        let position = current.to::<i64>();
+                        let position = current.to_int64();
                         if position >= 0 { args.position = Some(position); }
                         arguments.eat();
                     }
                     // fs.write(fd, string[, position[, encoding]], callback)
                     _ => {
                         if current.is_number() {
-                            args.position = Some(current.to::<i64>());
+                            args.position = Some(current.to_int64());
                             arguments.eat();
                             let Some(next) = arguments.next() else { break 'parse }; current = next;
                         }
@@ -2958,7 +2958,7 @@ pub mod args {
             let buffer_value = arguments.next_eat().ok_or_else(||
                 // theoretically impossible, argument has been passed already
                 ctx.throw_invalid_arguments("buffer is required"))?;
-            let buffer: bun_jsc::MarkedArrayBuffer = Buffer::from_js(ctx, buffer_value)
+            let buffer = Buffer::from_js(ctx, buffer_value)
                 .ok_or_else(|| ctx.throw_invalid_argument_type_value("buffer", "TypedArray", buffer_value))?;
 
             let offset_value = arguments.next_eat().unwrap_or(JSValue::NULL);
@@ -2970,7 +2970,7 @@ pub mod args {
             let offset: u64 = if offset_value.is_undefined_or_null() {
                 0
             } else {
-                u64::try_from(validators::validate_integer(ctx, offset_value, "offset", Some(0), Some(bun_jsc::MAX_SAFE_INTEGER))?).unwrap()
+                u64::try_from(validators::validate_integer(ctx, offset_value, b"offset", Some(0), Some(bun_jsc::MAX_SAFE_INTEGER))?).unwrap()
             };
 
             // length |= 0;
@@ -2987,7 +2987,7 @@ pub mod args {
 
             let buf_len = buffer.slice().len();
             if buf_len == 0 {
-                return Err(ctx.err_invalid_arg_value("The argument 'buffer' is empty and cannot be written.").throw());
+                return Err(validators::throw_err_invalid_arg_value(ctx, format_args!("The argument 'buffer' is empty and cannot be written.")));
             }
             // validateOffsetLengthRead(offset, length, buffer.byteLength);
             if length_float % 1.0 != 0.0 {
@@ -3017,15 +3017,15 @@ pub mod args {
             let position_int: i64 = if position_value.is_undefined_or_null() {
                 -1
             } else if position_value.is_number() {
-                validators::validate_integer(ctx, position_value, "position", Some(-1), Some(bun_jsc::MAX_SAFE_INTEGER))?
+                validators::validate_integer(ctx, position_value, b"position", Some(-1), Some(bun_jsc::MAX_SAFE_INTEGER))?
             } else if let Some(position) = bun_jsc::JSBigInt::from_js(position_value) {
                 // const maxPosition = 2n ** 63n - 1n - BigInt(length)
                 let max_position = i64::MAX - length_int;
                 if position.order(-1i64) == core::cmp::Ordering::Less || position.order(max_position) == core::cmp::Ordering::Greater {
                     let position_str = position.to_string(ctx)?;
-                    let r = Err(ctx.throw_range_error(position_str, bun_jsc::RangeErrorOptions { field_name: b"position", min: -1, max: max_position, ..Default::default() }));
+                    let position_bytes = position_str.to_owned_slice();
                     position_str.deref();
-                    return r;
+                    return Err(ctx.throw_range_error(&position_bytes[..], bun_jsc::RangeErrorOptions { field_name: b"position", min: -1, max: max_position, ..Default::default() }));
                 }
                 position.to_int64()
             } else {
@@ -3061,11 +3061,11 @@ pub mod args {
     impl ReadFile {
         pub fn deinit(&self) {
             self.path.deinit();
-            if let Some(signal) = &self.signal { signal.pending_activity_unref(); signal.unref(); }
+            if let Some(signal) = self.signal { signal.pending_activity_unref(); signal.unref(); }
         }
         pub fn deinit_and_unprotect(&self) {
             self.path.deinit_and_unprotect();
-            if let Some(signal) = &self.signal { signal.pending_activity_unref(); signal.unref(); }
+            if let Some(signal) = self.signal { signal.pending_activity_unref(); signal.unref(); }
         }
         pub fn to_thread_safe(&mut self) { self.path.to_thread_safe(); }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<ReadFile> {
@@ -3085,8 +3085,10 @@ pub mod args {
                         flag = FileSystemFlags::from_js(ctx, flag_)?.ok_or_else(|| { path.deinit(); ctx.throw_invalid_arguments("Invalid flag") })?;
                     }
                     if let Some(value) = arg.get_truthy(ctx, "signal")? {
-                        if let Some(signal) = AbortSignal::from_js(value) {
-                            *abort_signal = Some(signal.ref_());
+                        if let Some(signal_ptr) = AbortSignal::from_js(value) {
+                            // SAFETY: from_js returns a live C++ AbortSignal*.
+                            let signal = unsafe { &*signal_ptr };
+                            *abort_signal = NonNull::new(signal.ref_());
                             signal.pending_activity_ref();
                         } else {
                             path.deinit();
@@ -3099,7 +3101,7 @@ pub mod args {
             Ok(ReadFile { path, encoding, flag, limit_size_for_javascript: true, signal: abort_signal, ..Default::default() })
         }
         pub fn aborted(&self) -> bool {
-            if let Some(signal) = &self.signal { return signal.aborted(); }
+            if let Some(signal) = self.signal { return signal.aborted(); }
             false
         }
     }
@@ -3119,13 +3121,13 @@ pub mod args {
         pub fn deinit(&self) {
             self.file.deinit();
             self.data.deinit();
-            if let Some(signal) = &self.signal { signal.pending_activity_unref(); signal.unref(); }
+            if let Some(signal) = self.signal { signal.pending_activity_unref(); signal.unref(); }
         }
         pub fn to_thread_safe(&mut self) { self.file.to_thread_safe(); self.data.to_thread_safe(); }
         pub fn deinit_and_unprotect(&mut self) {
             self.file.deinit_and_unprotect();
             self.data.deinit_and_unprotect();
-            if let Some(signal) = &self.signal { signal.pending_activity_unref(); signal.unref(); }
+            if let Some(signal) = self.signal { signal.pending_activity_unref(); signal.unref(); }
         }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<WriteFile> {
             let path = PathOrFileDescriptor::from_js(ctx, arguments)?.ok_or_else(|| ctx.throw_invalid_arguments("path must be a string or a file descriptor"))?;
@@ -3151,15 +3153,17 @@ pub mod args {
                         mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);
                     }
                     if let Some(value) = arg.get_truthy(ctx, "signal")? {
-                        if let Some(signal) = AbortSignal::from_js(value) {
-                            *abort_signal = Some(signal.ref_());
+                        if let Some(signal_ptr) = AbortSignal::from_js(value) {
+                            // SAFETY: from_js returns a live C++ AbortSignal*.
+                            let signal = unsafe { &*signal_ptr };
+                            *abort_signal = NonNull::new(signal.ref_());
                             signal.pending_activity_ref();
                         } else {
                             path.deinit();
                             return Err(ctx.throw_invalid_argument_type_value("signal", "AbortSignal", value));
                         }
                     }
-                    if let Some(flush_) = arg.get_optional::<JSValue>(ctx, "flush")? {
+                    if let Some(flush_) = arg.get(ctx, "flush")? {
                         if flush_.is_boolean() || flush_.is_undefined_or_null() {
                             flush = flush_ == JSValue::TRUE;
                         } else {
@@ -3175,12 +3179,12 @@ pub mod args {
             // the pattern in node_fs.zig is to call toThreadSafe after Arguments.*.fromJS
             let is_async = false;
             let data = StringOrBuffer::from_js_with_encoding_maybe_async(ctx, data_value, encoding, is_async, allow_string_object)?
-                .ok_or_else(|| { path.deinit(); ctx.err_invalid_arg_type("The \"data\" argument must be of type string or an instance of Buffer, TypedArray, or DataView").throw() })?;
+                .ok_or_else(|| { path.deinit(); validators::throw_err_invalid_arg_type_with_message(ctx, format_args!("The \"data\" argument must be of type string or an instance of Buffer, TypedArray, or DataView")) })?;
             let abort_signal = scopeguard::ScopeGuard::into_inner(abort_signal);
             Ok(WriteFile { file: path, encoding, flag, mode, data, dirfd: FD::cwd(), signal: abort_signal, flush })
         }
         pub fn aborted(&self) -> bool {
-            if let Some(signal) = &self.signal { return signal.aborted(); }
+            if let Some(signal) = self.signal { return signal.aborted(); }
             false
         }
     }
@@ -3366,10 +3370,10 @@ pub enum StatOrNotFound {
     NotFound,
 }
 impl StatOrNotFound {
-    pub fn to_js(&mut self, global_object: &JSGlobalObject) -> JSValue {
+    pub fn to_js(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
-            StatOrNotFound::Stats(s) => s.to_js(global_object),
-            StatOrNotFound::NotFound => JSValue::UNDEFINED,
+            StatOrNotFound::Stats(s) => s.to_js_newly_created(global_object),
+            StatOrNotFound::NotFound => Ok(JSValue::UNDEFINED),
         }
     }
     pub fn to_js_newly_created(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
@@ -3387,7 +3391,7 @@ pub enum StringOrUndefined {
 impl StringOrUndefined {
     pub fn to_js(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
-            StringOrUndefined::String(s) => s.transfer_to_js(global_object),
+            StringOrUndefined::String(s) => bun_jsc::bun_string_jsc::transfer_to_js(s, global_object),
             StringOrUndefined::None => Ok(JSValue::UNDEFINED),
         }
     }
@@ -3442,7 +3446,7 @@ pub mod ret {
         const FIELD_BUFFER: ZigString = ZigString::init_static(b"buffer");
         pub fn to_js(&self, ctx: &JSGlobalObject) -> JsResult<JSValue> {
             let _unprotect = scopeguard::guard(self.buffer_val, |v| if !v.is_empty_or_undefined_or_null() { v.unprotect() });
-            JSValue::create_object_2(
+            jsvalue_create_object_2(
                 ctx,
                 &Self::FIELD_BYTES_READ,
                 &Self::FIELD_BUFFER,
@@ -3463,7 +3467,7 @@ pub mod ret {
         // Excited for the issue that's like "cannot read file bigger than 2 GB"
         pub fn to_js(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
             let _unprotect = scopeguard::guard(self.buffer_val, |v| if !v.is_empty_or_undefined_or_null() { v.unprotect() });
-            JSValue::create_object_2(
+            jsvalue_create_object_2(
                 global_object,
                 &Self::FIELD_BYTES_WRITTEN,
                 &Self::FIELD_BUFFER,

@@ -227,6 +227,19 @@ pub fn alloc_unsafe(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
     })
 }
 
+/// phase-c stub: `Bun.color()` requires the `css` feature (bun_css crate),
+/// which is intentionally off the `bun_bin` dep graph. With the feature
+/// enabled this is replaced by `bun_css::CssColor::js_function_color`.
+#[cfg(not(feature = "css"))]
+pub fn color_unsupported(
+    global_this: &JSGlobalObject,
+    _callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    Err(global_this.throw_invalid_arguments(format_args!(
+        "Bun.color() is unavailable: built without the `css` feature"
+    )))
+}
+
 // ─── lazy-property getters (un-gated targets only) ──────────────────────────
 // Zig: `toJSLazyPropertyCallback(wrapped)` emits a `callconv(jsc.conv)` shim
 // that calls `bun.jsc.toJSHostCall(global, @src(), wrapped, .{global, object})`

@@ -1117,7 +1117,7 @@ impl GetAddrInfoRequest {
                 if (*this).cache.pending_cache() {
                     (*resolver).drain_pending_host_native(
                         (*this).cache.pos_in_pending(),
-                        (*this).head.global_this,
+                        &*(*this).head.global_this,
                         status,
                         GetAddrInfo::Result::Any::Addrinfo(addr_info),
                     );
@@ -1129,7 +1129,7 @@ impl GetAddrInfoRequest {
             // + `Box::from_raw` would double-Drop `DNSLookup` (impls Drop).
             let owned = *Box::from_raw(this);
             let mut head = owned.head;
-            head.process_get_addr_info_native(status, addr_info);
+            DNSLookup::process_get_addr_info_native(&mut head, status, addr_info);
         }
     }
 
@@ -1159,7 +1159,7 @@ impl GetAddrInfoRequest {
                         if (*this).cache.pending_cache() {
                             (*resolver).drain_pending_host_native(
                                 (*this).cache.pos_in_pending(),
-                                (*this).head.global_this,
+                                &*(*this).head.global_this,
                                 0,
                                 any,
                             );
@@ -1170,7 +1170,7 @@ impl GetAddrInfoRequest {
                     // `ptr::read` + `Box::from_raw` would double-Drop `DNSLookup`.
                     let owned = *Box::from_raw(this);
                     let mut head = owned.head;
-                    head.on_complete_native(any);
+                    DNSLookup::on_complete_native(&mut head, any);
                 }
                 get_addr_info_request::Backend::Libc(get_addr_info_request::LibcBackend::Err(err)) => {
                     Self::get_addr_info_async_callback(*err, ptr::null_mut(), this as *mut c_void);
@@ -1209,7 +1209,7 @@ impl GetAddrInfoRequest {
             // + `Box::from_raw` would double-Drop `DNSLookup` (impls Drop).
             let owned = *Box::from_raw(this);
             let mut head = owned.head;
-            head.process_get_addr_info(err_, timeout, result);
+            DNSLookup::process_get_addr_info(&mut head, err_, timeout, result);
         }
     }
 
@@ -1230,7 +1230,7 @@ impl GetAddrInfoRequest {
                 if (*this).cache.pending_cache() {
                     (*resolver).drain_pending_host_native(
                         (*this).cache.pos_in_pending(),
-                        (*this).head.global_this,
+                        &*(*this).head.global_this,
                         retcode,
                         GetAddrInfo::Result::Any::Addrinfo((*uv_info).addrinfo),
                     );
@@ -1245,7 +1245,7 @@ impl GetAddrInfoRequest {
             // + `Box::from_raw` would double-Drop `DNSLookup` (impls Drop).
             let owned = *Box::from_raw(this);
             let mut head = owned.head;
-            head.process_get_addr_info_native(retcode, addrinfo);
+            DNSLookup::process_get_addr_info_native(&mut head, retcode, addrinfo);
         }
     }
 }

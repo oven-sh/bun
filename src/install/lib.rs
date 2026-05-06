@@ -1303,7 +1303,7 @@ impl RunCommand {
         _ctx: *const (),
         // Zig: out-param `*Transpiler` — opaque at this tier.
         _this_transpiler: *mut (),
-        env: &mut bun_dotenv::Loader,
+        env: &mut bun_dotenv::Loader<'_>,
         _log_errors: bool,
         _store_root_fd: bool,
     ) -> Result<*mut (), bun_core::Error> {

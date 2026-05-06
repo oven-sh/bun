@@ -220,7 +220,8 @@ impl FileResponseStream {
 
     pub fn on_read_chunk(&mut self, chunk_: &[u8], state_: ReadState) -> bool {
         self.r#ref();
-        let _guard = scopeguard::guard((), |_| self.deref());
+        let this: *mut Self = self;
+        let _guard = scopeguard::guard((), move |_| unsafe { Self::deref(this) });
 
         if self.state.contains(State::RESPONSE_DONE) {
             return false;
@@ -261,7 +262,7 @@ impl FileResponseStream {
         match self.resp.write(chunk) {
             bun_uws::WriteResult::Backpressure => {
                 // release the read ref; on_writable re-takes it
-                let _guard2 = scopeguard::guard((), |_| self.deref());
+                let _guard2 = scopeguard::guard((), move |_| unsafe { Self::deref(this) });
                 self.resp
                     .on_writable::<FileResponseStream>(Self::on_writable, self);
                 #[cfg(not(unix))]

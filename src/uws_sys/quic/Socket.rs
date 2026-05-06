@@ -60,6 +60,10 @@ impl Socket {
         // SAFETY: us_quic_socket_ext returns conn_ext_size bytes co-allocated with
         // the socket, sized and aligned for a single nullable-pointer slot.
         // Option<NonNull<T>> is niche-optimized to the same layout as Zig's `?*T`.
+        // Uniqueness: the ext bytes are caller-only storage that the C library
+        // never reads or writes, and every Rust access goes through this method
+        // behind `&mut self`; the elided return lifetime reborrows `self`, so the
+        // borrow checker forbids a second live `&mut` to the slot.
         unsafe { &mut *us_quic_socket_ext(self).cast::<Option<NonNull<T>>>() }
     }
 }

@@ -232,10 +232,6 @@ describe("system-wide bunfig.toml", () => {
     using dir = tempDir("system-bunfig-pkg-merge", {
       "package.json": `{"name": "test", "version": "1.0.0"}`,
     });
-    // `bun pm cache` prints the path of the opened fd (canonical / symlink-
-    // resolved), so compare against realpathSync of the directory we created.
-    // On macOS tempDir lives under /var → /private/var, on Windows the path
-    // uses backslashes — realpathSync.native handles both.
     const sysCachePath = join(String(dir), "sys-cache");
     const homeCachePath = join(String(dir), "home-cache");
     await Bun.write(join(String(dir), "sys.toml"), `[install]\ncache = ${JSON.stringify(sysCachePath)}\n`);

@@ -409,6 +409,10 @@ impl StrongOptional {
 
 pub mod bun_string_jsc {
     use super::{JSGlobalObject, JSValue, JsResult};
+    pub fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<bun_string::String> {
+        let _ = (value, global);
+        unimplemented!("b2-blocked: bun_jsc::bun_string_jsc::from_js")
+    }
     pub fn create_utf8_for_js(global: &JSGlobalObject, utf8: &[u8]) -> JsResult<JSValue> {
         let _ = (global, utf8);
         unimplemented!("b2-blocked: bun_jsc::bun_string_jsc::create_utf8_for_js")

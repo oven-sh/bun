@@ -313,16 +313,28 @@ pub mod unicode {
         }
     }
 
-    /// `toUTF16Literal` — comptime in Zig (`std.unicode.utf8ToUtf16LeStringLiteral`).
-    /// Zig `toUTF16Literal` is `comptime`-only. There is no runtime equivalent
-    /// in Rust without leaking; callers must use the `crate::w!("…")` macro
-    /// (const `&'static [u16]`) instead. This stub panics to catch leftover
-    /// runtime calls.
-    #[track_caller]
-    pub fn to_utf16_literal(_s: &[u8]) -> &'static [u16] {
-        unimplemented!(
-            "to_utf16_literal is comptime-only; use the `w!(\"…\")` macro for a const &[u16]"
-        )
+    /// `toUTF16Literal` — port of `unicode.zig:toUTF16Literal` →
+    /// `std.unicode.utf8ToUtf16LeStringLiteral`. Zig evaluated this at
+    /// `comptime` into a `Holder.value` const yielding `[:0]const u16`; the
+    /// Rust runtime port returns an owned `Box<[u16]>` (no `Box::leak` per
+    /// PORTING.md §Forbidden). Prefer the const `crate::w!("…")` macro at call
+    /// sites with literal inputs — this fn exists for the residual runtime
+    /// callers that thread `&[u8]` through.
+    pub fn to_utf16_literal(s: &[u8]) -> Box<[u16]> {
+        if s.is_empty() {
+            return Box::new([]);
+        }
+        // `std.unicode.utf8ToUtf16LeStringLiteral` requires valid UTF-8 (Zig
+        // would `catch unreachable` at comptime). simdutf gives us the exact
+        // UTF-16 code-unit length, then a validating convert.
+        let out_len = super::simdutf::length::utf16::from::utf8(s);
+        let mut out = vec![0u16; out_len].into_boxed_slice();
+        let written = super::simdutf::convert::utf8::to::utf16::le(s, &mut out);
+        debug_assert_eq!(
+            written, out_len,
+            "to_utf16_literal: input must be valid UTF-8 (was comptime-checked in Zig)",
+        );
+        out
     }
 }
 // Transcoding suite re-exported from bun_core (T0).

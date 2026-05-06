@@ -19,6 +19,24 @@ use bun_sys::{self, Fd, FdExt, Mode, Stat, SystemError};
 #[cfg(windows)]
 use bun_sys::windows::libuv;
 
+
+// Local conversion: `bun_sys::SystemError` -> `bun_jsc::SystemError`. Both mirror
+// the same Zig `jsc.SystemError` extern struct; map field-by-field because the
+// two Rust definitions order their fields differently.
+#[allow(dead_code)]
+fn to_jsc_system_error(e: SystemError) -> jsc::SystemError {
+    jsc::SystemError {
+        errno: e.errno,
+        code: e.code,
+        message: e.message,
+        path: e.path,
+        syscall: e.syscall,
+        hostname: e.hostname,
+        fd: e.fd,
+        dest: e.dest,
+    }
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // CopyFile (POSIX, blocking off-thread)
 // ───────────────────────────────────────────────────────────────────────────

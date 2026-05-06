@@ -170,24 +170,21 @@ impl AlgorithmValue {
                     unreachable!()
                 }
             } else {
-                return global_object.throw_invalid_argument_type(
+                return Err(global_object.throw_invalid_argument_type(
                     "hash",
                     "options.algorithm",
                     "string",
-                );
+                ));
             }
         } else if value.is_string() {
             let algorithm_string = value.get_zig_string(global_object)?;
 
-            let Some(algo) = Algorithm::LABEL
-                .get(algorithm_string.as_bytes())
-                .copied()
-            else {
-                return global_object.throw_invalid_argument_type(
+            let Some(algo) = algorithm_from_zig_string(&algorithm_string) else {
+                return Err(global_object.throw_invalid_argument_type(
                     "hash",
                     "algorithm",
                     UNKNOWN_PASSWORD_ALGORITHM_MESSAGE,
-                );
+                ));
             };
 
             match algo {

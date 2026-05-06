@@ -1730,10 +1730,12 @@ impl FetchTasklet {
             }
             return;
         }
-        task_ref
-            .javascript_vm
-            .event_loop()
-            .enqueue_task_concurrent(task_ref.concurrent_task.from(task, AutoDeinit::ManualDeinit));
+        // SAFETY: event_loop() is a self-ptr into the VM; uniquely accessed here.
+        unsafe {
+            (*task_ref.javascript_vm.event_loop()).enqueue_task_concurrent(
+                task_ref.concurrent_task.from(task, AutoDeinit::ManualDeinit),
+            );
+        }
 
         task_ref.mutex.unlock();
         // we are done with the http client so we can deref our side

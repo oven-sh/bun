@@ -1714,6 +1714,7 @@ dependencies = [
  "bun_io",
  "bun_js",
  "bun_js_parser",
+ "bun_js_parser_jsc",
  "bun_js_printer",
  "bun_jsc",
  "bun_libarchive",

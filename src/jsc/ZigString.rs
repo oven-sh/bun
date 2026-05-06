@@ -14,8 +14,8 @@ use crate::{c_api, JSGlobalObject, JSValue, VM};
 #[allow(unused_imports)]
 use bun_string::encoding::Encoding;
 // `webcore::encoding::{construct_from_u8,u16, byte_length_u8}` live in
-// `src/runtime/webcore/encoding.rs` (forward-dep on bun_jsc) — gate callers.
- use crate::webcore::encoding;
+// `src/runtime/webcore/encoding.rs` (forward-dep on bun_jsc) — callers stubbed
+// with `todo!()` until the dep cycle is broken or the encoder is hoisted.
 use bun_paths::PathBuffer;
 use bun_simdutf_sys::simdutf;
 use bun_string::{strings, String as BunString, ZStr};

@@ -8,6 +8,7 @@ use bun_collections::{StringHashMap, StringSet};
 use bun_core::{self as core_, Output};
 use bun_resolver::fs::{self as Fs, FileSystem, PathName};
 use bun_paths::{self, PathBuffer, SEP, SEP_STR};
+use bun_resolver::__phase_a_body::ResolveWatcher;
 use bun_string::{strings, ZStr};
 use bun_sys::{self, Fd};
 use bun_watcher::Watcher;
@@ -335,7 +336,7 @@ impl MainFile {
             ..Default::default()
         };
 
-        if let Some(dir) = bun_paths::dirname(file) {
+        if let Some(dir) = bun_core::dirname(file) {
             debug_assert!(bun_core::is_slice_in_buffer(dir, file));
             debug_assert!(file.len() > dir.len() + 1);
             main.dir = &file[0..dir.len() + 1];
@@ -504,7 +505,8 @@ where
         let mut watcher = match Watcher::init(reloader, fs) {
             Ok(w) => w,
             Err(err) => {
-                bun_core::handle_error_return_trace(&err);
+                // TODO(port): bun.handleErrorReturnTrace — debug-only diagnostics; no Rust equivalent yet
+                let _ = &err;
                 Output::panic(format_args!(
                     "Failed to enable File Watcher: {}",
                     err.name()
@@ -512,7 +514,8 @@ where
             }
         };
         if let Err(err) = watcher.start() {
-            bun_core::handle_error_return_trace(&err);
+            // TODO(port): bun.handleErrorReturnTrace — debug-only diagnostics; no Rust equivalent yet
+            let _ = &err;
             Output::panic(format_args!(
                 "Failed to start File Watcher: {}",
                 err.name()
@@ -594,7 +597,8 @@ where
                 ImportWatcher::Watch(match Watcher::init(reloader, ctx.transpiler.fs) {
                     Ok(w) => w,
                     Err(err) => {
-                        bun_core::handle_error_return_trace(&err);
+                        // TODO(port): bun.handleErrorReturnTrace — debug-only diagnostics; no Rust equivalent yet
+                let _ = &err;
                         Output::panic(format_args!(
                             "Failed to enable File Watcher: {}",
                             err.name()
@@ -605,7 +609,8 @@ where
                 ImportWatcher::Hot(match Watcher::init(reloader, ctx.transpiler.fs) {
                     Ok(w) => w,
                     Err(err) => {
-                        bun_core::handle_error_return_trace(&err);
+                        // TODO(port): bun.handleErrorReturnTrace — debug-only diagnostics; no Rust equivalent yet
+                let _ = &err;
                         Output::panic(format_args!(
                             "Failed to enable File Watcher: {}",
                             err.name()
@@ -616,7 +621,7 @@ where
 
             if RELOAD_IMMEDIATELY {
                 ctx.transpiler.resolver.watcher =
-                    bun_resolver::ResolveWatcher::init_with(
+                    ResolveWatcher::init_with(
                         match &mut ctx.bun_watcher {
                             ImportWatcher::Watch(w) => &mut **w,
                             _ => unreachable!(),
@@ -625,7 +630,7 @@ where
                     );
             } else {
                 ctx.transpiler.resolver.watcher =
-                    bun_resolver::ResolveWatcher::init_with(
+                    ResolveWatcher::init_with(
                         match &mut ctx.bun_watcher {
                             ImportWatcher::Hot(w) => &mut **w,
                             _ => unreachable!(),
@@ -639,14 +644,15 @@ where
             ctx.bun_watcher = Some(match Watcher::init(reloader, ctx.transpiler.fs) {
                 Ok(w) => w,
                 Err(err) => {
-                    bun_core::handle_error_return_trace(&err);
+                    // TODO(port): bun.handleErrorReturnTrace — debug-only diagnostics; no Rust equivalent yet
+                let _ = &err;
                     Output::panic(format_args!(
                         "Failed to enable File Watcher: {}",
                         err.name()
                     ));
                 }
             });
-            ctx.transpiler.resolver.watcher = bun_resolver::ResolveWatcher::init_with(
+            ctx.transpiler.resolver.watcher = ResolveWatcher::init_with(
                 &mut **ctx.bun_watcher.as_mut().unwrap(),
                 Watcher::on_maybe_watch_directory,
             );
@@ -881,7 +887,7 @@ where
                                                 // TODO(port): std.posix.access → bun_sys::access
                                                 if bun_sys::access(
                                                     affected_path,
-                                                    bun_sys::F_OK,
+                                                    libc::F_OK,
                                                 )
                                                 .is_err()
                                                 {
@@ -924,7 +930,7 @@ where
                         // SAFETY: ctx outlives reloader (BACKREF).
                         let _ = unsafe {
                             (*self.ctx).bust_dir_cache(
-                                strings::without_trailing_slash_windows_path(file_path),
+                                strings::paths::without_trailing_slash_windows_path(file_path),
                             )
                         };
 
@@ -955,7 +961,7 @@ where
                                     .unwrap_or(bun_bundler::options::Loader::File);
                                 let mut prev_entry_id: usize = usize::MAX;
                                 if loader != bun_bundler::options::Loader::File {
-                                    let mut path_string: bun_str::PathString =
+                                    let mut path_string: bun_string::PathString =
                                         Default::default();
                                     let mut file_hash: bun_watcher::HashType = last_file_hash;
                                     let abs_path: &[u8] = 'brk: {

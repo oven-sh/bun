@@ -41,8 +41,7 @@ pub struct QueuedDescribe<'a> {
 impl Collection {
     pub fn init(bun_test_root: &mut BunTestRoot) -> Collection {
         // TODO(port): @src() source-location for debug tracing — consider #[track_caller] + Location::caller()
-        group::begin();
-        let _g = scopeguard::guard((), |_| group::end());
+        let _g = group::begin();
 
         let only = if let Some(runner) = Jest::runner() {
             if runner.only { bun_test::Only::Contains } else { bun_test::Only::No }
@@ -91,8 +90,7 @@ impl Collection {
         new_scope: &mut DescribeScope,
         callback: Option<JSValue>,
     ) -> JsResult<()> {
-        group::begin();
-        let _g = scopeguard::guard((), |_| group::end());
+        let _g = group::begin();
 
         debug_assert!(!self.locked);
         let _buntest = self.bun_test();
@@ -128,8 +126,7 @@ impl Collection {
         _: Option<JSValue>,
         data: RefDataValue,
     ) -> JsResult<()> {
-        group::begin();
-        let _g = scopeguard::guard((), |_| group::end());
+        let _g = group::begin();
 
         let _formatter = make_formatter(global_this);
 
@@ -160,8 +157,7 @@ impl Collection {
         global_this: &JSGlobalObject,
         data: RefDataValue,
     ) -> JsResult<StepResult> {
-        group::begin();
-        let _g = scopeguard::guard((), |_| group::end());
+        let _g = group::begin();
         let buntest = buntest_strong.get();
         let this = &mut buntest.collection;
 
@@ -232,8 +228,7 @@ impl Collection {
         &mut self,
         _: RefDataValue,
     ) -> HandleUncaughtExceptionResult {
-        group::begin();
-        let _g = scopeguard::guard((), |_| group::end());
+        let _g = group::begin();
 
         // SAFETY: active_scope is always a valid cursor into root_scope's tree.
         unsafe { self.active_scope.as_mut() }.failed = true;

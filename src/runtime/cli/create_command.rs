@@ -1410,19 +1410,18 @@ impl CreateCommand {
             create_options.skip_git = !GitHandler::wait();
         }
 
-        Output::print_error("\n", format_args!(""));
+        Output::print_error("\n");
         Output::print_start_end(ctx.start_time, bun_core::time::nano_timestamp());
-        Output::pretty_errorln(" <r><d>bun create {}<r>", format_args!("{}", bstr::BStr::new(template)));
+        Output::pretty_errorln(format_args!(" <r><d>bun create {}<r>", bstr::BStr::new(template)));
 
         Output::flush();
 
-        Output::pretty(
+        Output::pretty(format_args!(
             "\n<d>Come hang out in bun's Discord: https://bun.com/discord<r>\n",
-            format_args!(""),
-        );
+        ));
 
         if !create_options.skip_install {
-            Output::pretty("\n<r><d>-----<r>\n", format_args!(""));
+            Output::pretty(format_args!("\n<r><d>-----<r>\n"));
             Output::flush();
         }
 
@@ -1434,20 +1433,17 @@ impl CreateCommand {
         // }
 
         if !create_options.skip_git && !create_options.skip_install {
-            Output::pretty(
+            Output::pretty(format_args!(
                 "\n<d>A local git repository was created for you and dependencies were installed automatically.<r>\n",
-                format_args!(""),
-            );
+            ));
         } else if !create_options.skip_git {
-            Output::pretty(
+            Output::pretty(format_args!(
                 "\n<d>A local git repository was created for you.<r>\n",
-                format_args!(""),
-            );
+            ));
         } else if !create_options.skip_install {
-            Output::pretty(
+            Output::pretty(format_args!(
                 "\n<d>Dependencies were installed automatically.<r>\n",
-                format_args!(""),
-            );
+            ));
         }
 
         if example_tag == ExampleTag::GithubRepository {

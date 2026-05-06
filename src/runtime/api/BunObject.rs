@@ -482,6 +482,8 @@ use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::{StringJsc as _, bun_string_jsc};
 use bun_str::zig_string::Slice as ZigStringSlice;
 use crate::test_runner::expect::{JSGlobalObjectTestExt as _, JSValueTestExt as _};
+use bun_str::zig_string::Slice as ZigStringSlice;
+use crate::test_runner::expect::{JSGlobalObjectTestExt as _, JSValueTestExt as _};
 
 // ── local shim: JSC-side `ZigString.toJS / toExternalValue / toAtomicValue` ──
 // `bun_jsc::ZigString` is a `pub type` alias for `bun_str::ZigString`; the
@@ -929,16 +931,18 @@ pub fn braces(
 
 #[bun_jsc::host_fn]
 pub fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let arguments_ = callframe.arguments_old(2);
+    let arguments_ = callframe.arguments_old::<2>();
     let path_buf = bun_paths::path_buffer_pool::get();
-    let mut arguments = CallFrame::ArgumentsSlice::init(global_this.bun_vm(), arguments_.slice());
+    // SAFETY: bun_vm() returns the live per-thread singleton VM for a Bun-owned global.
+    let vm = unsafe { &*global_this.bun_vm() };
+    let mut arguments = ArgumentsSlice::init(vm, arguments_.slice());
     let Some(path_arg) = arguments.next_eat() else {
-        return global_this.throw("which: expected 1 argument, got 0", format_args!(""));
+        return Err(global_this.throw("which: expected 1 argument, got 0"));
     };
 
-    let mut path_str = ZigString::Slice::empty();
-    let mut bin_str = ZigString::Slice::empty();
-    let mut cwd_str = ZigString::Slice::empty();
+    let mut path_str = ZigStringSlice::EMPTY;
+    let mut bin_str = ZigStringSlice::EMPTY;
+    let mut cwd_str = ZigStringSlice::EMPTY;
     // path_str / bin_str / cwd_str deinit on Drop
 
     if path_arg.is_empty_or_undefined_or_null() {
@@ -951,18 +955,19 @@ pub fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
     }
 
     if bin_str.len() >= MAX_PATH_BYTES {
-        return global_this.throw("bin path is too long", format_args!(""));
+        return Err(global_this.throw("bin path is too long"));
     }
 
     if bin_str.len() == 0 {
         return Ok(JSValue::NULL);
     }
 
-    path_str = ZigString::Slice::from_utf8_never_free(
-        global_this.bun_vm().transpiler.env.get(b"PATH").unwrap_or(b""),
+    // SAFETY: `transpiler.env` / `.fs` are process-lifetime singletons set during VM init.
+    path_str = ZigStringSlice::from_utf8_never_free(
+        unsafe { &*vm.transpiler.env }.get(b"PATH").unwrap_or(b""),
     );
-    cwd_str = ZigString::Slice::from_utf8_never_free(
-        global_this.bun_vm().transpiler.fs.top_level_dir,
+    cwd_str = ZigStringSlice::from_utf8_never_free(
+        unsafe { &*vm.transpiler.fs }.top_level_dir,
     );
 
     if let Some(arg) = arguments.next_eat() {
@@ -988,17 +993,20 @@ pub fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
 
 #[bun_jsc::host_fn]
 pub fn inspect_table(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let mut args_buf = callframe.arguments_undef(5);
-    let all_arguments = args_buf.as_mut();
+    let mut args_buf = callframe.arguments_undef::<5>();
+    let all_arguments = args_buf.mut_();
     if all_arguments[0].is_undefined_or_null() || !all_arguments[0].is_object() {
-        return Ok(BunString::empty().to_js(global_this));
+        return BunString::empty().to_js(global_this);
     }
 
-    for arg in all_arguments.iter() {
+    // PORT NOTE: protect/unprotect over a copied [JSValue; 5]; the borrow of
+    // `all_arguments` cannot escape into the scopeguard closure, so copy out.
+    let prot: [JSValue; 5] = core::array::from_fn(|i| all_arguments[i]);
+    for arg in prot.iter() {
         arg.protect();
     }
-    let _unprotect = scopeguard::guard((), |_| {
-        for arg in all_arguments.iter() {
+    let _unprotect = scopeguard::guard(prot, |prot| {
+        for arg in prot.iter() {
             arg.unprotect();
         }
     });
@@ -1035,39 +1043,46 @@ pub fn inspect_table(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsR
     };
     let mut table_printer =
         ConsoleObject::TablePrinter::init(global_this, ConsoleObject::MessageLevel::Log, value, properties)?;
-    table_printer.value_formatter.depth = format_options.max_depth;
-    table_printer.value_formatter.ordered_properties = format_options.ordered_properties;
-    table_printer.value_formatter.single_line = format_options.single_line;
+    // TODO(port): `TablePrinter.value_formatter` is private upstream
+    // (`bun_jsc::console_object`); depth/ordered/single_line are seeded by
+    // `TablePrinter::init` itself. Revisit once a setter lands.
+    let _ = (
+        format_options.max_depth,
+        format_options.ordered_properties,
+        format_options.single_line,
+    );
 
     let print_result = if format_options.enable_colors {
-        table_printer.print_table::<_, true>(&mut array)
+        table_printer.print_table::<true>(&mut array)
     } else {
-        table_printer.print_table::<_, false>(&mut array)
+        table_printer.print_table::<false>(&mut array)
     };
     if print_result.is_err() {
         if !global_this.has_exception() {
-            return global_this.throw_out_of_memory();
+            return Err(global_this.throw_out_of_memory());
         }
         return Ok(JSValue::ZERO);
     }
 
     // writer.flush(): Vec<u8> writer is unbuffered; nothing to flush.
 
-    BunString::create_utf8_for_js(global_this, &array)
+    bun_string_jsc::create_utf8_for_js(global_this, &array)
 }
 
 #[bun_jsc::host_fn]
 pub fn inspect(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let arguments = callframe.arguments_old(4).slice();
+    let args_buf = callframe.arguments_old::<4>();
+    let arguments = args_buf.slice();
     if arguments.is_empty() {
-        return Ok(BunString::empty().to_js(global_this));
+        return BunString::empty().to_js(global_this);
     }
 
     for arg in arguments {
         arg.protect();
     }
-    let _unprotect = scopeguard::guard((), |_| {
-        for arg in arguments {
+    let prot: Vec<JSValue> = arguments.to_vec();
+    let _unprotect = scopeguard::guard(prot, |prot| {
+        for arg in prot.iter() {
             arg.unprotect();
         }
     });
@@ -1117,10 +1132,7 @@ pub extern "C" fn Bun__inspect(global_this: *mut JSGlobalObject, value: JSValue)
     // very stable memory address
     let mut array: Vec<u8> = Vec::new();
 
-    let mut formatter = ConsoleObject::Formatter {
-        global_this,
-        ..Default::default()
-    };
+    let mut formatter = ConsoleObject::Formatter::new(global_this);
     if write!(&mut array, "{}", value.to_fmt(&mut formatter)).is_err() {
         return BunString::empty();
     }
@@ -1163,38 +1175,38 @@ pub extern "C" fn Bun__inspect_singleline(
 }
 
 pub fn get_inspect(global_object: &JSGlobalObject, _: &JSObject) -> JSValue {
-    let fun = JSFunction::create(global_object, "inspect", inspect, 2, Default::default());
-    let mut str = ZigString::init(b"nodejs.util.inspect.custom");
+    let fun = JSFunction::create(global_object, "inspect", __jsc_host_inspect, 2, Default::default());
+    let mut str = bun_str::ZigString::init(b"nodejs.util.inspect.custom");
     fun.put(
         global_object,
-        ZigString::static_(b"custom"),
+        b"custom",
         JSValue::symbol_for(global_object, &mut str),
     );
     fun.put(
         global_object,
-        ZigString::static_(b"table"),
-        JSFunction::create(global_object, "table", inspect_table, 3, Default::default()),
+        b"table",
+        JSFunction::create(global_object, "table", __jsc_host_inspect_table, 3, Default::default()),
     );
     fun
 }
 
 #[bun_jsc::host_fn]
 pub fn register_macro(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let arguments_ = callframe.arguments_old(2);
+    let arguments_ = callframe.arguments_old::<2>();
     let arguments = arguments_.slice();
     if arguments.len() != 2 || !arguments[0].is_number() {
-        return global_object
-            .throw_invalid_arguments("Internal error registering macros: invalid args", format_args!(""));
+        return Err(global_object
+            .throw_invalid_arguments("Internal error registering macros: invalid args"));
     }
     let id = arguments[0].to_int32();
     if id == -1 || id == 0 {
-        return global_object
-            .throw_invalid_arguments("Internal error registering macros: invalid id", format_args!(""));
+        return Err(global_object
+            .throw_invalid_arguments("Internal error registering macros: invalid id"));
     }
 
     if !arguments[1].is_cell() || !arguments[1].is_callable() {
         // TODO: add "toTypeOf" helper
-        return global_object.throw("Macro must be a function", format_args!(""));
+        return Err(global_object.throw("Macro must be a function"));
     }
 
     // SAFETY: VirtualMachine::get() returns the live per-thread singleton.
@@ -1203,23 +1215,22 @@ pub fn register_macro(global_object: &JSGlobalObject, callframe: &CallFrame) -> 
         .get_or_put(id)
         .expect("unreachable");
     if get_or_put_result.found_existing {
-        // SAFETY: value_ptr returned from get_or_put points to a live slot in the map for
-        // the map's lifetime; found_existing implies the slot is initialized.
-        unsafe { (*get_or_put_result.value_ptr).as_ref().unwrap() }
-            .value()
-            .unprotect();
+        // `value_ptr` is `&mut JSObjectRef` (`*mut OpaqueJSValue`); recover the
+        // protected JSValue and unprotect it before overwriting.
+        JSValue::c(*get_or_put_result.value_ptr).unprotect();
     }
 
     arguments[1].protect();
-    // SAFETY: value_ptr returned from get_or_put points to a live, writable slot in the map.
-    unsafe { *get_or_put_result.value_ptr = arguments[1].as_object_ref() };
+    *get_or_put_result.value_ptr = arguments[1].as_object_ref();
 
     Ok(JSValue::UNDEFINED)
 }
 
 pub fn get_cwd(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    // SAFETY: VirtualMachine::get() returns the live per-thread singleton.
-    ZigString::init(unsafe { &*VirtualMachine::get() }.transpiler.fs.top_level_dir).to_js(global_this)
+    // SAFETY: VirtualMachine::get() returns the live per-thread singleton; `fs` is
+    // the process-lifetime resolver FileSystem singleton.
+    ZigString::init(unsafe { (*(*VirtualMachine::get()).transpiler.fs).top_level_dir })
+        .to_js(global_this)
 }
 
 pub fn get_origin(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
@@ -1263,13 +1274,11 @@ pub fn get_main(global_this: &JSGlobalObject) -> JSValue {
                     sys::O::RDONLY
                 },
                 0,
-            )
-            .unwrap()
-            else {
+            ) else {
                 break 'use_resolved_path;
             };
 
-            let _close = scopeguard::guard(fd, |fd| fd.close());
+            let _close = scopeguard::guard(fd, |fd: Fd| fd.close());
             #[cfg(windows)]
             {
                 let mut wpath = WPathBuffer::uninit();
@@ -1304,7 +1313,10 @@ pub fn get_main(global_this: &JSGlobalObject) -> JSValue {
 }
 
 pub fn set_main(global_this: &JSGlobalObject, new_value: JSValue) -> bool {
-    global_this.bun_vm().overridden_main.set(global_this, new_value);
+    // SAFETY: bun_vm() returns the live per-thread singleton.
+    unsafe { &mut *global_this.bun_vm() }
+        .overridden_main
+        .set(global_this, new_value);
     true
 }
 
@@ -1314,90 +1326,57 @@ pub fn get_argv(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
 
 #[bun_jsc::host_fn]
 pub fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    // SAFETY: VirtualMachine::get() returns the live per-thread singleton.
-    let edit = &mut unsafe { &mut *VirtualMachine::get() }.rare_data().editor_context;
-    let args = callframe.arguments_old(4);
-    let mut arguments = CallFrame::ArgumentsSlice::init(global_this.bun_vm(), args.slice());
-    let mut path: &[u8] = b"";
-    let mut editor_choice: Option<Editor> = None;
-    let mut line: Option<&[u8]> = None;
-    let mut column: Option<&[u8]> = None;
+    // `RareData::editor_context` is a `high_tier::EditorContext` opaque stub in
+    // `bun_jsc::rare_data`; the real `crate::cli::open::EditorContext` (with
+    // `name`/`path`/`editor` fields and `detect_editor`) cannot be reached
+    // through `RareData` until the cycle-break vtable lands. Parse args for
+    // side-effect validation, then bail.
+    let args = callframe.arguments_old::<4>();
+    // SAFETY: bun_vm() returns the live per-thread singleton.
+    let vm = unsafe { &*global_this.bun_vm() };
+    let mut arguments = ArgumentsSlice::init(vm, args.slice());
+    let mut path = ZigStringSlice::EMPTY;
+    let mut _editor_choice: Option<Editor> = None;
+    let mut line = ZigStringSlice::EMPTY;
+    let mut column = ZigStringSlice::EMPTY;
 
     if let Some(file_path_) = arguments.next_eat() {
-        path = file_path_.to_slice(global_this)?.slice();
-        // TODO(port): lifetime — Zig kept the ZigString.Slice alive via arena.
+        path = file_path_.to_slice(global_this)?;
     }
 
     if let Some(opts) = arguments.next_eat() {
         if !opts.is_undefined_or_null() {
             if let Some(editor_val) = opts.get_truthy(global_this, "editor")? {
-                let sliced = editor_val.to_slice(global_this)?;
-                let prev_name = edit.name;
-
-                if !strings::eql_long(prev_name, sliced.slice(), true) {
-                    let prev = *edit;
-                    edit.name = sliced.slice();
-                    edit.detect_editor(unsafe { &*VirtualMachine::get() }.transpiler.env);
-                    editor_choice = edit.editor;
-                    if editor_choice.is_none() {
-                        *edit = prev;
-                        return global_this.throw(
-                            "Could not find editor \"{s}\"",
-                            format_args!("{}", bstr::BStr::new(sliced.slice())),
-                        );
-                    } else if edit.name.as_ptr() == edit.path.as_ptr() {
-                        edit.name = arguments
-                            .arena
-                            .alloc_slice_copy(edit.path)
-                            // PERF(port): was arena dupe
-                            ;
-                        edit.path = edit.path;
-                    }
-                }
+                let _sliced = editor_val.to_slice(global_this)?;
+                // TODO(port): edit.name/detect_editor — blocked on
+                // `bun_jsc::rare_data::EditorContext` being the real
+                // `crate::cli::open::EditorContext`.
             }
 
             if let Some(line_) = opts.get_truthy(global_this, "line")? {
-                line = Some(line_.to_slice(global_this)?.slice());
+                line = line_.to_slice(global_this)?;
             }
 
             if let Some(column_) = opts.get_truthy(global_this, "column")? {
-                column = Some(column_.to_slice(global_this)?.slice());
+                column = column_.to_slice(global_this)?;
             }
         }
     }
 
-    let editor = match editor_choice.or(edit.editor) {
-        Some(e) => e,
-        None => 'brk: {
-            edit.auto_detect_editor(unsafe { &*VirtualMachine::get() }.transpiler.env);
-            match edit.editor {
-                Some(e) => break 'brk e,
-                None => {
-                    return global_this.throw("Failed to auto-detect editor", format_args!(""));
-                }
-            }
-        }
-    };
-
-    if path.is_empty() {
-        return global_this.throw("No file path specified", format_args!(""));
+    if path.slice().is_empty() {
+        return Err(global_this.throw("No file path specified"));
     }
 
-    if let Err(err) = editor.open(edit.path, path, line, column) {
-        return global_this.throw(
-            "Opening editor failed {s}",
-            format_args!("{}", err.name()),
-        );
-    }
-
-    Ok(JSValue::UNDEFINED)
+    let _ = (line, column);
+    todo!("blocked_on: bun_jsc::rare_data::EditorContext (high_tier opaque stub)")
 }
 
-pub fn get_public_path(to: &[u8], origin: URL, writer: &mut impl bun_io::Write) {
+pub fn get_public_path(to: &[u8], origin: URL, writer: &mut (impl bun_io::Write + ?Sized)) {
     get_public_path_with_asset_prefix(
         to,
-        // SAFETY: VirtualMachine::get() returns the live per-thread singleton.
-        unsafe { &*VirtualMachine::get() }.transpiler.fs.top_level_dir,
+        // SAFETY: VirtualMachine::get() returns the live per-thread singleton; `fs` is
+        // the process-lifetime resolver FileSystem singleton.
+        unsafe { (*(*VirtualMachine::get()).transpiler.fs).top_level_dir },
         origin,
         b"",
         writer,
@@ -1415,14 +1394,14 @@ pub fn get_public_path_with_asset_prefix(
 ) {
     // TODO(port): `comptime platform` was a const-generic in Zig; demoted to runtime arg.
     // PERF(port): was comptime monomorphization — profile in Phase B
+    let _ = platform;
     let relative_path = if strings::has_prefix(to, dir) {
         strings::without_trailing_slash(&to[dir.len()..])
     } else {
-        // SAFETY: VirtualMachine::get() returns the live per-thread singleton.
-        unsafe { &*VirtualMachine::get() }
-            .transpiler
-            .fs
-            .relative_platform(dir, to, platform)
+        // PORT NOTE: `FileSystem::relative_platform` is not yet on the
+        // upstream `bun_bundler::bun_fs::FileSystem`; fall through to the
+        // stateless `bun_paths::relative` (matches the un-gated impl above).
+        bun_paths::relative(dir, to)
     };
     if origin.is_absolute() {
         if strings::has_prefix(relative_path, b"..") || strings::has_prefix(relative_path, b"./") {
@@ -1435,10 +1414,17 @@ pub fn get_public_path_with_asset_prefix(
             if bun_paths::is_absolute(to) {
                 let _ = writer.write_all(to);
             } else {
-                let _ = writer.write_all(unsafe { &*VirtualMachine::get() }.transpiler.fs.abs(&[to]));
+                // SAFETY: `transpiler.fs` is the process-lifetime resolver singleton.
+                let fs = unsafe { &*(*VirtualMachine::get()).transpiler.fs };
+                let _ = writer.write_all(fs.abs(&[to]));
             }
         } else {
-            let _ = origin.join_write(writer, asset_prefix, b"", relative_path, b"");
+            // PORT NOTE: `URL::join_write` is generic over `bun_url::bun_io::Write`
+            // (a re-exported copy that doesn't unify with the caller's
+            // `bun_io::Write` bound). Route through a local Vec, then forward.
+            let mut buf: Vec<u8> = Vec::new();
+            let _ = origin.join_write(&mut buf, asset_prefix, b"", relative_path, b"");
+            let _ = writer.write_all(&buf);
         }
     } else {
         let _ = writer.write_all(strings::trim_left(relative_path, b"/"));
@@ -1447,27 +1433,26 @@ pub fn get_public_path_with_asset_prefix(
 
 #[bun_jsc::host_fn]
 pub fn sleep_sync(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let arguments = callframe.arguments_old(1);
+    let arguments = callframe.arguments_old::<1>();
 
     // Expect at least one argument.  We allow more than one but ignore them; this
     //  is useful for supporting things like `[1, 2].map(sleepSync)`
-    if arguments.len() < 1 {
-        return global_object.throw_not_enough_arguments("sleepSync", 1, 0);
+    if arguments.len < 1 {
+        return Err(global_object.throw_not_enough_arguments("sleepSync", 1, 0));
     }
     let arg = arguments.slice()[0];
 
     // The argument must be a number
     if !arg.is_number() {
-        return global_object.throw_invalid_argument_type("sleepSync", "milliseconds", "number");
+        return Err(global_object.throw_invalid_argument_type("sleepSync", "milliseconds", "number"));
     }
 
     //NOTE: if argument is > max(i32) then it will be truncated
     let milliseconds = arg.coerce::<i32>(global_object)?;
     if milliseconds < 0 {
-        return global_object.throw_invalid_arguments(
-            "argument to sleepSync must not be negative, got {d}",
-            format_args!("{milliseconds}"),
-        );
+        return Err(global_object.throw_invalid_arguments(format_args!(
+            "argument to sleepSync must not be negative, got {milliseconds}"
+        )));
     }
 
     // TODO(port): std.Thread.sleep — bun owns its own sleep; using thread::sleep
@@ -1487,27 +1472,31 @@ pub extern "C" fn Bun__gc(vm: *mut VirtualMachine, sync: bool) -> usize {
 
 #[bun_jsc::host_fn]
 pub fn shrink(global_object: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-    global_object.vm().shrink_footprint();
+    // PORT NOTE: `bun_jsc::VM` (the lib.rs opaque stub) lacks `shrink_footprint`;
+    // call through the VM.rs FFI directly.
+    jsc::vm::VM::shrink_footprint(global_object.vm());
     Ok(JSValue::UNDEFINED)
 }
 
 fn do_resolve(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<JSValue> {
-    let mut args = CallFrame::ArgumentsSlice::init(global_this.bun_vm(), arguments);
+    // SAFETY: bun_vm() returns the live per-thread singleton.
+    let vm = unsafe { &*global_this.bun_vm() };
+    let mut args = ArgumentsSlice::init(vm, arguments);
     let Some(specifier) = args.protect_eat_next() else {
-        return global_this
-            .throw_invalid_arguments("Expected a specifier and a from path", format_args!(""));
+        return Err(global_this
+            .throw_invalid_arguments("Expected a specifier and a from path"));
     };
 
     if specifier.is_undefined_or_null() {
-        return global_this.throw_invalid_arguments("specifier must be a string", format_args!(""));
+        return Err(global_this.throw_invalid_arguments("specifier must be a string"));
     }
 
     let Some(from) = args.protect_eat_next() else {
-        return global_this.throw_invalid_arguments("Expected a from path", format_args!(""));
+        return Err(global_this.throw_invalid_arguments("Expected a from path"));
     };
 
     if from.is_undefined_or_null() {
-        return global_this.throw_invalid_arguments("from must be a string", format_args!(""));
+        return Err(global_this.throw_invalid_arguments("from must be a string"));
     }
 
     let mut is_esm = true;
@@ -1515,7 +1504,7 @@ fn do_resolve(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<J
         if next.is_boolean() {
             is_esm = next.to_boolean();
         } else {
-            return global_this.throw_invalid_arguments("esm must be a boolean", format_args!(""));
+            return Err(global_this.throw_invalid_arguments("esm must be a boolean"));
         }
     }
 
@@ -1531,11 +1520,11 @@ fn do_resolve_with_args<const IS_FILE_PATH: bool>(
     is_esm: bool,
     is_user_require_resolve: bool,
 ) -> JsResult<JSValue> {
-    let mut errorable: ErrorableString = Default::default();
+    let mut errorable: ErrorableString = ErrorableString::ok(BunString::empty());
     let mut query_string = BunString::empty();
     // query_string derefs on Drop
 
-    let specifier_decoded = if specifier.has_prefix_comptime(b"file://") {
+    let specifier_decoded = if strings::has_prefix(specifier.byte_slice(), b"file://") {
         jsc::URL::path_from_file_url(specifier)
     } else {
         specifier.dupe_ref()
@@ -1553,23 +1542,23 @@ fn do_resolve_with_args<const IS_FILE_PATH: bool>(
     )?;
 
     if !errorable.success {
-        return ctx.throw_value(errorable.result.err.value);
+        // SAFETY: !success → `err` arm of the #[repr(C)] union is active.
+        return Err(ctx.throw_value(unsafe { errorable.result.err }.value));
     }
     // errorable.result.value derefs on Drop (TODO(port): confirm ErrorableString Drop semantics)
 
     if !query_string.is_empty() {
         // PERF(port): was stack-fallback
         let mut arraylist: Vec<u8> = Vec::with_capacity(1024);
-        write!(
-            &mut arraylist,
-            "{}{}",
-            errorable.result.value, query_string
-        )?;
+        // SAFETY: success → `value` arm of the #[repr(C)] union is active.
+        let value = unsafe { errorable.result.value };
+        write!(&mut arraylist, "{}{}", value, query_string)?;
 
         return Ok(ZigString::init_utf8(&arraylist).to_js(ctx));
     }
 
-    Ok(errorable.result.value.to_js(ctx))
+    // SAFETY: success → `value` arm of the #[repr(C)] union is active.
+    unsafe { errorable.result.value }.to_js(ctx)
 }
 
 #[bun_jsc::host_fn]
@@ -1579,7 +1568,7 @@ pub fn resolve_sync(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
 
 #[bun_jsc::host_fn]
 pub fn resolve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let arguments = callframe.arguments_old(3);
+    let arguments = callframe.arguments_old::<3>();
     let value = match do_resolve(global_object, arguments.slice()) {
         Ok(v) => v,
         Err(e) => {

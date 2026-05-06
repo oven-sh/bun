@@ -42,7 +42,7 @@ pub fn to_be_instance_of(
         this.get_value(global, this_value, "toBeInstanceOf", "<green>expected<r>")?;
 
     let not = this.flags.not();
-    let mut pass = value.is_instance_of(global, expected_value);
+    let mut pass = value.is_instance_of(global, expected_value)?;
     if not {
         pass = !pass;
     }

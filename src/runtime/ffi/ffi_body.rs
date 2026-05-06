@@ -1676,7 +1676,8 @@ impl FFI {
         let napi_env = make_napi_env_if_needed(symbols.values(), global);
 
         for function in symbols.values_mut() {
-            let function_name = function.base_name.as_ref().unwrap().clone();
+            let function_name =
+                ZBox::from_bytes(function.base_name.as_ref().unwrap().as_bytes());
             // PORT NOTE: reshaped for borrowck — clone base_name to drop &function borrow
 
             // optional if the user passed "ptr"

@@ -1365,7 +1365,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
             Maybe::Ok(n) => n,
         };
         #[cfg(not(windows))]
-        let normdest: OSPathSliceZ = { let _ = &buf; dest };
+        let normdest: &OSPathSliceZ = { let _ = &buf; dest };
 
         let mkdir_ = nodefs.mkdir_recursive_os_path(normdest, args::Mkdir::DEFAULT_MODE, false);
         match mkdir_ {
@@ -1378,9 +1378,9 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         // are always UTF-8, so monomorphise on `PathType::U8` and let the
         // Windows branch (gated above) handle the wide path.
         #[cfg(windows)]
-        let mut iterator = DirIterator::iterate::<{ DirIterator::PathType::U16 }>(fd);
+        let mut iterator = DirIterator::iterate::<true>(fd);
         #[cfg(not(windows))]
-        let mut iterator = DirIterator::iterate::<{ DirIterator::PathType::U8 }>(fd);
+        let mut iterator = DirIterator::iterate::<false>(fd);
         let mut entry = iterator.next();
         loop {
             let current = match entry {
@@ -1627,7 +1627,7 @@ impl AsyncReaddirRecursiveTask {
             ret::ReaddirTag::WithFileTypes => ResultListEntryValue::WithFileTypes(Vec::new()),
             ret::ReaddirTag::Buffers => ResultListEntryValue::Buffers(Vec::new()),
         };
-        let root_path = PathString::init(ZStr::from_bytes(args.path.slice()));
+        let root_path = PathString::init(args.path.slice());
         let mut task = Self::new(AsyncReaddirRecursiveTask {
             promise: JSPromiseStrong::init(global_object),
             args,

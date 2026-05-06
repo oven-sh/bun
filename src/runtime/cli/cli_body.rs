@@ -1562,7 +1562,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
         };
 
         // Create command wraps bunx
-        let ctx = init::<{ Tag::CreateCommand }>(log)?;
+        let mut ctx = init::<{ Tag::CreateCommand }>(log)?;
 
         // TODO(port): std.process.argsAlloc — bun::argv() already has the process args
         let args = bun::argv();

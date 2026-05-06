@@ -1569,43 +1569,53 @@ impl FileSystemFlags {
     }
 
     /// Equivalent of GetValidFileMode, which is used to implement fs.access and copyFile
-    pub fn from_js_number_only<const KIND: FileSystemFlagsKind>(
+    // PORT NOTE: Zig took `comptime kind: enum { access, copy_file }`; lowered to a
+    // runtime arg here so callers (`node_fs.rs`) can pass it positionally without
+    // needing `adt_const_params` const-generic dispatch.
+    pub fn from_js_number_only(
         global: &JSGlobalObject,
         value: JSValue,
+        kind: FileSystemFlagsKind,
     ) -> JsResult<FileSystemFlags> {
         // Allow only int32 or null/undefined values.
         if !value.is_number() {
             if value.is_undefined_or_null() {
-                return Ok(FileSystemFlags(match KIND {
+                return Ok(FileSystemFlags(match kind {
                     FileSystemFlagsKind::Access => 0,   // F_OK
                     FileSystemFlagsKind::CopyFile => 0, // constexpr int kDefaultCopyMode = 0;
                 }));
             }
-            return global
-                .err(jsc::ErrorCode::INVALID_ARG_TYPE)
-                .fmt(format_args!("mode must be int32 or null/undefined"))
-                .throw();
+            return Err(global
+                .err(
+                    jsc::ErrorCode::INVALID_ARG_TYPE,
+                    format_args!("mode must be int32 or null/undefined"),
+                )
+                .throw());
         }
         const MIN: i32 = 0;
         const MAX: i32 = 7;
         if value.is_int32() {
             let int: i32 = value.as_int32();
             if int < MIN || int > MAX {
-                return global
-                    .err(jsc::ErrorCode::OUT_OF_RANGE)
-                    // Zig: comptime std.fmt.comptimePrint — MIN/MAX are literal consts; emit as &'static str.
-                    .fmt(format_args!("mode is out of range: >= 0 and <= 7"))
-                    .throw();
+                return Err(global
+                    .err(
+                        jsc::ErrorCode::OUT_OF_RANGE,
+                        // Zig: comptime std.fmt.comptimePrint — MIN/MAX are literal consts; emit as &'static str.
+                        format_args!("mode is out of range: >= 0 and <= 7"),
+                    )
+                    .throw());
             }
             Ok(FileSystemFlags(int))
         } else {
             let float = value.as_number();
             if float.is_nan() || float.is_infinite() || float < MIN as f64 || float > MAX as f64 {
-                return global
-                    .err(jsc::ErrorCode::OUT_OF_RANGE)
-                    // Zig: comptime std.fmt.comptimePrint — MIN/MAX are literal consts; emit as &'static str.
-                    .fmt(format_args!("mode is out of range: >= 0 and <= 7"))
-                    .throw();
+                return Err(global
+                    .err(
+                        jsc::ErrorCode::OUT_OF_RANGE,
+                        // Zig: comptime std.fmt.comptimePrint — MIN/MAX are literal consts; emit as &'static str.
+                        format_args!("mode is out of range: >= 0 and <= 7"),
+                    )
+                    .throw());
             }
             Ok(FileSystemFlags(float as i32))
         }

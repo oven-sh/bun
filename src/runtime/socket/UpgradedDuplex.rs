@@ -191,21 +191,20 @@ impl<'a> UpgradedDuplex<'a> {
 
     pub fn from(global: &'a JSGlobalObject, origin: JSValue, handlers: Handlers) -> UpgradedDuplex<'a> {
         UpgradedDuplex {
-            vm: global.bun_vm(),
-            origin: Strong::create(origin, global),
+            // SAFETY: `bun_vm()` never returns null for a Bun-owned global; lifetime tied to `global: &'a`.
+            vm: unsafe { &*global.bun_vm() },
+            origin: StrongOptional::create(origin, global),
             global: Some(global),
             wrapper: None,
             handlers,
             ssl_error: CertError::default(),
-            on_data_callback: Strong::empty(),
-            on_end_callback: Strong::empty(),
-            on_writable_callback: Strong::empty(),
-            on_close_callback: Strong::empty(),
-            event_loop_timer: EventLoopTimer {
-                next: bun_core::timespec::EPOCH,
-                tag: EventLoopTimerTag::UpgradedDuplex,
-                ..Default::default()
-            },
+            on_data_callback: StrongOptional::empty(),
+            on_end_callback: StrongOptional::empty(),
+            on_writable_callback: StrongOptional::empty(),
+            on_close_callback: StrongOptional::empty(),
+            // Zig: `.{ .next = .epoch, .tag = .UpgradedDuplex }` — `init_paused` yields the same
+            // (next=EPOCH, state=PENDING, heap zeroed).
+            event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::UpgradedDuplex),
             current_timeout: 0,
         }
     }

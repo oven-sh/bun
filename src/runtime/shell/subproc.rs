@@ -1571,7 +1571,26 @@ impl PipeReader {
     }
 
     pub fn on_captured_writer_done(&mut self) {
-        self.try_signal_done_to_cmd().run();
+        let y = self.try_signal_done_to_cmd();
+        self.run_yield(y);
+    }
+
+    /// Drive a `Yield` from inside an async I/O callback. Mirrors
+    /// `IOWriter::run_yield` / `IOReader::run_yield`: requires `interp` to
+    /// have been wired; if null, the continuation is dropped (debug-asserts
+    /// it was already terminal).
+    pub(crate) fn run_yield(&self, y: Yield) {
+        let interp = self.interp;
+        if interp.is_null() {
+            debug_assert!(
+                matches!(y, Yield::Done | Yield::Suspended | Yield::Failed),
+                "PipeReader async callback fired without interp backref"
+            );
+            return;
+        }
+        // SAFETY: interp outlives every PipeReader (it owns the Cmd that
+        // spawned the subprocess holding this reader). Single-threaded.
+        y.run(unsafe { &mut *interp });
     }
 
     pub fn create(

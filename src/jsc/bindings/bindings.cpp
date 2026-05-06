@@ -1101,6 +1101,12 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                 }
             }
             // Backward: every element in set2 has a deep-equal match in set1.
+            // Pass (key1, key2) in the same order as the forward pass. Argument
+            // order into Bun__deepEquals is what's recorded on the cycle-detection
+            // stack; reversing it here would break cycle detection for
+            // self-referential Sets (the (a, b) entry from forward wouldn't match
+            // a backward (b, a) lookup). matchAsymmetricMatcher handles matchers
+            // on either side, so this doesn't affect asymmetric-matcher semantics.
             {
                 auto iter2 = JSSetIterator::create(vm, globalObject->setIteratorStructure(), set2, IterationKind::Keys);
                 RETURN_IF_EXCEPTION(scope, {});
@@ -1111,7 +1117,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                     JSValue key1;
                     bool found = false;
                     while (iter1->next(globalObject, key1)) {
-                        bool equal = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key2, key1, gcBuffer, stack, scope, false);
+                        bool equal = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key1, key2, gcBuffer, stack, scope, false);
                         RETURN_IF_EXCEPTION(scope, {});
                         if (equal) {
                             found = true;
@@ -1233,6 +1239,8 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                 }
             }
             // Backward: every (k2, v2) in map2 has a deep-equal entry in map1.
+            // Pass (k1, k2) / (v1, v2) in the same order as forward — see the Set
+            // backward comment for why ordering matters for cycle detection.
             {
                 auto iter2 = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), map2, IterationKind::Entries);
                 RETURN_IF_EXCEPTION(scope, {});
@@ -1243,10 +1251,10 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                     JSValue key1, value1;
                     bool found = false;
                     while (iter1->nextKeyValue(globalObject, key1, value1)) {
-                        bool keysEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key2, key1, gcBuffer, stack, scope, false);
+                        bool keysEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key1, key2, gcBuffer, stack, scope, false);
                         RETURN_IF_EXCEPTION(scope, {});
                         if (keysEqual) {
-                            bool valuesEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, value2, value1, gcBuffer, stack, scope, false);
+                            bool valuesEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, value1, value2, gcBuffer, stack, scope, false);
                             RETURN_IF_EXCEPTION(scope, {});
                             if (valuesEqual) {
                                 found = true;

@@ -121,3 +121,33 @@ test("expect().toEqual with expect.anything in Map", () => {
     ]),
   );
 });
+
+test("expect().toEqual with self-referential Sets does not stack overflow", () => {
+  // Both passes of the two-way subset check must preserve cycle detection
+  // (consistent argument order to Bun__deepEquals).
+  const a = new Set<unknown>();
+  a.add(89);
+  a.add("hello");
+  a.add({ a: 1 });
+  a.add([1, 2, 3]);
+  a.add(a);
+  const b = new Set<unknown>();
+  b.add(89);
+  b.add("hello");
+  b.add(b);
+  b.add({ a: 1 });
+  b.add([1, 2, 3]);
+  expect(a).toEqual(b);
+  expect(b).toEqual(a);
+});
+
+test("expect().toEqual with self-referential Maps does not stack overflow", () => {
+  const a = new Map<unknown, unknown>();
+  a.set("self", a);
+  a.set("x", 1);
+  const b = new Map<unknown, unknown>();
+  b.set("x", 1);
+  b.set("self", b);
+  expect(a).toEqual(b);
+  expect(b).toEqual(a);
+});

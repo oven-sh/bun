@@ -370,38 +370,40 @@ pub mod Jest {
         };
         module.put(global_object, b"xdescribe", xdescribe_scope_functions);
 
+        // `#[bun_jsc::host_fn]` emits a `__jsc_host_{name}` shim with the raw
+        // C-ABI `JSHostFn` signature; pass that to JSFunction::create.
         module.put(
             global_object,
             b"beforeEach",
-            jsc::JSFunction::create(global_object, "beforeEach", generic_hook::before_each, 1, Default::default()),
+            jsc::JSFunction::create(global_object, "beforeEach", generic_hook::__jsc_host_before_each, 1, Default::default()),
         );
         module.put(
             global_object,
             b"beforeAll",
-            jsc::JSFunction::create(global_object, "beforeAll", generic_hook::before_all, 1, Default::default()),
+            jsc::JSFunction::create(global_object, "beforeAll", generic_hook::__jsc_host_before_all, 1, Default::default()),
         );
         module.put(
             global_object,
             b"afterAll",
-            jsc::JSFunction::create(global_object, "afterAll", generic_hook::after_all, 1, Default::default()),
+            jsc::JSFunction::create(global_object, "afterAll", generic_hook::__jsc_host_after_all, 1, Default::default()),
         );
         module.put(
             global_object,
             b"afterEach",
-            jsc::JSFunction::create(global_object, "afterEach", generic_hook::after_each, 1, Default::default()),
+            jsc::JSFunction::create(global_object, "afterEach", generic_hook::__jsc_host_after_each, 1, Default::default()),
         );
         module.put(
             global_object,
             b"onTestFinished",
-            jsc::JSFunction::create(global_object, "onTestFinished", generic_hook::on_test_finished, 1, Default::default()),
+            jsc::JSFunction::create(global_object, "onTestFinished", generic_hook::__jsc_host_on_test_finished, 1, Default::default()),
         );
         module.put(
             global_object,
             b"setDefaultTimeout",
-            jsc::JSFunction::create(global_object, "setDefaultTimeout", js_set_default_timeout, 1, Default::default()),
+            jsc::JSFunction::create(global_object, "setDefaultTimeout", __jsc_host_js_set_default_timeout, 1, Default::default()),
         );
-        module.put(global_object, b"expect", Expect::js::get_constructor(global_object));
-        module.put(global_object, b"expectTypeOf", ExpectTypeOf::js::get_constructor(global_object));
+        module.put(global_object, b"expect", jsc::codegen::js::get_constructor::<Expect>(global_object));
+        module.put(global_object, b"expectTypeOf", jsc::codegen::js::get_constructor::<ExpectTypeOf>(global_object));
 
         // will add more 9 properties in the module here so we need to allocate 23 properties
         create_mock_objects(global_object, module);

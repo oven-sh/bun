@@ -167,11 +167,26 @@ pub mod node_types {
         pub fn fd(&self) -> Fd {
             match self { Self::Fd(fd) => *fd, Self::Path(_) => unreachable!("PathOrFileDescriptor::fd() on .path") }
         }
+        /// Zig: `deinit()` — only the `.path` arm owns memory; fds are not closed.
+        #[inline]
+        pub fn deinit(&self) {}
     }
     /// `node.PathOrBlob` — used by `Blob.writeFile*`.
     pub enum PathOrBlob {
         Path(PathOrFileDescriptor),
         Blob(crate::webcore::blob::Blob),
+    }
+    impl PathOrBlob {
+        pub fn from_js_no_copy(
+            _ctx: &bun_jsc::JSGlobalObject,
+            _args: &mut bun_jsc::ArgumentsSlice,
+        ) -> bun_jsc::JsResult<PathOrBlob> {
+            todo!("blocked_on: crate::node::types::PathOrBlob::from_js_no_copy (webcore::node_types stub swap)")
+        }
+        #[inline]
+        pub fn as_blob(&self) -> &crate::webcore::blob::Blob {
+            match self { Self::Blob(b) => b, _ => unreachable!("PathOrBlob is not .blob") }
+        }
     }
 }
 

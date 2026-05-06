@@ -662,7 +662,9 @@ pub mod async_ {
                 Maybe::Err(err) => {
                     (this.completion)(
                         this.completion_ctx,
-                        Maybe::Err(err.with_path(Box::<[u8]>::from(err.path()))),
+                        // `with_path` already clones into a fresh `Box<[u8]>`; pass the
+                        // existing path slice (Zig duped it explicitly).
+                        Maybe::Err(err.with_path(&err.path)),
                     );
                 }
                 Maybe::Ok(_) => {

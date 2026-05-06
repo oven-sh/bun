@@ -1,18 +1,16 @@
 use core::mem::offset_of;
-use std::sync::Arc;
 
 use bun_collections::BabyList;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
-use crate::webcore::blob::{self, Blob};
-use crate::webcore::blob::Store as BlobStore;
+use crate::webcore::blob::{self, Blob, StoreRef};
 use crate::webcore::readable_stream;
 use crate::webcore::streams;
 
 pub struct ByteBlobLoader {
     pub offset: blob::SizeType,
     // LIFETIMES.tsv: SHARED — ref() on setup, deref() in clearData
-    pub store: Option<Arc<BlobStore>>,
+    pub store: Option<StoreRef>,
     pub chunk_size: blob::SizeType,
     pub remain: blob::SizeType,
     pub done: bool,

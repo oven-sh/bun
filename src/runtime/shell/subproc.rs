@@ -958,14 +958,16 @@ impl Writable {
     pub fn close(&mut self) {
         match self {
             Writable::Pipe(pipe) => {
-                let _ = pipe.end(None);
+                // SAFETY: single-thread; raw mut access mirrors Zig.
+                let _ = unsafe { (*(Arc::as_ptr(pipe) as *mut FileSink)).end(None) };
             }
             Writable::Memfd(fd) | Writable::Fd(fd) => {
                 fd.close();
                 *self = Writable::Ignore;
             }
             Writable::Buffer(buffer) => {
-                buffer.close();
+                // SAFETY: RefPtr data is live.
+                unsafe { (*buffer.data.as_ptr()).close() };
             }
             Writable::Ignore => {}
             Writable::Inherit => {}

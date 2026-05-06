@@ -451,12 +451,12 @@ pub mod codegen_stub {
     }
 }
 
-#[bun_jsc::JsClass]
+#[bun_jsc::JsClass(no_construct)]
 pub struct UDPSocket {
     pub config: UDPSocketConfig,
 
     pub socket: Option<*mut uws::udp::Socket>,
-    pub loop_: &'static uws::Loop,
+    pub loop_: *mut uws::Loop,
 
     // Stored as `*const` because we only ever re-borrow it as `&JSGlobalObject`
     // (see Zig spec: `globalThis: *JSGlobalObject` is read-only at every use site).

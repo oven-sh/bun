@@ -1637,7 +1637,11 @@ impl JSValkeyClient {
         ) {
             Ok(p) => p,
             Err(err) => {
-                return protocol::valkey_error_to_js(global, "Failed to send PUBLISH command", err)
+                return Ok(protocol::valkey_error_to_js(
+                    global,
+                    Some(b"Failed to send PUBLISH command"),
+                    err,
+                ));
             }
         };
 
@@ -1655,7 +1659,7 @@ impl JSValkeyClient {
         let mut redis_channels: Vec<JSArgument> = Vec::with_capacity(1);
 
         if !handler_callback.is_callable() {
-            return global.throw_invalid_argument_type("subscribe", "listener", "function");
+            return Err(global.throw_invalid_argument_type("subscribe", "listener", "function"));
         }
 
         // The first argument given is the channel or may be an array of channels.

@@ -301,18 +301,18 @@ pub fn bun_random_uuid_v7(global: &JSGlobalObject, callframe: &CallFrame) -> JsR
 pub fn bun_random_uuid_v5(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments = callframe.arguments_undef::<3>();
 
-    if arguments.is_empty() || arguments[0].is_undefined_or_null() {
+    if arguments.len == 0 || arguments.ptr[0].is_undefined_or_null() {
         return Err(global
-            .ERR(
+            .err(
                 bun_jsc::ErrorCode::INVALID_ARG_TYPE,
                 format_args!("The \"name\" argument must be specified"),
             )
             .throw());
     }
 
-    if arguments.len() < 2 || arguments[1].is_undefined_or_null() {
+    if arguments.len < 2 || arguments.ptr[1].is_undefined_or_null() {
         return Err(global
-            .ERR(
+            .err(
                 bun_jsc::ErrorCode::INVALID_ARG_TYPE,
                 format_args!("The \"namespace\" argument must be specified"),
             )
@@ -320,13 +320,13 @@ pub fn bun_random_uuid_v5(global: &JSGlobalObject, callframe: &CallFrame) -> JsR
     }
 
     let encoding: Encoding = 'brk: {
-        if arguments.len() > 2 && !arguments[2].is_undefined() {
-            if arguments[2].is_string() {
-                break 'brk match Encoding::from_js(arguments[2], global)? {
+        if arguments.len > 2 && !arguments.ptr[2].is_undefined() {
+            if arguments.ptr[2].is_string() {
+                break 'brk match Encoding::from_js(arguments.ptr[2], global)? {
                     Some(e) => e,
                     None => {
                         return Err(global
-                            .ERR(
+                            .err(
                                 bun_jsc::ErrorCode::UNKNOWN_ENCODING,
                                 format_args!("Encoding must be one of base64, base64url, hex, or buffer"),
                             )
@@ -339,8 +339,8 @@ pub fn bun_random_uuid_v5(global: &JSGlobalObject, callframe: &CallFrame) -> JsR
         break 'brk Encoding::Hex;
     };
 
-    let name_value = arguments[0];
-    let namespace_value = arguments[1];
+    let name_value = arguments.ptr[0];
+    let namespace_value = arguments.ptr[1];
 
     // `name` is a ZigString.Slice in Zig (borrow-or-own UTF-8). Port as bun_str::ZigStringSlice.
     let name: bun_str::ZigStringSlice = 'brk: {

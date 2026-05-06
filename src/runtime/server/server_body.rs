@@ -1596,9 +1596,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         httplog!("onReload");
 
         // SAFETY: app is set when reload is called
-        unsafe { &*self.app.unwrap() }.clear_routes();
+        unsafe { &mut *self.app.unwrap() }.clear_routes();
         if Self::HAS_H3 {
-            if let Some(h3a) = self.h3_app { unsafe { &*h3a }.clear_routes(); }
+            if let Some(h3a) = self.h3_app { unsafe { &mut *h3a }.clear_routes(); }
         }
 
         // only reload those two, but ignore if they're not specified.
@@ -1616,7 +1616,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             self.config.on_error = new_config.on_error.take();
         }
 
-        if let Some(ws) = &mut new_config.websocket {
+        if let Some(mut ws) = new_config.websocket.take() {
             ws.handler.flags.set(super::web_socket_server_context::HandlerFlags::SSL, SSL);
             if !ws.handler.on_message.is_empty() || !ws.handler.on_open.is_empty() {
                 if let Some(old_ws) = &self.config.websocket {
@@ -1624,7 +1624,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
                 ws.global_object = global as *const _;
                 // Zig assigns `ws.*` (move).
-                self.config.websocket = new_config.websocket.take();
+                self.config.websocket = Some(ws);
             } else {
                 // We don't replace the existing websocket config here, but
                 // the new one was already protected in WebSocketServerContext.onCreate.

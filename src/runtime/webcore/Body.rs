@@ -181,9 +181,20 @@ pub struct PendingValue {
 impl PendingValue {
     pub fn new(global: &JSGlobalObject) -> Self {
         Self {
+            global: global as *const _,
+            ..Default::default()
+        }
+    }
+}
+
+impl Default for PendingValue {
+    /// PORT NOTE: Zig requires `global` to be set; callers using `..Default::default()`
+    /// must initialize `global` explicitly. Null here is the only viable Rust default.
+    fn default() -> Self {
+        Self {
             promise: None,
             readable: webcore::readable_stream::Strong::default(),
-            global: global as *const _,
+            global: core::ptr::null(),
             task: None,
             on_receive_value: None,
             on_start_buffering: None,

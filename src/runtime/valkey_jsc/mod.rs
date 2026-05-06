@@ -57,6 +57,13 @@ pub use protocol_jsc::{resp_value_to_js, resp_value_to_js_with_options, valkey_e
 pub mod valkey_command {
     use super::*;
 
+    // Zig's `ValkeyCommand.zig` is a file-as-struct: it is both the namespace
+    // *and* the `Command` type. `index.rs` re-exports it via
+    // `super::valkey_command::ValkeyCommand`, so surface the module alias here
+    // publicly (the parent's `pub use valkey_command as ValkeyCommand` only
+    // reached this scope through the private `use super::*` glob).
+    pub use super::ValkeyCommand;
+
     bitflags::bitflags! {
         #[repr(transparent)]
         #[derive(Clone, Copy, PartialEq, Eq)]

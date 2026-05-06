@@ -16,7 +16,7 @@ use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
 
 // ── create_bun_socket_error_t.toJS / us_bun_verify_error_t.toJS ────────────
 pub fn create_bun_socket_error_to_js(
-    this: CreateBunSocketError,
+    this: create_bun_socket_error_t,
     global_object: &JSGlobalObject,
 ) -> JSValue {
     match this {
@@ -24,23 +24,23 @@ pub fn create_bun_socket_error_to_js(
         // bad cert/key/DH return NULL with .none and the detail is on the
         // BoringSSL error queue. Surfacing it here keeps every
         // `createSSLContext(...) orelse return err.toJS()` site correct.
-        CreateBunSocketError::None => {
+        create_bun_socket_error_t::none => {
             // SAFETY: ERR_get_error is thread-local queue read, always safe to call.
             boringssl::err_to_js(global_object, unsafe {
                 bun_boringssl_sys::ERR_get_error()
             })
         }
         // TODO(port): exact shape of `JSGlobalObject::ERR(code, fmt, args)` builder
-        CreateBunSocketError::LoadCaFile => global_object
+        create_bun_socket_error_t::load_ca_file => global_object
             .ERR(bun_jsc::ErrorCode::BORINGSSL, format_args!("Failed to load CA file"))
             .to_js(),
-        CreateBunSocketError::InvalidCaFile => global_object
+        create_bun_socket_error_t::invalid_ca_file => global_object
             .ERR(bun_jsc::ErrorCode::BORINGSSL, format_args!("Invalid CA file"))
             .to_js(),
-        CreateBunSocketError::InvalidCa => global_object
+        create_bun_socket_error_t::invalid_ca => global_object
             .ERR(bun_jsc::ErrorCode::BORINGSSL, format_args!("Invalid CA"))
             .to_js(),
-        CreateBunSocketError::InvalidCiphers => global_object
+        create_bun_socket_error_t::invalid_ciphers => global_object
             .ERR(bun_jsc::ErrorCode::BORINGSSL, format_args!("Invalid ciphers"))
             .to_js(),
     }

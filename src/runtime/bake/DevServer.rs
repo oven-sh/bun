@@ -149,8 +149,8 @@ pub enum TestingBatchEvents {
 /// There is only ever one bundle executing at the same time, since all bundles
 /// inevitably share state. This bundle is asynchronous, storing its state here
 /// while in-flight. All allocations held by `.bv2.graph.heap`'s arena
-pub struct CurrentBundle {
-    pub bv2: Box<BundleV2>,
+pub struct CurrentBundle<'a> {
+    pub bv2: Box<BundleV2<'a>>,
     /// Information BundleV2 needs to finalize the bundle
     pub start_data: bundler::DevServerInput,
     /// Started when the bundle was queued

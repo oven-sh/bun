@@ -159,21 +159,15 @@ mod ext {
         DashedIdentReference::parse_with_options(input, options)
     }
 
-    /// Inline of `DashedIdentReference::to_css` (gated in `values/ident.rs`).
-    /// The `css_module.reference_dashed` branch is itself still gated
-    /// (`css_modules.rs`); fall through to `write_dashed_ident` which is
-    /// the non-CSS-Modules path and the tail of the original body.
-    // TODO(port): CSS-Modules dashed-ident remapping (ident.zig:44-52) is
-    // skipped — blocked on `CssModule::reference_dashed` un-gating in
-    // css_modules.rs. Once that lands, replace this body with a forward to
-    // `DashedIdentReference::to_css` (ident.rs). Non-CSS-Modules output is
-    // byte-identical today; with `dashed_idents` enabled the original ident
-    // is emitted instead of the hashed/remapped name.
+    /// Forwarder to `DashedIdentReference::to_css` (now un-gated in
+    /// `values/ident.rs`). `CssModule::reference_dashed` is real; the
+    /// CSS-Modules `dashed_idents` remapping path (ident.zig:44-52) is wired.
+    #[inline]
     pub(super) fn dashed_ident_ref_to_css(
         this: &DashedIdentReference,
         dest: &mut Printer,
     ) -> PrintResult<()> {
-        dest.write_dashed_ident(&this.ident, false)
+        this.to_css(dest)
     }
 
     /// Inline of `CustomIdent::to_css` (gated in `values/ident.rs` on

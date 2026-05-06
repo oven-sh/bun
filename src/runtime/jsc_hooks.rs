@@ -923,9 +923,12 @@ fn transpile_source_code_inner(
             // return, `disable_transpilying`, already_bundled, empty `.cjs`,
             // cache-hit, AsyncModule, the wasm recurse, and the print error.
             // PORT NOTE: reshaped for borrowck — capture raw pointers so the
-            // guard does not alias the later `&mut input_file_fd`
-            // (`file_fd_ptr`) / `&mut should_close_input_file_fd`
-            // (`maybe_watch_file`) borrows.
+            // guard does not alias the parser's `file_fd_ptr` /
+            // `maybe_watch_file` borrows. **All** later access to
+            // `should_close_input_file_fd` / `input_file_fd` MUST go through
+            // these raw pointers — taking a fresh `&mut` to either local would
+            // invalidate the guard's tag under Stacked Borrows, making the
+            // deferred `.close()` (which the parse path always reaches) UB.
             let should_close_ptr: *mut bool = &mut should_close_input_file_fd;
             let input_file_fd_ptr: *mut bun_sys::Fd = &mut input_file_fd;
             let _fd_guard = scopeguard::guard((), move |_| {
@@ -1010,7 +1013,11 @@ fn transpile_source_code_inner(
                     loader,
                     dirname_fd: bun_sys::Fd::INVALID,
                     file_descriptor: fd,
-                    file_fd_ptr: Some(&mut input_file_fd),
+                    // SAFETY: `input_file_fd_ptr` points at this frame's
+                    // `input_file_fd`; reborrow through the raw pointer so the
+                    // `_fd_guard` scopeguard's tag is not invalidated by a
+                    // fresh `&mut` (see PORT NOTE on `_fd_guard`).
+                    file_fd_ptr: Some(unsafe { &mut *input_file_fd_ptr }),
                     file_hash: Some(hash),
                     macro_remappings,
                     jsx: unsafe { (*jsc_vm).transpiler.options.jsx.clone() },
@@ -1066,10 +1073,12 @@ fn transpile_source_code_inner(
                 let Some(mut parse_result) = parse_result else {
                     // Spec :273-295 — register with watcher even on parse failure.
                     if !disable_transpilying {
+                        // SAFETY: see PORT NOTE on `_fd_guard` — reborrow via
+                        // the raw pointers so the guard stays valid.
                         maybe_watch_file(
                             jsc_vm,
-                            &mut should_close_input_file_fd,
-                            input_file_fd,
+                            unsafe { &mut *should_close_ptr },
+                            unsafe { *input_file_fd_ptr },
                             is_node_override,
                             path,
                             hash,
@@ -1111,10 +1120,12 @@ fn transpile_source_code_inner(
 
                 // Spec :319-336 — register with watcher on success too.
                 if !disable_transpilying {
+                    // SAFETY: see PORT NOTE on `_fd_guard` — reborrow via the
+                    // raw pointers so the guard stays valid.
                     maybe_watch_file(
                         jsc_vm,
-                        &mut should_close_input_file_fd,
-                        input_file_fd,
+                        unsafe { &mut *should_close_ptr },
+                        unsafe { *input_file_fd_ptr },
                         is_node_override,
                         path,
                         hash,

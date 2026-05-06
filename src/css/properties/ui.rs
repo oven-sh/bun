@@ -1,6 +1,7 @@
 #![allow(unused_imports, dead_code)]
 use crate as css;
 
+use css::css_properties::Property;
 use css::{Printer, PrintErr, SmallList};
 
 use css::css_values::number::CSSNumber;
@@ -201,12 +202,12 @@ pub struct ColorSchemeHandler;
 impl ColorSchemeHandler {
     pub fn handle_property(
         &mut self,
-        property: &css::Property,
+        property: &Property,
         dest: &mut css::DeclarationList,
-        context: &mut css::PropertyHandlerContext,
+        context: &mut PropertyHandlerContext,
     ) -> bool {
         match property {
-            css::Property::ColorScheme(color_scheme_) => {
+            Property::ColorScheme(color_scheme_) => {
                 let color_scheme: ColorScheme = *color_scheme_;
                 if !context.targets.is_compatible(css::compat::Feature::LightDark) {
                     if color_scheme.contains(ColorScheme::LIGHT) {
@@ -230,21 +231,21 @@ impl ColorSchemeHandler {
                 }
                 // PORT NOTE: Zig pushed `property.deepClone(allocator)`; ColorScheme is
                 // `Copy` (bitflags u8), so reconstruct the variant directly.
-                dest.push(css::Property::ColorScheme(color_scheme));
+                dest.push(Property::ColorScheme(color_scheme));
                 true
             }
             _ => false,
         }
     }
 
-    pub fn finalize(&mut self, _: &mut css::DeclarationList<'_>, _: &mut css::PropertyHandlerContext<'_>) {}
+    pub fn finalize(&mut self, _: &mut css::DeclarationList<'_>, _: &mut PropertyHandlerContext<'_>) {}
 }
 
-fn define_var(name: &'static [u8], value: css::Token) -> css::Property {
+fn define_var(name: &'static [u8], value: css::Token) -> Property {
     // PORT NOTE: `name` is `&'static [u8]` because all call sites pass byte-string literals.
     // `TokenList.v` is `Vec<TokenOrValue>` (std Vec — see custom.rs:320), so no arena
     // threading is needed here despite Zig's `ArrayList(TokenOrValue)`.
-    css::Property::Custom(css::css_properties::custom::CustomProperty {
+    Property::Custom(css::css_properties::custom::CustomProperty {
         name: css::css_properties::custom::CustomPropertyName::Custom(DashedIdent { v: name }),
         value: css::TokenList {
             v: vec![css::css_properties::custom::TokenOrValue::Token(value)],

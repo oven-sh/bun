@@ -2,7 +2,7 @@ use crate::css_parser as css;
 use crate::css_parser::{CssResult, Maybe, Parser, PrintErr, Printer, Token};
 use crate::values::angle::Angle;
 use crate::values::calc::{Calc, MathFunction};
-use crate::values::number::CSSNumber;
+use crate::values::number::{CSSNumber, CSSNumberFns};
 use crate::values::percentage::DimensionPercentage;
 use crate::values::protocol;
 use crate::targets::Browsers;

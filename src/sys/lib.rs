@@ -329,6 +329,9 @@ impl Tag {
     pub const ppoll: Tag = Tag(62);   pub const fallocate: Tag = Tag(63);
     pub const copy_file_range: Tag = Tag(64);
     pub const pwritev: Tag = Tag(65);
+    pub const getdents64: Tag = Tag(66);
+    pub const getdirentries64: Tag = Tag(67);
+    pub const NtQueryDirectoryFile: Tag = Tag(68);
     pub const TODO: Tag = Tag(0);
     /// Full tag enum (~200 variants) lives in `lib_draft_b1.rs`. This subset
     /// covers the un-gated posix surface; B-2 widens as syscalls land.
@@ -350,7 +353,8 @@ impl Tag {
             54 => "fcopyfile", 55 => "mmap", 56 => "munmap", 57 => "fchdir",
             58 => "epoll_ctl", 59 => "kqueue", 60 => "kevent", 61 => "inotify",
             62 => "ppoll", 63 => "fallocate", 64 => "copy_file_range",
-            65 => "pwritev",
+            65 => "pwritev", 66 => "getdents64", 67 => "getdirentries64",
+            68 => "NtQueryDirectoryFile",
             _ => "unknown",
         }
     }

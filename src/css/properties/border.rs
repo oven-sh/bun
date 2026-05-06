@@ -103,7 +103,7 @@ where
             });
         }
 
-        Err(input.new_custom_error(css::ParserError::invalid_declaration()))
+        Err(input.new_custom_error(css::ParserError::invalid_declaration))
     }
 
     fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {

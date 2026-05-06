@@ -1008,6 +1008,37 @@ macro_rules! impl_generic_parse_tocss {
             }
         }
     )+};
+    // `@stub` arm: the leaf type's inherent `parse`/`to_css` is still
+    // `#[cfg(any())]`-gated (its body bottoms out on a not-yet-ported helper).
+    // Emitting a `todo!()` trait body lets `Property::{parse,value_to_css}`
+    // compile end-to-end now; the stub becomes a forwarding impl when the
+    // inherent un-gates (move the type to the plain arm above).
+    (@stub $($ty:ty),+ $(,)?) => {$(
+        impl $crate::generics::Parse for $ty {
+            #[inline]
+            fn parse(_input: &mut $crate::css_parser::Parser) -> $crate::css_parser::CssResult<Self> {
+                todo!(concat!("blocked_on: ", stringify!($ty), "::parse — inherent body still #[cfg(any())]-gated"))
+            }
+        }
+        impl $crate::generics::ParseWithOptions for $ty {
+            #[inline]
+            fn parse_with_options(
+                _input: &mut $crate::css_parser::Parser,
+                _options: &$crate::css_parser::ParserOptions,
+            ) -> $crate::css_parser::CssResult<Self> {
+                todo!(concat!("blocked_on: ", stringify!($ty), "::parse — inherent body still #[cfg(any())]-gated"))
+            }
+        }
+        impl $crate::generics::ToCss for $ty {
+            #[inline]
+            fn to_css(
+                &self,
+                _dest: &mut $crate::printer::Printer,
+            ) -> ::core::result::Result<(), $crate::PrintErr> {
+                todo!(concat!("blocked_on: ", stringify!($ty), "::to_css — inherent body still #[cfg(any())]-gated"))
+            }
+        }
+    )+};
 }
 
 /// `ParseWithOptions` for primitives — same fallthrough as the macro, but

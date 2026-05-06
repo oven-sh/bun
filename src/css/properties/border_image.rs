@@ -177,10 +177,11 @@ impl BorderImage {
     }
 
     pub fn get_fallbacks(&mut self, allocator: &Arena, targets: css::targets::Targets) -> SmallList<BorderImage, 6> {
-        let mut fallbacks = self.source.get_fallbacks(allocator, targets);
+        let fallbacks = self.source.get_fallbacks(allocator, targets);
         // PORT NOTE: `defer fallbacks.deinit(allocator)` dropped — SmallList drops at scope exit.
+        // SmallList has no `drain()`; consume via `to_owned_slice()` (moves elements out).
         let mut res = SmallList::<BorderImage, 6>::init_capacity(fallbacks.len());
-        for fallback in fallbacks.drain() {
+        for fallback in fallbacks.to_owned_slice().into_vec() {
             let mut clone = self.deep_clone(allocator);
             clone.source = fallback;
             res.append(clone);
@@ -449,6 +450,30 @@ pub struct BorderImageHandler {
     pub has_any: bool,
 }
 
+// PORT NOTE: `Rect::is_compatible` is bounded on `T: values::protocol::IsCompatible`,
+// which `BorderImageSideWidth` / `LengthOrNumber` don't yet impl. Hand-roll the
+// per-side check via the inherent methods so `flush_helper!` stays uniform.
+#[inline]
+fn rect_side_width_is_compatible(
+    r: &Rect<BorderImageSideWidth>,
+    browsers: css::targets::Browsers,
+) -> bool {
+    r.top.is_compatible(browsers)
+        && r.right.is_compatible(browsers)
+        && r.bottom.is_compatible(browsers)
+        && r.left.is_compatible(browsers)
+}
+#[inline]
+fn rect_length_or_number_is_compatible(
+    r: &Rect<LengthOrNumber>,
+    browsers: css::targets::Browsers,
+) -> bool {
+    r.top.is_compatible(browsers)
+        && r.right.is_compatible(browsers)
+        && r.bottom.is_compatible(browsers)
+        && r.left.is_compatible(browsers)
+}
+
 impl BorderImageHandler {
     pub fn handle_property(
         &mut self,
@@ -462,11 +487,11 @@ impl BorderImageHandler {
         // using @field for comptime field access. Ported as macro_rules! to keep the
         // per-field name dispatch without reflection.
         macro_rules! flush_helper {
-            ($self:expr, $d:expr, $ctx:expr, $name:ident, $val:expr) => {
+            ($self:expr, $d:expr, $ctx:expr, $name:ident, $val:expr, $is_compat:expr) => {
                 if $self.$name.is_some()
                     && !$self.$name.as_ref().unwrap().eql($val)
                     && $ctx.targets.browsers.is_some()
-                    && $val.is_compatible($ctx.targets.browsers.unwrap())
+                    && $is_compat($val, $ctx.targets.browsers.unwrap())
                 {
                     $self.flush($d, $ctx);
                 }

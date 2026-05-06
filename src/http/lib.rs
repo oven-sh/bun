@@ -1342,7 +1342,7 @@ pub enum HTTPVerboseLevel {
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
-enum HTTPUpgradeState {
+pub enum HTTPUpgradeState {
     #[default]
     None = 0,
     Pending = 1,

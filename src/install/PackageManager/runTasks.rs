@@ -799,10 +799,23 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         // with the loop body. Guard runs on every `continue`/`?`/fallthrough.
         // Phase B: have the iterator yield a pool guard that puts back on Drop.
         let task_ptr = task as *mut Task;
-        let _put_task = scopeguard::guard((), |()| {
-            // SAFETY: `manager` and `task` are live for the whole loop iteration;
-            // guard drops at iteration end after all body borrows end.
-            unsafe { (*manager_ptr).preallocated_resolve_tasks.put(&mut *task_ptr) };
+        // SAFETY: shadow-reborrow so every body access to `task` is a child of
+        // `task_ptr`'s tag — provenance is preserved for the guard derefs because
+        // the body never touches the iterator's original `&mut`.
+        let task = unsafe { &mut *task_ptr };
+        // Iteration-local raw ptrs derived from the *shadows* (not the function-
+        // scope `manager_ptr`/`extract_ctx_ptr`). Under Stacked Borrows these are
+        // children of the shadow's Unique tag, so writing through them in a guard
+        // does NOT pop the shadow — the next loop iteration's use of `manager` /
+        // `extract_ctx` stays valid.
+        let mgr_iter_ptr: *mut PackageManager = manager;
+        let ctx_iter_ptr: *mut C::Ctx = extract_ctx;
+        let _ = ctx_iter_ptr; // used by `_resolve_guard` below
+        let _put_task = scopeguard::guard((), move |()| {
+            // SAFETY: `mgr_iter_ptr`/`task_ptr` are live for the whole iteration;
+            // body accesses go through reborrows of these pointers, so their tags
+            // are still on the borrow stack when the guard fires.
+            unsafe { (*mgr_iter_ptr).preallocated_resolve_tasks.put(&mut *task_ptr) };
         });
         manager.decrement_pending_tasks();
 

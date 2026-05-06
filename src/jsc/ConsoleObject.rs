@@ -1317,17 +1317,17 @@ pub fn format2(
             any = true;
 
             tag = formatter::Tag::get(this_value, global)?;
-            if matches!(tag.tag, TagPayload::String) && !fmt.remaining_values.is_empty() {
+            if matches!(tag.tag, TagPayload::String) && !fmt.remaining().is_empty() {
                 tag.tag = TagPayload::StringPossiblyFormatted;
             }
 
             fmt.format::<true>(tag, writer, this_value, global)?;
-            if fmt.remaining_values.is_empty() {
+            if fmt.remaining().is_empty() {
                 break;
             }
 
-            this_value = fmt.remaining_values[0];
-            fmt.remaining_values = &fmt.remaining_values[1..];
+            this_value = fmt.remaining()[0];
+            fmt.advance_remaining();
         }
         if level == MessageLevel::Error {
             let _ = writer.write_all(pfmt!("<r>", true).as_bytes());
@@ -1339,17 +1339,17 @@ pub fn format2(
             }
             any = true;
             tag = formatter::Tag::get(this_value, global)?;
-            if matches!(tag.tag, TagPayload::String) && !fmt.remaining_values.is_empty() {
+            if matches!(tag.tag, TagPayload::String) && !fmt.remaining().is_empty() {
                 tag.tag = TagPayload::StringPossiblyFormatted;
             }
 
             fmt.format::<false>(tag, writer, this_value, global)?;
-            if fmt.remaining_values.is_empty() {
+            if fmt.remaining().is_empty() {
                 break;
             }
 
-            this_value = fmt.remaining_values[0];
-            fmt.remaining_values = &fmt.remaining_values[1..];
+            this_value = fmt.remaining()[0];
+            fmt.advance_remaining();
         }
     }
 
@@ -2093,7 +2093,7 @@ pub mod formatter {
                             break;
                         }
 
-                        if self.remaining_values.is_empty() {
+                        if self.remaining().is_empty() {
                             break;
                         }
 
@@ -2128,8 +2128,8 @@ pub mod formatter {
                         i = 0;
                         hit_percent = true;
                         len = slice.len() as u32;
-                        let next_value = self.remaining_values[0];
-                        self.remaining_values = &self.remaining_values[1..];
+                        let next_value = self.remaining()[0];
+                        self.advance_remaining();
 
                         // https://console.spec.whatwg.org/#formatter
                         const MAX_BEFORE_E_NOTATION: f64 = 1.0e21;
@@ -2329,7 +2329,7 @@ pub mod formatter {
                                 str.deref_();
                             }
                         }
-                        if self.remaining_values.is_empty() {
+                        if self.remaining().is_empty() {
                             break;
                         }
                     }

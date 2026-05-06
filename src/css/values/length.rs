@@ -139,7 +139,7 @@ macro_rules! define_length_units {
             /// If `self` and `other` are the same unit, apply `f(a, b)` and return
             /// the result in that unit; else `None`.
             #[inline]
-            fn try_same_unit_op(&self, other: &Self, f: impl FnOnce(f32, f32) -> f32) -> Option<Self> {
+            fn try_same_unit_op(&self, other: &Self, f: impl Fn(f32, f32) -> f32) -> Option<Self> {
                 match (self, other) {
                     $( (Self::$variant(a), Self::$variant(b)) => Some(Self::$variant(f(*a, *b))), )*
                     _ => None,

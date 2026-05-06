@@ -172,7 +172,9 @@ impl DirectoryWatchStore {
     ) -> Result<(), InsertError> {
         debug_assert!(!specifier.is_empty());
         // TODO: watch the parent dir too.
-        let dev = self.owner();
+        // PORT NOTE: take a raw pointer so the &mut self borrow from owner() does
+        // not overlap subsequent self.* field accesses (Zig has no borrowck here).
+        let dev: *mut DevServer = self.owner();
 
         // SAFETY: file_path is a live IncrementalGraph key slice for the duration of this call.
         let file_path_slice = unsafe { &*file_path };
@@ -228,7 +230,8 @@ impl DirectoryWatchStore {
         // Try to use an existing open directory handle
         // SAFETY: server_transpiler is initialized by Framework::init_transpiler
         // before DevServer accepts requests / processes resolution failures.
-        let cache_fd: Option<Fd> = match unsafe { dev.server_transpiler.assume_init_mut() }
+        // `dev` is a valid *mut DevServer for the duration of this call.
+        let cache_fd: Option<Fd> = match unsafe { (*dev).server_transpiler.assume_init_mut() }
             .resolver
             .read_dir_info(dir_name_to_watch)
         {
@@ -297,8 +300,8 @@ impl DirectoryWatchStore {
         let key: Box<[u8]> =
             Box::<[u8]>::from(strings::paths::without_trailing_slash_windows_path(&dir_name));
 
-        let watch_index = match dev
-            .bun_watcher
+        // SAFETY: `dev` is a valid *mut DevServer for the duration of this call.
+        let watch_index = match unsafe { &mut (*dev).bun_watcher }
             .add_directory::<false>(fd, &dir_name, Watcher::get_hash(&dir_name))
         {
             bun_sys::Result::Err(_) => return Err(InsertError::Ignore),

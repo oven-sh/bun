@@ -1068,8 +1068,12 @@ impl JSValkeyClient {
         Ok(JSValue::UNDEFINED)
     }
 
+    // PORT NOTE: `host_fn(getter)`/`host_fn(setter)` macros don't pass the JS
+    // `this_value` through. The cached-slot accessors are codegen-stubbed
+    // (`todo!` bodies) anyway, so recover `this_value` from the JsRef.
     #[bun_jsc::host_fn(getter)]
-    pub fn get_on_connect(&self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
+    pub fn get_on_connect(&self, _global: &JSGlobalObject) -> JSValue {
+        let this_value = self.this_value.try_get().unwrap_or(JSValue::UNDEFINED);
         if let Some(value) = Js::onconnect_get_cached(this_value) {
             return value;
         }
@@ -1079,15 +1083,17 @@ impl JSValkeyClient {
     #[bun_jsc::host_fn(setter)]
     pub fn set_on_connect(
         &mut self,
-        this_value: JSValue,
         global_object: &JSGlobalObject,
         value: JSValue,
-    ) {
+    ) -> JsResult<bool> {
+        let this_value = self.this_value.try_get().unwrap_or(JSValue::UNDEFINED);
         Js::onconnect_set_cached(this_value, global_object, value);
+        Ok(true)
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_on_close(&self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
+    pub fn get_on_close(&self, _global: &JSGlobalObject) -> JSValue {
+        let this_value = self.this_value.try_get().unwrap_or(JSValue::UNDEFINED);
         if let Some(value) = Js::onclose_get_cached(this_value) {
             return value;
         }
@@ -1097,18 +1103,19 @@ impl JSValkeyClient {
     #[bun_jsc::host_fn(setter)]
     pub fn set_on_close(
         &mut self,
-        this_value: JSValue,
         global_object: &JSGlobalObject,
         value: JSValue,
-    ) {
+    ) -> JsResult<bool> {
+        let this_value = self.this_value.try_get().unwrap_or(JSValue::UNDEFINED);
         Js::onclose_set_cached(this_value, global_object, value);
+        Ok(true)
     }
 
     /// Safely add a timer with proper reference counting and event loop keepalive
     fn add_timer(&mut self, timer: *mut Timer::EventLoopTimer, next_timeout_ms: u32) {
         // PORT NOTE: reshaped for borrowck — `timer` aliases a field of self, so use raw ptr.
         self.ref_();
-        let _d = scopeguard::guard((), |_| self.deref());
+        let _d = deref_guard(self);
 
         // SAFETY: caller passes &mut self.timer or &mut self.reconnect_timer
         let timer_ref = unsafe { &mut *timer };
@@ -1123,16 +1130,21 @@ impl JSValkeyClient {
             return;
         }
 
-        // Store VM reference to use later
-        let vm = self.client.vm;
-
         // Set up timer and add to event loop
         let timer_ref = unsafe { &mut *timer };
-        timer_ref.next = timespec::ms_from_now(
-            timespec::ClockSource::AllowMockedTime,
+        let now = bun_core::Timespec::ms_from_now(
+            bun_core::TimespecMockMode::AllowMockedTime,
             i64::from(next_timeout_ms),
         );
-        vm.timer.insert(timer_ref);
+        // PORT NOTE: `bun_event_loop::Timespec` is a local stub distinct from
+        // `bun_core::Timespec`; convert by fields until B-2 unifies them.
+        timer_ref.next = Timer::Timespec { sec: now.sec, nsec: now.nsec };
+        // TODO(b2-blocked): VirtualMachine.timer is type-erased to `()` in
+        // Phase A; the real `vm.timer.insert(timer_ref)` lands with the
+        // high-tier timer heap. Recorded as blocked.
+        let _ = timer_ref;
+        todo!("blocked_on: bun_jsc::VirtualMachine::timer.insert");
+        #[allow(unreachable_code)]
         self.ref_();
     }
 
@@ -1141,14 +1153,14 @@ impl JSValkeyClient {
         // SAFETY: caller passes a field of self
         let timer_ref = unsafe { &mut *timer };
         if timer_ref.state == Timer::State::ACTIVE {
-            // Store VM reference to use later
-            let vm = self.client.vm;
-
             // Remove the timer from the event loop
-            vm.timer.remove(timer_ref);
+            // TODO(b2-blocked): see `add_timer` — `vm.timer.remove(timer_ref)`.
+            let _ = timer_ref;
+            todo!("blocked_on: bun_jsc::VirtualMachine::timer.remove");
 
             // self.add_timer() adds a reference to 'self' when the timer is
             // alive which is balanced here.
+            #[allow(unreachable_code)]
             self.deref();
         }
     }

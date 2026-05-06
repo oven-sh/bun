@@ -2020,7 +2020,9 @@ impl DevServer<'_> {
             styles: match framework_bundle.cached_css_file_array.get() {
                 Some(a) => a,
                 None => 'arr: {
-                    let js = self.generate_css_js_array(route_bundle)?;
+                    // SAFETY: see PORT NOTE on `self_ptr` above; `generate_css_js_array`
+                    // reads `client_graph`/`router` and writes nothing in `route_bundles`.
+                    let js = unsafe { &mut *self_ptr }.generate_css_js_array(route_bundle)?;
                     framework_bundle.cached_css_file_array = jsc::StrongOptional::create(js, global);
                     break 'arr js;
                 }
@@ -2130,8 +2132,14 @@ impl DevServer<'_> {
         resp: AnyResponse,
         method: Method,
     ) {
-        let route_bundle = self.route_bundle_ptr(route_bundle_index);
+        // PORT NOTE: erase `self` to a raw pointer so the `route_bundle`/`html`
+        // borrows don't conflict with the `&mut self` calls below (Zig held
+        // these as plain heap pointers).
+        let self_ptr = self as *mut Self;
+        // SAFETY: `self_ptr` accesses below touch disjoint fields of `*self`.
+        let route_bundle = unsafe { &mut *self_ptr }.route_bundle_ptr(route_bundle_index);
         debug_assert!(matches!(route_bundle.data, route_bundle::Data::Html(_)));
+        let route_bundle_ptr = route_bundle as *mut RouteBundle;
         let html = match &mut route_bundle.data {
             route_bundle::Data::Html(h) => h,
             _ => unreachable!(),
@@ -2140,14 +2148,17 @@ impl DevServer<'_> {
         let blob: *mut StaticRoute = match html.cached_response {
             Some(b) => b.as_ptr(),
             None => 'generate: {
-                let payload =
-                    self.generate_html_payload(route_bundle_index, route_bundle, html).expect("oom");
+                // SAFETY: `generate_html_payload` reads `route_bundle.data` /
+                // `client_graph` and never reallocates `route_bundles`.
+                let payload = unsafe { &mut *self_ptr }
+                    .generate_html_payload(route_bundle_index, unsafe { &mut *route_bundle_ptr }, html)
+                    .expect("oom");
 
                 let route_ptr = StaticRoute::init_from_any_blob(
                     &crate::webcore::AnyBlob::from_owned_slice(payload),
                     crate::server::static_route::InitFromBytesOptions {
                         mime_type: Some(&MimeType::HTML),
-                        server: self.server,
+                        server: unsafe { &*self_ptr }.server,
                         ..Default::default()
                     },
                 );
@@ -2206,8 +2217,12 @@ impl DevServer<'_> {
         }
 
         self.graph_safety_lock.lock();
-        let _lock = scopeguard::guard((), |_| self.graph_safety_lock.unlock());
-        // TODO(port): scopeguard borrow conflict — Phase B reshape
+        // PORT NOTE: scopeguard captured `&mut self`; erase to raw pointer.
+        let self_ptr = self as *mut Self;
+        let _lock = scopeguard::guard((), move |_| {
+            // SAFETY: runs at scope exit, no other `self` borrow live.
+            unsafe { (*self_ptr).graph_safety_lock.unlock() }
+        });
 
         // Prepare bitsets for tracing
         // PERF(port): was stack-fallback (65536)
@@ -2318,16 +2333,23 @@ impl DevServer<'_> {
         resp: AnyResponse,
         method: Method,
     ) {
-        let route_bundle = self.route_bundle_ptr(bundle_index);
+        // PORT NOTE: erase `self` to a raw pointer so `route_bundle` borrow
+        // doesn't conflict with `generate_client_bundle(&mut self, ..)`.
+        let self_ptr = self as *mut Self;
+        // SAFETY: `self_ptr` accesses below touch disjoint fields of `*self`.
+        let route_bundle = unsafe { &mut *self_ptr }.route_bundle_ptr(bundle_index);
         let client_bundle: *mut StaticRoute = match route_bundle.client_bundle {
             Some(cb) => cb.as_ptr(),
             None => 'generate: {
-                let payload = self.generate_client_bundle(route_bundle).expect("oom");
+                // SAFETY: `generate_client_bundle` does not mutate `route_bundles`.
+                let payload = unsafe { &mut *self_ptr }
+                    .generate_client_bundle(route_bundle)
+                    .expect("oom");
                 let route_ptr = StaticRoute::init_from_any_blob(
                     &crate::webcore::AnyBlob::from_owned_slice(payload),
                     crate::server::static_route::InitFromBytesOptions {
                         mime_type: Some(&MimeType::JAVASCRIPT),
-                        server: self.server,
+                        server: unsafe { &*self_ptr }.server,
                         ..Default::default()
                     },
                 );

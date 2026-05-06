@@ -4,15 +4,32 @@ use core::ptr::NonNull;
 use bun_collections::BabyList;
 use crate::webcore::jsc::{
     self as jsc, ArrayBuffer, CommonAbortReason, JSGlobalObject, JSPromise, JSPromiseStrong,
-    JSValue, JsResult, Task, VirtualMachine,
+    JSType, JSValue, JsError, JsResult, SysErrorJsc, VirtualMachine,
 };
 use bun_sys::{self as sys, Error as SysError, Fd};
 
 use crate::webcore::blob::{Any as AnyBlob, Blob};
+use crate::webcore::sink::{Sink, SinkHandler};
 use crate::webcore::{AutoFlusher, ByteListPool};
 
-bun_core::declare_scope!(HTTPServerWritable, visible);
-bun_core::declare_scope!(NetworkSink, visible);
+// PORT NOTE: scope statics renamed with `Log` suffix so they don't collide with
+// the `HTTPServerWritable<SSL,H3>` / `NetworkSink` *types* defined below
+// (RequestContext was blocked on this name clash).
+bun_core::declare_scope!(HTTPServerWritableLog, visible);
+bun_core::declare_scope!(NetworkSinkLog, visible);
+
+/// `bun.ObjectPool(bun.ByteList, ...)::Node` — pooled buffer node type used by
+/// `HTTPServerWritable.pooled_buffer`.
+pub type ByteListPoolNode = bun_collections::pool::Node<bun_collections::ByteList>;
+
+// `bun_s3` is not a workspace crate yet (only `bun_s3_signing`). NetworkSink
+// stores a borrowed `*MultiPartUpload`; until the real type is wired, model it
+// as opaque `c_void` so the struct is name-able from RequestContext.
+// TODO(b2-blocked): swap to `crate::webcore::s3::multipart::MultiPartUpload`
+// once `webcore::s3` is un-gated in webcore.rs.
+mod bun_s3 {
+    pub type MultiPartUpload = core::ffi::c_void;
+}
 
 /// `Blob.SizeType` is `u32` in Zig.
 type BlobSizeType = u32;
@@ -25,24 +42,18 @@ pub mod result {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// JSC-heavy: Start::to_js/from_js, HTTPServerWritable impl, NetworkSink impl,
-// Writable/StreamResult JSC paths. Gated until `bun_jsc` is a dep.
-// TODO(b2-blocked): bun_jsc::* — un-gate progressively.
-// ──────────────────────────────────────────────────────────────────────────
-#[cfg(any())]
-mod _jsc_gated {
-use super::*;
-use bun_core::FeatureFlags;
-use bun_str::strings;
-use bun_uws as uws;
-use crate::webcore::sink::{FileSink, Sink};
-use crate::webcore::ByteListPoolNode;
-
-// ──────────────────────────────────────────────────────────────────────────
 // Start
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(strum::IntoStaticStr)]
+/// Options payload for the `Start::FileSink` variant. Mirrors
+/// `jsc.WebCore.FileSink.Options` (path-or-fd + chunk size).
+// TODO(port): once `crate::webcore::file_sink::Options` is exported, alias to it.
+#[derive(Debug)]
+pub struct FileSinkOptions {
+    pub chunk_size: BlobSizeType,
+    pub input_path: crate::webcore::PathOrFileDescriptor,
+}
+
 pub enum Start {
     Empty,
     Err(SysError),
@@ -52,8 +63,7 @@ pub enum Start {
         as_uint8array: bool,
         stream: bool,
     },
-    FileSink(<FileSink as crate::webcore::sink::FileSinkOptions>::Options),
-    // TODO(port): FileSink::Options type path — using placeholder trait projection
+    FileSink(FileSinkOptions),
     HTTPSResponseSink,
     HTTPResponseSink,
     H3ResponseSink,
@@ -64,7 +74,7 @@ pub enum Start {
 }
 
 #[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq, core::marker::ConstParamTy)]
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub enum StartTag {
     Empty,
     Err,
@@ -85,18 +95,20 @@ impl Start {
         match self {
             Start::Empty | Start::Ready => Ok(JSValue::UNDEFINED),
             Start::ChunkSize(chunk) => Ok(JSValue::js_number(chunk as f64)),
-            Start::Err(err) => global_this.throw_value(err.to_js(global_this)?),
-            Start::OwnedAndDone(list) => {
-                Ok(ArrayBuffer::from_bytes(list.slice(), ArrayBuffer::Kind::Uint8Array)
-                    .to_js(global_this))
+            Start::Err(err) => Err(err.throw(global_this)),
+            Start::OwnedAndDone(mut list) => {
+                ArrayBuffer::from_bytes(list.slice_mut(), JSType::Uint8Array).to_js(global_this)
             }
             Start::Done(list) => {
-                Ok(ArrayBuffer::create(global_this, list.slice(), ArrayBuffer::Kind::Uint8Array))
+                ArrayBuffer::create(global_this, JSType::Uint8Array, list.slice())
             }
             _ => Ok(JSValue::UNDEFINED),
         }
     }
 
+    // TODO(b2-blocked): from_js depends on JSValue::get_optional/BuiltinName +
+    // FileSink option construction; un-gate once those land.
+    #[cfg(any())]
     pub fn from_js(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Start> {
         if value.is_empty_or_undefined_or_null() || !value.is_object() {
             return Ok(Start::Empty);
@@ -113,6 +125,9 @@ impl Start {
         Ok(Start::Empty)
     }
 
+    // TODO(b2-blocked): const-generic enum param needs `ConstParamTy`; body
+    // depends on FileSink option construction + JSValue::get_optional surface.
+    #[cfg(any())]
     pub fn from_js_with_tag<const TAG: StartTag>(
         global_this: &JSGlobalObject,
         value: JSValue,
@@ -251,8 +266,6 @@ impl Start {
     }
 }
 
-} // mod _jsc_gated (Start)
-
 // ──────────────────────────────────────────────────────────────────────────
 // Result
 // ──────────────────────────────────────────────────────────────────────────
@@ -270,8 +283,6 @@ pub enum StreamResult {
     IntoArrayAndDone(IntoArray),
 }
 
-// TODO(b2-blocked): bun_jsc::* — JSValue::unprotect.
-#[cfg(any())]
 impl StreamResult {
     // TODO(port): not Drop — Result is bitwise-copied in to_js() shutdown path; ownership is contextual.
     // Named `release` (not `deinit`) per PORTING.md — `pub fn deinit` is forbidden as a public API.
@@ -303,15 +314,10 @@ pub enum WasStrong {
     Weak,
 }
 
-// TODO(b2-blocked): bun_jsc::* — SysError::to_js, CommonAbortReason::to_js.
-#[cfg(any())]
 impl StreamError {
     pub fn to_js_weak(&self, global_object: &JSGlobalObject) -> (JSValue, WasStrong) {
         match self {
-            StreamError::Error(err) => match err.to_js(global_object) {
-                Ok(v) => (v, WasStrong::Weak),
-                Err(_) => (JSValue::ZERO, WasStrong::Weak),
-            },
+            StreamError::Error(err) => (err.to_js(global_object), WasStrong::Weak),
             StreamError::JSValue(v) => (*v, WasStrong::Strong),
             StreamError::WeakJSValue(v) => (*v, WasStrong::Weak),
             StreamError::AbortReason(reason) => {
@@ -402,21 +408,19 @@ pub enum WritableFuture {
     Handler(WritableHandler),
 }
 
-// TODO(b2-blocked): bun_jsc::* — JSPromiseStrong::init/get.
-#[cfg(any())]
 impl WritablePending {
     pub fn promise(&mut self, global_this: &JSGlobalObject) -> *mut JSPromise {
         self.state = PendingState::Pending;
 
         match &self.future {
-            WritableFuture::Promise { strong, .. } => strong.get(),
+            WritableFuture::Promise { strong, .. } => strong.get() as *mut JSPromise,
             _ => {
                 self.future = WritableFuture::Promise {
                     strong: JSPromiseStrong::init(global_this),
                     global: global_this as *const _,
                 };
                 match &self.future {
-                    WritableFuture::Promise { strong, .. } => strong.get(),
+                    WritableFuture::Promise { strong, .. } => strong.get() as *mut JSPromise,
                     _ => unreachable!(),
                 }
             }

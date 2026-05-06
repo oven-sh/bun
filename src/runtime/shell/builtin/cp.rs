@@ -131,13 +131,14 @@ impl Cp {
                             let exit_code: ExitCode = if exec.err.is_some() { 1 } else { 0 };
                             exec.err = None;
                             #[cfg(windows)]
-                            if !exec.ebusy.tasks.is_empty() {
+                            let act = if !exec.ebusy.tasks.is_empty() {
                                 Action::Ebusy
                             } else {
                                 Action::Done(exit_code)
-                            }
+                            };
                             #[cfg(not(windows))]
-                            Action::Done(exit_code)
+                            let act = Action::Done(exit_code);
+                            act
                         } else {
                             return Yield::suspended();
                         }

@@ -235,6 +235,27 @@ pub extern "C" fn on_abort_signal(subprocess_ctx: *mut c_void, _reason: JSValue)
     let _ = this.try_kill(this.kill_signal);
 }
 
+/// Static vtable wired into `Process.set_exit_handler` so the low-tier
+/// `Process` can call back into this JSC-aware owner without a direct upward
+/// dependency (per §Dispatch).
+pub static PROCESS_EXIT_VTABLE: spawn_process::ProcessExitVTable = spawn_process::ProcessExitVTable {
+    on_process_exit: on_process_exit_thunk,
+};
+
+unsafe fn on_process_exit_thunk(
+    owner: *mut (),
+    process: *mut Process,
+    status: Status,
+    rusage: *const Rusage,
+) {
+    // SAFETY: owner was registered as `*mut Subprocess` in spawn_maybe_sync;
+    // process/rusage are live for the duration of the callback.
+    let this: &mut Subprocess = unsafe { &mut *(owner as *mut Subprocess) };
+    let process_ref: &Process = unsafe { &*process };
+    let rusage_ref: &Rusage = unsafe { &*rusage };
+    this.on_process_exit(process_ref, status, rusage_ref);
+}
+
 impl Subprocess<'_> {
     #[bun_jsc::host_fn(method)]
     pub fn resource_usage(

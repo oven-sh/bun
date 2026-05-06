@@ -564,11 +564,26 @@ impl<'a> Loader<'a> {
                 debug_assert!(!prefix.is_empty());
             }
 
+            // PORT NOTE: Zig's `if (key_buf_len > 0)` gate (env_loader.zig:455) is behavioral,
+            // not just a sizing optimization — when `behavior == .prefix` and NO env key starts
+            // with `prefix`, the entire second walk (including the framework-hash `else` arm)
+            // is skipped. Mirror that by pre-scanning for a prefix match before emitting.
+            let any_prefix_match = if behavior == DotEnvBehavior::Prefix {
+                self.map
+                    .map
+                    .keys()
+                    .iter()
+                    .any(|k| strings::starts_with(k, prefix))
+            } else {
+                true
+            };
+
             let mut key_buf: Vec<u8> = Vec::new();
             // PORT NOTE: borrowck — iterate parallel slices instead of `iterator()` so the
             // map borrow stays shared while we call into the vtable.
             let keys = self.map.map.keys();
             let values = self.map.map.values();
+            if any_prefix_match {
             for (k, v) in keys.iter().zip(values.iter()) {
                 if k.is_empty() {
                     continue;

@@ -4,22 +4,27 @@ pub use css::PrintErr;
 pub use css::Printer;
 
 /// A quoted CSS string.
-// TODO(port): arena-owned slice in CSS crate — may need `&'bump [u8]` threading in Phase B.
-pub type CssString = &'static [u8];
+///
+/// INVARIANT: the pointee is a sub-slice of the parser source buffer / arena
+/// and remains valid for the lifetime of the parse + print session (i.e. as
+/// long as the originating `ParserInput`/arena lives). Stored as a raw slice
+/// pointer rather than `&'static [u8]` so the arena lifetime is not laundered
+/// to `'static` (see PORTING.md §Forbidden patterns); Phase B threads an
+/// explicit `'bump` lifetime here.
+pub type CssString = *const [u8];
 
 pub struct CssStringFns;
 impl CssStringFns {
     pub fn parse(input: &mut css::Parser) -> Result<CssString> {
-        // SAFETY: `expect_string()` returns a sub-slice of the source buffer /
-        // arena which outlives the Parser; detach the elided `&mut self` borrow
-        // (same as `css_parser::src_str` — Token payloads are arena-static).
-        input
-            .expect_string()
-            .map(|s| -> &'static [u8] { unsafe { &*(s as *const [u8]) } })
+        // No lifetime laundering: capture the arena slice as a raw pointer.
+        input.expect_string().map(|s| s as *const [u8])
     }
 
-    pub fn to_css(this: &&[u8], dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        match css::serializer::serialize_string(*this, dest) {
+    pub fn to_css(this: &CssString, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        // SAFETY: per the `CssString` invariant above, the pointee borrows the
+        // parser arena which outlives the `Printer` it is being written to.
+        let s = unsafe { &**this };
+        match css::serializer::serialize_string(s, dest) {
             Ok(v) => Ok(v),
             Err(_) => Err(dest.add_fmt_error()),
         }

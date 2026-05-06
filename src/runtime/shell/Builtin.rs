@@ -489,21 +489,25 @@ impl Builtin {
         err: &bun_sys::Error,
     ) -> &'a [u8] {
         // TODO(b2-blocked): bun_sys::coreutils_error_map — map errno to the
-        // GNU coreutils-style message. For now use the generic name.
-        let path = err.path();
-        if !path.is_empty() {
+        // GNU coreutils-style message. For now use the generic errno name.
+        if !err.path.is_empty() {
             Self::fmt_error_arena(
                 interp,
                 cmd,
                 Some(kind),
                 format_args!(
                     "{}: {}\n",
-                    bstr::BStr::new(path),
-                    err.name()
+                    bstr::BStr::new(&err.path[..]),
+                    bstr::BStr::new(err.name()),
                 ),
             )
         } else {
-            Self::fmt_error_arena(interp, cmd, Some(kind), format_args!("{}\n", err.name()))
+            Self::fmt_error_arena(
+                interp,
+                cmd,
+                Some(kind),
+                format_args!("{}\n", bstr::BStr::new(err.name())),
+            )
         }
     }
 

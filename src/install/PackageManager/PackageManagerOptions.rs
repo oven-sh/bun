@@ -56,7 +56,7 @@ pub struct Options {
 
     pub publish_config: PublishConfig,
 
-    pub ca: &'static [&'static [u8]],
+    pub ca: Box<[Box<[u8]>]>,
     pub ca_file_name: &'static [u8],
 
     // if set to `false` in bunfig, save a binary lockfile
@@ -139,7 +139,7 @@ impl Default for Options {
             // TODO(port): no default in Zig — caller must supply at construction
             max_concurrent_lifecycle_scripts: 0,
             publish_config: PublishConfig::default(),
-            ca: &[],
+            ca: Box::default(),
             ca_file_name: b"",
             save_text_lockfile: None,
             lockfile_only: false,
@@ -363,11 +363,11 @@ impl Options {
             if let Some(ca) = &config.ca {
                 match ca {
                     Api::Ca::List(ca_list) => {
-                        self.ca = ca_list;
+                        self.ca = ca_list.clone();
                     }
                     Api::Ca::Str(ca_str) => {
-                        // TODO(port): Zig `&.{ca_str}` — single-element slice; needs owned storage in Rust
-                        self.ca = Box::leak(Box::new([*ca_str]));
+                        // Zig `&.{ca_str}` — single-element slice; own it (no `Box::leak`).
+                        self.ca = vec![ca_str.clone()].into_boxed_slice();
                     }
                 }
             }
@@ -781,7 +781,7 @@ impl Options {
             self.publish_config.tolerate_republish = cli.tolerate_republish;
 
             if !cli.ca.is_empty() {
-                self.ca = cli.ca;
+                self.ca = cli.ca.iter().map(|s| Box::<[u8]>::from(*s)).collect();
             }
             if !cli.ca_file_name.is_empty() {
                 self.ca_file_name = cli.ca_file_name;

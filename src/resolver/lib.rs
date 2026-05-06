@@ -3789,12 +3789,12 @@ impl<'a> Resolver<'a> {
                                 let mut module_type = package_json.module_type;
                                 let esmodule = ESModule {
                                     conditions: match kind {
-                                        ast::ImportKind::Require | ast::ImportKind::RequireResolve => self.opts.conditions.require.clone(),
-                                        ast::ImportKind::At | ast::ImportKind::AtConditional => self.opts.conditions.style.clone(),
-                                        _ => self.opts.conditions.import.clone(),
+                                        ast::ImportKind::Require | ast::ImportKind::RequireResolve => self.opts.conditions.require.clone().expect("oom"),
+                                        ast::ImportKind::At | ast::ImportKind::AtConditional => self.opts.conditions.style.clone().expect("oom"),
+                                        _ => self.opts.conditions.import.clone().expect("oom"),
                                     },
                                     // allocator dropped
-                                    debug_logs: self.debug_logs.as_mut().map(|d| d as *mut _),
+                                    debug_logs: self.debug_logs.as_mut(),
                                     module_type: &mut module_type,
                                 };
 
@@ -3851,10 +3851,12 @@ impl<'a> Resolver<'a> {
                                     self.extension_order = prev_extension_order;
                                     if let Some(d) = self.debug_logs.as_mut() { d.decrease_indent(); }
                                     return MatchResultUnion::Success(MatchResult {
-                                        path_pair: PathPair { primary: package_json.source.path.clone(), secondary: None },
+                                        // PORT NOTE: PackageJSON.source.path is bun_logger::fs::Path; convert
+                                        // to the resolver's interned crate::fs::Path<'static> via its text.
+                                        path_pair: PathPair { primary: Path::init(package_json.source.path.text), secondary: None },
                                         dirname_fd: pkg_dir_info.get_file_descriptor(),
                                         file_fd: FD::INVALID,
-                                        is_node_module: package_json.source.path.is_node_module(),
+                                        is_node_module: strings::contains(package_json.source.path.text, b"node_modules"),
                                         package_json: Some(package_json as *const _),
                                         dir_info: Some(dir_info as *const _),
                                         ..Default::default()
@@ -4826,7 +4828,7 @@ impl<'a> Resolver<'a> {
         Self::assert_valid_cache_key(path_without_trailing_slash);
         let top_result = self.dir_cache.get_or_put(path_without_trailing_slash)?;
         if top_result.status != allocators::Status::Unknown {
-            return Ok(self.dir_cache.at_index(top_result.index));
+            return Ok(self.dir_cache.at_index(top_result.index).map(|d| d as *mut _));
         }
 
         let dir_info_uncached_path_buf = bufs!(dir_info_uncached_path);
@@ -4895,8 +4897,8 @@ impl<'a> Resolver<'a> {
                         debuglog!(
                             "Failed to load DirEntry {}  {} - {}",
                             bstr::BStr::new(top),
-                            err.original_err.name(),
-                            err.canonical_error.name()
+                            bstr::BStr::new(err.original_err.name()),
+                            bstr::BStr::new(err.canonical_error.name())
                         );
                         break;
                     }
@@ -5108,7 +5110,7 @@ impl<'a> Resolver<'a> {
                         dir_entries_option = cached_entry;
                         needs_iter = false;
                     } else {
-                        in_place = Some(entries as *mut _);
+                        in_place = Some(*entries as *mut _);
                     }
                 }
             }
@@ -5141,7 +5143,8 @@ impl<'a> Resolver<'a> {
                 }
                 if let Some(existing) = in_place {
                     // SAFETY: see block-wide note above.
-                    unsafe { &mut *existing }.data.clear_and_free();
+                    // PORT NOTE: Zig `clear_and_free`; bun_collections::StringHashMap exposes `clear`.
+                    unsafe { &mut *existing }.data.clear();
                 }
                 new_entry.fd = if self.store_fd { open_dir } else { FD::INVALID };
                 let dir_entries_ptr = match in_place {
@@ -5170,7 +5173,7 @@ impl<'a> Resolver<'a> {
                 unsafe { &mut *dir_entries_option },
                 queue_top.result,
                 cached_dir_entry_result.index,
-                self.dir_cache.at_index(top_parent.index),
+                self.dir_cache.at_index(top_parent.index).map(|d| d as *mut _),
                 top_parent.index,
                 open_dir,
                 None,
@@ -5203,17 +5206,17 @@ impl<'a> Resolver<'a> {
             debug.add_note_fmt(format_args!(
                 "Matching \"{}\" against \"paths\" in \"{}\"",
                 bstr::BStr::new(path),
-                bstr::BStr::new(tsconfig.abs_path)
+                bstr::BStr::new(&tsconfig.abs_path)
             ));
         }
 
-        let mut abs_base_url = tsconfig.base_url_for_paths;
+        let mut abs_base_url: &[u8] = &tsconfig.base_url_for_paths;
 
         // The explicit base URL should take precedence over the implicit base URL
         // if present. This matters when a tsconfig.json file overrides "baseUrl"
         // from another extended tsconfig.json file but doesn't override "paths".
         if tsconfig.has_base_url() {
-            abs_base_url = tsconfig.base_url;
+            abs_base_url = &tsconfig.base_url;
         }
 
         if let Some(debug) = self.debug_logs.as_mut() {
@@ -5222,14 +5225,15 @@ impl<'a> Resolver<'a> {
 
         // Check for exact matches first
         {
-            let mut iter = tsconfig.paths.iter();
-            while let Some((key, value)) = iter.next() {
+            // PORT NOTE: ArrayHashMap has no `&self` (key,value) iterator; zip the
+            // parallel `keys()`/`values()` slices (insertion order).
+            for (key, value) in tsconfig.paths.keys().iter().zip(tsconfig.paths.values().iter()) {
                 if strings::eql_long(key, path, true) {
                     for original_path in value.iter() {
                         let mut absolute_original_path: &[u8] = original_path;
 
                         if !bun_paths::is_absolute(absolute_original_path) {
-                            let parts = [abs_base_url, original_path.as_ref()];
+                            let parts: [&[u8]; 2] = [abs_base_url, original_path.as_ref()];
                             absolute_original_path = self.fs.abs_buf(&parts, bufs!(tsconfig_path_abs));
                         }
 
@@ -5251,8 +5255,7 @@ impl<'a> Resolver<'a> {
         let mut longest_match_prefix_length: i32 = -1;
         let mut longest_match_suffix_length: i32 = -1;
 
-        let mut iter = tsconfig.paths.iter();
-        while let Some((key, original_paths)) = iter.next() {
+        for (key, original_paths) in tsconfig.paths.keys().iter().zip(tsconfig.paths.values().iter()) {
             if let Some(star) = strings::index_of_char(key, b'*') {
                 let star = star as usize;
                 let prefix: &[u8] = if star == 0 { b"" } else { &key[0..star] };
@@ -5295,7 +5298,7 @@ impl<'a> Resolver<'a> {
 
                 let total_length: Option<u32> = strings::index_of_char(original_path, b'*');
                 let prefix_end = total_length.map(|v| v as usize).unwrap_or(original_path.len());
-                let prefix_parts = [abs_base_url, &original_path[0..prefix_end]];
+                let prefix_parts: [&[u8]; 2] = [abs_base_url, &original_path[0..prefix_end]];
 
                 // Concatenate the matched text with the suffix from the wildcard path
                 let matched_text_with_suffix = bufs!(tsconfig_match_full_buf3);
@@ -5351,7 +5354,7 @@ impl<'a> Resolver<'a> {
             debug.add_note_fmt(format_args!(
                 "Looking for {} in \"imports\" map in {}",
                 bstr::BStr::new(import_path),
-                bstr::BStr::new(package_json.source.path.text())
+                bstr::BStr::new(package_json.source.path.text)
             ));
             debug.increase_indent();
             // defer debug.decreaseIndent() — TODO(port): missing matching decrease in Zig too
@@ -5371,10 +5374,10 @@ impl<'a> Resolver<'a> {
 
         let esmodule = ESModule {
             conditions: match kind {
-                ast::ImportKind::Require | ast::ImportKind::RequireResolve => self.opts.conditions.require.clone(),
-                _ => self.opts.conditions.import.clone(),
+                ast::ImportKind::Require | ast::ImportKind::RequireResolve => self.opts.conditions.require.clone().expect("oom"),
+                _ => self.opts.conditions.import.clone().expect("oom"),
             },
-            debug_logs: self.debug_logs.as_mut().map(|d| d as *mut _),
+            debug_logs: self.debug_logs.as_mut(),
             module_type: &mut module_type,
         };
 
@@ -5407,7 +5410,7 @@ impl<'a> Resolver<'a> {
             return self.load_node_modules(&esm_resolution.path, kind, dir_info, global_cache, true);
         }
 
-        if let Some(result) = self.handle_esm_resolution(esm_resolution, package_json.source.path.name.dir(), kind, package_json, b"") {
+        if let Some(result) = self.handle_esm_resolution(esm_resolution, package_json.source.path.name.dir, kind, package_json, b"") {
             return MatchResultUnion::Success(result);
         }
 
@@ -5809,7 +5812,7 @@ impl<'a> Resolver<'a> {
                 if let Some(debug) = self.debug_logs.as_mut() {
                     debug.add_note_fmt(format_args!(
                         "Searching for main fields in \"{}\"",
-                        bstr::BStr::new(pkg_json.source.path.text())
+                        bstr::BStr::new(pkg_json.source.path.text)
                     ));
                 }
 
@@ -5869,7 +5872,7 @@ impl<'a> Resolver<'a> {
                                     debug.add_note_fmt(format_args!(
                                         "Resolved to \"{}\" using the \"module\" field in \"{}\"",
                                         bstr::BStr::new(auto_main_result.path_pair.primary.text()),
-                                        bstr::BStr::new(pkg_json.source.path.text())
+                                        bstr::BStr::new(pkg_json.source.path.text)
                                     ));
                                     debug.add_note_fmt(format_args!(
                                         "The fallback path in case of \"require\" is {}",
@@ -5894,7 +5897,7 @@ impl<'a> Resolver<'a> {
                                         "Resolved to \"{}\" using the \"{}\" field in \"{}\"",
                                         bstr::BStr::new(auto_main_result.path_pair.primary.text()),
                                         bstr::BStr::new(key),
-                                        bstr::BStr::new(pkg_json.source.path.text())
+                                        bstr::BStr::new(pkg_json.source.path.text)
                                     ));
                                 }
                                 let mut _auto_main_result = auto_main_result;

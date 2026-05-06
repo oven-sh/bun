@@ -97,7 +97,7 @@ use crate::array_buffer::TypedArrayType;
 // defined types). A plain `#[repr(u8)] enum` would be UB for unknown discriminants,
 // so this is a transparent newtype with associated consts instead.
 #[repr(transparent)]
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, core::marker::ConstParamTy)]
 pub struct JSType(pub u8);
 
 #[allow(non_upper_case_globals)]

@@ -539,20 +539,23 @@ pub enum NumberOrPercentage {
 }
 
 impl NumberOrPercentage {
-    // TODO: implement this
-    // TODO(port): Zig used `css.DeriveParse(@This()).parse` / `css.DeriveToCss(@This()).toCss`
-    // (comptime reflection derives). Phase B: implement via #[derive(Parse, ToCss)] proc-macro
-    // or hand-roll the two-variant try-parse cascade.
+    // PORT NOTE: Zig used `css.DeriveParse(@This()).parse` / `css.DeriveToCss(@This()).toCss`
+    // (comptime reflection derives). Hand-rolled here as the trivial two-variant
+    // try-parse cascade so `AlphaValue::parse` doesn't panic at runtime.
     pub fn parse(input: &mut css::Parser) -> CssResult<NumberOrPercentage> {
-        // TODO(port): proc-macro — DeriveParse
-        let _ = input;
-        unimplemented!("css.DeriveParse")
+        if let Ok(n) = input.try_parse(crate::values::number::CSSNumberFns::parse) {
+            return Ok(NumberOrPercentage::Number(n));
+        }
+        Percentage::parse(input).map(NumberOrPercentage::Percentage)
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // TODO(port): proc-macro — DeriveToCss
-        let _ = dest;
-        unimplemented!("css.DeriveToCss")
+        match self {
+            NumberOrPercentage::Number(n) => {
+                crate::values::number::CSSNumberFns::to_css(n, dest)
+            }
+            NumberOrPercentage::Percentage(p) => p.to_css(dest),
+        }
     }
 
     // pub fn parse(input: *css.Parser) Result(NumberOrPercentage) {

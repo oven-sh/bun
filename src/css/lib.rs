@@ -437,19 +437,39 @@ pub mod values_stub {
 
         /// Either a literal identifier or a reference into the symbol table
         /// (CSS-modules local name). Data-only stub of `values/ident.rs::
-        /// IdentOrRef`; printer.rs's `lookup_ident_or_ref` consumes this.
+        /// IdentOrRef` — kept as a tagged enum mirroring the spec's
+        /// `packed struct(u128)` discriminated union (ident.zig:148-265) so
+        /// it never stores both an Ident and a Ref simultaneously.
+        ///
+        /// NOTE: the real packed-u128 implementation lives in
+        /// `crate::values::ident::IdentOrRef` (now un-gated); this stub is
+        /// retained only for any remaining `values_stub` consumers.
         #[derive(Clone, Copy)]
-        pub struct IdentOrRef {
-            pub v: Ident,
-            pub ref_: Option<bun_logger::Ref>,
+        pub enum IdentOrRef {
+            Ident(Ident),
+            Ref(bun_logger::Ref),
         }
         impl IdentOrRef {
-            #[inline] pub fn is_ident(&self) -> bool { self.ref_.is_none() }
+            #[inline] pub fn from_ident(ident: Ident) -> Self { IdentOrRef::Ident(ident) }
+            #[inline] pub fn from_ref(r: bun_logger::Ref) -> Self { IdentOrRef::Ref(r) }
+            #[inline] pub fn is_ident(&self) -> bool { matches!(self, IdentOrRef::Ident(_)) }
             #[inline] pub fn as_ident(&self) -> Option<Ident> {
-                if self.ref_.is_none() { Some(self.v) } else { None }
+                match *self { IdentOrRef::Ident(i) => Some(i), _ => None }
             }
-            #[inline] pub fn as_ref(&self) -> Option<bun_logger::Ref> { self.ref_ }
-            #[inline] pub fn debug_ident(&self) -> &'static [u8] { b"<ident-or-ref>" }
+            #[inline] pub fn as_ref(&self) -> Option<bun_logger::Ref> {
+                match *self { IdentOrRef::Ref(r) => Some(r), _ => None }
+            }
+            /// Returns the underlying ident bytes for debugging (matches
+            /// ident.zig:160-171). For the `Ref` arm there is no ident slice
+            /// in this stub, so a sentinel is returned.
+            #[inline] pub fn debug_ident(&self) -> &[u8] {
+                match self {
+                    // SAFETY: `v` borrows the parser arena; caller (Printer
+                    // debug path) is scoped within the parse session.
+                    IdentOrRef::Ident(i) => unsafe { i.as_slice() },
+                    IdentOrRef::Ref(_) => b"<ref>",
+                }
+            }
         }
     }
 

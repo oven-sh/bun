@@ -25,6 +25,14 @@ use crate::webcore as WebCore;
 
 bun_output::declare_scope!(Subprocess, hidden);
 
+// `SpawnOptions.Stdio` in Zig is a platform-dependent nested decl. Rust enums
+// cannot nest type decls, so process.rs defines `PosixStdio` / `WindowsStdio`
+// as siblings; alias the active one here so the body stays platform-neutral.
+#[cfg(not(windows))]
+type SpawnOptionsStdio = spawn::PosixStdio;
+#[cfg(windows)]
+type SpawnOptionsStdio = spawn::WindowsStdio;
+
 // TODO(port): move to runtime_sys
 unsafe extern "C" {
     static BUN_DEFAULT_PATH_FOR_SPAWN: *const c_char;
@@ -235,7 +243,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     // can't gate field type. Always Option<IPC::Mode>; IS_SYNC branches never read it.
     let mut maybe_ipc_mode: Option<IPC::Mode> = None;
     let mut ipc_callback: JSValue = JSValue::ZERO;
-    let mut extra_fds: Vec<spawn::SpawnOptions::Stdio> = Vec::new();
+    let mut extra_fds: Vec<SpawnOptionsStdio> = Vec::new();
     let mut argv0: Option<*const c_char> = None;
     let mut ipc_channel: i32 = -1;
     let mut timeout: Option<i32> = None;
@@ -434,12 +442,16 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                             new_item.extract(global_this, i, value, IS_SYNC)?;
 
                             let opt = match new_item.as_spawn_option(i) {
-                                spawn::StdioResult::Result(opt) => opt,
-                                spawn::StdioResult::Err(e) => {
+                                stdio::ResultT::Result(opt) => opt,
+                                stdio::ResultT::Err(e) => {
                                     return e.throw_js(global_this);
                                 }
                             };
-                            if matches!(opt, spawn::SpawnOptions::Stdio::Ipc) {
+                            #[cfg(not(windows))]
+                            let is_ipc = matches!(opt, SpawnOptionsStdio::Ipc);
+                            #[cfg(windows)]
+                            let is_ipc = matches!(opt, SpawnOptionsStdio::Ipc(_));
+                            if is_ipc {
                                 ipc_channel = i32::try_from(extra_fds.len()).unwrap();
                             }
                             extra_fds.push(opt);
@@ -692,10 +704,10 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                     let mut ipc_extra_fd_default = Stdio::Ipc;
                     let fd: i32 = ipc_channel + 3;
                     match ipc_extra_fd_default.as_spawn_option(fd) {
-                        spawn::StdioResult::Result(opt) => {
+                        stdio::ResultT::Result(opt) => {
                             extra_fds.push(opt);
                         }
-                        spawn::StdioResult::Err(e) => {
+                        stdio::ResultT::Err(e) => {
                             return e.throw_js(global_this);
                         }
                     }
@@ -792,16 +804,16 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         cwd,
         detached,
         stdin: match stdio[0].as_spawn_option(0) {
-            spawn::StdioResult::Result(opt) => opt,
-            spawn::StdioResult::Err(e) => return e.throw_js(global_this),
+            stdio::ResultT::Result(opt) => opt,
+            stdio::ResultT::Err(e) => return e.throw_js(global_this),
         },
         stdout: match stdio[1].as_spawn_option(1) {
-            spawn::StdioResult::Result(opt) => opt,
-            spawn::StdioResult::Err(e) => return e.throw_js(global_this),
+            stdio::ResultT::Result(opt) => opt,
+            stdio::ResultT::Err(e) => return e.throw_js(global_this),
         },
         stderr: match stdio[2].as_spawn_option(2) {
-            spawn::StdioResult::Result(opt) => opt,
-            spawn::StdioResult::Err(e) => return e.throw_js(global_this),
+            stdio::ResultT::Result(opt) => opt,
+            stdio::ResultT::Err(e) => return e.throw_js(global_this),
         },
         extra_fds: &extra_fds,
         argv0,
@@ -902,17 +914,17 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     // Use the isolated loop for spawnSync operations
     let process = spawned.to_process(loop_handle, IS_SYNC);
 
-    let subprocess = Box::into_raw(Box::new(Subprocess {
-        ref_count: Subprocess::RefCount::init(),
+    let subprocess = Box::into_raw(Box::new(SubprocessT {
+        ref_count: bun_ptr::RefCount::init(),
         global_this,
         process,
         pid_rusage: None,
         stdin: Writable::Ignore,
         stdout: Readable::Ignore,
         stderr: Readable::Ignore,
-        stdio_pipes: BabyList::default(),
+        stdio_pipes: Vec::new(),
         ipc_data: None,
-        flags: Subprocess::Flags { is_sync: IS_SYNC, ..Default::default() },
+        flags: if IS_SYNC { Subprocess::Flags::IS_SYNC } else { Subprocess::Flags::empty() },
         // SAFETY: field is overwritten by the aggregate init below before any read.
         kill_signal: unsafe { core::mem::zeroed() },
         ..Default::default()
@@ -933,7 +945,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     let mut promise_for_stream: JSValue = JSValue::ZERO;
 
     // When run synchronously, subprocess isn't garbage collected
-    *subprocess = Subprocess {
+    *subprocess = SubprocessT {
         global_this,
         process,
         pid_rusage: None,
@@ -952,8 +964,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         stderr: Readable::Ignore,
         // 1. JavaScript.
         // 2. Process.
-        ref_count: Subprocess::RefCount::init_exact_refs(2),
-        stdio_pipes: spawned.extra_pipes.move_to_unmanaged(),
+        ref_count: bun_ptr::RefCount::init_exact_refs(2),
+        stdio_pipes: core::mem::take(&mut spawned.extra_pipes),
         ipc_data: if !IS_SYNC && cfg!(windows) {
             #[cfg(windows)]
             {
@@ -973,10 +985,10 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             None
         },
 
-        flags: Subprocess::Flags { is_sync: IS_SYNC, ..Default::default() },
+        flags: if IS_SYNC { Subprocess::Flags::IS_SYNC } else { Subprocess::Flags::empty() },
         kill_signal,
-        stderr_maxbuf: subprocess.stderr_maxbuf,
-        stdout_maxbuf: subprocess.stdout_maxbuf,
+        stderr_maxbuf: subprocess.stderr_maxbuf.take(),
+        stdout_maxbuf: subprocess.stdout_maxbuf.take(),
         terminal: existing_terminal.or_else(|| terminal_info.as_ref().map(|info| info.terminal)),
         ..Default::default()
     };
@@ -1054,14 +1066,19 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     if let Some(info) = terminal_info.take() {
         terminal_js_value = info.js_value;
         info.terminal.close_slave_fd();
-        subprocess.flags.owns_terminal = true;
+        subprocess.flags.insert(Subprocess::Flags::OWNS_TERMINAL);
     }
     // existing_terminal: don't close slave_fd - user manages lifecycle and can reuse
 
-    subprocess.process.set_exit_handler(subprocess);
+    subprocess
+        .process
+        .set_exit_handler(subprocess as *mut SubprocessT as *mut (), &Subprocess::PROCESS_EXIT_VTABLE);
 
     promise_for_stream.ensure_still_alive();
-    subprocess.flags.is_stdin_a_readable_stream = promise_for_stream != JSValue::ZERO;
+    subprocess.flags.set(
+        Subprocess::Flags::IS_STDIN_A_READABLE_STREAM,
+        promise_for_stream != JSValue::ZERO,
+    );
 
     if promise_for_stream != JSValue::ZERO && !global_this.has_exception() {
         if let Some(err) = promise_for_stream.to_error() {

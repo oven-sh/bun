@@ -302,27 +302,23 @@ impl Rm {
     ) {
         // SAFETY: task was Box::into_raw'd in create(); reclaim.
         let mut task = unsafe { Box::from_raw(task) };
-        let (tasks_done, total, errstr) = {
+        let task_err = task.err.take();
+        // PORT NOTE: reshaped for borrowck — format the error string before
+        // stashing the error on `exec` (formatting needs &mut interp).
+        let errstr: Option<Vec<u8>> = task_err
+            .as_ref()
+            .map(|e| Builtin::task_error_to_string(interp, cmd, Kind::Rm, e).to_vec());
+        let (tasks_done, total) = {
             let RmState::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
                 panic!("Invalid state")
             };
             exec.tasks_done += 1;
-            let mut errstr: Option<Vec<u8>> = None;
-            if let Some(e) = task.err.take() {
+            if let Some(e) = task_err {
                 // exec.err is only used as a did-anything-fail flag from here.
                 exec.err = Some(e);
             }
-            (exec.tasks_done, exec.total_tasks, errstr.take())
+            (exec.tasks_done, exec.total_tasks)
         };
-        // Re-borrow to format the error (needs &mut interp without exec borrow).
-        let errstr = if let RmState::Exec(exec) = &Self::state_mut(interp, cmd).state {
-            exec.err.as_ref().map(|e| {
-                Builtin::task_error_to_string(interp, cmd, Kind::Rm, e).to_vec()
-            })
-        } else {
-            None
-        }
-        .or(errstr);
 
         if let Some(s) = errstr {
             if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {

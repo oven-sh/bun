@@ -252,13 +252,13 @@ impl ArrayBuffer {
         std::io::Cursor::new(slice)
     }
 
-    // PORT NOTE: Zig took `comptime kind: JSType`. Stable Rust forbids enum
-    // const-generic params (`adt_const_params` is unstable); demoted to a
-    // runtime arg. PERF(port): was comptime monomorphization — profile in
-    // Phase B (only 2 reachable arms, so the `match` is a single cmp).
-    pub fn create(global: &JSGlobalObject, kind: JSType, bytes: &[u8]) -> JsResult<JSValue> {
+    // PORT NOTE: Zig took `comptime kind: JSType`. Restored via
+    // `#![feature(adt_const_params)]` — `JSType` derives `ConstParamTy`, so
+    // `KIND` is a true const-generic and the `match` const-folds (Zig's
+    // `@compileError` arm becomes a post-mono `panic!` on the unreachable arm).
+    pub fn create<const KIND: JSType>(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
         crate::mark_binding!();
-        match kind {
+        match KIND {
             // SAFETY: FFI — global is valid; bytes ptr/len come from a live slice, copied by callee.
             JSType::Uint8Array => crate::host_fn::from_js_host_call(global, || unsafe {
                 Bun__createUint8ArrayForCopy(global as *const _ as *mut _, bytes.as_ptr().cast(), bytes.len(), false)
@@ -267,13 +267,13 @@ impl ArrayBuffer {
             JSType::ArrayBuffer => crate::host_fn::from_js_host_call(global, || unsafe {
                 Bun__createArrayBufferForCopy(global as *const _ as *mut _, bytes.as_ptr().cast(), bytes.len())
             }),
-            _ => unreachable!("Not implemented yet"), // Zig: @compileError
+            _ => panic!("ArrayBuffer::create: KIND not implemented"), // Zig: @compileError
         }
     }
 
-    pub fn create_empty(global: &JSGlobalObject, kind: JSType) -> JsResult<JSValue> {
+    pub fn create_empty<const KIND: JSType>(global: &JSGlobalObject) -> JsResult<JSValue> {
         crate::mark_binding!();
-        match kind {
+        match KIND {
             // SAFETY: FFI — global is valid; null ptr with len 0 is the documented empty case.
             JSType::Uint8Array => crate::host_fn::from_js_host_call(global, || unsafe {
                 Bun__createUint8ArrayForCopy(global as *const _ as *mut _, ptr::null(), 0, false)
@@ -282,7 +282,7 @@ impl ArrayBuffer {
             JSType::ArrayBuffer => crate::host_fn::from_js_host_call(global, || unsafe {
                 Bun__createArrayBufferForCopy(global as *const _ as *mut _, ptr::null(), 0)
             }),
-            _ => unreachable!("Not implemented yet"), // Zig: @compileError
+            _ => panic!("ArrayBuffer::create_empty: KIND not implemented"), // Zig: @compileError
         }
     }
 

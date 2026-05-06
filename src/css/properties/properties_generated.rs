@@ -2084,82 +2084,82 @@ impl PropertyId {
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"box-orient") {
-            let allowed: VendorPrefix = VendorPrefix::WEBKIT | VendorPrefix::MOZ;
+            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
             if allowed.contains(pre) { return Some(PropertyId::BoxOrient(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"box-direction") {
-            let allowed: VendorPrefix = VendorPrefix::WEBKIT | VendorPrefix::MOZ;
+            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
             if allowed.contains(pre) { return Some(PropertyId::BoxDirection(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"box-ordinal-group") {
-            let allowed: VendorPrefix = VendorPrefix::WEBKIT | VendorPrefix::MOZ;
+            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
             if allowed.contains(pre) { return Some(PropertyId::BoxOrdinalGroup(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"box-align") {
-            let allowed: VendorPrefix = VendorPrefix::WEBKIT | VendorPrefix::MOZ;
+            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
             if allowed.contains(pre) { return Some(PropertyId::BoxAlign(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"box-flex") {
-            let allowed: VendorPrefix = VendorPrefix::WEBKIT | VendorPrefix::MOZ;
+            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
             if allowed.contains(pre) { return Some(PropertyId::BoxFlex(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"box-flex-group") {
-            let allowed: VendorPrefix = VendorPrefix::WEBKIT;
+            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
             if allowed.contains(pre) { return Some(PropertyId::BoxFlexGroup(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"box-pack") {
-            let allowed: VendorPrefix = VendorPrefix::WEBKIT | VendorPrefix::MOZ;
+            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
             if allowed.contains(pre) { return Some(PropertyId::BoxPack(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"box-lines") {
-            let allowed: VendorPrefix = VendorPrefix::WEBKIT | VendorPrefix::MOZ;
+            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
             if allowed.contains(pre) { return Some(PropertyId::BoxLines(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"flex-pack") {
-            let allowed: VendorPrefix = VendorPrefix::MS;
+            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::MS;
             if allowed.contains(pre) { return Some(PropertyId::FlexPack(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"flex-order") {
-            let allowed: VendorPrefix = VendorPrefix::MS;
+            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::MS;
             if allowed.contains(pre) { return Some(PropertyId::FlexOrder(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"flex-align") {
-            let allowed: VendorPrefix = VendorPrefix::MS;
+            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::MS;
             if allowed.contains(pre) { return Some(PropertyId::FlexAlign(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"flex-item-align") {
-            let allowed: VendorPrefix = VendorPrefix::MS;
+            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::MS;
             if allowed.contains(pre) { return Some(PropertyId::FlexItemAlign(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"flex-line-pack") {
-            let allowed: VendorPrefix = VendorPrefix::MS;
+            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::MS;
             if allowed.contains(pre) { return Some(PropertyId::FlexLinePack(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"flex-positive") {
-            let allowed: VendorPrefix = VendorPrefix::MS;
+            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::MS;
             if allowed.contains(pre) { return Some(PropertyId::FlexPositive(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"flex-negative") {
-            let allowed: VendorPrefix = VendorPrefix::MS;
+            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::MS;
             if allowed.contains(pre) { return Some(PropertyId::FlexNegative(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"flex-preferred-size") {
-            let allowed: VendorPrefix = VendorPrefix::MS;
+            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::MS;
             if allowed.contains(pre) { return Some(PropertyId::FlexPreferredSize(pre)); }
             return None;
         }
@@ -2624,37 +2624,37 @@ impl PropertyId {
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"mask-source-type") {
-            let allowed: VendorPrefix = VendorPrefix::WEBKIT;
+            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
             if allowed.contains(pre) { return Some(PropertyId::MaskSourceType(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"mask-box-image") {
-            let allowed: VendorPrefix = VendorPrefix::WEBKIT;
+            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
             if allowed.contains(pre) { return Some(PropertyId::MaskBoxImage(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"mask-box-image-source") {
-            let allowed: VendorPrefix = VendorPrefix::WEBKIT;
+            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
             if allowed.contains(pre) { return Some(PropertyId::MaskBoxImageSource(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"mask-box-image-slice") {
-            let allowed: VendorPrefix = VendorPrefix::WEBKIT;
+            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
             if allowed.contains(pre) { return Some(PropertyId::MaskBoxImageSlice(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"mask-box-image-width") {
-            let allowed: VendorPrefix = VendorPrefix::WEBKIT;
+            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
             if allowed.contains(pre) { return Some(PropertyId::MaskBoxImageWidth(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"mask-box-image-outset") {
-            let allowed: VendorPrefix = VendorPrefix::WEBKIT;
+            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
             if allowed.contains(pre) { return Some(PropertyId::MaskBoxImageOutset(pre)); }
             return None;
         }
         if strings::eql_case_insensitive_ascii_check_length(name, b"mask-box-image-repeat") {
-            let allowed: VendorPrefix = VendorPrefix::WEBKIT;
+            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
             if allowed.contains(pre) { return Some(PropertyId::MaskBoxImageRepeat(pre)); }
             return None;
         }

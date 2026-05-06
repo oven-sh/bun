@@ -1,8 +1,68 @@
 use core::ffi::{c_char, c_int};
 use core::marker::PhantomData;
-use core::mem::offset_of;
 
 use bun_aio::KeepAlive;
+
+// ─── type defs (real) ─────────────────────────────────────────────────────
+
+/// Zig: `fn CompressionStream(comptime T: type) type { return struct { ... } }`
+/// This is a mixin: methods all take `this: *T` and access fields on `T`
+/// (write_in_progress, pending_close, pending_reset, closed, stream, this_value,
+/// write_result, task, poll_ref, globalThis) plus `T.js.*` codegen accessors and
+/// `T.ref()/deref()`.
+// TODO(port): Phase B — decide between (a) marker struct + associated fns (current),
+// or (b) extension trait with required accessor methods. Field accesses on `T` below
+// will not compile without a trait bound exposing those fields.
+pub struct CompressionStream<T>(PhantomData<T>);
+
+#[derive(Default)]
+pub struct CountedKeepAlive {
+    pub keep_alive: KeepAlive,
+    pub ref_count: u32,
+}
+
+impl Drop for CountedKeepAlive {
+    fn drop(&mut self) {
+        self.keep_alive.disable();
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct Error {
+    pub msg: *const c_char,
+    pub err: c_int,
+    pub code: *const c_char,
+}
+
+impl Error {
+    pub const OK: Error = Error::init(core::ptr::null(), 0, core::ptr::null());
+
+    #[inline]
+    pub const fn ok() -> Error {
+        Self::OK
+    }
+
+    pub const fn init(msg: *const c_char, err: c_int, code: *const c_char) -> Error {
+        Error { msg, err, code }
+    }
+
+    pub fn is_error(&self) -> bool {
+        !self.msg.is_null()
+    }
+}
+
+// ─── gated: JSC host fns + CompressionStream mixin bodies ─────────────────
+// Every body below builds JS values (`JSValue`, `CallFrame`, `JSGlobalObject`
+// throw helpers, `Strong`, codegen `js::*` accessors) or reaches event-loop
+// glue (`ConcurrentTask`, `WorkPool::schedule`, `VirtualMachine`) whose method
+// surface in `bun_jsc` / `bun_threading` is still in flux. Type defs (Error,
+// CountedKeepAlive, CompressionStream<T> marker) hoisted above.
+// TODO(b2-blocked): un-gate once bun_jsc method surface + WorkPoolTask export land.
+#[cfg(any())]
+mod _impl {
+use super::*;
+use core::mem::offset_of;
+
 use bun_core::Output;
 use bun_jsc::{
     self as jsc, CallFrame, ConcurrentTask, JSGlobalObject, JSValue, JsResult, Task, VirtualMachine,
@@ -13,6 +73,22 @@ use bun_threading::{WorkPool, WorkPoolTask};
 use bun_zlib;
 
 bun_output::declare_scope!(zlib, hidden);
+
+impl CountedKeepAlive {
+    pub fn ref_(&mut self, vm: &VirtualMachine) {
+        if self.ref_count == 0 {
+            self.keep_alive.ref_(vm);
+        }
+        self.ref_count += 1;
+    }
+
+    pub fn unref(&mut self, vm: &VirtualMachine) {
+        self.ref_count -= 1;
+        if self.ref_count == 0 {
+            self.keep_alive.unref(vm);
+        }
+    }
+}
 
 #[bun_jsc::host_fn]
 pub fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
@@ -88,16 +164,6 @@ pub fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
         .unwrap(),
     ))
 }
-
-/// Zig: `fn CompressionStream(comptime T: type) type { return struct { ... } }`
-/// This is a mixin: methods all take `this: *T` and access fields on `T`
-/// (write_in_progress, pending_close, pending_reset, closed, stream, this_value,
-/// write_result, task, poll_ref, globalThis) plus `T.js.*` codegen accessors and
-/// `T.ref()/deref()`.
-// TODO(port): Phase B — decide between (a) marker struct + associated fns (current),
-// or (b) extension trait with required accessor methods. Field accesses on `T` below
-// will not compile without a trait bound exposing those fields.
-pub struct CompressionStream<T>(PhantomData<T>);
 
 impl<T> CompressionStream<T> {
     #[bun_jsc::host_fn(method)]
@@ -527,53 +593,7 @@ impl<T> CompressionStream<T> {
 pub use jsc::codegen::JSNativeZlib::get_constructor as NativeZlib;
 pub use jsc::codegen::JSNativeBrotli::get_constructor as NativeBrotli;
 pub use jsc::codegen::JSNativeZstd::get_constructor as NativeZstd;
-
-#[derive(Default)]
-pub struct CountedKeepAlive {
-    pub keep_alive: KeepAlive,
-    pub ref_count: u32,
-}
-
-impl CountedKeepAlive {
-    pub fn ref_(&mut self, vm: &VirtualMachine) {
-        if self.ref_count == 0 {
-            self.keep_alive.ref_(vm);
-        }
-        self.ref_count += 1;
-    }
-
-    pub fn unref(&mut self, vm: &VirtualMachine) {
-        self.ref_count -= 1;
-        if self.ref_count == 0 {
-            self.keep_alive.unref(vm);
-        }
-    }
-}
-
-impl Drop for CountedKeepAlive {
-    fn drop(&mut self) {
-        self.keep_alive.disable();
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct Error {
-    pub msg: *const c_char,
-    pub err: c_int,
-    pub code: *const c_char,
-}
-
-impl Error {
-    pub const OK: Error = Error::init(core::ptr::null(), 0, core::ptr::null());
-
-    pub const fn init(msg: *const c_char, err: c_int, code: *const c_char) -> Error {
-        Error { msg, err, code }
-    }
-
-    pub fn is_error(&self) -> bool {
-        !self.msg.is_null()
-    }
-}
+} // mod _impl
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

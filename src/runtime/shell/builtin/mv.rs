@@ -116,13 +116,17 @@ impl Mv {
                     return Yield::suspended();
                 }
                 Tag::CheckTarget => {
-                    let (done, result) = match &Self::state_mut(interp, cmd).state {
-                        MvState::CheckTarget(t) => (t.done, t.result),
+                    let done = match &Self::state_mut(interp, cmd).state {
+                        MvState::CheckTarget(t) => t.done,
                         _ => unreachable!(),
                     };
                     if !done {
                         return Yield::suspended();
                     }
+                    let result = match &mut Self::state_mut(interp, cmd).state {
+                        MvState::CheckTarget(t) => t.result.take(),
+                        _ => unreachable!(),
+                    };
                     debug_assert!(result.is_some());
                     let maybe_fd: Option<bun_sys::Fd> = match result.unwrap() {
                         Ok(fd) => fd,

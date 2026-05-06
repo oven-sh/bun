@@ -1372,12 +1372,15 @@ pub fn init(
     }
 
     let env: &mut dot_env::Loader = {
+        // TODO(port): `dot_env::Loader<'a>` borrows `&'a mut Map`, so owning both on
+        // `PackageManager` is self-referential. Zig allocates once and never frees;
+        // `PackageManager` is a process-lifetime singleton (`holder::RAW_PTR`). Phase B
+        // should retype `Loader.map` to `Box<Map>` so this can become an owned field
+        // (`Box<dot_env::Loader>`) instead of `Box::leak`.
         let map = Box::leak(Box::new(dot_env::Map::init()));
         let loader = Box::leak(Box::new(dot_env::Loader::init(map)));
         loader
     };
-    // PORT NOTE: env has UNKNOWN ownership per LIFETIMES.tsv; Zig allocates and never frees.
-    // Using Box::leak to get &'static mut, stored as NonNull below.
 
     env.load_process()?;
     env.load(entries_option.entries(), &[], dot_env::Mode::Production, false)?;
@@ -1392,8 +1395,9 @@ pub fn init(
         let parts = [b"./.npmrc" as &[u8]];
 
         let install_ref = ctx.install.get_or_insert_with(|| {
-            // SAFETY: all-zero is a valid Api::BunInstall (extern struct in Zig)
-            Box::leak(Box::new(unsafe { core::mem::zeroed::<Api::BunInstall>() }))
+            // `Api::BunInstall` derives `Default` (all fields `None`/empty), matching
+            // Zig's `std.mem.zeroes(Api.BunInstall)`. Own via `Box` — never `Box::leak`.
+            Box::new(Api::BunInstall::default())
         });
         ini::load_npmrc_config(
             install_ref,
@@ -1406,8 +1410,9 @@ pub fn init(
         );
     } else {
         let install_ref = ctx.install.get_or_insert_with(|| {
-            // SAFETY: all-zero is a valid Api::BunInstall
-            Box::leak(Box::new(unsafe { core::mem::zeroed::<Api::BunInstall>() }))
+            // `Api::BunInstall` derives `Default` (all fields `None`/empty), matching
+            // Zig's `std.mem.zeroes(Api.BunInstall)`. Own via `Box` — never `Box::leak`.
+            Box::new(Api::BunInstall::default())
         });
         ini::load_npmrc_config(install_ref, env, true, &[ZStr::from_bytes(b".npmrc")]);
     }

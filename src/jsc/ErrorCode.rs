@@ -962,11 +962,18 @@ impl ErrorCode {
     pub const ERR_SECRETS_AUTH_FAILED: ErrorCode = ErrorCode::SECRETS_AUTH_FAILED;
     pub const ERR_SECRETS_INTERACTION_REQUIRED: ErrorCode = ErrorCode::SECRETS_INTERACTION_REQUIRED;
 
-    // Referenced in-tree but absent from ErrorCode.ts — out-of-range sentinels
-    // so `code_str` falls through to "ERR_UNKNOWN". Wire into ErrorCode.ts if
-    // they need a real C++-side ctor entry.
-    pub const ERR_SYSTEM_ERROR: ErrorCode = ErrorCode(Self::COUNT);
-    pub const ERR_CHILD_CLOSED_BEFORE_REPLY: ErrorCode = ErrorCode(Self::COUNT + 1);
+    // NOTE: `ERR_SYSTEM_ERROR` / `ERR_CHILD_CLOSED_BEFORE_REPLY` intentionally
+    // do NOT live here. They belong to the unrelated Zig enum
+    // `jsc.Node.ErrorCode` (src/runtime/node/nodejs_error_code.zig →
+    // `bun_runtime::node::nodejs_error_code::ErrorCode`), not to the
+    // ErrorCode.ts-derived table this type mirrors. Adding them here with
+    // out-of-range discriminants (≥ Self::COUNT) is a memory-safety bug: the
+    // C++ side does `errors[static_cast<size_t>(code)]` against a fixed
+    // `errors[COUNT]` array with no bounds check (ErrorCode.cpp /
+    // ErrorCode+Data.h), so any such value reaching `ErrorCode::fmt()` →
+    // `Bun__createErrorWithCode` reads past the array and past
+    // `ErrorCodeCache::internalField`. Callers needing those tags must use
+    // `bun_runtime::node::nodejs_error_code::ErrorCode` directly.
 }
 
 /// `error.code` string table — index-aligned with the consts above and with
@@ -1400,9 +1407,22 @@ impl<'a> ErrorBuilder<'a> {
 }
 
 // Zig: comptime { @export(&ErrorCode.ParserError, .{ .name = "Zig_ErrorCodeParserError" }); ... }
+//
+// Gated off: in Zig these are `@intFromEnum(ErrorCode.from(error.ParserError))`
+// — i.e. derived from the anyerror integer so that the value C++ compares
+// against (`extern "C" ZigErrorCode Zig_ErrorCodeParserError;`,
+// headers-handwritten.h) is exactly what `from()` produces. The Rust `from()`
+// above currently maps via `code.errno`, which never yields the hard-coded
+// 0xFFFE/0xFFFD placeholders, so exporting them would make C++ parser-error
+// detection silently never match. Until `bun_core::Error` gains the
+// NonZeroU16 anyerror interning (`err!("ParserError").as_u16()`) and these
+// constants can be derived from the same source as `from()`, keep the Zig-side
+// `@export` authoritative and do not let C++ link against bogus Rust statics.
+#[cfg(any())]
 #[unsafe(no_mangle)]
 pub static Zig_ErrorCodeParserError: ErrorCodeInt = ErrorCode::PARSER_ERROR;
 
+#[cfg(any())]
 #[unsafe(no_mangle)]
 pub static Zig_ErrorCodeJSErrorObject: ErrorCodeInt = ErrorCode::JS_ERROR_OBJECT;
 

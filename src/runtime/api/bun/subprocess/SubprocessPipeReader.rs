@@ -35,17 +35,36 @@ pub struct PipeReader {
     // TODO(port): lifetime — long-lived borrow of the VM's event loop
     pub event_loop: NonNull<EventLoop>,
     /// Intrusive refcount field for `bun_ptr::IntrusiveRc<PipeReader>`.
-    pub ref_count: Cell<u32>,
+    pub ref_count: RefCount<PipeReader>,
     pub state: State,
     pub stdio_result: StdioResult,
 }
 
 // `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` — intrusive, single-thread.
-// TODO(port): wire `ref_count` field + `deinit` destructor into `bun_ptr::IntrusiveRc<PipeReader>`.
+impl RefCounted for PipeReader {
+    type DestructorCtx = ();
+    fn debug_name() -> &'static str {
+        "PipeReader"
+    }
+    unsafe fn get_ref_count(this: *mut Self) -> *mut RefCount<Self> {
+        // SAFETY: caller contract — `this` points to a live PipeReader; field projection is in-bounds.
+        unsafe { core::ptr::addr_of_mut!((*this).ref_count) }
+    }
+    unsafe fn destructor(this: *mut Self, _ctx: ()) {
+        // SAFETY: refcount hit zero; we are the last owner of this heap allocation
+        // created in `create()` via Box::into_raw.
+        unsafe { PipeReader::deinit(this) };
+    }
+}
+
+// `pub const ref/deref = RefCount.ref/deref` — thin forwarders so existing call
+// sites (`self.r#ref()` / `PipeReader::deref(ptr)`) keep working.
 impl PipeReader {
     #[inline]
     pub fn r#ref(&self) {
-        self.ref_count.set(self.ref_count.get() + 1);
+        // SAFETY: `self` is live; RefCount::ref_ only touches the interior-mutable
+        // `ref_count` cell via raw-ptr field projection.
+        unsafe { RefCount::<PipeReader>::ref_(self as *const Self as *mut Self) };
     }
 
     /// Decrement the intrusive refcount; frees the allocation when it hits zero.
@@ -61,16 +80,8 @@ impl PipeReader {
     /// may outlive this call on the zero path.
     #[inline]
     pub unsafe fn deref(this: *mut Self) {
-        // SAFETY: `this` is live; `ref_count` is a `Cell` so shared access is sound.
-        let rc = unsafe { &(*this).ref_count };
-        let n = rc.get() - 1;
-        rc.set(n);
-        if n == 0 {
-            // SAFETY: refcount hit zero; we are the last owner of this heap allocation
-            // created in `create()` via Box::into_raw. `this` carries write provenance
-            // from the original Box.
-            unsafe { PipeReader::deinit(this) };
-        }
+        // SAFETY: caller contract.
+        unsafe { RefCount::<PipeReader>::deref(this) };
     }
 }
 

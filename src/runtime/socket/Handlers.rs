@@ -34,8 +34,8 @@ pub struct Handlers {
     pub mode: SocketMode,
     pub promise: Strong, // Strong.Optional → bun_jsc::Strong (Drop deallocates the slot)
 
-    #[cfg(feature = "ci_assert")]
-    // TODO(port): Environment.ci_assert → feature flag name TBD
+    #[cfg(debug_assertions)]
+    // TODO(port): Environment.ci_assert → using debug_assertions as the closest analogue
     pub protection_count: u32,
 }
 
@@ -192,7 +192,7 @@ impl Handlers {
             active_connections: 0,
             mode: if is_server { SocketMode::Server } else { SocketMode::Client },
             promise: Strong::empty(),
-            #[cfg(feature = "ci_assert")]
+            #[cfg(debug_assertions)]
             protection_count: 0,
         };
 
@@ -235,7 +235,7 @@ impl Handlers {
             return;
         }
 
-        #[cfg(feature = "ci_assert")]
+        #[cfg(debug_assertions)]
         {
             debug_assert!(self.protection_count > 0);
             self.protection_count -= 1;

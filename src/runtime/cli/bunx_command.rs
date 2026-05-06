@@ -589,7 +589,8 @@ impl BunxCommand {
         } else if &*update_request.name == b"@anthropic-ai/claude-code" {
             b"claude"
         } else if update_request.version.tag == VersionTag::Github {
-            update_request.version.value.github.repo.slice(&update_request.version_buf)
+            // SAFETY: tag == Github guarantees the `github` union arm is active.
+            unsafe { update_request.version.value.github.repo.slice(&update_request.version_buf) }
         } else if let Some(index) = strings::last_index_of_char(&update_request.name, b'/') {
             initial_bin_name_is_a_guess = true;
             &update_request.name[usize::try_from(index + 1).unwrap()..]

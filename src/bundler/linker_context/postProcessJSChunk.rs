@@ -1228,12 +1228,11 @@ pub fn generate_entry_point_tail_js(
         print_dce_annotations: c.options.emit_dce_annotations,
         minify_syntax: c.options.minify_syntax,
         mangled_props: Some(&c.mangled_props),
-        module_info: module_info.as_deref_mut(),
+        module_info,
         // .const_values = c.graph.const_values,
         ..Default::default()
     };
 
-    let import_records = ast.import_records.slice();
     let ast_view = ast.to_ast();
 
     CompileResult::Javascript {
@@ -1243,7 +1242,7 @@ pub fn generate_entry_point_tail_js(
             &ast_view,
             c.get_source(source_index as usize),
             print_options,
-            import_records,
+            ast_view.import_records.slice(),
             &[Part {
                 stmts: stmts.as_mut_slice() as *mut [Stmt],
                 ..Default::default()

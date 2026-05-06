@@ -1572,13 +1572,14 @@ impl<'a> BundleV2<'a> {
                     };
                     // For virtual files, use the path text as-is (no relative path computation needed).
                     path_primary.pretty = self.allocator().alloc_slice_copy(&path_primary.text);
+                    let mut tmp_source = Logger::Source {
+                        path: fs_path_to_logger(path_primary),
+                        contents: std::borrow::Cow::Borrowed(&b""[..]),
+                        ..Default::default()
+                    };
                     let idx = self.enqueue_parse_task(
                         &file_map_result,
-                        &Logger::Source {
-                            path: path_primary,
-                            contents: std::borrow::Cow::Borrowed(&b""[..]),
-                            ..Default::default()
-                        },
+                        &mut tmp_source,
                         loader,
                         import_record.original_target,
                     ).expect("oom");
@@ -1644,10 +1645,11 @@ impl<'a> BundleV2<'a> {
                             if is_package_path(&import_record.specifier) {
                                 if target == Target::Browser && options::ExternalModules::is_node_builtin(path_to_use) {
                                     add_error(
-                                        log, source, import_record.range, self.allocator(),
+                                        log, source, import_record.range,
                                         format_args!("Browser build cannot {} Node.js module: \"{}\". To use Node.js builtins, set target to 'node' or 'bun'",
                                             bstr::BStr::new(import_record.kind.error_label()), bstr::BStr::new(path_to_use)),
-                                        import_record.kind,
+                                        path_to_use,
+                                        import_record.kind.into(),
                                     ).expect("unreachable");
                                 } else {
                                     add_error(
@@ -1714,13 +1716,14 @@ impl<'a> BundleV2<'a> {
                 break 'brk path.loader(&transpiler.options.loaders).unwrap_or(Loader::File);
                 // HTML is only allowed at the entry point.
             };
+            let mut tmp_source = Logger::Source {
+                path: fs_path_to_logger(path.dupe_alloc().expect("oom")),
+                contents: std::borrow::Cow::Borrowed(&b""[..]),
+                ..Default::default()
+            };
             let idx = self.enqueue_parse_task(
                 &resolve_result,
-                &Logger::Source {
-                    path: logger_path_from_fs(path),
-                    contents: &b""[..],
-                    ..Default::default()
-                },
+                &mut tmp_source,
                 loader,
                 import_record.original_target,
             ).expect("oom");

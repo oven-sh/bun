@@ -594,7 +594,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
             // transpiler (it is never independently dropped: `Drop for DevServer`
             // does not free transpiler heap fields — see `useAllFields` mapping
             // where `.ssr_transpiler = {}` is a no-op in Zig).
-            core::ptr::copy_nonoverlapping(
+            ::core::ptr::copy_nonoverlapping(
                 addr_of_mut!((*p).server_transpiler).cast_const(),
                 addr_of_mut!((*p).ssr_transpiler),
                 1,

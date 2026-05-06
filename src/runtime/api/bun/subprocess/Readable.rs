@@ -249,9 +249,11 @@ impl Readable {
                 let Readable::Pipe(pipe) = mem::replace(self, Readable::Closed) else {
                     unreachable!()
                 };
-                let result = pipe.to_buffer(global);
-                // TODO(port): detach() must NOT deref under Rc — PipeReader.rs must drop the self.deref() line
-                pipe.detach();
+                let raw = pipe.into_raw();
+                // SAFETY: `raw` is live and we own one ref (just leaked from IntrusiveRc).
+                let result = unsafe { (*raw).to_buffer(global) };
+                // SAFETY: `raw` is still live; detach() performs the matching deref().
+                unsafe { PipeReader::detach(raw) };
                 Ok(result)
             }
             Readable::Buffer(_) => {

@@ -429,16 +429,16 @@ pub fn generate_files(
                 shadcn_argv[0] = bun_core::self_exe_path()?;
 
                 // Now we need to run shadcn to add the components to the project
-                // TODO(port): bun.spawnSync — confirm crate path
                 let shadcn_process =
-                    match crate::process::spawn_sync(&crate::process::SpawnOptions {
-                        argv: &shadcn_argv,
+                    match spawn_sync::spawn(&spawn_sync::Options {
+                        argv: shadcn_argv.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
                         envp: None,
-                        cwd: bun_fs::FileSystem::instance().top_level_dir,
-                        stderr: crate::process::Stdio::Inherit,
-                        stdout: crate::process::Stdio::Inherit,
-                        stdin: crate::process::Stdio::Inherit,
+                        cwd: Box::<[u8]>::from(FileSystem::instance().top_level_dir()),
+                        stderr: spawn_sync::SyncStdio::Inherit,
+                        stdout: spawn_sync::SyncStdio::Inherit,
+                        stdin: spawn_sync::SyncStdio::Inherit,
                         // TODO(port): Zig omits `.windows` here (unlike runInstall / dev-server spawns) — likely upstream bug; mirroring source exactly for now.
+                        ..Default::default()
                     }) {
                         Ok(p) => p,
                         Err(err) => {
@@ -460,10 +460,10 @@ pub fn generate_files(
                                 }
                             }
 
-                            if let crate::process::Status::Exited { code, .. } =
+                            if let bun_process::Status::Exited(exited) =
                                 spawn_result.status
                             {
-                                Global::exit(code);
+                                Global::exit(exited.code);
                             }
 
                             Global::crash();

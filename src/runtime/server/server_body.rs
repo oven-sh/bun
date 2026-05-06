@@ -873,7 +873,7 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     pub h3_request_pool_allocator: &'static RequestContextStackAllocator<SSL, DEBUG, true>,
     pub all_closed_promise: jsc::JSPromiseStrong,
 
-    pub listen_callback: jsc::AnyTask,
+    pub listen_callback: jsc::AnyTask::AnyTask,
     // allocator field dropped — global mimalloc
     pub poll_ref: KeepAlive,
 

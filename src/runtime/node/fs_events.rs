@@ -282,17 +282,14 @@ static mut FSEVENTS_CF: Option<CoreFoundation> = None;
 static mut FSEVENTS_CS: Option<CoreServices> = None;
 
 fn init_library() {
-    // TODO(port): bun_sys::dlopen flags — Zig used .{ .LAZY = true, .LOCAL = true }
-    // SAFETY: path is a NUL-terminated CStr literal; dlopen is sound to call from any thread
-    let fsevents_cf_handle = unsafe {
-        bun_sys::dlopen(
-            c"/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
-            bun_sys::DlopenFlags::LAZY | bun_sys::DlopenFlags::LOCAL,
-        )
-    };
-    if fsevents_cf_handle.is_null() {
+    // Zig used std.c.dlopen with .{ .LAZY = true, .LOCAL = true }
+    let fsevents_cf_handle = bun_sys::dlopen(
+        zstr!("/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"),
+        bun_sys::RTLD::LAZY | bun_sys::RTLD::LOCAL,
+    );
+    let Some(fsevents_cf_handle) = fsevents_cf_handle else {
         panic!("Cannot Load CoreFoundation");
-    }
+    };
 
     // SAFETY: only called under FSEVENTS_MUTEX
     unsafe {

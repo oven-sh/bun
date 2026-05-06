@@ -625,14 +625,12 @@ pub(crate) mod kind {
                 // We pass `reason` as a third argument instead.
                 match self.ip.opts.deser.error_handling {
                     ErrorHandling::DebugWarn => {
-                        crate::output::debug_warn(
+                        crate::output::debug_warn(&format_args!(
                             "Environment variable '{}' has value '{}' which {}.",
-                            (
-                                bstr::BStr::new(self.ip.var_name),
-                                bstr::BStr::new(raw_env),
-                                reason,
-                            ),
-                        );
+                            bstr::BStr::new(self.ip.var_name),
+                            bstr::BStr::new(raw_env),
+                            reason,
+                        ));
                         self.value.store(NOT_SET_SENTINEL, Ordering::Relaxed);
                         None
                     }

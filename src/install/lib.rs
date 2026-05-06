@@ -1379,19 +1379,11 @@ pub use package_manager::{
 };
 pub use resolution::Tag as ResolutionTag;
 pub use dependency::Tag as DependencyVersionTag;
-#[derive(Default)] pub struct ExtractTarball;
-impl ExtractTarball {
-    /// Stub for `ExtractTarball.run` (src/install/extract_tarball.zig). Real
-    /// body lives in the gated `extract_tarball.rs`; this signature lets
-    /// `PackageManagerTask` type-check until that module is un-gated.
-    pub fn run(
-        &self,
-        _log: &mut bun_logger::Log,
-        _bytes: &[u8],
-    ) -> Result<ExtractData, bun_core::Error> {
-        Err(bun_core::err!("ExtractTarballNotPorted"))
-    }
-}
+// reconciler-7: stub retired — `extract_tarball.rs` carries the real struct
+// (`name`/`resolution`/`temp_dir`/`integrity`/…) and `run`/`name_and_basename`/
+// `move_to_cache_directory`, which `TarballStream` and `PackageManagerTask`
+// now read directly.
+pub use extract_tarball::ExtractTarball;
 /// Stub for `NetworkTask` — only the fields `PackageManagerTask::callback`
 /// reads are exposed. Full struct lives in the gated `NetworkTask.rs`.
 #[derive(Default)] pub struct NetworkTask {
@@ -1821,8 +1813,44 @@ impl PackageManager {
         }
     }
 }
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
-pub enum Subcommand { #[default] Install, Add, Remove, Update, Link, Unlink, Pm, Patch, PatchCommit, Outdated }
+#[derive(Clone, Copy, Default, PartialEq, Eq, core::marker::ConstParamTy)]
+pub enum Subcommand {
+    #[default]
+    Install,
+    Update,
+    Pm,
+    Add,
+    Remove,
+    Link,
+    Unlink,
+    Patch,
+    PatchCommit,
+    Outdated,
+    Pack,
+    Publish,
+    Why,
+    Audit,
+    Info,
+    Scan,
+}
+
+impl Subcommand {
+    pub fn can_globally_install_packages(self) -> bool {
+        matches!(self, Subcommand::Install | Subcommand::Update | Subcommand::Add)
+    }
+
+    pub fn supports_workspace_filtering(self) -> bool {
+        matches!(self, Subcommand::Outdated | Subcommand::Install | Subcommand::Update)
+    }
+
+    pub fn supports_json_output(self) -> bool {
+        matches!(self, Subcommand::Audit | Subcommand::Pm | Subcommand::Info)
+    }
+
+    pub fn should_chdir_to_root(self) -> bool {
+        !matches!(self, Subcommand::Link)
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // MOVE_DOWN(b0): bun_runtime::cli::ShellCompletions → install

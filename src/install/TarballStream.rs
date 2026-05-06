@@ -159,7 +159,10 @@ pub struct TarballStream {
 /// state machine is only worth its per-chunk overhead for tarballs that
 /// would otherwise consume a noticeable amount of memory.
 pub fn min_size() -> usize {
-    usize::try_from(env_var::BUN_INSTALL_STREAMING_MIN_SIZE.get()).unwrap()
+    // env_var.get() returns Option<u64> in the Rust port even when a default
+    // is configured (Zig collapses it at comptime); the var has a 2 MiB
+    // default so unwrap is infallible here.
+    usize::try_from(env_var::BUN_INSTALL_STREAMING_MIN_SIZE.get().unwrap()).unwrap()
 }
 
 impl TarballStream {

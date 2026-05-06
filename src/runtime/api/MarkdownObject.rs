@@ -1000,7 +1000,11 @@ struct CallbackStackEntry {
     /// For ul/ol: number of li children seen so far (next li's index).
     /// For li: this item's 0-based index within its parent list.
     child_index: u32,
-    detail: md::SpanDetail,
+    // PORT NOTE: `SpanDetail` borrows from `src_text`; the `RendererImpl`
+    // trait erases that lifetime, so we extend it to `'static` at the
+    // `enter_span` boundary (see SAFETY note there). Entries are popped
+    // and consumed strictly before `src_text` is dropped.
+    detail: md::SpanDetail<'static>,
 }
 
 impl Default for CallbackStackEntry {

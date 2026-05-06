@@ -3077,7 +3077,7 @@ pub mod sync {
         pub err: bun_sys::E,
         pub context: *mut SyncWindowsProcess,
         pub on_done_callback:
-            fn(*mut SyncWindowsProcess, OutFd, &[&[u8]], bun_sys::E),
+            fn(*mut SyncWindowsProcess, OutFd, Vec<Box<[u8]>>, bun_sys::E),
         pub tag: OutFd,
     }
 
@@ -3112,8 +3112,12 @@ pub mod sync {
             // SAFETY: this is valid until we destroy it below
             let this_ref = unsafe { &mut *this };
             let context = this_ref.context;
-            let chunks: Vec<&[u8]> =
-                this_ref.chunks.iter().map(|c| c.as_ref()).collect();
+            // Move ownership of the chunk allocations out *before* dropping
+            // `this`, otherwise the callback would observe freed buffers.
+            // Mirrors Zig process.zig:2009-2011, where `destroy(this)` only
+            // frees the struct bytes and the ArrayList items survive to be
+            // freed later by `flattenOwnedChunks`.
+            let chunks: Vec<Box<[u8]>> = core::mem::take(&mut this_ref.chunks);
             let err = if this_ref.err == bun_sys::E::CANCELED {
                 bun_sys::E::SUCCESS
             } else {
@@ -3123,18 +3127,24 @@ pub mod sync {
             let on_done_callback = this_ref.on_done_callback;
             // bun.default_allocator.destroy(this.pipe) — Box<uv::Pipe> drops with `this`
             // bun.default_allocator.destroy(this)
-            // SAFETY: this was Box::into_raw'd; reclaim and drop
+            // SAFETY: this was Box::into_raw'd in start(); reclaim and drop
             drop(unsafe { Box::from_raw(this) });
-            on_done_callback(context, tag, &chunks, err);
-            // TODO(port): chunks borrows from `this` which we just dropped — Phase B:
-            // move chunks out before dropping, or pass owned Vec<Box<[u8]>>.
+            on_done_callback(context, tag, chunks, err);
         }
 
-        pub fn start(self: &mut Box<Self>) -> Maybe<()> {
-            let self_ptr = self.as_mut() as *mut SyncWindowsPipeReader;
-            self.pipe.set_data(self_ptr);
-            self.pipe.ref_();
-            self.pipe.read_start(self_ptr, Self::on_alloc, Self::on_error, Self::on_read)
+        pub fn start(self: Box<Self>) -> Maybe<()> {
+            // Single-pointer ownership: `Box::into_raw` is the *only* root for
+            // this allocation. Every subsequent access (including the libuv
+            // callbacks and the `Box::from_raw` in `on_close`) goes through
+            // this pointer, so no Stacked Borrows tag is invalidated by an
+            // interleaved Box deref.
+            let this: *mut SyncWindowsPipeReader = Box::into_raw(self);
+            // SAFETY: just allocated; sole owner.
+            unsafe {
+                (*this).pipe.set_data(this);
+                (*this).pipe.ref_();
+                (*this).pipe.read_start(this, Self::on_alloc, Self::on_error, Self::on_read)
+            }
         }
     }
 

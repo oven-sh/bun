@@ -606,25 +606,27 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // Sibling JS/CSS chunks may still be null at this point; `.chunk` pieces fall
             // back to file paths when their entry in `scc` is null, matching the previous
             // behavior for inter-chunk imports.
+            // PORT NOTE: take `intermediate_output` by value so `&mut self` is
+            // disjoint from `&mut Chunk` (matches writeOutputFilesToDisk.rs).
             // SAFETY: see PORT NOTE above — `code_standalone` only reads sibling
             // chunks via `chunks` and writes through `self`.
-            let buffer = unsafe {
-                (*chunk_item)
-                    .intermediate_output
-                    .code_standalone(
-                        None,
-                        &*c.parse_graph,
-                        &c.graph,
-                        &c.options.public_path,
-                        &mut *chunk_item,
-                        &mut *chunks_ptr,
-                        &mut ds,
-                        false,
-                        false,
-                        &scc,
-                    )
-            }?
-            .buffer;
+            let mut intermediate_output =
+                core::mem::take(unsafe { &mut (*chunk_item).intermediate_output });
+            let buffer = intermediate_output
+                .code_standalone(
+                    None,
+                    unsafe { &*c.parse_graph },
+                    &c.graph,
+                    &c.options.public_path,
+                    unsafe { &mut *chunk_item },
+                    unsafe { &mut *chunks_ptr },
+                    &mut ds,
+                    false,
+                    false,
+                    &scc,
+                )?
+                .buffer;
+            unsafe { (*chunk_item).intermediate_output = intermediate_output };
             scc[ci] = Some(buffer);
         }
 
@@ -679,41 +681,41 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
             // SAFETY: see PORT NOTE on `chunks_ptr` above — Zig freely aliases
             // `*IntermediateOutput` / `*Chunk` / `[]Chunk`; the callee only reads
-            // sibling chunks and writes via `self`.
+            // sibling chunks and writes via `self`. Take `intermediate_output`
+            // by value so `&mut self` is disjoint from `&mut Chunk` for borrowck
+            // (matches writeOutputFilesToDisk.rs).
             let chunk_ptr: *mut Chunk = chunk as *mut Chunk;
+            let mut intermediate_output = core::mem::take(&mut chunk.intermediate_output);
             let _code_result = if is_standalone && matches!(chunk.content, crate::chunk::Content::Html) {
-                unsafe {
-                    (*chunk_ptr).intermediate_output.code_standalone(
-                        None,
-                        &*c.parse_graph,
-                        &c.graph,
-                        public_path,
-                        &mut *chunk_ptr,
-                        &mut *chunks_ptr,
-                        &mut display_size,
-                        false,
-                        false,
-                        standalone_chunk_contents.as_deref().unwrap(),
-                    )
-                }?
+                intermediate_output.code_standalone(
+                    None,
+                    unsafe { &*c.parse_graph },
+                    &c.graph,
+                    public_path,
+                    unsafe { &mut *chunk_ptr },
+                    unsafe { &mut *chunks_ptr },
+                    &mut display_size,
+                    false,
+                    false,
+                    standalone_chunk_contents.as_deref().unwrap(),
+                )?
             } else {
                 let force_abs = unsafe { &(*c.resolver).opts }.compile
                     && !chunk.flags.contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD);
                 let enable_sm = chunk.content.sourcemap(c.options.source_maps) != SourceMapOption::None;
-                unsafe {
-                    (*chunk_ptr).intermediate_output.code(
-                        None,
-                        &*c.parse_graph,
-                        &c.graph,
-                        public_path,
-                        &mut *chunk_ptr,
-                        &mut *chunks_ptr,
-                        &mut display_size,
-                        force_abs,
-                        enable_sm,
-                    )
-                }?
+                intermediate_output.code(
+                    None,
+                    unsafe { &*c.parse_graph },
+                    &c.graph,
+                    public_path,
+                    unsafe { &mut *chunk_ptr },
+                    unsafe { &mut *chunks_ptr },
+                    &mut display_size,
+                    force_abs,
+                    enable_sm,
+                )?
             };
+            chunk.intermediate_output = intermediate_output;
             let mut code_result = _code_result;
 
             let mut sourcemap_output_file: Option<options::OutputFile> = None;

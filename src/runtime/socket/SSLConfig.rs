@@ -439,9 +439,21 @@ pub mod GlobalRegistry {
 
     // TODO(port): Zig used ArrayHashMapUnmanaged with a custom MapContext that
     // hashes/compares by *content* (content_hash / is_same) while the key is a
-    // raw `*SSLConfig`. bun_collections::ArrayHashMap needs equivalent
-    // per-map-context support; if not available, wrap *const SSLConfig in a
-    // newtype implementing Hash/Eq via unsafe deref.
+    // raw `*SSLConfig`. That shape is UB in Rust: when a stored config's strong
+    // count hits 0, std `Arc` materializes a `&mut SSLConfig` (via
+    // `drop_in_place`) *before* `Drop::drop` reaches `remove()`'s mutex; a
+    // concurrent `intern()` probing the map would form a `&SSLConfig` to the
+    // same allocation via the raw-ptr key, aliasing that live `&mut`. Zig's
+    // model tolerates read-while-deinit-blocked (.zig:336-341/.zig:356); Rust's
+    // does not, regardless of the mutex.
+    //
+    // Correct Rust shape: key the map by the precomputed `u64` content hash
+    // (call `content_hash()` on the owned `config` *before* `Arc::new`), store
+    // `Weak<SSLConfig>` as the value, and on probe perform `is_same` only after
+    // a successful `Weak::upgrade()` — so the comparand is always reached via a
+    // fresh strong `Arc`, never via a raw pointer that may alias Drop's `&mut`.
+    // `remove()` then looks up by the dying config's `cached_hash` and confirms
+    // identity by comparing `Weak::as_ptr` against `self as *const _`.
     //
     // Backing storage + intern() are gated until the content-hash MapContext
     // adapter exists; remove() is a no-op while no map is populated.
@@ -470,13 +482,21 @@ pub mod GlobalRegistry {
         struct MapContext;
         impl MapContext {
             fn hash(key: *const SSLConfig) -> u32 {
-                // SAFETY: key points into a live Arc allocation while held by the
-                // registry mutex (see module doc). `content_hash` takes `&self`
-                // and only mutates via `AtomicU64`, so a shared ref is sound.
+                // SAFETY VIOLATION (gated): forming `&SSLConfig` from a stored
+                // `Arc::as_ptr` key here is UB once that Arc's strong count is
+                // 0 — std `Arc` already holds a `&mut SSLConfig` inside
+                // `drop_in_place` while the dropping thread blocks on `MUTEX`
+                // in `remove()`, so this `&` aliases a live `&mut`. The mutex
+                // does not help; the exclusive borrow is taken before the lock.
+                // See module TODO for the u64-key + Weak::upgrade redesign that
+                // must replace this before un-gating.
                 unsafe { (*key).content_hash() as u32 }
             }
             fn eql(a: *const SSLConfig, b: *const SSLConfig) -> bool {
-                // SAFETY: see above.
+                // SAFETY VIOLATION (gated): same aliased-&mut hazard as `hash`
+                // above — `is_same` reads non-atomic CString/CStringList fields
+                // through a `&SSLConfig` that may alias Drop's `&mut`. Must be
+                // replaced by `Weak::upgrade()`-then-compare before un-gating.
                 unsafe { (*a).is_same(&*b) }
             }
         }
@@ -507,11 +527,13 @@ pub mod GlobalRegistry {
         /// The returned `SharedPtr` is dropped normally.
         pub fn intern(config: SSLConfig) -> SharedPtr {
             let new_shared: SharedPtr = Arc::new(config);
-            // SAFETY: `new_ptr` is used only as an identity key and for shared
-            // reads (`content_hash`/`is_same`) under the registry mutex while
-            // `new_shared` (or its weak) keeps the allocation alive. Never
-            // written through, so `*const` provenance from `Arc::as_ptr` is
-            // sufficient — no `*mut` cast needed.
+            // NOTE: `new_ptr` is currently the map key for the gated draft. Per
+            // the module TODO this must become a precomputed `u64` content hash
+            // (taken from the owned `config` before `Arc::new`) so probing never
+            // dereferences a `*const SSLConfig` derived from `Arc::as_ptr` —
+            // such derefs can alias the `&mut` that std `Arc` holds during
+            // `drop_in_place` on another thread. Until then `new_ptr` is used
+            // only as an identity token; do not read through it once stored.
             let new_ptr: *const SSLConfig = Arc::as_ptr(&new_shared);
 
             // Deferred cleanup MUST run after the mutex is released (Drop re-locks

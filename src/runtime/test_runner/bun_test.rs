@@ -819,21 +819,36 @@ impl<'a> BunTest<'a> {
     pub fn run(this_strong: BunTestPtr, global_this: &JSGlobalObject) -> JsResult<()> {
         group_begin!();
         let _g = scopeguard::guard((), |_| debug::group::end());
-        // SAFETY: see BunTestPtr TODO
-        let this = unsafe { &mut *(Rc::as_ptr(&this_strong) as *mut BunTest) };
+        // Zig: `const this = this_strong.get().?` — a freely-aliasing `*BunTest`.
+        // `Collection::step` / `Execution::step` re-enter and call `.get()` on
+        // the same `Rc`, so we keep a raw `*mut` (via `UnsafeCell`) and reborrow
+        // per-use instead of holding one long-lived `&mut` that would alias.
+        let this: *mut BunTest = this_strong.as_ptr();
 
-        if this.in_run_loop {
-            return Ok(());
+        // SAFETY: `this` is `UnsafeCell::get()`-derived; single-threaded JS VM;
+        // each `(*this)` deref below is a short-lived reborrow that does not
+        // span a re-entrant `.get()` call.
+        unsafe {
+            if (*this).in_run_loop {
+                return Ok(());
+            }
+            (*this).in_run_loop = true;
         }
-        this.in_run_loop = true;
-        let _reset = scopeguard::guard(&mut this.in_run_loop, |r| *r = false);
-        // TODO(port): errdefer/defer overlap with &mut this — reshape for borrowck
+        // Zig: `defer this.in_run_loop = false`. The guard captures the raw ptr
+        // (not a `&mut bool`) so no `&mut` is held across the loop body.
+        let _reset = scopeguard::guard(this, |p| {
+            // SAFETY: `p` is the same `UnsafeCell`-derived ptr; `this_strong`
+            // keeps the allocation alive for the whole function.
+            unsafe { (*p).in_run_loop = false }
+        });
 
         let mut min_timeout = Timespec::EPOCH;
 
-        while let Some(result) = this.result_queue.read_item() {
+        // SAFETY: see block-SAFETY above. `step()` may call `.get()` internally;
+        // no outer `&mut` overlaps because we only touch `*this` between calls.
+        while let Some(result) = unsafe { (*this).result_queue.read_item() } {
             global_this.clear_termination_exception();
-            let step_result: StepResult = match this.phase {
+            let step_result: StepResult = match unsafe { (*this).phase } {
                 Phase::Collection => Collection::step(this_strong.clone(), global_this, result)?,
                 Phase::Execution => Execution::step(this_strong.clone(), global_this, result)?,
                 Phase::Done => StepResult::Complete,
@@ -843,15 +858,17 @@ impl<'a> BunTest<'a> {
                     min_timeout = Timespec::min_ignore_epoch(min_timeout, timeout);
                 }
                 StepResult::Complete => {
-                    if this._advance(global_this)? == Advance::Exit {
+                    // SAFETY: short-lived reborrow; `_advance` does not re-enter `.get()`.
+                    if unsafe { (*this)._advance(global_this)? } == Advance::Exit {
                         return Ok(());
                     }
-                    this.add_result(RefDataValue::Start);
+                    unsafe { (*this).add_result(RefDataValue::Start) };
                 }
             }
         }
 
-        this.update_min_timeout(global_this, &min_timeout);
+        // SAFETY: loop done; sole `&mut` for the timer update.
+        unsafe { (*this).update_min_timeout(global_this, &min_timeout) };
         Ok(())
     }
 
@@ -971,8 +988,11 @@ impl<'a> BunTest<'a> {
     ) -> Option<RefDataValue> {
         group_begin!();
         let _g = scopeguard::guard((), |_| debug::group::end());
-        // SAFETY: see BunTestPtr TODO
-        let this = unsafe { &mut *(Rc::as_ptr(&this_strong) as *mut BunTest) };
+        // Raw `*mut` (via `UnsafeCell`) — the JS event-loop call below can
+        // re-enter `bun_test_then_or_catch` / `bun_test_done_callback` /
+        // `on_unhandled_rejection`, each of which `.get()`s the same `BunTest`.
+        // Hold a raw ptr and reborrow per-use so no two `&mut` overlap.
+        let this: *mut BunTest = this_strong.as_ptr();
         let vm = global_this.bun_vm();
 
         // Don't use Option<JSValue> to make it harder for the conservative stack
@@ -986,13 +1006,15 @@ impl<'a> BunTest<'a> {
             done_arg = match DoneCallback::bind(done_callback, global_this) {
                 Ok(v) => v,
                 Err(e) => {
-                    this.on_uncaught_exception(global_this, Some(global_this.take_exception(e)), false, cfg_data.clone());
+                    // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point.
+                    unsafe { (*this).on_uncaught_exception(global_this, Some(global_this.take_exception(e)), false, cfg_data.clone()) };
                     JSValue::ZERO // failed to bind done callback
                 }
             };
         }
 
-        this.update_min_timeout(global_this, timeout);
+        // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point (before JS re-entry).
+        unsafe { (*this).update_min_timeout(global_this, timeout) };
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { &[] };
         let result: JSValue = match vm.event_loop().run_callback_with_result_and_forcefully_drain_microtasks(
             cfg_callback,
@@ -1003,7 +1025,8 @@ impl<'a> BunTest<'a> {
             Ok(v) => v,
             Err(_) => {
                 global_this.clear_termination_exception();
-                this.on_uncaught_exception(global_this, global_this.try_take_exception(), false, cfg_data.clone());
+                // SAFETY: re-derive after JS callback returned; no outer `&mut` was held across it.
+                unsafe { (*this).on_uncaught_exception(global_this, global_this.try_take_exception(), false, cfg_data.clone()) };
                 bun_core::scoped_log!(bun_test_group, "callTestCallback -> error");
                 JSValue::ZERO
             }
@@ -1069,7 +1092,9 @@ impl<'a> BunTest<'a> {
                     }
                     PromiseStatus::Rejected => {
                         let value = promise.result(global_this.vm());
-                        this.on_uncaught_exception(global_this, Some(value), true, cfg_data.clone());
+                        // SAFETY: re-derive via `UnsafeCell` after the JS/microtask
+                        // drain above; sole `&mut` at this point.
+                        unsafe { (*this).on_uncaught_exception(global_this, Some(value), true, cfg_data.clone()) };
 
                         // We previously marked it as handled above.
 
@@ -1310,8 +1335,9 @@ impl RunTestsTask {
         // defer this.weak.deinit() → Weak drops with Box
         let Some(strong) = this.weak.upgrade() else { return Ok(()) };
         if let Err(e) = BunTest::run(strong.clone(), this.global_this) {
-            // SAFETY: see BunTestPtr TODO
-            let bt = unsafe { &mut *(Rc::as_ptr(&strong) as *mut BunTest) };
+            // SAFETY: `&mut` derived via `UnsafeCell` after `run` returned; sole
+            // borrow at this point.
+            let bt = strong.get();
             bt.on_uncaught_exception(
                 this.global_this,
                 Some(this.global_this.take_exception(e)),
@@ -1732,5 +1758,5 @@ pub use super::order as Order;
 //   source:     src/test_runner/bun_test.zig (1072 lines)
 //   confidence: medium
 //   todos:      22
-//   notes:      BunTestPtr=Rc<BunTest> needs interior-mutability decision; BunTest<'a> reporter borrow is mutated (reshape); RefData uses bun_ptr::IntrusiveRc (crosses FFI via asPromisePtr); intrusive ExecutionEntry list kept raw; group.begin/end mapped to debug::group stubs.
+//   notes:      BunTestPtr=Rc<BunTestCell> (UnsafeCell interior-mut, .get()/.as_ptr() mirror Zig *BunTest); BunTest<'a> reporter borrow is mutated (reshape); RefData uses bun_ptr::IntrusiveRc (crosses FFI via asPromisePtr); intrusive ExecutionEntry list kept raw; group.begin/end mapped to debug::group stubs.
 // ──────────────────────────────────────────────────────────────────────────

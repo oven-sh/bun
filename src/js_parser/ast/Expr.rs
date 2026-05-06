@@ -438,7 +438,7 @@ impl Expr {
             }
             Data::EString(str) => {
                 let mut str = *str;
-                if E::EString::len(&str) > index as usize {
+                if str.len() > index as usize {
                     let slice = str.slice(bump);
                     // TODO: this is not correct since .length refers to UTF-16 code units and not UTF-8 bytes
                     // However, since this is only used in the JSON prettifier for `bun pm view`, it's not a blocker for shipping.

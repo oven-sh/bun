@@ -374,6 +374,52 @@ const _: () = assert!(
     "Expected Stmt to be <= 24 bytes"
 );
 
+/// Zig: `std.meta.eql(p.loop_body, stmt.data)` (visitStmt.zig) — tag compare,
+/// then payload compare. Payloads here are arena pointers (`StoreRef<T>`) or
+/// ZSTs, so this is tag + pointer-identity, never a deep structural compare.
+impl PartialEq for Data {
+    fn eq(&self, other: &Self) -> bool {
+        use Data::*;
+        match (*self, *other) {
+            (SBlock(a), SBlock(b)) => core::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (SBreak(a), SBreak(b)) => core::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (SClass(a), SClass(b)) => core::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (SComment(a), SComment(b)) => core::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (SContinue(a), SContinue(b)) => core::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (SDirective(a), SDirective(b)) => core::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (SDoWhile(a), SDoWhile(b)) => core::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (SEnum(a), SEnum(b)) => core::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (SExportClause(a), SExportClause(b)) => core::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (SExportDefault(a), SExportDefault(b)) => core::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (SExportEquals(a), SExportEquals(b)) => core::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (SExportFrom(a), SExportFrom(b)) => core::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (SExportStar(a), SExportStar(b)) => core::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (SExpr(a), SExpr(b)) => core::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (SForIn(a), SForIn(b)) => core::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (SForOf(a), SForOf(b)) => core::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (SFor(a), SFor(b)) => core::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (SFunction(a), SFunction(b)) => core::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (SIf(a), SIf(b)) => core::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (SImport(a), SImport(b)) => core::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (SLabel(a), SLabel(b)) => core::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (SLocal(a), SLocal(b)) => core::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (SNamespace(a), SNamespace(b)) => core::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (SReturn(a), SReturn(b)) => core::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (SSwitch(a), SSwitch(b)) => core::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (SThrow(a), SThrow(b)) => core::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (STry(a), STry(b)) => core::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (SWhile(a), SWhile(b)) => core::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (SWith(a), SWith(b)) => core::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (SLazyExport(a), SLazyExport(b)) => core::ptr::eq(a.as_ptr(), b.as_ptr()),
+            (STypeScript(_), STypeScript(_)) => true,
+            (SEmpty(_), SEmpty(_)) => true,
+            (SDebugger(_), SDebugger(_)) => true,
+            _ => false,
+        }
+    }
+}
+impl Eq for Data {}
+
 impl Data {
     // TODO(port): derive or hand-map Data → Tag (Zig got this free from `union(Tag)`).
     pub fn tag(&self) -> Tag {

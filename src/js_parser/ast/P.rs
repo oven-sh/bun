@@ -6921,16 +6921,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         debug_assert!(self.current_scope == self.module_scope);
 
         if self.options.features.server_components == options::ServerComponents::WrapExportsForServerReference {
-            todo!("registerServerReference");
+            bun_core::todo_panic!("registerServerReference");
         }
 
         let module_path = self.new_expr(
             E::String::init(if self.options.jsx.development {
-                // TODO(port): Zig used `p.source.path.pretty`; logger::fs::Path
-                // currently has only `text` (Phase-A stub).
-                self.source.path.text
+                self.source.path.pretty
             } else {
-                todo!("TODO: unique_key here")
+                bun_core::todo_panic!("unique_key here")
             }),
             logger::Loc::EMPTY,
         );

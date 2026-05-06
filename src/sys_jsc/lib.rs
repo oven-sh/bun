@@ -501,17 +501,75 @@ pub trait SystemErrorJsc {
     ) -> JSValue;
 }
 
-impl SystemErrorJsc for bun_sys::SystemError {
-    fn to_error_instance(&self, _global: &JSGlobalObject) -> JSValue {
-        // TODO(b2-blocked): bun_jsc::SystemError::to_error_instance
-        todo!("b2-blocked: bun_jsc::SystemError::to_error_instance")
+/// `#[repr(C)]` mirror of `jsc.SystemError` (`src/jsc/SystemError.zig`) — the
+/// exact field order C++ `SystemError__toErrorInstance` reads. The T1
+/// `bun_sys::SystemError` is NOT `#[repr(C)]` and has a different field order,
+/// so we marshal through this on the way to FFI.
+#[repr(C)]
+struct CSystemError {
+    errno: core::ffi::c_int,
+    code: bun_string::String,
+    message: bun_string::String,
+    path: bun_string::String,
+    syscall: bun_string::String,
+    hostname: bun_string::String,
+    fd: core::ffi::c_int,
+    dest: bun_string::String,
+}
+
+impl CSystemError {
+    fn from_sys(e: &bun_sys::SystemError) -> Self {
+        // Bump refs: C++ consumes one ref per non-empty field; the Zig
+        // `toErrorInstance` does `defer this.deref()` which we mirror below.
+        e.code.ref_();
+        e.message.ref_();
+        e.path.ref_();
+        e.syscall.ref_();
+        e.hostname.ref_();
+        e.dest.ref_();
+        Self {
+            errno: e.errno as core::ffi::c_int,
+            code: e.code.clone(),
+            message: e.message.clone(),
+            path: e.path.clone(),
+            syscall: e.syscall.clone(),
+            hostname: e.hostname.clone(),
+            fd: e.fd as core::ffi::c_int,
+            dest: e.dest.clone(),
+        }
     }
+    fn deref(&self) {
+        self.code.deref();
+        self.message.deref();
+        self.path.deref();
+        self.syscall.deref();
+        self.hostname.deref();
+        self.dest.deref();
+    }
+}
+
+impl SystemErrorJsc for bun_sys::SystemError {
+    /// `SystemError.toErrorInstance(global)` (SystemError.zig).
+    fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue {
+        let c = CSystemError::from_sys(self);
+        // SAFETY: `c` is a valid `#[repr(C)]` SystemError; `global` is live.
+        let result = unsafe { SystemError__toErrorInstance(&c, global) };
+        // Zig: `defer this.deref();`
+        c.deref();
+        result
+    }
+    /// `SystemError.toErrorInstanceWithAsyncStack(global, promise)`
+    /// (SystemError.zig) — `toErrorInstance` then attach the promise's await
+    /// chain as async stack frames so threadpool-rejected promises get a
+    /// useful trace.
     fn to_error_instance_with_async_stack(
         &self,
-        _global: &JSGlobalObject,
-        _promise: &JSPromise,
+        global: &JSGlobalObject,
+        promise: &JSPromise,
     ) -> JSValue {
-        // TODO(b2-blocked): bun_jsc::SystemError::to_error_instance_with_async_stack
-        todo!("b2-blocked: bun_jsc::SystemError::to_error_instance_with_async_stack")
+        let value = self.to_error_instance(global);
+        // SAFETY: `global`/`promise` are live; `value` is a fresh Error cell.
+        unsafe { Bun__attachAsyncStackFromPromise(global, value, promise) };
+        value
     }
 }

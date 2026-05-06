@@ -4216,16 +4216,17 @@ impl NodeFS {
 
     fn preadv_inner(&mut self, args: &args::Readv) -> Maybe<ret::Readv> {
         let position = args.position.unwrap();
-        let _ = position;
-        // blocked_on: bun_sys::preadv — vectored read wrapper not yet exported
-        // from `bun_sys` (only the raw `c::preadv` extern exists). The Zig
-        // body just forwards to `Syscall.preadv`; restore once wired.
-        todo!("blocked_on: bun_sys::preadv")
+        match Syscall::preadv(args.fd, args.buffers.buffers.as_slice(), position as i64) {
+            Maybe::Err(err) => Maybe::Err(err),
+            Maybe::Ok(amt) => Maybe::Ok(ret::Readv { bytes_read: amt as u64 }),
+        }
     }
 
     fn readv_inner(&mut self, args: &args::Readv) -> Maybe<ret::Readv> {
-        let _ = args;
-        todo!("blocked_on: bun_sys::readv")
+        match Syscall::readv(args.fd, args.buffers.buffers.as_slice()) {
+            Maybe::Err(err) => Maybe::Err(err),
+            Maybe::Ok(amt) => Maybe::Ok(ret::Readv { bytes_read: amt as u64 }),
+        }
     }
 
     fn pwritev_inner(&mut self, args: &args::Writev) -> Maybe<ret::Write> {

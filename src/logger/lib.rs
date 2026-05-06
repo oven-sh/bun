@@ -3349,7 +3349,6 @@ impl FileSourceExt for bun_sys::Fd {
         to_source(path, opts)
     }
 }
-} // end  mod file_source_ext_draft
 
 // ───────────────────────────────────────────────────────────────────────────
 // js_ast — MOVE_DOWN from bun_js_parser::ast (T4→T2, CYCLEBREAK §interchange).

@@ -356,14 +356,132 @@ pub struct JSSink<T> {
     pub sink: T,
 }
 
-impl<T> JSSink<T> {
+/// Per-sink C ABI surface that the `js_sink!` macro would normally emit via
+/// `#[link_name = concat!($abi_name, "__fn")]` externs. Since `&str` const-
+/// generics can't drive `#[link_name]`, each `SinkType` provides the resolved
+/// extern fn-pointers here so the generic `JSSink<T>` stub can dispatch.
+pub trait JsSinkAbi {
+    /// `${abi_name}__fromJS` — encodes `*ThisSink` (or 0/1 sentinel) as `usize`.
+    unsafe fn from_js_extern(value: crate::webcore::jsc::JSValue) -> usize;
+    /// `${abi_name}__createObject`.
+    unsafe fn create_object_extern(
+        global: *mut crate::webcore::jsc::JSGlobalObject,
+        object: *mut c_void,
+        destructor: usize,
+    ) -> crate::webcore::jsc::JSValue;
+    /// `${abi_name}__assignToStream`.
+    unsafe fn assign_to_stream_extern(
+        global: *mut crate::webcore::jsc::JSGlobalObject,
+        stream: crate::webcore::jsc::JSValue,
+        ptr: *mut c_void,
+        jsvalue_ptr: *mut *mut c_void,
+    ) -> crate::webcore::jsc::JSValue;
+    /// `${abi_name}__onClose`.
+    unsafe fn on_close_extern(ptr: crate::webcore::jsc::JSValue, reason: crate::webcore::jsc::JSValue);
+    /// `${abi_name}__onReady`.
+    unsafe fn on_ready_extern(
+        ptr: crate::webcore::jsc::JSValue,
+        amount: crate::webcore::jsc::JSValue,
+        offset: crate::webcore::jsc::JSValue,
+    );
+}
+
+/// `from_js_extern` encodes two distinct failure types using 0 and 1. Any other
+/// value is `*ThisSink`. (Zig non-exhaustive `enum(usize)` → matched-by-const.)
+pub mod from_js_result {
+    /// The sink has been closed and the wrapped type is freed.
+    pub const DETACHED: usize = 0;
+    /// JS exception has not yet been thrown.
+    pub const CAST_FAILED: usize = 1;
+}
+
+impl<T: JsSinkAbi> JSSink<T> {
     pub fn create_object(
-        _global: &crate::webcore::jsc::JSGlobalObject,
-        _object: &mut T,
-        _destructor: usize,
+        global: &crate::webcore::jsc::JSGlobalObject,
+        object: &mut T,
+        destructor: usize,
     ) -> crate::webcore::jsc::JSValue {
-        // TODO(b2-blocked): `${abi_name}__createObject` extern — needs per-T abi_name.
-        unimplemented!("JSSink::create_object — js_sink! macro gated")
+        // SAFETY: FFI call into generated C++ sink glue (`${abi_name}__createObject`).
+        unsafe {
+            T::create_object_extern(
+                global as *const _ as *mut _,
+                object as *mut T as *mut c_void,
+                destructor,
+            )
+        }
+    }
+
+    /// `JSSink.fromJS(value)` — recover `*mut JSSink<T>` (= `*mut ThisSink`) from
+    /// the JS wrapper, or `None` if detached / wrong type.
+    pub fn from_js(value: crate::webcore::jsc::JSValue) -> Option<*mut JSSink<T>> {
+        // SAFETY: FFI call into generated C++ sink glue.
+        let raw = unsafe { T::from_js_extern(value) };
+        match raw {
+            from_js_result::DETACHED | from_js_result::CAST_FAILED => None,
+            ptr => Some(ptr as *mut JSSink<T>),
+        }
+    }
+
+    pub fn assign_to_stream(
+        global: &crate::webcore::jsc::JSGlobalObject,
+        stream: crate::webcore::jsc::JSValue,
+        ptr: &mut T,
+        jsvalue_ptr: *mut *mut c_void,
+    ) -> crate::webcore::jsc::JSValue {
+        // SAFETY: FFI call into generated C++ sink glue (`${abi_name}__assignToStream`).
+        unsafe {
+            T::assign_to_stream_extern(
+                global as *const _ as *mut _,
+                stream,
+                ptr as *mut T as *mut c_void,
+                jsvalue_ptr,
+            )
+        }
+    }
+}
+
+/// `JSSink.SinkSignal` — wraps a `JSValue` (the C++ sink controller cell) as
+/// a `streams::Signal`. The pointer stored in `Signal.ptr` is the encoded
+/// JSValue bits, never dereferenced; vtable thunks bitcast back and call the
+/// generated `${abi_name}__onClose` / `__onReady` externs.
+#[repr(C)]
+pub struct SinkSignal<T>(core::marker::PhantomData<T>);
+
+impl<T> JSSink<T> {
+    // Zig: `JSSink.SinkSignal` — exposed as an associated path for callers that
+    // spell `webcore::FileSink::JSSink::SinkSignal::init(...)`.
+    pub type SinkSignal = SinkSignal<T>;
+}
+
+impl<T: JsSinkAbi> SinkSignal<T> {
+    pub fn init(cpp: crate::webcore::jsc::JSValue) -> Signal {
+        use crate::webcore::jsc::JSValue;
+        // PORT NOTE: bypass `Signal::init_with_type` (which would form a fake
+        // `&mut SinkSignal<T>` ref); build the vtable directly so `this` stays
+        // a raw bit-pattern (`@setRuntimeSafety(false)` in Zig).
+        fn close<T: JsSinkAbi>(this: *mut c_void, _err: Option<SysError>) {
+            // SAFETY: `this` is the JSValue bits stashed by `init`; bitcast back.
+            let cpp = JSValue::from_encoded(this as usize as i64);
+            unsafe { T::on_close_extern(cpp, JSValue::UNDEFINED) };
+        }
+        fn ready<T: JsSinkAbi>(
+            this: *mut c_void,
+            _a: Option<crate::webcore::BlobSizeType>,
+            _o: Option<crate::webcore::BlobSizeType>,
+        ) {
+            let cpp = JSValue::from_encoded(this as usize as i64);
+            unsafe { T::on_ready_extern(cpp, JSValue::UNDEFINED, JSValue::UNDEFINED) };
+        }
+        fn start(_this: *mut c_void) {}
+        Signal {
+            // this one can be null
+            ptr: core::ptr::NonNull::new(cpp.encoded() as *mut c_void),
+            vtable: streams::SignalVTable {
+                close: close::<T>,
+                ready: ready::<T>,
+                start,
+            },
+        }
     }
 }
 

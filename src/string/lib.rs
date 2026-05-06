@@ -348,6 +348,16 @@ impl String {
     pub fn to_wtf_string(&mut self) {
         unsafe { BunString__toWTFString(self) }
     }
+    /// Zig: `bun.String.init(WTFStringImpl)` / `WTFString.adopt` — wrap a raw
+    /// `*mut WTFStringImplStruct`, **adopting** the existing +1 ref (no inc).
+    /// Inverse of [`leak_wtf_impl`]. Null → `String::EMPTY`.
+    #[inline]
+    pub fn adopt_wtf_impl(wtf: WTFStringImpl) -> Self {
+        if wtf.is_null() {
+            return Self::EMPTY;
+        }
+        Self { tag: Tag::WTFStringImpl, value: StringImpl { wtf } }
+    }
     /// Zig: `bun.String{...}.value.WTFStringImpl` — extract the raw `*mut WTFStringImplStruct`
     /// from a WTF-backed string, transferring ownership of the +1 ref to the caller. Returns
     /// null for non-WTF tags. Used by SQL data-cell paths that hand the impl pointer to C++.

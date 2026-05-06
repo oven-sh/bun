@@ -1300,17 +1300,13 @@ Full documentation is available at <magenta>https://bun.com/docs/installation#up
                 Output::flush();
             }
             Tag::PatchCommand => {
-                bun_install::PackageManager::CommandLineArguments::print_help(
-                    bun_install::PackageManager::Subcommand::Patch,
-                );
+                pm_print_help(bun_install::Subcommand::Patch);
             }
             Tag::PatchCommitCommand => {
-                bun_install::PackageManager::CommandLineArguments::print_help(
-                    bun_install::PackageManager::Subcommand::PatchCommit,
-                );
+                pm_print_help(bun_install::Subcommand::PatchCommit);
             }
             Tag::ExecCommand => {
-                Output::pretty(
+                Output::pretty(format_args!(
                     "\
 <b>Usage: bun exec <r><cyan>\\<script\\><r>
 
@@ -1322,19 +1318,20 @@ Execute a shell script directly from Bun.
   <b>bun exec \"echo hi\"<r>
   <b>bun exec \"echo \\\"hey friends\\\"!\"<r>
 ",
-                    format_args!(""),
-                );
+                ));
                 Output::flush();
             }
             Tag::OutdatedCommand
             | Tag::UpdateInteractiveCommand
             | Tag::PublishCommand
             | Tag::AuditCommand => {
-                bun_install::PackageManager::CommandLineArguments::print_help(match CMD {
-                    Tag::OutdatedCommand => bun_install::PackageManager::Subcommand::Outdated,
-                    Tag::UpdateInteractiveCommand => bun_install::PackageManager::Subcommand::Update,
-                    Tag::PublishCommand => bun_install::PackageManager::Subcommand::Publish,
-                    Tag::AuditCommand => bun_install::PackageManager::Subcommand::Audit,
+                pm_print_help(match CMD {
+                    Tag::OutdatedCommand => bun_install::Subcommand::Outdated,
+                    Tag::UpdateInteractiveCommand => bun_install::Subcommand::Update,
+                    // Publish/Audit variants not yet present on bun_install::Subcommand stub.
+                    Tag::PublishCommand | Tag::AuditCommand => {
+                        todo!("blocked_on: bun_install::Subcommand::{{Publish,Audit}}")
+                    }
                     _ => unreachable!(),
                 });
             }

@@ -4194,15 +4194,15 @@ impl DevServer<'_> {
             buf.extend_from_slice(bun_core::runtime_embed_file(
                 bun_core::EmbedKind::CodegenEager,
                 "bake.error.js",
-            ));
+            ).as_bytes());
             buf.extend_from_slice(post.as_bytes());
         }
 
         match resp {
             DevResponse::Http(r) => StaticRoute::send_blob_then_deinit(
                 r,
-                &Blob::Any::from_array_list(buf),
-                StaticRoute::Options {
+                &crate::webcore::blob::Any::from_array_list(buf),
+                crate::server::static_route::InitFromBytesOptions {
                     mime_type: &MimeType::HTML,
                     server: self.server.unwrap(),
                     status_code: 500,
@@ -4211,26 +4211,20 @@ impl DevServer<'_> {
             ),
             DevResponse::Promise(mut r) => {
                 let global = r.global;
-                let mut any_blob = Blob::Any::from_array_list(buf);
-                let mut headers = bun_http::Headers::from(None, bun_http::headers::Options { body: Some(&any_blob) });
-                headers.append("Content-Type", MimeType::HTML.value).expect("oom");
-                if headers.get("etag").is_none() {
+                let mut any_blob = crate::webcore::blob::Any::from_array_list(buf);
+                // TODO(b2-blocked): bun_http::Headers::from wants a webcore Body view; the
+                // body-aware path is gated. Pass None and append Content-Type manually.
+                let mut headers = bun_http::Headers::from(None, bun_http::headers::Options { body: None });
+                headers.append(b"Content-Type", &MimeType::HTML.value);
+                if headers.get(b"etag").is_none() {
                     if !any_blob.slice().is_empty() {
-                        bun_http::ETag::append_to_headers(any_blob.slice(), &mut headers).expect("oom");
+                        let _ = (&any_blob, &mut headers);
+                        todo!("blocked_on: bun_http::ETag::append_to_headers (bun_http::Headers vs bun_http_types::ETag::Headers)");
                     }
                 }
-                let fetch_headers = headers.to_fetch_headers(global)?;
-                let mut response = Response::init(
-                    Response::Init {
-                        status_code: 500,
-                        headers: fetch_headers,
-                    },
-                    Response::Body {
-                        value: Response::BodyValue::Blob(any_blob.to_blob(global)),
-                    },
-                    BunString::EMPTY,
-                    false,
-                );
+                let _ = (&mut headers, global);
+                let mut response: Response =
+                    todo!("blocked_on: bun_http::Headers::to_fetch_headers / webcore::response construction");
                 // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
                 let vm = unsafe { &*self.vm };
                 vm.event_loop().enter();

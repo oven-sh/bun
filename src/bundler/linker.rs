@@ -362,6 +362,13 @@ impl Linker {
         // `&*self.options`, which would invalidate an exclusive borrow under
         // Stacked Borrows. We only read `target` / `rewrite_jest_for_tests`.
         let opts = unsafe { &*self.options };
+        // SAFETY: single-owner. `self.log` is the `*mut Log` copied from
+        // `Transpiler.log` in `configure_linker*`; no callee reached from this
+        // body (`generate_import_path`, `get_hashed_filename`,
+        // `when_module_not_found`, `PluginRunner::on_resolve`) re-derives a
+        // borrow of `*self.log`, and the caller's field-split
+        // `&mut transpiler.linker` leaves the `Log` unborrowed, so this `&mut`
+        // is exclusive for the full body (linker.zig:96 `linker.log`).
         let log = unsafe { &mut *self.log };
 
         let source_dir = file_path.source_dir();

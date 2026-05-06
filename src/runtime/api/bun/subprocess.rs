@@ -229,7 +229,7 @@ impl AnyPromiseExt for bun_jsc::AnyPromise {
 /// Local port of `src/sys_jsc/signal_code_jsc.zig::fromJS` — `bun_sys_jsc` is
 /// not a dependency of `bun_runtime`, and its `from_js` uses crate-local JSC
 /// shim types that aren't `bun_jsc::{JSValue,JSGlobalObject}`.
-fn signal_code_from_js(arg: JSValue, global_this: &JSGlobalObject) -> JsResult<SignalCode> {
+pub(crate) fn signal_code_from_js(arg: JSValue, global_this: &JSGlobalObject) -> JsResult<SignalCode> {
     if let Some(sig64) = arg.get_number() {
         // Node does this:
         if sig64.is_nan() {
@@ -305,6 +305,24 @@ const _: () = {
         fn __from_js_direct(value: JSValue) -> *mut c_void;
         #[link_name = "Subprocess__create"]
         fn __create(global: *mut JSGlobalObject, ptr: *mut c_void) -> JSValue;
+    }
+
+    impl<'a> Subprocess<'a> {
+        /// Wrap an already-heap-allocated `Subprocess` (via `Box::into_raw`) in
+        /// its JS cell. `Bun.spawn` boxes early so address-dependent
+        /// back-pointers (`stdin.pipe.signal`, MaxBuf owner, IPC owner) can be
+        /// wired before `subprocess.toJS(globalThis)` runs; this is the raw-ptr
+        /// entrypoint that avoids re-boxing.
+        ///
+        /// # Safety
+        /// `ptr` must come from `Box::into_raw(Box::new(Subprocess { .. }))` and
+        /// not yet be owned by any JS wrapper; ownership transfers to the C++
+        /// side (released via `SubprocessClass__finalize`).
+        #[inline]
+        pub unsafe fn to_js_from_ptr(ptr: *mut Self, global: &JSGlobalObject) -> JSValue {
+            // SAFETY: caller contract.
+            unsafe { __create(global.as_mut_ptr(), ptr.cast()) }
+        }
     }
 
     impl<'a> bun_jsc::JsClass for Subprocess<'a> {

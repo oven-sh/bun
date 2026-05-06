@@ -87,8 +87,8 @@ use crate::bake::dev_server::source_map_store::SourceMapStore;
 use crate::bake::dev_server::DevServer;
 
 use crate::node::fs::async_ as fs_async;
-// `node_fs_watcher` / `node_fs_stat_watcher` — modules not yet declared in
-// `node.rs` (b2-blocked); FSWatchTask / StatWatcherScheduler arms stubbed.
+use crate::node::node_fs_watcher::FSWatchTask;
+use crate::node::node_fs_stat_watcher::StatWatcherScheduler;
 use crate::node::zlib::{native_brotli::NativeBrotli, native_zlib::NativeZlib, native_zstd::NativeZstd};
 use crate::node::node_zlib_binding;
 
@@ -112,9 +112,10 @@ use bun_sql_jsc::mysql::js_my_sql_connection::JSMySQLConnection as MySQLConnecti
 
 use crate::test_runner::bun_test::{BunTest, BunTestPtr};
 use crate::timer::{DateHeaderTimer, EventLoopDelayMonitor};
-// `bun_jsc::abort_signal::Timeout` lives in the gated `_gated` block of
-// `bun_jsc/lib.rs`; use the layout-compatible stub from `crate::timer` so
-// `container_of!` over `event_loop_timer` resolves. The `run` body is stubbed.
+// `crate::timer::AbortSignalTimeout` is the struct-surface mirror of
+// `bun_jsc::abort_signal::Timeout` (same `#[repr(C)]` layout) so
+// `container_of!` over `event_loop_timer` resolves; the `run` body lives on
+// the lower-tier `bun_jsc::abort_signal::Timeout` and is called via cast.
 use crate::timer::AbortSignalTimeout;
 
 #[allow(unused_imports)]

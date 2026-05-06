@@ -1211,20 +1211,27 @@ impl JSTranspiler {
 
         let source = logger::Source::init_path_string(name, &processed_code[..]);
 
-        // TODO(port): `merge_jsx` Pragma type mismatch — see TransformTask::run.
-        let jsx = self.transpiler.options.jsx.clone();
-        let _ = &self.config.tsconfig;
+        let jsx = match self.config.tsconfig.as_deref() {
+            Some(ts) => ts.merge_jsx(self.transpiler.options.jsx.clone().into()).into(),
+            None => self.transpiler.options.jsx.clone(),
+        };
 
         let parse_options = ParseOptions {
             allocator: arena,
-            macro_remappings: MacroMap::default(), // TODO(port): blocked_on MacroMap::clone
+            macro_remappings: clone_macro_map(&self.config.macro_map),
             dirname_fd: bun_sys::Fd::INVALID,
             file_descriptor: None,
             loader: loader.unwrap_or(self.config.default_loader),
             jsx,
             path: source.path.clone(),
             virtual_source: Some(&source),
-            replace_exports: Default::default(), // TODO(port): blocked_on ReplaceableExportMap::clone
+            replace_exports: self
+                .config
+                .runtime
+                .replace_exports
+                .entries
+                .clone()
+                .expect("OOM"),
             macro_js_ctx,
             experimental_decorators: self
                 .config

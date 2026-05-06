@@ -1181,6 +1181,12 @@ pub struct RuntimeHooks {
     /// — its function pointers reach into `Blob`/`ObjectURLRegistry`
     /// (`bun_runtime::webcore`), so the high tier supplies the table.
     pub vm_loader_vtable: &'static bun_bundler::options::VmLoaderVTable,
+    /// `node_cluster_binding.handleInternalMessageChild(global, data)` — spec
+    /// VirtualMachine.zig:3960 (IPCInstance.handleIPCMessage `.internal` arm).
+    pub handle_ipc_internal_child: unsafe fn(global: *mut JSGlobalObject, data: JSValue),
+    /// `node_cluster_binding.child_singleton.deinit()` — spec
+    /// VirtualMachine.zig:3972 (IPCInstance.handleIPCClose).
+    pub ipc_child_singleton_deinit: unsafe fn(),
 }
 
 impl VirtualMachine {

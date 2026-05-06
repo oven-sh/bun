@@ -2099,6 +2099,48 @@ pub mod WebCore {
         }
     }
 
+    // C-ABI trampolines exported by `bun_runtime::webcore` (breaks the dep
+    // cycle for the `BodyMixin::getBlobWithoutCallFrame` accessor — same
+    // pattern as `Bun__Blob__sharedView` below). The bodies live at the
+    // higher tier; this crate only declares the C symbol.
+    unsafe extern "C" {
+        fn Bun__Request__getBlobWithoutCallFrame(
+            this: *mut Request,
+            global: *mut crate::JSGlobalObject,
+        ) -> crate::JSValue;
+        fn Bun__Response__getBlobWithoutCallFrame(
+            this: *mut Response,
+            global: *mut crate::JSGlobalObject,
+        ) -> crate::JSValue;
+    }
+    impl Request {
+        /// `Request.getBlobWithoutCallFrame` (BodyMixin, body.zig). Returns a
+        /// freshly-allocated JS `Blob` wrapping the body, or throws.
+        pub fn get_blob_without_call_frame(
+            &mut self,
+            global: &crate::JSGlobalObject,
+        ) -> crate::JsResult<crate::JSValue> {
+            crate::host_fn::from_js_host_call(global, || unsafe {
+                // SAFETY: `self` is the live `m_ctx` payload obtained via
+                // `from_js`; trampoline body lives in `bun_runtime`.
+                Bun__Request__getBlobWithoutCallFrame(self, global.as_ptr())
+            })
+        }
+    }
+    impl Response {
+        /// `Response.getBlobWithoutCallFrame` (BodyMixin, body.zig). See
+        /// [`Request::get_blob_without_call_frame`].
+        pub fn get_blob_without_call_frame(
+            &mut self,
+            global: &crate::JSGlobalObject,
+        ) -> crate::JsResult<crate::JSValue> {
+            crate::host_fn::from_js_host_call(global, || unsafe {
+                // SAFETY: see `Request::get_blob_without_call_frame`.
+                Bun__Response__getBlobWithoutCallFrame(self, global.as_ptr())
+            })
+        }
+    }
+
     /// `webcore.Blob` (src/runtime/webcore/Blob.zig). Ported to this tier so
     /// lower-tier crates (e.g. `bun_bundler_jsc`) can construct Blob values
     /// without a `bun_runtime` forward-dep cycle. Pointer-returning FFI

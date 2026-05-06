@@ -947,7 +947,9 @@ pub mod dispatch {
         /// `dev.assets.get_hash(abs_path)`
         pub asset_hash: unsafe fn(*mut (), abs_path: &[u8]) -> Option<u64>,
         /// `dev.current_bundle.?.start_data` accessor for finish_from_bake_dev_server.
-        pub current_bundle_start_data: unsafe fn(*mut ()) -> *const (),
+        /// Returns `*mut` because the caller mutates `start.css_entry_points`
+        /// throughout finalize (Zig spec bundle_v2.zig:2442 takes `&dev_server.current_bundle.?.start_data`).
+        pub current_bundle_start_data: unsafe fn(*mut ()) -> *mut (),
         /// `dev.barrel_files_with_deferrals.get_or_put(path)` + key dupe.
         pub register_barrel_with_deferrals: unsafe fn(*mut (), path: &[u8]) -> Result<(), bun_core::Error>,
         /// `dev.barrel_needed_exports.get_or_put(path).get_or_put(alias)` — wraps the
@@ -3787,7 +3789,12 @@ impl<'a> BundleV2<'a> {
     // helpers. Until then the entry-point fields are reached through the vtable.
     pub fn finish_from_bake_dev_server(&mut self, dev_server: &dispatch::DevServerHandle) -> Result<(), AllocError> {
         // SAFETY: DevServer guarantees current_bundle is Some during finish (DevServer.zig:2237).
-        let start = unsafe { &mut *(dev_server.vtable.current_bundle_start_data)(dev_server.owner).cast::<DevServerInput>() };
+        // Vtable returns `*const ()` (opaque); the underlying `start_data` is mutated in
+        // place (Zig spec mutates `css_entry_points`), so cast through `*mut` here.
+        let start = unsafe {
+            &mut *((dev_server.vtable.current_bundle_start_data)(dev_server.owner)
+                as *mut DevServerInput)
+        };
 
         /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
@@ -3806,14 +3813,33 @@ impl<'a> BundleV2<'a> {
 
             let asts = self.graph.ast.slice();
             let css_asts = asts.css();
+            // PORT NOTE: SoA columns are physically disjoint slabs but rustc cannot
+            // see that through `&Slice`. Route the two columns we mutate (`parts`,
+            // `import_records`) through raw `items_raw` so the per-index `&mut`
+            // does not conflict with the `&asts` reads (`css`, `target`). Mirrors
+            // the pattern at `find_reachable_files` (~L1457).
+            // SAFETY: column types match `BundledAst::{parts,import_records}`; the
+            // slab does not resize for the duration of this loop and no other
+            // `&mut` to these columns exists.
+            let parts_col: *mut js_ast::PartList = unsafe {
+                asts.items_raw::<js_ast::PartList>(
+                    js_ast::ast::bundled_ast::BundledAstField::parts,
+                )
+            };
+            let import_records_col: *mut import_record::List = unsafe {
+                asts.items_raw::<import_record::List>(
+                    js_ast::ast::bundled_ast::BundledAstField::import_records,
+                )
+            };
 
             let input_files = self.graph.input_files.slice();
             let loaders = input_files.loader();
             let sources = input_files.source();
             // TODO(port): multi-zip iteration over MultiArrayList slices [1..]
             for index in 1..self.graph.ast.len() {
-                let part_list = &asts.parts()[index];
-                let import_records = &asts.import_records()[index];
+                // SAFETY: `index < ast.len()`; see PORT NOTE above for column aliasing.
+                let part_list = unsafe { &mut *parts_col.add(index) };
+                let import_records = unsafe { &mut *import_records_col.add(index) };
                 let maybe_css = &css_asts[index];
                 let target = asts.target()[index];
                 // Dev Server proceeds even with failed files.
@@ -3871,7 +3897,10 @@ impl<'a> BundleV2<'a> {
                         for record in import_records.slice_mut() {
                             if !record.source_index.is_valid() { continue; }
                             if loaders[record.source_index.get() as usize] != Loader::Css { continue; }
-                            if asts.parts()[record.source_index.get() as usize].len == 0 {
+                            // SAFETY: `source_index < ast.len()` (validated above); read
+                            // via the raw column ptr so we don't reborrow `asts.parts()`
+                            // while `import_records` (a sibling column) is held `&mut`.
+                            if unsafe { (*parts_col.add(record.source_index.get() as usize)).len } == 0 {
                                 record.source_index = Index::INVALID;
                                 continue;
                             }
@@ -3904,7 +3933,13 @@ impl<'a> BundleV2<'a> {
             }
 
             // TODO(port): leak js_files into arena — Zig returned .items
-            break 'reachable_files self.allocator().alloc_slice_copy(&js_files);
+            // SAFETY: `alloc_slice_copy` returns into the bundler arena which outlives
+            // this function. Erase the `&self` lifetime via `*const` so the borrow on
+            // `self.allocator()` does not extend across the `&mut self` calls below
+            // (Phase-A arena-erasure convention; see also `path.pretty` ~L4770).
+            break 'reachable_files unsafe {
+                &*(self.allocator().alloc_slice_copy(&js_files) as *const [Index])
+            };
         };
 
         /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
@@ -3992,11 +4027,12 @@ impl<'a> BundleV2<'a> {
             let order = crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order(&mut self.linker, self.allocator(), &[*entry_point]);
             #[cfg(not(feature = "css"))]
             let order: BabyList<chunk::CssImportOrder> = BabyList::default();
+            let order_len = order.len as usize;
             chunks.push(Chunk {
                 entry_point: chunk::EntryPoint::new(entry_point.get(), entry_point.get(), false, false),
                 content: chunk::Content::Css(chunk::CssChunk {
                     imports_in_chunk_in_order: order,
-                    asts: (0..order.len as usize)
+                    asts: (0..order_len)
                         .map(|_| bun_css::BundlerStyleSheet::empty())
                         .collect::<Vec<_>>()
                         .into_boxed_slice(),

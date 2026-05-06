@@ -2,10 +2,9 @@
 //!
 //! TCP/TLS socket JS bindings (`Bun.connect` / `Bun.listen` socket wrappers).
 
-use core::cell::{Cell, UnsafeCell};
+use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_uint, c_void};
-use core::ptr;
-use std::rc::Rc;
+use core::ptr::{self, NonNull};
 
 use bun_aio::KeepAlive;
 use bun_ptr::IntrusiveRc;
@@ -127,15 +126,25 @@ pub struct NewSocket<const SSL: bool> {
 
     pub flags: Flags,
     pub ref_count: Cell<u32>, // intrusive — see `bun_ptr::IntrusiveRc<Self>`
-    // Zig: `handlers: ?*Handlers` — a freely-aliased mutable heap pointer
-    // shared between the Listener and every accepted/connected socket.
-    // `reload()` overwrites the pointee in place (`this_handlers.* = handlers`)
-    // and `Scope::enter/exit` bump `active_connections` through it, so the
-    // payload MUST sit behind `UnsafeCell` for interior mutability — writing
-    // through `Rc::as_ptr() as *mut _` (the old shape) is UB. Server sockets
-    // still borrow the Listener-embedded value; Phase B may swap this to a
-    // raw `*mut Handlers` once Listener.rs and this file converge.
-    pub handlers: Option<Rc<UnsafeCell<Handlers>>>,
+    // Zig: `handlers: ?*Handlers` — a freely-aliased mutable raw pointer.
+    //
+    // OWNERSHIP: in **server** mode this points at `&mut listener.handlers`
+    // (the embedded `Listener.handlers` field — Listener.rs:34) so
+    // `@fieldParentPtr`-style offset arithmetic in `get_listener` and
+    // `Handlers::mark_inactive` can recover the parent `Listener`. In
+    // **client** mode it is `Box::into_raw(Box::new(Handlers))` and
+    // `Handlers::mark_inactive` frees it via `Box::from_raw` once the last
+    // connection drops.
+    //
+    // ALIASING: this is intentionally a raw pointer, NOT `&mut`/`Rc`/
+    // `Box`. JS dispatch is reentrant (`socket.reload()` overwrites the
+    // pointee while a callback frame still holds the pointer), so Rust's
+    // `&mut` exclusivity cannot be upheld across `callback.call()`. A raw
+    // pointer carries no aliasing guarantee to violate; callers reborrow
+    // `unsafe { &mut *p }` only for the exact field access they need and
+    // never across a reentrant JS call. See `get_handlers` for the access
+    // contract.
+    pub handlers: Option<NonNull<Handlers>>,
     /// Reference to the JS wrapper. Held strong while the socket is active so the
     /// wrapper cannot be garbage-collected out from under in-flight callbacks, and
     /// downgraded to weak once the socket is closed/inactive so GC can reclaim it.
@@ -247,7 +256,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             unsafe { &mut *self_ptr }.deref();
         });
 
-        let vm = self.get_handlers().vm;
+        // SAFETY: short-lived read; see `get_handlers` contract.
+        let vm = unsafe { (*self.get_handlers()).vm };
         let group = vm.rare_data().bun_connect_group(vm, SSL);
         let kind: uws::SocketKind = if SSL {
             uws::SocketKind::BunSocketTls
@@ -534,22 +544,23 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
 
-    pub fn get_handlers(&self) -> &mut Handlers {
-        // SAFETY: Zig's `*Handlers` is a freely-aliased mutable pointer on a
-        // single-threaded event loop. `UnsafeCell::get` yields a write-capable
-        // `*mut Handlers` from the shared `Rc`; callers uphold the invariant
-        // that no two `&mut Handlers` derived here are live across a reentrant
-        // dispatch (the Zig code has the same hazard and guards it via
-        // `Scope::enter/exit` refcounting). The returned reference points into
-        // the Rc heap payload, NOT into `self`, so it remains valid across
-        // `&mut self` operations that don't drop the Rc.
-        unsafe {
-            &mut *self
-                .handlers
-                .as_ref()
-                .expect("No handlers set on Socket")
-                .get()
-        }
+    /// Zig `getHandlers(this) *Handlers` — returns the raw, freely-aliased
+    /// pointer. **Do not** materialise a long-lived `&mut Handlers` from this
+    /// across any `callback.call(...)` / `resolve_promise` / `reject_promise`
+    /// boundary: JS may synchronously reenter `socket.reload()` which
+    /// `drop_in_place`s + `ptr::write`s the pointee, invalidating any
+    /// outstanding `&mut` under Stacked Borrows. Reborrow `unsafe { &mut *p }`
+    /// per field access (or re-derive after every reentrant call) instead.
+    ///
+    /// Server-mode: the returned pointer addresses the embedded
+    /// `Listener.handlers` field, so `@fieldParentPtr` arithmetic on it is
+    /// valid. Client-mode: the pointer is a `Box::into_raw` allocation that
+    /// `Handlers::mark_inactive` may free — callers null `self.handlers` when
+    /// `mark_inactive`/`scope.exit()` returns `true`.
+    pub fn get_handlers(&self) -> *mut Handlers {
+        self.handlers
+            .expect("No handlers set on Socket")
+            .as_ptr()
     }
 
     pub fn handle_connect_error(&mut self, errno: c_int) -> JsResult<()> {

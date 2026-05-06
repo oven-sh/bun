@@ -1288,110 +1288,44 @@ impl RunCommand {
 
 impl RunCommand {
     /// Port of `RunCommand.configureEnvForRun` (src/cli/run_command.zig).
-    /// Initializes a fresh `Transpiler` via out-param, loads `.env`, and seeds
-    /// the npm_* environment variables lifecycle scripts expect. Returns the
-    /// resolved root `DirInfo` (opaque to install — caller discards).
+    ///
+    /// DEP-CYCLE NOTE: the Zig body initialises a `bun.Transpiler`, walks
+    /// `bun_resolver::DirInfo`, and reads `bun_bunfig::Command.Context` — all
+    /// T6 (`bun_runtime`/`bun_cli`) types that are not (and must not be)
+    /// dependencies of `bun_install`. The full body therefore lives in
+    /// `bun_runtime::cli::RunCommand::configure_env_for_run`; this thin
+    /// install-tier shim seeds only the env vars that have no T6 dependency
+    /// so lifecycle-script callers in `PackageManager.rs` (gated) keep their
+    /// shape. The `*mut ()` return stands in for `*mut DirInfo` (opaque to
+    /// install — every caller discards it).
     pub fn configure_env_for_run(
-        ctx: bun_bunfig::Command::Context,
-        // Zig: `var this_transpiler: Transpiler = undefined` out-param. Taking
-        // `&mut MaybeUninit<T>` so the caller never has to materialize a `&mut T`
-        // pointing at uninitialized memory (which is UB regardless of whether the
-        // callee writes-before-read).
-        this_transpiler_out: &mut core::mem::MaybeUninit<bun_transpiler::Transpiler>,
-        // Zig: `env: ?*DotEnv.Loader` — call site passes `this.env_mut()` (always Some).
+        // Zig: `bun.CLI.Command.Context` — opaque at this tier.
+        _ctx: *const (),
+        // Zig: out-param `*Transpiler` — opaque at this tier.
+        _this_transpiler: *mut (),
         env: &mut bun_dotenv::Loader,
-        log_errors: bool,
-        store_root_fd: bool,
-    ) -> Result<*mut bun_resolver::DirInfo, bun_core::Error> {
-        use bun_core::{Global, Output};
-        use bun_schema::api;
-
-        // TODO(port): Zig branched on `env == null` to decide whether to run
-        // loadProcess()/runEnvLoader(). The only install caller always passes a
-        // loader, so the `had_env` path is the only one exercised here.
-        let had_env = true;
-        let this_transpiler = this_transpiler_out
-            .write(bun_transpiler::Transpiler::init(ctx.allocator, ctx.log, ctx.args, Some(env))?);
-        this_transpiler.options.env.behavior = api::DotEnvBehavior::LoadAll;
-        this_transpiler.env.quiet = true;
-        this_transpiler.options.env.prefix = b"";
-
-        this_transpiler.resolver.care_about_bin_folder = true;
-        this_transpiler.resolver.care_about_scripts = true;
-        this_transpiler.resolver.store_fd = store_root_fd;
-
-        this_transpiler.resolver.opts.load_tsconfig_json = true;
-        this_transpiler.options.load_tsconfig_json = true;
-
-        this_transpiler.configure_linker();
-
-        let root_dir_info = match this_transpiler
-            .resolver
-            .read_dir_info(this_transpiler.fs.top_level_dir)
-        {
-            Ok(Some(info)) => info,
-            Ok(None) => {
-                let _ = ctx.log.print(Output::error_writer());
-                Output::pretty_errorln(format_args!("error loading current directory"));
-                Output::flush();
-                return Err(bun_core::err!(CouldntReadCurrentDirectory));
-            }
-            Err(err) => {
-                if !log_errors {
-                    return Err(bun_core::err!(CouldntReadCurrentDirectory));
-                }
-                let _ = ctx.log.print(Output::error_writer());
-                Output::pretty_errorln(format_args!(
-                    "<r><red>error<r><d>:<r> <b>{}<r> loading directory {}",
-                    err,
-                    bun_core::fmt::quote(this_transpiler.fs.top_level_dir),
-                ));
-                Output::flush();
-                return Err(err);
-            }
-        };
-
-        this_transpiler.resolver.store_fd = false;
-
-        if !had_env {
-            this_transpiler.env.load_process()?;
-
-            if let Some(node_env) = this_transpiler.env.get(b"NODE_ENV") {
-                if bun_str::strings::eql_comptime(node_env, b"production") {
-                    this_transpiler.options.production = true;
-                }
-            }
-
-            // Always skip default .env files for package.json script runner
-            // (see comment in env_loader.zig:542-548 - the script's own bun instance loads .env)
-            let _ = this_transpiler.run_env_loader(true);
-        }
-
-        let _ = this_transpiler
-            .env
-            .map
-            .put_default(b"npm_config_local_prefix", this_transpiler.fs.top_level_dir);
+        _log_errors: bool,
+        _store_root_fd: bool,
+    ) -> Result<*mut (), bun_core::Error> {
+        use bun_core::Global;
 
         // Propagate --no-orphans / [run] noOrphans to the script's env so any
         // Bun process the script spawns enables its own watchdog. The env
         // loader snapshots `environ` before flag parsing runs, so the
         // `setenv()` in `enable()` isn't reflected here.
         if bun_aio::parent_death_watchdog::is_enabled() {
-            let _ = this_transpiler
-                .env
-                .map
-                .put(b"BUN_FEATURE_FLAG_NO_ORPHANS", b"1");
+            let _ = env.map.put(b"BUN_FEATURE_FLAG_NO_ORPHANS", b"1");
         }
 
-        // we have no way of knowing what version they're expecting without running the node executable
-        // running the node executable is too slow
-        // so we will just hardcode it to LTS
-        let _ = this_transpiler.env.map.put_default(
+        // we have no way of knowing what version they're expecting without
+        // running the node executable; running the node executable is too
+        // slow, so we will just hardcode it to LTS
+        let _ = env.map.put_default(
             b"npm_config_user_agent",
             // the use of npm/? is copying yarn
             // e.g.
             // > "yarn/1.22.4 npm/? node/v12.16.3 darwin x64",
-            const_str::concat!(
+            const_format::concatcp!(
                 "bun/",
                 Global::package_json_version,
                 " npm/? node/v",
@@ -1404,50 +1338,16 @@ impl RunCommand {
             .as_bytes(),
         );
 
-        if this_transpiler.env.get(b"npm_execpath").is_none() {
+        if env.get(b"npm_execpath").is_none() {
             // we don't care if this fails
             if let Ok(self_exe) = bun_core::self_exe_path() {
-                let _ = this_transpiler
-                    .env
-                    .map
-                    .put_default(b"npm_execpath", self_exe.as_bytes());
+                let _ = env.map.put_default(b"npm_execpath", self_exe.as_bytes());
             }
         }
 
-        // SAFETY: read_dir_info returned Some — pointer is owned by resolver's arena and
-        // valid for the resolver's lifetime.
-        if let Some(package_json) = unsafe { (*root_dir_info).enclosing_package_json } {
-            let pkg = unsafe { &*package_json };
-            if !pkg.name.is_empty()
-                && this_transpiler.env.map.get(b"npm_package_name").is_none()
-            {
-                let _ = this_transpiler.env.map.put(b"npm_package_name", pkg.name);
-            }
-
-            let _ = this_transpiler
-                .env
-                .map
-                .put_default(b"npm_package_json", pkg.source.path.text);
-
-            if !pkg.version.is_empty()
-                && this_transpiler.env.map.get(b"npm_package_version").is_none()
-            {
-                let _ = this_transpiler
-                    .env
-                    .map
-                    .put(b"npm_package_version", pkg.version);
-            }
-
-            if let Some(config) = pkg.config.as_ref() {
-                let _ = this_transpiler.env.map.ensure_unused_capacity(config.len());
-                for (k, v) in config.iter() {
-                    let key = bun_str::strings::concat(&[b"npm_package_config_", k]);
-                    this_transpiler.env.map.put_assume_capacity(&key, v);
-                }
-            }
-        }
-
-        Ok(root_dir_info)
+        // Transpiler/DirInfo bootstrap is performed by the T6 caller
+        // (`bun_runtime::cli::RunCommand`); install only consumes the env.
+        Ok(core::ptr::null_mut())
     }
 }
 

@@ -85,9 +85,12 @@ impl Context {
     }
 
     #[inline]
-    pub fn r#loop(&mut self) -> &mut Loop {
+    pub fn r#loop(&mut self) -> *mut Loop {
         // SAFETY: self is a live us_quic_socket_context_t; the loop outlives every context it owns.
-        unsafe { &mut *us_quic_socket_context_loop(self) }
+        // Returns a raw pointer because the Loop is shared across every context/socket/timer on
+        // the thread (Zig `*uws.Loop` freely aliases) — materializing `&mut Loop` here would
+        // assert uniqueness we cannot guarantee.
+        unsafe { us_quic_socket_context_loop(self) }
     }
 
     pub fn connect(

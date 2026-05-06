@@ -169,12 +169,19 @@ impl<const SSL: bool> NewSocket<SSL> {
     pub fn ref_(&self) {
         self.ref_count.set(self.ref_count.get() + 1);
     }
-    pub fn deref(&self) {
+    // Takes `&mut self` (not `&self`) so the destruction pointer carries
+    // write provenance — `&T as *const T as *mut T` followed by a write is
+    // UB under Stacked Borrows even when refcount==0 makes us the sole
+    // owner. All call sites already hold `&mut Self` (host-fn `this`,
+    // `&mut *raw` in scopeguard cleanup); see `bun_ptr::AnyRefCounted::rc_deref`
+    // for the raw-pointer variant this mirrors.
+    pub fn deref(&mut self) {
         let n = self.ref_count.get() - 1;
         self.ref_count.set(n);
         if n == 0 {
-            // SAFETY: refcount reached zero; we own the allocation.
-            unsafe { Self::deinit_and_destroy(self as *const Self as *mut Self) };
+            // SAFETY: refcount reached zero; we are the unique owner of the
+            // `Box::into_raw` allocation and `self` is not used after this.
+            unsafe { Self::deinit_and_destroy(self as *mut Self) };
         }
     }
 

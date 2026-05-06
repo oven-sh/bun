@@ -2791,12 +2791,12 @@ impl<'a> LinkerContext<'a> {
         re_exports: &mut Vec<Dependency>,
     ) -> MatchImport {
         let cycle_detector_top = self.cycle_detector.len();
-        // PORT NOTE: scopeguard captures `&mut self.cycle_detector` via raw ptr
-        // to avoid borrowck conflict with the `&mut self` calls below.
-        let _guard = scopeguard::guard(&mut self.cycle_detector as *mut Vec<ImportTracker>, move |cd| {
-            // SAFETY: cd points to self.cycle_detector which outlives this scope
-            unsafe { (*cd).truncate(cycle_detector_top) };
-        });
+        // PORT NOTE: Zig's `defer cycle_detector.shrinkRetainingCapacity` is
+        // lowered to an explicit `truncate` after the `'loop_` below — the only
+        // exits are the three `return`s that follow it, so a single post-loop
+        // truncate covers every path. A scopeguard holding a raw `*mut` into
+        // `self.cycle_detector` would be invalidated by the `&mut self`
+        // reborrows inside the loop (Stacked Borrows), so we don't use one.
 
         let mut tracker = init_tracker;
         let mut ambiguous_results: Vec<MatchImport> = Vec::new();
@@ -3075,6 +3075,10 @@ impl<'a> LinkerContext<'a> {
 
             break 'loop_;
         }
+
+        // Spec `defer`: restore cycle_detector to its entry length now that the
+        // loop is done. All remaining exit paths are below this point.
+        self.cycle_detector.truncate(cycle_detector_top);
 
         // If there is a potential ambiguity, all results must be the same
         for ambig in &ambiguous_results {

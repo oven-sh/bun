@@ -212,7 +212,11 @@ mod macho {
         pub fn Bun__getStandaloneModuleGraphMachoLength() -> *mut u64; // align(1) in Zig
     }
 
-    pub fn get_data() -> Option<&'static [u8]> {
+    /// Returns `(base, len)` for the embedded `__BUN` section data. Kept as a
+    /// raw `*mut u8` so the FFI write-provenance is preserved end-to-end —
+    /// collapsing to `&[u8]` here would freeze it to read-only and make the
+    /// later `from_bytes` writable subslices UB under Stacked Borrows.
+    pub fn get_data() -> Option<(*mut u8, usize)> {
         // SAFETY: FFI call returns pointer to embedded section header or null.
         let length_ptr = unsafe { Bun__getStandaloneModuleGraphMachoLength() };
         if length_ptr.is_null() {
@@ -225,9 +229,9 @@ mod macho {
         }
         // BlobHeader has 8 bytes size (u64), so data starts at offset 8.
         let data_offset = core::mem::size_of::<u64>();
-        let slice_ptr = length_ptr as *const u8;
+        let slice_ptr = length_ptr.cast::<u8>();
         // SAFETY: section data is `length` bytes immediately following the u64 header.
-        Some(unsafe { core::slice::from_raw_parts(slice_ptr.add(data_offset), length as usize) })
+        Some((unsafe { slice_ptr.add(data_offset) }, length as usize))
     }
 }
 
@@ -238,7 +242,11 @@ mod pe {
         pub fn Bun__getStandaloneModuleGraphPEData() -> *mut u8;
     }
 
-    pub fn get_data() -> Option<&'static [u8]> {
+    /// Returns `(base, len)` for the embedded `.bun` PE section data. Kept as a
+    /// raw `*mut u8` so the FFI write-provenance is preserved end-to-end —
+    /// collapsing to `&[u8]` here would freeze it to read-only and make the
+    /// later `from_bytes` writable subslices UB under Stacked Borrows.
+    pub fn get_data() -> Option<(*mut u8, usize)> {
         // SAFETY: FFI calls.
         let length = unsafe { Bun__getStandaloneModuleGraphPELength() };
         if length == 0 {
@@ -248,8 +256,8 @@ mod pe {
         if data_ptr.is_null() {
             return None;
         }
-        // SAFETY: data_ptr points to `length` bytes of section data valid for program lifetime.
-        Some(unsafe { core::slice::from_raw_parts(data_ptr, length as usize) })
+        // data_ptr points to `length` bytes of section data valid for program lifetime.
+        Some((data_ptr, length as usize))
     }
 }
 

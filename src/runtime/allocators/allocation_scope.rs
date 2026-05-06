@@ -42,7 +42,11 @@ impl Extra {
 }
 
 pub struct ExtraVTable {
-    pub on_allocation_leak: fn(*mut (), &mut [u8]),
+    // Zig passes `[]u8` (mutable slice) via `@constCast` of the stored `[*]const u8` key. In Rust
+    // the key's provenance may be read-only (it can arrive via `track_external_allocation(&[u8])`),
+    // so materialising `&mut [u8]` here would be UB under Stacked Borrows. Leak reporters only
+    // need to inspect the bytes, so expose `&[u8]`.
+    pub on_allocation_leak: fn(*mut (), &[u8]),
 }
 
 pub struct Stats {

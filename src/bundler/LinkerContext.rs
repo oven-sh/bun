@@ -1548,7 +1548,7 @@ impl<'a> LinkerContext<'a> {
     ) -> Result<bool, BunError> {
         let record = ast.import_records.at(import_record_index);
         // Barrel optimization: deferred import records should be dropped
-        if record.flags.is_unused {
+        if record.flags.contains(bun_options_types::ImportRecordFlags::IS_UNUSED) {
             return Ok(true);
         }
         // Is this an external import?
@@ -1562,12 +1562,12 @@ impl<'a> LinkerContext<'a> {
             stmts.inside_wrapper_prefix.append_non_dependency(
                 Stmt::alloc(
                     S::Local {
-                        decls: BabyList<G::Decl>::from_slice(
+                        decls: BabyList::<G::Decl>::from_slice(
                             alloc,
                             &[G::Decl {
-                                binding: Binding::alloc(alloc, B::Identifier { r#ref: namespace_ref }, loc),
+                                binding: Binding::alloc(alloc, js_ast::ast::b::Identifier { r#ref: namespace_ref }, loc),
                                 value: Some(Expr::init(
-                                    E::RequireString { import_record_index },
+                                    E::RequireString { import_record_index, ..Default::default() },
                                     loc,
                                 )),
                             }],
@@ -1594,11 +1594,11 @@ impl<'a> LinkerContext<'a> {
                 stmts.inside_wrapper_prefix.append_non_dependency(
                     Stmt::alloc(
                         S::Local {
-                            decls: BabyList<G::Decl>::from_slice(
+                            decls: BabyList::<G::Decl>::from_slice(
                                 alloc,
                                 &[G::Decl {
-                                    binding: Binding::alloc(alloc, B::Identifier { r#ref: namespace_ref }, loc),
-                                    value: Some(Expr::init(E::RequireString { import_record_index }, loc)),
+                                    binding: Binding::alloc(alloc, js_ast::ast::b::Identifier { r#ref: namespace_ref }, loc),
+                                    value: Some(Expr::init(E::RequireString { import_record_index, ..Default::default() }, loc)),
                                 }],
                             )?,
                             ..Default::default()
@@ -1668,9 +1668,9 @@ impl<'a> LinkerContext<'a> {
             indent: Default::default(),
             commonjs_named_exports: ast.commonjs_named_exports.clone(),
             commonjs_named_exports_ref: ast.exports_ref,
-            commonjs_module_ref: if ast.flags.uses_module_ref { ast.module_ref } else { Ref::NONE },
+            commonjs_module_ref: if ast.flags.contains(AstFlags::USES_MODULE_REF) { ast.module_ref } else { Ref::NONE },
             commonjs_named_exports_deoptimized: flags.wrap == WrapKind::Cjs,
-            commonjs_module_exports_assigned_deoptimized: ast.flags.commonjs_module_exports_assigned_deoptimized,
+            commonjs_module_exports_assigned_deoptimized: ast.flags.contains(AstFlags::COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED),
             // .const_values = c.graph.const_values,
             ts_enums: self.graph.ts_enums.clone(),
 
@@ -1696,7 +1696,7 @@ impl<'a> LinkerContext<'a> {
                 Format::Cjs => None, // use unbounded global
                 _ => runtime_require_ref,
             },
-            require_or_import_meta_for_source_callback: js_printer::RequireOrImportMetaForSourceCallback::init(
+            require_or_import_meta_for_source_callback: js_printer::RequireOrImportMetaCallback::init(
                 Self::require_or_import_meta_for_source,
                 self,
             ),
@@ -1758,7 +1758,7 @@ impl<'a> LinkerContext<'a> {
         let flags = self.graph.meta.items_flags()[source_index as usize];
         js_printer::RequireOrImportMeta {
             exports_ref: if flags.wrap == WrapKind::Esm
-                || (was_unwrapped_require && self.graph.ast.items_flags()[source_index as usize].force_cjs_to_esm)
+                || (was_unwrapped_require && self.graph.ast.items_flags()[source_index as usize].contains(AstFlags::FORCE_CJS_TO_ESM))
             {
                 self.graph.ast.items_exports_ref()[source_index as usize]
             } else {
@@ -1768,7 +1768,7 @@ impl<'a> LinkerContext<'a> {
             wrapper_ref: self.graph.ast.items_wrapper_ref()[source_index as usize],
 
             was_unwrapped_require: was_unwrapped_require
-                && self.graph.ast.items_flags()[source_index as usize].force_cjs_to_esm,
+                && self.graph.ast.items_flags()[source_index as usize].contains(AstFlags::FORCE_CJS_TO_ESM),
         }
     }
 
@@ -3760,13 +3760,13 @@ impl InsideWrapperPrefix {
         } else {
             // convert single `await init_` to `await __promiseAll([init_1(), init_2()])`
 
-            let promise_all = Expr::init(E::Identifier { r#ref: promise_all_ref, ..Default::default() }, Loc::EMPTY);
+            let promise_all = Expr::init(E::Identifier { ref_: promise_all_ref, ..Default::default() }, Loc::EMPTY);
 
-            let mut items: BabyList<Expr> = BabyList::with_capacity(2);
+            let mut items: BabyList<Expr> = BabyList::init_capacity(2);
             items.append_slice_assume_capacity(&[first_dep_call_expr, call_expr]);
             // PERF(port): was assume_capacity
 
-            let mut args: BabyList<Expr> = BabyList::with_capacity(1);
+            let mut args: BabyList<Expr> = BabyList::init_capacity(1);
             args.append_assume_capacity(Expr::init(E::Array { items, ..Default::default() }, Loc::EMPTY));
             // PERF(port): was assume_capacity
 

@@ -3138,52 +3138,47 @@ impl<'a> BundleV2<'a> {
                 let index = reachable_source.get() as usize;
                 let key = unique_key_for_additional_files[index];
                 if !key.is_empty() {
-                    let mut template = if !self.graph.html_imports.server_source_indices.is_empty()
+                    let mut template: options::PathTemplate = if !self.graph.html_imports.server_source_indices.is_empty()
                         && self.transpiler.options.asset_naming.is_empty()
                     {
-                        PathTemplate::ASSET_WITH_TARGET
+                        options::PathTemplate::ASSET_WITH_TARGET.into()
                     } else {
-                        PathTemplate::ASSET
+                        options::PathTemplate::ASSET.into()
                     };
 
                     let target = targets[index];
-                    let asset_naming = self.transpiler_for_target(target).options.asset_naming;
+                    let asset_naming = &self.transpiler_for_target(target).options.asset_naming;
                     if !asset_naming.is_empty() {
-                        template.data = asset_naming;
+                        template.data = asset_naming.clone();
                     }
 
                     let source = &sources[index];
 
-                    let output_path = 'brk: {
-                        let mut pathname = source.path.name.clone();
-
+                    let output_path: Box<[u8]> = {
                         // TODO: outbase
-                        pathname = Fs::PathName::init(bun_paths::resolve_path::relative_platform::<bun_paths::platform::Loose, false>(
+                        let pathname = Fs::PathName::init(bun_paths::resolve_path::relative_platform::<bun_paths::platform::Loose, false>(
                             &self.transpiler.options.root_dir,
                             &source.path.text,
-                            bun_paths::platform::Loose,
-                            false,
                         ));
 
-                        template.placeholder.name = pathname.base;
-                        template.placeholder.dir = pathname.dir;
-                        template.placeholder.ext = pathname.ext;
-                        if !template.placeholder.ext.is_empty() && template.placeholder.ext[0] == b'.' {
-                            template.placeholder.ext = &template.placeholder.ext[1..];
+                        template.placeholder.name = pathname.base.to_vec().into_boxed_slice();
+                        template.placeholder.dir = pathname.dir.to_vec().into_boxed_slice();
+                        let mut ext: &[u8] = pathname.ext;
+                        if !ext.is_empty() && ext[0] == b'.' {
+                            ext = &ext[1..];
                         }
+                        template.placeholder.ext = ext.to_vec().into_boxed_slice();
 
                         if template.needs(options::PlaceholderField::Hash) {
                             template.placeholder.hash = Some(content_hashes_for_additional_files[index]);
                         }
 
                         if template.needs(options::PlaceholderField::Target) {
-                            template.placeholder.target = <&'static str>::from(target).as_bytes();
+                            template.placeholder.target = target.as_tag_name().as_bytes().to_vec().into_boxed_slice();
                         }
-                        break 'brk {
-                            let mut v = Vec::new();
-                            write!(&mut v, "{}", template).expect("oom");
-                            v.into_boxed_slice()
-                        };
+                        let mut v = Vec::new();
+                        template.print(&mut v).expect("oom");
+                        v.into_boxed_slice()
                     };
 
                     let loader = loaders[index];
@@ -3191,22 +3186,22 @@ impl<'a> BundleV2<'a> {
                     additional_output_files.push(options::OutputFile::init(crate::output_file::Options {
                         source_index: Some(Index::init(index as u32)),
                         data: crate::output_file::OptionsData::Buffer {
-                            data: source.contents,
-                            allocator: file_allocators[index],
+                            data: source.contents.to_vec().into_boxed_slice(),
+                            allocator: bun_alloc::NullableAllocator::null(),
                         },
                         size: source.contents.len(),
                         output_path,
-                        input_path: Box::<[u8]>::from(source.path.text.as_ref()),
+                        input_path: source.path.text.to_vec().into_boxed_slice(),
                         input_loader: Loader::File,
                         output_kind: crate::options::OutputKind::Asset,
                         loader,
                         hash: Some(content_hashes_for_additional_files[index]),
-                        side: Some(bake::Side::Client),
+                        side: Some(crate::options::Side::Client),
                         entry_point_index: None,
                         is_executable: false,
                         ..Default::default()
                     }));
-                    additional_files[index].append(AdditionalFile::OutputFile((additional_output_files.len() - 1) as u32));
+                    additional_files[index].push(AdditionalFile::OutputFile((additional_output_files.len() - 1) as u32)).expect("oom");
                 }
             }
 

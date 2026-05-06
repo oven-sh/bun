@@ -4274,16 +4274,20 @@ impl Blob {
         Ok(ZigString::init(buf).to_json_object(global))
     }
 
+    /// See [`to_string_with_bytes`] for why `buf` is `*mut [u8]`.
     pub fn to_form_data_with_bytes<const _L: Lifetime>(
         &mut self,
         global: &JSGlobalObject,
-        buf: &mut [u8],
+        buf: *mut [u8],
     ) -> JSValue {
         let Some(encoder) = self.get_form_data_encoding() else {
             return ZigString::init(b"Invalid encoding").to_error_instance(global);
         };
 
-        match bun_core::FormData::to_js(global, buf, encoder.encoding) {
+        // SAFETY: `buf` is valid for reads for the duration of this call (either a
+        // leaked Box for `Temporary` or a store-backed view otherwise);
+        // `FormData::to_js` only reads it.
+        match bun_core::FormData::to_js(global, unsafe { &*buf }, encoder.encoding) {
             Ok(v) => v,
             Err(err) => global
                 .create_error_instance(format_args!("FormData encoding failed: {}", err.name())),

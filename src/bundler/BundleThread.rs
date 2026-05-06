@@ -67,8 +67,12 @@ impl<C: CompletionStruct> BundleThread<C> {
     /// impl (e.g. `enqueue`) and never materialize a `&mut Self`.
     pub unsafe fn spawn(instance: *mut Self) -> Result<bun_threading::Thread, bun_core::Error> {
         // TODO(port): narrow error set
-        let thread = bun_threading::Thread::spawn(move || unsafe {
-            Self::thread_main(instance)
+        let thread = bun_threading::Thread::spawn(move || {
+            // SAFETY: caller guarantees `instance` is valid for 'static; `thread_main`
+            // accesses fields only via raw-ptr projection (never `&Self`/`&mut Self`)
+            // and is the sole writer of `waker`/`generation`, so concurrent `enqueue()`
+            // from other threads is sound.
+            unsafe { Self::thread_main(instance) }
         })?;
         // SAFETY: field projection via raw ptr — the spawned thread is concurrently
         // writing `waker`, so we must not hold `&Self`/`&mut Self` here. `ready_event`
@@ -83,8 +87,11 @@ impl<C: CompletionStruct> BundleThread<C> {
     pub unsafe fn enqueue(instance: *mut Self, completion: *mut C) {
         // SAFETY: field projections via raw ptr — `thread_main` on the bundle thread
         // accesses the same struct concurrently, so we never materialize `&mut Self`.
-        // `UnboundedQueue::push` takes `&self` (lock-free MPSC) and `Waker::wake` is
-        // designed for cross-thread signalling.
+        // `UnboundedQueue::push` takes `&self` (lock-free MPSC). `Waker::wake` takes
+        // `&self` on all platforms (LinuxWaker/Windows/KEventWaker — the latter uses
+        // `AtomicBool` for `has_pending_wake`), so this autorefs to `&Waker` and is
+        // safe to call concurrently with `wait(&self)` at .rs:thread_main and with
+        // other `enqueue` callers.
         unsafe { (*instance).queue.push(completion) };
         unsafe { (*instance).waker.wake() };
     }

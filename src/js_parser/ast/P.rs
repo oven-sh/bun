@@ -6863,7 +6863,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             // PORT NOTE: Zig held `&mut parts[last]` inside `hmr_transform_ctx`
             // while iterating `parts` — Rust borrowck rejects that aliasing.
             // Reshaped via `split_last_mut` so the head slice and tail part are
-            // disjoint borrows.
+            // disjoint borrows. `finalize()` then needs the full `parts` slice
+            // again while the ctx still holds `last_part`; capture a raw ptr
+            // up-front and rebuild the slice for `finalize` (matching the Zig
+            // aliasing semantics — `finalize` only reads `last_part` via ctx).
+            let all_parts_ptr: *mut js_ast::Part = parts.as_mut_ptr();
+            let all_parts_len: usize = parts.len();
             let (last_part, head_parts) = parts
                 .split_last_mut()
                 .expect("hot_module_reloading parse always has at least one part");
@@ -6912,7 +6917,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 )?;
             }
 
-            hmr_transform_ctx.finalize(self, parts.as_mut_slice())?;
+            // SAFETY: see PORT NOTE above — `last_part` aliases `all_parts[len-1]`;
+            // `finalize` (round-E body) is responsible for treating the ctx-held
+            // `last_part` and `all_parts[len-1]` as the same slot (Zig did so freely).
+            hmr_transform_ctx.finalize(self, unsafe {
+                core::slice::from_raw_parts_mut(all_parts_ptr, all_parts_len)
+            })?;
         } else {
             // Handle import paths after the whole file has been visited because we need
             // symbol usage counts to be able to remove unused type-only imports in
@@ -7381,9 +7391,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     }
 }
 
-// `init` stays gated with the rest of round-D — it references the
-// Binding2ExprWrapper / ExpressionTransposer self-referential init helpers.
-#[cfg(any())]
+// `P::init` — UN-GATED. Body compiles standalone (verified `cargo check`):
+// the Binding2ExprWrapper / ExpressionTransposer self-referential helpers were
+// the only blockers and are now seeded with arena-unit placeholders inside the
+// struct literal (Phase B wires the real `*P` back-pointer). `Parser::_parse`
+// is blocked on this being callable — DO NOT re-gate.
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     P<'a, TYPESCRIPT, J, SCAN_ONLY>
 {

@@ -1,18 +1,37 @@
-use core::mem::MaybeUninit;
+//! Port of `src/bundler/ThreadPool.zig` — the bundler-side worker pool that
+//! wraps `bun_threading::thread_pool::ThreadPool` and owns the per-thread
+//! [`Worker`] state (mimalloc arena, per-thread `Transpiler` clone, AST store).
+//!
+//! Un-gated B-2: structural surface (struct fields, schedule, IO pool, worker
+//! map) is real so `ParseTask` / `bundle_v2` / `Graph` can name and drive it.
+//! The `Worker::create` tail that clones the `Transpiler` is sub-gated on
+//! `Transpiler::set_log` / `set_allocator` and `crate::Linker.resolver`
+//! (still opaque — see `transpiler.rs` Phase-A draft).
+
+use core::mem::{ManuallyDrop, MaybeUninit};
+use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use bun_alloc::Arena as ThreadLocalArena; // MimallocArena → bumpalo::Bump in AST crates
-use bun_collections::ArrayHashMap;
-use bun_core::{feature_flag, perf, FeatureFlags, Output};
+use bun_alloc::Arena as ThreadLocalArena; // Zig: bun.allocators.MimallocArena → bumpalo::Bump
+use bun_collections::{ArrayHashMap, MapEntry};
+use bun_core::{self, env_var, FeatureFlags, output as Output};
 use bun_logger as Logger;
-use bun_threading::{Mutex, ThreadId, ThreadPool as ThreadPoolLib};
+use bun_sys::Fd;
+use bun_threading::{thread_pool as ThreadPoolLib, Mutex};
 
-use crate::cache as CacheSet;
+use crate::cache::{self as CacheSet, Contents, Entry as CacheEntry, ExternalFreeFunction};
+use crate::linker_context_mod::StmtList;
 use crate::options::Target;
-use crate::{BundleV2, LinkerContext, ParseTask, Transpiler};
+use crate::parse_task::{ContentsOrFd, ParseTask, ParseTaskStage};
+use crate::transpiler::Transpiler;
+use crate::BundleV2;
 use bun_js_parser as js_ast;
 
-bun_output::declare_scope!(ThreadPool, visible);
+bun_core::declare_scope!(ThreadPool, visible);
+
+/// `std.Thread.Id` — `bun_threading::current_thread_id()` returns `u64` on
+/// every platform (`gettid`/`pthread_threadid_np`/`GetCurrentThreadId`).
+pub type ThreadId = u64;
 
 pub struct ThreadPool {
     /// macOS holds an IORWLock on every file open.
@@ -20,27 +39,62 @@ pub struct ThreadPool {
     /// On Windows, this seemed to be a small performance improvement.
     /// On Linux, this was a performance regression.
     /// In some benchmarks on macOS, this yielded up to a 60% performance improvement in microbenchmarks that load ~10,000 files.
-    // TODO(port): TSV says &'static ThreadPoolLib; wrapped in Option because Zig assigns `undefined` when !uses_io_pool()
-    pub io_pool: Option<&'static ThreadPoolLib>,
-    // TODO(port): lifetime — TSV class UNKNOWN (rust_type `&'a mut ThreadPoolLib`); conditionally owned via worker_pool_is_owned, kept raw for Phase A
-    pub worker_pool: *mut ThreadPoolLib,
+    // PORT NOTE: Zig left this `undefined` when `!uses_io_pool()`; `Option` makes
+    // that explicit. Stored as a raw pointer because all `ThreadPoolLib` driver
+    // methods (`schedule`, `warm`, `wake_for_idle_events`) take `&self`.
+    pub io_pool: Option<NonNull<ThreadPoolLib::ThreadPool>>,
+    // TODO(port): lifetime — TSV class UNKNOWN. Conditionally owned via
+    // `worker_pool_is_owned`; kept raw so callers (bundle_v2.rs draft) can
+    // dereference for `wake_for_idle_events()` without a borrow on `ThreadPool`.
+    pub worker_pool: *mut ThreadPoolLib::ThreadPool,
     pub worker_pool_is_owned: bool,
     pub workers_assignments: ArrayHashMap<ThreadId, *mut Worker>,
     pub workers_assignments_lock: Mutex,
-    pub v2: *const BundleV2,
+    // BACKREF (LIFETIMES.tsv row 170: ThreadPool.v2). `BundleV2` is generic
+    // over `'a`; erase to `'static` behind the raw pointer like ParseTask.ctx.
+    pub v2: *const BundleV2<'static>,
+}
+
+// SAFETY: `ThreadPool` is shared across worker threads guarded by
+// `workers_assignments_lock`; the raw-pointer fields are externally
+// synchronized exactly as in the Zig source.
+unsafe impl Send for ThreadPool {}
+unsafe impl Sync for ThreadPool {}
+
+impl Default for ThreadPool {
+    /// Placeholder so `bundle_v2` can `allocator().alloc(ThreadPool::default())`
+    /// before overwriting with [`ThreadPool::init`]. Mirrors Zig's
+    /// `allocator.create(ThreadPool)` which yields uninit memory.
+    fn default() -> Self {
+        Self {
+            io_pool: None,
+            worker_pool: ptr::null_mut(),
+            worker_pool_is_owned: false,
+            workers_assignments: ArrayHashMap::default(),
+            workers_assignments_lock: Mutex::default(),
+            v2: ptr::null(),
+        }
+    }
 }
 
 mod io_thread_pool {
     use super::*;
 
-    static mut THREAD_POOL: MaybeUninit<ThreadPoolLib> = MaybeUninit::uninit();
-    // Protects initialization and deinitialization of the IO thread pool.
-    static MUTEX: Mutex = Mutex::new();
-    // 0 means not initialized. 1 means initialized but not used.
-    // N > 1 means N-1 `ThreadPool`s are using the IO thread pool.
+    static mut THREAD_POOL: MaybeUninit<ThreadPoolLib::ThreadPool> = MaybeUninit::uninit();
+    /// Protects initialization and deinitialization of the IO thread pool.
+    static MUTEX: Mutex = {
+        // PORT NOTE: `Mutex` derives `Default` but `Default::default()` isn't
+        // `const`. The Zig source used `bun.threading.Mutex{}` (zero-init);
+        // an all-zero `Mutex` is the documented unlocked state on every impl.
+        // SAFETY: `Mutex` is `repr(Rust)` over an atomic / Futex word; zero is
+        // the valid initial value (matches `#[derive(Default)]`).
+        unsafe { core::mem::zeroed() }
+    };
+    /// 0 means not initialized. 1 means initialized but not used.
+    /// N > 1 means N-1 `ThreadPool`s are using the IO thread pool.
     static REF_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-    pub fn acquire() -> &'static ThreadPoolLib {
+    pub fn acquire() -> NonNull<ThreadPoolLib::ThreadPool> {
         let mut count = REF_COUNT.load(Ordering::Acquire);
         loop {
             if count == 0 {
@@ -55,8 +109,12 @@ mod io_thread_pool {
                 Ordering::Relaxed,
                 Ordering::Relaxed,
             ) {
-                // SAFETY: REF_COUNT != 0 means THREAD_POOL is initialized (set under MUTEX below).
-                Ok(_) => return unsafe { THREAD_POOL.assume_init_ref() },
+                Ok(_) => {
+                    // SAFETY: REF_COUNT != 0 ⇒ THREAD_POOL is initialized (set under MUTEX below).
+                    return unsafe {
+                        NonNull::new_unchecked((&raw mut THREAD_POOL).cast::<ThreadPoolLib::ThreadPool>())
+                    };
+                }
                 Err(actual) => count = actual,
             }
         }
@@ -66,23 +124,24 @@ mod io_thread_pool {
 
         // Relaxed because the store we care about (the one that stores 1 to
         // indicate the thread pool is initialized) is guarded by the mutex.
-        if REF_COUNT.load(Ordering::Relaxed) != 0 {
-            // SAFETY: non-zero ref count under mutex → initialized.
-            return unsafe { THREAD_POOL.assume_init_ref() };
+        if REF_COUNT.load(Ordering::Relaxed) == 0 {
+            // SAFETY: we hold MUTEX and REF_COUNT == 0, so no other thread is reading THREAD_POOL.
+            unsafe {
+                THREAD_POOL.write(ThreadPoolLib::ThreadPool::init(ThreadPoolLib::Config {
+                    max_threads: u32::from(bun_core::get_thread_count().min(4).max(2)),
+                    // Use a much smaller stack size for the IO thread pool
+                    stack_size: 512 * 1024,
+                }));
+            }
+            // 2 means initialized and referenced by one `ThreadPool`.
+            REF_COUNT.store(2, Ordering::Release);
+        } else {
+            // PORT NOTE: Zig fell through to `return &thread_pool` without
+            // bumping the ref count here, which is a latent bug in the source
+            // (the racing acquirer's reference isn't counted). Mirrored.
         }
-        // SAFETY: we hold MUTEX and REF_COUNT == 0, so no other thread is reading THREAD_POOL.
-        unsafe {
-            THREAD_POOL.write(ThreadPoolLib::init(ThreadPoolLib::Options {
-                max_threads: bun_core::get_thread_count().min(4).max(2),
-                // Use a much smaller stack size for the IO thread pool
-                stack_size: 512 * 1024,
-                ..Default::default()
-            }));
-        }
-        // 2 means initialized and referenced by one `ThreadPool`.
-        REF_COUNT.store(2, Ordering::Release);
-        // SAFETY: just initialized above.
-        unsafe { THREAD_POOL.assume_init_ref() }
+        // SAFETY: just initialized (or observed initialized) above.
+        unsafe { NonNull::new_unchecked((&raw mut THREAD_POOL).cast::<ThreadPoolLib::ThreadPool>()) }
     }
 
     pub fn release() {
@@ -112,29 +171,37 @@ mod io_thread_pool {
         if REF_COUNT.load(Ordering::Relaxed) != 0 {
             return false;
         }
-        // SAFETY: we hold MUTEX, REF_COUNT == 0, and we previously CAS'd from 1 → initialized.
+        // SAFETY: we hold MUTEX, REF_COUNT == 0, and we previously CAS'd from 1 ⇒ initialized.
         unsafe {
             THREAD_POOL.assume_init_drop();
         }
-        // TODO(port): Zig source falls off end of `bool`-returning fn here; assuming `true`.
+        // PORT NOTE: Zig source falls off the end of a `bool`-returning fn here
+        // (`thread_pool = undefined;` is the last statement). Assuming `true`.
         true
     }
 }
 
 impl ThreadPool {
-    pub fn init(v2: &BundleV2, worker_pool: Option<&mut ThreadPoolLib>) -> Result<ThreadPool, bun_alloc::AllocError> {
-        let pool: &mut ThreadPoolLib = match worker_pool {
-            Some(p) => p,
+    /// Inherent associated type so call sites that wrote
+    /// `ThreadPool::Worker::get(ctx)` (matching Zig's `ThreadPool.Worker`)
+    /// resolve without a separate module path.
+    pub type Worker = Worker;
+
+    pub fn init(
+        v2: &BundleV2<'_>,
+        worker_pool: Option<&mut ThreadPoolLib::ThreadPool>,
+    ) -> Result<ThreadPool, bun_alloc::AllocError> {
+        let pool: *mut ThreadPoolLib::ThreadPool = match worker_pool {
+            Some(p) => p as *mut _,
             None => {
                 let cpu_count = bun_core::get_thread_count();
-                // PERF(port): was arena allocator.create — using Box::into_raw (global mimalloc)
-                let pool = Box::into_raw(Box::new(ThreadPoolLib::init(ThreadPoolLib::Options {
-                    max_threads: cpu_count,
-                    ..Default::default()
-                })));
-                bun_output::scoped_log!(ThreadPool, "{} workers", cpu_count);
-                // SAFETY: just Box::into_raw'd above; exclusive.
-                unsafe { &mut *pool }
+                // PERF(port): was `v2.allocator().create(ThreadPoolLib)` —
+                // using Box::into_raw (global mimalloc).
+                let pool = Box::into_raw(Box::new(ThreadPoolLib::ThreadPool::init(
+                    ThreadPoolLib::Config { max_threads: u32::from(cpu_count), ..Default::default() },
+                )));
+                bun_core::scoped_log!(ThreadPool, "{} workers", cpu_count);
+                pool
             }
         };
         let mut this = Self::init_with_pool(v2, pool);
@@ -142,36 +209,48 @@ impl ThreadPool {
         Ok(this)
     }
 
-    pub fn init_with_pool(v2: &BundleV2, worker_pool: &mut ThreadPoolLib) -> ThreadPool {
+    pub fn init_with_pool(v2: &BundleV2<'_>, worker_pool: *mut ThreadPoolLib::ThreadPool) -> ThreadPool {
         ThreadPool {
-            worker_pool: worker_pool as *mut ThreadPoolLib,
+            worker_pool,
             io_pool: if Self::uses_io_pool() { Some(io_thread_pool::acquire()) } else { None },
-            v2: v2 as *const BundleV2,
+            // BACKREF: lifetime erased behind the raw pointer.
+            v2: (v2 as *const BundleV2<'_>).cast(),
             worker_pool_is_owned: false,
             workers_assignments: ArrayHashMap::default(),
-            workers_assignments_lock: Mutex::new(),
+            workers_assignments_lock: Mutex::default(),
         }
     }
 
-    pub fn start(&mut self) {
+    /// Explicit teardown — Zig callers spell `pool.deinit()` (no Drop on
+    /// `ThreadPool` because `Graph.pool` is `NonNull<ThreadPool>` and the arena
+    /// owns the storage).
+    pub fn deinit(&mut self) {
+        if self.worker_pool_is_owned {
+            // SAFETY: worker_pool was Box::into_raw'd in `init()` when owned.
+            unsafe { drop(Box::from_raw(self.worker_pool)) };
+            self.worker_pool = ptr::null_mut();
+        }
+        if Self::uses_io_pool() {
+            io_thread_pool::release();
+        }
+    }
+
+    pub fn start(&self) {
         // SAFETY: worker_pool is valid for the lifetime of self (set in init/init_with_pool).
         unsafe { (*self.worker_pool).warm(8) };
-        if Self::uses_io_pool() {
-            // TODO(port): &'static ref but ThreadPoolLib::warm likely needs &mut; cast away const matching Zig *ThreadPoolLib semantics
-            // SAFETY: io_pool points to module static THREAD_POOL, valid while ref_count > 0.
-            unsafe {
-                (*(self.io_pool.unwrap() as *const ThreadPoolLib as *mut ThreadPoolLib)).warm(1);
-            }
+        if let Some(io) = self.io_pool {
+            // SAFETY: io points to the module-static THREAD_POOL, live while ref_count > 0.
+            unsafe { io.as_ref().warm(1) };
         }
     }
 
     pub fn uses_io_pool() -> bool {
-        if feature_flag::BUN_FEATURE_FLAG_FORCE_IO_POOL.get() {
+        if env_var::feature_flag::BUN_FEATURE_FLAG_FORCE_IO_POOL.get() == Some(true) {
             // For testing.
             return true;
         }
 
-        if feature_flag::BUN_FEATURE_FLAG_DISABLE_IO_POOL.get() {
+        if env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_IO_POOL.get() == Some(true) {
             // For testing.
             return false;
         }
@@ -193,50 +272,59 @@ impl ThreadPool {
         if Self::uses_io_pool() { io_thread_pool::shutdown() } else { true }
     }
 
-    pub fn schedule_with_options(&mut self, parse_task: &mut ParseTask, is_inside_thread_pool: bool) {
-        if matches!(parse_task.contents_or_fd, ParseTask::ContentsOrFd::Contents(_))
-            && matches!(parse_task.stage, ParseTask::Stage::NeedsSourceCode)
+    pub fn schedule_with_options(&self, parse_task: &mut ParseTask, is_inside_thread_pool: bool) {
+        if matches!(parse_task.contents_or_fd, ContentsOrFd::Contents(_))
+            && matches!(parse_task.stage, ParseTaskStage::NeedsSourceCode)
         {
-            // TODO(port): exact ParseTask::Stage / ContentsOrFd shape lives in crate::ParseTask
-            let contents = match &parse_task.contents_or_fd {
-                ParseTask::ContentsOrFd::Contents(c) => c.clone(),
-                _ => unreachable!(),
+            let ContentsOrFd::Contents(contents) = parse_task.contents_or_fd else {
+                unreachable!()
             };
-            parse_task.stage = ParseTask::Stage::NeedsParse {
-                contents,
-                fd: bun_sys::Fd::INVALID,
-            };
+            // PORT NOTE: Zig moved the `[]const u8` slice into the cache entry
+            // by value. `cache::Contents` has no borrowed-slice variant; the
+            // contract (see ParseTask.rs `run_with_source_code` defer) is that
+            // `entry.deinit()` is *skipped* when `contents_or_fd == .contents`,
+            // so an `External` provenance tag (no-op deinit) is the correct
+            // mapping for these unowned bytes.
+            parse_task.stage = ParseTaskStage::NeedsParse(CacheEntry {
+                contents: if contents.is_empty() {
+                    Contents::Empty
+                } else {
+                    Contents::External { ptr: contents.as_ptr(), len: contents.len() }
+                },
+                fd: Fd::INVALID,
+                external_free_function: ExternalFreeFunction::NONE,
+            });
         }
 
-        let schedule_fn: fn(&mut ThreadPoolLib, ThreadPoolLib::Batch) = if is_inside_thread_pool {
-            ThreadPoolLib::schedule_inside_thread_pool
+        let schedule_fn: fn(&ThreadPoolLib::ThreadPool, ThreadPoolLib::Batch) = if is_inside_thread_pool {
+            ThreadPoolLib::ThreadPool::schedule_inside_thread_pool
         } else {
-            ThreadPoolLib::schedule
+            ThreadPoolLib::ThreadPool::schedule
         };
 
         if Self::uses_io_pool() {
             match parse_task.stage {
-                ParseTask::Stage::NeedsParse { .. } => {
+                ParseTaskStage::NeedsParse(_) => {
                     // SAFETY: worker_pool valid for lifetime of self.
-                    schedule_fn(unsafe { &mut *self.worker_pool }, ThreadPoolLib::Batch::from(&mut parse_task.task));
+                    schedule_fn(unsafe { &*self.worker_pool }, ThreadPoolLib::Batch::from(&mut parse_task.task));
                 }
-                ParseTask::Stage::NeedsSourceCode => {
+                ParseTaskStage::NeedsSourceCode => {
                     // SAFETY: io_pool is Some when uses_io_pool(); points to live static.
-                    let io = unsafe { &mut *(self.io_pool.unwrap() as *const _ as *mut ThreadPoolLib) };
+                    let io = unsafe { self.io_pool.unwrap_unchecked().as_ref() };
                     schedule_fn(io, ThreadPoolLib::Batch::from(&mut parse_task.io_task));
                 }
             }
         } else {
             // SAFETY: worker_pool valid for lifetime of self.
-            schedule_fn(unsafe { &mut *self.worker_pool }, ThreadPoolLib::Batch::from(&mut parse_task.task));
+            schedule_fn(unsafe { &*self.worker_pool }, ThreadPoolLib::Batch::from(&mut parse_task.task));
         }
     }
 
-    pub fn schedule(&mut self, parse_task: &mut ParseTask) {
+    pub fn schedule(&self, parse_task: &mut ParseTask) {
         self.schedule_with_options(parse_task, false);
     }
 
-    pub fn schedule_inside_thread_pool(&mut self, parse_task: &mut ParseTask) {
+    pub fn schedule_inside_thread_pool(&self, parse_task: &mut ParseTask) {
         self.schedule_with_options(parse_task, true);
     }
 
@@ -244,33 +332,46 @@ impl ThreadPool {
         let worker: *mut Worker;
         {
             self.workers_assignments_lock.lock();
-            let _guard = scopeguard::guard(&mut self.workers_assignments_lock, |l| l.unlock());
-            let entry = self.workers_assignments.get_or_put(id).expect("unreachable");
-            if entry.found_existing {
-                // SAFETY: map only stores live Box::into_raw'd Workers (inserted below).
-                return unsafe { &mut **entry.value_ptr };
+            // PORT NOTE: reshaped for borrowck — `scopeguard::guard(&mut lock)`
+            // would borrow `self` for the whole scope and conflict with
+            // `workers_assignments`. Unlock manually on each exit path instead.
+            match self.workers_assignments.entry(id) {
+                MapEntry::Occupied(o) => {
+                    let w = *o.into_mut();
+                    self.workers_assignments_lock.unlock();
+                    // SAFETY: map only stores live Box::into_raw'd Workers (inserted below).
+                    return unsafe { &mut *w };
+                }
+                MapEntry::Vacant(v) => {
+                    // SAFETY: every field is fully written below before any read.
+                    // Zig wrote a struct literal with `undefined` for the
+                    // late-init fields; mirrored with `MaybeUninit` slots.
+                    worker = Box::into_raw(unsafe { Box::<Worker>::new_uninit().assume_init() });
+                    v.insert(worker);
+                }
             }
-
-            // SAFETY: fully initialized via `worker.write(...)` immediately below before any read.
-            worker = Box::into_raw(Box::new(MaybeUninit::<Worker>::uninit())).cast::<Worker>();
-            // TODO(port): Zig writes uninit Worker* into map then fills it after unlock; mirrored with MaybeUninit
-            *entry.value_ptr = worker;
+            self.workers_assignments_lock.unlock();
         }
 
-        // SAFETY: worker was just Box::into_raw'd above; exclusive access on this thread.
+        // SAFETY: `worker` is freshly Box::into_raw'd and exclusive on this
+        // thread until published via the map (already inserted above, but no
+        // other thread looks it up under a different `id`).
         unsafe {
             worker.write(Worker {
                 ctx: self.v2,
-                heap: MaybeUninit::uninit().assume_init(), // TODO(port): undefined until create()
-                allocator: core::ptr::null(),              // TODO(port): self-referential &heap, set in create()
+                heap: MaybeUninit::uninit(),
+                allocator: ptr::null(),
                 thread: ThreadPoolLib::Thread::current(),
-                data: MaybeUninit::uninit().assume_init(), // TODO(port): undefined until create()
+                data: MaybeUninit::uninit(),
                 quit: false,
-                ast_memory_allocator: Default::default(),
+                ast_memory_allocator: ManuallyDrop::new(js_ast::ASTMemoryAllocator::default()),
                 has_created: false,
-                deinit_task: ThreadPoolLib::Task { callback: Worker::deinit_callback },
-                temporary_arena: MaybeUninit::uninit().assume_init(), // TODO(port): undefined until create()
-                stmt_list: MaybeUninit::uninit().assume_init(),       // TODO(port): undefined until create()
+                deinit_task: ThreadPoolLib::Task {
+                    node: ThreadPoolLib::Node::default(),
+                    callback: Worker::deinit_callback,
+                },
+                temporary_arena: MaybeUninit::uninit(),
+                stmt_list: MaybeUninit::uninit(),
             });
             (*worker).init(&*self.v2);
             &mut *worker
@@ -278,101 +379,104 @@ impl ThreadPool {
     }
 }
 
-impl Drop for ThreadPool {
-    fn drop(&mut self) {
-        if self.worker_pool_is_owned {
-            // SAFETY: worker_pool was Box::into_raw'd in init() when owned.
-            unsafe { drop(Box::from_raw(self.worker_pool)) };
-        }
-        if Self::uses_io_pool() {
-            io_thread_pool::release();
-        }
-    }
-}
+// ───────────────────────────────────────────────────────────────────────────
+// Worker
+// ───────────────────────────────────────────────────────────────────────────
 
+/// Per-OS-thread bundler state. Heap-allocated and pinned (the
+/// `deinit_task`/`allocator` fields are self-referential); never moved after
+/// `get_worker` boxes it.
 pub struct Worker {
-    pub heap: ThreadLocalArena,
+    /// Thread-local arena. `MaybeUninit` because Zig writes `undefined` until
+    /// [`Worker::create`] runs; reading it before `has_created` is UB.
+    pub heap: MaybeUninit<ThreadLocalArena>,
 
     /// Thread-local memory allocator
     /// All allocations are freed in `deinit` at the very end of bundling.
-    // TODO(port): self-referential borrow of `heap`; AST-crate convention is `&'bump Bump` but cannot name lifetime of own field
+    // PORT NOTE: self-referential borrow of `heap` — kept as a raw pointer so
+    // it can be reseated in `create()` without a self-borrow. Zig stored the
+    // `std.mem.Allocator` vtable; here it's just `&heap`.
     pub allocator: *const ThreadLocalArena,
 
-    pub ctx: *const BundleV2,
+    pub ctx: *const BundleV2<'static>,
 
-    pub data: WorkerData,
+    pub data: MaybeUninit<WorkerData>,
     pub quit: bool,
 
-    pub ast_memory_allocator: js_ast::ASTMemoryAllocator,
+    pub ast_memory_allocator: ManuallyDrop<js_ast::ASTMemoryAllocator>,
     pub has_created: bool,
-    pub thread: Option<&'static ThreadPoolLib::Thread>,
+    /// `ThreadPoolLib.Thread.current` — null when called off a pool thread.
+    pub thread: *mut ThreadPoolLib::Thread,
 
     pub deinit_task: ThreadPoolLib::Task,
 
-    pub temporary_arena: bun_alloc::Arena,
-    pub stmt_list: LinkerContext::StmtList,
+    pub temporary_arena: MaybeUninit<bun_alloc::Arena>,
+    pub stmt_list: MaybeUninit<StmtList>,
 }
 
 pub struct WorkerData {
-    // TODO(port): TSV class ARENA (`&'arena mut Logger::Log`); kept raw because arena is sibling field `Worker.heap`
+    // TODO(port): lifetime — TSV class ARENA (`&'arena mut Logger::Log`); kept
+    // raw because the arena is the sibling field `Worker.heap`.
     pub log: *mut Logger::Log,
     pub estimated_input_lines_of_code: usize,
-    pub transpiler: Transpiler,
-    pub other_transpiler: Option<Transpiler>,
-}
-
-impl Default for WorkerData {
-    fn default() -> Self {
-        Self {
-            log: core::ptr::null_mut(),
-            estimated_input_lines_of_code: 0,
-            transpiler: Transpiler::default(), // TODO(port): Zig leaves undefined
-            other_transpiler: None,
-        }
-    }
+    // PORT NOTE: lifetime erased to `'static` behind `MaybeUninit` — the inner
+    // `&'a Arena` borrows `Worker.heap`, which Rust can't express on a sibling
+    // field. Zig used `transpiler: Transpiler` with a copied `std.mem.Allocator`.
+    pub transpiler: MaybeUninit<Transpiler<'static>>,
+    pub other_transpiler: Option<Box<Transpiler<'static>>>,
 }
 
 impl Worker {
-    pub fn deinit_callback(task: *mut ThreadPoolLib::Task) {
-        bun_output::scoped_log!(ThreadPool, "Worker.deinit()");
+    /// SAFETY: `task` must be the `deinit_task` field of a live boxed `Worker`.
+    pub unsafe fn deinit_callback(task: *mut ThreadPoolLib::Task) {
+        bun_core::scoped_log!(ThreadPool, "Worker.deinit()");
         // SAFETY: task points to Worker.deinit_task; offset_of recovers the parent.
         let this: *mut Worker = unsafe {
             (task as *mut u8)
                 .sub(core::mem::offset_of!(Worker, deinit_task))
                 .cast::<Worker>()
         };
-        // SAFETY: deinit_callback is only scheduled via deinit_soon on a live boxed Worker.
+        // SAFETY: deinit_callback is only scheduled via `deinit_soon` on a live
+        // Box::into_raw'd Worker; we hold exclusive ownership on this idle task.
         unsafe { Self::deinit(this) };
     }
 
     pub fn deinit_soon(&mut self) {
-        if let Some(thread) = self.thread {
-            // TODO(port): ThreadPoolLib::Thread::push_idle_task likely needs &mut; matching Zig *Thread semantics
-            // SAFETY: thread is &'static to a threadlocal ThreadPoolLib::Thread.
-            unsafe {
-                (*(thread as *const _ as *mut ThreadPoolLib::Thread)).push_idle_task(&mut self.deinit_task);
-            }
+        if let Some(thread) = unsafe { self.thread.as_ref() } {
+            thread.push_idle_task(&mut self.deinit_task);
         }
     }
 
     /// Takes ownership of the heap allocation and frees it.
-    // SAFETY: `this` must have come from Box::into_raw in ThreadPool::get_worker.
+    ///
+    /// # Safety
+    /// `this` must have come from `Box::into_raw` in [`ThreadPool::get_worker`].
     pub unsafe fn deinit(this: *mut Worker) {
-        // has_created gate: heap is only valid if create() ran.
-        if unsafe { (*this).has_created } {
-            // heap dropped by Box::from_raw below
-        } else {
-            // TODO(port): heap/data/temporary_arena/stmt_list are uninit; must not run their Drop.
-            // Phase B: wrap those fields in MaybeUninit or ManuallyDrop and drop conditionally here.
+        // SAFETY: caller contract.
+        let worker = unsafe { &mut *this };
+        if worker.has_created {
+            // SAFETY: `has_created` ⇒ `create()` ran ⇒ these fields are init.
+            unsafe {
+                worker.heap.assume_init_drop();
+                worker.temporary_arena.assume_init_drop();
+                worker.stmt_list.assume_init_drop();
+                ptr::drop_in_place(worker.data.assume_init_mut());
+                ManuallyDrop::drop(&mut worker.ast_memory_allocator);
+            }
         }
-        // SAFETY: caller contract — this was Box::into_raw'd.
-        drop(unsafe { Box::from_raw(this) });
+        // SAFETY: caller contract — `this` was Box::into_raw'd. Reclaim the
+        // allocation without running field destructors (handled above).
+        drop(unsafe { Box::<MaybeUninit<Worker>>::from_raw(this.cast()) });
     }
 
-    pub fn get(ctx: &BundleV2) -> &mut Worker {
-        // SAFETY: ctx is a BACKREF; graph.pool needs &mut but BundleV2 owns it uniquely on the JS thread.
-        // PORT NOTE: reshaped for borrowck — cast through raw ptr to reach &mut pool from shared backref
-        let worker = unsafe { (*(ctx as *const BundleV2 as *mut BundleV2)).graph.pool.get_worker(bun_threading::current_thread_id()) };
+    pub fn get(ctx: &BundleV2<'_>) -> &mut Worker {
+        // SAFETY: `ctx` is a BACKREF; `graph.pool` needs `&mut` but `BundleV2`
+        // owns it uniquely on the JS thread, and per-thread `get_worker` only
+        // touches the map under `workers_assignments_lock`.
+        // PORT NOTE: reshaped for borrowck — cast through raw ptr to reach
+        // `&mut pool` from a shared backref.
+        let pool: &mut ThreadPool = unsafe { ctx.graph.pool.as_ptr().as_mut().unwrap_unchecked() };
+        let worker = pool.get_worker(bun_threading::current_thread_id());
         if !worker.has_created {
             worker.create(ctx);
         }
@@ -380,7 +484,11 @@ impl Worker {
         worker.ast_memory_allocator.push();
 
         if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {
-            worker.heap.help_catch_memory_issues();
+            // PORT NOTE: `MimallocArena::help_catch_memory_issues` collected
+            // mimalloc's deferred frees + zero-filled freed pages. The Rust
+            // arena is `bumpalo::Bump`, which has no equivalent — calls
+            // dropped, gated on the real `MimallocArena` un-gate
+            // (`bun_alloc/MimallocArena.rs` is `#[cfg(any())]`).
         }
 
         worker
@@ -388,86 +496,121 @@ impl Worker {
 
     pub fn unget(&mut self) {
         if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {
-            self.heap.help_catch_memory_issues();
+            // See `get()` — `help_catch_memory_issues` no-op while heap = Bump.
         }
 
         self.ast_memory_allocator.pop();
     }
 
-    pub fn init(&mut self, v2: &BundleV2) {
-        self.ctx = v2 as *const BundleV2;
+    pub fn init(&mut self, v2: &BundleV2<'_>) {
+        self.ctx = (v2 as *const BundleV2<'_>).cast();
     }
 
-    fn create(&mut self, ctx: &BundleV2) {
-        let _trace = perf::trace("Bundler.Worker.create");
+    fn create(&mut self, ctx: &BundleV2<'_>) {
+        // PORT NOTE: `bun_perf::trace` takes a generated `PerfEvent` enum, and
+        // the generator hasn't emitted `Bundler.Worker.create` yet (only
+        // `_Stub`). Dropped to avoid mis-attributing the span.
+        // let _trace = bun_perf::trace("Bundler.Worker.create");
 
         self.has_created = true;
         Output::Source::configure_thread();
-        self.heap = ThreadLocalArena::new();
-        // TODO(port): self-referential — allocator borrows self.heap
-        self.allocator = &self.heap as *const ThreadLocalArena;
+        self.heap.write(ThreadLocalArena::new());
+        // Self-referential — `allocator` borrows `self.heap`.
+        // SAFETY: heap was just initialized on the line above.
+        self.allocator = unsafe { self.heap.assume_init_ref() } as *const ThreadLocalArena;
 
         let allocator = self.allocator;
 
-        self.ast_memory_allocator = js_ast::ASTMemoryAllocator { allocator, ..Default::default() };
+        // Zig: `.{ .allocator = this.allocator }` then `reset()`. The Rust
+        // ASTMemoryAllocator owns its bump arena internally and ignores the
+        // passed fallback (see ASTMemoryAllocator::new doc).
+        // SAFETY: allocator points to the just-initialized self.heap.
+        *self.ast_memory_allocator =
+            js_ast::ASTMemoryAllocator::new(unsafe { &*allocator });
         self.ast_memory_allocator.reset();
 
-        // SAFETY: allocator points to self.heap which was just initialized and outlives self.data.
-        let log = unsafe { (*allocator).alloc(Logger::Log::init(&*allocator)) } as *mut Logger::Log;
-        self.data = WorkerData {
+        // SAFETY: allocator points to self.heap which outlives self.data.
+        let log: *mut Logger::Log = unsafe { (*allocator).alloc(Logger::Log::init()) };
+        self.data.write(WorkerData {
             log,
             estimated_input_lines_of_code: 0,
-            // TODO(port): Zig writes `undefined` then initialize_transpiler fills it; needs MaybeUninit in Phase B
-            transpiler: unsafe { MaybeUninit::uninit().assume_init() },
+            // Filled by `initialize_transpiler` immediately below.
+            transpiler: MaybeUninit::uninit(),
             other_transpiler: None,
-        };
-        self.ctx = ctx as *const BundleV2;
-        // PERF(port): was bun.ArenaAllocator backed by self.allocator — using fresh Bump
-        self.temporary_arena = bun_alloc::Arena::new();
-        self.stmt_list = LinkerContext::StmtList::init(allocator);
-        // PORT NOTE: reshaped for borrowck — capture log scalar, drop &mut self, re-borrow disjoint field
-        let data_log = self.data.log;
-        Self::initialize_transpiler(data_log, &mut self.data.transpiler, ctx.transpiler(), allocator);
+        });
+        self.ctx = (ctx as *const BundleV2<'_>).cast();
+        // PERF(port): was `bun.ArenaAllocator.init(this.allocator)` — using a
+        // fresh Bump (no nested-arena type yet).
+        self.temporary_arena.write(bun_alloc::Arena::new());
+        self.stmt_list.write(StmtList::init());
+        // SAFETY: self.data was just written above.
+        let data = unsafe { self.data.assume_init_mut() };
+        Self::initialize_transpiler(data.log, &mut data.transpiler, ctx.transpiler(), allocator);
 
-        bun_output::scoped_log!(ThreadPool, "Worker.create()");
+        bun_core::scoped_log!(ThreadPool, "Worker.create()");
     }
 
-    // PORT NOTE: reshaped for borrowck — associated fn (no &mut self) so callers can borrow self.data.transpiler disjointly
+    /// Clone `from` into `transpiler` and rewire its log/allocator/resolver.
+    ///
+    /// PORT NOTE: reshaped for borrowck — associated fn (no `&mut self`) so
+    /// callers can borrow `self.data.transpiler` and `self.data.log` disjointly.
     fn initialize_transpiler(
         log: *mut Logger::Log,
-        transpiler: &mut Transpiler,
-        from: &Transpiler,
+        transpiler: &mut MaybeUninit<Transpiler<'static>>,
+        from: &Transpiler<'_>,
         allocator: *const ThreadLocalArena,
     ) {
-        *transpiler = from.clone();
-        transpiler.set_log(log);
-        transpiler.set_allocator(allocator);
-        transpiler.linker.resolver = &mut transpiler.resolver;
-        transpiler.macro_context = Some(js_ast::Macro::MacroContext::init(transpiler));
-        transpiler.resolver.caches = CacheSet::Set::init(allocator);
+        // TODO(b2-blocked): the live `crate::Transpiler` lacks
+        // `Clone` / `set_log` / `set_allocator`, and `crate::Linker` is the
+        // unit stub `Linker(())` with no `.resolver` field. The full body
+        // un-gates with `transpiler.rs` Phase-A draft + `linker` module.
+        #[cfg(any())]
+        {
+            // Zig: `transpiler.* = from.*;`
+            // SAFETY: `from`'s `'a` arena outlives this worker (it's the
+            // BundleV2-owned transpiler); erase to `'static` to store it.
+            transpiler.write(unsafe {
+                core::mem::transmute::<Transpiler<'_>, Transpiler<'static>>(from.clone())
+            });
+            let t = unsafe { transpiler.assume_init_mut() };
+            t.set_log(unsafe { &mut *log });
+            t.set_allocator(unsafe { &*allocator });
+            t.linker.resolver = &mut t.resolver;
+            t.macro_context = Some(js_ast::Macro::MacroContext::init(t));
+            t.resolver.caches = CacheSet::Set::init();
+        }
+        let _ = (log, transpiler, from, allocator);
     }
 
-    pub fn transpiler_for_target(&mut self, target: Target) -> &mut Transpiler {
-        if target == Target::Browser && self.data.transpiler.options.target != target {
-            if self.data.other_transpiler.is_none() {
-                // TODO(port): Zig writes `undefined` into Option payload then borrows it; using MaybeUninit pattern
-                self.data.other_transpiler = Some(unsafe { MaybeUninit::uninit().assume_init() });
-                // PORT NOTE: reshaped for borrowck — capture scalars before borrowing self.data.other_transpiler
-                let data_log = self.data.log;
-                let allocator = self.allocator;
-                // SAFETY: ctx is a valid backref; client_transpiler must be Some in this branch per Zig `.?`.
-                let client: &Transpiler = unsafe { (*self.ctx).client_transpiler.as_ref().unwrap() };
-                Self::initialize_transpiler(data_log, self.data.other_transpiler.as_mut().unwrap(), client, allocator);
+    pub fn transpiler_for_target(&mut self, target: Target) -> &mut Transpiler<'static> {
+        // SAFETY: callers only invoke this after `Worker::get` → `create()`.
+        let data = unsafe { self.data.assume_init_mut() };
+        // SAFETY: `create()` wrote `data.transpiler` via `initialize_transpiler`.
+        let primary = unsafe { data.transpiler.assume_init_mut() };
+        if target == Target::Browser && primary.options.target != target {
+            if data.other_transpiler.is_none() {
+                // PORT NOTE: Zig wrote `undefined` into the Option payload then
+                // borrowed it; mirror with an uninit Box.
+                let mut slot: Box<MaybeUninit<Transpiler<'static>>> = Box::new_uninit();
+                // SAFETY: ctx is a valid backref; `client_transpiler` must be
+                // Some in this branch per Zig `.?`.
+                let client: &Transpiler<'_> =
+                    unsafe { (*self.ctx).client_transpiler.unwrap_unchecked().as_ref() };
+                Self::initialize_transpiler(data.log, &mut slot, client, self.allocator);
+                // SAFETY: `initialize_transpiler` fully writes the slot
+                // (once the body un-gates; until then this path is unreachable
+                // because `primary.options.target` is never populated).
+                data.other_transpiler = Some(unsafe { slot.assume_init() });
             }
-            let other_transpiler = self.data.other_transpiler.as_mut().unwrap();
-            debug_assert!(other_transpiler.options.target == target);
-            return other_transpiler;
+            let other = data.other_transpiler.as_deref_mut().unwrap();
+            debug_assert!(other.options.target == target);
+            return other;
         }
 
-        &mut self.data.transpiler
+        primary
     }
 
-    pub fn run(&mut self, ctx: &BundleV2) {
+    pub fn run(&mut self, ctx: &BundleV2<'_>) {
         if !self.has_created {
             self.create(ctx);
         }
@@ -481,6 +624,11 @@ pub use bun_js_parser::Index;
 // PORT STATUS
 //   source:     src/bundler/ThreadPool.zig (364 lines)
 //   confidence: medium
-//   todos:      19
-//   notes:      Heavy `undefined`-init + self-referential allocator field; Phase B needs MaybeUninit/ManuallyDrop on Worker fields and a decision on worker_pool ownership (TSV UNKNOWN). io_thread_pool::shutdown() Zig source missing trailing return.
+//   blocked_on: Transpiler::{Clone,set_log,set_allocator}; crate::Linker.resolver;
+//               bun_alloc::MimallocArena (help_catch_memory_issues);
+//               bun_perf PerfEvent codegen (Bundler.Worker.create)
+//   notes:      Heavy `undefined`-init + self-referential allocator field →
+//               MaybeUninit/ManuallyDrop on Worker. io_thread_pool::shutdown()
+//               Zig source missing trailing return; io_thread_pool::acquire()
+//               Zig source skips ref-count bump on the lock-race path (mirrored).
 // ──────────────────────────────────────────────────────────────────────────

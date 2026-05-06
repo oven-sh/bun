@@ -29,7 +29,8 @@ pub struct Error(NonZeroU16);
 // `pub const` Errors below have stable values without touching the lock.
 
 /// Pre-seeded names. **Append only** — existing indices are load-bearing for
-/// the `pub const` Errors and for `ERRNO_SEED` below.
+/// the `pub const` Errors below. (The errno→name map lives in the per-platform
+/// `SYSTEM_ERRNO_NAMES` table; entries here are only fast-path intern hits.)
 const SEED: &[&str] = &[
     // — well-known Zig error-set members the runtime matches on by value —
     "Unexpected",       // 1  (Zig's catch-all; also `errno_map` default)
@@ -43,7 +44,8 @@ const SEED: &[&str] = &[
     "Timeout",          // 9
     "Aborted",          // 10
     "WouldBlock",       // 11
-    // — POSIX errno tag names (subset; full table arrives via bun_errno) —
+    // — POSIX errno tag names (intern fast-path only; the actual errno→name
+    //   mapping is `SYSTEM_ERRNO_NAMES`, which is per-platform and full-range) —
     "EPERM",   // 12
     "ENOENT",  // 13
     "ESRCH",   // 14

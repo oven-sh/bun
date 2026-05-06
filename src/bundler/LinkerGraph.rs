@@ -1,16 +1,25 @@
 use bun_alloc::Arena;
 use bun_collections::{AutoBitSet, BabyList, DynamicBitSetUnmanaged as BitSet, MultiArrayList};
 use bun_js_parser as js_ast;
+use bun_js_parser::ast::base::RefTag;
+use bun_js_parser::ast::bundled_ast;
 use bun_js_parser::ast::symbol;
-use bun_js_parser::Symbol;
+use bun_js_parser::{DeclaredSymbol, DeclaredSymbolList, Dependency, Symbol};
 use bun_options_types::{ImportKind, ImportRecord};
 use bun_string::PathString;
 
 use crate::IndexStringMap::IndexStringMap;
 use crate::{
-    entry_point, import_record, index, js_meta, part, EntryPoint, Index, JSAst, JSMeta, Logger,
-    Part, Ref, ResolvedExports, ServerComponentBoundary, TopLevelSymbolToParts,
+    entry_point, import_record, index, js_meta, part, EntryPoint, ImportTracker, Index, JSAst,
+    JSMeta, Logger, Part, Ref, ResolvedExports, ServerComponentBoundary, TopLevelSymbolToParts,
 };
+// `items_<field>()` column accessors — bring the `*ListExt` traits into scope.
+// PORT NOTE: `BundledAstListExt` is emitted by `#[derive(MultiArrayElement)]`
+// on `BundledAst`; un-gating here is paired with that derive landing in
+// `bun_js_parser::ast::bundled_ast` (same dependency `scanImportsAndExports.rs`
+// already imports as `BundledAstField`).
+use crate::js_meta::JSMetaListExt as _;
+use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
 
 bun_core::declare_scope!(LinkerGraph, visible);
 

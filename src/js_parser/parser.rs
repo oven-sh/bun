@@ -233,58 +233,192 @@ pub use crate::ast::base::{Index, RefCtx};
 
 pub use bun_options_types::import_record as importRecord;
 
-// `runtime` mod is gated; provide a local Runtime stub so RuntimeFeatures/Imports
-// resolve. Real surface arrives when runtime.rs un-gates.
+// `runtime.rs` (full port) is path-gated in lib.rs as `runtime_full`. Until
+// its bun_core/bun_schema deps are wired, the *real* type surface — the parts
+// `P`/`visitStmt`/`visitExpr` actually consume — lives here so dependents can
+// drop their bool-placeholder guards.
 pub mod Runtime {
-    use bun_collections::StringSet;
+    use bun_collections::{StringArrayHashMap, StringSet};
+    use bun_string::strings;
 
-    #[derive(Default, Clone, Copy)]
+    use crate::ast::base::Ref;
+    use crate::ast::Expr;
+    use crate::RuntimeTranspilerCache;
+
+    // ─────────────────────────── Runtime.Features ───────────────────────────
+
     pub struct Features {
-        pub commonjs_named_exports: bool,
-        pub repl_mode: bool,
-        /// Zig `bundler_feature_flags: *const bun.StringSet = &empty_bundler_feature_flags`.
-        /// `None` ≡ the empty static set (contributes nothing to the hash).
-        pub bundler_feature_flags: Option<&'static StringSet>,
-        pub allow_runtime: bool,
-        pub auto_import_jsx: bool,
-        pub commonjs_at_runtime: bool,
-        pub dead_code_elimination: bool,
-        pub dynamic_require: bool,
-        pub hot_module_reloading: bool,
-        pub inject_jest_globals: bool,
-        pub inlining: bool,
-        pub jsx_optimization_inline: bool,
-        pub minify_identifiers: bool,
-        pub minify_syntax: bool,
-        pub no_macros: bool,
+        /// Enable the React Fast Refresh transform. What this does exactly
+        /// is documented in js_parser, search for `const ReactRefresh`
         pub react_fast_refresh: bool,
-        pub remove_whitespace: bool,
-        pub replace_exports: bool,
-        pub server_components: bool,
-        pub set_breakpoint_on_first_line: bool,
-        pub top_level_await: bool,
-        pub trim_unused_imports: bool,
-        pub use_import_meta_require: bool,
-        // ── round-D additions: stub fields for gated parse_*/visit_* bodies ──
-        pub auto_polyfill_require: bool,
-        pub dont_bundle_twice: bool,
-        pub emit_decorator_metadata: bool,
+        /// `hot_module_reloading` is specific to if we are using bun.bake.DevServer.
+        /// It can be enabled on the command line with --format=internal_bake_dev
+        ///
+        /// Standalone usage of this flag / usage of this flag
+        /// without '--format' set is an unsupported use case.
+        pub hot_module_reloading: bool,
+        /// Control how the parser handles server components and server functions.
+        pub server_components: ServerComponentsMode,
+
         pub is_macro_runtime: bool,
-        pub lower_using: bool,
+        pub top_level_await: bool,
+        pub auto_import_jsx: bool,
+        pub allow_runtime: bool,
+        pub inlining: bool,
+
+        pub inject_jest_globals: bool,
+
+        pub no_macros: bool,
+
+        pub commonjs_named_exports: bool,
+
+        pub minify_syntax: bool,
+        pub minify_identifiers: bool,
+        /// Preserve function/class names during minification (CLI: --keep-names)
         pub minify_keep_names: bool,
         pub minify_whitespace: bool,
-        pub remove_cjs_module_wrapper: bool,
-        pub runtime_transpiler_cache: bool,
-        pub should_unwrap_require: bool,
-        pub standard_decorators: bool,
+        pub dead_code_elimination: bool,
+
+        pub set_breakpoint_on_first_line: bool,
+
+        pub trim_unused_imports: bool,
+
+        /// Allow runtime usage of require(), converting `require` into `__require`
+        pub auto_polyfill_require: bool,
+
+        pub replace_exports: ReplaceableExportMap,
+
+        /// Scan for '// @bun' at the top of this file, halting a parse if it is
+        /// seen. This is used in `bun run` after a `bun build --target=bun`,
+        /// and you know the contents is already correct.
+        ///
+        /// This comment must never be used manually.
+        pub dont_bundle_twice: bool,
+
+        /// This is a list of packages which even when require() is used, we will
+        /// instead convert to ESM import statements.
+        ///
+        /// This is not normally a safe transformation.
+        ///
+        /// So we have a list of packages which we know are safe to do this with.
+        pub unwrap_commonjs_packages: &'static [&'static [u8]],
+
+        pub commonjs_at_runtime: bool,
         pub unwrap_commonjs_to_esm: bool,
+
+        pub emit_decorator_metadata: bool,
+        pub standard_decorators: bool,
+
+        /// If true and if the source is transpiled as cjs, don't wrap the module.
+        /// This is used for `--print` entry points so we can get the result.
+        pub remove_cjs_module_wrapper: bool,
+
+        // PORT NOTE: `?*bun.jsc.RuntimeTranspilerCache` — raw `*mut` (not `&'a mut`)
+        // so `Features` stays `'static`-bounded inside `Parser::Options` and avoids
+        // the borrowck self-borrow that `&'a mut` would induce while `P` holds
+        // `&mut Options`.
+        pub runtime_transpiler_cache: Option<*mut RuntimeTranspilerCache>,
+
+        // TODO: make this a bitset of all unsupported features
+        pub lower_using: bool,
+
+        /// Feature flags for dead-code elimination via `import { feature } from "bun:bundle"`
+        /// When `feature("FLAG_NAME")` is called, it returns true if FLAG_NAME is in this set.
+        ///
+        /// Zig `bundler_feature_flags: *const bun.StringSet = &empty_bundler_feature_flags`.
+        /// `None` ≡ the empty static set (contributes nothing to the hash). Kept
+        /// `Option` because `StringSet` has no const-empty constructor yet
+        /// (`StringSet::EMPTY` TODO in collections), so a `&'static StringSet`
+        /// default would need a lazy_static.
+        pub bundler_feature_flags: Option<&'static StringSet>,
+
+        /// REPL mode: transforms code for interactive evaluation
+        /// - Wraps lone object literals `{...}` in parentheses
+        /// - Hoists variable declarations for REPL persistence
+        /// - Wraps last expression in { value: expr } for result capture
+        /// - Assigns functions to context for persistence
+        pub repl_mode: bool,
+
+        // ── round-C/D vestigial bool stubs not present in Zig `Runtime.Features`. ──
+        // Retained until their last reader (parseJSXElement.rs et al.) is ported to
+        // the real predicate; they default false and are otherwise inert.
+        pub jsx_optimization_inline: bool,
+        pub dynamic_require: bool,
+        pub remove_whitespace: bool,
+        pub use_import_meta_require: bool,
     }
+
+    impl Default for Features {
+        fn default() -> Self {
+            Self {
+                react_fast_refresh: false,
+                hot_module_reloading: false,
+                server_components: ServerComponentsMode::None,
+                is_macro_runtime: false,
+                top_level_await: false,
+                auto_import_jsx: false,
+                allow_runtime: true,
+                inlining: false,
+                inject_jest_globals: false,
+                no_macros: false,
+                commonjs_named_exports: true,
+                minify_syntax: false,
+                minify_identifiers: false,
+                minify_keep_names: false,
+                minify_whitespace: false,
+                dead_code_elimination: true,
+                set_breakpoint_on_first_line: false,
+                trim_unused_imports: false,
+                auto_polyfill_require: false,
+                replace_exports: ReplaceableExportMap::default(),
+                dont_bundle_twice: false,
+                unwrap_commonjs_packages: &[],
+                commonjs_at_runtime: false,
+                unwrap_commonjs_to_esm: false,
+                emit_decorator_metadata: false,
+                standard_decorators: false,
+                remove_cjs_module_wrapper: false,
+                runtime_transpiler_cache: None,
+                lower_using: true,
+                bundler_feature_flags: None,
+                repl_mode: false,
+                jsx_optimization_inline: false,
+                dynamic_require: false,
+                remove_whitespace: false,
+                use_import_meta_require: false,
+            }
+        }
+    }
+
     impl Features {
-        // Zig: `hashForRuntimeTranspiler` — comptime tuple of field-name enum
-        // literals iterated with `inline for` + `@field`. Rust has no field
-        // reflection; expanded by hand. Keep in sync with `runtime.rs::Features`
-        // (the real impl) and the Zig `hash_fields_for_runtime_transpiler` tuple.
+        /// Initialize bundler feature flags for dead-code elimination via `import { feature } from "bun:bundle"`.
+        /// Returns a leaked `&'static StringSet`, or `None` if no flags are provided.
+        /// Keys are kept sorted so iteration order is deterministic (for RuntimeTranspilerCache hashing).
+        pub fn init_bundler_feature_flags(feature_flags: &[&[u8]]) -> Option<&'static StringSet> {
+            // Zig returns `*const bun.StringSet` heap-allocated via `allocator.create`, and
+            // the caller frees it. Rust callers (BundleOptions) own the result for the
+            // process lifetime, so leak is fine. Empty path returns `None` (≡ static empty).
+            if feature_flags.is_empty() {
+                return None;
+            }
+            let mut set = StringSet::new();
+            for flag in feature_flags {
+                let _ = set.insert(flag);
+            }
+            // PORT NOTE: reshaped for borrowck — Zig sorted via `set.map.sort` with a
+            // comparator closure that borrowed `set.map.keys()`. Here we sort the
+            // backing ArrayHashMap by key bytes directly.
+            // TODO(port): exact API on bun_collections::StringSet for in-place key sort
+            // (currently no `sort_keys_by`; iteration order is insertion order).
+            Some(Box::leak(Box::new(set)))
+        }
+
+        // Zig: `hash_fields_for_runtime_transpiler` — a comptime tuple of field-name
+        // enum literals iterated with `inline for` + `@field`. Rust has no field
+        // reflection; expanded by hand. Keep this list in sync with the Zig tuple.
         pub fn hash_for_runtime_transpiler(&self, hasher: &mut bun_wyhash::Wyhash11) {
+            debug_assert!(self.runtime_transpiler_cache.is_some());
+
             let bools: [bool; 17] = [
                 self.top_level_await,
                 self.auto_import_jsx,
@@ -303,19 +437,18 @@ pub mod Runtime {
                 self.standard_decorators,
                 self.lower_using,
                 self.repl_mode,
+                // note that we do not include .inject_jest_globals, as we bail out of the cache entirely if this is true
             ];
-            // SAFETY: [bool; N] is POD; matches Zig `std.mem.asBytes`.
+
+            // SAFETY: `[bool; N]` is N bytes of 0x00/0x01; matches Zig `std.mem.asBytes(&bools)`.
             hasher.update(unsafe {
-                core::slice::from_raw_parts(
-                    bools.as_ptr().cast::<u8>(),
-                    core::mem::size_of::<[bool; 17]>(),
-                )
+                core::slice::from_raw_parts(bools.as_ptr().cast::<u8>(), bools.len())
             });
 
             // Hash --feature flags. These directly affect transpiled output via
             // feature("NAME") replacement in visitExpr.zig. When empty, we add
             // nothing to the hash so existing cache entries remain valid.
-            // Keys are sorted in initBundlerFeatureFlags so flag order on the CLI doesn't matter.
+            // Keys are sorted in init_bundler_feature_flags so flag order on the CLI doesn't matter.
             if let Some(flags) = self.bundler_feature_flags {
                 for flag in flags.keys() {
                     hasher.update(flag);
@@ -323,17 +456,137 @@ pub mod Runtime {
                 }
             }
         }
+
+        pub fn should_unwrap_require(&self, package_name: &[u8]) -> bool {
+            !package_name.is_empty()
+                && strings::index_equal_any(self.unwrap_commonjs_packages, package_name).is_some()
+        }
     }
+
+    /// Zig: `Runtime.Features.ReplaceableExport`
+    #[derive(Clone)]
+    pub enum ReplaceableExport {
+        Delete,
+        Replace(Expr),
+        Inject { name: Box<[u8]>, value: Expr },
+        // TODO(port): `name` was `string` (= []const u8). Ownership unclear; using Box<[u8]>.
+    }
+
+    impl ReplaceableExport {
+        #[inline]
+        pub fn is_replace(&self) -> bool {
+            matches!(self, Self::Replace(_))
+        }
+    }
+
+    /// Zig: `bun.StringArrayHashMapUnmanaged(ReplaceableExport)`.
+    ///
+    /// Newtype (not a bare alias) so we can hang `get_ptr` (Zig spelling for
+    /// `getPtr`, which borrows immutably) and expose a `.entries` accessor that
+    /// satisfies the `replace_exports.entries.len` shape `visitStmt` ported
+    /// verbatim from Zig's `ArrayHashMap.entries`.
+    #[derive(Default)]
+    pub struct ReplaceableExportMap {
+        /// Backing map. Named `entries` so `replace_exports.entries.len()` —
+        /// the literal Zig spelling — resolves (Zig's `ArrayHashMap.entries`
+        /// is a `MultiArrayList` with `.len`; here `StringArrayHashMap` derefs
+        /// to `ArrayHashMap` which has `.len()`).
+        pub entries: StringArrayHashMap<ReplaceableExport>,
+    }
+
+    impl core::ops::Deref for ReplaceableExportMap {
+        type Target = StringArrayHashMap<ReplaceableExport>;
+        #[inline]
+        fn deref(&self) -> &Self::Target {
+            &self.entries
+        }
+    }
+    impl core::ops::DerefMut for ReplaceableExportMap {
+        #[inline]
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            &mut self.entries
+        }
+    }
+
+    impl ReplaceableExportMap {
+        #[inline]
+        pub fn count(&self) -> usize {
+            self.entries.count()
+        }
+        /// Zig `getPtr` returns `?*V` from a `*const Self` — i.e. immutable
+        /// lookup yielding a (logically-mutable) pointer. Rust splits this
+        /// into `get_ptr` (`&V`) and `get_ptr_mut` (`&mut V`); call sites in
+        /// the visitor only read through it.
+        #[inline]
+        pub fn get_ptr(&self, key: &[u8]) -> Option<&ReplaceableExport> {
+            self.entries.get(key)
+        }
+        #[inline]
+        pub fn get_ptr_mut(&mut self, key: &[u8]) -> Option<&mut ReplaceableExport> {
+            self.entries.get_ptr_mut(key)
+        }
+        #[inline]
+        pub fn contains(&self, key: &[u8]) -> bool {
+            self.entries.contains(key)
+        }
+    }
+
+    /// Zig: `Runtime.Features.ServerComponentsMode`
+    #[derive(Clone, Copy, PartialEq, Eq, Default)]
+    pub enum ServerComponentsMode {
+        /// Server components is disabled, strings "use client" and "use server" mean nothing.
+        #[default]
+        None,
+        /// This is a server-side file outside of the SSR graph, but not a "use server" file.
+        /// - Handle functions with "use server", creating secret exports for them.
+        WrapAnonServerFunctions,
+        /// This is a "use client" file on the server, and separate_ssr_graph is off.
+        /// - Wrap all exports in a call to `registerClientReference`
+        /// - Ban "use server" functions???
+        WrapExportsForClientReference,
+        /// This is a "use server" file on the server
+        /// - Wrap all exports in a call to `registerServerReference`
+        /// - Ban "use server" functions, since this directive is already applied.
+        WrapExportsForServerReference,
+        /// This is a client side file.
+        /// - Ban "use server" functions since it is on the client-side
+        ClientSide,
+    }
+
+    impl ServerComponentsMode {
+        #[inline]
+        pub fn is_server_side(self) -> bool {
+            matches!(
+                self,
+                Self::WrapExportsForServerReference | Self::WrapAnonServerFunctions
+            )
+        }
+
+        #[inline]
+        pub fn wraps_exports(self) -> bool {
+            matches!(
+                self,
+                Self::WrapExportsForClientReference | Self::WrapExportsForServerReference
+            )
+        }
+
+        #[inline]
+        pub fn is_enabled(self) -> bool {
+            !matches!(self, Self::None)
+        }
+    }
+
+    // ─────────────────────────── Runtime.Imports ───────────────────────────
     /// Stub of `runtime.rs::Imports` — only the fields/methods touched by
     /// un-gated `P` helpers (`ensure_require_symbol`, `runtime_identifier_ref`).
     /// Full table arrives when `runtime.rs` un-gates.
     #[derive(Default, Clone)]
     pub struct Imports {
-        pub __require: Option<crate::ast::base::Ref>,
+        pub __require: Option<Ref>,
         // TODO(port): remaining named fields — runtime.rs has the full struct.
         // Un-gated callers only touch __require directly; the rest go through
         // the by-name accessors below, which fall back to `extra`.
-        extra: std::collections::HashMap<&'static [u8], crate::ast::base::Ref>,
+        extra: std::collections::HashMap<&'static [u8], Ref>,
     }
     impl Imports {
         #[inline]
@@ -342,29 +595,25 @@ pub mod Runtime {
             self.extra.contains_key(key)
         }
         #[inline]
-        pub fn at(&self, key: &[u8]) -> Option<crate::ast::base::Ref> {
+        pub fn at(&self, key: &[u8]) -> Option<Ref> {
             if key == b"__require" { return self.__require; }
             self.extra.get(key).copied()
         }
         #[inline]
-        pub fn put(&mut self, key: &'static [u8], ref_: crate::ast::base::Ref) {
+        pub fn put(&mut self, key: &'static [u8], ref_: Ref) {
             if key == b"__require" { self.__require = Some(ref_); return; }
             self.extra.insert(key, ref_);
         }
     }
     #[derive(Default, Clone, Copy)]
     pub struct Names;
-    #[derive(Clone)]
-    pub enum ReplaceableExport {
-        Delete,
-        Replace(crate::ast::Expr),
-        Inject { name: Box<[u8]>, value: crate::ast::Expr },
-    }
+
     pub fn is_runtime_module(_: &[u8]) -> bool { false }
 }
 pub type RuntimeFeatures = Runtime::Features;
 pub type RuntimeImports = Runtime::Imports;
 pub type RuntimeNames = Runtime::Names;
+pub use Runtime::ServerComponentsMode as ServerComponents;
 
 pub use crate::ast::p::{NewParser, P};
 

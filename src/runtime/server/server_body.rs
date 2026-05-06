@@ -3435,18 +3435,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // uWS request will not live longer than this function
             request_object.request_context.detach_request();
         });
-        ctx.on_response(self, request_value, response_value);
-
         ctx.defer_deinit_until_callback_completes = None;
 
-        // TODO(port): ctx.{deinit,should_render_missing,render_missing,to_async}
+        // TODO(port): ctx.{on_response,deinit,should_render_missing,render_missing,to_async}
         // require `RequestContext<Self, ..>: NativePromiseContextType` and
         // `Self: server::ServerLike`, which are only impl'd for the
         // `server::NewServer` monomorphizations in mod.rs — not for this
         // module's draft `NewServer`. Un-gates with the type-unification pass
         // (see `server::AnyRoute unification` blocker above).
-        let _ = (should_deinit_context, req, request_object);
-        todo!("blocked_on: server::ServerLike impl for server_body::NewServer (ctx.deinit/render_missing/to_async)");
+        let _ = (should_deinit_context, req, request_object, request_value, response_value);
+        todo!("blocked_on: server::ServerLike impl for server_body::NewServer (ctx.on_response/deinit/render_missing/to_async)");
     }
 
     // https://chromium.googlesource.com/devtools/devtools-frontend/+/main/docs/ecosystem/automatic_workspace_folders.md

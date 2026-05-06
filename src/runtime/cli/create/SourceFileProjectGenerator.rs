@@ -2,14 +2,18 @@
 
 use bun_bundler::bundle_v2::BundleV2;
 use bun_bundler::bundle_v2::__phase_a_draft::DependenciesScannerResult;
+use bun_bundler::Graph::InputFileListExt as _;
+use bun_bundler::JSMetaListExt as _;
 use bun_bundler::ResolvedExports;
 use crate::cli::create_command::ExampleTag;
 use crate::cli::Command;
 use crate::api::bun::process as bun_process;
 use crate::api::bun::process::sync as spawn_sync;
+use crate::api::bun::process::SignalCodeExt as _;
 use bun_collections::StringSet;
 use bun_core::{Global, Output};
 use bun_js_parser::ast as js_ast;
+use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
 use bun_js_parser::js_lexer;
 use bun_logger::Source as LoggerSource;
 use bun_paths as path;
@@ -17,7 +21,7 @@ use bun_paths::resolve_path;
 use bun_paths::fs::FileSystem;
 use bun_str::strings;
 use bun_str::MutableString;
-use bun_sys::{self, Fd};
+use bun_sys::{self, Fd, FdExt as _};
 
 // Generate project files based on the entry point and dependencies
 pub fn generate(
@@ -27,10 +31,10 @@ pub fn generate(
     result: &mut DependenciesScannerResult,
 ) -> Result<(), bun_core::Error> {
     let Some(react_component_export) = find_react_component_export(result.bundle_v2) else {
-        Output::err_generic(format_args!(
+        Output::err_generic(
             "No component export found in <b>{}<r>",
-            bun_core::fmt::quote(entry_point)
-        ));
+            (bun_core::fmt::quote(entry_point),),
+        );
         Output::flush();
         let writer = Output::error_writer_buffered();
         writer.write_all(
@@ -54,12 +58,12 @@ pub fn generate(
     if !has_tailwind_in_dependencies {
         // Scan source files for Tailwind classes if not already in dependencies
         needs_to_inject_tailwind =
-            has_any_tailwind_classes_in_source_files(result.bundle_v2, &result.reachable_files);
+            has_any_tailwind_classes_in_source_files(result.bundle_v2, result.reachable_files);
     }
 
     // Get any shadcn components used in the project
     let shadcn = if ENABLE_SHADCN_UI {
-        get_shadcn_components(result.bundle_v2, &result.reachable_files)?
+        get_shadcn_components(result.bundle_v2, result.reachable_files)?
     } else {
         StringSet::new()
     };

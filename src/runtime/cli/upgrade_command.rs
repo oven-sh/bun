@@ -25,6 +25,21 @@ use bun_string::ZigString;
 
 use crate::cli::Command;
 
+// PORT NOTE: `bun_resolver::fs::FileSystem` (the inline canonical type surface
+// in `resolver/lib.rs`) does not yet expose `tmpdir()`; the full impl lives in
+// the un-exported `fs_full` module. Shim it locally — open
+// `RealFS::tmpdir_path()` as a `sys::Dir`, mirroring `RealFS::open_tmp_dir`.
+trait FileSystemTmpdirExt {
+    fn tmpdir(&mut self) -> Result<sys::Dir, bun_core::Error>;
+}
+impl FileSystemTmpdirExt for fs::FileSystem {
+    fn tmpdir(&mut self) -> Result<sys::Dir, bun_core::Error> {
+        sys::open_dir_absolute(fs::RealFS::tmpdir_path())
+            .map(sys::Dir::from_fd)
+            .map_err(Into::into)
+    }
+}
+
 // PORT NOTE: `bun.argv` is an `Argv` newtype (not `&[&[u8]]`), so
 // `strings::contains_any` can't take it directly. Local helper that scans the
 // process argv for an exact match — same semantics as Zig's
@@ -366,7 +381,7 @@ impl UpgradeCommand {
             size: 0,
         };
 
-        if !matches!(expr.data, js_ast::ExprData::EObject(_)) {
+        if !expr.is_object() {
             if !SILENT {
                 progress.unwrap().end();
                 refresher.unwrap().refresh();
@@ -382,8 +397,8 @@ impl UpgradeCommand {
         }
 
         if let Some(tag_name_) = expr.as_property(b"tag_name") {
-            if let Some(tag_name) = tag_name_.expr.as_string(bump) {
-                version.tag = tag_name.into();
+            if let Some(tag_name) = tag_name_.expr.as_utf8_string_literal() {
+                version.tag = Box::<[u8]>::from(tag_name);
             }
         }
 
@@ -406,13 +421,16 @@ impl UpgradeCommand {
             let Some(assets_) = expr.as_property(b"assets") else {
                 break 'get_asset;
             };
-            let Some(mut assets) = assets_.expr.as_array() else {
+            // PORT NOTE: Zig `Expr.asArray()` returns an iterator; the T2
+            // `bun_logger::js_ast::Expr` only exposes the raw `EArray` payload,
+            // so unwrap it and iterate `items` directly.
+            let Some(assets) = assets_.expr.data.e_array() else {
                 break 'get_asset;
             };
 
-            while let Some(asset) = assets.next() {
+            for asset in assets.items.slice() {
                 if let Some(content_type) = asset.as_property(b"content_type") {
-                    let Some(content_type_) = content_type.expr.as_string(bump) else {
+                    let Some(content_type_) = content_type.expr.as_utf8_string_literal() else {
                         continue;
                     };
                     if cfg!(debug_assertions) {
@@ -429,7 +447,7 @@ impl UpgradeCommand {
                 }
 
                 if let Some(name_) = asset.as_property(b"name") {
-                    if let Some(name) = name_.expr.as_string(bump) {
+                    if let Some(name) = name_.expr.as_utf8_string_literal() {
                         if cfg!(debug_assertions) {
                             let filename = if !use_profile {
                                 Version::ZIP_FILENAME
@@ -452,8 +470,8 @@ impl UpgradeCommand {
                         }
 
                         version.zip_url = match asset.as_property(b"browser_download_url") {
-                            Some(p) => match p.expr.as_string(bump) {
-                                Some(s) => s.into(),
+                            Some(p) => match p.expr.as_utf8_string_literal() {
+                                Some(s) => Box::<[u8]>::from(s),
                                 None => break 'get_asset,
                             },
                             None => break 'get_asset,
@@ -467,7 +485,7 @@ impl UpgradeCommand {
                         }
 
                         if let Some(size_) = asset.as_property(b"size") {
-                            if let js_ast::ExprData::ENumber(n) = &size_.expr.data {
+                            if let logger::js_ast::ExprData::ENumber(n) = &size_.expr.data {
                                 version.size = u32::try_from(
                                     ((n.value.ceil()) as i32).max(0),
                                 )

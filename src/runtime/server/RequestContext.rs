@@ -1501,7 +1501,7 @@ where
         // managing partial responses themselves.
         let user_handles_range = if let Some(r) = self.response_weakref.get() {
             r.status_code() != 200
-                || r.get_init_headers()
+                || r.get_init_headers_mut()
                     .map(|h| h.fast_has(jsc::HTTPHeaderName::ContentRange))
                     .unwrap_or(false)
         } else {
@@ -2083,7 +2083,10 @@ where
         };
         // SAFETY: BACKREF
         let global_this = unsafe { (*server).global_this() };
-        if let Some(headers) = response.get_fetch_headers() {
+        // `fast_get`/`fast_has` take `&mut self` (FFI shim), so use the `_mut`
+        // accessor — `get_fetch_headers()` and `get_init_headers()` alias the
+        // same `init.headers` field.
+        if let Some(headers) = response.get_init_headers_mut() {
             // first respect the headers
             if !HTTP3 {
                 if let Some(transfer_encoding) =
@@ -2448,14 +2451,16 @@ where
         req.sink = None;
 
         if let Some(resp) = req.response_weakref.get() {
-            let body_value = resp.get_body_value();
-
+            // PORT NOTE: Zig captures `bodyValue` ptr first then derefs after
+            // the stream calls; reordered here for borrowck (semantically
+            // identical — the Zig check reads through the pointer post-detach).
             if let Some(stream) = resp.get_body_readable_stream(global_this) {
                 stream.value.ensure_still_alive();
                 resp.detach_readable_stream(global_this);
                 stream.done(global_this);
             }
 
+            let body_value = resp.get_body_value();
             if matches!(body_value, Body::Value::Locked(_)) {
                 *body_value = Body::Value::Used;
             }

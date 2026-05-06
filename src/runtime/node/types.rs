@@ -974,6 +974,29 @@ pub enum PathLike {
     EncodedSlice(ZigStringSlice),
 }
 
+// Zig `PathLike` is bitwise-copy; provide a manual Clone that is safe under
+// the variant payloads' Rust ownership rules. `Buffer`'s backing
+// `MarkedArrayBuffer` lives in `bun_jsc` (no `Clone` derive) but its fields
+// (`ArrayBuffer` is `Copy`, `owns_buffer: bool`) are themselves `Copy`, so we
+// reconstruct a non-owning view. `EncodedSlice` allocates an owned copy so the
+// clone outlives the original's borrow.
+impl Clone for PathLike {
+    fn clone(&self) -> Self {
+        match self {
+            Self::String(s) => Self::String(*s),
+            Self::Buffer(b) => Self::Buffer(Buffer {
+                buffer: b.buffer,
+                owns_buffer: false,
+            }),
+            Self::SliceWithUnderlyingString(s) => Self::SliceWithUnderlyingString(s.dupe_ref()),
+            Self::ThreadsafeString(s) => Self::ThreadsafeString(s.dupe_ref()),
+            Self::EncodedSlice(s) => {
+                Self::EncodedSlice(ZigStringSlice::init_owned(s.slice().to_vec()))
+            }
+        }
+    }
+}
+
 // Gated: SliceWithUnderlyingString/ZigStringSlice deinit() are stubbed.
 // TODO(b2-blocked): un-gate once bun_str::SliceWithUnderlyingString is real.
 
@@ -1519,6 +1542,15 @@ pub enum PathOrFileDescriptor {
 
 impl Default for PathOrFileDescriptor {
     fn default() -> Self { Self::Fd(Fd::INVALID) }
+}
+
+impl Clone for PathOrFileDescriptor {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Fd(fd) => Self::Fd(*fd),
+            Self::Path(p) => Self::Path(p.clone()),
+        }
+    }
 }
 
 #[repr(u8)]

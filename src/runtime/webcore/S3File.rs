@@ -3,10 +3,13 @@ use std::sync::Arc;
 
 use bun_core::output;
 use bun_http::Method;
-use bun_jsc::{CallFrame, ErrorCode, JSGlobalObject, JSPromise, JSValue, JsError, JsResult};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult, JsClass as _};
 use crate::node::{PathLike, PathOrBlob};
 use crate::webcore::blob::{self, Blob};
+use crate::webcore::blob::store::StoreRef;
 use crate::webcore::s3::client as s3;
+use crate::webcore::s3_client::S3CredentialsExt as _;
+use crate::webcore::s3::error_jsc::s3_error_to_js_with_async_stack;
 use bun_str::strings;
 
 // Local front for `bun_core::pretty_fmt!` that accepts a runtime / const-
@@ -27,22 +30,20 @@ use super::s3_client;
 use super::s3_stat::S3Stat;
 
 pub fn write_format<F, W: core::fmt::Write, const ENABLE_ANSI_COLORS: bool>(
-    s3: &mut blob::store::S3,
+    s3: &blob::store::S3,
     formatter: &mut F,
     writer: &mut W,
     content_type: &[u8],
-    offset: usize,
-) -> Result<(), bun_core::Error>
-// TODO(port): narrow error set — Zig `!void` only fails on writer ops
+    offset: u64,
+) -> core::fmt::Result
 where
-    // TODO(port): Formatter trait — needs write_indent / print_comma / indent / reset_line
     F: bun_jsc::ConsoleFormatter,
 {
     writer.write_str(pfmt!("<r>S3Ref<r>", ENABLE_ANSI_COLORS))?;
     let credentials = s3.get_credentials();
     // detect virtual host style bucket name
     let bucket_name: &[u8] = if credentials.virtual_hosted_style && !credentials.endpoint.is_empty() {
-        s3::S3Credentials::guess_bucket(&credentials.endpoint).unwrap_or(&credentials.bucket)
+        <s3::S3Credentials>::guess_bucket(&credentials.endpoint).unwrap_or(&credentials.bucket)
     } else {
         &credentials.bucket
     };
@@ -72,7 +73,7 @@ where
     if !content_type.is_empty() {
         writer.write_str("\n")?;
         // PORT NOTE: reshaped for borrowck — Zig `defer formatter.indent -|= 1;` inlined (scopeguard would alias &mut formatter)
-        formatter.indent += 1;
+        formatter.indent_inc();
 
         formatter.write_indent(writer)?;
         write!(
@@ -85,16 +86,16 @@ where
             ),
         )?;
 
-        formatter.print_comma(writer, ENABLE_ANSI_COLORS)?;
+        formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
         if offset > 0 {
             writer.write_str("\n")?;
         }
-        formatter.indent = formatter.indent.saturating_sub(1);
+        formatter.indent_dec();
     }
 
     if offset > 0 {
         // PORT NOTE: reshaped for borrowck — Zig `defer formatter.indent -|= 1;` inlined
-        formatter.indent += 1;
+        formatter.indent_inc();
 
         formatter.write_indent(writer)?;
 
@@ -104,8 +105,8 @@ where
             output::pretty_fmt_args("offset<d>:<r> <yellow>{}<r>", ENABLE_ANSI_COLORS, (offset,)),
         )?;
 
-        formatter.print_comma(writer, ENABLE_ANSI_COLORS)?;
-        formatter.indent = formatter.indent.saturating_sub(1);
+        formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
+        formatter.indent_dec();
     }
     s3_client::write_format_credentials::<F, W, ENABLE_ANSI_COLORS>(&**credentials, s3.options, s3.acl, formatter, writer)?;
     formatter.write_indent(writer)?;

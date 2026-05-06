@@ -611,7 +611,10 @@ impl FetchTasklet {
                 if matches!(old, BodyValue::Locked(_)) {
                     bun_output::scoped_log!(FetchTasklet, "onBodyReceived old.resolve");
                     let mut old = old;
-                    BodyValue::resolve(&mut old, body, self.global_this, response.get_fetch_headers())?;
+                    // PORT NOTE: Body.rs aliases its `JsTerminated<T>` to `JsResult<T>` for
+                    // now; narrow back to the real `JsTerminated` here.
+                    BodyValue::resolve(&mut old, body, self.global_this, response.get_fetch_headers())
+                        .map_err(|_| bun_jsc::JsTerminated::JSTerminated)?;
                 }
             }
         }
@@ -1345,8 +1348,9 @@ impl FetchTasklet {
 
         let mut url = fetch_options.url;
         let mut proxy: Option<ZigURL> = None;
-        // SAFETY: transpiler is a self-ptr field on the VM; uniquely accessed here.
-        let env = unsafe { &mut (*global_this.bun_vm()).transpiler.env };
+        // SAFETY: `transpiler.env` is a `*mut bun_dotenv::Loader` self-ptr field on the VM;
+        // uniquely accessed here on the JS thread.
+        let env = unsafe { &mut *(*global_this.bun_vm()).transpiler.env };
         if let Some(proxy_opt) = &fetch_options.proxy {
             if !proxy_opt.is_empty() {
                 //if is empty just ignore proxy
@@ -1420,15 +1424,19 @@ impl FetchTasklet {
         http_client.client.flags.force_http1 = fetch_options.force_http1;
         fetch_tasklet.is_waiting_request_stream_start = is_stream;
         if is_stream {
-            let buffer = Arc::new(ThreadSafeStreamBuffer::default());
-            buffer.set_drain_callback::<FetchTasklet>(FetchTasklet::on_write_request_data_drain, fetch_tasklet_ptr);
-            // PORT NOTE: `http::http_request_body::Stream.buffer` is `Option<NonNull<_>>` (intrusive
-            // refcount), but FetchTasklet currently models the same buffer as `Arc<_>`. Hand the
-            // raw pointer to the HTTP thread side; intrusive `ref_count` starts at 2 (one for each
-            // side) so this matches Zig's ownership.
-            // TODO(port): unify ThreadSafeStreamBuffer ownership (intrusive vs Arc) in Phase B.
-            let buffer_nn = core::ptr::NonNull::new(Arc::as_ptr(&buffer) as *mut ThreadSafeStreamBuffer);
-            fetch_tasklet.request_body_streaming_buffer = Some(buffer);
+            // Intrusive `ref_count` starts at 2 (one for the main thread, one for the HTTP
+            // thread) so handing the same raw pointer to both sides matches Zig's ownership.
+            let buffer = ThreadSafeStreamBuffer::new(ThreadSafeStreamBuffer::default());
+            // SAFETY: fresh heap allocation from `ThreadSafeStreamBuffer::new` (Box::into_raw);
+            // exclusively owned here until shared below.
+            unsafe {
+                (*buffer).set_drain_callback::<FetchTasklet>(
+                    FetchTasklet::on_write_request_data_drain,
+                    fetch_tasklet_ptr,
+                );
+            }
+            let buffer_nn = core::ptr::NonNull::new(buffer);
+            fetch_tasklet.request_body_streaming_buffer = buffer_nn;
             fetch_tasklet.http.as_mut().unwrap().request_body =
                 http::HTTPRequestBody::Stream(http::http_request_body::Stream {
                     buffer: buffer_nn,
@@ -1549,11 +1557,14 @@ impl FetchTasklet {
                 return ResumableSinkBackpressure::Done;
             }
         }
-        let Some(thread_safe_stream_buffer) = self.request_body_streaming_buffer.as_ref() else {
+        let Some(thread_safe_stream_buffer) = self.request_body_streaming_buffer else {
             return ResumableSinkBackpressure::Done;
         };
-        let stream_buffer = thread_safe_stream_buffer.acquire();
-        let _release = scopeguard::guard((), |_| thread_safe_stream_buffer.release());
+        let thread_safe_stream_buffer = thread_safe_stream_buffer.as_ptr();
+        // SAFETY: intrusive-refcounted heap allocation; this side holds a ref. Mutex
+        // guards `buffer` against the HTTP thread between acquire/release.
+        let stream_buffer = unsafe { (*thread_safe_stream_buffer).acquire() };
+        let _release = scopeguard::guard((), move |_| unsafe { (*thread_safe_stream_buffer).release() });
         // PORT NOTE: `high_water_mark` is a private field on ResumableSink with no
         // accessor; default to its init-time value (16384) until an accessor lands.
         let high_water_mark: usize = 16384;
@@ -1613,13 +1624,17 @@ impl FetchTasklet {
         } else {
             if !self.skip_chunked_framing() {
                 // Using chunked transfer encoding, send the terminating chunk
-                let Some(thread_safe_stream_buffer) = self.request_body_streaming_buffer.as_ref() else {
+                let Some(thread_safe_stream_buffer) = self.request_body_streaming_buffer else {
                     FetchTasklet::deref(this_ptr);
                     return;
                 };
-                let stream_buffer = thread_safe_stream_buffer.acquire();
-                stream_buffer.write(http::END_OF_CHUNKED_HTTP1_1_ENCODING_RESPONSE_BODY);
-                thread_safe_stream_buffer.release();
+                // SAFETY: intrusive-refcounted heap allocation; this side holds a ref.
+                // Mutex guards `buffer` against the HTTP thread between acquire/release.
+                unsafe {
+                    let stream_buffer = (*thread_safe_stream_buffer.as_ptr()).acquire();
+                    stream_buffer.write(http::END_OF_CHUNKED_HTTP1_1_ENCODING_RESPONSE_BODY);
+                    (*thread_safe_stream_buffer.as_ptr()).release();
+                }
             }
             if let Some(http_) = self.http.as_mut() {
                 http::http_thread().schedule_request_write(http_, http::http_thread::WriteMessageType::End);

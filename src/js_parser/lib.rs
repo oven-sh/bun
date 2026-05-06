@@ -120,7 +120,19 @@ pub mod Macro {
         pub fn init<T>(_transpiler: &mut T) -> Self {
             todo!("b1-stub: Macro::MacroContext::init — owned by bun_js_parser_jsc")
         }
+        /// Zig: `pub fn getRemap(self: *MacroContext, path: []const u8) ?MacroRemapEntry`.
+        /// The real `MacroContext` (bun_js_parser_jsc) carries a `MacroMap`; this
+        /// lower-tier stub has no remap table, so it always reports "no remap".
+        #[inline]
+        pub fn get_remap(&self, _path: &[u8]) -> Option<&MacroRemapEntry> {
+            None
+        }
     }
+
+    /// Zig: `MacroImportReplacementMap` — `bun.StringArrayHashMap([]const u8)`.
+    /// Values borrow source-text slices ('static here; threaded as `'bump` once
+    /// the *_jsc crate owns the real type).
+    pub type MacroRemapEntry = bun_collections::StringArrayHashMap<&'static [u8]>;
 }
 pub use crate::ast::op as Op;
 pub use crate::ast::s as S;

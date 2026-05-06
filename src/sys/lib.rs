@@ -549,6 +549,10 @@ pub struct File { pub handle: Fd }
 impl File {
     #[inline] pub fn from_fd(fd: Fd) -> Self { Self { handle: fd } }
     #[inline] pub fn handle(&self) -> Fd { self.handle }
+    /// `bun.sys.File.from(.stdin())` — wrap the cached stdin fd. Do not close.
+    #[inline] pub fn stdin() -> Self { Self { handle: Fd::stdin() } }
+    #[inline] pub fn stdout() -> Self { Self { handle: Fd::stdout() } }
+    #[inline] pub fn stderr() -> Self { Self { handle: Fd::stderr() } }
 }
 /// `bun.sys.File` is also reachable as `bun_sys::file::File` (Zig: `sys.File`).
 pub mod file { pub use super::File; }

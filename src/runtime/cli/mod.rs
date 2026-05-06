@@ -769,20 +769,9 @@ pub mod command {
                 Global::exit(0);
             }
             Tag::PackageManagerCommand => {
-                for a in bun::argv().iter().skip(2) {
-                    if matches!(a, b"--help" | b"-h") {
-                        tag_print_help(Tag::PackageManagerCommand, true);
-                        Global::exit(0);
-                    }
-                }
-                
-                {
-                    let ctx = init(Tag::PackageManagerCommand, log)?;
-                    return super::package_manager_command::PackageManagerCommand::exec(ctx);
-                }
-                // TODO(b2-blocked): `bun pm bin`/`cache` need PackageManager::init
-                // + Command::Context (both gated on options_types::Context::Default).
-                todo!("Command::start dispatch for PackageManagerCommand (body gated; use --help)");
+                // SAFETY: see RunAsNodeCommand arm — single-threaded startup.
+                let ctx = unsafe { &mut *init(Tag::PackageManagerCommand, log)? };
+                return super::package_manager_command::PackageManagerCommand::exec(ctx);
             }
             Tag::RunAsNodeCommand => {
                 // SAFETY: `init` writes the process-global `CONTEXT_DATA` once

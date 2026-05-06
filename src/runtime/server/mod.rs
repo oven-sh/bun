@@ -927,7 +927,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         let h3_port: u16 = match self_.listener {
                             // SAFETY: ls is a live uws ListenSocket FFI handle
                             // (just set by on_listen).
-                            Some(ls) => unsafe { (*ls).get_local_port() } as u16,
+                            Some(ls) => (unsafe { (*ls).get_local_port() }) as u16,
                             None => *port,
                         };
                         let options = self_.config.get_usockets_options();

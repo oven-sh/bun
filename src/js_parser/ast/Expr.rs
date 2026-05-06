@@ -308,6 +308,10 @@ impl Expr {
         }
     }
 
+    // TODO(b2-ast-round-C): gated on `EString::string_z` (E.rs:1666 block) which
+    // needs `bun_string::ZStr` bump-arena constructors. Only caller
+    // (`get_string_cloned_z`) is likewise gated.
+    #[cfg(any())]
     #[inline]
     pub fn as_string_z<'b>(
         &self,

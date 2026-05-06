@@ -189,14 +189,10 @@ impl PendingValue {
     /// when Content-Length is provided this represents the whole size of the request
     /// If chunked encoded this will represent the total received size (ignoring the chunk headers)
     /// If the size is unknown will be 0
-    // TODO(b2-blocked): webcore::readable_stream::Ptr — ReadableStream's
-    // tagged-ptr enum (`Ptr::Bytes`/`Ptr::Blob`) is not yet ported. Until then
-    // callers fall back to the public `size_hint` field directly.
-    #[cfg(any())]
     fn size_hint(&self) -> blob::SizeType {
         if let Some(readable) = self.readable.get(unsafe { &*self.global }) {
-            if let webcore::readable_stream::Ptr::Bytes(bytes) = &readable.ptr {
-                return bytes.size_hint;
+            if let webcore::readable_stream::Source::Bytes(bytes) = readable.ptr {
+                return unsafe { (*bytes).size_hint };
             }
         }
         self.size_hint
@@ -606,7 +602,7 @@ impl Value {
             Value::Blob(b) => b.get_size_for_bindings() as blob::SizeType,
             Value::InternalBlob(b) => b.slice_const().len() as blob::SizeType,
             Value::WTFStringImpl(s) => s.utf8_byte_length() as blob::SizeType,
-            Value::Locked(l) => l.size_hint,
+            Value::Locked(l) => l.size_hint(),
             // Value::InlineBlob(b) => b.slice_const().len() as blob::SizeType,
             _ => 0,
         }
@@ -616,8 +612,7 @@ impl Value {
         match self {
             Value::InternalBlob(b) => b.slice_const().len() as blob::SizeType,
             Value::WTFStringImpl(s) => s.byte_slice().len() as blob::SizeType,
-            // TODO(b2-blocked): swap to `l.size_hint()` once readable_stream::Ptr lands.
-            Value::Locked(l) => l.size_hint,
+            Value::Locked(l) => l.size_hint(),
             // Value::InlineBlob(b) => b.slice_const().len() as blob::SizeType,
             _ => 0,
         }
@@ -627,8 +622,7 @@ impl Value {
         match self {
             Value::InternalBlob(b) => b.memory_cost(),
             Value::WTFStringImpl(s) => s.memory_cost(),
-            // TODO(b2-blocked): swap to `l.size_hint()` once readable_stream::Ptr lands.
-            Value::Locked(l) => l.size_hint as usize,
+            Value::Locked(l) => l.size_hint() as usize,
             // Value::InlineBlob(b) => b.slice_const().len(),
             _ => 0,
         }
@@ -638,8 +632,7 @@ impl Value {
         match self {
             Value::InternalBlob(b) => b.slice_const().len(),
             Value::WTFStringImpl(s) => s.byte_slice().len(),
-            // TODO(b2-blocked): swap to `l.size_hint()` once readable_stream::Ptr lands.
-            Value::Locked(l) => l.size_hint as usize,
+            Value::Locked(l) => l.size_hint() as usize,
             // Value::InlineBlob(b) => b.slice_const().len(),
             _ => 0,
         }

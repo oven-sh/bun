@@ -153,7 +153,7 @@ impl Set {
                 use_alternate_source_cache: false,
                 stream: false,
             },
-            json: Json {},
+            json: Json::init(),
         }
     }
 }
@@ -731,7 +731,16 @@ impl JavaScript {
     }
 }
 
-pub struct Json {}
+pub struct Json {
+    /// Long-lived arena backing the resolver-vtable parse path. Zig threads
+    /// `bun.default_allocator` through `parse{JSON,PackageJSON,TSConfig}`
+    /// (cache.zig:296-313) and the comment at the call site (package_json.zig
+    /// "DirInfo cache is reused globally / So we cannot free these") makes the
+    /// lifetime explicitly process-long. The vtable signature drops the
+    /// allocator arg (CYCLEBREAK §Dispatch), so the bundler-side `Json` owns
+    /// the arena instead and the thunks below borrow it via `*mut ()`.
+    bump: Bump,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum JsonMode {
@@ -741,7 +750,7 @@ pub enum JsonMode {
 
 impl Json {
     pub fn init() -> Json {
-        Json {}
+        Json { bump: Bump::new() }
     }
 }
 

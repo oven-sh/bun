@@ -304,6 +304,11 @@ pub mod E {
                 Ok(bump.alloc_slice_copy(&v))
             }
         }
+        /// Zig `stringZ(allocator)` — like `string()` but NUL-terminated.
+        pub fn string_z<'b>(&self, bump: &'b Bump) -> Result<&'b bun_string::ZStr, AllocError> {
+            let s = self.string(bump)?;
+            bun_string::ZStr::from_bytes_in(s, bump)
+        }
         pub fn string_cloned<'b>(&self, bump: &'b Bump) -> Result<&'b [u8], AllocError> {
             if self.is_utf8() {
                 Ok(bump.alloc_slice_copy(self.data))

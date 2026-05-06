@@ -615,13 +615,10 @@ impl Process {
             &mut *(poller as *mut u8).sub(offset_of!(Process, poller)).cast::<Process>()
         };
         let exit_code: u8 = if exit_status >= 0 { (exit_status as u64) as u8 } else { 0 };
-        let signal_code: Option<bun_core::SignalCode> =
-            if term_signal > 0 && term_signal < bun_core::SignalCode::SIGSYS as c_int {
-                // SAFETY: range-checked above
-                Some(unsafe { core::mem::transmute::<u8, bun_core::SignalCode>(term_signal as u8) })
-            } else {
-                None
-            };
+        // Zig: `if (term_signal > 0) @enumFromInt(...)` on a non-exhaustive enum(u8).
+        // Carry the raw byte; `Status::signal_code()` does the range-checked mapping.
+        let signal_code: Option<u8> =
+            if term_signal > 0 { Some(term_signal as u8) } else { None };
         let rusage = uv_getrusage(unsafe { &mut *process });
 
         bun_sys::windows::libuv::log!(
@@ -852,37 +849,26 @@ impl Status {
         if let Some(code) = exit_code {
             return Some(Status::Exited(Exited { code, signal: signal.unwrap_or(0) }));
         } else if let Some(sig) = signal {
-            // Zig's `bun.SignalCode` is a *non-exhaustive* `enum(u8) { …, _ }`, so
-            // `@enumFromInt(signal.?)` is defined for any byte. `bun_core::SignalCode`
-            // is an exhaustive `#[repr(u8)]` enum with discriminants 1..=31, so a
-            // Linux RT signal (32..64) or 0 from WTERMSIG/WSTOPSIG would be UB via
-            // transmute. Guard the range; for out-of-range signals, preserve the raw
-            // byte in `Exited.signal` (already a `u8`) so callers can still observe it.
-            if (1..=31).contains(&sig) {
-                // SAFETY: range-checked 1..=31; SignalCode is #[repr(u8)] with exactly
-                // those discriminants.
-                return Some(Status::Signaled(unsafe {
-                    core::mem::transmute::<u8, bun_core::SignalCode>(sig)
-                }));
-            }
-            return Some(Status::Exited(Exited { code: 0, signal: sig }));
+            // Zig: `.{ .signaled = @enumFromInt(signal.?) }` — non-exhaustive enum,
+            // any byte is valid. Carry the raw byte; `signal_code()` range-checks.
+            return Some(Status::Signaled(sig));
         }
 
         None
     }
 
     pub fn signal_code(&self) -> Option<bun_core::SignalCode> {
-        match self {
-            Status::Signaled(sig) => Some(*sig),
-            Status::Exited(exit) => {
-                if exit.signal > 0 && exit.signal <= bun_core::SignalCode::SIGSYS as u8 {
-                    // SAFETY: range-checked 1..=31; SignalCode is #[repr(u8)].
-                    Some(unsafe { core::mem::transmute::<u8, bun_core::SignalCode>(exit.signal) })
-                } else {
-                    None
-                }
-            }
-            _ => None,
+        let raw = match self {
+            Status::Signaled(sig) => *sig,
+            Status::Exited(exit) => exit.signal,
+            _ => return None,
+        };
+        if raw > 0 && raw <= bun_core::SignalCode::SIGSYS as u8 {
+            // SAFETY: range-checked 1..=31; SignalCode is #[repr(u8)] with exactly
+            // those discriminants.
+            Some(unsafe { core::mem::transmute::<u8, bun_core::SignalCode>(raw) })
+        } else {
+            None
         }
     }
 }
@@ -899,7 +885,7 @@ impl core::fmt::Display for Status {
 
         match self {
             Status::Exited(exit) => write!(writer, "code: {}", exit.code),
-            Status::Signaled(signal) => write!(writer, "signal: {}", *signal as u8),
+            Status::Signaled(signal) => write!(writer, "signal: {}", *signal),
             Status::Err(err) => write!(writer, "{}", err),
             _ => Ok(()),
         }
@@ -919,9 +905,21 @@ pub enum PollerPosix {
 #[cfg(unix)]
 impl Drop for PollerPosix {
     fn drop(&mut self) {
-        // Fd arm: hive-owned, returned via `Process::close()` before drop.
-        if let PollerPosix::WaiterThread(w) = self {
-            w.disable();
+        match self {
+            // Zig `PollerPosix.deinit` (process.zig:689-695): `.fd => |fd| fd.deinit()`.
+            // Normally `Process::close()` runs first and flips this to `Detached`, but
+            // if `watch()`'s `fd.register()` fails (process.rs `watch` Err arm) the
+            // poller is left as `Fd(poll)` and the caller may release its ref without
+            // ever calling `close()`. Return the hive slot here so we don't leak it.
+            PollerPosix::Fd(poll) => {
+                // SAFETY: poll is a live hive-allocated `FilePoll` slot, exclusive on
+                // the event-loop thread; `deinit()` returns it to the hive store.
+                unsafe { (*poll.as_ptr()).deinit() };
+            }
+            PollerPosix::WaiterThread(w) => {
+                w.disable();
+            }
+            PollerPosix::Detached => {}
         }
     }
 }
@@ -1043,22 +1041,48 @@ pub mod waiter_thread_posix {
         pub fn should_use_waiter_thread() -> bool {
             SHOULD_USE_WAITER_THREAD.load(Ordering::Relaxed)
         }
+        /// Intentionally a **no-op** while `waiter_thread_posix_body` is gated.
+        ///
+        /// The Zig spec flips a global so that subsequent `watch()` calls take
+        /// the waiter-thread branch (process.zig:937-949). The body of that
+        /// branch — `append()`/`init()`/`reload_handlers()` — is still
+        /// `#[cfg(any())]`-gated on `bun_threading::UnboundedQueue` +
+        /// `bun_event_loop::ConcurrentTask`. If we let the flag flip now,
+        /// `Process::watch()` would `self.ref_()` then call a stub `append()`,
+        /// silently leaking the refcount and never reaping the child. Keeping
+        /// the flag pinned to `false` forces the pidfd path (which is fully
+        /// implemented) to stay in force; `pifd_from_pid` callers see the
+        /// original `Err` and handle it.
+        // TODO(b2-blocked): restore `SHOULD_USE_WAITER_THREAD.store(true, Relaxed)`
+        // once `waiter_thread_posix_body` is un-gated and `append`/`reload_handlers`
+        // forward to it.
         #[inline]
         pub fn set_should_use_waiter_thread() {
-            SHOULD_USE_WAITER_THREAD.store(true, Ordering::Relaxed);
+            let _ = &SHOULD_USE_WAITER_THREAD;
         }
-        // TODO(b2-blocked): loop_/init/reload_handlers in waiter_thread_posix_body.
-        pub fn reload_handlers() {}
-        /// Enqueue a `Process` for the waiter thread. The full body
-        /// (`waiter_thread_posix_body`) is still gated on
-        /// `bun_threading::UnboundedQueue` + `bun_event_loop::ConcurrentTask`;
-        /// until then `should_use_waiter_thread()` is `false`, so this is
-        /// unreachable on the pidfd path.
+        /// Zig (process.zig:976-991) installs a `SIGCHLD` handler iff the
+        /// waiter thread is enabled. With `set_should_use_waiter_thread()` a
+        /// no-op above, the flag is always `false`, so the spec-correct
+        /// behaviour here is "do nothing".
+        // TODO(b2-blocked): forward to `waiter_thread_posix_body::reload_handlers`.
+        pub fn reload_handlers() {
+            if !SHOULD_USE_WAITER_THREAD.load(Ordering::Relaxed) {
+                return;
+            }
+            unreachable!("WaiterThread::reload_handlers: waiter_thread_posix_body is gated");
+        }
+        /// Enqueue a `Process` for the waiter thread.
+        ///
+        /// Unreachable while `set_should_use_waiter_thread()` is a no-op:
+        /// every caller is guarded by `should_use_waiter_thread()`. Kept loud
+        /// so that if the guard is ever bypassed we crash instead of silently
+        /// dropping the registration (which would leak a `Process` ref and
+        /// leave a zombie child — see process.zig:937-949).
         // TODO(b2-blocked): forward to `waiter_thread_posix_body::append` once un-gated.
         pub fn append(_process: *mut Process) {
-            debug_assert!(
-                SHOULD_USE_WAITER_THREAD.load(Ordering::Relaxed),
-                "WaiterThread::append called without waiter-thread fallback enabled"
+            unreachable!(
+                "WaiterThread::append reached while waiter_thread_posix_body is gated; \
+                 set_should_use_waiter_thread() must remain a no-op until then"
             );
         }
     }

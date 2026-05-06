@@ -254,34 +254,13 @@ impl SideEffects {
 }
 
 // ── Local extension shims so `parse` can call shapes that live in higher-tier
-//    crates (bun_bundler::cache::Json, full FileSystem). Only this file is
-//    editable in this round; bodies forward to bun_paths / mark TODO. ────────
-
-/// CYCLEBREAK: `bun_bundler::cache::Json::parse_package_json` — the resolver's
-/// `JsonCache` vtable (tsconfig_json.rs) only carries `parse_tsconfig`. Expose
-/// the package.json entry point as an extension trait so `parse` type-checks;
-/// the body is wired by bun_bundler when its vtable lands.
-pub trait JsonCachePackageJsonExt {
-    fn parse_package_json(
-        &mut self,
-        log: &mut logger::Log,
-        source: &logger::Source,
-        force_utf8: bool,
-    ) -> Result<Option<js_ast::Expr>, bun_core::Error>;
-}
-impl JsonCachePackageJsonExt for crate::tsconfig_json::JsonCache {
-    fn parse_package_json(
-        &mut self,
-        _log: &mut logger::Log,
-        _source: &logger::Source,
-        _force_utf8: bool,
-    ) -> Result<Option<js_ast::Expr>, bun_core::Error> {
-        // TODO(b2-blocked): bun_bundler::cache::Json::parse_package_json — extend
-        // `JsonCacheVTable` with a `parse_package_json` slot and forward through
-        // `self.ptr` (mirrors `parse_tsconfig`).
-        unimplemented!("JsonCache::parse_package_json (Phase B — bun_bundler vtable)")
-    }
-}
+//    crates (full FileSystem). Bodies forward to bun_paths. ────────────────
+//
+// PORT NOTE: the former `JsonCachePackageJsonExt` shim trait (which carried an
+// `unimplemented!()` body) is removed — `JsonCacheVTable` now has a real
+// `parse_package_json` slot and `JsonCache` exposes the inherent forwarder
+// (tsconfig_json.rs). `bun_bundler::cache::JSON_CACHE_VTABLE` wires it to
+// `bun_interchange::json`.
 
 /// `crate::fs::FileSystem` (the lib.rs forward-decl) only exposes `*_buf`
 /// variants; the Zig body calls the threadlocal-buffer `abs`/`join`/`normalize`.

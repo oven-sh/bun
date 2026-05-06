@@ -1208,7 +1208,7 @@ fn get_code_for_parse_task(
         loader,
         deferred_error: None,
         should_continue_running: &mut should_continue_running,
-        result: None,
+        result: core::ptr::null_mut(),
     };
 
     // SAFETY: task.ctx backref valid for the duration of the parse.
@@ -1231,7 +1231,11 @@ pub struct OnBeforeParsePlugin<'a> {
     deferred_error: Option<AnyError>,
     should_continue_running: &'a mut i32,
 
-    result: Option<&'a mut OnBeforeParseResult>,
+    // Raw pointer (Zig: `?*OnBeforeParseResult`). Must stay raw — the pointee
+    // is `OnBeforeParseResultWrapper.result`, and `get_wrapper` walks back to
+    // the parent via offset_of; a `&mut` here would (a) shrink provenance to
+    // the inner field and (b) alias with any `&`/`&mut` to the wrapper.
+    result: *mut OnBeforeParseResult,
 }
 
 // TODO(port): comptime size/align asserts vs bun.c.OnBeforeParseArguments etc.
@@ -1330,28 +1334,27 @@ impl BunLogOptions {
     }
 
     pub fn append(&self, log: &mut Log, namespace: &'static [u8]) {
-        // TODO(port): zig used `log.msgs.allocator.dupe(u8, ...)`; until
-        // `bun_logger::Str` carries an owning variant we leak via `Box::leak`
-        // (matches the Phase-A `'static` slice convention used everywhere else
-        // in this file). The leaked bytes live for the bundle pass.
-        fn dupe_static(s: &[u8]) -> &'static [u8] {
-            if s.is_empty() {
-                return b"";
-            }
-            Box::leak(Box::<[u8]>::from(s))
-        }
-        let source_line_text = self.source_line_text();
+        // TODO(port): `bun_logger::Location.file` / `.line_text` are currently
+        // `&'static [u8]`. Zig (ParseTask.zig:874-884) passes `this.path()`
+        // through *unduped* and dupes `source_line_text` via
+        // `log.msgs.allocator` so it is freed with the Log. Carrying owned
+        // bytes here requires those fields to become `Cow<'static,[u8]>`.
+        // `Box::leak` to fake `'static` is forbidden (PORTING.md §Forbidden),
+        // so until the type change lands we omit the borrowed path/line_text
+        // rather than leak per-message. The only caller (`log_fn`) is itself
+        // only reachable from the `#[cfg(any())]`-gated `run` below.
+        let _ = self.path();
+        let _ = self.source_line_text();
         let location = Location::init(
-            dupe_static(self.path()),
+            // TODO(port): self.path() — blocked on Location.file: Cow<'static,[u8]>
+            b"",
             namespace,
             self.line.max(-1),
             self.column.max(-1),
             (self.column_end - self.column).max(0) as u32,
-            if !source_line_text.is_empty() {
-                Some(dupe_static(source_line_text))
-            } else {
-                None
-            },
+            // TODO(port): Some(Cow::Owned(self.source_line_text().to_vec()))
+            // — blocked on Location.line_text: Option<Cow<'static,[u8]>>
+            None,
         );
         let mut msg = Msg {
             data: logger::Data {
@@ -1484,35 +1487,47 @@ pub extern "C" fn fetch_source_code(
 
 #[unsafe(no_mangle)]
 pub extern "C" fn OnBeforeParseResult__reset(this: *mut OnBeforeParseResult) {
-    // SAFETY: called from C++ with valid ptr embedded in wrapper.
-    let this = unsafe { &mut *this };
-    let wrapper = unsafe { &mut *OnBeforeParseResult::get_wrapper(this) };
-    this.loader = wrapper.loader;
-    if !wrapper.original_source.is_null() {
-        this.source_ptr = wrapper.original_source;
-        this.source_len = wrapper.original_source_len;
-    } else {
-        this.source_ptr = core::ptr::null();
-        this.source_len = 0;
+    // SAFETY: called from C++ with valid ptr embedded in wrapper. Operate on
+    // raw pointers throughout (mirrors Zig `@fieldParentPtr`): `wrapper.result`
+    // *is* `*this`, so materializing `&mut *this` alongside `&mut *wrapper`
+    // would be aliased-`&mut` UB, and forming `&mut *this` first would shrink
+    // provenance so `.sub(offset_of!)` in `get_wrapper` walks out of bounds.
+    let wrapper = OnBeforeParseResult::get_wrapper(this);
+    unsafe {
+        (*this).loader = (*wrapper).loader;
+        if !(*wrapper).original_source.is_null() {
+            (*this).source_ptr = (*wrapper).original_source;
+            (*this).source_len = (*wrapper).original_source_len;
+        } else {
+            (*this).source_ptr = core::ptr::null();
+            (*this).source_len = 0;
+        }
     }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn OnBeforeParsePlugin__isDone(this: *mut OnBeforeParsePlugin<'_>) -> i32 {
-    // SAFETY: called from C++ with valid ptr.
-    let this = unsafe { &mut *this };
-    if *this.should_continue_running != 1 {
-        return 1;
-    }
+    // SAFETY: called from C++ with valid ptr. Read via raw pointers (mirrors
+    // Zig `@fieldParentPtr`) — `wrapper.result` aliases `*result`, so forming
+    // overlapping references would be UB, and a `&mut`-derived `*mut` would
+    // lack provenance over the enclosing wrapper.
+    unsafe {
+        if *(*this).should_continue_running != 1 {
+            return 1;
+        }
 
-    let Some(result) = this.result.as_deref_mut() else { return 1 };
-    // The first plugin to set the source wins.
-    // But, we must check that they actually modified it
-    // since fetching the source stores it inside `result.source_ptr`
-    if !result.source_ptr.is_null() {
-        // SAFETY: result is always embedded in a wrapper.
-        let wrapper = unsafe { &*OnBeforeParseResult::get_wrapper(result) };
-        return (result.source_ptr != wrapper.original_source) as i32;
+        let result = (*this).result;
+        if result.is_null() {
+            return 1;
+        }
+        // The first plugin to set the source wins.
+        // But, we must check that they actually modified it
+        // since fetching the source stores it inside `result.source_ptr`
+        let source_ptr = (*result).source_ptr;
+        if !source_ptr.is_null() {
+            let wrapper = OnBeforeParseResult::get_wrapper(result);
+            return (source_ptr != (*wrapper).original_source) as i32;
+        }
     }
 
     0
@@ -1560,9 +1575,9 @@ impl<'a> OnBeforeParsePlugin<'a> {
             },
         };
 
-        // SAFETY: wrapper.result outlives self.result usage (cleared before return).
-        // TODO(port): self-referential borrow — using raw ptr cast to satisfy borrowck.
-        self.result = Some(unsafe { &mut *(&mut wrapper.result as *mut _) });
+        // Raw pointer with provenance over the whole `wrapper` local so
+        // `get_wrapper`'s offset_of walk-back stays in-bounds.
+        self.result = core::ptr::addr_of_mut!(wrapper.result);
         let namespace_str;
         let path_str = bun_string::String::init(self.file_path.text);
         let count = plugin.call_on_before_parse_plugins(

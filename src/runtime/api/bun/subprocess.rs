@@ -1363,16 +1363,16 @@ impl Subprocess<'_> {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_exit_code(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        if let Status::Exited(exited) = &this.process.status {
+    pub fn get_exit_code(&self, _global: &JSGlobalObject) -> JSValue {
+        if let Status::Exited(exited) = &self.process.status {
             return JSValue::js_number(exited.code as f64);
         }
         JSValue::NULL
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_signal_code(this: &Self, global: &JSGlobalObject) -> JSValue {
-        if let Some(signal) = this.process.signal_code() {
+    pub fn get_signal_code(&self, global: &JSGlobalObject) -> JSValue {
+        if let Some(signal) = self.process.signal_code() {
             // `process.signal_code()` returns the tier-0 `bun_core::SignalCode`
             // (bare `#[repr(u8)]` discriminant); name/exit-code helpers live on
             // `bun_sys::SignalCode`.

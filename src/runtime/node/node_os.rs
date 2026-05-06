@@ -176,23 +176,23 @@ mod gen_ {
 
 pub fn create_node_os_binding(global: &JSGlobalObject) -> JsResult<JSValue> {
     // TODO(port): JSObject::create struct-literal API — Phase B defines a builder/macro
-    let obj = JSObject::create(global)?;
+    let obj = JSValue::create_empty_object(global, 14);
     // SAFETY: pure FFI getter
-    obj.put(global, "hostCpuCount", JSValue::js_number(1i32.max(unsafe { bun_sysconf__SC_NPROCESSORS_ONLN() })));
-    obj.put(global, "cpus", gen_::create_cpus_callback(global));
-    obj.put(global, "freemem", gen_::create_freemem_callback(global));
-    obj.put(global, "getPriority", gen_::create_get_priority_callback(global));
-    obj.put(global, "homedir", gen_::create_homedir_callback(global));
-    obj.put(global, "hostname", gen_::create_hostname_callback(global));
-    obj.put(global, "loadavg", gen_::create_loadavg_callback(global));
-    obj.put(global, "networkInterfaces", gen_::create_network_interfaces_callback(global));
-    obj.put(global, "release", gen_::create_release_callback(global));
-    obj.put(global, "totalmem", gen_::create_totalmem_callback(global));
-    obj.put(global, "uptime", gen_::create_uptime_callback(global));
-    obj.put(global, "userInfo", gen_::create_user_info_callback(global));
-    obj.put(global, "version", gen_::create_version_callback(global));
-    obj.put(global, "setPriority", gen_::create_set_priority_callback(global));
-    Ok(obj.to_js())
+    obj.put(global, b"hostCpuCount", JSValue::js_number(1i32.max(unsafe { bun_sysconf__SC_NPROCESSORS_ONLN() }) as f64));
+    obj.put(global, b"cpus", gen_::create_cpus_callback(global));
+    obj.put(global, b"freemem", gen_::create_freemem_callback(global));
+    obj.put(global, b"getPriority", gen_::create_get_priority_callback(global));
+    obj.put(global, b"homedir", gen_::create_homedir_callback(global));
+    obj.put(global, b"hostname", gen_::create_hostname_callback(global));
+    obj.put(global, b"loadavg", gen_::create_loadavg_callback(global));
+    obj.put(global, b"networkInterfaces", gen_::create_network_interfaces_callback(global));
+    obj.put(global, b"release", gen_::create_release_callback(global));
+    obj.put(global, b"totalmem", gen_::create_totalmem_callback(global));
+    obj.put(global, b"uptime", gen_::create_uptime_callback(global));
+    obj.put(global, b"userInfo", gen_::create_user_info_callback(global));
+    obj.put(global, b"version", gen_::create_version_callback(global));
+    obj.put(global, b"setPriority", gen_::create_set_priority_callback(global));
+    Ok(obj)
 }
 
 impl CPUTimes {

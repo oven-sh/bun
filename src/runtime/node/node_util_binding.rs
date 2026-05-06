@@ -240,7 +240,7 @@ pub fn normalize_encoding(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
 #[bun_jsc::host_fn]
 pub fn parse_env(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let content = frame.argument(0);
-    validators::validate_string(global, content, "content", format_args!(""))?;
+    validators::validate_string(global, content, "content")?;
 
     // PERF(port): was arena bulk-free (std.heap.ArenaAllocator) — profile in Phase B.
     // Non-AST crate: arena dropped; Map/Loader/to_slice use global allocator and Drop.

@@ -1042,10 +1042,20 @@ fn transpile_source_code_inner(
                     // call. Un-gate once `Fs::Path<'a>` lands.
                     
                     {
-                        let fallback_path = Fs::Path::init_with_namespace(specifier, b"node");
+                        // PORT NOTE: `bun_logger::Source::path` is the logger-local
+                        // `fs::Path` (NOT `bun_resolver::fs::Path`). `specifier`
+                        // here is a `node_fallbacks` key — a `&'static [u8]`
+                        // literal — so no lifetime erasure needed.
+                        // SAFETY: `node_fallbacks::contents_from_path` only
+                        // matches `'static` literal keys.
+                        let spec_static: &'static [u8] = unsafe {
+                            core::slice::from_raw_parts(specifier.as_ptr(), specifier.len())
+                        };
+                        let fallback_path =
+                            bun_logger::fs::Path::init_with_namespace(spec_static, b"node");
                         fallback_source = bun_logger::Source {
                             path: fallback_path,
-                            contents: code,
+                            contents: bun_ptr::Cow::Borrowed(code),
                             ..Default::default()
                         };
                         virtual_source = Some(&fallback_source);

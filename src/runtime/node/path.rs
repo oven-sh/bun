@@ -1,8 +1,63 @@
 // TODO(b2-blocked): bun_jsc — using crate-local opaque shim until `bun_jsc` is a dep.
-use crate::jsc::{JSGlobalObject, JSValue, JsResult};
+use crate::jsc::{JSGlobalObject, JSValue, JsResult, SysErrorJsc as _};
 use bun_paths::{self, Platform, MAX_PATH_BYTES};
 use bun_str::{self, strings, ZigString};
 use bun_sys;
+
+/// Local shim for `bun.String.createUTF8ForJS` over `[T]` (T = u8 | u16).
+///
+/// Zig's `createUTF8ForJS` only accepts `[]const u8`, but the `*JS_T` wrappers
+/// in path.zig are `comptime T`-generic. In practice every JS entry point
+/// converts to UTF-8 first (via `ZigString.toSlice`) and instantiates with
+/// `T = u8`, so the `u16` arm is never reached at runtime — but it must still
+/// type-check. Dispatch on `T::IS_U16` and route the cold u16 arm through
+/// `bun.String.cloneUTF16(...).toJS(...)` so the generic body unifies.
+#[inline]
+fn create_js_string_t<T: PathChar>(global: &JSGlobalObject, s: &[T]) -> JsResult<JSValue> {
+    use crate::jsc::{bun_string_jsc, StringJsc as _};
+    if T::IS_U16 {
+        // SAFETY: T == u16 when IS_U16; same layout as &[u16].
+        let s16: &[u16] = unsafe { core::slice::from_raw_parts(s.as_ptr().cast::<u16>(), s.len()) };
+        let bs = bun_str::String::clone_utf16(s16);
+        let r = bs.to_js(global);
+        bs.deref();
+        r
+    } else {
+        // SAFETY: T == u8 when !IS_U16; same layout as &[u8].
+        let s8: &[u8] = unsafe { core::slice::from_raw_parts(s.as_ptr().cast::<u8>(), s.len()) };
+        bun_string_jsc::create_utf8_for_js(global, s8)
+    }
+}
+
+// ── Local extension shims for upstream types missing methods (cannot edit upstream crates).
+
+/// `ZigString.trunc(n)` — clamp `len` to `n` (ZigString.zig:580).
+trait ZigStringTruncExt {
+    fn trunc(&self, len: usize) -> ZigString;
+}
+impl ZigStringTruncExt for ZigString {
+    #[inline]
+    fn trunc(&self, len: usize) -> ZigString {
+        let mut out = *self;
+        out.len = out.len.min(len);
+        out
+    }
+}
+
+/// `bun.String.charAt(i)` — code unit at `i` widened to u32 (string.zig).
+trait BunStringCharAtExt {
+    fn char_at(&self, i: usize) -> u32;
+}
+impl BunStringCharAtExt for bun_str::String {
+    #[inline]
+    fn char_at(&self, i: usize) -> u32 {
+        if self.is_utf16() {
+            self.utf16()[i] as u32
+        } else {
+            self.latin1()[i] as u32
+        }
+    }
+}
 
 // Allow on the stack:
 // - 8 string slices

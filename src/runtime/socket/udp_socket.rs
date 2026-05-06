@@ -269,7 +269,7 @@ impl UDPSocketConfig {
         };
 
         let flags: i32 = if let Some(value) = options.get_truthy(global_this, "flags")? {
-            validators::validate_int32(global_this, value, "flags", (), None, None)?
+            validators::validate_int32(global_this, value, "flags", None, None)?
         } else {
             0
         };

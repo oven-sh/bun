@@ -97,6 +97,19 @@ impl ServerFile {
     }
 }
 
+impl Default for ServerFile {
+    fn default() -> Self {
+        Self {
+            is_rsc: false,
+            is_ssr: false,
+            is_client_component_boundary: false,
+            is_route: false,
+            failed: false,
+            kind: FileKind::Unknown,
+        }
+    }
+}
+
 // TODO(port): verify `freeFileContent(.ignore_css)` semantics are preserved by
 // `ClientFilePacked`'s Drop in Phase B (it must NOT call `assets.unrefByPath`).
 #[derive(Clone)]

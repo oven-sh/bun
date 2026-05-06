@@ -84,7 +84,7 @@ pub fn run_as_coordinator(
         // TODO(port): allocPrintSentinel — was arena-backed; sentinel handling for make_path/delete_tree
         let mut dir = format_bytes!(
             "{}/bun-test-worker-{}",
-            bstr::BStr::new(bun_fs::FileSystem::RealFS::get_default_temp_dir()),
+            bstr::BStr::new(RealFS::get_default_temp_dir()),
             pid
         );
         dir.push(0);
@@ -138,7 +138,8 @@ pub fn run_as_coordinator(
         vm,
         reporter,
         files: sorted,
-        cwd: bun_fs::FileSystem::instance().top_level_dir,
+        // SAFETY: FileSystem singleton is initialized before any test runner code runs.
+        cwd: unsafe { (*FileSystem::instance()).top_level_dir },
         argv,
         envps,
         workers: &mut workers, // TODO(port): lifetime — Coordinator borrows workers slice

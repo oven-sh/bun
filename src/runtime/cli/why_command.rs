@@ -259,7 +259,7 @@ impl WhyCommand {
     pub fn print_usage() {
         Output::prettyln(format_args!(
             concat!("<r><b>bun why<r> <d>v", "{}", "<r>"),
-            Global::PACKAGE_JSON_VERSION_WITH_SHA
+            Global::package_json_version_with_sha
         ));
 
         // PORT NOTE: Zig multiline literal preserved verbatim.
@@ -371,7 +371,7 @@ impl WhyCommand {
                 write!(
                     &mut dep_version_buf,
                     "{}",
-                    packages.items_resolution()[pkg_idx].fmt(string_bytes, bun_install::resolution::FmtMode::Auto)
+                    packages.items_resolution()[pkg_idx].fmt(string_bytes, bun_core::fmt::PathSep::Auto)
                 )
                 .expect("unreachable");
                 let dep_pkg_version: Box<[u8]> = dep_version_buf.into_boxed_slice();
@@ -413,7 +413,7 @@ impl WhyCommand {
             write!(
                 &mut version_buf,
                 "{}",
-                packages.items_resolution()[pkg_idx].fmt(string_bytes, bun_install::resolution::FmtMode::Auto)
+                packages.items_resolution()[pkg_idx].fmt(string_bytes, bun_core::fmt::PathSep::Auto)
             )
             .expect("unreachable");
             let version: Box<[u8]> = version_buf.into_boxed_slice();

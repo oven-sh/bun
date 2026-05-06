@@ -89,7 +89,7 @@ impl AuditCommand {
             }
         };
 
-        let code = audit(
+        let code = Self::audit(
             ctx,
             manager,
             manager.options.json_output,
@@ -134,8 +134,9 @@ impl AuditCommand {
             if !response_text.is_empty() {
                 let source = logger::Source::init_path_string(b"audit-response.json", &response_text);
                 let mut log = logger::Log::init();
+                let bump = bun_alloc::Arena::new();
 
-                let expr = match bun_json::parse(&source, &mut log, true) {
+                let expr = match bun_json::parse::<true>(&source, &mut log, &bump) {
                     Ok(e) => e,
                     Err(_) => {
                         Output::pretty_errorln(format_args!(
@@ -444,7 +445,7 @@ fn send_audit_request(
     libdeflate::load();
     let mut compressor = libdeflate::Compressor::alloc(6).ok_or(bun_alloc::AllocError)?;
 
-    let max_compressed_size = compressor.max_bytes_needed(body, libdeflate::Format::Gzip);
+    let max_compressed_size = compressor.max_bytes_needed(body, libdeflate::Encoding::Gzip);
     let mut compressed_body = vec![0u8; max_compressed_size];
 
     let compression_result = compressor.gzip(body, &mut compressed_body);
@@ -500,7 +501,7 @@ fn send_audit_request(
         final_compressed_body,
         http_proxy,
         None,
-        http::Redirect::Follow,
+        http::FetchRedirect::Follow,
     );
     let res = match req.send_sync() {
         Ok(r) => r,

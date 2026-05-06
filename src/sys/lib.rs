@@ -654,6 +654,14 @@ pub fn lstatat(fd: Fd, path: &ZStr) -> Result<Stat> {
         }
     }
 }
+/// `bun.getcwdAlloc(allocator)` (bun.zig:1256) — read cwd into a stack
+/// `PathBuffer`, then duplicate into a heap-owned NUL-terminated `ZBox`.
+pub fn getcwd_alloc() -> Maybe<bun_core::ZBox> {
+    let mut buf = [0u8; bun_core::MAX_PATH_BYTES];
+    let len = getcwd(&mut buf[..])?;
+    Ok(bun_core::ZBox::from_bytes(&buf[..len]))
+}
+
 pub mod coreutils_error_map;
 pub mod libuv_error_map;
 #[path = "SignalCode.rs"] pub mod signal_code;

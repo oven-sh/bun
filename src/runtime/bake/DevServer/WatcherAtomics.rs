@@ -201,15 +201,20 @@ impl WatcherAtomics {
                     // Not atomic because the dev server is not running events right now.
                     self.dbg_server_event = Some(ev);
                 }
-                ev_ref.concurrent_task = jsc::ConcurrentTask {
-                    task: jsc::Task::init(ev),
-                    ..Default::default()
-                };
+                // PORT NOTE: `jsc::ConcurrentTask` is a module; the struct lives at
+                // `jsc::ConcurrentTask::ConcurrentTask`. The field on `HotReloadEvent` is
+                // `MaybeUninit<ConcurrentTask>`, so initialize via `MaybeUninit::new` and
+                // hand the raw pointer to `enqueue_task_concurrent`.
+                ev_ref.concurrent_task =
+                    core::mem::MaybeUninit::new(jsc::ConcurrentTask::ConcurrentTask {
+                        task: jsc::Task::init(ev),
+                        ..Default::default()
+                    });
                 ev_ref
                     .owner
                     .vm
                     .event_loop
-                    .enqueue_task_concurrent(&mut ev_ref.concurrent_task);
+                    .enqueue_task_concurrent(ev_ref.concurrent_task.as_mut_ptr());
             }
 
             NextEvent::WAITING => {

@@ -916,7 +916,7 @@ impl IncrementalGraph<Client> {
         if bun_core::FeatureFlags::BAKE_DEBUGGING_FEATURES {
             if let ReceiveChunkContent::Js { code, .. } = &content {
                 if let Some(dump_dir) = &dev.dump_dir {
-                    DevServer::dump_bundle_for_chunk(dev, dump_dir, Side::Client, key, code, true, is_ssr_graph);
+                    dev_server_body::dump_bundle_for_chunk(dev, dump_dir, Side::Client, key, code, true, is_ssr_graph);
                 }
             }
         }
@@ -1078,7 +1078,7 @@ impl IncrementalGraph<Server> {
         if bun_core::FeatureFlags::BAKE_DEBUGGING_FEATURES {
             if let ReceiveChunkContent::Js { code, .. } = &content {
                 if let Some(dump_dir) = &dev.dump_dir {
-                    DevServer::dump_bundle_for_chunk(dev, dump_dir, Side::Server, key, code, true, is_ssr_graph);
+                    dev_server_body::dump_bundle_for_chunk(dev, dump_dir, Side::Server, key, code, true, is_ssr_graph);
                 }
             }
         }

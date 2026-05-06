@@ -4,10 +4,10 @@ use std::io::Write as _;
 use bstr::BStr;
 
 use bun_core::Output;
-use bun_str::{strings, String as BunString};
+use bun_string::{strings, String as BunString};
 use bun_url::URL as ZigURL;
-use bun_schema::api;
 
+use crate::schema_api as api;
 use crate::{ZigStackFrameCode, ZigStackFramePosition};
 
 /// Represents a single frame in a stack trace
@@ -39,7 +39,7 @@ impl ZigStackFrame {
     pub fn to_api(
         &self,
         root_path: &[u8],
-        origin: Option<&ZigURL>,
+        origin: Option<&ZigURL<'_>>,
     ) -> Result<api::StackFrame, bun_alloc::AllocError> {
         // Zig was `!api.StackFrame` with alloc-only `try` sites; allocator param dropped.
         // SAFETY: all-zero is a valid api::StackFrame (Zig used `comptime std.mem.zeroes`).

@@ -4665,69 +4665,30 @@ impl<'a> BundleV2<'a> {
                 // TODO(b2-blocked): `schedule_barrel_deferred_imports` is gated.
 
                 // For files with use directives, index and prepare the other side.
-                if result.use_directive != UseDirective::None
+                if result.use_directive != crate::UseDirective::None
                     && if this.framework.as_ref().unwrap().server_components.as_ref().unwrap().separate_ssr_graph {
-                        (result.use_directive == UseDirective::Client) == (result_ast_target == Target::Browser)
+                        (result.use_directive == crate::UseDirective::Client) == (result_ast_target == Target::Browser)
                     } else {
-                        (result.use_directive == UseDirective::Client) != (result_ast_target == Target::Browser)
+                        (result.use_directive == crate::UseDirective::Client) != (result_ast_target == Target::Browser)
                     }
                 {
-                    if result.use_directive == UseDirective::Server {
+                    if result.use_directive == crate::UseDirective::Server {
                         bun_core::todo_panic!("\"use server\"");
                     }
 
-                    let separate_ssr_graph = this.framework.as_ref().unwrap().server_components.as_ref().unwrap().separate_ssr_graph;
-                    let result_loader = graph.input_files.items_loader()[result_source_index];
-                    let (reference_source_index, ssr_index) = if separate_ssr_graph {
-                        // Enqueue two files, one in server graph, one in ssr graph.
-                        let reference_source_index = this.enqueue_server_component_generated_file(
-                            crate::ServerComponentParseTask::Data::ClientReferenceProxy(
-                                crate::ServerComponentParseTask::ClientReferenceProxy {
-                                    other_source_index: result_source_index as IndexInt,
-                                },
-                            ),
-                            result_source_index as IndexInt,
-                        ).expect("oom");
-
-                        let mut ssr_source = core::mem::take(&mut graph.input_files.items_source_mut()[result_source_index]);
-                        ssr_source.path = this.path_with_pretty_initialized(ssr_source.path, Target::BakeServerComponentsSsr).expect("oom");
-                        let ssr_index = this.enqueue_parse_task2(
-                            &mut ssr_source,
-                            result_loader,
-                            Target::BakeServerComponentsSsr,
-                        ).expect("oom");
-                        graph.input_files.items_source_mut()[result_source_index] = ssr_source;
-
-                        (reference_source_index, ssr_index)
-                    } else {
-                        // Enqueue only one file
-                        let mut server_source = core::mem::take(&mut graph.input_files.items_source_mut()[result_source_index]);
-                        server_source.path = this.path_with_pretty_initialized(server_source.path, this.transpiler.options.target).expect("oom");
-                        let server_index = this.enqueue_parse_task2(
-                            &mut server_source,
-                            result_loader,
-                            Target::Browser,
-                        ).expect("oom");
-                        graph.input_files.items_source_mut()[result_source_index] = server_source;
-
-                        (server_index, Index::INVALID.get())
-                    };
-
-                    graph.path_to_source_index_map(result_ast_target).put(
-                        &source_path_owned,
-                        reference_source_index,
-                    ).expect("oom");
-
-                    graph.server_component_boundaries.put(
-                        result_source_index as IndexInt,
-                        result.use_directive,
-                        reference_source_index,
-                        ssr_index,
-                    ).expect("oom");
+                    // blocked_on: `Logger::Source.path` is `bun_logger::fs::Path` but
+                    // `path_with_pretty_initialized` takes/returns `Fs::Path`
+                    // (`bun_resolver::Path<'_>`) — types not yet unified. Additionally
+                    // `result.ast` / `result.source` were consumed above (moved into
+                    // `graph.ast` / swapped into `graph.input_files`), so the Zig data
+                    // flow that builds `ReferenceProxy { other_source, named_exports }`
+                    // from `result` needs re-threading from `graph` once unified.
+                    let _ = (result_ast_target, &source_path_owned, result_source_index);
+                    todo!("blocked_on: Logger::fs::Path vs Fs::Path unification + ServerComponentParseTask::ReferenceProxy data flow");
                 }
             }
             parse_task::ResultValue::Err(err) => {
-                if cfg!(feature = "enable_logs") {
+                if cfg!(feature = "debug_logs") {
                     bun_core::scoped_log!(Bundle, "onParse() = err");
                 }
 
@@ -4741,18 +4702,27 @@ impl<'a> BundleV2<'a> {
                             this as *mut _,
                         ).expect("oom");
                     } else if !err.log.msgs.is_empty() {
-                        err.log.clone_to_with_recycled(this.transpiler.log, true).expect("unreachable");
+                        // SAFETY: `transpiler.log` is a live BACKREF set in BundleV2::init.
+                        err.log.clone_to_with_recycled(unsafe { &mut *this.transpiler.log }, true).expect("unreachable");
                     } else {
-                        this.transpiler.log.add_error_fmt(
+                        // PORT NOTE: Zig used `@tagName(err.step)`.
+                        let step_name = match err.step {
+                            crate::parse_task::Step::Pending => "pending",
+                            crate::parse_task::Step::ReadFile => "read_file",
+                            crate::parse_task::Step::Parse => "parse",
+                            crate::parse_task::Step::Resolve => "resolve",
+                        };
+                        // SAFETY: `transpiler.log` is a live BACKREF set in BundleV2::init.
+                        unsafe { &mut *this.transpiler.log }.add_error_fmt(
                             None,
                             Logger::Loc::EMPTY,
-                            format_args!("{} while {}", bstr::BStr::new(err.err.name()), super::parse_task_step_name(err.step)),
+                            format_args!("{} while {}", bstr::BStr::new(err.err.name()), step_name),
                         ).expect("unreachable");
                     }
                 }
 
                 if cfg!(debug_assertions) && this.dev_server.is_some() {
-                    debug_assert!(graph.ast.items_parts()[err.source_index.get() as usize].len() == 0);
+                    debug_assert!(graph.ast.items_parts()[err.source_index.get() as usize].len == 0);
                 }
             }
         }
@@ -4870,7 +4840,7 @@ pub struct JSMeta {
     ///
     /// This array holds the deferred imports to bind so the pass can be split
     /// into two separate passes.
-    pub imports_to_bind: RefImportData,
+    pub imports_to_bind: crate::RefImportData,
 
     /// This includes both named exports and re-exports.
     ///

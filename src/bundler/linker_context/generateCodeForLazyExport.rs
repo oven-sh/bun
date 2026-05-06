@@ -490,7 +490,7 @@ pub fn generate_code_for_lazy_export(
                     let generated =
                         this.generate_named_export_in_file(source_index, module_ref, name, name)?;
                     // TODO(port): `parts.ptr[generated[1]]` raw-ptr indexing; re-borrow `parts` here for borrowck.
-                    let parts = &mut this.graph.ast.items_mut().parts[source_index as usize];
+                    let parts = &mut this.graph.ast.items_parts_mut()[source_index as usize];
                     // PERF(port): was `this.allocator().alloc(Stmt, 1)` (arena) — use bump.alloc_slice in Phase B.
                     parts[generated.1 as usize].stmts =
                         this.allocator().alloc_slice_fill_default(1).into();
@@ -532,13 +532,13 @@ pub fn generate_code_for_lazy_export(
                     name,
                     b"default",
                 )?;
-                let parts = &mut this.graph.ast.items_mut().parts[source_index as usize];
+                let parts = &mut this.graph.ast.items_parts_mut()[source_index as usize];
                 parts[generated.1 as usize].stmts =
                     this.allocator().alloc_slice_fill_default(1).into();
                 parts[generated.1 as usize].stmts[0] = Stmt::alloc(
                     S::ExportDefault {
                         default_name: js_ast::LocRef {
-                            ref_: generated.0,
+                            ref_: Some(generated.0),
                             loc: stmt.loc,
                         },
                         value: js_ast::StmtOrExpr::Expr(expr),

@@ -90,7 +90,7 @@ pub struct struct_gzFile_s {
 pub type gzFile = *mut struct_gzFile_s;
 
 unsafe extern "C" {
-    pub fn zlibVersion() -> *const u8;
+    pub fn zlibVersion() -> *const c_char;
     pub fn deflate(strm: z_streamp, flush: FlushValue) -> ReturnCode;
     pub fn deflateEnd(strm: z_streamp) -> ReturnCode;
     pub fn inflate(strm: z_streamp, flush: FlushValue) -> ReturnCode;

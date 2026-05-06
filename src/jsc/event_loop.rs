@@ -1114,14 +1114,18 @@ pub extern "C" fn Bun__EventLoop__runCallback3(
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__EventLoop__enter(global: *mut JSGlobalObject) {
-    // SAFETY: called from C++ with a valid live global
-    unsafe { &*global }.bun_vm().event_loop().enter();
+    // SAFETY: called from C++ with a valid live global; bun_vm() and
+    // event_loop() return non-null raw pointers into the owning VM.
+    let global = unsafe { &*global };
+    unsafe { (*(*global.bun_vm()).event_loop()).enter() };
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__EventLoop__exit(global: *mut JSGlobalObject) {
-    // SAFETY: called from C++ with a valid live global
-    unsafe { &*global }.bun_vm().event_loop().exit();
+    // SAFETY: called from C++ with a valid live global; bun_vm() and
+    // event_loop() return non-null raw pointers into the owning VM.
+    let global = unsafe { &*global };
+    unsafe { (*(*global.bun_vm()).event_loop()).exit() };
 }
 
 // ──────────────────────────────────────────────────────────────────────────

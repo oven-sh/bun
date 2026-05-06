@@ -60,6 +60,43 @@ use bun_string::MutableString;
 
 bun_output::declare_scope!(Transpiler, visible);
 
+// PORT NOTE: `CompileTarget.fromJS` / `.fromSlice` live in `bundler_jsc/options_jsc.zig`
+// (re-exported onto the type via `pub const fromJS = @import(...)`). `bun_bundler_jsc`
+// is not a dependency of `bun_runtime`, so the bodies are duplicated here.
+fn compile_target_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<CompileTarget> {
+    let slice = value.to_slice(global)?;
+    if !slice.slice().starts_with(b"bun-") {
+        return global.throw_invalid_arguments(
+            &format!(
+                "Expected compile target to start with 'bun-', got {}",
+                bstr::BStr::new(slice.slice())
+            ),
+            &[],
+        );
+    }
+    compile_target_from_slice(global, slice.slice())
+}
+
+fn compile_target_from_slice(
+    global: &JSGlobalObject,
+    slice_with_bun_prefix: &[u8],
+) -> JsResult<CompileTarget> {
+    let slice = &slice_with_bun_prefix[b"bun-".len()..];
+    let Ok(target_parsed) = CompileTarget::try_from(slice) else {
+        return global.throw_invalid_arguments(
+            &format!("Unknown compile target: {}", bstr::BStr::new(slice_with_bun_prefix)),
+            &[],
+        );
+    };
+    if !target_parsed.is_supported() {
+        return global.throw_invalid_arguments(
+            &format!("Unsupported compile target: {}", bstr::BStr::new(slice_with_bun_prefix)),
+            &[],
+        );
+    }
+    Ok(target_parsed)
+}
+
 pub mod js_bundler {
     use super::*;
 

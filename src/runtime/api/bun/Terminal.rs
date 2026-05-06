@@ -922,9 +922,9 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
 
     // Set close-on-exec on master side fds only
     // slave_fd should NOT have close-on-exec since child needs to inherit it
-    let _ = sys::set_close_on_exec(master_fd_desc);
-    let _ = sys::set_close_on_exec(read_fd);
-    let _ = sys::set_close_on_exec(write_fd);
+    let _ = crate::api::bun_process::spawn_sys::set_close_on_exec(master_fd_desc);
+    let _ = crate::api::bun_process::spawn_sys::set_close_on_exec(read_fd);
+    let _ = crate::api::bun_process::spawn_sys::set_close_on_exec(write_fd);
 
     Ok(PtyResult {
         master: master_fd_desc,

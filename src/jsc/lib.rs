@@ -2428,8 +2428,11 @@ pub mod webcore {
                         mime_ptr,
                     )
                 };
-                // Ownership of `pathlike`'s payload moved across FFI.
-                core::mem::forget(pathlike);
+                // Ownership of `pathlike`'s payload moved across FFI via
+                // `ptr::read` on the callee side. `PathOrFileDescriptor` is
+                // `Copy` (no `Drop` impl), so there is nothing to `forget` —
+                // the binding is dead past this point.
+                let _ = pathlike;
                 if store.is_null() {
                     Err(bun_core::AllocError)
                 } else {

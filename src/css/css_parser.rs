@@ -1804,7 +1804,10 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                 Ok(())
             }
             AtRulePrelude::Keyframes { name, prefix } => {
-                let mut parser = css_rules::keyframes::KeyframesListParser::default();
+                // blocked_on: `KeyframesListParser: RuleBodyItemParser` trait
+                // impls (rules/keyframes.rs gated const block).
+                #[cfg(any())] {
+                let mut parser = css_rules::keyframes::KeyframesListParser;
                 let mut iter = RuleBodyParser::new(input, &mut parser);
                 // todo_stuff.think_mem_mgmt
                 // PERF(port): was arena bulk-free — profile in Phase B
@@ -1820,7 +1823,12 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                     vendor_prefix: prefix,
                     loc,
                 }));
-                Ok(())
+                return Ok(());
+                }
+                #[cfg(not(any()))] {
+                let _ = (name, prefix, input, loc);
+                todo("@keyframes block — KeyframesListParser trait impls gated");
+                }
             }
             AtRulePrelude::Page(selectors) => {
                 let rule = css_rules::page::PageRule::parse(selectors, input, loc, this.options)?;
@@ -1834,15 +1842,24 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                 ));
                 Ok(())
             }
-            AtRulePrelude::Layer(layer) => {
+            AtRulePrelude::Layer(mut layer) => {
                 let name = if layer.len() == 0 {
                     None
                 } else if layer.len() == 1 {
-                    Some(layer.at(0).clone())
+                    // PORT NOTE: Zig copied the first slot; SmallList<T> has
+                    // no `Clone` (LayerName isn't Clone). Own it via swap_remove
+                    // — `layer` is consumed by the match arm anyway.
+                    Some(layer.swap_remove(0))
                 } else {
                     return Err(input.new_error(BasicParseErrorKind::at_rule_body_invalid));
                 };
 
+                // blocked_on: `LayerName: Clone` — `on_layer_rule` /
+                // `push_to_enclosing_layer` want by-value clones; the Zig
+                // original deep-clones via the arena. Until LayerName grows a
+                // shallow `Clone` (or `deep_clone(&Arena)` is threaded), the
+                // bundler layer-tracking hooks stay gated.
+                #[cfg(any())] {
                 T::on_layer_rule(this.at_rule_parser, &layer);
                 let old_len = T::enclosing_layer_length(this.at_rule_parser);
                 if let Some(ref n) = name {
@@ -1850,13 +1867,16 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                 } else {
                     T::bump_anon_layer_count(this.at_rule_parser, 1);
                 }
+                }
 
                 let rules = this.parse_style_block(input)?;
 
+                #[cfg(any())] {
                 if name.is_none() {
                     T::bump_anon_layer_count(this.at_rule_parser, -1);
                 }
                 T::reset_enclosing_layer(this.at_rule_parser, old_len);
+                }
 
                 this.rules.v.push(CssRule::LayerBlock(
                     css_rules::layer::LayerBlockRule { name, rules, loc },
@@ -1969,24 +1989,23 @@ impl<'a, T: CustomAtRuleParser> QualifiedRuleParser for NestedRuleParser<'a, T> 
     type QualifiedRule = ();
 
     fn parse_prelude(this: &mut Self, input: &mut Parser) -> CssResult<SelectorList> {
-        let mut selector_parser = selector::parser::SelectorParser {
+        let mut selector_parser = selector_parser::SelectorParser {
             is_nesting_allowed: true,
             options: this.options,
-            ..Default::default()
         };
         if this.is_in_style_rule {
             SelectorList::parse_relative(
                 &mut selector_parser,
                 input,
-                selector::parser::ErrorRecovery::DiscardList,
-                selector::parser::NestingRequirement::Implicit,
+                selector_parser::ParseErrorRecovery::DiscardList,
+                selector_parser::NestingRequirement::Implicit,
             )
         } else {
             SelectorList::parse(
                 &mut selector_parser,
                 input,
-                selector::parser::ErrorRecovery::DiscardList,
-                selector::parser::NestingRequirement::None,
+                selector_parser::ParseErrorRecovery::DiscardList,
+                selector_parser::NestingRequirement::None,
             )
         }
     }

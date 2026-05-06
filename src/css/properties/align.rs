@@ -1407,22 +1407,22 @@ impl AlignHandler {
     }
 }
 
-fn is_align_property(property_id: PropertyId) -> bool {
+fn is_align_property(property_id: &PropertyId) -> bool {
     matches!(
         property_id,
-        PropertyId::AlignContent
-            | PropertyId::FlexLinePack
-            | PropertyId::JustifyContent
-            | PropertyId::BoxPack
-            | PropertyId::FlexPack
+        PropertyId::AlignContent(_)
+            | PropertyId::FlexLinePack(_)
+            | PropertyId::JustifyContent(_)
+            | PropertyId::BoxPack(_)
+            | PropertyId::FlexPack(_)
             | PropertyId::PlaceContent
-            | PropertyId::AlignSelf
-            | PropertyId::FlexItemAlign
+            | PropertyId::AlignSelf(_)
+            | PropertyId::FlexItemAlign(_)
             | PropertyId::JustifySelf
             | PropertyId::PlaceSelf
-            | PropertyId::AlignItems
-            | PropertyId::BoxAlign
-            | PropertyId::FlexAlign
+            | PropertyId::AlignItems(_)
+            | PropertyId::BoxAlign(_)
+            | PropertyId::FlexAlign(_)
             | PropertyId::JustifyItems
             | PropertyId::PlaceItems
             | PropertyId::RowGap
@@ -1438,5 +1438,3 @@ fn is_align_property(property_id: PropertyId) -> bool {
 //   todos:      23
 //   notes:      AlignHandler comptime-string @field/@unionInit helpers ported as macro_rules!; DeriveParse/DeriveToCss/DefineEnumProperty/PropertyFieldMap need proc-macro derives in Phase B; Property variant names/shapes assumed PascalCase tuple-variants.
 // ──────────────────────────────────────────────────────────────────────────
-
-} // mod align_handler_body

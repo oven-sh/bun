@@ -2,21 +2,20 @@
 //!
 //! Ported from `src/css/properties/custom.zig`.
 //
-// ─── B-2 round 8 status ────────────────────────────────────────────────────
-// Module un-gated from `gated_prop!` so the *data types* (TokenList /
-// TokenOrValue / CustomProperty / CustomPropertyName / UnparsedProperty /
-// EnvironmentVariable / Variable / Function / UnresolvedColor /
-// UAEnvironmentVariable) are real and referenced by `properties_generated.rs`,
-// `media_query.rs`, `rules/{unknown,font_face,font_palette_values}.rs`,
-// `selectors/parser.rs`, and `context.rs`.
+// ─── B-2 round 9 status ────────────────────────────────────────────────────
+// `TokenList::{parse, parse_into, parse_with_options, to_css, to_css_raw}`,
+// `UnresolvedColor::{parse, to_css}`, `Variable::{parse, to_css}`,
+// `EnvironmentVariable::{parse, parse_nested, to_css}`,
+// `EnvironmentVariableName::{parse, to_css}`, `Function::to_css`,
+// `CustomProperty::parse`, `UnparsedProperty::parse` are now real.
 //
-// `eql` / `hash` / `deep_clone` are now real via `#[derive(CssEql, CssHash,
-// DeepClone)]` (the `Token` arm is hand-impl'd below since `Token` lives at
-// crate root). `parse` / `to_css` / `get_fallback` *bodies* remain
-// `#[cfg(any())]`-gated because they bottom out on still-gated leaf surface
-// (DashedIdent{,Reference}::to_css/parse_with_options, Url::parse,
-// ComponentParser, ColorFallbackKind::supports_condition, AnimationName::
-// to_css). Each gate carries a `blocked_on:` note.
+// A few leaf calls (Url::parse/to_css, DashedIdentReference::parse_with_options/
+// to_css, CustomIdent::to_css) are still `#[cfg(any())]`-gated in *other*
+// files; those bodies are inlined verbatim under `mod ext` below so the hub
+// compiles without touching `values/{url,ident}.rs`. Remaining internal
+// `#[cfg(any())]` gates carry `blocked_on:` notes for the next round
+// (ComponentParser un-gate from `values::color::gated_full_impl`;
+// `properties::animation` un-gate; `get_fallback` chain).
 
 use crate as css;
 use crate::css_parser::{

@@ -864,10 +864,7 @@ impl RuntimeTranspilerCache {
                 // Zig: `std.fs.cwd().makeOpenPath(dirname, .{ .access_sub_paths = true })`
                 let dir = sys::Dir::cwd()
                     .make_open_path(dirname, sys::OpenDirOptions::default())?;
-                break 'brk dir
-                    .fd
-                    .make_lib_uv_owned()
-                    .map_err(|e| -> bun_core::Error { sys::Error::from(e).into() })?;
+                break 'brk dir.fd.make_lib_uv_owned()?;
             }
 
             break 'brk Fd::cwd();

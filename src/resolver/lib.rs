@@ -6222,12 +6222,16 @@ impl<'a> Resolver<'a> {
 
         // When this function halts, any item not processed means it's not found.
         // PORT NOTE: capture only what the cleanup needs by-value (store_fd) / by-Cell
-        // (open_dir_count) so the guard doesn't pin `&mut self` across the loop body.
+        // (open_dir_count) / by-raw-ptr (rfs) so the guard doesn't pin `&mut self`
+        // across the loop body. `need_to_close_files()` is evaluated AT DROP TIME
+        // (matching Zig's `defer`), not snapshotted up-front — the loop body calls
+        // `Fs.FileSystem.setMaxFd()` which can flip `needToCloseFiles()` mid-walk.
         let close_dirs_store_fd = self.store_fd;
-        let close_dirs_need_close = self.fs().fs.need_to_close_files();
+        let close_dirs_rfs: *mut Fs::file_system::RealFS = rfs;
         let _close_dirs = scopeguard::guard((), |_| {
             let n = open_dir_count.get();
-            if n > 0 && (!close_dirs_store_fd || close_dirs_need_close) {
+            // SAFETY: `close_dirs_rfs` points at the process-global RealFS singleton.
+            if n > 0 && (!close_dirs_store_fd || unsafe { (*close_dirs_rfs).need_to_close_files() }) {
                 let open_dirs = &bufs!(open_dirs)[0..n];
                 for open_dir in open_dirs {
                     open_dir.close();
@@ -7294,8 +7298,11 @@ impl<'a> Resolver<'a> {
                 let abs_path: &'static [u8] = {
                     if query.entry.abs_path.is_empty() {
                         let abs_path_parts = [query.entry.dir, query.entry.base()];
+                        // PORT NOTE: split into two statements so the two `&mut FileSystem`
+                        // borrows from `self.fs()` don't overlap (Stacked Borrows).
+                        let joined = self.fs().abs_buf(&abs_path_parts, bufs!(load_as_file));
                         query.entry.abs_path = PathString::init(
-                            self.fs().dirname_store.append_slice(self.fs().abs_buf(&abs_path_parts, bufs!(load_as_file))).expect("unreachable"),
+                            self.fs().dirname_store.append_slice(joined).expect("unreachable"),
                         );
                     }
                     // SAFETY: PathString backs onto FilenameStore singleton (interned 'static).
@@ -7651,7 +7658,10 @@ impl<'a> Resolver<'a> {
                         } else if !parent_.abs_real_path.is_empty() {
                             // this might leak a little i'm not sure
                             let parts = [parent_.abs_real_path, base];
-                            symlink = self.fs().dirname_store.append_slice(self.fs().abs_buf(&parts, bufs!(dir_info_uncached_filename))).expect("unreachable");
+                            // PORT NOTE: split into two statements so the two `&mut FileSystem`
+                            // borrows from `self.fs()` don't overlap (Stacked Borrows).
+                            let joined = self.fs().abs_buf(&parts, bufs!(dir_info_uncached_filename));
+                            symlink = self.fs().dirname_store.append_slice(joined).expect("unreachable");
 
                             if let Some(logs) = self.debug_logs.as_mut() {
                                 let mut buf = Vec::new();

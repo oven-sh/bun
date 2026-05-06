@@ -1028,7 +1028,7 @@ pub fn parse_rgb_components(
 
     let is_legacy_syntax = parser.from.is_none()
         && !red.unit_value().is_nan()
-        && input.try_parse(css::Parser::expect_comma).is_ok();
+        && input.try_parse(|i| i.expect_comma()).is_ok();
 
     let (r, g, b) = if is_legacy_syntax {
         match red {
@@ -1088,7 +1088,7 @@ pub fn parse_hslhwb_components<T>(
     let is_legacy_syntax = allows_legacy
         && parser.from.is_none()
         && !h.is_nan()
-        && input.try_parse(css::Parser::expect_comma).is_ok();
+        && input.try_parse(|i| i.expect_comma()).is_ok();
     let a = parser.parse_percentage(input)?.clamp(0.0, 1.0);
     if is_legacy_syntax {
         if let Err(e) = input.expect_colon() {
@@ -1242,7 +1242,7 @@ pub fn parse_hsl_hwb_components<T>(
     let is_legacy_syntax = allows_legacy
         && parser.from.is_none()
         && !h.is_nan()
-        && input.try_parse(css::Parser::expect_comma).is_ok();
+        && input.try_parse(|i| i.expect_comma()).is_ok();
 
     let a = parser.parse_percentage(input)?.clamp(0.0, 1.0);
 
@@ -2333,7 +2333,7 @@ pub fn parse_color_mix(input: &mut css::Parser) -> CssResult<CssColor> {
         method,
         ColorSpaceName::Hsl | ColorSpaceName::Hwb | ColorSpaceName::Lch | ColorSpaceName::Oklch
     ) {
-        let hue_method = input.try_parse(HueInterpolationMethod::parse);
+        let hue_method = input.try_parse(|i| HueInterpolationMethod::parse(i));
         if hue_method.is_ok() {
             if let Err(e) = input.expect_ident_matching(b"hue") {
                 return Err(e);
@@ -2349,21 +2349,21 @@ pub fn parse_color_mix(input: &mut css::Parser) -> CssResult<CssColor> {
         return Err(e);
     }
 
-    let first_percent_ = input.try_parse(css::Parser::expect_percentage);
+    let first_percent_ = input.try_parse(|i| i.expect_percentage());
     let first_color = CssColor::parse(input)?;
     let first_percent: Option<f32> = match first_percent_ {
         Ok(v) => Some(v),
-        Err(_) => input.try_parse(css::Parser::expect_percentage).ok(),
+        Err(_) => input.try_parse(|i| i.expect_percentage()).ok(),
     };
     if let Err(e) = input.expect_comma() {
         return Err(e);
     }
 
-    let second_percent_ = input.try_parse(css::Parser::expect_percentage);
+    let second_percent_ = input.try_parse(|i| i.expect_percentage());
     let second_color = CssColor::parse(input)?;
     let second_percent: Option<f32> = match second_percent_ {
         Ok(v) => Some(v),
-        Err(_) => input.try_parse(css::Parser::expect_percentage).ok(),
+        Err(_) => input.try_parse(|i| i.expect_percentage()).ok(),
     };
 
     // https://drafts.csswg.org/css-color-5/#color-mix-percent-norm

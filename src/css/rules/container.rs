@@ -18,8 +18,17 @@ impl ContainerName {
     }
 }
 
-// ─── ContainerName parse/clone ────────────────────────────────────────────
-// blocked_on: Parser::new_unexpected_token_error, DeepClone.
+impl ContainerName {
+    #[inline]
+    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+        // PORT NOTE: `css.implementDeepClone` field-walk — `CustomIdent`
+        // identity-copy (arena-owned slice pointer).
+        Self { v: self.v.deep_clone(bump) }
+    }
+}
+
+// ─── ContainerName parse ──────────────────────────────────────────────────
+// blocked_on: Parser::new_unexpected_token_error.
 #[cfg(any())]
 impl ContainerName {
     pub fn parse(input: &mut css::Parser) -> css::Result<ContainerName> {
@@ -40,11 +49,6 @@ impl ContainerName {
         }
 
         Ok(ContainerName { v: ident })
-    }
-
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // PERF(port): was css.implementDeepClone (comptime field-walk).
-        css::implement_deep_clone(self, bump)
     }
 }
 
@@ -195,9 +199,25 @@ impl QueryCondition for StyleQuery {
     }
 }
 
-// ─── StyleQuery parse/clone ───────────────────────────────────────────────
+impl StyleQuery {
+    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+        // PORT NOTE: `css.implementDeepClone` variant-walk. `Operator` is `Copy`;
+        // `Property` routes through `dc::property` until the per-variant
+        // `DeepClone` derives land in `properties_generated.rs`.
+        match self {
+            Self::Feature(p) => Self::Feature(super::dc::property(p, bump)),
+            Self::Not(c) => Self::Not(Box::new(c.deep_clone(bump))),
+            Self::Operation { operator, conditions } => Self::Operation {
+                operator: *operator,
+                conditions: conditions.iter().map(|c| c.deep_clone(bump)).collect(),
+            },
+        }
+    }
+}
+
+// ─── StyleQuery parse ─────────────────────────────────────────────────────
 // blocked_on: Property::parse, PropertyId::parse, css::parse_important,
-// ParserOptions::default allocator, DeepClone.
+// ParserOptions::default allocator.
 #[cfg(any())]
 impl StyleQuery {
     pub fn parse_feature(input: &mut css::Parser) -> css::Result<StyleQuery> {
@@ -217,11 +237,6 @@ impl StyleQuery {
         });
         let _ = input.try_parse(css::parse_important);
         Ok(feature)
-    }
-
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // PERF(port): was css.implementDeepClone (comptime field-walk).
-        css::implement_deep_clone(self, bump)
     }
 }
 
@@ -290,10 +305,26 @@ impl QueryCondition for ContainerCondition {
     }
 }
 
-// ─── ContainerCondition parse/clone ───────────────────────────────────────
+impl ContainerCondition {
+    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+        // PORT NOTE: `css.implementDeepClone` variant-walk. `QueryFeature<F>`
+        // routes through `dc::query_feature` (Clone is faithful — see note
+        // there); `Operator` is `Copy`.
+        match self {
+            Self::Feature(f) => Self::Feature(super::dc::query_feature(f, bump)),
+            Self::Not(c) => Self::Not(Box::new(c.deep_clone(bump))),
+            Self::Operation { operator, conditions } => Self::Operation {
+                operator: *operator,
+                conditions: conditions.iter().map(|c| c.deep_clone(bump)).collect(),
+            },
+            Self::Style(q) => Self::Style(q.deep_clone(bump)),
+        }
+    }
+}
+
+// ─── ContainerCondition parse ─────────────────────────────────────────────
 // blocked_on: media_query::{parse_query_condition,QueryConditionFlags
-// constructors}, QueryFeature::parse, Parser::{try_parse,parse_nested_block},
-// DeepClone.
+// constructors}, QueryFeature::parse, Parser::{try_parse,parse_nested_block}.
 #[cfg(any())]
 impl ContainerCondition {
     pub fn parse(input: &mut css::Parser) -> css::Result<ContainerCondition> {
@@ -338,11 +369,6 @@ impl ContainerCondition {
 
         input.parse_nested_block::<ContainerCondition, ()>((), parse_nested_block_fn)
     }
-
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // PERF(port): was css.implementDeepClone (comptime field-walk).
-        css::implement_deep_clone(self, bump)
-    }
 }
 
 /// A [@container](https://drafts.csswg.org/css-contain-3/#container-rule) rule.
@@ -386,12 +412,18 @@ impl<R> ContainerRule<R> {
     }
 }
 
-// blocked_on: DeepClone.
-#[cfg(any())]
 impl<R> ContainerRule<R> {
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // PERF(port): was css.implementDeepClone (comptime field-walk).
-        css::implement_deep_clone(self, bump)
+    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+    where
+        R: css::generics::DeepClone<'bump>,
+    {
+        // PORT NOTE: `css.implementDeepClone` field-walk.
+        Self {
+            name: self.name.as_ref().map(|n| n.deep_clone(bump)),
+            condition: self.condition.deep_clone(bump),
+            rules: self.rules.deep_clone(bump),
+            loc: self.loc,
+        }
     }
 }
 

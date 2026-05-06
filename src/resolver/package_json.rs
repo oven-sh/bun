@@ -793,7 +793,7 @@ impl PackageJSON {
         // aliasing `*FileSystem`/`*Log` and break borrowck cycles between
         // `Resolver` self-borrows. Both are always non-null for a live resolver
         // and uniquely accessed for the duration of this call.
-        let r_fs: &mut Fs::FileSystem = unsafe { &mut *r.fs };
+        let r_fs: &mut fs::FileSystem = unsafe { &mut *r.fs };
         let r_log: &mut logger::Log = unsafe { &mut *r.log };
 
         // TODO: remove this extra copy

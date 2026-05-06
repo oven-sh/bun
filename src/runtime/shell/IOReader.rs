@@ -66,6 +66,11 @@ struct State {
 }
 
 pub struct IOReader {
+    /// Split out of `State` so `state()`'s `&mut State` never overlaps the
+    /// `&mut ReaderImpl` the read-loop caller holds while invoking vtable
+    /// callbacks (see `BufferedReaderParent` aliasing contract). Both cells
+    /// root at SharedReadWrite; callbacks touch only `state` fields.
+    reader: UnsafeCell<ReaderImpl>,
     state: UnsafeCell<State>,
 }
 

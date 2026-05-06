@@ -1256,31 +1256,47 @@ impl VirtualMachine {
         let _ = vm_ref.regular_event_loop.tasks.ensure_unused_capacity(64);
         vm_ref.event_loop = &mut vm_ref.regular_event_loop;
 
-        // JSGlobalObject creation.
-        // SAFETY: extern "C" FFI; `vm`/`console` valid.
-        vm_ref.global = unsafe {
-            ZigGlobalObject__create(
-                vm,
+        // JSGlobalObject creation. Spec JSGlobalObject.zig:875 — the wrapper
+        // calls `vm.eventLoop().ensureWaker()` before the 5-arg FFI.
+        // Capture inputs and end `vm_ref`'s last use BEFORE the FFI: the C++
+        // body re-enters Rust via `Bun__getVM()` (ZigGlobalObject.cpp:473/961)
+        // through the thread-local raw `vm` stored above — a parent provenance
+        // of `vm_ref` — so any access during the call invalidates `vm_ref`'s
+        // Unique tag under Stacked Borrows.
+        let context_id = vm_ref.initial_script_execution_context_identifier;
+        vm_ref.regular_event_loop.ensure_waker();
+        // SAFETY: extern "C" FFI; `console` valid.
+        let global = unsafe {
+            Zig__GlobalObject__create(
                 console.cast(),
-                vm_ref.initial_script_execution_context_identifier,
+                context_id,
                 opts.smol,
                 opts.eval_mode,
                 core::ptr::null_mut(),
             )
         };
-        vm_ref.regular_event_loop.global = NonNull::new(vm_ref.global);
-        // SAFETY: global is freshly created and live for VM lifetime.
-        // `vm_ptr()` returns the FFI `*mut VM` directly (no `&VM` reborrow),
-        // preserving mutable provenance for later FFI use.
-        vm_ref.jsc_vm = unsafe { (*vm_ref.global).vm_ptr() };
-        VMHolder::CACHED_GLOBAL_OBJECT.set(Some(vm_ref.global));
+        // JSC may mess with the stack size (spec JSGlobalObject.zig:879).
+        bun_core::StackCheck::configure_thread();
+        // SAFETY: write through the raw `vm` ptr (not `vm_ref`) so no
+        // `&mut VirtualMachine` is held live across the FFI call above; same
+        // pattern as the `init_runtime_state` hook below. `global` is freshly
+        // created and live for VM lifetime; `vm_ptr()` returns the FFI
+        // `*mut VM` directly (no `&VM` reborrow), preserving mutable provenance.
+        let jsc_vm = unsafe {
+            (*vm).global = global;
+            (*vm).regular_event_loop.global = NonNull::new(global);
+            let jsc_vm = (*global).vm_ptr();
+            (*vm).jsc_vm = jsc_vm;
+            jsc_vm
+        };
+        VMHolder::CACHED_GLOBAL_OBJECT.set(Some(global));
 
         // Spec VirtualMachine.zig:1313: `uws.Loop.get().internal_loop_data.jsc_vm
         // = vm.jsc_vm` — must run AFTER `jsc_vm` is set so C/uws callbacks can
         // recover the JSC VM via `internal_loop_data`.
         // SAFETY: `uws::Loop::get()` returns the live per-thread uws loop.
         unsafe {
-            (*uws::Loop::get()).internal_loop_data.jsc_vm = vm_ref.jsc_vm.cast();
+            (*uws::Loop::get()).internal_loop_data.jsc_vm = jsc_vm.cast();
         }
 
         // High-tier finishes Transpiler / Timer::All / debugger / body-hive.

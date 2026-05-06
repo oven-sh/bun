@@ -146,7 +146,13 @@ pub struct WebWorker {
     /// The worker's `jsc.VirtualMachine`, or null before `startVM()` / after
     /// `shutdown()` nulls it. Lives inside `arena`. `vm_lock` must be held for
     /// any cross-thread read (see header comment).
-    vm: *mut VirtualMachine,
+    ///
+    /// `UnsafeCell` because this is read through `&WebWorker` on the parent /
+    /// main thread (`notify_need_termination`, `terminate_all_and_wait`, `exit`)
+    /// and written on the worker thread (`start_vm`, `shutdown`) — `vm_lock`
+    /// serialises the memory ops, but Rust's aliasing model still requires
+    /// interior mutability for a field written while a `&WebWorker` may be live.
+    vm: UnsafeCell<*mut VirtualMachine>,
     vm_lock: Mutex,
 
     // ---- Parent-thread only -------------------------------------------------

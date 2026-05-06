@@ -190,8 +190,6 @@ impl Listener {
                 }
 
                 let this: *mut Listener = Box::into_raw(Box::new(socket));
-                // SAFETY: just allocated, non-null, exclusive
-                let this_ref = unsafe { &mut *this };
                 // TODO: server_name is not supported on named pipes, I belive its , lets wait for
                 // someone to ask for it
 
@@ -204,12 +202,18 @@ impl Listener {
 
                 // we need to add support for the backlog parameter on listen here we use the
                 // default value of nodejs
+                //
+                // Pass the allocation-rooted raw `this` (not a `&mut` reborrow) so the
+                // `NonNull<Listener>` stored inside the context for `on_client_connect`
+                // keeps full provenance and isn't popped under Stacked Borrows by the
+                // field writes below.
+                // SAFETY: `this` is non-null (just Box::into_raw'd).
                 let named_pipe = match WindowsNamedPipeListeningContext::listen(
                     global,
                     pipe_name,
                     511,
                     ssl.as_deref(),
-                    this_ref,
+                    unsafe { NonNull::new_unchecked(this) },
                 ) {
                     Ok(np) => np,
                     Err(_) => {
@@ -220,12 +224,17 @@ impl Listener {
                         ));
                     }
                 };
-                this_ref.listener = ListenerType::NamedPipe(named_pipe);
+                // SAFETY: `this` is live and exclusively owned here. Field accesses go
+                // through the raw pointer (no whole-struct `&mut Listener`) so we don't
+                // invalidate the `NonNull<Listener>` backref stored in `named_pipe`.
+                unsafe {
+                    (*this).listener = ListenerType::NamedPipe(named_pipe);
 
-                let this_value = this_ref.to_js(global);
-                this_ref.strong_self.set(global, this_value);
-                this_ref.poll_ref.ref_(handlers.vm);
-                return Ok(this_value);
+                    let this_value = (*this).to_js(global);
+                    (*this).strong_self.set(global, this_value);
+                    (*this).poll_ref.ref_(handlers.vm);
+                    return Ok(this_value);
+                }
             }
         }
 

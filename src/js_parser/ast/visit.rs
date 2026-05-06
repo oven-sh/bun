@@ -1939,18 +1939,16 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 // TODO(port): replace with `.get(&loc).unwrap()` once `Loc: Hash` lands in
 // bun_logger (cross-crate; out of scope here).
 unsafe fn scopes_for_enum_at<'a>(
-    map: &bun_collections::ArrayHashMap<logger::Loc, &'a mut [ScopeOrder<'a>]>,
+    map: &bun_collections::ArrayHashMap<logger::Loc, core::ptr::NonNull<[ScopeOrder<'a>]>>,
     loc: logger::Loc,
 ) -> &'a mut [ScopeOrder<'a>] {
     let keys = map.keys();
     let values = map.values();
     for i in 0..keys.len() {
         if keys[i] == loc {
-            let s: &&'a mut [ScopeOrder<'a>] = &values[i];
-            // SAFETY: see fn doc.
-            return unsafe {
-                core::slice::from_raw_parts_mut(s.as_ptr() as *mut ScopeOrder<'a>, s.len())
-            };
+            // SAFETY: see fn doc — arena-owned slice valid for `'a`; the map
+            // stores raw `NonNull` so the caller becomes the sole live `&mut`.
+            return unsafe { &mut *values[i].as_ptr() };
         }
     }
     unreachable!("scopes_in_order_for_enum miss for enum stmt loc");

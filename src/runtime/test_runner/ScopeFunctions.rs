@@ -816,11 +816,9 @@ impl ScopeFunctions {
 pub fn create_unbound(global: &JSGlobalObject, mode: Mode, each: JSValue, cfg: BaseScopeCfg) -> JSValue {
     let _g = group_log::begin();
 
-    let scope_functions = Box::into_raw(Box::new(ScopeFunctions { mode, cfg, each }));
-
-    // SAFETY: scope_functions is a valid freshly-allocated *mut ScopeFunctions; codegen
-    // takes ownership and pairs with `finalize`.
-    let value = unsafe { (*scope_functions).to_js(global) };
+    // `JsClass::to_js` boxes `self` and hands the raw pointer to the C++
+    // wrapper (m_ctx); freed in `finalize`.
+    let value = ScopeFunctions { mode, cfg, each }.to_js(global);
     value.ensure_still_alive();
     // Write into the C++ m_each WriteBarrier so GC visits it. The Rust `each` field
     // lives in unmanaged memory that JSC never scans; without this the array can be

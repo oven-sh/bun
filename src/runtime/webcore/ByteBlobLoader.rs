@@ -239,8 +239,9 @@ impl ByteBlobLoader {
         let take = 16384usize.min(temporary.len().min(self.remain as usize));
         let temporary = &temporary[..take];
 
-        let byte_list = BabyList::<u8>::from_borrowed_slice_dangerous(temporary);
-        let cloned = byte_list.clone_owned();
+        // Zig: `ByteList.fromBorrowedSliceDangerous(temporary).clone(allocator)` — collapse to a
+        // single owning copy (avoids the `ManuallyDrop` borrow dance).
+        let cloned = bun_core::handle_oom(BabyList::<u8>::from_slice(temporary));
         self.offset = self.offset.saturating_add(blob::SizeType::from(cloned.len));
         self.remain = self.remain.saturating_sub(blob::SizeType::from(cloned.len));
 
@@ -253,13 +254,16 @@ impl ByteBlobLoader {
         action: streams::BufferActionTag,
     ) -> JsResult<JSValue> {
         if let Some(mut blob) = self.to_any_blob(global) {
-            return blob.to_promise(global, action);
+            return Ok(blob.to_promise(global, action)?);
         }
 
-        // TODO(port): globalThis.ERR(.BODY_ALREADY_USED, "...", .{}).reject()
-        global
-            .err(bun_jsc::ErrorCode::BODY_ALREADY_USED, "Body already used")
-            .reject()
+        // globalThis.ERR(.BODY_ALREADY_USED, "...", .{}).reject()
+        Ok(global
+            .err(
+                bun_jsc::ErrorCode::BODY_ALREADY_USED,
+                format_args!("Body already used"),
+            )
+            .reject())
     }
 
     pub fn memory_cost(&self) -> usize {

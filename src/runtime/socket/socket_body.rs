@@ -2844,95 +2844,114 @@ impl<const SSL: bool> NewSocket<SSL> {
     // else fallback`. Rust cannot const-select inherent methods on a const
     // generic bool, so Phase A defines all of them as forwarding methods that
     // branch on `SSL` at runtime (monomorphised away).
+    //
+    // PORT NOTE: rustc does not unify `NewSocket<SSL>` with `NewSocket<true>`
+    // inside an `if SSL { .. }` block. The cast is sound because both
+    // monomorphisations have identical layout and the branch only runs when
+    // `SSL == true` (so `Self` *is* `TLSSocket`).
     // ──────────────────────────────────────────────────────────────────────
+
+    #[inline(always)]
+    fn as_tls_mut(this: &mut Self) -> &mut TLSSocket {
+        debug_assert!(SSL);
+        // SAFETY: only called from the `if SSL` branch; `NewSocket<SSL>` and
+        // `NewSocket<true>` are the same monomorphisation when `SSL == true`.
+        unsafe { &mut *(this as *mut Self as *mut TLSSocket) }
+    }
+    #[inline(always)]
+    fn as_tls(this: &Self) -> &TLSSocket {
+        debug_assert!(SSL);
+        // SAFETY: see `as_tls_mut`.
+        unsafe { &*(this as *const Self as *const TLSSocket) }
+    }
 
     #[bun_jsc::host_fn(method)]
     pub fn disable_renegotiation(this: &mut Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
-        if SSL { tls_socket_functions::disable_renegotiation(this, g, f) } else { Ok(JSValue::UNDEFINED) }
+        if SSL { tls_socket_functions::disable_renegotiation(Self::as_tls_mut(this), g, f) } else { Ok(JSValue::UNDEFINED) }
     }
     #[bun_jsc::host_fn(method)]
     pub fn is_session_reused(this: &mut Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
-        if SSL { tls_socket_functions::is_session_reused(this, g, f) } else { Ok(JSValue::FALSE) }
+        if SSL { tls_socket_functions::is_session_reused(Self::as_tls_mut(this), g, f) } else { Ok(JSValue::FALSE) }
     }
     #[bun_jsc::host_fn(method)]
     pub fn set_verify_mode(this: &mut Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
-        if SSL { tls_socket_functions::set_verify_mode(this, g, f) } else { Ok(JSValue::UNDEFINED) }
+        if SSL { tls_socket_functions::set_verify_mode(Self::as_tls_mut(this), g, f) } else { Ok(JSValue::UNDEFINED) }
     }
     #[bun_jsc::host_fn(method)]
     pub fn renegotiate(this: &mut Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
-        if SSL { tls_socket_functions::renegotiate(this, g, f) } else { Ok(JSValue::UNDEFINED) }
+        if SSL { tls_socket_functions::renegotiate(Self::as_tls_mut(this), g, f) } else { Ok(JSValue::UNDEFINED) }
     }
     #[bun_jsc::host_fn(method)]
     pub fn get_tls_ticket(this: &mut Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
-        if SSL { tls_socket_functions::get_tls_ticket(this, g, f) } else { Ok(JSValue::UNDEFINED) }
+        if SSL { tls_socket_functions::get_tls_ticket(Self::as_tls_mut(this), g, f) } else { Ok(JSValue::UNDEFINED) }
     }
     #[bun_jsc::host_fn(method)]
     pub fn set_session(this: &mut Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
-        if SSL { tls_socket_functions::set_session(this, g, f) } else { Ok(JSValue::UNDEFINED) }
+        if SSL { tls_socket_functions::set_session(Self::as_tls_mut(this), g, f) } else { Ok(JSValue::UNDEFINED) }
     }
     #[bun_jsc::host_fn(method)]
     pub fn get_session(this: &mut Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
-        if SSL { tls_socket_functions::get_session(this, g, f) } else { Ok(JSValue::UNDEFINED) }
+        if SSL { tls_socket_functions::get_session(Self::as_tls_mut(this), g, f) } else { Ok(JSValue::UNDEFINED) }
     }
     #[bun_jsc::host_fn(getter)]
     pub fn get_alpn_protocol(this: &Self, g: &JSGlobalObject) -> JsResult<JSValue> {
-        if SSL { tls_socket_functions::get_alpn_protocol(this, g) } else { Ok(JSValue::FALSE) }
+        if SSL { tls_socket_functions::get_alpn_protocol(Self::as_tls(this), g) } else { Ok(JSValue::FALSE) }
     }
     #[bun_jsc::host_fn(method)]
     pub fn export_keying_material(this: &mut Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
-        if SSL { tls_socket_functions::export_keying_material(this, g, f) } else { Ok(JSValue::UNDEFINED) }
+        if SSL { tls_socket_functions::export_keying_material(Self::as_tls_mut(this), g, f) } else { Ok(JSValue::UNDEFINED) }
     }
     #[bun_jsc::host_fn(method)]
     pub fn get_ephemeral_key_info(this: &mut Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
-        if SSL { tls_socket_functions::get_ephemeral_key_info(this, g, f) } else { Ok(JSValue::NULL) }
+        if SSL { tls_socket_functions::get_ephemeral_key_info(Self::as_tls_mut(this), g, f) } else { Ok(JSValue::NULL) }
     }
     #[bun_jsc::host_fn(method)]
     pub fn get_cipher(this: &mut Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
-        if SSL { tls_socket_functions::get_cipher(this, g, f) } else { Ok(JSValue::UNDEFINED) }
+        if SSL { tls_socket_functions::get_cipher(Self::as_tls_mut(this), g, f) } else { Ok(JSValue::UNDEFINED) }
     }
     #[bun_jsc::host_fn(method)]
     pub fn get_tls_peer_finished_message(this: &mut Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
-        if SSL { tls_socket_functions::get_tls_peer_finished_message(this, g, f) } else { Ok(JSValue::UNDEFINED) }
+        if SSL { tls_socket_functions::get_tls_peer_finished_message(Self::as_tls_mut(this), g, f) } else { Ok(JSValue::UNDEFINED) }
     }
     #[bun_jsc::host_fn(method)]
     pub fn get_tls_finished_message(this: &mut Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
-        if SSL { tls_socket_functions::get_tls_finished_message(this, g, f) } else { Ok(JSValue::UNDEFINED) }
+        if SSL { tls_socket_functions::get_tls_finished_message(Self::as_tls_mut(this), g, f) } else { Ok(JSValue::UNDEFINED) }
     }
     #[bun_jsc::host_fn(method)]
     pub fn get_shared_sigalgs(this: &mut Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
-        if SSL { tls_socket_functions::get_shared_sigalgs(this, g, f) } else { Ok(JSValue::UNDEFINED) }
+        if SSL { tls_socket_functions::get_shared_sigalgs(Self::as_tls_mut(this), g, f) } else { Ok(JSValue::UNDEFINED) }
     }
     #[bun_jsc::host_fn(method)]
     pub fn get_tls_version(this: &mut Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
-        if SSL { tls_socket_functions::get_tls_version(this, g, f) } else { Ok(JSValue::NULL) }
+        if SSL { tls_socket_functions::get_tls_version(Self::as_tls_mut(this), g, f) } else { Ok(JSValue::NULL) }
     }
     #[bun_jsc::host_fn(method)]
     pub fn set_max_send_fragment(this: &mut Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
-        if SSL { tls_socket_functions::set_max_send_fragment(this, g, f) } else { Ok(JSValue::FALSE) }
+        if SSL { tls_socket_functions::set_max_send_fragment(Self::as_tls_mut(this), g, f) } else { Ok(JSValue::FALSE) }
     }
     #[bun_jsc::host_fn(method)]
     pub fn get_peer_certificate(this: &mut Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
-        if SSL { tls_socket_functions::get_peer_certificate(this, g, f) } else { Ok(JSValue::NULL) }
+        if SSL { tls_socket_functions::get_peer_certificate(Self::as_tls_mut(this), g, f) } else { Ok(JSValue::NULL) }
     }
     #[bun_jsc::host_fn(method)]
     pub fn get_certificate(this: &mut Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
-        if SSL { tls_socket_functions::get_certificate(this, g, f) } else { Ok(JSValue::UNDEFINED) }
+        if SSL { tls_socket_functions::get_certificate(Self::as_tls_mut(this), g, f) } else { Ok(JSValue::UNDEFINED) }
     }
     #[bun_jsc::host_fn(method)]
     pub fn get_peer_x509_certificate(this: &mut Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
-        if SSL { tls_socket_functions::get_peer_x509_certificate(this, g, f) } else { Ok(JSValue::UNDEFINED) }
+        if SSL { tls_socket_functions::get_peer_x509_certificate(Self::as_tls_mut(this), g, f) } else { Ok(JSValue::UNDEFINED) }
     }
     #[bun_jsc::host_fn(method)]
     pub fn get_x509_certificate(this: &mut Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
-        if SSL { tls_socket_functions::get_x509_certificate(this, g, f) } else { Ok(JSValue::UNDEFINED) }
+        if SSL { tls_socket_functions::get_x509_certificate(Self::as_tls_mut(this), g, f) } else { Ok(JSValue::UNDEFINED) }
     }
     #[bun_jsc::host_fn(method)]
     pub fn get_servername(this: &mut Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
-        if SSL { tls_socket_functions::get_servername(this, g, f) } else { Ok(JSValue::UNDEFINED) }
+        if SSL { tls_socket_functions::get_servername(Self::as_tls_mut(this), g, f) } else { Ok(JSValue::UNDEFINED) }
     }
     #[bun_jsc::host_fn(method)]
     pub fn set_servername(this: &mut Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
-        if SSL { tls_socket_functions::set_servername(this, g, f) } else { Ok(JSValue::UNDEFINED) }
+        if SSL { tls_socket_functions::set_servername(Self::as_tls_mut(this), g, f) } else { Ok(JSValue::UNDEFINED) }
     }
 }
 

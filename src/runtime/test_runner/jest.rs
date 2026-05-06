@@ -554,12 +554,20 @@ pub mod on_unhandled_rejection {
             );
             buntest.add_result(current_state_data);
             if let Err(e) = bun_test::BunTest::run(buntest_strong, global_object) {
-                global_object.report_uncaught_exception_from_error(e);
+                // TODO(blocked_on: bun_jsc::JSGlobalObject::report_uncaught_exception_from_error):
+                // the inherent method lives in the cfg-gated JSGlobalObject.rs impl.
+                let _ = e;
             }
             return;
         }
 
-        jsc_vm.run_error_handler(rejection, jsc_vm.on_unhandled_rejection_exception_list);
+        // SAFETY: `on_unhandled_rejection_exception_list` is either None or a
+        // live `NonNull<ExceptionList>` owned by the VM; reborrow as `&mut`
+        // for the duration of `run_error_handler` (single-threaded JS thread).
+        let exception_list = jsc_vm
+            .on_unhandled_rejection_exception_list
+            .map(|p| unsafe { &mut *p.as_ptr() });
+        jsc_vm.run_error_handler(rejection, exception_list);
     }
 }
 
@@ -764,10 +772,10 @@ pub fn capture_test_line_number(callframe: &CallFrame, global_this: &JSGlobalObj
 
 pub fn error_in_ci(global_object: &JSGlobalObject, message: &[u8]) -> JsResult<()> {
     if crate::cli::ci_info::is_ci() {
-        return global_object.throw(format_args!(
+        return Err(global_object.throw(format_args!(
             "{}\nTo override, set the environment variable CI=false.",
             bstr::BStr::new(message)
-        ));
+        )));
     }
     Ok(())
 }

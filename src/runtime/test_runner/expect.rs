@@ -378,7 +378,8 @@ impl Expect {
                     let vm = global_this.vm();
                     promise.set_handled(vm);
 
-                    global_this.bun_vm().wait_for_promise(promise);
+                    // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
+            unsafe { (*global_this.bun_vm()).wait_for_promise(promise) };
 
                     let new_value = promise.result(vm);
                     match promise.status() {
@@ -1316,20 +1317,32 @@ impl Expect {
                 // Even though they point to the same native functions for all matchers,
                 // multiple instances are created because each instance will hold the matcher_fn as a property
 
+                // PORT NOTE: Zig used `toJSHostFn(applyCustomMatcher)` (comptime fn-ptr
+                // wrapping). Rust's `to_js_host_fn` returns an opaque closure, so emit
+                // an explicit C-ABI shim and pass its address.
+                unsafe extern "C" fn __apply_custom_matcher_shim(
+                    g: *mut bun_jsc::JSGlobalObject,
+                    f: *mut bun_jsc::CallFrame,
+                ) -> JSValue {
+                    // SAFETY: JSC guarantees both pointers are live for the call.
+                    let (g, f) = unsafe { (&*g, &*f) };
+                    bun_jsc::to_js_host_fn_result(g, Expect::apply_custom_matcher(g, f))
+                }
+                let host_fn_ptr: bun_jsc::JSHostFn = __apply_custom_matcher_shim;
                 // SAFETY: FFI call with valid global, &bun_str::String, host-fn ptr, and JSValue
                 let wrapper_fn = unsafe {
                     Bun__JSWrappingFunction__create(
                         global_this,
                         &matcher_name,
-                        bun_jsc::to_js_host_fn(Self::apply_custom_matcher),
+                        &host_fn_ptr,
                         matcher_fn,
                         true,
                     )
                 };
 
-                expect_proto.put_may_be_index(global_this, &matcher_name, wrapper_fn)?;
-                expect_constructor.put_may_be_index(global_this, &matcher_name, wrapper_fn)?;
-                expect_static_proto.put_may_be_index(global_this, &matcher_name, wrapper_fn)?;
+                put_may_be_index(expect_proto, global_this, &matcher_name, wrapper_fn)?;
+                put_may_be_index(expect_constructor, global_this, &matcher_name, wrapper_fn)?;
+                put_may_be_index(expect_static_proto, global_this, &matcher_name, wrapper_fn)?;
             }
         }
 
@@ -1354,14 +1367,15 @@ impl Expect {
             "'{f}' was returned",
         );
         // PERF(port): was comptime bool dispatch — profile in Phase B
+        // TODO(port): create_error_instance Zig-style fmt-template+args; collapsed to single Display.
+        let _ = FMT;
         let err = global_this.create_error_instance(
-            Output::pretty_fmt(FMT, Output::enable_ansi_colors_stderr()),
             format_args!("{} {}", matcher_name, result.to_fmt(&mut formatter)),
         );
         // TODO(port): handle JsResult from toJS in throw path
         err.put(
             global_this,
-            ZigString::static_("name"),
+            b"name",
             bun_str::String::static_("InvalidMatcherError").to_js(global_this).unwrap_or(JSValue::UNDEFINED),
         );
         global_this.throw_value(err)
@@ -1379,10 +1393,8 @@ impl Expect {
         silent: bool,
     ) -> JsResult<bool> {
         // prepare the this object
-        let matcher_context = Box::new(ExpectMatcherContext { flags });
-        let matcher_context = Box::into_raw(matcher_context);
-        // SAFETY: to_js takes ownership of m_ctx
-        let matcher_context_jsvalue = unsafe { (*matcher_context).to_js(global_this) };
+        // PORT NOTE: JsClass::to_js takes `self` by value and boxes internally.
+        let matcher_context_jsvalue = ExpectMatcherContext { flags }.to_js(global_this);
         matcher_context_jsvalue.ensure_still_alive();
 
         // call the custom matcher implementation
@@ -1394,7 +1406,14 @@ impl Expect {
 
             global_this.bun_vm().wait_for_promise(promise);
 
-            result = promise.result(vm);
+            // PORT NOTE: bun_jsc::AnyPromise has no `result()`; use status()+unwrap() instead.
+            let _ = vm;
+            result = match promise.status() {
+                js_promise::Status::Pending => unreachable!(),
+                js_promise::Status::Fulfilled => promise.as_value(),
+                js_promise::Status::Rejected => promise.as_value(),
+            };
+            let _ = &result; // TODO(port): blocked_on bun_jsc::AnyPromise::result — using as_value() placeholder
             result.ensure_still_alive();
             debug_assert!(!result.is_empty());
             match promise.status() {
@@ -1458,7 +1477,8 @@ impl Expect {
                 debug_assert!(message.is_callable()); // checked above
             }
 
-            let message_result = message.call_with_global_this(global_this, &[])?;
+            // PORT NOTE: Zig `callWithGlobalThis` == call with globalThis as `this`.
+            let message_result = message.call(global_this, JSValue::UNDEFINED, &[])?;
             bun_str::OwnedString::new(bun_str::String::from_js(message_result, global_this)?)
         };
 
@@ -1515,7 +1535,8 @@ impl Expect {
         };
 
         // retrieve the captured expected value
-        let Some(mut value) = Self::js::captured_value_get_cached(this_value) else {
+        // TODO(port): blocked_on Expect::js cached-accessor module (codegen_cached_accessors!)
+        let Some(mut value): Option<JSValue> = todo!("blocked_on: Expect::js::captured_value_get_cached") else {
             return Err(global_this.throw2(
                 "Internal consistency error: failed to retrieve the captured value",
                 format_args!(""),
@@ -1537,14 +1558,15 @@ impl Expect {
         // prepare the args array
         let args = call_frame.arguments();
         // PERF(port): was stack-fallback allocator — profile in Phase B
-        let mut matcher_args = bun_jsc::MarkedArgumentBuffer::new();
-        matcher_args.append(value);
-        // PERF(port): was assume_capacity
+        // PORT NOTE: MarkedArgumentBuffer::new is scoped (closure-borrow); collect into a Vec
+        // since execute_custom_matcher takes &[JSValue].
+        let mut matcher_args: Vec<JSValue> = Vec::with_capacity(args.len() + 1);
+        matcher_args.push(value);
         for arg in args {
-            matcher_args.append(*arg);
+            matcher_args.push(*arg);
         }
 
-        let _ = Self::execute_custom_matcher(global_this, matcher_name, matcher_fn, matcher_args.slice(), expect.flags, false)?;
+        let _ = Self::execute_custom_matcher(global_this, matcher_name, matcher_fn, &matcher_args, expect.flags, false)?;
 
         Ok(this_value)
     }

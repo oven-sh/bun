@@ -526,30 +526,29 @@ impl UDPSocket {
 
         this.config = UDPSocketConfig::from_js(global_this, options, this_value)?;
 
-        let mut err: i32 = 0;
+        let mut err: c_int = 0;
 
-        let hostname_slice = this.config.hostname.to_utf8();
-        let hostname_z = bun_str::ZStr::from_bytes(hostname_slice.as_bytes());
+        let hostname_z = this.config.hostname.to_owned_slice_z();
 
-        this.socket = uws::udp::Socket::create(
+        let created = uws::udp::Socket::create(
             this.loop_,
             on_data,
             on_drain,
             on_close,
             on_recv_error,
-            &hostname_z,
+            hostname_z.as_ptr(),
             this.config.port,
             this.config.flags,
-            &mut err,
+            Some(&mut err),
             this_ptr as *mut c_void,
         );
         drop(hostname_z);
-        drop(hostname_slice);
+        this.socket = if created.is_null() { None } else { Some(created) };
 
         if this.socket.is_none() {
             this.closed = true;
             if err != 0 {
-                let code: &'static str = SystemErrno::init(err as c_int).unwrap().into();
+                let code: &'static str = SystemErrno::init(err as i64).map(Into::into).unwrap_or("UNKNOWN");
                 let sys_err = SystemError {
                     errno: err,
                     code: BunString::static_(code),
@@ -557,10 +556,14 @@ impl UDPSocket {
                         "bind {} {}",
                         code, this.config.hostname
                     )),
-                    ..Default::default()
+                    path: BunString::empty(),
+                    syscall: BunString::empty(),
+                    hostname: BunString::empty(),
+                    fd: c_int::MIN,
+                    dest: BunString::empty(),
                 };
                 let error_value = sys_err.to_error_instance(global_this);
-                error_value.put(global_this, "address", this.config.hostname.to_js(global_this)?);
+                error_value.put(global_this, b"address", this.config.hostname.to_js(global_this)?);
 
                 return Err(global_this.throw_value(error_value));
             }
@@ -569,18 +572,22 @@ impl UDPSocket {
         }
 
         if let Some(connect) = &this.config.connect {
-            let address_slice = connect.address.to_utf8();
-            let address_z = bun_str::ZStr::from_bytes(address_slice.as_bytes());
+            let address_z = connect.address.to_owned_slice_z();
             // SAFETY: socket is Some (checked above).
-            let ret = unsafe { (*this.socket.unwrap()).connect(&address_z, connect.port) };
+            let ret = unsafe { (*this.socket.unwrap()).connect(address_z.as_ptr(), connect.port as u32) };
             if ret != 0 {
-                if let Some(sys_err) = bun_sys::Result::<()>::errno_sys(ret, bun_sys::Tag::Connect) {
-                    return Err(global_this.throw_value(sys_err.err().to_js(global_this)?));
+                if let Some(sys_err) = errno_sys(ret, bun_sys::Tag::connect) {
+                    return Err(global_this.throw_value(sys_err.to_js(global_this)));
                 }
 
                 if let Some(eai_err) = c_ares::Error::init_eai(ret) {
                     return Err(global_this.throw_value(
-                        eai_err.to_js_with_syscall_and_hostname(global_this, "connect", address_slice.as_bytes())?,
+                        crate::dns_jsc::cares_jsc::error_to_js_with_syscall_and_hostname(
+                            eai_err,
+                            global_this,
+                            b"connect",
+                            address_z.as_bytes(),
+                        )?,
                     ));
                 }
             }
@@ -590,7 +597,7 @@ impl UDPSocket {
         // Disarm errdefer.
         scopeguard::ScopeGuard::into_inner(guard);
 
-        this.poll_ref.ref_(vm);
+        this.poll_ref.ref_(vm_ctx());
         Ok(bun_jsc::JSPromise::resolved_promise_value(global_this, this_value))
     }
 

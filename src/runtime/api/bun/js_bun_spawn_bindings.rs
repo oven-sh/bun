@@ -1413,7 +1413,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         // watchOrReap will handle the already exited case for us.
     }
 
-    match subprocess.process.watch_or_reap() {
+    // SAFETY: see `process_mut` doc.
+    match unsafe { process_mut(&subprocess.process) }.watch_or_reap() {
         sys::Result::Ok(_) => {
             // Once everything is set up, we can add the abort listener
             // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted
@@ -1428,7 +1429,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             }
         }
         sys::Result::Err(_) => {
-            subprocess.process.wait(true);
+            // SAFETY: see `process_mut` doc.
+            unsafe { process_mut(&subprocess.process) }.wait(true);
         }
     }
 

@@ -1666,11 +1666,9 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
         // toArrayBuffer in AnyBlob checks for non-UTF8 strings
         let value = self.get_body_value();
         let mut blob: AnyBlob = value.use_as_any_blob_allow_non_utf8_string();
-        Ok(JSPromise::wrap(
-            global_object,
-            lifetime_wrap(AnyBlob::to_array_buffer, Lifetime::Transfer),
-            (&mut blob, global_object),
-        ))
+        Ok(JSPromise::wrap(global_object, |g| {
+            blob.to_array_buffer(g, Lifetime::Transfer)
+        })?)
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
@@ -1715,11 +1713,9 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
         // toArrayBuffer in AnyBlob checks for non-UTF8 strings
         let value = self.get_body_value();
         let mut blob: AnyBlob = value.use_as_any_blob_allow_non_utf8_string();
-        Ok(JSPromise::wrap(
-            global_object,
-            lifetime_wrap(AnyBlob::to_uint8_array, Lifetime::Transfer),
-            (&mut blob, global_object),
-        ))
+        Ok(JSPromise::wrap(global_object, |g| {
+            blob.to_uint8_array(g, Lifetime::Transfer)
+        })?)
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
@@ -1759,8 +1755,10 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
         let Some(encoder) = self.get_form_data_encoding()? else {
             // TODO: catch specific errors from getFormDataEncoding
             return Ok(global_object
-                .err(jsc::ErrorCode::FORMDATA_PARSE_ERROR)
-                .message("Can't decode form data from body because of incorrect MIME type/boundary")
+                .err(
+                    jsc::ErrorCode::FORMDATA_PARSE_ERROR,
+                    format_args!("Can't decode form data from body because of incorrect MIME type/boundary"),
+                )
                 .reject());
         };
 

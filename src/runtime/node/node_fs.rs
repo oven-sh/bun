@@ -972,11 +972,16 @@ impl<R, A: FsArgument, const F: NodeFSFunctionEnum> AsyncFSTask<R, A, F> {
             core::hint::black_box(&node_fs);
         }
 
-        // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv
-        unsafe { &*this.global_object }
-            .bun_vm_concurrently()
-            .event_loop()
-            .enqueue_task_concurrent(ConcurrentTask::create_from(this));
+        // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv.
+        // `bun_vm()` returns the raw `*mut VirtualMachine`; Zig's
+        // `bunVMConcurrently` is the same pointer minus a thread-local debug
+        // assert, so derefing it off-thread is the intended semantics.
+        unsafe {
+            let vm = (*this.global_object).bun_vm();
+            (*(*vm).event_loop()).enqueue_task_concurrent(
+                ConcurrentTask::create_from(this as *mut Self),
+            );
+        }
     }
 
     pub fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
@@ -1825,7 +1830,7 @@ impl AsyncReaddirRecursiveTask {
         let task = ReaddirSubtask::new(ReaddirSubtask {
             readdir_task: self,
             basename: basename_ps,
-            task: WorkPoolTask { callback: ReaddirSubtask::call, ..Default::default() },
+            task: work_pool_task(ReaddirSubtask::call),
         });
         debug_assert!(self.subtask_count.fetch_add(1, Ordering::Relaxed) > 0);
         WorkPool::schedule(&mut Box::leak(task).task);

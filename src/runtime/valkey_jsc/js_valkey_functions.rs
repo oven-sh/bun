@@ -1742,11 +1742,11 @@ impl JSValkeyClient {
         let promise = match this.send(global, this_js, &command) {
             Ok(p) => p,
             Err(err) => {
-                return protocol::valkey_error_to_js(
+                return Ok(protocol::valkey_error_to_js(
                     global,
-                    "Failed to send UNSUBSCRIBE command",
+                    Some(b"Failed to send UNSUBSCRIBE command"),
                     err,
-                );
+                ));
             }
         };
 
@@ -1791,14 +1791,14 @@ impl JSValkeyClient {
             // In this case, the first argument is a channel string and the second
             // argument is the handler to remove.
             if !channel_or_many.is_string() {
-                return global.throw_invalid_argument_type("unsubscribe", "channel", "string");
+                return Err(global.throw_invalid_argument_type("unsubscribe", "channel", "string"));
             }
 
             let channel = channel_or_many;
             let listener_cb = frame.argument(1);
 
             if !listener_cb.is_callable() {
-                return global.throw_invalid_argument_type("unsubscribe", "listener", "function");
+                return Err(global.throw_invalid_argument_type("unsubscribe", "listener", "function"));
             }
 
             // Populate the redis_channels list with the single channel to

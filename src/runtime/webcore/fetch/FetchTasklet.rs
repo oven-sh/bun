@@ -85,7 +85,10 @@ bun_output::declare_scope!(FetchTasklet, visible);
 pub type ResumableSink = ResumableFetchSink<'static>;
 
 pub struct FetchTasklet {
-    pub sink: Option<Arc<ResumableSink>>,
+    // PORT NOTE: ResumableSink is intrusively refcounted (`ref_count: Cell<u32>` +
+    // Box::into_raw); was `Option<Arc<_>>` in Phase A — `Arc` can't be mutably
+    // borrowed for `cancel/drain`, so model as raw like Zig's `?*ResumableSink`.
+    pub sink: Option<*mut ResumableSink>,
     pub http: Option<Box<AsyncHTTP>>,
     pub result: HTTPClientResult<'static>,
     pub metadata: Option<HTTPResponseMetadata>,
@@ -101,7 +104,8 @@ pub struct FetchTasklet {
     /// response weak ref we need this to track the response JS lifetime
     pub response: jsc::Weak<'static, FetchTasklet>,
     /// native response ref if we still need it when JS is discarted
-    pub native_response: Option<Arc<Response>>,
+    // PORT NOTE: Response is intrusively refcounted; raw ptr matches Zig `?*Response`.
+    pub native_response: Option<*mut Response>,
     pub ignore_data: bool,
     /// stream strong ref if any is available
     pub readable_stream_ref: ReadableStreamStrong,
@@ -119,7 +123,10 @@ pub struct FetchTasklet {
     /// We always clone url and proxy (if informed)
     pub url_proxy_buffer: Box<[u8]>,
 
-    pub signal: Option<Arc<AbortSignal>>,
+    // PORT NOTE: WebCore::AbortSignal is C++-refcounted; was `Option<Arc<_>>`
+    // but Arc<stub_ty> can't auto-deref to the FFI methods. Model as raw ptr
+    // like Zig's `?*AbortSignal`; ref/unref via local FFI shims.
+    pub signal: Option<*mut AbortSignal>,
     pub signals: Signals,
     pub signal_store: http::signals::Store,
     pub has_schedule_callback: AtomicBool,

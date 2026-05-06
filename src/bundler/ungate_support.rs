@@ -193,12 +193,12 @@ pub mod bun_css {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// `bundle_v2.zig:PartRange`.
-#[derive(Clone, Copy, Default)]
-pub struct PartRange {
-    pub source_index: Index,
-    pub part_index_begin: u32,
-    pub part_index_end: u32,
-}
+///
+/// PORT NOTE: re-exported from `bundle_v2::__phase_a_draft` so `Chunk.rs`
+/// (`parts_in_chunk_in_order: Box<[PartRange]>`) and the `bundle_v2.rs`
+/// `compute_chunks` body that fills it agree on a single type. Once
+/// `__phase_a_draft` un-gates, this collapses to a plain local def.
+pub use crate::bundle_v2::__phase_a_draft::PartRange;
 
 /// `bundle_v2.zig:StableRef` — `packed struct(u96)`.
 #[repr(C, packed)]

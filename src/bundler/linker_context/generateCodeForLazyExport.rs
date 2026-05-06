@@ -343,7 +343,7 @@ pub fn generate_code_for_lazy_export(
                 };
                 visitor.clear_all();
                 visitor.inner_visited.set(ref_.inner_index() as usize);
-                if ref_.tag.class {
+                if ref_.tag().contains(CssRefTag::CLASS) {
                     visitor.visit_composes(css_ast, ref_, source_index);
                 }
 
@@ -371,8 +371,9 @@ pub fn generate_code_for_lazy_export(
                 exports.put(this.allocator(), key, value)?;
             }
 
-            if let StmtData::SLazyExport(slot) = &mut part.stmts[0].data {
-                **slot = Expr::init(exports, stmt.loc).data;
+            if let StmtData::SLazyExport(mut slot) = part.stmts[0].data {
+                // `StoreRef<ExprData>` is a Copy `NonNull` — write through the pointer.
+                *slot = Expr::init(exports, stmt.loc).data;
             }
         }
     }
@@ -383,8 +384,8 @@ pub fn generate_code_for_lazy_export(
     }
 
     let expr = Expr {
-        data: match &stmt.data {
-            StmtData::SLazyExport(d) => **d,
+        data: match stmt.data {
+            StmtData::SLazyExport(d) => *d,
             _ => unreachable!(),
         },
         loc: stmt.loc,

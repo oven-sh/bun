@@ -528,7 +528,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
             let repr = chunk.content.javascript_mut();
             let mut cross_chunk_prefix_stmts = BabyList::<js_ast::Stmt>::default();
 
-            crate::bundle_v2::CrossChunkImport::sorted_cross_chunk_imports(
+            CrossChunkImportD::sorted_cross_chunk_imports(
                 &mut list,
                 chunks,
                 &mut repr.imports_from_other_chunks,
@@ -536,7 +536,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
             .expect("unreachable");
             // TODO(port): borrowck — `chunks` is borrowed mutably by the outer loop and
             // immutably here; Phase B may need to pass a read-only view or index.
-            let cross_chunk_imports_input: &[CrossChunkImport] = list.as_slice();
+            let cross_chunk_imports_input: &[CrossChunkImportD] = list.as_slice();
             let mut cross_chunk_imports = core::mem::take(&mut chunk.cross_chunk_imports);
             // PORT NOTE: reshaped for borrowck — Zig copies the BabyList by value, mutates,
             // then writes back; we `take` to express the same move-out/move-in.

@@ -786,7 +786,7 @@ pub fn renegotiate(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame)
 // must live inside an inherent impl block even though the Zig source defines
 // them as free mixin functions.
 impl This {
-pub fndisable_renegotiation(this: &mut This, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub fn disable_renegotiation(this: &mut This, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::UNDEFINED) };
     // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
     unsafe { boringssl::SSL_set_renegotiate_mode(ssl_ptr, boringssl::ssl_renegotiate_never) };

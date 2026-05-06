@@ -5862,7 +5862,7 @@ pub trait FileOpener: Sized {
             match bun_sys::open(
                 path,
                 Self::OPEN_FLAGS | Self::OPENER_FLAGS,
-                node::fs::DEFAULT_PERMISSION,
+                crate::node::fs::DEFAULT_PERMISSION,
             ) {
                 bun_sys::Result::Ok(fd) => {
                     self.set_opened_fd(fd);

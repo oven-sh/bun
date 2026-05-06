@@ -264,7 +264,7 @@ where
     }
     fn on_handshake_no_ext(s: *mut us_socket_t, ok: bool, err: us_bun_verify_error_t) {
         if let Some(mut ns) = unsafe { *(*s).ext::<Option<NonNull<api::NewSocket<SSL>>>>() } {
-            swallow(unsafe { ns.as_mut() }.on_handshake(wrap::<SSL>(s), ok as i32, err));
+            swallow(unsafe { ns.as_mut() }.on_handshake(wrap::<SSL>(s), ok as i32, to_uws_verify_err(err)));
         }
     }
 }

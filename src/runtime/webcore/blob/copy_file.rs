@@ -83,7 +83,7 @@ impl<'a> CopyFile<'a> {
         todo!("blocked_on: jsc::ConcurrentPromiseTask<T>::create_on_js_thread (gated)")
     }
 
-    pub fn reject(&mut self, promise: &mut JSPromise) -> jsc::JSTerminatedResult<()> {
+    pub fn reject(&mut self, promise: &mut JSPromise) -> Result<(), jsc::JsTerminated> {
         let global_this = self.global_this;
         let mut system_error: SystemError = self
             .system_error

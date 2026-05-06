@@ -95,7 +95,7 @@ fn get_argv0(
         actual_argv0 = ZStr::from_bytes(argv0_to_use);
     } else {
         let Some(resolved) = bun_core::which(&path_buf, path_to_use, cwd, argv0_to_use) else {
-            return throw_command_not_found(global_this, argv0_to_use);
+            return Err(throw_command_not_found(global_this, argv0_to_use));
         };
         actual_argv0 = ZStr::from_bytes(resolved);
     }

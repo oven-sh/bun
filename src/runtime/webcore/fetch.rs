@@ -713,13 +713,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                             return Ok(JSValue::ZERO);
                         }
 
-                        // TODO(port): `SSLConfig::from_js` lives in a private gated
-                        // module (`socket::ssl_config::_gated_from_js`).
-                        let from_js_result: JsResult<Option<SSLConfig>> = {
-                            let _ = (&*vm, tls);
-                            todo!("blocked_on: crate::socket::ssl_config::SSLConfig::from_js (gated)")
-                        };
-                        match from_js_result {
+                        match SSLConfig::from_js(vm, global_this, tls) {
                             Err(_) => {
                                 is_error = true;
                                 return Ok(JSValue::ZERO);
@@ -757,8 +751,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             if !obj.is_empty() {
                 if let Some(socket_path) = obj.get(global_this, "unix")? {
                     if socket_path.is_string() && socket_path.get_length(ctx)? > 0 {
-                        break 'extract_unix_socket_path socket_path
-                            .to_slice_clone_with_allocator(global_this)?;
+                        // PORT NOTE: Zig `toSliceCloneWithAllocator` ≈ `to_slice_clone`.
+                        break 'extract_unix_socket_path socket_path.to_slice_clone(global_this)?;
                     }
                 }
 
@@ -857,7 +851,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         // PERF(port): was `inline for` — plain loop, profile in Phase B
         for obj in objects_to_try {
             if !obj.is_empty() {
-                match obj.get_optional_enum_fetch_redirect(global_this, "redirect") {
+                match obj.get_optional_enum::<FetchRedirect>(global_this, "redirect") {
                     Err(_) => {
                         is_error = true;
                         return Ok(JSValue::ZERO);
@@ -1036,10 +1030,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                                     {
                                         if !headers_value.is_undefined_or_null() {
                                             if let Some(fetch_hdrs) =
-                                                headers_value.as_fetch_headers()
+                                                FetchHeaders::cast(headers_value)
                                             {
-                                                // SAFETY: as_fetch_headers returns a live FetchHeaders*.
-                                                let fetch_hdrs = unsafe { &*fetch_hdrs };
+                                                // SAFETY: cast returns a live FetchHeaders*.
+                                                let fetch_hdrs = unsafe { fetch_hdrs.as_ref() };
                                                 proxy_headers = Some(Headers::from(
                                                     Some(fetch_headers_ref(fetch_hdrs)),
                                                     HeadersOptions::default(),

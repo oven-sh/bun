@@ -122,6 +122,32 @@ use crate::timer::AbortSignalTimeout;
 use bun_io::pipe_writer::PosixPipeWriter; // brings `on_poll` into scope for FileSinkPoll/StaticPipeWriterPoll/etc.
 
 // ──────────────────────────────────────────────────────────────────────────
+// Cross-crate trait glue (§Dispatch — orphan-rule placement)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `bun_install::SecurityScanSubprocess: StaticPipeWriterProcess` — the trait
+/// lives here in `bun_runtime` (where `StaticPipeWriter<P>` is defined), and
+/// `bun_install` is a lower-tier dep, so this is the only crate where the impl
+/// can legally live (orphan rule). Spec security_scanner.zig:907 `onCloseIO`.
+impl crate::api::bun_subprocess::static_pipe_writer::StaticPipeWriterProcess
+    for bun_install::SecurityScanSubprocess
+{
+    unsafe fn on_close_io(
+        _this: *mut Self,
+        _kind: crate::api::bun_subprocess::stdio::StdioKind,
+    ) {
+        // Zig: `this.json_writer = null;` — the lower-tier
+        // `SecurityScanSubprocess` placeholder has no `json_writer` slot yet
+        // (the real layout lands with the `security_scanner.rs` un-gate). The
+        // writer's own `Drop` already detaches its source, so nothing to clear
+        // on the parent side here.
+        // PORT NOTE: layering — `json_writer` field belongs to the full
+        // `bun_install::PackageManager::security_scanner::SecurityScanSubprocess`
+        // once that module is wired into `bun_install`'s tree.
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // Local shims for upstream type-erased / gated surfaces (§Dispatch glue)
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -674,19 +700,12 @@ pub unsafe fn run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
             h.on_poll(size_or_offset as isize, hup);
         }
         poll_tag::SHELL_STATIC_PIPE_WRITER => {
-            // Body: `owner_as!(StaticPipeWriterPoll<ShellSubprocess>).on_poll(size_or_offset as isize, hup)`
-            // — `crate::shell::subproc` is gated behind the private `shell_body`
-            // module and `ShellSubprocess: StaticPipeWriterProcess` is not yet
-            // implemented.
-            let _ = (size_or_offset, hup);
-            todo!("blocked_on: crate::shell::subproc::ShellSubprocess");
+            let h = owner_as!(StaticPipeWriterPoll<crate::shell::subproc::ShellSubprocess>);
+            h.on_poll(size_or_offset as isize, hup);
         }
         poll_tag::SECURITY_SCAN_STATIC_PIPE_WRITER => {
-            // Body: `owner_as!(StaticPipeWriterPoll<SecurityScanSubprocess>).on_poll(size_or_offset as isize, hup)`
-            // — `bun_install::SecurityScanSubprocess` is a placeholder stub and
-            // does not yet implement `StaticPipeWriterProcess`.
-            let _ = (size_or_offset, hup);
-            todo!("blocked_on: bun_install::SecurityScanSubprocess: StaticPipeWriterProcess");
+            let h = owner_as!(StaticPipeWriterPoll<bun_install::SecurityScanSubprocess>);
+            h.on_poll(size_or_offset as isize, hup);
         }
         poll_tag::SHELL_BUFFERED_WRITER => {
             // `bun.shell.Interpreter.IOWriter.Poll`
@@ -701,10 +720,8 @@ pub unsafe fn run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
         poll_tag::GET_ADDR_INFO_REQUEST => {
             #[cfg(target_os = "macos")]
             {
-                let _loader = owner.ptr as *mut GetAddrInfoRequest;
-                // `BackendLibInfo::on_machport_change` lives in the gated
-                // `dns_jsc::dns_body` draft.
-                todo!("blocked_on: crate::dns_jsc::get_addr_info_request::BackendLibInfo");
+                let loader = owner.ptr as *mut GetAddrInfoRequest;
+                get_addr_info_request::BackendLibInfo::on_machport_change(loader);
             }
             #[cfg(not(target_os = "macos"))]
             {
@@ -714,9 +731,8 @@ pub unsafe fn run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
         poll_tag::REQUEST => {
             #[cfg(target_os = "macos")]
             {
-                // `internal::MacAsyncDNS::on_machport_change` lives in the gated
-                // `dns_jsc::dns_body` draft.
-                todo!("blocked_on: crate::dns_jsc::internal::MacAsyncDNS");
+                let req = owner.ptr as *mut crate::dns_jsc::internal::Request;
+                crate::dns_jsc::internal::MacAsyncDNS::on_machport_change(req);
             }
             #[cfg(not(target_os = "macos"))]
             {
@@ -863,10 +879,15 @@ unsafe fn fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, vm: *mut ()
         EventLoopTimerTag::AbortSignalTimeout => {
             let container = container_of!(AbortSignalTimeout, event_loop_timer);
             // SAFETY: per fn contract; `run` may free `container`.
-            // `AbortSignalTimeout::run` lives in the gated
-            // `bun_jsc::abort_signal` Phase-A draft.
-            let _ = container;
-            todo!("blocked_on: bun_jsc::abort_signal::Timeout::run");
+            // `crate::timer::AbortSignalTimeout` is the `#[repr(C)]` mirror of
+            // `bun_jsc::abort_signal::Timeout` (same field layout); cast to the
+            // lower-tier type so the real `run` body is reachable.
+            unsafe {
+                bun_jsc::abort_signal::Timeout::run(
+                    container.cast::<bun_jsc::abort_signal::Timeout>(),
+                    &*vm,
+                );
+            }
         }
         EventLoopTimerTag::DateHeaderTimer => {
             let container = container_of!(DateHeaderTimer, event_loop_timer);
@@ -879,8 +900,9 @@ unsafe fn fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, vm: *mut ()
             unsafe { (*container).on_fire(&mut *vm, &*now) };
         }
         EventLoopTimerTag::StatWatcherScheduler => {
-            // Body: `container_of!(StatWatcherScheduler, event_loop_timer).timer_callback()`
-            todo!("blocked_on: crate::node::node_fs_stat_watcher::StatWatcherScheduler");
+            let container = container_of!(StatWatcherScheduler, event_loop_timer);
+            // SAFETY: per fn contract.
+            unsafe { (*container).timer_callback() };
         }
         EventLoopTimerTag::UpgradedDuplex => {
             let container = container_of!(UpgradedDuplex<'_>, event_loop_timer);

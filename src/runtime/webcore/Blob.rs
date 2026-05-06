@@ -649,38 +649,121 @@ impl Blob {
         global: &JSGlobalObject,
     ) -> JsTerminatedResult<()> {
         if self.needs_to_read_file() {
-            // TODO(port): inline Adapter struct mapping ReadFileResultType → ReadBytesResult.
-            self.do_read_file_internal(ctx, |c, r| {
-                H::on_read_bytes(
-                    c,
-                    match r {
-                        // `is_temporary` ⇒ `r.buf` is the ReadFile Vec's
-                        // items handed over (default allocator) — we own it.
-                        read_file::ReadFileResultType::Result(b) => ReadBytesResult::Ok(b.buf),
-                        read_file::ReadFileResultType::Err(e) => ReadBytesResult::Err(e),
-                    },
-                );
-            }, global);
+            // Adapter mapping ReadFileResultType → ReadBytesResult, type-level
+            // so it monomorphizes per `H` (Zig: local `Adapter.run`).
+            struct Adapter<H>(core::marker::PhantomData<H>);
+            impl<H: ReadBytesHandler> InternalReadFileFn<H> for Adapter<H> {
+                fn call(c: *mut H, r: read_file::ReadFileResultType) {
+                    // SAFETY: `c` is the `&mut H` round-tripped through
+                    // `*anyopaque`; caller guarantees it outlives the read.
+                    let c = unsafe { &mut *c };
+                    H::on_read_bytes(
+                        c,
+                        match r {
+                            // `is_temporary` ⇒ `r.buf` is the ReadFile Vec's
+                            // items handed over (default allocator) — we own it.
+                            // SAFETY: `b.buf` is a leaked default-allocator
+                            // `Box<[u8]>` per the `ReadFileRead.is_temporary` contract.
+                            read_file::ReadFileResultType::Result(b) => ReadBytesResult::Ok(
+                                unsafe { Box::from_raw(b.buf as *mut [u8]) }.into_vec(),
+                            ),
+                            read_file::ReadFileResultType::Err(e) => ReadBytesResult::Err(e),
+                        },
+                    );
+                }
+            }
+            self.do_read_file_internal::<H, Adapter<H>>(ctx as *mut H, global);
             return Ok(());
         }
         if self.is_s3() {
-            // TODO(port): heap-allocate a Task { ctx, blob, poll, vm } and pass
-            // its callback into S3::download / S3::download_slice. The Zig
-            // version defines a local `Task` struct with `done` and `cb` fns.
-            struct Task<'a, H> {
-                ctx: &'a mut H,
+            // Heap-allocated Task { ctx, blob, poll, vm } whose `cb` runs on
+            // the JS thread once the S3 download completes (Zig: local `Task`).
+            struct Task<H> {
+                ctx: *mut H,
                 blob: Blob, // dupe for store ref + offset/size
                 poll: bun_aio::KeepAlive,
+                #[allow(dead_code)]
                 vm: *mut VirtualMachine,
             }
-            // ... full body elided in Phase A; the dispatch matches Zig 1:1.
-            // TODO(port): implement Task::done / Task::cb and S3 download dispatch.
-            let _ = Task::<H> {
+            impl<H: ReadBytesHandler> Task<H> {
+                fn done(t: *mut Self, r: ReadBytesResult) {
+                    // SAFETY: `t` was Box::into_raw'd below; sole owner here.
+                    let mut t = unsafe { Box::from_raw(t) };
+                    t.poll.unref(vm_ctx());
+                    Blob::deinit(&mut t.blob);
+                    let c = t.ctx;
+                    drop(t);
+                    // SAFETY: `c` is the original `&mut H` raw-cast; caller
+                    // contract is that it outlives the async download.
+                    H::on_read_bytes(unsafe { &mut *c }, r);
+                }
+                fn cb(
+                    result: s3_client::S3DownloadResult<'_>,
+                    opaque_self: *mut c_void,
+                ) -> JsTerminatedResult<()> {
+                    let t = opaque_self.cast::<Self>();
+                    match result {
+                        // `body` is owned by us; take the Vec's items as-is.
+                        s3_client::S3DownloadResult::Success(response) => {
+                            Self::done(t, ReadBytesResult::Ok(response.body.list))
+                        }
+                        // S3Error has its own JS-error builder; flatten to a
+                        // SystemError so the callback has one shape to handle.
+                        s3_client::S3DownloadResult::NotFound(e)
+                        | s3_client::S3DownloadResult::Failure(e) => {
+                            // SAFETY: `t` is the Box::into_raw'd Task; valid
+                            // until `done` consumes it below.
+                            let path = unsafe { &*t }
+                                .blob
+                                .store
+                                .as_ref()
+                                .and_then(|s| s.get_path())
+                                .unwrap_or(b"");
+                            Self::done(
+                                t,
+                                ReadBytesResult::Err(bun_jsc::SystemError {
+                                    code: BunString::clone_utf8(e.code),
+                                    message: BunString::clone_utf8(e.message),
+                                    path: BunString::clone_utf8(path),
+                                    syscall: BunString::static_("fetch"),
+                                    ..Default::default()
+                                }),
+                            )
+                        }
+                    }
+                    Ok(())
+                }
+            }
+            let t = Box::into_raw(Box::new(Task::<H> {
                 ctx,
                 blob: self.dupe(),
                 poll: bun_aio::KeepAlive::default(),
                 vm: global.bun_vm(),
+            }));
+            // SAFETY: `t` was just allocated.
+            unsafe { (*t).poll.ref_(vm_ctx()) };
+            let proxy_owned = http_proxy_href(global);
+            let proxy = proxy_owned.as_deref();
+            // SAFETY: `t` is live; store/data were populated from a live S3 blob.
+            let (cred, path, payer) = unsafe {
+                let s3 = (*t).blob.store.as_ref().unwrap().data.as_s3();
+                (s3.get_credentials(), s3.path(), s3.request_payer)
             };
+            if self.offset > 0 || self.size != MAX_SIZE {
+                let len: Option<usize> = if self.size != MAX_SIZE {
+                    Some(usize::try_from(self.size).unwrap())
+                } else {
+                    None
+                };
+                s3_client::download_slice(
+                    cred, path, usize::try_from(self.offset).unwrap(), len,
+                    Task::<H>::cb, t.cast::<c_void>(), proxy, payer,
+                )?;
+            } else {
+                s3_client::download(
+                    cred, path, Task::<H>::cb, t.cast::<c_void>(), proxy, payer,
+                )?;
+            }
             return Ok(());
         }
         // In-memory or detached.

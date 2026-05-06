@@ -635,14 +635,16 @@ pub fn install_with_manager(
         let source_copy = root_package_json_entry.source;
 
         let mut resolver: () = ();
-        // TODO(port): Package::parse — see above.
         {
-            let log = manager.log.unwrap().as_ptr();
             let mgr: *mut PackageManager = manager;
+            // SAFETY: `mgr` is the sole provenance root; `parse` reborrows
+            // disjoint fields (`lockfile`, `log`) through it. No other live
+            // `&mut` to `*mgr` exists across the call.
+            let log = unsafe { (*mgr).log.unwrap().as_ptr() };
             root.parse(
-                &mut manager.lockfile,
-                mgr,
-                log,
+                unsafe { &mut (*mgr).lockfile },
+                unsafe { &mut *mgr },
+                unsafe { &mut *log },
                 &source_copy,
                 &mut resolver,
                 Features::main(),

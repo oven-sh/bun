@@ -880,9 +880,16 @@ impl<'a> TransformTask<'a> {
             let error_value: JsResult<JSValue> = 'brk: {
                 if let Some(err) = self.err {
                     if !self.log.has_any() {
-                        // TODO(port): runtime::api::BuildMessage::create — see api.rs stub.
-                        let _ = err;
-                        todo!("blocked_on: bun_runtime::api::BuildMessage::create");
+                        break 'brk bun_jsc::BuildMessage::create(
+                            self.global,
+                            logger::Msg {
+                                data: logger::Data {
+                                    text: err.name().as_bytes().to_vec().into(),
+                                    ..Default::default()
+                                },
+                                ..Default::default()
+                            },
+                        );
                     }
                 }
 
@@ -1065,10 +1072,7 @@ pub fn constructor(
     }
 
     if config.macro_map.count() > 0 {
-        // TODO(port): `MacroMap` (StringArrayHashMap<StringArrayHashMap<&[u8]>>) is not
-        // Clone — Zig copied it by-value. Once StringArrayHashMap derives Clone restore:
-        //   transpiler.options.macro_remap = config.macro_map.clone();
-        todo!("blocked_on: bun_collections::StringArrayHashMap::clone");
+        transpiler.options.macro_remap = clone_macro_map(&config.macro_map);
     }
 
     // REPL mode disables DCE to preserve expressions like `42`

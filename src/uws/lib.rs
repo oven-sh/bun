@@ -2166,29 +2166,6 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
         Ok(Self { socket: InternalSocket::Connected(s) })
     }
 
-    /// Wrap an already-open fd in a new uSockets socket on `g`, stashing
-    /// `owner` in the socket ext. Spec `NewSocketHandler.fromFd` (uws.zig).
-    pub fn from_fd<Owner>(
-        g: &mut SocketGroup,
-        kind: SocketKind,
-        fd: bun_core::Fd,
-        owner: *mut Owner,
-        is_ipc: bool,
-    ) -> Option<Self> {
-        let ext_size = core::mem::size_of::<Option<*mut Owner>>() as c_int;
-        #[cfg(windows)]
-        let raw_fd: LIBUS_SOCKET_DESCRIPTOR = fd.native() as LIBUS_SOCKET_DESCRIPTOR;
-        #[cfg(not(windows))]
-        let raw_fd: LIBUS_SOCKET_DESCRIPTOR = fd.native();
-        let s = g.from_fd(kind, None, ext_size, raw_fd, is_ipc);
-        if s.is_null() {
-            return None;
-        }
-        // SAFETY: ext storage is sized for `?*Owner` and `s` is live.
-        unsafe { *sock_c::us_socket_ext(s).cast::<Option<*mut Owner>>() = Some(owner) };
-        Some(Self { socket: InternalSocket::Connected(s) })
-    }
-
     /// `*SSL` when `SSL == true`, raw fd-as-ptr otherwise. Type-erased to
     /// `*mut c_void` here because const-generic type dispatch
     /// (`NativeSocketHandleType(is_ssl)`) is unsupported in stable Rust;

@@ -16,15 +16,22 @@ use crate::bun_bunfig::Arguments as Command;
 use crate::bun_fs::FileSystem;
 use crate::bun_progress::{Node as ProgressNode, Progress};
 use crate::lifecycle_script_runner::LifecycleScriptSubprocess;
-use crate::lockfile_real::{self as lockfile, DependencySlice, Lockfile, Tree};
+// PORT NOTE: `Lockfile` here is the in-crate `crate::lockfile::Lockfile` (the
+// struct `PackageManager.lockfile` actually carries). `lockfile_real` is still
+// imported for `tree::Id` / `Tree` / `DependencySlice` / `package::*`, all of
+// which are the same types re-exported through `crate::lockfile`.
+use crate::lockfile::Lockfile;
+use crate::lockfile_real::{self as lockfile, DependencySlice, Tree};
 use crate::lockfile_real::package::{
     self as Package, scripts::Scripts as PackageScripts, PackageListExt, PackageSliceExt,
 };
 use crate::package_install::{self, PackageInstall};
 use crate::package_manager::{self, Options, PackageManager};
 // PORT NOTE: `Options` above is the namespace module (`Options::LogLevel`); the
-// concrete `PackageManager.Options` struct lives in `package_manager_real`.
-use crate::package_manager_real::Options as PackageManagerOptions;
+// concrete `PackageManager.options` field is `crate::PackageManagerOptionsStub`
+// (the struct the in-crate `PackageManager` actually carries). `installer.options`
+// aliases `&manager.options`, so it must agree with that type.
+use crate::PackageManagerOptionsStub as PackageManagerOptions;
 use crate::package_manager_real::progress_strings::ProgressStrings;
 use crate::package_manager_task as task;
 use crate::patch_install::PatchTask;
@@ -299,7 +306,7 @@ pub struct TreeContext {
     /// being able to install it's dependencies
     pub pending_installs: Vec<DependencyInstallContext>,
 
-    pub binaries: bin::PriorityQueue<'static>,
+    pub binaries: bin::PriorityQueue,
 
     /// Number of installed dependencies. Could be successful or failure.
     pub install_count: usize,

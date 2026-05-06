@@ -281,14 +281,10 @@ impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<'a, J
         bun_jsc::mark_binding!();
         let args = callframe.arguments();
         if args.len() > 0 && args[0].is_object() {
-            // PORT NOTE: Zig `getOptionalInt(i64)` = `get` + `validateIntegerRange`.
-            // `bun_jsc::JSValue::get_optional_int` and
-            // `JSGlobalObject::validate_integer_range` are still gated upstream,
-            // so inline the lookup and fall back to plain i64 coercion.
-            // TODO(port): blocked_on: bun_jsc::JSValue::get_optional_int — restore
-            // proper `validateIntegerRange` (throws ERR_OUT_OF_RANGE) once ungated.
-            if let Some(value) = args[0].get(global_this, "highWaterMark")? {
-                this.high_water_mark = value.coerce_to_int64(global_this)?;
+            if let Some(high_water_mark) =
+                args[0].get_optional_int::<i64>(global_this, "highWaterMark")?
+            {
+                this.high_water_mark = high_water_mark;
             }
         }
 
@@ -439,19 +435,28 @@ impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<'a, J
         // SAFETY: called from JSC finalize on the mutator thread; `this` is the m_ctx ptr.
         unsafe {
             (*this).js_this.finalize();
-            // Route through the same hand-rolled refcount path as ref_/deref_
-            // so teardown (Box::from_raw on count==0) is spelled exactly once.
-            (*this).deref_();
+            Self::deref_(this);
         }
     }
 
     fn on_stream_pipe(&mut self, stream: StreamResult) {
-        // PORT NOTE: Zig copied `stream` to `stream_` and conditionally deinit'd
-        // `.owned` / `.owned_and_done` payloads in a `defer`. In Rust the
-        // StreamResult variants own their buffers and Drop handles this; the
-        // explicit `stream_needs_deinit` dance is deleted.
-        // TODO(port): verify StreamResult Drop matches Zig semantics for
-        // non-owned variants (must NOT free borrowed slices).
+        // PORT NOTE: Zig `onStreamPipe(this, stream, allocator)` frees
+        // `.owned`/`.owned_and_done` payloads with the *caller-supplied*
+        // allocator. The Rust `Pipe`/`PipeHandler` reshape drops the allocator
+        // param because every producer (`ByteStream::on_data` — the sole `Pipe`
+        // call site) allocates with `bun.default_allocator`, which is the same
+        // global mimalloc that `ByteList::clear_and_free()` frees with. The
+        // explicit `defer { switch }` becomes a `scopeguard` so the free runs
+        // on every exit (incl. after `end_pipe` may have dropped `self`).
+        let mut stream = stream;
+        let release = scopeguard::guard(&mut stream, |s| match s {
+            StreamResult::Owned(owned) | StreamResult::OwnedAndDone(owned) => {
+                owned.clear_and_free();
+            }
+            _ => {}
+        });
+        let stream = &**release;
+
         let chunk = stream.slice();
         scoped_log!(ResumableSink, "onWrite {}", chunk.len());
 
@@ -462,7 +467,7 @@ impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<'a, J
 
         if is_done {
             let err: Option<JSValue> = 'brk_err: {
-                if let StreamResult::Err(e) = &stream {
+                if let StreamResult::Err(e) = stream {
                     let (js_err, was_strong) = e.to_js_weak(self.global_this);
                     js_err.ensure_still_alive();
                     if was_strong == crate::webcore::streams::WasStrong::Strong {
@@ -499,36 +504,55 @@ impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<'a, J
 
         Self::on_end(self.context, err);
 
-        if self.js_this.is_strong() {
+        let js_is_strong = self.js_this.is_strong();
+        if js_is_strong {
             // JS owns the stream, so we need to detach the JS and let finalize handle the deref
             // this should not happen but lets handle it anyways
             self.detach_js();
-        } else {
-            // no js attached, so we can just deref
-            self.deref_();
         }
-
-        // We ref when we attach the stream so we deref when we detach the stream
-        self.deref_();
+        // Last use of `&mut self`. Derive a raw pointer for the refcount
+        // decrement(s) so no live `&mut` aliases the `Box::from_raw` teardown
+        // when the count reaches 0 (Stacked Borrows).
+        let this: *mut Self = self;
+        // SAFETY: `this` was allocated via `Box::into_raw` in `init_exact_refs`
+        // and is live until the final `deref_` below drops the count to 0.
+        unsafe {
+            if !js_is_strong {
+                // no js attached, so we can just deref
+                Self::deref_(this);
+            }
+            // We ref when we attach the stream so we deref when we detach the stream
+            Self::deref_(this);
+        }
     }
 
-    // Intrusive refcount helpers (bun.ptr.RefCount).
+    // Intrusive refcount helpers (`bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`).
     #[inline]
     pub fn ref_(&self) {
         self.ref_count.set(self.ref_count.get() + 1);
     }
+
+    /// Decrement the intrusive refcount; on 0, run `Drop` (= Zig `deinit`) and
+    /// free the `Box` allocated in [`init_exact_refs`].
+    ///
+    /// # Safety
+    /// `this` must point to a live `Self` allocated via `Box::into_raw` in
+    /// `init_exact_refs`. After this call returns, `this` may dangle — the
+    /// caller must not access it (nor any `&`/`&mut` it was derived from).
     #[inline]
-    pub fn deref_(&mut self) {
-        // TODO(port): IntrusiveRc::deref_raw — when count hits 0, run Drop and
-        // free the Box allocated in init_exact_refs.
-        let n = self.ref_count.get() - 1;
-        self.ref_count.set(n);
+    pub unsafe fn deref_(this: *mut Self) {
+        // SAFETY: caller contract — `this` is live.
+        let rc = unsafe { &(*this).ref_count };
+        // Match Zig `RefCount` debug assertion (under-deref guard).
+        debug_assert!(rc.get() > 0, "ResumableSink ref_count underflow");
+        let n = rc.get() - 1;
+        rc.set(n);
         if n == 0 {
-            // SAFETY: allocated via Box::into_raw in init_exact_refs; count==0
-            // means no other live refs. `self` is `&mut` (matching Zig's
-            // `*ThisSink`), so the derived `*mut Self` carries write provenance
-            // back to the original Box allocation — no `*const`→`*mut` cast.
-            unsafe { drop(Box::from_raw(self as *mut Self)) };
+            // SAFETY: allocated via `Box::into_raw` in `init_exact_refs`;
+            // count==0 ⇒ no other live refs. No `&mut Self` is held across
+            // this point (raw-ptr receiver), so `Box`'s `Drop` taking a fresh
+            // `&mut Self` does not alias.
+            drop(unsafe { Box::from_raw(this) });
         }
     }
 }

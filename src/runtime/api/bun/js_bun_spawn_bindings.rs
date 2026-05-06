@@ -922,10 +922,22 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     bun_output::scoped_log!(Subprocess, "spawn maxBuffer: {:?}", max_buffer);
 
     if !override_env && env_array.is_empty() {
-        // TODO(port): `DotEnv::Map::create_null_delimited_env_map` not yet on
-        // the Rust port; build the envp array directly from the loader's map.
-        todo!("blocked_on: bun_dotenv::Map::create_null_delimited_env_map");
+        // SAFETY: `transpiler.env` is the per-VM DotEnv loader (set during init,
+        // valid for VM lifetime); `.map` is its `&mut Map` slot.
+        let envmap = match unsafe { (*(*jsc_vm.transpiler.env).map).create_null_delimited_env_map() }
+        {
+            Ok(m) => m,
+            Err(_) => return Err(global_this.throw_out_of_memory()),
+        };
+        // PORT NOTE: Zig assigned `env_array.items = envp` (sentinel slice — the
+        // trailing `null` lives at `[len]`, outside `.items`). The Rust port's
+        // `as_slice()` *includes* the trailing `None`, so strip it; the common
+        // tail below re-appends one after the optional NODE_CHANNEL_* entries.
+        let entries = envmap.as_slice();
+        env_array.extend_from_slice(&entries[..entries.len().saturating_sub(1)]);
+        inherited_env_storage = Some(envmap);
     }
+    let _ = &inherited_env_storage;
 
     // PORT NOTE: Zig `inline for (0..stdio.len)` — unrolled here as a regular for; const N=3.
     for fd_index in 0..stdio.len() {
@@ -1115,11 +1127,17 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         can_block_entire_thread_to_reduce_cpu_usage_in_fast_path,
         // Only pass pty_slave_fd for newly created terminals (for setsid+TIOCSCTTY setup).
         // For existing terminals, the session is already set up - child just uses the fd as stdio.
-        // TODO(port): Terminal::get_slave_fd / get_pseudoconsole gated; pass -1 / None.
         #[cfg(unix)]
-        pty_slave_fd: -1,
+        pty_slave_fd: match terminal_info.as_ref() {
+            // SAFETY: `ti.terminal` is the live `IntrusiveRc<Terminal>` raw ptr from above.
+            Some(ti) => unsafe { terminal_impl(ti.terminal) }.get_slave_fd().native(),
+            None => -1,
+        },
         #[cfg(windows)]
-        pseudoconsole: None,
+        pseudoconsole: existing_terminal
+            .or_else(|| terminal_info.as_ref().map(|ti| ti.terminal))
+            // SAFETY: see `terminal_impl` doc; ptr is from a live wrapper / IntrusiveRc.
+            .and_then(|t| unsafe { terminal_impl(t) }.get_pseudoconsole()),
 
         #[cfg(windows)]
         windows: spawn::WindowsOptions {
@@ -1129,7 +1147,6 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         },
         ..Default::default()
     };
-    let _ = (&existing_terminal, &terminal_info);
 
     let mut spawned = match spawn::spawn_process(
         &spawn_options,
@@ -1302,9 +1319,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         if let Some(ipc_mode) = maybe_ipc_mode {
             subprocess.ipc_data = Some(IPC::SendQueue::init(
                 ipc_mode,
-                // Zig: `.{ .subprocess = subprocess }` — Rust port routes owner
-                // dispatch through a vtable supplied by bun_runtime; not yet wired.
-                todo!("blocked_on: ipc::SendQueueOwner vtable for Subprocess"),
+                subprocess_ipc_owner(subprocess_ptr),
                 IPC::SocketUnion::Uninitialized,
             ));
         }
@@ -1397,8 +1412,10 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     // For existing terminal: keep slave_fd open so terminal can be reused for more spawns
     if let Some(info) = terminal_info.take() {
         terminal_js_value = info.js_value;
-        // TODO(port): Terminal::close_slave_fd gated behind bun_terminal_body.
-        let _ = info.terminal;
+        // SAFETY: `info.terminal` is the live `IntrusiveRc<Terminal>` raw ptr
+        // populated above; spawn succeeded so the child holds its own copy of
+        // the slave fd.
+        unsafe { terminal_impl(info.terminal) }.close_slave_fd();
         subprocess.flags.insert(Subprocess::Flags::OWNS_TERMINAL);
     }
     // existing_terminal: don't close slave_fd - user manages lifecycle and can reuse
@@ -1454,9 +1471,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                 let socket = raw_socket;
                 subprocess.ipc_data = Some(IPC::SendQueue::init(
                     mode,
-                    // Zig: `.{ .subprocess = subprocess }` — Rust port routes owner
-                    // dispatch through a vtable supplied by bun_runtime; not yet wired.
-                    todo!("blocked_on: ipc::SendQueueOwner vtable for Subprocess"),
+                    subprocess_ipc_owner(subprocess_ptr),
                     IPC::SocketUnion::Uninitialized,
                 ));
                 posix_ipc_info = Some(IPC::Socket::from(socket));
@@ -1497,19 +1512,32 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     }
 
     if matches!(subprocess.stdin, Writable::Pipe(_)) && promise_for_stream == JSValue::ZERO {
-        // TODO(port): borrowck — Zig passes `&subprocess.stdin` while holding
-        // `.pipe`. `streams::Signal::init` requires `T: SignalHandler`; that
-        // impl for `Writable<'_>` is gated. Leave the FileSink's signal unset
-        // until the trait impl lands.
-        // todo!("blocked_on: webcore::streams::SignalHandler for Writable<'_>")
+        // PORT NOTE: Zig writes `subprocess.stdin.pipe.signal =
+        // Signal.init(&subprocess.stdin)` — a self-referential store. Capture
+        // the field address via `addr_of_mut!` (no intermediate `&mut` is
+        // formed) and route through `init_with_type` so borrowck never sees the
+        // alias; the vtable only dereferences this pointer later on the JS
+        // thread, after the local `subprocess` borrow has ended.
+        let stdin_ptr: *mut Writable<'_> = core::ptr::addr_of_mut!(subprocess.stdin);
+        // SAFETY: `stdin_ptr` is the stable boxed address of `subprocess.stdin`
+        // (Subprocess was `Box::into_raw`'d above) and was just confirmed to be
+        // the `Pipe` variant; the signal's stored back-pointer remains valid for
+        // the lifetime of the FileSink, which is owned by this same field.
+        unsafe {
+            if let Writable::Pipe(pipe) = &mut *stdin_ptr {
+                (*pipe.as_ptr()).signal =
+                    WebCore::streams::Signal::init_with_type::<Writable<'_>>(stdin_ptr);
+            }
+        }
     }
 
     let out = if !IS_SYNC {
-        // SAFETY: `__create` (JsClass::to_js) takes ownership of a *new* Box; we
-        // already boxed via `Box::into_raw` above. Route through the raw ptr
-        // path instead so the existing allocation is wrapped (Zig's
-        // `subprocess.toJS(globalThis)` did not re-allocate).
-        todo!("blocked_on: bun_jsc::JsClass::to_js_ptr for pre-boxed Subprocess")
+        // SAFETY: `subprocess_ptr` came from `Box::into_raw` above and has not
+        // yet been wrapped; ownership transfers to the C++ JS cell (released via
+        // `SubprocessClass__finalize`). Zig's `subprocess.toJS(globalThis)` did
+        // not re-allocate, so use the raw-ptr entrypoint instead of the
+        // by-value `JsClass::to_js` (which would re-box).
+        unsafe { SubprocessT::to_js_from_ptr(subprocess_ptr, global_this) }
     } else {
         JSValue::ZERO
     };

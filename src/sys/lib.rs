@@ -1815,6 +1815,47 @@ mod posix_impl {
         check!(unsafe { libc::munmap(ptr.cast(), len) }, Tag::munmap); Ok(())
     }
 
+    /// `bun.sys.mmapFile` — open `path` RDWR, fstat for size, mmap [offset, offset+len).
+    /// Returns a process-lifetime `&'static mut [u8]`; caller is responsible for
+    /// `munmap`. Mirrors Zig `mmapFile` (sys.zig).
+    pub fn mmap_file(
+        path: &ZStr,
+        flags: libc::c_int,
+        wanted_size: Option<usize>,
+        offset: usize,
+    ) -> Maybe<&'static mut [u8]> {
+        let fd = match open(path, O::RDWR, 0) {
+            Ok(fd) => fd,
+            Err(err) => return Err(err),
+        };
+        // close fd regardless of mmap outcome (the mapping outlives the fd).
+        let _close = scopeguard::guard((), |_| { let _ = fd.close(); });
+
+        let stat_size = match fstat(fd) {
+            Ok(result) => usize::try_from(result.st_size).unwrap_or(0),
+            Err(err) => return Err(err),
+        };
+        let mut size = stat_size.saturating_sub(offset);
+        if let Some(size_) = wanted_size {
+            size = size.min(size_);
+        }
+
+        match mmap(
+            core::ptr::null_mut(),
+            size,
+            libc::PROT_READ | libc::PROT_WRITE,
+            flags,
+            fd,
+            offset as i64,
+        ) {
+            Ok(ptr) => {
+                // SAFETY: mmap returned a valid mapping of `size` bytes.
+                Ok(unsafe { core::slice::from_raw_parts_mut(ptr, size) })
+            }
+            Err(err) => Err(err),
+        }
+    }
+
     // ── memfd (Linux only) — sys.zig:3237-3296 ──
     /// `bun.sys.MemfdFlags` (Zig: `enum(u32)`).
     #[cfg(target_os = "linux")]
@@ -4776,6 +4817,40 @@ impl Dir {
     {
         mkdir_recursive_at(self.fd, sub_path)?;
         open_dir_at(self.fd, sub_path).map(Dir::from_fd).map_err(Into::into)
+    }
+    /// `std.fs.Dir.makeDir` — single `mkdirat` (not recursive), mode `0o755`.
+    pub fn make_dir(&self, sub_path: &[u8]) -> core::result::Result<(), bun_core::Error> {
+        let mut buf = bun_paths::PathBuffer::default();
+        let len = sub_path.len().min(buf.0.len() - 1);
+        buf.0[..len].copy_from_slice(&sub_path[..len]);
+        buf.0[len] = 0;
+        // SAFETY: NUL-terminated above.
+        let z = unsafe { ZStr::from_raw(buf.0.as_ptr(), len) };
+        mkdirat(self.fd, z, 0o755).map_err(Into::into)
+    }
+    /// `std.fs.Dir.symLink` — `symlinkat(target, self.fd, sub_path)`. The
+    /// `is_directory` flag is a no-op on POSIX (only Windows distinguishes
+    /// directory junctions); callers on Windows should route via
+    /// `sys_uv::symlink_uv` with `UV_FS_SYMLINK_JUNCTION` instead.
+    #[cfg(not(windows))]
+    pub fn sym_link(
+        &self,
+        target: &[u8],
+        sub_path: &[u8],
+        _is_directory: bool,
+    ) -> core::result::Result<(), bun_core::Error> {
+        let mut tbuf = bun_paths::PathBuffer::default();
+        let tlen = target.len().min(tbuf.0.len() - 1);
+        tbuf.0[..tlen].copy_from_slice(&target[..tlen]);
+        tbuf.0[tlen] = 0;
+        let mut pbuf = bun_paths::PathBuffer::default();
+        let plen = sub_path.len().min(pbuf.0.len() - 1);
+        pbuf.0[..plen].copy_from_slice(&sub_path[..plen]);
+        pbuf.0[plen] = 0;
+        // SAFETY: both NUL-terminated above.
+        let tz = unsafe { ZStr::from_raw(tbuf.0.as_ptr(), tlen) };
+        let pz = unsafe { ZStr::from_raw(pbuf.0.as_ptr(), plen) };
+        symlinkat(tz, self.fd, pz).map_err(Into::into)
     }
     /// `std.fs.Dir.deleteTree` — recursive `rm -rf`. Port stub: routes via
     /// `walker_skippable` once that lands; for now best-effort `unlinkat`.

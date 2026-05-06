@@ -1623,52 +1623,34 @@ where
         }
     }
 
-    // TODO(b2-blocked): body depends on `webcore::streams::HTTPServerWritable`
-    // (ResponseStream / ResponseStreamJSSink), which is still aliased to c_void
-    // because the streams.rs scope name-clash hasn't been resolved. Full Phase-A
-    // body preserved in `_gated_do_render_stream` below.
+    /// C-ABI thunk for `HTTPServerWritable::on_first_write` (`fn(?*anyopaque)`).
+    fn handle_first_stream_write_thunk(ctx: Option<*mut c_void>) {
+        let Some(ctx) = ctx else { return };
+        // SAFETY: ctx is the *mut Self stashed in `sink.ctx` by do_render_stream;
+        // the sink only fires this once before any concurrent borrow of `self`.
+        Self::handle_first_stream_write(unsafe { &mut *(ctx as *mut Self) });
+    }
+
+    /// Tear down a heap `ResponseStreamJSSink` allocated by `do_render_stream`.
+    /// Mirrors Zig `response_stream.detach(); response_stream.sink.destroy()` —
+    /// JSSink<T> is `repr(transparent)` so the inner-ptr free matches the
+    /// outer allocation.
+    fn destroy_sink(ptr: NonNull<ResponseStreamJSSink<SSL_ENABLED, HTTP3>>) {
+        // SAFETY: `ptr` was `Box::into_raw`'d in do_render_stream and is being
+        // consumed exactly once here. `JSSink<T>` is repr(transparent), so the
+        // inner `HTTPServerWritable` shares the allocation Layout.
+        ResponseStream::<SSL_ENABLED, HTTP3>::destroy(
+            ptr.as_ptr() as *mut ResponseStream<SSL_ENABLED, HTTP3>,
+        );
+    }
+
     fn do_render_stream(pair: *mut StreamPair<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, HTTP3>) {
         ctx_log!("doRenderStream");
         // SAFETY: pair is a stack local threaded through cork user-data.
         let pair = unsafe { &mut *pair };
-        let this = &mut *pair.this;
-        debug_assert!(this.server.is_some());
-        // SAFETY: BACKREF
-        let global_this = unsafe { (*this.server.unwrap()).global_this() };
-        if this.is_aborted_or_ended() {
-            pair.stream.cancel(global_this);
-            this.response_body_readable_stream_ref.deinit();
-            return;
-        }
-        // Until the writable-stream sink type is real we cannot pipe; cancel
-        // the readable. We still honor the Response's status/headers via
-        // render_metadata() + end_stream() rather than substituting a 204
-        // (renderMissing) — see PORTING.md §Forbidden re: silent behavioural
-        // stubs. The body itself is dropped; full piping is preserved gated
-        // in `_gated_do_render_stream` below.
-        pair.stream.cancel(global_this);
-        this.response_body_readable_stream_ref.deinit();
-        if !this.flags.has_written_status() {
-            this.render_metadata();
-        }
-        this.end_stream(this.should_close_connection());
-    }
-
-    
-    #[allow(unreachable_code, unused)]
-    fn _gated_do_render_stream(pair: *mut StreamPair<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, HTTP3>) {
-        // The body below depends on `webcore::streams::HTTPServerWritable` /
-        // `ResponseStreamJSSink`, which are still aliased to c_void (see the
-        // type aliases at the top of this file). Full Phase-A body retained
-        // verbatim in git history; restore once the streams scope name-clash
-        // is resolved.
-        let _ = pair;
-        todo!("blocked_on: webcore::streams::HTTPServerWritable / ResponseStreamJSSink");
-        /*
-        ctx_log!("doRenderStream");
-        // SAFETY: pair is a stack local threaded through cork user-data.
-        let pair = unsafe { &mut *pair };
-        let this = &mut *pair.this;
+        // PORT NOTE: reshaped for borrowck — split the two fields up front so
+        // `this` and `stream` are independent borrows of `*pair`.
+        let this: &mut Self = &mut *pair.this;
         let stream = &mut pair.stream;
         debug_assert!(this.server.is_some());
         // SAFETY: BACKREF
@@ -1683,31 +1665,39 @@ where
 
         stream.value.ensure_still_alive();
 
-        let mut response_stream = Box::new(ResponseStreamJSSink::<SSL_ENABLED, HTTP3> {
-            sink: ResponseStream::<SSL_ENABLED, HTTP3>::Sink {
-                res: resp,
+        // `HTTPServerWritable::res` stores the type-erased uws response handle;
+        // `any_res()` reconstructs the variant from the const generics.
+        let raw_res: *mut c_void = match resp {
+            uws::AnyResponse::SSL(p) => p as *mut c_void,
+            uws::AnyResponse::TCP(p) => p as *mut c_void,
+            uws::AnyResponse::H3(p) => p as *mut c_void,
+        };
+
+        let response_stream_box = Box::new(ResponseStreamJSSink::<SSL_ENABLED, HTTP3> {
+            sink: ResponseStream::<SSL_ENABLED, HTTP3> {
+                res: Some(raw_res),
                 buffer: ByteList::default(),
-                on_first_write: Some(Self::handle_first_stream_write as *const _),
-                ctx: this as *mut Self as *mut c_void,
-                global_this,
+                on_first_write: Some(Self::handle_first_stream_write_thunk),
+                ctx: Some(this as *mut Self as *mut c_void),
+                global_this: global_this as *const _,
                 ..Default::default()
             },
         });
-        let signal = &mut response_stream.sink.signal;
-        // PORT NOTE: reshaped for borrowck — keep raw ptr to the boxed sink so we can
-        // move the Box into self.sink and still mutate through it.
-        let response_stream_ptr: *mut ResponseStreamJSSink<SSL_ENABLED, HTTP3> =
-            &mut *response_stream;
-        this.sink = Some(response_stream);
-        // SAFETY: response_stream_ptr is valid; Box is now owned by self.sink
-        let response_stream = unsafe { &mut *response_stream_ptr };
+        // PORT NOTE: reshaped for borrowck — own via raw ptr so `this.sink` and the
+        // local `response_stream` view can coexist with `&mut *this` calls below.
+        let response_stream_ptr =
+            unsafe { NonNull::new_unchecked(Box::into_raw(response_stream_box)) };
+        this.sink = Some(response_stream_ptr);
+        // SAFETY: just allocated; sole live mutable view (this.sink only stores the ptr).
+        let response_stream = unsafe { &mut *response_stream_ptr.as_ptr() };
 
-        *signal = ResponseStream::<SSL_ENABLED, HTTP3>::JSSink::SinkSignal::init(JSValue::ZERO);
+        response_stream.sink.signal =
+            crate::webcore::sink::SinkSignal::<ResponseStream<SSL_ENABLED, HTTP3>>::init(JSValue::ZERO);
 
         // explicitly set it to a dead pointer
         // we use this memory address to disable signals being sent
-        signal.clear();
-        debug_assert!(signal.is_dead());
+        response_stream.sink.signal.clear();
+        debug_assert!(response_stream.sink.signal.is_dead());
         // we need to render metadata before assignToStream because the stream can call res.end
         // and this would auto write an 200 status
         if !this.flags.has_written_status() {
@@ -1715,40 +1705,49 @@ where
         }
 
         // We are already corked!
-        let assignment_result: JSValue = ResponseStream::<SSL_ENABLED, HTTP3>::JSSink::assign_to_stream(
-            global_this,
-            stream.value,
-            response_stream,
-            &mut signal.ptr as *mut _ as *mut *mut c_void,
-        );
+        // `Option<NonNull<c_void>>` is layout-compatible with `*mut c_void` (niche).
+        let signal_ptr_slot = &mut response_stream.sink.signal.ptr as *mut Option<NonNull<c_void>>
+            as *mut *mut c_void;
+        let assignment_result: JSValue =
+            ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::assign_to_stream(
+                global_this,
+                stream.value,
+                &mut response_stream.sink,
+                signal_ptr_slot,
+            );
 
         assignment_result.ensure_still_alive();
 
         // assert that it was updated
-        debug_assert!(!signal.is_dead());
+        debug_assert!(!response_stream.sink.signal.is_dead());
 
         #[cfg(debug_assertions)]
-        {
-            // SAFETY: FFI handle
-            if unsafe { resp.has_responded() } {
-                stream_log!("responded");
-            }
+        if resp.has_responded() {
+            stream_log!("responded");
         }
 
-        this.flags.set_aborted(this.flags.aborted() || response_stream.sink.aborted);
+        let aborted = this.flags.aborted() || response_stream.sink.aborted;
+        this.flags.set_aborted(aborted);
 
         if let Some(err_value) = assignment_result.to_error() {
             stream_log!("returned an error");
-            response_stream.detach(global_this);
-            this.sink = None; // sink.destroy() — Box drops
+            ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
+                &mut response_stream.sink.signal,
+                global_this,
+            );
+            this.sink = None;
+            Self::destroy_sink(response_stream_ptr);
             return this.handle_reject(err_value);
         }
 
-        // SAFETY: FFI handle
-        if unsafe { resp.has_responded() } {
+        if resp.has_responded() {
             stream_log!("done");
-            response_stream.detach(global_this);
-            this.sink = None; // sink.destroy() — Box drops
+            ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
+                &mut response_stream.sink.signal,
+                global_this,
+            );
+            this.sink = None;
+            Self::destroy_sink(response_stream_ptr);
             stream.done(global_this);
             this.response_body_readable_stream_ref.deinit();
             this.end_stream(this.should_close_connection());
@@ -1765,7 +1764,8 @@ where
         let mut effective_result = assignment_result;
         if effective_result.is_empty_or_undefined_or_null() {
             if let Some(flush) = response_stream.sink.pending_flush {
-                effective_result = flush.to_js();
+                // SAFETY: pending_flush is a GC-rooted *JSPromise set by the sink.
+                effective_result = unsafe { (*flush).to_js() };
             }
         }
 
@@ -1781,7 +1781,7 @@ where
                         stream_log!("promise still Pending");
                         if !this.flags.has_written_status() {
                             response_stream.sink.on_first_write = None;
-                            response_stream.sink.ctx = core::ptr::null_mut();
+                            response_stream.sink.ctx = None;
                             this.render_metadata();
                         }
 
@@ -1789,12 +1789,12 @@ where
                         let body_value = this.response_weakref.get().unwrap().get_body_value();
                         *body_value = Body::Value::Locked(Body::PendingValue {
                             readable: readable_stream::Strong::init(*stream, global_this),
-                            global: global_this,
+                            global: global_this as *const _,
                             ..Default::default()
                         });
                         this.ref_();
                         let cell = NativePromiseContext::create(global_this, this);
-                        let _ = effective_result.then_with_value(
+                        effective_result.then_with_value(
                             global_this,
                             cell,
                             Self::on_resolve_stream,
@@ -1804,52 +1804,58 @@ where
                     }
                     jsc::js_promise::Status::Fulfilled => {
                         stream_log!("promise Fulfilled");
-                        let mut response_body_readable_stream_ref =
+                        let mut readable_ref =
                             core::mem::take(&mut this.response_body_readable_stream_ref);
-                        let _guard = scopeguard::guard((), |_| {
-                            stream.done(global_this);
-                            response_body_readable_stream_ref.deinit();
-                        });
-
+                        // PORT NOTE: reshaped for borrowck — Zig `defer` runs
+                        // after handle_resolve_stream; emulate by running the
+                        // body first then the deferred cleanup.
                         this.handle_resolve_stream();
+                        stream.done(global_this);
+                        readable_ref.deinit();
                     }
                     jsc::js_promise::Status::Rejected => {
                         stream_log!("promise Rejected");
-                        let mut response_body_readable_stream_ref =
+                        let mut readable_ref =
                             core::mem::take(&mut this.response_body_readable_stream_ref);
-                        let _guard = scopeguard::guard((), |_| {
-                            stream.cancel(global_this);
-                            response_body_readable_stream_ref.deinit();
-                        });
                         this.handle_reject_stream(global_this, promise.result(global_this.vm()));
+                        stream.cancel(global_this);
+                        readable_ref.deinit();
                     }
                 }
                 return;
             } else {
                 // if is not a promise we treat it as Error
                 stream_log!("returned an error");
-                response_stream.detach(global_this);
-                this.sink = None; // sink.destroy() — Box drops
+                ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
+                    &mut response_stream.sink.signal,
+                    global_this,
+                );
+                this.sink = None;
+                Self::destroy_sink(response_stream_ptr);
                 return this.handle_reject(effective_result);
             }
         }
 
         if this.is_aborted_or_ended() {
-            response_stream.detach(global_this);
+            ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
+                &mut response_stream.sink.signal,
+                global_this,
+            );
             stream.cancel(global_this);
-            let _guard =
-                scopeguard::guard((), |_| this.response_body_readable_stream_ref.deinit());
+            let mut readable_ref =
+                core::mem::take(&mut this.response_body_readable_stream_ref);
 
             response_stream.sink.mark_done();
             response_stream.sink.on_first_write = None;
 
             response_stream.sink.finalize();
-            this.sink = None; // sink.destroy() — Box drops
+            this.sink = None;
+            Self::destroy_sink(response_stream_ptr);
+            readable_ref.deinit();
             return;
         }
-        let mut response_body_readable_stream_ref =
+        let mut readable_ref =
             core::mem::take(&mut this.response_body_readable_stream_ref);
-        let _guard = scopeguard::guard((), |_| response_body_readable_stream_ref.deinit());
 
         let is_in_progress = response_stream.sink.has_backpressure
             || !(response_stream.sink.wrote == 0 && response_stream.sink.buffer.len == 0);
@@ -1863,11 +1869,16 @@ where
                 {
                     stream_log!("is not locked");
                     response_stream.sink.on_first_write = None;
-                    response_stream.sink.ctx = core::ptr::null_mut();
-                    response_stream.detach(global_this);
+                    response_stream.sink.ctx = None;
+                    ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
+                        &mut response_stream.sink.signal,
+                        global_this,
+                    );
                     response_stream.sink.mark_done();
                     response_stream.sink.finalize();
-                    this.sink = None; // sink.destroy() — Box drops
+                    this.sink = None;
+                    Self::destroy_sink(response_stream_ptr);
+                    readable_ref.deinit();
                     this.render_missing();
                     return;
                 }
@@ -1876,14 +1887,18 @@ where
 
         stream_log!("is in progress, but did not return a Promise. Finalizing request context");
         response_stream.sink.on_first_write = None;
-        response_stream.sink.ctx = core::ptr::null_mut();
-        response_stream.detach(global_this);
+        response_stream.sink.ctx = None;
+        ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
+            &mut response_stream.sink.signal,
+            global_this,
+        );
         stream.cancel(global_this);
         response_stream.sink.mark_done();
         response_stream.sink.finalize();
-        this.sink = None; // sink.destroy() — Box drops
+        this.sink = None;
+        Self::destroy_sink(response_stream_ptr);
+        readable_ref.deinit();
         this.render_missing();
-        */
     }
 
     pub fn did_upgrade_web_socket(&self) -> bool {

@@ -7,17 +7,6 @@ edition.workspace = true
 path = "lib.rs"
 
 [dependencies]
-parking_lot.workspace = true
-strum.workspace = true
-phf.workspace = true
-bstr.workspace = true
-scopeguard.workspace = true
-const_format.workspace = true
-enum-map.workspace = true
-enumset.workspace = true
-libc.workspace = true
-bitflags.workspace = true
-# TODO(b2-blocked): bun_jsc dependency disabled — crate has 18 compile errors; re-enable once green.
-# bun_jsc.workspace = true
+bun_jsc.workspace = true
 bun_string.workspace = true
 bun_sys.workspace = true

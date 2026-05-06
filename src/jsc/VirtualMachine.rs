@@ -202,8 +202,7 @@ pub struct VirtualMachine {
     pub active_tasks: usize,
 
     pub rare_data: Option<Box<RareData>>,
-    // TODO(b2-cycle): `RareData::ProxyEnvStorage` — rare_data.rs gated.
-    pub proxy_env_storage: (),
+    pub proxy_env_storage: crate::rare_data::ProxyEnvStorage,
     pub is_us_loop_entered: bool,
     pub pending_internal_promise: Option<*mut JSInternalPromise>,
     pub pending_internal_promise_is_protected: bool,

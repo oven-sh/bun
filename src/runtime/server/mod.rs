@@ -210,14 +210,16 @@ impl AnyRoute {
 
 // ─── ServePlugins ────────────────────────────────────────────────────────────
 pub struct ServePlugins {
-    pub plugins: Box<[Box<[u8]>]>,
     pub state: ServePluginsState,
     // TODO(port): `RefCount` field dropped — owned via `Rc<ServePlugins>` per
     // §Pointers Rc/Arc default. Revisit if FFI needs intrusive ref/deref.
 }
 
 pub enum ServePluginsState {
-    Unqueued,
+    /// Spec server.zig:316 — `.unqueued: []const []const u8`. The plugin path
+    /// list is the variant payload; transitioning to `Pending`/`Loaded`
+    /// consumes it (no parallel `plugins` field).
+    Unqueued(Box<[Box<[u8]>]>),
     // TODO(b2-blocked): `Pending(Vec<ServePluginsCallback>)` once JSBundler is real.
     Pending,
     Loaded(jsc::JSBundler),
@@ -911,61 +913,79 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             unsafe { &mut *this }.set_using_custom_expect_handler(true);
         }
 
-        // PORT NOTE: scope a single `&mut *this` for the address match. The
-        // listen_* trampolines re-derive `&mut *this` synchronously inside the
-        // C callback, so `self_` (and anything borrowed from it) must not be
-        // used after `listen_with_config` / `listen_on_unix_socket` returns —
-        // every read happens before the call, and the binding is dropped at the
-        // end of this block before the post-listen `has_exception()` check.
-        {
-        let self_ = unsafe { &mut *this };
-        match &self_.config.address {
-            server_config::Address::Tcp { port, hostname } => {
-                let mut host: *const c_char = core::ptr::null();
-                let mut host_buff = [0u8; 1025];
-
-                if let Some(existing) = hostname.as_deref() {
-                    let bytes = existing.to_bytes();
-                    if bytes.len() > 2 && bytes[0] == b'[' {
-                        // strip "[" and "]" from IPv6 literal
-                        let inner = &bytes[1..bytes.len() - 1];
-                        host_buff[..inner.len()].copy_from_slice(inner);
-                        host_buff[inner.len()] = 0;
-                        host = host_buff.as_ptr() as *const c_char;
-                    } else {
-                        host = existing.as_ptr();
+        // PORT NOTE: the listen_* trampolines re-derive `&mut *this` synchronously
+        // inside the C callback (writing `self.listener` / `self.h3_listener`).
+        // Under Stacked Borrows, holding any `&*this` / `&mut *this` across a
+        // listen call would have its tag popped by that re-derive and become UB
+        // on the next access. So: hoist every config read into a local via a
+        // short-lived `&*this` BEFORE the call, drop the borrow, call listen,
+        // then re-derive fresh for each post-listen field access.
+        let mut host_buff = [0u8; 1025];
+        // Extract (discriminant, raw payload) and drop the `&*this` borrow at `;`.
+        // The raw pointers reference `config.address`'s CString backing storage,
+        // which the trampolines never touch (they only write `listener`/
+        // `h3_listener`), so the bytes remain valid through the listen calls.
+        enum Addr { Tcp { port: u16, host: *const c_char }, Unix { ptr: *const u8, len: usize } }
+        let (addr, h1, options) = {
+            let cfg = unsafe { &(*this).config };
+            let addr = match &cfg.address {
+                server_config::Address::Tcp { port, hostname } => {
+                    let mut host: *const c_char = core::ptr::null();
+                    if let Some(existing) = hostname.as_deref() {
+                        let bytes = existing.to_bytes();
+                        if bytes.len() > 2 && bytes[0] == b'[' {
+                            // strip "[" and "]" from IPv6 literal
+                            let inner = &bytes[1..bytes.len() - 1];
+                            host_buff[..inner.len()].copy_from_slice(inner);
+                            host_buff[inner.len()] = 0;
+                            host = host_buff.as_ptr() as *const c_char;
+                        } else {
+                            host = existing.as_ptr();
+                        }
                     }
+                    Addr::Tcp { port: *port, host }
                 }
+                server_config::Address::Unix(unix) => Addr::Unix {
+                    ptr: unix.as_ptr().cast(),
+                    len: unix.as_bytes().len(),
+                },
+            };
+            (addr, cfg.h1, cfg.get_usockets_options())
+        };
 
-                if self_.config.h1 {
-                    // SAFETY: app is a live uws handle owned by this server.
+        match addr {
+            Addr::Tcp { port, host } => {
+                if h1 {
+                    // SAFETY: app is a live uws handle owned by this server. No
+                    // `&*this` is live across this call; the trampoline's
+                    // `&mut *this` is the sole borrow while it runs.
                     unsafe {
                         (*app).listen_with_config(
                             Some(trampoline::on_listen::<SSL, DEBUG>),
                             this as *mut c_void,
                             uws_app_c::uws_app_listen_config_t {
-                                port: *port as c_int,
+                                port: port as c_int,
                                 host,
-                                options: self_.config.get_usockets_options(),
+                                options,
                             },
                         );
                     }
                 }
 
                 if Self::HAS_H3 {
-                    if let Some(h3_app) = self_.h3_app {
+                    // Re-derive: `listener` was just written by `on_listen`.
+                    if let Some(h3_app) = unsafe { (*this).h3_app } {
                         // Same UDP port as the TCP listener so Alt-Svc works.
-                        // PORT NOTE: `listener` was set synchronously by
-                        // `on_listen` inside the h1 `listen_with_config` above;
-                        // see the scope-level PORT NOTE re: `self_` re-derive.
-                        let h3_port: u16 = match self_.listener {
+                        let h3_port: u16 = match unsafe { (*this).listener } {
                             // SAFETY: ls is a live uws ListenSocket FFI handle
                             // (just set by on_listen).
                             Some(ls) => (unsafe { (*ls).get_local_port() }) as u16,
-                            None => *port,
+                            None => port,
                         };
-                        let options = self_.config.get_usockets_options();
-                        // SAFETY: h3_app is a live H3::App handle owned by this server.
+                        // SAFETY: h3_app is a live H3::App handle owned by this
+                        // server. No `&*this` is live across this call; the h3
+                        // trampoline's `&mut *this` is the sole borrow while it
+                        // runs (the closure is capture-less).
                         unsafe { &mut *h3_app }.listen_with_config(
                             this,
                             |s: &mut Self, ls: Option<&mut uws_sys::h3::ListenSocket>| {
@@ -973,47 +993,47 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             },
                             uws_sys::h3::ListenConfig { port: h3_port, host, options },
                         );
-                        if self_.h3_listener.is_none() && !global.has_exception() {
+                        // Re-derive: `h3_listener` was just written by `on_h3_listen`.
+                        if unsafe { (*this).h3_listener }.is_none() && !global.has_exception() {
                             let _ = global.throw(format_args!(
                                 "Failed to listen on UDP port {h3_port} for HTTP/3"
                             ));
                             // post-match `has_exception()` check below handles
                             // deinit + return ZERO.
                         }
-                        // TODO(b2-blocked): if !self_.config.h1 { vm.event_loop_handle = AsyncLoop::get() }
+                        // TODO(b2-blocked): if !h1 { vm.event_loop_handle = AsyncLoop::get() }
                         // — bun_jsc::VirtualMachine.event_loop_handle setter not yet exposed.
                     }
                 }
             }
-            server_config::Address::Unix(unix) => {
+            Addr::Unix { ptr, len } => {
                 if Self::HAS_H3 {
-                    if let Some(h3a) = self_.h3_app.take() {
+                    if let Some(h3a) = unsafe { (*this).h3_app.take() } {
                         // QUIC over AF_UNIX is non-standard and Alt-Svc can't
                         // advertise it; drop the H3 listener instead of wiring
                         // an exotic transport nobody can reach.
                         bun_core::Output::warn(format_args!(
                             "h3: true with a unix socket — HTTP/3 listener skipped"
                         ));
-                        // SAFETY: h3a is a live H3::App handle just taken from self_.h3_app.
+                        // SAFETY: h3a is a live H3::App handle just taken from self.h3_app.
                         unsafe { uws_sys::h3::App::destroy(h3a) };
                     }
                 }
-                // SAFETY: unix is a CString; NUL invariant holds for ZStr::from_raw.
-                let z = unsafe {
-                    bun_core::ZStr::from_raw(unix.as_ptr().cast(), unix.as_bytes().len())
-                };
-                // SAFETY: app is a live uws handle owned by this server.
+                // SAFETY: ptr/len reference `config.address`'s CString; NUL
+                // invariant holds for ZStr::from_raw.
+                let z = unsafe { bun_core::ZStr::from_raw(ptr, len) };
+                // SAFETY: app is a live uws handle owned by this server. No
+                // `&*this` is live across this call.
                 unsafe {
                     (*app).listen_on_unix_socket(
                         trampoline::on_listen_unix::<SSL, DEBUG>,
                         this as *mut c_void,
                         z,
-                        self_.config.get_usockets_options(),
+                        options,
                     );
                 }
             }
         }
-        } // drop `self_` — invalidated by the listen-trampoline re-derive.
 
         if global.has_exception() {
             Self::deinit(this);

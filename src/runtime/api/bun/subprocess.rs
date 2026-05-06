@@ -797,10 +797,21 @@ impl Subprocess<'_> {
             return;
         }
         self.event_loop_timer_refd = refd;
-        let _vm = self.global_this().bun_vm();
-        // TODO(blocked_on: bun_jsc::VirtualMachineRef::timer): `timer` is a `()`
-        // stub on the upstream VM type; wire `increment_timer_ref` once it lands.
-        let _ = refd;
+        let uws_loop = self.global_this().bun_vm().uws_loop();
+        let delta: i32 = if refd { 1 } else { -1 };
+        // SAFETY: single JS thread; `timer_all()` points into the boxed
+        // per-thread `RuntimeState`.
+        unsafe { (*Self::timer_all()).increment_timer_ref(delta, uws_loop) };
+    }
+
+    /// Recover this thread's `timer::All` heap. b2-cycle: `vm.timer` is `()`
+    /// on the low-tier `bun_jsc::VirtualMachine`; the real value lives in
+    /// `jsc_hooks::RuntimeState.timer` (raw-ptr-per-field re-entry pattern).
+    #[inline]
+    fn timer_all() -> *mut crate::timer::All {
+        let state = crate::jsc_hooks::runtime_state();
+        // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`.
+        unsafe { core::ptr::addr_of_mut!((*state).timer) }
     }
 
     pub fn timeout_callback(&mut self) {
@@ -1358,12 +1369,12 @@ impl Subprocess<'_> {
 
     fn clear_abort_signal(&mut self) {
         if let Some(signal) = self.abort_signal.take() {
-            // TODO(blocked_on: bun_jsc::AbortSignal): `bun_jsc::AbortSignal` is a
-            // `stub_ty!` opaque; the real `pending_activity_unref` /
-            // `clean_native_bindings` live on `bun_jsc::abort_signal::AbortSignal`.
-            let _ = self as *mut Self;
-            // signal.unref() — handled by Arc::drop
-            drop(signal);
+            // SAFETY: `signal` was stored with a +1 C++ intrusive ref (taken in
+            // `spawn_maybe_sync`); it stays live until `unref()` below.
+            let signal: &AbortSignal = unsafe { signal.as_ref() };
+            signal.pending_activity_unref();
+            signal.clean_native_bindings(self as *mut Self as *mut c_void);
+            signal.unref();
         }
     }
 

@@ -137,6 +137,44 @@ pub mod js_bundler {
         }
     }
 
+    /// `JSValue.toEnumFromMap` — local shim until `bun_jsc` grows it.
+    /// Mirrors JSValue.zig `toEnumFromMap`: validates `is_string`, looks up
+    /// via the supplied phf map, and throws "must be one of …" on miss.
+    fn to_enum_from_map<E: Copy>(
+        target: JSValue,
+        global: &JSGlobalObject,
+        property_name: &'static str,
+        map: &'static phf::Map<&'static [u8], E>,
+        one_of: &'static str,
+    ) -> JsResult<E> {
+        if !target.is_string() {
+            return Err(global.throw_invalid_arguments(
+                format_args!("{} must be a string", property_name),
+            ));
+        }
+        match jsc::comptime_string_map_jsc::from_js(map, global, target)? {
+            Some(v) => Ok(v),
+            None => Err(global.throw_invalid_arguments(
+                format_args!("{} must be one of {}", property_name, one_of),
+            )),
+        }
+    }
+
+    /// `JSValue.getOptionalEnum` — local shim until `bun_jsc` grows it.
+    /// Zig: `getTruthy` then `toEnum`.
+    fn get_optional_enum_from_map<E: Copy>(
+        target: JSValue,
+        global: &JSGlobalObject,
+        property_name: &'static str,
+        map: &'static phf::Map<&'static [u8], E>,
+        one_of: &'static str,
+    ) -> JsResult<Option<E>> {
+        match target.get_truthy(global, property_name)? {
+            Some(v) => Ok(Some(to_enum_from_map(v, global, property_name, map, one_of)?)),
+            None => Ok(None),
+        }
+    }
+
     /// `options::JSX::Runtime` → `api::JsxRuntime` (only the reverse `From`
     /// exists upstream).
     fn jsx_runtime_to_api(r: options::JSX::Runtime) -> api::JsxRuntime {
@@ -904,9 +942,13 @@ pub mod js_bundler {
                         };
                     }
                 } else if !source_map_js.is_empty_or_undefined_or_null() {
-                    let _ = source_map_js;
-                    this.source_map =
-                        todo!("blocked_on: bun_jsc::FromJsEnum for options::SourceMapOption");
+                    this.source_map = to_enum_from_map(
+                        source_map_js,
+                        global_this,
+                        "sourcemap",
+                        &options::SOURCE_MAP_OPTION_MAP,
+                        "\"none\", \"linked\", \"inline\", \"external\"",
+                    )?;
                 }
             }
 
@@ -949,9 +991,14 @@ pub mod js_bundler {
                 }
             }
 
-            if let Some(_packages_val) = config.get_truthy(global_this, "packages")? {
-                this.packages =
-                    todo!("blocked_on: bun_jsc::JSValue::get_optional_enum::<options::PackagesOption>");
+            if let Some(packages) = get_optional_enum_from_map(
+                config,
+                global_this,
+                "packages",
+                &options::PACKAGES_OPTION_MAP,
+                "\"bundle\", \"external\"",
+            )? {
+                this.packages = packages;
             }
 
             // Parse JSX configuration
@@ -1017,16 +1064,20 @@ pub mod js_bundler {
                 }
             }
 
-            if let Some(_format_val) = config.get_truthy(global_this, "format")? {
-                let format: options::Format =
-                    todo!("blocked_on: bun_jsc::JSValue::get_optional_enum::<options::Format>");
+            if let Some(format) = get_optional_enum_from_map(
+                config,
+                global_this,
+                "format",
+                &options::Format::MAP,
+                "\"esm\", \"cjs\", \"iife\"",
+            )? {
                 this.format = format;
 
                 if this.bytecode && format != options::Format::Cjs && format != options::Format::Esm
                 {
                     return Err(global_this.throw_invalid_arguments(
-                            "format must be 'cjs' or 'esm' when bytecode is true.",
-                        ));
+                        "format must be 'cjs' or 'esm' when bytecode is true.",
+                    ));
                 }
             }
 
@@ -1379,10 +1430,13 @@ pub mod js_bundler {
                     drop(prop_slice);
 
                     // PERF(port): was assume_capacity
-                    let _ = loader_iter.value;
-                    loader_values.push(todo!(
-                        "blocked_on: bun_jsc::JSValue::to_enum_from_map::<api::Loader>"
-                    ));
+                    loader_values.push(to_enum_from_map(
+                        loader_iter.value,
+                        global_this,
+                        "loader",
+                        &options::LOADER_API_NAMES,
+                        "\"js\", \"jsx\", \"ts\", \"tsx\", \"css\", \"file\", \"json\", \"toml\", \"wasm\", \"napi\", \"base64\", \"dataurl\", \"text\", \"html\"",
+                    )?);
                     loader_names.push(prop.to_owned_slice().into_boxed_slice());
                 }
 

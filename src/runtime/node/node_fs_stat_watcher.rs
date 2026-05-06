@@ -464,7 +464,8 @@ impl StatWatcher {
     pub fn initial_stat_error_on_main_thread(this: *mut StatWatcher) {
         // SAFETY: this is alive — ref'd in InitialStatTask::create_and_schedule
         let this_ref = unsafe { &mut *this };
-        let _deref_on_exit = scopeguard::guard((), |_| this_ref.deref()); // Balance the ref from createAndSchedule().
+        // SAFETY: balance the ref from createAndSchedule(); raw ptr captured (not `&self`).
+        let _deref_on_exit = scopeguard::guard((), move |_| unsafe { Self::deref(this) });
         // PORT NOTE: reshaped for borrowck
         if this_ref.closed {
             return;

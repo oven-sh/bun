@@ -391,7 +391,7 @@ impl WindowsNamedPipe {
             let _ = pipe.unref();
         }
 
-        if let Some(err) = status.to_error(bun_sys::Syscall::Connect) {
+        if let Some(err) = status.to_error(bun_sys::Tag::connect) {
             self.on_error(err);
             self.deref();
             return;
@@ -441,7 +441,7 @@ impl WindowsNamedPipe {
                 Err(_) => {
                     return bun_sys::Result::Err(bun_sys::Error {
                         errno: bun_sys::E::PIPE as _,
-                        syscall: bun_sys::Syscall::Connect,
+                        syscall: bun_sys::Tag::connect,
                         ..Default::default()
                     });
                 }
@@ -587,7 +587,7 @@ impl WindowsNamedPipe {
                     unsafe { boringssl::SSL_CTX_free(ctx) };
                     return Some(bun_sys::Result::Err(bun_sys::Error {
                         errno: bun_sys::E::PIPE as _,
-                        syscall: bun_sys::Syscall::Connect,
+                        syscall: bun_sys::Tag::connect,
                         ..Default::default()
                     }));
                 }
@@ -601,7 +601,7 @@ impl WindowsNamedPipe {
                 Err(_) => {
                     return Some(bun_sys::Result::Err(bun_sys::Error {
                         errno: bun_sys::E::PIPE as _,
-                        syscall: bun_sys::Syscall::Connect,
+                        syscall: bun_sys::Tag::connect,
                         ..Default::default()
                     }));
                 }

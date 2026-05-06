@@ -764,9 +764,10 @@ pub fn set_session(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) 
 pub fn get_tls_ticket(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::UNDEFINED) };
     // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
-    let Some(session) = (unsafe { ffi::SSL_get_session(ssl_ptr) }) else {
+    let session = unsafe { ffi::SSL_get_session(ssl_ptr) };
+    if session.is_null() {
         return Ok(JSValue::UNDEFINED);
-    };
+    }
     let mut ticket: *const u8 = core::ptr::null();
     let mut length: usize = 0;
     // The pointer is only valid while the connection is in use so we need to copy it

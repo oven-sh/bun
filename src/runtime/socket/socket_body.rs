@@ -3465,24 +3465,32 @@ pub fn js_set_socket_options(global: &JSGlobalObject, callframe: &CallFrame) -> 
 
     #[cfg(unix)]
     {
+        // TODO(port): Zig used `bun.sys.setsockopt`; not yet surfaced in
+        // `bun_sys`, so call libc directly with the same `Maybe` shape.
+        let setsockopt = |level: libc::c_int, opt: libc::c_int| -> Option<sys::Error> {
+            let val: libc::c_int = buffer_size;
+            // SAFETY: libc FFI; `val` lives for the call.
+            let rc = unsafe {
+                libc::setsockopt(
+                    file_descriptor.native(),
+                    level,
+                    opt,
+                    &val as *const _ as *const c_void,
+                    core::mem::size_of::<libc::c_int>() as libc::socklen_t,
+                )
+            };
+            if rc != 0 {
+                Some(sys::Error::from_code(sys::get_errno(rc), sys::Tag::setsockopt))
+            } else {
+                None
+            }
+        };
         if is_for_send_buffer {
-            let result = sys::setsockopt(
-                file_descriptor,
-                sys::posix::SOL_SOCKET,
-                sys::posix::SO_SNDBUF,
-                buffer_size,
-            );
-            if let Some(err) = result.as_err() {
+            if let Some(err) = setsockopt(libc::SOL_SOCKET, libc::SO_SNDBUF) {
                 return global.throw_value(err.to_js(global)?);
             }
         } else if is_for_recv_buffer {
-            let result = sys::setsockopt(
-                file_descriptor,
-                sys::posix::SOL_SOCKET,
-                sys::posix::SO_RCVBUF,
-                buffer_size,
-            );
-            if let Some(err) = result.as_err() {
+            if let Some(err) = setsockopt(libc::SOL_SOCKET, libc::SO_RCVBUF) {
                 return global.throw_value(err.to_js(global)?);
             }
         }

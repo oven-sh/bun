@@ -160,9 +160,15 @@ impl Zone {
     /// Zig spec where every method takes `*Zone`.
     #[inline(always)]
     fn as_ptr(&self) -> *mut Zone {
-        // SAFETY: see type-level doc — `Zone: !Freeze`, so deriving a mutable
-        // raw pointer from `&self` for FFI does not violate aliasing rules.
-        self as *const Zone as *mut Zone
+        // SAFETY: route through `UnsafeCell::get()` — the sanctioned way to
+        // derive a writable raw pointer from `&self`. `_p` is the first (and
+        // only sized) field of `#[repr(C)] Zone`, so its address is `self`'s
+        // address; provenance covers the full C `malloc_zone_t` allocation
+        // because every `&Zone` originates from the `*mut Zone` returned by
+        // `malloc_create_zone` (see `Zone::init`). Avoids the
+        // `&T as *const T as *mut T` pattern, which is UB under Stacked
+        // Borrows when `T: Freeze` and a lint hazard regardless.
+        self._p.get().cast::<Zone>()
     }
 
     /// Zig: `pub fn init(comptime name: [:0]const u8) *Zone`

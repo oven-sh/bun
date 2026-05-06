@@ -2758,7 +2758,7 @@ impl<'a> BundleV2<'a> {
 
         self.increment_scan_counter();
 
-        self.graph.pool.worker_pool.schedule(ThreadPoolLib::Batch::from(&task.task));
+        unsafe { (*self.graph.pool.as_ptr()).worker_pool }.schedule(ThreadPoolLib::Batch::from(&task.task));
 
         Ok(u32::try_from(source_index).unwrap())
     }
@@ -3171,7 +3171,7 @@ impl<'a> BundleV2<'a> {
                 // If it's a file namespace, we should run it through the parser like normal.
                 // The file could be on disk.
                 if source.path.is_file() {
-                    this.graph.pool.schedule(load.parse_task);
+                    unsafe { this.graph.pool.as_mut() }.schedule(load.parse_task);
                     return;
                 }
 
@@ -3205,7 +3205,7 @@ impl<'a> BundleV2<'a> {
                     this.free_list.push(code.source_code);
                 }
                 parse_task.contents_or_fd = ParseTask::ContentsOrFd::Contents(code.source_code);
-                this.graph.pool.schedule(parse_task);
+                unsafe { this.graph.pool.as_mut() }.schedule(parse_task);
 
                 if let Some(watcher) = this.bun_watcher {
                     'add_watchers: {
@@ -3422,7 +3422,7 @@ impl<'a> BundleV2<'a> {
                                 this.graph.estimated_file_loader_count += 1;
                             }
 
-                            this.graph.pool.schedule(task);
+                            unsafe { this.graph.pool.as_mut() }.schedule(task);
                         }
                     } else {
                         out_source_index = Some(Index::init(*existing.value_ptr));
@@ -4688,7 +4688,7 @@ impl<'a> BundleV2<'a> {
                     graph.estimated_file_loader_count += 1;
                 }
 
-                graph.pool.schedule(new_task);
+                unsafe { graph.pool.as_mut() }.schedule(new_task);
             } else {
                 if loader.should_copy_for_bundling() {
                     let additional_files: &mut BabyList<crate::AdditionalFile> = &mut graph.input_files.items_additional_files_mut()[importer_source_index as usize];

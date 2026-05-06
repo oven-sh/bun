@@ -53,11 +53,14 @@ enum Phase {
     Done,
 }
 
-// TODO(port): lifetime — `extract_task`/`package_manager` are classified
-// BORROW_PARAM (`&'a`) per LIFETIMES.tsv, but this struct is heap-allocated
-// (Box::into_raw), crosses threads via `drain_task`, and self-destroys in
-// `finish()`. Phase B may need to demote these to raw pointers.
-pub struct TarballStream<'a> {
+// PORT NOTE: `extract_task` / `package_manager` are raw pointers, not
+// `&'a mut` / `&'a`. The Zig original stores `*Task` / `*PackageManager`
+// (freely-aliasing). This struct is heap-allocated (`Box::into_raw`),
+// crosses threads via `drain_task`, and self-destroys in `finish()`, so a
+// borrowed lifetime cannot be sound. Holding `&'a mut Task` here while
+// `populate_result` materialises another `&mut Task` from a raw copy of it
+// would be aliased UB; raw pointers match the Zig aliasing contract.
+pub struct TarballStream {
     // ---------------------------------------------------------------------
     // Cross-thread producer state (HTTP → worker)
     // ---------------------------------------------------------------------
@@ -142,9 +145,9 @@ pub struct TarballStream<'a> {
 
     /// Completion task that carries the final result back to the main
     /// thread. Populated by `finish()` and pushed onto `resolve_tasks` there.
-    extract_task: &'a mut Task,
+    extract_task: *mut Task,
     network_task: *mut NetworkTask,
-    package_manager: &'a PackageManager,
+    package_manager: *const PackageManager,
 }
 
 /// Minimum Content-Length for which the streaming path is used. Below
@@ -155,13 +158,16 @@ pub fn min_size() -> usize {
     usize::try_from(env_var::BUN_INSTALL_STREAMING_MIN_SIZE.get()).unwrap()
 }
 
-impl<'a> TarballStream<'a> {
+impl TarballStream {
     pub fn init(
-        extract_task: &'a mut Task,
+        extract_task: *mut Task,
         network_task: *mut NetworkTask,
-        manager: &'a PackageManager,
-    ) -> *mut TarballStream<'a> {
-        let tarball = &extract_task.request.extract.tarball;
+        manager: *const PackageManager,
+    ) -> *mut TarballStream {
+        // SAFETY: caller guarantees `extract_task` is live for the lifetime
+        // of this stream (it is published back to the main thread only in
+        // `finish()`); see Zig `init` which takes `*Task`.
+        let tarball = unsafe { &(*extract_task).request.extract.tarball };
 
         // For GitHub/URL/local tarballs we need a SHA-512 to record in the
         // lockfile even when there is no expected value to verify against,

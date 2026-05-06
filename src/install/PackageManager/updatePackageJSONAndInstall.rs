@@ -1010,13 +1010,16 @@ pub fn update_package_json_and_install(
     update_package_json_and_install_and_cli(ctx, subcommand, cli)
 }
 
-struct Analyzer<'a> {
+struct Analyzer {
     ctx: Command::Context,
-    cli: &'a mut CommandLineArguments,
+    /// Raw ptr (not `&mut`) to mirror Zig's `*PackageManager.CommandLineArguments`: the
+    /// `DependenciesScanner.entry_points` field holds a shared borrow into `cli.positionals`
+    /// for the duration of the scan, so storing `&mut CommandLineArguments` here would alias.
+    cli: *mut CommandLineArguments,
     subcommand: Subcommand,
 }
 
-impl Analyzer<'_> {
+impl Analyzer {
     pub fn on_analyze(
         &mut self,
         result: &mut bun_bundler::bundle_v2::BundleV2::DependenciesScanner::Result,
@@ -1030,11 +1033,16 @@ impl Analyzer<'_> {
         for (dst, src) in positionals[1..].iter_mut().zip(keys.iter()) {
             *dst = *src;
         }
+        // SAFETY: `self.cli` points at the stack `cli` local in `update_package_json_and_install`,
+        // which outlives this callback. The bundler has finished reading `entry_points` (the only
+        // other borrow of `*self.cli`) before invoking `on_fetch`, and this callback never returns
+        // (`Global::exit` below), so this is the sole live access to `*self.cli` from here on.
+        let cli = unsafe { &mut *self.cli };
         // TODO(port): `cli.positionals` field type — Zig stored a heap slice of slices; revisit
         // ownership (Box<[&[u8]]> vs Vec) in Phase B.
-        self.cli.positionals = positionals;
+        cli.positionals = positionals;
 
-        update_package_json_and_install_and_cli(self.ctx, self.subcommand, self.cli.clone())?;
+        update_package_json_and_install_and_cli(self.ctx, self.subcommand, cli.clone())?;
 
         Global::exit(0);
     }
@@ -1046,9 +1054,12 @@ impl Analyzer<'_> {
         ctx: *mut core::ffi::c_void,
         result: *mut bun_bundler::bundle_v2::BundleV2::DependenciesScanner::Result,
     ) -> Option<Error> {
-        // SAFETY: `ctx` was created from `&mut Analyzer` above and outlives this call.
+        // SAFETY: `ctx` is `addr_of_mut!(analyzer)` from `update_package_json_and_install`; the
+        // `analyzer` local outlives this callback and is not otherwise borrowed (the only other
+        // handle is the raw `fetcher.ctx` we were just passed), so materializing `&mut` is unique.
         let this = unsafe { &mut *(ctx as *mut Analyzer) };
-        // SAFETY: `result` is a valid `&mut` for the duration of this callback.
+        // SAFETY: caller (bundler `DependenciesScanner`) passes a unique `*mut Result` valid for
+        // the duration of this callback; no other reference to it is live.
         let result = unsafe { &mut *result };
         this.on_analyze(result).err()
     }

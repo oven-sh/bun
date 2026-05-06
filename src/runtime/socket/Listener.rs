@@ -1282,7 +1282,11 @@ fn normalize_pipe_name<'a>(pipe_name: &[u8], buffer: &'a mut [u8]) -> Option<&'a
 pub struct WindowsNamedPipeListeningContext {
     pub uv_pipe: uv::Pipe,
     pub listener: Option<NonNull<Listener>>,
-    pub global_this: *mut JSGlobalObject,
+    // Only ever dereferenced as `&JSGlobalObject` (see on_client_connect); store
+    // as *const so we never launder a `&T` into `*mut T` (would be UB to write
+    // through). Zig spec uses `*jsc.JSGlobalObject` but Zig pointers freely
+    // alias — Rust must keep provenance const here.
+    pub global_this: *const JSGlobalObject,
     pub vm: *mut VirtualMachine,
     pub ctx: Option<NonNull<boring_sys::SSL_CTX>>, // server reuses the same ctx
 }

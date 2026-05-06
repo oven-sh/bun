@@ -2261,12 +2261,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             h3_alt_svc: ZStr::empty_boxed(),
             js_value: JsRef::empty(),
             pending_requests: 0,
-            request_pool_allocator: ServerRequestContext<SSL, DEBUG>::pool_get_or_init(),
+            request_pool_allocator: ServerRequestContext::<SSL, DEBUG>::pool_get_or_init(),
             h3_request_pool_allocator: if Self::HAS_H3 {
-                ServerH3RequestContext<SSL, DEBUG>::pool_get_or_init()
+                ServerH3RequestContext::<SSL, DEBUG>::pool_get_or_init()
             } else {
                 // TODO(port): conditional field — placeholder static
-                ServerH3RequestContext<SSL, DEBUG>::pool_get_or_init()
+                ServerH3RequestContext::<SSL, DEBUG>::pool_get_or_init()
             },
             all_closed_promise: jsc::JSPromiseStrong::default(),
             listen_callback: jsc::AnyTask::default(),

@@ -16,7 +16,8 @@ use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, JSGlobalObject, JSPromise, JSValue, JsRef, JsResult,
     VirtualMachine,
 };
-use bun_string::String as BunString;
+#[allow(deprecated)]
+use bun_jsc::ZigString;
 use bun_sys::{self, Fd, SignalCode};
 use enumset::{EnumSet, EnumSetType};
 
@@ -1277,7 +1278,8 @@ impl Subprocess<'_> {
     pub fn get_signal_code(this: &Self, global: &JSGlobalObject) -> JSValue {
         if let Some(signal) = this.process.signal_code() {
             if let Some(name) = signal.name() {
-                return BunString::static_(name).to_js(global);
+                #[allow(deprecated)]
+                return ZigString::init(name).to_js(global);
             } else {
                 return JSValue::js_number(signal as u32);
             }
@@ -1354,7 +1356,7 @@ impl Subprocess<'_> {
 
 pub enum Source {
     Blob(webcore::AnyBlob),
-    ArrayBuffer(jsc::ArrayBufferStrong),
+    ArrayBuffer(jsc::array_buffer::ArrayBufferStrong),
     Detached,
 }
 

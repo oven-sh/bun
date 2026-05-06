@@ -129,7 +129,7 @@ impl<'a> Installer<'a> {
 
             let node_pkg_ids = store.nodes.items_pkg_id();
 
-            let entries = store.entries.slice();
+            let entries = &store.entries;
             let entry_steps = entries.items_step();
             let entry_node_ids = entries.items_node_id();
 
@@ -244,10 +244,10 @@ impl<'a> Installer<'a> {
     pub fn on_task_fail(&mut self, entry_id: StoreEntryId, err: TaskError) {
         let string_buf = self.lockfile.buffers.string_bytes.as_slice();
 
-        let entries = self.store.entries.slice();
+        let entries = &self.store.entries;
         let entry_node_ids = entries.items_node_id();
 
-        let nodes = self.store.nodes.slice();
+        let nodes = &self.store.nodes;
         let node_pkg_ids = nodes.items_pkg_id();
 
         let pkgs = self.lockfile.packages.slice();
@@ -398,7 +398,7 @@ impl<'a> Installer<'a> {
         entry_id: StoreEntryId,
         parent_dedupe: &mut ArrayHashMap<StoreEntryId, ()>,
     ) -> bool {
-        let entries = self.store.entries.slice();
+        let entries = &self.store.entries;
         let entry_deps = entries.items_dependencies();
         let entry_steps = entries.items_step();
 
@@ -434,7 +434,7 @@ impl<'a> Installer<'a> {
             node.complete_one();
         }
 
-        let nodes = self.store.nodes.slice();
+        let nodes = &self.store.nodes;
 
         let (node_id, real_state) = 'state: {
             if entry_id == StoreEntryId::ROOT {
@@ -487,7 +487,7 @@ impl<'a> Installer<'a> {
     // and
     // `entry_steps[entry_id.get() as usize].store(.symlink_dependency_binaries, .monotonic)`
     pub fn resume_unblocked_tasks(&mut self) {
-        let entries = self.store.entries.slice();
+        let entries = &self.store.entries;
         let entry_steps = entries.items_step();
 
         let mut parent_dedupe: ArrayHashMap<StoreEntryId, ()> = ArrayHashMap::default();
@@ -721,14 +721,14 @@ impl Task {
         let pkg_bins = pkgs.items_bin();
         let pkg_script_lists = pkgs.items_scripts();
 
-        let entries = installer.store.entries.slice();
+        let entries = &installer.store.entries;
         let entry_node_ids = entries.items_node_id();
         let entry_dependencies = entries.items_dependencies();
         let entry_steps = entries.items_step();
         let entry_scripts = entries.items_scripts();
         let entry_hoisted = entries.items_hoisted();
 
-        let nodes = installer.store.nodes.slice();
+        let nodes = &installer.store.nodes;
         let node_pkg_ids = nodes.items_pkg_id();
         let node_dep_ids = nodes.items_dep_id();
 
@@ -2000,11 +2000,11 @@ impl<'a> Installer<'a> {
         let string_buf = lockfile.buffers.string_bytes.as_slice();
         let extern_string_buf = lockfile.buffers.extern_strings.as_slice();
 
-        let entries = store.entries.slice();
+        let entries = &store.entries;
         let entry_node_ids: &[StoreNodeId] = entries.items_node_id();
         let entry_deps = entries.items_dependencies();
 
-        let nodes = store.nodes.slice();
+        let nodes = &store.nodes;
         let node_pkg_ids = nodes.items_pkg_id();
         let node_dep_ids = nodes.items_dep_id();
 
@@ -2321,10 +2321,10 @@ impl<'a> Installer<'a> {
     ) {
         let string_buf = self.lockfile.buffers.string_bytes.as_slice();
 
-        let entries = self.store.entries.slice();
+        let entries = &self.store.entries;
         let entry_node_ids = entries.items_node_id();
 
-        let nodes = self.store.nodes.slice();
+        let nodes = &self.store.nodes;
         let node_pkg_ids = nodes.items_pkg_id();
 
         let pkgs = self.lockfile.packages.slice();
@@ -2394,10 +2394,10 @@ impl<'a> Installer<'a> {
     pub fn append_store_path(&self, buf: &mut impl paths::PathLike, entry_id: StoreEntryId) {
         let string_buf = self.lockfile.buffers.string_bytes.as_slice();
 
-        let entries = self.store.entries.slice();
+        let entries = &self.store.entries;
         let entry_node_ids = entries.items_node_id();
 
-        let nodes = self.store.nodes.slice();
+        let nodes = &self.store.nodes;
         let node_pkg_ids = nodes.items_pkg_id();
         let node_dep_ids = nodes.items_dep_id();
         // let node_peers = nodes.items().peers;

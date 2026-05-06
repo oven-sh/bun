@@ -65,7 +65,6 @@ pub fn install_with_manager(
 
     let (config_version, changed_config_version) = load_result.choose_config_version();
     manager.options.config_version = config_version;
-    let _ = changed_config_version;
 
     let mut root = lockfile::Package::default();
     let mut needs_new_lockfile = !matches!(load_result, lockfile::LoadResult::Ok { .. })
@@ -331,8 +330,17 @@ pub fn install_with_manager(
                         break 'brk all_name_hashes;
                     };
 
-                    manager.lockfile.overrides = lockfile.overrides.clone_into(manager, &lockfile, manager.lockfile, builder)?;
-                    manager.lockfile.catalogs = lockfile.catalogs.clone_into(manager, &lockfile, manager.lockfile, builder)?;
+                    // TODO(port): OverrideMap/CatalogMap clone — Zig: `lockfile.overrides.clone(
+                    // manager, &lockfile, manager.lockfile, builder)`. The ported `clone_into`
+                    // takes `(&PackageManager, &Lockfile, &mut Lockfile, &mut StringBuilder)`;
+                    // route through raw ptrs to avoid the `manager` / `manager.lockfile` overlap.
+                    {
+                        let mgr: *mut PackageManager = manager;
+                        let dst: *mut Lockfile = &mut manager.lockfile;
+                        // SAFETY: disjoint storage; mirrors Zig's `*PackageManager` + `*Lockfile` aliasing.
+                        manager.lockfile.overrides = lockfile.overrides.clone_into(unsafe { &*mgr }, &lockfile, unsafe { &mut *dst }, builder)?;
+                        manager.lockfile.catalogs = lockfile.catalogs.clone_into(unsafe { &*mgr }, &lockfile, unsafe { &mut *dst }, builder)?;
+                    }
 
                     manager.lockfile.trusted_dependencies = if let Some(trusted_dependencies) = &lockfile.trusted_dependencies {
                         Some(trusted_dependencies.clone())
@@ -461,8 +469,9 @@ pub fn install_with_manager(
                                     manager.patched_dependencies_to_remove.insert(*key, ());
                                 }
                             }
-                            for hash in manager.patched_dependencies_to_remove.keys() {
-                                let _ = manager.lockfile.patched_dependencies.shift_remove(hash);
+                            let to_remove: Vec<u64> = manager.patched_dependencies_to_remove.keys().copied().collect();
+                            for hash in to_remove {
+                                let _ = manager.lockfile.patched_dependencies.shift_remove(&hash);
                             }
                         }
                     }
@@ -776,56 +785,29 @@ pub fn install_with_manager(
         root_scripts.append_to_lockfile(&mut manager.lockfile);
     }
     {
+        // TODO(port): Zig iterates `packages.items(.{ .resolution, .meta, .scripts })`, and for
+        // each workspace package with `meta.hasInstallScript()` calls
+        // `scripts.getScriptEntries(lockfile, string_buf, .workspace, add_node_gyp)` then
+        // pushes each non-null entry into `lockfile.scripts.@field(name)`. The stub
+        // `lockfile::package::scripts::Scripts` lacks `get_script_entries` / `has_any`, and
+        // `lockfile_real::Scripts` lacks an indexed `list_mut(i)` accessor — both land with
+        // the lockfile_real un-gate (reconciler-6). The body below preserves the iteration
+        // shape for borrowck so the surrounding control flow stays exercised.
         let packages = manager.lockfile.packages.slice();
         let resolutions = packages.items_resolution();
         let metas = packages.items_meta();
         let scripts_slice = packages.items_scripts();
         debug_assert_eq!(resolutions.len(), metas.len());
         debug_assert_eq!(resolutions.len(), scripts_slice.len());
-        for ((resolution, meta), scripts) in resolutions.iter().zip(metas).zip(scripts_slice) {
+        for ((resolution, _meta), _scripts) in resolutions.iter().zip(metas).zip(scripts_slice) {
             if resolution.tag == ResolutionTag::Workspace {
-                if meta.has_install_script() {
-                    if scripts.has_any() {
-                        let (first_index, _, entries) = scripts.get_script_entries(
-                            manager.lockfile,
-                            &manager.lockfile.buffers.string_bytes,
-                            ResolutionTag::Workspace,
-                            false,
-                        );
-
-                        if cfg!(debug_assertions) {
-                            debug_assert!(first_index != -1);
-                        }
-
-                        if first_index != -1 {
-                            // TODO(port): inline-for over `Lockfile.Scripts.names` with `@field` reflection.
-                            // Phase B: replace with a generated `Scripts::list_mut(i)` accessor or unrolled match.
-                            let _ = entries;
-                            todo!("blocked_on: lockfile_real::Scripts::list_mut accessor (reconciler-6)");
-                        }
-                    } else {
-                        let (first_index, _, entries) = scripts.get_script_entries(
-                            manager.lockfile,
-                            &manager.lockfile.buffers.string_bytes,
-                            ResolutionTag::Workspace,
-                            true,
-                        );
-
-                        if cfg!(debug_assertions) {
-                            debug_assert!(first_index != -1);
-                        }
-
-                        // TODO(port): inline-for over `Lockfile.Scripts.names` with `@field` reflection.
-                        let _ = (first_index, entries);
-                        todo!("blocked_on: lockfile_real::Scripts::list_mut accessor (reconciler-6)");
-                    }
-                }
+                todo!("blocked_on: lockfile::package::scripts::Scripts::get_script_entries / lockfile_real::Scripts::list_mut (reconciler-6)");
             }
         }
     }
 
     if manager.options.global {
-        manager.setup_global_dir(&ctx)?;
+        manager.setup_global_dir(ctx)?;
     }
 
     let packages_len_before_install = manager.lockfile.packages.len();
@@ -1040,7 +1022,7 @@ pub fn install_with_manager(
             // have finished, and lockfiles have been saved
             let optional = false;
             let output_in_foreground = true;
-            manager.spawn_package_lifecycle_scripts(&ctx, scripts, optional, output_in_foreground, None)?;
+            manager.spawn_package_lifecycle_scripts(ctx, scripts, optional, output_in_foreground, None)?;
 
             // .monotonic is okay because at this point, this value is only accessed from this
             // thread.
@@ -1052,7 +1034,7 @@ pub fn install_with_manager(
     }
 
     if log_level != Options::LogLevel::Silent {
-        print_install_summary(manager, &ctx, &install_summary, did_meta_hash_change, log_level)?;
+        print_install_summary(manager, ctx, &install_summary, did_meta_hash_change, log_level)?;
     }
 
     if install_summary.fail > 0 {
@@ -1182,7 +1164,7 @@ fn wait_for_peers(this: &mut PackageManager) -> Result<(), bun_core::Error> {
 
 fn print_install_summary(
     this: &mut PackageManager,
-    ctx: &Command::Context,
+    ctx: Command::Context,
     install_summary: &PackageInstallSummary,
     did_meta_hash_change: bool,
     log_level: Options::LogLevel,
@@ -1233,7 +1215,7 @@ fn print_install_summary(
         } else if this.summary.remove > 0 {
             if this.subcommand == Subcommand::Remove {
                 for request in &this.update_requests {
-                    Output::prettyln(format_args!("<r><red>-<r> {}", bstr::BStr::new(request.name.as_bytes())));
+                    Output::prettyln(format_args!("<r><red>-<r> {}", bstr::BStr::new(&request.name)));
                 }
             }
 
@@ -1355,7 +1337,7 @@ pub fn get_workspace_filters(
 
             #[cfg(windows)]
             {
-                let abs_path = Path::path_to_posix_buf::<u8>(FileSystem::instance().top_level_dir, &mut path_buf);
+                let abs_path = Path::path_to_posix_buf::<u8>(FileSystem::instance().top_level_dir, &mut path_buf.0);
                 break 'abs_root_path strings::without_trailing_slash(
                     &abs_path[Path::windows_volume_name_len(abs_path).0..],
                 );

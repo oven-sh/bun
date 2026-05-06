@@ -1418,6 +1418,7 @@ impl Lockfile {
 
         // This goes breadth-first
         while let Some(item) = builder.queue.read_item() {
+            use tree::BuilderEntryListExt as _;
             // PORT NOTE: reshaped for borrowck — Zig indexes builder.list while passing &mut builder.
             let tree = builder.list.items_tree()[item.tree_id as usize];
             tree.process_subtree(item.dependency_id, item.hoist_root_id, &mut builder)?;

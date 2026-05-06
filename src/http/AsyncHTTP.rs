@@ -328,10 +328,6 @@ pub struct Options {
 // impl AsyncHTTP — basic state
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Zig: `pub var max_simultaneous_requests = std.atomic.Value(usize).init(256)`.
-pub static MAX_SIMULTANEOUS_REQUESTS: core::sync::atomic::AtomicUsize =
-    core::sync::atomic::AtomicUsize::new(256);
-
 impl AsyncHTTP {
     /// Accessor for the global concurrent-request cap (Zig:
     /// `AsyncHTTP.max_simultaneous_requests`). Returned as a static so callers

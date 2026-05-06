@@ -1970,7 +1970,7 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
         let mut optional_peer_dependencies: ArrayHashMap<
             PackageNameHash,
             &[u8],
-            ArrayIdentityContext::U64,
+            bun_collections::identity_context::U64,
         > = ArrayHashMap::default();
         // defer optional_peer_dependencies.deinit(); — Drop handles it
 
@@ -2044,9 +2044,10 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
                                 //        ]
                                 //    }
                                 //
-                                if let Some(packages_query) = obj.get(b"packages") {
+                                if let Some(packages_query) = obj.as_property(b"packages") {
+                                    let packages_expr = packages_query.expr;
                                     if !matches!(
-                                        packages_query.data,
+                                        packages_expr.data,
                                         bun_js_parser::ast::ExprData::EArray(_)
                                     ) {
                                         let _ = log.add_error_fmt(

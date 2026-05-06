@@ -1700,13 +1700,14 @@ pub fn init(
             // Zig's `std.mem.zeroes(Api.BunInstall)`. Own via `Box` — never `Box::leak`.
             Box::new(Api::BunInstall::default())
         });
+        let npmrc_local = ZBox::from_bytes(b".npmrc");
         ini::load_npmrc_config(
             install_ref,
             env,
             true,
             &[
                 resolve_path::join_abs_string_buf_z::<platform::Auto>(data_dir, &mut buf, &parts),
-                ZStr::from_bytes(b".npmrc"),
+                &*npmrc_local,
             ],
         );
     } else {
@@ -1715,7 +1716,8 @@ pub fn init(
             // Zig's `std.mem.zeroes(Api.BunInstall)`. Own via `Box` — never `Box::leak`.
             Box::new(Api::BunInstall::default())
         });
-        ini::load_npmrc_config(install_ref, env, true, &[ZStr::from_bytes(b".npmrc")]);
+        let npmrc_local = ZBox::from_bytes(b".npmrc");
+        ini::load_npmrc_config(install_ref, env, true, &[&*npmrc_local]);
     }
     let cpu_count = bun_core::get_thread_count();
 

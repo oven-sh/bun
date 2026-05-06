@@ -438,9 +438,3 @@ impl bun_core::output::ErrName for Error {
         })
     }
 }
-
-impl bun_core::output::ErrName for SystemErrno {
-    fn name(&self) -> &[u8] {
-        tag_name(*self).map(str::as_bytes).unwrap_or(b"Unknown")
-    }
-}

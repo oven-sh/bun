@@ -1269,9 +1269,9 @@ impl<'a> ScopeIterator<'a> {
 // loadNpmrcConfig / loadNpmrc
 // ──────────────────────────────────────────────────────────────────────────
 
-pub fn load_npmrc_config(
+pub fn load_npmrc_config<'a>(
     install: &mut BunInstall,
-    env: &mut DotEnvLoader<'_>,
+    env: &'a mut DotEnvLoader<'a>,
     auto_loaded: bool,
     npmrc_paths: &[&ZStr],
 ) {
@@ -1325,15 +1325,20 @@ pub fn load_npmrc_config(
 }
 
 
-pub fn load_npmrc(
+pub fn load_npmrc<'a>(
     install: &mut BunInstall,
-    env: &mut DotEnvLoader<'_>,
+    env: &'a mut DotEnvLoader<'a>,
     npmrc_path: &ZStr,
     log: &mut Log,
     source: &Source,
     configs: &mut Vec<ConfigItem>,
 ) -> OOM<()> {
-    let mut parser = Parser::init(npmrc_path.as_bytes(), &source.contents, env);
+    // TODO(port): lifetime — `Parser<'a>` ties `src`/`env` to one `'a`; `source`
+    // outlives the local `parser` so erase to `'static` (matches `Parser::init`'s
+    // own transmutes for `path`/`src`).
+    let contents: &'static [u8] =
+        unsafe { core::mem::transmute::<&[u8], &'static [u8]>(&source.contents) };
+    let mut parser = Parser::init(npmrc_path.as_bytes(), contents, env);
     // TODO(port): borrowck — `parser.arena` is borrowed while `parser` is `&mut`.
     // SAFETY: arena outlives all bump-allocated slices used below; Phase B should
     // restructure Parser so the bump is passed externally or split borrows.
@@ -1648,7 +1653,7 @@ pub fn load_npmrc(
                 let conf_item: &ConfigItem = &conf_item_;
                 match conf_item.optname {
                     ConfigOpt::Certfile | ConfigOpt::Keyfile => {
-                        log.add_warning_fmt(
+                        iter.log.add_warning_fmt(
                             Some(source),
                             iter.config.properties.at(iter.prop_idx - 1).key.as_ref().unwrap().loc,
                             format_args!(

@@ -2993,7 +2993,7 @@ impl StyleAttribute {
         //   "Source maps are not supported for style attributes"
         // );
 
-        let symbols = bun_logger::symbol::Map::default();
+        let symbols = bun_logger::symbol::Map::init_list(Default::default());
         // TODO(port): writer adapter — Zig used std.Io.Writer.Allocating; route
         // through bun_io::Write over Vec<u8> until 'bump dest threads.
         let mut dest: Vec<u8> = Vec::new();
@@ -3006,14 +3006,14 @@ impl StyleAttribute {
             None,
             &symbols,
         );
-        // TODO(port): printer.sources type — `&Vec<&[u8]>` vs `&Vec<Box<[u8]>>`;
-        // unify with `StyleSheet::to_css_with_writer_impl` when 'bump threads.
         printer.sources = Some(&self.sources);
 
         self.declarations.to_css(&mut printer)?;
 
+        let dependencies = printer.dependencies.take().map(|v| v.into_iter().collect());
+        drop(printer);
         Ok(ToCssResult {
-            dependencies: printer.dependencies.take(),
+            dependencies,
             code: dest,
             exports: None,
             references: None,
@@ -3228,13 +3228,12 @@ impl<'a> ParserOptions<'a> {
         }
     }
 
-     // blocked_on: bun_logger::Log API shape (notes ownership)
     pub fn warn_fmt_with_notes(
         &self,
         args: fmt::Arguments<'_>,
         line: u32,
         column: u32,
-        notes: &mut [logger::Data],
+        notes: Box<[logger::Data]>,
     ) {
         if let Some(lg) = self.logger {
             // SAFETY: see `warn`.
@@ -3244,7 +3243,6 @@ impl<'a> ParserOptions<'a> {
         }
     }
 
-     // blocked_on: bun_logger::Log API shape (range note)
     pub fn warn_fmt_with_note(
         &self,
         args: fmt::Arguments<'_>,
@@ -3258,15 +3256,16 @@ impl<'a> ParserOptions<'a> {
             let lg: &mut Log = unsafe { &mut *lg.as_ptr() };
             lg.add_range_warning_fmt_with_note(
                 None,
-                logger::Loc { start: i32::try_from(line).unwrap() },
-                // TODO(port): Zig wrote `.end = column` on Loc; Loc has no .end field.
+                logger::Range {
+                    loc: logger::Loc { start: i32::try_from(line).unwrap() },
+                    len: i32::try_from(column).unwrap(),
+                },
                 args,
                 note_args,
                 note_range,
             )
             .expect("unreachable");
         }
-        let _ = column;
     }
 
     pub fn default(log: Option<&'a mut Log>) -> ParserOptions<'a> {

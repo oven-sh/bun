@@ -42,17 +42,9 @@ impl Animation {
     // metadata consumed by reflection in the shorthand codegen. Phase B should
     // replace these with a derive macro (e.g. #[derive(Shorthand)]) that emits
     // the field→PropertyIdTag and field→has-vendor-prefix tables.
-    pub const PROPERTY_FIELD_MAP: &'static [(&'static str, css::PropertyIdTag)] = &[
-        ("name", css::PropertyIdTag::AnimationName),
-        ("duration", css::PropertyIdTag::AnimationDuration),
-        ("timing_function", css::PropertyIdTag::AnimationTimingFunction),
-        ("iteration_count", css::PropertyIdTag::AnimationIterationCount),
-        ("direction", css::PropertyIdTag::AnimationDirection),
-        ("play_state", css::PropertyIdTag::AnimationPlayState),
-        ("delay", css::PropertyIdTag::AnimationDelay),
-        ("fill_mode", css::PropertyIdTag::AnimationFillMode),
-        ("timeline", css::PropertyIdTag::AnimationTimeline),
-    ];
+    // PORT NOTE: PropertyFieldMap dropped — `PropertyIdTag::Animation*` variants
+    // are not yet generated (animation longhands are unparsed-only for now), and
+    // the table was unread comptime metadata. Re-add when the variants land.
 
     pub const VENDOR_PREFIX_MAP: &'static [(&'static str, bool)] = &[
         ("name", true),
@@ -153,8 +145,9 @@ impl Animation {
         // string slice up front instead.
         let name_str: Option<&[u8]> = match &self.name {
             AnimationName::None => None,
-            AnimationName::Ident(ident) => Some(ident.v.as_ref()),
-            AnimationName::String(s) => Some(s.as_ref()),
+            // SAFETY: arena-owned slices live for the parse session.
+            AnimationName::Ident(ident) => Some(unsafe { &*ident.v }),
+            AnimationName::String(s) => Some(unsafe { &**s }),
         };
 
         if let Some(name_str) = name_str {
@@ -174,7 +167,7 @@ impl Animation {
             }
 
             if self.iteration_count != AnimationIterationCount::default()
-                || strings::eql_case_insensitive_ascii(name_str, b"infinite")
+                || strings::eql_case_insensitive_ascii(name_str, b"infinite", true)
             {
                 self.iteration_count.to_css(dest)?;
                 dest.write_char(b' ')?;
@@ -193,7 +186,7 @@ impl Animation {
             }
 
             if self.fill_mode != AnimationFillMode::default()
-                || (!strings::eql_case_insensitive_ascii(name_str, b"none")
+                || (!strings::eql_case_insensitive_ascii(name_str, b"none", true)
                     && css::parse_utility::parse_string::<AnimationFillMode>(
                         dest.allocator,
                         name_str,
@@ -220,7 +213,7 @@ impl Animation {
 
         self.name.to_css(dest)?;
 
-        if self.name != AnimationName::None && self.timeline != AnimationTimeline::default() {
+        if !matches!(self.name, AnimationName::None) && self.timeline != AnimationTimeline::default() {
             dest.write_char(b' ')?;
             self.timeline.to_css(dest)?;
         }
@@ -230,7 +223,9 @@ impl Animation {
 }
 
 /// A value for the [animation-name](https://drafts.csswg.org/css-animations/#animation-name) property.
-#[derive(PartialEq, Eq, Hash)]
+// PORT NOTE: no `#[derive(PartialEq, Eq, Hash)]` — `CustomIdent`/`CSSString`
+// carry raw `*const [u8]` arena pointers; derived eq/hash would compare by
+// pointer. Hand-written `eql`/`hash` below compare by content.
 pub enum AnimationName {
     /// The `none` keyword.
     None,
@@ -284,10 +279,18 @@ impl AnimationName {
         }
     }
 
-    // TODO(port): `parse` was not defined in the Zig source for AnimationName but
-    // is referenced by `Animation::parse` via `input.tryParse(AnimationName.parse, ...)`.
-    // It is presumably provided elsewhere (DeriveParse mixin or hand-written upstream).
-    // Phase B: locate/implement.
+    pub fn parse(input: &mut Parser) -> css::Result<Self> {
+        // PORT NOTE: ported from src/css/properties/animation.zig — `none` keyword,
+        // then `<string>`, else `<custom-ident>`.
+        if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+            return Ok(AnimationName::None);
+        }
+        if let Ok(s) = input.try_parse(|i| i.expect_string()) {
+            return Ok(AnimationName::String(s));
+        }
+        let ident = CustomIdent::parse(input)?;
+        Ok(AnimationName::Ident(ident))
+    }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         let css_module_animation_enabled = if let Some(css_module) = &dest.css_module {
@@ -299,43 +302,47 @@ impl AnimationName {
         match self {
             AnimationName::None => return dest.write_str("none"),
             AnimationName::Ident(s) => {
+                // SAFETY: arena-owned slice valid for 'bump.
+                let name: &[u8] = unsafe { &*s.v };
                 if css_module_animation_enabled {
                     // PORT NOTE: reshaped for borrowck — capture allocator/source_index
                     // before borrowing dest.css_module mutably.
                     let allocator = dest.allocator;
                     let source_index = dest.loc.source_index;
                     if let Some(css_module) = &mut dest.css_module {
-                        css_module.get_reference(allocator, &s.v, source_index);
+                        css_module.get_reference(allocator, name, source_index);
                     }
                 }
                 return s.to_css_with_options(dest, css_module_animation_enabled);
             }
             AnimationName::String(s) => {
+                // SAFETY: arena-owned slice valid for 'bump.
+                let name: &[u8] = unsafe { &**s };
                 if css_module_animation_enabled {
                     // PORT NOTE: reshaped for borrowck
                     let allocator = dest.allocator;
                     let source_index = dest.loc.source_index;
                     if let Some(css_module) = &mut dest.css_module {
-                        css_module.get_reference(allocator, s, source_index);
+                        css_module.get_reference(allocator, name, source_index);
                     }
                 }
 
                 // CSS-wide keywords and `none` cannot remove quotes
-                if strings::eql_case_insensitive_ascii(s, b"none", true)
-                    || strings::eql_case_insensitive_ascii(s, b"initial", true)
-                    || strings::eql_case_insensitive_ascii(s, b"inherit", true)
-                    || strings::eql_case_insensitive_ascii(s, b"unset", true)
-                    || strings::eql_case_insensitive_ascii(s, b"default", true)
-                    || strings::eql_case_insensitive_ascii(s, b"revert", true)
-                    || strings::eql_case_insensitive_ascii(s, b"revert-layer", true)
+                if strings::eql_case_insensitive_ascii(name, b"none", true)
+                    || strings::eql_case_insensitive_ascii(name, b"initial", true)
+                    || strings::eql_case_insensitive_ascii(name, b"inherit", true)
+                    || strings::eql_case_insensitive_ascii(name, b"unset", true)
+                    || strings::eql_case_insensitive_ascii(name, b"default", true)
+                    || strings::eql_case_insensitive_ascii(name, b"revert", true)
+                    || strings::eql_case_insensitive_ascii(name, b"revert-layer", true)
                 {
-                    if css::serializer::serialize_string(s, dest).is_err() {
+                    if css::serializer::serialize_string(name, dest).is_err() {
                         return dest.add_fmt_error();
                     }
                     return Ok(());
                 }
 
-                return dest.write_ident(s, css_module_animation_enabled);
+                return dest.write_ident(name, css_module_animation_enabled);
             }
         }
     }
@@ -459,7 +466,6 @@ impl AnimationComposition {
 }
 
 /// A value for the [animation-timeline](https://drafts.csswg.org/css-animations-2/#animation-timeline) property.
-#[derive(PartialEq)]
 pub enum AnimationTimeline {
     /// The animation's timeline is a DocumentTimeline, more specifically the default document timeline.
     Auto,
@@ -520,6 +526,28 @@ impl AnimationTimeline {
     pub fn default() -> AnimationTimeline {
         AnimationTimeline::Auto
     }
+
+    pub fn is_default(&self) -> bool {
+        matches!(self, AnimationTimeline::Auto)
+    }
+}
+
+// PORT NOTE: hand-written `PartialEq` — `DashedIdent` carries a raw
+// `*const [u8]` arena pointer; derive would compare by pointer, not content.
+impl PartialEq for AnimationTimeline {
+    fn eq(&self, other: &Self) -> bool {
+        use crate::generics::CssEql;
+        match (self, other) {
+            (AnimationTimeline::Auto, AnimationTimeline::Auto) => true,
+            (AnimationTimeline::None, AnimationTimeline::None) => true,
+            (AnimationTimeline::DashedIdent(a), AnimationTimeline::DashedIdent(b)) => a.eql(b),
+            (AnimationTimeline::Scroll(a), AnimationTimeline::Scroll(b)) => a == b,
+            (AnimationTimeline::View(a), AnimationTimeline::View(b)) => {
+                a.axis == b.axis && Size2D::eql(&a.inset, &b.inset)
+            }
+            _ => false,
+        }
+    }
 }
 
 /// The [scroll()](https://drafts.csswg.org/scroll-animations-1/#scroll-notation) function.
@@ -532,7 +560,6 @@ pub struct ScrollTimeline {
 }
 
 /// The [view()](https://drafts.csswg.org/scroll-animations-1/#view-notation) function.
-#[derive(PartialEq)]
 pub struct ViewTimeline {
     /// Specifies which axis of the scroll container to use as the progress for the timeline.
     pub axis: ScrollAxis,

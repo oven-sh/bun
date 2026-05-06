@@ -8,3 +8,9 @@
 #[cfg(target_os = "linux")] pub use linux_errno::{*, posix};
 #[cfg(windows)] pub mod windows_errno;
 #[cfg(windows)] pub use windows_errno::*;
+
+impl bun_core::output::ErrName for SystemErrno {
+    fn name(&self) -> &[u8] {
+        <&'static str>::from(*self).as_bytes()
+    }
+}

@@ -321,13 +321,13 @@ impl AnimationName {
                 }
 
                 // CSS-wide keywords and `none` cannot remove quotes
-                if strings::eql_case_insensitive_ascii_icheck_length(s, b"none")
-                    || strings::eql_case_insensitive_ascii_icheck_length(s, b"initial")
-                    || strings::eql_case_insensitive_ascii_icheck_length(s, b"inherit")
-                    || strings::eql_case_insensitive_ascii_icheck_length(s, b"unset")
-                    || strings::eql_case_insensitive_ascii_icheck_length(s, b"default")
-                    || strings::eql_case_insensitive_ascii_icheck_length(s, b"revert")
-                    || strings::eql_case_insensitive_ascii_icheck_length(s, b"revert-layer")
+                if strings::eql_case_insensitive_ascii(s, b"none", true)
+                    || strings::eql_case_insensitive_ascii(s, b"initial", true)
+                    || strings::eql_case_insensitive_ascii(s, b"inherit", true)
+                    || strings::eql_case_insensitive_ascii(s, b"unset", true)
+                    || strings::eql_case_insensitive_ascii(s, b"default", true)
+                    || strings::eql_case_insensitive_ascii(s, b"revert", true)
+                    || strings::eql_case_insensitive_ascii(s, b"revert-layer", true)
                 {
                     if css::serializer::serialize_string(s, dest).is_err() {
                         return dest.add_fmt_error();

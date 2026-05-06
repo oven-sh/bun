@@ -9,12 +9,8 @@ use css::css_rules::media::MediaRule;
 use css::media_query::{MediaCondition, MediaFeature, MediaFeatureId, MediaList, MediaQuery};
 use css::css_properties::custom::UnparsedProperty;
 
-// TODO(port): LIFETIMES.tsv prescribes `&'a HashSet<String>` for unused_symbols verbatim,
-// but std HashSet is SipHash-backed and `String` forces UTF-8 validation on arbitrary-byte
-// CSS symbol names. The underlying Zig type is `std.StringArrayHashMapUnmanaged(void)`.
-// Phase B: retype to `&'a bun_collections::ArrayHashMap<Box<[u8]>, ()>` (or a
-// `StringArrayHashSet` alias), update the LIFETIMES.tsv row, and drop this import.
-use std::collections::HashSet;
+use bun_collections::ArrayHashMap;
+use bun_alloc::Arena as Bump;
 
 pub struct SupportsEntry {
     pub condition: css::SupportsCondition,

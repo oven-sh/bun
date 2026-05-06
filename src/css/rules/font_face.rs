@@ -42,38 +42,37 @@ pub enum FontFaceProperty {
 impl FontFaceProperty {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // Local helpers mirroring the Zig `Helpers.writeProperty` with `comptime multi: bool`.
-        fn write_property_single<V>(d: &mut Printer, prop: &'static str, value: &V) -> Result<(), PrintErr>
-        where
-            V: crate::generics::ToCss,
-        {
-            d.write_str(prop)?;
-            d.delim(b':', false)?;
-            value.to_css(d)
+        macro_rules! write_property_single {
+            ($d:expr, $prop:expr, $value:expr) => {{
+                $d.write_str($prop)?;
+                $d.delim(b':', false)?;
+                $value.to_css($d)
+            }};
         }
 
-        fn write_property_multi<V>(d: &mut Printer, prop: &'static str, value: &[V]) -> Result<(), PrintErr>
-        where
-            V: crate::generics::ToCss,
-        {
-            d.write_str(prop)?;
-            d.delim(b':', false)?;
-            let len = value.len();
-            for (idx, val) in value.iter().enumerate() {
-                val.to_css(d)?;
-                if idx < len - 1 {
-                    d.delim(b',', false)?;
+        macro_rules! write_property_multi {
+            ($d:expr, $prop:expr, $value:expr) => {{
+                $d.write_str($prop)?;
+                $d.delim(b':', false)?;
+                let slice = $value;
+                let len = slice.len();
+                for (idx, val) in slice.iter().enumerate() {
+                    val.to_css($d)?;
+                    if idx < len - 1 {
+                        $d.delim(b',', false)?;
+                    }
                 }
-            }
-            Ok(())
+                Ok(())
+            }};
         }
 
         match self {
-            FontFaceProperty::Source(value) => write_property_multi(dest, "src", value.as_slice()),
-            FontFaceProperty::FontFamily(value) => write_property_single(dest, "font-family", value),
-            FontFaceProperty::FontStyle(value) => write_property_single(dest, "font-style", value),
-            FontFaceProperty::FontWeight(value) => write_property_single(dest, "font-weight", value),
-            FontFaceProperty::FontStretch(value) => write_property_single(dest, "font-stretch", value),
-            FontFaceProperty::UnicodeRange(value) => write_property_multi(dest, "unicode-range", value.as_slice()),
+            FontFaceProperty::Source(value) => write_property_multi!(dest, "src", value.as_slice()),
+            FontFaceProperty::FontFamily(value) => write_property_single!(dest, "font-family", value),
+            FontFaceProperty::FontStyle(value) => write_property_single!(dest, "font-style", value),
+            FontFaceProperty::FontWeight(value) => write_property_single!(dest, "font-weight", value),
+            FontFaceProperty::FontStretch(value) => write_property_single!(dest, "font-stretch", value),
+            FontFaceProperty::UnicodeRange(value) => write_property_multi!(dest, "unicode-range", value.as_slice()),
             FontFaceProperty::Custom(custom) => {
                 dest.write_str(custom.name.as_str())?;
                 dest.delim(b':', false)?;
@@ -83,9 +82,30 @@ impl FontFaceProperty {
     }
 
     pub fn deep_clone(&self, allocator: &bun_alloc::Arena) -> Self {
-        // TODO(port): `css.implementDeepClone` is comptime-reflection-based; replace with a
-        // `#[derive(DeepClone)]` proc-macro or hand-written impl in Phase B.
-        css::implement_deep_clone(self, allocator)
+        // PORT NOTE: Zig `css.implementDeepClone` field-walk, hand-expanded.
+        match self {
+            FontFaceProperty::Source(v) => {
+                FontFaceProperty::Source(v.iter().map(|s| s.deep_clone(allocator)).collect())
+            }
+            FontFaceProperty::FontFamily(v) => FontFaceProperty::FontFamily(v.deep_clone(allocator)),
+            FontFaceProperty::FontStyle(v) => FontFaceProperty::FontStyle(v.deep_clone(allocator)),
+            FontFaceProperty::FontWeight(v) => FontFaceProperty::FontWeight(v.deep_clone(allocator)),
+            FontFaceProperty::FontStretch(v) => FontFaceProperty::FontStretch(v.deep_clone(allocator)),
+            FontFaceProperty::UnicodeRange(v) => {
+                FontFaceProperty::UnicodeRange(v.iter().map(|r| UnicodeRange { start: r.start, end: r.end }).collect())
+            }
+            FontFaceProperty::Custom(v) => FontFaceProperty::Custom(v.deep_clone(allocator)),
+        }
+    }
+}
+
+impl FontStyle {
+    pub fn deep_clone(&self, allocator: &bun_alloc::Arena) -> Self {
+        match self {
+            FontStyle::Normal => FontStyle::Normal,
+            FontStyle::Italic => FontStyle::Italic,
+            FontStyle::Oblique(a) => FontStyle::Oblique(a.deep_clone(allocator)),
+        }
     }
 }
 
@@ -168,11 +188,11 @@ impl UnicodeRange {
         //   u <number-token> <number-token> |
         //   u '+' '?'+
 
-        if let Some(e) = input.expect_ident_matching("u").as_err() {
+        if let Err(e) = input.expect_ident_matching(b"u") {
             return Err(e);
         }
         let after_u = input.position();
-        if let Some(e) = Self::parse_tokens(input).as_err() {
+        if let Err(e) = Self::parse_tokens(input) {
             return Err(e);
         }
 
@@ -212,7 +232,7 @@ impl UnicodeRange {
                     }
                 };
 
-                if matches!(*token, css::Token::Delim('?')) {
+                if matches!(*token, css::Token::Delim(c) if c == '?' as u32) {
                     return Self::parse_question_marks(input);
                 }
                 if matches!(*token, css::Token::Delim(_) | css::Token::Number { .. }) {
@@ -221,12 +241,12 @@ impl UnicodeRange {
                 return Ok(());
             }
             css::Token::Delim(c) => {
-                if c == '+' {
+                if c == '+' as u32 {
                     let next = match input.next_including_whitespace() {
                         Ok(vv) => vv,
                         Err(e) => return Err(e),
                     };
-                    if !(matches!(*next, css::Token::Ident(_)) || matches!(*next, css::Token::Delim('?'))) {
+                    if !(matches!(*next, css::Token::Ident(_)) || matches!(*next, css::Token::Delim(d) if d == '?' as u32)) {
                         return Err(input.new_basic_unexpected_token_error(next.clone()));
                     }
                     return Self::parse_question_marks(input);
@@ -241,8 +261,8 @@ impl UnicodeRange {
     fn parse_question_marks(input: &mut css::Parser) -> css::Result<()> {
         loop {
             let start = input.state();
-            if let Some(tok) = input.next_including_whitespace().as_value() {
-                if matches!(*tok, css::Token::Delim('?')) {
+            if let Ok(tok) = input.next_including_whitespace() {
+                if matches!(*tok, css::Token::Delim(c) if c == '?' as u32) {
                     continue;
                 }
             }

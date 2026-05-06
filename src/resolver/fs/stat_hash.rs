@@ -31,21 +31,32 @@ fn as_bytes<T>(v: &T) -> &[u8] {
     unsafe { core::slice::from_raw_parts((v as *const T).cast::<u8>(), core::mem::size_of::<T>()) }
 }
 
+// Zig `std.posix.Stat.mtime()` — Rust `libc::stat` has no method, project the
+// platform-specific fields here (mirrors `bun_sys::PosixStat::stat_mtime`).
+#[inline]
+fn stat_mtime(s: &Stat) -> Timespec {
+    #[cfg(target_os = "linux")]
+    { Timespec { sec: s.st_mtime as i64, nsec: s.st_mtime_nsec as i64 } }
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    { Timespec { sec: s.st_mtimespec.tv_sec as i64, nsec: s.st_mtimespec.tv_nsec as i64 } }
+    #[cfg(windows)]
+    { Timespec { sec: s.st_mtim.tv_sec as i64, nsec: s.st_mtim.tv_nsec as i64 } }
+}
+
 impl StatHash {
     pub fn hash(&mut self, stat: &Stat, path: &[u8]) {
         let mut stat_hasher = XxHash64::new(42);
-        stat_hasher.update(as_bytes(&stat.size));
-        stat_hasher.update(as_bytes(&stat.mode));
-        stat_hasher.update(as_bytes(&stat.mtime()));
-        stat_hasher.update(as_bytes(&stat.ino));
+        stat_hasher.update(as_bytes(&stat.st_size));
+        stat_hasher.update(as_bytes(&stat.st_mode));
+        stat_hasher.update(as_bytes(&stat_mtime(stat)));
+        stat_hasher.update(as_bytes(&stat.st_ino));
         stat_hasher.update(path);
 
         let prev = self.value;
         self.value = stat_hasher.digest();
 
-        // TODO(port): narrow @intCast target type for stat.mode (Zig inferred from S.ISREG param)
-        if prev != self.value && S::ISREG(u32::try_from(stat.mode).unwrap()) {
-            let mtime_timespec = stat.mtime();
+        if prev != self.value && S::ISREG(u32::try_from(stat.st_mode).unwrap()) {
+            let mtime_timespec = stat_mtime(stat);
             // Clamp negative values to 0 to avoid timestamp overflow issues on Windows
             let mtime = Timespec {
                 nsec: i64::try_from(mtime_timespec.nsec.max(0)).unwrap(),
@@ -61,7 +72,7 @@ impl StatHash {
                 self.last_modified_buffer_len = 0;
                 self.last_modified_u64 = 0;
             }
-        } else if !S::ISREG(u32::try_from(stat.mode).unwrap()) {
+        } else if !S::ISREG(u32::try_from(stat.st_mode).unwrap()) {
             self.last_modified_buffer_len = 0;
             self.last_modified_u64 = 0;
         }

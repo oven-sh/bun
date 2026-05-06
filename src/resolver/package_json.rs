@@ -17,19 +17,193 @@ use bun_sys::Fd;
 
 use crate::fs;
 use crate as resolver;
+use bumpalo::Bump;
+use bun_wyhash::Wyhash;
 
-// ── B-2 local stand-ins for blocked higher-tier crate types ──────────────
-// TODO(b2-blocked): bun_install::dependency::Dependency
-#[derive(Default, Clone)] pub struct Dependency(());
-// TODO(b2-blocked): bun_install::npm::Architecture
-#[derive(Default, Clone, Copy)] pub struct Architecture(());
-// TODO(b2-blocked): bun_install::npm::OperatingSystem
-#[derive(Default, Clone, Copy)] pub struct OperatingSystem(());
+// ── FORWARD_DECL: bun_install types reachable only on the auto-install path ──
+// CYCLEBREAK: bun_resolver → bun_install would loop through bun_http. The
+// auto-install path is dormant until `bun_install` writes `r.package_manager`;
+// these stubs project just the field/method shape the resolver bodies touch.
+// `bun_install` installs the real `INSTALL_HOOKS` vtable at init.
+
 // TODO(b2-blocked): bun_install::PackageID
 pub type PackageID = u32;
 pub const INVALID_PACKAGE_ID: PackageID = u32::MAX;
-impl Architecture {
-    pub fn all() -> Self { Self(()) }
+
+pub use install_stubs::{Architecture, Dependency, OperatingSystem};
+
+#[allow(non_snake_case)]
+pub mod install_stubs {
+    use super::{PackageID, SemverString};
+    use core::ptr::NonNull;
+
+    // ── bun_install::npm::{Architecture, OperatingSystem} ──────────────────
+    // Real types are bitflags; resolver only constructs them via
+    // `none().negatable().apply(str).combine()` and stores the result.
+    #[derive(Default, Clone, Copy)] pub struct Architecture(pub u16);
+    #[derive(Default, Clone, Copy)] pub struct OperatingSystem(pub u16);
+    #[derive(Default, Clone, Copy)] pub struct Negatable<T: Copy>(pub T, pub T);
+    impl Architecture {
+        pub fn all() -> Self { Self(u16::MAX) }
+        pub fn none() -> Self { Self(0) }
+        pub fn negatable(self) -> Negatable<Architecture> { Negatable(self, Architecture(0)) }
+    }
+    impl OperatingSystem {
+        pub fn all() -> Self { Self(u16::MAX) }
+        pub fn none() -> Self { Self(0) }
+        pub fn negatable(self) -> Negatable<OperatingSystem> { Negatable(self, OperatingSystem(0)) }
+    }
+    impl Negatable<Architecture> {
+        pub fn apply(&mut self, _s: &[u8]) {
+            // FORWARD_DECL: real impl is `bun_install::npm::Architecture::apply` —
+            // bit-set lookup keyed by `_s`. Auto-install-only; hook installed by
+            // bun_install. No-op until then (matches `Architecture::all()` default).
+        }
+        pub fn combine(self) -> Architecture { Architecture(self.0 .0 & !self.1 .0) }
+    }
+    impl Negatable<OperatingSystem> {
+        pub fn apply(&mut self, _s: &[u8]) {}
+        pub fn combine(self) -> OperatingSystem { OperatingSystem(self.0 .0 & !self.1 .0) }
+    }
+
+    // ── bun_install::dependency ────────────────────────────────────────────
+    pub mod Behavior {
+        bitflags::bitflags! {
+            #[derive(Default, Clone, Copy, PartialEq, Eq)]
+            pub struct Behavior: u8 {
+                const PROD     = 1 << 0;
+                const DEV      = 1 << 1;
+                const OPTIONAL = 1 << 2;
+                const PEER     = 1 << 3;
+            }
+        }
+    }
+    pub use Behavior::Behavior as DepBehavior;
+
+    pub mod Version {
+        #[derive(Default, Clone)]
+        pub struct Version {
+            pub tag: Tag,
+            pub value: Value,
+        }
+        #[derive(Default, Clone, Copy, PartialEq, Eq)]
+        pub enum Tag { #[default] Uninitialized, Npm }
+        impl Tag {
+            /// Zig: `Dependency.Version.Tag.infer` — only the resolver's
+            /// `== .npm` branch is reachable here.
+            pub fn infer(_s: &[u8]) -> Tag { Tag::Uninitialized }
+        }
+        #[derive(Default, Clone)]
+        pub struct Value { npm: NpmInfo }
+        impl Value {
+            pub fn npm(&self) -> &NpmInfo { &self.npm }
+        }
+        #[derive(Default, Clone)]
+        pub struct NpmInfo { pub version: bun_semver::Query::Group }
+    }
+
+    #[derive(Default, Clone)]
+    pub struct Dependency {
+        pub name: SemverString,
+        pub version: Version::Version,
+        pub name_hash: u64,
+        pub behavior: DepBehavior,
+    }
+
+    /// FORWARD_DECL: `bun_install::dependency::parse`/`parse_with_tag`. The
+    /// auto-install path is only entered when `r.package_manager.is_some()`
+    /// (set by bun_install); until that crate links, these are unreachable.
+    pub static mut INSTALL_HOOKS: InstallHooks = InstallHooks {
+        parse: |_, _, _, _, _, _| None,
+        parse_with_tag: |_, _, _, _, _, _, _| None,
+    };
+    pub struct InstallHooks {
+        pub parse: fn(
+            SemverString,
+            Option<u64>,
+            &[u8],
+            &bun_semver::SlicedString,
+            *mut bun_logger::Log,
+            *const super::PackageManager,
+        ) -> Option<Version::Version>,
+        pub parse_with_tag: fn(
+            SemverString,
+            u64,
+            &[u8],
+            Version::Tag,
+            &bun_semver::SlicedString,
+            *mut bun_logger::Log,
+            *const super::PackageManager,
+        ) -> Option<Version::Version>,
+    }
+    impl Dependency {
+        #[allow(non_snake_case)]
+        pub use Version::*;
+        pub fn parse(
+            name: SemverString,
+            name_hash: Option<u64>,
+            version: &[u8],
+            sliced: &bun_semver::SlicedString,
+            log: *mut bun_logger::Log,
+            pm: *const super::PackageManager,
+        ) -> Option<Version::Version> {
+            // SAFETY: single-threaded init; written once by bun_install.
+            unsafe { (INSTALL_HOOKS.parse)(name, name_hash, version, sliced, log, pm) }
+        }
+        pub fn parse_with_tag(
+            name: SemverString,
+            name_hash: u64,
+            version: &[u8],
+            tag: Version::Tag,
+            sliced: &bun_semver::SlicedString,
+            log: *mut bun_logger::Log,
+            pm: *const super::PackageManager,
+        ) -> Option<Version::Version> {
+            // SAFETY: see `parse`.
+            unsafe { (INSTALL_HOOKS.parse_with_tag)(name, name_hash, version, tag, sliced, log, pm) }
+        }
+    }
+
+    // ── bun_install::lockfile::Package::DependencyGroup ────────────────────
+    #[derive(Clone, Copy)]
+    pub struct DependencyGroup {
+        pub prop: &'static [u8],
+        pub field: &'static [u8],
+        pub behavior: DepBehavior,
+    }
+    impl DependencyGroup {
+        pub const DEPENDENCIES: Self =
+            Self { prop: b"dependencies", field: b"dependencies", behavior: DepBehavior::PROD };
+        pub const DEV: Self =
+            Self { prop: b"devDependencies", field: b"dev_dependencies", behavior: DepBehavior::DEV };
+        pub const OPTIONAL: Self = Self {
+            prop: b"optionalDependencies",
+            field: b"optional_dependencies",
+            behavior: DepBehavior::OPTIONAL,
+        };
+    }
+
+    // ── bun_install::PackageManager (opaque + lockfile accessor) ───────────
+    #[repr(C)]
+    pub struct Lockfile { _opaque: [u8; 0] }
+    impl Lockfile {
+        pub fn resolve_package_from_name_and_version(
+            &self,
+            _name: &[u8],
+            _version: &Version::Version,
+        ) -> Option<PackageID> {
+            // FORWARD_DECL hook — unreachable until bun_install populates
+            // `r.package_manager` (which it doesn't without linking).
+            None
+        }
+    }
+}
+
+/// Opaque `bun_install::PackageManager`. Held as `Option<NonNull<_>>` on the
+/// resolver; only dereferenced when bun_install has installed itself.
+#[repr(C)]
+pub struct PackageManager {
+    pub lockfile: install_stubs::Lockfile,
 }
 impl OperatingSystem {
     pub fn all() -> Self { Self(()) }
@@ -430,6 +604,7 @@ impl PackageJSON {
     fn load_define_defaults(
         env: &mut options::Env,
         json: &js_ast::E::Object,
+        bump: &Bump,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         let mut valid_count: usize = 0;
@@ -449,8 +624,12 @@ impl PackageJSON {
             }
             // PERF(port): was appendAssumeCapacity
             env.defaults.push(options::EnvDefault {
-                key: prop.key.as_ref().unwrap().data.e_string().string().expect("unreachable"),
-                value: prop.value.as_ref().unwrap().data.e_string().string().expect("unreachable"),
+                key: Box::from(
+                    prop.key.as_ref().unwrap().data.e_string().unwrap().string(bump).expect("unreachable"),
+                ),
+                value: Box::from(
+                    prop.value.as_ref().unwrap().data.e_string().unwrap().string(bump).expect("unreachable"),
+                ),
             });
         }
         Ok(())
@@ -459,6 +638,7 @@ impl PackageJSON {
     fn load_overrides(
         framework: &mut options::Framework,
         json: &js_ast::E::Object,
+        bump: &Bump,
     ) {
         let mut valid_count: usize = 0;
         for prop in json.properties.slice() {
@@ -477,8 +657,12 @@ impl PackageJSON {
             if !matches!(prop.value.as_ref().unwrap().data, js_ast::ExprData::EString(_)) {
                 continue;
             }
-            keys.push(prop.key.as_ref().unwrap().data.e_string().string().expect("unreachable"));
-            values.push(prop.value.as_ref().unwrap().data.e_string().string().expect("unreachable"));
+            keys.push(Box::from(
+                prop.key.as_ref().unwrap().data.e_string().unwrap().string(bump).expect("unreachable"),
+            ));
+            values.push(Box::from(
+                prop.value.as_ref().unwrap().data.e_string().unwrap().string(bump).expect("unreachable"),
+            ));
         }
         framework.override_modules = api::StringMap { keys, values };
     }
@@ -486,16 +670,17 @@ impl PackageJSON {
     fn load_define_expression(
         env: &mut options::Env,
         json: &js_ast::E::Object,
+        bump: &Bump,
     ) -> Result<(), bun_core::Error> {
         for prop in json.properties.slice() {
             match &prop.key.as_ref().unwrap().data {
                 js_ast::ExprData::EString(e_str) => {
-                    let str = e_str.string().unwrap_or_default();
+                    let str = e_str.string(bump).unwrap_or_default();
 
                     if str.as_ref() == b"defaults" {
                         match &prop.value.as_ref().unwrap().data {
                             js_ast::ExprData::EObject(obj) => {
-                                Self::load_define_defaults(env, obj)?;
+                                Self::load_define_defaults(env, obj, bump)?;
                             }
                             _ => {
                                 env.defaults.truncate(0);
@@ -504,10 +689,12 @@ impl PackageJSON {
                     } else if str.as_ref() == b".env" {
                         match &prop.value.as_ref().unwrap().data {
                             js_ast::ExprData::EString(value_str) => {
-                                env.set_behavior_from_prefix(value_str.string().unwrap_or_default());
+                                env.set_behavior_from_prefix(Box::from(
+                                    value_str.string(bump).unwrap_or_default(),
+                                ));
                             }
                             _ => {
-                                env.behavior = options::EnvBehavior::Disable;
+                                env.behavior = options::EnvBehavior::disable;
                                 env.prefix = Box::default();
                             }
                         }
@@ -522,9 +709,10 @@ impl PackageJSON {
     fn load_framework_expression<const READ_DEFINE: bool>(
         framework: &mut options::Framework,
         json: js_ast::Expr,
+        bump: &Bump,
     ) -> bool {
         if let Some(client) = json.as_property(b"client") {
-            if let Some(str) = client.expr.as_string() {
+            if let Some(str) = client.expr.as_string(bump) {
                 if !str.is_empty() {
                     framework.client.path = str;
                     framework.client.kind = options::EntryPointKind::Client;
@@ -533,7 +721,7 @@ impl PackageJSON {
         }
 
         if let Some(client) = json.as_property(b"fallback") {
-            if let Some(str) = client.expr.as_string() {
+            if let Some(str) = client.expr.as_string(bump) {
                 if !str.is_empty() {
                     framework.fallback.path = str;
                     framework.fallback.kind = options::EntryPointKind::Fallback;
@@ -542,7 +730,7 @@ impl PackageJSON {
         }
 
         if let Some(css_prop) = json.as_property(b"css") {
-            if let Some(str) = css_prop.expr.as_string() {
+            if let Some(str) = css_prop.expr.as_string(bump) {
                 if str.as_ref() == b"onimportcss" {
                     framework.client_css_in_js = options::CssInJs::FacadeOnimportcss;
                 } else {
@@ -553,7 +741,7 @@ impl PackageJSON {
 
         if let Some(override_) = json.as_property(b"override") {
             if let js_ast::ExprData::EObject(obj) = &override_.expr.data {
-                Self::load_overrides(framework, obj);
+                Self::load_overrides(framework, obj, bump);
             }
         }
 
@@ -564,7 +752,7 @@ impl PackageJSON {
                     if let js_ast::ExprData::EObject(object) = &client.expr.data {
                         framework.client.env = options::Env::init();
 
-                        let _ = Self::load_define_expression(&mut framework.client.env, object);
+                        let _ = Self::load_define_expression(&mut framework.client.env, object, bump);
                         framework.fallback.env = framework.client.env.clone();
                         skip_fallback = true;
                     }
@@ -575,7 +763,7 @@ impl PackageJSON {
                         if let js_ast::ExprData::EObject(object) = &client.expr.data {
                             framework.fallback.env = options::Env::init();
 
-                            let _ = Self::load_define_expression(&mut framework.fallback.env, object);
+                            let _ = Self::load_define_expression(&mut framework.fallback.env, object, bump);
                         }
                     }
                 }
@@ -584,14 +772,14 @@ impl PackageJSON {
                     if let js_ast::ExprData::EObject(object) = &server.expr.data {
                         framework.server.env = options::Env::init();
 
-                        let _ = Self::load_define_expression(&mut framework.server.env, object);
+                        let _ = Self::load_define_expression(&mut framework.server.env, object, bump);
                     }
                 }
             }
         }
 
         if let Some(server) = json.as_property(b"server") {
-            if let Some(str) = server.expr.as_string() {
+            if let Some(str) = server.expr.as_string(bump) {
                 if !str.is_empty() {
                     framework.server.path = str;
                     framework.server.kind = options::EntryPointKind::Server;
@@ -609,12 +797,13 @@ impl PackageJSON {
         package_json: &PackageJSON,
         pair: &mut FrameworkRouterPair<'_>,
         json: js_ast::Expr,
+        bump: &Bump,
         load_framework: LoadFramework,
     ) {
         let Some(framework_object) = json.as_property(b"framework") else { return };
 
         if let Some(name) = framework_object.expr.as_property(b"displayName") {
-            if let Some(str) = name.expr.as_string() {
+            if let Some(str) = name.expr.as_string(bump) {
                 if !str.is_empty() {
                     pair.framework.display_name = str;
                 }
@@ -622,7 +811,7 @@ impl PackageJSON {
         }
 
         if let Some(version) = json.get(b"version") {
-            if let Some(str) = version.as_string() {
+            if let Some(str) = version.as_string(bump) {
                 if !str.is_empty() {
                     pair.framework.version = str;
                 }
@@ -630,7 +819,7 @@ impl PackageJSON {
         }
 
         if let Some(static_prop) = framework_object.expr.as_property(b"static") {
-            if let Some(str) = static_prop.expr.as_string() {
+            if let Some(str) = static_prop.expr.as_string(bump) {
                 if !str.is_empty() {
                     pair.router.static_dir = str;
                     pair.router.static_dir_enabled = true;
@@ -639,7 +828,7 @@ impl PackageJSON {
         }
 
         if let Some(asset_prefix) = framework_object.expr.as_property(b"assetPrefix") {
-            if let Some(_str) = asset_prefix.expr.as_string() {
+            if let Some(_str) = asset_prefix.expr.as_string(bump) {
                 let str = bun_string::strings::trim(&_str, b" ");
                 if !str.is_empty() {
                     pair.router.asset_prefix_path = Box::from(str);
@@ -735,11 +924,11 @@ impl PackageJSON {
         match load_framework {
             LoadFramework::Development => {
                 if let Some(env) = framework_object.expr.as_property(b"development") {
-                    if Self::load_framework_expression::<READ_DEFINES>(pair.framework, env.expr) {
+                    if Self::load_framework_expression::<READ_DEFINES>(pair.framework, env.expr, bump) {
                         pair.framework.package = package_json.name_for_import().expect("unreachable");
                         pair.framework.development = true;
                         if let Some(static_prop) = env.expr.as_property(b"static") {
-                            if let Some(str) = static_prop.expr.as_string() {
+                            if let Some(str) = static_prop.expr.as_string(bump) {
                                 if !str.is_empty() {
                                     pair.router.static_dir = str;
                                     pair.router.static_dir_enabled = true;
@@ -753,12 +942,12 @@ impl PackageJSON {
             }
             LoadFramework::Production => {
                 if let Some(env) = framework_object.expr.as_property(b"production") {
-                    if Self::load_framework_expression::<READ_DEFINES>(pair.framework, env.expr) {
+                    if Self::load_framework_expression::<READ_DEFINES>(pair.framework, env.expr, bump) {
                         pair.framework.package = package_json.name_for_import().expect("unreachable");
                         pair.framework.development = false;
 
                         if let Some(static_prop) = env.expr.as_property(b"static") {
-                            if let Some(str) = static_prop.expr.as_string() {
+                            if let Some(str) = static_prop.expr.as_string(bump) {
                                 if !str.is_empty() {
                                     pair.router.static_dir = str;
                                     pair.router.static_dir_enabled = true;

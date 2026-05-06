@@ -657,9 +657,9 @@ macro_rules! init_small_list_helper {
 macro_rules! flush_helper {
     ($this:expr, $field:ident, $val:expr, $dest:expr, $context:expr) => {{
         if let Some(existing) = &$this.$field {
-            if !existing.eql($val)
+            if !crate::generic::eql(existing, $val)
                 && $context.targets.browsers.is_some()
-                && !$val.is_compatible($context.targets.browsers.unwrap())
+                && !crate::generic::is_compatible($val, $context.targets.browsers.unwrap())
             {
                 $this.flush($dest, $context);
             }

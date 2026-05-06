@@ -844,7 +844,12 @@ pub type BundlerAtRule = DefaultAtRule;
 
 pub struct BundlerAtRuleParser<'a> {
     pub allocator: &'a Bump,
-    pub import_records: &'a mut BabyList<ImportRecord>,
+    /// Raw pointer aliasing the same `BabyList` that `Parser.import_records`
+    /// holds the unique `&mut` to (Zig passes one pointer to both — see
+    /// `parseBundler`, css_parser.zig:3245). Stored raw so the unique borrow
+    /// can flow into `parse_with`/`Parser::new`; only dereferenced in
+    /// `on_import_rule`, never concurrently with the parser's own use.
+    pub import_records: *mut BabyList<ImportRecord>,
     pub layer_names: BabyList<LayerName>,
     pub options: &'a ParserOptions<'a>,
     /// Having _named_ layers nested inside of an _anonymous_ layer has no
@@ -891,9 +896,12 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
     }
 
     fn on_import_rule(this: &mut Self, import_rule: &mut ImportRule, start_position: u32, end_position: u32) {
-        let import_record_index = this.import_records.len;
+        // SAFETY: aliases `Parser.import_records` (see field doc); the parser
+        // is not reading/writing the list while this hook runs.
+        let import_records = unsafe { &mut *this.import_records };
+        let import_record_index = import_records.len;
         import_rule.import_record_idx = import_record_index;
-        bun_core::handle_oom(this.import_records.append(ImportRecord {
+        bun_core::handle_oom(import_records.append(ImportRecord {
             path: ast::fs::path_init(import_rule.url),
             kind: if import_rule.supports.is_some() { ImportKind::AtConditional } else { ImportKind::At },
             range: logger::Range {
@@ -2171,7 +2179,6 @@ impl<'a, T: CustomAtRuleParser> QualifiedRuleParser for NestedRuleParser<'a, T> 
                 entry.fill(&usage, custom_properties_slice);
             }
             }
-            #[cfg(any())] { let _ = location; }
         }
 
         this.rules.v.push(CssRule::Style(StyleRule {
@@ -2526,12 +2533,9 @@ impl<AtRule> StyleSheet<AtRule> {
     where
         AtRule: for<'b> generic::DeepClone<'b>,
     {
-        // SAFETY: crate-wide `'bump`-erasure — `allocator` owns the AST and
-        // outlives every `DeclarationList`/handler produced here.
-        let bump: &'static Bump = unsafe { &*(allocator as *const Bump) };
-        let ctx = PropertyHandlerContext::new(bump, options.targets, &options.unused_symbols);
-        let mut handler = DeclarationHandler::new(bump);
-        let mut important_handler = DeclarationHandler::new(bump);
+        let ctx = PropertyHandlerContext::new(allocator, options.targets, &options.unused_symbols);
+        let mut handler = DeclarationHandler::new(allocator);
+        let mut important_handler = DeclarationHandler::new(allocator);
 
         // @custom-media rules may be defined after they are referenced, but
         // may only be defined at the top level of a stylesheet. Do a pre-scan
@@ -3029,28 +3033,43 @@ impl StyleSheet<BundlerAtRule> {
         import_records: &mut BabyList<ImportRecord>,
         source_index: SrcIndex,
     ) -> Maybe<(Self, StylesheetExtra), Err<ParserError>> {
-        // PORT NOTE: reshaped for borrowck — Zig aliased `import_records` into
-        // both `BundlerAtRuleParser` *and* the parser's own slot, and aliased
-        // `&options` into the at-rule parser while also passing `options` by
-        // value (struct copy) to `parseWith`. Rust forbids both overlaps.
-        // - `import_records`: only the at-rule-parser holds it; `parse_with`
-        //   receives `None`. Phase B reshapes so `BundlerAtRuleParser` reaches
-        //   import records through the `Parser` instead.
-        // - `options`: shallow-copy via `ptr::read` (the Zig by-value pass) so
-        //   the original stack slot stays live for `at_rule_parser.options`.
-        // SAFETY: `ParserOptions` fields are POD/shared-ref-like (`NonNull<Log>`
-        // is Copy; `css_modules::Config` has no Drop). No double-drop hazard;
-        // mirrors Zig's bitwise struct copy.
-        let options_for_parse = unsafe { core::ptr::read(&options) };
+        // PORT NOTE: Zig aliased `import_records` into both `BundlerAtRuleParser`
+        // *and* the inner `Parser` (css_parser.zig:3245), and aliased `&options`
+        // into the at-rule parser while also passing `options` by value (struct
+        // copy) to `parseWith`. Rust forbids both overlaps directly:
+        // - `import_records`: derive a raw `*mut` once; the at-rule parser
+        //   stores the raw pointer (see field doc) while a fresh `&mut` derived
+        //   from the same raw pointer flows into `parse_with` → `Parser::new`,
+        //   so `add_import_record` / `state()` / `reset()` see the shared list
+        //   exactly as in the spec.
+        // - `options`: bitwise-duplicate via `ptr::read` (mirroring Zig's
+        //   by-value struct copy) and wrap the original in `ManuallyDrop` so
+        //   only the moved copy drops — `ParserOptions` transitively owns a
+        //   `SmallList` (via `css_modules::Config::pattern`) which has a real
+        //   `Drop`, so both copies must not run their destructors.
+        let options = core::mem::ManuallyDrop::new(options);
+        // SAFETY: original is `ManuallyDrop`; only `options_for_parse` drops.
+        let options_for_parse = unsafe { core::ptr::read(&*options) };
+        let import_records_ptr: *mut BabyList<ImportRecord> = import_records;
         let mut at_rule_parser = BundlerAtRuleParser {
             allocator,
-            import_records,
+            import_records: import_records_ptr,
             options: &options,
             layer_names: BabyList::default(),
             anon_layer_count: 0,
             enclosing_layer: LayerName::default(),
         };
-        Self::parse_with(allocator, code, options_for_parse, &mut at_rule_parser, None, source_index)
+        // SAFETY: see `import_records` note above — the raw pointer is the
+        // common parent of both this `&mut` and the at-rule parser's view.
+        let import_records_mut = unsafe { &mut *import_records_ptr };
+        Self::parse_with(
+            allocator,
+            code,
+            options_for_parse,
+            &mut at_rule_parser,
+            Some(import_records_mut),
+            source_index,
+        )
     }
 }
 

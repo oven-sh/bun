@@ -30,9 +30,9 @@ pub enum DeclarationContext {
 }
 
 pub struct PropertyHandlerContext<'a> {
-    // PORT NOTE: `allocator` is the parser arena (`&'static` per the crate-wide
-    // `'bump`-erasure convention until `CssRule<'bump, R>` re-threads).
-    pub allocator: &'static Bump,
+    // PORT NOTE: `allocator` is the parser arena that owns the AST being
+    // minified; bound to `'a` alongside the other borrowed inputs.
+    pub allocator: &'a Bump,
     pub targets: css::targets::Targets,
     pub is_important: bool,
     pub supports: Vec<SupportsEntry>,
@@ -45,7 +45,7 @@ pub struct PropertyHandlerContext<'a> {
 
 impl<'a> PropertyHandlerContext<'a> {
     pub fn new(
-        allocator: &'static Bump,
+        allocator: &'a Bump,
         targets: css::targets::Targets,
         unused_symbols: &'a ArrayHashMap<Box<[u8]>, ()>,
     ) -> PropertyHandlerContext<'a> {

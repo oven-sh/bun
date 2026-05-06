@@ -647,21 +647,35 @@ impl SSLConfig {
 
 mod _gated_from_js {
     use super::*;
-    use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult};
+    use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, SysErrorJsc};
     use bun_jsc::virtual_machine::VirtualMachine;
-    use bun_str::WTFStringImpl;
+
+    /// Convert a `ZBox` (NUL-terminated owned byte buffer) into a `CString`
+    /// without re-allocating. Matches Zig `toOwnedSliceZ` semantics (no
+    /// interior-NUL check).
+    #[inline]
+    fn zbox_into_cstring(z: bun_core::ZBox) -> CString {
+        // SAFETY: `ZBox` guarantees a single trailing NUL; we hand the bytes
+        // (including the sentinel) to `CString` without re-allocating.
+        unsafe { CString::from_vec_with_nul_unchecked(z.into_vec_with_nul()) }
+    }
 
     // ── ReadFromBlobError ────────────────────────────────────────────────
-    #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
+    // PORT NOTE: cannot derive `thiserror::Error` because `JsError` is not
+    // `std::error::Error`/`Display`. Manual `From<JsError>` instead.
+    #[derive(Debug, strum::IntoStaticStr)]
     pub enum ReadFromBlobError {
-        #[error(transparent)]
-        Js(#[from] JsError),
-        #[error("NullStore")]
+        Js(JsError),
         NullStore,
-        #[error("NotAFile")]
         NotAFile,
-        #[error("EmptyFile")]
         EmptyFile,
+    }
+
+    impl From<JsError> for ReadFromBlobError {
+        #[inline]
+        fn from(e: JsError) -> Self {
+            ReadFromBlobError::Js(e)
+        }
     }
 
     fn read_from_blob(

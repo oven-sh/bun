@@ -856,7 +856,7 @@ fn write_head_internal(
             );
         },
         uws::AnyResponse::H3(_) => {
-            bun_core::Output::panic("node:http does not support HTTP/3 responses");
+            bun_core::Output::panic(format_args!("node:http does not support HTTP/3 responses"));
         }
     }
 }

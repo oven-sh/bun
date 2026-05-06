@@ -403,29 +403,29 @@ fn print_truncated_line(
     writer: &mut impl Write,
     config: &DiffConfig,
     style: Style,
-) -> std::io::Result<()> {
+) -> std::fmt::Result {
     if line.len() <= config.truncate_threshold || line.len() <= config.truncate_context * 2 {
         if config.enable_ansi_colors {
-            writer.write_all(style.text_color.as_bytes())?;
+            writer.write_str(style.text_color)?;
         }
-        writer.write_all(line)?;
+        write!(writer, "{}", BStr::new(line))?;
         if config.enable_ansi_colors {
-            writer.write_all(colors::RESET.as_bytes())?;
+            writer.write_str(colors::RESET)?;
         }
         return Ok(());
     }
 
     // Line is too long, truncate it.
     if config.enable_ansi_colors {
-        writer.write_all(style.text_color.as_bytes())?;
+        writer.write_str(style.text_color)?;
     }
-    writer.write_all(&line[0..config.truncate_context])?;
+    write!(writer, "{}", BStr::new(&line[0..config.truncate_context]))?;
     if config.enable_ansi_colors {
-        writer.write_all(colors::RESET.as_bytes())?;
+        writer.write_str(colors::RESET)?;
     }
 
     if config.enable_ansi_colors {
-        writer.write_all(colors::WHITE.as_bytes())?;
+        writer.write_str(colors::WHITE)?;
     }
     // The context is shown on both sides, so we truncate line.len - 2 * context
     write!(
@@ -434,15 +434,19 @@ fn print_truncated_line(
         line.len() - 2 * config.truncate_context
     )?;
     if config.enable_ansi_colors {
-        writer.write_all(colors::RESET.as_bytes())?;
+        writer.write_str(colors::RESET)?;
     }
 
     if config.enable_ansi_colors {
-        writer.write_all(style.text_color.as_bytes())?;
+        writer.write_str(style.text_color)?;
     }
-    writer.write_all(&line[line.len() - config.truncate_context..])?;
+    write!(
+        writer,
+        "{}",
+        BStr::new(&line[line.len() - config.truncate_context..])
+    )?;
     if config.enable_ansi_colors {
-        writer.write_all(colors::RESET.as_bytes())?;
+        writer.write_str(colors::RESET)?;
     }
     Ok(())
 }
@@ -452,13 +456,13 @@ fn print_segment(
     writer: &mut impl Write,
     config: &DiffConfig,
     style: Style,
-) -> std::io::Result<()> {
+) -> std::fmt::Result {
     let mut lines = text.split(|&b| b == b'\n');
 
     print_truncated_line(lines.next().unwrap(), writer, config, style)?;
 
     for line in lines {
-        writer.write_all(b"\n")?;
+        writer.write_str("\n")?;
         print_line_prefix(writer, config, style.prefix)?;
         print_truncated_line(line, writer, config, style)?;
     }
@@ -470,7 +474,7 @@ fn print_modified_segment_without_diffdiff(
     config: &DiffConfig,
     segment: &DiffSegment<'_>,
     modified_style: ModifiedStyle,
-) -> std::io::Result<()> {
+) -> std::fmt::Result {
     let removed_prefix = match modified_style.single_line {
         true => prefix_styles::SINGLE_LINE_REMOVED,
         false => prefix_styles::REMOVED,

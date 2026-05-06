@@ -5,6 +5,7 @@ use bun_jsc::{
     CallFrame, JSGlobalObject, JSValue, JsError, JsResult,
     ConsoleObject, JSFunction, JSPropertyIterator, JSArrayIterator, JSString,
 };
+use bun_jsc::{JsClass as _, StringJsc as _};
 use bun_str::ZigString;
 use bun_jsc::js_promise;
 use bun_jsc::virtual_machine::VirtualMachine;

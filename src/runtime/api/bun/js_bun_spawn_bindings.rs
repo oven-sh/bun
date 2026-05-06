@@ -978,7 +978,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     // the struct once with its final field values instead, then fill in the
     // address-dependent fields (maxbufs, ipc_data on Windows) afterward.
     let subprocess_ptr = Box::into_raw(Box::new(SubprocessT {
-        global_this,
+        global_this: global_this as *const JSGlobalObject,
         process,
         pid_rusage: None,
         // stdin/stdout/stderr are assigned immediately after this literal.
@@ -1003,11 +1003,22 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         kill_signal,
         stderr_maxbuf: None,
         stdout_maxbuf: None,
-        terminal: existing_terminal.or_else(|| terminal_info.as_ref().map(|info| info.terminal)),
-        ..Default::default()
+        terminal: existing_terminal
+            .or_else(|| terminal_info.as_ref().map(|info| info.terminal))
+            .and_then(NonNull::new),
+        observable_getters: Default::default(),
+        closed: Default::default(),
+        this_value: Default::default(),
+        weak_file_sink_stdin_ptr: None,
+        abort_signal: None,
+        event_loop_timer_refd: false,
+        event_loop_timer: Default::default(),
+        exited_due_to_maxbuf: None,
     }));
     // SAFETY: subprocess_ptr is a freshly-boxed Subprocess; we hold the only reference.
     let subprocess = unsafe { &mut *subprocess_ptr };
+    // SAFETY: subprocess_ptr is non-null (just boxed).
+    let subprocess_nn = unsafe { NonNull::new_unchecked(subprocess_ptr) };
 
     // Address-dependent fields, filled now that `subprocess` has a stable address.
     // PORT NOTE: pass the raw `*mut SubprocessT` captured above instead of the

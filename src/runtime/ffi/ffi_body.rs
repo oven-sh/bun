@@ -2020,11 +2020,11 @@ pub fn generate_symbols(
         if let Some(val) = generate_symbol_for_function(global, value, &mut function)? {
             return Ok(Some(val));
         }
-        let base_name = prop.to_owned_slice_z()?;
+        let base_name = prop.to_owned_slice_z();
         let key = base_name.as_bytes().to_vec().into_boxed_slice();
         function.base_name = Some(base_name);
 
-        symbols.insert(key, function);
+        symbols.insert(&key, function);
         // PERF(port): was putAssumeCapacity
     }
 

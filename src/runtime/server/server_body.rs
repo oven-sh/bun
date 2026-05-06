@@ -3379,7 +3379,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
         self.pending_requests += 1;
         req.set_yield(false);
-        let ctx = self.request_pool_allocator.try_get();
+        // SAFETY: handle_oom aborts on failure; pointer is non-null and owns a fresh pool slot.
+        let ctx = unsafe { &mut *bun_core::handle_oom(self.request_pool_allocator.try_get()) };
         let mut should_deinit_context = false;
         ctx.create(self, req, resp, Some(&mut should_deinit_context), None);
         let body = self.vm.init_request_body_value(Body::Value::Null).expect("unreachable");

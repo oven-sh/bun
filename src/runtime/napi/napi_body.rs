@@ -2430,12 +2430,12 @@ impl ThreadSafeFunction {
     }
 
     pub fn ref_(&mut self) {
-        self.poll_ref.ref_concurrently_from_event_loop(self.event_loop);
+        self.poll_ref.ref_concurrently_from_event_loop(vm_ctx());
     }
 
     pub fn unref(&mut self) {
         self.poll_ref
-            .unref_concurrently_from_event_loop(self.event_loop);
+            .unref_concurrently_from_event_loop(vm_ctx());
     }
 
     pub fn acquire(&mut self) -> napi_status {
@@ -2453,12 +2453,15 @@ impl ThreadSafeFunction {
         mode: napi_threadsafe_function_release_mode,
         already_locked: bool,
     ) -> napi_status {
+        // PORT NOTE: borrowck — see `dispatch_one`.
+        let lock_ptr: *const Mutex = &self.lock;
         if !already_locked {
             self.lock.lock();
         }
-        let _g = scopeguard::guard((), |_| {
+        let _g = scopeguard::guard((), move |_| {
             if !already_locked {
-                self.lock.unlock();
+                // SAFETY: lock_ptr points into `*self`, which outlives `_g`.
+                unsafe { (*lock_ptr).unlock() };
             }
         });
 

@@ -1057,9 +1057,9 @@ pub fn network_interfaces_windows(global_this: &JSGlobalObject) -> JsResult<JSVa
             //.info = info,
             errno: err,
             syscall: BunString::static_("uv_interface_addresses"),
-            ..Default::default()
+            ..system_error_default()
         };
-        return global_this.throw_value(sys_err.to_error_instance(global_this));
+        return Err(global_this.throw_value(sys_err.to_error_instance(global_this)));
     }
     let _free = scopeguard::guard((), |_| {
         // SAFETY: returned by uv_interface_addresses

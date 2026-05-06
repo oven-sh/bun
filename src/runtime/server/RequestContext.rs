@@ -3209,11 +3209,16 @@ where
     /// before taking a new one so the old Response's allocation can be
     /// freed once its own strong refs go to zero.
     fn set_response(&mut self, response: &mut Response) {
-        if self.response_weakref.raw_ptr() == Some(response as *mut _) {
+        if self
+            .response_weakref
+            .get()
+            .map(|r| r as *mut Response)
+            == Some(response as *mut _)
+        {
             return;
         }
         self.response_weakref.deref();
-        self.response_weakref = Response::WeakRef::init_ref(response);
+        self.response_weakref = response::WeakRef::init_ref(response);
     }
 
     pub fn render(&mut self, response: &mut Response) {

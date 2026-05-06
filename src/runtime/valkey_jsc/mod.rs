@@ -156,8 +156,15 @@ pub mod valkey {
         #[default]
         None,
         Enabled,
-        // TODO(b2-blocked): SSLConfig payload — erased until server_config is real.
-        Custom(*mut c_void),
+        Custom(crate::socket::SSLConfig),
+    }
+    // Call sites only ever compare against `TLS::None` / `TLS::Enabled`;
+    // `SSLConfig` doesn't (and shouldn't) implement `PartialEq`, so compare by
+    // discriminant — matches Zig's tagged-union `==` semantics for tag checks.
+    impl PartialEq for TLS {
+        fn eq(&self, other: &Self) -> bool {
+            core::mem::discriminant(self) == core::mem::discriminant(other)
+        }
     }
 
     pub struct Options {

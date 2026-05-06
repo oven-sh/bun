@@ -260,8 +260,9 @@ impl CryptoHasher {
             unsafe { boring_ssl::ERR_clear_error() };
             return Err(global.throw_value(instance));
         };
-        encoding.encode_with_max_size::<EVP_MAX_MD_SIZE_USIZE>(
+        encoding.encode_with_max_size(
             global,
+            EVP_MAX_MD_SIZE_USIZE,
             &output_digest_buf[0..len as usize],
         )
     }
@@ -666,7 +667,7 @@ impl CryptoHasher {
         if global.has_exception() {
             return Err(JsError::Thrown);
         }
-        encoding.encode_with_max_size::<EVP_MAX_MD_SIZE_USIZE>(global, out)
+        encoding.encode_with_max_size(global, EVP_MAX_MD_SIZE_USIZE, out)
     }
 
     fn final_<'a>(
@@ -860,7 +861,7 @@ impl CryptoHasherZig {
         let len = A::DIGEST_LENGTH as usize;
         h.final_(&mut out[..len]);
 
-        encoding.encode_with_max_size::<EVP_MAX_MD_SIZE_USIZE>(global, &out[..len])
+        encoding.encode_with_max_size(global, EVP_MAX_MD_SIZE_USIZE, &out[..len])
     }
 
     fn hash_by_name_inner_to_bytes<A: ZigHashAlgo>(
@@ -1112,7 +1113,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
             H::hash(input.slice(), &mut output_digest_buf, None);
         }
 
-        encoding.encode_with_max_size::<EVP_MAX_MD_SIZE_USIZE>(global, output_digest_buf.as_ref())
+        encoding.encode_with_max_size(global, EVP_MAX_MD_SIZE_USIZE, output_digest_buf.as_ref())
     }
 
     fn hash_to_bytes(
@@ -1333,7 +1334,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         self.hashing.final_(output_digest_slice);
         self.digested = true;
 
-        encoding.encode_with_max_size::<EVP_MAX_MD_SIZE_USIZE>(global, output_digest_slice.as_ref())
+        encoding.encode_with_max_size(global, EVP_MAX_MD_SIZE_USIZE, output_digest_slice.as_ref())
     }
 
     pub fn finalize(this: *mut Self) {

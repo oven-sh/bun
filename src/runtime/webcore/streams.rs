@@ -1794,7 +1794,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             // SAFETY: prom is GC-rooted
             unsafe { &*prom }.to_js().unprotect();
         }
-        this.buffer.deinit();
+        this.buffer.clear_and_free();
         this.unregister_auto_flusher();
         drop(this);
     }

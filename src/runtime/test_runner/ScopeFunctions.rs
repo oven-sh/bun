@@ -340,30 +340,33 @@ impl ScopeFunctions {
         match bun_test.phase {
             bun_test::Phase::Collection => {} // ok
             bun_test::Phase::Execution => {
-                return global.throw(format_args!(
+                return Err(global.throw(format_args!(
                     "Cannot call {}() inside a test. Call it inside describe() instead.",
                     self
-                ));
+                )));
             }
             bun_test::Phase::Done => {
-                return global.throw(format_args!(
+                return Err(global.throw(format_args!(
                     "Cannot call {}() after the test run has completed",
                     self
-                ));
+                )));
             }
         }
 
         // handle test reporter agent for debugger
         let vm = global.bun_vm();
         let mut test_id_for_debugger: i32 = 0;
-        if let Some(debugger) = vm.debugger.as_mut() {
+        // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachine` for any
+        // Bun-owned global; single JS thread so no aliasing across this borrow.
+        if let Some(debugger) = unsafe { (*vm).debugger.as_mut() } {
             if debugger.test_reporter_agent.is_enabled() {
                 // Zig: fn-local `struct { var max_test_id_for_debugger: i32 = 0; }` — process-global static.
                 static MAX_TEST_ID_FOR_DEBUGGER: AtomicI32 = AtomicI32::new(0);
                 // TODO(port): Zig used non-atomic `+= 1` (single JS thread). Relaxed fetch_add preserves semantics.
                 let id = MAX_TEST_ID_FOR_DEBUGGER.fetch_add(1, Ordering::Relaxed) + 1;
                 let mut name = BunString::init(description.unwrap_or(b"(unnamed)"));
-                let parent = &bun_test.collection.active_scope;
+                // SAFETY: active_scope is a valid cursor into root_scope's tree for the lifetime of Collection.
+                let parent: &DescribeScope = unsafe { bun_test.collection.active_scope.as_ref() };
                 let parent_id = if parent.base.test_id_for_debugger != 0 {
                     parent.base.test_id_for_debugger
                 } else {

@@ -118,7 +118,7 @@ pub fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
     // Encode the token
     encoding
         .to_node_encoding()
-        .encode_with_max_size(global, boring::EVP_MAX_MD_SIZE + 32, token_bytes)
+        .encode_with_max_size(global, boring::EVP_MAX_MD_SIZE as usize + 32, token_bytes)
 }
 
 /// JS binding function for verifying CSRF tokens

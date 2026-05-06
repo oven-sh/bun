@@ -58,6 +58,12 @@ impl<'a> Default for InitOptions<'a> {
 }
 
 impl FileRoute {
+    /// Exposes the private `server` Cell to the route table (`AnyRoute::set_server`).
+    #[inline]
+    pub fn set_server(&self, server: Option<AnyServer>) {
+        self.server.set(server);
+    }
+
     pub fn memory_cost(&self) -> usize {
         size_of::<FileRoute>() + self.headers.memory_cost() + self.blob.reported_estimated_size
     }
@@ -339,11 +345,18 @@ impl FileRoute {
             server.on_pending_request();
             resp.timeout(server.config().idle_timeout);
         }
-        let Some(path) = self.blob.store.as_ref().unwrap().get_path() else {
-            req.set_yield(true);
-            self.on_response_complete(resp);
-            return;
+        // PORT NOTE: clone the path to break the shared borrow on `self.blob`
+        // so the `&mut self` calls below (on_response_complete, stat_hash.hash)
+        // don't conflict. Zig had no borrowck here.
+        let path_buf: Vec<u8> = match self.blob.store.as_ref().unwrap().get_path() {
+            Some(p) => p.to_vec(),
+            None => {
+                req.set_yield(true);
+                self.on_response_complete(resp);
+                return;
+            }
         };
+        let path: &[u8] = path_buf.as_slice();
 
         let open_flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NONBLOCK;
 

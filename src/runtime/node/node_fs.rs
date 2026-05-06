@@ -3253,7 +3253,7 @@ pub mod args {
             let mut mode = FileSystemFlags::R;
             if let Some(arg) = arguments.next() {
                 arguments.eat();
-                mode = FileSystemFlags::from_js_number_only(ctx, arg, FileSystemFlagsKind::Access)?;
+                mode = FileSystemFlags::from_js_number_only::<{ FileSystemFlagsKind::Access }>(ctx, arg)?;
             }
             Ok(Access { path, mode })
         }
@@ -3288,7 +3288,7 @@ pub mod args {
             let mut mode = constants::Copyfile::from_raw(0);
             if let Some(arg) = arguments.next() {
                 arguments.eat();
-                mode = constants::Copyfile::from_raw(FileSystemFlags::from_js_number_only(ctx, arg, FileSystemFlagsKind::CopyFile)?.as_int());
+                mode = constants::Copyfile::from_raw(FileSystemFlags::from_js_number_only::<{ FileSystemFlagsKind::CopyFile }>(ctx, arg)?.as_int());
             }
             Ok(CopyFile { src, dest, mode })
         }
@@ -4589,7 +4589,7 @@ impl NodeFS {
 
     pub fn uv_writev(&mut self, args: &args::Writev, rc: i64) -> Maybe<ret::Writev> {
         if rc < 0 {
-            return Maybe::Err(sys::Error { errno: (-rc) as _, syscall: sys::Tag::writev, fd: args.fd, from_libuv: true, ..Default::default() });
+            return Maybe::Err(sys::Error { errno: (-rc) as _, syscall: sys::Tag::writev, fd: args.fd, #[cfg(windows)] from_libuv: true, ..Default::default() });
         }
         Maybe::Ok(ret::Writev { bytes_written: rc as u64 })
     }

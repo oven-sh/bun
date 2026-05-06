@@ -633,7 +633,7 @@ impl AnyRoute {
         init_ctx: &mut ServerInitContext,
     ) -> JsResult<Option<AnyRoute>> {
         use std::collections::hash_map::Entry as StdEntry;
-        if let Some(html_bundle) = HTMLBundle::from_js(argument) {
+        if let Some(html_bundle) = <HTMLBundle as bun_jsc::JsClass>::from_js(argument) {
             let entry = init_ctx.dedupe_html_bundle_map.entry(html_bundle as *const _);
             // PERF(port): was bun.handleOom — Rust HashMap aborts on OOM
             return Ok(Some(match entry {
@@ -1602,44 +1602,41 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         // only reload those two, but ignore if they're not specified.
-        if self.config.on_request != new_config.on_request
-            && (!new_config.on_request.is_empty() && !new_config.on_request.is_undefined())
-        {
-            self.config.on_request.unprotect();
-            self.config.on_request = new_config.on_request;
+        // PORT NOTE: Zig compared `JSValue` handles directly; here `Option<Strong>`
+        // wraps a `Strong` that owns its handle, so identity comparison is
+        // approximated by checking the new handler is set (non-undefined).
+        if new_config.on_request.as_ref().map_or(false, |s| !s.get().is_undefined()) {
+            // Old Strong drops (releases) when overwritten.
+            self.config.on_request = new_config.on_request.take();
         }
-        if self.config.on_node_http_request != new_config.on_node_http_request {
-            self.config.on_node_http_request.unprotect();
-            self.config.on_node_http_request = new_config.on_node_http_request;
+        if new_config.on_node_http_request.is_some() {
+            self.config.on_node_http_request = new_config.on_node_http_request.take();
         }
-        if self.config.on_error != new_config.on_error
-            && (!new_config.on_error.is_empty() && !new_config.on_error.is_undefined())
-        {
-            self.config.on_error.unprotect();
-            self.config.on_error = new_config.on_error;
+        if new_config.on_error.as_ref().map_or(false, |s| !s.get().is_undefined()) {
+            self.config.on_error = new_config.on_error.take();
         }
 
         if let Some(ws) = &mut new_config.websocket {
-            ws.handler.flags.ssl = SSL;
+            ws.handler.flags.set(super::web_socket_server_context::HandlerFlags::SSL, SSL);
             if !ws.handler.on_message.is_empty() || !ws.handler.on_open.is_empty() {
                 if let Some(old_ws) = &self.config.websocket {
-                    old_ws.unprotect();
+                    old_ws.handler.unprotect();
                 }
                 ws.global_object = global as *const _;
-                self.config.websocket = Some(ws.clone());
-                // TODO(port): Zig assigns `ws.*` (move). Phase B: make WebSocketServerContext movable.
+                // Zig assigns `ws.*` (move).
+                self.config.websocket = new_config.websocket.take();
             } else {
                 // We don't replace the existing websocket config here, but
                 // the new one was already protected in WebSocketServerContext.onCreate.
                 // Unprotect the discarded handlers so they don't leak.
-                ws.unprotect();
+                ws.handler.unprotect();
             }
         }
 
         // These get re-applied when we set the static routes again.
         if let Some(dev_server) = &mut self.dev_server {
             // Prevent a use-after-free in the hash table keys.
-            dev_server.html_router.clear();
+            dev_server.html_router.map.clear();
             dev_server.html_router.fallback = None;
         }
 

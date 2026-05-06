@@ -1894,20 +1894,18 @@ impl ExpectAnything {
 
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-        let anything = Box::into_raw(Box::new(ExpectAnything { flags: Flags::default() }));
-
-        // SAFETY: freshly leaked Box; wrapper takes ownership, freed in finalize
-        let anything_js_value = unsafe { (*anything).to_js(global_this) };
+        let anything_js_value = ExpectAnything { flags: Flags::default() }.to_js(global_this);
         anything_js_value.ensure_still_alive();
 
         let vm = global_this.bun_vm();
-        vm.auto_garbage_collect();
+        // SAFETY: bun_vm() returns the live VM pointer for this global.
+        unsafe { (*vm).auto_garbage_collect() };
 
         Ok(anything_js_value)
     }
 }
 
-#[bun_jsc::JsClass]
+#[bun_jsc::JsClass(no_construct)]
 pub struct ExpectStringMatching {
     pub flags: Flags,
 }

@@ -8,6 +8,7 @@ use core::cell::Cell;
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, SystemError};
 use bun_output::{declare_scope, scoped_log};
+#[allow(unused_imports)]
 use bun_ptr::IntrusiveRc;
 use bun_str::String as BunString;
 
@@ -411,13 +412,16 @@ impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<'a, J
 
             js_this.ensure_still_alive();
             if let Some(callback) = on_cancel_callback {
-                let event_loop = global_object.bun_vm().event_loop();
-                event_loop.run_callback(
-                    callback,
-                    global_object,
-                    JSValue::UNDEFINED,
-                    &[JSValue::UNDEFINED, reason],
-                );
+                // SAFETY: see `drain()` — VM/event-loop pointers are live for the
+                // global's lifetime.
+                unsafe {
+                    (*(*global_object.bun_vm()).event_loop()).run_callback(
+                        callback,
+                        global_object,
+                        JSValue::UNDEFINED,
+                        &[JSValue::UNDEFINED, reason],
+                    );
+                }
             }
         }
     }

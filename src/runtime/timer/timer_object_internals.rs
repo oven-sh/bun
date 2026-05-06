@@ -826,6 +826,181 @@ impl TimerObjectInternals {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// JS-host-method facade — `do_ref`/`do_unref`/`do_refresh`/`has_ref`/
+// `to_primitive`/`get_destroyed`/`finalize`/`cancel`. Un-gated for
+// `TimeoutObject.rs` / `ImmediateObject.rs` host-fn shims.
+// ──────────────────────────────────────────────────────────────────────────
+impl TimerObjectInternals {
+    /// Read-only `@fieldParentPtr` to the owning `EventLoopTimer.state`.
+    /// Mirror of [`Self::event_loop_timer`] for `&self` callers (`get_destroyed`).
+    fn event_loop_timer_state(&self) -> EventLoopTimerState {
+        match self.flags.kind() {
+            // SAFETY: `kind == SetImmediate` ⇒ `self` is the `internals` field
+            // of a live `ImmediateObject` (set in `init()`); read-only deref.
+            Kind::SetImmediate => unsafe {
+                (*(self as *const Self as *const u8)
+                    .sub(offset_of!(ImmediateObject, internals))
+                    .cast::<ImmediateObject>())
+                .event_loop_timer
+                .state
+            },
+            // SAFETY: as above for `TimeoutObject`.
+            Kind::SetTimeout | Kind::SetInterval => unsafe {
+                (*(self as *const Self as *const u8)
+                    .sub(offset_of!(TimeoutObject, internals))
+                    .cast::<TimeoutObject>())
+                .event_loop_timer
+                .state
+            },
+        }
+    }
+
+    /// Spec TimerObjectInternals.zig `doRef`.
+    pub fn do_ref(&mut self, _global: &JSGlobalObject, this_value: JSValue) -> JsResult<JSValue> {
+        this_value.ensure_still_alive();
+
+        let did_have_js_ref = self.flags.has_js_ref();
+        self.flags.set_has_js_ref(true);
+
+        // https://github.com/nodejs/node/blob/a7cbb904745591c9a9d047a364c2c188e5470047/lib/internal/timers.js#L256
+        // and
+        // https://github.com/nodejs/node/blob/a7cbb904745591c9a9d047a364c2c188e5470047/lib/internal/timers.js#L685-L687
+        // Node only re-enables the keep-alive ref when `!this._destroyed`. Checking
+        // `has_cleared_timer` alone is not sufficient: a one-shot timer that has already fired
+        // has `has_cleared_timer == false` but is still destroyed. Calling `.unref(); .ref()`
+        // on such a timer would otherwise leak an event-loop ref and hang the process.
+        if !did_have_js_ref && !self.get_destroyed() {
+            self.set_enable_keeping_event_loop_alive(VirtualMachine::get(), true);
+        }
+
+        Ok(this_value)
+    }
+
+    /// Spec TimerObjectInternals.zig `doUnref`.
+    pub fn do_unref(&mut self, _global: &JSGlobalObject, this_value: JSValue) -> JsResult<JSValue> {
+        this_value.ensure_still_alive();
+
+        let did_have_js_ref = self.flags.has_js_ref();
+        self.flags.set_has_js_ref(false);
+
+        if did_have_js_ref {
+            self.set_enable_keeping_event_loop_alive(VirtualMachine::get(), false);
+        }
+
+        Ok(this_value)
+    }
+
+    /// Spec TimerObjectInternals.zig `doRefresh`.
+    pub fn do_refresh(
+        &mut self,
+        global_object: &JSGlobalObject,
+        this_value: JSValue,
+    ) -> JsResult<JSValue> {
+        // Immediates do not have a refresh function, and our binding generator should not let this
+        // function be reached even if you override the `this` value calling a Timeout object's
+        // `refresh` method
+        debug_assert!(self.flags.kind() != Kind::SetImmediate);
+
+        // setImmediate does not support refreshing and we do not support refreshing after cleanup
+        if self.id == -1
+            || self.flags.kind() == Kind::SetImmediate
+            || self.flags.has_cleared_timer()
+        {
+            return Ok(this_value);
+        }
+
+        self.this_value.set_strong(this_value, global_object);
+        self.reschedule(this_value, VirtualMachine::get(), global_object.as_ptr());
+
+        Ok(this_value)
+    }
+
+    /// Spec TimerObjectInternals.zig `hasRef`.
+    pub fn has_ref(&self) -> JsResult<JSValue> {
+        Ok(JSValue::from(self.flags.is_keeping_event_loop_alive()))
+    }
+
+    /// Spec TimerObjectInternals.zig `toPrimitive` — first access mints an
+    /// `id → *mut EventLoopTimer` entry in `All.maps` so `clearTimeout(+t)` /
+    /// `clearImmediate(+t)` (numeric-id form) can resolve it.
+    ///
+    /// PORT NOTE (b2-cycle): `vm.timer.maps` resolved via `runtime_state()`.
+    pub fn to_primitive(&mut self) -> JsResult<JSValue> {
+        if !self.flags.has_accessed_primitive() {
+            self.flags.set_has_accessed_primitive(true);
+            let state = crate::jsc_hooks::runtime_state();
+            debug_assert!(!state.is_null(), "RuntimeState not installed");
+            // PORT NOTE: reshaped for borrowck — capture `event_loop_timer` ptr
+            // before borrowing `(*state).timer.maps`.
+            let elt = self.event_loop_timer();
+            // SAFETY: `state` is the boxed per-thread `RuntimeState`;
+            // single-threaded JS heap so no concurrent `&mut` to `.timer.maps`.
+            unsafe { (*state).timer.maps.get(self.flags.kind()).put(self.id, elt) }?;
+        }
+        Ok(JSValue::js_number(f64::from(self.id)))
+    }
+
+    /// Spec TimerObjectInternals.zig `getDestroyed` — getter for `_destroyed`
+    /// on JS Timeout and Immediate objects.
+    pub fn get_destroyed(&self) -> bool {
+        if self.flags.has_cleared_timer() {
+            return true;
+        }
+        if self.flags.in_callback() {
+            return false;
+        }
+        match self.event_loop_timer_state() {
+            EventLoopTimerState::ACTIVE | EventLoopTimerState::PENDING => false,
+            EventLoopTimerState::FIRED | EventLoopTimerState::CANCELLED => true,
+        }
+    }
+
+    /// Spec TimerObjectInternals.zig `finalize` — `.classes.ts` finalizer hook.
+    /// Runs on the mutator thread during lazy sweep; do not touch any
+    /// `JSValue`/`Strong` content here.
+    pub fn finalize(&mut self) {
+        self.this_value.finalize();
+        self.deref();
+    }
+
+    /// Spec TimerObjectInternals.zig `cancel` — `clearTimeout`/`clearInterval`
+    /// / `clearImmediate` / `Timeout#[Symbol.dispose]` body.
+    ///
+    /// PORT NOTE: takes `*mut VirtualMachine` (NOT `&mut`) — callers hand over
+    /// `global.bun_vm()` (raw ptr) and the body forwards to
+    /// `set_enable_keeping_event_loop_alive` which already uses the raw-ptr
+    /// contract. `vm.timer` resolved via `runtime_state()` (b2-cycle).
+    pub fn cancel(&mut self, vm: *mut VirtualMachine) {
+        self.set_enable_keeping_event_loop_alive(vm, false);
+        self.flags.set_has_cleared_timer(true);
+
+        if self.flags.kind() == Kind::SetImmediate {
+            // Release the strong reference so the GC can collect the JS object.
+            // The immediate task is still in the event loop queue and will be skipped
+            // by runImmediateTask when it sees has_cleared_timer == true.
+            self.this_value.downgrade();
+            return;
+        }
+
+        let elt = self.event_loop_timer();
+        // SAFETY: `elt` derived from the live parent (see `event_loop_timer`).
+        let was_active = unsafe { (*elt).state } == EventLoopTimerState::ACTIVE;
+        // SAFETY: as above.
+        unsafe { (*elt).state = EventLoopTimerState::CANCELLED };
+        self.this_value.downgrade();
+
+        if was_active {
+            let state = crate::jsc_hooks::runtime_state();
+            debug_assert!(!state.is_null(), "RuntimeState not installed");
+            // SAFETY: `state` is the boxed per-thread `RuntimeState`;
+            // single-threaded JS heap so no concurrent `&mut` to `.timer`.
+            unsafe { (*state).timer.remove(elt) };
+            self.deref();
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/timer/TimerObjectInternals.zig
 //   confidence: medium — struct/flags + runImmediateTask + fire + reschedule

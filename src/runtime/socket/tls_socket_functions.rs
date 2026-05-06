@@ -666,7 +666,6 @@ pub fn get_ephemeral_key_info(this: &mut This, global: &JSGlobalObject, _frame: 
     Ok(result)
 }
 
-#[bun_jsc::host_fn(getter)]
 pub fn get_alpn_protocol(this: &This, global: &JSGlobalObject) -> JsResult<JSValue> {
     let mut alpn_proto: *const u8 = core::ptr::null();
     let mut alpn_proto_len: u32 = 0;

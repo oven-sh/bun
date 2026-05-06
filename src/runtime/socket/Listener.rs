@@ -435,7 +435,7 @@ impl Listener {
         Ok(this_value)
     }
 
-    #[bun_jsc::host_fn]
+    // PORT NOTE: no #[bun_jsc::host_fn] — JsClass codegen emits the constructor shim.
     pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Listener> {
         global.throw("Cannot construct Listener")
     }

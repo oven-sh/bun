@@ -74,11 +74,16 @@ impl DateHeaderTimer {
             // SAFETY: uws_loop() returns a valid live *mut Loop owned by the VM.
             unsafe { (*vm.uws_loop()).update_date() };
 
-            vm.timer.update(&mut self.event_loop_timer, &now.add_ms(MS_PER_S));
+            let elt: *mut EventLoopTimer = &mut self.event_loop_timer;
+            // SAFETY: single JS thread; `All::update` only touches `lock`/`timers`/
+            // `fake_timers`, disjoint from `date_header_timer` which `self` aliases.
+            unsafe { (*timer_all()).update(elt, &now.add_ms(MS_PER_S)) };
         } else {
             // The date was updated recently, just reschedule for the next second
             bun_output::scoped_log!(DateHeaderTimer, "rescheduling timer");
-            vm.timer.insert(&mut self.event_loop_timer);
+            let elt: *mut EventLoopTimer = &mut self.event_loop_timer;
+            // SAFETY: see above — disjoint-field access on `All`.
+            unsafe { (*timer_all()).insert(elt) };
         }
     }
 

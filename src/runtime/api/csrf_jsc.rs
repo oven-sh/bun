@@ -206,15 +206,15 @@ pub fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
     // We should have at least one argument (token)
     let args = frame.arguments();
     if args.len() < 1 {
-        return global.throw_invalid_arguments(format_args!("Missing required token parameter"));
+        return Err(global.throw_invalid_arguments(format_args!("Missing required token parameter")));
     }
     let js_token: JSValue = args[0];
     // Extract the token (required)
     if js_token.is_undefined_or_null() {
-        return global.throw_invalid_arguments(format_args!("Token is required"));
+        return Err(global.throw_invalid_arguments(format_args!("Token is required")));
     }
     if !js_token.is_string() || js_token.get_length(global)? == 0 {
-        return global.throw_invalid_arguments(format_args!("Token must be a non-empty string"));
+        return Err(global.throw_invalid_arguments(format_args!("Token must be a non-empty string")));
     }
     let token = js_token.to_slice(global)?;
     // `defer token.deinit();` — handled by Drop on ZigStringSlice

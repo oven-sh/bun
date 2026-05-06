@@ -303,6 +303,9 @@ impl<'a> ReplRunner<'a> {
 // TODO(port): move to bun_jsc_sys (or wherever bun.cpp externs land)
 unsafe extern "C" {
     fn Bun__ExposeNodeModuleGlobals(global: *const JSGlobalObject);
+    // Local shim for `JSGlobalObject::setTimeZone` (ZigGlobalObject.cpp) until
+    // bun_jsc grows a wrapper.
+    fn JSGlobalObject__setTimeZone(global: *const JSGlobalObject, time_zone: *const ZigString) -> bool;
     // TODO(port): Zig signature returns `bun.JSError!void` across FFI — actual C ABI is likely
     // `bool`/`void` with exception on VM. Verify against bindings and adjust JsResult conversion.
     fn Bun__REPL__setupGlobalRequire(

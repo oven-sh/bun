@@ -66,6 +66,14 @@ use crate::timer;
 pub struct RuntimeState {
     /// `bun.api.Timer.All` — setTimeout/setInterval heap + uv timers.
     pub timer: timer::All,
+    /// `RareData.{mysql,postgresql}_context` — concrete SQL state. The
+    /// `bun_jsc::rare_data::RareData` slots for these are opaque ZSTs (cycle
+    /// break); `bun_sql_jsc` reads them via `Bun__VM__rareData`, which returns
+    /// `&mut runtime_state().sql_rare` cast to its local `#[repr(C)]` view.
+    pub sql_rare: bun_sql_jsc::jsc::RareData,
+    /// `RareData.ssl_ctx_cache` — concrete digest-keyed weak `SSL_CTX*` cache.
+    /// Same cycle-break story as `sql_rare`.
+    pub ssl_ctx_cache: crate::api::SSLContextCache::SSLContextCache,
     /// Synthetic `bun:main` wrapper source.
     pub entry_point: ServerEntryPoint,
     /// Backing arena for `vm.transpiler` (spec passes `bun.default_allocator`;
@@ -133,6 +141,8 @@ unsafe fn init_runtime_state(
     // `OnceLock`, which this is not (per-VM / per-Worker-thread).
     let state = Box::into_raw(Box::new(RuntimeState {
         timer: timer::All::init(),
+        sql_rare: Default::default(),
+        ssl_ctx_cache: Default::default(),
         entry_point: ServerEntryPoint::default(),
         transpiler_arena: Box::new(bun_alloc::Arena::new()),
     }));

@@ -1506,6 +1506,30 @@ pub mod SocketContext {
             let ctx = unsafe { us_ssl_ctx_from_options(self, err) };
             if ctx.is_null() { None } else { Some(ctx) }
         }
+
+        /// SHA-256 over every field this struct carries, dereferencing string
+        /// pointers so the digest is content-addressed (not pointer-addressed).
+        /// Two option structs that build the same `SSL_CTX*` produce the same
+        /// digest. Used as the key for `SSLContextCache`.
+        ///
+        /// Delegates to `bun_uws_sys::BunSocketContextOptions::digest` — both
+        /// structs are `#[repr(C)]` with identical field list/order, so a value
+        /// transmute is sound and avoids duplicating the hashing body.
+        pub fn digest(&self) -> [u8; 32] {
+            const _: () = assert!(
+                core::mem::size_of::<BunSocketContextOptions>()
+                    == core::mem::size_of::<bun_uws_sys::BunSocketContextOptions>()
+            );
+            const _: () = assert!(
+                core::mem::align_of::<BunSocketContextOptions>()
+                    == core::mem::align_of::<bun_uws_sys::BunSocketContextOptions>()
+            );
+            // SAFETY: both are `#[repr(C)]` with identical field list/order (see
+            // src/uws_sys/SocketContext.rs); Copy + POD, value transmute is sound.
+            let sys: bun_uws_sys::BunSocketContextOptions =
+                unsafe { core::mem::transmute_copy(self) };
+            sys.digest()
+        }
     }
 
     unsafe extern "C" {

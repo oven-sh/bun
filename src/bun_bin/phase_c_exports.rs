@@ -288,3 +288,62 @@ pub extern "C" fn JSC__JSValue__parseJSON(string: *const c_void, global: *const 
 pub extern "C" fn BunString__toErrorInstance(this: *const c_void, global: *mut JSGlobalObject) -> JSValue {
     unreachable!("BunString__toErrorInstance: not implemented in Zig either (no C++ body)")
 }
+
+// Declared `extern` in InspectorLifecycleAgent.cpp:47-48 but never defined in
+// C++ nor Zig (Debugger.zig declares it `extern "c"` too). The agent's
+// preventExit/stopPreventingExit protocol commands are no-ops in the inspector
+// build today.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__LifecycleAgentPreventExit(_agent: *mut c_void) {}
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__LifecycleAgentStopPreventingExit(_agent: *mut c_void) {}
+
+// `generated_classes.rs` emits `<Class>__getConstructor` externs unconditionally,
+// but `ZigGeneratedClasses.cpp` only defines them for classes whose `.classes.ts`
+// declares a `construct` hook. `DNSResolver` has none — the extern is dead.
+#[unsafe(no_mangle)]
+pub extern "C" fn DNSResolver__getConstructor(_global: *mut JSGlobalObject) -> JSValue {
+    unreachable!("DNSResolver has no JS-visible constructor (no `construct` in .classes.ts)")
+}
+
+// `JSGlobalObject.rs::get_body_stream_or_bytes_for_wasm_streaming` carries the
+// real `#[host_fn(export = ...)]` body, but the whole module is gated. The
+// caller (`WebAssembly.instantiateStreaming`) is unreachable until webcore Body
+// streams un-gate, so satisfy the link name and crash loudly if hit early.
+#[unsafe(no_mangle)]
+pub extern "C" fn Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming(
+    _global: *mut JSGlobalObject,
+    _response: JSValue,
+    _streaming_compiler: *mut c_void,
+) -> JSValue {
+    unreachable!(
+        "Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming: gated on JSGlobalObject.rs un-gate"
+    )
+}
+
+// `bundler_jsc::analyze_jsc` defines these but the crate is not in `bun_bin`'s
+// dep graph yet (it pulls `bun_bundler` test-only surface). Park the link names
+// here; the real bodies move once `bun_bundler_jsc` is linked.
+#[unsafe(no_mangle)]
+pub extern "C" fn zig__renderDiff(
+    _expected_ptr: *const u8,
+    _expected_len: usize,
+    _received_ptr: *const u8,
+    _received_len: usize,
+    _global: *mut JSGlobalObject,
+) {
+    unreachable!("zig__renderDiff: bun_bundler_jsc not yet in bun_bin dep graph")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
+    _global: *mut JSGlobalObject,
+    _vm: *mut c_void,
+    _module_key: *const c_void,
+    _source_code: *const c_void,
+    _declared_variables: *mut c_void,
+    _lexical_variables: *mut c_void,
+    _res: *const c_void,
+) -> *mut c_void {
+    unreachable!("zig__ModuleInfoDeserialized__toJSModuleRecord: bun_bundler_jsc not yet in bun_bin dep graph")
+}

@@ -1,34 +1,37 @@
 //! Port of src/bun.js.zig — entry point for `bun run <file>` / standalone executables.
 
 use core::mem::MaybeUninit;
+use core::ptr::NonNull;
+use core::sync::atomic::Ordering;
 use std::io::Write as _;
 
 use bun_alloc::Arena; // MimallocArena
 use crate::cli::Command;
 use bun_core::{Global, Output};
-use bun_http::AsyncHTTP;
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, VirtualMachine};
+use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, VirtualMachineRef as VirtualMachine};
 use bun_logger as logger;
-use crate::api::dns::Resolver as DNSResolver;
-use bun_str::strings;
+use bun_dns::Order as DnsResultOrder;
+use bun_standalone_graph::StandaloneModuleGraph::StandaloneModuleGraph;
+use bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo;
 
 extern crate bun_standalone_graph as bun_standalone_module_graph;
 
 // Thin re-exports (mirrors `pub const X = @import(...)` at file top).
 pub use bun_jsc as jsc_mod; // TODO(port): naming — Zig exposed this as `bun.js.jsc`
-pub use bun_jsc::bindgen;
+// TODO(b2-gated): `bun_jsc::bindgen` is in `_gated` (jsc/lib.rs); re-export once un-gated.
 pub use crate::api;
 pub use crate::webcore;
 
 pub fn apply_standalone_runtime_flags(
     b: &mut bun_bundler::Transpiler,
-    graph: &bun_standalone_module_graph::StandaloneModuleGraph,
+    graph: &StandaloneModuleGraph,
 ) {
+    use bun_options_types::schema::api::DotEnvBehavior;
     b.options.env.disable_default_env_files = graph.flags.disable_default_env_files;
     b.options.env.behavior = if graph.flags.disable_default_env_files {
-        bun_bundler::options::EnvBehavior::Disable
+        DotEnvBehavior::disable
     } else {
-        bun_bundler::options::EnvBehavior::LoadAllWithoutInlining
+        DotEnvBehavior::LoadAllWithoutInlining
     };
 
     b.resolver.opts.load_tsconfig_json = !graph.flags.disable_autoload_tsconfig;
@@ -36,8 +39,8 @@ pub fn apply_standalone_runtime_flags(
 }
 
 pub struct Run {
-    pub ctx: Command::Context,
-    pub vm: Box<VirtualMachine>,
+    pub ctx: Command::Context<'static>,
+    pub vm: *mut VirtualMachine,
     // TODO(port): lifetime — process-lifetime borrow (never freed; globalExit ends process)
     pub entry_path: &'static [u8],
     // PERF(port): was MimallocArena used as the VM allocator; non-AST crate but
@@ -808,13 +811,13 @@ unsafe extern "C" {
     fn JSC__JSGlobalObject__addGc(global: *const JSGlobalObject);
 }
 
-// TODO(port): these enum paths are placeholders for cross-crate types referenced
-// only by variant; Phase B fixes imports.
-use crate::cli::debug::HotReload;
-use crate::cli::debug::Macros;
-use crate::cli::debug::OfflineMode;
-use bun_jsc::bun_cpu_profiler as CPUProfiler;
-use bun_jsc::bun_heap_profiler as HeapProfiler;
+// Cross-crate enum types referenced only by variant.
+use bun_options_types::Context::HotReload;
+use bun_options_types::Context::MacroOptions as Macros;
+use bun_options_types::OfflineMode::OfflineMode;
+// TODO(b2-gated): `bun_cpu_profiler` / `bun_heap_profiler` modules live in
+// jsc/lib.rs `_gated`; the profiler-config blocks below are stubbed until
+// those un-gate.
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

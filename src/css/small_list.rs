@@ -908,7 +908,7 @@ where
         let len = shallow_clone.len();
         for i in 0..len {
             let in_ = this.r#mut(i);
-            let out_val = in_.get_fallback(ColorFallbackKind { rgb: true, ..Default::default() });
+            let out_val = in_.get_fallback(allocator, ColorFallbackKind { rgb: true, ..Default::default() });
             *shallow_clone.r#mut(i) = out_val;
         }
         Some(shallow_clone)
@@ -927,8 +927,8 @@ where
         let images = 'images: {
             let mut images = SmallList::<T, 1>::default();
             for item in prefix_images.slice() {
-                if let Some(img) = item.get_image().get_legacy_webkit() {
-                    images.append(item.with_image(img));
+                if let Some(img) = item.get_image().get_legacy_webkit(allocator) {
+                    images.append(item.with_image(allocator, img));
                 }
             }
             break 'images images;
@@ -954,7 +954,7 @@ where
                 let in_ = pfi.at(i);
                 let image = in_.get_image().get_prefixed(alloc, css::VendorPrefix::from_name(prefix));
                 // SAFETY: i < len; slot uninitialized after set_len
-                unsafe { ptr::write(images.as_ptr().add(i as usize), in_.with_image(image)) };
+                unsafe { ptr::write(images.as_ptr().add(i as usize), in_.with_image(alloc, image)) };
             }
             r.push(images);
         }

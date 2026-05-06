@@ -480,8 +480,189 @@ mod platform {
     {
         /// Memory such as file names referenced in this returned entry becomes invalid
         /// with subsequent calls to `next`, as well as when this `Dir` is deinitialized.
-        pub fn next(&mut self) -> <Select<USE_WINDOWS_OSPATH> as WindowsOsPath>::ResultT {
-            todo!("blocked_on: bun_sys::windows::ntdll::NtQueryDirectoryFile — Windows path is gated until the bun_sys windows FFI surface lands")
+        pub fn next(
+            &mut self,
+        ) -> sys::Result<Option<<Select<USE_WINDOWS_OSPATH> as WindowsOsPath>::Entry>> {
+            loop {
+                if self.index >= self.end_index {
+                    // The I/O manager only fills the IO_STATUS_BLOCK on IRP
+                    // completion. When NtQueryDirectoryFile fails with an
+                    // NT_ERROR status (e.g. parameter validation), the block
+                    // is left untouched, so zero-initialize it rather than
+                    // reading uninitialized stack if the call fails.
+                    // SAFETY: all-zero is a valid IO_STATUS_BLOCK.
+                    let mut io: IO_STATUS_BLOCK = unsafe { core::mem::zeroed() };
+                    if self.first {
+                        // > Any bytes inserted for alignment SHOULD be set to zero, and the receiver MUST ignore them
+                        self.buf.fill(0);
+                    }
+
+                    let mut filter_us = UNICODE_STRING {
+                        Length: 0,
+                        MaximumLength: 0,
+                        Buffer: core::ptr::null_mut(),
+                    };
+                    let filter_ptr: *mut UNICODE_STRING = match self.name_filter {
+                        Some((ptr, len)) => {
+                            let len_bytes = (len * 2) as u16;
+                            filter_us.Length = len_bytes;
+                            filter_us.MaximumLength = len_bytes;
+                            filter_us.Buffer = ptr as *mut u16;
+                            &mut filter_us
+                        }
+                        None => core::ptr::null_mut(),
+                    };
+
+                    // SAFETY: FFI; `dir` is a directory HANDLE, `buf` is 8192 8-byte-aligned
+                    // bytes, `io`/`filter_us` live on this stack frame for the call duration.
+                    let rc = unsafe {
+                        ntdll::NtQueryDirectoryFile(
+                            self.dir.cast(),
+                            core::ptr::null_mut(),
+                            core::ptr::null_mut(),
+                            core::ptr::null_mut(),
+                            &mut io,
+                            self.buf.as_mut_ptr().cast(),
+                            self.buf.len() as u32,
+                            w::FILE_INFORMATION_CLASS::FileDirectoryInformation,
+                            FALSE as BOOLEAN,
+                            filter_ptr,
+                            if self.first { TRUE as BOOLEAN } else { FALSE as BOOLEAN },
+                        )
+                    };
+
+                    self.first = false;
+
+                    // Check the return status before trusting io.Information;
+                    // the IO_STATUS_BLOCK is not written on NT_ERROR statuses.
+
+                    // If the handle is not a directory, we'll get STATUS_INVALID_PARAMETER.
+                    if rc == w::NTSTATUS::INVALID_PARAMETER {
+                        sys::syslog!(
+                            "NtQueryDirectoryFile({}) = INVALID_PARAMETER",
+                            self.dir
+                        );
+                        return Err(sys::Error::from_code(
+                            SystemErrno::ENOTDIR,
+                            Tag::NtQueryDirectoryFile,
+                        ));
+                    }
+
+                    // NO_SUCH_FILE is returned on the first call when a FileName filter
+                    // matches nothing; NO_MORE_FILES on subsequent calls. Both mean "done".
+                    if rc == w::NTSTATUS::NO_MORE_FILES || rc == w::NTSTATUS::NO_SUCH_FILE {
+                        sys::syslog!("NtQueryDirectoryFile({}) = {:#x}", self.dir, rc.0);
+                        return Ok(None);
+                    }
+
+                    if rc != w::NTSTATUS::SUCCESS {
+                        sys::syslog!("NtQueryDirectoryFile({}) = {:#x}", self.dir, rc.0);
+                        let errno = w::Win32Error::from_nt_status(rc)
+                            .to_system_errno()
+                            .unwrap_or(SystemErrno::EUNKNOWN);
+                        return Err(sys::Error::from_code(errno, Tag::NtQueryDirectoryFile));
+                    }
+
+                    if io.Information == 0 {
+                        sys::syslog!("NtQueryDirectoryFile({}) = 0", self.dir);
+                        return Ok(None);
+                    }
+                    self.index = 0;
+                    self.end_index = io.Information;
+
+                    sys::syslog!("NtQueryDirectoryFile({}) = {}", self.dir, self.end_index);
+                }
+
+                let entry_offset = self.index;
+                let p = self.buf.as_ptr();
+                // While the official api docs guarantee FILE_DIRECTORY_INFORMATION to
+                // be aligned properly this may not always be the case (e.g. due to
+                // faulty VM/Sandboxing tools) — read fields via unaligned loads.
+                // SAFETY: entry_offset < end_index ≤ buf.len(); the header up through
+                // FileName lies within `buf` per the kernel contract.
+                let next_entry_offset = unsafe {
+                    core::ptr::read_unaligned(
+                        p.add(entry_offset
+                            + offset_of!(FILE_DIRECTORY_INFORMATION, NextEntryOffset))
+                            as *const u32,
+                    )
+                };
+                // SAFETY: see above.
+                let file_name_length = unsafe {
+                    core::ptr::read_unaligned(
+                        p.add(entry_offset
+                            + offset_of!(FILE_DIRECTORY_INFORMATION, FileNameLength))
+                            as *const u32,
+                    )
+                } as usize;
+                // SAFETY: see above.
+                let file_attributes = unsafe {
+                    core::ptr::read_unaligned(
+                        p.add(entry_offset
+                            + offset_of!(FILE_DIRECTORY_INFORMATION, FileAttributes))
+                            as *const u32,
+                    )
+                };
+
+                if next_entry_offset != 0 {
+                    self.index = entry_offset + next_entry_offset as usize;
+                } else {
+                    self.index = self.buf.len();
+                }
+
+                // Some filesystem / filter drivers have been observed returning
+                // FILE_DIRECTORY_INFORMATION entries with an out-of-range
+                // FileNameLength (well beyond the 255-WCHAR NTFS component
+                // limit). Clamp to what fits in name_data (destination) and to
+                // what remains in buf (source) so a misbehaving driver cannot
+                // walk us past the end of either buffer.
+                let max_name_u16 =
+                    <Select<USE_WINDOWS_OSPATH> as WindowsOsPath>::max_name_u16();
+                let name_byte_offset =
+                    entry_offset + offset_of!(FILE_DIRECTORY_INFORMATION, FileName);
+                let buf_remaining_u16 =
+                    self.buf.len().saturating_sub(name_byte_offset) / size_of::<u16>();
+                let name_len_u16 =
+                    (file_name_length / 2).min(max_name_u16).min(buf_remaining_u16);
+                // SAFETY: name_byte_offset + name_len_u16*2 ≤ buf.len() by clamp above;
+                // FileName is u16-aligned (NextEntryOffset/record is 8-byte aligned).
+                let dir_info_name = unsafe {
+                    core::slice::from_raw_parts(
+                        p.add(name_byte_offset) as *const u16,
+                        name_len_u16,
+                    )
+                };
+
+                if dir_info_name == [b'.' as u16]
+                    || dir_info_name == [b'.' as u16, b'.' as u16]
+                {
+                    continue;
+                }
+
+                let kind = {
+                    let isdir = file_attributes & FILE_ATTRIBUTE_DIRECTORY != 0;
+                    let islink = file_attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0;
+                    // on windows symlinks can be directories, too. We prioritize the
+                    // "sym_link" kind over the "directory" kind
+                    // this will coerce into either .file or .directory later
+                    // once the symlink is read
+                    if islink {
+                        EntryKind::SymLink
+                    } else if isdir {
+                        EntryKind::Directory
+                    } else {
+                        EntryKind::File
+                    }
+                };
+
+                return Ok(Some(
+                    <Select<USE_WINDOWS_OSPATH> as WindowsOsPath>::make_entry(
+                        &mut self.name_data,
+                        dir_info_name,
+                        kind,
+                    ),
+                ));
+            }
         }
     }
 }

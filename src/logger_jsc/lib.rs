@@ -107,13 +107,9 @@ pub fn log_to_js_array(this: &Log, global: &JSGlobalObject) -> JsResult<JSValue>
 // PORT STATUS
 //   source:     src/logger_jsc/logger_jsc.zig (93 lines)
 //   confidence: medium
-//   todos:      see TODO(b2-blocked) markers
-//   notes:      B-2 un-gated (5/6). Compiles against real `bun_jsc` (Track-A
-//               stub surface) — local shadow types removed. `msg_from_js` is
-//               now live for the non-Error path; only the `err.to_error()`
-//               arm stays re-gated: bun_jsc's `ZigException` is still an
-//               opaque `stub_ty!` (no `.message` field, wrong FFI layout).
-//               `Holder::{init, zig_exception}` are available. The
-//               `Data.text` lifetime blocker is resolved
-//               (`Cow<'static, [u8]>`); only the lower-tier API gap remains.
+//   notes:      B-2 un-gated (6/6). Compiles against real `bun_jsc` —
+//               `ZigException` now has its `#[repr(C)]` field surface
+//               (`.message`), so `msg_from_js` is fully ported (both
+//               branches). `Data.text` lifetime resolved via
+//               `Cow<'static, [u8]>` + `to_owned_slice()`.
 // ──────────────────────────────────────────────────────────────────────────

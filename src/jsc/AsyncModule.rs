@@ -1230,7 +1230,7 @@ mod _gated_impl {
                     )
                 };
 
-                if let Some(fd_) = parse_result.input_fd {
+                if let Some(fd_) = input_fd {
                     if bun_paths::is_absolute(path.text)
                         && !strings::contains(path.text, b"node_modules")
                     {
@@ -1246,7 +1246,7 @@ mod _gated_impl {
                             path.text,
                             self.hash,
                             options::Loader::from_api(self.loader),
-                            Fd::invalid(),
+                            Fd::INVALID,
                             // TODO(port): `&PackageJSON` → `&mut PackageJSON`
                             // mismatch — `ImportWatcher::add_file` takes
                             // `Option<&mut>` but `self.package_json` is

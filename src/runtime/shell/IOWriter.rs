@@ -1049,24 +1049,34 @@ pub fn on_io_writer_chunk(
     err: Option<sys::SystemError>,
 ) -> Yield {
     use crate::shell::builtin::Builtin;
+    use crate::shell::states::{cmd, cond_expr, pipeline, subshell};
     match child.tag {
         WriterTag::Builtin => Builtin::on_io_writer_chunk(interp, child.node, written, err),
-        // TODO(port): per-state on_io_writer_chunk (Cmd writes "command not
-        // found", Pipeline/Subshell/CondExpr/If write error msgs, Subproc
-        // captured-writer). Gated on those state nodes growing the method.
-        // Spec IOWriter.zig:760-762 dispatches to every registered child type;
-        // returning `Yield::suspended()` here would be a silent no-op (the
-        // producer stalls forever waiting for chunk-complete), so panic loudly
-        // until each tag is wired up. PORTING.md §Forbidden: silent-no-op.
-        WriterTag::Cmd
-        | WriterTag::Pipeline
-        | WriterTag::Subshell
-        | WriterTag::CondExpr
-        | WriterTag::If
-        | WriterTag::Subproc => {
-            let _ = (interp, written, err);
-            todo!("port: on_io_writer_chunk for WriterTag::{:?}", child.tag)
+        WriterTag::Cmd => cmd::Cmd::on_io_writer_chunk(interp, child.node, written, err),
+        WriterTag::Pipeline => {
+            pipeline::Pipeline::on_io_writer_chunk(interp, child.node, written, err)
         }
+        WriterTag::Subshell => {
+            subshell::Subshell::on_io_writer_chunk(interp, child.node, written, err)
+        }
+        WriterTag::CondExpr => {
+            cond_expr::CondExpr::on_io_writer_chunk(interp, child.node, written, err)
+        }
+        // `Interpreter.If` is not in the spec's `ChildPtrRaw` union (IOWriter.zig
+        // :765-793) — it never enqueues to an IOWriter.
+        WriterTag::If => crate::shell::interpreter::unreachable_state(
+            "IOWriter.onIOWriterChunk",
+            "If",
+        ),
+        // Spec dispatches to `subproc.PipeReader.CapturedWriter`; in the
+        // NodeId-arena port that lives outside the arena (raw pointer +
+        // @fieldParentPtr) and the `subproc` module is still gated, so no
+        // `ChildPtr` is ever constructed with this tag yet. Once wired,
+        // forward to `CapturedWriter::on_iowriter_chunk(written, err)`.
+        WriterTag::Subproc => crate::shell::interpreter::unreachable_state(
+            "IOWriter.onIOWriterChunk",
+            "Subproc (CapturedWriter not yet routed via NodeId arena)",
+        ),
     }
 }
 

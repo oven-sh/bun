@@ -784,12 +784,12 @@ impl Execution {
 
     pub fn handle_uncaught_exception(
         &mut self,
-        user_data: RefDataValue,
+        user_data: &RefDataValue,
     ) -> HandleUncaughtExceptionResult {
-        let _scope = group_log::begin();
+        group_begin!();
 
         let Some((sequence_ptr, _group_ptr)) =
-            self.get_current_and_valid_execution_sequence(&user_data)
+            self.get_current_and_valid_execution_sequence(user_data)
         else {
             return HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests;
         };

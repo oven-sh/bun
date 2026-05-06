@@ -344,8 +344,14 @@ impl WindowsNamedPipeContext {
             });
         }
 
-        // Arc<TLSSocket>/Arc<TCPSocket> already hold a strong ref by being stored in `socket`;
-        // the Zig `tls.ref()` / `tcp.ref()` is implicit in Arc move-into-struct.
+        // Zig: `switch (socket) { .tls => |tls| tls.ref(), .tcp => |tcp| tcp.ref(), ... }`
+        // — take a +1 intrusive ref so the wrapped JS socket outlives this context.
+        match socket {
+            // SAFETY: caller passes a live socket pointer; `ref_` only bumps the count.
+            SocketType::Tls(tls) => unsafe { (*tls).ref_() },
+            SocketType::Tcp(tcp) => unsafe { (*tcp).ref_() },
+            SocketType::None => {}
+        }
 
         this
     }

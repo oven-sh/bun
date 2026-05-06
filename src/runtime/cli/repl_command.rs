@@ -317,13 +317,13 @@ unsafe extern "C" {
     // Local shim for `JSGlobalObject::setTimeZone` (ZigGlobalObject.cpp) until
     // bun_jsc grows a wrapper.
     fn JSGlobalObject__setTimeZone(global: *const JSGlobalObject, time_zone: *const ZigString) -> bool;
-    // TODO(port): Zig signature returns `bun.JSError!void` across FFI — actual C ABI is likely
-    // `bool`/`void` with exception on VM. Verify against bindings and adjust JsResult conversion.
+    // C++ ABI is `void` (`[[ZIG_EXPORT(check_slow)]]`); the JSError!void wrapper is a Zig
+    // codegen artifact that post-checks `hasException()` — replicated at the call site.
     fn Bun__REPL__setupGlobalRequire(
         global: *const JSGlobalObject,
         cwd_ptr: *const c_char,
         cwd_len: usize,
-    ) -> bun_jsc::JsResult<()>;
+    );
 }
 
 use bun_bundler::options::EnvBehavior;

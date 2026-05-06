@@ -96,7 +96,7 @@ pub fn resp_value_to_js_with_options(
         RESPValue::SimpleString(str) => valkey_str_to_js_value(global, str, &options),
         RESPValue::Error(str) => Ok(valkey_error_to_js(
             global,
-            Some(str),
+            &**str,
             RedisError::InvalidResponse,
         )),
         RESPValue::Integer(int) => Ok(JSValue::js_number(*int as f64)),

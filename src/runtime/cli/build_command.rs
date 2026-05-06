@@ -745,25 +745,30 @@ impl BuildCommand {
                     match bun_standalone_module_graph::StandaloneModuleGraph::to_executable(
                         compile_target,
                         output_files,
-                        root_dir,
+                        root_dir.fd,
                         &this_transpiler.options.public_path,
                         outfile,
-                        &this_transpiler.env,
+                        &mut this_transpiler.env,
                         this_transpiler.options.output_format,
                         ctx.bundler_options.windows,
                         ctx.bundler_options.compile_exec_argv.as_deref().unwrap_or(b""),
-                        &ctx.bundler_options.compile_executable_path,
-                        bun_standalone_module_graph::ExecutableOptions {
-                            disable_default_env_files: !ctx
-                                .bundler_options
-                                .compile_autoload_dotenv,
-                            disable_autoload_bunfig: !ctx.bundler_options.compile_autoload_bunfig,
-                            disable_autoload_tsconfig: !ctx
-                                .bundler_options
-                                .compile_autoload_tsconfig,
-                            disable_autoload_package_json: !ctx
-                                .bundler_options
-                                .compile_autoload_package_json,
+                        ctx.bundler_options.compile_executable_path.as_deref(),
+                        {
+                            use bun_standalone_module_graph::StandaloneModuleGraph::Flags;
+                            let mut flags = Flags::default();
+                            if !ctx.bundler_options.compile_autoload_dotenv {
+                                flags |= Flags::DISABLE_DEFAULT_ENV_FILES;
+                            }
+                            if !ctx.bundler_options.compile_autoload_bunfig {
+                                flags |= Flags::DISABLE_AUTOLOAD_BUNFIG;
+                            }
+                            if !ctx.bundler_options.compile_autoload_tsconfig {
+                                flags |= Flags::DISABLE_AUTOLOAD_TSCONFIG;
+                            }
+                            if !ctx.bundler_options.compile_autoload_package_json {
+                                flags |= Flags::DISABLE_AUTOLOAD_PACKAGE_JSON;
+                            }
+                            flags
                         },
                     ) {
                         Ok(r) => r,

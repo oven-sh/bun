@@ -653,7 +653,14 @@ fn get_shadcn_components(
     Ok(icons)
 }
 
-fn find_react_component_export(bundler: &BundleV2) -> Option<&[u8]> {
+// Local wrapper for `bun.sys.exists([]const u8)` — bun_sys currently exposes
+// only `exists_z(&ZStr)`, so NUL-terminate via `resolve_path::z`.
+fn exists(path: &[u8]) -> bool {
+    let mut buf = bun_paths::PathBuffer::uninit();
+    bun_sys::exists_z(resolve_path::z(path, &mut buf))
+}
+
+fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]> {
     let input_files = bundler.graph.input_files.slice();
     let loaders = input_files.items_loader();
     let resolved_exports: &[ResolvedExports] = bundler.linker.graph.meta.items_resolved_exports();

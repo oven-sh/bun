@@ -905,7 +905,7 @@ impl Drop for DevServer<'_> {
         }
 
         if let TestingBatchEvents::Enabled(batch) = &mut self.testing_batch_events {
-            drop(core::mem::take(&mut batch.entry_points));
+            drop(std::mem::take(&mut batch.entry_points));
         }
 
         debug_assert!(self.magic == Magic::Valid);

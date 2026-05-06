@@ -1876,7 +1876,7 @@ pub mod js_bundler {
                 unsafe { core::mem::transmute::<u8, api::Loader>(loader_as_int.to::<u8>()) };
             // SAFETY: bv2 backref is valid; plugins is Some
             let global = unsafe { (*(*this.bv2).plugins.unwrap()).global_object() };
-            let source_code = match crate::node::types::StringOrBuffer::from_js_to_owned_slice(
+            let source_code = match crate::node::StringOrBuffer::from_js_to_owned_slice(
                 global,
                 source_code_value,
             ) {

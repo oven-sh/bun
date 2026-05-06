@@ -468,7 +468,11 @@ impl FSEventsLoop {
         }
 
         let mut iter = concurrent.iterator();
-        while let Some(task) = iter.next() {
+        loop {
+            let task = iter.next();
+            if task.is_null() {
+                break;
+            }
             // SAFETY: task is a valid *mut ConcurrentTask from the queue
             let task = unsafe { &mut *task };
             task.task.run();

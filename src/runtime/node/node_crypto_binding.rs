@@ -18,6 +18,9 @@ use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, JSGlobalObject, JSValue, JsResult, StrongOptional,
     VirtualMachineRef as VirtualMachine,
 };
+// `bun_jsc::{AnyTask, ConcurrentTask}` are *modules*; import the structs.
+use bun_jsc::AnyTask::AnyTask;
+use bun_jsc::ConcurrentTask::ConcurrentTask;
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
 use crate::node::StringOrBuffer;

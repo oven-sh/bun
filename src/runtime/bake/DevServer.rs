@@ -2651,7 +2651,7 @@ impl DevServer<'_> {
                 // TODO(port): `take_source_map` is typed against the keystone
                 // `source_map_store::Entry`; the body-module `Entry` will unify
                 // once `source_map_store_body` is folded in.
-                let _ = &entry;
+                let _ = entry;
                 let _: () = todo!("blocked_on: source_map_store::Entry unification with source_map_store_body::Entry");
                 #[allow(unreachable_code)]
                 scopeguard::ScopeGuard::into_inner(_guard);

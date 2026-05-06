@@ -425,9 +425,7 @@ impl HTMLRewriterLoader {
 
         // SAFETY: `bytes` borrowed for the synchronous `output.write` call only;
         // the `Temporary` variant signals the sink it must copy before returning.
-        let borrowed = core::mem::ManuallyDrop::into_inner(unsafe {
-            ByteList::from_borrowed_slice_dangerous(bytes)
-        });
+        let borrowed = unsafe { ByteList::from_borrowed_slice_dangerous(bytes) };
         let write_result = self
             .output
             .write(webcore::sink::Data::Bytes(StreamResult::Temporary(borrowed)));

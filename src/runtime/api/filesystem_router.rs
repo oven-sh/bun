@@ -38,8 +38,9 @@ use core::ffi::c_void;
 use bun_alloc::Arena as ArenaAllocator;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSObject, JSValue, JsClass, JsResult, LogJsc,
-    ObjectInitializer, StringJsc,
+    StringJsc,
 };
+use bun_jsc::js_object::ObjectInitializer;
 use bun_jsc::ref_string::RefString;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_str::{ZigString, ZigStringSlice};

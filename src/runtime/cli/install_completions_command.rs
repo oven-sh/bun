@@ -515,28 +515,30 @@ impl InstallCompletionsCommand {
 
         debug_assert!(!completions_dir.is_empty());
 
-        // TODO(port): output_dir.createFileZ(filename, .{ .truncate = true }) → bun_sys::Dir::create_file_z
-        let output_file = match output_dir.create_file_z(filename, true) {
+        // output_dir.createFileZ(filename, .{ .truncate = true })
+        let output_file: File = match File::create(output_dir, filename, true) {
             Ok(f) => f,
             Err(err) => {
-                Output::pretty_errorln(
-                    "<r><red>error:<r> Could not open {s} for writing: {s}",
-                    format_args!("{} {}", bstr::BStr::new(filename), err.name()),
+                pretty_errorln!(
+                    "<r><red>error:<r> Could not open {} for writing: {}",
+                    bstr::BStr::new(filename),
+                    bstr::BStr::new(err.name()),
                 );
                 Global::exit(fail_exit_code);
             }
         };
 
         if let Err(err) = output_file.write_all(shell.completions()) {
-            Output::pretty_errorln(
-                "<r><red>error:<r> Could not write to {s}: {s}",
-                format_args!("{} {}", bstr::BStr::new(filename), err.name()),
+            pretty_errorln!(
+                "<r><red>error:<r> Could not write to {}: {}",
+                bstr::BStr::new(filename),
+                bstr::BStr::new(err.name()),
             );
             Global::exit(fail_exit_code);
         }
 
-        // defer output_file.close() — handled by Drop
-        drop(output_dir);
+        // defer output_dir.close()
+        let _ = bun_sys::close(output_dir);
 
         // Check if they need to load the zsh completions file into their .zshrc
         if shell == Shell::Zsh {

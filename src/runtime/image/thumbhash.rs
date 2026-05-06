@@ -191,6 +191,15 @@ impl From<DecodeError> for bun_core::Error {
     }
 }
 
+impl From<DecodeError> for super::codecs_body::Error {
+    fn from(e: DecodeError) -> Self {
+        match e {
+            DecodeError::DecodeFailed => super::codecs_body::Error::DecodeFailed,
+            DecodeError::OutOfMemory => super::codecs_body::Error::OutOfMemory,
+        }
+    }
+}
+
 /// Decode `hash` to a ≤32px RGBA image. Returns `error.DecodeFailed` if the
 /// hash is too short. Output is `bun.default_allocator`-owned.
 pub fn decode(hash: &[u8]) -> Result<Decoded, DecodeError> {

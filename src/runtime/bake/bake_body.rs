@@ -287,6 +287,7 @@ impl UserOptions {
 }
 
 /// Each string stores its allocator since some may hold reference counts to JSC
+#[derive(Default)]
 pub struct StringRefList {
     pub strings: Vec<ZigStringSlice>,
 }

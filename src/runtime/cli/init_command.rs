@@ -138,14 +138,11 @@ impl InitCommand {
                 Output::clear_to_end();
                 if $reprint {
                     // Print final selection
-                    Output::prettyln(
-                        "<r><green>✓<r> {s}<d>:<r> {s}<r>",
-                        format_args!(
-                            "{} {}",
-                            bstr::BStr::new(label),
-                            choices[$sel.to_index()]
-                        ),
-                    );
+                    Output::prettyln(format_args!(
+                        "<r><green>✓<r> {}<d>:<r> {}<r>",
+                        bstr::BStr::new(label),
+                        &choices[$sel.to_index()],
+                    ));
                 }
             }};
         }

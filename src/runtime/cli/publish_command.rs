@@ -1630,8 +1630,8 @@ impl PublishCommand {
                 Global::arch_name,
                 uses_workspaces,
                 if ci_name.is_some() { " ci/" } else { "" },
-                ci_name.unwrap_or(""),
-            )?;
+                bstr::BStr::new(ci_name.unwrap_or(b"")),
+            ).ok();
             // headers.count("user-agent", "npm/10.8.3 node/v24.3.0 darwin arm64 workspaces/false");
             headers.count(b"user-agent", print_buf);
             print_buf.clear();
@@ -1640,7 +1640,7 @@ impl PublishCommand {
             headers.count(b"Host", &registry.url.host);
 
             if let Some(json_len) = maybe_json_len {
-                write!(print_buf, "{}", json_len)?;
+                write!(print_buf, "{}", json_len).ok();
                 headers.count(b"Content-Length", print_buf);
                 print_buf.clear();
             }

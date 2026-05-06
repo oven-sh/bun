@@ -150,9 +150,10 @@ impl SecureContext {
         ctx_opts: uws::socket_context::BunSocketContextOptions,
         d: [u8; 32],
     ) -> JsResult<Box<SecureContext>> {
-        let mut err = uws::create_bun_socket_error_t::None;
-        let Some(ctx) = global
-            .bun_vm()
+        let mut err = uws::create_bun_socket_error_t::none;
+        // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
+        let vm = unsafe { &mut *global.bun_vm() };
+        let Some(ctx) = vm
             .rare_data()
             .ssl_ctx_cache()
             .get_or_create_digest(ctx_opts, d, &mut err)
@@ -161,7 +162,7 @@ impl SecureContext {
             // file, …). When BoringSSL itself fails (e.g. unsupported curve) the
             // enum is still `.none`; surface the library error stack instead of
             // throwing an empty placeholder.
-            if err == uws::create_bun_socket_error_t::None {
+            if err == uws::create_bun_socket_error_t::none {
                 // SAFETY: FFI; ERR_get_error reads the thread-local BoringSSL error queue, no preconditions.
                 let code = unsafe { boringssl::ERR_get_error() };
                 if code != 0 {
@@ -169,7 +170,7 @@ impl SecureContext {
                 }
                 return Err(global.throw("Failed to create SSL context"));
             }
-            return Err(global.throw_value(err.to_js(global)));
+            return Err(global.throw_value(create_bun_socket_error_to_js(err, global)));
         };
         Ok(Box::new(SecureContext {
             ctx,

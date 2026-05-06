@@ -2477,11 +2477,27 @@ impl Example {
             }
         }
 
-        Output::pretty_errorln(
+        Output::pretty_errorln(format_args!(
             "Corrupt examples data: expected object but received {}",
-            format_args!("{}", <&'static str>::from(examples_object.data.tag())),
-        );
+            expr_data_tag_name(&examples_object.data),
+        ));
         Global::exit(1);
+    }
+}
+
+// Local shim: `bun_logger::js_ast::ExprData` has no `tag()` accessor yet.
+// Zig used `@tagName(examples_object.data)`.
+fn expr_data_tag_name(data: &logger::js_ast::ExprData) -> &'static str {
+    use logger::js_ast::ExprData as D;
+    match data {
+        D::EArray(_) => "e_array",
+        D::EObject(_) => "e_object",
+        D::EString(_) => "e_string",
+        D::EBoolean(_) => "e_boolean",
+        D::ENumber(_) => "e_number",
+        D::ENull(_) => "e_null",
+        D::EUndefined(_) => "e_undefined",
+        D::EMissing(_) => "e_missing",
     }
 }
 

@@ -33,7 +33,7 @@ struct ScanOpts {
 impl ScanOpts {
     fn parse_cwd(
         global_this: &JSGlobalObject,
-        arena: &Arena,
+        _arena: &Arena,
         cwd_val: JSValue,
         absolute: bool,
         fn_name: &'static str, // PERF(port): was comptime monomorphization — profile in Phase B
@@ -49,9 +49,8 @@ impl ScanOpts {
             // TODO(port): `to_utf8_without_ref` took an allocator (arena) in Zig; bun_str API TBD.
 
             // If its absolute return as is
-            if resolve_path::Platform::Auto.is_absolute(cwd_utf8.slice()) {
-                break 'cwd_str Box::<[u8]>::from(cwd_utf8.clone_if_borrowed()?.slice());
-                // TODO(port): clone_if_borrowed() took arena allocator in Zig.
+            if resolve_path::Platform::AUTO.is_absolute(cwd_utf8.slice()) {
+                break 'cwd_str Box::<[u8]>::from(cwd_utf8.slice());
             }
 
             // `cwd_utf8` drops at scope exit (was `defer cwd_utf8.deinit()`).
@@ -65,26 +64,26 @@ impl ScanOpts {
 
             // Convert to an absolute path
             let mut path_buf = PathBuffer::uninit();
-            let cwd = match bun_sys::getcwd(&mut path_buf) {
-                bun_sys::Result::Ok(cwd) => cwd,
+            let cwd_len = match bun_sys::getcwd(&mut path_buf[..]) {
+                bun_sys::Result::Ok(len) => len,
                 bun_sys::Result::Err(err) => {
-                    let err_js = err.to_js(global_this)?;
-                    return global_this.throw_value(err_js);
+                    let err_js = err.to_js(global_this);
+                    return Err(global_this.throw_value(err_js));
                 }
             };
 
             let cwd_str = join_string_buf::<platform::Auto>(
                 &mut path_buf2,
-                &[cwd, cwd_utf8.slice()],
+                &[&path_buf[..cwd_len], cwd_utf8.slice()],
             );
             break 'cwd_str Box::<[u8]>::from(cwd_str);
         };
 
         if cwd_str.len() > MAX_PATH_BYTES {
-            return global_this.throw(format_args!(
+            return Err(global_this.throw(format_args!(
                 "{}: invalid `cwd`, longer than {} bytes",
                 fn_name, MAX_PATH_BYTES
-            ));
+            )));
         }
 
         Ok(cwd_str)

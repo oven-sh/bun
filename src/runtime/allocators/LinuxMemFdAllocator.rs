@@ -16,12 +16,13 @@
 //! data that we expect to be cloned multiple times. Such as Blob in FormData.
 
 use core::ffi::c_void;
-use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_alloc::Allocator;
 use bun_core::Fd;
 // bun_sys (T1) — mmap/munmap/pwrite/ftruncate/memfd_create/Result/Error/E/Tag/can_use_memfd.
 use bun_sys as sys;
+use bun_sys::FdExt;
 // TODO(b0-genuine): crate::webcore::blob::store::Bytes — return-value struct constructed
 // inline (cap/ptr/len/allocator). Not dispatch; not a hook. Candidate fix: define a local
 // `MemFdBytes { cap: u32, ptr: *mut u8, len: u32, allocator: ... }` here and have runtime convert,

@@ -1361,7 +1361,14 @@ mod phase_a_draft {
             if let Some(node_linker_expr) = expr_get(install_obj, b"linker") {
                 self.expect_string(&node_linker_expr)?;
                 if let Some(s) = expr_as_string(&node_linker_expr, self.bump) {
-                    install.node_linker = PackageManager::Options::NodeLinker::from_str(s);
+                    // PORT NOTE: `api::NodeLinker` is a CYCLEBREAK mirror of
+                    // `bun_install_types::NodeLinker`; map the string locally
+                    // rather than crossing the type boundary.
+                    install.node_linker = match s {
+                        b"hoisted" => Some(api::NodeLinker::Hoisted),
+                        b"isolated" => Some(api::NodeLinker::Isolated),
+                        _ => None,
+                    };
                     if install.node_linker.is_none() {
                         self.add_error(
                             node_linker_expr.loc,

@@ -198,10 +198,10 @@ fn load_bunfig(
             if auto_loaded {
                 return Ok(());
             }
-            Output::pretty_errorln(
-                "{}\nwhile reading config \"{s}\"",
-                (err, BStr::new(config_path.as_bytes())),
-            );
+            Output::pretty_errorln(format_args!(
+                "{}\nwhile reading config \"{}\"",
+                err, BStr::new(config_path.as_bytes()),
+            ));
             Global::exit(1);
         }
     };

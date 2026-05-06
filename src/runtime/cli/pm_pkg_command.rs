@@ -294,13 +294,18 @@ impl PmPkgCommand {
         cwd: &[u8],
     ) -> Result<(), Error> {
         if args.is_empty() {
-            Output::err_generic(format_args!(
-                "<blue>bun pm pkg set<r> expects a key=value pair of args"
-            ));
+            Output::err_generic(
+                "<blue>bun pm pkg set<r> expects a key=value pair of args",
+                (),
+            );
             Global::exit(1);
         }
 
-        let parse_json = pm.options.json_output;
+        // blocked_on: bun_install::PackageManagerOptionsStub::json_output —
+        // field not yet on the upstream stub. Default to `false` so the rest of
+        // this body remains type-checked.
+        let _ = &pm.options;
+        let parse_json = false;
 
         let path = Self::find_package_json(cwd)?;
 

@@ -227,6 +227,7 @@ fn expand_css_eql(input: DeriveInput) -> syn::Result<TokenStream2> {
         #[automatically_derived]
         impl #impl_g ::bun_css::generics::CssEql for #name #ty_g #where_g {
             #[inline]
+            #[allow(unused_variables)]
             fn eql(&self, __other: &Self) -> bool {
                 #[allow(unused_imports)]
                 use ::bun_css::generics::CssEql as _;
@@ -323,6 +324,7 @@ fn expand_css_hash(input: DeriveInput) -> syn::Result<TokenStream2> {
         #[automatically_derived]
         impl #impl_g ::bun_css::generics::CssHash for #name #ty_g #where_g {
             #[inline]
+            #[allow(unused_variables)]
             fn hash(&self, __hasher: &mut ::bun_css::generics::Wyhash) {
                 #[allow(unused_imports)]
                 use ::bun_css::generics::CssHash as _;

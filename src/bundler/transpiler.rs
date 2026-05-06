@@ -747,6 +747,22 @@ impl<'a> Transpiler<'a> {
 use bun_js_printer as js_printer;
 use crate::analyze_transpiled_module;
 
+/// Map the bundler-local `Target` (options.rs:489) to the lower-tier
+/// `bun_options_types::BundleEnums::Target` consumed by `js_printer::Options`.
+/// The two enums are variant-for-variant identical but nominally distinct;
+/// Phase B-3 collapses them (see lib.rs `pub mod options` shadow note).
+#[inline]
+fn to_bundle_enums_target(t: crate::options_impl::Target) -> bun_options_types::BundleEnums::Target {
+    use bun_options_types::BundleEnums::Target as T;
+    match t {
+        crate::options_impl::Target::Browser => T::Browser,
+        crate::options_impl::Target::Bun => T::Bun,
+        crate::options_impl::Target::BunMacro => T::BunMacro,
+        crate::options_impl::Target::Node => T::Node,
+        crate::options_impl::Target::BakeServerComponentsSsr => T::BakeServerComponentsSsr,
+    }
+}
+
 /// Re-export so `bun_bundler::PrintFormat::EsmAscii` (AsyncModule.rs:1018)
 /// resolves once `lib.rs` `pub use transpiler::*` lands.
 pub use js_printer::Format as PrintFormat;

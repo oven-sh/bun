@@ -8024,7 +8024,7 @@ impl LowerUsingDeclarationsContext {
 
         if !exports.is_empty() {
             result.push(p.s(
-                S::ExportClause { items: exports.into_bump_slice() as *mut [js_ast::ClauseItem], is_single_line: false },
+                S::ExportClause { items: exports.into_bump_slice_mut() as *mut [js_ast::ClauseItem], is_single_line: false },
                 loc,
             ));
         }

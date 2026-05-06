@@ -1625,7 +1625,8 @@ impl CreateCommand {
                 'outer: {
                     if let Some(home_dir) = env_loader.map.get(b"HOME") {
                         let parts = [home_dir, BUN_CREATE_DIR, positional];
-                        let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
+                        // SAFETY: `filesystem` is the process-global FileSystem singleton (non-null after init).
+                        let outdir_path = unsafe { &*filesystem }.abs_buf(&parts, home_dir_buf);
                         let len = outdir_path.len();
                         home_dir_buf[len] = 0;
                         // SAFETY: home_dir_buf[len] == 0 written above
@@ -1657,7 +1658,9 @@ impl CreateCommand {
 
                 if repo_begin == usize::MAX && positional[0] != b'/' {
                     if let Some(first_slash_index) = bun_str::strings::index_of_char(positional, b'/') {
+                        let first_slash_index = first_slash_index as usize;
                         if let Some(last_slash_index) = bun_str::strings::index_of_char(positional, b'/') {
+                            let last_slash_index = last_slash_index as usize;
                             if first_slash_index == last_slash_index
                                 && !positional[last_slash_index..].is_empty()
                                 && last_slash_index > 0
@@ -1671,10 +1674,12 @@ impl CreateCommand {
                 if repo_begin != usize::MAX {
                     let remainder = &positional[repo_begin..];
                     if let Some(i) = bun_str::strings::index_of_char(remainder, b'/') {
+                        let i = i as usize;
                         if i > 0 && !remainder[i + 1..].is_empty() {
                             if let Some(last_slash) =
                                 bun_str::strings::index_of_char(&remainder[i + 1..], b'/')
                             {
+                                let last_slash = last_slash as usize;
                                 example_tag = ExampleTag::GithubRepository;
                                 break 'brk strings::trim(&remainder[0..i + 1 + last_slash], b"# \r\t");
                             } else {
@@ -1710,7 +1715,7 @@ fn file_copier_copy(
     #[cfg(windows)] src_base_len: usize,
     #[cfg(windows)] src_buf: &mut bun_paths::WPathBuffer,
 ) -> Result<(), bun_core::Error> {
-    while let Some(entry) = walker.next().unwrap_result()? {
+    while let Some(entry) = walker.next()? {
         #[cfg(windows)]
         {
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
@@ -1916,7 +1921,7 @@ impl ExampleTag {
 }
 
 // TODO(port): mutable static URL — single-threaded CLI usage
-static mut URL_: URL = URL::ZEROED;
+static mut URL_: Option<URL<'static>> = None;
 static mut APP_NAME_BUF: [u8; 512] = [0u8; 512];
 static mut GITHUB_REPOSITORY_URL_BUF: [u8; 1024] = [0u8; 1024];
 
@@ -1961,7 +1966,7 @@ impl Example {
 
     pub fn fetch_all_local_and_remote(
         ctx: &Command::Context,
-        node: Option<&mut Progress::Node>,
+        mut node: Option<&mut ProgressNode>,
         env_loader: &mut DotEnv::Loader,
         filesystem: &mut fs::FileSystem,
     ) -> Result<Vec<Example>, bun_core::Error> {
@@ -2366,7 +2371,7 @@ impl Example {
     pub fn fetch_all(
         ctx: &Command::Context,
         env_loader: &mut DotEnv::Loader,
-        progress_node: Option<&mut Progress::Node>,
+        progress_node: Option<&mut ProgressNode>,
     ) -> Result<Box<[Example]>, bun_core::Error> {
         // SAFETY: single-threaded CLI access to static URL_
         unsafe {

@@ -5219,7 +5219,7 @@ impl<'a> Resolver<'a> {
                 dir_info_ptr,
                 dir_path,
                 // SAFETY: ARENA — `dir_entries_option` is a slot in `rfs.entries` (BSSMap) and outlives the resolver.
-                unsafe { &mut *dir_entries_option },
+                dir_entries_option,
                 queue_top.result,
                 cached_dir_entry_result.index,
                 self.dir_cache.at_index(top_parent.index).map(|d| d as *mut _),
@@ -6236,15 +6236,10 @@ impl<'a> Resolver<'a> {
         // Zig held raw pointers here. Re-borrow at each use so `&mut self` calls
         // (debug_logs / dirname_store / parse_*) don't trip borrowck.
         // TODO(port): split RealFS borrow once entries iteration is interior-mutability-backed.
-        let rfs: *mut Fs::file_system::RealFS = &mut self.fs.fs;
-        let entries: *mut Fs::file_system::DirEntry = unsafe { &mut *_entries }.entries_mut();
-        macro_rules! rfs { () => { unsafe { &mut *rfs } } }
-        macro_rules! entries { () => { unsafe { &mut *entries } } }
-        let rfs = rfs!();
-        let entries = entries!();
-        let _ = (rfs, entries); // re-bound below per use site
-        let rfs: *mut Fs::file_system::RealFS = &mut self.fs.fs;
-        let entries: *mut Fs::file_system::DirEntry = unsafe { &mut *_entries }.entries_mut();
+        let rfs_ptr: *mut Fs::file_system::RealFS = &mut self.fs.fs;
+        let entries_ptr: *mut Fs::file_system::DirEntry = unsafe { &mut *_entries }.entries_mut();
+        let rfs: &mut Fs::file_system::RealFS = unsafe { &mut *rfs_ptr };
+        let entries: &mut Fs::file_system::DirEntry = unsafe { &mut *entries_ptr };
 
         if cfg!(debug_assertions) {
             // `path` is stored in the permanent `dir_cache` as `DirInfo.abs_path`. It must not

@@ -834,7 +834,7 @@ impl protocol::TryFromAngle for Angle {
     #[inline] fn try_from_angle(a: Angle) -> Option<Self> { Some(a) }
 }
 impl protocol::TrySign for Angle {
-    #[inline] fn try_sign(&self) -> Option<f32> { Angle::try_sign(self) }
+    #[inline] fn try_sign(&self) -> Option<f32> { Some(self.sign()) }
 }
 impl protocol::TryMap for Angle {
     #[inline] fn try_map(&self, f: impl Fn(f32) -> f32) -> Option<Self> { Some(self.map(f)) }

@@ -790,18 +790,24 @@ pub fn step_group(
     let this = &mut buntest.execution;
 
     loop {
-        let Some(group) = this.active_group() else {
-            return Ok(StepResult::Complete);
+        // Carry the active group as NonNull so it does not alias `&mut Execution` re-derived
+        // inside step_group_one (Zig spec uses raw `*ConcurrentGroup`).
+        let group_ptr: NonNull<ConcurrentGroup> = match this.active_group() {
+            Some(g) => NonNull::from(g),
+            None => return Ok(StepResult::Complete),
         };
-        // TODO(port): borrowck — `group` borrows `this.groups`; subsequent calls reborrow `this`.
-        if !group.executing {
-            this.on_group_started(group, global_this);
-            group.executing = true;
+        {
+            // SAFETY: group_ptr points into this.groups; only this scope holds a `&mut` to it.
+            let group = unsafe { &mut *group_ptr.as_ptr() };
+            if !group.executing {
+                Execution::on_group_started(global_this);
+                group.executing = true;
+            }
         }
 
         // loop over items in the group and advance their execution
 
-        let status = step_group_one(buntest_strong, global_this, group, now)?;
+        let status = step_group_one(buntest_strong, global_this, group_ptr, now)?;
         match status {
             AdvanceStatus::Execute { timeout } => {
                 return Ok(StepResult::Waiting {
@@ -811,12 +817,16 @@ pub fn step_group(
             AdvanceStatus::Done => {}
         }
 
+        // SAFETY: re-deref after step_group_one; disjoint from this.sequences read below.
+        let group = unsafe { &mut *group_ptr.as_ptr() };
         group.executing = false;
-        this.on_group_completed(group, global_this);
+        Execution::on_group_completed(global_this);
 
         // if there is one sequence and it failed, skip to the next group
+        let (start, end, failure_skip_to) =
+            (group.sequence_start, group.sequence_end, group.failure_skip_to);
         let all_failed = 'blk: {
-            for sequence in group.sequences(this).iter() {
+            for sequence in this.sequences[start..end].iter() {
                 if !sequence.result.is_fail() {
                     break 'blk false;
                 }
@@ -828,7 +838,7 @@ pub fn step_group(
             group_log::log(
                 "stepGroup: all sequences failed, skipping to failure_skip_to group",
             );
-            this.group_index = group.failure_skip_to;
+            this.group_index = failure_skip_to;
         } else {
             group_log::log("stepGroup: not all sequences failed, advancing to next group");
             this.group_index += 1;
@@ -844,11 +854,10 @@ enum AdvanceStatus {
 fn step_group_one(
     buntest_strong: BunTestPtr,
     global_this: &JSGlobalObject,
-    group: &mut ConcurrentGroup,
+    group: NonNull<ConcurrentGroup>,
     now: &mut Timespec,
 ) -> JsResult<AdvanceStatus> {
     let buntest = buntest_strong.get();
-    let this = &mut buntest.execution;
     let mut final_status = AdvanceStatus::Done;
     let concurrent_limit = if let Some(reporter) = buntest.reporter.as_ref() {
         reporter.jest.max_concurrency
@@ -857,7 +866,11 @@ fn step_group_one(
         20
     };
     let mut active_count: usize = 0;
-    let len = group.sequences(this).len();
+    // SAFETY: group points into buntest.execution.groups; read-only here.
+    let len = {
+        let g = unsafe { group.as_ref() };
+        g.sequence_end - g.sequence_start
+    };
     for sequence_index in 0..len {
         let sequence_status =
             step_sequence(buntest_strong, global_this, group, sequence_index, now)?;

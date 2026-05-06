@@ -24,6 +24,12 @@ pub enum DotEnvFileSuffix {
     Test,
 }
 
+/// Downstream callers (transpiler, install, lockfile) variously spell the load-mode
+/// discriminant `Kind` or `Mode`; both alias the same `DotEnvFileSuffix` enum so the
+/// crate exports a single canonical type without forcing a tree-wide rename.
+pub type Kind = DotEnvFileSuffix;
+pub type Mode = DotEnvFileSuffix;
+
 /// Mirrors `bun_api::DotEnvBehavior` (schema.peechy enum, values 1..=4). Defined locally so
 /// this T2 crate names no `bun_api` types — see PORTING.md §Dispatch. The high-tier caller
 /// transmutes/maps its `api::DotEnvBehavior` into this at the call site.

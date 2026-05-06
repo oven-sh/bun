@@ -9,8 +9,8 @@
 //! `get_source_map_impl`, `find_source_mapping_url_{u8,u16}`, and the
 //! `SourceProvider` impls for `SourceProviderMap` / `DevServerSourceProvider`
 //! are now live. Remaining `#[cfg(any())]` fn-body gates are tagged
-//! `TODO(b2-blocked)` on missing lower-tier surface (bun_js_parser::Expr
-//! accessors, bun_interchange::json::parse, bun_logger::fs::Path::pretty).
+//! `TODO(b2-blocked)` on missing lower-tier surface (bun_logger::fs::Path::pretty,
+//! bun_logger::Source `'static` contents lifetime).
 //!
 //! The `_phase_a_draft` block below preserves only `parse_json` for the next
 //! pass.
@@ -1220,8 +1220,11 @@ pub fn append_source_mapping_url_remote<W: bun_io::Write + ?Sized>(
 // ──────────────────────────────────────────────────────────────────────────
 // Phase-A draft body — preserved, gated off. Only `parse_json` remains;
 // everything else has been lifted out and is live above.
-//   TODO(b2-blocked): bun_js_parser::Expr (data_store_reset / Data accessors)
-//   TODO(b2-blocked): bun_interchange::json::parse
+//   TODO(b2-blocked): bun_logger::Source — `contents: &'static [u8]` rejects
+//     the non-static `source` arg; needs `'source` lifetime threading (or
+//     `Cow<'static, [u8]>`). PORTING.md §Forbidden bars lifetime-extend here.
+//   (bun_interchange::json::parse and bun_logger::js_ast::Expr accessors are
+//    now available — body below targets that surface.)
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(any())]
 mod _phase_a_draft {

@@ -1382,18 +1382,20 @@ impl<const SSL: bool> WebSocket<SSL> {
             let to_mask = &mut tail[..ping_len];
             // SAFETY: input and output point to the same memory; Mask::fill supports in-place
             Mask::fill_in_place(self.global_this, mask_buf, to_mask);
-            // PORT NOTE: reshaped — copy out to avoid borrow conflict with &mut self
+            // PORT NOTE: copy the ≤(6+125)-byte frame to a stack array so the
+            // slice does not alias `&mut self` across `enqueue_encoded_bytes`
+            // (PORTING.md §Forbidden: aliased-&mut). `enqueue_encoded_bytes`
+            // may call `terminate → clear_data` while the laundered slice into
+            // `self.ping_frame_bytes` would still be live.
             let frame_len = 6 + ping_len;
-            let frame_ptr = self.ping_frame_bytes.as_ptr();
-            // SAFETY: frame valid for this call
-            let frame = unsafe { core::slice::from_raw_parts(frame_ptr, frame_len) };
-            self.enqueue_encoded_bytes(socket, frame)
+            let mut frame_buf = [0u8; 6 + 125];
+            frame_buf[..frame_len].copy_from_slice(&self.ping_frame_bytes[..frame_len]);
+            self.enqueue_encoded_bytes(socket, &frame_buf[..frame_len])
         } else {
             self.ping_frame_bytes[2..6].fill(0); // autobahn tests require that we mask empty pongs
-            let frame_ptr = self.ping_frame_bytes.as_ptr();
-            // SAFETY: frame valid for this call
-            let frame = unsafe { core::slice::from_raw_parts(frame_ptr, 6) };
-            self.enqueue_encoded_bytes(socket, frame)
+            let mut frame_buf = [0u8; 6];
+            frame_buf.copy_from_slice(&self.ping_frame_bytes[..6]);
+            self.enqueue_encoded_bytes(socket, &frame_buf)
         }
     }
 

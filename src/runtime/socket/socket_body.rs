@@ -2401,7 +2401,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // Per-VM weak cache: `tls:true` and `{servername}`-only hit
             // the same CTX as `Bun.connect`; an inline CA dedupes across
             // every upgradeTLS that names it.
-            owned_ctx = match VirtualMachine::get()
+            *owned_ctx = match VirtualMachine::get()
                 .rare_data()
                 .ssl_ctx_cache()
                 .get_or_create(cfg, &mut create_err)
@@ -2437,15 +2437,23 @@ impl<const SSL: bool> NewSocket<SSL> {
         let handlers_taken = handlers_guard.take().unwrap();
         scopeguard::ScopeGuard::into_inner(handlers_guard);
         let vm = handlers_taken.vm;
-        // TODO(port): Rc<Handlers> vs Box — Zig allocates a raw `*Handlers` here.
-        let handlers_ptr = Rc::new(UnsafeCell::new(handlers_taken));
+        // Zig: `bun.default_allocator.create(Handlers)` — client-mode
+        // `Handlers` is a standalone heap allocation that
+        // `Handlers::mark_inactive` later frees via `Box::from_raw`.
+        // SAFETY: `Box::new` never returns null.
+        let handlers_ptr =
+            unsafe { NonNull::new_unchecked(Box::into_raw(Box::new(handlers_taken))) };
+
+        // Ownership of the +1 `SSL_CTX` ref transfers into `tls.owned_ssl_ctx`
+        // below; defuse the errdefer so a later `?` doesn't double-free.
+        let owned_ctx_taken = scopeguard::ScopeGuard::into_inner(owned_ctx);
 
         let cfg = ssl_opts.as_ref();
-        let mut tls = TLSSocket::new(TLSSocket {
+        let tls_ptr: *mut TLSSocket = TLSSocket::new(TLSSocket {
             ref_count: Cell::new(1),
-            handlers: Some(handlers_ptr.clone()),
+            handlers: Some(handlers_ptr),
             socket: SocketHandler::<true>::DETACHED,
-            owned_ssl_ctx: owned_ctx,
+            owned_ssl_ctx: owned_ctx_taken,
             connection: this.connection.as_ref().map(|c| c.clone()),
             protos: cfg.and_then(|c| {
                 c.protos.map(|p| {
@@ -2468,11 +2476,13 @@ impl<const SSL: bool> NewSocket<SSL> {
             native_callback: NativeCallbacks::None,
             twin: None,
         });
-        // SAFETY: tls just allocated via Box::into_raw.
-        let tls = unsafe { &mut *tls };
-        // tls.deinit() now drops the ref; clear so errdefer doesn't double-free.
-        owned_ctx = None;
-        scopeguard::ScopeGuard::into_inner(owned_ctx_guard);
+        // Do NOT shadow `tls_ptr` with a long-lived `&mut TLSSocket`: the
+        // allocation-root pointer (from `Box::into_raw`) must be the value
+        // stored in the uws ext slot below so dispatch-derived `&mut`s share
+        // its provenance. A `&mut *tls_ptr` reborrow that outlives the
+        // ext-slot store and the `on_open`/`start_tls_handshake` calls would
+        // alias the `&mut TLSSocket` those calls materialise from ext.
+        // Reborrow short-lived `unsafe { &mut *tls_ptr }` per use instead.
 
         let sni: *const c_char = cfg
             .and_then(|c| c.server_name)

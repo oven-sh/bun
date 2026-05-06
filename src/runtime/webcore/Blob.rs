@@ -483,7 +483,6 @@ impl Blob {
 
 mod _jsc_gated {
 use super::*;
-use bun_jsc::SysErrorJsc as _;
 use super::read_file;
 use crate::node as node;
 use crate::image::Image;

@@ -330,6 +330,34 @@ impl Cmd {
         // `Pipeline::child_done` before this runs) — never freed here.
         me.base.end_scope();
     }
+
+    // ── Subprocess callbacks (legacy `*Cmd` backref shape) ────────────────
+    // Spec: Cmd.zig `bufferedInputClose` / `bufferedOutputClose` / `onExit`.
+    // The NodeId-arena port routes these through `(interp, NodeId)` instead;
+    // the `*mut Cmd` backref kept on `ShellSubprocess` will be replaced with a
+    // `NodeId` once spawn is wired in the new model.
+
+    pub fn buffered_input_close(&mut self) {
+        // Spec: `this.exec.subproc.buffered_closed.close(this, .stdin)`.
+        // TODO(port): subprocess buffered-close bookkeeping moves to
+        // `Exec::Subproc` once that variant carries the `BufferedIoClosed`
+        // bitset. No-op until then.
+    }
+
+    pub fn buffered_output_close(
+        &mut self,
+        _kind: crate::shell::util::OutKind,
+        _err: Option<bun_sys::SystemError>,
+    ) -> Yield {
+        // Spec: tee captured output into the JS-side bytelist, mark the kind
+        // closed, and if all stdio + exit are settled, run `next()`.
+        todo!("blocked_on: Cmd::buffered_output_close NodeId-arena port")
+    }
+
+    pub fn on_exit(&mut self, exit_code: ExitCode) {
+        // Spec: stash exit code; subprocess pipe-close drives `next()`.
+        self.exit_code = Some(exit_code);
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

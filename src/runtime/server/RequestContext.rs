@@ -1405,7 +1405,15 @@ where
                 if auto_close {
                     fd.close();
                 }
-                let js_err = err.with_path(&file.pathlike).to_js(global_this);
+                // TODO(port): Zig `withPathLike(file.pathlike)` also sets
+                // `.fd` for the Fd arm; `bun_sys::Error` only carries a path
+                // slice, so render the fd as bytes for the error path.
+                let js_err = match &file.pathlike {
+                    crate::webcore::PathOrFileDescriptor::Path(p) => {
+                        err.with_path(p.slice()).to_js(global_this)
+                    }
+                    crate::webcore::PathOrFileDescriptor::Fd(_) => err.to_js(global_this),
+                };
                 return self.run_error_handler(js_err);
             }
         };

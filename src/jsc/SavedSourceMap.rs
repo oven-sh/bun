@@ -418,7 +418,7 @@ impl SavedSourceMap {
             // can hold a ref while the table mutates. The shell takes ownership
             // of the blob.
             let ism = InternalSourceMap {
-                data: tagged.as_unchecked::<InternalSourceMap>() as *mut u8,
+                data: tagged.as_unchecked::<InternalSourceMap>() as *const u8,
             };
             // Table holds one strong ref (leaked via `into_raw`); caller gets
             // the returned `Arc`. Mirrors Zig's intrusive `ref()` pair.

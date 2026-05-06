@@ -324,11 +324,6 @@ pub use form_data::{FormData, AsyncFormData};
 #[path = "webcore/ScriptExecutionContext.rs"]
 pub mod script_execution_context;
 
-/// `bun.webcore.ResumableSinkBackpressure` — re-exported from `resumable_sink`
-/// now that the module is un-gated. Consumed by `s3::multipart::MultiPartUpload::write*`
-/// and the `ResumableSinkContext` trait, so they must be the same type.
-pub use resumable_sink::ResumableSinkBackpressure;
-
 #[doc(hidden)]
 #[path = "webcore/s3/multipart_options.rs"]
 pub mod multipart_options_impl;

@@ -20,8 +20,8 @@ use crate::css_properties::border_image::BorderImageRepeat;
 use crate::css_properties::border_image::BorderImage;
 
 use crate::VendorPrefix;
-use crate::PropertyId;
-use crate::PropertyIdTag;
+use crate::properties::PropertyId;
+use crate::properties::PropertyIdTag;
 
 /// A value for the [clip-path](https://www.w3.org/TR/css-masking-1/#the-clip-path) property.
 // TODO(port): non-pub in Zig — confirm visibility
@@ -348,7 +348,7 @@ impl Mask {
             }
         }
 
-        css::Result::ok(Self {
+        Ok(Self {
             image: image.unwrap_or_else(Image::default),
             position: position.unwrap_or_else(Position::default),
             repeat: repeat.unwrap_or_else(BackgroundRepeat::default),
@@ -471,7 +471,7 @@ impl MaskBorder {
         if border_image.is_ok() || mode.is_some() {
             // PERF(port): Zig used `comptime BorderImage.default()` — const-eval default in Phase B
             let bi = border_image.unwrap_or(BorderImage::default());
-            css::Result::ok(MaskBorder {
+            Ok(MaskBorder {
                 source: bi.source,
                 slice: bi.slice,
                 width: bi.width,

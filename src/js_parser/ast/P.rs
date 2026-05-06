@@ -5882,7 +5882,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         // freshly-installed slice and inserts at index 0. We rebuild instead
                         // (Property is not Clone in Rust).
                         let old_props: *mut [G::Property] = unsafe { (*class).properties };
-                        let old_len = unsafe { (*old_props).len() };
+                        // SAFETY: arena-owned slice valid for 'a; explicit reborrow to avoid implicit autoref.
+                        let old_len = unsafe { &*old_props }.len();
                         let mut properties = BumpVec::<G::Property>::with_capacity_in(old_len + 1, self.allocator);
                         let mut constructor_stmts = BumpVec::<Stmt>::new_in(self.allocator);
 

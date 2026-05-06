@@ -11,18 +11,7 @@ use crate::values::resolution::Resolution;
 use crate::values::time::Time;
 use crate::values::url::Url;
 use crate::properties::custom::TokenList;
-use crate::properties::transform::TransformList;
-
-// blocked_on: properties::transform un-gate — `Transform` is not in the
-// `prop_value_stub!(transform, …)` list (only `TransformList` is), so the real
-// `crate::properties::transform::Transform` type does not exist while the leaf
-// `.rs` is `gated_prop!`-ed. Mirror property.rs's local-stub pattern: alias to
-// the ZST `TransformList` stub so the enum variant compiles, swap to the real
-// type when transform.rs un-gates.
-#[cfg(any())]
-use crate::properties::transform::Transform;
-#[cfg(not(any()))]
-type Transform = crate::properties::transform::TransformList;
+use crate::properties::transform::{Transform, TransformList};
 
 use bun_string::strings;
 
@@ -150,18 +139,16 @@ impl SyntaxString {
                                 SyntaxComponentKind::Time => ParsedComponent::Time(Time::parse(i)?),
                                 SyntaxComponentKind::Resolution => ParsedComponent::Resolution(Resolution::parse(i)?),
                                 SyntaxComponentKind::TransformFunction => {
-                                    // blocked_on: properties::transform un-gate — stub `Transform`
-                                    // has no `parse`. Body once un-gated:
-                                    //   ParsedComponent::TransformFunction(Transform::parse(i)?)
-                                    let _ = i;
-                                    todo!("blocked_on: properties::transform::Transform::parse un-gate")
+                                    ParsedComponent::TransformFunction(Transform::parse(i)?)
                                 }
                                 SyntaxComponentKind::TransformList => {
-                                    // blocked_on: properties::transform un-gate — stub `TransformList`
-                                    // has no `parse`. Body once un-gated:
+                                    // blocked_on: 'bump threading — `TransformList<'bump>` borrows
+                                    // the parser arena but `ParsedComponent` is lifetime-free in
+                                    // Phase A (matching `Token`/`Ident`'s `'static` placeholders).
+                                    // Body once `'bump` is threaded through `ParsedComponent<'a>`:
                                     //   ParsedComponent::TransformList(TransformList::parse(i)?)
                                     let _ = i;
-                                    todo!("blocked_on: properties::transform::TransformList::parse un-gate")
+                                    todo!("blocked_on: ParsedComponent<'bump> threading for TransformList::parse")
                                 }
                                 SyntaxComponentKind::CustomIdent => {
                                     ParsedComponent::CustomIdent(CustomIdentFns::parse(i)?)
@@ -443,7 +430,10 @@ pub enum ParsedComponent {
     /// A `<transform-function>` value.
     TransformFunction(Transform),
     /// A `<transform-list>` value.
-    TransformList(TransformList),
+    // PORT NOTE: `TransformList<'bump>` borrows the parser arena. Phase A uses
+    // `'static` placeholders (matching `Token`/`Ident`); Phase B threads `'bump`
+    // through `ParsedComponent<'a>`.
+    TransformList(TransformList<'static>),
     /// A `<custom-ident>` value.
     CustomIdent(CustomIdent),
     /// A literal value.
@@ -484,16 +474,8 @@ impl ParsedComponent {
             ParsedComponent::Angle(v) => v.to_css(dest),
             ParsedComponent::Time(v) => v.to_css(dest),
             ParsedComponent::Resolution(v) => v.to_css(dest),
-            ParsedComponent::TransformFunction(_v) => {
-                // blocked_on: properties::transform un-gate — stub has no `to_css`.
-                // Body once un-gated: `v.to_css(dest)`
-                todo!("blocked_on: properties::transform::Transform::to_css un-gate")
-            }
-            ParsedComponent::TransformList(_v) => {
-                // blocked_on: properties::transform un-gate — stub has no `to_css`.
-                // Body once un-gated: `v.to_css(dest)`
-                todo!("blocked_on: properties::transform::TransformList::to_css un-gate")
-            }
+            ParsedComponent::TransformFunction(v) => v.to_css(dest),
+            ParsedComponent::TransformList(v) => v.to_css(dest),
             ParsedComponent::CustomIdent(_v) => {
                 // blocked_on: values::ident::CustomIdent::to_css un-gate (Printer::write_ident).
                 // Body once un-gated: `CustomIdentFns::to_css(v, dest)`

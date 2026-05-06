@@ -5,7 +5,7 @@ use crate::Parser;
 use crate::Result as CssResult;
 use crate::DeclarationList;
 use crate::PropertyHandlerContext;
-use crate::PropertyIdTag;
+use crate::properties::PropertyIdTag;
 
 use crate::css_properties::Property;
 use crate::css_properties::PropertyId;

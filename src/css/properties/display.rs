@@ -1,4 +1,5 @@
-use crate::{self as css, Parser, Printer, PrintErr, VendorPrefix};
+use crate as css;
+use crate::{Parser, Printer, PrintErr, VendorPrefix};
 
 /// A value for the [display](https://drafts.csswg.org/css-display-3/#the-display-properties) property.
 #[derive(Clone, PartialEq, Eq, Hash, css::Parse, css::ToCss)]

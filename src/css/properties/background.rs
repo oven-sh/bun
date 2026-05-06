@@ -1,4 +1,5 @@
-use crate::{self as css, Parser, Printer, PrintErr, Property, PropertyId, PropertyIdTag, VendorPrefix, SmallList, DeclarationList, PropertyHandlerContext, ColorFallbackKind};
+use crate as css;
+use crate::{Parser, Printer, PrintErr, Property, PropertyId, PropertyIdTag, VendorPrefix, SmallList, DeclarationList, PropertyHandlerContext, ColorFallbackKind};
 use crate::css_values::length::LengthPercentageOrAuto;
 use crate::css_values::image::Image;
 use crate::css_values::color::CssColor;

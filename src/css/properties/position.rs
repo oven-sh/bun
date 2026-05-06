@@ -1,4 +1,5 @@
-use crate::{self as css, Parser, Printer, PrintErr, VendorPrefix, Token};
+use crate as css;
+use crate::{Parser, Printer, PrintErr, VendorPrefix, Token};
 
 /// A value for the [position](https://www.w3.org/TR/css-position-3/#position-property) property.
 #[derive(Debug, Clone, PartialEq)]

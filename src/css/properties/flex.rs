@@ -101,7 +101,7 @@ impl FlexFlow {
             break;
         }
 
-        css::Result::ok(FlexFlow {
+        Ok(FlexFlow {
             direction: direction.unwrap_or(FlexDirection::Row),
             wrap: wrap.unwrap_or(FlexWrap::Nowrap),
         })
@@ -153,7 +153,7 @@ pub struct Flex {
 impl Flex {
     pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
         if input.try_parse(|i| css::Parser::expect_ident_matching(i, "none")).is_ok() {
-            return css::Result::ok(Flex {
+            return Ok(Flex {
                 grow: 0.0,
                 shrink: 0.0,
                 basis: LengthPercentageOrAuto::Auto,
@@ -183,7 +183,7 @@ impl Flex {
             break;
         }
 
-        css::Result::ok(Flex {
+        Ok(Flex {
             grow: grow.unwrap_or(1.0),
             shrink: shrink.unwrap_or(1.0),
             basis: basis.unwrap_or(LengthPercentageOrAuto::Length(LengthPercentage::Percentage(

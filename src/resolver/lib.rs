@@ -4911,8 +4911,8 @@ impl<'a> Resolver<'a> {
                                     // The condition set is determined by the kind of import
                                     // PORT NOTE: reshaped for borrowck — see identical note above.
                                     let conditions = match kind {
-                                        ast::ImportKind::Require | ast::ImportKind::RequireResolve => self.opts.conditions.require.clone(),
-                                        _ => self.opts.conditions.import.clone(),
+                                        ast::ImportKind::Require | ast::ImportKind::RequireResolve => self.opts.conditions.require.clone().expect("oom"),
+                                        _ => self.opts.conditions.import.clone().expect("oom"),
                                     };
 
                                     // Resolve against the path "/", then join it with the absolute

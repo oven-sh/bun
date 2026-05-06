@@ -241,6 +241,49 @@ pub enum AnimationName {
 }
 
 impl AnimationName {
+    // PORT NOTE: hand-written (not `#[derive]`) because `CSSString` is a raw
+    // `*const [u8]` arena pointer — generics blanket impls cover `&[u8]` but
+    // not raw slices. Mirrors Zig `css.implementEql/Hash/DeepClone`.
+    pub fn eql(&self, other: &Self) -> bool {
+        match (self, other) {
+            (AnimationName::None, AnimationName::None) => true,
+            (AnimationName::Ident(a), AnimationName::Ident(b)) => {
+                use crate::generics::CssEql;
+                a.eql(b)
+            }
+            (AnimationName::String(a), AnimationName::String(b)) => {
+                // SAFETY: arena-owned slices live for the parse session.
+                unsafe { bun_string::strings::eql(&**a, &**b) }
+            }
+            _ => false,
+        }
+    }
+
+    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash11) {
+        match self {
+            AnimationName::None => hasher.update(&0u32.to_ne_bytes()),
+            AnimationName::Ident(i) => {
+                hasher.update(&1u32.to_ne_bytes());
+                i.hash(hasher);
+            }
+            AnimationName::String(s) => {
+                hasher.update(&2u32.to_ne_bytes());
+                // SAFETY: arena-owned slice.
+                hasher.update(unsafe { &**s });
+            }
+        }
+    }
+
+    #[inline]
+    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+        // All payloads are `Copy` (arena slice pointers); identity copy.
+        match self {
+            AnimationName::None => AnimationName::None,
+            AnimationName::Ident(i) => AnimationName::Ident(*i),
+            AnimationName::String(s) => AnimationName::String(*s),
+        }
+    }
+
     // TODO(port): `parse` was not defined in the Zig source for AnimationName but
     // is referenced by `Animation::parse` via `input.tryParse(AnimationName.parse, ...)`.
     // It is presumably provided elsewhere (DeriveParse mixin or hand-written upstream).

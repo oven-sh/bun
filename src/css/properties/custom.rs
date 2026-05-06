@@ -45,6 +45,124 @@ use crate::rules::supports::SupportsCondition;
 use bun_string::strings;
 use bun_wyhash::Wyhash11 as Wyhash;
 
+use crate::generics::{CssEql, CssHash, DeepClone};
+use bun_alloc::Arena;
+
+// ─── Token protocol impls ──────────────────────────────────────────────────
+// `Token` / `Num` / `Dimension` are defined data-only at crate root (lib.rs);
+// their `eql`/`hash` bodies in css_parser.rs forward to `generic::implement_*`
+// which bound on these traits — provide them here so the cycle closes and
+// `#[derive(CssEql/CssHash/DeepClone)]` on `TokenOrValue` resolves the
+// `Token(Token)` arm. Hand-written (not derived) because `Token` carries
+// `&'static [u8]` payloads (Phase-A arena-lifetime placeholder) and named-field
+// variants whose layout lives outside this module's edit scope.
+impl CssEql for crate::Num {
+    #[inline]
+    fn eql(&self, other: &Self) -> bool {
+        self.has_sign == other.has_sign
+            && self.value == other.value
+            && self.int_value == other.int_value
+    }
+}
+impl CssHash for crate::Num {
+    #[inline]
+    fn hash(&self, hasher: &mut Wyhash) {
+        hasher.update(&[self.has_sign as u8]);
+        hasher.update(&self.value.to_ne_bytes());
+        if let Some(iv) = self.int_value {
+            hasher.update(&iv.to_ne_bytes());
+        }
+    }
+}
+impl CssEql for crate::Dimension {
+    #[inline]
+    fn eql(&self, other: &Self) -> bool {
+        self.num.eql(&other.num) && strings::eql(self.unit, other.unit)
+    }
+}
+impl CssHash for crate::Dimension {
+    #[inline]
+    fn hash(&self, hasher: &mut Wyhash) {
+        self.num.hash(hasher);
+        hasher.update(self.unit);
+    }
+}
+impl CssEql for Token {
+    fn eql(&self, other: &Self) -> bool {
+        use Token::*;
+        match (self, other) {
+            (Ident(a), Ident(b))
+            | (Function(a), Function(b))
+            | (AtKeyword(a), AtKeyword(b))
+            | (UnrestrictedHash(a), UnrestrictedHash(b))
+            | (IdHash(a), IdHash(b))
+            | (QuotedString(a), QuotedString(b))
+            | (BadString(a), BadString(b))
+            | (UnquotedUrl(a), UnquotedUrl(b))
+            | (BadUrl(a), BadUrl(b))
+            | (Whitespace(a), Whitespace(b))
+            | (Comment(a), Comment(b)) => strings::eql(a, b),
+            (Delim(a), Delim(b)) => a == b,
+            (Number(a), Number(b)) => a.eql(b),
+            (Dimension(a), Dimension(b)) => a.eql(b),
+            (
+                Percentage { has_sign: a0, unit_value: a1, int_value: a2 },
+                Percentage { has_sign: b0, unit_value: b1, int_value: b2 },
+            ) => a0 == b0 && a1 == b1 && a2 == b2,
+            (Cdo, Cdo)
+            | (Cdc, Cdc)
+            | (IncludeMatch, IncludeMatch)
+            | (DashMatch, DashMatch)
+            | (PrefixMatch, PrefixMatch)
+            | (SuffixMatch, SuffixMatch)
+            | (SubstringMatch, SubstringMatch)
+            | (Colon, Colon)
+            | (Semicolon, Semicolon)
+            | (Comma, Comma)
+            | (OpenSquare, OpenSquare)
+            | (CloseSquare, CloseSquare)
+            | (OpenParen, OpenParen)
+            | (CloseParen, CloseParen)
+            | (OpenCurly, OpenCurly)
+            | (CloseCurly, CloseCurly) => true,
+            _ => false,
+        }
+    }
+}
+impl CssHash for Token {
+    fn hash(&self, hasher: &mut Wyhash) {
+        use Token::*;
+        // Zig `implementHash`: tag prefix + payload bytes.
+        // `Token::kind() as u32` gives a stable per-variant discriminant.
+        hasher.update(&(self.kind() as u32).to_ne_bytes());
+        match self {
+            Ident(v) | Function(v) | AtKeyword(v) | UnrestrictedHash(v) | IdHash(v)
+            | QuotedString(v) | BadString(v) | UnquotedUrl(v) | BadUrl(v) | Whitespace(v)
+            | Comment(v) => hasher.update(v),
+            Delim(d) => hasher.update(&d.to_ne_bytes()),
+            Number(n) => n.hash(hasher),
+            Dimension(d) => d.hash(hasher),
+            Percentage { has_sign, unit_value, int_value } => {
+                hasher.update(&[*has_sign as u8]);
+                hasher.update(&unit_value.to_ne_bytes());
+                if let Some(iv) = int_value {
+                    hasher.update(&iv.to_ne_bytes());
+                }
+            }
+            _ => {}
+        }
+    }
+}
+impl<'bump> DeepClone<'bump> for Token {
+    #[inline]
+    fn deep_clone(&self, _bump: &'bump Arena) -> Self {
+        // All `&'static [u8]` payloads borrow the parser source/arena (Phase-A
+        // `'static` placeholder) — identity copy is correct (matches generics.zig
+        // "const strings" fast-path). `Num`/`Dimension` are POD.
+        self.clone()
+    }
+}
+
 // PERF(port): css is listed as an AST crate (arena-backed) in PORTING.md, but
 // LIFETIMES.tsv pre-classified the token vecs here as plain `Vec<TokenOrValue>`.
 // Phase A drops allocator params and uses global-alloc `Vec`; Phase B may need

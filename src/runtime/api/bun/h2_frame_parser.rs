@@ -30,6 +30,51 @@ use phf::phf_map;
 bun_output::declare_scope!(H2FrameParser, visible);
 
 // ──────────────────────────────────────────────────────────────────────────
+// AbortSignal shim — `bun_jsc::abort_signal` is gated behind `#![cfg(any())]`
+// upstream, leaving only the opaque `stub_ty!` `AbortSignal` at the crate root.
+// Mirror the surface this file consumes (`listen`/`ref_`/`aborted`/…) so the
+// module compiles; bodies `todo!()` until the upstream module is un-gated.
+// ──────────────────────────────────────────────────────────────────────────
+mod abort_signal_shim {
+    use super::{AbortSignal, JSValue, c_void};
+
+    pub trait AbortListener {
+        fn on_abort(&mut self, reason: JSValue);
+    }
+
+    #[allow(dead_code)]
+    pub trait AbortSignalExt {
+        fn from_js(value: JSValue) -> Option<*mut AbortSignal>;
+        fn ref_(&self) -> *mut AbortSignal;
+        fn listen<C: AbortListener>(&self, ctx: *mut C) -> *mut AbortSignal;
+        fn aborted(&self) -> bool;
+        fn abort_reason(&self) -> JSValue;
+        fn detach(&self, ctx: *mut c_void);
+    }
+
+    impl AbortSignalExt for AbortSignal {
+        fn from_js(_value: JSValue) -> Option<*mut AbortSignal> {
+            todo!("blocked_on: bun_jsc::abort_signal::AbortSignal::from_js")
+        }
+        fn ref_(&self) -> *mut AbortSignal {
+            todo!("blocked_on: bun_jsc::abort_signal::AbortSignal::ref_")
+        }
+        fn listen<C: AbortListener>(&self, _ctx: *mut C) -> *mut AbortSignal {
+            todo!("blocked_on: bun_jsc::abort_signal::AbortSignal::listen")
+        }
+        fn aborted(&self) -> bool {
+            todo!("blocked_on: bun_jsc::abort_signal::AbortSignal::aborted")
+        }
+        fn abort_reason(&self) -> JSValue {
+            todo!("blocked_on: bun_jsc::abort_signal::AbortSignal::abort_reason")
+        }
+        fn detach(&self, _ctx: *mut c_void) {
+            todo!("blocked_on: bun_jsc::abort_signal::AbortSignal::detach")
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // Codegen stubs — `jsc.Codegen.JSH2FrameParser` / `JSTCPSocket` / `JSTLSSocket`
 // are emitted by generate-classes.ts (.classes.ts → .rs) but the Rust output
 // path is not wired up yet. Mirror the surface this file consumes so the

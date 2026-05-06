@@ -3155,7 +3155,7 @@ fn is_special_file_or_variant(filename: &[u8], name: &'static [u8]) -> bool {
 
 pub mod bindings {
     use super::*;
-    use bun_jsc::{CallFrame, JSArray, JSGlobalObject, JSObject, JSValue, JsResult, ZigString};
+    use bun_jsc::{CallFrame, JSArray, JSGlobalObject, JSObject, JSValue, JsResult};
     use bun_str::String as BunString;
 
     #[bun_jsc::host_fn]

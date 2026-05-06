@@ -57,8 +57,8 @@ pub fn post_process_css_chunk(
         MultiArrayList::default();
     bun_core::handle_oom(compile_results_for_source_map.set_capacity(compile_results.len()));
 
-    // TODO(port): MultiArrayList field-slice accessor — Zig: `c.parse_graph.input_files.items(.source)`
-    let sources: &[logger::Source] = c.parse_graph.input_files.items_source();
+    // SAFETY: `parse_graph` backref valid for the link pass.
+    let sources: &[logger::Source] = unsafe { (*c.parse_graph).input_files.items_source() };
     for compile_result in compile_results.iter() {
         let source_index = compile_result.source_index();
 

@@ -78,14 +78,14 @@ pub struct BundleV2<'a> {
     // T6 generic instantiated over a T5 type. SAFETY: erased — never deref'd here.
     pub bun_watcher: Option<NonNull<()>>,
     pub plugins: Option<NonNull<JSBundlerPlugin>>,
-    pub completion: Option<NonNull<JSBundleCompletionTask>>,
+    pub completion: Option<*mut JSBundleCompletionTask>,
     /// CYCLEBREAK GENUINE: erased `bake::DevServer`. Populated from
     /// `transpiler.options.dev_server` + the runtime-registered vtable at
     /// construction. All ~15 DevServer call sites go through this.
     pub dev_server: Option<dispatch::DevServerHandle>,
     /// In-memory files that can be used as entrypoints or imported.
     /// This is a pointer to the FileMap in the completion config.
-    pub file_map: Option<NonNull<FileMap>>,
+    pub file_map: Option<&'a FileMap>,
     pub source_code_length: usize,
 
     /// There is a race condition where an onResolve plugin may schedule a task

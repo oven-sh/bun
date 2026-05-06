@@ -2111,7 +2111,8 @@ unsafe fn fetch_builtin_module(
         // SAFETY: per fn contract.
         if let Some(graph) = unsafe { (*jsc_vm).standalone_module_graph } {
             let graph = graph.as_ptr().cast::<bun_standalone_graph::Graph>();
-            if let Some(file) = unsafe { (*graph).files.get_ptr(spec) } {
+            if let Some(file) = unsafe { (*graph).files.get(spec) } {
+                let _ = file;
                 // … sqlite synthetic-import wrapper / bytecode-cache fields …
             }
         }
@@ -2766,7 +2767,7 @@ unsafe fn transpile_file(
             }
             // Generic transpile error → format `log` into `*ret`.
             bun_jsc::module_loader::process_fetch_log(
-                global_ref,
+                global_ref as *const JSGlobalObject as *mut JSGlobalObject,
                 // SAFETY: per fn contract — pointers valid for the call.
                 unsafe { *specifier_ptr },
                 unsafe { *referrer },

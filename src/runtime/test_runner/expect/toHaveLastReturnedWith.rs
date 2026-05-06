@@ -42,7 +42,7 @@ pub fn to_have_last_returned_with(
     let mut last_error_value: JSValue = JSValue::UNDEFINED;
 
     if calls_count > 0 {
-        let last_result = returns.get_index(global_this, calls_count - 1);
+        let last_result = returns.get_direct_index(global_this, calls_count - 1);
 
         if last_result.is_object() {
             let result_type = last_result.get(global_this, "type")?.unwrap_or(JSValue::UNDEFINED);

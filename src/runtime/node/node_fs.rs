@@ -637,7 +637,7 @@ impl<R, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, F> {
         if success {
             promise.resolve(global_object, result)?;
         } else {
-            promise.reject(global_object, result)?;
+            promise.reject(global_object, Ok(result))?;
         }
         Ok(())
     }
@@ -652,7 +652,7 @@ impl<R, A: FsArgument, const F: NodeFSFunctionEnum> UVFSRequest<R, A, F> {
         // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv
         this_ref.r#ref.unref(unsafe { &*this_ref.global_object }.bun_vm());
         this_ref.args.deinit_and_unprotect();
-        this_ref.promise.deinit();
+        this_ref.promise = JSPromiseStrong::default();
         // SAFETY: paired with Box::leak in create()
         drop(unsafe { Box::from_raw(this) });
     }
@@ -803,7 +803,7 @@ impl<R, A: FsArgument, const F: NodeFSFunctionEnum> AsyncFSTask<R, A, F> {
         if success {
             promise.resolve(global_object, result)?;
         } else {
-            promise.reject(global_object, result)?;
+            promise.reject(global_object, Ok(result))?;
         }
         Ok(())
     }
@@ -818,7 +818,7 @@ impl<R, A: FsArgument, const F: NodeFSFunctionEnum> AsyncFSTask<R, A, F> {
         // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv
         this_ref.r#ref.unref(unsafe { &*this_ref.global_object }.bun_vm());
         this_ref.args.deinit_and_unprotect();
-        this_ref.promise.deinit();
+        this_ref.promise = JSPromiseStrong::default();
         // SAFETY: paired with Box::leak in create()
         drop(unsafe { Box::from_raw(this) });
     }
@@ -1166,7 +1166,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         if success {
             promise.resolve(global_object, result)?;
         } else {
-            promise.reject(global_object, result)?;
+            promise.reject(global_object, Ok(result))?;
         }
         Ok(())
     }
@@ -1176,12 +1176,11 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
     pub unsafe fn destroy(this: *mut Self) {
         // SAFETY: caller guarantees `this` is a live Box-leaked allocation
         let this_ref = unsafe { &mut *this };
-        if let Maybe::Err(err) = this_ref.result.get_mut() {
-            err.deinit();
-        }
+        // PORT NOTE: Zig `err.deinit()` freed the path slice; Rust `bun_sys::Error`
+        // owns `Box<[u8]>` and frees on Drop (in `Box::from_raw` below).
         if !IS_SHELL { this_ref.r#ref.unref(event_loop_handle_to_ctx(this_ref.evtloop)); }
         this_ref.args.deinit();
-        this_ref.promise.deinit();
+        this_ref.promise = JSPromiseStrong::default();
         // SAFETY: paired with Box::leak in create_with_shell_task()/create_mini()
         drop(unsafe { Box::from_raw(this) });
     }

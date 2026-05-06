@@ -737,14 +737,13 @@ pub mod SavedSourceMap {
                 return;
             }
             if let Some(note) = PATH.lock().as_deref() {
-                // TODO(b2-blocked): bun_core::Output::note — currently takes `&str`,
-                // not `format_args!`; format into a String for now.
-                bun_core::Output::note(&format!(
+                bun_core::Output::note(
                     "missing sourcemaps for {}",
-                    ::bstr::BStr::new(note)
-                ));
+                    (::bstr::BStr::new(note),),
+                );
                 bun_core::Output::note(
                     "consider bundling with '--sourcemap' to get unminified traces",
+                    (),
                 );
             }
         }
@@ -874,10 +873,10 @@ pub mod SerializedSourceMap {
                 self.decompressed_files[index] = Some(
                     match bun_zstd::decompress(&mut bytes, compressed_file) {
                         bun_zstd::Result::Err(err) => {
-                            bun_core::Output::warn(format_args!(
+                            bun_core::Output::warn(
                                 "Source map decompression error: {}",
-                                ::bstr::BStr::new(err.as_bytes())
-                            ));
+                                (::bstr::BStr::new(err.as_bytes()),),
+                            );
                             Vec::new()
                         }
                         bun_zstd::Result::Success(n) => {

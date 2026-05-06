@@ -8,37 +8,6 @@ pub fn ParsePrefix(
         const is_jsx_enabled = P.is_jsx_enabled;
         const is_typescript_enabled = P.is_typescript_enabled;
 
-        /// True iff the parser is currently parsing a statement or
-        /// expression that is itself at module top level — i.e. walking up
-        /// the scope stack reaches the real module `entry` scope without
-        /// ever crossing a function body, function args, arrow, class body,
-        /// class name, class static init, or a TypeScript namespace / enum
-        /// body. Block and with scopes don't count as crossings because
-        /// statements like `if (false) { await import(x); }` are still
-        /// logically module-scope code.
-        ///
-        /// `.entry` is overloaded: it marks both the true module scope and
-        /// TypeScript namespace / enum bodies. Namespace/enum scopes set
-        /// `ts_namespace != null` — those are function-like nested contexts
-        /// at runtime and must be treated as not-at-module-scope so the
-        /// `await` identifier upgrade doesn't misfire inside them.
-        fn isAtModuleScope(p: *P) bool {
-            var scope: ?*js_ast.Scope = p.current_scope;
-            while (scope) |s| : (scope = s.parent) {
-                switch (s.kind) {
-                    .entry => return s.ts_namespace == null,
-                    .function_args,
-                    .function_body,
-                    .class_body,
-                    .class_name,
-                    .class_static_init,
-                    => return false,
-                    else => {},
-                }
-            }
-            return false;
-        }
-
         /// Returns true when the current lexer position immediately after an
         /// `await` identifier unambiguously forces `await` to be interpreted
         /// as the `await` keyword rather than a plain identifier. Used at
@@ -209,23 +178,25 @@ pub fn ParsePrefix(
                 },
 
                 .is_await => {
-                    // If we're at the actual module top-level (the current
-                    // scope has no parent) in a non-ESM target (`allow_ident`)
-                    // and `await` is followed on the same line by a token
-                    // that clearly starts an expression — i.e. one that
-                    // could never be a valid continuation of an identifier —
-                    // upgrade to parsing an `await` expression anyway. DCE
-                    // then has a chance to drop the branch before we reject
-                    // it. If a live await survives DCE, the visit pass emits
-                    // a CJS-TLA error instead. (A newline after `await` is
+                    // If we're at module top-level (see `p.isAtModuleScope`
+                    // for the precise definition — walks past block/with/
+                    // label scopes to reach the real module `entry`) in a
+                    // non-ESM target (`allow_ident`), and `await` is
+                    // followed on the same line by a token that clearly
+                    // starts an expression — i.e. one that could never be
+                    // a valid continuation of an identifier — upgrade to
+                    // parsing an `await` expression anyway. DCE then has a
+                    // chance to drop the branch before we reject it. If a
+                    // live await survives DCE, the visit pass emits a
+                    // CJS-TLA error instead. (A newline after `await` is
                     // left alone because `await\nfoo` can be two statements
-                    // via ASI.) Checking `current_scope.parent == null`
-                    // instead of `fn_or_arrow_data_parse.is_top_level` makes
-                    // this robust against sub-parsers that inherit but never
-                    // reset the flag: every nested construct (function
-                    // bodies, arrow args, class fields, etc.) has already
-                    // pushed its own scope at this point.
-                    const at_module_scope = isAtModuleScope(p);
+                    // via ASI.) Using a scope-stack walk instead of the
+                    // `fn_or_arrow_data_parse.is_top_level` flag makes
+                    // this robust against sub-parsers that inherit but
+                    // never reset the flag: every nested construct
+                    // (function bodies, arrow args, class fields, TS
+                    // namespace bodies, etc.) pushes its own scope.
+                    const at_module_scope = p.isAtModuleScope();
                     const should_upgrade_to_await_expr =
                         p.fn_or_arrow_data_parse.allow_await == .allow_ident and
                         at_module_scope and

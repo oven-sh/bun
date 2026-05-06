@@ -777,29 +777,11 @@ pub fn ParseStmt(
                 // Accept it here and rely on the visit pass to raise a
                 // targeted error if a live `for await` survives.
                 //
-                // We're at module scope iff walking up the scope stack hits
-                // the real module `entry` without crossing a function /
-                // class / arrow scope or a TS namespace / enum body. The
-                // `entry` scope kind is overloaded and namespace / enum
-                // bodies set `ts_namespace != null`; those are function-
-                // like nested contexts, not module top-level. Block scopes
-                // (including the one `t_for` just pushed) don't count.
-                const at_module_scope = at_module_scope: {
-                    var s: ?*js_ast.Scope = p.current_scope;
-                    while (s) |curr| : (s = curr.parent) {
-                        switch (curr.kind) {
-                            .entry => break :at_module_scope curr.ts_namespace == null,
-                            .function_args,
-                            .function_body,
-                            .class_body,
-                            .class_name,
-                            .class_static_init,
-                            => break :at_module_scope false,
-                            else => {},
-                        }
-                    }
-                    break :at_module_scope false;
-                };
+                // `p.isAtModuleScope()` walks past the block scope `t_for`
+                // just pushed and returns true only at the real module
+                // `entry` (ts_namespace == null), not inside a TS namespace
+                // body or any function/class nesting.
+                const at_module_scope = p.isAtModuleScope();
                 const tolerate_top_level =
                     p.fn_or_arrow_data_parse.allow_await == .allow_ident and
                     at_module_scope;

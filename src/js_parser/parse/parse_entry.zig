@@ -643,23 +643,37 @@ pub const Parser = struct {
 
         visit_tracer.end();
 
-        // If no `await` survived DCE at module scope, drop the pre-DCE range
-        // so downstream passes don't think this file is an ESM module just
-        // because of a dead top-level await.
-        if (!p.has_live_top_level_await) {
-            p.top_level_await_keyword = logger.Range.None;
-        } else if (!p.options.features.top_level_await) {
-            // A live top-level await survived DCE, but the configured output
-            // format does not support top-level await. Emit a targeted error
-            // pointing at the surviving `await` (visitExpr.e_await rewrites
-            // `top_level_await_keyword` to a live range before we get here).
-            try p.log.addRangeErrorFmt(
-                p.source,
-                p.top_level_await_keyword,
-                p.allocator,
-                "Top-level await is currently not supported with the \"{s}\" output format",
-                .{@tagName(p.options.output_format)},
-            );
+        // In a non-ESM target, the DCE-before-reject flow owns the post-visit
+        // state of `top_level_await_keyword`: clear the pre-DCE range if no
+        // live `await` survived (so downstream ESM classification doesn't
+        // mistake a dead `if (false) { await ... }` for real TLA), or emit a
+        // targeted diagnostic at the surviving `await` if one did.
+        //
+        // In an ESM / bake-dev target we MUST NOT clear the range. `toBoolean`
+        // sets `is_control_flow_dead=true` for a dead `if (false)` branch
+        // unconditionally, but the dead-branch *removal* at visitStmt.zig is
+        // gated on `features.minify_syntax`. Without `--minify`, the dead
+        // `await` stays in the emitted AST and the linker still needs to
+        // wrap the module in an `async` closure — clearing the range would
+        // emit a non-async `__esm` wrapper around code that still contains
+        // `await`, producing a runtime SyntaxError.
+        if (!p.options.features.top_level_await) {
+            if (!p.has_live_top_level_await) {
+                p.top_level_await_keyword = logger.Range.None;
+            } else {
+                // A live top-level await survived DCE, but the configured
+                // output format does not support top-level await. Emit a
+                // targeted error pointing at the surviving `await`
+                // (visitExpr.e_await rewrites `top_level_await_keyword` to
+                // a live range before we get here).
+                try p.log.addRangeErrorFmt(
+                    p.source,
+                    p.top_level_await_keyword,
+                    p.allocator,
+                    "Top-level await is currently not supported with the \"{s}\" output format",
+                    .{@tagName(p.options.output_format)},
+                );
+            }
         }
 
         // If there were errors while visiting, also halt here

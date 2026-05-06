@@ -1146,6 +1146,37 @@ pub fn NewParser_(
             return p.commonjs_named_exports_deoptimized and p.commonjs_named_exports.count() > 0;
         }
 
+        /// True iff the parser is currently parsing a statement or
+        /// expression that is itself at module top level — i.e. walking up
+        /// the scope stack reaches the real module `entry` scope without
+        /// ever crossing a function body, function args, arrow, class body,
+        /// class name, class static init, or a TypeScript namespace / enum
+        /// body. Block and with scopes don't count as crossings because
+        /// statements like `if (false) { await import(x); }` are still
+        /// logically module-scope code.
+        ///
+        /// `.entry` is overloaded: it marks both the true module scope and
+        /// TypeScript namespace / enum bodies. Namespace/enum scopes set
+        /// `ts_namespace != null` — those are function-like nested contexts
+        /// at runtime and must be treated as not-at-module-scope so the
+        /// `await` identifier upgrade doesn't misfire inside them.
+        pub fn isAtModuleScope(noalias p: *P) bool {
+            var scope: ?*js_ast.Scope = p.current_scope;
+            while (scope) |curr| : (scope = curr.parent) {
+                switch (curr.kind) {
+                    .entry => return curr.ts_namespace == null,
+                    .function_args,
+                    .function_body,
+                    .class_body,
+                    .class_name,
+                    .class_static_init,
+                    => return false,
+                    else => {},
+                }
+            }
+            return false;
+        }
+
         pub fn recordUsage(noalias p: *P, ref: Ref) void {
             if (p.is_revisit_for_substitution) return;
             // The use count stored in the symbol is used for generating symbol names

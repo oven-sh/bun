@@ -1,11 +1,11 @@
 use core::ffi::c_void;
 use core::marker::{PhantomData, PhantomPinned};
 
-use bun_jsc::{JSGlobalObject, JSObject, JSValue, JsResult};
-use bun_str::ZigString;
-// TODO(port): ZigString::Slice is a nested type in Zig; Phase B should expose it as
-// `bun_str::zig_string::Slice` (or an associated type) — using a path alias here.
-use bun_str::zig_string::Slice as ZigStringSlice;
+use crate::{JSGlobalObject, JSObject, JSValue, JsResult};
+use bun_string::ZigString;
+// `ZigString.Slice` in Zig — re-exported in Rust as `bun_string::zig_string::Slice`
+// (alias for `bun_string::ZigStringSlice`).
+use bun_string::zig_string::Slice as ZigStringSlice;
 
 /// Opaque JSC `JSString*` cell. Never constructed in Rust; only handled by reference.
 #[repr(C)]
@@ -90,13 +90,15 @@ impl JSString {
     pub fn to_slice_clone(&self, global: &JSGlobalObject) -> JsResult<ZigStringSlice> {
         let mut str = ZigString::init(b"");
         self.to_zig_string(global, &mut str);
-        str.to_slice_clone()
+        // TODO(b2-blocked): bun_string::ZigString::to_slice_clone — falls back to to_slice() until ported.
+        Ok(str.to_slice())
     }
 
     pub fn to_slice_z(&self, global: &JSGlobalObject) -> ZigStringSlice {
         let mut str = ZigString::init(b"");
         self.to_zig_string(global, &mut str);
-        str.to_slice_z()
+        // TODO(b2-blocked): bun_string::ZigString::to_slice_z — falls back to to_slice() until ported.
+        str.to_slice()
     }
 
     pub fn eql(&self, global: &JSGlobalObject, other: &JSString) -> bool {

@@ -15,6 +15,11 @@
 
 #![allow(dead_code, unused_imports, unused_variables, deprecated, non_snake_case)]
 #![allow(unexpected_cfgs)] // TODO(b2): ci_assert / asan features — wire up in Cargo.toml
+// `ConsoleObject::Formatter::print_as` dispatches on `const FORMAT: Tag` to
+// preserve Zig's comptime monomorphization (zig:2210). `Tag` is a fieldless
+// enum, so this is the structural-match subset of the feature.
+#![feature(adt_const_params)]
+#![allow(incomplete_features)]
 
 extern crate alloc;
 // Allow `::bun_jsc::…` paths emitted by the proc-macros to resolve when used
@@ -30,7 +35,7 @@ use core::ffi::{c_char, c_void};
 // See docs/PORTING.md §JSC types and src/codegen/generate-classes.ts for the
 // symbol-naming contract the macros uphold.
 // ──────────────────────────────────────────────────────────────────────────
-pub use bun_jsc_macros::{host_call, host_fn, JsClass, JsClassDerive};
+pub use bun_jsc_macros::{codegen_cached_accessors, host_call, host_fn, JsClass, JsClassDerive};
 
 /// The calling convention used for JavaScript functions <> Native.
 ///
@@ -1295,6 +1300,7 @@ impl BuiltinName {
     pub const Url: Self = Self::url;
     pub const Body: Self = Self::body;
     pub const Data: Self = Self::data;
+    pub const InspectCustom: Self = Self::inspectCustom;
     pub const HighWaterMark: Self = Self::highWaterMark;
     pub const Path: Self = Self::path;
     pub const Stream: Self = Self::stream;
@@ -2733,10 +2739,11 @@ pub mod math {
     }
 }
 
-// TODO(port): generated module — re-run bindgen with .rs output.
-pub mod generated {
-    // GENERATED: re-run codegen (bindgen_generated) with .rs output
-}
+// TODO(port): generated module — re-run bindgen with .rs output. Hand-stubbed
+// in `generated.rs` until `src/codegen/generate-classes.ts` grows a `.rs`
+// backend.
+#[path = "generated.rs"]
+pub mod generated;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

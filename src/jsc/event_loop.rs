@@ -206,8 +206,11 @@ impl From<JsTerminated> for bun_core::Error {
 // `(tag, ptr)` and the hook. The Phase-A draft of the match lives in
 // `src/jsc/Task.rs` (still gated — every arm names a `bun_runtime` type).
 // ──────────────────────────────────────────────────────────────────────────
-pub type TickQueueFn =
-    fn(&mut EventLoop, &mut VirtualMachine, &mut u32) -> Result<(), JsTerminated>;
+// PORT NOTE: `EventLoop` is a value field of `VirtualMachine`, so handing the
+// dispatcher both `&mut EventLoop` and `&mut VirtualMachine` would alias
+// (PORTING.md §Forbidden). The hook receives a single `*mut VirtualMachine`
+// and reborrows `event_loop` from it on the high-tier side.
+pub type TickQueueFn = fn(*mut VirtualMachine, &mut u32) -> Result<(), JsTerminated>;
 
 static TICK_QUEUE_HOOK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
 
@@ -217,11 +220,7 @@ pub fn set_tick_queue_hook(f: TickQueueFn) {
 }
 
 #[inline]
-fn tick_queue_with_count(
-    el: &mut EventLoop,
-    vm: &mut VirtualMachine,
-    counter: &mut u32,
-) -> Result<(), JsTerminated> {
+fn tick_queue_with_count(el: &mut EventLoop, vm: *mut VirtualMachine, counter: &mut u32) -> Result<(), JsTerminated> {
     let p = TICK_QUEUE_HOOK.load(Ordering::Acquire);
     if p.is_null() {
         // No high-tier dispatcher registered (e.g. unit tests) — drain without
@@ -234,7 +233,7 @@ fn tick_queue_with_count(
     }
     // SAFETY: `p` was stored from a `TickQueueFn` (same layout).
     let f: TickQueueFn = unsafe { core::mem::transmute::<*mut (), TickQueueFn>(p) };
-    f(el, vm, counter)
+    f(vm, counter)
 }
 
 impl EventLoop {
@@ -256,7 +255,8 @@ impl EventLoop {
         let count = self.entered_event_loop_count;
         bun_core::scoped_log!(EventLoop, "exit() = {}", count - 1);
 
-        if count == 1 && !self.vm().is_inside_deferred_task_queue {
+        // SAFETY: vm() returns the live owning VM; field read only.
+        if count == 1 && !unsafe { (*self.vm()).is_inside_deferred_task_queue } {
             let _ = self.drain_microtasks();
         }
 
@@ -269,20 +269,26 @@ impl EventLoop {
         let count = self.entered_event_loop_count;
         bun_core::scoped_log!(EventLoop, "exit() = {}", count - 1);
 
-        let result = if allow_drain_microtask && count == 1 && !self.vm().is_inside_deferred_task_queue {
+        // SAFETY: vm() returns the live owning VM; field read only.
+        let inside_deferred = unsafe { (*self.vm()).is_inside_deferred_task_queue };
+        let result = if allow_drain_microtask && count == 1 && !inside_deferred {
             self.drain_microtasks()
         } else {
             Ok(())
         };
 
-        self.entered_event_loop_count -= 1;
+        // PORT NOTE: spec event_loop.zig:92-103 uses `try drainMicrotasksWithGlobal(...)`
+        // which returns BEFORE reaching `entered_event_loop_count -= 1`; only
+        // `defer this.debug.exit()` runs on the error path. Mirror that here.
+        if result.is_ok() {
+            self.entered_event_loop_count -= 1;
+        }
         self.debug.exit();
-        // PORT NOTE: reshaped for borrowck — `defer` moved to tail; result captured before
         result
     }
 
     #[inline]
-    pub fn get_vm_impl(&self) -> &mut VirtualMachine {
+    pub fn get_vm_impl(&self) -> *mut VirtualMachine {
         self.vm()
     }
 
@@ -296,9 +302,11 @@ impl EventLoop {
         global_object: &JSGlobalObject,
         jsc_vm: *mut jsc::VM,
     ) -> Result<(), JsTerminated> {
+        let vm = self.vm();
         // During spawnSync, the isolated event loop shares the same VM/GlobalObject.
         // Draining microtasks would execute user JavaScript, which must not happen.
-        if self.vm().suppress_microtask_drain {
+        // SAFETY: `vm` is the live owning VM; field reads/writes only.
+        if unsafe { (*vm).suppress_microtask_drain } {
             return Ok(());
         }
 
@@ -312,13 +320,20 @@ impl EventLoop {
             DrainMicrotasksResult::JsTerminated => return Err(JsTerminated::JSTerminated),
         }
 
-        self.vm().is_inside_deferred_task_queue = true;
+        // SAFETY: `vm` is the live owning VM.
+        unsafe { (*vm).is_inside_deferred_task_queue = true };
         self.deferred_tasks.run();
-        self.vm().is_inside_deferred_task_queue = false;
+        // SAFETY: `vm` is the live owning VM.
+        unsafe { (*vm).is_inside_deferred_task_queue = false };
 
-        if let Some(h) = self.vm().event_loop_handle {
-            // SAFETY: `event_loop_handle` is a live uws/uv loop for the VM lifetime.
-            unsafe { (*h).drain_quic_if_necessary() };
+        // PORT NOTE: spec event_loop.zig:144-146 guards on `event_loop_handle != null`
+        // but then calls `this.virtual_machine.uwsLoop().drainQuicIfNecessary()`.
+        // On Windows `uwsLoop()` returns `uws.Loop.get()` (NOT `event_loop_handle`,
+        // which is the libuv loop). Mirror that here.
+        // SAFETY: `vm` is the live owning VM; field read only.
+        if unsafe { (*vm).event_loop_handle.is_some() } {
+            // SAFETY: `uws_loop()` returns a live uws loop for the VM lifetime.
+            unsafe { (*(*vm).uws_loop()).drain_quic_if_necessary() };
         }
 
         #[cfg(debug_assertions)]
@@ -333,14 +348,16 @@ impl EventLoop {
     pub fn drain_microtasks(&mut self) -> Result<(), JsTerminated> {
         // PORT NOTE: reshaped for borrowck — capture raw ptrs before &mut self call.
         let global = self.global.unwrap().as_ptr();
-        let jsc_vm = self.vm().jsc_vm;
+        // SAFETY: vm() returns the live owning VM; field read only.
+        let jsc_vm = unsafe { (*self.vm()).jsc_vm };
         // SAFETY: `global` is set during VM init and outlives EventLoop.
         self.drain_microtasks_with_global(unsafe { &*global }, jsc_vm)
     }
 
     // should be called after exit()
     pub fn maybe_drain_microtasks(&mut self) {
-        if self.entered_event_loop_count == 0 && !self.vm().is_inside_deferred_task_queue {
+        // SAFETY: vm() returns the live owning VM; field read only.
+        if self.entered_event_loop_count == 0 && !unsafe { (*self.vm()).is_inside_deferred_task_queue } {
             let _ = self.drain_microtasks();
         }
     }
@@ -383,7 +400,7 @@ impl EventLoop {
         result
     }
 
-    fn tick_with_count(&mut self, virtual_machine: &mut VirtualMachine) -> u32 {
+    fn tick_with_count(&mut self, virtual_machine: *mut VirtualMachine) -> u32 {
         let mut counter: u32 = 0;
         let _ = tick_queue_with_count(self, virtual_machine, &mut counter);
         counter
@@ -402,7 +419,7 @@ impl EventLoop {
     pub fn run_imminent_gc_timer(&mut self) {
         let ptr = self.imminent_gc_timer.swap(core::ptr::null_mut(), Ordering::SeqCst);
         if !ptr.is_null() {
-            // TODO(b2-cycle): `(*ptr).run(self.vm())` — `WTFTimer` lives in
+            // TODO(b2-cycle): `(*ptr).run(vm)` — `WTFTimer` lives in
             // `bun_runtime::api::Timer` (forward-dep). High tier installs a hook.
             let _ = ptr;
         }
@@ -467,8 +484,12 @@ impl EventLoop {
     }
 
     fn update_counts(&mut self) {
+        // PORT NOTE: spec event_loop.zig:283-284 unwraps `event_loop_handle.?`
+        // (panic). Do NOT silently drop the swapped delta when the handle is
+        // missing — refs queued via `ref_concurrently()` would be lost forever.
+        // SAFETY: vm() returns the live owning VM; field read only.
+        let loop_ = unsafe { (*self.vm()).event_loop_handle }.expect("event_loop_handle");
         let delta = self.concurrent_ref.swap(0, Ordering::SeqCst);
-        let Some(loop_) = self.vm().event_loop_handle else { return };
         // SAFETY: `event_loop_handle` is a live uws/uv loop for the VM lifetime.
         let loop_ = unsafe { &mut *loop_ };
         #[cfg(windows)]
@@ -498,7 +519,8 @@ impl EventLoop {
         }
         #[cfg(not(windows))]
         {
-            self.vm().event_loop_handle.unwrap_or(core::ptr::null_mut())
+            // SAFETY: vm() returns the live owning VM; field read only.
+            unsafe { (*self.vm()).event_loop_handle }.unwrap_or(core::ptr::null_mut())
         }
     }
 
@@ -514,15 +536,14 @@ impl EventLoop {
         // PORT NOTE: reshaped for borrowck — Zig `defer { entered_event_loop_count -= 1; debug.exit() }`
         // is inlined at each return site below (scopeguard would alias &mut self).
 
-        let ctx = self.vm() as *mut VirtualMachine;
+        let ctx = self.vm();
         self.tick_concurrent();
         self.process_gc_timer();
 
-        // SAFETY: `ctx` is the VM that owns `self`; both live for the loop.
-        let ctx = unsafe { &mut *ctx };
         // PORT NOTE: reshaped for borrowck — capture raw ptr; deref per use.
         let global = self.global.unwrap().as_ptr();
-        let global_vm = ctx.jsc_vm;
+        // SAFETY: `ctx` is the VM that owns `self`; field read only.
+        let global_vm = unsafe { (*ctx).jsc_vm };
 
         loop {
             // Zig: while (tickWithCount > 0) : (handleRejectedPromises) { tickConcurrent } else { ... }
@@ -559,17 +580,18 @@ impl EventLoop {
     pub fn tick_tasks_only(&mut self) {
         self.tick_concurrent();
 
-        let vm = self.vm() as *mut VirtualMachine;
-        // SAFETY: `vm` is the VM that owns `self`; both live for the loop.
-        let vm = unsafe { &mut *vm };
-        let prev = vm.suppress_microtask_drain;
-        vm.suppress_microtask_drain = true;
+        let vm = self.vm();
+        // SAFETY: `vm` is the VM that owns `self`; field reads/writes only.
+        let prev = unsafe { (*vm).suppress_microtask_drain };
+        // SAFETY: see above.
+        unsafe { (*vm).suppress_microtask_drain = true };
 
         while self.tick_with_count(vm) > 0 {
             self.tick_concurrent();
         }
 
-        vm.suppress_microtask_drain = prev;
+        // SAFETY: see above.
+        unsafe { (*vm).suppress_microtask_drain = prev };
         // PORT NOTE: reshaped for borrowck — `defer vm.suppress_microtask_drain = prev` moved to tail
     }
 
@@ -583,12 +605,15 @@ impl EventLoop {
 
     pub fn ensure_waker(&mut self) {
         jsc::mark_binding(core::panic::Location::caller());
-        if self.vm().event_loop_handle.is_none() {
+        let vm = self.vm();
+        // SAFETY: `vm` is the live owning VM; field reads/writes only.
+        if unsafe { (*vm).event_loop_handle.is_none() } {
             #[cfg(windows)]
             {
                 self.uws_loop = NonNull::new(uws::Loop::get());
             }
-            self.vm().event_loop_handle = Some(Async::Loop::get());
+            // SAFETY: `vm` is the live owning VM.
+            unsafe { (*vm).event_loop_handle = Some(Async::Loop::get()) };
             // TODO(b2-cycle): gc_controller.init(vm) — gated sibling.
         }
         #[cfg(windows)]
@@ -606,6 +631,23 @@ impl EventLoop {
         // TODO(b2-cycle): GarbageCollectionController::perform_gc — gated sibling.
     }
 
+    /// `eventLoop().autoTick()` — bounces through `VirtualMachine::auto_tick`,
+    /// which dispatches to the `bun_runtime` hook (needs `Timer::All` for the
+    /// poll timeout). The full body is preserved in the `#[cfg(any())]` block
+    /// below; the high-tier hook is expected to be ABI-equivalent.
+    #[inline]
+    pub fn auto_tick(&mut self) {
+        // SAFETY: `vm()` is the live owning VM; reborrow uniquely (no `&mut self` overlaps).
+        unsafe { (*self.vm()).auto_tick() };
+    }
+
+    /// `eventLoop().waitForPromise(promise)` — spin tick/auto_tick until
+    /// `promise` settles or execution is forbidden.
+    pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) {
+        // SAFETY: `vm()` is the live owning VM; reborrow uniquely.
+        unsafe { (*self.vm()).wait_for_promise(promise) };
+    }
+
     pub fn wakeup(&self) {
         #[cfg(windows)]
         {
@@ -617,7 +659,8 @@ impl EventLoop {
         }
         #[cfg(not(windows))]
         {
-            if let Some(loop_) = self.vm().event_loop_handle {
+            // SAFETY: vm() returns the live owning VM; field read only.
+            if let Some(loop_) = unsafe { (*self.vm()).event_loop_handle } {
                 // SAFETY: `event_loop_handle` is a live loop for the VM lifetime.
                 unsafe { (*loop_).wakeup() };
             }
@@ -626,7 +669,8 @@ impl EventLoop {
 
     pub fn enqueue_task_concurrent(&self, task: *mut ConcurrentTaskItem) {
         if cfg!(debug_assertions) {
-            if self.vm().has_terminated {
+            // SAFETY: vm() returns the live owning VM; field read only.
+            if unsafe { (*self.vm()).has_terminated } {
                 panic!("EventLoop.enqueueTaskConcurrent: VM has terminated");
             }
         }
@@ -648,10 +692,14 @@ impl EventLoop {
     // ──────────── private helpers (port-only; not in Zig) ────────────
     // TODO(port): lifetime — these unwrap NonNull backrefs. Phase B should
     // replace with proper borrow plumbing.
+    //
+    // PORT NOTE: returns a raw pointer, NOT `&mut VirtualMachine`. `EventLoop`
+    // is a value field of `VirtualMachine`, so materializing `&mut VM` while a
+    // `&EventLoop`/`&mut EventLoop` is live would alias (PORTING.md §Forbidden).
+    // Callers must dereference per-field at use sites.
     #[inline]
-    fn vm(&self) -> &mut VirtualMachine {
-        // SAFETY: virtual_machine is set during VM init and outlives EventLoop (EventLoop is a field of VM)
-        unsafe { self.virtual_machine.unwrap().as_mut() }
+    fn vm(&self) -> *mut VirtualMachine {
+        self.virtual_machine.unwrap().as_ptr()
     }
     #[inline]
     fn global_ref(&self) -> &JSGlobalObject {
@@ -721,7 +769,9 @@ impl EventLoop {
         self.next_immediate_tasks = to_run_now;
     }
 
-    pub fn auto_tick(&mut self) {
+    // PORT NOTE: real body — installed by `bun_runtime` via
+    // `virtual_machine::RuntimeHooks::auto_tick`. Preserved here for reference.
+    pub fn _auto_tick_body(&mut self) {
         let loop_ = self.usockets_loop();
         let ctx = self.vm();
 
@@ -868,7 +918,7 @@ impl EventLoop {
         ctx.on_after_event_loop();
     }
 
-    pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) {
+    pub fn _wait_for_promise_body(&mut self, promise: jsc::AnyPromise) {
         let jsc_vm = self.vm().jsc_vm;
         match promise.status() {
             jsc::PromiseStatus::Pending => {

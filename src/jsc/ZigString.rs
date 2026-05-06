@@ -70,14 +70,25 @@ pub fn static_(s: &'static [u8]) -> bun_string::ZigString {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// TODO(port): the local `pub struct ZigString` below DUPLICATES
-// `bun_string::ZigString` (same #[repr(C)] layout) so it can grow JSC-side
-// `to_js`/`to_error_instance` methods. Per PORTING.md these belong on a
-// `ZigStringJsc` extension trait impl'd for `bun_string::ZigString`. The
-// method bodies depend on `bun_string::strings` API surface (is_all_ascii,
-// to_utf8_from_latin1, …), `crate::node::Encoding`, `crate::webcore::encoding`,
-// and `NullableAllocator::default_alloc/null` not yet exposed at this tier.
-// Gated wholesale; `static_`/`Slice` above satisfy current downstream callers.
+// phase-b2+: `JSValue` / `JSGlobalObject` surface has landed (~83 methods).
+// NOTE: this body was *never* blocked on JSValue surface — its blockers are
+// orthogonal lower-tier API gaps. Per PORTING.md the JSC-side methods (`to_js`/
+// `to_error_instance`/…) belong on a `ZigStringJsc` extension trait impl'd for
+// `bun_string::ZigString`, not on a duplicate local struct.
+//
+// STILL GATED — remaining hard blockers (all OUTSIDE this file):
+//   - `bytemuck` not in `bun_jsc` dep graph (cast_slice, 3×)
+//   - `bun_alloc::NullableAllocator::{default_alloc, null, NULL, get, is_null,
+//      free, is_default}` — real impl is `#[cfg(any())]`-gated; only a unit
+//      stub struct is exported (Slice ownership model needs it)
+//   - `bun_alloc::free_slice` — not exported
+//   - `crate::node::Encoding` / `crate::webcore::encoding` — modules absent
+//   - `c_api::{JSStringRef, JSStringCreateWithCharactersNoCopy,
+//      JSStringCreateStatic}` — not in javascript_core_c_api.rs
+//   - `crate::ErrorCode::STRING_TOO_LONG` — codegen'd ErrorCode not yet emitted
+//   - `bun_core::fmt::{format_utf16_type, format_latin1, github_action_writer}`
+//   - `bun_string::ZStr::{from_bytes, from_vec_with_nul, from_raw}`
+// `static_`/`Slice` re-export above satisfy current downstream callers.
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(any())]
 mod _body {

@@ -2,8 +2,8 @@ use core::ffi::{c_uint, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 use core::mem::ManuallyDrop;
 
-use bun_jsc::{self as jsc, host_fn, JSCell, JSGlobalObject, JSValue, JsError, JsResult, TopExceptionScope};
-use bun_str::{String as BunString, ZigString};
+use crate::{JSCell, JSGlobalObject, JSValue, JsError, JsResult};
+use bun_string::{String as BunString, ZigString};
 
 // TODO(port): move to jsc_sys
 unsafe extern "C" {
@@ -97,19 +97,16 @@ impl JSObject {
         // provided by a `#[derive(PojoFields)]` proc-macro that emits an inline
         // `put(b"name", JSValue::from_any(global, &self.name)?)?;` per field.
 
-        let obj = 'obj: {
-            let val = if NULL_PROTOTYPE {
-                JSValue::create_empty_object_with_null_prototype(global)
-            } else {
-                JSValue::create_empty_object(global, T::FIELD_COUNT)
-            };
-            if cfg!(debug_assertions) {
-                debug_assert!(val.is_object());
-            }
-            // SAFETY: `val.is_object()` asserted above in debug; JSC guarantees
-            // these constructors return a JSObject cell.
-            break 'obj unsafe { val.unchecked_ptr_cast::<JSObject>() };
+        let val = if NULL_PROTOTYPE {
+            JSValue::create_empty_object_with_null_prototype(global)
+        } else {
+            JSValue::create_empty_object(global, T::FIELD_COUNT)
         };
+        debug_assert!(val.is_object());
+        // SAFETY: `val.is_object()` asserted above in debug; JSC guarantees
+        // these constructors return a JSObject cell. A cell-tagged JSValue's
+        // payload IS the cell pointer (NotCellMask bits are zero).
+        let obj = unsafe { &mut *(val.0 as *mut JSObject) };
 
         let cell = obj.to_js();
         // PORT NOTE: Zig used `inline for` — each `fromAny` result is `put()` immediately
@@ -124,12 +121,12 @@ impl JSObject {
     }
 
     pub fn get(&self, global: &JSGlobalObject, prop: impl AsRef<[u8]>) -> JsResult<Option<JSValue>> {
-        self.to_js().get(global, prop)
+        self.to_js().get(global, prop.as_ref())
     }
 
     #[inline]
     pub fn put(&self, global: &JSGlobalObject, key: impl AsRef<[u8]>, value: JSValue) -> JsResult<()> {
-        self.to_js().put(global, key, value);
+        self.to_js().put(global, key.as_ref(), value);
         Ok(())
     }
 
@@ -156,12 +153,17 @@ impl JSObject {
         length: u32,
         names: *mut ExternColumnIdentifier,
     ) -> JSValue {
-        jsc::mark_binding!();
-        // SAFETY: thin FFI shim; `owner.as_cell()` is non-null per caller contract.
+        crate::mark_binding!();
+        debug_assert!(owner.is_cell());
+        // JSObject.zig:118 — passes `owner.asCell()`. A cell-tagged JSValue's
+        // payload IS the JSCell* (NotCellMask bits are zero), so the raw usize
+        // is the pointer. SAFETY: caller guarantees `owner.is_cell()`.
+        let owner_cell = owner.0 as *mut JSCell;
+        // SAFETY: thin FFI shim; `owner_cell` is non-null per caller contract.
         unsafe {
             JSC__createStructure(
                 global as *const _ as *mut _,
-                owner.as_cell(),
+                owner_cell,
                 length,
                 names,
             )
@@ -190,10 +192,12 @@ impl JSObject {
         // then the JSValue is zero. the function this ends up calling can return undefined
         // with an exception:
         // https://github.com/oven-sh/WebKit/blob/397dafc9721b8f8046f9448abb6dbc14efe096d3/Source/JavaScriptCore/runtime/JSObjectInlines.h#L112
-        let scope = TopExceptionScope::new(global_this);
+        // TODO(b2-blocked): TopExceptionScope::init is in-place (Pin); skipped in stub path.
         // SAFETY: thin FFI shim into JSC.
         let value = unsafe { JSC__JSObject__getIndex(this, global_this as *const _ as *mut _, i) };
-        scope.return_if_exception()?;
+        if global_this.has_exception() {
+            return Err(JsError::Thrown);
+        }
         debug_assert!(!value.is_empty());
         Ok(value)
     }
@@ -280,8 +284,21 @@ extern "C" fn initializer_call<Ctx: ObjectInitializer>(
     // `obj` and `global` are live JSC pointers for the duration of the callback.
     let result = unsafe { Ctx::create(&mut *(this as *mut Ctx), &mut *obj, &*global) };
     if let Err(err) = result {
+        // Mirrors `host_fn::void_from_js_error` (host_fn.zig) — OOM throws,
+        // anything else asserts an exception is already pending.
         // SAFETY: `global` is valid (see above).
-        unsafe { host_fn::void_from_js_error(err, &*global) };
+        let global = unsafe { &*global };
+        match err {
+            JsError::OutOfMemory => {
+                global.throw_out_of_memory_value();
+            }
+            _ => {
+                debug_assert!(
+                    global.has_exception(),
+                    "ObjectInitializer: JsError without pending exception"
+                );
+            }
+        }
     }
 }
 

@@ -107,11 +107,17 @@ impl Mode {
 
     // TODO(port): move to *_jsc — Map.fromJS wrapper
     pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mode>> {
-        // TODO(port): ComptimeStringMap.fromJS — get string from JSValue then
-        // `from_string`. MUST NOT return `Err(JsError::Thrown)` without an
-        // exception actually pending on `global` (violates JSC invariant).
-        let _ = (global, value);
-        todo!("ipc::Mode::from_js — ComptimeStringMap.fromJS")
+        // ComptimeStringMap.fromJS — get string from JSValue then `from_string`.
+        // VERIFY-FIX: a previous draft fabricated `Err(JsError::Thrown)` without
+        // an exception actually pending on `global` (violates the JSC invariant
+        // that `JsError::Thrown` ⇔ `global.has_exception()`). Now: only `?` on
+        // `to_slice_or_null` (which sets the exception itself); a non-string
+        // input or unrecognised string yields `Ok(None)`, never a synthetic Err.
+        if !value.is_string() {
+            return Ok(None);
+        }
+        let s = value.to_slice_or_null(global)?;
+        Ok(Self::from_string(s.slice()))
     }
 }
 
@@ -168,33 +174,29 @@ pub enum IPCSerializationError {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// TODO(port): the IPC channel body below depends on:
-//   - `bun_uws::SocketHandler<false>` API surface (write/close/is_closed/…)
-//   - `crate::ManagedTask` as a *type* (currently a module re-export)
-//   - `Subprocess`/`node_cluster_binding` (high-tier, shimmed above)
-//   - `JSONLineBuffer` sibling (still gated)
-//   - `bun_sys::windows::libuv` (windows-only; cfg-gated above)
-//   - `JSValue::call_next_tick`, `JSGlobalObject::err`, `Fd::close`
-//   - `#[crate::host_fn]` proc-macro
-// STILL GATED (phase-b2): `#[crate::host_fn]` exists, but un-gating produces
-// ~100 errors. Remaining hard blockers (all outside this file):
+// phase-b2+: `JSValue` / `JSGlobalObject` surface has landed (~83 methods).
+// RESOLVED blockers (now real, no longer gating this body):
+//   ✓ `JSValue::{is_callable, get_own, fast_get, get_own_truthy}`
+//   ✓ `JSGlobalObject::{err, emit_warning, throw_missing_arguments_value,
+//      throw_invalid_argument_type_value_one_of}`
+//   ✓ `BuiltinName::{cmd, data, message}` (lowercase variants)
+//   ✓ `#[crate::host_fn]` proc-macro
+//
+// STILL GATED — remaining hard blockers (all OUTSIDE this file):
 //   - `crate::ManagedTask` is a *module*, body uses it as a type (4×)
-//   - `JSValue::{call_next_tick, serialize, deserialize, is_callable,
-//      get_own, fast_get, to_js, get_own_truthy}` — missing methods
-//   - `JSGlobalObject::{err, emit_warning, throw_missing_arguments_value,
-//      throw_invalid_argument_type_value_one_of}` — missing methods
-//   - `VirtualMachine::{get, process_emit_error_event, get_ipc_instance}`
+//   - `JSValue::{call_next_tick, serialize, deserialize, to_js}` — missing
+//     (`call_next_tick_{1,2}` exist; needs variadic shim or call-site rewrite)
+//   - `VirtualMachine::{process_emit_error_event, get_ipc_instance}`
 //   - `jsc::SerializeOptions`, `jsc::virtual_machine::IPCInstance` — missing types
-//   - `BuiltinName::{Cmd, Data, Message}`, `ErrorCode::IPC_CHANNEL_CLOSED`
+//   - `ErrorCode::IPC_CHANNEL_CLOSED` — codegen'd ErrorCode not yet emitted
 //   - `bun_event_loop::Task::as_<T>()` downcast
-//   - `bun_string::String::{to_js, to_js_by_parse_json, transfer_to_js, from_js}`
-//   - `bun_uws::NewSocketHandler::write_fd`
+//   - `bun_string::String::{to_js, to_js_by_parse_json, transfer_to_js}`
+//   - `bun_uws::NewSocketHandler::write_fd` / SocketHandler<false> surface
 //   - `bun_core::Fd::{close, to_js}`
 //   - `JSONLineBuffer` real impl (sibling, shimmed above)
 //   - `Subprocess`/`node_cluster_binding::InternalMsgHolder` (bun_runtime cycle)
 //   - `uv` crate path on non-windows (cfg leak, 3×)
-// Re-attempt once the `JSValue` / `JSGlobalObject` surface in
-// `src/jsc/JSValue.rs` + `src/jsc/JSGlobalObject.rs` lands.
+// Re-attempt once `ManagedTask`-as-type + `Subprocess` cycle-break land.
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(any())]
 mod _body {

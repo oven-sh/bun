@@ -88,11 +88,13 @@ pub struct VirtualMachine {
     pub global: *mut JSGlobalObject,
     // allocator: dropped per §Allocators (global mimalloc)
     pub has_loaded_constructors: bool,
-    pub transpiler: Transpiler,
+    // TODO(port): lifetime — `Transpiler<'a>` borrows `log`/`allocator`; VM is
+    // self-referential and cannot carry `<'a>`, so we erase to `'static` and the
+    // owner guarantees the borrowed `log` outlives the VM (see `init`).
+    pub transpiler: Transpiler<'static>,
     // TODO(b2-cycle): `bun_watcher` is `ImportWatcher` from hot_reloader.rs (gated sibling).
     pub bun_watcher: *mut c_void,
-    // TODO(b2-cycle): `console` is `Box<ConsoleObject>` — ConsoleObject.rs is gated.
-    pub console: *mut c_void,
+    pub console: *mut crate::console_object::ConsoleObject,
     // TODO(port): lifetime — LIFETIMES.tsv says BORROW_PARAM (`&'a mut logger::Log`);
     // raw NonNull used because VM is self-referential and cannot carry `<'a>`.
     pub log: Option<NonNull<logger::Log>>,
@@ -457,7 +459,7 @@ impl VirtualMachine {
     }
 
     #[inline]
-    pub fn transpiler(&mut self) -> &mut Transpiler {
+    pub fn transpiler(&mut self) -> &mut Transpiler<'static> {
         &mut self.transpiler
     }
 
@@ -681,6 +683,425 @@ impl VirtualMachine {
 extern crate alloc;
 
 // ──────────────────────────────────────────────────────────────────────────
+// §Dispatch — `bun_runtime` vtable.
+//
+// `init` / `load_entry_point` / the `bun -e` path reach into types that live
+// in the higher-tier `bun_runtime` crate (`api::Timer::All`, `node::fs`,
+// `webcore::Body`, the bundler entry-point generator, …). Per PORTING.md
+// §Dispatch (cold-path), the low tier defines a manual vtable; `bun_runtime`
+// installs the static instance at startup via `set_runtime_hooks`. Every call
+// site below is `// PERF(port): was inline switch` — acceptable, each does
+// real work (I/O, JS callback, allocation).
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Opaque per-VM state owned by `bun_runtime` (Timer::All, NodeFS, Body hive
+/// allocator, …). Stored as `*mut c_void` in `VirtualMachine`; the high tier
+/// casts back on the other side of each hook.
+pub type RuntimeState = *mut c_void;
+
+pub struct RuntimeHooks {
+    /// `bun.api.Timer.All.init()` + `Body.Value.HiveAllocator.init()` +
+    /// `configureDebugger()` — everything `init()` does that names a
+    /// `bun_runtime` type. Called once with the freshly-boxed VM AFTER
+    /// `vm.global` / `vm.jsc_vm` are populated (spec VirtualMachine.zig:1313+);
+    /// returns the opaque per-VM runtime state pointer (or null).
+    pub init_runtime_state: unsafe fn(vm: *mut VirtualMachine, opts: &InitOptions) -> RuntimeState,
+    /// `ServerEntryPoint.generate(watch, entry_path)` — produces the synthetic
+    /// `bun:main` module body for `entry_path`. Returns `false` on error
+    /// (error already logged into `vm.log`).
+    pub generate_entry_point:
+        unsafe fn(vm: *mut VirtualMachine, watch: bool, entry_path: &[u8]) -> bool,
+    /// `loadPreloads()` — runs `--preload` scripts. Returns the in-flight
+    /// promise if a preload is async, else null.
+    pub load_preloads: unsafe fn(vm: *mut VirtualMachine) -> *mut JSInternalPromise,
+    /// `ensureDebugger(block_until_connected)` — no-op when no debugger.
+    pub ensure_debugger: unsafe fn(vm: *mut VirtualMachine, block_until_connected: bool),
+    /// `eventLoop().autoTick()` — needs `Timer::All` for the timeout calc.
+    /// Hoisted here so `event_loop.rs` doesn't need its own hook table.
+    pub auto_tick: unsafe fn(vm: *mut VirtualMachine),
+}
+
+static RUNTIME_HOOKS: core::sync::atomic::AtomicPtr<RuntimeHooks> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
+/// Called by `bun_runtime` at startup to install the real hook table.
+/// `hooks` must have `'static` lifetime (typically `&'static RUNTIME_HOOKS_IMPL`).
+pub fn set_runtime_hooks(hooks: &'static RuntimeHooks) {
+    RUNTIME_HOOKS.store(
+        hooks as *const RuntimeHooks as *mut RuntimeHooks,
+        core::sync::atomic::Ordering::Release,
+    );
+}
+
+#[inline]
+fn runtime_hooks() -> Option<&'static RuntimeHooks> {
+    let p = RUNTIME_HOOKS.load(core::sync::atomic::Ordering::Acquire);
+    // SAFETY: `p` was stored from a `&'static RuntimeHooks` (or is null).
+    unsafe { p.as_ref() }
+}
+
+// TODO(port): move to jsc_sys
+unsafe extern "C" {
+    fn ZigGlobalObject__create(
+        vm: *mut VirtualMachine,
+        console: *mut c_void,
+        context_id: i32,
+        mini_mode: bool,
+        eval_mode: bool,
+        worker_ptr: *mut c_void,
+    ) -> *mut JSGlobalObject;
+    fn Bun__loadHTMLEntryPoint(global: *mut JSGlobalObject) -> *mut JSInternalPromise;
+    fn JSC__VM__executionForbidden(vm: *mut VM) -> bool;
+    fn NodeModuleModule__callOverriddenRunMain(global: *mut JSGlobalObject, argv1: JSValue) -> JSValue;
+    fn JSC__JSInternalPromise__resolvedPromise(global: *mut JSGlobalObject, value: JSValue) -> *mut JSInternalPromise;
+}
+
+fn get_origin_timestamp() -> u64 {
+    // Subtract the Y2K epoch so the timestamp fits in a u64 (nanoseconds).
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as i128)
+        .unwrap_or(0);
+    (now - ORIGIN_RELATIVE_EPOCH).max(0) as u64
+}
+
+impl VirtualMachine {
+    /// `VirtualMachine.init(opts)` — allocate + wire the per-thread VM.
+    ///
+    /// PORT NOTE: every step that names a `bun_runtime` / `bun_webcore` type
+    /// (`Timer.All.init`, `Body.Value.HiveAllocator`, `configureDebugger`,
+    /// `Config.configureTransformOptionsForBunVM`, `ParentDeathWatchdog`) is
+    /// dispatched through `RuntimeHooks::init_runtime_state` so `bun_jsc` does
+    /// not name those types directly. The hook receives the boxed VM after the
+    /// JSC-tier fields are populated and finishes the rest.
+    pub fn init(opts: InitOptions) -> Result<*mut VirtualMachine, bun_core::Error> {
+        jsc::mark_binding(core::panic::Location::caller());
+
+        let log: *mut logger::Log = Box::into_raw(Box::new(logger::Log::default()));
+
+        // SAFETY: VM is large + self-referential; allocate zeroed and fill in
+        // place (mirrors Zig's `allocator.create` + struct-init). The
+        // allocation lives for the thread lifetime (never freed on the main
+        // thread; worker `destroy()` frees it explicitly).
+        // TODO(port): zeroing is not strictly init-safe for every field
+        // (e.g. `std::time::Instant`); Phase B should switch to
+        // `MaybeUninit` + `addr_of_mut!` per-field writes.
+        let layout = core::alloc::Layout::new::<VirtualMachine>();
+        // SAFETY: `layout` is non-zero-sized; `alloc_zeroed` returns either a
+        // valid aligned ptr or null (handled by `handle_alloc_error`).
+        let vm: *mut VirtualMachine = unsafe {
+            let p = alloc::alloc::alloc_zeroed(layout);
+            if p.is_null() {
+                alloc::alloc::handle_alloc_error(layout);
+            }
+            p.cast()
+        };
+        VMHolder::VM.set(Some(vm));
+        if opts.is_main_thread {
+            // SAFETY: written once during main-thread init.
+            unsafe { MAIN_THREAD_VM = Some(vm) };
+        }
+        // SAFETY: `vm` is a fresh unique allocation on this thread.
+        let vm_ref = unsafe { &mut *vm };
+
+        // ConsoleObject is self-referential (buffers + adapters) — allocate
+        // stable storage and init in place. Spec VirtualMachine.zig:1238-1239:
+        // `console.init(Output.rawErrorWriter(), Output.rawWriter())` must
+        // happen BEFORE the pointer is stored/passed; the previous port left
+        // it as raw `MaybeUninit` (UB on first C++ read).
+        let mut console_box: Box<core::mem::MaybeUninit<crate::console_object::ConsoleObject>> =
+            Box::new(core::mem::MaybeUninit::uninit());
+        crate::console_object::ConsoleObject::init(
+            &mut console_box,
+            bun_core::Output::raw_error_writer(),
+            bun_core::Output::raw_writer(),
+        );
+        let console = Box::into_raw(console_box) as *mut crate::console_object::ConsoleObject;
+
+        vm_ref.global = core::ptr::null_mut();
+        vm_ref.console = console;
+        // SAFETY: `log` is a fresh leaked Box; outlives the VM.
+        vm_ref.log = NonNull::new(log);
+        vm_ref.main = b"";
+        vm_ref.main_hash = 0;
+        vm_ref.main_resolved_path = bun_string::String::empty();
+        vm_ref.hide_bun_stackframes = true;
+        vm_ref.is_main_thread = opts.is_main_thread;
+        vm_ref.on_unhandled_rejection = VirtualMachine::default_on_unhandled_rejection;
+        vm_ref.origin_timer = std::time::Instant::now();
+        vm_ref.origin_timestamp = get_origin_timestamp();
+        vm_ref.smol = opts.smol;
+        vm_ref.standalone_module_graph = NonNull::new(opts.graph);
+        vm_ref.initial_script_execution_context_identifier =
+            if opts.is_main_thread { 1 } else { i32::MAX };
+        #[cfg(debug_assertions)]
+        {
+            vm_ref.debug_thread_id = std::thread::current().id();
+        }
+
+        // Event-loop wiring (self-pointers).
+        vm_ref.regular_event_loop = EventLoop::default();
+        vm_ref.regular_event_loop.virtual_machine = NonNull::new(vm);
+        let _ = vm_ref.regular_event_loop.tasks.ensure_unused_capacity(64);
+        vm_ref.event_loop = &mut vm_ref.regular_event_loop;
+
+        // JSGlobalObject creation.
+        // SAFETY: extern "C" FFI; `vm`/`console` valid.
+        vm_ref.global = unsafe {
+            ZigGlobalObject__create(
+                vm,
+                console.cast(),
+                vm_ref.initial_script_execution_context_identifier,
+                opts.smol,
+                opts.eval_mode,
+                core::ptr::null_mut(),
+            )
+        };
+        vm_ref.regular_event_loop.global = NonNull::new(vm_ref.global);
+        // SAFETY: global is freshly created and live for VM lifetime.
+        vm_ref.jsc_vm = unsafe { (*vm_ref.global).vm() } as *const VM as *mut VM;
+        VMHolder::CACHED_GLOBAL_OBJECT.set(Some(vm_ref.global));
+
+        // Spec VirtualMachine.zig:1313: `uws.Loop.get().internal_loop_data.jsc_vm
+        // = vm.jsc_vm` — must run AFTER `jsc_vm` is set so C/uws callbacks can
+        // recover the JSC VM via `internal_loop_data`.
+        // SAFETY: `uws::Loop::get()` returns the live per-thread uws loop.
+        unsafe {
+            (*uws::Loop::get()).internal_loop_data.jsc_vm = vm_ref.jsc_vm.cast();
+        }
+
+        // High-tier finishes Transpiler / Timer::All / debugger / body-hive.
+        // PORT NOTE: spec VirtualMachine.zig:1321-1322 runs configureDebugger
+        // / Body.Value.HiveAllocator.init AFTER global creation; the hook must
+        // see `vm.global`/`vm.jsc_vm` populated. PERF(port): was inline switch.
+        if let Some(hooks) = runtime_hooks() {
+            // SAFETY: hook contract — `vm` is the unique live VM on this thread.
+            unsafe { (hooks.init_runtime_state)(vm, &opts) };
+        }
+
+        if opts.smol {
+            // SAFETY: written once during init.
+            unsafe { IS_SMOL_MODE = true };
+        }
+
+        Ok(vm)
+    }
+
+    /// `init` + set `main` to `entry_path`. Port-side convenience for the
+    /// `bun -e` / `bun run <file>` boot path; Zig open-codes this in
+    /// `run_command.zig`.
+    pub fn init_with_main(
+        opts: InitOptions,
+        entry_path: &'static [u8],
+    ) -> Result<*mut VirtualMachine, bun_core::Error> {
+        let vm = Self::init(opts)?;
+        // SAFETY: `vm` is the unique live VM on this thread.
+        let vm_ref = unsafe { &mut *vm };
+        vm_ref.main = entry_path;
+        vm_ref.main_hash = bun_watcher::Watcher::get_hash(entry_path);
+        Ok(vm)
+    }
+
+    /// `eventLoop().waitForPromise(promise)` — spin tick/auto_tick until
+    /// `promise` settles. Hoisted here (vs. the gated `event_loop.rs` body)
+    /// so `load_entry_point` can call it without naming `Timer::All`.
+    pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) {
+        let jsc_vm = self.jsc_vm;
+        loop {
+            // SAFETY: AnyPromise wraps a live JSC heap cell.
+            let status = match promise {
+                jsc::AnyPromise::Normal(p) => unsafe { (*p).status() },
+                jsc::AnyPromise::Internal(p) => unsafe { (*p).status() },
+            };
+            if status != crate::js_promise::Status::Pending {
+                break;
+            }
+            // SAFETY: jsc_vm is live for VM lifetime.
+            if unsafe { JSC__VM__executionForbidden(jsc_vm) } {
+                break;
+            }
+            self.event_loop().tick();
+            // Re-check after tick before sleeping in auto_tick.
+            // SAFETY: see above.
+            let status = match promise {
+                jsc::AnyPromise::Normal(p) => unsafe { (*p).status() },
+                jsc::AnyPromise::Internal(p) => unsafe { (*p).status() },
+            };
+            if status != crate::js_promise::Status::Pending {
+                break;
+            }
+            self.auto_tick();
+        }
+    }
+
+    /// `eventLoop().autoTick()` — dispatched through the runtime hook
+    /// (needs `Timer::All` for the poll timeout).
+    #[inline]
+    pub fn auto_tick(&mut self) {
+        if let Some(hooks) = runtime_hooks() {
+            // SAFETY: hook contract — `self` is the live per-thread VM.
+            // PERF(port): was inline switch.
+            unsafe { (hooks.auto_tick)(self) };
+        } else {
+            // No high tier (unit tests) — fall back to a non-blocking tick.
+            self.event_loop().tick();
+        }
+    }
+
+    /// `reloadEntryPoint(entry_path)` — set `main`, generate the synthetic
+    /// `bun:main` entry, run preloads, and kick off module evaluation.
+    pub fn reload_entry_point(
+        &mut self,
+        entry_path: &'static [u8],
+    ) -> Result<*mut JSInternalPromise, bun_core::Error> {
+        self.has_loaded = false;
+        self.main = entry_path;
+        self.main_resolved_path.deref();
+        self.main_resolved_path = bun_string::String::empty();
+        self.main_hash = bun_watcher::Watcher::get_hash(entry_path);
+        self.overridden_main.deinit();
+
+        let hooks = runtime_hooks();
+        if let Some(hooks) = hooks {
+            // SAFETY: hook contract — `self` is the live per-thread VM.
+            unsafe { (hooks.ensure_debugger)(self, true) };
+        }
+
+        if !self.main_is_html_entrypoint {
+            if let Some(hooks) = hooks {
+                let watch = self.is_watcher_enabled();
+                // SAFETY: hook contract.
+                if !unsafe { (hooks.generate_entry_point)(self, watch, entry_path) } {
+                    return Err(bun_core::err!("ServerEntryPointGenerate"));
+                }
+            }
+        }
+
+        // TODO(b2-cycle): `transpiler.options.disable_transpilation` — gated
+        // bundler field. Assume `false` (always transpile) until un-gated.
+        if !self.preload.is_empty() {
+            if let Some(hooks) = hooks {
+                // SAFETY: hook contract.
+                let p = unsafe { (hooks.load_preloads)(self) };
+                if !p.is_null() {
+                    JSValue::from_cell(p).ensure_still_alive();
+                    JSValue::from_cell(p).protect();
+                    self.pending_internal_promise = Some(p);
+                    self.pending_internal_promise_is_protected = true;
+                    return Ok(p);
+                }
+            }
+
+            // Check if Module.runMain was patched (spec VirtualMachine.zig:2322-2335).
+            if self.has_patched_run_main {
+                #[cold]
+                #[inline(never)]
+                fn cold() {}
+                cold();
+                self.pending_internal_promise = None;
+                self.pending_internal_promise_is_protected = false;
+                let global = self.global;
+                // SAFETY: `global` is set during init and live for the VM lifetime.
+                let global_ref = unsafe { &*global };
+                let argv1 = jsc::bun_string_jsc::create_utf8_for_js(global_ref, MAIN_FILE_NAME)
+                    .map_err(|_| bun_core::err!("JSError"))?;
+                // SAFETY: extern "C" FFI; global valid for VM lifetime.
+                let ret = jsc::from_js_host_call_generic(global_ref, || unsafe {
+                    NodeModuleModule__callOverriddenRunMain(global, argv1)
+                })
+                .map_err(|_| bun_core::err!("JSError"))?;
+                // If the override stored a promise itself, use that; otherwise
+                // wrap its return value.
+                if let Some(stored) = self.pending_internal_promise {
+                    return Ok(stored);
+                }
+                // SAFETY: extern "C" FFI; global valid for VM lifetime.
+                let resolved = unsafe { JSC__JSInternalPromise__resolvedPromise(global, ret) };
+                self.pending_internal_promise = Some(resolved);
+                self.pending_internal_promise_is_protected = false;
+                return Ok(resolved);
+            }
+        }
+
+        // PORT NOTE: reshaped for borrowck — capture raw ptr before &self call.
+        let global = self.global;
+        // SAFETY: `global` is set during init and live for the VM lifetime.
+        let global_ref = unsafe { &*global };
+        let promise = if !self.main_is_html_entrypoint {
+            let name = bun_string::String::borrow_utf8(MAIN_FILE_NAME);
+            jsc::JSModuleLoader::load_and_evaluate_module(global_ref, Some(&name))
+                .map(|p| p as *const _ as *mut JSInternalPromise)
+                .ok_or_else(|| bun_core::err!("JSError"))?
+        } else {
+            // SAFETY: extern "C" FFI; global valid for VM lifetime.
+            let p = jsc::from_js_host_call_generic(global_ref, || unsafe {
+                Bun__loadHTMLEntryPoint(global)
+            })
+            .map_err(|_| bun_core::err!("JSError"))?;
+            if p.is_null() {
+                return Err(bun_core::err!("JSError"));
+            }
+            p
+        };
+
+        self.pending_internal_promise = Some(promise);
+        self.pending_internal_promise_is_protected = false;
+        JSValue::from_cell(promise).ensure_still_alive();
+        Ok(promise)
+    }
+
+    /// `loadEntryPoint(entry_path)` — `reload_entry_point` + spin until the
+    /// returned promise settles.
+    pub fn load_entry_point(
+        &mut self,
+        entry_path: &'static [u8],
+    ) -> Result<*mut JSInternalPromise, bun_core::Error> {
+        let promise = self.reload_entry_point(entry_path)?;
+
+        // pending_internal_promise can change if hot module reloading is enabled
+        if self.is_watcher_enabled() {
+            self.event_loop().perform_gc();
+            loop {
+                let Some(p) = self.pending_internal_promise else { break };
+                // SAFETY: `p` is a live JSC heap cell tracked by the VM.
+                if unsafe { (*p).status() } != crate::js_promise::Status::Pending {
+                    break;
+                }
+                self.event_loop().tick();
+                let Some(p) = self.pending_internal_promise else { break };
+                // SAFETY: see above.
+                if unsafe { (*p).status() } == crate::js_promise::Status::Pending {
+                    self.auto_tick();
+                }
+            }
+        } else {
+            // SAFETY: `promise` is a live JSC heap cell.
+            if unsafe { (*promise).status() } == crate::js_promise::Status::Rejected {
+                return Ok(promise);
+            }
+            self.event_loop().perform_gc();
+            self.wait_for_promise(jsc::AnyPromise::Internal(promise));
+        }
+
+        Ok(self.pending_internal_promise.unwrap_or(promise))
+    }
+
+    /// Drain pending tasks/microtasks if the event loop is not currently
+    /// re-entered. Port-side convenience used after top-level evaluation on
+    /// the `bun -e` path (Zig open-codes `eventLoop().tick()` +
+    /// `drainMicrotasks()` at each call site).
+    pub fn drain_queues_if_needed(&mut self) {
+        if self.event_loop().entered_event_loop_count > 0 {
+            return;
+        }
+        self.event_loop().tick();
+        let _ = self.event_loop().drain_microtasks();
+        // SAFETY: global is valid for VM lifetime.
+        unsafe { (*self.global).handle_rejected_promises() };
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // `bun_runtime` / `bun_schema` / gated-sibling-dependent impl — preserved
 // verbatim from the Phase-A draft. Un-gate piecewise once the cycle breaks.
 // ──────────────────────────────────────────────────────────────────────────
@@ -726,10 +1147,8 @@ impl VirtualMachine {
     pub fn enqueue_immediate_task(&mut self, task: *mut bun_runtime::api::Timer::ImmediateObject) { todo!() }
     pub fn enqueue_task_concurrent(&mut self, task: *mut crate::event_loop::ConcurrentTaskItem) { todo!() }
     pub fn wait_for(&mut self, cond: &mut bool) { todo!() }
-    pub fn wait_for_promise(&mut self, promise: crate::AnyPromise) { todo!() }
     pub fn wait_for_tasks(&mut self) { todo!() }
     pub fn init_with_module_graph(opts: Options) -> Result<*mut VirtualMachine, bun_core::Error> { todo!() }
-    pub fn init(opts: Options) -> Result<*mut VirtualMachine, bun_core::Error> { todo!() }
     pub fn init_worker(worker: &mut bun_runtime::webcore::WebWorker, opts: Options) -> Result<*mut VirtualMachine, bun_core::Error> { todo!() }
     pub fn init_bake(opts: Options) -> Result<*mut VirtualMachine, bun_core::Error> { todo!() }
     pub fn clear_ref_string(_: *mut c_void, ref_string: &mut crate::RefString) { todo!() }
@@ -742,13 +1161,10 @@ impl VirtualMachine {
     pub fn destroy(&mut self) { todo!() }
     pub fn print_exception() { todo!() }
     pub fn clear_entry_point(&mut self) -> JsResult<()> { todo!() }
-    pub fn ensure_debugger(&mut self, block_until_connected: bool) -> Result<(), bun_core::Error> { todo!() }
-    pub fn reload_entry_point(&mut self, entry_path: &[u8]) -> Result<*mut JSInternalPromise, bun_core::Error> { todo!() }
     pub fn use_isolation_source_provider_cache(&self) -> bool { todo!() }
     pub fn reload_entry_point_for_test_runner(&mut self, entry_path: &[u8]) -> Result<*mut JSInternalPromise, bun_core::Error> { todo!() }
     pub fn load_entry_point_for_web_worker(&mut self, entry_path: &[u8]) -> Result<*mut JSInternalPromise, bun_core::Error> { todo!() }
     pub fn load_entry_point_for_test_runner(&mut self, entry_path: &[u8]) -> Result<*mut JSInternalPromise, bun_core::Error> { todo!() }
-    pub fn load_entry_point(&mut self, entry_path: &[u8]) -> Result<*mut JSInternalPromise, bun_core::Error> { todo!() }
     pub fn add_listening_socket_for_watch_mode(&mut self, socket: bun_sys::Fd) { todo!() }
     pub fn remove_listening_socket_for_watch_mode(&mut self, socket: bun_sys::Fd) { todo!() }
     pub fn swap_global_for_test_isolation(&mut self) { todo!() }
@@ -773,9 +1189,12 @@ impl VirtualMachine {
 //   source:     src/jsc/VirtualMachine.zig (~3840 lines)
 //   confidence: low
 //   todos:      30+
-//   notes:      B-2 un-gate. Core struct + VMHolder + accessors real. Field
-//               types from bun_runtime/webcore/ipc/hot_reloader/gc_controller
-//               replaced with placeholders + TODO(b2-cycle). All methods that
-//               name forward-dep types are listed in the cfg(any()) block
-//               above; full Phase-A draft preserved in git @ 5410a51d85^.
+//   notes:      Keystone-C un-gate. Core struct + VMHolder + accessors real.
+//               init / init_with_main / reload_entry_point / load_entry_point /
+//               wait_for_promise / drain_queues_if_needed un-gated; the
+//               bun_runtime-typed steps (Timer::All, ServerEntryPoint,
+//               configureDebugger, autoTick) dispatch through `RuntimeHooks`
+//               per §Dispatch (cold-path vtable). Field types from
+//               bun_runtime/webcore/ipc/hot_reloader/gc_controller remain
+//               opaque + TODO(b2-cycle). Full Phase-A draft @ 5410a51d85^.
 // ──────────────────────────────────────────────────────────────────────────

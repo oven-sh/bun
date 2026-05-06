@@ -1,9 +1,13 @@
-use core::ffi::{c_char, c_uint, c_void, CStr};
+use core::ffi::{c_char, c_uint, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 
-use crate::{JSGlobalObject, JSValue, JSValueRef, VirtualMachine, VM};
+use crate::virtual_machine::VirtualMachine;
+use crate::{JSGlobalObject, JSValue, VM};
 use bun_collections::IntegerBitSet;
-use bun_str::ZStr;
+use bun_string::ZStr;
+
+#[allow(deprecated)]
+use crate::c_api::JSValueRef;
 
 /// Call Frame for JavaScript -> Native function calls. In Bun, it is
 /// preferred to use the bindings generator instead of directly decoding
@@ -165,7 +169,7 @@ impl CallFrame {
     }
 
     pub fn get_caller_src_loc(&self, global_this: &JSGlobalObject) -> CallerSrcLoc {
-        let mut str = core::mem::MaybeUninit::<bun_str::String>::uninit();
+        let mut str = core::mem::MaybeUninit::<bun_string::String>::uninit();
         let mut line: c_uint = 0;
         let mut column: c_uint = 0;
         // SAFETY: FFI call writes into the three out-params; all pointers valid.
@@ -188,7 +192,11 @@ impl CallFrame {
 
     pub fn describe_frame(&self) -> &ZStr {
         // SAFETY: FFI returns a NUL-terminated C string with lifetime tied to the frame.
-        unsafe { ZStr::from_ptr(Bun__CallFrame__describeFrame(self)) }
+        unsafe {
+            let p = Bun__CallFrame__describeFrame(self);
+            let len = core::ffi::CStr::from_ptr(p).to_bytes().len();
+            ZStr::from_raw(p as *const u8, len)
+        }
     }
 }
 
@@ -259,7 +267,7 @@ impl<const MAX: usize> Arguments<MAX> {
 }
 
 pub struct CallerSrcLoc {
-    pub str: bun_str::String,
+    pub str: bun_string::String,
     pub line: c_uint,
     pub column: c_uint,
 }
@@ -297,11 +305,11 @@ pub struct ArgumentsSlice<'a> {
 
 impl<'a> ArgumentsSlice<'a> {
     pub fn unprotect(&mut self) {
-        let mut iter = self.protected.iter();
+        let mut iter = self.protected.iterator::<true, true>();
         while let Some(i) = iter.next() {
             self.all[i].unprotect();
         }
-        self.protected = IntegerBitSet::<32>::empty();
+        self.protected = IntegerBitSet::<32>::init_empty();
     }
 
     pub fn protect_eat(&mut self) {
@@ -336,7 +344,7 @@ impl<'a> ArgumentsSlice<'a> {
             all: slice,
             arena: bun_alloc::Arena::new(),
             threw: false,
-            protected: IntegerBitSet::<32>::empty(),
+            protected: IntegerBitSet::<32>::init_empty(),
             will_be_async: false,
         }
     }
@@ -351,7 +359,7 @@ impl<'a> ArgumentsSlice<'a> {
             all: slice,
             arena: bun_alloc::Arena::new(),
             threw: false,
-            protected: IntegerBitSet::<32>::empty(),
+            protected: IntegerBitSet::<32>::init_empty(),
             will_be_async: false,
         }
     }
@@ -399,7 +407,7 @@ unsafe extern "C" {
     fn Bun__CallFrame__getCallerSrcLoc(
         cf: *const CallFrame,
         global: *const JSGlobalObject,
-        out_str: *mut bun_str::String,
+        out_str: *mut bun_string::String,
         out_line: *mut c_uint,
         out_column: *mut c_uint,
     );

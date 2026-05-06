@@ -23,8 +23,54 @@ use bun_string::{self as strings, String as BunString};
 // gated; bodies that reference them are gated below.
 // TODO(port): bun_runtime / bun_js_parser cycle.
 #[cfg(any())] use bun_runtime::cli::Command as CLI;
-#[cfg(any())] use bun_js_parser::{js_lexer as JSLexer, js_printer as JSPrinter};
 #[cfg(any())] use bun_runtime::test_runner::pretty_format::JestPrettyFormat;
+
+/// Thin facade over `bun_js_parser::lexer` / `bun_js_printer` so the call
+/// sites below keep their Zig spelling (`JSLexer.isLatin1Identifier`,
+/// `JSPrinter.writeJsonString`) while the underlying crates expose slightly
+/// different shapes (single generic identifier predicate; const-generic
+/// encoding on `write_json_string`).
+mod JSLexer {
+    #[inline]
+    pub fn is_latin1_identifier_u8(name: &[u8]) -> bool {
+        bun_js_parser::lexer::is_latin1_identifier(name)
+    }
+    /// Zig `isLatin1Identifier(comptime []const u16, name)` — same predicate
+    /// over a UTF-16 slice. `bun_js_printer` has a private copy; reproduce
+    /// the (tiny) check here rather than widen its visibility.
+    pub fn is_latin1_identifier_u16(name: &[u16]) -> bool {
+        if name.is_empty() { return false; }
+        let c0 = name[0];
+        if !(c0 == b'_' as u16 || c0 == b'$' as u16
+            || (b'a' as u16..=b'z' as u16).contains(&c0)
+            || (b'A' as u16..=b'Z' as u16).contains(&c0))
+        { return false; }
+        name[1..].iter().all(|&c| {
+            c == b'_' as u16 || c == b'$' as u16
+                || (b'a' as u16..=b'z' as u16).contains(&c)
+                || (b'A' as u16..=b'Z' as u16).contains(&c)
+                || (b'0' as u16..=b'9' as u16).contains(&c)
+        })
+    }
+}
+mod JSPrinter {
+    pub use bun_js_printer::Encoding;
+    /// Runtime-encoding adapter over `bun_js_printer::write_json_string`,
+    /// which takes `Encoding` as a const generic.
+    #[inline]
+    pub fn write_json_string(
+        input: &[u8],
+        writer: &mut (impl bun_io::Write + ?Sized),
+        encoding: Encoding,
+    ) -> Result<(), bun_core::Error> {
+        match encoding {
+            Encoding::Latin1 => bun_js_printer::write_json_string::<_, { Encoding::Latin1 }>(input, writer),
+            Encoding::Utf8   => bun_js_printer::write_json_string::<_, { Encoding::Utf8   }>(input, writer),
+            Encoding::Ascii  => bun_js_printer::write_json_string::<_, { Encoding::Ascii  }>(input, writer),
+            Encoding::Utf16  => bun_js_printer::write_json_string::<_, { Encoding::Utf16  }>(input, writer),
+        }
+    }
+}
 
 /// Local front for `bun_core::pretty_fmt!` that accepts a runtime / const-
 /// generic bool. Zig's `Output.prettyFmt(comptime fmt, comptime enable_colors)`
@@ -153,177 +199,28 @@ pub enum MessageType {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Un-gated public type surface (matches the lib.rs B-2 stub this replaces).
-// The full ~4kL formatter body below is gated until `JSValue.rs` /
-// `JSGlobalObject.rs` un-gate — it depends on ~40 methods not yet surfaced.
+// Body — format2 / TablePrinter / Formatter::print_as / C-exported
+// Bun__ConsoleObject__* shims. The high-tier-cycle deps (bun_runtime: CLI,
+// JSLexer, JSPrinter, JestPrettyFormat) remain individually #[cfg(any())]-
+// gated at their use sites; everything else is live.
 // ───────────────────────────────────────────────────────────────────────────
 
-pub use formatter::Formatter;
+use bun_threading::Mutex;
 
-/// Controls how `Error` values are formatted (full stack vs. warn-style vs.
-/// name+message). Mirrors `FormatOptions.ErrorDisplayLevel` (zig:1011).
-#[derive(Clone, Copy, Eq, PartialEq)]
-pub enum ErrorDisplayLevel {
-    Normal,
-    Warn,
-    Full,
+/// `globalThis.bunVM().console` — `VirtualMachine.console` is currently typed
+/// `*mut c_void` (the `Box<ConsoleObject>` is erased to break the dep cycle
+/// while `VirtualMachine.rs` is half-gated). This is the single re-entry point
+/// that casts it back; every body below goes through it instead of touching
+/// the field directly.
+#[inline]
+fn vm_console(global: &JSGlobalObject) -> &'static mut ConsoleObject {
+    // SAFETY: `VirtualMachine.console` is initialized once at VM construction
+    // (see `init` above — written into stable boxed storage) and lives for the
+    // VM's lifetime; the C++ side never calls into `Bun__ConsoleObject__*`
+    // before that. The `'static` is a lie of convenience matching the Zig
+    // shape (`*ConsoleObject` field) — callers never outlive the VM.
+    unsafe { &mut *(global.bun_vm().console as *mut ConsoleObject) }
 }
-
-pub mod formatter {
-    use super::*;
-
-    /// Payload for `Tag::CustomFormattedObject` — the `[util.inspect.custom]`
-    /// callback function and its receiver. Mirrors `Formatter.CustomFormattedObject`
-    /// (zig:985); the spec carries this as the `union(Tag)` payload.
-    #[derive(Clone, Copy)]
-    pub struct CustomFormattedObject {
-        pub function: JSValue,
-        pub this: JSValue,
-    }
-    impl Default for CustomFormattedObject {
-        fn default() -> Self { Self { function: JSValue::ZERO, this: JSValue::ZERO } }
-    }
-
-    /// `ConsoleObject.Formatter` — the recursive value pretty-printer. Field
-    /// list kept; method bodies gated in `_body` below.
-    pub struct Formatter<'a> {
-        pub global_this: &'a JSGlobalObject,
-        pub remaining_values: &'a [JSValue],
-        pub map: bun_collections::HashMap<JSValue, ()>,
-        pub hide_native: bool,
-        pub indent: u32,
-        pub depth: u16,
-        pub max_depth: u16,
-        pub quote_strings: bool,
-        pub quote_keys: bool,
-        pub failed: bool,
-        pub estimated_line_length: usize,
-        pub always_newline_scope: bool,
-        pub single_line: bool,
-        pub ordered_properties: bool,
-        pub custom_formatted_object: CustomFormattedObject,
-        pub disable_inspect_custom: bool,
-        pub stack_check: StackCheck,
-        pub can_throw_stack_overflow: bool,
-        pub error_display_level: ErrorDisplayLevel,
-        pub format_buffer_as_text: bool,
-    }
-
-    /// `ConsoleObject.Formatter.Tag` — classifies a JSValue for printing.
-    // PORT NOTE: Zig used `comptime Format: Tag`; `ConstParamTy` is unstable
-    // (`adt_const_params`), so `Tag` is passed at runtime — see `print_as` in
-    // the gated body. PERF(port): was comptime monomorphization.
-    #[derive(Copy, Clone, Eq, PartialEq, Debug, strum::IntoStaticStr)]
-    pub enum Tag {
-        StringPossiblyFormatted,
-        String,
-        Undefined,
-        Double,
-        Integer,
-        Null,
-        Boolean,
-        Array,
-        Object,
-        Function,
-        Class,
-        Error,
-        TypedArray,
-        Map,
-        MapIterator,
-        SetIterator,
-        Set,
-        BigInt,
-        Symbol,
-        CustomFormattedObject,
-        GlobalObject,
-        Private,
-        Promise,
-        JSON,
-        ToJSON,
-        NativeCode,
-        JSX,
-        Event,
-        GetterSetter,
-        CustomGetterSetter,
-        Proxy,
-        RevokedProxy,
-    }
-
-    /// `Tag.Result` — classification + resolved cell type.
-    /// Spec `Tag.Result.tag` is a `union(Tag)` whose `CustomFormattedObject`
-    /// arm carries `{ function, this }` (zig:1144-1179). `Tag` here is a flat
-    /// C-like enum (runtime-dispatched, since `ConstParamTy` is unstable), so
-    /// the payload lives in a side field that `Tag::get` populates and
-    /// `print_as` reads back into `Formatter.custom_formatted_object`.
-    #[derive(Clone, Copy)]
-    pub struct Result {
-        pub tag: Tag,
-        pub custom_formatted_object: CustomFormattedObject,
-        pub cell: crate::JSType,
-    }
-
-    impl Tag {
-        /// `Tag.get(value, global)` — classify a JSValue.
-        pub fn get(value: JSValue, global: &JSGlobalObject) -> crate::JsResult<Result> {
-            let _ = (value, global);
-            // TODO(b2): full classifier (ConsoleObject.zig:1190) — gated body.
-            todo!("ConsoleObject::Formatter::Tag::get")
-        }
-    }
-}
-
-// ───────────────────────────────────────────────────────────────────────────
-// TODO(port): full body — `format2` / `TablePrinter` / `Formatter::print_as`
-// / C-exported `Bun__ConsoleObject__*` shims. ~4kL; depends on:
-//   - `JSValue` surface: is_callable, fast_get, get_prototype, get_name,
-//     iterators, symbol_for, BuiltinName fast-paths, …
-//   - `JSGlobalObject` surface: err(), clear_exception(), …
-//   - `bun_io::Write`, `bun_core::Output::source::stream_type`
-//   - `bun_js_parser::js_printer` (source highlighting)
-//   - `bun_runtime::cli::Command`, `bun_runtime::test_runner::JestPrettyFormat`
-//   - `#[crate::host_call]` proc-macro
-//
-// STILL GATED (phase-b2): `#[crate::host_call]` exists, but un-gating produces
-// ~260 errors. Remaining hard blockers (all outside this file):
-//   - `JSValue` surface (~30 missing methods): is_callable, fast_get,
-//     get_prototype, get_name, get_class_name, get_boolean_loose, to_number,
-//     coerce_{i32,i64,f64}, to_u16, json_stringify{,_fast}, symbol_for,
-//     for_each_{property,property_ordered,property_non_indexed,with_context},
-//     get_{own,direct_index,description,name_property,zig_string,
-//     proxy_internal_field}, is_{symbol,class,buffer,big_int,iterable},
-//     as_{cell,object_ref}, to_{cell,object,fmt}, fmt_string, push, c
-//   - `JSValue` is not an iterator (6×)
-//   - `JSGlobalObject::{clear_exception, throw_stack_overflow,
-//     generate_heap_snapshot}`
-//   - `crate::{PromiseStatus, ProxyField}` enums
-//   - `jsc::PropertyIteratorOptions` struct, `JSPropertyIterator.i` visibility
-//   - `BuiltinName::{Error, InspectCustom}`, `EventType::Unknown` + iterator
-//   - `TypedArrayType::{Uint8Array, ArrayBuffer}` variants
-//   - `VirtualMachine::{print_stack_trace, remap_zig_exception,
-//     print_errorlike_object}`, `.console` is `*mut c_void` not `&ConsoleObject`
-//   - `bun_core::Output::{print_errorln, enable_ansi_colors_{stdout,stderr}}`
-//   - `bun_core::time::{NS_PER_US, US_PER_MS}`, `bun_core::f16`
-//   - `bun_core::fmt::{DoubleFormatter, count_int, count_float}`
-//   - `bun_io::{Error, FmtWriteAdapter}`, `bun_io::Write` trait shape
-//   - `bun_string::ZigString` Display + `{is_16_bit, eql_comptime, char_at,
-//     to_error_instance}`, `ZigStringSlice::{len, as_bytes}`
-//   - `bun_string::String::{visible_width_exclude_ansi_colors, deref_, trunc}`
-//   - `bun_string::strings::{visible, first_non_ascii, is_valid_utf8,
-//     index_of_any16, latin1_to_codepoint_bytes_assume_not_ascii,
-//     allocate_latin1_into_utf8}`
-//   - `bun_collections::HashMap::{get_or_put, fetch_put, get_entry}`
-//   - `bun_threading::Mutex` (used unimported), `crate::Jest::runner`
-//   - `jsc::C::{CellType, JSObjectGetProxyTarget}`
-//   - `DOMFormData: JsClass`, `JSType: Into<&'static str>`
-//   - high-tier cycle: `bun_runtime` (16×), `JSPrinter`/`JSLexer`/`CLI`/
-//     `JestPrettyFormat` use-sites (imports gated above but bodies reference)
-//   - `adt_const_params` unstable (Tag as const generic) — needs runtime arg
-// Re-attempt once `src/jsc/JSValue.rs` un-gates its method surface.
-// ───────────────────────────────────────────────────────────────────────────
-#[cfg(any())]
-mod _body {
-use super::*;
-use super::formatter::Tag;
 
 static STDERR_MUTEX: Mutex = Mutex::new();
 static STDOUT_MUTEX: Mutex = Mutex::new();
@@ -358,7 +255,7 @@ fn message_with_type_and_level_(
     vals: *const JSValue,
     len: usize,
 ) -> JsResult<()> {
-    let console = global.bun_vm().console;
+    let console = vm_console(global);
     // `defer console.default_indent +|= (message_type == StartGroup) as u16;`
     let indent_guard = scopeguard::guard((), |_| {
         console.default_indent = console
@@ -446,17 +343,26 @@ fn message_with_type_and_level_(
         console.writer()
     };
 
+    // TODO(port-cycle): `crate::Jest::runner()?.bun_test_root.on_before_print()`
+    // — Jest runner lives in `bun_runtime` (high-tier cycle); restored when
+    // the test-runner crate split lands.
+    #[cfg(any())]
     if let Some(runner) = crate::Jest::runner() {
         runner.bun_test_root.on_before_print();
     }
 
     let mut print_length = len;
-    // Get console depth from CLI options or bunfig, fallback to default
-    let cli_context = CLI::get();
-    let console_depth = cli_context
+    // Get console depth from CLI options or bunfig, fallback to default.
+    // TODO(port-cycle): `CLI::get().runtime_options.console_depth` — `CLI`
+    // (`bun_runtime::cli::Command`) is a high-tier cycle dep. Until the CLI
+    // context is plumbed through `VirtualMachine`, fall back to the default.
+    #[cfg(any())]
+    let console_depth = CLI::get()
         .runtime_options
         .console_depth
         .unwrap_or(DEFAULT_CONSOLE_LOG_DEPTH);
+    #[cfg(not(any()))]
+    let console_depth = DEFAULT_CONSOLE_LOG_DEPTH;
 
     let mut print_options = FormatOptions {
         enable_colors,
@@ -3682,6 +3588,17 @@ pub mod formatter {
                 estimated_line_length: &mut self.estimated_line_length,
             };
 
+            // TODO(port-cycle): the `bun_runtime` `JsClass` downcasts (Response,
+            // Request, BuildArtifact, Blob, S3Client, Archive, FetchHeaders,
+            // TimeoutObject, ImmediateObject, BuildMessage, ResolveMessage) and
+            // `JestPrettyFormat::print_asymmetric_matcher` form a high-tier
+            // crate cycle (`bun_jsc → bun_runtime → bun_jsc`). They are gated
+            // here as a single block; the always-live tail (DOMFormData +
+            // non-DOMWrapper fallback) is preserved below so generic objects
+            // still print. Restored once the runtime types implement a
+            // dyn-erased `WriteFormat` hook this crate can call without naming
+            // them.
+            #[cfg(any())]
             if let Some(response) = value.as_::<bun_runtime::webcore::Response>() {
                 let _ = response.write_format::<C>(self, writer_);
                 return Ok(());
@@ -3713,21 +3630,6 @@ pub mod formatter {
                         .unwrap_or_else(|err| self.global_this.take_exception(err));
                     return self.print_as::<{ Tag::Object }, C>(writer_, result, jsc::JSType::Object);
                 }
-            } else if value.as_::<crate::DOMFormData>().is_some() {
-                if let Some(to_json_function) = value.get(self.global_this, "toJSON")? {
-                    let prev_quote_keys = self.quote_keys;
-                    self.quote_keys = true;
-                    let _r = scopeguard::guard(&mut self.quote_keys, move |q| *q = prev_quote_keys);
-
-                    let result = to_json_function
-                        .call(self.global_this, value, &[])
-                        .unwrap_or_else(|err| self.global_this.take_exception(err));
-                    return self.print_as::<{ Tag::Object }, C>(writer_, result, jsc::JSType::Object);
-                }
-
-                // this case should never happen
-                return self
-                    .print_as::<{ Tag::Undefined }, C>(writer_, JSValue::UNDEFINED, jsc::JSType::Cell);
             } else if let Some(timer) = value.as_::<bun_runtime::api::timer::TimeoutObject>() {
                 self.add_for_new_line(
                     "Timeout(# ) ".len()
@@ -3774,6 +3676,24 @@ pub mod formatter {
                 )
             })? {
                 return Ok(());
+            }
+
+            let _ = (&mut writer, pf!("<r>")); // silence unused while gated above
+            if value.as_::<crate::DOMFormData>().is_some() {
+                if let Some(to_json_function) = value.get(self.global_this, "toJSON")? {
+                    let prev_quote_keys = self.quote_keys;
+                    self.quote_keys = true;
+                    let _r = scopeguard::guard(&mut self.quote_keys, move |q| *q = prev_quote_keys);
+
+                    let result = to_json_function
+                        .call(self.global_this, value, &[])
+                        .unwrap_or_else(|err| self.global_this.take_exception(err));
+                    return self.print_as::<{ Tag::Object }, C>(writer_, result, jsc::JSType::Object);
+                }
+
+                // this case should never happen
+                return self
+                    .print_as::<{ Tag::Undefined }, C>(writer_, JSValue::UNDEFINED, jsc::JSType::Cell);
             } else if js_type != jsc::JSType::DOMWrapper {
                 if *remove_before_recurse {
                     *remove_before_recurse = false;
@@ -4684,7 +4604,7 @@ pub extern "C" fn Bun__ConsoleObject__count(
     ptr: *const u8,
     len: usize,
 ) {
-    let this = global_this.bun_vm().console;
+    let this = vm_console(global_this);
     // SAFETY: caller passes a valid (ptr, len) pair.
     let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
     let hash = bun_wyhash::hash(slice);
@@ -4720,7 +4640,7 @@ pub extern "C" fn Bun__ConsoleObject__countReset(
     ptr: *const u8,
     len: usize,
 ) {
-    let this = global_this.bun_vm().console;
+    let this = vm_console(global_this);
     // SAFETY: caller passes a valid (ptr, len) pair.
     let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
     let hash = bun_wyhash::hash(slice);
@@ -4826,18 +4746,14 @@ pub extern "C" fn Bun__ConsoleObject__timeLog(
         global_this: global,
         ordered_properties: false,
         quote_strings: false,
-        max_depth: {
-            let cli_context = CLI::get();
-            cli_context
-                .runtime_options
-                .console_depth
-                .unwrap_or(DEFAULT_CONSOLE_LOG_DEPTH)
-        },
+        // TODO(port-cycle): `CLI::get().runtime_options.console_depth` — see
+        // the matching note in `message_with_type_and_level_`.
+        max_depth: DEFAULT_CONSOLE_LOG_DEPTH,
         stack_check: StackCheck::init(),
         can_throw_stack_overflow: true,
         ..Formatter::new(global)
     };
-    let console = global.bun_vm().console;
+    let console = vm_console(global);
     let writer = console.error_writer();
     // SAFETY: caller passes a valid (args, args_len) pair.
     for &arg in unsafe { core::slice::from_raw_parts(args, args_len) } {
@@ -4942,7 +4858,6 @@ pub extern "C" fn Bun__ConsoleObject__messageWithTypeAndLevel(
     message_with_type_and_level(ctype, message_type, level, global, vals, len);
 }
 
-} // mod _body
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

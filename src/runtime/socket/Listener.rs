@@ -1410,7 +1410,7 @@ impl WindowsNamedPipeListeningContext {
             boringssl::load();
 
             let ctx_opts: uws::SocketContext::BunSocketContextOptions = ssl_options.as_usockets();
-            let mut err = uws::CreateBunSocketError::None;
+            let mut err = uws::create_bun_socket_error_t::none;
             // Create SSL context using uSockets to match behavior of node.js
             this.ctx = match ctx_opts.create_ssl_context(&mut err) {
                 Some(c) => Some(c),

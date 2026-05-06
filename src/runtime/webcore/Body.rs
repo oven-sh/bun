@@ -2194,8 +2194,8 @@ impl<'a> ValueBufferer<'a> {
                 // toBlobIfPossible should've caught this
                 webcore::readable_stream::Source::Blob(_)
                 | webcore::readable_stream::Source::File(_) => unreachable!(),
-                webcore::readable_stream::Source::JavaScript(_)
-                | webcore::readable_stream::Source::Direct(_) => {
+                webcore::readable_stream::Source::JavaScript
+                | webcore::readable_stream::Source::Direct => {
                     // this is broken right now
                     // return self.create_js_sink(stream);
                     return Err(bun_core::err!("UnsupportedStreamType"));

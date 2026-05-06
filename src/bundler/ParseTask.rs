@@ -633,7 +633,7 @@ fn get_empty_css_ast(
     log: &mut Log,
     transpiler: &mut Transpiler,
     opts: ParserOptions,
-    bump: &Bump,
+    bump: &'static Bump,
     source: &Source,
 ) -> core::result::Result<JSAst, AnyError> {
     let root = Expr::init(E::Object::default(), Loc { start: 0 });
@@ -641,7 +641,7 @@ fn get_empty_css_ast(
         js_parser::new_lazy_export_ast(bump, &mut transpiler.options.define, opts, log, root, source, b"")?
             .unwrap(),
     );
-    ast.css = Some(bump.alloc(bun_css::BundlerStyleSheet::empty(bump)) as *mut _ as *mut c_void);
+    ast.css = Some(bump.alloc(bun_css::BundlerStyleSheet::empty()) as *mut _ as *mut c_void);
     Ok(ast)
 }
 
@@ -649,7 +649,7 @@ fn get_empty_ast<RootType: Default + ast::expr::IntoExprData>(
     log: &mut Log,
     transpiler: &mut Transpiler,
     opts: ParserOptions,
-    bump: &Bump,
+    bump: &'static Bump,
     source: &Source,
 ) -> core::result::Result<JSAst, AnyError> {
     let root = Expr::init(RootType::default(), Loc::EMPTY);
@@ -689,7 +689,7 @@ fn get_ast(
     log: &mut Log,
     transpiler: &mut Transpiler,
     opts: ParserOptions,
-    bump: &Bump,
+    bump: &'static Bump,
     resolver: &mut Resolver,
     source: &Source,
     loader: Loader,
@@ -1962,7 +1962,9 @@ fn run_with_source_code(
     entry: &mut CacheEntry,
 ) -> core::result::Result<Success, AnyError> {
     // SAFETY: see `get_source_code` — worker arena pinned for the bundle pass.
-    let bump: &Bump = unsafe { &*this.allocator };
+    // `'static` matches `JSAst = BundledAst<'static>` (ungate_support.rs); the
+    // arena outlives all reads through the returned ASTs.
+    let bump: &'static Bump = unsafe { &*this.allocator };
 
     // PORT NOTE: reshaped for borrowck — `transpiler_for_target` borrows `this`
     // mutably; we may need to call it again below (server-components branch),
@@ -2393,7 +2395,9 @@ fn run_from_thread_pool_impl(this: &mut ParseTask) {
         // `ConcurrentTask` is POD with no NonNull/NonZero fields.
         task: unsafe { core::mem::zeroed() },
         value,
-        external: this.external_free_function,
+        // PORT NOTE: `ExternalFreeFunction` is POD in Zig (copied); Rust port
+        // doesn't derive `Copy`, so move it out (task is consumed here).
+        external: core::mem::take(&mut this.external_free_function),
         watcher_data: match this.contents_or_fd {
             ContentsOrFd::Fd { file, dir } => WatcherData { fd: file, dir_fd: dir },
             ContentsOrFd::Contents(_) => WatcherData::NONE,

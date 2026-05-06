@@ -3182,12 +3182,12 @@ impl<'a> BundleV2<'a> {
                 if let Some(dev) = this.dev_server {
                     let source = &this.graph.input_files.items_source()[load.source_index.get() as usize];
                     // A stack-allocated Log object containing the singular message
-                    let mut msg_mut = msg;
+                    let kind = msg.kind;
                     let temp_log = Logger::Log {
                         clone_line_text: false,
-                        errors: (msg.kind == Logger::Kind::Err) as u32,
-                        warnings: (msg.kind == Logger::Kind::Warn) as u32,
-                        msgs: vec![msg_mut],
+                        errors: (kind == Logger::Kind::Err) as u32,
+                        warnings: (kind == Logger::Kind::Warn) as u32,
+                        msgs: vec![msg],
                         ..Default::default()
                     };
                     dev.handle_parse_task_failure(
@@ -3229,7 +3229,12 @@ fn on_resolve_from_js_loop_raw(resolve: *mut jsc_api::JSBundler::Resolve) -> Res
 
 impl<'a> BundleV2<'a> {
     pub fn on_resolve(resolve: &mut jsc_api::JSBundler::Resolve, this: &mut BundleV2) {
-        let _dec_guard = scopeguard::guard((), |_| this.decrement_scan_counter());
+        // SAFETY: `this` outlives `_dec_guard` (dropped at fn exit). Capturing
+        // `this` by reference would hold a unique borrow for the whole body and
+        // block every subsequent use; raw-ptr capture mirrors Zig's
+        // `defer this.decrementScanCounter()` without borrowck contention.
+        let this_ptr: *mut BundleV2 = this;
+        let _dec_guard = scopeguard::guard((), move |_| unsafe { (*this_ptr).decrement_scan_counter() });
         bun_core::scoped_log!(Bundle, "onResolve: ({}:{}, {:?})",
             bstr::BStr::new(&resolve.import_record.namespace),
             bstr::BStr::new(&resolve.import_record.specifier),

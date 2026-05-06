@@ -3045,15 +3045,15 @@ impl H2FrameParser {
             return Ok(data.len());
         }
 
-        let self_ptr = self as *mut Self;
-        // SAFETY: self_ptr = self as *mut Self captured above; reshaped for borrowck, no aliasing &mut held across this call
-        if let Some(content) = unsafe { &mut *self_ptr }.handle_incomming_payload(data, frame.stream_identifier) {
-            let payload = content.data;
+        if let Some(content) = self.handle_incomming_payload(data, frame.stream_identifier) {
+            // SAFETY: see Payload::data — points into caller `data` or read_buffer's allocation;
+            // reset() only clears len so the bytes stay readable through decode_header_block below
+            // (matches Zig handleHeadersFrame ordering).
+            let payload = unsafe { content.data() };
             let mut offset: usize = 0;
             let mut padding: usize = 0;
             let end_ = content.end;
-            // SAFETY: self_ptr = self as *mut Self captured above; reshaped for borrowck, payload borrow released before reset
-            unsafe { &mut *self_ptr }.read_buffer.reset();
+            self.read_buffer.reset();
 
             if frame.flags & HeadersFrameFlags::PADDED as u8 != 0 {
                 if payload.len() < 1 {
@@ -3188,12 +3188,12 @@ impl H2FrameParser {
             if send_ack_on_exit { self.send_settings_ack(); }
             return 0;
         }
-        let self_ptr = self as *mut Self;
-        // SAFETY: self_ptr = self as *mut Self captured above; reshaped for borrowck, no aliasing &mut held across this call
-        if let Some(content) = unsafe { &mut *self_ptr }.handle_incomming_payload(data, frame.stream_identifier) {
+        if let Some(content) = self.handle_incomming_payload(data, frame.stream_identifier) {
             let mut remote_settings: FullSettingsPayload = self.remote_settings.unwrap_or_default();
             let mut i: usize = 0;
-            let payload = content.data;
+            // SAFETY: see Payload::data — backing storage (caller `data` or read_buffer alloc) is
+            // not freed/grown before `payload` is consumed; reset() below only clears len.
+            let payload = unsafe { content.data() };
             while i < payload.len() {
                 // SAFETY: all-zero is a valid SettingsPayloadUnit (#[repr(C)] POD, no NonNull/NonZero/enum fields)
                 let mut unit: SettingsPayloadUnit = unsafe { core::mem::zeroed() };

@@ -108,6 +108,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 if chunk.content.is_css() {
                     tasks[i] = PrepareCssAstTask {
                         task: ThreadPoolLib::Task {
+                            node: ThreadPoolLib::Node::default(),
                             callback: prepare_css_asts_for_chunk,
                         },
                         chunk: chunk as *mut Chunk,
@@ -195,6 +196,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                 part_range: *part_range,
                                 i: u32::try_from(i).unwrap(),
                                 task: ThreadPoolLib::Task {
+                                    node: ThreadPoolLib::Node::default(),
                                     callback: generate_compile_result_for_js_chunk,
                                 },
                                 ctx: chunk_ctx as *mut GenerateChunkCtx,
@@ -211,6 +213,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                 part_range: Default::default(),
                                 i: u32::try_from(i).unwrap(),
                                 task: ThreadPoolLib::Task {
+                                    node: ThreadPoolLib::Node::default(),
                                     callback: generate_compile_result_for_css_chunk,
                                 },
                                 ctx: chunk_ctx as *mut GenerateChunkCtx,
@@ -225,6 +228,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             part_range: Default::default(),
                             i: 0,
                             task: ThreadPoolLib::Task {
+                                node: ThreadPoolLib::Node::default(),
                                 callback: generate_compile_result_for_html_chunk,
                             },
                             ctx: chunk_ctx as *mut GenerateChunkCtx,

@@ -16,6 +16,7 @@ use bun_uws as uws;
 
 use super::js_valkey_functions as fns;
 use super::valkey;
+use super::valkey_command_body as command;
 use super::valkey_command_body::Command;
 use bun_jsc::URL;
 use bun_valkey::valkey_protocol as protocol;
@@ -746,8 +747,8 @@ impl JSValkeyClient {
                 protocol: uri,
                 username,
                 password,
-                in_flight: LinearFifo::init(),
-                queue: LinearFifo::init(),
+                in_flight: command::promise_pair::Queue::init(),
+                queue: command::entry::Queue::init(),
                 status: valkey::Status::Disconnected,
                 connection_strings,
                 socket: Socket::SocketTcp(uws::SocketTCP {
@@ -867,8 +868,8 @@ impl JSValkeyClient {
                 protocol: self.client.protocol,
                 username,
                 password,
-                in_flight: LinearFifo::init(),
-                queue: LinearFifo::init(),
+                in_flight: command::promise_pair::Queue::init(),
+                queue: command::entry::Queue::init(),
                 status: valkey::Status::Disconnected,
                 connection_strings: connection_strings_copy,
                 socket: Socket::SocketTcp(uws::SocketTCP {

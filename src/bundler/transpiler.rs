@@ -800,56 +800,56 @@ impl<'a> Transpiler<'a> {
                 break 'brk logger::Source::init_path_string(path.text, body);
             }
 
-            // TODO(b2-blocked): `crate::cache::Fs::read_file_with_allocator` is
-            // gated (depends on `bun_resolver::fs::FileSystem` + `bun_sys::File`
-            // surface) and the resolver's CYCLEBREAK `CacheSet.fs` stub body is
-            // `unimplemented!()`. Un-gate this block once either lands; the
-            // `init_recycled_file` constructor also needs the public
-            // `PathContentsPair` (logger keeps it module-private).
-            #[cfg(any())]
-            {
-                let entry = match self.resolver.caches.fs.read_file_with_allocator(
-                    // PERF(port): USE_SHARED_BUFFER selected default_allocator vs this_parse.allocator
-                    &mut *self.fs,
-                    path.text,
-                    dirname_fd,
-                    USE_SHARED_BUFFER,
-                    file_descriptor,
-                ) {
-                    Ok(e) => e,
-                    Err(err) => {
-                        let _ = log.add_error_fmt(
-                            None,
-                            logger::Loc::EMPTY,
-                            format_args!("{} reading \"{}\"", err, bstr::BStr::new(path.text)),
-                        );
-                        return None;
-                    }
-                };
-                input_fd = Some(entry.fd);
-                if let Some(file_fd_ptr) = this_parse.file_fd_ptr {
-                    *file_fd_ptr = entry.fd;
+            // PERF(port): Zig forwarded `if (use_shared_buffer)
+            // bun.default_allocator else this_parse.allocator` — the Rust
+            // `read_file_with_allocator` drops the allocator (global mimalloc
+            // for the non-shared path; see resolver/lib.rs PORT NOTE).
+            let entry = match self.resolver.caches.fs.read_file_with_allocator(
+                // SAFETY: `self.fs` is the non-null `&Fs.FileSystem.instance`
+                // singleton (see `Transpiler.fs` field PORT NOTE).
+                unsafe { &mut *self.fs },
+                path.text,
+                dirname_fd,
+                USE_SHARED_BUFFER,
+                file_descriptor,
+            ) {
+                Ok(e) => e,
+                Err(err) => {
+                    let _ = log.add_error_fmt(
+                        None,
+                        logger::Loc::EMPTY,
+                        format_args!(
+                            "{} reading \"{}\"",
+                            bstr::BStr::new(err.name()),
+                            bstr::BStr::new(path.text),
+                        ),
+                    );
+                    return None;
                 }
-                match logger::Source::init_recycled_file(logger::PathContentsPair {
-                    path: path.clone(),
-                    contents: entry.contents,
-                }) {
-                    Ok(s) => break 'brk s,
-                    Err(_) => return None,
-                }
+            };
+            input_fd = Some(entry.fd);
+            if let Some(file_fd_ptr) = this_parse.file_fd_ptr {
+                *file_fd_ptr = entry.fd;
             }
-            #[cfg(not(any()))]
-            {
-                let _ = (file_descriptor, dirname_fd, &this_parse.file_fd_ptr);
-                let _ = log.add_error_fmt(
-                    None,
-                    logger::Loc::EMPTY,
-                    format_args!(
-                        "reading \"{}\" (b2-blocked: cache::Fs::read_file)",
-                        bstr::BStr::new(path.text)
-                    ),
-                );
-                return None;
+            // PORT NOTE: `Source.contents: &'static [u8]` (Phase-A `Str`
+            // convention). The bytes live either in the per-thread shared
+            // buffer (`USE_SHARED_BUFFER`) or a heap allocation the caller
+            // recycles after the `ParseResult` is consumed (Zig handed
+            // ownership to the `Source`; `Entry.deinit` is never called on
+            // this path). `entry` is forgotten so `Contents::Owned`'s implicit
+            // `Drop` does not free out from under the returned `Source`.
+            // SAFETY: ARENA — `contents_is_recycled = true` records that the
+            // bytes are externally-owned; Phase B threads `'bump`.
+            let contents: &'static [u8] = unsafe {
+                core::slice::from_raw_parts(entry.contents.as_ptr(), entry.contents.len())
+            };
+            core::mem::forget(entry);
+            match logger::Source::init_recycled_file(logger::PathContentsPair {
+                path: path.clone(),
+                contents,
+            }) {
+                Ok(s) => break 'brk s,
+                Err(_) => return None,
             }
         };
         let source: &logger::Source = &source_owned;

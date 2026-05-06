@@ -1928,45 +1928,54 @@ impl<'a> Parser<'a> {
             let after_len = after.len();
             let parts_len = parts.len();
             parts.reserve(before_len + after_len);
-            // SAFETY: capacity reserved above; we fully initialize the new range below.
-            unsafe { parts.set_len(parts_len + before_len + after_len) };
+            // PORT NOTE: do NOT `parts.set_len(new_len)` before the raw copies. Doing so
+            // would (a) make `parts` claim uninitialized slots and (b) create a window
+            // where both `parts` and `before`/`after` own the same `Part` values — a
+            // double-free if anything unwinds. We operate on the raw spare capacity via
+            // `as_mut_ptr()` and only commit the new length after ownership has been
+            // fully transferred (source vecs emptied) below.
+            let base = parts.as_mut_ptr();
 
             if before_len > 0 {
                 if parts_len > 0 {
                     // first copy parts to the middle if before exists
                     // PORT NOTE: src/dst overlap → use ptr::copy (memmove semantics)
                     unsafe {
-                        // SAFETY: ranges are within `parts`; ptr::copy handles overlap.
-                        let base = parts.as_mut_ptr();
+                        // SAFETY: `reserve` guarantees capacity for `parts_len + before_len
+                        // + after_len`; both ranges lie within that allocation and
+                        // ptr::copy handles overlap.
                         core::ptr::copy(base, base.add(before_len), parts_len);
                     }
                 }
                 unsafe {
-                    // SAFETY: non-overlapping; `before` is a separate buffer.
-                    core::ptr::copy_nonoverlapping(
-                        before.as_ptr(),
-                        parts.as_mut_ptr(),
-                        before_len,
-                    );
+                    // SAFETY: non-overlapping; `before` is a separate buffer and
+                    // `[0, before_len)` is within `parts`' reserved capacity.
+                    core::ptr::copy_nonoverlapping(before.as_ptr(), base, before_len);
                 }
             }
             if after_len > 0 {
                 unsafe {
-                    // SAFETY: non-overlapping; `after` is a separate buffer.
+                    // SAFETY: non-overlapping; `after` is a separate buffer and
+                    // `[parts_len + before_len, ..)` is within `parts`' reserved capacity.
                     core::ptr::copy_nonoverlapping(
                         after.as_ptr(),
-                        parts.as_mut_ptr().add(parts_len + before_len),
+                        base.add(parts_len + before_len),
                         after_len,
                     );
                 }
             }
-            // SAFETY: ownership of the `Part` elements has been bitwise-moved into `parts`
-            // above. `bumpalo::collections::Vec::drop` runs element destructors, so we must
-            // logically empty the source vecs to avoid double-free of `Part`'s heap-owning
-            // fields (BabyList / ArrayHashMap). The backing storage itself is bump-allocated.
+            // SAFETY: ownership of the `Part` elements has been bitwise-moved into
+            // `parts`' buffer above. `bumpalo::collections::Vec::drop` runs element
+            // destructors, so we must logically empty the source vecs *before*
+            // committing the new `parts` length to avoid any double-free window on
+            // `Part`'s heap-owning fields (BabyList / ArrayHashMap). The backing
+            // storage itself is bump-allocated.
             unsafe {
                 before.set_len(0);
                 after.set_len(0);
+                // SAFETY: capacity reserved above; the full `[0, new_len)` range is now
+                // initialized (memmove + two copy_nonoverlapping) and uniquely owned.
+                parts.set_len(parts_len + before_len + after_len);
             }
         }
 

@@ -682,6 +682,8 @@ mod nocancel {
         pub fn pread(fd: c_int, buf: *mut libc::c_void, count: usize, off: libc::off_t) -> isize;
         #[link_name = "pwrite$NOCANCEL"]
         pub fn pwrite(fd: c_int, buf: *const libc::c_void, count: usize, off: libc::off_t) -> isize;
+        #[link_name = "pwritev$NOCANCEL"]
+        pub fn pwritev(fd: c_int, iov: *const libc::iovec, iovcnt: c_int, off: libc::off_t) -> isize;
         #[link_name = "recvfrom$NOCANCEL"]
         pub fn recvfrom(fd: c_int, buf: *mut libc::c_void, len: usize, flags: c_int, addr: *mut libc::sockaddr, alen: *mut libc::socklen_t) -> isize;
         #[link_name = "sendto$NOCANCEL"]
@@ -902,7 +904,7 @@ mod posix_impl {
     /// sys.zig:3897 — `fcntl(F_DUPFD_CLOEXEC, 0)` so the dup'd fd doesn't leak
     /// to children. NOT `dup(2)` (which lacks CLOEXEC).
     pub fn dup(fd: Fd) -> Maybe<Fd> {
-        let rc = check!(unsafe { libc::fcntl(fd.native(), libc::F_DUPFD_CLOEXEC, 0) }, Tag::dup);
+        let rc = check!(unsafe { libc::fcntl(fd.native(), libc::F_DUPFD_CLOEXEC, 0) }, Tag::fcntl);
         Ok(Fd::from_native(rc))
     }
     pub fn fchmod(fd: Fd, mode: Mode) -> Maybe<()> {
@@ -1270,22 +1272,7 @@ mod posix_impl {
         );
         Ok(n as usize)
     }
-    #[cfg(target_os = "macos")]
-    pub fn sendfile(src: Fd, dest: Fd, len: usize) -> Maybe<usize> {
-        let mut wrote = len.min(i32::MAX as usize - 1) as i64;
-        loop {
-            let rc = unsafe {
-                libc::sendfile(src.native(), dest.native(), 0, &mut wrote, core::ptr::null_mut(), 0)
-            };
-            if rc < 0 {
-                let e = last_errno();
-                if e == libc::EINTR { continue; }
-                if e != libc::EAGAIN { return Err(Error::from_code_int(e, Tag::sendfile)); }
-            }
-            return Ok(wrote as usize);
-        }
-    }
-    #[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
+    #[cfg(all(unix, not(target_os = "linux")))]
     pub fn sendfile(_src: Fd, _dest: Fd, _len: usize) -> Maybe<usize> {
         Err(Error::from_code_int(libc::ENOSYS, Tag::sendfile))
     }

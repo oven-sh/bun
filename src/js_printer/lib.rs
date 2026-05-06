@@ -6776,31 +6776,45 @@ pub fn get_source_map_builder<const IS_BUN_PLATFORM: bool>(
 // Top-level print entry points
 // ───────────────────────────────────────────────────────────────────────────
 
-// TODO(b2-blocked): bun_js_parser::Scope::{children::slice_mut, parent} self-ref
-// TODO(b2-blocked): bun_js_parser::ast::symbol::Map::get → &mut Symbol (must_not_be_renamed write)
-// TODO(b2-blocked): borrowck — `opts` moved into `Printer::init` then re-read for
-//   module_info / runtime_transpiler_cache / source_map_handler
-#[cfg(any())]
-pub fn print_ast<W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOURCE_MAP: bool>(
+pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOURCE_MAP: bool>(
     _writer: W,
-    tree: Ast,
+    bump: &'a bumpalo::Bump,
+    tree: &'a Ast,
     symbols: js_ast::ast::symbol::Map,
-    source: &logger::Source,
-    opts: Options,
+    source: &'a logger::Source,
+    opts: Options<'a>,
 ) -> Result<usize, bun_core::Error> {
-    let mut renamer: rename::Renamer;
-    let mut no_op_renamer: rename::NoOpRenamer;
-    let mut module_scope = tree.module_scope;
+    let prev_action = bun_crash_handler::current_action();
+    let _restore = scopeguard::guard((), |_| bun_crash_handler::set_current_action(prev_action));
+    bun_crash_handler::set_current_action(Some(bun_crash_handler::Action::Print(source.path.text)));
+
+    // PORT NOTE: Zig declared `renamer`/`no_op_renamer` undefined and assigned per
+    // branch. `Renamer<'r,'src>` is invariant in `'src` (it holds `&'r mut
+    // NoOpRenamer<'src>`), so the two arms must agree on `'src`; constructing the
+    // `MinifyRenamer` variant inline (rather than via `to_renamer() ->
+    // Renamer<'static,'static>`) lets inference unify it with the no-op arm.
+    let mut no_op_renamer;
+    let renamer: rename::Renamer<'_, '_>;
+    // PORT NOTE: Zig copied `tree.module_scope` to a stack local and re-pointed
+    // children's `parent` at the local. `Scope` isn't `Copy` here and the only
+    // consumer (`compute_reserved_names_for_scope`) walks `members`/`generated`/
+    // `children` — never `parent` — so we re-point at the in-place
+    // `tree.module_scope` instead (lives for `'a`, strictly safer than the Zig
+    // stack-local backref).
+    let module_scope = &tree.module_scope;
+    let stable_source_indices = [source.index.0];
     if opts.minify_identifiers {
         let mut reserved_names = rename::compute_initial_reserved_names(opts.module_type)?;
-        for child in module_scope.children.slice_mut() {
-            child.parent = Some(&mut module_scope); // TODO(port): self-reference — needs raw ptr in Phase B
+        for child in module_scope.children.slice() {
+            // SAFETY: `Scope.children` are arena-allocated; `parent` is a raw
+            // back-pointer (`Option<NonNull<Scope>>`) by design.
+            unsafe { (*child.as_ptr()).parent = Some(NonNull::from(module_scope)); }
         }
 
-        rename::compute_reserved_names_for_scope(&module_scope, &symbols, &mut reserved_names);
-        let mut minify_renamer = rename::MinifyRenamer::init(symbols, tree.nested_scope_slot_counts, reserved_names)?;
+        rename::compute_reserved_names_for_scope(module_scope, &symbols, &mut reserved_names);
+        let mut minify_renamer = rename::MinifyRenamer::init(symbols, tree.nested_scope_slot_counts.clone(), reserved_names)?;
 
-        let mut top_level_symbols = rename::StableSymbolCount::Array::new();
+        let mut top_level_symbols = rename::StableSymbolCountArray::new();
 
         let uses_exports_ref = tree.uses_exports_ref;
         let uses_module_ref = tree.uses_module_ref;
@@ -6808,40 +6822,45 @@ pub fn print_ast<W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOURCE_M
         let module_ref = tree.module_ref;
         let parts = &tree.parts;
 
+        // PORT NOTE: `symbols` was moved into `minify_renamer`; reach it through
+        // the renamer for the post-init `must_not_be_renamed` pass (Zig held a
+        // by-value copy).
         let dont_break_the_code = [tree.module_ref, tree.exports_ref, tree.require_ref];
         for ref_ in dont_break_the_code {
-            if let Some(symbol) = symbols.get(ref_) {
-                symbol.must_not_be_renamed = true;
+            if let Some(symbol) = minify_renamer.symbols.get(ref_) {
+                // SAFETY: `Map::get` yields an arena-backed `*mut Symbol`.
+                unsafe { (*symbol).must_not_be_renamed = true; }
             }
         }
 
         for named_export in tree.named_exports.values() {
-            if let Some(symbol) = symbols.get(named_export.ref_) {
-                symbol.must_not_be_renamed = true;
+            if let Some(symbol) = minify_renamer.symbols.get(named_export.ref_) {
+                // SAFETY: `Map::get` yields an arena-backed `*mut Symbol`.
+                unsafe { (*symbol).must_not_be_renamed = true; }
             }
         }
 
         if uses_exports_ref {
-            minify_renamer.accumulate_symbol_use_count(&mut top_level_symbols, exports_ref, 1, &[source.index.value])?;
+            minify_renamer.accumulate_symbol_use_count(&mut top_level_symbols, exports_ref, 1, &stable_source_indices)?;
         }
         if uses_module_ref {
-            minify_renamer.accumulate_symbol_use_count(&mut top_level_symbols, module_ref, 1, &[source.index.value])?;
+            minify_renamer.accumulate_symbol_use_count(&mut top_level_symbols, module_ref, 1, &stable_source_indices)?;
         }
 
         for part in parts.slice() {
-            minify_renamer.accumulate_symbol_use_counts(&mut top_level_symbols, &part.symbol_uses, &[source.index.value])?;
+            minify_renamer.accumulate_symbol_use_counts(&mut top_level_symbols, &part.symbol_uses, &stable_source_indices)?;
             for declared_ref in part.declared_symbols.refs() {
-                minify_renamer.accumulate_symbol_use_count(&mut top_level_symbols, *declared_ref, 1, &[source.index.value])?;
+                minify_renamer.accumulate_symbol_use_count(&mut top_level_symbols, *declared_ref, 1, &stable_source_indices)?;
             }
         }
 
-        top_level_symbols.sort_by(rename::StableSymbolCount::less_than);
+        top_level_symbols.sort_unstable_by(rename::StableSymbolCount::less_than);
 
-        minify_renamer.allocate_top_level_symbol_slots(top_level_symbols)?;
+        minify_renamer.allocate_top_level_symbol_slots(&top_level_symbols)?;
         let mut minifier = tree.char_freq.as_ref().unwrap().compile();
         minify_renamer.assign_names_by_frequency(&mut minifier)?;
 
-        renamer = minify_renamer.to_renamer();
+        renamer = rename::Renamer::MinifyRenamer(minify_renamer);
     } else {
         no_op_renamer = rename::NoOpRenamer::init(symbols, source);
         renamer = no_op_renamer.to_renamer();
@@ -6849,28 +6868,35 @@ pub fn print_ast<W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOURCE_M
 
     // defer: if minify_identifiers { renamer.deinit() } — Drop handles.
 
+    // Spec js_printer.zig:6024 — `is_bun_platform = ascii_only` for printAst.
     type PrinterType<'a, W, const A: bool, const G: bool> = Printer<'a, W, A, false, /*IS_BUN_PLATFORM=*/A, false, G>;
     let writer = _writer;
 
+    let mut opts = opts;
+    let source_map_builder = get_source_map_builder::<ASCII_ONLY>(GenerateSourceMap::lazy_if(GENERATE_SOURCE_MAP), &mut opts, source, tree);
     let mut printer = PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::init(
         writer,
+        bump,
         tree.import_records.slice(),
         opts,
         renamer,
-        get_source_map_builder::<{ if GENERATE_SOURCE_MAP { GenerateSourceMap::Lazy } else { GenerateSourceMap::Disable } }, ASCII_ONLY>(&opts, source, &tree),
+        source_map_builder,
     );
     // defer: if GENERATE_SOURCE_MAP { printer.source_map_builder.line_offset_tables.deinit() } — Drop handles.
     printer.was_lazy_export = tree.has_lazy_export;
+    // PORT NOTE: borrowck reshape — `opts` was moved into `Printer::init`; mirror
+    // Zig's post-init `printer.module_info = opts.module_info` by taking it back
+    // out of `printer.options` (see `print_with_writer_and_platform`).
     if PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::MAY_HAVE_MODULE_INFO {
-        printer.module_info = opts.module_info;
+        printer.module_info = printer.options.module_info.take();
     }
     // PERF(port): was stack-fallback allocator for binary_expression_stack
     printer.binary_expression_stack = Vec::new();
 
-    if !opts.bundling
+    if !printer.options.bundling
         && tree.uses_require_ref
         && tree.exports_kind == js_ast::ExportsKind::Esm
-        && opts.target == bundle_opts::Target::Bun
+        && printer.options.target == bundle_opts::Target::Bun
     {
         // Hoist the `var {require}=import.meta;` declaration. Previously,
         // `import.meta.require` was inlined into transpiled files, which
@@ -6883,48 +6909,50 @@ pub fn print_ast<W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOURCE_M
         printer.print(b"var {require}=import.meta;");
 
         if PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::MAY_HAVE_MODULE_INFO {
-            if let Some(mi) = printer.module_info() {
+            if let Some(mi) = printer.module_info.as_deref_mut() {
                 mi.flags.contains_import_meta = true;
-                mi.add_var(mi.str(b"require"), analyze_transpiled_module::VarKind::Declared);
+                let s = mi.str(b"require");
+                mi.add_var(s, analyze_transpiled_module::VarKind::Declared);
             }
         }
     }
 
     for part in tree.parts.slice() {
-        for stmt in &part.stmts {
+        for stmt in slice_of(part.stmts).iter() {
             printer.print_stmt(*stmt, TopLevel::init(IsTopLevel::Yes))?;
             printer.writer.get_error()?;
             printer.print_semicolon_if_needed();
         }
     }
 
-    let have_module_info = PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::MAY_HAVE_MODULE_INFO && opts.module_info.is_some();
+    let have_module_info = PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::MAY_HAVE_MODULE_INFO && printer.module_info.is_some();
     if have_module_info {
-        opts.module_info.as_mut().unwrap().finalize()?;
+        printer.module_info.as_mut().unwrap().finalize().map_err(|()| bun_core::Error::OUT_OF_MEMORY)?;
     }
 
     let mut source_maps_chunk: Option<SourceMap::Chunk> = if GENERATE_SOURCE_MAP {
-        if opts.source_map_handler.is_some() {
-            Some(printer.source_map_builder.generate_chunk(printer.writer.ctx_get_written()))
-            // TODO(port): writer.ctx.getWritten() — need accessor on WriterTrait
+        if printer.options.source_map_handler.is_some() {
+            // PORT NOTE: Zig used `printer.writer.ctx.getWritten()`; WriterTrait
+            // exposes the same buffer via `slice()` (cf. print_with_writer_and_platform).
+            Some(printer.source_map_builder.generate_chunk(printer.writer.slice()))
         } else { None }
     } else { None };
     // defer: if let Some(chunk) = &mut source_maps_chunk { chunk.deinit() } — Drop handles.
 
-    if let Some(cache) = opts.runtime_transpiler_cache {
+    if let Some(cache) = &printer.options.runtime_transpiler_cache {
         let mut srlz_res: Vec<u8> = Vec::new();
         if have_module_info {
-            opts.module_info.as_ref().unwrap().as_deserialized().serialize(&mut srlz_res)?;
+            printer.module_info.as_ref().unwrap().as_deserialized().serialize(&mut srlz_res)?;
         }
         cache.put(
-            printer.writer.ctx_get_written(), // TODO(port): accessor
+            printer.writer.slice(),
             source_maps_chunk.as_ref().map(|c| c.buffer.list.as_slice()).unwrap_or(b""),
             &srlz_res,
         );
     }
 
     if GENERATE_SOURCE_MAP {
-        if let Some(handler) = &opts.source_map_handler {
+        if let Some(handler) = &printer.options.source_map_handler {
             handler.on_source_map_chunk(source_maps_chunk.take().unwrap(), source)?;
         }
     }

@@ -291,7 +291,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             && !is_delete_target
         {
             if let Some(def) = p.define.for_identifier(name) {
-                if def.value.is_some() {
+                if !def.valueless() {
                     // blocked_on: P::value_for_define is in the gated round-D impl
                     // (P.rs `#[cfg(any())]` block); body preserved in _draft.
                     let newvalue: Expr = {
@@ -308,21 +308,21 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         return newvalue;
                     }
 
-                    original_name = def.original_name.as_deref();
+                    original_name = def.original_name();
                 }
 
                 // Copy the side effect flags over in case this expression is unused
-                if def.can_be_removed_if_unused {
+                if def.can_be_removed_if_unused() {
                     e_.can_be_removed_if_unused = true;
                 }
-                // PORT NOTE: round-C `defines` stub stores `call_can_be_unwrapped_if_unused: bool`;
-                // the full Zig type is `js_ast.E.CallUnwrap`. `true` ↔ `.if_unused`.
-                if def.call_can_be_unwrapped_if_unused && !p.options.ignore_dce_annotations {
+                if def.call_can_be_unwrapped_if_unused() != E::CallUnwrap::Never
+                    && !p.options.ignore_dce_annotations
+                {
                     e_.call_can_be_unwrapped_if_unused = true;
                 }
 
                 // If the user passed --drop=console, drop all property accesses to console.
-                if def.method_call_must_be_replaced_with_undefined
+                if def.method_call_must_be_replaced_with_undefined()
                     && in_.property_access_for_method_call_maybe_should_replace_with_undefined
                     && in_.assign_target == js_ast::AssignTarget::None
                 {
@@ -1279,12 +1279,12 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 if is_match {
                     if in_.assign_target == js_ast::AssignTarget::None {
                         // Substitute user-specified defines
-                        if define.data.value.is_some() {
+                        if !define.data.valueless() {
                             let _ = (in_.assign_target, is_delete_target, &define.data);
                             todo!("e_dot: P::value_for_define (gated)");
                         }
 
-                        if define.data.method_call_must_be_replaced_with_undefined
+                        if define.data.method_call_must_be_replaced_with_undefined()
                             && in_
                                 .property_access_for_method_call_maybe_should_replace_with_undefined
                         {
@@ -1293,15 +1293,15 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     }
 
                     // Copy the side effect flags over in case this expression is unused
-                    if define.data.can_be_removed_if_unused {
+                    if define.data.can_be_removed_if_unused() {
                         e_.can_be_removed_if_unused = true;
                     }
 
-                    // PORT NOTE: round-C `defines` stub uses `bool`; full type is `E::CallUnwrap`.
-                    if define.data.call_can_be_unwrapped_if_unused
+                    if define.data.call_can_be_unwrapped_if_unused() != E::CallUnwrap::Never
                         && !p.options.ignore_dce_annotations
                     {
-                        e_.call_can_be_unwrapped_if_unused = E::CallUnwrap::IfUnused;
+                        e_.call_can_be_unwrapped_if_unused =
+                            define.data.call_can_be_unwrapped_if_unused();
                     }
 
                     break;

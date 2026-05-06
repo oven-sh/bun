@@ -1220,33 +1220,346 @@ impl RuntimeTranspilerCache {
 }
 
 // ─── from bun_bundler::defines (src/bundler/defines.zig) ────────────────────
-// Round-C stub: P.rs only needs `Define` (read-only handle) + `DefineData`
-// (lookup result). Full impl below stays gated.
+// B-3 UNIFIED: canonical `Define` / `DefineData` / `DotDefine` live here so the
+// parser (`P.define: &'a Define`) and the bundler (`BundleOptions.define:
+// Box<Define>`) share one nominal type. `bun_bundler::defines` re-exports these
+// and layers the table-backed `init` / json-parse on top via an extension
+// trait — those bodies need `defines_table` / `bun_interchange` which sit a
+// tier above js_parser. The fallback table lookup in `for_identifier` is
+// reached via the `PURE_GLOBAL_IDENTIFIER_LOOKUP` hook that bundler registers
+// once at startup (PORTING.md §Dispatch — cold path, one indirect call per
+// unbound-identifier visit; the Zig original inlined the static map).
 pub mod defines {
-    use crate::ast::expr;
-    #[derive(Default)]
-    pub struct Define {
-        pub identifiers: bun_collections::StringHashMap<IdentifierDefine>,
-        pub dots: bun_collections::StringHashMap<Vec<DotDefine>>,
-    }
-    #[derive(Clone, Default)]
-    pub struct DefineData {
-        pub value: Option<expr::Data>,
-        pub original_name: Option<Box<[u8]>>,
-        pub can_be_removed_if_unused: bool,
-        pub call_can_be_unwrapped_if_unused: bool,
-        pub method_call_must_be_replaced_with_undefined: bool,
-    }
+    use core::ptr::NonNull;
+    use std::sync::OnceLock;
+
+    use bun_collections::{StringArrayHashMap, StringHashMap};
+    use bun_string::strings;
+
+    use crate::ast::expr::Data as ExprData;
+    use crate::ast::StoreRef;
+    use crate::E;
+
+    // Zig: `bun.StringArrayHashMap(string)` / `bun.StringArrayHashMap(DefineData)`.
+    pub type RawDefines = StringArrayHashMap<Box<[u8]>>;
+    pub type UserDefines = StringHashMap<DefineData>;
+    pub type UserDefinesArray = StringArrayHashMap<DefineData>;
+
     pub type IdentifierDefine = DefineData;
-    #[derive(Clone, Default)]
+
+    /// Hook: `bun_bundler::defines_table::PURE_GLOBAL_IDENTIFIER_MAP` lookup.
+    /// Set once by the bundler's `Define::init`. `None` ⇒ no global fallback
+    /// (matches Zig when the table is compiled out).
+    // PERF(port): was direct comptime-map probe.
+    pub static PURE_GLOBAL_IDENTIFIER_LOOKUP: OnceLock<
+        fn(&[u8]) -> Option<&'static IdentifierDefine>,
+    > = OnceLock::new();
+
+    #[derive(Clone)]
     pub struct DotDefine {
+        // Zig stored borrowed `[][]const u8` into static tables / user-define
+        // key strings; the Rust port owns the part strings (small, allocated
+        // once at startup). PERF(port): tiny copies.
         pub parts: Vec<Box<[u8]>>,
         pub data: DefineData,
     }
+
+    /// Zig: `packed struct(u8)` — `_padding: u3, valueless: bool,
+    /// can_be_removed_if_unused: bool, call_can_be_unwrapped_if_unused:
+    /// E.CallUnwrap (u2), method_call_must_be_replaced_with_undefined: bool`.
+    /// Packed LSB-first → bit positions below match the Zig layout exactly.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Default, PartialEq, Eq)]
+    pub struct Flags(u8);
+
+    impl Flags {
+        const VALUELESS_SHIFT: u8 = 3;
+        const CAN_BE_REMOVED_SHIFT: u8 = 4;
+        const CALL_UNWRAP_SHIFT: u8 = 5;
+        const CALL_UNWRAP_MASK: u8 = 0b11 << Self::CALL_UNWRAP_SHIFT;
+        const METHOD_CALL_UNDEF_SHIFT: u8 = 7;
+
+        #[inline]
+        pub const fn valueless(self) -> bool {
+            (self.0 >> Self::VALUELESS_SHIFT) & 1 != 0
+        }
+        #[inline]
+        pub fn set_valueless(&mut self, v: bool) {
+            self.0 = (self.0 & !(1 << Self::VALUELESS_SHIFT)) | ((v as u8) << Self::VALUELESS_SHIFT);
+        }
+        #[inline]
+        pub const fn can_be_removed_if_unused(self) -> bool {
+            (self.0 >> Self::CAN_BE_REMOVED_SHIFT) & 1 != 0
+        }
+        #[inline]
+        pub fn set_can_be_removed_if_unused(&mut self, v: bool) {
+            self.0 = (self.0 & !(1 << Self::CAN_BE_REMOVED_SHIFT))
+                | ((v as u8) << Self::CAN_BE_REMOVED_SHIFT);
+        }
+        #[inline]
+        pub fn call_can_be_unwrapped_if_unused(self) -> E::CallUnwrap {
+            // SAFETY: CallUnwrap is #[repr(u8)] with values 0..=2; mask is 2 bits.
+            unsafe {
+                core::mem::transmute::<u8, E::CallUnwrap>(
+                    (self.0 & Self::CALL_UNWRAP_MASK) >> Self::CALL_UNWRAP_SHIFT,
+                )
+            }
+        }
+        #[inline]
+        pub fn set_call_can_be_unwrapped_if_unused(&mut self, v: E::CallUnwrap) {
+            self.0 =
+                (self.0 & !Self::CALL_UNWRAP_MASK) | (((v as u8) & 0b11) << Self::CALL_UNWRAP_SHIFT);
+        }
+        #[inline]
+        pub const fn method_call_must_be_replaced_with_undefined(self) -> bool {
+            (self.0 >> Self::METHOD_CALL_UNDEF_SHIFT) & 1 != 0
+        }
+        #[inline]
+        pub fn set_method_call_must_be_replaced_with_undefined(&mut self, v: bool) {
+            self.0 = (self.0 & !(1 << Self::METHOD_CALL_UNDEF_SHIFT))
+                | ((v as u8) << Self::METHOD_CALL_UNDEF_SHIFT);
+        }
+        pub fn new(
+            valueless: bool,
+            can_be_removed_if_unused: bool,
+            call_can_be_unwrapped_if_unused: E::CallUnwrap,
+            method_call_must_be_replaced_with_undefined: bool,
+        ) -> Self {
+            let mut f = Flags(0);
+            f.set_valueless(valueless);
+            f.set_can_be_removed_if_unused(can_be_removed_if_unused);
+            f.set_call_can_be_unwrapped_if_unused(call_can_be_unwrapped_if_unused);
+            f.set_method_call_must_be_replaced_with_undefined(
+                method_call_must_be_replaced_with_undefined,
+            );
+            f
+        }
+    }
+
+    #[derive(Clone)]
+    pub struct DefineData {
+        pub value: ExprData,
+        // Not using a slice here shrinks the size from 48 bytes to 40 bytes.
+        // TODO(port): lifetime — borrows into caller-owned key/value strings.
+        // Kept `pub` so the bundler-side `parse`/`from_input` (which live a
+        // tier up for json-parser access) can construct directly.
+        pub original_name_ptr: Option<NonNull<u8>>,
+        pub original_name_len: u32,
+        pub flags: Flags,
+    }
+
+    // SAFETY: `original_name_ptr` aliases into immutable, process-lifetime
+    // string storage (`DirnameStore`/static tables/env-map). Never written
+    // through; treated as `&'static [u8]` by `original_name()`.
+    unsafe impl Send for DefineData {}
+    unsafe impl Sync for DefineData {}
+
+    impl Default for DefineData {
+        fn default() -> Self {
+            Self {
+                // Zig: `.e_missing = .{}`
+                value: ExprData::EMissing(E::Missing),
+                original_name_ptr: None,
+                original_name_len: 0,
+                flags: Flags::default(),
+            }
+        }
+    }
+
+    /// Named-init shim (mirrors Zig anonymous-struct init).
+    pub struct Options<'a> {
+        pub original_name: Option<&'a [u8]>,
+        pub value: ExprData,
+        pub valueless: bool,
+        pub can_be_removed_if_unused: bool,
+        pub call_can_be_unwrapped_if_unused: E::CallUnwrap,
+        pub method_call_must_be_replaced_with_undefined: bool,
+    }
+    impl<'a> Default for Options<'a> {
+        fn default() -> Self {
+            Self {
+                original_name: None,
+                value: ExprData::EMissing(E::Missing),
+                valueless: false,
+                can_be_removed_if_unused: false,
+                call_can_be_unwrapped_if_unused: E::CallUnwrap::Never,
+                method_call_must_be_replaced_with_undefined: false,
+            }
+        }
+    }
+
+    impl DefineData {
+        pub fn init(options: Options<'_>) -> DefineData {
+            DefineData {
+                value: options.value,
+                flags: Flags::new(
+                    options.valueless,
+                    options.can_be_removed_if_unused,
+                    options.call_can_be_unwrapped_if_unused,
+                    options.method_call_must_be_replaced_with_undefined,
+                ),
+                original_name_ptr: options
+                    .original_name
+                    .and_then(|name| NonNull::new(name.as_ptr() as *mut u8)),
+                original_name_len: options.original_name.map(|n| n.len() as u32).unwrap_or(0),
+            }
+        }
+
+        #[inline]
+        pub fn original_name(&self) -> Option<&[u8]> {
+            if self.original_name_len > 0 {
+                let ptr = self.original_name_ptr.unwrap();
+                // SAFETY: ptr/len were set together from a borrowed slice that
+                // the caller keeps alive for the lifetime of the `Define`.
+                return Some(unsafe {
+                    core::slice::from_raw_parts(ptr.as_ptr(), self.original_name_len as usize)
+                });
+            }
+            None
+        }
+
+        /// True if accessing this value is known to not have any side effects.
+        #[inline]
+        pub fn can_be_removed_if_unused(&self) -> bool {
+            self.flags.can_be_removed_if_unused()
+        }
+        /// True if a call to this value is known to not have any side effects.
+        #[inline]
+        pub fn call_can_be_unwrapped_if_unused(&self) -> E::CallUnwrap {
+            self.flags.call_can_be_unwrapped_if_unused()
+        }
+        #[inline]
+        pub fn method_call_must_be_replaced_with_undefined(&self) -> bool {
+            self.flags.method_call_must_be_replaced_with_undefined()
+        }
+        #[inline]
+        pub fn valueless(&self) -> bool {
+            self.flags.valueless()
+        }
+
+        pub fn init_boolean(value: bool) -> DefineData {
+            let mut flags = Flags::default();
+            flags.set_can_be_removed_if_unused(true);
+            DefineData { value: ExprData::EBoolean(E::Boolean { value }), flags, ..Default::default() }
+        }
+
+        pub fn init_static_string(str: &'static E::EString) -> DefineData {
+            let mut flags = Flags::default();
+            flags.set_can_be_removed_if_unused(true);
+            DefineData {
+                // Zig: @constCast(str) — Expr.Data.e_string stores *E.String.
+                value: ExprData::EString(StoreRef::from_static(str)),
+                flags,
+                ..Default::default()
+            }
+        }
+
+        pub fn merge(a: DefineData, b: DefineData) -> DefineData {
+            DefineData {
+                value: b.value,
+                flags: Flags::new(
+                    // TODO: investigate if this is correct. This is what it was before.
+                    a.method_call_must_be_replaced_with_undefined()
+                        || b.method_call_must_be_replaced_with_undefined(),
+                    a.can_be_removed_if_unused(),
+                    a.call_can_be_unwrapped_if_unused(),
+                    a.method_call_must_be_replaced_with_undefined()
+                        || b.method_call_must_be_replaced_with_undefined(),
+                ),
+                original_name_ptr: b.original_name_ptr,
+                original_name_len: b.original_name_len,
+            }
+        }
+    }
+
+    pub struct Define {
+        pub identifiers: StringHashMap<IdentifierDefine>,
+        pub dots: StringHashMap<Vec<DotDefine>>,
+        pub drop_debugger: bool,
+    }
+
+    impl Default for Define {
+        fn default() -> Self {
+            Self {
+                identifiers: StringHashMap::default(),
+                dots: StringHashMap::default(),
+                drop_debugger: false,
+            }
+        }
+    }
+
     impl Define {
         pub fn for_identifier(&self, name: &[u8]) -> Option<&IdentifierDefine> {
-            self.identifiers.get(name)
+            if let Some(data) = self.identifiers.get(name) {
+                return Some(data);
+            }
+            // Table fallback via hook (registered by bun_bundler::defines).
+            PURE_GLOBAL_IDENTIFIER_LOOKUP.get().and_then(|f| f(name))
         }
+
+        // Zig: `comptime Iterator: type, iter: Iterator` — type param dropped.
+        pub fn insert_from_iterator<'a, I>(&mut self, iter: I) -> Result<(), bun_alloc::AllocError>
+        where
+            I: Iterator<Item = (&'a [u8], &'a DefineData)>,
+        {
+            for (key, value) in iter {
+                self.insert(key, value.clone())?;
+            }
+            Ok(())
+        }
+
+        pub fn insert(
+            &mut self,
+            key: &[u8],
+            value: DefineData,
+        ) -> Result<(), bun_alloc::AllocError> {
+            // If it has a dot, then it's a DotDefine. e.g. process.env.NODE_ENV
+            if let Some(last_dot) = strings::last_index_of_char(key, b'.') {
+                let tail = &key[last_dot + 1..key.len()];
+                let remainder = &key[0..last_dot];
+                let count = remainder.iter().filter(|&&b| b == b'.').count() + 1;
+                let mut parts: Vec<Box<[u8]>> = Vec::with_capacity(count + 1);
+                for split in remainder.split(|b| *b == b'.') {
+                    parts.push(Box::from(split));
+                }
+                parts.push(Box::from(tail));
+
+                let mut initial_values: &[DotDefine] = &[];
+                // PORT NOTE: reshaped for borrowck — getOrPut split into get/insert.
+                if let Some(existing) = self.dots.get_mut(tail) {
+                    for part in existing.iter_mut() {
+                        if are_parts_equal(&part.parts, &parts) {
+                            part.data = DefineData::merge(part.data.clone(), value);
+                            return Ok(());
+                        }
+                    }
+                    initial_values = existing.as_slice();
+                }
+
+                let mut list: Vec<DotDefine> = Vec::with_capacity(initial_values.len() + 1);
+                if !initial_values.is_empty() {
+                    list.extend_from_slice(initial_values);
+                }
+                list.push(DotDefine { data: value, parts });
+                self.dots.insert(tail.into(), list);
+            } else {
+                // e.g. IS_BROWSER
+                self.identifiers.insert(key.into(), value);
+            }
+            Ok(())
+        }
+    }
+
+    pub fn are_parts_equal(a: &[Box<[u8]>], b: &[Box<[u8]>]) -> bool {
+        if a.len() != b.len() {
+            return false;
+        }
+        for i in 0..a.len() {
+            if !strings::eql(&a[i], &b[i]) {
+                return false;
+            }
+        }
+        true
     }
 }
 pub use defines::{Define, DefineData};

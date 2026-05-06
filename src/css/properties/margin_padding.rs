@@ -602,6 +602,13 @@ pub trait SizeHandlerSpec {
     const SHORTHAND: PropertyIdTag;
     const BLOCK_SHORTHAND: PropertyIdTag;
     const INLINE_SHORTHAND: PropertyIdTag;
+    // PORT NOTE: `PropertyId` mirrors of TOP/BOTTOM/LEFT/RIGHT for
+    // `UnparsedProperty::with_property_id`. All margin/padding/inset/scroll-*
+    // `PropertyId` variants are payload-free, so these are well-formed consts.
+    const TOP_ID: PropertyId;
+    const BOTTOM_ID: PropertyId;
+    const LEFT_ID: PropertyId;
+    const RIGHT_ID: PropertyId;
     const SHORTHAND_CATEGORY: PropertyCategory;
     /// `shorthand_extra.?.feature` — `None` ⇔ Zig passed `null`.
     const FEATURE: Option<Feature>;

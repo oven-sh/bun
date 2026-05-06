@@ -2251,7 +2251,7 @@ impl<'a> LinkerContext<'a> {
     /// Spec: `LinkerContext.zig:2154 topLevelSymbolsToPartsForRuntime`.
     #[inline]
     pub fn top_level_symbols_to_parts_for_runtime(&self, r#ref: Ref) -> &[u32] {
-        self.top_level_symbols_to_parts(Index::runtime().get(), r#ref)
+        self.top_level_symbols_to_parts(Index::RUNTIME.get(), r#ref)
     }
 
     /// Spec: `LinkerContext.zig:496 scanCSSImports`.
@@ -2282,7 +2282,10 @@ impl<'a> LinkerContext<'a> {
         &mut self,
         wrap: WrapKind,
         wrapper_ref: Ref,
-        wrapper_part_index: &mut Index,
+        // PORT NOTE: `crate::Index` (`bun_options_types::BundleEnums::Index`),
+        // not `bun_js_parser::Index` — the SoA `wrapper_part_index` column is
+        // typed via the crate-root re-export.
+        wrapper_part_index: &mut crate::Index,
         source_index: crate::IndexInt,
     ) {
         // TODO(b2-blocked): real body in the `#[cfg(any())]` impl block below
@@ -2307,7 +2310,7 @@ impl<'a> LinkerContext<'a> {
     /// Spec: `linker_context/doStep5.zig`.
     /// Forward decl for `worker_pool.each(this, LinkerContext::do_step5, &reachable)`.
     #[allow(unused_variables)]
-    pub fn do_step5(&mut self, source_index: Index, _i: usize) {
+    pub fn do_step5(&mut self, source_index: crate::Index, _i: usize) {
         // TODO(b2-blocked): real body lives in `linker_context/doStep5.rs`
         // (module gated in `lib.rs::linker_context`). Un-gates with that
         // submodule; this shim keeps `scanImportsAndExports` resolvable.

@@ -148,6 +148,7 @@ unsafe fn init_runtime_state(
             postgresql_context: Default::default(),
         },
         ssl_ctx_cache: Default::default(),
+        editor_context: Default::default(),
         entry_point: ServerEntryPoint::default(),
         transpiler_arena: Box::new(bun_alloc::Arena::new()),
     }));

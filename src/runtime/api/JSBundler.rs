@@ -505,7 +505,7 @@ pub mod js_bundler {
                 }
             };
 
-            if let Some(target) = get_own_str(object, global_this, "target")? {
+            if let Some(target) = object.get_own(global_this, &BunString::static_str("target"))? {
                 this.compile_target = compile_target_from_js(global_this, target)?;
             }
 
@@ -524,7 +524,7 @@ pub mod js_bundler {
                 }
             }
 
-            if let Some(executable_path) = get_own_str(object, global_this, "executablePath")? {
+            if let Some(executable_path) = object.get_own(global_this, &BunString::static_str("executablePath"))? {
                 let slice = executable_path.to_slice(global_this)?;
                 let path_z = bun_core::ZBox::from_bytes(slice.slice());
                 if bun_sys::exists_at_type(bun_sys::Fd::cwd(), path_z.as_zstr())
@@ -544,11 +544,11 @@ pub mod js_bundler {
                     return Err(global_this.throw_invalid_arguments("windows must be an object"));
                 }
 
-                if let Some(hide_console) = get_own_str(windows, global_this, "hideConsole")? {
+                if let Some(hide_console) = windows.get_own(global_this, &BunString::static_str("hideConsole"))? {
                     this.windows_hide_console = hide_console.to_boolean();
                 }
 
-                if let Some(windows_icon_path) = get_own_str(windows, global_this, "icon")? {
+                if let Some(windows_icon_path) = windows.get_own(global_this, &BunString::static_str("icon"))? {
                     let slice = windows_icon_path.to_slice(global_this)?;
                     let path_z = bun_core::ZBox::from_bytes(slice.slice());
                     if bun_sys::exists_at_type(bun_sys::Fd::cwd(), path_z.as_zstr())
@@ -563,33 +563,33 @@ pub mod js_bundler {
                     this.windows_icon_path.append_slice_exact(slice.slice())?;
                 }
 
-                if let Some(windows_title) = get_own_str(windows, global_this, "title")? {
+                if let Some(windows_title) = windows.get_own(global_this, &BunString::static_str("title"))? {
                     let slice = windows_title.to_slice(global_this)?;
                     this.windows_title.append_slice_exact(slice.slice())?;
                 }
 
-                if let Some(windows_publisher) = get_own_str(windows, global_this, "publisher")? {
+                if let Some(windows_publisher) = windows.get_own(global_this, &BunString::static_str("publisher"))? {
                     let slice = windows_publisher.to_slice(global_this)?;
                     this.windows_publisher.append_slice_exact(slice.slice())?;
                 }
 
-                if let Some(windows_version) = get_own_str(windows, global_this, "version")? {
+                if let Some(windows_version) = windows.get_own(global_this, &BunString::static_str("version"))? {
                     let slice = windows_version.to_slice(global_this)?;
                     this.windows_version.append_slice_exact(slice.slice())?;
                 }
 
-                if let Some(windows_description) = get_own_str(windows, global_this, "description")? {
+                if let Some(windows_description) = windows.get_own(global_this, &BunString::static_str("description"))? {
                     let slice = windows_description.to_slice(global_this)?;
                     this.windows_description.append_slice_exact(slice.slice())?;
                 }
 
-                if let Some(windows_copyright) = get_own_str(windows, global_this, "copyright")? {
+                if let Some(windows_copyright) = windows.get_own(global_this, &BunString::static_str("copyright"))? {
                     let slice = windows_copyright.to_slice(global_this)?;
                     this.windows_copyright.append_slice_exact(slice.slice())?;
                 }
             }
 
-            if let Some(outfile) = get_own_str(object, global_this, "outfile")? {
+            if let Some(outfile) = object.get_own(global_this, &BunString::static_str("outfile"))? {
                 let slice = outfile.to_slice(global_this)?;
                 this.outfile.append_slice_exact(slice.slice())?;
             }
@@ -638,7 +638,7 @@ pub mod js_bundler {
             });
 
             let mut did_set_target = false;
-            if let Some(slice) = get_optional_slice(config, global_this, b"target")? {
+            if let Some(slice) = config.get_optional_slice(global_this, b"target")? {
                 if slice.slice().starts_with(b"bun-") {
                     this.compile = Some(CompileOptions {
                         compile_target: compile_target_from_slice(global_this, slice.slice())?,
@@ -675,7 +675,7 @@ pub mod js_bundler {
                             .throw_invalid_arguments("Expected plugin to be an object"));
                     }
 
-                    if let Some(slice) = get_optional_slice(plugin, global_this, b"name")? {
+                    if let Some(slice) = plugin.get_optional_slice(global_this, b"name")? {
                         if slice.slice().is_empty() {
                             return Err(global_this.throw_invalid_arguments(
                                 "Expected plugin to have a non-empty name",
@@ -687,7 +687,7 @@ pub mod js_bundler {
                             .throw_invalid_arguments("Expected plugin to have a name"));
                     }
 
-                    let Some(function) = get_function(plugin, global_this, b"setup")? else {
+                    let Some(function) = plugin.get_function(global_this, b"setup")? else {
                         return Err(global_this.throw_invalid_arguments(
                             "Expected plugin to have a setup() function",
                         ));
@@ -777,18 +777,18 @@ pub mod js_bundler {
             }
 
             let mut has_out_dir = false;
-            if let Some(slice) = get_optional_slice(config, global_this, b"outdir")? {
+            if let Some(slice) = config.get_optional_slice(global_this, b"outdir")? {
                 this.outdir.append_slice_exact(slice.slice())?;
                 has_out_dir = true;
                 drop(slice);
             }
 
-            if let Some(slice) = get_optional_slice(config, global_this, b"banner")? {
+            if let Some(slice) = config.get_optional_slice(global_this, b"banner")? {
                 this.banner.append_slice_exact(slice.slice())?;
                 drop(slice);
             }
 
-            if let Some(slice) = get_optional_slice(config, global_this, b"footer")? {
+            if let Some(slice) = config.get_optional_slice(global_this, b"footer")? {
                 this.footer.append_slice_exact(slice.slice())?;
                 drop(slice);
             }
@@ -871,7 +871,7 @@ pub mod js_bundler {
                 }
 
                 if let Some(slice) =
-                    get_optional_slice(jsx_value, global_this, b"runtime")?
+                    jsx_value.get_optional_slice(global_this, b"runtime")?
                 {
                     let mut str_lower = [0u8; 128];
                     let len = slice.slice().len().min(str_lower.len());
@@ -896,21 +896,21 @@ pub mod js_bundler {
                 }
 
                 if let Some(slice) =
-                    get_optional_slice(jsx_value, global_this, b"factory")?
+                    jsx_value.get_optional_slice(global_this, b"factory")?
                 {
                     this.jsx.factory = Box::<[u8]>::from(slice.slice());
                     drop(slice);
                 }
 
                 if let Some(slice) =
-                    get_optional_slice(jsx_value, global_this, b"fragment")?
+                    jsx_value.get_optional_slice(global_this, b"fragment")?
                 {
                     this.jsx.fragment = Box::<[u8]>::from(slice.slice());
                     drop(slice);
                 }
 
                 if let Some(slice) =
-                    get_optional_slice(jsx_value, global_this, b"importSource")?
+                    jsx_value.get_optional_slice(global_this, b"importSource")?
                 {
                     this.jsx.import_source = Box::<[u8]>::from(slice.slice());
                     drop(slice);
@@ -989,7 +989,7 @@ pub mod js_bundler {
             }
 
             // Parse the files option for in-memory files
-            if let Some(files_obj) = get_own_object(config, global_this, "files")? {
+            if let Some(files_obj) = config.get_own_object(global_this, "files")? {
                 this.files = FileMap::from_js(global_this, JSValue::from_cell(files_obj))?;
             }
 
@@ -1023,7 +1023,7 @@ pub mod js_bundler {
             {
                 let path: ZigStringSlice = 'brk: {
                     if let Some(slice) =
-                        get_optional_slice(config, global_this, b"root")?
+                        config.get_optional_slice(global_this, b"root")?
                     {
                         break 'brk slice;
                     }
@@ -1091,7 +1091,7 @@ pub mod js_bundler {
                 drop(path);
             }
 
-            if let Some(externals) = get_own_array(config, global_this, "external")? {
+            if let Some(externals) = config.get_own_array(global_this, "external")? {
                 let mut iter = externals.array_iterator(global_this)?;
                 while let Some(entry_point) = iter.next()? {
                     let slice = entry_point.to_slice_or_null(global_this)?;
@@ -1100,7 +1100,7 @@ pub mod js_bundler {
                 }
             }
 
-            if let Some(allow_unresolved_val) = get_own_str(config, global_this, "allowUnresolved")? {
+            if let Some(allow_unresolved_val) = config.get_own(global_this, &BunString::static_str("allowUnresolved"))? {
                 if !allow_unresolved_val.is_undefined() && !allow_unresolved_val.is_null() {
                     if !(allow_unresolved_val.is_cell()
                         && allow_unresolved_val.js_type().is_array())
@@ -1120,7 +1120,7 @@ pub mod js_bundler {
                 }
             }
 
-            if let Some(drops) = get_own_array(config, global_this, "drop")? {
+            if let Some(drops) = config.get_own_array(global_this, "drop")? {
                 let mut iter = drops.array_iterator(global_this)?;
                 while let Some(entry) = iter.next()? {
                     let slice = entry.to_slice_or_null(global_this)?;
@@ -1129,7 +1129,7 @@ pub mod js_bundler {
                 }
             }
 
-            if let Some(features) = get_own_array(config, global_this, "features")? {
+            if let Some(features) = config.get_own_array(global_this, "features")? {
                 let mut iter = features.array_iterator(global_this)?;
                 while let Some(entry) = iter.next()? {
                     let slice = entry.to_slice_or_null(global_this)?;
@@ -1138,7 +1138,7 @@ pub mod js_bundler {
                 }
             }
 
-            if let Some(optimize_imports) = get_own_array(config, global_this, "optimizeImports")? {
+            if let Some(optimize_imports) = config.get_own_array(global_this, "optimizeImports")? {
                 let mut iter = optimize_imports.array_iterator(global_this)?;
                 while let Some(entry) = iter.next()? {
                     let slice = entry.to_slice_or_null(global_this)?;
@@ -1154,7 +1154,7 @@ pub mod js_bundler {
             //     this.appendSliceExact(globalThis.bunVM().transpiler.fs.top_level_dir) catch unreachable;
             // }
 
-            if let Some(slice) = get_optional_slice(config, global_this, b"publicPath")? {
+            if let Some(slice) = config.get_optional_slice(global_this, b"publicPath")? {
                 this.public_path.append_slice_exact(slice.slice())?;
                 drop(slice);
             }
@@ -1162,7 +1162,7 @@ pub mod js_bundler {
             if let Some(naming) = config.get_truthy(global_this, "naming")? {
                 if naming.is_string() {
                     if let Some(slice) =
-                        get_optional_slice(config, global_this, b"naming")?
+                        config.get_optional_slice(global_this, b"naming")?
                     {
                         if !slice.slice().starts_with(b"./") {
                             this.names.owned_entry_point.append_slice_exact(b"./")?;
@@ -1175,7 +1175,7 @@ pub mod js_bundler {
                     }
                 } else if naming.is_object() {
                     if let Some(slice) =
-                        get_optional_slice(naming, global_this, b"entry")?
+                        naming.get_optional_slice(global_this, b"entry")?
                     {
                         if !slice.slice().starts_with(b"./") {
                             this.names.owned_entry_point.append_slice_exact(b"./")?;
@@ -1187,7 +1187,7 @@ pub mod js_bundler {
                     }
 
                     if let Some(slice) =
-                        get_optional_slice(naming, global_this, b"chunk")?
+                        naming.get_optional_slice(global_this, b"chunk")?
                     {
                         if !slice.slice().starts_with(b"./") {
                             this.names.owned_chunk.append_slice_exact(b"./")?;
@@ -1199,7 +1199,7 @@ pub mod js_bundler {
                     }
 
                     if let Some(slice) =
-                        get_optional_slice(naming, global_this, b"asset")?
+                        naming.get_optional_slice(global_this, b"asset")?
                     {
                         if !slice.slice().starts_with(b"./") {
                             this.names.owned_asset.append_slice_exact(b"./")?;
@@ -1216,7 +1216,7 @@ pub mod js_bundler {
                 }
             }
 
-            if let Some(define) = get_own_object(config, global_this, "define")? {
+            if let Some(define) = config.get_own_object(global_this, "define")? {
                 // SAFETY: `get_own_object` only returns non-null live JSObject*.
                 let define_ref = unsafe { &*define };
                 let mut define_iter = jsc::JSPropertyIterator::init(
@@ -1256,7 +1256,7 @@ pub mod js_bundler {
                 }
             }
 
-            if let Some(loaders) = get_own_object(config, global_this, "loader")? {
+            if let Some(loaders) = config.get_own_object(global_this, "loader")? {
                 // SAFETY: `get_own_object` only returns non-null live JSObject*.
                 let loaders_ref = unsafe { &*loaders };
                 let mut loader_iter = jsc::JSPropertyIterator::init(
@@ -1307,12 +1307,12 @@ pub mod js_bundler {
                 });
             }
 
-            if let Some(flag) = get_boolean_strict(config, global_this, "throw")? {
+            if let Some(flag) = config.get_boolean_strict(global_this, "throw")? {
                 this.throw_on_error = flag;
             }
 
             // Parse metafile option: boolean | string | { json?: string, markdown?: string }
-            if let Some(metafile_value) = get_own_str(config, global_this, "metafile")? {
+            if let Some(metafile_value) = config.get_own(global_this, &BunString::static_str("metafile"))? {
                 if metafile_value.is_boolean() {
                     this.metafile = metafile_value == JSValue::TRUE;
                 } else if metafile_value.is_string() {
@@ -1325,13 +1325,13 @@ pub mod js_bundler {
                     // metafile: { json?: string, markdown?: string }
                     this.metafile = true;
                     if let Some(slice) =
-                        get_optional_slice(metafile_value, global_this, b"json")?
+                        metafile_value.get_optional_slice(global_this, b"json")?
                     {
                         this.metafile_json_path.append_slice_exact(slice.slice())?;
                         drop(slice);
                     }
                     if let Some(slice) =
-                        get_optional_slice(metafile_value, global_this, b"markdown")?
+                        metafile_value.get_optional_slice(global_this, b"markdown")?
                     {
                         this.metafile_markdown_path.append_slice_exact(slice.slice())?;
                         drop(slice);

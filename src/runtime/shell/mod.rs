@@ -50,6 +50,8 @@ pub mod io_writer;
 pub mod builtin;
 #[path = "interpreter.rs"]
 pub mod interpreter;
+#[path = "ParsedShellScript.rs"]
+pub mod parsed_shell_script;
 
 #[path = "states"]
 pub mod states {

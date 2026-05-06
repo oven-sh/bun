@@ -1685,10 +1685,14 @@ impl<'a> Formatter<'a> {
                         let inner: JsResult<()> = (|| {
                             {
                                 // SAFETY: `r#ref` is a live JSObjectRef for `value`; index 0 is
-                                // bounds-checked by `len > 0` in the enclosing branch.
+                                // bounds-checked by `len > 0` in the enclosing branch. The C-API
+                                // takes `*mut JSGlobalObject` by convention but never mutates it.
                                 let element = JSValue::c(unsafe {
-                                    capi_ext::JSObjectGetPropertyAtIndex(
-                                        self.global_this, r#ref, 0, core::ptr::null_mut(),
+                                    JSObjectGetPropertyAtIndex(
+                                        self.global_this as *const JSGlobalObject as *mut _,
+                                        r#ref,
+                                        0,
+                                        core::ptr::null_mut(),
                                     )
                                 });
                                 let tag = Tag::get(element, self.global_this)?;
@@ -1729,10 +1733,14 @@ impl<'a> Formatter<'a> {
                                 writer.write_all(b"\n");
                                 self.write_indent(writer.ctx).expect("unreachable");
 
-                                // SAFETY: `i < len`, `r#ref` is the live object ref.
+                                // SAFETY: `i < len`, `r#ref` is the live object ref. The C-API
+                                // takes `*mut JSGlobalObject` by convention but never mutates it.
                                 let element = JSValue::c(unsafe {
-                                    capi_ext::JSObjectGetPropertyAtIndex(
-                                        self.global_this, r#ref, i, core::ptr::null_mut(),
+                                    JSObjectGetPropertyAtIndex(
+                                        self.global_this as *const JSGlobalObject as *mut _,
+                                        r#ref,
+                                        i,
+                                        core::ptr::null_mut(),
                                     )
                                 });
                                 let tag = Tag::get(element, self.global_this)?;

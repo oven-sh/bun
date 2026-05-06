@@ -238,15 +238,17 @@ fn tick_queue_with_count(el: &mut EventLoop, vm: *mut VirtualMachine, counter: &
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `ImmediateObject::runImmediateTask` dispatch — `ImmediateObject` is opaque
-// at this tier (real type lives in `bun_runtime::api::Timer`). The high tier
-// installs the per-task body at startup; `tick_immediate_tasks` below performs
-// the swap + drain regardless so `auto_tick` reads `has_pending_immediate`
-// correctly even when no hook is installed (unit tests).
+// `ImmediateObject::runImmediateTask` dispatch — the real `ImmediateObject`
+// lives in `bun_runtime::api::Timer` (cycle), so this tier stores the queued
+// task as `*mut ()` (PORTING.md §Dispatch). The high tier installs the
+// per-task body at startup; `tick_immediate_tasks` below performs the swap +
+// drain regardless so `auto_tick` reads `has_pending_immediate` correctly even
+// when no hook is installed (unit tests).
 // ──────────────────────────────────────────────────────────────────────────
-/// `fn(*mut ImmediateObject, *mut VirtualMachine) -> bool` — returns whether
-/// the callback threw (mirrors `runImmediateTask`'s return).
-pub type RunImmediateFn = unsafe fn(*mut ImmediateObject, *mut VirtualMachine) -> bool;
+/// `fn(*mut (), *mut VirtualMachine) -> bool` — `task` is an erased
+/// `*mut bun_runtime::timer::ImmediateObject`; returns whether the callback
+/// threw (mirrors `runImmediateTask`'s return).
+pub type RunImmediateFn = unsafe fn(*mut (), *mut VirtualMachine) -> bool;
 
 static RUN_IMMEDIATE_HOOK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
 
@@ -256,14 +258,16 @@ pub fn set_run_immediate_hook(f: RunImmediateFn) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `WTFTimer::run` dispatch — `WTFTimer` is opaque at this tier (real type
-// lives in `bun_runtime::api::Timer`). The high tier installs the body at
+// `WTFTimer::run` dispatch — the real `WTFTimer` lives in
+// `bun_runtime::api::Timer` (cycle), so this tier stores the slot as
+// `AtomicPtr<()>` (PORTING.md §Dispatch). The high tier installs the body at
 // startup; `run_imminent_gc_timer` below only swaps the slot when a hook is
 // present so an imminent-GC timer is never consumed without being fired
 // (spec event_loop.zig:302-306).
 // ──────────────────────────────────────────────────────────────────────────
-/// `fn(*mut WTFTimer, *mut VirtualMachine)` — mirrors `WTFTimer::run(vm)`.
-pub type RunWtfTimerFn = unsafe fn(*mut WTFTimer, *mut VirtualMachine);
+/// `fn(*mut (), *mut VirtualMachine)` — `timer` is an erased
+/// `*mut bun_runtime::timer::WTFTimer`; mirrors `WTFTimer::run(vm)`.
+pub type RunWtfTimerFn = unsafe fn(*mut (), *mut VirtualMachine);
 
 static RUN_WTF_TIMER_HOOK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
 

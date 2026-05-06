@@ -1483,7 +1483,7 @@ impl GetAddrInfoRequest {
     }
 
     #[cfg(windows)]
-    pub fn on_libuv_complete(uv_info: *mut libuv::uv_getaddrinfo_t) {
+    pub fn on_libuv_complete(uv_info: *mut bun_sys::windows::libuv::uv_getaddrinfo_t) {
         unsafe {
             let retcode = (*uv_info).retcode.int();
             bun_output::scoped_log!(GetAddrInfoRequest, "onLibUVComplete: status={}", retcode);

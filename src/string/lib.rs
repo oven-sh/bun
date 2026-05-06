@@ -463,6 +463,20 @@ impl String {
         }
     }
 
+    /// `bun.String.trunc` (string.zig:317) — clamp to `len` code units. The
+    /// returned `String` borrows the same storage; for `WTFStringImpl` this
+    /// downgrades to a `ZigString` view (no ref taken), so the original must
+    /// outlive the result.
+    pub fn trunc(&self, len: usize) -> String {
+        if self.length() <= len {
+            // PORT NOTE: Zig returns `this` by value with no refcount bump;
+            // `String` is `Copy` here (POD #[repr(C)]), so a plain copy
+            // matches the Zig pass-by-value semantics.
+            return *self;
+        }
+        String::init(self.to_zig_string().trunc(len))
+    }
+
     /// `bun.String.substring` (string.zig:669) — borrowed slice from `start_index`
     /// to end. The returned `String` borrows the same underlying storage; for
     /// `WTFStringImpl` this downgrades to a `ZigString` view (no ref taken), so

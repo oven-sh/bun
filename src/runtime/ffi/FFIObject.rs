@@ -743,6 +743,19 @@ macro_rules! wrap_static_method {
     ($($path:tt)*) => { wrap_static_method_stub };
 }
 
+/// Shared `JSHostFn` thunk for the `FIELDS` table — see PORT NOTE in `to_js`.
+/// All entries currently resolve to `wrap_static_method_stub`, so a single
+/// extern-"C" trampoline suffices until `#[bun_jsc::host_fn]` mints per-entry
+/// fn pointers.
+unsafe extern "C" fn fields_host_fn_thunk(
+    global: *mut JSGlobalObject,
+    callframe: *mut CallFrame,
+) -> JSValue {
+    // SAFETY: JSC guarantees both pointers are live for the host call.
+    let (global, callframe) = unsafe { (&*global, &*callframe) };
+    jsc::to_js_host_fn_result(global, wrap_static_method_stub(global, callframe))
+}
+
 // Represented here as a const slice of (name, host_fn) so `to_js` can iterate.
 const FIELDS: &[(&str, jsc::JSHostFnZig)] = &[
     ("viewSource", wrap_static_method!(FFI::print)),

@@ -2334,7 +2334,7 @@ impl IncrementalGraph<Client> {
                     if !initial_response_entry_point.is_empty() {
                         let mut relative_path_buf = path_buffer_pool::get();
                         bun_js_printer::write_json_string::<_, { bun_js_printer::Encoding::Utf8 }>(
-                            self.owner().relative_path(&mut *relative_path_buf, initial_response_entry_point),
+                            self.owner().relative_path(&mut relative_path_buf, initial_response_entry_point),
                             w,
                         )?;
                     } else {
@@ -2364,7 +2364,7 @@ impl IncrementalGraph<Client> {
                         w.extend_from_slice(b",\n  refresh: ");
                         let mut relative_path_buf = path_buffer_pool::get();
                         bun_js_printer::write_json_string::<_, { bun_js_printer::Encoding::Utf8 }>(
-                            self.owner().relative_path(&mut *relative_path_buf, options.react_refresh_entry_point),
+                            self.owner().relative_path(&mut relative_path_buf, options.react_refresh_entry_point),
                             w,
                         )?;
                     }

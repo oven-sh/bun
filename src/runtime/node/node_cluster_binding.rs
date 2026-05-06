@@ -6,8 +6,10 @@
 
 use bun_collections::ArrayHashMap;
 use bun_jsc::ipc::{IsInternal, SerializeAndSendResult};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, Strong, Subprocess};
-use bun_str::{String as BunString, ZigString};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc, StrongOptional};
+use bun_str::String as BunString;
+
+use crate::api::bun::subprocess::Subprocess;
 
 bun_output::declare_scope!(IPC, visible);
 
@@ -19,43 +21,49 @@ unsafe extern "C" {
 
 // TODO(port): `pub var` mutable global with !Sync fields (Strong). Only ever accessed on the
 // JS thread. Phase B: wrap in a JS-thread-local cell or assert const-init of fields.
-pub static mut CHILD_SINGLETON: InternalMsgHolder = InternalMsgHolder {
-    seq: 0,
-    callbacks: ArrayHashMap::new(),
-    worker: Strong::EMPTY,
-    cb: Strong::EMPTY,
-    messages: Vec::new(),
-};
+// PORT NOTE: ArrayHashMap::new() is not const, so the global is lazily seeded on first
+// access via `child_singleton()`.
+pub static mut CHILD_SINGLETON: Option<InternalMsgHolder> = None;
 
 #[inline]
 fn child_singleton() -> &'static mut InternalMsgHolder {
     // SAFETY: only called on the single JS thread; mirrors Zig `pub var` access.
     // TODO(port): static mut reference — replace with proper single-thread cell in Phase B.
-    unsafe { &mut *core::ptr::addr_of_mut!(CHILD_SINGLETON) }
+    unsafe { (*core::ptr::addr_of_mut!(CHILD_SINGLETON)).get_or_insert_with(Default::default) }
+}
+
+/// JS-thread `EventLoopCtx` for `KeepAlive::ref_/unref`. Zig passed the
+/// `*VirtualMachine` directly (anytype dispatch); the Rust split routes through
+/// the aio hook registered by `crate::init()`.
+#[inline]
+fn vm_ctx() -> bun_aio::EventLoopCtx {
+    bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js)
 }
 
 #[bun_jsc::host_fn]
 pub fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     bun_output::scoped_log!(IPC, "sendHelperChild");
 
-    let arguments = frame.arguments_old(3).ptr;
+    let arguments = frame.arguments_old::<3>().ptr;
     let message = arguments[0];
     let handle = arguments[1];
     let callback = arguments[2];
 
     let vm = global.bun_vm();
+    // SAFETY: `bun_vm()` never returns null for a Bun-owned global; sole &mut on JS thread.
+    let vm = unsafe { &mut *vm };
 
     if vm.ipc.is_none() {
         return Ok(JSValue::FALSE);
     }
     if message.is_undefined() {
-        return global.throw_missing_arguments_value(&["message"]);
+        return Err(global.throw_missing_arguments_value(&["message"]));
     }
     if !handle.is_null() {
-        return global.throw("passing 'handle' not implemented yet", format_args!(""));
+        return Err(global.throw("passing 'handle' not implemented yet"));
     }
     if !message.is_object() {
-        return global.throw_invalid_argument_type_value("message", "object", message);
+        return Err(global.throw_invalid_argument_type_value(b"message", b"object", message));
     }
     let singleton = child_singleton();
     if callback.is_function() {
@@ -63,28 +71,31 @@ pub fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         // These sequence numbers shouldn't exist from JavaScript's perspective at all.
         singleton
             .callbacks
-            .put(singleton.seq, Strong::create(callback, global));
+            .put(singleton.seq, StrongOptional::create(callback, global));
     }
 
     // sequence number for InternalMsgHolder
-    message.put(
-        global,
-        ZigString::static_str("seq"),
-        JSValue::js_number(singleton.seq),
-    );
+    message.put(global, b"seq", JSValue::js_number(singleton.seq as f64));
     singleton.seq = singleton.seq.wrapping_add(1);
 
     // similar code as Bun__Process__send
-    let formatter = bun_jsc::ConsoleObject::Formatter { global_this: global };
-    if cfg!(debug_assertions) {
-        bun_output::scoped_log!(IPC, "child: {}", message.to_fmt(&formatter));
+    #[cfg(debug_assertions)]
+    {
+        let mut formatter = bun_jsc::console_object::Formatter::new(global);
+        bun_output::scoped_log!(
+            IPC,
+            "child: {}",
+            bun_jsc::console_object::formatter::ZigFormatter::new(&mut formatter, message)
+        );
     }
 
     let ipc_instance = vm.get_ipc_instance().unwrap();
+    // SAFETY: `get_ipc_instance` returns a live owned IPCInstance pointer; sole &mut on JS thread.
+    let ipc_instance = unsafe { &mut *ipc_instance };
 
     #[bun_jsc::host_fn]
     fn impl_(global_: &JSGlobalObject, frame_: &CallFrame) -> JsResult<JSValue> {
-        let arguments_ = frame_.arguments_old(1).slice();
+        let arguments_ = frame_.arguments_old::<1>().slice();
         let ex = arguments_[0];
         // SAFETY: FFI call into C++; `global_` is a live JSGlobalObject* for the duration
         // of the call. Passed as `*const` — mutation happens behind the FFI boundary, so
@@ -100,14 +111,15 @@ pub fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         .serialize_and_send(global, message, IsInternal::Internal, JSValue::NULL, None);
 
     if good == SerializeAndSendResult::Failure {
-        let ex = global.create_type_error_instance("sendInternal() failed", format_args!(""));
+        let ex = global.create_type_error_instance("sendInternal() failed");
         ex.put(
             global,
-            ZigString::static_str("syscall"),
+            b"syscall",
             BunString::static_str("write").to_js(global)?,
         );
-        let fnvalue = bun_jsc::JSFunction::create(global, "", impl_, 1, ());
-        fnvalue.call_next_tick(global, &[ex])?;
+        let fnvalue =
+            bun_jsc::JSFunction::create(global, "", __jsc_host_impl_, 1, Default::default());
+        JSValue::call_next_tick_1(fnvalue, global, ex)?;
         return Ok(JSValue::FALSE);
     }
 
@@ -121,11 +133,11 @@ pub fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
 #[bun_jsc::host_fn]
 pub fn on_internal_message_child(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     bun_output::scoped_log!(IPC, "onInternalMessageChild");
-    let arguments = frame.arguments_old(2).ptr;
+    let arguments = frame.arguments_old::<2>().ptr;
     let singleton = child_singleton();
     // TODO: we should not create two jsc.Strong.Optional here. If absolutely necessary, a single Array. should be all we use.
-    singleton.worker = Strong::create(arguments[0], global);
-    singleton.cb = Strong::create(arguments[1], global);
+    singleton.worker = StrongOptional::create(arguments[0], global);
+    singleton.cb = StrongOptional::create(arguments[1], global);
     singleton.flush(global)?;
     Ok(JSValue::UNDEFINED)
 }
@@ -145,10 +157,10 @@ pub struct InternalMsgHolder {
 
     // TODO: move this to an Array or a JS Object or something which doesn't
     // individually create a Strong for every single IPC message...
-    pub callbacks: ArrayHashMap<i32, Strong>,
-    pub worker: Strong,
-    pub cb: Strong,
-    pub messages: Vec<Strong>,
+    pub callbacks: ArrayHashMap<i32, StrongOptional>,
+    pub worker: StrongOptional,
+    pub cb: StrongOptional,
+    pub messages: Vec<StrongOptional>,
 }
 
 impl Default for InternalMsgHolder {
@@ -156,8 +168,8 @@ impl Default for InternalMsgHolder {
         Self {
             seq: 0,
             callbacks: ArrayHashMap::default(),
-            worker: Strong::EMPTY,
-            cb: Strong::EMPTY,
+            worker: StrongOptional::empty(),
+            cb: StrongOptional::empty(),
             messages: Vec::new(),
         }
     }
@@ -171,7 +183,7 @@ impl InternalMsgHolder {
     pub fn enqueue(&mut self, message: JSValue, global: &JSGlobalObject) {
         // TODO: .addOne is workaround for .append causing crash/ dependency loop in zig compiler
         // (Rust: just push; the workaround is Zig-specific.)
-        self.messages.push(Strong::create(message, global));
+        self.messages.push(StrongOptional::create(message, global));
     }
 
     pub fn dispatch(&mut self, message: JSValue, global: &JSGlobalObject) -> JsResult<()> {
@@ -186,7 +198,8 @@ impl InternalMsgHolder {
         let cb = self.cb.get().unwrap();
         let worker = self.worker.get().unwrap();
 
-        let event_loop = global.bun_vm().event_loop();
+        // SAFETY: `bun_vm()` never returns null; sole &mut on JS thread.
+        let event_loop = unsafe { &mut *(*global.bun_vm()).event_loop() };
 
         if let Some(p) = message.get(global, "ack")? {
             if !p.is_undefined() {
@@ -247,8 +260,10 @@ impl InternalMsgHolder {
 pub fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     bun_output::scoped_log!(IPC, "sendHelperPrimary");
 
-    let arguments = frame.arguments_old(4).ptr;
-    let subprocess = arguments[0].as_::<Subprocess>().unwrap();
+    let arguments = frame.arguments_old::<4>().ptr;
+    let subprocess = arguments[0].as_::<Subprocess<'_>>().unwrap();
+    // SAFETY: `as_` returns a live wrapped pointer; sole &mut on JS thread.
+    let subprocess = unsafe { &mut *subprocess };
     let message = arguments[1];
     let handle = arguments[2];
     let callback = arguments[3];
@@ -258,30 +273,32 @@ pub fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
     };
 
     if message.is_undefined() {
-        return global.throw_missing_arguments_value(&["message"]);
+        return Err(global.throw_missing_arguments_value(&["message"]));
     }
     if !message.is_object() {
-        return global.throw_invalid_argument_type_value("message", "object", message);
+        return Err(global.throw_invalid_argument_type_value(b"message", b"object", message));
     }
     if callback.is_function() {
-        ipc_data.internal_msg_queue.callbacks.put(
-            ipc_data.internal_msg_queue.seq,
-            Strong::create(callback, global),
-        );
+        // TODO(port): blocked — `SendQueue.internal_msg_queue` is an opaque
+        // `[usize; 6]` placeholder in `bun_jsc::ipc`; field access (callbacks/seq)
+        // requires the real struct to land upstream.
+        let _ = callback;
+        todo!("blocked_on: bun_jsc::ipc::InternalMsgHolder fields");
     }
 
     // sequence number for InternalMsgHolder
-    message.put(
-        global,
-        ZigString::static_str("seq"),
-        JSValue::js_number(ipc_data.internal_msg_queue.seq),
-    );
-    ipc_data.internal_msg_queue.seq = ipc_data.internal_msg_queue.seq.wrapping_add(1);
+    // TODO(port): blocked — see above (`internal_msg_queue.seq`).
+    message.put(global, b"seq", JSValue::js_number(0.0));
 
     // similar code as bun.jsc.Subprocess.doSend
-    let formatter = bun_jsc::ConsoleObject::Formatter { global_this: global };
-    if cfg!(debug_assertions) {
-        bun_output::scoped_log!(IPC, "primary: {}", message.to_fmt(&formatter));
+    #[cfg(debug_assertions)]
+    {
+        let mut formatter = bun_jsc::console_object::Formatter::new(global);
+        bun_output::scoped_log!(
+            IPC,
+            "primary: {}",
+            bun_jsc::console_object::formatter::ZigFormatter::new(&mut formatter, message)
+        );
     }
 
     let _ = handle;
@@ -295,60 +312,36 @@ pub fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
 
 #[bun_jsc::host_fn]
 pub fn on_internal_message_primary(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let arguments = frame.arguments_old(3).ptr;
-    let subprocess = arguments[0].as_::<Subprocess>().unwrap();
-    let Some(ipc_data) = subprocess.ipc() else {
+    let arguments = frame.arguments_old::<3>().ptr;
+    let subprocess = arguments[0].as_::<Subprocess<'_>>().unwrap();
+    // SAFETY: `as_` returns a live wrapped pointer; sole &mut on JS thread.
+    let subprocess = unsafe { &mut *subprocess };
+    let Some(_ipc_data) = subprocess.ipc() else {
         return Ok(JSValue::UNDEFINED);
     };
     // TODO: remove these strongs.
-    ipc_data.internal_msg_queue.worker = Strong::create(arguments[1], global);
-    ipc_data.internal_msg_queue.cb = Strong::create(arguments[2], global);
-    Ok(JSValue::UNDEFINED)
+    // TODO(port): blocked — `SendQueue.internal_msg_queue` is opaque in bun_jsc::ipc.
+    let _ = (arguments[1], arguments[2], global);
+    todo!("blocked_on: bun_jsc::ipc::InternalMsgHolder fields");
 }
 
 pub fn handle_internal_message_primary(
     global: &JSGlobalObject,
-    subprocess: &mut Subprocess,
+    subprocess: &mut Subprocess<'_>,
     message: JSValue,
 ) -> JsResult<()> {
-    let Some(ipc_data) = subprocess.ipc() else {
+    let Some(_ipc_data) = subprocess.ipc() else {
         return Ok(());
     };
 
-    let event_loop = global.bun_vm().event_loop();
+    // SAFETY: `bun_vm()` never returns null; sole &mut on JS thread.
+    let _event_loop = unsafe { &mut *(*global.bun_vm()).event_loop() };
 
     // TODO: investigate if "ack" and "seq" are observable and if they're not, remove them entirely.
-    if let Some(p) = message.get(global, "ack")? {
-        if !p.is_undefined() {
-            let ack = p.to_int32();
-            // PORT NOTE: reshaped for borrowck — swap_remove returns the owned Strong.
-            if let Some(cbstrong) = ipc_data.internal_msg_queue.callbacks.swap_remove(&ack) {
-                let cb = cbstrong.get().unwrap();
-                event_loop.run_callback(
-                    cb,
-                    global,
-                    ipc_data.internal_msg_queue.worker.get().unwrap(),
-                    &[
-                        message,
-                        JSValue::NULL, // handle
-                    ],
-                );
-                // cbstrong drops here (== `defer cbstrong.deinit()`)
-                return Ok(());
-            }
-        }
-    }
-    let cb = ipc_data.internal_msg_queue.cb.get().unwrap();
-    event_loop.run_callback(
-        cb,
-        global,
-        ipc_data.internal_msg_queue.worker.get().unwrap(),
-        &[
-            message,
-            JSValue::NULL, // handle
-        ],
-    );
-    Ok(())
+    // TODO(port): blocked — `SendQueue.internal_msg_queue` is opaque in bun_jsc::ipc;
+    // callbacks/worker/cb field access requires the real struct upstream.
+    let _ = message;
+    todo!("blocked_on: bun_jsc::ipc::InternalMsgHolder fields");
 }
 
 //
@@ -357,22 +350,23 @@ pub fn handle_internal_message_primary(
 
 #[bun_jsc::host_fn]
 pub fn set_ref(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let arguments = frame.arguments_old(1).ptr;
+    let arguments = frame.arguments_old::<1>().ptr;
 
     if arguments.len() == 0 {
-        return global.throw_missing_arguments_value(&["enabled"]);
+        return Err(global.throw_missing_arguments_value(&["enabled"]));
     }
     if !arguments[0].is_boolean() {
-        return global.throw_invalid_argument_type_value("enabled", "boolean", arguments[0]);
+        return Err(global.throw_invalid_argument_type_value(b"enabled", b"boolean", arguments[0]));
     }
 
     let enabled = arguments[0].to_boolean();
-    let vm = global.bun_vm();
+    // SAFETY: `bun_vm()` never returns null; sole &mut on JS thread.
+    let vm = unsafe { &mut *global.bun_vm() };
     vm.channel_ref_overridden = true;
     if enabled {
-        vm.channel_ref.ref_(vm);
+        vm.channel_ref.ref_(vm_ctx());
     } else {
-        vm.channel_ref.unref(vm);
+        vm.channel_ref.unref(vm_ctx());
     }
     Ok(JSValue::UNDEFINED)
 }
@@ -381,9 +375,10 @@ pub fn set_ref(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> 
 pub extern "C" fn Bun__refChannelUnlessOverridden(global: *mut JSGlobalObject) {
     // SAFETY: caller (C++) passes a valid JSGlobalObject pointer.
     let global = unsafe { &*global };
-    let vm = global.bun_vm();
+    // SAFETY: `bun_vm()` never returns null; sole &mut on JS thread.
+    let vm = unsafe { &mut *global.bun_vm() };
     if !vm.channel_ref_overridden {
-        vm.channel_ref.ref_(vm);
+        vm.channel_ref.ref_(vm_ctx());
     }
 }
 
@@ -391,9 +386,10 @@ pub extern "C" fn Bun__refChannelUnlessOverridden(global: *mut JSGlobalObject) {
 pub extern "C" fn Bun__unrefChannelUnlessOverridden(global: *mut JSGlobalObject) {
     // SAFETY: caller (C++) passes a valid JSGlobalObject pointer.
     let global = unsafe { &*global };
-    let vm = global.bun_vm();
+    // SAFETY: `bun_vm()` never returns null; sole &mut on JS thread.
+    let vm = unsafe { &mut *global.bun_vm() };
     if !vm.channel_ref_overridden {
-        vm.channel_ref.unref(vm);
+        vm.channel_ref.unref(vm_ctx());
     }
 }
 
@@ -402,7 +398,8 @@ pub fn channel_ignore_one_disconnect_event_listener(
     global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let vm = global.bun_vm();
+    // SAFETY: `bun_vm()` never returns null; sole &mut on JS thread.
+    let vm = unsafe { &mut *global.bun_vm() };
     vm.channel_ref_should_ignore_one_disconnect_event_listener = true;
     Ok(JSValue::FALSE)
 }
@@ -411,7 +408,8 @@ pub fn channel_ignore_one_disconnect_event_listener(
 pub extern "C" fn Bun__shouldIgnoreOneDisconnectEventListener(global: *mut JSGlobalObject) -> bool {
     // SAFETY: caller (C++) passes a valid JSGlobalObject pointer.
     let global = unsafe { &*global };
-    let vm = global.bun_vm();
+    // SAFETY: `bun_vm()` never returns null; sole &mut on JS thread.
+    let vm = unsafe { &*global.bun_vm() };
     vm.channel_ref_should_ignore_one_disconnect_event_listener
 }
 

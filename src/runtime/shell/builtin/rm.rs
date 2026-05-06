@@ -488,6 +488,25 @@ impl ShellRmTask {
         let cmd = unsafe { (*this).cmd };
         Rm::on_shell_rm_task_done(interp, cmd, this);
     }
+
+    /// Spec: rm.zig `ShellRmTask.DirTask.runFromMainThreadMini` — a child
+    /// `DirTask` finished its subtree; bubble its error up into the parent.
+    pub fn on_dir_task_done(
+        parent: &mut ShellRmTask,
+        _interp: &mut Interpreter,
+        dir: *mut crate::shell::dispatch_tasks::ShellRmDirTask,
+    ) {
+        // SAFETY: `dir` is a live Box::into_raw'd DirTask (caller contract).
+        let owned = unsafe { Box::from_raw(dir) };
+        if parent.err.is_none() {
+            parent.err = owned.err;
+        }
+        // TODO(b2-blocked): decrement the parent DirTask `remaining` counter
+        // and rmdir bottom-up once it drains. The tree-walk that creates
+        // these is still stubbed in `run_from_thread_pool`, so terminal
+        // completion is routed via `ShellRmTask::run_from_main_thread`.
+        let _ = &owned.path;
+    }
 }
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellRmTask {

@@ -481,11 +481,11 @@ pub fn validate_boolean_array(
 
 pub fn validate_function(
     global: &JSGlobalObject,
-    name: &[u8],
+    name: &str,
     value: JSValue,
 ) -> JsResult<JSValue> {
     if !value.is_function() {
-        return Err(throw_invalid_argument_type_value(global, name, b"function", value));
+        return Err(throw_invalid_argument_type_value(global, name, "function", value));
     }
     Ok(value)
 }
@@ -493,7 +493,7 @@ pub fn validate_function(
 pub fn validate_undefined(
     global_this: &JSGlobalObject,
     value: JSValue,
-    name: fmt::Arguments<'_>,
+    name: impl fmt::Display,
 ) -> JsResult<()> {
     if !value.is_undefined() {
         return Err(throw_err_invalid_arg_type(global_this, name, "undefined", value));
@@ -516,7 +516,7 @@ pub trait StringEnum: Sized {
 pub fn validate_string_enum<T: StringEnum>(
     global_this: &JSGlobalObject,
     value: JSValue,
-    name: fmt::Arguments<'_>,
+    name: impl fmt::Display,
 ) -> JsResult<T> {
     let str = value.to_bun_string(global_this)?;
     // `str` drops (derefs) at scope exit — Zig had `defer str.deref()`.

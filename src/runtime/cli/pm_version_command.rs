@@ -109,7 +109,7 @@ mod pm_shims {
 
 impl PmVersionCommand {
     pub fn exec(
-        ctx: &mut command::Context,
+        ctx: command::Context<'_>,
         pm: &mut PackageManager,
         positionals: &[&[u8]],
         original_cwd: &[u8],
@@ -201,6 +201,9 @@ impl PmVersionCommand {
             None
         };
 
+        let silent = pm.options.log_level == LogLevel::Silent;
+        let use_system_shell = ctx.debug.use_system_shell;
+
         if let Some(s) = &scripts_obj {
             if let Some(script) = s.get(b"preversion") {
                 if let Some(script_command) = script.as_utf8_string_literal() {
@@ -211,8 +214,8 @@ impl PmVersionCommand {
                         &package_json_dir,
                         pm_shims::env(pm),
                         &[],
-                        pm.options.log_level == LogLevel::Silent,
-                        ctx.debug.use_system_shell,
+                        silent,
+                        use_system_shell,
                     )?;
                 }
             }

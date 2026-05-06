@@ -770,6 +770,9 @@ impl CompileC {
                 return Err(bun_core::err!("DeferredErrors"));
             }
         };
+        // SAFETY: `state_ptr` was just returned non-null by `TCC::State::init`;
+        // we hold the only reference for the rest of this function.
+        let state: &mut TCC::State = unsafe { &mut *state_ptr.as_ptr() };
 
         let mut pathbuf = PathBuffer::uninit();
 

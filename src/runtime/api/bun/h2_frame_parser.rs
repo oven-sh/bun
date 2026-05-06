@@ -4582,19 +4582,19 @@ impl H2FrameParser {
             let name = name_slice.slice();
 
             if header_name.char_at(0) == b':' as u16 {
-                let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_INVALID_PSEUDOHEADER, format_args!("\"{}\" is an invalid pseudoheader or is used incorrectly", BStr::new(name)));
+                let exception = global_object.to_type_error_fmt(bun_jsc::ErrorCode::HTTP2_INVALID_PSEUDOHEADER, format_args!("\"{}\" is an invalid pseudoheader or is used incorrectly", BStr::new(name)));
                 return global_object.throw_value(exception);
             }
 
             let js_value = iter.value;
             if js_value.is_undefined_or_null() {
-                let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(name)));
+                let exception = global_object.to_type_error_fmt(bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(name)));
                 return global_object.throw_value(exception);
             }
             let validated_name = match Self::to_valid_header_name(name, &mut name_buffer[0..name.len()]) {
                 Ok(n) => n,
                 Err(_) => {
-                    let exception = global_object.to_type_error(bun_jsc::ErrorCode::INVALID_HTTP_TOKEN, format_args!("The arguments Header name is invalid. Received {}", BStr::new(name)));
+                    let exception = global_object.to_type_error_fmt(bun_jsc::ErrorCode::INVALID_HTTP_TOKEN, format_args!("The arguments Header name is invalid. Received {}", BStr::new(name)));
                     return global_object.throw_value(exception);
                 }
             };
@@ -4630,7 +4630,7 @@ impl H2FrameParser {
 
                 if let Some(idx) = single_value_headers_index_of(validated_name) {
                     if value_iter.len > 1 || single_value_headers[idx] {
-                        let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE, format_args!("Header field \"{}\" must only have a single value", BStr::new(validated_name)));
+                        let exception = global_object.to_type_error_fmt(bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE, format_args!("Header field \"{}\" must only have a single value", BStr::new(validated_name)));
                         return global_object.throw_value(exception);
                     }
                     single_value_headers[idx] = true;
@@ -4638,7 +4638,7 @@ impl H2FrameParser {
 
                 while let Some(item) = value_iter.next()? {
                     if item.is_empty_or_undefined_or_null() {
-                        let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(validated_name)));
+                        let exception = global_object.to_type_error_fmt(bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(validated_name)));
                         return global_object.throw_value(exception);
                     }
 
@@ -4646,7 +4646,7 @@ impl H2FrameParser {
                         Ok(s) => s,
                         Err(_) => {
                             global_object.clear_exception();
-                            let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(validated_name)));
+                            let exception = global_object.to_type_error_fmt(bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(validated_name)));
                             return global_object.throw_value(exception);
                         }
                     };
@@ -4665,7 +4665,7 @@ impl H2FrameParser {
             } else {
                 if let Some(idx) = single_value_headers_index_of(validated_name) {
                     if single_value_headers[idx] {
-                        let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE, format_args!("Header field \"{}\" must only have a single value", BStr::new(validated_name)));
+                        let exception = global_object.to_type_error_fmt(bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE, format_args!("Header field \"{}\" must only have a single value", BStr::new(validated_name)));
                         return global_object.throw_value(exception);
                     }
                     single_value_headers[idx] = true;
@@ -4674,7 +4674,7 @@ impl H2FrameParser {
                     Ok(s) => s,
                     Err(_) => {
                         global_object.clear_exception();
-                        let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(validated_name)));
+                        let exception = global_object.to_type_error_fmt(bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(validated_name)));
                         return global_object.throw_value(exception);
                     }
                 };
@@ -5069,7 +5069,7 @@ impl H2FrameParser {
                 let validated_name = match Self::to_valid_header_name(name, &mut name_buffer[0..name.len()]) {
                     Ok(n) => n,
                     Err(_) => {
-                        let exception = global_object.to_type_error(bun_jsc::ErrorCode::INVALID_HTTP_TOKEN, format_args!("The arguments Header name is invalid. Received \"{}\"", BStr::new(name)));
+                        let exception = global_object.to_type_error_fmt(bun_jsc::ErrorCode::INVALID_HTTP_TOKEN, format_args!("The arguments Header name is invalid. Received \"{}\"", BStr::new(name)));
                         return global_object.throw_value(exception);
                     }
                 };
@@ -5100,7 +5100,7 @@ impl H2FrameParser {
 
                 let js_value = iter.value;
                 if js_value.is_undefined_or_null() {
-                    let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(name)));
+                    let exception = global_object.to_type_error_fmt(bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE, format_args!("Invalid value for header \"{}\"", BStr::new(name)));
                     return global_object.throw_value(exception);
                 }
 
@@ -5111,7 +5111,7 @@ impl H2FrameParser {
                     if let Some(idx) = single_value_headers_index_of(validated_name) {
                         if value_iter.len > 1 || single_value_headers[idx] {
                             if !global_object.has_exception() {
-                                let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE, format_args!("Header field \"{}\" must only have a single value", BStr::new(validated_name)));
+                                let exception = global_object.to_type_error_fmt(bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE, format_args!("Header field \"{}\" must only have a single value", BStr::new(validated_name)));
                                 return global_object.throw_value(exception);
                             }
                             return Ok(JSValue::ZERO);
@@ -5165,7 +5165,7 @@ impl H2FrameParser {
                     bun_output::scoped_log!(H2FrameParser, "single header {}", BStr::new(name));
                     if let Some(idx) = single_value_headers_index_of(validated_name) {
                         if single_value_headers[idx] {
-                            let exception = global_object.to_type_error(bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE, format_args!("Header field \"{}\" must only have a single value", BStr::new(validated_name)));
+                            let exception = global_object.to_type_error_fmt(bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE, format_args!("Header field \"{}\" must only have a single value", BStr::new(validated_name)));
                             return global_object.throw_value(exception);
                         }
                         single_value_headers[idx] = true;

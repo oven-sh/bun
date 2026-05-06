@@ -37,6 +37,7 @@ struct PackageInfo {
 }
 
 // In Zig this is `PackageInfo.DependencyPath`; hoisted because Rust has no nested struct types.
+#[allow(dead_code)]
 struct DependencyPath {
     path: Vec<Box<[u8]>>,
     is_direct: bool,
@@ -218,7 +219,8 @@ fn collect_packages_for_audit(
     // behind the upstream PackageManager stub (reconciler-6).
     let packages_list: Vec<PackageVersions> =
         todo!("blocked_on: bun_install::PackageManager::lockfile");
-    let _ = (pm, prod_only, build_production_package_set as fn(_, _) -> _);
+    let _ = build_production_package_set;
+    let _ = (pm, prod_only);
     let skipped_packages: Vec<Box<[u8]>> = Vec::new();
 
     // PERF(port): Zig used MutableString with initial capacity 1024.

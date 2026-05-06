@@ -1733,10 +1733,12 @@ impl AsyncReaddirRecursiveTask {
             }
         }
 
-        // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv
-        unsafe { &*self.global_object }
-            .bun_vm_concurrently()
-            .enqueue_task_concurrent(ConcurrentTask::create(Task::init(self)));
+        // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv.
+        // `bun_vm()` returns the raw `*mut VirtualMachine`; `bun_vm_concurrently`
+        // (which only skips the JS-thread assert) is not on the lib.rs surface
+        // yet, so deref the pointer directly — safe to call from any thread.
+        let vm = unsafe { &mut *unsafe { &*self.global_object }.bun_vm() };
+        vm.enqueue_task_concurrent(ConcurrentTask::create(Task::init(self as *mut Self)));
     }
 
     fn clear_result_list(&mut self) {

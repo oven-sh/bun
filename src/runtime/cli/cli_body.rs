@@ -1169,12 +1169,12 @@ Examples<d>:<r>
 A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>
 ";
 
-                Output::pretty(const_format::concatcp!(INTRO_TEXT, "\n\n"), format_args!(""));
+                Output::pretty(format_args!("{}", const_format::concatcp!(INTRO_TEXT, "\n\n")));
                 Output::flush();
-                Output::pretty("<b>Flags:<r>", format_args!(""));
+                Output::pretty(format_args!("<b>Flags:<r>"));
                 Output::flush();
                 clap::simple_help(arguments::BUILD_ONLY_PARAMS);
-                Output::pretty(const_format::concatcp!("\n\n", OUTRO_TEXT), format_args!(""));
+                Output::pretty(format_args!("{}", const_format::concatcp!("\n\n", OUTRO_TEXT)));
                 Output::flush();
             }
             Tag::TestCommand => {

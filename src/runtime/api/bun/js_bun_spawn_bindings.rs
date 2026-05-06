@@ -677,8 +677,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     let mut memfd_guard = scopeguard::guard(
         (&mut should_close_memfd, &mut stdio),
-        |(should_close_memfd, stdio)| {
-            if **should_close_memfd {
+        |(should_close_memfd, stdio): (&mut bool, &mut [Stdio; 3])| {
+            if *should_close_memfd {
                 for fd_index in 0..stdio.len() {
                     if let Stdio::Memfd(fd) = stdio[fd_index] {
                         fd.close();

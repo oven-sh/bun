@@ -1416,8 +1416,11 @@ impl Subprocess<'_> {
             IPC::DecodedIPCMessage::Internal(data) => {
                 bun_output::scoped_log!(IPC, "Received IPC internal message from child");
                 let global_this = self.global_this();
-                let _ =
-                    node_cluster_binding::handle_internal_message_primary(global_this, self, data);
+                // TODO(blocked_on: node_cluster_binding::handle_internal_message_primary):
+                // signature currently takes `&mut bun_jsc::Subprocess` (stub type),
+                // not `&mut crate::api::bun_subprocess::Subprocess`.
+                let _ = (global_this, &mut *self, data);
+                let _ = node_cluster_binding::handle_internal_message_primary;
             }
         }
     }

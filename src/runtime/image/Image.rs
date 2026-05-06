@@ -1152,10 +1152,10 @@ impl Image {
                 Ok((out, format.mime()))
             }
             TaskResult::Err(e) => {
-                global.throw(format_args!("{}", bstr::BStr::new(error_message(e).as_bytes())))
+                Err(global.throw(format_args!("{}", bstr::BStr::new(error_message(e).as_bytes()))))
             }
             // Preserve errno/path/syscall instead of flattening to DecodeFailed.
-            TaskResult::IoErr(e) => global.throw_value(e.to_js(global)?),
+            TaskResult::IoErr(e) => Err(global.throw_value(e.to_js(global))),
             TaskResult::Meta { .. } => unreachable!(),
         }
     }

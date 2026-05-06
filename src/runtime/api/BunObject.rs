@@ -2271,12 +2271,12 @@ pub mod environment_variables {
         ptr: *mut *mut &[u8],
     ) -> usize {
         // SAFETY: caller is C++ with live global; ptr is a valid out-param.
-        let bun_vm = unsafe { (*global_object).bun_vm() };
+        let bun_vm = unsafe { &mut *(*global_object).bun_vm() };
         // TODO(port): map.map.keys().ptr — exposes raw pointer to the env-map
-        // key slice array. The Rust StringMap should expose a `.keys_ptr()`
-        // accessor that returns `*mut &[u8]` for FFI compat.
-        unsafe { *ptr = bun_vm.transpiler.env.map.map.keys_ptr() };
-        bun_vm.transpiler.env.map.map.unmanaged_entries_len()
+        // key slice array. The Rust StringMap needs a `.keys_ptr()` accessor
+        // returning `*mut &[u8]` for FFI compat.
+        let _ = (bun_vm, ptr);
+        todo!("blocked_on: bun_dotenv::Map::keys_ptr / unmanaged_entries_len")
     }
 
     #[unsafe(no_mangle)]

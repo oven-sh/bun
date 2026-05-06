@@ -373,13 +373,13 @@ impl HTMLRewriterLoader {
             return;
         }
         // SAFETY: rewriter created via builder.build(); not yet freed.
-        unsafe { lolhtml::HTMLRewriter::deinit(self.rewriter) };
-        self.backpressure = LinearFifo::init();
+        unsafe { lolhtml::HTMLRewriter::destroy(self.rewriter) };
+        self.backpressure = LinearFifo::<u8, DynamicBuffer<u8>>::init();
         self.finalized = true;
     }
 
     pub fn fail(&mut self, err: bun_sys::Error) {
-        self.signal.close(Some(err));
+        self.signal.close(Some(err.clone()));
         self.output.end(Some(err));
         self.failed = true;
         self.finalize();

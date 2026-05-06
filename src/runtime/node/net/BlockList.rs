@@ -432,7 +432,7 @@ impl BlockList {
         let int = match read_int_le_usize(buf, &mut pos) {
             Some(v) => v,
             None => {
-                return global.throw("BlockList.onStructuredCloneDeserialize failed");
+                return Err(global.throw("BlockList.onStructuredCloneDeserialize failed"));
             }
         };
 

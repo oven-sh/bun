@@ -1303,7 +1303,8 @@ pub mod js_bundler {
                             this.names.owned_chunk.append_slice_exact(b"./")?;
                         }
                         this.names.owned_chunk.append_slice_exact(slice.slice())?;
-                        this.names.chunk.data = this.names.owned_chunk.as_slice_ptr();
+                        this.names.chunk.data =
+                            this.names.owned_chunk.list.clone().into_boxed_slice();
                         drop(slice);
                     }
 
@@ -1314,7 +1315,8 @@ pub mod js_bundler {
                             this.names.owned_asset.append_slice_exact(b"./")?;
                         }
                         this.names.owned_asset.append_slice_exact(slice.slice())?;
-                        this.names.asset.data = this.names.owned_asset.as_slice_ptr();
+                        this.names.asset.data =
+                            this.names.owned_asset.list.clone().into_boxed_slice();
                         drop(slice);
                     }
                 } else {

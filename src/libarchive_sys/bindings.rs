@@ -1074,7 +1074,10 @@ unsafe extern "C" {
 
 #[inline(always)]
 fn ep(e: &ArchiveEntry) -> *mut ArchiveEntry {
-    e as *const ArchiveEntry as *mut ArchiveEntry
+    // SAFETY: `ArchiveEntry` is an opaque zero-sized FFI marker; `_p: UnsafeCell<_>`
+    // at offset 0 grants interior mutability so the derived `*mut` carries write
+    // provenance for the C-side allocation.
+    e._p.get() as *mut ArchiveEntry
 }
 
 impl ArchiveEntry {

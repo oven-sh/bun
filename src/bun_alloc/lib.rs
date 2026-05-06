@@ -1032,10 +1032,22 @@ pub mod heap_breakdown {
             crate::Allocator::type_id(alloc) == core::any::TypeId::of::<Zone>()
         }
 
+        /// Raw `*mut malloc_zone_t` for the FFI surface.
+        ///
+        /// `Zone` is `#[repr(C)]` with `_p: UnsafeCell<[u8; 0]>` at offset 0,
+        /// so `_p.get()` yields a pointer at the struct's base address that
+        /// carries interior-mut provenance — no `*const → *mut` cast from a
+        /// shared ref. libmalloc handles its own synchronization.
+        #[inline]
+        pub fn as_mut_ptr(&self) -> *mut Zone {
+            self._p.get().cast()
+        }
+
         #[inline]
         pub fn malloc_zone_malloc(&self, size: usize) -> Option<*mut c_void> {
-            // SAFETY: `self` is a live `malloc_zone_t`.
-            let p = unsafe { malloc_zone_malloc(self as *const Zone as *mut Zone, size) };
+            // SAFETY: `self` is a live `malloc_zone_t`; `as_mut_ptr` derives a
+            // write-capable pointer through `UnsafeCell`.
+            let p = unsafe { malloc_zone_malloc(self.as_mut_ptr(), size) };
             if p.is_null() { None } else { Some(p) }
         }
 
@@ -1045,7 +1057,7 @@ pub mod heap_breakdown {
         #[inline]
         pub unsafe fn malloc_zone_free(&self, ptr: *mut c_void) {
             // SAFETY: caller contract above; `self` is a live `malloc_zone_t`.
-            unsafe { malloc_zone_free(self as *const Zone as *mut Zone, ptr) }
+            unsafe { malloc_zone_free(self.as_mut_ptr(), ptr) }
         }
     }
 

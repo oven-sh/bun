@@ -146,35 +146,40 @@ impl<R> StyleRule<R> {
                 for decl in decls {
                     // The CSS modules `composes` property is handled specially, and omitted during printing.
                     // We need to add the classes it references to the list for the selectors in this rule.
-                    if let Property::Composes(_composes) = decl {
+                    if let Property::Composes(composes) = decl {
                         if dest.is_nested() && dest.css_module.is_some() {
-                            // TODO(port): blocked_on properties::css_modules — the
-                            // stub `Composes` carries no `cssparser_loc`; pass
-                            // `None` for the error location until the real type
-                            // un-gates (gated_prop! in properties/mod.rs).
                             return dest.new_error(
                                 PrinterErrorKind::invalid_composes_nesting,
-                                None,
+                                Some(composes.cssparser_loc),
                             );
                         }
 
                         if dest.css_module.is_some() {
-                            // TODO(port): blocked_on CssModule::handle_composes
-                            // ( in css_modules.rs) — until that
-                            // un-gates, just honor the "omitted during printing"
-                            // contract and skip the declaration.
-                            
-                            if let Some(css_module) = &mut dest.css_module {
-                                if let Err(error_kind) = css_module
+                            // PORT NOTE: reshaped for borrowck — Zig
+                            // `if (dest.css_module) |*css_module|
+                            //     css_module.handleComposes(dest, ...)` overlaps
+                            // `&mut dest.css_module` with `&mut *dest`. Move the
+                            // module out for the duration of the call, then put
+                            // it back before any `dest.new_error` early return.
+                            let mut cm = dest.css_module.take();
+                            let err = if let Some(css_module) = &mut cm {
+                                css_module
                                     .handle_composes(
                                         dest,
                                         &self.selectors,
-                                        _composes,
+                                        composes,
                                         self.loc.source_index,
                                     )
-                                {
-                                    return dest.new_error(error_kind, Some(_composes.cssparser_loc));
-                                }
+                                    .err()
+                            } else {
+                                None
+                            };
+                            dest.css_module = cm;
+                            if let Some(error_kind) = err {
+                                return dest.new_error(
+                                    error_kind,
+                                    Some(composes.cssparser_loc),
+                                );
                             }
                             continue;
                         }
@@ -288,27 +293,14 @@ impl<R> StyleRule<R> {
         // }
 
         context.handler_context.context = DeclarationContext::StyleRule;
-        // SAFETY: `DeclarationBlock<'static>` is the crate-wide `'bump`-erasure
-        // placeholder (see struct PORT NOTE). `DeclarationHandler<'a>` is
-        // invariant in `'a` (bumpalo Vec), so reborrowing the context handlers
-        // requires the same erasure here. Both point into the same arena that
-        // owns `self.declarations`; lifetimes re-thread together when
-        // `CssRule<'bump, R>` lands.
-        let (handler, important_handler) = unsafe {
-            (
-                core::mem::transmute::<
-                    &mut css::DeclarationHandler<'_>,
-                    &mut css::DeclarationHandler<'static>,
-                >(&mut *context.handler),
-                core::mem::transmute::<
-                    &mut css::DeclarationHandler<'_>,
-                    &mut css::DeclarationHandler<'static>,
-                >(&mut *context.important_handler),
-            )
-        };
+        // PORT NOTE: `DeclarationBlock<'static>` (struct PORT NOTE above) forces
+        // `minify` to want `DeclarationHandler<'static>`; route through the
+        // single centralized `'bump`-erasure helper instead of open-coding the
+        // transmute (PORTING.md §Forbidden). Collapses when `CssRule<'bump, R>`
+        // re-threads the arena lifetime.
         self.declarations.minify(
-            handler,
-            important_handler,
+            super::dc::decl_handler_static(&mut *context.handler),
+            super::dc::decl_handler_static(&mut *context.important_handler),
             &mut context.handler_context,
         );
         context.handler_context.context = DeclarationContext::None;

@@ -211,6 +211,46 @@ pub(super) mod dc {
         }
     }
 
+    /// Empty `DeclarationBlock<'static>` — Zig spec writes `css.DeclarationBlock{}`.
+    ///
+    /// SAFETY: same `'bump`-erasure rationale as [`decl_block_static`]. Exists
+    /// so call-sites that need an empty block (rules.zig:363
+    /// `nested_rule.declarations = .{}`) route through ONE centralized erasure
+    /// helper instead of open-coding `unsafe { &*(bump as *const _) }`
+    /// (PORTING.md §Forbidden). Delete with `decl_block_static` once
+    /// `CssRule<'bump, R>` re-threads the arena lifetime.
+    #[inline]
+    pub fn decl_block_empty_static(bump: &Arena) -> crate::DeclarationBlock<'static> {
+        unsafe {
+            core::mem::transmute::<crate::DeclarationBlock<'_>, crate::DeclarationBlock<'static>>(
+                crate::DeclarationBlock::new_in(
+                    core::mem::transmute::<&Arena, &'static Arena>(bump),
+                ),
+            )
+        }
+    }
+
+    /// `'bump`-erasure adaptor for `&mut DeclarationHandler<'_>`.
+    ///
+    /// SAFETY: `DeclarationBlock<'static>` on `StyleRule` (see style.rs struct
+    /// PORT NOTE) forces `DeclarationBlock::minify` to expect
+    /// `DeclarationHandler<'static>`; the handlers in `MinifyContext` carry the
+    /// real `'bump`. Both reference the same arena. Centralized here so the
+    /// erasure lives in ONE place (PORTING.md §Forbidden: do not add new
+    /// open-coded lifetime-extension transmutes); collapses together with
+    /// `decl_block_static` when `CssRule<'bump, R>` lands.
+    #[inline]
+    pub fn decl_handler_static<'a>(
+        h: &'a mut crate::DeclarationHandler<'_>,
+    ) -> &'a mut crate::DeclarationHandler<'static> {
+        unsafe {
+            core::mem::transmute::<
+                &'a mut crate::DeclarationHandler<'_>,
+                &'a mut crate::DeclarationHandler<'static>,
+            >(h)
+        }
+    }
+
     /// `MediaList::deep_clone` — routes to the real arena-aware impl in
     /// media_query.rs (element-wise walk of `media_queries`).
     #[inline]
@@ -779,13 +819,12 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
     {
         let mut rulesss = CssRuleList::<R>::default();
         core::mem::swap(&mut sty.rules, &mut rulesss);
-        // SAFETY: Phase-A 'static erasure on `DeclarationBlock<'static>` —
-        // matches existing pattern in declaration.rs / css_parser.rs.
-        let bump: &'static bun_alloc::Arena =
-            unsafe { &*(context.allocator as *const bun_alloc::Arena) };
+        // Zig: `.declarations = css.DeclarationBlock{}` — empty block. Route
+        // through the centralized `'bump`-erasure helper instead of fabricating
+        // `&'static Arena` here (PORTING.md §Forbidden).
         Some(style::StyleRule {
             selectors: sty.selectors.deep_clone(),
-            declarations: css::DeclarationBlock::new_in(bump),
+            declarations: dc::decl_block_empty_static(context.allocator),
             rules: rulesss,
             vendor_prefix: sty.vendor_prefix,
             loc: sty.loc,

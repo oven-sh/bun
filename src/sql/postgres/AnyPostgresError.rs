@@ -6,7 +6,7 @@
 // We hand-roll Display via `IntoStaticStr` so the message == the variant name
 // (matching Zig `@errorName`), and impl `std::error::Error` manually.
 #[allow(non_camel_case_types)]
-#[derive(Debug, Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, strum::IntoStaticStr, strum::EnumString)]
 pub enum AnyPostgresError {
     ConnectionClosed,
     ExpectedRequest,
@@ -56,6 +56,16 @@ impl std::error::Error for AnyPostgresError {}
 impl From<AnyPostgresError> for bun_core::Error {
     fn from(e: AnyPostgresError) -> Self {
         bun_core::Error::from_name(<&'static str>::from(e))
+    }
+}
+
+// Reverse of the above: `bun_core::Error` is just an interned name; recover the
+// matching variant by name (or `JSError` as a catch-all). Needed because the
+// protocol `write_internal` helpers were widened to `bun_core::Error` while
+// callers (e.g. `PostgresRequest`) still propagate `AnyPostgresError`.
+impl From<bun_core::Error> for AnyPostgresError {
+    fn from(e: bun_core::Error) -> Self {
+        e.name().parse().unwrap_or(AnyPostgresError::JSError)
     }
 }
 

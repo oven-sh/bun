@@ -405,33 +405,28 @@ impl MySQLQuery {
         match unsafe { (*stmt).status } {
             my_sql_statement::Status::Failed => {
                 debug!("failed");
-                let error_response = stmt.error_response.to_js(global_object);
+                // SAFETY: `stmt` is live (intrusive ref held by `self.statement`).
+                let error_response = unsafe { (*stmt).error_response.to_js(global_object) };
                 // If the statement failed, we need to throw the error
-                return global_object.throw_value(error_response);
+                return Err(global_object.throw_value(error_response).into());
             }
             my_sql_statement::Status::Prepared => {
                 if connection.can_pipeline() {
                     debug!("bindAndExecute");
                     let writer = connection.get_writer();
-                    // Derive a raw `*mut MySQLStatement` and let the `&mut self` borrow used
-                    // to obtain it end *before* calling the `&mut self` method below — passing a
-                    // `&mut MySQLStatement` rooted in `*self` alongside `&mut self` would be two
-                    // overlapping mutable borrows. The Zig spec (.zig:183/195) passes an
-                    // independent `*MySQLStatement` here.
-                    // TODO(port): `Rc::get_mut` panics when the connection map also holds a ref;
-                    // see field note — switch to IntrusiveRc/RefCell.
-                    let stmt_ptr: *mut MySQLStatement = Rc::get_mut(self.statement.as_mut().unwrap())
-                        .expect("TODO(port): shared mutation — switch to IntrusiveRc/RefCell")
-                        as *mut MySQLStatement;
+                    // Pass the raw `*mut MySQLStatement` separately from `&mut self`
+                    // (matches Zig .zig:183/195 which passes an independent `*MySQLStatement`).
                     if let Err(err) =
-                        self.bind_and_execute(writer, stmt_ptr, global_object, binding_value, columns_value)
+                        self.bind_and_execute(writer, stmt, global_object, binding_value, columns_value)
                     {
                         if !global_object.has_exception() {
-                            return global_object.throw_value(mysql_error_to_js(
-                                global_object,
-                                "failed to bind and execute query",
-                                err,
-                            ));
+                            return Err(global_object
+                                .throw_value(mysql_error_to_js(
+                                    global_object,
+                                    Some(b"failed to bind and execute query"),
+                                    err,
+                                ))
+                                .into());
                         }
                         return Err(bun_core::err!("JSError"));
                     }
@@ -449,15 +444,15 @@ impl MySQLQuery {
                         Some(q) => q,
                         None => self.query.to_utf8(),
                     };
-                    if let Err(err) =
-                        mysql_request::prepare_request(query.as_slice(), writer)
-                    {
-                        return global_object.throw_error(err, "failed to prepare query");
+                    if let Err(err) = mysql_request::prepare_request(query.slice(), writer) {
+                        return Err(global_object
+                            .throw_error(err, "failed to prepare query")
+                            .err()
+                            .unwrap()
+                            .into());
                     }
-                    // TODO(port): needs `&mut MySQLStatement`; see field note.
-                    Rc::get_mut(self.statement.as_mut().unwrap())
-                        .expect("TODO(port): shared mutation")
-                        .status = my_sql_statement::Status::Parsing;
+                    // SAFETY: `stmt` is live (intrusive ref held by `self.statement`).
+                    unsafe { (*stmt).status = my_sql_statement::Status::Parsing };
                 }
             }
         }
@@ -468,7 +463,7 @@ impl MySQLQuery {
     /// `JSValue.toBunString`). `cleanup()` will deref it exactly once.
     pub fn init(query: BunString, bigint: bool, simple: bool) -> Self {
         Self {
-            statement: None,
+            statement: core::ptr::null_mut(),
             query,
             status: Status::Pending,
             flags: Flags::new(bigint, simple),
@@ -522,8 +517,12 @@ impl MySQLQuery {
 
     pub fn cleanup(&mut self) {
         // Zig: `if (this.#statement) |s| { s.deref(); this.#statement = null; }`
-        // With `Rc`, dropping the `Some` IS the deref.
-        self.statement = None;
+        if !self.statement.is_null() {
+            let s = self.statement;
+            self.statement = core::ptr::null_mut();
+            // SAFETY: `s` is a live boxed `MySQLStatement` we held one intrusive ref on.
+            unsafe { MySQLStatement::deref(s) };
+        }
         // Zig: `var q = this.#query; defer q.deref(); this.#query = .empty;`
         // `BunString` derefs on Drop; assigning `empty()` drops the old value.
         self.query = BunString::empty();
@@ -550,10 +549,9 @@ impl MySQLQuery {
     #[inline]
     pub fn is_being_prepared(&self) -> bool {
         self.status == Status::Pending
-            && self
-                .statement
-                .as_ref()
-                .is_some_and(|s| s.status == my_sql_statement::Status::Parsing)
+            && !self.statement.is_null()
+            // SAFETY: non-null and kept alive by the intrusive ref in `self.statement`.
+            && unsafe { (*self.statement).status } == my_sql_statement::Status::Parsing
     }
 
     #[inline]
@@ -579,11 +577,11 @@ impl MySQLQuery {
     #[inline]
     pub fn mark_as_prepared(&mut self) {
         if self.status == Status::Pending {
-            if let Some(statement) = self.statement.as_mut() {
-                // TODO(port): needs `&mut MySQLStatement`; see field note. Zig always mutates
-                // through the shared `*MySQLStatement`; do not silently no-op when the Rc is shared.
-                let statement = Rc::get_mut(statement)
-                    .expect("TODO(port): shared mutation — switch to IntrusiveRc/RefCell");
+            if !self.statement.is_null() {
+                // SAFETY: non-null and kept alive by the intrusive ref in
+                // `self.statement`; this thread is the only mutator (matches Zig
+                // shared `*MySQLStatement` mutation).
+                let statement = unsafe { &mut *self.statement };
                 if statement.status == my_sql_statement::Status::Parsing
                     && statement.params.len() == statement.params_received as usize
                     && statement.statement_id > 0
@@ -595,8 +593,12 @@ impl MySQLQuery {
     }
 
     #[inline]
-    pub fn get_statement(&self) -> Option<&MySQLStatement> {
-        self.statement.as_deref()
+    pub fn get_statement(&self) -> Option<&mut MySQLStatement> {
+        // SAFETY: when non-null, `self.statement` is a live boxed `MySQLStatement`
+        // kept alive by the intrusive ref we hold. Returning `&mut` mirrors Zig's
+        // `?*MySQLStatement` (shared mutation through the intrusive pointer); the
+        // lifetime is bounded by `&self`, which owns one ref.
+        unsafe { self.statement.as_mut() }
     }
 }
 
@@ -604,6 +606,6 @@ impl MySQLQuery {
 // PORT STATUS
 //   source:     src/sql_jsc/mysql/MySQLQuery.zig (334 lines)
 //   confidence: medium
-//   todos:      15
-//   notes:      LIFETIMES.tsv mandates Rc<MySQLStatement> but Zig uses intrusive refcount with shared mutation; Phase B must pick IntrusiveRc or RefCell. MarkedArgumentBuffer::run trampoline shape needs confirming.
+//   todos:      2
+//   notes:      statement: *mut MySQLStatement w/ intrusive ref_/deref (matches PreparedStatementsMap). ExecuteParams thunks bridge cross-crate Value. MarkedArgumentBuffer::run trampoline shape needs confirming.
 // ──────────────────────────────────────────────────────────────────────────

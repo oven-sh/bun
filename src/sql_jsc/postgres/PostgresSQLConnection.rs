@@ -22,6 +22,8 @@ use crate::postgres::PostgresSQLQuery;
 use crate::postgres::postgres_sql_query::{self, Status as QueryStatus, js as query_js};
 use crate::postgres::PostgresSQLStatement;
 use crate::postgres::postgres_sql_statement::{Status as StatementStatus, Error as StatementError};
+use crate::postgres::sasl::SASLStatus;
+use bun_sql::shared::SQLQueryResultMode;
 use crate::jsc::{EventLoopTimerState, EventLoopTimerTag};
 use bun_sql::postgres::SocketMonitor;
 use bun_sql::postgres::PostgresProtocol as protocol;
@@ -1246,7 +1248,7 @@ impl PostgresSQLConnection {
             let request = unsafe { &mut *request };
             match request.status {
                 // pending we will fail the request and the stmt will be marked as error ConnectionClosed too
-                PostgresSQLQuery::Status::Pending => {
+                QueryStatus::Pending => {
                     let Some(stmt) = request.statement else {
                         // `continue` in Zig with `orelse continue` — but we still need to deref+discard.
                         // PORT NOTE: Zig `orelse continue` skips the deref/discard at the bottom too;
@@ -1255,37 +1257,37 @@ impl PostgresSQLConnection {
                     };
                     // SAFETY: stmt is a valid *mut PostgresSQLStatement.
                     let stmt = unsafe { &mut *stmt };
-                    stmt.error_response = Some(PostgresSQLStatement::ErrorResponse::PostgresError(AnyPostgresError::ConnectionClosed));
-                    stmt.status = PostgresSQLStatement::Status::Failed;
+                    stmt.error_response = Some(StatementError::PostgresError(AnyPostgresError::ConnectionClosed));
+                    stmt.status = StatementStatus::Failed;
                     if !unsafe { self.vm() }.is_shutting_down() {
                         if let Some(reason) = js_reason {
                             request.on_js_error(reason, self.global());
                         } else {
                             request.on_error(
-                                PostgresSQLStatement::ErrorResponse::PostgresError(AnyPostgresError::ConnectionClosed),
+                                StatementError::PostgresError(AnyPostgresError::ConnectionClosed),
                                 self.global(),
                             );
                         }
                     }
                 }
                 // in the middle of running
-                PostgresSQLQuery::Status::Binding
-                | PostgresSQLQuery::Status::Running
-                | PostgresSQLQuery::Status::PartialResponse => {
+                QueryStatus::Binding
+                | QueryStatus::Running
+                | QueryStatus::PartialResponse => {
                     self.finish_request(request);
                     if !unsafe { self.vm() }.is_shutting_down() {
                         if let Some(reason) = js_reason {
                             request.on_js_error(reason, self.global());
                         } else {
                             request.on_error(
-                                PostgresSQLStatement::ErrorResponse::PostgresError(AnyPostgresError::ConnectionClosed),
+                                StatementError::PostgresError(AnyPostgresError::ConnectionClosed),
                                 self.global(),
                             );
                         }
                     }
                 }
                 // just ignore success and fail cases
-                PostgresSQLQuery::Status::Success | PostgresSQLQuery::Status::Fail => {}
+                QueryStatus::Success | QueryStatus::Fail => {}
             }
             request.deref();
             self.requests.discard(1);
@@ -1334,8 +1336,8 @@ impl PostgresSQLConnection {
         }
 
         self.nonpipelinable_requests == 0 // need to wait for non pipelinable requests to finish
-            && !self.flags.use_unnamed_prepared_statements // unnamed statements are not pipelinable
-            && !self.flags.waiting_to_prepare // cannot pipeline when waiting prepare
+            && !self.flags.contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS) // unnamed statements are not pipelinable
+            && !self.flags.contains(ConnectionFlags::WAITING_TO_PREPARE) // cannot pipeline when waiting prepare
             && !self.flags.contains(ConnectionFlags::HAS_BACKPRESSURE) // dont make sense to buffer more if we have backpressure
             && self.write_buffer.len() < MAX_PIPELINE_SIZE // buffer is too big need to flush before pipeline more
     }
@@ -1497,23 +1499,23 @@ impl PostgresSQLConnection {
 
     fn finish_request(&mut self, item: &mut PostgresSQLQuery) {
         match item.status {
-            PostgresSQLQuery::Status::Running
-            | PostgresSQLQuery::Status::Binding
-            | PostgresSQLQuery::Status::PartialResponse => {
+            QueryStatus::Running
+            | QueryStatus::Binding
+            | QueryStatus::PartialResponse => {
                 if item.flags.simple {
                     self.nonpipelinable_requests -= 1;
                 } else if item.flags.pipelined {
                     self.pipelined_requests -= 1;
                 }
             }
-            PostgresSQLQuery::Status::Success
-            | PostgresSQLQuery::Status::Fail
-            | PostgresSQLQuery::Status::Pending => {}
+            QueryStatus::Success
+            | QueryStatus::Fail
+            | QueryStatus::Pending => {}
         }
     }
 
     pub fn can_prepare_query(&self) -> bool {
-        self.flags.contains(ConnectionFlags::IS_READY_FOR_QUERY) && !self.flags.waiting_to_prepare && self.pipelined_requests == 0
+        self.flags.contains(ConnectionFlags::IS_READY_FOR_QUERY) && !self.flags.contains(ConnectionFlags::WAITING_TO_PREPARE) && self.pipelined_requests == 0
     }
 
     /// Process pending requests and flush. Called from the enqueue path when
@@ -1540,12 +1542,12 @@ impl PostgresSQLConnection {
                     // An item may be in the success or failed state and still be inside the queue (see deinit later comments)
                     // so we do the cleanup here
                     match result.status {
-                        PostgresSQLQuery::Status::Success => {
+                        QueryStatus::Success => {
                             result.deref();
                             $self.requests.discard(1);
                             continue;
                         }
-                        PostgresSQLQuery::Status::Fail => {
+                        QueryStatus::Fail => {
                             result.deref();
                             $self.requests.discard(1);
                             continue;
@@ -1567,7 +1569,7 @@ impl PostgresSQLConnection {
             // SAFETY: req is a valid *mut PostgresSQLQuery owned by the queue.
             let req = unsafe { &mut *req_ptr };
             match req.status {
-                PostgresSQLQuery::Status::Pending => {
+                QueryStatus::Pending => {
                     if req.flags.simple {
                         if self.pipelined_requests > 0 || !self.flags.contains(ConnectionFlags::IS_READY_FOR_QUERY) {
                             debug!(
@@ -1591,14 +1593,14 @@ impl PostgresSQLConnection {
                                 self.requests.discard(1);
                             } else {
                                 // deinit later
-                                req.status = PostgresSQLQuery::Status::Fail;
+                                req.status = QueryStatus::Fail;
                             }
                             debug!("executeQuery failed: {}", <&'static str>::from(err));
                             continue;
                         }
                         self.nonpipelinable_requests += 1;
-                        self.flags.is_ready_for_query = false;
-                        req.status = PostgresSQLQuery::Status::Running;
+                        self.flags.remove(ConnectionFlags::IS_READY_FOR_QUERY);
+                        req.status = QueryStatus::Running;
                         defer_cleanup!(self);
                         return;
                     } else {
@@ -1606,7 +1608,7 @@ impl PostgresSQLConnection {
                             // SAFETY: statement is a valid *mut PostgresSQLStatement.
                             let statement = unsafe { &mut *statement_ptr };
                             match statement.status {
-                                PostgresSQLStatement::Status::Failed => {
+                                StatementStatus::Failed => {
                                     debug!("stmt failed");
                                     debug_assert!(statement.error_response.is_some());
                                     req.on_error(statement.error_response.clone().unwrap(), self.global());
@@ -1615,12 +1617,12 @@ impl PostgresSQLConnection {
                                         self.requests.discard(1);
                                     } else {
                                         // deinit later
-                                        req.status = PostgresSQLQuery::Status::Fail;
+                                        req.status = QueryStatus::Fail;
                                         offset += 1;
                                     }
                                     continue;
                                 }
-                                PostgresSQLStatement::Status::Prepared => {
+                                StatementStatus::Prepared => {
                                     let Some(this_value) = req.this_value.try_get() else {
                                         debug_assert!(false, "query value was freed earlier than expected");
                                         if offset == 0 {
@@ -1628,16 +1630,16 @@ impl PostgresSQLConnection {
                                             self.requests.discard(1);
                                         } else {
                                             // deinit later
-                                            req.status = PostgresSQLQuery::Status::Fail;
+                                            req.status = QueryStatus::Fail;
                                             offset += 1;
                                         }
                                         continue;
                                     };
-                                    let binding_value = PostgresSQLQuery::js::binding_get_cached(this_value).unwrap_or(JSValue::ZERO);
-                                    let columns_value = PostgresSQLQuery::js::columns_get_cached(this_value).unwrap_or(JSValue::ZERO);
+                                    let binding_value = postgres_sql_query::js::binding_get_cached(this_value).unwrap_or(JSValue::ZERO);
+                                    let columns_value = postgres_sql_query::js::columns_get_cached(this_value).unwrap_or(JSValue::ZERO);
                                     req.flags.binary = !statement.fields.is_empty();
 
-                                    if self.flags.use_unnamed_prepared_statements {
+                                    if self.flags.contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS) {
                                         // For unnamed prepared statements, always include Parse
                                         // before Bind+Execute. The unnamed statement may not exist
                                         // on the current server connection when using PgBouncer or
@@ -1663,7 +1665,7 @@ impl PostgresSQLConnection {
                                                 self.requests.discard(1);
                                             } else {
                                                 // deinit later
-                                                req.status = PostgresSQLQuery::Status::Fail;
+                                                req.status = QueryStatus::Fail;
                                                 offset += 1;
                                             }
                                             debug!("parse, bind and execute failed: {}", <&'static str>::from(err));
@@ -1688,7 +1690,7 @@ impl PostgresSQLConnection {
                                                 self.requests.discard(1);
                                             } else {
                                                 // deinit later
-                                                req.status = PostgresSQLQuery::Status::Fail;
+                                                req.status = QueryStatus::Fail;
                                                 offset += 1;
                                             }
                                             debug!("bind and execute failed: {}", <&'static str>::from(err));
@@ -1696,12 +1698,12 @@ impl PostgresSQLConnection {
                                         }
                                     }
 
-                                    self.flags.is_ready_for_query = false;
-                                    req.status = PostgresSQLQuery::Status::Binding;
+                                    self.flags.remove(ConnectionFlags::IS_READY_FOR_QUERY);
+                                    req.status = QueryStatus::Binding;
                                     req.flags.pipelined = true;
                                     self.pipelined_requests += 1;
 
-                                    if self.flags.use_unnamed_prepared_statements || !self.can_pipeline() {
+                                    if self.flags.contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS) || !self.can_pipeline() {
                                         debug!("cannot pipeline more stmt");
                                         defer_cleanup!(self);
                                         return;
@@ -1710,7 +1712,7 @@ impl PostgresSQLConnection {
                                     offset += 1;
                                     continue;
                                 }
-                                PostgresSQLStatement::Status::Pending => {
+                                StatementStatus::Pending => {
                                     if !self.can_prepare_query() {
                                         debug!("need to wait to finish the pipeline before starting a new query preparation");
                                         // need to wait to finish the pipeline before starting a new query preparation
@@ -1729,13 +1731,13 @@ impl PostgresSQLConnection {
                                                 self.requests.discard(1);
                                             } else {
                                                 // deinit later
-                                                req.status = PostgresSQLQuery::Status::Fail;
+                                                req.status = QueryStatus::Fail;
                                                 offset += 1;
                                             }
                                             continue;
                                         };
                                         // prepareAndQueryWithSignature will write + bind + execute, it will change to running after binding is complete
-                                        let binding_value = PostgresSQLQuery::js::binding_get_cached(this_value).unwrap_or(JSValue::ZERO);
+                                        let binding_value = postgres_sql_query::js::binding_get_cached(this_value).unwrap_or(JSValue::ZERO);
                                         debug!("prepareAndQueryWithSignature");
                                         if let Err(err) = PostgresRequest::prepare_and_query_with_signature(
                                             self.global(),
@@ -1747,8 +1749,8 @@ impl PostgresSQLConnection {
                                             if let Some(err_) = self.global().try_take_exception() {
                                                 req.on_js_error(err_, self.global());
                                             } else {
-                                                statement.status = PostgresSQLStatement::Status::Failed;
-                                                statement.error_response = Some(PostgresSQLStatement::ErrorResponse::PostgresError(err));
+                                                statement.status = StatementStatus::Failed;
+                                                statement.error_response = Some(StatementError::PostgresError(err));
                                                 req.on_write_fail(err, self.global(), self.get_queries_array());
                                             }
                                             if offset == 0 {
@@ -1756,21 +1758,21 @@ impl PostgresSQLConnection {
                                                 self.requests.discard(1);
                                             } else {
                                                 // deinit later
-                                                req.status = PostgresSQLQuery::Status::Fail;
+                                                req.status = QueryStatus::Fail;
                                             }
                                             debug!("prepareAndQueryWithSignature failed: {}", <&'static str>::from(err));
                                             continue;
                                         }
-                                        self.flags.is_ready_for_query = false;
-                                        self.flags.waiting_to_prepare = true;
-                                        req.status = PostgresSQLQuery::Status::Binding;
-                                        statement.status = PostgresSQLStatement::Status::Parsing;
+                                        self.flags.remove(ConnectionFlags::IS_READY_FOR_QUERY);
+                                        self.flags.insert(ConnectionFlags::WAITING_TO_PREPARE);
+                                        req.status = QueryStatus::Binding;
+                                        statement.status = StatementStatus::Parsing;
                                         self.flush_data_and_reset_timeout();
                                         defer_cleanup!(self);
                                         return;
                                     }
 
-                                    if self.flags.use_unnamed_prepared_statements {
+                                    if self.flags.contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS) {
                                         // For unnamed prepared statements, send Parse+Describe+Bind+Execute
                                         // atomically to prevent PgBouncer from splitting them across
                                         // server connections. Uses signature field types for encoding
@@ -1783,8 +1785,8 @@ impl PostgresSQLConnection {
                                             self.requests.discard(1);
                                             continue;
                                         };
-                                        let binding_value = PostgresSQLQuery::js::binding_get_cached(this_value).unwrap_or(JSValue::ZERO);
-                                        let columns_value = PostgresSQLQuery::js::columns_get_cached(this_value).unwrap_or(JSValue::ZERO);
+                                        let binding_value = postgres_sql_query::js::binding_get_cached(this_value).unwrap_or(JSValue::ZERO);
+                                        let columns_value = postgres_sql_query::js::columns_get_cached(this_value).unwrap_or(JSValue::ZERO);
                                         debug!("parseAndBindAndExecute (unnamed, first execution)");
                                         if let Err(err) = PostgresRequest::parse_and_bind_and_execute(
                                             self.global(),
@@ -1798,8 +1800,8 @@ impl PostgresSQLConnection {
                                             if let Some(err_) = self.global().try_take_exception() {
                                                 req.on_js_error(err_, self.global());
                                             } else {
-                                                statement.status = PostgresSQLStatement::Status::Failed;
-                                                statement.error_response = Some(PostgresSQLStatement::ErrorResponse::PostgresError(err));
+                                                statement.status = StatementStatus::Failed;
+                                                statement.error_response = Some(StatementError::PostgresError(err));
                                                 req.on_write_fail(err, self.global(), self.get_queries_array());
                                             }
                                             debug_assert!(offset == 0);
@@ -1808,10 +1810,10 @@ impl PostgresSQLConnection {
                                             debug!("parseAndBindAndExecute failed: {}", <&'static str>::from(err));
                                             continue;
                                         }
-                                        self.flags.is_ready_for_query = false;
-                                        self.flags.waiting_to_prepare = true;
-                                        req.status = PostgresSQLQuery::Status::Binding;
-                                        statement.status = PostgresSQLStatement::Status::Parsing;
+                                        self.flags.remove(ConnectionFlags::IS_READY_FOR_QUERY);
+                                        self.flags.insert(ConnectionFlags::WAITING_TO_PREPARE);
+                                        req.status = QueryStatus::Binding;
+                                        statement.status = StatementStatus::Parsing;
                                         req.flags.pipelined = true;
                                         self.pipelined_requests += 1;
                                         self.flush_data_and_reset_timeout();
@@ -1834,8 +1836,8 @@ impl PostgresSQLConnection {
                                         if let Some(err_) = self.global().try_take_exception() {
                                             req.on_js_error(err_, self.global());
                                         } else {
-                                            statement.error_response = Some(PostgresSQLStatement::ErrorResponse::PostgresError(err));
-                                            statement.status = PostgresSQLStatement::Status::Failed;
+                                            statement.error_response = Some(StatementError::PostgresError(err));
+                                            statement.status = StatementStatus::Failed;
                                             req.on_write_fail(err, self.global(), self.get_queries_array());
                                         }
                                         debug_assert!(offset == 0);
@@ -1848,8 +1850,8 @@ impl PostgresSQLConnection {
                                         if let Some(err_) = self.global().try_take_exception() {
                                             req.on_js_error(err_, self.global());
                                         } else {
-                                            statement.error_response = Some(PostgresSQLStatement::ErrorResponse::PostgresError(err));
-                                            statement.status = PostgresSQLStatement::Status::Failed;
+                                            statement.error_response = Some(StatementError::PostgresError(err));
+                                            statement.status = StatementStatus::Failed;
                                             req.on_write_fail(err, self.global(), self.get_queries_array());
                                         }
                                         debug_assert!(offset == 0);
@@ -1858,14 +1860,14 @@ impl PostgresSQLConnection {
                                         debug!("write query (sync) failed: {}", <&'static str>::from(err));
                                         continue;
                                     }
-                                    self.flags.is_ready_for_query = false;
-                                    self.flags.waiting_to_prepare = true;
-                                    statement.status = PostgresSQLStatement::Status::Parsing;
+                                    self.flags.remove(ConnectionFlags::IS_READY_FOR_QUERY);
+                                    self.flags.insert(ConnectionFlags::WAITING_TO_PREPARE);
+                                    statement.status = StatementStatus::Parsing;
                                     self.flush_data_and_reset_timeout();
                                     defer_cleanup!(self);
                                     return;
                                 }
-                                PostgresSQLStatement::Status::Parsing => {
+                                StatementStatus::Parsing => {
                                     // we are still parsing, lets wait for it to be prepared or failed
                                     offset += 1;
                                     continue;
@@ -1878,10 +1880,10 @@ impl PostgresSQLConnection {
                     }
                 }
 
-                PostgresSQLQuery::Status::Running
-                | PostgresSQLQuery::Status::Binding
-                | PostgresSQLQuery::Status::PartialResponse => {
-                    if self.flags.waiting_to_prepare || self.nonpipelinable_requests > 0 {
+                QueryStatus::Running
+                | QueryStatus::Binding
+                | QueryStatus::PartialResponse => {
+                    if self.flags.contains(ConnectionFlags::WAITING_TO_PREPARE) || self.nonpipelinable_requests > 0 {
                         defer_cleanup!(self);
                         return;
                     }
@@ -1893,10 +1895,10 @@ impl PostgresSQLConnection {
                     }
                     continue;
                 }
-                PostgresSQLQuery::Status::Success => {
+                QueryStatus::Success => {
                     if offset > 0 {
                         // deinit later
-                        req.status = PostgresSQLQuery::Status::Fail;
+                        req.status = QueryStatus::Fail;
                         offset += 1;
                         continue;
                     }
@@ -1904,7 +1906,7 @@ impl PostgresSQLConnection {
                     self.requests.discard(1);
                     continue;
                 }
-                PostgresSQLQuery::Status::Fail => {
+                QueryStatus::Fail => {
                     if offset > 0 {
                         // deinit later
                         offset += 1;
@@ -1950,11 +1952,11 @@ impl PostgresSQLConnection {
                 let mut cached_structure: Option<PostgresCachedStructure> = None;
                 // explicit use switch without else so if new modes are added, we don't forget to check for duplicate fields
                 match request.flags.result_mode {
-                    PostgresSQLQuery::ResultMode::Objects => {
+                    SQLQueryResultMode::Objects => {
                         cached_structure = Some(statement.structure(self.js_value.get(), self.global()));
                         structure = cached_structure.as_ref().unwrap().js_value().unwrap_or(JSValue::UNDEFINED);
                     }
-                    PostgresSQLQuery::ResultMode::Raw | PostgresSQLQuery::ResultMode::Values => {
+                    SQLQueryResultMode::Raw | SQLQueryResultMode::Values => {
                         // no need to check for duplicate fields or structure
                     }
                 }
@@ -1987,7 +1989,7 @@ impl PostgresSQLConnection {
                 cells.fill(DataCell::SQLDataCell { tag: DataCellTag::Null, value: DataCellValue { null: 0 } });
                 putter.list = cells;
 
-                let decode_result = if request.flags.result_mode == PostgresSQLQuery::ResultMode::Raw {
+                let decode_result = if request.flags.result_mode == SQLQueryResultMode::Raw {
                     protocol::DataRow::decode(&mut putter, reader, DataCell::Putter::put_raw)
                 } else {
                     protocol::DataRow::decode(&mut putter, reader, DataCell::Putter::put)
@@ -2013,7 +2015,7 @@ impl PostgresSQLConnection {
                     debug_assert!(false, "query value was freed earlier than expected");
                     return Err(AnyPostgresError::ExpectedRequest);
                 };
-                let pending_value = PostgresSQLQuery::js::pending_value_get_cached(this_value).unwrap_or(JSValue::ZERO);
+                let pending_value = postgres_sql_query::js::pending_value_get_cached(this_value).unwrap_or(JSValue::ZERO);
                 pending_value.ensure_still_alive();
                 let result = putter.to_js(
                     self.global(),
@@ -2025,7 +2027,7 @@ impl PostgresSQLConnection {
                 )?;
 
                 if pending_value.is_empty() {
-                    PostgresSQLQuery::js::pending_value_set_cached(this_value, self.global(), result);
+                    postgres_sql_query::js::pending_value_set_cached(this_value, self.global(), result);
                 }
 
                 let _ = free_cells; // heap_cells dropped at scope end; _cells_guard runs cell.deinit()
@@ -2046,14 +2048,14 @@ impl PostgresSQLConnection {
                 ready_for_query.decode_internal(reader)?;
 
                 self.set_status(Status::Connected);
-                self.flags.waiting_to_prepare = false;
-                self.flags.is_ready_for_query = true;
+                self.flags.remove(ConnectionFlags::WAITING_TO_PREPARE);
+                self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
                 self.socket.set_timeout(300);
 
                 if let Some(request_ptr) = self.current() {
                     // SAFETY: valid queue item.
                     let request = unsafe { &mut *request_ptr };
-                    if request.status == PostgresSQLQuery::Status::PartialResponse {
+                    if request.status == QueryStatus::PartialResponse {
                         self.finish_request(request);
                         // if is a partial response, just signal that the query is now complete
                         request.on_result(b"", self.global(), self.js_value.get(), true);
@@ -2082,8 +2084,8 @@ impl PostgresSQLConnection {
                 let request_ptr = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
                 // SAFETY: valid *mut PostgresSQLQuery owned by self.requests queue.
                 let request = unsafe { &mut *request_ptr };
-                if request.status == PostgresSQLQuery::Status::Binding {
-                    request.status = PostgresSQLQuery::Status::Running;
+                if request.status == QueryStatus::Binding {
+                    request.status = QueryStatus::Running;
                 }
             }
             MessageType::ParseComplete => {
@@ -2095,9 +2097,9 @@ impl PostgresSQLConnection {
                     // SAFETY: request holds a ref on its statement; valid while request is queued.
                     let statement = unsafe { &mut *statement_ptr };
                     // if we have params wait for parameter description
-                    if statement.status == PostgresSQLStatement::Status::Parsing && statement.signature.fields.is_empty() {
-                        statement.status = PostgresSQLStatement::Status::Prepared;
-                        self.flags.waiting_to_prepare = false;
+                    if statement.status == StatementStatus::Parsing && statement.signature.fields.is_empty() {
+                        statement.status = StatementStatus::Prepared;
+                        self.flags.remove(ConnectionFlags::WAITING_TO_PREPARE);
                     }
                 }
             }
@@ -2127,9 +2129,9 @@ impl PostgresSQLConnection {
                     // PORT NOTE: Box<[T]> drop frees old slice.
                 }
                 statement.parameters = description.parameters;
-                if statement.status == PostgresSQLStatement::Status::Parsing {
-                    statement.status = PostgresSQLStatement::Status::Prepared;
-                    self.flags.waiting_to_prepare = false;
+                if statement.status == StatementStatus::Parsing {
+                    statement.status = StatementStatus::Prepared;
+                    self.flags.remove(ConnectionFlags::WAITING_TO_PREPARE);
                 }
             }
             MessageType::RowDescription => {
@@ -2169,12 +2171,12 @@ impl PostgresSQLConnection {
 
                 match &auth {
                     protocol::Authentication::SASL => {
-                        if !matches!(self.authentication_state, AuthenticationState::SASL(_)) {
-                            self.authentication_state = AuthenticationState::SASL(Default::default());
+                        if !matches!(self.authentication_state, AuthenticationState::Sasl(_)) {
+                            self.authentication_state = AuthenticationState::Sasl(Default::default());
                         }
 
                         let mut mechanism_buf = [0u8; 128];
-                        let AuthenticationState::SASL(sasl) = &mut self.authentication_state else { unreachable!() };
+                        let AuthenticationState::Sasl(sasl) = &mut self.authentication_state else { unreachable!() };
                         let mechanism = {
                             use std::io::Write as _;
                             let mut cursor = &mut mechanism_buf[..];
@@ -2200,12 +2202,12 @@ impl PostgresSQLConnection {
                         // SAFETY: self.password points into self.options_buf for the
                         // lifetime of the connection (see ::init).
                         let password: &[u8] = unsafe { &*self.password };
-                        let AuthenticationState::SASL(sasl) = &mut self.authentication_state else {
+                        let AuthenticationState::Sasl(sasl) = &mut self.authentication_state else {
                             debug!("Unexpected SASLContinue for authentication state: {}", <&'static str>::from(&self.authentication_state));
                             return Err(AnyPostgresError::UnexpectedMessage);
                         };
 
-                        if sasl.status != AuthenticationState::SaslStatus::Init {
+                        if sasl.status != SASLStatus::Init {
                             debug!("Unexpected SASLContinue for SASL state: {}", <&'static str>::from(sasl.status));
                             return Err(AnyPostgresError::UnexpectedMessage);
                         }
@@ -2269,17 +2271,17 @@ impl PostgresSQLConnection {
                         // PORT NOTE: reshaped for borrowck — set status before
                         // self.writer()/flush_data() so the `sasl` borrow ends
                         // first (Zig order is not load-bearing).
-                        sasl.status = AuthenticationState::SaslStatus::Continue;
+                        sasl.status = SASLStatus::Continue;
                         response.write_internal(self.writer())?;
                         self.flush_data();
                     }
                     protocol::Authentication::SASLFinal(final_) => {
-                        let AuthenticationState::SASL(sasl) = &mut self.authentication_state else {
+                        let AuthenticationState::Sasl(sasl) = &mut self.authentication_state else {
                             debug!("SASLFinal - Unexpected SASLContinue for authentication state: {}", <&'static str>::from(&self.authentication_state));
                             return Err(AnyPostgresError::UnexpectedMessage);
                         };
 
-                        if sasl.status != AuthenticationState::SaslStatus::Continue {
+                        if sasl.status != SASLStatus::Continue {
                             debug!("SASLFinal - Unexpected SASLContinue for SASL state: {}", <&'static str>::from(sasl.status));
                             return Err(AnyPostgresError::UnexpectedMessage);
                         }
@@ -2398,8 +2400,8 @@ impl PostgresSQLConnection {
                 let request_ptr = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
                 // SAFETY: valid *mut PostgresSQLQuery owned by self.requests queue.
                 let request = unsafe { &mut *request_ptr };
-                if request.status == PostgresSQLQuery::Status::Binding {
-                    request.status = PostgresSQLQuery::Status::Running;
+                if request.status == QueryStatus::Binding {
+                    request.status = QueryStatus::Running;
                 }
             }
             MessageType::BackendKeyData => {
@@ -2432,8 +2434,8 @@ impl PostgresSQLConnection {
                 if let Some(stmt_ptr) = request.statement {
                     // SAFETY: request holds a ref on its statement; valid while request is queued.
                     let stmt = unsafe { &mut *stmt_ptr };
-                    if stmt.status == PostgresSQLStatement::Status::Parsing {
-                        stmt.status = PostgresSQLStatement::Status::Failed;
+                    if stmt.status == StatementStatus::Parsing {
+                        stmt.status = StatementStatus::Failed;
                         stmt.error_response =
                             Some(crate::postgres::postgres_sql_statement::Error::Protocol(err));
                         if self.statements.remove(&bun_wyhash::hash(&stmt.signature.name)).is_some() {

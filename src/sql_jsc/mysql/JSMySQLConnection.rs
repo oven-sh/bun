@@ -273,15 +273,15 @@ impl JSMySQLConnection {
         if self.max_lifetime_interval_ms == 0 {
             return;
         }
-        if self.max_lifetime_timer.state == EventLoopTimer::State::ACTIVE {
+        if self.max_lifetime_timer.state == EventLoopTimerState::ACTIVE {
             return;
         }
 
         self.max_lifetime_timer.next = timespec::ms_from_now(
-            timespec::Mode::AllowMockedTime,
+            TimespecMockMode::AllowMockedTime,
             self.max_lifetime_interval_ms.into(),
         );
-        self.vm.timer.insert(&mut self.max_lifetime_timer);
+        self.vm_mut().timer().insert(&mut self.max_lifetime_timer);
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn] — free-fn shim emitted inside an
@@ -291,7 +291,7 @@ impl JSMySQLConnection {
         global_object: &JSGlobalObject,
         _callframe: &CallFrame,
     ) -> JsResult<*mut Self> {
-        global_object.throw("MySQLConnection cannot be constructed directly", format_args!(""))
+        Err(global_object.throw(format_args!("MySQLConnection cannot be constructed directly")))
     }
 
     pub fn enqueue_request(&mut self, item: *mut JSMySQLQuery) {
@@ -357,15 +357,17 @@ impl JSMySQLConnection {
     /// that is why this (and `deref`) are raw-pointer-shaped, mirroring Zig's
     /// `fn deinit(this: *@This())` which has no reference-validity invariant.
     unsafe fn deinit(this: *mut Self) {
-        (*this).stop_timers();
-        (*this).poll_ref.unref((*this).vm);
-        (*this).unregister_auto_flusher();
+        // SAFETY: see fn-level contract — `this` is a live `Box::into_raw` ptr;
+        // unique owner; no `&`/`&mut Self` outlives the `Box::from_raw` below.
+        unsafe {
+            (*this).stop_timers();
+            (*this).poll_ref.unref((*this).vm);
+            (*this).unregister_auto_flusher();
 
-        (*this).connection.cleanup();
-        // bun.destroy(this): reclaim the `Box::into_raw` from `create_instance`.
-        // SAFETY: see fn-level contract. No further access to `*this` after
-        // this line; no `&`/`&mut Self` is live in any caller frame.
-        drop(Box::from_raw(this));
+            (*this).connection.cleanup();
+            // bun.destroy(this): reclaim the `Box::into_raw` from `create_instance`.
+            drop(Box::from_raw(this));
+        }
     }
 
     fn ensure_js_value_is_alive(&self) {
@@ -397,7 +399,7 @@ impl JSMySQLConnection {
             {
                 self.poll_ref.unref(self.vm);
             } else {
-                self.poll_ref.ref_(self.vm);
+                self.poll_ref.r#ref(self.vm);
             }
             return;
         }
@@ -448,8 +450,8 @@ impl JSMySQLConnection {
                     Err(_) => return Ok(JSValue::ZERO),
                 }
             } else {
-                return global_object
-                    .throw_invalid_arguments("tls must be a boolean or an object", format_args!(""));
+                return Err(global_object
+                    .throw_invalid_arguments("tls must be a boolean or an object"));
             };
 
             if global_object.has_exception() {
@@ -469,7 +471,9 @@ impl JSMySQLConnection {
                 .get_or_create_opts(tls_config.as_usockets_for_client_verification(), &mut err);
             if secure.is_none() {
                 drop(tls_config);
-                return global_object.throw_value(err.to_js(global_object));
+                // TODO(port): `create_bun_socket_error_t::to_js` extension trait
+                // pending in `crate::jsc`; throw the error name string for now.
+                return Err(global_object.throw(format_args!("{:?}", err)));
             }
         }
         // Covers `try arguments[7/8].toBunString()` and the null-byte rejection

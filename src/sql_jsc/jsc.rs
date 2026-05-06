@@ -163,6 +163,12 @@ impl JSValue {
     }
     pub fn is_string(self) -> bool { self.is_cell() && self.js_type().is_string_like() }
     pub fn is_date(self) -> bool { self.is_cell() && self.js_type() == JSType::JSDate }
+    /// `JSValue.isCallable()` (JSValue.zig:1159). Mirrors bun_jsc.
+    #[inline] pub fn is_callable(self) -> bool {
+        // SAFETY: pure FFI predicate; C++ handles non-cells.
+        unsafe extern "C" { fn JSC__JSValue__isCallable(v: JSValue) -> bool; }
+        unsafe { JSC__JSValue__isCallable(self) }
+    }
 
     /// `jsType()` — only valid when `is_cell()`. Reads the JSCell type byte.
     #[inline] pub fn js_type(self) -> JSType {
@@ -422,6 +428,31 @@ impl JSGlobalObject {
         // SAFETY: `zs` borrowed for the call; `self` is live.
         let err = unsafe { ZigString__toErrorInstance(&zs, self.as_mut_ptr()) };
         self.throw_value(err)
+    }
+    /// JSGlobalObject.zig:throwInvalidArgumentType — formatted convenience
+    /// wrapper over `throw`. Mirrors bun_jsc (lib.rs:1477).
+    pub fn throw_invalid_argument_type(
+        &self,
+        fn_name: &str,
+        field: &str,
+        expected: &str,
+    ) -> JsError {
+        self.throw(format_args!(
+            "{fn_name} expects \"{field}\" to be a {expected}"
+        ))
+    }
+    /// JSGlobalObject.zig:throwInvalidArgumentTypeValue — mirrors bun_jsc
+    /// (lib.rs:1518). `value` is only used for the formatted message in the
+    /// Zig spec; surfaced via the type name once display is wired.
+    pub fn throw_invalid_argument_type_value(
+        &self,
+        field: &str,
+        expected: &str,
+        _value: JSValue,
+    ) -> JsError {
+        self.throw(format_args!(
+            "Expected \"{field}\" to be a {expected}"
+        ))
     }
     /// `globalObject.ERR(.OUT_OF_RANGE, fmt, args)` — returns a builder so
     /// callsites can chain `.throw()`.
@@ -1848,6 +1879,10 @@ pub mod call_frame {
             self.remaining = rest;
             Some(*first)
         }
+        /// CallFrame.zig:nextEat — alias for `next()` (the SQL callsites only
+        /// iterate; arena scratch is dropped — see PORT NOTE on `init`).
+        #[inline]
+        pub fn next_eat(&mut self) -> Option<JSValue> { self.next() }
     }
 }
 

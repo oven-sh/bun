@@ -1246,6 +1246,47 @@ pub enum Content {
 }
 
 impl Content {
+    #[inline]
+    pub fn is_javascript(&self) -> bool {
+        matches!(self, Content::Javascript(_))
+    }
+    #[inline]
+    pub fn is_css(&self) -> bool {
+        matches!(self, Content::Css(_))
+    }
+    #[inline]
+    pub fn is_html(&self) -> bool {
+        matches!(self, Content::Html)
+    }
+    #[inline]
+    pub fn javascript(&self) -> &JavaScriptChunk {
+        match self {
+            Content::Javascript(js) => js,
+            _ => unreachable!("Content is not javascript"),
+        }
+    }
+    #[inline]
+    pub fn javascript_mut(&mut self) -> &mut JavaScriptChunk {
+        match self {
+            Content::Javascript(js) => js,
+            _ => unreachable!("Content is not javascript"),
+        }
+    }
+    #[inline]
+    pub fn css(&self) -> &CssChunk {
+        match self {
+            Content::Css(c) => c,
+            _ => unreachable!("Content is not css"),
+        }
+    }
+    #[inline]
+    pub fn css_mut(&mut self) -> &mut CssChunk {
+        match self {
+            Content::Css(c) => c,
+            _ => unreachable!("Content is not css"),
+        }
+    }
+
     pub fn sourcemap(&self, default: options::SourceMapOption) -> options::SourceMapOption {
         match self {
             Content::Javascript(_) => default,

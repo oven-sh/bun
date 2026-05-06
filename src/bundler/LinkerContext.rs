@@ -1942,12 +1942,16 @@ impl<'a> LinkerContext<'a> {
         for &export_ref in export_refs.keys() {
             #[cfg(debug_assertions)]
             {
+                // SAFETY: `symbols.get` returns a stable `*mut Symbol` into the
+                // SoA symbol table; read-only here. `parse_graph` is a backref
+                // into BundleV2 (LIFETIMES.tsv).
+                let sym = unsafe { &*self.graph.symbols.get(export_ref).unwrap() };
                 debug_tree_shake!(
                     "Export name: {} (in {})",
-                    bstr::BStr::new(&self.graph.symbols.get(export_ref).unwrap().original_name),
+                    bstr::BStr::new(&sym.original_name),
                     bstr::BStr::new(unsafe {
-                        // SAFETY: parse_graph is a BACKREF into BundleV2 (LIFETIMES.tsv)
-                        &(*self.parse_graph).input_files.get(export_ref.source_index()).source.path.text
+                        &(*self.parse_graph).input_files.items_source()
+                            [export_ref.source_index() as usize].path.text
                     }),
                 );
             }
@@ -1959,6 +1963,39 @@ impl<'a> LinkerContext<'a> {
         list.sort_by(StableRef::is_less_than);
     }
 } // end  — split: tree-shaking trio un-gated below (B-2 second pass)
+
+/// CYCLEBREAK FORWARD_DECL: `bun_css::css_modules::hash` — the real CSS-modules
+/// hasher is feature-gated (`feature = "css"`). With the feature on, delegate;
+/// without it, mirror its shape (32-bit wyhash truncation, base62-ish encoding)
+/// so `mangle_local_css` produces deterministic names. The hash *value* only
+/// matters for cross-bundle determinism, not correctness.
+#[cfg(feature = "css")]
+#[inline]
+fn css_modules_hash_shim(pretty_path: &[u8]) -> Box<[u8]> {
+    ::bun_css::css_modules::hash(format_args!("{}", bstr::BStr::new(pretty_path)), false)
+}
+#[cfg(not(feature = "css"))]
+#[inline]
+fn css_modules_hash_shim(pretty_path: &[u8]) -> Box<[u8]> {
+    let h = bun_hash::wyhash(pretty_path) as u32;
+    let mut out = Vec::with_capacity(6);
+    let mut n = h;
+    const ALPHA: &[u8; 62] = b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    for _ in 0..6 {
+        out.push(ALPHA[(n % 62) as usize]);
+        n /= 62;
+    }
+    out.into_boxed_slice()
+}
+
+/// `js_printer::RequireOrImportMetaSource` — manual-vtable shim so the printer
+/// can call back into `LinkerContext::require_or_import_meta_for_source`.
+impl<'a> js_printer::RequireOrImportMetaSource for LinkerContext<'a> {
+    #[inline]
+    fn require_or_import_meta_for_source(&mut self, id: u32, was_unwrapped_require: bool) -> js_printer::RequireOrImportMeta {
+        LinkerContext::require_or_import_meta_for_source(self, id, was_unwrapped_require)
+    }
+}
 
 // ══════════════════════════════════════════════════════════════════════════
 // B-2 second pass: un-gated tree-shaking primitives. These reach into

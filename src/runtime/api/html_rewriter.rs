@@ -1583,7 +1583,7 @@ impl WrapperLike for TextChunk {
 
 // ──────────────────────────── DocType ────────────────────────────────────
 
-#[bun_jsc::JsClass]
+#[bun_jsc::JsClass(no_construct, no_finalize)]
 pub struct DocType {
     // TODO(port): replace hand-rolled ref_/deref with bun_ptr::IntrusiveRc<Self>
     // per PORTING.md (intrusive RefCount; *Self is the JS wrapper m_ctx).
@@ -1627,7 +1627,7 @@ impl DocType {
             return JSValue::NULL;
         }
         ZigString::init(str).to_js(global_object)
-    }
+    } // PORT NOTE: ZigString = bun_jsc::ZigString (has .to_js)
 
     #[bun_jsc::host_fn(getter)]
     pub fn system_id(&self, global_object: &JSGlobalObject) -> JSValue {
@@ -1641,7 +1641,7 @@ impl DocType {
             return JSValue::NULL;
         }
         ZigString::init(str).to_js(global_object)
-    }
+    } // PORT NOTE: ZigString = bun_jsc::ZigString (has .to_js)
 
     #[bun_jsc::host_fn(getter)]
     pub fn public_id(&self, global_object: &JSGlobalObject) -> JSValue {
@@ -1655,7 +1655,7 @@ impl DocType {
             return JSValue::NULL;
         }
         ZigString::init(str).to_js(global_object)
-    }
+    } // PORT NOTE: ZigString = bun_jsc::ZigString (has .to_js)
 
     #[bun_jsc::host_fn(method)]
     pub fn remove(&mut self, _global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {

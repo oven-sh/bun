@@ -1344,7 +1344,7 @@ impl AnyServer {
     /// Dispatch the user `fetch` handler. Mirrors Zig `AnyServer.onRequest`
     /// (see `server.zig`): un-erase the SSL bool from the tag and downcast
     /// `AnyResponse` to the matching `NewAppResponse<SSL>` variant.
-    pub fn on_request(&mut self, req: &mut uws_sys::Request, resp: uws::AnyResponse) {
+    pub fn on_request(&self, req: &mut uws_sys::Request, resp: uws::AnyResponse) {
         // SAFETY: ptr was produced by `AnyServer::from` for the matching tag
         // and is non-null while the server is alive; `assert_{no_,}ssl` upholds
         // the tag↔SSL invariant.

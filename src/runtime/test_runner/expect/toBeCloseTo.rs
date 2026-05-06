@@ -76,11 +76,16 @@ impl Expect {
             return Ok(JSValue::UNDEFINED);
         }
 
+        // Zig shares one `*Formatter` (raw pointer) across both `toFmt` calls; in Rust
+        // `ZigFormatter` holds `&'a mut Formatter`, so two live adapters cannot alias the same
+        // backing formatter. Use a second formatter for the received value — `make_formatter` is
+        // a trivial struct init and the formatters carry no shared state between values.
         let mut formatter = super::make_formatter(global);
+        let mut formatter2 = super::make_formatter(global);
         // `defer formatter.deinit()` — handled by Drop.
 
         let expected_fmt = expected_.to_fmt(&mut formatter);
-        let received_fmt = received_.to_fmt(&mut formatter);
+        let received_fmt = received_.to_fmt(&mut formatter2);
 
         const EXPECTED_LINE: &str = "Expected: <green>{}<r>\n";
         const RECEIVED_LINE: &str = "Received: <red>{}<r>\n";

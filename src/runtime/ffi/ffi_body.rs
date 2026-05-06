@@ -1571,7 +1571,6 @@ impl FFI {
         {
             let _ = global.throw(
                 "bun:ffi dlopen() is not available in this build (TinyCC is disabled)",
-                &[],
             );
             return JSValue::ZERO;
         }

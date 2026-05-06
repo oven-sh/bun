@@ -937,7 +937,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                                 systemerror.errno = -UV_E::NOENT;
                             }
                             return Err(global_this.throw_value(
-                                SystemError::from(systemerror).to_error_instance(global_this),
+                                sys_system_error_to_js(systemerror, global_this),
                             ));
                         }
                     }

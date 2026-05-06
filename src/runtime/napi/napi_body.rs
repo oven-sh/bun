@@ -1992,7 +1992,8 @@ extern "C" fn napi_internal_register_cleanup_callback(data: *mut c_void) {
 pub extern "C" fn napi_internal_register_cleanup_zig(env_: napi_env) {
     // SAFETY: caller guarantees env_ is non-null (Zig used `.?`).
     let env = unsafe { &*env_ };
-    env.to_js().bun_vm().rare_data().push_cleanup_hook(
+    // SAFETY: bun_vm() never null; rare_data() needs `&mut`.
+    unsafe { &mut *env.to_js().bun_vm() }.rare_data().push_cleanup_hook(
         env.to_js(),
         env_ as *mut c_void,
         napi_internal_register_cleanup_callback,

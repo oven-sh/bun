@@ -13,15 +13,16 @@ use bun_collections::{BabyList, IntegerBitSet};
 use bun_core::{self, Output};
 use bun_jsc::{
     self as jsc, CallFrame, JSArrayIterator, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer,
-    PlatformEventLoop, SystemError,
+    PlatformEventLoop,
 };
+use bun_jsc::{StringJsc as _, SysErrorJsc as _};
 // `VirtualMachine`/`MiniEventLoop` are re-exported as *modules* by bun_jsc; pull the inner types.
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::MiniEventLoop::MiniEventLoop;
 use bun_simdutf_sys::simdutf;
 use bun_str::{String as BunString, ZStr};
 use bun_core::strings;
-use bun_sys::{self as sys, Fd};
+use bun_sys::{self as sys, Fd, SystemError};
 
 // ───────────────────────────── re-exports ─────────────────────────────
 

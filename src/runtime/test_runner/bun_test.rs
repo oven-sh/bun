@@ -1463,11 +1463,35 @@ pub enum ScopeMode {
     FilteredOut,
 }
 
+impl ScopeMode {
+    /// Port of Zig `@tagName`.
+    pub fn tag_name(self) -> &'static str {
+        match self {
+            Self::Normal => "normal",
+            Self::Skip => "skip",
+            Self::Todo => "todo",
+            Self::Failing => "failing",
+            Self::FilteredOut => "filtered_out",
+        }
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum Only {
     No,
     Contains,
     Yes,
+}
+
+impl Only {
+    /// Port of Zig `@tagName`.
+    pub fn tag_name(self) -> &'static str {
+        match self {
+            Self::No => "no",
+            Self::Contains => "contains",
+            Self::Yes => "yes",
+        }
+    }
 }
 
 pub struct BaseScope {

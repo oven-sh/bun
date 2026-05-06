@@ -663,14 +663,14 @@ pub fn homedir(global: &JSGlobalObject) -> JsResult<BunString> {
         let _ = using_heap;
 
         if ret != 0 {
-            return global.throw_value(
+            return Err(global.throw_value(
                 bun_sys::Error::from_code(
                     // SAFETY: ret is a valid errno value
                     unsafe { core::mem::transmute::<c_int, bun_sys::E>(ret) },
                     bun_sys::Tag::uv_os_homedir,
                 )
-                .to_js(global)?,
-            );
+                .to_js(global),
+            ));
         }
 
         if result.is_null() {

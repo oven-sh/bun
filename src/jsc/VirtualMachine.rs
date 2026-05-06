@@ -529,6 +529,25 @@ impl VirtualMachine {
         self.is_shutting_down
     }
 
+    /// Port of `VirtualMachine.scriptExecutionStatus` (VirtualMachine.zig:885).
+    /// Exported to C++ as `Bun__VM__scriptExecutionStatus` via virtual_machine_exports.rs.
+    pub fn script_execution_status(&self) -> crate::ScriptExecutionStatus {
+        if self.is_shutting_down {
+            return crate::ScriptExecutionStatus::Stopped;
+        }
+
+        if let Some(worker) = self.worker {
+            // SAFETY: `worker` is a `*const c_void` pointing at a heap `WebWorker`
+            // owned by C++ that outlives this VM (BACKREF — see field decl).
+            let worker = unsafe { &*(worker as *const crate::web_worker::WebWorker) };
+            if worker.has_requested_terminate() {
+                return crate::ScriptExecutionStatus::Stopped;
+            }
+        }
+
+        crate::ScriptExecutionStatus::Running
+    }
+
     pub fn uws_loop(&self) -> *mut uws::Loop {
         #[cfg(unix)]
         {

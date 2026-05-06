@@ -396,7 +396,7 @@ impl<'a> Parser<'a> {
         // in the `symbols` array.
         debug_assert!(p.symbols.len() == 0);
         let mut symbols_ = symbols;
-        p.symbols = symbols_.move_to_list_managed(p.bump);
+        p.symbols = symbols_.move_to_list_managed(p.allocator);
 
         p.prepare_for_visit_pass()?;
 
@@ -404,7 +404,7 @@ impl<'a> Parser<'a> {
 
         // Optionally call a runtime API function to transform the expression
         if !runtime_api_call.is_empty() {
-            let args = p.bump.alloc_slice_fill_with(1, |_| expr);
+            let args = p.allocator.alloc_slice_fill_with(1, |_| expr);
             final_expr = p.call_runtime(expr.loc, runtime_api_call, args);
         }
 
@@ -413,9 +413,9 @@ impl<'a> Parser<'a> {
             ..Default::default()
         };
 
-        let stmts = p.bump.alloc_slice_fill_with(1, |_| Stmt {
-            data: js_ast::Stmt::Data::SLazyExport({
-                let data = p.bump.alloc(final_expr.data);
+        let stmts = p.allocator.alloc_slice_fill_with(1, |_| Stmt {
+            data: js_ast::StmtData::SLazyExport({
+                let data = p.allocator.alloc(final_expr.data);
                 data
             }),
             loc: expr.loc,
@@ -426,12 +426,12 @@ impl<'a> Parser<'a> {
             ..Default::default()
         };
         p.symbol_uses = Default::default();
-        let mut parts = BumpVec::with_capacity_in(2, p.bump);
+        let mut parts = BumpVec::with_capacity_in(2, p.allocator);
         // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
         parts.extend_from_slice(&[ns_export_part, part]);
 
         let exports_kind: js_ast::ExportsKind = 'brk: {
-            if matches!(expr.data, js_ast::Expr::Data::EUndefined) {
+            if matches!(expr.data, js_ast::ExprData::EUndefined) {
                 if self.source.path.name.ext == b".cjs" {
                     break 'brk js_ast::ExportsKind::Cjs;
                 }
@@ -508,7 +508,7 @@ impl<'a> Parser<'a> {
         let visit_tracer = /* TODO(b2-blocked): bun_perf */ (); // TODO(b2-blocked): bun_perf::trace
         p.prepare_for_visit_pass()?;
 
-        let mut parts = BumpVec::new_in(p.bump);
+        let mut parts = BumpVec::new_in(p.allocator);
 
         p.append_part(&mut parts, stmts)?;
         visit_tracer.end();
@@ -521,7 +521,7 @@ impl<'a> Parser<'a> {
 
     fn _parse<const TS: bool, JX: JsxT>(&mut self) -> Result<js_ast::Result, Error> {
         // reconciler-6: full body re-gated below — ~148 port errors against round-G
-        // P surface (p.bump→allocator, Stmt::Data paths, Tracer.end(), etc.).
+        // P surface (p.allocator→allocator, Stmt::Data paths, Tracer.end(), etc.).
         // Body preserved verbatim under #[cfg(any())] sibling for diff-pass.
         let _ = self;
         todo!("phase-b2: Parser::_parse re-gated by reconciler-6")
@@ -655,9 +655,9 @@ impl<'a> Parser<'a> {
         let visit_tracer = /* TODO(b2-blocked): bun_perf */ (); // TODO(b2-blocked): bun_perf::trace
         p.prepare_for_visit_pass()?;
 
-        let mut before = BumpVec::<js_ast::Part>::new_in(p.bump);
-        let mut after = BumpVec::<js_ast::Part>::new_in(p.bump);
-        let mut parts = BumpVec::<js_ast::Part>::new_in(p.bump);
+        let mut before = BumpVec::<js_ast::Part>::new_in(p.allocator);
+        let mut after = BumpVec::<js_ast::Part>::new_in(p.allocator);
+        let mut parts = BumpVec::<js_ast::Part>::new_in(p.allocator);
         // (defer after.deinit()/before.deinit() — handled by Drop on bumpalo Vec, which is a no-op)
 
         if p.options.bundle {
@@ -668,8 +668,8 @@ impl<'a> Parser<'a> {
 
         // --inspect-brk
         if p.options.features.set_breakpoint_on_first_line {
-            let debugger_stmts = p.bump.alloc_slice_fill_with(1, |_| Stmt {
-                data: js_ast::Stmt::Data::SDebugger(Default::default()),
+            let debugger_stmts = p.allocator.alloc_slice_fill_with(1, |_| Stmt {
+                data: js_ast::StmtData::SDebugger(Default::default()),
                 loc: logger::Loc::EMPTY,
             });
             before.push(js_ast::Part {
@@ -737,18 +737,18 @@ impl<'a> Parser<'a> {
             // The TypeScript compiler itself contains code with this pattern, so
             // it's important to implement this optimization.
 
-            let mut preprocessed_enums: BumpVec<&[js_ast::Part]> = BumpVec::new_in(p.bump);
+            let mut preprocessed_enums: BumpVec<&[js_ast::Part]> = BumpVec::new_in(p.allocator);
             let mut preprocessed_enum_i: usize = 0;
             if p.scopes_in_order_for_enum.count() > 0 {
                 for stmt in stmts.iter_mut() {
-                    if matches!(stmt.data, js_ast::Stmt::Data::SEnum(_)) {
+                    if matches!(stmt.data, js_ast::StmtData::SEnum(_)) {
                         let old_scopes_in_order = p.scope_order_to_visit;
                         // PORT NOTE: reshaped for borrowck — restore after the block instead of `defer`
                         p.scope_order_to_visit =
                             p.scopes_in_order_for_enum.get(stmt.loc).unwrap();
 
-                        let mut enum_parts = BumpVec::<js_ast::Part>::new_in(p.bump);
-                        let mut sliced = BumpVec::<Stmt>::with_capacity_in(1, p.bump);
+                        let mut enum_parts = BumpVec::<js_ast::Part>::new_in(p.allocator);
+                        let mut sliced = BumpVec::<Stmt>::with_capacity_in(1, p.allocator);
                         // PERF(port): was assume_capacity
                         sliced.push(*stmt);
                         p.append_part(&mut enum_parts, sliced.as_mut_slice())?;
@@ -762,28 +762,28 @@ impl<'a> Parser<'a> {
             // When tree shaking is enabled, each top-level statement is potentially a separate part.
             for stmt in stmts.iter() {
                 match &stmt.data {
-                    js_ast::Stmt::Data::SLocal(local) => {
+                    js_ast::StmtData::SLocal(local) => {
                         if local.decls.len() > 1 {
                             for decl in local.decls.slice() {
-                                let mut sliced = BumpVec::<Stmt>::with_capacity_in(1, p.bump);
+                                let mut sliced = BumpVec::<Stmt>::with_capacity_in(1, p.allocator);
                                 // SAFETY: capacity reserved above
                                 unsafe { sliced.set_len(1) };
                                 let mut _local = **local;
-                                _local.decls = G::Decl::List::init_one(p.bump, *decl)?;
+                                _local.decls = G::Decl::List::init_one(p.allocator, *decl)?;
                                 sliced[0] = p.s(_local, stmt.loc);
                                 p.append_part(&mut parts, sliced.as_mut_slice())?;
                             }
                         } else {
-                            let mut sliced = BumpVec::<Stmt>::with_capacity_in(1, p.bump);
+                            let mut sliced = BumpVec::<Stmt>::with_capacity_in(1, p.allocator);
                             // SAFETY: capacity for 1 reserved by with_capacity_in above; element written immediately below before any read.
                             unsafe { sliced.set_len(1) };
                             sliced[0] = *stmt;
                             p.append_part(&mut parts, sliced.as_mut_slice())?;
                         }
                     }
-                    js_ast::Stmt::Data::SImport(_)
-                    | js_ast::Stmt::Data::SExportFrom(_)
-                    | js_ast::Stmt::Data::SExportStar(_) => {
+                    js_ast::StmtData::SImport(_)
+                    | js_ast::StmtData::SExportFrom(_)
+                    | js_ast::StmtData::SExportStar(_) => {
                         let parts_list = if p.options.bundle {
                             // Move imports (and import-like exports) to the top of the file to
                             // ensure that if they are converted to a require() call, the effects
@@ -801,20 +801,20 @@ impl<'a> Parser<'a> {
                             &mut parts
                         };
 
-                        let mut sliced = BumpVec::<Stmt>::with_capacity_in(1, p.bump);
+                        let mut sliced = BumpVec::<Stmt>::with_capacity_in(1, p.allocator);
                         // SAFETY: capacity for 1 reserved by with_capacity_in above; element written immediately below before any read.
                         unsafe { sliced.set_len(1) };
                         sliced[0] = *stmt;
                         p.append_part(parts_list, sliced.as_mut_slice())?;
                     }
 
-                    js_ast::Stmt::Data::SClass(class) => {
+                    js_ast::StmtData::SClass(class) => {
                         // Move class export statements to the top of the file if we can
                         // This automatically resolves some cyclical import issues
                         // https://github.com/kysely-org/kysely/issues/412
                         let should_move = !p.options.bundle && class.class.can_be_moved();
 
-                        let mut sliced = BumpVec::<Stmt>::with_capacity_in(1, p.bump);
+                        let mut sliced = BumpVec::<Stmt>::with_capacity_in(1, p.allocator);
                         // SAFETY: capacity for 1 reserved by with_capacity_in above; element written immediately below before any read.
                         unsafe { sliced.set_len(1) };
                         sliced[0] = *stmt;
@@ -827,12 +827,12 @@ impl<'a> Parser<'a> {
                             parts.truncate(new_len);
                         }
                     }
-                    js_ast::Stmt::Data::SExportDefault(value) => {
+                    js_ast::StmtData::SExportDefault(value) => {
                         // We move export default statements when we can
                         // This automatically resolves some cyclical import issues in packages like luxon
                         // https://github.com/oven-sh/bun/issues/1961
                         let should_move = !p.options.bundle && value.can_be_moved();
-                        let mut sliced = BumpVec::<Stmt>::with_capacity_in(1, p.bump);
+                        let mut sliced = BumpVec::<Stmt>::with_capacity_in(1, p.allocator);
                         // SAFETY: capacity for 1 reserved by with_capacity_in above; element written immediately below before any read.
                         unsafe { sliced.set_len(1) };
                         sliced[0] = *stmt;
@@ -844,7 +844,7 @@ impl<'a> Parser<'a> {
                             parts.truncate(new_len);
                         }
                     }
-                    js_ast::Stmt::Data::SEnum(_) => {
+                    js_ast::StmtData::SEnum(_) => {
                         parts.extend_from_slice(preprocessed_enums[preprocessed_enum_i]);
                         preprocessed_enum_i += 1;
 
@@ -853,7 +853,7 @@ impl<'a> Parser<'a> {
                         p.scope_order_to_visit = &p.scope_order_to_visit[enum_scope_count..];
                     }
                     _ => {
-                        let mut sliced = BumpVec::<Stmt>::with_capacity_in(1, p.bump);
+                        let mut sliced = BumpVec::<Stmt>::with_capacity_in(1, p.allocator);
                         // PERF(port): was assume_capacity
                         sliced.push(*stmt);
                         p.append_part(&mut parts, sliced.as_mut_slice())?;
@@ -889,11 +889,11 @@ impl<'a> Parser<'a> {
             if uses_dirname || uses_filename {
                 let count = (uses_dirname as usize) + (uses_filename as usize);
                 let mut declared_symbols =
-                    DeclaredSymbol::List::init_capacity(p.bump, count).expect("unreachable");
-                let decls = p.bump.alloc_slice_fill_default::<G::Decl>(count);
+                    DeclaredSymbol::List::init_capacity(p.allocator, count).expect("unreachable");
+                let decls = p.allocator.alloc_slice_fill_default::<G::Decl>(count);
                 if uses_dirname {
                     decls[0] = G::Decl {
-                        binding: p.b(B::Identifier { ref_: p.dirname_ref }, logger::Loc::EMPTY),
+                        binding: p.b(B::Identifier { r#ref: p.dirname_ref }, logger::Loc::EMPTY),
                         value: Some(p.new_expr(
                             E::String { data: p.source.path.name.dir, ..Default::default() },
                             logger::Loc::EMPTY,
@@ -904,7 +904,7 @@ impl<'a> Parser<'a> {
                 }
                 if uses_filename {
                     decls[uses_dirname as usize] = G::Decl {
-                        binding: p.b(B::Identifier { ref_: p.filename_ref }, logger::Loc::EMPTY),
+                        binding: p.b(B::Identifier { r#ref: p.filename_ref }, logger::Loc::EMPTY),
                         value: Some(p.new_expr(
                             E::String { data: p.source.path.text, ..Default::default() },
                             logger::Loc::EMPTY,
@@ -913,10 +913,10 @@ impl<'a> Parser<'a> {
                     declared_symbols.push(DeclaredSymbol { ref_: p.filename_ref, is_top_level: true });
                 }
 
-                let part_stmts = p.bump.alloc_slice_fill_with(1, |_| {
+                let part_stmts = p.allocator.alloc_slice_fill_with(1, |_| {
                     p.s(
                         S::Local {
-                            kind: S::Local::Kind::KVar,
+                            kind: js_ast::LocalKind::KVar,
                             decls: Decl::List::from_owned_slice(decls),
                             ..Default::default()
                         },
@@ -926,7 +926,7 @@ impl<'a> Parser<'a> {
                 before.push(js_ast::Part {
                     stmts: part_stmts,
                     declared_symbols,
-                    tag: js_ast::Part::Tag::DirnameFilename,
+                    tag: js_ast::PartTag::DirnameFilename,
                     ..Default::default()
                 });
                 uses_dirname = false;
@@ -953,7 +953,7 @@ impl<'a> Parser<'a> {
 
                     p.module_scope
                         .generated
-                        .push(p.bump, deferred_import.namespace.ref_.unwrap());
+                        .push(p.allocator, deferred_import.namespace.ref_.unwrap());
 
                     import_part_stmts[0] = Stmt::alloc(
                         S::Import {
@@ -965,7 +965,7 @@ impl<'a> Parser<'a> {
                         deferred_import.namespace.loc,
                     );
                     let mut declared_symbols =
-                        DeclaredSymbol::List::init_capacity(p.bump, 1).expect("unreachable");
+                        DeclaredSymbol::List::init_capacity(p.allocator, 1).expect("unreachable");
                     declared_symbols.push(DeclaredSymbol {
                         ref_: deferred_import.namespace.ref_.unwrap(),
                         is_top_level: true,
@@ -974,7 +974,7 @@ impl<'a> Parser<'a> {
                     before.push(js_ast::Part {
                         stmts: import_part_stmts,
                         declared_symbols,
-                        tag: js_ast::Part::Tag::ImportToConvertFromRequire,
+                        tag: js_ast::PartTag::ImportToConvertFromRequire,
                         // This part has a single symbol, so it may be removed if unused.
                         can_be_removed_if_unused: true,
                         ..Default::default()
@@ -1023,7 +1023,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // reconciler-6: tail re-gated — ~148 port errors below (p.bump→allocator,
+        // reconciler-6: tail re-gated — ~148 port errors below (p.allocator→allocator,
         // js_ast::Stmt::Data paths, Tracer.end() on (), ArrayHashMap<Loc>.get bounds,
         // b::Identifier.ref_ field, BumpVec<Part>::extend_from_slice Clone bound).
         // Body preserved verbatim under #[cfg(any())]; runtime panics until un-gate.
@@ -1061,9 +1061,9 @@ impl<'a> Parser<'a> {
                 for (part_idx, part) in parts.iter().enumerate() {
                     for s in part.stmts.iter() {
                         match s.data {
-                            js_ast::Stmt::Data::SComment(_)
-                            | js_ast::Stmt::Data::SDirective(_)
-                            | js_ast::Stmt::Data::SEmpty(_) => continue,
+                            js_ast::StmtData::SComment(_)
+                            | js_ast::StmtData::SDirective(_)
+                            | js_ast::StmtData::SEmpty(_) => continue,
                             _ => {
                                 // If we already found a non-trivial statement, there's more than one
                                 if found.is_some() {
@@ -1081,16 +1081,16 @@ impl<'a> Parser<'a> {
                 let part = &mut parts[found.part_idx];
                 if p.symbols.as_slice()[p.module_ref.inner_index() as usize].use_count_estimate == 1
                 {
-                    if let js_ast::Stmt::Data::SExpr(s_expr) = &stmt.data {
+                    if let js_ast::StmtData::SExpr(s_expr) = &stmt.data {
                         let value: Expr = s_expr.value;
 
-                        if let js_ast::Expr::Data::EBinary(bin) = &value.data {
+                        if let js_ast::ExprData::EBinary(bin) = &value.data {
                             let left = bin.left;
                             let right = bin.right;
                             if bin.op == js_ast::op::Code::BinAssign
-                                && matches!(&left.data, js_ast::Expr::Data::EDot(d)
+                                && matches!(&left.data, js_ast::ExprData::EDot(d)
                                     if d.name == b"exports"
-                                        && matches!(&d.target.data, js_ast::Expr::Data::EIdentifier(id)
+                                        && matches!(&d.target.data, js_ast::ExprData::EIdentifier(id)
                                             if id.ref_.eql(p.module_ref)))
                             {
                                 let redirect_import_record_index: Option<u32> = 'inner_brk: {
@@ -1098,7 +1098,7 @@ impl<'a> Parser<'a> {
                                     //
                                     //      module.exports = require("foo");
                                     //
-                                    if let js_ast::Expr::Data::ERequireString(req) = &right.data {
+                                    if let js_ast::ExprData::ERequireString(req) = &right.data {
                                         break 'inner_brk Some(req.import_record_index);
                                     }
 
@@ -1111,7 +1111,7 @@ impl<'a> Parser<'a> {
                                     //      module.exports = Foo;
                                     //
                                     // This is what fixes #3537
-                                    if let js_ast::Expr::Data::EIdentifier(id) = &right.data {
+                                    if let js_ast::ExprData::EIdentifier(id) = &right.data {
                                         if p.import_records.len() == 1
                                             && p.imports_to_convert_from_require.len() == 1
                                             && p.imports_to_convert_from_require.as_slice()[0]
@@ -1166,28 +1166,28 @@ impl<'a> Parser<'a> {
 
                     for j in 0..part.stmts.len() {
                         let stmt = &mut part.stmts[j];
-                        if let js_ast::Stmt::Data::SExpr(s_expr) = &stmt.data {
+                        if let js_ast::StmtData::SExpr(s_expr) = &stmt.data {
                             let value: Expr = s_expr.value;
 
-                            if let js_ast::Expr::Data::EBinary(mut bin_ptr) = value.data {
+                            if let js_ast::ExprData::EBinary(mut bin_ptr) = value.data {
                                 let mut bin = bin_ptr;
                                 loop {
                                     let left = bin.left;
                                     let right = bin.right;
 
                                     if bin.op == js_ast::op::Code::BinAssign
-                                        && matches!(right.data, js_ast::Expr::Data::ERequireString(_))
-                                        && matches!(&left.data, js_ast::Expr::Data::EDot(d)
+                                        && matches!(right.data, js_ast::ExprData::ERequireString(_))
+                                        && matches!(&left.data, js_ast::ExprData::EDot(d)
                                             if d.name == b"exports"
-                                                && matches!(&d.target.data, js_ast::Expr::Data::EIdentifier(id)
+                                                && matches!(&d.target.data, js_ast::ExprData::EIdentifier(id)
                                                     if id.ref_.eql(p.module_ref)))
                                     {
                                         let req = match &right.data {
-                                            js_ast::Expr::Data::ERequireString(r) => r,
+                                            js_ast::ExprData::ERequireString(r) => r,
                                             _ => unreachable!(),
                                         };
                                         p.export_star_import_records
-                                            .push(p.bump, req.import_record_index);
+                                            .push(p.allocator, req.import_record_index);
                                         let namespace_ref = p
                                             .imports_to_convert_from_require
                                             .as_slice()[req.unwrapped_id as usize]
@@ -1199,7 +1199,7 @@ impl<'a> Parser<'a> {
                                         part.stmts = {
                                             let mut new_stmts = BumpVec::<Stmt>::with_capacity_in(
                                                 part.stmts.len() + 1,
-                                                p.bump,
+                                                p.allocator,
                                             );
                                             // PERF(port): was appendSliceAssumeCapacity
                                             new_stmts.extend_from_slice(&part.stmts[0..j]);
@@ -1217,7 +1217,7 @@ impl<'a> Parser<'a> {
                                         };
 
                                         part.import_record_indices
-                                            .push(p.bump, req.import_record_index);
+                                            .push(p.allocator, req.import_record_index);
                                         p.symbols.as_mut_slice()
                                             [p.module_ref.inner_index() as usize]
                                             .use_count_estimate = 0;
@@ -1230,7 +1230,7 @@ impl<'a> Parser<'a> {
 
                                         for (i, before_part) in before.iter().enumerate() {
                                             if before_part.tag
-                                                == js_ast::Part::Tag::ImportToConvertFromRequire
+                                                == js_ast::PartTag::ImportToConvertFromRequire
                                             {
                                                 let _ = before.swap_remove(i);
                                                 break;
@@ -1245,7 +1245,7 @@ impl<'a> Parser<'a> {
                                         break;
                                     }
 
-                                    if let js_ast::Expr::Data::EBinary(rb) = right.data {
+                                    if let js_ast::ExprData::EBinary(rb) = right.data {
                                         bin = rb;
                                         continue;
                                     }
@@ -1285,7 +1285,7 @@ impl<'a> Parser<'a> {
                         for part in before.iter() {
                             for stmt in part.stmts.iter() {
                                 match &stmt.data {
-                                    js_ast::Stmt::Data::SExportStar(star) => {
+                                    js_ast::StmtData::SExportStar(star) => {
                                         if star.alias.is_some() {
                                             break 'brk None;
                                         }
@@ -1296,8 +1296,8 @@ impl<'a> Parser<'a> {
 
                                         export_star = Some(star);
                                     }
-                                    js_ast::Stmt::Data::SEmpty(_)
-                                    | js_ast::Stmt::Data::SComment(_) => {}
+                                    js_ast::StmtData::SEmpty(_)
+                                    | js_ast::StmtData::SComment(_) => {}
                                     _ => {
                                         break 'brk None;
                                     }
@@ -1310,7 +1310,7 @@ impl<'a> Parser<'a> {
                     if let Some(star) = export_star_redirect {
                         return Ok(js_ast::Result::Ast(js_ast::Ast {
                             // TODO(port): Zig set `.allocator = p.allocator`; arena ownership tracked elsewhere in Rust
-                            import_records: ImportRecord::List::init(p.import_records.as_slice()),
+                            import_records: ImportRecord::List::init(p.import_records.items()),
                             redirect_import_record_index: star.import_record_index,
                             named_imports: p.named_imports,
                             named_exports: p.named_exports,
@@ -1347,7 +1347,7 @@ impl<'a> Parser<'a> {
                 wrap_mode = WrapMode::BunCommonjs;
 
                 let import_record: Option<&ImportRecord> = 'brk: {
-                    for import_record in p.import_records.as_slice() {
+                    for import_record in p.import_records.items() {
                         if import_record.flags.is_internal || import_record.flags.is_unused {
                             continue;
                         }
@@ -1363,7 +1363,7 @@ impl<'a> Parser<'a> {
                 if let Some(record) = import_record {
                     // find the usage of the export symbol
 
-                    let mut notes = BumpVec::<logger::Data>::new_in(p.bump);
+                    let mut notes = BumpVec::<logger::Data>::new_in(p.allocator);
 
                     notes.push(logger::Data {
                         text: {
@@ -1452,7 +1452,7 @@ impl<'a> Parser<'a> {
                     //
                     // If they use an import statement, we say it's ESM because that's not allowed in CommonJS files.
                     let uses_any_import_statements = 'brk: {
-                        for import_record in p.import_records.as_slice() {
+                        for import_record in p.import_records.items() {
                             if import_record.flags.is_internal || import_record.flags.is_unused {
                                 continue;
                             }
@@ -1503,12 +1503,12 @@ impl<'a> Parser<'a> {
             debug_assert!(!p.options.bundle);
             let count = (uses_dirname as usize) + (uses_filename as usize);
             let mut declared_symbols =
-                DeclaredSymbol::List::init_capacity(p.bump, count).expect("unreachable");
-            let decls = p.bump.alloc_slice_fill_default::<G::Decl>(count);
+                DeclaredSymbol::List::init_capacity(p.allocator, count).expect("unreachable");
+            let decls = p.allocator.alloc_slice_fill_default::<G::Decl>(count);
             if uses_dirname {
                 // var __dirname = import.meta
                 decls[0] = G::Decl {
-                    binding: p.b(B::Identifier { ref_: p.dirname_ref }, logger::Loc::EMPTY),
+                    binding: p.b(B::Identifier { r#ref: p.dirname_ref }, logger::Loc::EMPTY),
                     value: Some(p.new_expr(
                         E::Dot {
                             name: b"dir",
@@ -1524,7 +1524,7 @@ impl<'a> Parser<'a> {
             if uses_filename {
                 // var __filename = import.meta.path
                 decls[uses_dirname as usize] = G::Decl {
-                    binding: p.b(B::Identifier { ref_: p.filename_ref }, logger::Loc::EMPTY),
+                    binding: p.b(B::Identifier { r#ref: p.filename_ref }, logger::Loc::EMPTY),
                     value: Some(p.new_expr(
                         E::Dot {
                             name: b"path",
@@ -1538,10 +1538,10 @@ impl<'a> Parser<'a> {
                 declared_symbols.push(DeclaredSymbol { ref_: p.filename_ref, is_top_level: true });
             }
 
-            let part_stmts = p.bump.alloc_slice_fill_with(1, |_| {
+            let part_stmts = p.allocator.alloc_slice_fill_with(1, |_| {
                 p.s(
                     S::Local {
-                        kind: S::Local::Kind::KVar,
+                        kind: js_ast::LocalKind::KVar,
                         decls: Decl::List::from_owned_slice(decls),
                         ..Default::default()
                     },
@@ -1551,7 +1551,7 @@ impl<'a> Parser<'a> {
             before.push(js_ast::Part {
                 stmts: part_stmts,
                 declared_symbols,
-                tag: js_ast::Part::Tag::DirnameFilename,
+                tag: js_ast::PartTag::DirnameFilename,
                 ..Default::default()
             });
         }
@@ -1571,7 +1571,7 @@ impl<'a> Parser<'a> {
             }
             let jest: &mut Jest = &mut p.jest;
 
-            for item in p.import_records.as_slice() {
+            for item in p.import_records.items() {
                 // skip if they did import it
                 if item.path.text == b"bun:test"
                     || item.path.text == b"@jest/globals"
@@ -1606,11 +1606,11 @@ impl<'a> Parser<'a> {
             }
 
             let mut declared_symbols = js_ast::DeclaredSymbol::List::default();
-            declared_symbols.ensure_total_capacity(p.bump, items_count)?;
+            declared_symbols.ensure_total_capacity(p.allocator, items_count)?;
 
             // For CommonJS modules, use require instead of import
             if exports_kind == js_ast::ExportsKind::Cjs {
-                let import_record_indices = p.bump.alloc_slice_fill_default::<u32>(1);
+                let import_record_indices = p.allocator.alloc_slice_fill_default::<u32>(1);
                 let import_record_id = p.add_import_record(
                     bun_options_types::ImportKind::Require,
                     logger::Loc::EMPTY,
@@ -1619,7 +1619,7 @@ impl<'a> Parser<'a> {
                 import_record_indices[0] = import_record_id;
 
                 // Create object binding pattern for destructuring
-                let properties = p.bump.alloc_slice_fill_default::<B::Property>(items_count);
+                let properties = p.allocator.alloc_slice_fill_default::<B::Property>(items_count);
                 let mut prop_i: usize = 0;
                 // TODO(port): comptime field reflection on Jest
                 for (symbol_name, get_ref) in Jest::FIELDS {
@@ -1630,7 +1630,7 @@ impl<'a> Parser<'a> {
                                 E::String { data: symbol_name.as_bytes(), ..Default::default() },
                                 logger::Loc::EMPTY,
                             ),
-                            value: p.b(B::Identifier { ref_: r }, logger::Loc::EMPTY),
+                            value: p.b(B::Identifier { r#ref: r }, logger::Loc::EMPTY),
                             ..Default::default()
                         };
                         declared_symbols.push(DeclaredSymbol { ref_: r, is_top_level: true });
@@ -1639,7 +1639,7 @@ impl<'a> Parser<'a> {
                 }
 
                 // Create: const { test, expect, ... } = require("bun:test")
-                let decls = p.bump.alloc_slice_fill_default::<G::Decl>(1);
+                let decls = p.allocator.alloc_slice_fill_default::<G::Decl>(1);
                 decls[0] = G::Decl {
                     binding: p.b(B::Object { properties, ..Default::default() }, logger::Loc::EMPTY),
                     value: Some(p.new_expr(
@@ -1648,10 +1648,10 @@ impl<'a> Parser<'a> {
                     )),
                 };
 
-                let part_stmts = p.bump.alloc_slice_fill_with(1, |_| {
+                let part_stmts = p.allocator.alloc_slice_fill_with(1, |_| {
                     p.s(
                         S::Local {
-                            kind: S::Local::Kind::KConst,
+                            kind: js_ast::LocalKind::KConst,
                             decls: Decl::List::from_owned_slice(decls),
                             ..Default::default()
                         },
@@ -1663,11 +1663,11 @@ impl<'a> Parser<'a> {
                     stmts: part_stmts,
                     declared_symbols,
                     import_record_indices: BabyList::<u32>::from_owned_slice(import_record_indices),
-                    tag: js_ast::Part::Tag::BunTest,
+                    tag: js_ast::PartTag::BunTest,
                     ..Default::default()
                 });
             } else {
-                let import_record_indices = p.bump.alloc_slice_fill_default::<u32>(1);
+                let import_record_indices = p.allocator.alloc_slice_fill_default::<u32>(1);
                 let import_record_id = p.add_import_record(
                     bun_options_types::ImportKind::Stmt,
                     logger::Loc::EMPTY,
@@ -1711,12 +1711,12 @@ impl<'a> Parser<'a> {
                     logger::Loc::EMPTY,
                 );
 
-                let part_stmts = p.bump.alloc_slice_fill_with(1, |_| import_stmt);
+                let part_stmts = p.allocator.alloc_slice_fill_with(1, |_| import_stmt);
                 before.push(js_ast::Part {
                     stmts: part_stmts,
                     declared_symbols,
                     import_record_indices: BabyList::<u32>::from_owned_slice(import_record_indices),
-                    tag: js_ast::Part::Tag::BunTest,
+                    tag: js_ast::PartTag::BunTest,
                     ..Default::default()
                 });
             }

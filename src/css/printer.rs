@@ -202,9 +202,13 @@ impl<'a> Printer<'a> {
     // a `written_len()` method (or be a concrete `Vec<u8>`-backed writer).
     #[inline]
     fn get_written_amt(writer: &dyn Write) -> usize {
-        // TODO(port): replace with writer.written_len() once bun_io::Write provides it
+        // TODO(port): replace with writer.written_len() once bun_io::Write provides it.
+        // Zig checked the vtable against std.Io.Writer.Allocating and returned written().len
+        // for the common case; until the trait exposes that, this is a stub — use todo!()
+        // (not unreachable!()) so it is correctly flagged as unimplemented rather than
+        // asserting an invariant that does not hold.
         let _ = writer;
-        unreachable!("css: got bad writer type");
+        todo!("css: Printer::get_written_amt — bun_io::Write needs written_len()");
     }
 
     /// Returns the current source filename that is being printed.

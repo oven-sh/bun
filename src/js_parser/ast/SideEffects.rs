@@ -1,6 +1,8 @@
 #![allow(unused_imports, unused_variables, dead_code, unused_mut)]
-use crate::ast::{self, Binding, E, Expr, ExprData, G, Op, Stmt, StmtData};
+use crate::ast::{self, Binding, E, Expr, ExprData, G, Op, Stmt, StmtData, StoreRef};
 use crate::ast::p::P;
+use crate::ast::e::CallUnwrap;
+use crate::ast::symbol;
 use crate::parser::JsxT;
 use bumpalo::Bump;
 

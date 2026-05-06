@@ -2718,20 +2718,20 @@ impl<AtRule> StyleSheet<AtRule> {
     }
 
     /// Parse a style sheet from a string.
-    pub fn parse_with<P: CustomAtRuleParser>(
+    pub fn parse_with<P: CustomAtRuleParser<AtRule = AtRule>>(
         code: &[u8],
         options: ParserOptions,
         at_rule_parser: &mut P,
         import_records: Option<&mut BabyList<ImportRecord>>,
         source_index: SrcIndex,
-    ) -> Maybe<(Self, StylesheetExtra), Err<ParserError>>
-    where
-        AtRule: From<P::AtRule>, // TODO(port): Zig instantiates StyleSheet(AtRule) generically
-    {
-        // blocked_on: rule_parsers impl bodies (TopLevelRuleParser: AtRuleParser
-        // + QualifiedRuleParser are `#[cfg(any())]`-gated above), 'bump lifetime
-        // threading from `code` → license_comments / options.filename → sources.
-        #[cfg(any())] {
+    ) -> Maybe<(Self, StylesheetExtra), Err<ParserError>> {
+        // TODO(port): 'bump lifetime threading — the arena currently lives on
+        // this stack frame. Every arena-backed slice the parser hands back is
+        // detached to `'static` (matching the crate-wide erasure on
+        // `DeclarationBlock<'static>`/`Token` payloads). This is *unsound* once
+        // the returned `StyleSheet` outlives this fn; Phase B hoists the arena
+        // into `StyleSheet` (or threads `&'bump Bump` from the caller) and
+        // re-threads the lifetime through `CssRuleList<'bump, R>`.
         let mut composes = ComposesMap::default();
         let mut parser_extra = ParserExtra {
             local_scope: LocalScope::default(),
@@ -2741,7 +2741,10 @@ impl<AtRule> StyleSheet<AtRule> {
         let mut local_properties = LocalPropertyUsage::default();
 
         let arena = Bump::new();
-        let mut input = ParserInput::new(code, &arena);
+        // SAFETY: same `'static` erasure as `DeclarationBlock::parse` /
+        // `TopLevelRuleParser::nested`. See note above.
+        let arena_ref: &'static Bump = unsafe { &*(&arena as *const Bump) };
+        let mut input = ParserInput::new(code, arena_ref);
         let mut parser = Parser::new(
             &mut input,
             import_records,
@@ -2750,14 +2753,15 @@ impl<AtRule> StyleSheet<AtRule> {
         );
 
         // PERF(port): was arena bulk-free — profile in Phase B
-        let mut license_comments: Vec<&[u8]> = Vec::new();
+        let mut license_comments: Vec<&'static [u8]> = Vec::new();
         let mut state = parser.state();
         while let Ok(token) = parser.next_including_whitespace_and_comments() {
-            match token {
+            match *token {
                 Token::Whitespace(_) => {}
                 Token::Comment(comment) => {
                     if comment.first() == Some(&b'!') {
-                        license_comments.push(comment);
+                        // TODO(port): lifetime — arena slice; see erasure note.
+                        license_comments.push(unsafe { &*(comment as *const [u8]) });
                     }
                 }
                 _ => break,
@@ -2768,6 +2772,7 @@ impl<AtRule> StyleSheet<AtRule> {
 
         let mut rules = CssRuleList::<AtRule>::default();
         let mut rule_parser = TopLevelRuleParser::new(
+            arena_ref,
             &options,
             at_rule_parser,
             &mut rules,
@@ -2787,17 +2792,17 @@ impl<AtRule> StyleSheet<AtRule> {
             }
         }
 
-        let mut sources = Vec::with_capacity(1);
-        sources.push(options.filename.into());
-        let mut source_map_urls = Vec::with_capacity(1);
-        source_map_urls.push(parser.current_source_map_url().map(Into::into));
+        let mut sources: Vec<Box<[u8]>> = Vec::with_capacity(1);
+        sources.push(Box::<[u8]>::from(options.filename));
+        let mut source_map_urls: Vec<Option<Box<[u8]>>> = Vec::with_capacity(1);
+        source_map_urls.push(parser.current_source_map_url().map(Box::<[u8]>::from));
 
         // TODO(port): `layer_names` is taken from `at_rule_parser` only when
         // `P == BundlerAtRuleParser`. Rust cannot specialize at runtime; Phase
         // B adds a `take_layer_names()` method on `CustomAtRuleParser`.
         let layer_names = BabyList::default();
 
-        return Ok((
+        Ok((
             Self {
                 rules,
                 sources,
@@ -2811,12 +2816,7 @@ impl<AtRule> StyleSheet<AtRule> {
                 composes,
             },
             StylesheetExtra { symbols: parser_extra.symbols },
-        ));
-        }
-        #[cfg(not(any()))] {
-        let _ = (code, options, at_rule_parser, import_records, source_index);
-        todo!("StyleSheet::parse_with — gated on rule_parsers (TopLevelRuleParser trait impls)")
-        }
+        ))
     }
 
     pub fn debug_layer_rule_sanity_check(&self) {

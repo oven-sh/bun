@@ -155,7 +155,9 @@ macro_rules! logical_property_helper {
             $self.flush($d, $ctx);
         }
 
-        $self.$prop = Some($val.clone());
+        // PORT NOTE: Zig stored `property.deepClone(allocator)`. `Property` itself
+        // has no blanket `Clone`; callers pass an already-deep_clone'd `Property`.
+        $self.$prop = Some($val);
         $self.category = PropertyCategory::Logical;
         $self.has_any = true;
     }};
@@ -166,14 +168,14 @@ macro_rules! single_property {
         if let Some(v) = $val {
             if !v.1.is_empty() {
                 let prefix = $ctx.targets.prefixes(v.1, css::prefixes::Feature::BorderRadius);
-                $d.push(Property::$variant(v.0, prefix));
+                $d.push(Property::$variant((v.0, prefix)));
             }
         }
     }};
 }
 
 macro_rules! logical_property {
-    ($d:expr, $ctx:expr, $val:expr, $ltr:ident, $rtl:ident, $logical_supported:expr) => {{
+    ($d:expr, $ctx:expr, $bump:expr, $val:expr, $ltr:ident, $rtl:ident, $logical_supported:expr) => {{
         if let Some(v) = $val {
             if $logical_supported {
                 $d.push(v);
@@ -187,14 +189,14 @@ macro_rules! logical_property {
                     | Property::BorderEndEndRadius(radius)
                     | Property::BorderEndStartRadius(radius) => {
                         $ctx.add_logical_rule(
-                            Property::$ltr(radius.clone(), prefix),
-                            Property::$rtl(radius, prefix),
+                            Property::$ltr((radius.clone(), prefix)),
+                            Property::$rtl((radius, prefix)),
                         );
                     }
                     Property::Unparsed(unparsed) => {
                         $ctx.add_logical_rule(
-                            Property::Unparsed(unparsed.with_property_id(PropertyId::$ltr(prefix))),
-                            Property::Unparsed(unparsed.with_property_id(PropertyId::$rtl(prefix))),
+                            Property::Unparsed(unparsed.with_property_id($bump, PropertyId::$ltr(prefix))),
+                            Property::Unparsed(unparsed.with_property_id($bump, PropertyId::$rtl(prefix))),
                         );
                     }
                     _ => {}
@@ -211,16 +213,17 @@ impl BorderRadiusHandler {
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) -> bool {
+        let bump = dest.bump();
         match property {
-            Property::BorderTopLeftRadius(val, vp) => property_helper!(self, dest, context, top_left, val, *vp),
-            Property::BorderTopRightRadius(val, vp) => property_helper!(self, dest, context, top_right, val, *vp),
-            Property::BorderBottomRightRadius(val, vp) => property_helper!(self, dest, context, bottom_right, val, *vp),
-            Property::BorderBottomLeftRadius(val, vp) => property_helper!(self, dest, context, bottom_left, val, *vp),
-            Property::BorderStartStartRadius(_) => logical_property_helper!(self, dest, context, start_start, property),
-            Property::BorderStartEndRadius(_) => logical_property_helper!(self, dest, context, start_end, property),
-            Property::BorderEndEndRadius(_) => logical_property_helper!(self, dest, context, end_end, property),
-            Property::BorderEndStartRadius(_) => logical_property_helper!(self, dest, context, end_start, property),
-            Property::BorderRadius(val, vp) => {
+            Property::BorderTopLeftRadius((val, vp)) => property_helper!(self, dest, context, top_left, val, *vp),
+            Property::BorderTopRightRadius((val, vp)) => property_helper!(self, dest, context, top_right, val, *vp),
+            Property::BorderBottomRightRadius((val, vp)) => property_helper!(self, dest, context, bottom_right, val, *vp),
+            Property::BorderBottomLeftRadius((val, vp)) => property_helper!(self, dest, context, bottom_left, val, *vp),
+            Property::BorderStartStartRadius(_) => logical_property_helper!(self, dest, context, start_start, property.deep_clone(bump)),
+            Property::BorderStartEndRadius(_) => logical_property_helper!(self, dest, context, start_end, property.deep_clone(bump)),
+            Property::BorderEndEndRadius(_) => logical_property_helper!(self, dest, context, end_end, property.deep_clone(bump)),
+            Property::BorderEndStartRadius(_) => logical_property_helper!(self, dest, context, end_start, property.deep_clone(bump)),
+            Property::BorderRadius((val, vp)) => {
                 self.start_start = None;
                 self.start_end = None;
                 self.end_end = None;
@@ -237,26 +240,26 @@ impl BorderRadiusHandler {
                 property_helper!(self, dest, context, bottom_left, &val.bottom_left, *vp);
             }
             Property::Unparsed(unparsed) => {
-                if is_border_radius_property(unparsed.property_id) {
+                if is_border_radius_property(unparsed.property_id.tag()) {
                     // Even if we weren't able to parse the value (e.g. due to var() references),
                     // we can still add vendor prefixes to the property itself.
-                    match unparsed.property_id {
+                    match unparsed.property_id.tag() {
                         PropertyIdTag::BorderStartStartRadius => {
-                            logical_property_helper!(self, dest, context, start_start, property)
+                            logical_property_helper!(self, dest, context, start_start, property.deep_clone(bump))
                         }
                         PropertyIdTag::BorderStartEndRadius => {
-                            logical_property_helper!(self, dest, context, start_end, property)
+                            logical_property_helper!(self, dest, context, start_end, property.deep_clone(bump))
                         }
                         PropertyIdTag::BorderEndEndRadius => {
-                            logical_property_helper!(self, dest, context, end_end, property)
+                            logical_property_helper!(self, dest, context, end_end, property.deep_clone(bump))
                         }
                         PropertyIdTag::BorderEndStartRadius => {
-                            logical_property_helper!(self, dest, context, end_start, property)
+                            logical_property_helper!(self, dest, context, end_start, property.deep_clone(bump))
                         }
                         _ => {
                             self.flush(dest, context);
                             dest.push(Property::Unparsed(
-                                unparsed.get_prefixed(context.targets, css::prefixes::Feature::BorderRadius),
+                                unparsed.get_prefixed(bump, context.targets, css::prefixes::Feature::BorderRadius),
                             ));
                         }
                     }

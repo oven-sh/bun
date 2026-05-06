@@ -1016,11 +1016,82 @@ impl Interpreter {
 
     // ── run loop ───────────────────────────────────────────────────────────
 
+    /// Spec: interpreter.zig `setupIOBeforeRun` + `setupIOBeforeRunImpl`
+    /// (interpreter.zig:1177-1223). When `!quiet`, dup stdout/stderr (or open
+    /// the null device if the process was started with that stream closed),
+    /// wrap each in an `IOWriter`, and install them as `root_io.stdout/stderr`
+    /// so command output reaches the terminal. On the JS event loop the
+    /// `captured` slot is also wired to `_buffered_stdout/err` so
+    /// `Bun.$` callers can read it back.
+    fn setup_io_before_run(&mut self) -> bun_sys::Result<()> {
+        if self.flags.quiet() {
+            return Ok(());
+        }
+        let event_loop = self.event_loop;
+
+        // ── dup stdout ─────────────────────────────────────────────────────
+        log!("Duping stdout");
+        let stdout_fd = if bun_core::output::stdio::is_stdout_null() {
+            open_null_device()?
+        } else {
+            bun_sys::dup(Fd::stdout())?
+        };
+
+        // ── dup stderr (errdefer closes stdout on failure) ────────────────
+        log!("Duping stderr");
+        let stderr_fd_res = if bun_core::output::stdio::is_stderr_null() {
+            open_null_device()
+        } else {
+            bun_sys::dup(Fd::stderr())
+        };
+        let stderr_fd = match stderr_fd_res {
+            Ok(fd) => fd,
+            Err(e) => {
+                closefd(stdout_fd);
+                return Err(e);
+            }
+        };
+
+        let stdout_writer = IOWriter::init(
+            stdout_fd,
+            crate::shell::io_writer::Flags {
+                pollable: is_pollable(stdout_fd),
+                ..Default::default()
+            },
+            event_loop,
+        );
+        let stderr_writer = IOWriter::init(
+            stderr_fd,
+            crate::shell::io_writer::Flags {
+                pollable: is_pollable(stderr_fd),
+                ..Default::default()
+            },
+            event_loop,
+        );
+
+        self.root_io.stdout = crate::shell::io::OutKind::Fd(crate::shell::io::OutFd {
+            writer: stdout_writer,
+            captured: None,
+        });
+        self.root_io.stderr = crate::shell::io::OutKind::Fd(crate::shell::io::OutFd {
+            writer: stderr_writer,
+            captured: None,
+        });
+
+        // Spec: `if (event_loop == .js)` — hook captured buffers so the JS
+        // `Bun.$` API can read stdout/stderr after completion.
+        // TODO(b2-blocked): bun_jsc — `EventLoopHandle` is an opaque shim with
+        // no `.js` discriminant yet; the mini path (the only live caller) does
+        // not capture, so this is correctly a no-op until the JS loop lands.
+
+        Ok(())
+    }
+
     pub fn run(&mut self) -> bun_sys::Result<()> {
         log!("Interpreter(0x{:x}) run", self as *const _ as usize);
-        // TODO(b2-blocked): setup_io_before_run() — depends on IOWriter::init
-        // and EventLoopHandle accessors; gated body preserved in
-        // `interpreter_body` below.
+        if let Err(e) = self.setup_io_before_run() {
+            return Err(e);
+        }
 
         // PORT NOTE: reshaped for borrowck — capture raw ptrs/clones before
         // taking `&mut self` for `Script::init`.
@@ -1197,9 +1268,108 @@ impl ShellExecEnv {
         drop(boxed);
     }
 
-    // The remaining body (change_cwd, get_home_dir, assign_var, etc.) is
-    // preserved in the gated `interpreter_body` module below — it depends on
-    // ResolvePath join_buf and IOWriter method surface that aren't yet stable.
+    /// Spec: interpreter.zig `ShellExecEnv.changeCwdImpl`.
+    ///
+    /// Resolves `new_cwd_` (absolute, or relative to current `cwd()`), opens it
+    /// with `O_DIRECTORY`, and on success rotates `__cwd`/`__prev_cwd`/`cwd_fd`.
+    /// When `in_init` is true, also writes `PWD`/`OLDPWD` into `export_env`
+    /// — skipped here (spec does that only when `!in_init`, see tail below).
+    pub fn change_cwd_impl(
+        &mut self,
+        new_cwd_: &[u8],
+        in_init: bool,
+    ) -> bun_sys::Result<()> {
+        let is_abs = bun_paths::is_absolute(new_cwd_);
+
+        // Spec bounds-check against the 4096-byte join buffer (ENAMETOOLONG).
+        let mut buf = bun_paths::PathBuffer::uninit();
+        let required_len = if is_abs {
+            new_cwd_.len()
+        } else {
+            self.cwd().len() + 1 + new_cwd_.len()
+        };
+        if required_len >= buf.len() {
+            return Err(bun_sys::Error::from_code_int(
+                bun_sys::E::ENAMETOOLONG as _,
+                bun_sys::Tag::chdir,
+            ));
+        }
+
+        // Build NUL-terminated `new_cwd` in `buf`.
+        let new_cwd_len: usize = if is_abs {
+            buf[..new_cwd_.len()].copy_from_slice(new_cwd_);
+            buf[new_cwd_.len()] = 0;
+            new_cwd_.len()
+        } else {
+            // PORT NOTE: spec uses `ResolvePath.joinZ` (normalizes `.`/`..`).
+            // The full normalizer lives in bun_paths but isn't yet exposed with
+            // the exact join_buf signature; for now do the literal join the
+            // spec describes pre-normalization. `openat` on the resulting path
+            // still resolves `.`/`..` at the kernel level, so the *fd* is
+            // correct; only the stored `__cwd` string may be un-normalized.
+            // TODO(port): swap to `bun_paths::join_z` once landed.
+            let cwd = self.cwd();
+            buf[..cwd.len()].copy_from_slice(cwd);
+            let mut n = cwd.len();
+            #[cfg(windows)]
+            { buf[n] = b'\\'; }
+            #[cfg(not(windows))]
+            { buf[n] = b'/'; }
+            n += 1;
+            buf[n..n + new_cwd_.len()].copy_from_slice(new_cwd_);
+            n += new_cwd_.len();
+            // strip trailing separator (spec: `if len > 1 && last == sep`)
+            #[cfg(windows)]
+            let sep = b'\\';
+            #[cfg(not(windows))]
+            let sep = b'/';
+            if n > 1 && buf[n - 1] == sep {
+                n -= 1;
+            }
+            buf[n] = 0;
+            n
+        };
+        // SAFETY: we wrote `new_cwd_len` bytes + a NUL at `[new_cwd_len]`.
+        let new_cwd_z = unsafe { bun_core::ZStr::from_raw(buf.as_ptr(), new_cwd_len) };
+
+        let new_cwd_fd = bun_sys::openat(
+            self.cwd_fd,
+            new_cwd_z,
+            bun_sys::O::DIRECTORY | bun_sys::O::RDONLY,
+            0,
+        )?;
+
+        closefd(self.cwd_fd);
+
+        self.__prev_cwd.clear();
+        self.__prev_cwd.extend_from_slice(&self.__cwd[..]);
+
+        self.__cwd.clear();
+        // include trailing NUL (spec: `new_cwd[0 .. new_cwd.len + 1]`).
+        self.__cwd.extend_from_slice(&buf[..new_cwd_len + 1]);
+
+        debug_assert_eq!(*self.__cwd.last().unwrap(), 0);
+        debug_assert_eq!(*self.__prev_cwd.last().unwrap(), 0);
+
+        self.cwd_fd = new_cwd_fd;
+
+        if !in_init {
+            // Spec: `export_env.put("PWD", EnvStr.initSlice(cwd()))` etc.
+            use crate::shell::env_str::EnvStr;
+            self.export_env
+                .put(EnvStr::init_slice(b"PWD"), EnvStr::init_slice(self.cwd()));
+            self.export_env.put(
+                EnvStr::init_slice(b"OLDPWD"),
+                EnvStr::init_slice(self.prev_cwd()),
+            );
+        }
+
+        Ok(())
+    }
+
+    // The remaining body (get_home_dir, assign_var, etc.) is preserved in the
+    // gated `interpreter_body` module below — it depends on ResolvePath
+    // join_buf and IOWriter method surface that aren't yet stable.
 }
 
 // ────────────────────────────────────────────────────────────────────────────

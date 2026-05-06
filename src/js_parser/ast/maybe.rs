@@ -10,6 +10,47 @@ use crate::ast::p::P;
 use crate::lexer as js_lexer;
 use crate::parser::{self as js_parser, IdentifierOpts, JsxT, RelocateVars, RelocateVarsMode, SideEffects};
 
+// ── local EString shims ────────────────────────────────────────────────────
+// E.rs currently carries two `impl EString` blocks (live + round-C draft) with
+// overlapping inherent methods, so calls like `EString::init`/`javascript_length`
+// /`eql_bytes` are E0034-ambiguous from here. These thin wrappers go through
+// public fields directly and are removed once E.rs is deduped.
+#[inline]
+fn e_string_init(data: &[u8]) -> E::EString {
+    // SAFETY: arena-owned or 'static slice; lifetime erased per Phase-A `Str` convention.
+    let data: &'static [u8] = unsafe { core::mem::transmute(data) };
+    E::EString { data, ..Default::default() }
+}
+
+#[inline]
+fn e_string_javascript_length(s: &E::EString) -> Option<u32> {
+    if s.rope_len > 0 {
+        // We only support ascii ropes for now
+        return Some(s.rope_len);
+    }
+    if !s.is_utf16 {
+        if !s.data.iter().all(|&b| b < 128) {
+            return None;
+        }
+        return Some(s.data.len() as u32);
+    }
+    // UTF-16: `data.len()` stores the u16 element count (see EString::init_utf16).
+    Some(s.data.len() as u32)
+}
+
+#[inline]
+fn e_string_eql_bytes(s: &E::EString, other: &[u8]) -> bool {
+    if !s.is_utf16 {
+        s.data == other
+    } else {
+        // SAFETY: when is_utf16, `data.ptr` was originally a `*const u16` and
+        // `data.len()` is the u16 element count.
+        let s16 =
+            unsafe { core::slice::from_raw_parts(s.data.as_ptr() as *const u16, s.data.len()) };
+        s16.len() == other.len() && s16.iter().zip(other).all(|(&c, &b)| c == b as u16)
+    }
+}
+
 // Zig: `pub fn AstMaybe(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
 // a direct `impl P` block.
@@ -397,7 +438,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     if p.options.features.minify_syntax {
                         // minify "long-string".length to 11
                         if name == b"length" {
-                            if let Some(len) = str_.javascript_length() {
+                            if let Some(len) = e_string_javascript_length(&str_) {
                                 return Some(p.new_expr(E::Number { value: len as f64 }, loc));
                             }
                         }
@@ -428,7 +469,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                                     && prop.flags.len() == 0
                                     && prop.key.is_some()
                                     && matches!(prop.key.unwrap().data, js_ast::ExprData::EString(_))
-                                    && prop.key.unwrap().data.e_string().unwrap().eql_bytes(name)
+                                    && e_string_eql_bytes(
+                                        &prop.key.unwrap().data.e_string().unwrap(),
+                                        name,
+                                    )
                                     && name != b"__proto__"
                                 {
                                     return Some(prop.value.unwrap());
@@ -463,34 +507,24 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         if name == b"dir" || name == b"dirname" {
                             // Inline import.meta.dir
                             return Some(
-                                p.new_expr(E::EString::init(p.source.path.name.dir), name_loc),
+                                p.new_expr(e_string_init(p.source.path.name.dir), name_loc),
                             );
                         } else if name == b"file" {
                             // Inline import.meta.file (filename only)
                             return Some(
-                                p.new_expr(E::EString::init(p.source.path.name.filename), name_loc),
+                                p.new_expr(e_string_init(p.source.path.name.filename), name_loc),
                             );
                         } else if name == b"path" {
                             // Inline import.meta.path (full path)
-                            return Some(p.new_expr(E::EString::init(p.source.path.text), name_loc));
+                            return Some(p.new_expr(e_string_init(p.source.path.text), name_loc));
                         } else if name == b"url" {
                             // Inline import.meta.url as file:// URL
-                            // blocked_on: jsc::URL::file_url_from_string FFI (MOVE_DOWN
-                            // bun_jsc::URL → bun_url; see http/lib.rs:1225). The Zig
-                            // formatter writes a `file://` URL via WTF::URL.
-                            
-                            {
-                                let bunstr = bun_string::String::from_bytes(p.source.path.text);
-                                let url = p.allocator.alloc_slice_copy(
-                                    format!("{}", bun_url::file_url_from_string(&bunstr)).as_bytes(),
-                                );
-                                drop(bunstr);
-                                return Some(p.new_expr(E::EString::init(url), name_loc));
-                            }
-                            todo!(
-                                "maybe_rewrite_property_access: import.meta.url → file:// URL \
-                                 (blocked_on bun_url::file_url_from_string)"
+                            let bunstr = bun_string::String::from_bytes(p.source.path.text);
+                            let url = p.allocator.alloc_slice_copy(
+                                format!("{}", bun_url::file_url_from_string(&bunstr)).as_bytes(),
                             );
+                            drop(bunstr);
+                            return Some(p.new_expr(e_string_init(url), name_loc));
                         }
                     }
 

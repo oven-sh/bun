@@ -1759,6 +1759,18 @@ impl TemplateContents {
 }
 
 
+impl TemplateContents {
+    /// Field-wise copy (Zig: `var part = part.*`). `EString` is structurally
+    /// `Copy` but does not derive it; use `shallow_clone` for the cooked arm.
+    #[inline]
+    fn shallow_clone(&self) -> TemplateContents {
+        match self {
+            TemplateContents::Cooked(c) => TemplateContents::Cooked(c.shallow_clone()),
+            TemplateContents::Raw(r) => TemplateContents::Raw(r),
+        }
+    }
+}
+
 impl Template {
     /// "`a${'b'}c`" => "`abc`"
     pub fn fold(&mut self, bump: &Bump, loc: logger::Loc) -> Expr {
@@ -1766,7 +1778,14 @@ impl Template {
             || (matches!(self.head, TemplateContents::Cooked(_)) && !self.head.cooked().is_utf8())
         {
             // we only fold utf-8/ascii for now
-            return Expr { data: crate::ast::expr::Data::ETemplate(self), loc };
+            // SAFETY: `self` is Store/arena-allocated (Zig: `*Template`); capturing its
+            // address as a `StoreRef` mirrors `.{ .e_template = self }`.
+            return Expr {
+                data: crate::ast::expr::Data::ETemplate(unsafe {
+                    StoreRef::from_raw(self as *mut Template)
+                }),
+                loc,
+            };
         }
 
         debug_assert!(matches!(self.head, TemplateContents::Cooked(_)));
@@ -1777,9 +1796,15 @@ impl Template {
 
         let mut parts =
             bumpalo::collections::Vec::<TemplatePart>::with_capacity_in(self.parts.len(), bump);
-        let head = Expr::init(core::mem::take(self.head.cooked_mut()), loc);
+        let mut head = Expr::init(core::mem::take(self.head.cooked_mut()), loc);
         for part_src in self.parts {
-            let mut part = *part_src;
+            // Zig `var part = part.*` — field-wise copy (TemplatePart is not `Copy` only
+            // because `EString` does not derive it; all fields are structurally `Copy`).
+            let mut part = TemplatePart {
+                value: part_src.value,
+                tail_loc: part_src.tail_loc,
+                tail: part_src.tail.shallow_clone(),
+            };
             debug_assert!(matches!(part.tail, TemplateContents::Cooked(_)));
 
             part.value = part.value.unwrap_inlined();
@@ -1795,7 +1820,7 @@ impl Template {
                 }
                 crate::ast::expr::Data::EBoolean(b) => {
                     part.value = Expr::init(
-                        EString::init(if b.value { b"true" } else { b"false" }),
+                        EString::init(if b.value { &b"true"[..] } else { &b"false"[..] }),
                         part.value.loc,
                     );
                 }
@@ -1810,22 +1835,27 @@ impl Template {
 
             if matches!(part.value.data, crate::ast::expr::Data::EString(_))
                 && part.tail.cooked().is_utf8()
-                && part.value.data.e_string().is_utf8()
+                && part.value.data.e_string().unwrap().is_utf8()
             {
                 if parts.is_empty() {
-                    if part.value.data.e_string().len() > 0 {
-                        head.data.e_string_mut().push(
-                            Expr::init(*part.value.data.e_string(), logger::Loc::EMPTY)
-                                .data
-                                .e_string_mut(),
+                    if part.value.data.e_string().unwrap().len() > 0 {
+                        head.data.e_string_mut().unwrap().push(
+                            Expr::init(
+                                part.value.data.e_string().unwrap().shallow_clone(),
+                                logger::Loc::EMPTY,
+                            )
+                            .data
+                            .e_string_mut()
+                            .unwrap(),
                         );
                     }
 
                     if part.tail.cooked().len() > 0 {
-                        head.data.e_string_mut().push(
+                        head.data.e_string_mut().unwrap().push(
                             Expr::init(core::mem::take(part.tail.cooked_mut()), part.tail_loc)
                                 .data
-                                .e_string_mut(),
+                                .e_string_mut()
+                                .unwrap(),
                         );
                     }
 
@@ -1835,11 +1865,15 @@ impl Template {
                     debug_assert!(matches!(prev_part.tail, TemplateContents::Cooked(_)));
 
                     if prev_part.tail.cooked().is_utf8() {
-                        if part.value.data.e_string().len() > 0 {
+                        if part.value.data.e_string().unwrap().len() > 0 {
                             prev_part.tail.cooked_mut().push(
-                                Expr::init(*part.value.data.e_string(), logger::Loc::EMPTY)
-                                    .data
-                                    .e_string_mut(),
+                                Expr::init(
+                                    part.value.data.e_string().unwrap().shallow_clone(),
+                                    logger::Loc::EMPTY,
+                                )
+                                .data
+                                .e_string_mut()
+                                .unwrap(),
                             );
                         }
 
@@ -1847,7 +1881,8 @@ impl Template {
                             prev_part.tail.cooked_mut().push(
                                 Expr::init(core::mem::take(part.tail.cooked_mut()), part.tail_loc)
                                     .data
-                                    .e_string_mut(),
+                                    .e_string_mut()
+                                    .unwrap(),
                             );
                         }
                     } else {
@@ -1863,7 +1898,7 @@ impl Template {
 
         if parts.is_empty() {
             // parts.deinit() — drop is implicit
-            head.data.e_string_mut().resolve_rope_if_needed(bump);
+            head.data.e_string_mut().unwrap().resolve_rope_if_needed(bump);
             return head;
         }
 
@@ -1875,7 +1910,7 @@ impl Template {
             Template {
                 tag: None,
                 parts: parts_slice,
-                head: TemplateContents::Cooked(*head.data.e_string()),
+                head: TemplateContents::Cooked(head.data.e_string().unwrap().shallow_clone()),
             },
             loc,
         )

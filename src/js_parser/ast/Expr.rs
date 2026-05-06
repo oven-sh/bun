@@ -616,38 +616,54 @@ impl Expr {
         None
     }
 
-    pub fn get_string_cloned(
+    pub fn get_string_cloned<'b>(
         expr: &Expr,
-        bump: &Bump,
+        bump: &'b Bump,
         name: &[u8],
-    ) -> Result<Option<*const [u8]>, AllocError> {
+    ) -> Result<Option<&'b [u8]>, AllocError> {
         match expr.as_property(name) {
             Some(q) => q.expr.as_string_cloned(bump),
             None => Ok(None),
         }
     }
 
-    pub fn get_string_cloned_z(
+    pub fn get_string_cloned_z<'b>(
         expr: &Expr,
-        bump: &Bump,
+        bump: &'b Bump,
         name: &[u8],
-    ) -> Result<Option<*const ZStr>, AllocError> {
+    ) -> Result<Option<&'b ZStr>, AllocError> {
         match expr.as_property(name) {
             Some(q) => q.expr.as_string_z(bump),
             None => Ok(None),
         }
     }
 
-    pub fn get_array(expr: &Expr, name: &[u8]) -> Option<ArrayIterator<'_>> {
-        // TODO(port): lifetime of returned iterator borrows `expr`
-        expr.as_property(name).and_then(|q| q.expr.as_array_owned())
+    // PORT NOTE: `Query` holds `expr` by value (Copy), so we can't borrow into
+    // the underlying `E::Array` from it (it'd be borrowing a temporary). The
+    // returned iterator instead borrows the arena slot directly via
+    // `StoreRef::get()` (which yields a `'static`-ish ref into the AST arena),
+    // so the lifetime is decoupled from `expr`.
+    pub fn get_array(expr: &Expr, name: &[u8]) -> Option<ArrayIterator<'static>> {
+        let q = expr.as_property(name)?;
+        match q.expr.data {
+            Data::EArray(array) => {
+                if array.items.len == 0 {
+                    return None;
+                }
+                Some(ArrayIterator { array: array.get(), index: 0 })
+            }
+            _ => None,
+        }
     }
 
-    pub fn get_rope(self_: &Expr, rope: &E::Rope) -> Option<E::RopeQuery> {
-        if let Some(existing) = self_.get(rope.head.data.as_e_string().unwrap().data) {
+    pub fn get_rope<'a>(&self, rope: &'a E::Rope) -> Option<E::RopeQuery<'a>> {
+        if let Some(existing) = self.get(rope.head.data.as_e_string().unwrap().data) {
             match &existing.data {
                 Data::EArray(array) => {
-                    if let Some(next) = rope.next {
+                    if !rope.next.is_null() {
+                        // SAFETY: `rope.next` is a non-null arena-owned `*mut Rope`.
+                        let next: &E::Rope = unsafe { &*rope.next };
+                        let mut array = *array;
                         if let Some(end) = array.items.last() {
                             return end.get_rope(next);
                         }
@@ -655,7 +671,9 @@ impl Expr {
                     return Some(E::RopeQuery { expr: existing, rope });
                 }
                 Data::EObject(_) => {
-                    if let Some(next) = rope.next {
+                    if !rope.next.is_null() {
+                        // SAFETY: `rope.next` is a non-null arena-owned `*mut Rope`.
+                        let next: &E::Rope = unsafe { &*rope.next };
                         if let Some(end) = existing.get_rope(next) {
                             return Some(end);
                         }
@@ -670,22 +688,13 @@ impl Expr {
         None
     }
 
-    // Making this comptime bloats the binary and doesn't seem to impact runtime performance.
-    pub fn as_property(expr: &Expr, name: &[u8]) -> Option<Query> {
-        let Data::EObject(obj) = &expr.data else { return None };
-        if obj.properties.len() == 0 {
-            return None;
-        }
-        obj.as_property(name)
-    }
-
-    pub fn as_property_string_map(
+    pub fn as_property_string_map<'b>(
         expr: &Expr,
         name: &[u8],
-        bump: &Bump,
-    ) -> Option<Box<ArrayHashMap<*const [u8], *const [u8]>>> {
+        bump: &'b Bump,
+    ) -> Option<Box<ArrayHashMap<&'b [u8], &'b [u8]>>> {
         let Data::EObject(obj_) = &expr.data else { return None };
-        if obj_.properties.len() == 0 {
+        if obj_.properties.len == 0 {
             return None;
         }
         let query = obj_.as_property(name)?;
@@ -701,8 +710,8 @@ impl Expr {
         if count == 0 {
             return None;
         }
-        let mut map = ArrayHashMap::<&[u8], &[u8]>::default();
-        if map.reserve(count).is_err() {
+        let mut map = ArrayHashMap::<&'b [u8], &'b [u8]>::default();
+        if map.ensure_total_capacity(count).is_err() {
             return None;
         }
 

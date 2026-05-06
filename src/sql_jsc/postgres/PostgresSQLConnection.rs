@@ -1264,42 +1264,71 @@ impl PostgresSQLConnection {
     }
 }
 
-pub struct Writer<'a> {
-    pub connection: &'a mut PostgresSQLConnection,
+// PORT NOTE: reshaped for borrowck — Zig's `Writer.connection: *PostgresSQLConnection`
+// is a raw backref (LIFETIMES.tsv BACKREF). Holding `&'a mut PostgresSQLConnection`
+// here would alias the `&mut self` that `on()` already holds whenever a write happens
+// mid-message-handling. The connection strictly outlives any Writer (Writers are only
+// constructed via `self.writer()` and never stored), and write_buffer accesses are
+// disjoint from read_buffer accesses.
+#[derive(Clone, Copy)]
+pub struct Writer {
+    pub connection: *mut PostgresSQLConnection,
 }
 
-impl<'a> Writer<'a> {
+impl Writer {
+    #[inline]
+    fn conn(&self) -> &mut PostgresSQLConnection {
+        // SAFETY: see struct-level PORT NOTE — connection outlives the Writer and
+        // write_buffer is disjoint from any concurrent read_buffer access.
+        unsafe { &mut *self.connection }
+    }
+
     pub fn write(&mut self, data: &[u8]) -> Result<(), AnyPostgresError> {
-        let buffer = &mut self.connection.write_buffer;
+        let buffer = &mut self.conn().write_buffer;
         buffer.write(data)?;
         Ok(())
     }
 
     pub fn pwrite(&mut self, data: &[u8], index: usize) -> Result<(), AnyPostgresError> {
-        self.connection.write_buffer.byte_list.slice_mut()[index..][..data.len()].copy_from_slice(data);
+        self.conn().write_buffer.byte_list.slice_mut()[index..][..data.len()].copy_from_slice(data);
         Ok(())
     }
 
     pub fn offset(&self) -> usize {
-        self.connection.write_buffer.len()
+        self.conn().write_buffer.len()
     }
 }
 
 impl PostgresSQLConnection {
-    pub fn writer(&mut self) -> protocol::NewWriter<Writer<'_>> {
+    pub fn writer(&mut self) -> protocol::NewWriter<Writer> {
         protocol::NewWriter {
-            wrapped: Writer { connection: self },
+            wrapped: Writer { connection: self as *mut PostgresSQLConnection },
         }
     }
 }
 
-pub struct Reader<'a> {
-    pub connection: &'a mut PostgresSQLConnection,
+// PORT NOTE: reshaped for borrowck — Zig's `Reader.connection: *PostgresSQLConnection`
+// is a raw backref (LIFETIMES.tsv BACKREF). `PostgresRequest::on_data` passes both
+// `&mut PostgresSQLConnection` and a `NewReader<Reader>` into `on()`; with a borrowed
+// `&'a mut` field that is two live `&mut` to the same object. `*mut` mirrors the Zig
+// pointer; read_buffer/last_message_start accesses here are disjoint from the
+// write_buffer/state mutations done through `&mut self` in `on()`.
+#[derive(Clone, Copy)]
+pub struct Reader {
+    pub connection: *mut PostgresSQLConnection,
 }
 
-impl<'a> Reader<'a> {
+impl Reader {
+    #[inline]
+    fn conn(&self) -> &mut PostgresSQLConnection {
+        // SAFETY: see struct-level PORT NOTE — connection outlives the Reader and
+        // read_buffer is disjoint from any concurrent write_buffer access.
+        unsafe { &mut *self.connection }
+    }
+
     pub fn mark_message_start(&mut self) {
-        self.connection.last_message_start = self.connection.read_buffer.head;
+        let conn = self.conn();
+        conn.last_message_start = conn.read_buffer.head;
     }
 
     pub fn ensure_length(&self, count: usize) -> bool {
@@ -1307,20 +1336,22 @@ impl<'a> Reader<'a> {
     }
 
     pub fn peek(&self) -> &[u8] {
-        self.connection.read_buffer.remaining()
+        self.conn().read_buffer.remaining()
     }
 
     pub fn skip(&mut self, count: usize) {
-        self.connection.read_buffer.head =
-            (self.connection.read_buffer.head + (count as u32)).min(self.connection.read_buffer.byte_list.len);
+        let conn = self.conn();
+        conn.read_buffer.head =
+            (conn.read_buffer.head + (count as u32)).min(conn.read_buffer.byte_list.len);
     }
 
     pub fn ensure_capacity(&self, count: usize) -> bool {
-        (self.connection.read_buffer.head as usize) + count <= (self.connection.read_buffer.byte_list.len as usize)
+        let conn = self.conn();
+        (conn.read_buffer.head as usize) + count <= (conn.read_buffer.byte_list.len as usize)
     }
 
     pub fn read(&mut self, count: usize) -> Result<Data, AnyPostgresError> {
-        let remaining = self.connection.read_buffer.remaining();
+        let remaining = self.conn().read_buffer.remaining();
         if (remaining.len() as usize) < count {
             return Err(AnyPostgresError::ShortRead);
         }
@@ -1333,7 +1364,7 @@ impl<'a> Reader<'a> {
     }
 
     pub fn read_z(&mut self) -> Result<Data, AnyPostgresError> {
-        let remain = self.connection.read_buffer.remaining();
+        let remain = self.conn().read_buffer.remaining();
 
         if let Some(zero) = strings::index_of_char(remain, 0) {
             let slice = &remain[..zero as usize] as *const [u8];
@@ -1347,9 +1378,9 @@ impl<'a> Reader<'a> {
 }
 
 impl PostgresSQLConnection {
-    pub fn buffered_reader(&mut self) -> protocol::NewReader<Reader<'_>> {
+    pub fn buffered_reader(&mut self) -> protocol::NewReader<Reader> {
         protocol::NewReader {
-            wrapped: Reader { connection: self },
+            wrapped: Reader { connection: self as *mut PostgresSQLConnection },
         }
     }
 

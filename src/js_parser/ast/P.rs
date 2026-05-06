@@ -696,9 +696,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
 }
 
 // Zig: `const Binding2ExprWrapper = struct { pub const Namespace = Binding.ToExpr(P, P.wrapIdentifierNamespace); ... }`
-// TODO(port): Binding.ToExpr(P, fn) is a comptime type-generator; needs a Rust trait/closure in Phase B.
-pub type Binding2ExprWrapperNamespace = ();
-pub type Binding2ExprWrapperHoisted = ();
+// PORT NOTE: `Binding.ToExpr(P, fn)` is a comptime type-generator returning a
+// struct that holds `*P` + allocator and dispatches `wrapIdentifier` to the
+// captured fn. The Rust port type-erases `*P` (which is generic over
+// `<'a, TYPESCRIPT, J, SCAN_ONLY>`) into `binding::ToExprWrapper` - same shim
+// pattern as `ImportTransposer` above. Wired in `prepare_for_visit_pass`.
+pub type Binding2ExprWrapperNamespace = crate::ast::binding::ToExprWrapper;
+pub type Binding2ExprWrapperHoisted = crate::ast::binding::ToExprWrapper;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Round-C: associated consts kept live (cheap, used by ParserLike + Parser.rs).
@@ -2650,7 +2654,30 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             self.import_transposer.0 = self_ptr;
             self.require_transposer.0 = self_ptr;
             self.require_resolve_transposer.0 = self_ptr;
+            // Zig: `Binding2ExprWrapper.{Namespace,Hoisted}.init(this)`.
+            // The trampolines cast the erased ctx back to this `P` instantiation
+            // and call the inherent wrap methods; non-capturing => fn-pointer.
+            self.to_expr_wrapper_namespace = crate::ast::binding::ToExprWrapper::new(
+                self_ptr,
+                self.allocator,
+                |ctx, loc, ref_| {
+                    // SAFETY: `ctx` is `addr_of_mut!(*self)` for the live visit-pass `P`;
+                    // see `ImportTransposer::maybe_transpose_if` for the aliasing argument.
+                    let p = unsafe { &mut *(ctx as *mut P<'a, TYPESCRIPT, J, SCAN_ONLY>) };
+                    p.wrap_identifier_namespace(loc, ref_)
+                },
+            );
+            self.to_expr_wrapper_hoisted = crate::ast::binding::ToExprWrapper::new(
+                self_ptr,
+                self.allocator,
+                |ctx, loc, ref_| {
+                    // SAFETY: same as above.
+                    let p = unsafe { &mut *(ctx as *mut P<'a, TYPESCRIPT, J, SCAN_ONLY>) };
+                    p.wrap_identifier_hoisting(loc, ref_)
+                },
+            );
         }
+
         {
             // Compact `scopes_in_order` (parse pass leaves None holes from
             // popAndDiscardScope) into a dense bump-slice for the visit pass.
@@ -7829,8 +7856,11 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 has_multiple_args: false,
                 has_catch: false,
             },
-            to_expr_wrapper_namespace: (), // Binding2ExprWrapper.Namespace — Phase-B placeholder
-            to_expr_wrapper_hoisted: (),   // Binding2ExprWrapper.Hoisted — Phase-B placeholder
+            // Zig: `Binding2ExprWrapper.{Namespace,Hoisted}.init(this)` at the
+            // tail of `init`; deferred to `prepare_for_visit_pass` for the same
+            // reason as the transposers (self moves on return).
+            to_expr_wrapper_namespace: crate::ast::binding::ToExprWrapper::dangling(),
+            to_expr_wrapper_hoisted: crate::ast::binding::ToExprWrapper::dangling(),
             // Zig's ExpressionTransposer captures `*P`; in Rust the recursion
             // lives as inherent `P::maybe_transpose_if_*` methods (no aliased
             // `&mut`). These compat-shim fields start dangling and are wired in

@@ -731,12 +731,29 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             return p.new_expr(E::Undefined {}, expr.loc);
                         }
 
-                        // blocked_on: MacroContext::call surface — `p.options.macro_context` is
-                        // `Option<&'a mut MacroContext>` placeholder; the cross-FFI call shape
-                        // (record.path, source_dir, log, source, range, expr, name) → !Result<Expr>
-                        // isn't ported. Body preserved verbatim in `_draft::e_template`.
-                        let _ = macro_ref_data;
-                        todo!("e_template: MacroContext::call dispatch — see _draft");
+                        p.macro_call_count += 1;
+                        let name: &[u8] = macro_ref_data
+                            .name
+                            .unwrap_or_else(|| e_.tag.unwrap().data.e_dot().unwrap().name);
+                        let record =
+                            &p.import_records.items()[macro_ref_data.import_record_id as usize];
+                        // We must visit it to convert inline_identifiers and record usage
+                        let macro_result = match p.options.macro_context.call(
+                            record.path.text,
+                            p.source.path.source_dir(),
+                            p.log,
+                            p.source,
+                            record.range,
+                            expr,
+                            name,
+                        ) {
+                            Ok(r) => r,
+                            Err(_) => return expr,
+                        };
+
+                        if !matches!(macro_result.data, Data::ETemplate(..)) {
+                            return p.visit_expr(macro_result);
+                        }
                     }
                 }
             }
@@ -760,9 +777,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         // it may no longer be a template literal after this point (it may turn into
         // a plain string literal instead).
         if p.should_fold_typescript_constant_expressions || p.options.features.inlining {
-            // blocked_on: E::Template::fold (E.rs `` ~2141 — depends on
-            // E::Number::to_string + Expr::Data::ETemplate(self) by-ref store).
-            todo!("e_template: E::Template::fold (gated)");
+            return e_.fold(p.allocator, expr.loc);
         }
         expr
     }
@@ -1281,20 +1296,20 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let is_call_target = matches!(p.call_target, Data::EDot(ct) if core::ptr::eq(&*e_ as *const _, &*ct as *const _));
 
         if let Some(parts) = p.define.dots.get(e_.name) {
-            for define in parts {
-                // blocked_on: P::is_dot_define_match + P::value_for_define live in the
-                // gated round-D impl (P.rs `` ~5380); `defines::DotDefine.parts`
-                // is the round-C `Vec<Box<[u8]>>` stub (full type is `*const [*const [u8]]`).
-                let is_match: bool = {
-                    let _ = &define.parts;
-                    todo!("e_dot: P::is_dot_define_match (gated)")
-                };
-                if is_match {
+            for i in 0..parts.len() {
+                // SAFETY: `p.define: &'a Define` outlives `p`; erase the local
+                // borrow so `&mut self` helpers below can be called.
+                let define = unsafe { &*(&parts[i] as *const crate::defines::DotDefine) };
+                if p.is_dot_define_match(expr, &define.parts) {
                     if in_.assign_target == js_ast::AssignTarget::None {
                         // Substitute user-specified defines
                         if !define.data.valueless() {
-                            let _ = (in_.assign_target, is_delete_target, &define.data);
-                            todo!("e_dot: P::value_for_define (gated)");
+                            return p.value_for_define(
+                                expr.loc,
+                                in_.assign_target,
+                                is_delete_target,
+                                &define.data,
+                            );
                         }
 
                         if define.data.method_call_must_be_replaced_with_undefined()
@@ -1906,9 +1921,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 match &first.data {
                     Data::EString(..) => {
                         // require(FOO) => require(FOO)
-                        // blocked_on: P::transpose_require gated (P.rs:871 ``).
-                        let _ = (first, &state);
-                        todo!("e_call: P::transpose_require (gated)");
+                        return p.transpose_require(first, &state);
                     }
                     Data::EIf(..) => {
                         // require(FOO  ? '123' : '456') => FOO ? require('123') : require('456')

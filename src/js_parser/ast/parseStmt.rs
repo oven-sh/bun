@@ -25,8 +25,8 @@ type Result<T> = core::result::Result<T, bun_core::Error>;
 // Zig: `pub fn ParseStmt(comptime ts, comptime jsx, comptime scan_only) type { return struct {...} }`
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
 // a direct `impl P` block. The 25+ per-token `t_*` helpers are private; only `parse_stmt` is
-// surfaced. Round-G un-gated the simpler `t_*` bodies; `t_export`/`t_import`/fallthrough remain
-// blocked on helper availability (see  mod _draft_heavy below).
+// surfaced. Round-G un-gated the simpler `t_*` bodies; phase-d ported the remaining
+// `t_export`/`t_import`/fallthrough bodies inline (the `_draft_heavy` staging mod is gone).
 
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
     fn t_semicolon(p: &mut Self) -> Result<Stmt> {
@@ -1141,7 +1141,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     namespace_ref = p.store_name_in_ref(name)?;
                     alias = Some(G::ExportStarAlias {
                         loc: p.lexer.loc(),
-                        original_name: name,
+                        original_name: name as *const [u8],
                     });
                     p.lexer.next()?;
                     p.lexer.expect_contextual_keyword(b"from")?;

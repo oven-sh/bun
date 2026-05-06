@@ -906,27 +906,8 @@ pub trait ImageFallback: Sized {
     ) -> crate::values::color::ColorFallbackKind;
 }
 
-impl ImageFallback for crate::values::image::Image {
-    #[inline]
-    fn get_image(&self) -> &crate::values::image::Image {
-        crate::values::image::Image::get_image(self)
-    }
-    #[inline]
-    fn with_image(&self, _allocator: &bun_alloc::Arena, image: crate::values::image::Image) -> Self {
-        crate::values::image::Image::with_image(self, image)
-    }
-    #[inline]
-    fn get_fallback(&self, allocator: &bun_alloc::Arena, kind: crate::values::color::ColorFallbackKind) -> Self {
-        crate::values::image::Image::get_fallback(self, allocator, kind)
-    }
-    #[inline]
-    fn get_necessary_fallbacks(
-        &self,
-        targets: crate::targets::Targets,
-    ) -> crate::values::color::ColorFallbackKind {
-        crate::values::image::Image::get_necessary_fallbacks(self, targets)
-    }
-}
+// `ImageFallback for Image` is implemented alongside the type in
+// `crate::values::image` to avoid a duplicate impl here.
 
 impl<T: ImageFallback> SmallList<T, 1> {
     /// Port of Zig `SmallList(T, N).getFallbacks` for the `@hasDecl(T, "getImage")`

@@ -105,7 +105,7 @@ pub struct ParseTask {
     pub module_type: options::ModuleType,
     pub emit_decorator_metadata: bool,
     pub experimental_decorators: bool,
-    pub ctx: *const BundleV2<'static>, // BACKREF (LIFETIMES.tsv)
+    pub ctx: *mut BundleV2<'static>, // BACKREF (LIFETIMES.tsv) — Zig `*BundleV2` is mutable; written through in `on_complete`.
     // TODO(port): arena lifetime — borrowed from package_json
     pub package_version: &'static [u8],
     pub package_name: &'static [u8],

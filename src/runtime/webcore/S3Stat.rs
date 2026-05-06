@@ -3,7 +3,7 @@ use bun_str::{String as BunString, StringJsc as _};
 
 bun_output::declare_scope!(S3Stat, visible);
 
-#[derive(bun_jsc::JsClass)]
+#[bun_jsc::JsClass]
 pub struct S3Stat {
     pub size: u64,
     pub etag: BunString,

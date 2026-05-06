@@ -3138,12 +3138,11 @@ static SYS_FS_VTABLE: bun_sys::fs::FsVTable = bun_sys::fs::FsVTable {
     },
     dirname_store_append_lower_case: |s, v| {
         use strings::Appender as _;
-        // SAFETY: see `dirname_store_append`. `Appender::append_lower_case` takes
-        // `&mut self`; the DirnameStore singleton is internally synchronized
-        // (process-static, per `string_store_impl!`), so the `*mut` cast is the
-        // same shape as the Zig `*DirnameStore` receiver.
-        let store = unsafe { &mut *(s as *const DirnameStore as *mut DirnameStore) };
-        let r = store.append_lower_case(v)?;
+        // SAFETY: see `dirname_store_append`. `Appender` is implemented on
+        // `&'static DirnameStore` (not `DirnameStore`), so bind that and pass
+        // `&mut store` as the trait `&mut self`.
+        let mut store: &'static DirnameStore = unsafe { &*(s as *const DirnameStore) };
+        let r = strings::Appender::append_lower_case(&mut store, v)?;
         // SAFETY: re-erase to `'static`; storage owned by the process-lifetime
         // `DirnameStore` singleton (see `string_store_impl!` PORT NOTE).
         Ok(unsafe { launder_static(r) })

@@ -2171,8 +2171,11 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
         }
         // SAFETY: ext storage is sized for `*mut c_void` and `new_s` is live.
         unsafe { *sock_c::us_socket_ext(new_s).cast::<*mut c_void>() = owner.cast::<c_void>() };
-        // SAFETY: caller guarantees `owner` is a valid unique pointer.
-        set_socket_field(unsafe { &mut *owner }, Self { socket: InternalSocket::Connected(new_s) });
+        // Forward the raw pointer — do NOT materialize `&mut *owner` here:
+        // callers (e.g. websocket_client) hold a live `&mut Owner` across this
+        // call, so creating a second one would be aliased UB. The closure
+        // performs the field write through the raw pointer itself.
+        set_socket_field(owner, Self { socket: InternalSocket::Connected(new_s) });
         true
     }
 

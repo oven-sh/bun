@@ -34,33 +34,19 @@ type CResult<T> = css::Result<T>;
 // [u8]` once `Parser<'bump>` threads the arena lifetime.
 type Str = &'static [u8]; // arena-backed `[]const u8` source slice
 
-// ─── Phase-B protocol shims ──────────────────────────────────────────────────
+// ─── Protocol traits ─────────────────────────────────────────────────────────
 // Zig's `implementEql` / `implementHash` / `implementDeepClone` are comptime
 // field/variant reflection over `@typeInfo(T)` — in Rust this is the body of
-// `#[derive(CssEql/CssHash/DeepClone)]` (Phase B codegen). The free fns in
-// `crate::generics` bound on those traits, which the selector grammar types
-// don't implement yet. These local shims keep the method *surface* (so
-// `Component::eql(a, b)` etc. resolve for cross-module callers) while
-// deferring the bodies to the derive pass. Every callsite below was
-// `css::implement_*(self, ..)`; sed-rewritten to `protocol_shims::implement_*`.
-mod protocol_shims {
-    use super::Wyhash;
-    #[track_caller]
-    #[inline(always)]
-    pub fn implement_eql<T>(_a: &T, _b: &T) -> bool {
-        todo!("bun_css selector grammar: #[derive(CssEql)] — Phase B codegen")
-    }
-    #[track_caller]
-    #[inline(always)]
-    pub fn implement_hash<T>(_a: &T, _h: &mut Wyhash) {
-        todo!("bun_css selector grammar: #[derive(CssHash)] — Phase B codegen")
-    }
-    #[track_caller]
-    #[inline(always)]
-    pub fn implement_deep_clone<T>(_a: &T) -> T {
-        todo!("bun_css selector grammar: #[derive(DeepClone)] — Phase B codegen")
-    }
-}
+// `#[derive(CssEql, CssHash, DeepClone)]` (`bun_css_derive`). Non-generic
+// grammar types below carry the derive directly; the `<Impl: SelectorImpl>`-
+// generic types hand-write bodies (the derive's `where Impl: CssEql` bound is
+// useless — equality recurses on `Impl::Assoc`, not `Impl`).
+//
+// `deep_clone` on the grammar types intentionally drops the `&Arena` parameter:
+// the selector AST is global-alloc (`Vec`/`Box`/`SmallList`) in Phase A, and
+// the only arena-borrowed payloads are `Str` / `Ident.v` (`*const [u8]`)
+// which are identity-copied (matches generics.zig "const strings" fast-path).
+use css::generics::{CssEql, CssHash};
 
 /// Drain a `SmallList<T, N>` into a `Box<[T]>`. `SmallList` has no `into_vec`;
 /// this bitwise-moves each element out and `set_len(0)`s the source so its
@@ -177,13 +163,15 @@ pub mod attrs {
 
     impl<Impl: BunSelectorImpl> NamespaceUrl<Impl> {
         pub fn eql(&self, rhs: &Self) -> bool {
-            protocol_shims::implement_eql(self, rhs)
+            // `BunSelectorImpl` fixes `NamespacePrefix = Ident`, `NamespaceUrl = Str`.
+            self.prefix.eql(&rhs.prefix) && strings::eql(self.url, rhs.url)
         }
         pub fn deep_clone(&self) -> Self {
-            protocol_shims::implement_deep_clone(self)
+            self.clone()
         }
         pub fn hash(&self, hasher: &mut Wyhash) {
-            protocol_shims::implement_hash(self, hasher)
+            self.prefix.hash(hasher);
+            hasher.update(self.url);
         }
     }
 
@@ -250,15 +238,25 @@ pub mod attrs {
         Specific(NamespaceUrl),
     }
 
-    impl<N: PartialEq + Clone> NamespaceConstraint<N> {
+    impl<Impl: BunSelectorImpl> NamespaceConstraint<NamespaceUrl<Impl>> {
         pub fn eql(&self, rhs: &Self) -> bool {
-            protocol_shims::implement_eql(self, rhs)
+            match (self, rhs) {
+                (Self::Any, Self::Any) => true,
+                (Self::Specific(a), Self::Specific(b)) => a.eql(b),
+                _ => false,
+            }
         }
         pub fn hash(&self, hasher: &mut Wyhash) {
-            protocol_shims::implement_hash(self, hasher)
+            match self {
+                Self::Any => hasher.update(&0u32.to_ne_bytes()),
+                Self::Specific(n) => {
+                    hasher.update(&1u32.to_ne_bytes());
+                    n.hash(hasher);
+                }
+            }
         }
         pub fn deep_clone(&self) -> Self {
-            protocol_shims::implement_deep_clone(self)
+            self.clone()
         }
     }
 
@@ -272,19 +270,42 @@ pub mod attrs {
         },
     }
 
-    impl<A: PartialEq + Clone> ParsedAttrSelectorOperation<A> {
+    // PORT NOTE: implemented for the concrete `AttrValue = css::CSSString`
+    // (= `*const [u8]`) only — the sole `BunSelectorImpl` instantiation.
+    impl ParsedAttrSelectorOperation<css::CSSString> {
         pub fn deep_clone(&self) -> Self {
-            protocol_shims::implement_deep_clone(self)
+            self.clone()
         }
         pub fn eql(&self, rhs: &Self) -> bool {
-            protocol_shims::implement_eql(self, rhs)
+            match (self, rhs) {
+                (Self::Exists, Self::Exists) => true,
+                (
+                    Self::WithValue { operator: ao, case_sensitivity: ac, expected_value: av },
+                    Self::WithValue { operator: bo, case_sensitivity: bc, expected_value: bv },
+                ) => {
+                    ao == bo
+                        && ac == bc
+                        // SAFETY: arena-owned slices live for the parse session.
+                        && unsafe { strings::eql(&**av, &**bv) }
+                }
+                _ => false,
+            }
         }
         pub fn hash(&self, hasher: &mut Wyhash) {
-            protocol_shims::implement_hash(self, hasher)
+            match self {
+                Self::Exists => hasher.update(&0u32.to_ne_bytes()),
+                Self::WithValue { operator, case_sensitivity, expected_value } => {
+                    hasher.update(&1u32.to_ne_bytes());
+                    operator.hash(hasher);
+                    case_sensitivity.hash(hasher);
+                    // SAFETY: arena-owned slice.
+                    hasher.update(unsafe { &**expected_value });
+                }
+            }
         }
     }
 
-    #[derive(Clone, Copy, PartialEq, Eq, Hash)]
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, CssEql, CssHash, css::generics::DeepClone)]
     pub enum AttrSelectorOperator {
         Equal,
         Includes,
@@ -308,9 +329,6 @@ pub mod attrs {
             })
         }
 
-        pub fn hash(&self, hasher: &mut Wyhash) {
-            protocol_shims::implement_hash(self, hasher)
-        }
     }
 
     #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -323,7 +341,7 @@ pub mod attrs {
         Suffix,
     }
 
-    #[derive(Clone, Copy, PartialEq, Eq, Hash)]
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, CssEql, CssHash, css::generics::DeepClone)]
     pub enum ParsedCaseSensitivity {
         // 's' was specified.
         ExplicitCaseSensitive,

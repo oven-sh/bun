@@ -1050,5 +1050,5 @@ pub struct MinifyContext<'a> {
 //   source:     src/css/rules/rules.zig (681 lines)
 //   confidence: medium
 //   todos:      4
-//   notes:      hub un-gated; CssRule<R> + CssRuleList::{to_css,minify,deep_clone} + MinifyContext + StyleRuleKey + merge_style_rules real; leaf-rule to_css dispatch routes through to_css_shim! no-ops until each leaf drops its #[cfg(any())] (compiler flags duplicate, delete shim); minify .style arm + merge_style_rules body + StyleRuleKey hash/eq internally gated on StyleRule behavior + selector helpers; 'bump arena lifetime dropped from CssRuleList until crate-wide thread
+//   notes:      hub un-gated; CssRule<R> + CssRuleList::{to_css,minify,deep_clone} + MinifyContext + StyleRuleKey + merge_style_rules real; all leaf-rule to_css impls real — to_css_shim! deleted; minify .style arm + merge_style_rules body + StyleRuleKey hash/eq internally gated on StyleRule behavior + selector helpers; 'bump arena lifetime dropped from CssRuleList until crate-wide thread
 // ──────────────────────────────────────────────────────────────────────────

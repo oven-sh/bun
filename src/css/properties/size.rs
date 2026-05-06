@@ -324,11 +324,11 @@ pub struct AspectRatio {
 impl AspectRatio {
     pub fn parse(input: &mut css::Parser) -> css::Result<AspectRatio> {
         let location = input.current_source_location();
-        let mut auto = input.try_parse(|i| i.expect_ident_matching("auto"));
+        let mut auto = input.try_parse(|i| i.expect_ident_matching(b"auto"));
 
         let ratio = input.try_parse(Ratio::parse);
         if auto.is_err() {
-            auto = input.try_parse(|i| i.expect_ident_matching("auto"));
+            auto = input.try_parse(|i| i.expect_ident_matching(b"auto"));
         }
         if auto.is_err() && ratio.is_err() {
             return Err(location.new_custom_error(css::ParserError::InvalidValue));

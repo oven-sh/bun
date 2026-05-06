@@ -1,12 +1,15 @@
+#![allow(unused_imports, dead_code, unused_macros)]
 use crate as css;
 
-use css::{Printer, PrintErr, Property, PropertyId, PropertyIdTag, VendorPrefix};
+use crate::properties::{Property, PropertyId, PropertyIdTag};
+use css::{Printer, PrintErr, VendorPrefix};
 use css::css_values::number::{CSSNumber, CSSNumberFns, CSSInteger};
 use css::css_values::length::{LengthPercentage, LengthPercentageOrAuto};
 use css::css_values::length::LengthValue as Length;
 use css::css_properties::align::{AlignItems, JustifyContent, AlignSelf, AlignContent};
 use css::prefixes::Feature as PrefixFeature;
 // Zig: `const isFlex2009 = css.prefixes.Feature.isFlex2009;`
+#[cfg(any())]
 use css::prefixes::Feature::is_flex_2009;
 
 /// A value for the [flex-direction](https://www.w3.org/TR/2018/CR-css-flexbox-1-20181119/#propdef-flex-direction) property.
@@ -80,6 +83,7 @@ pub struct FlexFlow {
 //   PropertyFieldMap = { direction: PropertyIdTag::FlexDirection, wrap: PropertyIdTag::FlexWrap }
 //   VendorPrefixMap  = { direction: true, wrap: true }
 
+#[cfg(any())] // blocked_on: css::Result.as_value() helper (Zig Maybe.asValue) + DefineEnumProperty parse on FlexDirection/FlexWrap
 impl FlexFlow {
     pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
         let mut direction: Option<FlexDirection> = None;
@@ -150,6 +154,7 @@ pub struct Flex {
 //   PropertyFieldMap = { grow: PropertyIdTag::FlexGrow, shrink: PropertyIdTag::FlexShrink, basis: PropertyIdTag::FlexBasis }
 //   VendorPrefixMap  = { grow: true, shrink: true, basis: true }
 
+#[cfg(any())] // blocked_on: expect_ident_matching(&str) + LengthPercentageOrAuto::parse + CSSNumberFns::parse
 impl Flex {
     pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
         if input.try_parse(|i| css::Parser::expect_ident_matching(i, "none")).is_ok() {
@@ -297,6 +302,7 @@ pub enum BoxAlign {
     Stretch,
 }
 
+#[cfg(any())] // blocked_on: align::{AlignItems,SelfPosition} payload shapes
 impl BoxAlign {
     pub fn from_standard(align: &AlignItems) -> Option<BoxAlign> {
         use css::css_properties::align::SelfPosition;
@@ -335,6 +341,7 @@ pub enum BoxPack {
     Justify,
 }
 
+#[cfg(any())] // blocked_on: align::{JustifyContent,ContentPosition} payload shapes
 impl BoxPack {
     pub fn from_standard(justify: &JustifyContent) -> Option<BoxPack> {
         use css::css_properties::align::{ContentDistribution, ContentPosition};
@@ -371,6 +378,7 @@ pub enum BoxLines {
     Multiple,
 }
 
+#[cfg(any())] // blocked_on: FlexWrap from_standard wiring
 impl BoxLines {
     pub fn from_standard(wrap: &FlexWrap) -> Option<BoxLines> {
         match *wrap {
@@ -400,6 +408,7 @@ pub enum FlexPack {
     Distribute,
 }
 
+#[cfg(any())] // blocked_on: align::{JustifyContent,ContentDistribution} payload shapes
 impl FlexPack {
     pub fn from_standard(justify: &JustifyContent) -> Option<FlexPack> {
         use css::css_properties::align::{ContentDistribution, ContentPosition};
@@ -445,6 +454,7 @@ pub enum FlexItemAlign {
     Stretch,
 }
 
+#[cfg(any())] // blocked_on: align::{AlignSelf,SelfPosition} payload shapes
 impl FlexItemAlign {
     pub fn from_standard(justify: &AlignSelf) -> Option<FlexItemAlign> {
         use css::css_properties::align::SelfPosition;
@@ -488,6 +498,7 @@ pub enum FlexLinePack {
     Stretch,
 }
 
+#[cfg(any())] // blocked_on: align::{AlignContent,ContentDistribution} payload shapes
 impl FlexLinePack {
     pub fn from_standard(justify: &AlignContent) -> Option<FlexLinePack> {
         use css::css_properties::align::{ContentDistribution, ContentPosition};
@@ -553,6 +564,27 @@ pub struct FlexHandler {
     pub has_any: bool,
 }
 
+impl FlexHandler {
+    // No-op stubs so `DeclarationHandler` compiles; real bodies are gated below.
+    #[inline]
+    pub fn handle_property(
+        &mut self,
+        _property: &Property,
+        _dest: &mut css::DeclarationList<'_>,
+        _context: &mut css::PropertyHandlerContext<'_>,
+    ) -> bool {
+        false
+    }
+    #[inline]
+    pub fn finalize(
+        &mut self,
+        _dest: &mut css::DeclarationList<'_>,
+        _context: &mut css::PropertyHandlerContext<'_>,
+    ) {
+    }
+}
+
+#[cfg(any())] // blocked_on: prefixes::Feature::is_flex_2009 + Property variant payloads + PropertyId tuple variants
 impl FlexHandler {
     pub fn handle_property(
         &mut self,

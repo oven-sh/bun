@@ -1,7 +1,9 @@
+#![allow(unused_imports, dead_code, unused_macros)]
 use crate as css;
 use crate::{Parser, Printer, PrintErr, Result as CssResult, Token};
 use crate::css_values::length::LengthPercentage;
-use crate::{VendorPrefix, Property, PropertyId, PropertyIdTag, DeclarationList, PropertyHandlerContext};
+use crate::{VendorPrefix, DeclarationList, PropertyHandlerContext};
+use crate::properties::{Property, PropertyId, PropertyIdTag};
 use crate::prefixes::Feature;
 use crate::compat;
 
@@ -75,13 +77,13 @@ impl BaselinePosition {
 
         // TODO(port): bun.ComptimeEnumMap(..).getASCIIICaseInsensitive — using
         // css::match_ignore_ascii_case! (lightningcss-style) in Phase B.
-        if bun_string::strings::eql_case_insensitive_ascii(ident, b"baseline", true) {
+        if bun_string::strings::eql_case_insensitive_ascii::<true>(ident, b"baseline") {
             return Ok(BaselinePosition::First);
-        } else if bun_string::strings::eql_case_insensitive_ascii(ident, b"first", true) {
-            input.expect_ident_matching("baseline")?;
+        } else if bun_string::strings::eql_case_insensitive_ascii::<true>(ident, b"first") {
+            input.expect_ident_matching(b"baseline")?;
             return Ok(BaselinePosition::First);
-        } else if bun_string::strings::eql_case_insensitive_ascii(ident, b"last", true) {
-            input.expect_ident_matching("baseline")?;
+        } else if bun_string::strings::eql_case_insensitive_ascii::<true>(ident, b"last") {
+            input.expect_ident_matching(b"baseline")?;
             return Ok(BaselinePosition::Last);
         } else {
             return Err(location.new_unexpected_token_error(Token::Ident(ident)));
@@ -140,7 +142,7 @@ impl JustifyContentContentPosition {
 
 impl JustifyContent {
     pub fn parse(input: &mut Parser) -> CssResult<Self> {
-        if input.try_parse(|i| i.expect_ident_matching("normal")).is_ok() {
+        if input.try_parse(|i| i.expect_ident_matching(b"normal")).is_ok() {
             return Ok(JustifyContent::Normal);
         }
 
@@ -160,9 +162,9 @@ impl JustifyContent {
         let ident = input.expect_ident()?;
 
         // TODO(port): bun.ComptimeEnumMap getASCIIICaseInsensitive
-        if bun_string::strings::eql_case_insensitive_ascii(ident, b"left", true) {
+        if bun_string::strings::eql_case_insensitive_ascii::<true>(ident, b"left") {
             Ok(JustifyContent::Left { overflow })
-        } else if bun_string::strings::eql_case_insensitive_ascii(ident, b"right", true) {
+        } else if bun_string::strings::eql_case_insensitive_ascii::<true>(ident, b"right") {
             Ok(JustifyContent::Right { overflow })
         } else {
             Err(location.new_unexpected_token_error(Token::Ident(ident)))
@@ -295,15 +297,15 @@ impl JustifySelfSelfPosition {
 
 impl JustifySelf {
     pub fn parse(input: &mut Parser) -> CssResult<Self> {
-        if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
+        if input.try_parse(|i| i.expect_ident_matching(b"auto")).is_ok() {
             return Ok(JustifySelf::Auto);
         }
 
-        if input.try_parse(|i| i.expect_ident_matching("normal")).is_ok() {
+        if input.try_parse(|i| i.expect_ident_matching(b"normal")).is_ok() {
             return Ok(JustifySelf::Normal);
         }
 
-        if input.try_parse(|i| i.expect_ident_matching("stretch")).is_ok() {
+        if input.try_parse(|i| i.expect_ident_matching(b"stretch")).is_ok() {
             return Ok(JustifySelf::Stretch);
         }
 
@@ -322,9 +324,9 @@ impl JustifySelf {
         let location = input.current_source_location();
         let ident = input.expect_ident()?;
         // TODO(port): bun.ComptimeEnumMap getASCIIICaseInsensitive
-        if bun_string::strings::eql_case_insensitive_ascii(ident, b"left", true) {
+        if bun_string::strings::eql_case_insensitive_ascii::<true>(ident, b"left") {
             Ok(JustifySelf::Left { overflow })
-        } else if bun_string::strings::eql_case_insensitive_ascii(ident, b"right", true) {
+        } else if bun_string::strings::eql_case_insensitive_ascii::<true>(ident, b"right") {
             Ok(JustifySelf::Right { overflow })
         } else {
             Err(location.new_unexpected_token_error(Token::Ident(ident)))
@@ -457,11 +459,11 @@ impl JustifyItemsSelfPosition {
 
 impl JustifyItems {
     pub fn parse(input: &mut Parser) -> CssResult<Self> {
-        if input.try_parse(|i| i.expect_ident_matching("normal")).is_ok() {
+        if input.try_parse(|i| i.expect_ident_matching(b"normal")).is_ok() {
             return Ok(JustifyItems::Normal);
         }
 
-        if input.try_parse(|i| i.expect_ident_matching("stretch")).is_ok() {
+        if input.try_parse(|i| i.expect_ident_matching(b"stretch")).is_ok() {
             return Ok(JustifyItems::Stretch);
         }
 
@@ -485,9 +487,9 @@ impl JustifyItems {
         let ident = input.expect_ident()?;
 
         // TODO(port): bun.ComptimeEnumMap getASCIIICaseInsensitive
-        if bun_string::strings::eql_case_insensitive_ascii(ident, b"left", true) {
+        if bun_string::strings::eql_case_insensitive_ascii::<true>(ident, b"left") {
             Ok(JustifyItems::Left { overflow })
-        } else if bun_string::strings::eql_case_insensitive_ascii(ident, b"right", true) {
+        } else if bun_string::strings::eql_case_insensitive_ascii::<true>(ident, b"right") {
             Ok(JustifyItems::Right { overflow })
         } else {
             Err(location.new_unexpected_token_error(Token::Ident(ident)))
@@ -546,26 +548,26 @@ impl LegacyJustify {
         let ident = input.expect_ident()?;
 
         // TODO(port): bun.ComptimeEnumMap getASCIIICaseInsensitive
-        if bun_string::strings::eql_case_insensitive_ascii(ident, b"legacy", true) {
+        if bun_string::strings::eql_case_insensitive_ascii::<true>(ident, b"legacy") {
             let inner_location = input.current_source_location();
             let inner_ident = input.expect_ident()?;
-            if bun_string::strings::eql_case_insensitive_ascii(inner_ident, b"left", true) {
+            if bun_string::strings::eql_case_insensitive_ascii::<true>(inner_ident, b"left") {
                 return Ok(LegacyJustify::Left);
-            } else if bun_string::strings::eql_case_insensitive_ascii(inner_ident, b"right", true) {
+            } else if bun_string::strings::eql_case_insensitive_ascii::<true>(inner_ident, b"right") {
                 return Ok(LegacyJustify::Right);
-            } else if bun_string::strings::eql_case_insensitive_ascii(inner_ident, b"center", true) {
+            } else if bun_string::strings::eql_case_insensitive_ascii::<true>(inner_ident, b"center") {
                 return Ok(LegacyJustify::Center);
             } else {
                 return Err(inner_location.new_unexpected_token_error(Token::Ident(inner_ident)));
             }
-        } else if bun_string::strings::eql_case_insensitive_ascii(ident, b"left", true) {
-            input.expect_ident_matching("legacy")?;
+        } else if bun_string::strings::eql_case_insensitive_ascii::<true>(ident, b"left") {
+            input.expect_ident_matching(b"legacy")?;
             return Ok(LegacyJustify::Left);
-        } else if bun_string::strings::eql_case_insensitive_ascii(ident, b"right", true) {
-            input.expect_ident_matching("legacy")?;
+        } else if bun_string::strings::eql_case_insensitive_ascii::<true>(ident, b"right") {
+            input.expect_ident_matching(b"legacy")?;
             return Ok(LegacyJustify::Right);
-        } else if bun_string::strings::eql_case_insensitive_ascii(ident, b"center", true) {
-            input.expect_ident_matching("legacy")?;
+        } else if bun_string::strings::eql_case_insensitive_ascii::<true>(ident, b"center") {
+            input.expect_ident_matching(b"legacy")?;
             return Ok(LegacyJustify::Center);
         }
         Err(location.new_unexpected_token_error(Token::Ident(ident)))
@@ -962,6 +964,30 @@ pub struct AlignHandler {
     pub column_gap: Option<GapValue>,
     pub has_any: bool,
 }
+
+impl AlignHandler {
+    // No-op stubs so `DeclarationHandler` compiles; real bodies are gated below.
+    #[inline]
+    pub fn handle_property(
+        &mut self,
+        _property: &Property,
+        _dest: &mut DeclarationList<'_>,
+        _context: &mut PropertyHandlerContext<'_>,
+    ) -> bool {
+        false
+    }
+    #[inline]
+    pub fn finalize(
+        &mut self,
+        _dest: &mut DeclarationList<'_>,
+        _context: &mut PropertyHandlerContext<'_>,
+    ) {
+    }
+}
+
+#[cfg(any())] // blocked_on: prefixes::Feature method names + Property variant payloads + flex::{BoxPack,FlexPack,...}::from_standard
+mod align_handler_body {
+use super::*;
 
 // ─── helper macros (Zig used `comptime prop: []const u8` + `@field` / `@unionInit`) ───
 //
@@ -1423,3 +1449,5 @@ fn is_align_property(property_id: PropertyId) -> bool {
 //   todos:      23
 //   notes:      AlignHandler comptime-string @field/@unionInit helpers ported as macro_rules!; DeriveParse/DeriveToCss/DefineEnumProperty/PropertyFieldMap need proc-macro derives in Phase B; Property variant names/shapes assumed PascalCase tuple-variants.
 // ──────────────────────────────────────────────────────────────────────────
+
+} // mod align_handler_body

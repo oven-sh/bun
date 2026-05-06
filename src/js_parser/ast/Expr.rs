@@ -2871,24 +2871,32 @@ impl EqlKindT for StrictEql {
     const STRICT: bool = true;
 }
 
+/// Minimal parser surface needed by `Data::eql` — Zig wrote `p: anytype` and
+/// touched only `p.allocator` + `p.module_ref`. Kept separate from
+/// `ast::p::ParserLike` so this file does not grow that trait (out of scope);
+/// blanket-impl'd for every `P<...>` instantiation below.
+pub trait EqlParser {
+    fn allocator(&self) -> &Bump;
+    fn module_ref(&self) -> Ref;
+}
+impl<'a, const TS: bool, J: crate::JsxT, const SCAN: bool> EqlParser
+    for crate::ast::p::P<'a, TS, J, SCAN>
+{
+    #[inline]
+    fn allocator(&self) -> &Bump { self.allocator }
+    #[inline]
+    fn module_ref(&self) -> Ref { self.module_ref }
+}
+
 impl Data {
     // Returns "equal, ok". If "ok" is false, then nothing is known about the two
     // values. If "ok" is true, the equality or inequality of the two values is
     // stored in "equal".
-    //
-    // TODO(b2-ast-round-C): `P: ParserLike` (parser-state trait) un-gates with
-    // P.rs/Parser.rs. Body also calls `EString::eql` (needs
-    // bun_string::utf16_eql_string — track-A).
-    #[cfg(any())]
-    pub fn eql<P, K: EqlKindT>(left: &Data, right: &Data, p: &mut P) -> Equality
-    where
-        P: js_ast::ParserLike,
-    {
-        // (callers: replace `KIND == EqlKind::Strict` with `K::STRICT` when un-gated)
+    pub fn eql<P: EqlParser, K: EqlKindT>(left: &Data, right: &Data, p: &mut P) -> Equality {
         // https://dorey.github.io/JavaScript-Equality-Table/
         match left {
             Data::EInlinedEnum(inlined) => {
-                return inlined.value.data.eql::<P, KIND>(right, p);
+                return Data::eql::<P, K>(&inlined.value.data, right, p);
             }
 
             Data::ENull(_) | Data::EUndefined(_) => {
@@ -2896,7 +2904,7 @@ impl Data {
                 let ok = matches!(right_tag, Tag::ENull | Tag::EUndefined)
                     || right_tag.is_primitive_literal();
 
-                if KIND == EqlKind::Loose {
+                if !K::STRICT {
                     return Equality {
                         equal: matches!(right_tag, Tag::ENull | Tag::EUndefined),
                         ok,
@@ -2915,7 +2923,7 @@ impl Data {
                     return Equality { ok: true, equal: l.value == r.value, ..Default::default() };
                 }
                 Data::ENumber(num) => {
-                    if KIND == EqlKind::Strict {
+                    if K::STRICT {
                         // "true === 1" is false
                         // "false === 0" is false
                         return Equality::FALSE;
@@ -2941,7 +2949,7 @@ impl Data {
                     }
                 }
                 Data::EBoolean(r) | Data::EBranchBoolean(r) => {
-                    if KIND == EqlKind::Loose {
+                    if !K::STRICT {
                         return Equality {
                             ok: true,
                             // "1 == true" is true
@@ -2962,7 +2970,7 @@ impl Data {
             },
             Data::EBigInt(l) => {
                 if let Data::EBigInt(r) = right {
-                    if strings::strings::eql_long(l.value, r.value, true) {
+                    if strings::strings::eql_long::<true>(l.value, r.value) {
                         return Equality::TRUE;
                     }
                     // 0x0000n == 0n is true
@@ -2975,47 +2983,55 @@ impl Data {
                     };
                 }
             }
-            Data::EString(l) => match right {
-                Data::EString(r) => {
-                    r.resolve_rope_if_needed(p.allocator());
-                    l.resolve_rope_if_needed(p.allocator());
-                    return Equality {
-                        ok: true,
-                        equal: r.eql_estring(l),
-                        ..Default::default()
-                    };
-                }
-                Data::EInlinedEnum(inlined) => {
-                    if let Data::EString(r) = &inlined.value.data {
+            Data::EString(l) => {
+                // `StoreRef<EString>` is a Copy pointer; rebind mutably so
+                // `DerefMut` gives `&mut EString` for in-place rope flattening
+                // (Zig wrote through `*E.String` here).
+                let mut l = *l;
+                match right {
+                    Data::EString(r) => {
+                        let mut r = *r;
                         r.resolve_rope_if_needed(p.allocator());
                         l.resolve_rope_if_needed(p.allocator());
                         return Equality {
                             ok: true,
-                            equal: r.eql_estring(l),
+                            equal: r.eql_string(&l),
                             ..Default::default()
                         };
                     }
-                }
-                Data::ENull(_) | Data::EUndefined(_) => {
-                    return Equality::FALSE;
-                }
-                Data::ENumber(r) => {
-                    if KIND == EqlKind::Loose {
-                        l.resolve_rope_if_needed(p.allocator());
-                        if r.value == 0.0 && (l.is_blank() || l.eql_comptime(b"0")) {
-                            return Equality::TRUE;
+                    Data::EInlinedEnum(inlined) => {
+                        if let Data::EString(r) = inlined.value.data {
+                            let mut r = r;
+                            r.resolve_rope_if_needed(p.allocator());
+                            l.resolve_rope_if_needed(p.allocator());
+                            return Equality {
+                                ok: true,
+                                equal: r.eql_string(&l),
+                                ..Default::default()
+                            };
                         }
-                        if r.value == 1.0 && l.eql_comptime(b"1") {
-                            return Equality::TRUE;
-                        }
-                        // the string could still equal 0 or 1 but it could be hex, binary, octal, ...
-                        return Equality::UNKNOWN;
-                    } else {
+                    }
+                    Data::ENull(_) | Data::EUndefined(_) => {
                         return Equality::FALSE;
                     }
+                    Data::ENumber(r) => {
+                        if !K::STRICT {
+                            l.resolve_rope_if_needed(p.allocator());
+                            if r.value == 0.0 && (l.is_blank() || l.eql_comptime(b"0")) {
+                                return Equality::TRUE;
+                            }
+                            if r.value == 1.0 && l.eql_comptime(b"1") {
+                                return Equality::TRUE;
+                            }
+                            // the string could still equal 0 or 1 but it could be hex, binary, octal, ...
+                            return Equality::UNKNOWN;
+                        } else {
+                            return Equality::FALSE;
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
-            },
+            }
 
             _ => {
                 // Do not need to check left because e_require_main is

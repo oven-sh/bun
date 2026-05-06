@@ -7365,9 +7365,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Ok(js_ast::Ast {
             // Spec P.zig:6644: `.runtime_imports = p.runtime_imports`.
             // Round-G: `Ast.runtime_imports` is now the real
-            // `parser::Runtime::Imports`; move it out (P is terminal after
+            // `parser::Runtime::Imports`; moved out above (P is terminal after
             // `to_ast`).
-            runtime_imports: core::mem::take(&mut self.runtime_imports),
+            runtime_imports,
             module_scope,
             exports_ref: self.exports_ref,
             wrapper_ref,
@@ -7392,7 +7392,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
             },
             nested_scope_slot_counts,
 
-            require_ref: self.runtime_imports.__require.unwrap_or(self.require_ref),
+            require_ref,
 
             force_cjs_to_esm: self.unwrap_all_requires
                 || exports_kind == js_ast::ExportsKind::EsmWithDynamicFallbackFromCjs,

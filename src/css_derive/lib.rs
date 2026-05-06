@@ -787,6 +787,10 @@ enum VariantShape<'a> {
     Unit { ident: &'a syn::Ident, keyword: String },
     /// `Foo(Payload)` — single unnamed field
     Payload { ident: &'a syn::Ident, ty: &'a syn::Type },
+    /// `Foo { f1, f2, … }` — inline struct payload. Direct Rust analogue of the
+    /// Zig `union(enum)` arm carrying an anonymous `struct { … __generateToCss }`;
+    /// the printer is the field sequence (see [`gen_field_seq_to_css`]).
+    NamedFields { ident: &'a syn::Ident, fields: &'a syn::FieldsNamed },
 }
 
 fn classify<'a>(data: &'a syn::DataEnum) -> syn::Result<Vec<VariantShape<'a>>> {
@@ -801,16 +805,80 @@ fn classify<'a>(data: &'a syn::DataEnum) -> syn::Result<Vec<VariantShape<'a>>> {
                 ident: &v.ident,
                 ty: &fs.unnamed.first().unwrap().ty,
             }),
+            Fields::Named(fs) => out.push(VariantShape::NamedFields {
+                ident: &v.ident,
+                fields: fs,
+            }),
             _ => {
                 return Err(syn::Error::new_spanned(
                     &v.ident,
-                    "#[derive(Parse/ToCss)] supports unit variants and single-field tuple \
-                     variants only (Zig `union(enum)` shape)",
+                    "#[derive(Parse/ToCss)] supports unit variants, single-field tuple \
+                     variants, and named-field struct variants (Zig `union(enum)` shape)",
                 ));
             }
         }
     }
     Ok(out)
+}
+
+/// `true` if any `#[css(...)]` attr in `attrs` carries the bare flag `flag`
+/// (e.g. `#[css(generate_to_css)]`). Unknown sibling keys are ignored.
+fn has_css_flag(attrs: &[Attribute], flag: &str) -> bool {
+    for attr in attrs {
+        if !attr.path().is_ident("css") {
+            continue;
+        }
+        let mut hit = false;
+        let _ = attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident(flag) {
+                hit = true;
+            } else if meta.input.peek(syn::Token![=]) {
+                // Consume `key = value` so a later flag in the same list is still seen.
+                let _ = meta.value().and_then(|v| v.parse::<syn::Expr>());
+            }
+            Ok(())
+        });
+        if hit {
+            return true;
+        }
+    }
+    false
+}
+
+/// Emit the `__generateToCss` field-sequence body shared by the struct branch
+/// and named-field enum variants: each field is `to_css`'d in declaration
+/// order, `Option<_>` fields are unwrapped, and a single space is written
+/// between fields (unconditionally — matching the Zig, which does not elide the
+/// separator when an optional field is `None`).
+///
+/// `access` maps a field ident to the expression that reads it (`self.f` for
+/// a struct, the binding name for a destructured enum variant).
+fn gen_field_seq_to_css<'a>(
+    fields: impl ExactSizeIterator<Item = &'a syn::Field> + Clone,
+    access: impl Fn(&syn::Ident) -> TokenStream2,
+) -> TokenStream2 {
+    let len = fields.len();
+    let last = len.saturating_sub(1);
+    let stmts = fields.enumerate().map(|(j, f)| {
+        let fname = f.ident.as_ref().unwrap();
+        let slot = access(fname);
+        let body = if is_option_type(&f.ty) {
+            quote! {
+                if let ::core::option::Option::Some(__v) = &#slot {
+                    __v.to_css(__dest)?;
+                }
+            }
+        } else {
+            quote! { #slot.to_css(__dest)?; }
+        };
+        let sep = if len > 1 && j != last {
+            quote! { __dest.write_char(b' ')?; }
+        } else {
+            quote! {}
+        };
+        quote! { #body #sep }
+    });
+    quote! { #(#stmts)* }
 }
 
 /// `true` when `ty` is spelled `Option<…>` (any path ending in `Option` with one
@@ -853,27 +921,15 @@ fn expand_derive_to_css(input: DeriveInput) -> syn::Result<TokenStream2> {
                      (Zig `__generateToCss` shape)",
                 ));
             };
+            // `#[css(generate_to_css)]` is accepted (and recommended) as an
+            // explicit opt-in marker mirroring Zig's `pub fn __generateToCss()`,
+            // but the behaviour is identical with or without it — deriving
+            // `ToCss` on a named-field struct always emits the field-sequence
+            // printer. The flag exists so the port can record intent at the
+            // declaration site without a doc-comment.
+            let _ = has_css_flag(&input.attrs, "generate_to_css");
             let (impl_g, ty_g, where_g) = input.generics.split_for_impl();
-            let fields: Vec<_> = named.named.iter().collect();
-            let last = fields.len().saturating_sub(1);
-            let stmts = fields.iter().enumerate().map(|(j, f)| {
-                let fname = f.ident.as_ref().unwrap();
-                let body = if is_option_type(&f.ty) {
-                    quote! {
-                        if let ::core::option::Option::Some(__v) = &self.#fname {
-                            __v.to_css(__dest)?;
-                        }
-                    }
-                } else {
-                    quote! { self.#fname.to_css(__dest)?; }
-                };
-                let sep = if fields.len() > 1 && j != last {
-                    quote! { __dest.write_char(b' ')?; }
-                } else {
-                    quote! {}
-                };
-                quote! { #body #sep }
-            });
+            let stmts = gen_field_seq_to_css(named.named.iter(), |f| quote! { self.#f });
             return Ok(quote! {
                 #[automatically_derived]
                 #[allow(dead_code)]

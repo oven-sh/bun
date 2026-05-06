@@ -260,7 +260,19 @@ impl ImportRule {
             None
         };
         #[cfg(not(any()))]
-        let dep: Option<css::dependencies::ImportDependency> = None;
+        let dep: Option<css::dependencies::ImportDependency> = if dest.dependencies.is_some() {
+            // Spec import.zig:210-233 — when `dest.dependencies != null`, an
+            // `ImportDependency` is constructed, its `placeholder` is serialized
+            // in place of `this.url`, and the dependency is pushed onto
+            // `dest.dependencies`. Falling through to `None` here would
+            // silently emit the original URL and record no dependency
+            // (PORTING.md §Forbidden: silent no-op). Fail loudly until
+            // ImportDependency::new un-gates — matches the pattern at
+            // CssRuleList::to_css (mod.rs).
+            todo!("blocked_on: dependencies::ImportDependency::new")
+        } else {
+            None
+        };
 
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);

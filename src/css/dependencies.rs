@@ -57,66 +57,57 @@ pub struct ImportDependency {
     pub loc: SourceRange,
 }
 
-// Constructors depend on still-gated hubs (rules::import, css_modules,
-// to_css::string, values::url, printer). Data layout above is the un-gated
-// surface; bodies re-enable when those modules land.
-#[cfg(any())]
 impl ImportDependency {
     pub fn new<'bump>(
-        bump: &'bump Arena,
-        rule: &css::css_rules::import::ImportRule,
+        bump: &'bump bun_alloc::Arena,
+        rule: &crate::css_rules::import::ImportRule,
         filename: &[u8],
-        local_names: Option<&css::LocalsResultsMap>,
+        local_names: Option<&crate::LocalsResultsMap>,
         symbols: &bun_logger::symbol::Map,
     ) -> ImportDependency {
+        // PORT NOTE: Zig routed through `css.to_css.string(allocator, T, ...)`;
+        // that free function is still `#[cfg(any())]`-gated on the
+        // `Printer::new` arena reshape, so its body (sub-printer +
+        // `T::to_css` + buffer) is inlined here. Swap back to
+        // `crate::to_css::string` once that un-gates.
+        let stringify = |f: &dyn Fn(&mut crate::Printer) -> Result<(), crate::PrintErr>,
+                         what: &str|
+         -> &'bump [u8] {
+            let mut buf: Vec<u8> = Vec::new();
+            let mut printer =
+                crate::Printer::new_buffered(bump, &mut buf, None, local_names, symbols);
+            f(&mut printer).unwrap_or_else(|_| {
+                panic!(
+                    "Unreachable code: failed to stringify {what}.\n\n\
+                     This is a bug in Bun's CSS printer. Please file a bug report at \
+                     https://github.com/oven-sh/bun/issues/new/choose"
+                )
+            });
+            drop(printer);
+            bump.alloc_slice_copy(&buf)
+        };
+
         let supports: Option<*const [u8]> = if let Some(supports) = &rule.supports {
-            let s = css::to_css::string(
-                bump,
-                // Zig passed the type `css.css_rules.supports.SupportsCondition` as a comptime
-                // param; in Rust the generic is inferred from `supports`.
-                supports,
-                css::PrinterOptions::default(),
-                None,
-                local_names,
-                symbols,
-            )
-            .expect(
-                "Unreachable code: failed to stringify SupportsCondition.\n\n\
-                 This is a bug in Bun's CSS printer. Please file a bug report at \
-                 https://github.com/oven-sh/bun/issues/new/choose",
-            );
-            Some(s as *const [u8])
+            // Zig passed the type `css.css_rules.supports.SupportsCondition` as a comptime
+            // param; in Rust the inherent `to_css` is dispatched directly.
+            Some(stringify(&|p| supports.to_css(p), "SupportsCondition") as *const [u8])
         } else {
             None
         };
 
         let media: Option<*const [u8]> = if !rule.media.media_queries.is_empty() {
-            let s = css::to_css::string(
-                bump,
-                &rule.media, // css::MediaList
-                css::PrinterOptions::default(),
-                None,
-                local_names,
-                symbols,
-            )
-            .expect(
-                "Unreachable code: failed to stringify MediaList.\n\n\
-                 This is a bug in Bun's CSS printer. Please file a bug report at \
-                 https://github.com/oven-sh/bun/issues/new/choose",
-            );
-            Some(s as *const [u8])
+            Some(stringify(&|p| rule.media.to_css(p), "MediaList") as *const [u8])
         } else {
             None
         };
 
-        let placeholder = css::css_modules::hash(
+        let placeholder = crate::css_modules::hash(
             bump,
-            // TODO(port): Zig passed fmt string "{s}_{s}" + .{filename, rule.url}. Phase B:
-            // confirm `css_modules::hash` Rust signature (likely `core::fmt::Arguments`).
+            // PORT NOTE: Zig "{s}_{s}", .{ filename, rule.url } → fmt::Arguments
             format_args!(
                 "{}_{}",
                 bstr::BStr::new(filename),
-                bstr::BStr::new(&rule.url)
+                bstr::BStr::new(rule.url)
             ),
             false,
         );

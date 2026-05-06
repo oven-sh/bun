@@ -68,7 +68,7 @@ impl DisplayPair {
 
         loop {
             if input
-                .try_parse(|i| i.expect_ident_matching("list-item"))
+                .try_parse(|i| i.expect_ident_matching(b"list-item"))
                 .is_ok()
             {
                 list_item = true;

@@ -21,7 +21,7 @@ pub struct TransformList<'bump> {
 impl<'bump> TransformList<'bump> {
     pub fn parse(input: &mut Parser<'_>) -> Result<Self> {
         if input
-            .try_parse(|i| i.expect_ident_matching("none"))
+            .try_parse(|i| i.expect_ident_matching(b"none"))
             .is_ok()
         {
             return Ok(Self { v: BumpVec::new_in(input.allocator()) });
@@ -699,7 +699,7 @@ pub enum Translate {
 impl Translate {
     pub fn parse(input: &mut Parser) -> Result<Self> {
         if input
-            .try_parse(|i| i.expect_ident_matching("none"))
+            .try_parse(|i| i.expect_ident_matching(b"none"))
             .is_ok()
         {
             return Ok(Translate::None);
@@ -779,7 +779,7 @@ pub struct Rotate {
 impl Rotate {
     pub fn parse(input: &mut Parser) -> Result<Self> {
         if input
-            .try_parse(|i| i.expect_ident_matching("none"))
+            .try_parse(|i| i.expect_ident_matching(b"none"))
             .is_ok()
         {
             return Ok(Rotate {
@@ -895,7 +895,7 @@ pub enum Scale {
 impl Scale {
     pub fn parse(input: &mut Parser) -> Result<Self> {
         if input
-            .try_parse(|i| i.expect_ident_matching("none"))
+            .try_parse(|i| i.expect_ident_matching(b"none"))
             .is_ok()
         {
             return Ok(Scale::None);

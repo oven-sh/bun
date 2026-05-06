@@ -6497,13 +6497,16 @@ impl<'a> Resolver<'a> {
         let dir_path = strings::without_trailing_slash_windows_path(dir_path_maybe_trail_slash);
 
         Self::assert_valid_cache_key(dir_path);
-        // SAFETY: ARENA — `DirInfo::hash_map_instance()` singleton (see `dir_cache()` PORT NOTE);
-        // narrow `&mut` per call, each dies before the next deref.
-        let mut dir_cache_info_result = unsafe { &mut *self.dir_cache() }.get_or_put(dir_path)?;
+        // SAFETY: ARENA — `DirInfo::hash_map_instance()` singleton (see `dir_cache()` PORT NOTE).
+        // Stacked Borrows: bind ONE `&mut HashMap` and route both the lookup and the slot
+        // projection through it so the returned `*mut DirInfo` shares a parent tag with the
+        // borrow it was derived from (a second `&mut *self.dir_cache()` Unique retag of the
+        // whole `BSSMapInner` would otherwise pop it).
+        let dc = unsafe { &mut *self.dir_cache() };
+        let mut dir_cache_info_result = dc.get_or_put(dir_path)?;
         if dir_cache_info_result.status == allocators::Status::Exists {
             // we've already looked up this package before
-            // SAFETY: see above — narrow `&mut`, immediately erased to `*mut DirInfo`.
-            return Ok(unsafe { &mut *self.dir_cache() }.at_index(dir_cache_info_result.index).map(|d| d as *mut _));
+            return Ok(dc.at_index(dir_cache_info_result.index).map(|d| d as *mut _));
         }
         // SAFETY: PORT (Stacked Borrows) — derive `rfs` from the raw `*mut FileSystem`
         // field via `addr_of_mut!` so later `&mut *self.log()` / `&mut *self.dir_cache()`
@@ -7531,12 +7534,18 @@ impl<'a> Resolver<'a> {
             // This is important so that browser_scope has a valid index.
             // PORT NOTE: erase the `&mut DirInfo` borrow to `*mut` immediately so
             // `self.dir_cache` (and `*self`) are reborrowable for the call below.
-            // SAFETY: ARENA — `dir_cache()` singleton (see PORT NOTE); narrow `&mut` per call,
-            // each dies before the next deref.
+            // SAFETY: ARENA — `dir_cache()` singleton (see PORT NOTE). Stacked Borrows: bind
+            // ONE `&mut HashMap` and derive BOTH slot pointers from it so they share a parent
+            // tag — a second `&mut *self.dir_cache()` Unique retag of the whole `BSSMapInner`
+            // (whose `backing_buf` is inline) would pop `dir_info_ptr`'s tag before
+            // `dir_info_uncached` writes through it. Spec resolver.zig:3022/3030 routes both
+            // through the single raw `r.dir_cache: *HashMap` with no intermediate retag.
+            // NOTE: erasing `&mut V` to `*mut V` does NOT, by itself, survive a sibling Unique
+            // retag of the parent allocation; the shared `dc` parent is what keeps both live.
+            let dc = unsafe { &mut *self.dir_cache() };
             let dir_info_ptr: *mut DirInfo::DirInfo =
-                unsafe { &mut *self.dir_cache() }.put(&mut queue_top.result, DirInfo::DirInfo::default())?;
-            // SAFETY: see above — narrow `&mut`, immediately erased to `*mut DirInfo`.
-            let parent_dir_ptr = unsafe { &mut *self.dir_cache() }.at_index(top_parent.index).map(|d| d as *mut _);
+                dc.put(&mut queue_top.result, DirInfo::DirInfo::default())?;
+            let parent_dir_ptr = dc.at_index(top_parent.index).map(|d| d as *mut _);
 
             self.dir_info_uncached(
                 dir_info_ptr,

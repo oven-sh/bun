@@ -284,7 +284,7 @@ impl LinkerContext<'_> {
                         // note: if we crash on append, it is due to threadlocal heaps in mimalloc
                         part.dependencies
                             .append(Dependency {
-                                source_index: js_ast::Index::source(source_index),
+                                source_index: js_ast::Index::source(source_index as usize),
                                 part_index: other_part_index,
                             })
                             .expect("unreachable");

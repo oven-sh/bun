@@ -66,7 +66,7 @@ pub fn find_imported_css_files_in_js_order(
             // are a compile-time concept while CommonJS imports are a run-time
             // concept. But we don't want to manipulate <style> tags at run-time so
             // this is the only way to do it.
-            for &import_record_index in part.import_record_indices.as_slice() {
+            for &import_record_index in part.import_record_indices.slice() {
                 let record = &records[import_record_index as usize];
                 if record.source_index.is_valid() {
                     visit(
@@ -74,7 +74,6 @@ pub fn find_imported_css_files_in_js_order(
                         import_records,
                         parts,
                         loaders,
-                        temp,
                         visits,
                         o,
                         record.source_index,
@@ -85,8 +84,8 @@ pub fn find_imported_css_files_in_js_order(
         }
 
         if is_css && source_index.is_valid() {
-            // bun.handleOom(o.append(temp, source_index)) — Rust aborts on OOM.
-            o.push(temp, source_index);
+            // bun.handleOom(o.append(temp, source_index)) — Rust BabyList uses global allocator.
+            o.append(source_index).expect("oom");
         }
     }
 
@@ -96,7 +95,6 @@ pub fn find_imported_css_files_in_js_order(
         all_import_records,
         all_parts,
         all_loaders,
-        temp,
         &mut visited,
         &mut order,
         entry_point,

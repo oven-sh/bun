@@ -129,7 +129,7 @@ pub fn rename_symbols_in_chunk(
             let nested_scope_slot_counts: *mut [SlotCounts] =
                 col_ptr!(ast, AstField::nested_scope_slot_counts, SlotCounts);
             for &i in files_in_order {
-                slots.union_max(col!(nested_scope_slot_counts)[i as usize]);
+                slots.union_max(col!(nested_scope_slot_counts)[i as usize].clone());
             }
             slots
         };

@@ -70,7 +70,7 @@ pub fn post_process_css_chunk(
                 line_offset.advance(b"\n");
             }
 
-            let pretty: &[u8] = &sources[source_index as usize].path.pretty;
+            let pretty: &[u8] = sources[source_index as usize].path.pretty;
 
             j.push_static(b"/* ");
             line_offset.advance(b"/* ");

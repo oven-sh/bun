@@ -3809,11 +3809,11 @@ impl InsideWrapperPrefix {
 
             let promise_all = Expr::init(E::Identifier { ref_: promise_all_ref, ..Default::default() }, Loc::EMPTY);
 
-            let mut items: BabyList<Expr> = BabyList::init_capacity(2);
+            let mut items: BabyList<Expr> = BabyList::init_capacity(2)?;
             items.append_slice_assume_capacity(&[first_dep_call_expr, call_expr]);
             // PERF(port): was assume_capacity
 
-            let mut args: BabyList<Expr> = BabyList::init_capacity(1);
+            let mut args: BabyList<Expr> = BabyList::init_capacity(1)?;
             args.append_assume_capacity(Expr::init(E::Array { items, ..Default::default() }, Loc::EMPTY));
             // PERF(port): was assume_capacity
 

@@ -29,6 +29,44 @@ impl Default for MapEntry {
 
 pub type Map = StringHashMap<MapEntry>;
 
+// PORT NOTE: Zig `JSON.parsePackageJSONUTF8WithOpts` takes `comptime opts:
+// js_lexer.JSONOptions`; the Rust port (`bun_interchange::json`) spells those
+// out as 8 const-generic bools. The only field this module varies at runtime
+// is `guess_indentation` (because `GetJSONOptions` was demoted from comptime
+// to runtime), so dispatch on that one bool here and keep the rest fixed to
+// match the Zig call sites (.is_json/.allow_comments/.allow_trailing_commas
+// = true, others default false).
+fn parse_package_json(
+    source: &Source,
+    log: &mut Log,
+    bump: &bun_alloc::Arena,
+    guess_indentation: bool,
+) -> Result<json::JsonResult, bun_core::Error> {
+    if guess_indentation {
+        json::parse_package_json_utf8_with_opts::<
+            true,  // IS_JSON
+            true,  // ALLOW_COMMENTS
+            true,  // ALLOW_TRAILING_COMMAS
+            false, // IGNORE_LEADING_ESCAPE_SEQUENCES
+            false, // IGNORE_TRAILING_ESCAPE_SEQUENCES
+            false, // JSON_WARN_DUPLICATE_KEYS
+            false, // WAS_ORIGINALLY_MACRO
+            true,  // GUESS_INDENTATION
+        >(source, log, bump)
+    } else {
+        json::parse_package_json_utf8_with_opts::<
+            true,  // IS_JSON
+            true,  // ALLOW_COMMENTS
+            true,  // ALLOW_TRAILING_COMMAS
+            false, // IGNORE_LEADING_ESCAPE_SEQUENCES
+            false, // IGNORE_TRAILING_ESCAPE_SEQUENCES
+            false, // JSON_WARN_DUPLICATE_KEYS
+            false, // WAS_ORIGINALLY_MACRO
+            false, // GUESS_INDENTATION
+        >(source, log, bump)
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct GetJSONOptions {
     pub init_reset_store: bool,

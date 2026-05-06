@@ -711,10 +711,10 @@ impl PostgresSQLConnection {
                             offset, consumed, data.len()
                         );
 
-                        self.read_buffer.head = 0;
-                        self.last_message_start = 0;
-                        self.read_buffer.byte_list.len = 0;
-                        self.read_buffer.write(&data[offset..]).expect("failed to write to read buffer");
+                        self.read_buffer.get_mut().head = 0;
+                        self.last_message_start.set(0);
+                        self.read_buffer.get_mut().byte_list.len = 0;
+                        self.read_buffer.get_mut().write(&data[offset..]).expect("failed to write to read buffer");
                     } else {
                         { let _ = err; /* TODO(port): bun_crash_handler::handle_error_return_trace */ };
                         self.fail(b"Failed to read data", err);
@@ -726,15 +726,15 @@ impl PostgresSQLConnection {
         }
         if !done {
             // read buffer is not empty, so we need to write the data to the buffer and then read it
-            self.read_buffer.write(data).expect("failed to write to read buffer");
+            self.read_buffer.get_mut().write(data).expect("failed to write to read buffer");
             // PORT NOTE: reshaped for borrowck — build reader (raw backref) before reborrowing self.
             let reader = self.buffered_reader();
             match PostgresRequest::on_data(self, reader) {
                 Ok(()) => {
                     debug!("clean read_buffer");
                     // success, we read everything! let's reset the last message start and the head
-                    self.last_message_start = 0;
-                    self.read_buffer.head = 0;
+                    self.last_message_start.set(0);
+                    self.read_buffer.get_mut().head = 0;
                 }
                 Err(err) => {
                     if err != AnyPostgresError::ShortRead {
@@ -742,10 +742,14 @@ impl PostgresSQLConnection {
                         self.fail(b"Failed to read data", err);
                     } else {
                         #[cfg(debug_assertions)]
-                        debug!(
-                            "read_buffer: not empty and received short read: last_message_start: {}, head: {}, len: {}",
-                            self.last_message_start, self.read_buffer.head, self.read_buffer.byte_list.len
-                        );
+                        {
+                            let lms = self.last_message_start.get();
+                            let rb = self.read_buffer.get_mut();
+                            debug!(
+                                "read_buffer: not empty and received short read: last_message_start: {}, head: {}, len: {}",
+                                lms, rb.head, rb.byte_list.len
+                            );
+                        }
                     }
                 }
             }

@@ -419,7 +419,20 @@ impl PostgresSQLQuery {
     }
 
     // TODO(b2-blocked): #[crate::jsc::host_fn(method)] proc-macro attr
-    pub fn do_run(this: &mut Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    //
+    // Takes `*mut Self` (the JSCell m_ctx payload, i.e. the original `Box::into_raw`
+    // pointer) rather than `&mut Self`: `connection.requests.write_item(this_ptr)` below
+    // stashes this pointer in a long-lived FIFO, and a `&mut`-derived `*mut` would carry
+    // borrow-scoped provenance that is invalidated once codegen reuses m_ctx after this
+    // call returns (Stacked Borrows). Passing the raw payload pointer through preserves
+    // the allocation's root provenance for the queued entry.
+    pub fn do_run(this_ptr: *mut Self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        // SAFETY: `this_ptr` is the live m_ctx payload for `callframe.this()`; the JS
+        // wrapper is on-stack so GC cannot finalize it, and the mutator thread has
+        // exclusive access. We reborrow as `&mut` for ergonomic field access only —
+        // the pointer pushed into `connection.requests` is `this_ptr` itself, never a
+        // coercion of this reborrow.
+        let this = unsafe { &mut *this_ptr };
         let arguments = callframe.arguments();
         let Some(connection) = arguments[0].as_::<PostgresSQLConnection>() else {
             return global_object.throw("connection must be a PostgresSQLConnection", &[]);

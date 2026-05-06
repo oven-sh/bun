@@ -1299,6 +1299,6 @@ use crate::package_manager_task::{TaskData, TaskStatus};
 // PORT STATUS
 //   source:     src/install/TarballStream.zig (940 lines)
 //   confidence: medium
-//   todos:      11
-//   notes:      intrusive thread-pool task + self-destroy-in-method (`finish`); extract_task/package_manager demoted to raw ptrs (Zig `*T`); tokenizeScalar.rest() and OS-path Z-slice types are placeholders.
+//   todos:      7
+//   notes:      intrusive thread-pool task; on_chunk/schedule_drain/drain/finish/take_pending take `*mut Self` (Zig freely-aliasing `*T`) to avoid cross-thread/re-entrant `&mut` aliasing; extract_task/package_manager are raw ptrs; tokenizeScalar.rest() and OS-path Z-slice types are placeholders.
 // ──────────────────────────────────────────────────────────────────────────

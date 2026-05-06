@@ -12,10 +12,11 @@ pub fn to_have_been_called(
     bun_jsc::mark_binding!();
     let this_value = frame.this();
     let first_argument = frame.arguments_as_array::<1>()[0];
-    // TODO(port): `defer this.postMatch(globalThis)` — scopeguard captures &mut this and conflicts
-    // with subsequent &mut uses below; Phase B may need to reshape (call post_match before each
-    // return) or split borrows.
-    scopeguard::defer! { this.post_match(global); }
+    // Zig: `defer this.postMatch(globalThis);`
+    // PORT NOTE: reshaped for borrowck — wrap `this` in a scopeguard and re-borrow through
+    // the guard's DerefMut so post_match runs at every exit without a raw-pointer alias.
+    let mut this = scopeguard::guard(this, |t| t.post_match(global));
+    let this: &mut Expect = &mut *this;
 
     if !first_argument.is_undefined() {
         return Err(global.throw_invalid_arguments(format_args!(
@@ -29,7 +30,7 @@ pub fn to_have_been_called(
     let calls = super::mock::JSMockFunction__getCalls(global, value)?;
     this.increment_expect_call_counter();
     if !calls.js_type().is_array() {
-        let formatter = super::make_formatter(global);
+        let mut formatter = super::make_formatter(global);
         // `defer formatter.deinit()` → Drop
         return Err(global.throw(format_args!(
             "Expected value must be a mock function: {}",

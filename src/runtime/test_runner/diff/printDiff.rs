@@ -520,7 +520,7 @@ fn print_modified_segment(
     writer: &mut impl Write,
     config: &DiffConfig,
     modified_style: ModifiedStyle,
-) -> std::io::Result<()> {
+) -> std::fmt::Result {
     let removed_prefix = match modified_style.single_line {
         true => prefix_styles::SINGLE_LINE_REMOVED,
         false => prefix_styles::REMOVED,
@@ -588,7 +588,7 @@ fn print_modified_segment(
             }
         }
     }
-    writer.write_all(b"\n")?;
+    writer.write_str("\n")?;
 
     print_line_prefix(writer, config, inserted_prefix)?;
     for item in char_diff.iter() {

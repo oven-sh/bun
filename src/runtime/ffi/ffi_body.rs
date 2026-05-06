@@ -2035,7 +2035,7 @@ pub fn generate_symbols(
 
 pub struct Function {
     pub symbol_from_dynamic_library: Option<*mut c_void>,
-    pub base_name: Option<Box<ZStr>>,
+    pub base_name: Option<ZBox>,
     pub state: Option<NonNull<TCC::State>>,
 
     pub return_type: ABIType,

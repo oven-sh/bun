@@ -723,17 +723,17 @@ mod _gated_from_js {
 
     impl SSLConfig {
         pub fn from_js(
-            vm: &mut VirtualMachine,
+            vm: &VirtualMachine,
             global: &JSGlobalObject,
             value: JSValue,
         ) -> JsResult<Option<SSLConfig>> {
-            let mut generated = jsc::generated::SSLConfig::from_js(global, value)?;
+            let generated = jsc::generated::SSLConfig::from_js(global, value)?;
             // `generated` dropped at scope exit
             Self::from_generated(vm, global, &generated)
         }
 
         pub fn from_generated(
-            vm: &mut VirtualMachine,
+            vm: &VirtualMachine,
             global: &JSGlobalObject,
             generated: &jsc::generated::SSLConfig,
         ) -> JsResult<Option<SSLConfig>> {

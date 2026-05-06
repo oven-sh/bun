@@ -4268,10 +4268,11 @@ macro_rules! any_server_dispatch {
 impl AnyServer {
     pub fn user_routes(&self) -> AnyUserRouteList<'_> {
         match self.ptr.tag() {
-            t if t == <TaggedPtrUnion<_>>::case::<HTTPServer>() => AnyUserRouteList::HTTPServer(&self.ptr.as_::<HTTPServer>().user_routes),
-            t if t == <TaggedPtrUnion<_>>::case::<HTTPSServer>() => AnyUserRouteList::HTTPSServer(&self.ptr.as_::<HTTPSServer>().user_routes),
-            t if t == <TaggedPtrUnion<_>>::case::<DebugHTTPServer>() => AnyUserRouteList::DebugHTTPServer(&self.ptr.as_::<DebugHTTPServer>().user_routes),
-            t if t == <TaggedPtrUnion<_>>::case::<DebugHTTPSServer>() => AnyUserRouteList::DebugHTTPSServer(&self.ptr.as_::<DebugHTTPSServer>().user_routes),
+            // SAFETY: tag was just checked; as_unchecked yields the matching live *mut.
+            t if t == <TaggedPtrUnion<_>>::case::<HTTPServer>() => AnyUserRouteList::HTTPServer(&unsafe { &*self.ptr.as_unchecked::<HTTPServer>() }.user_routes),
+            t if t == <TaggedPtrUnion<_>>::case::<HTTPSServer>() => AnyUserRouteList::HTTPSServer(&unsafe { &*self.ptr.as_unchecked::<HTTPSServer>() }.user_routes),
+            t if t == <TaggedPtrUnion<_>>::case::<DebugHTTPServer>() => AnyUserRouteList::DebugHTTPServer(&unsafe { &*self.ptr.as_unchecked::<DebugHTTPServer>() }.user_routes),
+            t if t == <TaggedPtrUnion<_>>::case::<DebugHTTPSServer>() => AnyUserRouteList::DebugHTTPSServer(&unsafe { &*self.ptr.as_unchecked::<DebugHTTPSServer>() }.user_routes),
             _ => unreachable!("Invalid pointer tag"),
         }
     }
@@ -4290,8 +4291,9 @@ impl AnyServer {
     /// of which response path produced the body.
     pub fn h3_alt_svc(&self) -> Option<&[u8]> {
         match self.ptr.tag() {
-            t if t == <TaggedPtrUnion<_>>::case::<HTTPSServer>() => self.ptr.as_::<HTTPSServer>().h3_alt_svc(),
-            t if t == <TaggedPtrUnion<_>>::case::<DebugHTTPSServer>() => self.ptr.as_::<DebugHTTPSServer>().h3_alt_svc(),
+            // SAFETY: tag was just checked; as_unchecked yields the matching live *mut.
+            t if t == <TaggedPtrUnion<_>>::case::<HTTPSServer>() => unsafe { &*self.ptr.as_unchecked::<HTTPSServer>() }.h3_alt_svc(),
+            t if t == <TaggedPtrUnion<_>>::case::<DebugHTTPSServer>() => unsafe { &*self.ptr.as_unchecked::<DebugHTTPSServer>() }.h3_alt_svc(),
             _ => None,
         }
     }
@@ -4363,7 +4365,7 @@ impl AnyServer {
     /// SAFETY: derives `&mut ServerConfig` through `&self` via the erased
     /// `AnyServer` pointer; two calls alias the same handler. Caller must not
     /// hold another live `&mut Handler` (resolver-style accessor).
-    pub unsafe fn web_socket_handler(&self) -> Option<&mut WebSocketServerContext::Handler> {
+    pub unsafe fn web_socket_handler(&self) -> Option<&mut super::web_socket_server_context::Handler> {
         let server_config: &mut ServerConfig = any_server_dispatch!(self, |s| &mut s.config);
         server_config.websocket.as_mut().map(|ws| &mut ws.handler)
     }
@@ -4380,9 +4382,9 @@ impl AnyServer {
 
     pub fn from<T>(server: &T) -> AnyServer
     where
-        TaggedPtrUnion<(HTTPServer, HTTPSServer, DebugHTTPServer, DebugHTTPSServer)>: From<*const T>,
+        T: bun_ptr::tagged_pointer::UnionMember<AnyServerTypes>,
     {
-        AnyServer { ptr: TaggedPtrUnion::init(server) }
+        AnyServer { ptr: TaggedPtrUnion::init(server as *const T) }
     }
 
     pub fn on_pending_request(&self) {

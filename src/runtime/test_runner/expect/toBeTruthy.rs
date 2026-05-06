@@ -10,10 +10,9 @@ pub fn to_be_truthy(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // TODO(port): `defer this.postMatch(globalThis)` — scopeguard borrows `this` for the
-    // whole scope which conflicts with the &mut uses below; Phase B may need to reshape
-    // (e.g. raw-ptr guard or call post_match before each return).
-    let _post = scopeguard::guard((), |_| this.post_match(global));
+    // PORT NOTE: `defer this.postMatch(globalThis)` — scopeguard owns the `&mut Expect`
+    // borrow so post_match runs on every exit path; deref-mut through the guard below.
+    let mut this = scopeguard::guard(this, |this| this.post_match(global));
 
     let this_value = frame.this();
     let value: JSValue = this.get_value(global, this_value, "toBeTruthy", "")?;

@@ -2066,7 +2066,7 @@ impl EndTag {
         }
         // SAFETY: self.end_tag is non-null (checked above) and valid for the
         // duration of the lol-html callback.
-        unsafe { lolhtml::EndTag::get_name(self.end_tag) }.to_js(global_object)
+        html_string_to_js(unsafe { lolhtml::EndTag::get_name(self.end_tag) }, global_object)
     }
 
     #[bun_jsc::host_fn(setter)]

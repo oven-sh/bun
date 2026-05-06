@@ -1130,12 +1130,12 @@ pub fn network_interfaces_windows(global_this: &JSGlobalObject) -> JsResult<JSVa
                 &mut ip_buf,
             )
             .expect("unreachable");
-            interface.put(global_this, ZigString::static_("netmask"), ZigString::init(str).with_encoding().to_js(global_this));
+            interface.put(global_this, b"netmask", ZigString::init(str).with_encoding().to_js(global_this));
         }
         // family
         // SAFETY: union read tagged by family
         let family = unsafe { iface.address.address4.family } as c_int;
-        interface.put(global_this, ZigString::static_("family"), match family {
+        interface.put(global_this, b"family", match family {
             bun_sys::posix::AF::INET => global_this.common_strings().ipv4(),
             bun_sys::posix::AF::INET6 => global_this.common_strings().ipv6(),
             _ => ZigString::static_("unknown").to_js(global_this),

@@ -1131,7 +1131,7 @@ where
         if let Some(signal) = this.signal.take() {
             if !shim::signal_aborted(&signal) {
                 shim::signal_fire(&signal, global_this, jsc::CommonAbortReason::ConnectionClosed);
-                any_js_calls = true;
+                any_js_calls.set(true);
             }
             shim::signal_unref(&signal);
             drop(signal); // unref

@@ -412,7 +412,7 @@ impl<'a> GlobalMini<'a> {
     }
 
     #[inline]
-    pub fn event_loop_ctx(self) -> &'a MiniEventLoop {
+    pub fn event_loop_ctx(self) -> &'a MiniEventLoop<'a> {
         self.mini
     }
 

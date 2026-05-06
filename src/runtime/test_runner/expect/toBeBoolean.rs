@@ -10,11 +10,9 @@ pub fn to_be_boolean(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // PORT NOTE: Zig `defer this.postMatch(globalThis)` — must run on every exit path
-    // (including the `?` below). scopeguard here aliases `&mut self`; Phase B may need
-    // to reshape (e.g. split borrow or move post_match into Drop of a guard type on Expect).
-    // TODO(port): defer post_match — borrowck reshape
-    let _post = scopeguard::guard((), |_| this.post_match(global));
+    // PORT NOTE: reshaped for borrowck — `defer this.postMatch(globalThis)` via scopeguard
+    // owning the &mut Expect; body accesses `this` through DerefMut.
+    let mut this = scopeguard::guard(this, |t| t.post_match(global));
 
     let this_value = frame.this();
     let value: JSValue = this.get_value(global, this_value, "toBeBoolean", "")?;

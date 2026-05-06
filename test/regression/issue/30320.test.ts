@@ -141,7 +141,7 @@ test("#30320 bundler preserves sideEffects glob imports", async () => {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
   expect(stdout).toContain("foo adapter registered");
   expect(stdout).toContain("bar adapter registered");
+  expect(exitCode).toBe(0);
 });

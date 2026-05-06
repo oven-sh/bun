@@ -4939,7 +4939,9 @@ test("scoped package manifest url uses uppercase %2F", async () => {
       // Tarball download.
       if (url.pathname.endsWith("/has-bin-entry-1.0.0.tgz")) {
         return new Response(
-          Bun.file(join(import.meta.dir, "registry", "packages", "@scoped", "has-bin-entry", "has-bin-entry-1.0.0.tgz")),
+          Bun.file(
+            join(import.meta.dir, "registry", "packages", "@scoped", "has-bin-entry", "has-bin-entry-1.0.0.tgz"),
+          ),
         );
       }
 
@@ -4957,10 +4959,7 @@ test("scoped package manifest url uses uppercase %2F", async () => {
         },
       }),
     ),
-    write(
-      join(packageDir, ".npmrc"),
-      `@scoped:registry=http://localhost:${server.port}/\n`,
-    ),
+    write(join(packageDir, ".npmrc"), `@scoped:registry=http://localhost:${server.port}/\n`),
   ]);
 
   const { stdout, stderr, exited } = spawn({

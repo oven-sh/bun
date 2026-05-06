@@ -749,7 +749,7 @@ pub fn parse_arguments(
 
     if result.options.retry.is_none() {
         if let Some(runner) = jest::Jest::runner() {
-            result.options.retry = Some(runner.test_options().retry);
+            result.options.retry = Some(runner.test_options.retry);
         }
     }
     if result.options.retry.unwrap_or(0) != 0 && result.options.repeats != 0 {

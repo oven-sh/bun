@@ -457,6 +457,15 @@ impl Execution {
         Some(&mut self.groups[self.group_index])
     }
 
+    /// Shared-borrow variant of [`active_group`] for read-only inspection
+    /// (e.g. `BunTest::get_current_state_data`, which only reads).
+    pub fn active_group_ref(&self) -> Option<&ConcurrentGroup> {
+        if self.group_index >= self.groups.len() {
+            return None;
+        }
+        Some(&self.groups[self.group_index])
+    }
+
     /// Returns `NonNull` pointers (not `&mut`) into `self.sequences` / `self.groups` so the
     /// caller can hold both alongside other borrows of `self` without aliased-`&mut` UB.
     /// Dereference at point-of-use only.

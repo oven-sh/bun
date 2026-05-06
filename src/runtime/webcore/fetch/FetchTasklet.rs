@@ -33,6 +33,34 @@ type JsTerminatedResult<T> = Result<T, bun_jsc::JsTerminated>;
 // ConcurrentTask/AnyTask callbacks at the tier-3 layer.
 type ElJsResult<T> = bun_event_loop::JsResult<T>;
 
+// ─── local AnyPromise shim: `bun_jsc::AnyPromise` (lib.rs enum stub) lacks
+// resolve/reject; the real impl in `bun_jsc::any_promise` is gated. Dispatch
+// through the underlying `JSPromise` cell (JSInternalPromise subclasses it).
+trait AnyPromiseExt {
+    fn resolve(self, global: &JSGlobalObject, value: JSValue) -> JsTerminatedResult<()>;
+    fn reject_with_async_stack(self, global: &JSGlobalObject, value: JSValue) -> JsTerminatedResult<()>;
+}
+impl AnyPromiseExt for jsc::AnyPromise {
+    fn resolve(self, global: &JSGlobalObject, value: JSValue) -> JsTerminatedResult<()> {
+        let p: *mut jsc::JSPromise = match self {
+            jsc::AnyPromise::Normal(p) => p,
+            jsc::AnyPromise::Internal(p) => p as *mut jsc::JSPromise,
+        };
+        // SAFETY: variant payload is a live JSC heap cell from `as_any_promise`.
+        unsafe { (*p).resolve(global, value) }
+    }
+    fn reject_with_async_stack(self, global: &JSGlobalObject, value: JSValue) -> JsTerminatedResult<()> {
+        let p: *mut jsc::JSPromise = match self {
+            jsc::AnyPromise::Normal(p) => p,
+            jsc::AnyPromise::Internal(p) => p as *mut jsc::JSPromise,
+        };
+        // TODO(port): `value.attach_async_stack_from_promise(global, p)` once
+        // that helper is reachable from this crate. Fall back to plain reject.
+        // SAFETY: see `resolve`.
+        unsafe { (*p).reject(global, Ok(value)) }
+    }
+}
+
 // PORT NOTE: `d2i_X509`/`X509_free` are in BoringSSL but not yet bound in `bun_boringssl_sys`; declare locally.
 unsafe extern "C" {
     fn d2i_X509(
@@ -504,17 +532,20 @@ impl FetchTasklet {
                 let chunk = self.scheduled_response_buffer.list.as_slice();
 
                 if self.result.has_more {
-                    bytes.on_data(StreamResult::Temporary(ManuallyDrop::into_inner(
-                        bun_collections::ByteList::from_borrowed_slice_dangerous(chunk),
-                    )))?;
+                    // SAFETY: `chunk` borrows `scheduled_response_buffer` which outlives
+                    // `on_data` (consumed synchronously per StreamResult::Temporary contract).
+                    bytes.on_data(StreamResult::Temporary(unsafe {
+                        bun_collections::ByteList::from_borrowed_slice_dangerous(chunk)
+                    }))?;
                 } else {
                     self.clear_stream_cancel_handler();
                     let prev = core::mem::take(&mut self.readable_stream_ref);
                     buffer_reset.set(false);
 
-                    bytes.on_data(StreamResult::TemporaryAndDone(ManuallyDrop::into_inner(
-                        bun_collections::ByteList::from_borrowed_slice_dangerous(chunk),
-                    )))?;
+                    // SAFETY: see above.
+                    bytes.on_data(StreamResult::TemporaryAndDone(unsafe {
+                        bun_collections::ByteList::from_borrowed_slice_dangerous(chunk)
+                    }))?;
                     drop(prev);
                 }
                 return Ok(());
@@ -535,15 +566,18 @@ impl FetchTasklet {
                     let chunk = self.scheduled_response_buffer.list.as_slice();
 
                     if self.result.has_more {
-                        bytes.on_data(StreamResult::Temporary(ManuallyDrop::into_inner(
-                            bun_collections::ByteList::from_borrowed_slice_dangerous(chunk),
-                        )))?;
+                        // SAFETY: `chunk` borrows `scheduled_response_buffer` which outlives
+                        // `on_data` (consumed synchronously per StreamResult::Temporary contract).
+                        bytes.on_data(StreamResult::Temporary(unsafe {
+                            bun_collections::ByteList::from_borrowed_slice_dangerous(chunk)
+                        }))?;
                     } else {
                         readable.value.ensure_still_alive();
                         response.detach_readable_stream(global_this);
-                        bytes.on_data(StreamResult::TemporaryAndDone(ManuallyDrop::into_inner(
-                            bun_collections::ByteList::from_borrowed_slice_dangerous(chunk),
-                        )))?;
+                        // SAFETY: see above.
+                        bytes.on_data(StreamResult::TemporaryAndDone(unsafe {
+                            bun_collections::ByteList::from_borrowed_slice_dangerous(chunk)
+                        }))?;
                     }
 
                     return Ok(());

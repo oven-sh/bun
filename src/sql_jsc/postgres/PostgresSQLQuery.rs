@@ -27,20 +27,20 @@ pub use js::to_js;
 
 // TODO(b2-blocked): #[crate::jsc::JsClass] proc-macro attr
 pub struct PostgresSQLQuery {
-    statement: Option<Rc<PostgresSQLStatement>>,
-    query: BunString,
-    cursor_name: BunString,
+    pub statement: Option<Rc<PostgresSQLStatement>>,
+    pub query: BunString,
+    pub cursor_name: BunString,
 
-    this_value: JsRef,
+    pub this_value: JsRef,
 
-    status: Status,
+    pub status: Status,
 
     // bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) — intrusive single-thread refcount.
     // TODO(port): IntrusiveRc<PostgresSQLQuery>; ref_/deref_ below manipulate this directly
     // because *PostgresSQLQuery is stored raw in PostgresSQLConnection.requests.
     ref_count: Cell<u32>,
 
-    flags: Flags,
+    pub flags: Flags,
 }
 
 impl Default for PostgresSQLQuery {

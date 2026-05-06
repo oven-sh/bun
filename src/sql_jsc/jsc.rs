@@ -913,6 +913,19 @@ impl JsRef {
     pub fn is_not_empty(&self) -> bool { !self.value.is_empty_or_undefined_or_null() }
     /// JSRef.zig:183 — `pub fn isStrong()`.
     pub fn is_strong(&self) -> bool { self.strong.has() }
+    /// JSRef.zig:179 — `pub fn isWeak()`.
+    pub fn is_weak(&self) -> bool { !self.strong.has() }
+    /// JSRef.zig:148 — `pub fn upgrade(this, globalThis)` — weak → strong.
+    pub fn upgrade(&mut self, global: &JSGlobalObject) {
+        debug_assert!(self.is_not_empty());
+        debug_assert!(!self.strong.has());
+        self.strong.set(global, self.value);
+    }
+    /// JSRef.zig:159 — `pub fn downgrade(this)` — strong → weak (keeps value).
+    pub fn downgrade(&mut self) {
+        debug_assert!(self.strong.has());
+        self.strong.deinit();
+    }
     pub fn set_weak(&mut self, value: JSValue) { self.value = value; }
     /// JSRef.zig:130 — `pub fn setStrong(this, value, globalThis)`.
     pub fn set_strong(&mut self, value: JSValue, global: &JSGlobalObject) {

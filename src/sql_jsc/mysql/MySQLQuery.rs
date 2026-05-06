@@ -105,16 +105,16 @@ impl Flags {
 impl MySQLQuery {
     fn bind(
         &mut self,
-        execute: &mut prepared_statement::Execute,
+        param_types: &[Param],
         global_object: &JSGlobalObject,
         binding_value: JSValue,
         columns_value: JSValue,
         roots: &mut MarkedArgumentBuffer,
-    ) -> Result<(), AnyMySQLError> {
+    ) -> Result<Vec<Value>, AnyMySQLError> {
         let mut iter = QueryBindingIterator::init(binding_value, columns_value, global_object)?;
 
         let mut i: u32 = 0;
-        let len = execute.param_types.len();
+        let len = param_types.len();
         let mut params: Vec<Value> = Vec::with_capacity(len);
         // errdefer { for params[0..i] deinit; free(params) } — deleted: `Vec<Value>` drops on `?`.
 
@@ -126,12 +126,12 @@ impl MySQLQuery {
                 // loudly instead of writing past the end of `params`/`param_types`.
                 return Err(AnyMySQLError::WrongNumberOfParametersProvided);
             }
-            let param = &execute.param_types[i as usize];
+            let param = &param_types[i as usize];
             params.push(Value::from_js(
                 js_value,
                 global_object,
                 param.r#type,
-                param.flags.unsigned(),
+                param.flags.contains(ColumnFlags::UNSIGNED),
                 roots,
             )?);
             i += 1;
@@ -148,8 +148,7 @@ impl MySQLQuery {
         }
 
         self.status = Status::Binding;
-        execute.params = params.into_boxed_slice();
-        Ok(())
+        Ok(params)
     }
 
     /// `statement` is a raw `*mut MySQLStatement` (not `&mut`) because the sole caller,

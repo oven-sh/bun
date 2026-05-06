@@ -1263,28 +1263,28 @@ impl<const SSL: bool> HTTPClient<SSL> {
         }
 
         for header in response.headers.list {
-            match header.name.len() {
+            match header.name().len() {
                 len if len == b"Connection".len() => {
-                    if connection_header.name.is_empty()
-                        && strings::eql_case_insensitive_ascii(header.name, b"Connection", false)
+                    if connection_header.name().is_empty()
+                        && strings::eql_case_insensitive_ascii(header.name(), b"Connection", false)
                     {
                         connection_header = *header;
                     }
                 }
                 len if len == b"Upgrade".len() => {
-                    if upgrade_header.name.is_empty()
-                        && strings::eql_case_insensitive_ascii(header.name, b"Upgrade", false)
+                    if upgrade_header.name().is_empty()
+                        && strings::eql_case_insensitive_ascii(header.name(), b"Upgrade", false)
                     {
                         upgrade_header = *header;
                     }
                 }
                 len if len == b"Sec-WebSocket-Version".len() => {
                     if strings::eql_case_insensitive_ascii(
-                        header.name,
+                        header.name(),
                         b"Sec-WebSocket-Version",
                         false,
                     ) {
-                        if !strings::eql_comptime_ignore_len(header.value, b"13") {
+                        if !strings::eql_comptime_ignore_len(header.value(), b"13") {
                             // SAFETY: no `&mut Self` is live across this call.
                             unsafe { Self::terminate(this, ErrorCode::InvalidWebsocketVersion) };
                             return;

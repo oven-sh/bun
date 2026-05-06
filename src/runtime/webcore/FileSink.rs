@@ -788,7 +788,9 @@ impl FileSink {
         self.readable_stream = readable_stream::Strong::default();
         self.pending = streams::WritablePending::default();
         self.js_sink_ref.deinit();
-        self.deref();
+        // SAFETY: `&mut self` carries write provenance over the whole
+        // allocation; this is the last use of `self` in `finalize`.
+        unsafe { FileSink::deref(self as *mut Self) };
     }
 
     /// Protect the JS wrapper object from GC collection while an async operation is pending.

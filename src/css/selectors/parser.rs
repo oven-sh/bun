@@ -259,7 +259,13 @@ pub mod attrs {
                 && self.never_matches == rhs.never_matches
         }
         pub fn deep_clone(&self) -> Self {
-            self.clone()
+            Self {
+                namespace: self.namespace.as_ref().map(|n| n.deep_clone()),
+                local_name: self.local_name.clone(),
+                local_name_lower: self.local_name_lower.clone(),
+                operation: self.operation.deep_clone(),
+                never_matches: self.never_matches,
+            }
         }
         pub fn hash(&self, hasher: &mut Wyhash) {
             if let Some(ns) = &self.namespace {
@@ -297,7 +303,10 @@ pub mod attrs {
             }
         }
         pub fn deep_clone(&self) -> Self {
-            self.clone()
+            match self {
+                Self::Any => Self::Any,
+                Self::Specific(n) => Self::Specific(n.deep_clone()),
+            }
         }
     }
 

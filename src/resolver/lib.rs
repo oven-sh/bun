@@ -2947,6 +2947,23 @@ pub struct Resolver<'a> {
 }
 
 impl<'a> Resolver<'a> {
+    /// Port of Zig `r.fs` deref. Returns `&'a mut` (not tied to `&self`) so
+    /// borrowck treats it like the old `&'a mut` field — the FileSystem is the
+    /// process-global singleton and outlives every worker clone.
+    #[inline(always)]
+    pub fn fs(&self) -> &'a mut Fs::FileSystem {
+        // SAFETY: ARENA — `Fs::FileSystem::instance()` singleton; never freed.
+        unsafe { &mut *self.fs }
+    }
+
+    /// Port of Zig `r.log` deref.
+    #[inline(always)]
+    pub fn log(&self) -> &'a mut logger::Log {
+        // SAFETY: BACKREF — owner (Transpiler/BundleV2) outlives the Resolver;
+        // worker clones share the same Log under the resolver mutex.
+        unsafe { &mut *self.log }
+    }
+
     // TODO(b2-blocked): bun_install::PackageManager + bun_http::HTTPThread —
     // re-gated; the resolver body only reaches this on the auto-install path
     // (`load_node_modules` global-cache block, also re-gated below).
@@ -3100,10 +3117,10 @@ impl<'a> Resolver<'a> {
             // the `what` buffer via `Data.text: Cow::Owned` (no `Box::leak`, PORTING.md
             // §Forbidden). The `should_print` gate mirrors the bypassed wrappers.
             if flush_mode == FlushMode::Fail {
-                if logger::Kind::Debug.should_print(self.log.level) {
+                if logger::Kind::Debug.should_print(self.log().level) {
                     let what = core::mem::take(&mut debug.what);
                     let notes = core::mem::take(&mut debug.notes).into_boxed_slice();
-                    self.log.add_msg(Msg {
+                    self.log().add_msg(Msg {
                         kind: logger::Kind::Debug,
                         data: logger::range_data(
                             None,
@@ -3114,11 +3131,11 @@ impl<'a> Resolver<'a> {
                         ..Default::default()
                     })?;
                 }
-            } else if (self.log.level as u32) <= (logger::Level::Verbose as u32) {
-                if logger::Kind::Verbose.should_print(self.log.level) {
+            } else if (self.log().level as u32) <= (logger::Level::Verbose as u32) {
+                if logger::Kind::Verbose.should_print(self.log().level) {
                     let what = core::mem::take(&mut debug.what);
                     let notes = core::mem::take(&mut debug.notes).into_boxed_slice();
-                    self.log.add_msg(Msg {
+                    self.log().add_msg(Msg {
                         kind: logger::Kind::Verbose,
                         data: logger::range_data(
                             None,
@@ -3191,7 +3208,7 @@ impl<'a> Resolver<'a> {
         struct ElapsedGuard<'g, 'a>(&'g mut Resolver<'a>);
         // TODO(port): elapsed accumulation moved to end of function for borrowck
 
-        if self.log.level == logger::Level::Verbose {
+        if self.log().level == logger::Level::Verbose {
             if self.debug_logs.is_some() {
                 // deinit → drop
                 self.debug_logs = None;
@@ -3522,7 +3539,7 @@ impl<'a> Resolver<'a> {
                         // PORT NOTE: copy out `path` so the `&self.opts.framework` borrow
                         // ends before `self.resolve(&mut self, ...)`.
                         let path: &'static [u8] = unsafe { &*(path.as_ref() as *const [u8]) };
-                        let top = self.fs.top_level_dir;
+                        let top = self.fs().top_level_dir;
                         return self.resolve(top, path, ast::ImportKind::EntryPointBuild);
                     }
                 }
@@ -3640,7 +3657,7 @@ impl<'a> Resolver<'a> {
                 // SAFETY: ARENA — slot in the BSSMap-backed EntriesOptionMap singleton; outlives the resolver.
                 let entries = unsafe { &mut *entries };
                 if let Some(query) = entries.get(path.name.filename()) {
-                    let symlink_path = query.entry.symlink(&mut self.fs.fs, self.store_fd);
+                    let symlink_path = query.entry.symlink(&mut self.fs().fs, self.store_fd);
                     if !symlink_path.is_empty() {
                         path.set_realpath(symlink_path);
                         if !result.file_fd.is_valid() {
@@ -3661,7 +3678,7 @@ impl<'a> Resolver<'a> {
 
                         // PORT NOTE: `abs_buf` returns a borrow of `buf`; capture only the
                         // length so `buf` can be re-borrowed for null-termination below.
-                        let out_len = self.fs.abs_buf(&parts, &mut buf).len();
+                        let out_len = self.fs().abs_buf(&parts, &mut buf).len();
 
                         let store_fd = self.store_fd;
 
@@ -3682,7 +3699,7 @@ impl<'a> Resolver<'a> {
                         // PORT NOTE: snapshot `need_to_close_files` and raw-ptr the entry so
                         // the `move` closure captures only Copy values — keeps `self` and
                         // `query.entry` reborrowable across the guard's lifetime.
-                        let need_close = self.fs.fs.need_to_close_files();
+                        let need_close = self.fs().fs.need_to_close_files();
                         let entry_ptr: *mut Fs::file_system::Entry = query.entry;
                         let _close_guard = scopeguard::guard((), move |_| {
                             if need_close {
@@ -3766,7 +3783,7 @@ impl<'a> Resolver<'a> {
                         && import_path[import_path.len() - 2] == b'.'
                         && import_path[import_path.len() - 1] == b'.');
                 let buf = bufs!(relative_abs_path);
-                let Some(abs) = self.fs.abs_buf_checked(&[import_path], buf) else {
+                let Some(abs) = self.fs().abs_buf_checked(&[import_path], buf) else {
                     return ResultUnion::NotFound;
                 };
                 let mut len = abs.len();
@@ -3986,7 +4003,7 @@ impl<'a> Resolver<'a> {
         kind: ast::ImportKind,
         global_cache: GlobalCache,
     ) -> ResultUnion {
-        let Some(abs_path) = self.fs.abs_buf_checked(&[source_dir, import_path], bufs!(relative_abs_path)) else {
+        let Some(abs_path) = self.fs().abs_buf_checked(&[source_dir, import_path], bufs!(relative_abs_path)) else {
             return ResultUnion::NotFound;
         };
 
@@ -4003,7 +4020,7 @@ impl<'a> Resolver<'a> {
             }
 
             return ResultUnion::Success(Result {
-                path_pair: PathPair { primary: Path::init(self.fs.dirname_store.append_slice(abs_path).expect("oom")), secondary: None },
+                path_pair: PathPair { primary: Path::init(self.fs().dirname_store.append_slice(abs_path).expect("oom")), secondary: None },
                 flags: ResultFlags::IS_EXTERNAL,
                 ..Default::default()
             });
@@ -4020,7 +4037,7 @@ impl<'a> Resolver<'a> {
                     if let Some(remap) = self.check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(import_dir_info, abs_path) {
                         // Is the path disabled?
                         if remap.is_empty() {
-                            let mut _path = Path::init(self.fs.dirname_store.append_slice(abs_path).expect("unreachable"));
+                            let mut _path = Path::init(self.fs().dirname_store.append_slice(abs_path).expect("unreachable"));
                             _path.is_disabled = true;
                             return ResultUnion::Success(Result {
                                 path_pair: PathPair { primary: _path, secondary: None },
@@ -4365,7 +4382,7 @@ impl<'a> Resolver<'a> {
     /// See `assertValidCacheKey` for requirements on the input
     pub fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
         Self::assert_valid_cache_key(path);
-        let first_bust = self.fs.fs.bust_entries_cache(path);
+        let first_bust = self.fs().fs.bust_entries_cache(path);
         let second_bust = self.dir_cache.remove(path);
         bun_output::scoped_log!(Resolver, "Bust {} = {}, {}", bstr::BStr::new(path), first_bust, second_bust);
         first_bust || second_bust
@@ -4442,7 +4459,7 @@ impl<'a> Resolver<'a> {
             // Try looking up the path relative to the base URL
             if tsconfig.has_base_url() {
                 let base: &[u8] = &tsconfig.base_url;
-                if let Some(abs) = self.fs.abs_buf_checked(&[base, import_path], bufs!(load_as_file_or_directory_via_tsconfig_base_path)) {
+                if let Some(abs) = self.fs().abs_buf_checked(&[base, import_path], bufs!(load_as_file_or_directory_via_tsconfig_base_path)) {
                     if let Some(res) = self.load_as_file_or_directory(abs, kind) {
                         if let Some(d) = self.debug_logs.as_mut() { d.decrease_indent(); }
                         return MatchResultUnion::Success(res);
@@ -4510,7 +4527,7 @@ impl<'a> Resolver<'a> {
                     // SAFETY: see function-wide note above.
                     unsafe { &*dir_info }.abs_path
                 } else {
-                    match self.fs.abs_buf_checked(
+                    match self.fs().abs_buf_checked(
                         // SAFETY: see function-wide note above.
                         &[unsafe { &*dir_info }.abs_path, b"node_modules", import_path],
                         bufs!(node_modules_check),
@@ -4536,7 +4553,7 @@ impl<'a> Resolver<'a> {
                     } else {
                         // SAFETY: see function-wide note above.
                         let parts = [unsafe { &*dir_info }.abs_path, b"node_modules".as_slice(), esm.name];
-                        self.fs.abs_buf(&parts, bufs!(esm_absolute_package_path))
+                        self.fs().abs_buf(&parts, bufs!(esm_absolute_package_path))
                     };
 
                     if let Ok(Some(pkg_dir_info_ptr)) = self.dir_info_cached(abs_package_path) {
@@ -4682,7 +4699,7 @@ impl<'a> Resolver<'a> {
         if !node_path.is_empty() {
             let delim = if cfg!(windows) { b';' } else { b':' };
             for path in node_path.split(|&b| b == delim).filter(|s| !s.is_empty()) {
-                let Some(abs_path) = self.fs.abs_buf_checked(&[path, import_path], bufs!(node_modules_check)) else {
+                let Some(abs_path) = self.fs().abs_buf_checked(&[path, import_path], bufs!(node_modules_check)) else {
                     continue;
                 };
                 if let Some(debug) = self.debug_logs.as_mut() {
@@ -4985,7 +5002,7 @@ impl<'a> Resolver<'a> {
                                 }
                             }
 
-                            let Some(abs_path) = self.fs.abs_buf_checked(&[pkg_dir_info.abs_path, esm.subpath], bufs!(node_modules_check)) else {
+                            let Some(abs_path) = self.fs().abs_buf_checked(&[pkg_dir_info.abs_path, esm.subpath], bufs!(node_modules_check)) else {
                                 if let Some(d) = self.debug_logs.as_mut() { d.decrease_indent(); }
                                 return MatchResultUnion::NotFound;
                             };
@@ -5035,7 +5052,7 @@ impl<'a> Resolver<'a> {
             // we've already looked up this package before
             return Ok(self.dir_cache.at_index(dir_cache_info_result.index));
         }
-        let rfs = &mut self.fs.fs;
+        let rfs = &mut self.fs().fs;
         let mut cached_dir_entry_result = rfs.entries.get_or_put(dir_path);
 
         let mut dir_entries_option: *mut Fs::file_system::real_fs::EntriesOption;
@@ -5045,7 +5062,7 @@ impl<'a> Resolver<'a> {
             Ok(d) => d,
             Err(err) => {
                 // TODO: handle this error better
-                let _ = self.log.add_error_fmt(
+                let _ = self.log().add_error_fmt(
                     None,
                     logger::Loc::EMPTY,
                     format_args!("Unable to open directory: {}", err.name()),
@@ -5278,7 +5295,7 @@ impl<'a> Resolver<'a> {
             return None;
         }
 
-        let abs_esm_path: &[u8] = match self.fs.abs_buf_checked(
+        let abs_esm_path: &[u8] = match self.fs().abs_buf_checked(
             &[abs_package_path, strings::without_leading_path_separator(&esm_resolution.path)],
             bufs!(esm_absolute_package_path_joined),
         ) {
@@ -5349,7 +5366,7 @@ impl<'a> Resolver<'a> {
                     }
                 };
 
-                if entry_query.entry.kind(&mut self.fs.fs, self.store_fd) == Fs::file_system::EntryKind::Dir {
+                if entry_query.entry.kind(&mut self.fs().fs, self.store_fd) == Fs::file_system::EntryKind::Dir {
                     let ends_with_star = esm_resolution.status == Status::ExactEndsWithStar;
                     esm_resolution.status = Status::UnsupportedDirectoryImport;
 
@@ -5368,7 +5385,7 @@ impl<'a> Resolver<'a> {
                                     file_name[index.len()..].copy_from_slice(ext);
                                     let index_query = dir_entries.get(&file_name[..]);
                                     if let Some(iq) = index_query {
-                                        if iq.entry.kind(&mut self.fs.fs, self.store_fd) == Fs::file_system::EntryKind::File {
+                                        if iq.entry.kind(&mut self.fs().fs, self.store_fd) == Fs::file_system::EntryKind::File {
                                             if let Some(debug) = self.debug_logs.as_mut() {
                                                 let mut ms = Vec::with_capacity(1 + file_name.len());
                                                 ms.push(b'/');
@@ -5394,7 +5411,7 @@ impl<'a> Resolver<'a> {
                 let absolute_out_path: &[u8] = {
                     if entry_query.entry.abs_path.is_empty() {
                         entry_query.entry.abs_path =
-                            PathString::init(self.fs.dirname_store.append_slice(abs_esm_path).expect("unreachable"));
+                            PathString::init(self.fs().dirname_store.append_slice(abs_esm_path).expect("unreachable"));
                     }
                     entry_query.entry.abs_path.slice()
                 };
@@ -5443,7 +5460,7 @@ impl<'a> Resolver<'a> {
         if is_package_path(import_path) {
             self.load_node_modules(import_path, kind, source_dir_info, global_cache, false)
         } else {
-            let Some(resolved) = self.fs.abs_buf_checked(&[source_dir_info.abs_path, import_path], bufs!(resolve_without_remapping)) else {
+            let Some(resolved) = self.fs().abs_buf_checked(&[source_dir_info.abs_path, import_path], bufs!(resolve_without_remapping)) else {
                 return MatchResultUnion::NotFound;
             };
             if let Some(result) = self.load_as_file_or_directory(resolved, kind) {
@@ -5479,7 +5496,7 @@ impl<'a> Resolver<'a> {
         // The file name needs to be persistent because it can have errors
         // and if those errors need to print the filename
         // then it will be undefined memory if we parse another tsconfig.json late
-        let key_path = Fs::Path::init(self.fs.dirname_store.append_slice(file).expect("unreachable"));
+        let key_path = Fs::Path::init(self.fs().dirname_store.append_slice(file).expect("unreachable"));
 
         let source = logger::Source::init_path_string(key_path.text(), entry.contents);
         let file_dir = source.path.source_dir();
@@ -5493,14 +5510,14 @@ impl<'a> Resolver<'a> {
             // this might leak
             if !bun_paths::is_absolute(result.base_url) {
                 let paths = [file_dir, result.base_url];
-                result.base_url = self.fs.dirname_store.append_slice(self.fs.abs_buf(&paths, bufs!(tsconfig_base_url))).expect("unreachable");
+                result.base_url = self.fs().dirname_store.append_slice(self.fs().abs_buf(&paths, bufs!(tsconfig_base_url))).expect("unreachable");
             }
         }
 
         if result.paths.count() > 0 && (result.base_url_for_paths.is_empty() || !bun_paths::is_absolute(result.base_url_for_paths)) {
             // this might leak
             let paths = [file_dir, result.base_url];
-            result.base_url_for_paths = self.fs.dirname_store.append_slice(self.fs.abs_buf(&paths, bufs!(tsconfig_base_url))).expect("unreachable");
+            result.base_url_for_paths = self.fs().dirname_store.append_slice(self.fs().abs_buf(&paths, bufs!(tsconfig_base_url))).expect("unreachable");
         }
 
         return Ok(Some(result));
@@ -5573,7 +5590,7 @@ impl<'a> Resolver<'a> {
         let mut input_path = raw_input_path;
 
         if is_dot_slash(input_path) || input_path == b"." {
-            input_path = self.fs.top_level_dir;
+            input_path = self.fs().top_level_dir;
         }
 
         // A path longer than MAX_PATH_BYTES cannot name a real directory.
@@ -5586,7 +5603,7 @@ impl<'a> Resolver<'a> {
         #[cfg(windows)]
         {
             let win32_normalized_dir_info_cache_buf = bufs!(win32_normalized_dir_info_cache);
-            input_path = self.fs.normalize_buf(win32_normalized_dir_info_cache_buf, input_path);
+            input_path = self.fs().normalize_buf(win32_normalized_dir_info_cache_buf, input_path);
             // kind of a patch on the fact normalizeBuf isn't 100% perfect what we want
             if (input_path.len() == 2 && input_path[1] == b':')
                 || (input_path.len() == 3 && input_path[1] == b':' && input_path[2] == b'.')
@@ -5652,10 +5669,10 @@ impl<'a> Resolver<'a> {
         Self::assert_valid_cache_key(root_path);
 
         // PORT NOTE: hold RealFS as a raw `*mut` so the entries-mutex/close-dirs
-        // scopeguards can capture it by Copy without keeping a `&mut self.fs.fs`
+        // scopeguards can capture it by Copy without keeping a `&mut self.fs().fs`
         // borrow live across the loop body (which calls `&mut self` methods).
-        // SAFETY: ARENA — `self.fs.fs` is the process-global RealFS singleton.
-        let rfs: *mut Fs::file_system::RealFS = &mut self.fs.fs;
+        // SAFETY: ARENA — `self.fs().fs` is the process-global RealFS singleton.
+        let rfs: *mut Fs::file_system::RealFS = &mut self.fs().fs;
         macro_rules! rfs { () => { unsafe { &mut *rfs } } }
 
         rfs!().entries_mutex.lock();
@@ -5749,7 +5766,7 @@ impl<'a> Resolver<'a> {
         // PORT NOTE: capture only what the cleanup needs by-value (store_fd) / by-Cell
         // (open_dir_count) so the guard doesn't pin `&mut self` across the loop body.
         let close_dirs_store_fd = self.store_fd;
-        let close_dirs_need_close = self.fs.fs.need_to_close_files();
+        let close_dirs_need_close = self.fs().fs.need_to_close_files();
         let _close_dirs = scopeguard::guard((), |_| {
             let n = open_dir_count.get();
             if n > 0 && (!close_dirs_store_fd || close_dirs_need_close) {
@@ -5847,7 +5864,7 @@ impl<'a> Resolver<'a> {
                             if !(err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound")) {
                                 if ENABLE_LOGGING {
                                     let pretty = queue_top.unsafe_path;
-                                    let _ = self.log.add_error_fmt(
+                                    let _ = self.log().add_error_fmt(
                                         None,
                                         logger::Loc::default(),
                                         format_args!(
@@ -5880,9 +5897,9 @@ impl<'a> Resolver<'a> {
                     // Now that we've opened the topmost directory successfully, it's reasonable to store the slice.
                     if path[path.len() - 1] != SEP {
                         let parts: [&[u8]; 2] = [path, SEP_STR.as_bytes()];
-                        _safe_path = Some(self.fs.dirname_store.append_parts(&parts)?);
+                        _safe_path = Some(self.fs().dirname_store.append_parts(&parts)?);
                     } else {
-                        _safe_path = Some(self.fs.dirname_store.append_slice(path)?);
+                        _safe_path = Some(self.fs().dirname_store.append_slice(path)?);
                     }
                 }
 
@@ -6048,7 +6065,7 @@ impl<'a> Resolver<'a> {
 
                         if !bun_paths::is_absolute(absolute_original_path) {
                             let parts: [&[u8]; 2] = [abs_base_url, original_path.as_ref()];
-                            absolute_original_path = self.fs.abs_buf(&parts, bufs!(tsconfig_path_abs));
+                            absolute_original_path = self.fs().abs_buf(&parts, bufs!(tsconfig_path_abs));
                         }
 
                         if let Some(res) = self.load_as_file_or_directory(absolute_original_path, kind) {
@@ -6128,7 +6145,7 @@ impl<'a> Resolver<'a> {
 
                 // 1. Normalize the base path
                 // so that "/Users/foo/project/", "../components/*" => "/Users/foo/components/""
-                let Some(prefix) = self.fs.abs_buf_checked(&prefix_parts, bufs!(tsconfig_match_full_buf2)) else {
+                let Some(prefix) = self.fs().abs_buf_checked(&prefix_parts, bufs!(tsconfig_match_full_buf2)) else {
                     continue;
                 };
 
@@ -6143,7 +6160,7 @@ impl<'a> Resolver<'a> {
                     },
                     strings::trim_left(longest_match.suffix, b"/"),
                 ];
-                let Some(absolute_original_path) = self.fs.abs_buf_checked(&parts, bufs!(tsconfig_match_full_buf)) else {
+                let Some(absolute_original_path) = self.fs().abs_buf_checked(&parts, bufs!(tsconfig_match_full_buf)) else {
                     continue;
                 };
 
@@ -6267,7 +6284,7 @@ impl<'a> Resolver<'a> {
         }
 
         // Normalize the path so we can compare against it without getting confused by "./"
-        let cleaned = self.fs.normalize_buf(bufs!(check_browser_map), input_path);
+        let cleaned = self.fs().normalize_buf(bufs!(check_browser_map), input_path);
 
         if cleaned.len() == 1 && cleaned[0] == b'.' {
             // No bundler supports remapping ".", so we don't either
@@ -6361,7 +6378,7 @@ impl<'a> Resolver<'a> {
                         // Is the path disabled?
                         if remap.is_empty() {
                             let paths = [path, field_rel_path];
-                            let new_path = self.fs.abs_alloc(&paths).expect("unreachable");
+                            let new_path = self.fs().abs_alloc(&paths).expect("unreachable");
                             let mut _path = Path::init(new_path);
                             _path.is_disabled = true;
                             dec_ret!(Some(MatchResult {
@@ -6377,7 +6394,7 @@ impl<'a> Resolver<'a> {
             }
         }
         let _paths = [path, field_rel_path];
-        let field_abs_path = self.fs.abs_buf(&_paths, bufs!(field_abs_path));
+        let field_abs_path = self.fs().abs_buf(&_paths, bufs!(field_abs_path));
 
         // Is this a file?
         if let Some(result) = self.load_as_file(field_abs_path, extension_order) {
@@ -6433,7 +6450,7 @@ impl<'a> Resolver<'a> {
     }
 
     fn load_index_with_extension(&mut self, dir_info: &mut DirInfo::DirInfo, ext: &[u8]) -> Option<MatchResult> {
-        let rfs = &mut self.fs.fs;
+        let rfs = &mut self.fs().fs;
 
         let ext_buf = bufs!(extension_path);
 
@@ -6449,9 +6466,9 @@ impl<'a> Resolver<'a> {
                     let out_buf: &[u8] = {
                         if lookup.entry.abs_path.is_empty() {
                             let parts = [dir_info.abs_path, &base[..]];
-                            let out_buf_ = self.fs.abs_buf(&parts, bufs!(index));
+                            let out_buf_ = self.fs().abs_buf(&parts, bufs!(index));
                             lookup.entry.abs_path =
-                                PathString::init(self.fs.dirname_store.append_slice(out_buf_).expect("unreachable"));
+                                PathString::init(self.fs().dirname_store.append_slice(out_buf_).expect("unreachable"));
                         }
                         lookup.entry.abs_path.slice()
                     };
@@ -6517,7 +6534,7 @@ impl<'a> Resolver<'a> {
                         // Is the path disabled?
                         if remap.is_empty() {
                             let paths = [path, FIELD_REL_PATH];
-                            let new_path = self.fs.abs_buf(&paths, bufs!(remap_path));
+                            let new_path = self.fs().abs_buf(&paths, bufs!(remap_path));
                             let mut _path = Path::init(new_path);
                             _path.is_disabled = true;
                             return Some(MatchResult {
@@ -6528,7 +6545,7 @@ impl<'a> Resolver<'a> {
                         }
 
                         let new_paths = [path, remap];
-                        let remapped_abs = self.fs.abs_buf(&new_paths, bufs!(remap_path));
+                        let remapped_abs = self.fs().abs_buf(&new_paths, bufs!(remap_path));
 
                         // Is this a file
                         if let Some(file_result) = self.load_as_file(remapped_abs, extension_order) {
@@ -6752,7 +6769,7 @@ impl<'a> Resolver<'a> {
         // pointer here. We re-borrow `&mut *rfs` at each use site so `&mut self`
         // calls (debug_logs, load_extension) don't conflict. TODO(port): split
         // RealFS borrow once entries iteration is interior-mutability-backed.
-        let rfs: *mut Fs::file_system::RealFS = &mut self.fs.fs;
+        let rfs: *mut Fs::file_system::RealFS = &mut self.fs().fs;
         #[allow(unused_macros)]
         macro_rules! rfs { () => { unsafe { &mut *rfs } } }
 
@@ -6785,7 +6802,7 @@ impl<'a> Resolver<'a> {
                     || e == bun_core::err!("ENOTDIR")
                     || e == bun_core::err!("NotDir") => {}
                 _ => {
-                    let _ = self.log.add_error_fmt(
+                    let _ = self.log().add_error_fmt(
                         None,
                         logger::Loc::EMPTY,
                         format_args!(
@@ -6820,7 +6837,7 @@ impl<'a> Resolver<'a> {
                     if query.entry.abs_path.is_empty() {
                         let abs_path_parts = [query.entry.dir, query.entry.base()];
                         query.entry.abs_path = PathString::init(
-                            self.fs.dirname_store.append_slice(self.fs.abs_buf(&abs_path_parts, bufs!(load_as_file))).expect("unreachable"),
+                            self.fs().dirname_store.append_slice(self.fs().abs_buf(&abs_path_parts, bufs!(load_as_file))).expect("unreachable"),
                         );
                     }
                     // SAFETY: PathString backs onto FilenameStore singleton (interned 'static).
@@ -6904,11 +6921,11 @@ impl<'a> Resolver<'a> {
                                     if query.entry.abs_path.is_empty() {
                                         if !query.entry.dir.is_empty() && query.entry.dir[query.entry.dir.len() - 1] == SEP {
                                             let parts: [&[u8]; 2] = [query.entry.dir, &buffer[..]];
-                                            query.entry.abs_path = PathString::init(self.fs.filename_store.append_parts(&parts).expect("unreachable"));
+                                            query.entry.abs_path = PathString::init(self.fs().filename_store.append_parts(&parts).expect("unreachable"));
                                             // the trailing path CAN be missing here
                                         } else {
                                             let parts: [&[u8]; 3] = [query.entry.dir, SEP_STR.as_bytes(), &buffer[..]];
-                                            query.entry.abs_path = PathString::init(self.fs.filename_store.append_parts(&parts).expect("unreachable"));
+                                            query.entry.abs_path = PathString::init(self.fs().filename_store.append_parts(&parts).expect("unreachable"));
                                         }
                                     }
                                     // SAFETY: PathString backs onto FilenameStore singleton (interned 'static).
@@ -6951,7 +6968,7 @@ impl<'a> Resolver<'a> {
     ) -> Option<LoadResult> {
         // SAFETY: PORT — see load_as_file; raw-ptr re-borrow so `&mut self`
         // (debug_logs / dirname_store) doesn't alias `rfs`/`entries`.
-        let rfs: *mut Fs::file_system::RealFS = &mut self.fs.fs;
+        let rfs: *mut Fs::file_system::RealFS = &mut self.fs().fs;
         let entries: *const Fs::file_system::DirEntry = entries;
         let buffer = &mut bufs!(load_as_file)[0..path.len() + ext.len()];
         buffer[path.len()..].copy_from_slice(ext);
@@ -6971,7 +6988,7 @@ impl<'a> Resolver<'a> {
                 return Some(LoadResult {
                     path: {
                         query.entry.abs_path = if query.entry.abs_path.is_empty() {
-                            PathString::init(self.fs.dirname_store.append_slice(&buffer[..]).expect("unreachable"))
+                            PathString::init(self.fs().dirname_store.append_slice(&buffer[..]).expect("unreachable"))
                         } else {
                             query.entry.abs_path
                         };
@@ -7007,7 +7024,7 @@ impl<'a> Resolver<'a> {
         // Zig held raw pointers here. Re-borrow at each use so `&mut self` calls
         // (debug_logs / dirname_store / parse_*) don't trip borrowck.
         // TODO(port): split RealFS borrow once entries iteration is interior-mutability-backed.
-        let rfs_ptr: *mut Fs::file_system::RealFS = &mut self.fs.fs;
+        let rfs_ptr: *mut Fs::file_system::RealFS = &mut self.fs().fs;
         let entries_ptr: *mut Fs::file_system::DirEntry = unsafe { &mut *_entries }.entries_mut();
         let rfs: &mut Fs::file_system::RealFS = unsafe { &mut *rfs_ptr };
         let entries: &mut Fs::file_system::DirEntry = unsafe { &mut *entries_ptr };
@@ -7081,7 +7098,7 @@ impl<'a> Resolver<'a> {
                                 }
                             }
 
-                            let Ok(stored) = self.fs.dirname_store.append_slice(bin_path) else {
+                            let Ok(stored) = self.fs().dirname_store.append_slice(bin_path) else {
                                 break 'append_bin_dir;
                             };
                             let _ = BIN_FOLDERS.assume_init_mut().append(stored);
@@ -7118,7 +7135,7 @@ impl<'a> Resolver<'a> {
                                     }
                                 }
 
-                                let Ok(stored) = self.fs.dirname_store.append_slice(bin_path) else {
+                                let Ok(stored) = self.fs().dirname_store.append_slice(bin_path) else {
                                     break 'append_bin_dir;
                                 };
                                 let _ = BIN_FOLDERS.assume_init_mut().append(stored);
@@ -7176,7 +7193,7 @@ impl<'a> Resolver<'a> {
                         } else if !parent_.abs_real_path.is_empty() {
                             // this might leak a little i'm not sure
                             let parts = [parent_.abs_real_path, base];
-                            symlink = self.fs.dirname_store.append_slice(self.fs.abs_buf(&parts, bufs!(dir_info_uncached_filename))).expect("unreachable");
+                            symlink = self.fs().dirname_store.append_slice(self.fs().abs_buf(&parts, bufs!(dir_info_uncached_filename))).expect("unreachable");
 
                             if let Some(logs) = self.debug_logs.as_mut() {
                                 let mut buf = Vec::new();
@@ -7236,7 +7253,7 @@ impl<'a> Resolver<'a> {
                     let entry = &lookup.entry;
                     if entry.kind(rfs, self.store_fd) == Fs::file_system::EntryKind::File {
                         let parts = [path, b"tsconfig.json".as_slice()];
-                        tsconfig_path = Some(self.fs.abs_buf(&parts, bufs!(dir_info_uncached_filename)));
+                        tsconfig_path = Some(self.fs().abs_buf(&parts, bufs!(dir_info_uncached_filename)));
                     }
                 }
                 if tsconfig_path.is_none() {
@@ -7244,7 +7261,7 @@ impl<'a> Resolver<'a> {
                         let entry = &lookup.entry;
                         if entry.kind(rfs, self.store_fd) == Fs::file_system::EntryKind::File {
                             let parts = [path, b"jsconfig.json".as_slice()];
-                            tsconfig_path = Some(self.fs.abs_buf(&parts, bufs!(dir_info_uncached_filename)));
+                            tsconfig_path = Some(self.fs().abs_buf(&parts, bufs!(dir_info_uncached_filename)));
                         }
                     }
                 }
@@ -7265,9 +7282,9 @@ impl<'a> Resolver<'a> {
                     Err(err) => {
                         let pretty = tsconfigpath;
                         if err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound") {
-                            let _ = self.log.add_error_fmt(None, logger::Loc::EMPTY, format_args!("Cannot find tsconfig file {}", bun_core::fmt::quote(pretty)));
+                            let _ = self.log().add_error_fmt(None, logger::Loc::EMPTY, format_args!("Cannot find tsconfig file {}", bun_core::fmt::quote(pretty)));
                         } else if err != bun_core::err!("ParseErrorAlreadyLogged") && err != bun_core::err!("IsDir") && err != bun_core::err!("EISDIR") {
-                            let _ = self.log.add_error_fmt(None, logger::Loc::EMPTY, format_args!("Cannot read file {}: {}", bun_core::fmt::quote(pretty), bstr::BStr::new(err.name())));
+                            let _ = self.log().add_error_fmt(None, logger::Loc::EMPTY, format_args!("Cannot read file {}: {}", bun_core::fmt::quote(pretty), bstr::BStr::new(err.name())));
                         }
                         None
                     }
@@ -7289,7 +7306,7 @@ impl<'a> Resolver<'a> {
                         let parent_config_maybe: Option<*mut TSConfigJSON> = match self.parse_tsconfig(abs_path, FD::INVALID) {
                             Ok(v) => v.map(|r| r as *mut _),
                             Err(err) => {
-                                let _ = self.log.add_debug_fmt(None, logger::Loc::EMPTY, format_args!(
+                                let _ = self.log().add_debug_fmt(None, logger::Loc::EMPTY, format_args!(
                                     "{} loading tsconfig.json extends {}",
                                     bstr::BStr::new(err.name()),
                                     bun_core::fmt::quote(abs_path)

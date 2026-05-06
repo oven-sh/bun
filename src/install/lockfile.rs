@@ -578,7 +578,7 @@ impl Lockfile {
                 });
             }
 
-            bun_core::analytics::Features::text_lockfile_inc(1);
+            bun_core::analytics::Features::text_lockfile_inc();
 
             return LoadResult::Ok(LoadResultOk {
                 lockfile: self,
@@ -637,7 +637,7 @@ impl Lockfile {
                     ));
                 }
 
-                bun_core::analytics::Features::text_lockfile_inc(1);
+                bun_core::analytics::Features::text_lockfile_inc();
             }
         }
 
@@ -977,7 +977,7 @@ impl Lockfile {
 
     /// Does this tree id belong to a workspace (including workspace root)?
     /// TODO(dylan-conway) fix!
-    pub fn is_workspace_tree_id(&self, id: Tree::Id) -> bool {
+    pub fn is_workspace_tree_id(&self, id: tree::Id) -> bool {
         id == 0
             || self.buffers.dependencies
                 [self.buffers.trees[id as usize].dependency_id as usize]
@@ -1074,7 +1074,7 @@ impl Lockfile {
             log,
             old_preinstall_state,
             manager,
-            trees: Tree::List::default(),
+            trees: tree::List::default(),
             trees_count: 1,
         };
 
@@ -1234,7 +1234,8 @@ impl Lockfile {
                 "Clean lockfile: {} packages -> {} packages in {}\n",
                 old.packages.len(),
                 new.packages.len(),
-                bun_core::fmt::fmt_duration_one_decimal(timer.read()),
+                // SAFETY: only entered when `log_level.is_verbose()`, which set `timer = Some(..)`.
+                bun_core::fmt::fmt_duration_one_decimal(timer.as_ref().unwrap().read()),
             ));
         }
 
@@ -1339,8 +1340,8 @@ impl<'a> Cloner<'a> {
 // ────────────────────────────────────────────────────────────────────────────
 
 impl Lockfile {
-    pub fn resolve(&mut self, log: &mut logger::Log) -> Result<(), Tree::SubtreeError> {
-        self.hoist::<{ Tree::BuilderMethod::Resolvable }>(log, (), (), (), ())
+    pub fn resolve(&mut self, log: &mut logger::Log) -> Result<(), tree::SubtreeError> {
+        self.hoist::<{ tree::BuilderMethod::Resolvable }>(log, None, true, &[], None)
     }
 
     pub fn filter(
@@ -1350,8 +1351,8 @@ impl Lockfile {
         install_root_dependencies: bool,
         workspace_filters: &[WorkspaceFilter],
         packages_to_install: Option<&[PackageID]>,
-    ) -> Result<(), Tree::SubtreeError> {
-        self.hoist::<{ Tree::BuilderMethod::Filter }>(
+    ) -> Result<(), tree::SubtreeError> {
+        self.hoist::<{ tree::BuilderMethod::Filter }>(
             log,
             manager,
             install_root_dependencies,
@@ -1377,8 +1378,8 @@ impl Lockfile {
     ) -> Result<(), tree::SubtreeError> {
         let slice = self.packages.slice();
 
-        let mut builder = Tree::Builder::<METHOD> {
-            queue: Tree::BuilderQueue::init(),
+        let mut builder = tree::Builder::<METHOD> {
+            queue: tree::TreeFiller::init(),
             resolution_lists: slice.items_resolutions(),
             resolutions: self.buffers.resolutions.as_slice(),
             dependencies: self.buffers.dependencies.as_slice(),
@@ -1388,7 +1389,7 @@ impl Lockfile {
             install_root_dependencies,
             workspace_filters,
             packages_to_install,
-            pending_optional_peers: Tree::PendingOptionalPeers::init(),
+            pending_optional_peers: Default::default(),
             ..Default::default()
         };
         // TODO(port): Tree::Builder field set may differ; verify in Phase B.
@@ -1907,7 +1908,7 @@ impl Lockfile {
     fn init_empty_value() -> Self {
         Lockfile {
             format: FormatVersion::current(),
-            text_lockfile_version: TextLockfile::Version::current(),
+            text_lockfile_version: bun_lock::Version::current(),
             packages: Default::default(),
             buffers: Buffers::default(),
             package_index: PackageIndexMap::default(),
@@ -2180,7 +2181,7 @@ pub struct Scratch {
 
 pub type DuplicateCheckerMap =
     BunHashMap<PackageNameHash, logger::Loc, IdentityContext<PackageNameHash>>;
-pub type DependencyQueue = LinearFifo<DependencySlice>;
+pub type DependencyQueue = LinearFifo<DependencySlice, DynamicBuffer<DependencySlice>>;
 
 impl Scratch {
     pub fn init() -> Scratch {

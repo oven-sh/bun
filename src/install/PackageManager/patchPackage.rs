@@ -504,7 +504,7 @@ pub fn do_patch_commit(
     // MOVE_DOWN(b0): `bun.jsc.Node.fs.NodeFS{}.mkdirRecursive(args)` — only the
     // mkdir-p syscall is used here, no JS surface; route directly through
     // `bun_sys::mkdir_recursive` to avoid the `bun_runtime` dep cycle.
-    let patches_dir: &[u8] = manager.options.patch_features.commit.patches_dir.as_ref();
+    let patches_dir: &[u8] = &manager.options.patch_features.commit.patches_dir;
     if let Some(e) = sys::mkdir_recursive(patches_dir).as_err() {
         Output::err(e, "failed to make patches dir {f}", format_args!("{}", bun_fmt::quote(patches_dir)));
         Global::crash();

@@ -82,7 +82,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
     let tmpname = FileSystem::tmpname(b"hm", &mut tmpbuf, bun_core::fast_random()).expect("unreachable");
 
     // TODO(port): std.time.Timer — using bun_core::time::Timer placeholder
-    let mut timer = if manager.options.log_level != Options::LogLevel::Silent {
+    let mut timer = if manager.options.log_level != LogLevel::Silent {
         Some(bun_core::time::Timer::start().expect("unreachable"))
     } else {
         None
@@ -170,7 +170,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
         unsafe { USING_FALLBACK_TEMP_DIR = true; }
     }
 
-    if manager.options.log_level != Options::LogLevel::Silent {
+    if manager.options.log_level != LogLevel::Silent {
         let elapsed = timer.as_mut().unwrap().read();
         if elapsed > bun_core::time::NS_PER_MS * 100 {
             let mut path_buf = PathBuffer::uninit();
@@ -795,30 +795,30 @@ pub fn attempt_to_create_package_json() -> Result<(), Error> {
 
 pub fn save_lockfile(
     this: &mut PackageManager,
-    load_result: &Lockfile::LoadResult,
-    save_format: Lockfile::LoadResult::LockfileFormat,
+    load_result: &LoadResult,
+    save_format: LockfileFormat,
     had_any_diffs: bool,
     // TODO(dylan-conway): this and `packages_len_before_install` can most likely be deleted
     // now that git dependnecies don't append to lockfile during installation.
     lockfile_before_install: &Lockfile,
     packages_len_before_install: usize,
-    log_level: Options::LogLevel,
+    log_level: LogLevel,
 ) -> Result<(), AllocError> {
     if this.lockfile.is_empty() {
         if !this.options.dry_run {
             'delete: {
                 let delete_format = match load_result {
-                    Lockfile::LoadResult::NotFound => break 'delete,
-                    Lockfile::LoadResult::Err(err) => err.format,
-                    Lockfile::LoadResult::Ok(ok) => ok.format,
+                    LoadResult::NotFound => break 'delete,
+                    LoadResult::Err(err) => err.format,
+                    LoadResult::Ok(ok) => ok.format,
                 };
 
                 match sys::unlinkat(
                     Fd::cwd(),
-                    if delete_format == Lockfile::LoadResult::LockfileFormat::Text {
-                        bun_paths::os_path_literal("bun.lock")
+                    if delete_format == LockfileFormat::Text {
+                        bun_paths::os_path_literal!("bun.lock")
                     } else {
-                        bun_paths::os_path_literal("bun.lockb")
+                        bun_paths::os_path_literal!("bun.lockb")
                     },
                 )
                 .unwrap()
@@ -833,7 +833,7 @@ pub fn save_lockfile(
                             break 'delete;
                         }
 
-                        if log_level != Options::LogLevel::Silent {
+                        if log_level != LogLevel::Silent {
                             Output::err(err, format_args!("failed to delete empty lockfile"));
                         }
                         return Ok(());
@@ -842,7 +842,7 @@ pub fn save_lockfile(
             }
         }
         if !this.options.global {
-            if log_level != Options::LogLevel::Silent {
+            if log_level != LogLevel::Silent {
                 match this.subcommand {
                     PackageManager::Subcommand::Remove => {
                         Output::pretty_errorln(format_args!("\npackage.json has no dependencies! Deleted empty lockfile"))
@@ -868,12 +868,12 @@ pub fn save_lockfile(
     this.lockfile.save_to_disk(load_result, &this.options);
 
     // delete binary lockfile if saving text lockfile
-    if save_format == Lockfile::LoadResult::LockfileFormat::Text && load_result.loaded_from_binary_lockfile() {
-        let _ = sys::unlinkat(Fd::cwd(), bun_paths::os_path_literal("bun.lockb"));
+    if save_format == LockfileFormat::Text && load_result.loaded_from_binary_lockfile() {
+        let _ = sys::unlinkat(Fd::cwd(), bun_paths::os_path_literal!("bun.lockb"));
     }
 
     if cfg!(debug_assertions) {
-        if !matches!(load_result, Lockfile::LoadResult::NotFound) {
+        if !matches!(load_result, LoadResult::NotFound) {
             if load_result.loaded_from_text_lockfile() {
                 if !this.lockfile.eql(lockfile_before_install, packages_len_before_install)? {
                     Output::panic(format_args!("Lockfile non-deterministic after saving"));
@@ -891,7 +891,7 @@ pub fn save_lockfile(
         this.progress.refresh();
         this.progress.root.end();
         this.progress = Default::default();
-    } else if log_level != Options::LogLevel::Silent {
+    } else if log_level != LogLevel::Silent {
         Output::pretty_errorln(format_args!("Saved lockfile"));
         Output::flush();
     }
@@ -901,10 +901,10 @@ pub fn save_lockfile(
 
 pub fn update_lockfile_if_needed(
     manager: &mut PackageManager,
-    load_result: Lockfile::LoadResult,
+    load_result: LoadResult,
 ) -> Result<(), Error> {
     // TODO(port): narrow error set
-    if let Lockfile::LoadResult::Ok(ok) = &load_result {
+    if let LoadResult::Ok(ok) = &load_result {
         if ok.serializer_result.packages_need_update {
             let slice = manager.lockfile.packages.slice();
             for meta in slice.items_meta_mut() {
@@ -926,11 +926,15 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
 
     let mut tmpname_buf = [0u8; 512];
     tmpname_buf[0..8].copy_from_slice(b"tmplock-");
-    let mut tmpfile = bun_fs::file_system::RealFS::Tmpfile::default();
+    // PORT NOTE: `FileSystem.RealFS.Tmpfile` lives in `bun_resolver::fs`;
+    // `bun_install` has no `bun_resolver` dep, so use the moved-down
+    // `bun_sys::fs::RealFsTmpfile` (same fields/behavior, no `&mut RealFS` arg
+    // — the POSIX path never used it; Windows opens via `get_default_temp_dir`).
+    let mut tmpfile = sys::fs::RealFsTmpfile::default();
     let mut secret = [0u8; 32];
     secret[0..8].copy_from_slice(&u64::try_from(bun_core::time::milli_timestamp()).unwrap().to_le_bytes());
     let mut base64_bytes = [0u8; 64];
-    bun_core::crypto::random_bytes(&mut base64_bytes);
+    bun_core::csprng(&mut base64_bytes);
 
     // TODO(port): Zig `std.fmt.bufPrint(buf, "{x}", .{&base64_bytes})` formats each u8 as
     // lower-hex WITHOUT zero-pad (1–2 chars/byte); length is computed from the returned slice.
@@ -946,7 +950,7 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
     // SAFETY: tmpname_buf[tmpname_len + 8] == 0 written above
     let tmpname = unsafe { ZStr::from_raw(tmpname_buf.as_ptr(), tmpname_len + 8) };
 
-    if let Err(err) = tmpfile.create(&FileSystem::instance().fs, tmpname) {
+    if let Err(err) = tmpfile.create(tmpname) {
         Output::pretty_errorln(format_args!("<r><red>error:<r> failed to create tmpfile: {}", err.name()));
         Global::crash();
     }
@@ -1013,7 +1017,7 @@ static mut USING_FALLBACK_TEMP_DIR: bool = false;
 // TODO(port): move to bun_str / bun_core if not already provided
 /// Equivalent of `std.fmt.bufPrintZ` — writes formatted bytes into `buf`,
 /// appends a NUL terminator, and returns a `&ZStr` borrowing `buf`.
-fn buf_print_z(buf: &mut [u8], args: fmt::Arguments<'_>) -> Result<&ZStr, fmt::Error> {
+fn buf_print_z<'a>(buf: &'a mut [u8], args: fmt::Arguments<'_>) -> Result<&'a ZStr, fmt::Error> {
     let total = buf.len();
     let mut cursor: &mut [u8] = buf;
     cursor.write_fmt(args).map_err(|_| fmt::Error)?;

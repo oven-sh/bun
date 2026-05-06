@@ -55,11 +55,16 @@ pub fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Task) {
     #[cfg(feature = "show_crash_trace")]
     let _crash_guard = {
         let prev_action = bun_crash_handler::current_action();
-        bun_crash_handler::set_current_action(bun_crash_handler::Action::BundleGenerateChunk {
-            chunk: chunk_ptr as *const (),
-            context: c_ptr as *const (),
-            part_range: &part_range.part_range,
-        });
+        // SAFETY: `c_ptr` / `chunk_ptr` carry valid mutable provenance (see extraction above);
+        // we materialize transient `&` refs only to hand erased `*const ()` to the crash-trace
+        // vtable — they are not retained past this expression.
+        bun_crash_handler::set_current_action(Some(
+            crate::linker_context_mod::bundle_generate_chunk_action(
+                unsafe { &*c_ptr },
+                unsafe { &*chunk_ptr },
+                &part_range.part_range,
+            ),
+        ));
         scopeguard::guard((), move |_| {
             bun_crash_handler::set_current_action(prev_action);
         })
@@ -72,9 +77,9 @@ pub fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Task) {
         let path = &parse_graph.input_files.items_source()
             [part_range.part_range.source_index.get() as usize]
             .path;
-        if bun_core::cli::debug_flags::has_print_breakpoint(path) {
-            // TODO(port): @breakpoint() — no stable Rust equivalent; use core::intrinsics::breakpoint behind cfg or a helper
-            bun_core::breakpoint();
+        // MOVE_DOWN(b0): debug_flags relocated bun_cli → bun_core; takes (pretty, text) split.
+        if bun_core::debug_flags::has_print_breakpoint(&path.pretty, &path.text) {
+            // TODO(port): @breakpoint() — no stable Rust equivalent; left as no-op (see resolver/lib.rs:4573)
         }
     }
 

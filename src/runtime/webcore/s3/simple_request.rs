@@ -64,6 +64,21 @@ pub enum S3UploadResult<'a> {
     Failure(S3Error<'a>),
 }
 
+// PORT NOTE: manual Debug because upstream `S3Error` (bun_s3_signing) doesn't derive Debug and
+// we may not edit that crate from here. Only the variant tag is needed for `scoped_log!`.
+impl core::fmt::Debug for S3UploadResult<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            S3UploadResult::Success => f.write_str("Success"),
+            S3UploadResult::Failure(err) => f
+                .debug_struct("Failure")
+                .field("code", &bun_str::strings::QuotedFormatter { text: err.code })
+                .field("message", &bun_str::strings::QuotedFormatter { text: err.message })
+                .finish(),
+        }
+    }
+}
+
 pub enum S3DeleteResult<'a> {
     Success,
     NotFound(S3Error<'a>),

@@ -117,7 +117,7 @@ impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<'a, J
     // derive emits the `${T}Class__construct` shim that calls
     // `<Self>::constructor` directly.
     pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Self> {
-        Err(global.throw_invalid_arguments("ResumableSink is not constructable", &[]))
+        Err(global.throw_invalid_arguments("ResumableSink is not constructable"))
     }
 
     pub fn init(

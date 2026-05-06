@@ -1015,9 +1015,9 @@ pub mod js_readable_stream_source {
 
         if !value.is_callable() {
             return Err(global_object.throw_invalid_argument_type(
-                b"ReadableStreamSource",
-                b"onclose",
-                b"function",
+                "ReadableStreamSource",
+                "onclose",
+                "function",
             ));
         }
         let cb = value.with_async_context_if_needed(global_object);

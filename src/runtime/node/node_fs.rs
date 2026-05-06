@@ -4491,7 +4491,7 @@ impl NodeFS {
 
     pub fn uv_open(&mut self, args: &args::Open, rc: i64) -> Maybe<ret::Open> {
         if rc < 0 {
-            return Maybe::Err(sys::Error { errno: (-rc) as _, syscall: sys::Tag::open, path: args.path.slice().into(), from_libuv: true, ..Default::default() });
+            return Maybe::Err(sys::Error { errno: (-rc) as _, syscall: sys::Tag::open, path: args.path.slice().into(), #[cfg(windows)] from_libuv: true, ..Default::default() });
         }
         Maybe::Ok(FD::from_uv(rc as _))
     }

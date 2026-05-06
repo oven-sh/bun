@@ -933,7 +933,7 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
                     // SAFETY: all-zero is a valid libuv Pipe (POD C struct)
                     unsafe { core::mem::zeroed::<bun_sys::windows::libuv::Pipe>() },
                 ))),
-                cwd: bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(&script.package_json_path),
+                cwd: bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(&script.package_json_path).into(),
                 #[cfg(windows)]
                 windows: spawn::WindowsOptions { loop_: EventLoopHandle::init(event_loop) },
                 stream: true,

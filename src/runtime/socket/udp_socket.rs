@@ -219,11 +219,11 @@ extern "C" fn on_data(socket: *mut uws::udp::Socket, buf: *mut uws::udp::PacketB
         };
 
         // SAFETY: vm stored at construction; outlives socket.
-        let loop_ = unsafe { &*udp_socket.vm }.event_loop();
+        let loop_ = unsafe { &mut *(*udp_socket.vm).event_loop() };
         loop_.enter();
 
         let flags = JSValue::create_empty_object(global_this, 1);
-        flags.put(global_this, ZigString::static_("truncated"), JSValue::from(truncated));
+        flags.put(global_this, b"truncated", JSValue::from(truncated));
 
         let payload_js = match udp_socket.config.binary_type.to_js(slice, global_this) {
             Ok(v) => v,
@@ -245,7 +245,7 @@ extern "C" fn on_data(socket: *mut uws::udp::Socket, buf: *mut uws::udp::PacketB
         let result = callback.call(
             global_this,
             this_value,
-            &[this_value, payload_js, JSValue::js_number(port), hostname_js, flags],
+            &[this_value, payload_js, JSValue::js_number(port as f64), hostname_js, flags],
         );
         if let Err(err) = result {
             udp_socket.call_error_handler(JSValue::ZERO, global_this.take_exception(err));

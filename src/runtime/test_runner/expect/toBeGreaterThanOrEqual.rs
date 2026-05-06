@@ -69,10 +69,14 @@ pub fn to_be_greater_than_or_equal(
     }
 
     // handle failure
+    // PORT NOTE: reshaped for borrowck — Zig held two `*Formatter` aliases via `toFmt`;
+    // Rust `to_fmt(&mut Formatter)` borrows exclusively, so use a second formatter for the
+    // expected value (matches the toBeGreaterThan.rs pattern).
     let mut formatter = super::make_formatter(global);
+    let mut formatter2 = super::make_formatter(global);
     // Zig: `defer formatter.deinit();` — handled by Drop.
     let value_fmt = value.to_fmt(&mut formatter);
-    let expected_fmt = other_value.to_fmt(&mut formatter);
+    let expected_fmt = other_value.to_fmt(&mut formatter2);
     if not {
         const EXPECTED_LINE: &str = "Expected: not \\>= <green>{}<r>\n";
         const RECEIVED_LINE: &str = "Received: <red>{}<r>\n";

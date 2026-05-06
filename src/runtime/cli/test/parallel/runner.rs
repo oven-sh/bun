@@ -120,6 +120,14 @@ pub fn run_as_coordinator(
         }
         worker_tmpdir = Some(dir);
     }
+    // Guard registered after `worker_tmpdir` is finalized so the closure's
+    // borrow doesn't conflict with the assignment above (Zig `defer` reads at
+    // exec-time; Rust closure captures at creation-time).
+    let _tmpdir_guard = scopeguard::guard((), |_| {
+        if let Some(d) = &worker_tmpdir {
+            let _ = Fd::cwd().delete_tree(d);
+        }
+    });
     // Each worker gets a unique JEST_WORKER_ID / BUN_TEST_WORKER_ID (1-indexed,
     // matching Jest) so tests can pick distinct ports/databases. Serialize the
     // env map once per worker after .put() — appending after the fact would

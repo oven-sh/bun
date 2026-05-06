@@ -61,13 +61,13 @@ test.if(isPosix)("bun completions doesn't duplicate when .zshrc uses $HOME inste
   const home = String(dir);
 
   const { exitCode } = await runCompletions(home);
-  expect(exitCode).toBe(0);
 
   const zshrcAfter = readFileSync(join(home, ".zshrc"), "utf8");
   // No duplicate line appended — the $HOME reference is recognised.
   expect(countBunSourceLines(zshrcAfter)).toBe(1);
   // And the user's original line is untouched.
   expect(zshrcAfter).toBe(zshrcBefore);
+  expect(exitCode).toBe(0);
 });
 
 // One test per variant so a failure names the specific form that regressed
@@ -84,11 +84,11 @@ test.if(isPosix).each([
   const home = String(dir);
 
   const { exitCode } = await runCompletions(home);
-  expect(exitCode).toBe(0);
 
   const zshrcAfter = readFileSync(join(home, ".zshrc"), "utf8");
   expect(countBunSourceLines(zshrcAfter)).toBe(1);
   expect(zshrcAfter).toBe(zshrcBefore);
+  expect(exitCode).toBe(0);
 });
 
 test.if(isPosix)("bun completions still appends on a zshrc that doesn't reference _bun", async () => {
@@ -102,14 +102,15 @@ test.if(isPosix)("bun completions still appends on a zshrc that doesn't referenc
   const home = String(dir);
 
   const { exitCode } = await runCompletions(home);
-  expect(exitCode).toBe(0);
 
   const zshrcAfter = readFileSync(join(home, ".zshrc"), "utf8");
   expect(zshrcAfter).toContain("# bun completions");
   expect(countBunSourceLines(zshrcAfter)).toBe(1);
+  expect(exitCode).toBe(0);
+
   // Running a second time must not append again.
   const { exitCode: exit2 } = await runCompletions(home);
-  expect(exit2).toBe(0);
   const zshrcAfter2 = readFileSync(join(home, ".zshrc"), "utf8");
   expect(zshrcAfter2).toBe(zshrcAfter);
+  expect(exit2).toBe(0);
 });

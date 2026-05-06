@@ -181,14 +181,16 @@ static WS_VM_EVENT_LOOP_CTX_VTABLE: bun_aio::EventLoopCtxVTable = bun_aio::Event
 impl<const SSL: bool> WebSocket<SSL> {
     #[inline]
     fn vm_loop_ctx(global_this: &JSGlobalObject) -> bun_aio::EventLoopCtx {
-        // SAFETY: `EventLoopCtx.owner` is a type-erased `*mut ()` slot; the
-        // local vtable (`WS_VM_EVENT_LOOP_CTX_VTABLE`) only ever reborrows it
-        // as `*const VirtualMachine` → `&VirtualMachine` (see
-        // `platform_event_loop` above) and never writes through it, so the
-        // `*const _ as *mut ()` cast is purely for storage shape and does not
-        // launder write provenance.
+        // SAFETY: `EventLoopCtx.owner` is a type-erased `*mut ()` slot. Source
+        // it from `bun_vm_ptr()` (FFI `*mut VirtualMachine`, see
+        // `JSGlobalObject.zig:617`) rather than `bun_vm()`'s `&VirtualMachine`
+        // so the stored pointer carries write provenance instead of being
+        // laundered through a shared-ref `*const _ as *mut` hop. The local
+        // vtable (`WS_VM_EVENT_LOOP_CTX_VTABLE`) currently only reborrows it
+        // as `&VirtualMachine` in `platform_event_loop`, but keeping mut
+        // provenance matches the Zig spec and the `EventLoopCtxVTable` shape.
         bun_aio::EventLoopCtx {
-            owner: global_this.bun_vm() as *const _ as *mut (),
+            owner: global_this.bun_vm_ptr() as *mut (),
             vtable: &WS_VM_EVENT_LOOP_CTX_VTABLE,
         }
     }

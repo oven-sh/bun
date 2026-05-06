@@ -3292,6 +3292,8 @@ pub mod options {
         pub output_dir: Box<[u8]>,
         pub root_dir: Box<[u8]>,
         pub public_path: Box<[u8]>,
+        pub compile: bool,
+        pub supports_multiple_outputs: bool,
     }
 
     impl Default for BundleOptions {
@@ -3327,6 +3329,8 @@ pub mod options {
                 output_dir: Box::default(),
                 root_dir: Box::default(),
                 public_path: Box::default(),
+                compile: false,
+                supports_multiple_outputs: true,
                 production: false,
                 force_node_env: ForceNodeEnv::default(),
             }

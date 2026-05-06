@@ -22,6 +22,27 @@ pub fn expr_to_js(this: &Expr, global: &JSGlobalObject) -> Result<JSValue, ToJSE
     data_to_js(&this.data, global)
 }
 
+/// Extension trait providing `Expr.toJS` / `Expr::Data.toJS` as method syntax.
+/// `Expr` lives in `bun_js_parser` (lower tier, no JSC dep), so an inherent
+/// `impl Expr { fn to_js }` is forbidden by orphan rules. Mirrors the
+/// `StringJsc` pattern in `bun_jsc` — callers `use bun_js_parser_jsc::ExprJsc`
+/// (or the crate prelude) and write `expr.to_js(global)`.
+pub trait ExprJsc {
+    fn to_js(&self, global: &JSGlobalObject) -> Result<JSValue, ToJSError>;
+}
+impl ExprJsc for Expr {
+    #[inline]
+    fn to_js(&self, global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
+        expr_to_js(self, global)
+    }
+}
+impl ExprJsc for ExprData {
+    #[inline]
+    fn to_js(&self, global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
+        data_to_js(self, global)
+    }
+}
+
 pub fn data_to_js(this: &ExprData, global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
     match this {
         ExprData::EArray(e) => array_to_js(e, global),

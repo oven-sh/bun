@@ -18,8 +18,86 @@ use crate as bun_sys;
 use crate::{E, Fd, SystemErrno};
 
 pub use bun_windows_sys::ntdll;
-pub use bun_windows_sys::kernel32;
 pub use bun_windows_sys::kernel32::GetLastError;
+
+/// `std.os.windows.kernel32` — re-exports the tier-0 `bun_windows_sys::kernel32`
+/// surface and layers the additional externs higher-tier crates reach for
+/// (`ReadDirectoryChangesW`, IOCP, SRW locks, `CreateProcessW`, …). Declared
+/// locally so adding an extern doesn't require touching `bun_windows_sys`.
+pub mod kernel32 {
+    use core::ffi::c_void;
+    use super::{
+        BOOL, DWORD, HANDLE, LPCWSTR, LPVOID, LPWSTR, PWSTR, ULONG_PTR,
+        OVERLAPPED, LPOVERLAPPED, LPOVERLAPPED_COMPLETION_ROUTINE,
+        FileNotifyChangeFilter, STARTUPINFOW, PROCESS_INFORMATION,
+    };
+    pub use bun_windows_sys::kernel32::*;
+    pub use bun_windows_sys::externs::SetEndOfFile;
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        // ── IOCP / async directory watching ──
+        pub fn CreateIoCompletionPort(
+            FileHandle: HANDLE,
+            ExistingCompletionPort: HANDLE,
+            CompletionKey: ULONG_PTR,
+            NumberOfConcurrentThreads: DWORD,
+        ) -> HANDLE;
+        pub fn GetQueuedCompletionStatus(
+            CompletionPort: HANDLE,
+            lpNumberOfBytesTransferred: *mut DWORD,
+            lpCompletionKey: *mut ULONG_PTR,
+            lpOverlapped: *mut *mut OVERLAPPED,
+            dwMilliseconds: DWORD,
+        ) -> BOOL;
+        pub fn ReadDirectoryChangesW(
+            hDirectory: HANDLE,
+            lpBuffer: *mut c_void,
+            nBufferLength: DWORD,
+            bWatchSubtree: BOOL,
+            dwNotifyFilter: FileNotifyChangeFilter,
+            lpBytesReturned: *mut DWORD,
+            lpOverlapped: LPOVERLAPPED,
+            lpCompletionRoutine: LPOVERLAPPED_COMPLETION_ROUTINE,
+        ) -> BOOL;
+
+        // ── process creation ──
+        pub fn CreateProcessW(
+            lpApplicationName: LPCWSTR,
+            lpCommandLine: LPWSTR,
+            lpProcessAttributes: *mut c_void,
+            lpThreadAttributes: *mut c_void,
+            bInheritHandles: BOOL,
+            dwCreationFlags: DWORD,
+            lpEnvironment: *mut c_void,
+            lpCurrentDirectory: LPCWSTR,
+            lpStartupInfo: *mut STARTUPINFOW,
+            lpProcessInformation: *mut PROCESS_INFORMATION,
+        ) -> BOOL;
+        pub fn WaitForSingleObject(hHandle: HANDLE, dwMilliseconds: DWORD) -> DWORD;
+
+        // ── file moves ──
+        pub fn MoveFileExW(
+            lpExistingFileName: LPCWSTR,
+            lpNewFileName: LPCWSTR,
+            dwFlags: DWORD,
+        ) -> BOOL;
+
+        // ── SRW locks (`bun_threading::Mutex` windows arm) ──
+        pub fn AcquireSRWLockExclusive(SRWLock: *mut c_void);
+        pub fn ReleaseSRWLockExclusive(SRWLock: *mut c_void);
+        pub fn TryAcquireSRWLockExclusive(SRWLock: *mut c_void) -> u8;
+
+        // ── vectored exception handling (`bun_crash_handler`) ──
+        pub fn AddVectoredExceptionHandler(
+            First: u32,
+            Handler: unsafe extern "system" fn(*mut c_void) -> i32,
+        ) -> *mut c_void;
+        pub fn RemoveVectoredExceptionHandler(Handle: *mut c_void) -> u32;
+
+        pub fn GetCurrentThreadId() -> DWORD;
+    }
+}
 
 pub use bun_windows_sys::PATH_MAX_WIDE;
 pub use bun_windows_sys::MAX_PATH;
@@ -101,6 +179,123 @@ pub use bun_paths::WPathBuffer;
 
 pub use bun_windows_sys::HANDLE;
 pub use bun_windows_sys::HMODULE;
+
+// ──────────────────────────────────────────────────────────────────────────
+// Additional Win32 typedefs / constants surfaced for `bun_watcher`,
+// `bun_crash_handler`, `bun_threading`, `bun_install` (B-2 un-gate batch).
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `ULONG_PTR` — pointer-sized unsigned (winnt.h).
+pub type ULONG_PTR = usize;
+/// `HRESULT` — 32-bit signed result code.
+pub type HRESULT = i32;
+/// `WaitForSingleObject` infinite timeout sentinel.
+pub const INFINITE: DWORD = 0xFFFF_FFFF;
+/// `S_OK` — success `HRESULT`.
+pub const S_OK: HRESULT = 0;
+/// Extract the Win32 facility code from an `HRESULT` (`winerror.h` macro).
+#[inline] pub const fn HRESULT_CODE(hr: HRESULT) -> HRESULT { hr & 0xFFFF }
+
+// `NtCreateFile` access masks / create-options not yet in `bun_windows_sys`.
+pub const FILE_LIST_DIRECTORY: ULONG = 0x0001;
+pub const FILE_OPEN_FOR_BACKUP_INTENT: ULONG = 0x0000_4000;
+
+// `ReadDirectoryChangesW` action codes (`winnt.h`).
+pub const FILE_ACTION_ADDED: DWORD = 0x0000_0001;
+pub const FILE_ACTION_REMOVED: DWORD = 0x0000_0002;
+pub const FILE_ACTION_MODIFIED: DWORD = 0x0000_0003;
+pub const FILE_ACTION_RENAMED_OLD_NAME: DWORD = 0x0000_0004;
+pub const FILE_ACTION_RENAMED_NEW_NAME: DWORD = 0x0000_0005;
+
+bitflags::bitflags! {
+    /// `std.os.windows.FileNotifyChangeFilter` — `dwNotifyFilter` for
+    /// `ReadDirectoryChangesW` (`winnt.h` `FILE_NOTIFY_CHANGE_*`).
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub struct FileNotifyChangeFilter: DWORD {
+        const FILE_NAME   = 0x0000_0001;
+        const DIR_NAME    = 0x0000_0002;
+        const ATTRIBUTES  = 0x0000_0004;
+        const SIZE        = 0x0000_0008;
+        const LAST_WRITE  = 0x0000_0010;
+        const LAST_ACCESS = 0x0000_0020;
+        const CREATION    = 0x0000_0040;
+        const SECURITY    = 0x0000_0100;
+    }
+}
+
+/// `FILE_NOTIFY_INFORMATION` (`winnt.h`) — variable-length record returned
+/// by `ReadDirectoryChangesW`. `FileName` is a flexible array; declared as
+/// `[WCHAR; 1]` to match the C layout (read past it via `FileNameLength`).
+#[repr(C)]
+pub struct FILE_NOTIFY_INFORMATION {
+    pub NextEntryOffset: DWORD,
+    pub Action: DWORD,
+    pub FileNameLength: DWORD,
+    pub FileName: [WCHAR; 1],
+}
+
+/// `OVERLAPPED` (`minwinbase.h`).
+#[repr(C)]
+pub struct OVERLAPPED {
+    pub Internal: ULONG_PTR,
+    pub InternalHigh: ULONG_PTR,
+    pub Offset: DWORD,
+    pub OffsetHigh: DWORD,
+    pub hEvent: HANDLE,
+}
+pub type LPOVERLAPPED = *mut OVERLAPPED;
+pub type LPOVERLAPPED_COMPLETION_ROUTINE =
+    Option<unsafe extern "system" fn(DWORD, DWORD, *mut OVERLAPPED)>;
+
+/// `STARTUPINFOW` (`processthreadsapi.h`).
+#[repr(C)]
+pub struct STARTUPINFOW {
+    pub cb: DWORD,
+    pub lpReserved: PWSTR,
+    pub lpDesktop: PWSTR,
+    pub lpTitle: PWSTR,
+    pub dwX: DWORD,
+    pub dwY: DWORD,
+    pub dwXSize: DWORD,
+    pub dwYSize: DWORD,
+    pub dwXCountChars: DWORD,
+    pub dwYCountChars: DWORD,
+    pub dwFillAttribute: DWORD,
+    pub dwFlags: DWORD,
+    pub wShowWindow: WORD,
+    pub cbReserved2: WORD,
+    pub lpReserved2: *mut u8,
+    pub hStdInput: HANDLE,
+    pub hStdOutput: HANDLE,
+    pub hStdError: HANDLE,
+}
+
+/// `PROCESS_INFORMATION` (`processthreadsapi.h`).
+#[repr(C)]
+pub struct PROCESS_INFORMATION {
+    pub hProcess: HANDLE,
+    pub hThread: HANDLE,
+    pub dwProcessId: DWORD,
+    pub dwThreadId: DWORD,
+}
+
+/// `std.os.windows.CreateIoCompletionPort` — wraps the kernel32 call and
+/// returns `Err` on `NULL` (matching Zig's `error.Unexpected`).
+pub fn CreateIoCompletionPort(
+    file_handle: HANDLE,
+    existing_completion_port: HANDLE,
+    completion_key: ULONG_PTR,
+    concurrent_threads: DWORD,
+) -> core::result::Result<HANDLE, bun_core::Error> {
+    // SAFETY: thin syscall; all pointer args are opaque handles.
+    let h = unsafe {
+        kernel32::CreateIoCompletionPort(
+            file_handle, existing_completion_port, completion_key, concurrent_threads,
+        )
+    };
+    if h.is_null() { return Err(bun_core::err!("Unexpected")); }
+    Ok(h)
+}
 
 /// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle
 pub use bun_windows_sys::externs::GetFileInformationByHandle;
@@ -2971,7 +3166,8 @@ impl Win32Error {
     pub const WSA_QOS_RESERVED_PETYPE: Win32Error = Win32Error(11031);
     pub fn get() -> Win32Error {
         // SAFETY: GetLastError has no preconditions
-        Win32Error(u16::try_from(unsafe { kernel32::GetLastError() }).unwrap())
+        // Zig truncates the DWORD to u16 (`@truncate`); never panic on >0xFFFF.
+        Win32Error(unsafe { kernel32::GetLastError() } as u16)
     }
 
     pub fn int(self) -> u16 {
@@ -3079,7 +3275,7 @@ pub fn translate_nt_status_to_errno(err: NTSTATUS) -> E {
         NOT_A_DIRECTORY => E::NOTDIR,
         RETRY => E::AGAIN,
         DIRECTORY_NOT_EMPTY => E::NOTEMPTY,
-        FILE_TOO_LARGE => E::TOOBIG, // Zig: .@"2BIG"
+        FILE_TOO_LARGE => E::_2BIG, // Zig: .@"2BIG"
         NOT_SAME_DEVICE => E::XDEV,
         DELETE_PENDING => E::BUSY,
         SHARING_VIOLATION => {
@@ -3840,6 +4036,9 @@ pub fn update_stdio_mode_flags(i: bun_sys::Stdio, opts: UpdateStdioModeFlagsOpts
 }
 
 const WATCHER_CHILD_ENV: &[u16] = bun_str::w!("_BUN_WATCHER_CHILD");
+// NUL-terminated form for Win32 LPCWSTR (`GetEnvironmentVariableW`); `w!` does
+// NOT append a terminator on its own.
+const WATCHER_CHILD_ENV_Z: &[u16] = bun_str::w!("_BUN_WATCHER_CHILD\0");
 
 // magic exit code to indicate to the watcher manager that the child process should be re-spawned
 // this was randomly generated - we need to avoid using a common exit code that might be used by the script itself
@@ -3851,7 +4050,7 @@ pub const WATCHER_RELOAD_EXIT: DWORD = 3224497970;
 pub fn is_watcher_child() -> bool {
     let mut buf: [u16; 1] = [0];
     // SAFETY: buf valid for 1 element
-    unsafe { kernel32_2::GetEnvironmentVariableW(WATCHER_CHILD_ENV.as_ptr(), buf.as_mut_ptr(), 1) > 0 }
+    unsafe { kernel32_2::GetEnvironmentVariableW(WATCHER_CHILD_ENV_Z.as_ptr(), buf.as_mut_ptr(), 1) > 0 }
 }
 
 pub fn become_watcher_manager() -> ! {
@@ -4350,12 +4549,12 @@ unsafe extern "system" {
     pub fn QueryPerformanceFrequency(lpFrequency: *mut i64) -> BOOL;
 }
 
-/// `bun.windows.translateNtStatusToErrno` — `RtlNtStatusToDosError` →
-/// Win32Error → `E`. Unknown status codes map to `EUNKNOWN`.
+/// `bun.windows.translateNtStatusToErrno` — alias of
+/// [`translate_nt_status_to_errno`] kept for external callers; the previous
+/// duplicate body returned different values and has been removed.
+#[inline]
 pub fn translate_ntstatus_to_errno(status: NTSTATUS) -> E {
-    // SAFETY: ntdll export; status is a plain integer.
-    let win32 = unsafe { RtlNtStatusToDosError(status) };
-    win32.to_system_errno().unwrap_or(E::EUNKNOWN)
+    translate_nt_status_to_errno(status)
 }
 
 /// `bun.windows.getenvW` — read a UTF-16 env var into an owned `Vec<u16>`.
@@ -4372,50 +4571,9 @@ pub fn getenv_w(name: &[u16]) -> Option<Vec<u16>> {
     }
 }
 
-/// `bun.windows.libuv` — thin re-export of the libuv FFI surface that the
-/// rest of the codebase reaches as `bun_sys::windows::libuv::*`.
-pub mod libuv {
-    use core::ffi::{c_int, c_void};
-    use crate::E;
-
-    /// `uv_uid_t` — `int` on Windows (libuv `include/uv/win.h`).
-    pub type uv_uid_t = c_int;
-    pub type uv_gid_t = c_int;
-    pub type uv_file  = c_int;
-
-    /// Opaque `uv_loop_t`.
-    #[repr(C)]
-    pub struct Loop { _p: [u8; 0] }
-    impl Loop {
-        pub fn get() -> *mut Loop {
-            // SAFETY: libuv guarantees `uv_default_loop()` is valid for the
-            // process lifetime once the library is loaded.
-            unsafe { uv_default_loop() }
-        }
-    }
-    /// Opaque `uv_timer_t`.
-    #[repr(C)]
-    pub struct Timer { _p: [u8; 0] }
-
-    /// Map a negative libuv return code to `E` (libuv codes are negated POSIX
-    /// errno on Unix; on Windows they are an internal table). Port of
-    /// `bun.windows.libuv.translateUvErrorToE`.
-    pub fn translate_uv_error_to_e(rc: c_int) -> E {
-        if rc >= 0 { return E::SUCCESS; }
-        let pos = (-rc) as u16;
-        crate::SystemErrno::init(pos as i64).unwrap_or(E::EUNKNOWN)
-    }
-
-    unsafe extern "C" {
-        pub fn uv_default_loop() -> *mut Loop;
-        pub fn uv_replace_allocator(
-            malloc: unsafe extern "C" fn(usize) -> *mut c_void,
-            realloc: unsafe extern "C" fn(*mut c_void, usize) -> *mut c_void,
-            calloc: unsafe extern "C" fn(usize, usize) -> *mut c_void,
-            free: unsafe extern "C" fn(*mut c_void),
-        ) -> c_int;
-    }
-}
+// `bun.windows.libuv` — re-exported as `pub use bun_libuv_sys as libuv` above.
+// The duplicate inline `pub mod libuv { ... }` that lived here caused E0260 and
+// has been removed; its items belong in `bun_libuv_sys`.
 
 bun_output::declare_scope!(windowsUserUniqueId, visible);
 

@@ -54,8 +54,10 @@ pub mod bundle_v2;
 // ---------------------------------------------------------------------------
 
 /// Stub: see gated `bundle_v2` module.
+#[derive(Default)]
 pub struct BundleV2(());
 /// Stub: see gated `transpiler` module.
+#[derive(Default)]
 pub struct Transpiler(());
 /// Stub: see gated `options` module.
 pub struct BundleOptions(());

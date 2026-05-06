@@ -165,7 +165,7 @@ impl UrlDependency {
             .at(url.import_record_idx as usize)
             .path
             .pretty
-            .as_bytes();
+            ;
         let placeholder = crate::css_modules::hash(
             bump,
             format_args!("{}_{}", bstr::BStr::new(filename), bstr::BStr::new(theurl)),

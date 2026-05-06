@@ -32,12 +32,13 @@ pub mod json {
     use bumpalo::Bump;
     use bun_logger as logger;
 
-    // TODO(b2-blocked): bun_logger::js_ast::Expr
     // TODO(b2-blocked): bun_logger::js_printer
     // TODO(b2-blocked): bun_js_parser::js_lexer (GENUINE cycle — needs js_lexer split)
-    /// Opaque stub for `json::Expr` (re-export of `bun_logger::js_ast::Expr`).
-    #[derive(Default)]
-    pub struct Expr(());
+    /// `json::Expr` — re-export of the MOVE_DOWN'd `bun_logger::js_ast::Expr`
+    /// (Zig: `js_ast.Expr`). The full json.rs draft does the same re-export;
+    /// surfacing it here lets downstream `json_parser::Expr` callers resolve
+    /// against the real `{ loc, data }` shape instead of an opaque unit stub.
+    pub use bun_logger::js_ast::Expr;
 
     /// Parse JSON.
     ///

@@ -134,12 +134,21 @@ impl ImportKind {
 
 pub struct ImportRecord {
     pub range: Range,
-    pub path: Path,
+    // TODO(port): lifetime — `bun_paths::fs::Path<'a>` borrows resolver-owned
+    // strings. Phase A uses 'static (PORTING.md: no struct lifetime params).
+    pub path: Path<'static>,
     pub kind: ImportKind,
     pub tag: Tag,
     pub loader: Option<Loader>,
 
     pub source_index: AstIndex,
+
+    /// `js_printer::printBundledImport` reads this. The Zig field was removed
+    /// from `ImportRecord` but the printer body referencing it is dead (never
+    /// analysed by Zig's lazy compilation). Kept here so the eagerly-compiled
+    /// Rust port of that body type-checks; always 0 in practice.
+    // TODO(port): delete once `printBundledImport` is confirmed dead and removed.
+    pub module_id: u32,
 
     /// The original import specifier as written in source code (e.g., "./foo.js").
     /// This is preserved before resolution overwrites `path` with the resolved path.

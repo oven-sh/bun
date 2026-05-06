@@ -112,6 +112,20 @@ impl Expr {
             loc: self.loc,
         }
     }
+
+    /// Zig: `Expr.Data.Store.reset()`. Associated wrapper so downstream crates
+    /// can call `bun_js_parser::Expr::data_store_reset()` without naming the
+    /// thread-local Store module path.
+    #[inline]
+    pub fn data_store_reset() {
+        data::Store::reset();
+    }
+
+    /// Zig: `Expr.Data.Store.create()`.
+    #[inline]
+    pub fn data_store_create() {
+        data::Store::create();
+    }
 }
 
 impl Expr {
@@ -1679,6 +1693,28 @@ impl Data {
     #[inline]
     pub fn as_e_string(&self) -> Option<StoreRef<E::EString>> {
         self.e_string()
+    }
+    /// Zig: `data.e_array` field-access. Mirrors `e_array()`; provided under
+    /// the `as_*` name for downstream crates ported from `.e_array.*`.
+    #[inline]
+    pub fn as_e_array(&self) -> Option<StoreRef<E::Array>> {
+        self.e_array()
+    }
+    /// Zig: `data.e_number` field-access. `E::Number` is an inline (non-Store)
+    /// payload, so this returns it by value.
+    #[inline]
+    pub fn as_e_number(&self) -> Option<E::Number> {
+        if let Data::ENumber(n) = *self { Some(n) } else { None }
+    }
+    /// Zig: `data == .e_string`.
+    #[inline]
+    pub fn is_e_string(&self) -> bool {
+        matches!(self, Data::EString(_))
+    }
+    /// Zig: `data == .e_number`.
+    #[inline]
+    pub fn is_e_number(&self) -> bool {
+        matches!(self, Data::ENumber(_))
     }
 }
 

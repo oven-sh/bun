@@ -7,3 +7,9 @@
 pub mod expr_jsc;
 #[path = "Macro.rs"]
 pub mod Macro;
+
+// Re-export the foreign `Expr` alongside its JSC extension trait so downstream
+// callers can write `bun_js_parser_jsc::Expr` / `expr.to_js(global)` without
+// also depending on `bun_js_parser` directly.
+pub use bun_js_parser::Expr;
+pub use expr_jsc::{data_to_js, expr_to_js, ExprJsc};

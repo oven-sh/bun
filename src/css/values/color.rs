@@ -1166,6 +1166,14 @@ impl RGBA {
         }
     }
 
+    pub fn into_hsl(&self) -> HSL {
+        HSL::from_rgba(self)
+    }
+
+    pub fn into_lab(&self) -> LAB {
+        LAB::from_rgba(self)
+    }
+
     pub fn try_from_css_color(color: &CssColor) -> Option<RGBA> {
         // TODO(port): Zig used ColorspaceConversions(@This()).tryFromCssColor; routed via SRGB
         Some(SRGB::try_from_css_color(color)?.into_rgba())
@@ -1236,6 +1244,14 @@ impl LABColor {
         LABColor::Lab(LAB { l, a, b, alpha })
     }
 
+    pub fn into_hsl(&self) -> HSL {
+        HSL::from_lab_color(self)
+    }
+
+    pub fn into_lab(&self) -> LAB {
+        LAB::from_lab_color(self)
+    }
+
     pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
         css::implement_hash(self, hasher);
     }
@@ -1282,6 +1298,14 @@ pub enum FloatColor {
 }
 
 impl FloatColor {
+    pub fn into_hsl(&self) -> HSL {
+        HSL::from_float_color(self)
+    }
+
+    pub fn into_lab(&self) -> LAB {
+        LAB::from_float_color(self)
+    }
+
     pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
         css::implement_hash(self, hasher);
     }

@@ -37,12 +37,25 @@ pub const WRITE_BUFFER_CONTROL_LIMIT: usize = 1024 * 1024;
 /// Live-object counters for the leak test in fetch-http2-leak.test.ts.
 /// Incremented at allocation, decremented in deinit. Read from the JS thread
 /// via TestingAPIs.liveCounts so they must be atomic.
-pub static LIVE_SESSIONS: AtomicI32 = AtomicI32::new(0);
-pub static LIVE_STREAMS: AtomicI32 = AtomicI32::new(0);
+// PORT NOTE: Zig names are `live_sessions`/`live_streams` (snake_case module
+// vars). Kept verbatim so cross-crate readers (`bun_http_jsc`) and the gated
+// submodules see the same identifier the Zig uses; SCREAMING_SNAKE aliases
+// preserved for the existing internal references.
+#[allow(non_upper_case_globals)]
+pub static live_sessions: AtomicI32 = AtomicI32::new(0);
+#[allow(non_upper_case_globals)]
+pub static live_streams: AtomicI32 = AtomicI32::new(0);
+pub use live_sessions as LIVE_SESSIONS;
+pub use live_streams as LIVE_STREAMS;
 
-pub use crate::h2_client::Stream;
-pub use crate::h2_client::ClientSession;
-pub use crate::h2_client::PendingConnect;
+// TODO(b2-blocked): Stream/ClientSession/PendingConnect bottom out on
+// HTTPClient/HTTPContext/uws socket types — un-gate together with the
+// `_phase_a_draft` cluster in lib.rs.
+#[cfg(any())] #[path = "h2_client/Stream.rs"]         pub mod Stream;
+#[cfg(any())] #[path = "h2_client/ClientSession.rs"]  pub mod ClientSession;
+#[cfg(any())] #[path = "h2_client/PendingConnect.rs"] pub mod PendingConnect;
+#[cfg(any())] #[path = "h2_client/dispatch.rs"]       pub mod dispatch;
+#[cfg(any())] #[path = "h2_client/encode.rs"]         pub mod encode;
 
 // PORT NOTE: Zig had `pub const TestingAPIs = @import("../http_jsc/headers_jsc.zig").H2TestingAPIs;`
 // — a `*_jsc` alias. Deleted per PORTING.md: `to_js`/host-fn surfaces live in the

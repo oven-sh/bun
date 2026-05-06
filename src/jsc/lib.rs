@@ -920,6 +920,7 @@ stub_ty!(
     URL, VM,
     ResolvedSource, ZigStackTrace, ZigStackFrame,
     ZigException, Formatter, RuntimeTranspilerCache,
+    FetchHeaders,
 );
 
 /// `jsc.AnyPromise` — `JSPromise | JSInternalPromise` (AnyPromise.zig).
@@ -942,6 +943,16 @@ impl AnyPromise {
 pub enum PromiseUnwrapMode {
     MarkHandled,
     LeaveUnhandled,
+}
+
+/// `JSPromise.Unwrapped` (JSPromise.zig:343) — surfaced at the crate root as
+/// `PromiseResult` for downstream callers (Macro.rs / JSBundler.rs reference it
+/// via `jsc::PromiseResult::{Pending,Fulfilled,Rejected}`).
+#[derive(Debug, Clone, Copy)]
+pub enum PromiseResult {
+    Pending,
+    Fulfilled(JSValue),
+    Rejected(JSValue),
 }
 
 /// `JSPropertyIteratorOptions` — comptime config struct in Zig; here a value type
@@ -978,6 +989,23 @@ unsafe extern "C" {
     fn JSC__VM__throwError(vm: *mut VM, global: *const JSGlobalObject, value: JSValue);
     fn JSGlobalObject__createOutOfMemoryError(this: *const JSGlobalObject) -> JSValue;
     fn JSGlobalObject__tryTakeException(this: *const JSGlobalObject) -> JSValue;
+    fn JSC__JSGlobalObject__queueMicrotaskCallback(
+        this: *const JSGlobalObject,
+        ctx: *mut c_void,
+        function: unsafe extern "C" fn(*mut c_void),
+    );
+    fn Bun__msToGregorianDateTime(
+        this: *const JSGlobalObject,
+        ms: f64,
+        input_is_utc: bool,
+        year: *mut i32,
+        month: *mut i32,
+        day: *mut i32,
+        hour: *mut i32,
+        minute: *mut i32,
+        second: *mut i32,
+        weekday: *mut i32,
+    );
     fn ZigString__toErrorInstance(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
     fn ZigString__toTypeErrorInstance(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
     fn ZigString__toSyntaxErrorInstance(this: *const bun_string::ZigString, global: *const JSGlobalObject) -> JSValue;
@@ -1173,6 +1201,34 @@ impl JSGlobalObject {
         todo!("JSGlobalObject::validate_object")
     }
 
+    /// `JSGlobalObject.queueMicrotaskCallback(ctx, comptime fn(ctx))` —
+    /// enqueue a native microtask. Zig used a comptime fn param + `anyopaque`
+    /// thunk; the Rust port takes an already-thunked `extern "C" fn(*mut c_void)`
+    /// (callers produce one via `bun_jsc::opaque_wrap` or a hand-written shim).
+    pub fn queue_microtask_callback(
+        &self,
+        ctx: *mut c_void,
+        function: unsafe extern "C" fn(*mut c_void),
+    ) {
+        // SAFETY: `self` is live; `ctx`/`function` are forwarded to C++ which
+        // calls `function(ctx)` from the microtask queue.
+        unsafe { JSC__JSGlobalObject__queueMicrotaskCallback(self, ctx, function) }
+    }
+
+    /// `JSGlobalObject.msToGregorianDateTimeUTC(ms)` (JSGlobalObject.zig:45).
+    pub fn ms_to_gregorian_date_time_utc(&self, ms: f64) -> GregorianDateTime {
+        let mut dt = GregorianDateTime::default();
+        // SAFETY: `self` is live; out-params are valid for the call.
+        unsafe {
+            Bun__msToGregorianDateTime(
+                self, ms, false,
+                &mut dt.year, &mut dt.month, &mut dt.day,
+                &mut dt.hour, &mut dt.minute, &mut dt.second, &mut dt.weekday,
+            )
+        };
+        dt
+    }
+
     pub fn run_on_resolve_plugins(
         &self,
         namespace: bun_string::String,
@@ -1189,6 +1245,19 @@ impl JSGlobalObject {
 /// `bun.fmt.OutOfRangeOptions` — re-exported here under the name dependents
 /// expect (`jsc.RangeErrorOptions`).
 pub type RangeErrorOptions<'a> = bun_core::fmt::OutOfRangeOptions<'a>;
+
+/// `JSGlobalObject.GregorianDateTime` (JSGlobalObject.zig:35).
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy)]
+pub struct GregorianDateTime {
+    pub year: i32,
+    pub month: i32,
+    pub day: i32,
+    pub hour: i32,
+    pub minute: i32,
+    pub second: i32,
+    pub weekday: i32,
+}
 
 #[derive(Default, Copy, Clone)]
 pub struct ValidateObjectOpts {
@@ -1620,6 +1689,16 @@ pub mod saved_source_map {
         // TODO(b2): real fields — gated until SavedSourceMap.rs un-gates.
         _priv: (),
     }
+    impl SavedSourceMap {
+        /// `SavedSourceMap.get(path)` (SavedSourceMap.zig:320) — look up the
+        /// parsed sourcemap for `path`. Returns `None` until the real
+        /// `HashTable` + `MappingProvider` machinery un-gates.
+        pub fn get(&mut self, path: &[u8]) -> Option<*mut bun_sourcemap::ParsedSourceMap> {
+            let _ = path;
+            // TODO(b2): map lookup + lazy parse — gated until SavedSourceMap.rs un-gates.
+            None
+        }
+    }
 }
 pub use self::saved_source_map as SavedSourceMap;
 
@@ -1716,7 +1795,10 @@ pub use self::virtual_machine as VirtualMachine;
 pub use self::virtual_machine::InitOptions as VirtualMachineInitOptions;
 
 pub mod module_loader {
-    /// Re-export of the canonical hard-coded module enum.
+    /// Re-export of the canonical hard-coded module namespace.
+    /// `bun_resolve_builtins::HardcodedModule` is the *module* (containing
+    /// `Alias`, `Cfg`, and the `HardcodedModule` enum), so
+    /// `bun_jsc::ModuleLoader::HardcodedModule::Alias` resolves correctly.
     pub use bun_resolve_builtins::HardcodedModule;
 }
 pub use self::module_loader as ModuleLoader;
@@ -1730,11 +1812,75 @@ pub mod rare_data {
         pub mysql_context: *mut core::ffi::c_void,
         pub postgresql_context: *mut core::ffi::c_void,
         boring_engine_: *mut core::ffi::c_void,
+        entropy_cache: Option<alloc::boxed::Box<EntropyCache>>,
     }
     impl RareData {
         pub fn boring_engine(&mut self) -> *mut core::ffi::c_void {
             // TODO(b2): bun_boringssl::ENGINE_new() lazy-init — gated.
             self.boring_engine_
+        }
+
+        /// `RareData.postgresqlContext` (rare_data.zig:11) — accessor form for
+        /// callers that go through `vm.rare_data().postgresql_context()`.
+        #[inline]
+        pub fn postgresql_context(&mut self) -> *mut core::ffi::c_void {
+            self.postgresql_context
+        }
+        /// `RareData.mysqlContext` (rare_data.zig:10).
+        #[inline]
+        pub fn mysql_context(&mut self) -> *mut core::ffi::c_void {
+            self.mysql_context
+        }
+
+        /// `RareData.entropySlice(len)` (rare_data.zig:459) — lazy-init the
+        /// entropy cache and return a `len`-byte slice from it.
+        pub fn entropy_slice(&mut self, len: usize) -> &mut [u8] {
+            self.entropy_cache
+                .get_or_insert_with(|| alloc::boxed::Box::new(EntropyCache::new()))
+                .slice(len)
+        }
+
+        /// `RareData.wsClientGroup(vm, comptime ssl)` (rare_data.zig:729) —
+        /// lazy `uws.SocketGroup` for WebSocket client connects.
+        pub fn ws_client_group<const SSL: bool>(
+            &mut self,
+            vm: &mut super::virtual_machine::VirtualMachine,
+        ) -> *mut bun_uws::SocketGroup {
+            let _ = vm;
+            // TODO(b2): lazy_group() field-name dispatch — gated until rare_data.rs un-gates.
+            todo!("RareData::ws_client_group")
+        }
+    }
+
+    /// `RareData.EntropyCache` (rare_data.zig:468). 16 × 128 = 2048-byte ring
+    /// buffer of CSPRNG output.
+    pub struct EntropyCache {
+        cache: [u8; Self::SIZE],
+        index: usize,
+    }
+    impl EntropyCache {
+        pub const BUFFERED_UUIDS_COUNT: usize = 16;
+        pub const SIZE: usize = Self::BUFFERED_UUIDS_COUNT * 128;
+
+        pub fn new() -> Self {
+            let mut this = Self { cache: [0u8; Self::SIZE], index: 0 };
+            this.fill();
+            this
+        }
+        pub fn fill(&mut self) {
+            bun_core::csprng(&mut self.cache);
+            self.index = 0;
+        }
+        pub fn slice(&mut self, len: usize) -> &mut [u8] {
+            if len > self.cache.len() {
+                return &mut [];
+            }
+            if self.index + len > self.cache.len() {
+                self.fill();
+            }
+            let start = self.index;
+            self.index += len;
+            &mut self.cache[start..start + len]
         }
     }
 }
@@ -1935,6 +2081,20 @@ pub mod event_loop {
         pub fn auto_tick_active(&mut self) { todo!("EventLoop::auto_tick_active — gated") }
         pub fn tick_concurrent_with_count(&mut self) -> usize { 0 }
         pub fn enqueue_task(&mut self, _task: Task) { todo!("EventLoop::enqueue_task — gated") }
+
+        /// `EventLoop.enter()` (event_loop.zig:70) — increment the
+        /// entered-event-loop counter before calling into JavaScript.
+        pub fn enter(&mut self) {
+            // TODO(b2): `self.entered_event_loop_count += 1` + debug.enter() —
+            // field layout gated until event_loop.rs un-gates.
+            todo!("EventLoop::enter — gated")
+        }
+        /// `EventLoop.exit()` (event_loop.zig:79) — decrement and drain
+        /// microtasks when reaching zero.
+        pub fn exit(&mut self) {
+            // TODO(b2): drainMicrotasksWithGlobal when count hits 1 — gated.
+            todo!("EventLoop::exit — gated")
+        }
     }
 }
 pub use self::event_loop as EventLoop;
@@ -2012,9 +2172,35 @@ pub mod WebCore {
     // in the bun_webcore crate (not available at this tier).
     crate::stub_ty!(Blob, Request, Response);
 }
-pub use self::WebCore as webcore;
+/// `jsc.webcore` — lower-case alias for [`WebCore`] plus the nested `blob`
+/// namespace dependents reach for (`bun_jsc::webcore::blob::Store`).
+pub mod webcore {
+    pub use super::WebCore::{Blob, Request, Response};
+    pub mod blob {
+        /// `webcore.Blob.Store` — backing store (bytes / file / S3). Full impl
+        /// lives in `bun_webcore` (forward-dep, not at this tier).
+        #[repr(C)]
+        #[derive(Debug)]
+        pub struct Store {
+            _opaque: [u8; 0],
+        }
+        impl Store {
+            /// `Store.initFile(pathlike, mime_type, allocator)`
+            /// (src/runtime/webcore/blob/Store.zig:125). Allocates a new
+            /// file-backed `Store`.
+            pub fn init_file(
+                pathlike: crate::node::PathOrFileDescriptor,
+                mime_type: Option<&bun_http::MimeType>,
+            ) -> Result<*mut Store, bun_core::AllocError> {
+                let _ = (pathlike, mime_type);
+                // TODO(b2): bun_webcore forward-dep — gated.
+                todo!("webcore::blob::Store::init_file")
+            }
+        }
+    }
+}
 pub mod blob {
-    crate::stub_ty!(Store);
+    pub use super::webcore::blob::Store;
 }
 /// Deprecated: Use `bun_api`
 #[deprecated]
@@ -2023,6 +2209,17 @@ pub mod api {
     // `bun_api::BuildArtifact` is defined in bun_runtime (not at this tier).
     // Surface an opaque placeholder so dependents type-check.
     crate::stub_ty!(BuildArtifact);
+
+    /// `bun.api.NewSocket(comptime ssl)` — type-generator for the JS `Socket`
+    /// wrapper (src/runtime/socket/socket.zig:39). Real impl lives in
+    /// `bun_runtime` (forward-dep). Surfaced as a const-generic opaque so
+    /// dependents like `uws_dispatch.rs` can name `NewSocket<true>` /
+    /// `NewSocket<false>`.
+    #[repr(C)]
+    pub struct NewSocket<const SSL: bool> {
+        _opaque: [u8; 0],
+        _m: core::marker::PhantomData<*mut u8>,
+    }
 }
 /// Deprecated: Use `bun_api::node`
 // TODO(b1): bun_api::node missing from stub surface
@@ -2031,10 +2228,11 @@ pub mod api {
 pub use bun_api::node as Node;
 #[allow(non_snake_case)]
 pub mod Node {
-    // `node.PathLike` / `node.PathOrFileDescriptor` are defined in bun_runtime
-    // (forward-dep on bun_jsc). Surface opaque placeholders so this crate's
-    // dependents (which import them via `bun_jsc::Node::*`) type-check.
-    crate::stub_ty!(PathLike, PathOrFileDescriptor);
+    // `node.PathLike` / `node.PathOrFileDescriptor` / `node.BlobOrStringOrBuffer`
+    // are defined in bun_runtime (forward-dep on bun_jsc). Surface opaque
+    // placeholders so this crate's dependents (which import them via
+    // `bun_jsc::Node::*`) type-check.
+    crate::stub_ty!(PathLike, PathOrFileDescriptor, BlobOrStringOrBuffer);
 }
 pub use self::Node as node;
 
@@ -2275,10 +2473,25 @@ pub mod zig_exception {
     #[repr(C)]
     pub struct Holder {
         // TODO(b2): full field layout (frames + remapped flag) — gated.
-        _bytes: [u8; 0],
+        loaded: bool,
+        zig_exception_: super::ZigException,
     }
     impl Holder {
-        pub fn init() -> Self { Self { _bytes: [] } }
+        pub fn init() -> Self {
+            Self { loaded: false, zig_exception_: super::ZigException::default() }
+        }
+        /// `Holder.zigException()` (ZigException.zig:98) — lazy-init the inner
+        /// `ZigException` (wiring up `frames`/`source_lines` storage) and
+        /// return a mutable pointer to it.
+        pub fn zig_exception(&mut self) -> &mut super::ZigException {
+            if !self.loaded {
+                // TODO(b2): wire frames_ptr/source_lines_ptr to Holder-owned arrays —
+                // gated until ZigException.rs / ZigStackTrace.rs un-gate.
+                self.zig_exception_ = super::ZigException::default();
+                self.loaded = true;
+            }
+            &mut self.zig_exception_
+        }
     }
 }
 

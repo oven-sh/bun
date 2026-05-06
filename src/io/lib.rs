@@ -33,8 +33,15 @@ pub mod pipe_writer;
 pub mod open_for_writing_mod;
 #[path = "MaxBuf.rs"]
 pub mod max_buf;
+#[path = "write.rs"]
+pub mod write;
 
 // ── re-exports for higher tiers ─────────────────────────────────────────────
+// Byte-level `Write` trait + helpers (Zig `std.Io.Writer` surface). Downstream
+// crates name these as `bun_io::Write` / `bun_io::BufWriter` /
+// `bun_io::FmtAdapter` / `bun_io::Result`.
+pub use write::{BufWriter, FmtAdapter, IntLe, Result, Write};
+
 pub use pipes::{FileType, ReadState};
 #[allow(non_snake_case)]
 pub use max_buf as MaxBuf;

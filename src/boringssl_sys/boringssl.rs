@@ -337,9 +337,14 @@ unsafe extern "C" {
     // ── EVP digest ctx ───────────────────────────────────────────────────
     pub fn EVP_MD_CTX_init(ctx: *mut EVP_MD_CTX);
     pub fn EVP_MD_CTX_cleanup(ctx: *mut EVP_MD_CTX) -> c_int;
+    pub fn EVP_MD_CTX_copy_ex(out: *mut EVP_MD_CTX, in_: *const EVP_MD_CTX) -> c_int;
+    pub fn EVP_MD_CTX_size(ctx: *const EVP_MD_CTX) -> usize;
     pub fn EVP_DigestInit(ctx: *mut EVP_MD_CTX, type_: *const EVP_MD) -> c_int;
+    pub fn EVP_DigestInit_ex(ctx: *mut EVP_MD_CTX, type_: *const EVP_MD, engine: *mut ENGINE) -> c_int;
     pub fn EVP_DigestUpdate(ctx: *mut EVP_MD_CTX, data: *const c_void, len: usize) -> c_int;
     pub fn EVP_DigestFinal(ctx: *mut EVP_MD_CTX, md_out: *mut u8, out_size: *mut c_uint) -> c_int;
+    pub fn EVP_DigestFinal_ex(ctx: *mut EVP_MD_CTX, md_out: *mut u8, out_size: *mut c_uint) -> c_int;
+    pub fn EVP_get_digestbyname(name: *const c_char) -> *const EVP_MD;
     pub fn EVP_Digest(
         data: *const c_void,
         len: usize,

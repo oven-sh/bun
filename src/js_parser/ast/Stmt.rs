@@ -17,6 +17,20 @@ pub struct Stmt {
 pub type Batcher = NewBatcher<Stmt>;
 
 impl Stmt {
+    /// Zig: `Stmt.Data.Store.reset()`. Associated wrapper so downstream crates
+    /// can call `bun_js_parser::Stmt::data_store_reset()` without naming the
+    /// thread-local Store module path.
+    #[inline]
+    pub fn data_store_reset() {
+        data::Store::reset();
+    }
+
+    /// Zig: `Stmt.Data.Store.create()`.
+    #[inline]
+    pub fn data_store_create() {
+        data::Store::create();
+    }
+
     pub fn assign(a: Expr, b: Expr) -> Stmt {
         Stmt::alloc(
             S::SExpr {

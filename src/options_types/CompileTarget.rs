@@ -241,8 +241,6 @@ impl CompileTarget {
         }
     }
 
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_sys::fetch_cache_directory_path
     pub fn exe_path<'a>(
         &self,
         buf: &'a mut PathBuffer,
@@ -255,7 +253,7 @@ impl CompileTarget {
                 let Ok(self_exe_path) = bun_core::self_exe_path() else {
                     break 'brk;
                 };
-                buf[..self_exe_path.len()].copy_from_slice(self_exe_path);
+                buf[..self_exe_path.len()].copy_from_slice(self_exe_path.as_bytes());
                 buf[self_exe_path.len()] = 0;
                 *needs_download = false;
                 // SAFETY: buf[self_exe_path.len()] == 0 written above
@@ -263,35 +261,31 @@ impl CompileTarget {
             }
         }
 
-        if Fd::cwd().exists_at(version_str) {
+        if bun_sys::exists_at(Fd::cwd(), version_str) {
             *needs_download = false;
             return version_str;
         }
 
-        let dest = path::join_abs_string_buf_z(
-            bun_fs::FileSystem::instance().top_level_dir,
-            buf,
+        // MOVE_DOWN(b0): bun.install.PackageManager.fetchCacheDirectoryPath → bun_sys
+        // T1 fallback ignores `env` (full env-override chain lives in bun_install).
+        let _ = env;
+        let cache_dir = bun_sys::fetch_cache_directory_path();
+        let dest = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
+            path::fs::FileSystem::instance().top_level_dir(),
+            &mut buf[..],
             &[
-                // MOVE_DOWN(b0): bun_install::PackageManager::fetch_cache_directory_path → bun_sys
-                bun_sys::fetch_cache_directory_path(env, None).path,
+                cache_dir.as_slice(),
                 version_str.as_bytes(),
             ],
-            path::Platform::Auto,
         );
 
-        if Fd::cwd().exists_at(dest) {
+        if bun_sys::exists_at(Fd::cwd(), dest) {
             *needs_download = false;
         }
 
         dest
     }
 
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_sys::move_file_z
-    // TODO(b2-blocked): bun_sys::Dir::make_open_path
-    // TODO(b2-blocked): bun_sys::Dir::delete_tree
-    // TODO(b2-blocked): bun_core::fast_random
-    // TODO(b2-blocked): bun_paths::fs::FileSystem::tmpname
     pub fn download_to_path(
         &self,
         env: &mut bun_dotenv::Loader,
@@ -309,14 +303,14 @@ impl CompileTarget {
         // SAFETY: registered once at startup, &'static thereafter.
         let http_vt: &HttpSyncDownloadVTable = unsafe { &*http_vt };
         unsafe { (http_vt.init_thread)() };
-        let mut refresher = bun_core::Progress::default();
+        let mut refresher = bun_core::Progress::Progress::default();
 
         {
             refresher.refresh();
 
             // TODO: This is way too much code necessary to send a single HTTP request...
             let mut compressed_archive_bytes =
-                Box::new(bun_core::MutableString::init(24 * 1024 * 1024)?);
+                Box::new(MutableString::init(24 * 1024 * 1024)?);
             let mut url_buffer = [0u8; 2048];
             let url_str = match self.to_npm_registry_url(&mut url_buffer) {
                 Ok(s) => s,
@@ -328,20 +322,26 @@ impl CompileTarget {
             let url_str_copy: Box<[u8]> = Box::from(url_str);
             let url = bun_url::URL::parse(&url_str_copy);
             {
-                let mut progress = refresher.start("Downloading", 0);
-                let _progress_guard = scopeguard::guard((), |_| progress.end());
-                // TODO(port): errdefer — progress captured by guard above conflicts with use below; Phase B reshape
+                // TODO(port): errdefer progress.end() — `start` returns `&mut Node`
+                // borrowing `refresher`, so a scopeguard capturing it would alias.
+                // Phase B: reshape with a guard that re-borrows on drop.
+                // PORT NOTE: reshaped for borrowck — `get_http_proxy_for` borrows
+                // `env` for the proxy URL lifetime; read the bool first.
+                let reject_unauthorized = env.get_tls_reject_unauthorized();
                 let http_proxy: Option<bun_url::URL> = env.get_http_proxy_for(&url);
+                let progress = refresher.start(b"Downloading", 0);
 
                 let status_code = unsafe {
                     (http_vt.get_sync)(
                         url,
                         http_proxy,
-                        env.get_tls_reject_unauthorized(),
-                        &mut progress as *mut _ as *mut (),
+                        reject_unauthorized,
+                        progress as *mut bun_core::Progress::Node as *mut (),
                         &mut *compressed_archive_bytes as *mut _,
                     )
-                }?;
+                };
+                progress.end();
+                let status_code = status_code?;
 
                 match status_code {
                     404 => {
@@ -368,50 +368,67 @@ impl CompileTarget {
                 }
 
                 {
-                    let mut node = refresher.start("Decompressing", 0);
-                    let mut gunzip = match bun_zlib::ZlibReaderArrayList::init(
-                        compressed_archive_bytes.list.as_slice(),
-                        &mut tarball_bytes,
-                    ) {
-                        Ok(g) => g,
-                        Err(_) => {
-                            node.end();
-                            // Return error without printing - let caller handle the messaging
-                            return Err(bun_core::err!("InvalidResponse"));
-                        }
-                    };
-                    if gunzip.read_all(true).is_err() {
-                        node.end();
+                    // PORT NOTE: reshaped for borrowck — `refresher.start` borrows
+                    // `refresher` mutably; do gunzip work first, drive progress around it.
+                    refresher.start(b"Decompressing", 0);
+                    let gunzip_result = (|| -> Result<(), bun_core::Error> {
+                        let mut gunzip = bun_zlib::ZlibReaderArrayList::init(
+                            compressed_archive_bytes.list.as_slice(),
+                            &mut tarball_bytes,
+                        )
+                        .map_err(|_| bun_core::err!("InvalidResponse"))?;
+                        gunzip
+                            .read_all(true)
+                            .map_err(|_| bun_core::err!("InvalidResponse"))?;
+                        Ok(())
+                    })();
+                    refresher.root.end();
+                    if let Err(e) = gunzip_result {
                         // Return error without printing - let caller handle the messaging
-                        return Err(bun_core::err!("InvalidResponse"));
+                        return Err(e);
                     }
-                    drop(gunzip);
-                    node.end();
                 }
                 refresher.refresh();
 
                 {
-                    let mut node = refresher.start("Extracting", 0);
+                    refresher.start(b"Extracting", 0);
                     // defer node.end() — see explicit calls below
                     // TODO(port): scopeguard for node.end() conflicts with explicit node.end() in error arms
 
+                    // Inlined `bun.fs.FileSystem.tmpname` (lives in bun_resolver,
+                    // which is a higher tier — would form a cycle). Produces
+                    // `.{hex(hash|nano)}-{hex(counter)}.tmp\0`.
                     let mut tmpname_buf = [0u8; 1024];
-                    let tempdir_name = bun_fs::FileSystem::tmpname(
-                        b"tmp",
-                        &mut tmpname_buf,
-                        bun_core::fast_random(),
-                    )?;
-                    // TODO(port): std.fs.cwd().makeOpenPath / deleteTree — use bun_sys equivalents
-                    let tmpdir = bun_sys::Dir::cwd().make_open_path(tempdir_name)?;
+                    let tempdir_name: &ZStr = {
+                        use core::sync::atomic::AtomicU32;
+                        static TMPNAME_ID: AtomicU32 = AtomicU32::new(0);
+                        let hash = bun_core::fast_random();
+                        let hex_value: u64 = (u128::from(hash)
+                            | u128::try_from(bun_core::time::nano_timestamp()).unwrap_or(0))
+                            as u64;
+                        let mut cursor = std::io::Cursor::new(&mut tmpname_buf[..]);
+                        write!(
+                            &mut cursor,
+                            ".{:x}-{:X}.tmp",
+                            hex_value,
+                            TMPNAME_ID.fetch_add(1, Ordering::Relaxed),
+                        )
+                        .map_err(|_| bun_core::err!("NoSpaceLeft"))?;
+                        let written = cursor.position() as usize;
+                        tmpname_buf[written] = 0;
+                        // SAFETY: tmpname_buf[written] == 0 written above
+                        unsafe { ZStr::from_raw(tmpname_buf.as_ptr(), written) }
+                    };
+                    let tmpdir = bun_sys::Dir::cwd()
+                        .make_open_path(tempdir_name.as_bytes(), Default::default())?;
                     let _cleanup = scopeguard::guard((), |_| {
-                        let _ = bun_sys::Dir::cwd().delete_tree(tempdir_name);
+                        let _ = bun_sys::Dir::cwd().delete_tree(tempdir_name.as_bytes());
                     });
                     let extract_res = bun_libarchive::Archiver::extract_to_dir(
                         tarball_bytes.as_slice(),
-                        &tmpdir,
+                        tmpdir.fd(),
                         None,
-                        (),
-                        (),
+                        &mut (),
                         bun_libarchive::ExtractOptions {
                             // "package/bin"
                             depth_to_skip: 2,
@@ -419,7 +436,7 @@ impl CompileTarget {
                         },
                     );
                     if extract_res.is_err() {
-                        node.end();
+                        refresher.root.end();
                         // Return error without printing - let caller handle the messaging
                         return Err(bun_core::err!("ExtractionFailed"));
                     }
@@ -427,36 +444,35 @@ impl CompileTarget {
                     let mut did_retry = false;
                     loop {
                         let src_name: &ZStr = if self.os == OperatingSystem::Windows {
-                            ZStr::from_literal(b"bun.exe\0")
+                            bun_core::zstr!("bun.exe")
                         } else {
-                            ZStr::from_literal(b"bun\0")
+                            bun_core::zstr!("bun")
                         };
                         let mv = bun_sys::move_file_z(
-                            Fd::from_std_dir(&tmpdir),
+                            tmpdir.fd(),
                             src_name,
-                            bun_sys::INVALID_FD,
+                            Fd::INVALID,
                             dest_z,
                         );
                         if mv.is_err() {
                             if !did_retry {
                                 did_retry = true;
-                                let dirname = path::dirname(dest_z.as_bytes(), path::Platform::Loose);
+                                let dirname = path::dirname(dest_z.as_bytes());
                                 if !dirname.is_empty() {
-                                    // TODO(port): std.fs.cwd().makePath — use bun_sys::make_path
                                     let _ = bun_sys::Dir::cwd().make_path(dirname);
                                     continue;
                                 }
 
                                 // fallthrough, failed for another reason
                             }
-                            node.end();
+                            refresher.root.end();
                             // Return error without printing - let caller handle the messaging
                             return Err(bun_core::err!("ExtractionFailed"));
                         }
                         break;
                     }
-                    drop(tmpdir);
-                    node.end();
+                    tmpdir.close();
+                    refresher.root.end();
                 }
                 refresher.refresh();
             }

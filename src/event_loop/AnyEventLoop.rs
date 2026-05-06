@@ -156,6 +156,15 @@ impl<'a> AnyEventLoop<'a> {
         }
     }
 
+    /// Convert to an owned [`EventLoopHandle`]. Thin alias for
+    /// [`EventLoopHandle::from_any`] kept for Zig-shape parity — callers that
+    /// were `jsc.EventLoopHandle.init(any_loop)` in Zig spell it
+    /// `AnyEventLoop::as_handle(any_loop)` in Rust.
+    #[inline]
+    pub fn as_handle(this: &mut AnyEventLoop<'static>) -> EventLoopHandle {
+        EventLoopHandle::from_any(this)
+    }
+
     pub fn init() -> AnyEventLoop<'a> {
         // PORT NOTE: Zig took `allocator: std.mem.Allocator`; dropped per §Allocators (non-AST crate).
         AnyEventLoop::Mini(MiniEventLoop::init())

@@ -226,14 +226,6 @@ pub enum ScopeError {
 // minimal opaque shadow stubs are provided so dependents type-check.
 // ──────────────────────────────────────────────────────────────────────────
 
-// TODO(b2-blocked): bun_js_parser::Expr (with .data / ::init / .as_property /
-//                   .as_string / .as_bool / .get / .is_array / .as_string_cloned /
-//                   .as_utf8_string_literal)
-// TODO(b2-blocked): bun_js_parser::ExprData (EString/EArray/EObject/EBoolean/ENull/ENumber)
-// TODO(b2-blocked): bun_js_parser::E::Object (.properties / .get / .put / .get_or_put_object)
-// TODO(b2-blocked): bun_js_parser::E::Array (.items / .push)
-// TODO(b2-blocked): bun_js_parser::E::{String, Boolean, Null, Number}
-// TODO(b2-blocked): bun_js_parser::e::object::Rope
 // TODO(b2-blocked): bun_api::BunInstall
 // TODO(b2-blocked): bun_api::NpmRegistry
 // TODO(b2-blocked): bun_api::NpmRegistryMap
@@ -241,7 +233,8 @@ pub enum ScopeError {
 // TODO(b2-blocked): bun_api::Ca
 // TODO(b2-blocked): bun_logger::source_from_file (was bun_sys::File::to_source — moved up)
 // TODO(b2-blocked): bun_install_types::NodeLinker::PnpmMatcher::from_expr
-// TODO(b2-blocked): bun_interchange::json::parse_utf8_impl
+// TODO(b2-blocked): bun_interchange::json::parse_utf8_impl (bun_interchange::Expr is an
+//                   opaque stub, not bun_js_parser::Expr — quoted-value JSON fast path only)
 
 pub use draft::{
     ConfigIterator, Parser, ScopeItem, ScopeIterator, ToStringFormatter,
@@ -356,21 +349,15 @@ impl<'a> Parser<'a> {
     // deinit -> Drop: `logger` and `arena` are owned and drop automatically.
 
     pub fn parse(&mut self, bump: &'a Arena) -> OOM<()> {
-        #[cfg(any())]
-        // TODO(b2-blocked): bun_js_parser::E::Object::get_or_put_object
-        // TODO(b2-blocked): bun_js_parser::E::Object::get
-        // TODO(b2-blocked): bun_js_parser::E::Object::put
-        // TODO(b2-blocked): bun_js_parser::E::Array::push
-        // TODO(b2-blocked): bun_js_parser::ExprData::e_object_mut
-        // TODO(b2-blocked): bun_js_parser::ExprData::e_array_mut
-        {
         // TODO(port): borrowck — in Zig, `arena_allocator` is `self.arena.allocator()`;
         // here it is passed separately to avoid overlapping &mut self borrows.
         let src = self.src;
         let mut iter = src.split(|&b| b == b'\n');
         // TODO(port): borrowck — `head` aliases into `self.out.data.e_object` while
-        // `self` is also borrowed mutably for prepare_str(). Phase B may need raw ptr.
-        let mut head: *mut E::Object = self.out.data.e_object_mut();
+        // `self` is also borrowed mutably for prepare_str(). Kept as raw `*mut`
+        // (the underlying `E::Object` lives in the Expr Store, not on `self`).
+        let mut head: *mut E::Object =
+            self.out.data.e_object_mut().expect("Parser.out is E.Object") as *mut E::Object;
 
         // var duplicates = bun.StringArrayHashMapUnmanaged(u32){};
         // defer duplicates.deinit(allocator);
@@ -426,14 +413,12 @@ impl<'a> Parser<'a> {
                         )?
                         .into_section();
                     // PERF(port): was `rope_stack.fixed_buffer_allocator.reset()` here.
-                    // SAFETY: head is a valid &mut E::Object derived from self.out.
-                    let root = unsafe { &mut *self.out.data.e_object_mut() };
-                    let parent_object = match root.get_or_put_object(section, bump) {
+                    // SAFETY: `self.out` was constructed as `E.Object` in `init()`.
+                    let root = self.out.data.e_object_mut().expect("Parser.out is E.Object");
+                    let mut parent_object = match root.get_or_put_object(section, bump) {
                         Ok(v) => v,
-                        Err(e) if e == bun_core::err!("OutOfMemory") => {
-                            return Err(AllocError);
-                        }
-                        Err(_clobber) => {
+                        Err(E::SetError::OutOfMemory) => return Err(AllocError),
+                        Err(E::SetError::Clobber) => {
                             // We're in here if key exists but it is not an object
                             //
                             // This is possible if someone did:
@@ -469,7 +454,11 @@ impl<'a> Parser<'a> {
                             break 'treat_as_key;
                         }
                     };
-                    head = parent_object.data.e_object_mut();
+                    head = parent_object
+                        .data
+                        .e_object_mut()
+                        .expect("get_or_put_object returns E.Object")
+                        as *mut E::Object;
                     break 'treat_as_key;
                 }
                 if !treat_as_key {
@@ -535,22 +524,19 @@ impl<'a> Parser<'a> {
                             )?
                             .into_value();
                     }
-                    break 'brk Expr::init(
-                        E::String(E::String { data: b"" }),
-                        Loc::EMPTY,
-                    );
+                    break 'brk Expr::init(E::EString::init(b""), Loc::EMPTY);
                 }
-                Expr::init(E::Boolean(E::Boolean { value: true }), Loc::EMPTY)
+                Expr::init(E::Boolean { value: true }, Loc::EMPTY)
             };
 
             let value: Expr = match &value_raw.data {
                 ExprData::EString(s) => {
                     if s.data == b"true" {
-                        Expr::init(E::Boolean(E::Boolean { value: true }), Loc::EMPTY)
+                        Expr::init(E::Boolean { value: true }, Loc::EMPTY)
                     } else if s.data == b"false" {
-                        Expr::init(E::Boolean(E::Boolean { value: false }), Loc::EMPTY)
+                        Expr::init(E::Boolean { value: false }, Loc::EMPTY)
                     } else if s.data == b"null" {
-                        Expr::init(E::Null(E::Null {}), Loc::EMPTY)
+                        Expr::init(E::Null, Loc::EMPTY)
                     } else {
                         value_raw
                     }
@@ -564,27 +550,23 @@ impl<'a> Parser<'a> {
 
             if is_array {
                 if let Some(val) = head_ref.get(key) {
-                    if !val.data.is_e_array() {
+                    if !matches!(val.data, ExprData::EArray(_)) {
                         let mut arr = E::Array::default();
                         arr.push(bump, val)?;
-                        head_ref.put(bump, key, Expr::init(E::Array(arr), Loc::EMPTY))?;
+                        head_ref.put(bump, key, Expr::init(arr, Loc::EMPTY))?;
                     }
                 } else {
-                    head_ref.put(
-                        bump,
-                        key,
-                        Expr::init(E::Array(E::Array::default()), Loc::EMPTY),
-                    )?;
+                    head_ref.put(bump, key, Expr::init(E::Array::default(), Loc::EMPTY))?;
                 }
             }
 
             // safeguard against resetting a previously defined
             // array by accidentally forgetting the brackets
             let mut was_already_array = false;
-            if let Some(val) = head_ref.get(key) {
-                if val.data.is_e_array() {
+            if let Some(mut val) = head_ref.get(key) {
+                if matches!(val.data, ExprData::EArray(_)) {
                     was_already_array = true;
-                    val.data.e_array_mut().push(bump, value)?;
+                    val.data.e_array_mut().unwrap().push(bump, value)?;
                     head_ref.put(bump, key, val)?;
                 }
             }
@@ -592,8 +574,6 @@ impl<'a> Parser<'a> {
                 head_ref.put(bump, key, value)?;
             }
         }
-        } // end #[cfg(any())]
-        let _ = bump;
         Ok(())
     }
 
@@ -606,10 +586,6 @@ impl<'a> Parser<'a> {
         offset_: i32,
     ) -> OOM<PrepareResult<'a>> {
         #![allow(unreachable_code)]
-        #[cfg(any())]
-        // TODO(b2-blocked): bun_interchange::json::parse_utf8_impl
-        // TODO(b2-blocked): bun_js_parser::Expr::as_string
-        {
         let mut offset = offset_;
         let mut val = strings::trim(val_, b" \n\r\t");
 
@@ -624,10 +600,17 @@ impl<'a> Parser<'a> {
                     };
                     offset += 1;
                 }
+                // TODO(b2-blocked): bun_interchange::json::parse_utf8_impl —
+                // `bun_interchange` currently exports an opaque `Expr` stub
+                // (not `bun_js_parser::Expr`), so the JSON fast path stays
+                // gated. Falls back to the same path the Zig takes when JSON
+                // parsing fails (env-var expand for values, fallthrough for
+                // sections/keys).
+                #[cfg(any())]
+                {
                 let src = Source::init_path_string(self.source.path.text.as_slice(), val);
                 let mut log = Log::init();
                 // Try to parse it and if it fails will just treat it as a string
-                // TODO(b2-blocked): bun_interchange::json::parse_utf8_impl
                 let json_val: Expr = match bun_interchange::json::parse_utf8_impl(&src, &mut log, bump, true) {
                     Ok(v) => v,
                     Err(_) => {
@@ -702,6 +685,16 @@ impl<'a> Parser<'a> {
                         return Ok(PrepareResult::Key(str_));
                     }
                 }
+                } // end #[cfg(any())] — JSON fast path
+                // Fallback (JSON-parse-unavailable ≈ JSON-parse-failed):
+                if usage == Usage::Value {
+                    let expanded = self.expand_env_vars(bump, val)?;
+                    return Ok(PrepareResult::Value(Expr::init(
+                        E::EString::init(expanded),
+                        Loc { start: offset },
+                    )));
+                }
+                // sections/keys: fall through past the if/else to the bottom.
             }
         } else {
             const STACK_BUF_SIZE: usize = 1024;
@@ -716,7 +709,7 @@ impl<'a> Parser<'a> {
             let mut rope: Option<&'a mut Rope> = None;
 
             let mut i: usize = 0;
-            while i < val.len() {
+            'walk: while i < val.len() {
                 let c = val[i];
                 if esc {
                     match c {
@@ -781,7 +774,7 @@ impl<'a> Parser<'a> {
                                     did_any_escape = true;
                                     i = new_i;
                                     i += 1;
-                                    continue;
+                                    continue 'walk;
                                 }
                             }
                             unesc.push(b'$');
@@ -845,18 +838,18 @@ impl<'a> Parser<'a> {
                 Usage::Value => {
                     if !did_any_escape {
                         return Ok(PrepareResult::Value(Expr::init(
-                            E::String(E::String::init(val)),
+                            E::EString::init(val),
                             Loc { start: offset },
                         )));
                     }
                     if unesc.len() <= STACK_BUF_SIZE {
                         return Ok(PrepareResult::Value(Expr::init(
-                            E::String(E::String::init(bump.alloc_slice_copy(&unesc))),
+                            E::EString::init(bump.alloc_slice_copy(&unesc)),
                             Loc { start: offset },
                         )));
                     }
                     return Ok(PrepareResult::Value(Expr::init(
-                        E::String(E::String::init(unesc.into_bump_slice())),
+                        E::EString::init(unesc.into_bump_slice()),
                         Loc { start: offset },
                     )));
                 }
@@ -877,19 +870,16 @@ impl<'a> Parser<'a> {
         // fallthrough from `break 'out` above
         if usage == Usage::Value {
             return Ok(PrepareResult::Value(Expr::init(
-                E::String(E::String::init(val)),
+                E::EString::init(val),
                 Loc { start: offset },
             )));
         }
         if usage == Usage::Key {
-            return Ok(PrepareResult::Key(val));
             // TODO(port): lifetime — `val` borrows `val_` (caller line slice);
-            // Zig returns it directly. Phase B may need bump.alloc_slice_copy here.
+            // Zig returns it directly. Dupe into the bump for now.
+            return Ok(PrepareResult::Key(bump.alloc_slice_copy(val)));
         }
         Ok(PrepareResult::Section(Self::str_to_rope(ropealloc, val)?))
-        } // end #[cfg(any())]
-        let _ = (usage, bump, ropealloc, val_, offset_);
-        todo!("b2-blocked: bun_interchange::json::parse_utf8_impl / bun_js_parser::Expr::as_string")
     }
 
     /// Expands ${VAR} and ${VAR?} environment variable substitutions in a string.
@@ -1906,5 +1896,5 @@ fn handle_auth(
 //   source:     src/ini/ini.zig (1357 lines)
 //   confidence: medium
 //   todos:      6
-//   notes:      B-2: Parser/PrepareResult/ToStringFormatter/ConfigIterator/ScopeIterator structs + Rope helpers + env-var expansion compile; parse()/prepare_str()/iterator next()/load_npmrc bodies re-gated on bun_js_parser gated accessor impls (Object::get/put/get_or_put_object, Array::push, Expr::as_*) and empty bun_api crate
+//   notes:      B-2: Parser::parse()/prepare_str() bodies un-gated against live bun_js_parser accessor surface (Object::get/put/get_or_put_object, Array::push, ExprData::e_object_mut/e_array_mut, IntoExprData). Quoted-value JSON fast path in prepare_str() stays gated on bun_interchange::json (its Expr is an opaque stub). load_npmrc/load_npmrc_config + ScopeIterator::next stay gated on empty bun_api crate (BunInstall/NpmRegistry/Ca/npm_registry::Parser).
 // ──────────────────────────────────────────────────────────────────────────

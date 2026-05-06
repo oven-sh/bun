@@ -133,14 +133,14 @@ impl BrotliDecoder {
         unsafe { core::mem::transmute::<i32, BrotliDecoderErrorCode>(BrotliDecoderGetErrorCode(state) as i32) }
     }
 
-    pub fn error_string(c: BrotliDecoderErrorCode) -> &'static ZStr {
+    pub fn error_string(c: BrotliDecoderErrorCode) -> &'static core::ffi::CStr {
         // SAFETY: BrotliDecoderErrorString returns a static NUL-terminated string (or null)
         let ptr = unsafe { BrotliDecoderErrorString(c) };
         if ptr.is_null() {
-            return ZStr::EMPTY;
+            return c"";
         }
         // SAFETY: ptr is a valid NUL-terminated static string from brotli
-        unsafe { ZStr::from_ptr(ptr.cast::<u8>()) }
+        unsafe { core::ffi::CStr::from_ptr(ptr) }
     }
 
     pub fn version() -> u32 {
@@ -364,18 +364,24 @@ pub enum BrotliEncoderOperation {
     emit_metadata = 3,
 }
 
-// TODO(port): lifetime — `output` borrows the encoder's internal buffer until the next encoder call.
-// Phase A forbids struct lifetime params; using &'static [u8] as a placeholder (Phase B decides Box<[u8]> vs raw *const [u8] vs lifetime).
-#[derive(Default)]
-pub struct CompressionResult {
+// `output` borrows the encoder's internal buffer; valid until the next encoder call.
+pub struct CompressionResult<'a> {
     pub success: bool,
     pub has_more: bool,
-    pub output: &'static [u8],
+    pub output: &'a [u8],
 }
 
-impl BrotliEncoder {
-    pub type Operation = BrotliEncoderOperation;
+impl<'a> Default for CompressionResult<'a> {
+    fn default() -> Self {
+        Self { success: false, has_more: false, output: b"" }
+    }
+}
 
+// PORT NOTE: Zig's `BrotliEncoder.Operation` flattened to module-level alias
+// (inherent associated types are unstable in Rust).
+pub type Operation = BrotliEncoderOperation;
+
+impl BrotliEncoder {
     pub fn create_instance(alloc_func: brotli_alloc_func, free_func: brotli_free_func, opaque: *mut c_void) -> Option<&'static mut BrotliEncoder> {
         // SAFETY: FFI constructor; null on failure
         unsafe { BrotliEncoderCreateInstance(alloc_func, free_func, opaque).as_mut() }
@@ -405,7 +411,11 @@ impl BrotliEncoder {
     }
 
     // https://github.com/google/brotli/blob/2ad58d8603294f5ee33d23bb725e0e6a17c1de50/go/cbrotli/writer.go#L23-L40
-    pub fn compress_stream(state: &mut BrotliEncoder, op: BrotliEncoderOperation, data: &[u8]) -> CompressionResult {
+    pub fn compress_stream<'a>(state: &'a mut BrotliEncoder, op: BrotliEncoderOperation, data: &[u8]) -> CompressionResult<'a> {
+        // PORT NOTE: reshaped for borrowck — drive FFI via raw ptr so `output`
+        // can borrow the encoder's internal buffer for `'a` while we still
+        // query has_more_output afterward (matching Zig call order).
+        let state: *mut BrotliEncoder = state;
         let mut available_in = data.len();
         let mut next_in: *const u8 = data.as_ptr();
 
@@ -413,17 +423,24 @@ impl BrotliEncoder {
 
         let mut result = CompressionResult::default();
 
-        // SAFETY: state is a valid &mut BrotliEncoder; in/out pointers are valid;
+        // SAFETY: state is a valid *mut BrotliEncoder for 'a; in/out pointers are valid;
         // next_out is null (we use take_output below); total_out is null (unused)
         result.success = unsafe {
             BrotliEncoderCompressStream(state, op, &mut available_in, &mut next_in, &mut available_out, core::ptr::null_mut(), core::ptr::null_mut()) > 0
         };
 
         if result.success {
-            result.output = Self::take_output(state);
+            let mut size: usize = 0;
+            // SAFETY: state is a valid *mut BrotliEncoder; size is in-out
+            let ptr = unsafe { BrotliEncoderTakeOutput(state, &mut size) };
+            if !ptr.is_null() {
+                // SAFETY: brotli returns a pointer to an internal buffer of `size` bytes,
+                // valid until the next encoder call (bounded by 'a)
+                result.output = unsafe { core::slice::from_raw_parts::<'a>(ptr, size) };
+            }
         }
 
-        // SAFETY: state is a valid &mut BrotliEncoder
+        // SAFETY: state is a valid *mut BrotliEncoder
         result.has_more = unsafe { BrotliEncoderHasMoreOutput(state) > 0 };
 
         result
@@ -454,6 +471,6 @@ pub const BROTLI_DEFAULT_MODE: c_int = BROTLI_MODE_GENERIC;
 // PORT STATUS
 //   source:     src/brotli_sys/brotli_c.zig (334 lines)
 //   confidence: medium
-//   todos:      1
-//   notes:      inherent associated type `BrotliEncoder::Operation` is unstable; Phase B may flatten to module-level alias. get_error_code transmute is UB if brotli returns 0..3 (non-error) — matches Zig behavior. CompressionResult.output uses &'static [u8] placeholder (no struct lifetimes in Phase A); Phase B must reconcile with take_output borrow.
+//   todos:      0
+//   notes:      `BrotliEncoder::Operation` flattened to module-level `Operation` alias (inherent assoc types unstable). get_error_code transmute is UB if brotli returns 0..3 (non-error) — matches Zig behavior. CompressionResult carries lifetime `'a` borrowing the encoder's internal buffer.
 // ──────────────────────────────────────────────────────────────────────────

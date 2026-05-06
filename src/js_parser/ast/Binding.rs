@@ -4,6 +4,11 @@ use bun_logger as logger;
 
 use crate::ast::b::B;
 
+/// Zig: `Binding.Data` is the `union(Tag)` payload. In the Rust port that
+/// union lives at `crate::ast::b::B`; re-export it under the Zig-path name
+/// so downstream crates can `use bun_js_parser::ast::binding::Data`.
+pub use crate::ast::b::B as Data;
+
 // Zig file-as-struct: top-level fields `loc`, `data` define `Binding`.
 #[derive(Copy, Clone, Default)]
 pub struct Binding {

@@ -17,17 +17,30 @@
 
 use core::sync::atomic::AtomicU32;
 
-pub use crate::h3_client::Stream;
-pub use crate::h3_client::ClientSession;
-pub use crate::h3_client::ClientContext;
-pub use crate::h3_client::PendingConnect;
-pub use crate::h3_client::AltSvc;
+// TODO(b2-blocked): Stream/ClientSession/ClientContext/PendingConnect/AltSvc/
+// callbacks/encode bottom out on HTTPClient/HTTPContext/uws quic socket types
+// — un-gate together with the `_phase_a_draft` cluster in lib.rs.
+#[cfg(any())] #[path = "h3_client/Stream.rs"]          pub mod Stream;
+#[cfg(any())] #[path = "h3_client/ClientSession.rs"]   pub mod ClientSession;
+#[cfg(any())] #[path = "h3_client/ClientContext.rs"]   pub mod ClientContext;
+#[cfg(any())] #[path = "h3_client/PendingConnect.rs"]  pub mod PendingConnect;
+#[cfg(any())] #[path = "h3_client/AltSvc.rs"]          pub mod AltSvc;
+#[cfg(any())] #[path = "h3_client/callbacks.rs"]       pub mod callbacks;
+#[cfg(any())] #[path = "h3_client/encode.rs"]          pub mod encode;
 
 /// Live-object counters for the leak test in fetch-http3-client.test.ts.
 /// Incremented at allocation, decremented in deinit. Read from the JS thread
 /// via TestingAPIs.quicLiveCounts so they must be atomic.
-pub static LIVE_SESSIONS: AtomicU32 = AtomicU32::new(0);
-pub static LIVE_STREAMS: AtomicU32 = AtomicU32::new(0);
+// PORT NOTE: Zig names are `live_sessions`/`live_streams` (snake_case module
+// vars). Kept verbatim so cross-crate readers (`bun_http_jsc`) and the gated
+// submodules see the same identifier the Zig uses; SCREAMING_SNAKE aliases
+// preserved for the existing internal references.
+#[allow(non_upper_case_globals)]
+pub static live_sessions: AtomicU32 = AtomicU32::new(0);
+#[allow(non_upper_case_globals)]
+pub static live_streams: AtomicU32 = AtomicU32::new(0);
+pub use live_sessions as LIVE_SESSIONS;
+pub use live_streams as LIVE_STREAMS;
 
 // Zig: pub const TestingAPIs = @import("../http_jsc/headers_jsc.zig").H3TestingAPIs;
 // Deleted per PORTING.md — *_jsc aliases are dropped; H3TestingAPIs lives in

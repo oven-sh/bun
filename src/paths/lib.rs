@@ -28,9 +28,8 @@ pub fn is_absolute_windows_t<T: PathChar>(p: &[T]) -> bool {
     if p.is_empty() { return false; }
     let c0 = p[0];
     if c0 == T::from_u8(b'/') || c0 == T::from_u8(b'\\') { return true; }
-    // Drive letter: `X:\` or `X:/`
+    // Drive letter: `X:\` or `X:/` — Zig std does NOT require `X` be alphabetic.
     if p.len() >= 3
-        && c0.is_ascii_alphabetic()
         && p[1] == T::from_u8(b':')
         && (p[2] == T::from_u8(b'/') || p[2] == T::from_u8(b'\\'))
     {
@@ -43,20 +42,46 @@ pub fn is_absolute_windows(p: &[u8]) -> bool { is_absolute_windows_t::<u8>(p) }
 
 /// Port of `std.fs.path.diskDesignatorWindows` — returns the leading drive
 /// designator (e.g. `C:` or `\\server\share`) or empty.
+///
+/// Faithful to Zig std `windowsParsePath`: no alphabetic gate on the drive
+/// letter; UNC requires a *matching* separator pair (`//` or `\\`, not mixed),
+/// rejects a third leading separator, and requires BOTH server and share
+/// tokens — otherwise returns `b""`.
 pub fn disk_designator_windows(p: &[u8]) -> &[u8] {
-    if p.len() >= 2 && p[0].is_ascii_alphabetic() && p[1] == b':' {
+    if p.len() >= 2 && p[1] == b':' {
         return &p[..2];
     }
-    if p.len() >= 2 && (p[0] == b'\\' || p[0] == b'/') && (p[1] == b'\\' || p[1] == b'/') {
-        // UNC: \\server\share — designator is through the share component.
-        let is_sep = |c: u8| c == b'\\' || c == b'/';
-        let mut i = 2;
-        while i < p.len() && !is_sep(p[i]) { i += 1; } // server
-        if i < p.len() { i += 1; }
-        while i < p.len() && !is_sep(p[i]) { i += 1; } // share
-        return &p[..i];
+    // Single leading sep (not UNC) → no designator.
+    if p.len() >= 1
+        && (p[0] == b'/' || p[0] == b'\\')
+        && (p.len() == 1 || (p[1] != b'/' && p[1] != b'\\'))
+    {
+        return b"";
     }
-    &[]
+    if p.len() < b"//a/b".len() {
+        return b"";
+    }
+    for &this_sep in b"/\\" {
+        if p[0] == this_sep && p[1] == this_sep {
+            if p[2] == this_sep {
+                return b"";
+            }
+            // mem.tokenizeScalar(u8, p, this_sep): skip runs of `this_sep`,
+            // yield non-sep tokens. Require two tokens (server + share);
+            // designator is `p[..index_after_share]`.
+            let mut idx = 0usize;
+            let mut next = || -> Option<()> {
+                while idx < p.len() && p[idx] == this_sep { idx += 1; }
+                if idx == p.len() { return None; }
+                while idx < p.len() && p[idx] != this_sep { idx += 1; }
+                Some(())
+            };
+            if next().is_none() { return b""; } // server
+            if next().is_none() { return b""; } // share
+            return &p[..idx];
+        }
+    }
+    b""
 }
 
 /// Character types valid in path slices (u8 / u16). Defined in resolve_path
@@ -68,13 +93,83 @@ pub fn is_absolute(p: &[u8]) -> bool {
     #[cfg(not(windows))] { p.first() == Some(&b'/') }
     #[cfg(windows)] { is_absolute_windows(p) }
 }
-pub fn dirname(p: &[u8]) -> &[u8] {
+/// NOT a port of `std.fs.path.dirname` — this is the naive "slice before last
+/// separator" used by a handful of callers that want exactly that. For Zig-std
+/// `dirname` semantics (Option, trailing-slash handling, root preservation)
+/// use `bun_core::dirname`.
+pub fn dirname_simple(p: &[u8]) -> &[u8] {
     p.iter().rposition(|&c| c == b'/' || (cfg!(windows) && c == b'\\'))
         .map(|i| &p[..i]).unwrap_or(b"")
 }
 pub fn basename(p: &[u8]) -> &[u8] {
     p.iter().rposition(|&c| c == b'/' || (cfg!(windows) && c == b'\\'))
         .map(|i| &p[i+1..]).unwrap_or(p)
+}
+
+/// Port of `std.fs.path.basenamePosix` — strips trailing `/` then returns the
+/// final component. `\` is NOT a separator.
+pub fn basename_posix(p: &[u8]) -> &[u8] {
+    if p.is_empty() { return b""; }
+    let mut end = p.len();
+    while end > 0 && p[end - 1] == b'/' { end -= 1; }
+    if end == 0 { return b""; }
+    let mut start = end;
+    while start > 0 && p[start - 1] != b'/' { start -= 1; }
+    &p[start..end]
+}
+
+/// Port of `std.fs.path.basenameWindows` — strips trailing `/`/`\`, treats a
+/// drive designator (`X:`) as a boundary, then returns the final component.
+pub fn basename_windows(p: &[u8]) -> &[u8] {
+    if p.is_empty() { return b""; }
+    let mut end = p.len();
+    loop {
+        let c = p[end - 1];
+        if c == b'/' || c == b'\\' {
+            end -= 1;
+            if end == 0 { return b""; }
+            continue;
+        }
+        if c == b':' && end == 2 { return b""; }
+        break;
+    }
+    let mut start = end;
+    while start > 0
+        && p[start - 1] != b'/'
+        && p[start - 1] != b'\\'
+        && !(p[start - 1] == b':' && start - 1 == 1)
+    {
+        start -= 1;
+    }
+    &p[start..end]
+}
+
+#[inline]
+fn std_basename(p: &[u8]) -> &[u8] {
+    if cfg!(windows) { basename_windows(p) } else { basename_posix(p) }
+}
+
+/// Port of `std.fs.path.extension` — returns the file extension of `p`
+/// **including** the leading dot, or `b""` if none. Dotfiles (`.gitignore`)
+/// and basenames whose only `.` is at index 0 report no extension.
+pub fn extension(p: &[u8]) -> &[u8] {
+    let filename = std_basename(p);
+    match filename.iter().rposition(|&c| c == b'.') {
+        Some(dot) if dot > 0 => &filename[dot..],
+        _ => &p[p.len()..],
+    }
+}
+
+/// Port of `std.fs.path.stem` — returns the basename of `p` with the
+/// extension (as defined by [`extension`]) stripped. Dotfiles keep their
+/// leading dot (`.gitignore` → `.gitignore`).
+pub fn stem(p: &[u8]) -> &[u8] {
+    let filename = std_basename(p);
+    match filename.iter().rposition(|&c| c == b'.') {
+        Some(0) => p,
+        Some(dot) => &filename[..dot],
+        None => filename,
+    }
 }
 
 // TODO(port): Zig's `std.fs.max_path_bytes` is platform-derived; values below mirror Zig std.
@@ -250,24 +345,6 @@ pub fn is_package_path_not_absolute(non_absolute_path: &[u8]) -> bool {
     true
 }
 
-// Local mirror of `std.fs.path.isAbsoluteWindows` for `is_package_path` only;
-// the full `Platform::is_absolute_t` lives in `resolve_path.rs`.
-#[cfg(windows)]
-#[inline]
-fn is_absolute_windows(path: &[u8]) -> bool {
-    if path.is_empty() {
-        return false;
-    }
-    if path[0] == b'/' || path[0] == b'\\' {
-        return true;
-    }
-    // Drive designator: `X:\` or `X:/`
-    path.len() >= 3
-        && path[0].is_ascii_alphabetic()
-        && path[1] == b':'
-        && (path[2] == b'/' || path[2] == b'\\')
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // MOVE_DOWN(CYCLEBREAK): `bun_resolver::fs` — TYPE_ONLY subset.
 // Source: src/resolver/fs.zig.
@@ -279,8 +356,13 @@ fn is_absolute_windows(path: &[u8]) -> bool {
 // resolve them without a `bun_resolver` edge.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod fs {
-    use core::sync::atomic::{AtomicBool, Ordering};
+    use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+    use std::io::Write as _;
     use std::sync::OnceLock;
+
+    use bun_core::ZStr;
+
+    use crate::resolve_path::{is_sep_any, last_index_of_sep};
 
     /// Minimal `FileSystem` singleton: holds `top_level_dir` only. The Zig original
     /// (`src/resolver/fs.zig:14`) also owns the dir-entry cache and filename arenas;
@@ -298,6 +380,9 @@ pub mod fs {
     // Kept as a separate flag so `instance_loaded()` is a cheap relaxed load that
     // mirrors the Zig `pub var instance_loaded: bool`.
     static INSTANCE_LOADED: AtomicBool = AtomicBool::new(false);
+
+    // Zig: `var tmpname_id_number = std.atomic.Value(u32).init(0);`
+    static TMPNAME_ID_NUMBER: AtomicU32 = AtomicU32::new(0);
 
     impl FileSystem {
         #[inline]
@@ -335,49 +420,222 @@ pub mod fs {
                 d
             }
         }
+
+        /// Port of `FileSystem.tmpname` in `src/resolver/fs.zig`:
+        /// `pub fn tmpname(extname: string, buf: []u8, hash: u64) std.fmt.BufPrintError![:0]u8`
+        ///
+        /// Writes `.<hex(hash|nanos)>-<HEX(counter)>.<extname>\0` into `buf` and returns
+        /// the NUL-terminated borrow. Static (no `&self`) — matches the Zig.
+        pub fn tmpname<'b>(
+            extname: &[u8],
+            buf: &'b mut [u8],
+            hash: u64,
+        ) -> Result<&'b mut ZStr, bun_core::Error> {
+            // Zig: `@as(u64, @truncate(@as(u128, hash) | @as(u128, std.time.nanoTimestamp())))`
+            let hex_value: u64 =
+                (u128::from(hash) | (bun_core::time::nano_timestamp() as u128)) as u64;
+
+            let len = buf.len();
+            let mut cursor = &mut buf[..];
+            // Zig: bun.fmt.hexIntLower / hexIntUpper — fixed-width, zero-padded
+            // to `@bitSizeOf(Int)/4` digits (u64 → 16, u32 → 8).
+            write!(
+                &mut cursor,
+                ".{:016x}-{:08X}.{}",
+                hex_value,
+                TMPNAME_ID_NUMBER.fetch_add(1, Ordering::Relaxed),
+                bstr::BStr::new(extname),
+            )
+            .map_err(|_| bun_core::err!("NoSpaceLeft"))?;
+            let written = len - cursor.len();
+            if written >= len {
+                return Err(bun_core::err!("NoSpaceLeft"));
+            }
+            buf[written] = 0;
+            // SAFETY: `buf[written] == 0` written immediately above; `buf[..=written]` is
+            // exclusively borrowed for `'b`.
+            Ok(unsafe { ZStr::from_raw_mut(buf.as_mut_ptr(), written) })
+        }
     }
 
-    /// TYPE_ONLY: `src/resolver/fs.zig:1582` — parsed (dir, base, ext, filename) view
-    /// over a borrowed path slice. All four fields point into the same backing string.
-    // TODO(port): Zig `string` is `[]const u8` borrowed; modelled as `&'static str` for
-    // now so `Default`/const-init work. Phase B introduces a lifetime param if callers
-    // need non-'static borrows.
-    #[derive(Debug, Clone, Copy, Default)]
-    pub struct PathName {
-        pub base: &'static str,
-        pub dir: &'static str,
+    /// Port of `PathName` in `src/resolver/fs.zig:1582` — parsed (dir, base, ext,
+    /// filename) view over a borrowed path slice. All four fields point into the
+    /// same backing allocation.
+    #[derive(Debug, Clone, Copy)]
+    pub struct PathName<'a> {
+        pub base: &'a [u8],
+        pub dir: &'a [u8],
         /// includes the leading `.`; extensionless files report `""`
-        pub ext: &'static str,
-        pub filename: &'static str,
+        pub ext: &'a [u8],
+        pub filename: &'a [u8],
     }
 
-    /// TYPE_ONLY: `src/resolver/fs.zig:1727` — the bundler/resolver's logical path
-    /// (display `pretty`, canonical `text`, `namespace`, parsed `name`).
+    impl<'a> Default for PathName<'a> {
+        #[inline]
+        fn default() -> Self {
+            Self { base: b"", dir: b"", ext: b"", filename: b"" }
+        }
+    }
+
+    impl<'a> PathName<'a> {
+        /// Zig: `PathName.findExtname`.
+        pub fn find_extname(path: &[u8]) -> &[u8] {
+            let start = last_index_of_sep(path).map(|i| i + 1).unwrap_or(0);
+            let base = &path[start..];
+            if let Some(dot) = base.iter().rposition(|&c| c == b'.') {
+                if dot > 0 {
+                    return &base[dot..];
+                }
+            }
+            b""
+        }
+
+        #[inline]
+        pub fn ext_without_leading_dot(&self) -> &'a [u8] {
+            if !self.ext.is_empty() && self.ext[0] == b'.' { &self.ext[1..] } else { self.ext }
+        }
+
+        /// Zig: `PathName.nonUniqueNameStringBase`.
+        /// `/bar/foo/index.js` → `foo`; `/bar/foo.js` → `foo`.
+        pub fn non_unique_name_string_base(&self) -> &'a [u8] {
+            // /bar/foo/index.js -> foo
+            if !self.dir.is_empty() && self.base == b"index" {
+                // "/index" -> "index"
+                return PathName::init(self.dir).base;
+            }
+            debug_assert!(!self.base.contains(&b'/'));
+            // /bar/foo.js -> foo
+            self.base
+        }
+
+        /// Zig: `PathName.dirOrDot`.
+        #[inline]
+        pub fn dir_or_dot(&self) -> &'a [u8] {
+            if self.dir.is_empty() { b"." } else { self.dir }
+        }
+
+        /// Zig: `PathName.dirWithTrailingSlash`.
+        #[inline]
+        pub fn dir_with_trailing_slash(&self) -> &'a [u8] {
+            // The three strings basically always point to the same underlying ptr
+            // so if dir does not have a trailing slash, but is spaced one apart from the basename
+            // we can assume there is a trailing slash there
+            // so we extend the original slice's length by one
+            if self.dir.is_empty() {
+                return b"./";
+            }
+            let extend = (!is_sep_any(self.dir[self.dir.len() - 1])
+                && (self.dir.as_ptr() as usize + self.dir.len() + 1)
+                    == self.base.as_ptr() as usize) as usize;
+            // SAFETY: when `extend == 1`, `dir.ptr[dir.len]` is the separator byte
+            // immediately preceding `base` — both slices borrow the same underlying
+            // allocation (the `path_` passed to `init`).
+            unsafe { core::slice::from_raw_parts(self.dir.as_ptr(), self.dir.len() + extend) }
+        }
+
+        /// Zig: `PathName.init`.
+        pub fn init(path_: &'a [u8]) -> PathName<'a> {
+            #[cfg(all(windows, debug_assertions))]
+            {
+                // This path is likely incorrect. I think it may be *possible*
+                // but it is almost entirely certainly a bug.
+                debug_assert!(!path_.starts_with(b"/:/"));
+                debug_assert!(!path_.starts_with(b"\\:\\"));
+            }
+
+            let mut path = path_;
+            let mut base = path;
+            let ext: &[u8];
+            let mut dir = path;
+            let mut is_absolute = true;
+            let has_disk_designator = path.len() > 2
+                && path[1] == b':'
+                && matches!(path[0], b'a'..=b'z' | b'A'..=b'Z')
+                && is_sep_any(path[2]);
+            if has_disk_designator {
+                path = &path[2..];
+            }
+
+            while let Some(i) = last_index_of_sep(path) {
+                // Stop if we found a non-trailing slash
+                if i + 1 != path.len() && path.len() > i + 1 {
+                    base = &path[i + 1..];
+                    dir = &path[0..i];
+                    is_absolute = false;
+                    break;
+                }
+
+                // Ignore trailing slashes
+                path = &path[0..i];
+            }
+
+            // Strip off the extension
+            if let Some(dot) = base.iter().rposition(|&c| c == b'.') {
+                ext = &base[dot..];
+                base = &base[0..dot];
+            } else {
+                ext = b"";
+            }
+
+            if is_absolute {
+                dir = b"";
+            }
+
+            if base.len() > 1 && is_sep_any(base[base.len() - 1]) {
+                base = &base[0..base.len() - 1];
+            }
+
+            if !is_absolute && has_disk_designator {
+                dir = &path_[0..dir.len() + 2];
+            }
+
+            let filename = if !dir.is_empty() { &path_[dir.len() + 1..] } else { path_ };
+
+            PathName { dir, base, ext, filename }
+        }
+    }
+
+    /// Port of `Path` in `src/resolver/fs.zig:1727` — the bundler/resolver's logical
+    /// path (display `pretty`, canonical `text`, `namespace`, parsed `name`).
     ///
     /// NOTE: distinct from `crate::Path` (the buffer-backed AbsPath/RelPath). This is
     /// the *resolver* `Path`; addressed as `bun_paths::fs::Path`.
-    #[derive(Debug, Clone, Default)]
-    pub struct Path {
+    #[derive(Debug, Clone)]
+    pub struct Path<'a> {
         /// Display path — relative to cwd in the bundler; forward-slash on Windows.
-        pub pretty: &'static str,
+        pub pretty: &'a [u8],
         /// Canonical location. For `file` namespace, usually absolute with native seps.
-        pub text: &'static str,
-        pub namespace: &'static str,
+        pub text: &'a [u8],
+        pub namespace: &'a [u8],
         // TODO(@paperclover): investigate removing or simplifying this property (it's 64 bytes)
-        pub name: PathName,
+        pub name: PathName<'a>,
         pub is_disabled: bool,
         pub is_symlink: bool,
     }
 
-    impl Path {
+    impl<'a> Default for Path<'a> {
+        #[inline]
+        fn default() -> Self {
+            Self {
+                pretty: b"",
+                text: b"",
+                namespace: b"",
+                name: PathName::default(),
+                is_disabled: false,
+                is_symlink: false,
+            }
+        }
+    }
+
+    impl<'a> Path<'a> {
         /// Zig: `Path.init(text)` — sets `text`/`pretty` to the same slice, parses `name`,
         /// namespace defaults to `"file"`.
-        pub fn init(text: &'static str) -> Self {
+        pub fn init(text: &'a [u8]) -> Self {
             Self {
                 pretty: text,
                 text,
-                namespace: "file",
-                name: PathName::default(), // TODO(port): wire PathName::init(text) once ported
+                namespace: b"file",
+                name: PathName::init(text),
                 is_disabled: false,
                 is_symlink: false,
             }
@@ -385,16 +643,22 @@ pub mod fs {
 
         #[inline]
         pub fn is_file(&self) -> bool {
-            self.namespace.is_empty() || self.namespace == "file"
+            self.namespace.is_empty() || self.namespace == b"file"
+        }
+
+        /// Zig: `pub inline fn sourceDir(this: *const Path) string`
+        #[inline]
+        pub fn source_dir(&self) -> &'a [u8] {
+            self.name.dir_with_trailing_slash()
         }
     }
 
-    /// TYPE_ONLY: `src/resolver/fs.zig:1505`.
+    /// Port of `PathContentsPair` in `src/resolver/fs.zig:1505`.
     #[derive(Debug, Clone, Default)]
-    pub struct PathContentsPair {
-        pub path: Path,
+    pub struct PathContentsPair<'a> {
+        pub path: Path<'a>,
         // Zig: `contents: string` (`[]const u8`).
-        pub contents: &'static str,
+        pub contents: &'a [u8],
     }
 }
 

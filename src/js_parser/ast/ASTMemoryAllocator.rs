@@ -24,7 +24,32 @@ pub struct ASTMemoryAllocator {
     previous: *mut ASTMemoryAllocator,
 }
 
+impl Default for ASTMemoryAllocator {
+    fn default() -> Self {
+        Self { arena: Arena::new(), previous: ptr::null_mut() }
+    }
+}
+
 impl ASTMemoryAllocator {
+    /// Construct a fresh allocator.
+    ///
+    /// Zig callers wrote `var a: ASTMemoryAllocator = undefined;` then
+    /// `a.enter(allocator)` (passing the fallback `std.mem.Allocator`). In the
+    /// Rust port the SFA + fallback collapse to a single internal `Arena`, so
+    /// the passed arena is currently unused — kept for call-site shape compat.
+    // TODO(port): if Phase B routes the parser bump arena through here instead
+    // of allocating a fresh one, thread `_fallback` into `self.arena`.
+    pub fn new(_fallback: &Arena) -> Self {
+        // PERF(port): was stack-fallback — profile in Phase B
+        Self::default()
+    }
+
+    /// Zig: `var a: ASTMemoryAllocator = undefined; a.initWithoutStack(arena);`
+    /// — collapsed to a constructor that returns a ready instance.
+    pub fn new_without_stack(_fallback: &Arena) -> Self {
+        Self::default()
+    }
+
     pub fn enter(&mut self) -> Scope<'_> {
         // Zig: this.allocator = allocator;
         //      this.stack_allocator = SFA{ .buffer = undefined, .fallback_allocator = allocator, .fixed_buffer_allocator = undefined };

@@ -270,6 +270,10 @@ pub mod unicode {
 }
 // Transcoding suite re-exported from bun_core (T0).
 pub use self::unicode::to_utf16_literal;
+/// `bun.strings.w` — comptime UTF-8→UTF-16 literal. In Rust this **must** be a
+/// macro (callers write `bun_string::strings::w!("…")`); a `fn` returning
+/// `&'static [u16]` would require leaking. Re-export of the crate-root `w!`.
+pub use crate::w;
 pub use bun_core::strings::{
     EncodeIntoResult, copy_latin1_into_utf8, copy_utf16_into_utf8,
     element_length_latin1_into_utf8, element_length_utf16_into_utf8,

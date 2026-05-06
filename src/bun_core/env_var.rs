@@ -68,6 +68,9 @@ new!(pub BUN_DEBUG_HASH_RANDOM_SEED: unsigned, "BUN_DEBUG_HASH_RANDOM_SEED", { d
 new!(pub BUN_DEBUG_QUIET_LOGS: boolean, "BUN_DEBUG_QUIET_LOGS", {});
 new!(pub BUN_DEBUG_TEST_TEXT_LOCKFILE: boolean, "BUN_DEBUG_TEST_TEXT_LOCKFILE", { default: false });
 new!(pub BUN_DEV_SERVER_TEST_RUNNER: string, "BUN_DEV_SERVER_TEST_RUNNER", {});
+/// Debug-only: when set, `NumberRenamer` dumps the symbol table before
+/// renaming (`src/js_printer/renamer.zig`). Presence-checked, value ignored.
+new!(pub BUN_DUMP_SYMBOLS: string, "BUN_DUMP_SYMBOLS", {});
 new!(pub BUN_ENABLE_CRASH_REPORTING: boolean, "BUN_ENABLE_CRASH_REPORTING", {});
 /// Opt-in: when truthy, Bun watches its original parent pid and exits as soon
 /// as that process dies (even if the parent was SIGKILLed and couldn't forward
@@ -569,11 +572,19 @@ pub(crate) mod kind {
                 // Zig used `std.fmt.parseInt(u64, raw_env, 10)` which distinguishes Overflow vs
                 // InvalidCharacter. Env-var values are arbitrary bytes, so per PORTING.md we parse
                 // the byte slice directly instead of round-tripping through `core::str::from_utf8`.
-                // Mirrors Zig std.fmt.parseInt(u64, _, 10): optional leading '+',
+                // Mirrors Zig std.fmt.parseInt(u64, _, 10): optional leading '+' OR '-',
                 // base-10 digits, and interior '_' separators are skipped
-                // (vendor/zig/lib/std/fmt.zig:454). Leading/trailing '_' rejected.
+                // (vendor/zig/lib/std/fmt.zig:454). Leading/trailing '_' rejected. A leading
+                // '-' is accepted by Zig even for unsigned targets: "-0" parses to 0 and any
+                // other "-N" yields error.Overflow.
                 let formatted = {
-                    let digits = raw_env.strip_prefix(b"+").unwrap_or(raw_env);
+                    let (digits, negative) = if let Some(d) = raw_env.strip_prefix(b"+") {
+                        (d, false)
+                    } else if let Some(d) = raw_env.strip_prefix(b"-") {
+                        (d, true)
+                    } else {
+                        (raw_env, false)
+                    };
                     if digits.is_empty()
                         || *digits.first().unwrap() == b'_'
                         || *digits.last().unwrap() == b'_'
@@ -593,6 +604,9 @@ pub(crate) mod kind {
                             Some(v) => v,
                             None => return self.handle_error(raw_env, "overflows u64"),
                         };
+                    }
+                    if negative && acc != 0 {
+                        return self.handle_error(raw_env, "overflows u64");
                     }
                     acc
                 };

@@ -42,6 +42,7 @@ pub mod part {
 // `generated_symbol_name!` is `#[macro_export]` in parser.rs → already at crate root.
 #[path = "lexer.rs"]
 pub mod lexer;
+// `bun_js_parser::js_lexer` is re-exported via `pub use parser::*` (parser.rs:140).
 #[path = "lexer_tables.rs"]
 pub mod lexer_tables;
 // TODO(b2-blocked): bun_collections::StringSet

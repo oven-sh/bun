@@ -955,6 +955,18 @@ impl<V> StringHashMap<V> {
         self.inner.len()
     }
 
+    /// Zig `valueIterator()`. Inherent forwarder so callers can name
+    /// `StringHashMap::values` without relying on `Deref` resolution.
+    #[inline]
+    pub fn values(&self) -> std::collections::hash_map::Values<'_, Box<[u8]>, V> {
+        self.inner.values()
+    }
+
+    #[inline]
+    pub fn values_mut(&mut self) -> std::collections::hash_map::ValuesMut<'_, Box<[u8]>, V> {
+        self.inner.values_mut()
+    }
+
     pub fn ensure_total_capacity(&mut self, n: usize) -> Result<(), AllocError> {
         let need = n.saturating_sub(self.inner.len());
         self.inner.reserve(need);

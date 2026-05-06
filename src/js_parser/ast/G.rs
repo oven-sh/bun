@@ -8,6 +8,11 @@ use crate::ast::stmt::Stmt;
 use crate::ast::TypeScript;
 use crate::{flags, ExprData, ExprNodeList, LocRef, StmtNodeList};
 
+/// Zig: `G.Fn.flags: Flags.Function.Set`. Downstream crates address the flag
+/// enum via `G::FnFlags::IsExport` etc.; re-export the enum + set type here.
+pub use crate::flags::Function as FnFlags;
+pub use crate::flags::FunctionSet as FnFlagsSet;
+
 // PORT NOTE: all `&'ast mut [T]` arena slices are raw `*mut [T]` in Phase A (per
 // the lib.rs file-doc and S.rs convention). 'ast/'bump threaded crate-wide in
 // Phase B in one pass.

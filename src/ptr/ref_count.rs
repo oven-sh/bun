@@ -650,6 +650,31 @@ impl<T: AnyRefCounted> RefPtr<T> {
     /// WITHOUT incrementing the refcount. The caller gives up their ref;
     /// this RefPtr now owns it. Unlike `adopt_ref`, this does not assert
     /// `has_one_ref()` — the pointer may have other outstanding refs.
+    /// This is the inverse of `leak()` / `into_raw()`.
+    ///
+    /// Std-conventional alias for [`take_ref`] (matches `Arc::from_raw` /
+    /// `Rc::from_raw` semantics) so Phase-A drafts that reached for the
+    /// idiomatic Rust name compile without churn.
+    ///
+    /// # Safety
+    /// `raw_ptr` must point to a live `T` and the caller must own one ref.
+    #[inline]
+    pub unsafe fn from_raw(raw_ptr: *mut T) -> Self {
+        // SAFETY: forwarded caller contract
+        unsafe { Self::take_ref(raw_ptr) }
+    }
+
+    /// Std-conventional alias for [`leak`]. Extract the raw pointer, giving up
+    /// ownership WITHOUT decrementing the refcount. Inverse of [`from_raw`].
+    #[inline]
+    pub fn into_raw(self) -> *mut T {
+        self.leak()
+    }
+
+    /// Wrap a raw pointer whose ref is being transferred to this RefPtr
+    /// WITHOUT incrementing the refcount. The caller gives up their ref;
+    /// this RefPtr now owns it. Unlike `adopt_ref`, this does not assert
+    /// `has_one_ref()` — the pointer may have other outstanding refs.
     /// This is the inverse of `leak()`.
     ///
     /// # Safety

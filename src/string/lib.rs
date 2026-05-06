@@ -506,6 +506,29 @@ impl String {
         self.to_zig_string().to_owned_slice_z()
     }
 
+    /// `bun.String.encodeInto` — encode `self` into `out` using a Node.js
+    /// Buffer encoding (string.zig:630). Dispatches to
+    /// `jsc.WebCore.encoding.encodeIntoFrom{8,16}` via [`webcore_encoding`]
+    /// hooks (tier-6 owns the bodies; per PORTING.md §Dispatch hook pattern).
+    ///
+    /// Returns bytes written. The Zig version is `comptime enc`-monomorphized;
+    /// PERF(port): demoted to runtime `enc` — profile in Phase B.
+    pub fn encode_into(
+        &self,
+        out: &mut [u8],
+        enc: encoding::Encoding,
+    ) -> Result<usize, bun_core::Error> {
+        if self.is_utf16() {
+            return Ok(webcore_encoding::encode_into_from16(self.utf16(), out, enc, true));
+        }
+        if self.is_utf8() {
+            // TODO(port): Zig: `@panic("TODO")` — UTF-8 source path was never
+            // implemented (string.zig:636). Match the Zig behaviour.
+            unreachable!("String.encodeInto from UTF-8 source — unimplemented in Zig");
+        }
+        Ok(webcore_encoding::encode_into_from8(self.latin1(), out, enc))
+    }
+
     // `to_js` / `transfer_to_js` / `create_utf8_for_js` are tier-6 (jsc) — the
     // *_jsc alias pattern: deleted here per PORTING.md, defined as extension
     // trait in `bun_jsc`.
@@ -560,6 +583,24 @@ impl ZigString {
     pub fn init_utf16(s: &[u16]) -> Self {
         let mut z = Self { ptr: s.as_ptr().cast(), len: s.len() };
         z.mark_utf16();
+        z
+    }
+
+    /// `ZigString.from16Slice` — wraps a globally-allocated UTF-16 buffer
+    /// (sets both the 16-bit and global ptr-tags). ZigString.zig:533.
+    #[inline]
+    pub fn from16_slice(slice: &[u16]) -> Self {
+        Self::from16(slice.as_ptr(), slice.len())
+    }
+
+    /// `ZigString.from16` — globally-allocated memory only (ZigString.zig:547).
+    /// Marks UTF-16 + global; caller must ensure the buffer was allocated by
+    /// `bun.default_allocator` (mimalloc) since `deinitGlobal` will free it.
+    #[inline]
+    pub fn from16(ptr: *const u16, len: usize) -> Self {
+        let mut z = Self { ptr: ptr.cast(), len };
+        z.mark_utf16();
+        z.mark_global();
         z
     }
 
@@ -661,6 +702,14 @@ impl ZigString {
         debug_assert!(self.is_16bit());
         if self.len == 0 { return &[]; }
         unsafe { core::slice::from_raw_parts(Self::untagged(self.ptr).cast(), self.len) }
+    }
+    /// `ZigString.utf16SliceAligned` — same as `utf16_slice`; the Zig variant
+    /// added an `@alignCast` (ZigString.zig:444). The Rust `.cast::<u16>()`
+    /// already requires the caller-established 2-byte alignment, so this is
+    /// just a name alias for port-diff parity.
+    #[inline]
+    pub fn utf16_slice_aligned(&self) -> &[u16] {
+        self.utf16_slice()
     }
     /// Raw bytes regardless of encoding (`len * 2` for UTF-16).
     pub fn byte_slice(&self) -> &[u8] {
@@ -855,6 +904,282 @@ pub mod lexer_tables {
 
 // Hook slot: bun_runtime sets the WTFString allocation cap.
 pub static STRING_ALLOCATION_LIMIT_HOOK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+
+// ──────────────────────────────────────────────────────────────────────────
+// move-in: webcore_encoding (HOOK ← src/runtime/webcore/encoding.zig)
+//
+// `String::encode_into` dispatches to `jsc.WebCore.encoding.encodeIntoFrom{8,16}`
+// (tier-6 — base64/hex/simdutf bodies). Per PORTING.md §Dispatch (debug/crash
+// hooks), expose fn-ptr hooks that `bun_runtime::init()` populates.
+// ──────────────────────────────────────────────────────────────────────────
+pub mod webcore_encoding {
+    use super::encoding::Encoding;
+    use core::sync::atomic::{AtomicPtr, Ordering};
+
+    pub type EncodeInto16 =
+        unsafe fn(*const u16, usize, *mut u8, usize, Encoding, bool) -> usize;
+    pub type EncodeInto8 = unsafe fn(*const u8, usize, *mut u8, usize, Encoding) -> usize;
+
+    pub static ENCODE_INTO_FROM16_HOOK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+    pub static ENCODE_INTO_FROM8_HOOK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+
+    /// `bun_runtime::init()` calls this once with real impls.
+    pub fn install_hooks(encode16: EncodeInto16, encode8: EncodeInto8) {
+        ENCODE_INTO_FROM16_HOOK.store(encode16 as *mut (), Ordering::Release);
+        ENCODE_INTO_FROM8_HOOK.store(encode8 as *mut (), Ordering::Release);
+    }
+
+    #[inline]
+    pub fn encode_into_from16(
+        input: &[u16],
+        out: &mut [u8],
+        enc: Encoding,
+        allow_partial_write: bool,
+    ) -> usize {
+        let f = ENCODE_INTO_FROM16_HOOK.load(Ordering::Acquire);
+        debug_assert!(!f.is_null(), "webcore_encoding hooks not installed");
+        // SAFETY: hook installed by runtime init; input/out describe valid slices.
+        unsafe {
+            core::mem::transmute::<*mut (), EncodeInto16>(f)(
+                input.as_ptr(), input.len(), out.as_mut_ptr(), out.len(), enc, allow_partial_write,
+            )
+        }
+    }
+
+    #[inline]
+    pub fn encode_into_from8(input: &[u8], out: &mut [u8], enc: Encoding) -> usize {
+        let f = ENCODE_INTO_FROM8_HOOK.load(Ordering::Acquire);
+        debug_assert!(!f.is_null(), "webcore_encoding hooks not installed");
+        // SAFETY: hook installed by runtime init; input/out describe valid slices.
+        unsafe {
+            core::mem::transmute::<*mut (), EncodeInto8>(f)(
+                input.as_ptr(), input.len(), out.as_mut_ptr(), out.len(), enc,
+            )
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// move-in: printer (MOVE_DOWN ← src/js_printer/js_printer.zig)
+//
+// Self-contained string-quoting helpers used by `strings::format_escapes`,
+// `bun_sourcemap::Chunk` (JSON serialization), and `bun_js_parser::ast::Expr`.
+// Breaking the `bun_js_printer → bun_sourcemap` cycle by hosting the
+// pure-string `quoteForJSON` here.
+// ──────────────────────────────────────────────────────────────────────────
+pub mod printer {
+    use crate::immutable::{self as strings, Encoding as StrEncoding};
+    use crate::mutable_string::MutableString;
+
+    const HEX_CHARS: &[u8; 16] = b"0123456789ABCDEF";
+    const FIRST_ASCII: i32 = 0x20;
+    const LAST_ASCII: i32 = 0x7E;
+    const FIRST_HIGH_SURROGATE: i32 = 0xD800;
+    const FIRST_LOW_SURROGATE: i32 = 0xDC00;
+    const LAST_LOW_SURROGATE: i32 = 0xDFFF;
+
+    /// Minimal byte-sink so `write_pre_quoted_string` works for both
+    /// `core::fmt::Formatter` and `MutableString` without an `io::Write` bound.
+    pub trait PrinterWriter {
+        fn write_all(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error>;
+    }
+    impl PrinterWriter for MutableString {
+        #[inline]
+        fn write_all(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error> {
+            self.append(bytes).map_err(Into::into)
+        }
+    }
+    impl PrinterWriter for Vec<u8> {
+        #[inline]
+        fn write_all(&mut self, bytes: &[u8]) -> Result<(), bun_core::Error> {
+            self.extend_from_slice(bytes);
+            Ok(())
+        }
+    }
+
+    #[inline]
+    pub fn can_print_without_escape(c: i32, ascii_only: bool) -> bool {
+        if c <= LAST_ASCII {
+            c >= FIRST_ASCII
+                && c != b'\\' as i32
+                && c != b'"' as i32
+                && c != b'\'' as i32
+                && c != b'`' as i32
+                && c != b'$' as i32
+        } else {
+            !ascii_only
+                && c != 0xFEFF
+                && c != 0x2028
+                && c != 0x2029
+                && (c < FIRST_HIGH_SURROGATE || c > LAST_LOW_SURROGATE)
+        }
+    }
+
+    /// Port of `js_printer.writePreQuotedString`.
+    /// PERF(port): was comptime-monomorphized over (quote_char, ascii_only, json,
+    /// encoding); demoted to runtime params — profile in Phase B.
+    pub fn write_pre_quoted_string<W: PrinterWriter + ?Sized>(
+        text_in: &[u8],
+        writer: &mut W,
+        quote_char: u8,
+        ascii_only: bool,
+        json: bool,
+        encoding: StrEncoding,
+    ) -> Result<(), bun_core::Error> {
+        debug_assert!(!json || quote_char == b'"');
+        // utf16 view over the same bytes (only used when encoding == Utf16).
+        // SAFETY: callers pass 2-byte-aligned even-length input for Utf16.
+        let text16: &[u16] = if encoding == StrEncoding::Utf16 {
+            unsafe {
+                core::slice::from_raw_parts(text_in.as_ptr() as *const u16, text_in.len() / 2)
+            }
+        } else {
+            &[]
+        };
+        let n: usize = if encoding == StrEncoding::Utf16 { text16.len() } else { text_in.len() };
+        let mut i: usize = 0;
+
+        while i < n {
+            let width: u8 = match encoding {
+                StrEncoding::Latin1 | StrEncoding::Ascii | StrEncoding::Utf16 => 1,
+                StrEncoding::Utf8 => strings::wtf8_byte_sequence_length_with_invalid(text_in[i]),
+            };
+            let clamped_width = (width as usize).min(n.saturating_sub(i));
+            let c: i32 = match encoding {
+                StrEncoding::Utf8 => {
+                    let mut buf = [0u8; 4];
+                    buf[..clamped_width].copy_from_slice(&text_in[i..i + clamped_width]);
+                    strings::decode_wtf8_rune_t::<i32>(&buf, width, 0)
+                }
+                StrEncoding::Ascii => {
+                    debug_assert!(text_in[i] <= 0x7F);
+                    text_in[i] as i32
+                }
+                StrEncoding::Latin1 => text_in[i] as i32,
+                StrEncoding::Utf16 => text16[i] as i32,
+            };
+
+            if can_print_without_escape(c, ascii_only) {
+                match encoding {
+                    StrEncoding::Ascii | StrEncoding::Utf8 => {
+                        let remain = &text_in[i + clamped_width..];
+                        if let Some(j) =
+                            strings::index_of_needs_escape_for_java_script_string(remain, quote_char)
+                        {
+                            writer.write_all(&text_in[i..i + clamped_width])?;
+                            i += clamped_width;
+                            writer.write_all(&remain[..j as usize])?;
+                            i += j as usize;
+                        } else {
+                            writer.write_all(&text_in[i..])?;
+                            break;
+                        }
+                    }
+                    StrEncoding::Latin1 | StrEncoding::Utf16 => {
+                        let mut cp = [0u8; 4];
+                        let cp_len = strings::encode_wtf8_rune(&mut cp, c as u32);
+                        writer.write_all(&cp[..cp_len])?;
+                        i += clamped_width;
+                    }
+                }
+                continue;
+            }
+
+            match c {
+                0x07 => { writer.write_all(b"\\x07")?; i += 1; }
+                0x08 => { writer.write_all(b"\\b")?; i += 1; }
+                0x0C => { writer.write_all(b"\\f")?; i += 1; }
+                0x0A => {
+                    writer.write_all(if quote_char == b'`' { b"\n" } else { b"\\n" })?;
+                    i += 1;
+                }
+                0x0D => { writer.write_all(b"\\r")?; i += 1; }
+                0x0B => { writer.write_all(b"\\v")?; i += 1; }
+                0x5C => { writer.write_all(b"\\\\")?; i += 1; }
+                0x22 => {
+                    writer.write_all(if quote_char == b'"' { b"\\\"" } else { b"\"" })?;
+                    i += 1;
+                }
+                0x27 => {
+                    writer.write_all(if quote_char == b'\'' { b"\\'" } else { b"'" })?;
+                    i += 1;
+                }
+                0x60 => {
+                    writer.write_all(if quote_char == b'`' { b"\\`" } else { b"`" })?;
+                    i += 1;
+                }
+                0x24 => {
+                    if quote_char == b'`' {
+                        let next_is_brace = match encoding {
+                            StrEncoding::Utf16 => i + 1 < n && text16[i + 1] == b'{' as u16,
+                            _ => i + 1 < n && text_in[i + 1] == b'{',
+                        };
+                        writer.write_all(if next_is_brace { b"\\$" } else { b"$" })?;
+                    } else {
+                        writer.write_all(b"$")?;
+                    }
+                    i += 1;
+                }
+                0x09 => {
+                    writer.write_all(if quote_char == b'`' { b"\t" } else { b"\\t" })?;
+                    i += 1;
+                }
+                _ => {
+                    i += width as usize;
+                    if c <= 0xFF && !json {
+                        let k = c as usize;
+                        writer.write_all(&[
+                            b'\\', b'x',
+                            HEX_CHARS[(k >> 4) & 0xF],
+                            HEX_CHARS[k & 0xF],
+                        ])?;
+                    } else if c <= 0xFFFF {
+                        let k = c as usize;
+                        writer.write_all(&[
+                            b'\\', b'u',
+                            HEX_CHARS[(k >> 12) & 0xF],
+                            HEX_CHARS[(k >> 8) & 0xF],
+                            HEX_CHARS[(k >> 4) & 0xF],
+                            HEX_CHARS[k & 0xF],
+                        ])?;
+                    } else {
+                        let k = c - 0x10000;
+                        let lo = (FIRST_HIGH_SURROGATE + ((k >> 10) & 0x3FF)) as usize;
+                        let hi = (FIRST_LOW_SURROGATE + (k & 0x3FF)) as usize;
+                        writer.write_all(&[
+                            b'\\', b'u',
+                            HEX_CHARS[lo >> 12],
+                            HEX_CHARS[(lo >> 8) & 15],
+                            HEX_CHARS[(lo >> 4) & 15],
+                            HEX_CHARS[lo & 15],
+                            b'\\', b'u',
+                            HEX_CHARS[hi >> 12],
+                            HEX_CHARS[(hi >> 8) & 15],
+                            HEX_CHARS[(hi >> 4) & 15],
+                            HEX_CHARS[hi & 15],
+                        ])?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Port of `js_printer.quoteForJSON`. MOVE_DOWN so `bun_sourcemap` /
+    /// `bun_js_parser` can call it without depending on `bun_js_printer`.
+    pub fn quote_for_json(
+        text: &[u8],
+        bytes: &mut MutableString,
+        ascii_only: bool,
+    ) -> Result<(), bun_core::Error> {
+        // PERF(port): Zig pre-grew via estimateLengthForUTF8 — profile in Phase B.
+        bytes.append_char(b'"')?;
+        write_pre_quoted_string(text, bytes, b'"', ascii_only, true, StrEncoding::Utf8)?;
+        bytes.append_char(b'"').expect("unreachable");
+        Ok(())
+    }
+}
+pub use printer::quote_for_json;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Top-level free helpers (move-ins from misc Zig namespaces).

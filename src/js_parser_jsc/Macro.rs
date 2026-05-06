@@ -19,6 +19,7 @@ use bun_jsc::{
     JSPropertyIterator, JSValue, JsError, MarkedArgumentBuffer, ModuleLoader, WebCore,
 };
 use bun_jsc::VirtualMachine::VirtualMachine;
+use crate::expr_jsc::ExprJsc;
 // PORT NOTE: Zig referenced these via `bun.jsc.API.{BuildMessage,ResolveMessage}`.
 // The stub structs live in `bun_jsc`, but lack `JsClass` impls so
 // `value.as_::<ResolveMessage>()` cannot dispatch yet.

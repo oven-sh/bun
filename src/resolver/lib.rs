@@ -473,10 +473,178 @@ pub mod fs {
         }
     }
 
-    // ── Remaining stubs (un-gated in later B-2 batches) ──────────────────
-    pub type RealFS = ();
-    pub type Entry = ();
-    pub type DirEntry = ();
+    // ── Entry / DirEntry / EntryKind ─────────────────────────────────────
+    // Minimal real ports of `FileSystem.Entry` / `FileSystem.DirEntry` from
+    // `fs.zig` so downstream crates type-check. Full method bodies (readdir,
+    // add_entry, kind() stat path) remain in the gated `fs.rs` Phase-A draft.
+
+    use bun_core::Generation;
+    use bun_string::{strings, PathString};
+    use bun_sys::Fd;
+    use bun_threading::Mutex;
+
+    /// Port of `FileSystem.Entry.Kind` in `fs.zig`.
+    #[repr(u8)]
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub enum EntryKind {
+        Dir,
+        File,
+    }
+
+    /// Port of `FileSystem.Entry.Cache` in `fs.zig`.
+    #[derive(Clone, Copy)]
+    pub struct EntryCache {
+        pub symlink: PathString,
+        /// Too much code expects this to be 0
+        /// don't make it bun.invalid_fd
+        pub fd: Fd,
+        pub kind: EntryKind,
+    }
+
+    impl Default for EntryCache {
+        fn default() -> Self {
+            Self { symlink: PathString::EMPTY, fd: Fd::INVALID, kind: EntryKind::File }
+        }
+    }
+
+    /// Port of `FileSystem.Entry` in `fs.zig`.
+    pub struct Entry {
+        pub cache: EntryCache,
+        // TODO(port): rule deviation — Zig deinit calls allocator.free(e.dir) so guide
+        // says Box<[u8]>, but this points into DirnameStore (a &'static BSSList).
+        pub dir: &'static [u8],
+        pub base_: strings::StringOrTinyString,
+        // Necessary because the hash table uses it as a key
+        pub base_lowercase_: strings::StringOrTinyString,
+        pub mutex: Mutex,
+        pub need_stat: bool,
+        pub abs_path: PathString,
+    }
+
+    impl Entry {
+        #[inline]
+        pub fn base(&self) -> &[u8] {
+            self.base_.slice()
+        }
+
+        #[inline]
+        pub fn base_lowercase(&self) -> &[u8] {
+            self.base_lowercase_.slice()
+        }
+    }
+
+    /// Port of `FileSystem.DirEntry` namespace items (`EntryMap`, `Err`).
+    pub mod dir_entry {
+        use super::Entry;
+
+        /// Port of `DirEntry.EntryMap` (`bun.StringHashMap(*Entry)`).
+        pub type EntryMap = bun_collections::StringHashMap<*mut Entry>;
+
+        /// Port of `DirEntry.Err`.
+        #[derive(Clone, Copy)]
+        pub struct Err {
+            pub original_err: bun_core::Error,
+            pub canonical_error: bun_core::Error,
+        }
+    }
+
+    /// Port of `FileSystem.DirEntry` in `fs.zig`.
+    pub struct DirEntry {
+        // TODO(port): rule deviation — interned in DirnameStore (&'static BSSList).
+        pub dir: &'static [u8],
+        pub fd: Fd,
+        pub generation: Generation,
+        pub data: dir_entry::EntryMap,
+    }
+
+    impl DirEntry {
+        pub fn init(dir: &'static [u8], generation: Generation) -> DirEntry {
+            DirEntry { dir, data: dir_entry::EntryMap::default(), generation, fd: Fd::INVALID }
+        }
+
+        // TODO(b2-blocked): get / get_comptime_query / has_comptime_query — depend on
+        // bun_string::strings::copy_lowercase_if_needed + StringHashMap adapted lookups
+        // (see gated fs.rs:326). Exposed once those land.
+    }
+
+    /// Port of `FileSystem.RealFS.EntriesOption` in `fs.zig`.
+    pub enum EntriesOption {
+        Entries(Box<DirEntry>),
+        Err(dir_entry::Err),
+    }
+
+    /// Downstream-facing alias — `bun_glob::GlobWalker` named the result of
+    /// `RealFS::read_directory` `ReadDirResult`; the Zig type is `EntriesOption`.
+    pub type ReadDirResult = EntriesOption;
+
+    // ── RealFS ───────────────────────────────────────────────────────────
+
+    /// Port of `FileSystem.RealFS` in `fs.zig` (minimal — `entries: &EntriesOptionMap`
+    /// omitted until `bun_alloc::BSSMap` is un-gated).
+    pub struct RealFS {
+        pub entries_mutex: Mutex,
+        // TODO(b2-blocked): bun_alloc::BSSMap — `pub entries: &'static EntriesOptionMap`
+        pub cwd: &'static [u8],
+        pub file_limit: usize,
+        pub file_quota: usize,
+    }
+
+    impl RealFS {
+        fn platform_temp_dir_compute() -> &'static [u8] {
+            use bun_core::env_var;
+            // Try TMPDIR, TMP, and TEMP in that order, matching Node.js.
+            // https://github.com/nodejs/node/blob/e172be269890702bf2ad06252f2f152e7604d76c/src/node_credentials.cc#L132
+            if let Some(dir) = env_var::TMPDIR
+                .get_not_empty()
+                .or_else(|| env_var::TMP.get_not_empty())
+                .or_else(|| env_var::TEMP.get_not_empty())
+            {
+                if dir.len() > 1 && dir[dir.len() - 1] == bun_paths::SEP {
+                    return &dir[0..dir.len() - 1];
+                }
+                return dir;
+            }
+
+            #[cfg(target_os = "windows")]
+            {
+                // TODO(b2-blocked): Windows fallback chain (SYSTEMROOT/WINDIR/HOME/getcwd)
+                // requires owned-static storage; deferred to avoid Box::leak (forbidden).
+                // Zig: fs.zig:556-578.
+                return b"C:\\Windows\\Temp";
+            }
+            #[cfg(target_os = "macos")]
+            {
+                return b"/private/tmp";
+            }
+            #[cfg(target_os = "android")]
+            {
+                return b"/data/local/tmp";
+            }
+            #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "android")))]
+            {
+                b"/tmp"
+            }
+        }
+
+        /// Port of `RealFS.platformTempDir()` in `fs.zig`.
+        pub fn platform_temp_dir() -> &'static [u8] {
+            static ONCE: bun_core::Once<&'static [u8]> = bun_core::Once::new();
+            ONCE.call(Self::platform_temp_dir_compute)
+        }
+
+        /// Port of `RealFS.tmpdirPath()` in `fs.zig`:
+        /// `pub fn tmpdirPath() []const u8 { return bun.env_var.BUN_TMPDIR.getNotEmpty() orelse platformTempDir(); }`
+        pub fn tmpdir_path() -> &'static [u8] {
+            bun_core::env_var::BUN_TMPDIR
+                .get_not_empty()
+                .unwrap_or_else(Self::platform_temp_dir)
+        }
+
+        /// Port of `RealFS.getDefaultTempDir()` in `fs.zig`.
+        pub fn get_default_temp_dir() -> &'static [u8] {
+            bun_core::env_var::BUN_TMPDIR.get().unwrap_or_else(Self::platform_temp_dir)
+        }
+    }
 }
 pub fn is_package_path(path: &[u8]) -> bool {
     // Always check for posix absolute paths (starts with "/")

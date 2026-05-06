@@ -219,6 +219,27 @@ impl<'a> Parser<'a> {
     }
 }
 
+// ── live `Parser::parse` / `Parser::scan_imports` symbols (round-E unblock) ──
+// Bodies forward to the gated `_parse`/`_scan_imports` once `P`'s full method
+// surface (`init`/`parse_stmts_up_to`/`prepare_for_visit_pass`/`to_ast`) lands.
+// Downstream crates (bundler/cache, interchange/json) only need the symbol to
+// type-check; calling these before round-D un-gate panics with a clear message.
+impl<'a> Parser<'a> {
+    // TODO(b2-ast-round-D): replace body with the real cfg-gated dispatcher
+    // below once `P::init`/`parse_stmts_up_to`/`to_ast` are live.
+    pub fn parse(&mut self) -> Result<js_ast::Result, Error> {
+        let _ = (&self.options, &self.lexer);
+        todo!("Parser::parse — blocked on P method surface (b2-ast-round-D)")
+    }
+
+    // TODO(b2-ast-round-D): replace body with `_scan_imports::<...>()` dispatch
+    // once the ScanOnly `P` instantiations compile.
+    pub fn scan_imports(&mut self, scan_pass: &mut ScanPassResult) -> Result<(), Error> {
+        let _ = (scan_pass, &self.options);
+        todo!("Parser::scan_imports — blocked on P method surface (b2-ast-round-D)")
+    }
+}
+
 // Round-D: parse()/analyze()/_parse()/scan_imports() drive the full P method
 // surface (init/prepare_for_visit_pass/to_ast) which is gated. Struct + named
 // instantiations stay live so downstream crates can name `Parser<'a>`.

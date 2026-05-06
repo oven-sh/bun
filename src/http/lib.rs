@@ -13,16 +13,19 @@
 
 // ── sub-modules (un-gated in B-2; remaining gates need higher-tier deps) ──
 // TODO(b2-blocked): bun_uws::SocketHandler — AsyncHTTP/HTTPContext/HTTPThread/
-// ProxyTunnel/h2_client/h3_client are mutually recursive and all bottom out on
-// uws socket types + ssl_config (see note above `_phase_a_draft`). They cannot
-// be un-gated piecewise; first un-gate `ssl_config` + `bun_uws_sys::socket`
-// (T4), then this whole cluster lands together.
+// ProxyTunnel are mutually recursive and all bottom out on uws socket types
+// + ssl_config (see note above `_phase_a_draft`). They cannot be un-gated
+// piecewise; first un-gate `ssl_config` + `bun_uws_sys::socket` (T4), then
+// this whole cluster lands together.
+// PORT NOTE: `h2_client`/`h3_client` are now un-gated as thin shells (atomics
+// + constants only); their heavy submodules (Stream/ClientSession/…) remain
+// gated inside H2Client.rs/H3Client.rs until the cluster above lands.
 #[cfg(any())] #[path = "AsyncHTTP.rs"]              pub mod async_http;
 #[path = "CertificateInfo.rs"]                      pub mod certificate_info;
 #[path = "Decompressor.rs"]                         pub mod decompressor;
-#[cfg(any())] #[path = "H2Client.rs"]               pub mod h2_client;
+#[path = "H2Client.rs"]                             pub mod h2_client;
 #[path = "H2FrameParser.rs"]                        pub mod h2_frame_parser;
-#[cfg(any())] #[path = "H3Client.rs"]               pub mod h3_client;
+#[path = "H3Client.rs"]                             pub mod h3_client;
 #[path = "HTTPCertError.rs"]                        pub mod http_cert_error;
 #[cfg(any())] #[path = "HTTPContext.rs"]            pub mod http_context;
 #[path = "HTTPRequestBody.rs"]                      pub mod http_request_body;

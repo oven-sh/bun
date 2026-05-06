@@ -46,6 +46,64 @@ impl core::fmt::Display for SystemError {
     }
 }
 pub mod walker_skippable;
+// `copy_file.rs` (full ioctl_ficlone/copy_file_range/sendfile state machine)
+// is still gated: it depends on `bun_output` (not a dep of this crate),
+// `crate::linux::{ioctl_ficlone,copy_file_range}` (not yet wired), and uses
+// pre-rename `E::XDEV`-style errno tags. The thin module below exposes the
+// stable surface (`CopyFileState`, `copy_file`, `copy_file_with_state`, the
+// runtime-probe toggles) so `bun_sys::copy_file::*` resolves; bodies route to
+// the read/write fallback at crate root until the full file is un-gated.
+#[cfg(any())] #[path = "copy_file.rs"] mod copy_file_full;
+pub mod copy_file {
+    use super::{Fd, Maybe};
+    use core::sync::atomic::{AtomicBool, Ordering};
+
+    /// On Windows `bun.copy_file` takes paths; everywhere else it takes fds.
+    #[cfg(windows)] pub type InputType<'a> = &'a bun_string::WStr;
+    #[cfg(not(windows))] pub type InputType<'a> = Fd;
+
+    bitflags::bitflags! {
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        pub struct LinuxCopyFileState: u8 {
+            const HAS_SEEN_EXDEV             = 1 << 0;
+            const HAS_IOCTL_FICLONE_FAILED   = 1 << 1;
+            const HAS_COPY_FILE_RANGE_FAILED = 1 << 2;
+            const HAS_SENDFILE_FAILED        = 1 << 3;
+        }
+    }
+    impl Default for LinuxCopyFileState { fn default() -> Self { Self::empty() } }
+    #[derive(Default, Clone, Copy)]
+    pub struct EmptyCopyFileState;
+    #[cfg(target_os = "linux")] pub type CopyFileState = LinuxCopyFileState;
+    #[cfg(not(target_os = "linux"))] pub type CopyFileState = EmptyCopyFileState;
+
+    /// fd→fd copy. PORT NOTE: routes to the crate-root read/write loop until
+    /// `copy_file.rs` un-gates; the fast paths are PERF, not correctness.
+    #[inline]
+    pub fn copy_file(in_: InputType<'_>, out: InputType<'_>) -> Maybe<()> {
+        #[cfg(not(windows))] { super::copy_file(in_, out) }
+        #[cfg(windows)] { let _ = (in_, out); todo!("b2-windows: CopyFileW path-based copy") }
+    }
+    #[inline]
+    pub fn copy_file_with_state(in_: InputType<'_>, out: InputType<'_>, _state: &mut CopyFileState) -> Maybe<()> {
+        copy_file(in_, out)
+    }
+    /// `copy_file_range(2)` wrapper. Real impl in `copy_file.rs`; stub falls
+    /// through to a pread/pwrite loop so callers compile.
+    pub fn copy_file_range(_in: Fd, _off_in: u64, _out: Fd, _off_out: u64, _len: usize, _flags: u32) -> Maybe<usize> {
+        todo!("b2-blocked: copy_file_range — un-gate src/sys/copy_file.rs")
+    }
+    /// Map a raw `copy_file`-path errno to `bun_core::Error`.
+    #[inline]
+    pub fn copy_file_error_convert(e: super::Error) -> bun_core::Error { e.into() }
+
+    static CAN_USE_COPY_FILE_RANGE: AtomicBool = AtomicBool::new(cfg!(target_os = "linux"));
+    static CAN_USE_IOCTL_FICLONE:   AtomicBool = AtomicBool::new(cfg!(target_os = "linux"));
+    #[inline] pub fn can_use_copy_file_range_syscall() -> bool { CAN_USE_COPY_FILE_RANGE.load(Ordering::Relaxed) }
+    #[inline] pub fn disable_copy_file_range_syscall() { CAN_USE_COPY_FILE_RANGE.store(false, Ordering::Relaxed) }
+    #[inline] pub fn can_use_ioctl_ficlone() -> bool { CAN_USE_IOCTL_FICLONE.load(Ordering::Relaxed) }
+    #[inline] pub fn disable_ioctl_ficlone() { CAN_USE_IOCTL_FICLONE.store(false, Ordering::Relaxed) }
+}
 
 // `std.fs.Dir.Entry.Kind` — same set as `bun_core::FileKind`.
 pub use bun_core::FileKind as EntryKind;
@@ -1022,7 +1080,22 @@ impl File {
         }
         Ok(())
     }
-    pub fn read_all(&self, buf: &mut Vec<u8>) -> Maybe<usize> {
+    /// `File.readAll(buf: []u8)` — loop `read()` into a **fixed** caller-owned
+    /// slice until EOF or full. Returns total bytes read (sys.zig `readAll`).
+    pub fn read_all(&self, buf: &mut [u8]) -> Maybe<usize> {
+        let mut rest = &mut *buf;
+        let mut total_read: usize = 0;
+        while !rest.is_empty() {
+            let n = read(self.handle, rest)?;
+            if n == 0 { break; }
+            rest = &mut rest[n..];
+            total_read += n;
+        }
+        Ok(total_read)
+    }
+    /// Growable-`Vec` variant (was previously misnamed `read_all`). Kept for
+    /// callers that want cursor-relative streaming into an existing `Vec`.
+    pub fn read_to_end_into(&self, buf: &mut Vec<u8>) -> Maybe<usize> {
         let start = buf.len();
         loop {
             if buf.capacity() == buf.len() { buf.reserve(8192); }
@@ -1037,7 +1110,8 @@ impl File {
     }
     pub fn read_to_end(&self) -> Maybe<Vec<u8>> {
         let mut v = Vec::new();
-        self.read_all(&mut v)?;
+        // File.zig `readToEnd` — fstat-presized, pread-from-0; not a cursor read.
+        self.read_to_end_with_array_list(&mut v, SizeHint::UnknownSize)?;
         Ok(v)
     }
     /// `File.getEndPos()` — file size via fstat.
@@ -1504,6 +1578,35 @@ pub mod darwin {
         pub const TIMER:  i16 = libc::EVFILT_TIMER;
         pub const USER:   i16 = libc::EVFILT_USER;
         pub const MACHPORT: i16 = libc::EVFILT_MACHPORT;
+    }
+    /// `std.c.EV` — kqueue event flags (Darwin).
+    pub mod EV {
+        pub const ADD:      u16 = libc::EV_ADD;
+        pub const DELETE:   u16 = libc::EV_DELETE;
+        pub const ENABLE:   u16 = libc::EV_ENABLE;
+        pub const DISABLE:  u16 = libc::EV_DISABLE;
+        pub const ONESHOT:  u16 = libc::EV_ONESHOT;
+        pub const CLEAR:    u16 = libc::EV_CLEAR;
+        pub const RECEIPT:  u16 = libc::EV_RECEIPT;
+        pub const DISPATCH: u16 = libc::EV_DISPATCH;
+        pub const EOF:      u16 = libc::EV_EOF;
+        pub const ERROR:    u16 = libc::EV_ERROR;
+    }
+    /// `std.c.NOTE` — kqueue fflags (Darwin).
+    pub mod NOTE {
+        pub const EXIT:       u32 = libc::NOTE_EXIT;
+        pub const EXITSTATUS: u32 = libc::NOTE_EXITSTATUS;
+        pub const SIGNAL:     u32 = libc::NOTE_SIGNAL;
+        pub const FORK:       u32 = libc::NOTE_FORK;
+        pub const EXEC:       u32 = libc::NOTE_EXEC;
+        pub const TRIGGER:    u32 = libc::NOTE_TRIGGER;
+        pub const DELETE:     u32 = libc::NOTE_DELETE;
+        pub const WRITE:      u32 = libc::NOTE_WRITE;
+        pub const EXTEND:     u32 = libc::NOTE_EXTEND;
+        pub const ATTRIB:     u32 = libc::NOTE_ATTRIB;
+        pub const LINK:       u32 = libc::NOTE_LINK;
+        pub const RENAME:     u32 = libc::NOTE_RENAME;
+        pub const REVOKE:     u32 = libc::NOTE_REVOKE;
     }
     /// Darwin `struct kevent64_s` (extended kevent with 2-slot `ext[]`).
     pub use libc::kevent64_s;
@@ -2158,6 +2261,11 @@ pub mod net {
     impl Default for Address {
         fn default() -> Self { Self { any: unsafe { core::mem::zeroed() } } }
     }
+    impl fmt::Debug for Address {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            fmt::Display::fmt(self, f)
+        }
+    }
     impl fmt::Display for Address {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             // PORT NOTE: Zig's std.net.Address.format prints "ip:port"/"[ip6]:port".
@@ -2190,8 +2298,57 @@ pub mod elf {
 /// FreeBSD platform surface.
 #[cfg(target_os = "freebsd")]
 pub mod freebsd {
+    use core::ffi::c_int;
     /// `struct kevent` (FreeBSD).
     pub type Kevent = libc::kevent;
+    /// `std.c.EVFILT` — kqueue filter constants (FreeBSD).
+    pub mod EVFILT {
+        pub const READ:   i16 = libc::EVFILT_READ;
+        pub const WRITE:  i16 = libc::EVFILT_WRITE;
+        pub const VNODE:  i16 = libc::EVFILT_VNODE;
+        pub const PROC:   i16 = libc::EVFILT_PROC;
+        pub const SIGNAL: i16 = libc::EVFILT_SIGNAL;
+        pub const TIMER:  i16 = libc::EVFILT_TIMER;
+        pub const USER:   i16 = libc::EVFILT_USER;
+    }
+    /// `std.c.EV` — kqueue event flags (FreeBSD).
+    pub mod EV {
+        pub const ADD:      u16 = libc::EV_ADD;
+        pub const DELETE:   u16 = libc::EV_DELETE;
+        pub const ENABLE:   u16 = libc::EV_ENABLE;
+        pub const DISABLE:  u16 = libc::EV_DISABLE;
+        pub const ONESHOT:  u16 = libc::EV_ONESHOT;
+        pub const CLEAR:    u16 = libc::EV_CLEAR;
+        pub const RECEIPT:  u16 = libc::EV_RECEIPT;
+        pub const DISPATCH: u16 = libc::EV_DISPATCH;
+        pub const EOF:      u16 = libc::EV_EOF;
+        pub const ERROR:    u16 = libc::EV_ERROR;
+    }
+    /// `std.c.NOTE` — kqueue fflags (FreeBSD).
+    pub mod NOTE {
+        pub const EXIT:    u32 = libc::NOTE_EXIT;
+        pub const FORK:    u32 = libc::NOTE_FORK;
+        pub const EXEC:    u32 = libc::NOTE_EXEC;
+        pub const TRIGGER: u32 = libc::NOTE_TRIGGER;
+        pub const DELETE:  u32 = libc::NOTE_DELETE;
+        pub const WRITE:   u32 = libc::NOTE_WRITE;
+        pub const EXTEND:  u32 = libc::NOTE_EXTEND;
+        pub const ATTRIB:  u32 = libc::NOTE_ATTRIB;
+        pub const LINK:    u32 = libc::NOTE_LINK;
+        pub const RENAME:  u32 = libc::NOTE_RENAME;
+        pub const REVOKE:  u32 = libc::NOTE_REVOKE;
+    }
+    /// `kevent()` syscall — thin re-export so callers don't need a direct
+    /// `libc` dep. SAFETY: caller upholds the kernel contract.
+    #[inline]
+    pub unsafe fn kevent(
+        kq: c_int,
+        changelist: *const Kevent, nchanges: c_int,
+        eventlist: *mut Kevent, nevents: c_int,
+        timeout: *const libc::timespec,
+    ) -> c_int {
+        unsafe { libc::kevent(kq, changelist, nchanges, eventlist, nevents, timeout) }
+    }
 }
 #[cfg(not(target_os = "freebsd"))]
 pub mod freebsd {}
@@ -2267,7 +2424,43 @@ pub mod make_path {
     {
         dir.make_open_path(sub_path, opts)
     }
+
+    /// Dispatch trait for `make_path::<T>` over `u8` (POSIX) / `u16` (Windows).
+    /// Mirrors Zig's `std.fs.Dir.makePath` taking `OSPathSlice`.
+    pub trait PathChar: Copy {
+        fn make_path_at(dir: Fd, sub: &[Self]) -> core::result::Result<(), bun_core::Error>;
+    }
+    impl PathChar for u8 {
+        #[inline]
+        fn make_path_at(dir: Fd, sub: &[u8]) -> core::result::Result<(), bun_core::Error> {
+            mkdir_recursive_at(dir, sub).map_err(Into::into)
+        }
+    }
+    impl PathChar for u16 {
+        #[inline]
+        fn make_path_at(dir: Fd, sub: &[u16]) -> core::result::Result<(), bun_core::Error> {
+            make_path_w(dir, sub).map_err(Into::into)
+        }
+    }
+    /// `bun.makePath` — `mkdir -p` relative to `dir`, generic over path-char
+    /// width so callers can pass `OSPathChar` slices unchanged.
+    #[inline]
+    pub fn make_path<T: PathChar>(dir: Dir, sub_path: &[T])
+        -> core::result::Result<(), bun_core::Error>
+    {
+        T::make_path_at(dir.fd, sub_path)
+    }
+    /// Explicit UTF-16 form (Windows). On POSIX transcodes via `make_path_w`.
+    #[inline]
+    pub fn make_path_u16(dir: Dir, sub_path: &[u16])
+        -> core::result::Result<(), bun_core::Error>
+    {
+        make_path_w(dir.fd, sub_path).map_err(Into::into)
+    }
 }
+/// Type-style alias so callers can write `bun_sys::MakePath::make_path::<T>(..)`
+/// (Zig: `bun.MakePath` namespace re-export).
+pub use make_path as MakePath;
 
 // `Fd` parity: `Fd::cwd().make_open_path(..)` / `.make_path(..)` are used by
 // `bun_install` and `bun_bundler` directly on `Fd`. Extension trait so we
@@ -2544,12 +2737,69 @@ pub mod fs {
     /// `bun.fs.Entry` — single cached directory entry (name + kind).
     #[repr(C)]
     pub struct Entry { _opaque: [u8; 0] }
+    impl Entry {
+        // CYCLEBREAK: real fields/body live in `bun_resolver::fs::Entry`. These
+        // accessor stubs let dependents type-check against the `bun_sys::fs`
+        // path until MOVE_DOWN lands; bodies panic to surface mis-routing.
+        #[inline] pub fn base(&self) -> &[u8] {
+            todo!("b2-blocked: bun_resolver::fs::Entry::base (MOVE_DOWN pending)")
+        }
+        #[inline] pub fn base_lowercase(&self) -> &[u8] {
+            todo!("b2-blocked: bun_resolver::fs::Entry::base_lowercase (MOVE_DOWN pending)")
+        }
+        #[inline] pub fn dir(&self) -> &'static [u8] {
+            todo!("b2-blocked: bun_resolver::fs::Entry::dir (MOVE_DOWN pending)")
+        }
+        #[inline] pub fn abs_path(&self) -> &bun_string::PathString {
+            todo!("b2-blocked: bun_resolver::fs::Entry::abs_path (MOVE_DOWN pending)")
+        }
+        #[inline] pub fn cache(&self) -> &EntryCache {
+            todo!("b2-blocked: bun_resolver::fs::Entry::cache (MOVE_DOWN pending)")
+        }
+        /// Zig: `Entry.kind(fs, store_fd)`. The `fs` arg is the resolver's
+        /// `Implementation` (higher-tier); accepted as `*mut c_void` here so
+        /// the stub stays tier-clean.
+        #[inline] pub fn kind(&mut self, _fs: *mut core::ffi::c_void, _store_fd: bool) -> super::EntryKind {
+            todo!("b2-blocked: bun_resolver::fs::Entry::kind (MOVE_DOWN pending)")
+        }
+    }
+    /// `bun.fs.Entry.Cache` — cached stat result for an `Entry`.
+    #[derive(Clone, Copy)]
+    pub struct EntryCache {
+        pub symlink: bun_string::PathString,
+        pub fd: super::Fd,
+        pub kind: super::EntryKind,
+    }
     /// `bun.fs.DirEntry` — directory entry cache record (name → Entry map).
     #[repr(C)]
     pub struct DirEntry { _opaque: [u8; 0] }
+    impl DirEntry {
+        /// Zig: `DirEntry.hasComptimeQuery(comptime query)` — fast O(1) lookup
+        /// of a known-at-compile-time filename in this directory's entry map.
+        #[inline] pub fn has_comptime_query(&self, _query_lower: &'static [u8]) -> bool {
+            todo!("b2-blocked: bun_resolver::fs::DirEntry::has_comptime_query (MOVE_DOWN pending)")
+        }
+        /// Accessor for the underlying `EntryMap`. Real field is
+        /// `bun_resolver::fs::DirEntry.data`; opaque here.
+        #[inline] pub fn data(&self) -> &() {
+            todo!("b2-blocked: bun_resolver::fs::DirEntry::data (MOVE_DOWN pending)")
+        }
+    }
     /// `bun.fs.FileSystem.DirnameStore` — interned-dirname arena.
     #[repr(C)]
     pub struct DirnameStore { _opaque: [u8; 0] }
+    impl DirnameStore {
+        /// Intern `value` into the dirname arena, returning a `&'static` slice.
+        /// Zig: `DirnameStore.append(allocator, value)`.
+        pub fn append(&self, _value: &[u8]) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
+            todo!("b2-blocked: bun_resolver::fs::DirnameStore::append (MOVE_DOWN pending)")
+        }
+        /// Intern the ASCII-lowercased form of `value`.
+        /// Zig: `DirnameStore.appendLowerCase(allocator, value)`.
+        pub fn append_lower_case(&self, _value: &[u8]) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
+            todo!("b2-blocked: bun_resolver::fs::DirnameStore::append_lower_case (MOVE_DOWN pending)")
+        }
+    }
     /// `bun.fs.EntriesOption` — `Ok(DirEntry)` / `Err(err)`.
     pub enum EntriesOption {
         Entries(*const DirEntry),

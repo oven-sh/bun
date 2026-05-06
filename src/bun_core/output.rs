@@ -1056,12 +1056,23 @@ pub fn reset_terminal_all() {
 /// Bun automatically calls this function in Global.exit().
 pub fn flush() {
     if Environment::IS_NATIVE && SOURCE_SET.get() {
-        SOURCE.with_borrow_mut(|s| {
-            let _ = s.buffered_stream().flush();
-            let _ = s.buffered_error_stream().flush();
-            // let _ = s.stream().flush();
-            // let _ = s.error_stream().flush();
+        // Same re-entrancy hazard as with_dest_writer: drop the RefCell borrow
+        // before calling into the writer so a flush triggered from inside a
+        // print (or vice-versa) doesn't BorrowMutError.
+        let (bs, bes): (*mut io::Writer, *mut io::Writer) = SOURCE.with_borrow_mut(|s| {
+            (
+                s.buffered_stream() as *mut io::Writer,
+                s.buffered_error_stream() as *mut io::Writer,
+            )
         });
+        // SAFETY: see with_dest_writer — pointers target thread-local backing
+        // fields with stable addresses once Source::init has run.
+        unsafe {
+            let _ = (*bs).flush();
+            let _ = (*bes).flush();
+        }
+        // let _ = s.stream().flush();
+        // let _ = s.error_stream().flush();
     }
 }
 
@@ -1217,12 +1228,26 @@ pub fn print_timer(timer: &mut impl ReadTimer) {
 fn with_dest_writer<R>(dest: Destination, f: impl FnOnce(&mut io::Writer) -> R) -> R {
     debug_assert!(SOURCE_SET.get());
     let buffering = ENABLE_BUFFERING.load(Ordering::Relaxed);
-    SOURCE.with_borrow_mut(|s| match dest {
-        Destination::Stdout => f(if buffering { s.buffered_stream() } else { s.stream() }),
-        Destination::Stderr => {
-            f(if buffering { s.buffered_error_stream() } else { s.error_stream() })
+    // Load the writer pointer and *drop the RefCell borrow* before invoking `f`.
+    // `f` may call `write_fmt`, which evaluates user `Display` impls that can
+    // re-enter this module (e.g. `debug_warn` → `print_to`, or `flush()`); holding
+    // the `with_borrow_mut` guard across that re-entry panics with BorrowMutError.
+    // Zig's `destWriter()` has no such exclusion — it just returns the pointer.
+    let w: *mut io::Writer = SOURCE.with_borrow_mut(|s| match dest {
+        Destination::Stdout => {
+            (if buffering { s.buffered_stream() } else { s.stream() }) as *mut _
         }
-    })
+        Destination::Stderr => {
+            (if buffering { s.buffered_error_stream() } else { s.error_stream() }) as *mut _
+        }
+    });
+    // SAFETY: `w` points into a `QuietWriterAdapter` field of the thread-local
+    // `Source`, whose address is stable for the thread's lifetime once
+    // `Source::init` has run (asserted via SOURCE_SET above). These same raw
+    // pointers are already cached on `Source.{stream,error_stream,...}` and
+    // handed out by `writer()`/`error_writer()` — this is the established
+    // self-referential pattern, not a lifetime extension of borrowed data.
+    f(unsafe { &mut *w })
 }
 
 /// Single shared write path for pre-formatted bytes.
@@ -1559,6 +1584,16 @@ pub const DIM: &str = "\x1b[2m";
 #[inline]
 pub fn pretty(args: fmt::Arguments<'_>) {
     print_to(Destination::Stdout, args);
+}
+
+/// `bun.Output.prettyln(fmt, args)` — `pretty()` with a trailing newline.
+/// Dynamic-args entry point; the compile-time `<tag>` rewrite happens at the
+/// call site (Phase-A drafts pass a pre-built `format_args!`). For the
+/// literal-template form use the `prettyln!` macro instead.
+#[inline]
+pub fn prettyln(args: fmt::Arguments<'_>) {
+    print_to(Destination::Stdout, args);
+    print_to(Destination::Stdout, format_args!("\n"));
 }
 
 /// Compile-time `<tag>` → ANSI escape rewriter.

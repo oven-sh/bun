@@ -627,6 +627,7 @@ pub mod generate_header {
 pub use generate_header as GenerateHeader;
 
 pub mod schema;
+pub use schema::{BufReader, Reader, SchemaInt, Writer};
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

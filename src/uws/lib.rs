@@ -65,7 +65,7 @@ macro_rules! opaque_stub {
 }
 // TODO(b1): bun_uws_sys::{socket,timer,loop_,request,response,app,web_socket,...} gated
 opaque_stub!(
-    us_socket_stream_buffer_t, SocketKind, NewApp,
+    us_socket_stream_buffer_t, NewApp,
     uws_res, RawWebSocket, AnyWebSocket, State, BodyReaderMixin,
 );
 pub struct WebSocketBehavior<T>(core::marker::PhantomData<T>);
@@ -1675,6 +1675,100 @@ pub mod SocketContext {
 /// Snake-case module alias for the porting tooling that lowercases Zig namespaces.
 pub use SocketContext as socket_context;
 
+/// C-name alias for `SocketContext::BunSocketContextOptions` — what
+/// `SSLConfig.asUSockets()` produces and `us_ssl_ctx_from_options` consumes.
+/// Higher tiers (http, runtime/socket) reference it under the C struct name.
+pub type us_bun_socket_context_options_t = SocketContext::BunSocketContextOptions;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SocketKind (a.k.a. DispatchKind) / CloseKind
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Closed-world enum of every `us_socket_t` consumer in Bun. Stamped on the
+/// socket at creation (`s->kind`) and switched on in `dispatch.rs` so the
+/// event loop calls straight into the right handler with the ext already
+/// typed — no per-context vtable, no runtime SSL flag.
+///
+/// Source of truth: `src/uws_sys/SocketKind.zig`.
+#[repr(u8)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum SocketKind {
+    /// Reserved. `loop.c` callocs sockets, so 0 must be a value that crashes
+    /// loudly if dispatch ever sees it instead of silently routing somewhere.
+    Invalid = 0,
+    /// Dispatch reads `group->vtable->on_*`. For sockets whose handler set is
+    /// only known at runtime (uWS C++ via per-App vtable, tests).
+    Dynamic,
+    // ── Bun.connect / Bun.listen ──────────────────────────────────────────
+    BunSocketTcp,
+    BunSocketTls,
+    BunListenerTcp,
+    BunListenerTls,
+    // ── HTTP client thread ────────────────────────────────────────────────
+    HttpClient,
+    HttpClientTls,
+    // ── new WebSocket(...) client ─────────────────────────────────────────
+    WsClientUpgrade,
+    WsClientUpgradeTls,
+    WsClient,
+    WsClientTls,
+    // ── Database drivers ──────────────────────────────────────────────────
+    Postgres,
+    PostgresTls,
+    Mysql,
+    MysqlTls,
+    Valkey,
+    ValkeyTls,
+    // ── Bun.spawn IPC over socketpair ─────────────────────────────────────
+    SpawnIpc,
+    // ── Bun.serve / uWS — handlers live in C++ ───────────────────────────
+    UwsHttp,
+    UwsHttpTls,
+    UwsWs,
+    UwsWsTls,
+}
+
+impl SocketKind {
+    #[inline]
+    pub const fn is_tls(self) -> bool {
+        matches!(
+            self,
+            SocketKind::BunSocketTls
+                | SocketKind::BunListenerTls
+                | SocketKind::HttpClientTls
+                | SocketKind::WsClientUpgradeTls
+                | SocketKind::WsClientTls
+                | SocketKind::PostgresTls
+                | SocketKind::MysqlTls
+                | SocketKind::ValkeyTls
+                | SocketKind::UwsHttpTls
+                | SocketKind::UwsWsTls
+        )
+    }
+}
+
+/// Alias used by some Phase-A ports (`websocket_client`, `sql_jsc`) that named
+/// the dispatch tag `DispatchKind`. Same enum.
+pub type DispatchKind = SocketKind;
+
+/// `us_socket_t.CloseCode` — selects FIN / RST / fast-shutdown behaviour for
+/// `us_socket_close`. `#[repr(i32)]` to match the C enum passed by value.
+#[repr(i32)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum CloseKind {
+    /// TLS: send close_notify and defer fd close until peer replies. TCP: FIN.
+    Normal = 0,
+    /// TLS: fast-shutdown (no wait). TCP: SO_LINGER{1,0} → RST, dropping any
+    /// unflushed send buffer. Only for `terminate()` / GC abort.
+    Failure = 1,
+    /// TLS: fast-shutdown (no wait). TCP: FIN. For `_handle.close()` where
+    /// the JS wrapper detaches immediately so `Normal`'s deferral would
+    /// orphan the `us_socket_t`, but already-written data must still drain.
+    FastShutdown = 2,
+}
+/// C-name alias.
+pub type CloseCode = CloseKind;
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Socket handlers (NewSocketHandler / SocketHandler / AnySocket)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1701,8 +1795,212 @@ pub struct NewSocketHandler<const SSL: bool> {
     pub socket: InternalSocket,
 }
 
+// ── FFI surface used by the method bodies below. Signatures verified against
+//    `src/uws_sys/us_socket_t.zig` / `ConnectingSocket.zig` `extern fn` blocks.
+mod sock_c {
+    use super::{us_socket_t, ConnectingSocket, SocketGroup};
+    use core::ffi::c_void;
+    unsafe extern "C" {
+        pub fn us_socket_close(s: *mut us_socket_t, code: i32, reason: *mut c_void) -> *mut us_socket_t;
+        pub fn us_socket_is_closed(s: *mut us_socket_t) -> i32;
+        pub fn us_socket_is_shut_down(s: *mut us_socket_t) -> i32;
+        pub fn us_socket_is_established(s: *mut us_socket_t) -> i32;
+        pub fn us_socket_shutdown_read(s: *mut us_socket_t);
+        pub fn us_socket_write(s: *mut us_socket_t, data: *const u8, length: i32) -> i32;
+        pub fn us_socket_get_native_handle(s: *mut us_socket_t) -> *mut c_void;
+        pub fn us_socket_ext(s: *mut us_socket_t) -> *mut c_void;
+        pub fn us_socket_adopt(s: *mut us_socket_t, group: *mut SocketGroup, kind: u8, old_ext_size: i32, ext_size: i32) -> *mut us_socket_t;
+
+        pub fn us_connecting_socket_close(s: *mut ConnectingSocket);
+        pub fn us_connecting_socket_is_closed(s: *mut ConnectingSocket) -> i32;
+        pub fn us_connecting_socket_is_shut_down(s: *mut ConnectingSocket) -> i32;
+        pub fn us_connecting_socket_shutdown_read(s: *mut ConnectingSocket);
+        pub fn us_connecting_socket_get_native_handle(s: *mut ConnectingSocket) -> *mut c_void;
+    }
+}
+
 impl<const SSL: bool> NewSocketHandler<SSL> {
     pub const DETACHED: Self = Self { socket: InternalSocket::Detached };
+
+    /// Zig `pub const detached` — lower-case constructor form used by callers
+    /// that wrote `Socket::detached()`.
+    #[inline]
+    pub const fn detached() -> Self {
+        Self { socket: InternalSocket::Detached }
+    }
+
+    #[inline]
+    pub fn detach(&mut self) {
+        self.socket = InternalSocket::Detached;
+    }
+
+    #[inline]
+    pub fn is_detached(&self) -> bool {
+        matches!(self.socket, InternalSocket::Detached)
+    }
+
+    pub fn is_closed(&self) -> bool {
+        match self.socket {
+            // SAFETY: variant pointers are non-null FFI handles owned by uSockets.
+            InternalSocket::Connected(s) => unsafe { sock_c::us_socket_is_closed(s) > 0 },
+            InternalSocket::Connecting(s) => unsafe { sock_c::us_connecting_socket_is_closed(s) > 0 },
+            InternalSocket::Detached => true,
+            // TODO(port): UpgradedDuplex/Pipe live in higher tiers (type-erased
+            // `*mut c_void` here); their `is_closed` dispatches via the owner.
+            InternalSocket::UpgradedDuplex(_) => false,
+            #[cfg(windows)]
+            InternalSocket::Pipe(_) => false,
+            #[cfg(not(windows))]
+            InternalSocket::Pipe => true,
+        }
+    }
+
+    pub fn is_shutdown(&self) -> bool {
+        match self.socket {
+            // SAFETY: variant pointers are non-null FFI handles owned by uSockets.
+            InternalSocket::Connected(s) => unsafe { sock_c::us_socket_is_shut_down(s) > 0 },
+            InternalSocket::Connecting(s) => unsafe { sock_c::us_connecting_socket_is_shut_down(s) > 0 },
+            InternalSocket::Detached => true,
+            // TODO(port): UpgradedDuplex/Pipe — see is_closed note above.
+            InternalSocket::UpgradedDuplex(_) => false,
+            #[cfg(windows)]
+            InternalSocket::Pipe(_) => false,
+            #[cfg(not(windows))]
+            InternalSocket::Pipe => false,
+        }
+    }
+
+    pub fn is_established(&self) -> bool {
+        match self.socket {
+            // SAFETY: variant pointer is a non-null FFI handle owned by uSockets.
+            InternalSocket::Connected(s) => unsafe { sock_c::us_socket_is_established(s) > 0 },
+            // TODO(port): UpgradedDuplex/Pipe — see is_closed note above.
+            InternalSocket::UpgradedDuplex(_) => true,
+            #[cfg(windows)]
+            InternalSocket::Pipe(_) => true,
+            #[cfg(not(windows))]
+            InternalSocket::Pipe => false,
+            InternalSocket::Connecting(_) | InternalSocket::Detached => false,
+        }
+    }
+
+    pub fn shutdown_read(&self) {
+        match self.socket {
+            // SAFETY: variant pointers are non-null FFI handles owned by uSockets.
+            InternalSocket::Connected(s) => unsafe { sock_c::us_socket_shutdown_read(s) },
+            InternalSocket::Connecting(s) => unsafe { sock_c::us_connecting_socket_shutdown_read(s) },
+            // TODO(port): UpgradedDuplex/Pipe — see is_closed note above.
+            InternalSocket::UpgradedDuplex(_) => {}
+            #[cfg(windows)]
+            InternalSocket::Pipe(_) => {}
+            #[cfg(not(windows))]
+            InternalSocket::Pipe => {}
+            InternalSocket::Detached => {}
+        }
+    }
+
+    pub fn close(&self, code: CloseKind) {
+        match self.socket {
+            // SAFETY: variant pointers are non-null FFI handles owned by uSockets.
+            InternalSocket::Connected(s) => unsafe {
+                let _ = sock_c::us_socket_close(s, code as i32, core::ptr::null_mut());
+            },
+            InternalSocket::Connecting(s) => unsafe { sock_c::us_connecting_socket_close(s) },
+            // TODO(port): UpgradedDuplex/Pipe — see is_closed note above.
+            InternalSocket::UpgradedDuplex(_) => {}
+            #[cfg(windows)]
+            InternalSocket::Pipe(_) => {}
+            #[cfg(not(windows))]
+            InternalSocket::Pipe => {}
+            InternalSocket::Detached => {}
+        }
+    }
+
+    pub fn write(&self, data: &[u8]) -> i32 {
+        match self.socket {
+            InternalSocket::Connected(s) => {
+                // PERF(port): @intCast — profile in Phase B
+                let len = core::cmp::min(data.len(), i32::MAX as usize) as i32;
+                // SAFETY: `s` is a non-null FFI handle; data.as_ptr()/len describe a valid slice.
+                unsafe { sock_c::us_socket_write(s, data.as_ptr(), len) }
+            }
+            // TODO(port): UpgradedDuplex/Pipe encodeAndWrite live in higher tiers.
+            InternalSocket::UpgradedDuplex(_) => 0,
+            #[cfg(windows)]
+            InternalSocket::Pipe(_) => 0,
+            #[cfg(not(windows))]
+            InternalSocket::Pipe => 0,
+            InternalSocket::Connecting(_) | InternalSocket::Detached => 0,
+        }
+    }
+
+    /// `*SSL` when `SSL == true`, raw fd-as-ptr otherwise. Type-erased to
+    /// `*mut c_void` here because const-generic type dispatch
+    /// (`NativeSocketHandleType(is_ssl)`) is unsupported in stable Rust;
+    /// callers `cast()` immediately anyway.
+    pub fn get_native_handle(&self) -> Option<*mut c_void> {
+        let h = match self.socket {
+            // SAFETY: variant pointers are non-null FFI handles owned by uSockets.
+            InternalSocket::Connected(s) => unsafe { sock_c::us_socket_get_native_handle(s) },
+            InternalSocket::Connecting(s) => unsafe { sock_c::us_connecting_socket_get_native_handle(s) },
+            // TODO(port): UpgradedDuplex/Pipe — see is_closed note above.
+            InternalSocket::UpgradedDuplex(_) => return None,
+            #[cfg(windows)]
+            InternalSocket::Pipe(_) => return None,
+            #[cfg(not(windows))]
+            InternalSocket::Pipe => return None,
+            InternalSocket::Detached => return None,
+        };
+        if h.is_null() { None } else { Some(h) }
+    }
+
+    /// Move an open socket into a new group/kind, stashing `owner` in the ext.
+    /// Replaces `Socket.adoptPtr`.
+    ///
+    /// `set_socket_field` replaces Zig's `comptime field: []const u8` +
+    /// `@field(owner, field)` reflection — the closure writes the resulting
+    /// `Self` into the owner's socket field.
+    pub fn adopt_group<Owner>(
+        tcp: *mut us_socket_t,
+        g: *mut SocketGroup,
+        kind: SocketKind,
+        owner: *mut Owner,
+        set_socket_field: impl FnOnce(&mut Owner, Self),
+    ) -> bool {
+        // SAFETY: `tcp` and `g` are non-null FFI handles; ext sizes are word-sized.
+        let new_s = unsafe {
+            sock_c::us_socket_adopt(
+                tcp,
+                g,
+                kind as u8,
+                core::mem::size_of::<*mut c_void>() as i32,
+                core::mem::size_of::<*mut c_void>() as i32,
+            )
+        };
+        if new_s.is_null() {
+            return false;
+        }
+        // SAFETY: ext storage is sized for `*mut c_void` and `new_s` is live.
+        unsafe { *sock_c::us_socket_ext(new_s).cast::<*mut c_void>() = owner.cast::<c_void>() };
+        // SAFETY: caller guarantees `owner` is a valid unique pointer.
+        set_socket_field(unsafe { &mut *owner }, Self { socket: InternalSocket::Connected(new_s) });
+        true
+    }
+
+    #[inline]
+    pub fn from(socket: *mut us_socket_t) -> Self {
+        Self { socket: InternalSocket::Connected(socket) }
+    }
+
+    #[inline]
+    pub fn from_connecting(connecting: *mut ConnectingSocket) -> Self {
+        Self { socket: InternalSocket::Connecting(connecting) }
+    }
+
+    #[inline]
+    pub fn from_any(socket: InternalSocket) -> Self {
+        Self { socket }
+    }
 }
 
 pub type SocketTCP = NewSocketHandler<false>;

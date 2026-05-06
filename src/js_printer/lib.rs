@@ -955,10 +955,18 @@ where
     Ok(())
 }
 
-pub fn quote_for_json<const ASCII_ONLY: bool>(text: &[u8], bytes: &mut MutableString) -> Result<(), bun_core::Error> {
-    bytes.grow_if_needed(estimate_length_for_utf8::<ASCII_ONLY, b'"'>(text))?;
-    bytes.append_char(b'"')?;
-    write_pre_quoted_string::<_, b'"', ASCII_ONLY, true, { Encoding::Utf8 }>(text, bytes)?;
+pub fn quote_for_json(text: &[u8], bytes: &mut MutableString, ascii_only: bool) -> Result<(), bun_core::Error> {
+    // Zig: `comptime ascii_only: bool`. Downstream callers (bundler) pass a literal
+    // at each site, so dispatch to the const-generic helpers here.
+    if ascii_only {
+        bytes.grow_if_needed(estimate_length_for_utf8::<true, b'"'>(text))?;
+        bytes.append_char(b'"')?;
+        write_pre_quoted_string::<_, b'"', true, true, { Encoding::Utf8 }>(text, bytes)?;
+    } else {
+        bytes.grow_if_needed(estimate_length_for_utf8::<false, b'"'>(text))?;
+        bytes.append_char(b'"')?;
+        write_pre_quoted_string::<_, b'"', false, true, { Encoding::Utf8 }>(text, bytes)?;
+    }
     bytes.append_char(b'"').expect("unreachable");
     Ok(())
 }

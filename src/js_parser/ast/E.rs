@@ -1418,6 +1418,13 @@ impl EString {
         self.slice8()
     }
 
+    /// Zig: `slice(allocator)` — flatten any rope and return UTF-8 bytes.
+    /// Resolves the rope into the bump arena, then transcodes if UTF-16.
+    pub fn slice<'b>(&mut self, bump: &'b Bump) -> &'b [u8] {
+        self.resolve_rope_if_needed(bump);
+        self.string(bump).expect("OOM")
+    }
+
     pub fn eql_bytes(&self, other: &[u8]) -> bool {
         if self.is_utf8() {
             strings::eql_long::<true>(self.data, other)

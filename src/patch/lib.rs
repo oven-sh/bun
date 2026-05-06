@@ -685,6 +685,214 @@ pub enum PatchFilePartKind {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// json_fmt — JSON `Display` adapter for `PatchFile`
+//
+// Port of Zig's `std.json.fmt(patchfile, .{})` (used only by the testing
+// bindings in `src/patch_jsc/testing.zig`). The output shape is dictated by
+// Zig's default `std.json.stringify` rules, so it must match exactly for the
+// snapshot tests in `test/js/bun/patch/patch.test.ts` to pass:
+//   - struct           → `{"field":...}` in field-declaration order
+//   - `ArrayListUnmanaged` (our `Vec<T>`) → `{"items":[...],"capacity":N}`
+//   - `[]const u8`     → JSON string
+//   - `enum`           → `"tag_name"`
+//   - `union(enum)`    → `{"tag_name":payload}`
+//   - `?T`             → `null` or value
+//   - `*T`             → serialized as the pointee
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Returns a `Display` adapter that serializes `patchfile` as JSON, matching
+/// the output of Zig's `std.json.fmt(patchfile, .{})`.
+pub fn json_fmt<'a, 'b>(patchfile: &'b PatchFile<'a>) -> impl core::fmt::Display + 'b {
+    PatchFileJsonFmt(patchfile)
+}
+
+struct PatchFileJsonFmt<'a, 'b>(&'b PatchFile<'a>);
+
+impl core::fmt::Display for PatchFileJsonFmt<'_, '_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        json::write_patch_file(f, self.0)
+    }
+}
+
+mod json {
+    use super::*;
+    use core::fmt::{Result, Write};
+
+    /// Minimal JSON string writer matching Zig `std.json.encodeJsonString`
+    /// (default options: escape `"`, `\`, and control chars; pass other
+    /// bytes through verbatim — Zig does no UTF-8 validation here).
+    fn write_str(w: &mut impl Write, s: &[u8]) -> Result {
+        w.write_char('"')?;
+        for &b in s {
+            match b {
+                b'"' => w.write_str("\\\"")?,
+                b'\\' => w.write_str("\\\\")?,
+                0x08 => w.write_str("\\b")?,
+                0x0c => w.write_str("\\f")?,
+                b'\n' => w.write_str("\\n")?,
+                b'\r' => w.write_str("\\r")?,
+                b'\t' => w.write_str("\\t")?,
+                0x00..=0x1f => write!(w, "\\u{:04x}", b)?,
+                _ => w.write_char(b as char)?,
+            }
+        }
+        w.write_char('"')
+    }
+
+    fn write_opt_str(w: &mut impl Write, s: Option<&[u8]>) -> Result {
+        match s {
+            None => w.write_str("null"),
+            Some(s) => write_str(w, s),
+        }
+    }
+
+    /// Zig `std.ArrayListUnmanaged(T)` is a plain struct `{ items: []T, capacity: usize }`,
+    /// which `std.json` serializes field-wise. Reproduce that wrapper around a `Vec<T>`.
+    fn write_list<W: Write, T>(
+        w: &mut W,
+        v: &Vec<T>,
+        mut elem: impl FnMut(&mut W, &T) -> Result,
+    ) -> Result {
+        w.write_str("{\"items\":[")?;
+        for (i, e) in v.iter().enumerate() {
+            if i != 0 {
+                w.write_char(',')?;
+            }
+            elem(w, e)?;
+        }
+        write!(w, "],\"capacity\":{}}}", v.capacity())
+    }
+
+    fn file_mode_tag(m: FileMode) -> &'static str {
+        match m {
+            FileMode::NonExecutable => "non_executable",
+            FileMode::Executable => "executable",
+        }
+    }
+
+    fn part_type_tag(t: PartType) -> &'static str {
+        match t {
+            PartType::Context => "context",
+            PartType::Insertion => "insertion",
+            PartType::Deletion => "deletion",
+        }
+    }
+
+    fn write_header(w: &mut impl Write, h: &Header) -> Result {
+        write!(
+            w,
+            "{{\"original\":{{\"start\":{},\"len\":{}}},\"patched\":{{\"start\":{},\"len\":{}}}}}",
+            h.original.start, h.original.len, h.patched.start, h.patched.len,
+        )
+    }
+
+    fn write_mutation_part(w: &mut impl Write, p: &PatchMutationPart<'_>) -> Result {
+        // Zig field name is `type`; Rust field is `ty`.
+        write!(w, "{{\"type\":\"{}\",\"lines\":", part_type_tag(p.ty))?;
+        write_list(w, &p.lines, |w, line| write_str(w, line))?;
+        write!(w, ",\"no_newline_at_end_of_file\":{}}}", p.no_newline_at_end_of_file)
+    }
+
+    fn write_hunk(w: &mut impl Write, h: &Hunk<'_>) -> Result {
+        w.write_str("{\"header\":")?;
+        write_header(w, &h.header)?;
+        w.write_str(",\"parts\":")?;
+        write_list(w, &h.parts, |w, p| write_mutation_part(w, p))?;
+        w.write_char('}')
+    }
+
+    fn write_opt_hunk(w: &mut impl Write, h: &Option<Box<Hunk<'_>>>) -> Result {
+        match h {
+            None => w.write_str("null"),
+            Some(h) => write_hunk(w, h),
+        }
+    }
+
+    fn write_file_patch(w: &mut impl Write, fp: &FilePatch<'_>) -> Result {
+        w.write_str("{\"path\":")?;
+        write_str(w, fp.path)?;
+        w.write_str(",\"hunks\":")?;
+        write_list(w, &fp.hunks, |w, h| write_hunk(w, h))?;
+        w.write_str(",\"before_hash\":")?;
+        write_opt_str(w, fp.before_hash)?;
+        w.write_str(",\"after_hash\":")?;
+        write_opt_str(w, fp.after_hash)?;
+        w.write_char('}')
+    }
+
+    fn write_file_deletion(w: &mut impl Write, fd: &FileDeletion<'_>) -> Result {
+        w.write_str("{\"path\":")?;
+        write_str(w, fd.path)?;
+        write!(w, ",\"mode\":\"{}\",\"hunk\":", file_mode_tag(fd.mode))?;
+        write_opt_hunk(w, &fd.hunk)?;
+        w.write_str(",\"hash\":")?;
+        write_opt_str(w, fd.hash)?;
+        w.write_char('}')
+    }
+
+    fn write_file_creation(w: &mut impl Write, fc: &FileCreation<'_>) -> Result {
+        w.write_str("{\"path\":")?;
+        write_str(w, fc.path)?;
+        write!(w, ",\"mode\":\"{}\",\"hunk\":", file_mode_tag(fc.mode))?;
+        write_opt_hunk(w, &fc.hunk)?;
+        w.write_str(",\"hash\":")?;
+        write_opt_str(w, fc.hash)?;
+        w.write_char('}')
+    }
+
+    fn write_file_rename(w: &mut impl Write, fr: &FileRename<'_>) -> Result {
+        w.write_str("{\"from_path\":")?;
+        write_str(w, fr.from_path)?;
+        w.write_str(",\"to_path\":")?;
+        write_str(w, fr.to_path)?;
+        w.write_char('}')
+    }
+
+    fn write_file_mode_change(w: &mut impl Write, fm: &FileModeChange<'_>) -> Result {
+        w.write_str("{\"path\":")?;
+        write_str(w, fm.path)?;
+        write!(
+            w,
+            ",\"old_mode\":\"{}\",\"new_mode\":\"{}\"}}",
+            file_mode_tag(fm.old_mode),
+            file_mode_tag(fm.new_mode),
+        )
+    }
+
+    fn write_part(w: &mut impl Write, part: &PatchFilePart<'_>) -> Result {
+        match part {
+            PatchFilePart::FilePatch(p) => {
+                w.write_str("{\"file_patch\":")?;
+                write_file_patch(w, p)?;
+            }
+            PatchFilePart::FileDeletion(p) => {
+                w.write_str("{\"file_deletion\":")?;
+                write_file_deletion(w, p)?;
+            }
+            PatchFilePart::FileCreation(p) => {
+                w.write_str("{\"file_creation\":")?;
+                write_file_creation(w, p)?;
+            }
+            PatchFilePart::FileRename(p) => {
+                w.write_str("{\"file_rename\":")?;
+                write_file_rename(w, p)?;
+            }
+            PatchFilePart::FileModeChange(p) => {
+                w.write_str("{\"file_mode_change\":")?;
+                write_file_mode_change(w, p)?;
+            }
+        }
+        w.write_char('}')
+    }
+
+    pub(super) fn write_patch_file(w: &mut impl Write, pf: &PatchFile<'_>) -> Result {
+        w.write_str("{\"parts\":")?;
+        write_list(w, &pf.parts, |w, p| write_part(w, p))?;
+        w.write_char('}')
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // ParseErr
 // ──────────────────────────────────────────────────────────────────────────
 

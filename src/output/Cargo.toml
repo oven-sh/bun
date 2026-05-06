@@ -1,0 +1,13 @@
+[package]
+name = "bun_output"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+bun_core.workspace = true
+
+[features]
+debug_logs = []

@@ -3094,6 +3094,19 @@ pub mod js_ast {
             todo!("js_ast::Expr::init — MOVE_DOWN pending (bun_js_parser::ast)")
         }
 
+        /// `Expr.asStringCloned` (Zig: `src/js_parser/ast/Expr.zig:495`).
+        /// Returns an arena-owned UTF-8 copy when `data` is `e_string`, else `None`.
+        // TODO(b2-blocked): real impl matches on `ExprData::EString` and calls
+        // `E::String::string_cloned(bump)`; both blocked on the full E port.
+        #[inline]
+        pub fn as_string_cloned<'b>(
+            &self,
+            bump: &'b bun_alloc::Arena,
+        ) -> Result<Option<&'b [u8]>, bun_alloc::AllocError> {
+            let _ = bump;
+            todo!("js_ast::Expr::as_string_cloned — MOVE_DOWN pending (bun_js_parser::ast)")
+        }
+
         /// `Expr.Data.Store.assert()` — debug-only no-op until the store lands.
         #[inline]
         pub fn data_store_assert() {}
@@ -3147,6 +3160,28 @@ pub mod js_ast {
         impl ExprInit for Null {}
         impl ExprInit for Array {}
         impl ExprInit for Object {}
+
+        impl Array {
+            /// `E.Array.slice` (Zig: `src/js_parser/ast/E.zig:24` — `this.items.slice()`).
+            // TODO(b2-blocked): returns `self.items.as_slice()` once Array gains
+            // its real `{ items: ExprNodeList, .. }` field set.
+            #[inline]
+            pub fn slice(&self) -> &[super::Expr] {
+                todo!("js_ast::E::Array::slice — MOVE_DOWN pending (bun_js_parser::ast)")
+            }
+        }
+
+        impl String {
+            /// `E.String.slice` (Zig: `src/js_parser/ast/E.zig:945` —
+            /// `resolveRopeIfNeeded(allocator); return this.string(allocator)`).
+            // TODO(b2-blocked): real impl flattens the rope into `bump` then
+            // returns the UTF-8 view; blocked on `E::String { data, next, .. }`.
+            #[inline]
+            pub fn slice(&mut self, bump: &bun_alloc::Arena) -> &[u8] {
+                let _ = bump;
+                todo!("js_ast::E::String::slice — MOVE_DOWN pending (bun_js_parser::ast)")
+            }
+        }
     }
 
     /// Lowercase `e::*` path some B-1 drafts use (`js_ast::e::object::Rope`).

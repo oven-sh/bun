@@ -681,6 +681,29 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         // TODO(port): per-monomorphization singleton.
         unimplemented!("BSSMapInner::init requires per-type static storage (Phase B)")
     }
+
+    /// Zig: `BSSMap.atIndex` — resolve an `IndexType` to the stored value.
+    /// Returns `None` for `NOT_FOUND` / `UNASSIGNED`. Real lookups require the
+    /// backing-array + overflow-list storage (see `_bss_gated::BSSMapInner`);
+    /// since `init()` is Phase-B-gated no live instance can hold a real index.
+    pub fn at_index(&mut self, index: IndexType) -> Option<&mut ValueType> {
+        if index.index() == NOT_FOUND.index() || index.index() == UNASSIGNED.index() {
+            return None;
+        }
+        unimplemented!("BSSMapInner::at_index requires per-type static storage (Phase B)")
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// `bun.allocators` namespace shim
+//
+// Zig exposed this file as `bun.allocators.*`; downstream crates were ported
+// against that path (`use bun_alloc::allocators;`). Re-export the crate root
+// so `allocators::IndexType`, `allocators::BSSMapInner`, etc. resolve without
+// rewriting every callsite.
+// ──────────────────────────────────────────────────────────────────────────
+pub mod allocators {
+    pub use super::*;
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -272,6 +272,14 @@ impl OwnedURL {
     pub fn into_href(self) -> Box<[u8]> {
         self.href
     }
+    /// Construct from an already-normalized href buffer (the tail of
+    /// `URL::from_string` after `to_owned_slice`). Exposed so out-of-crate
+    /// producers (e.g. `bun_url_jsc::url_from_js`) can build an `OwnedURL`
+    /// without the `href` field being public.
+    #[inline]
+    pub fn from_href(href: Box<[u8]>) -> Self {
+        Self { href }
+    }
 }
 
 impl<'a> URL<'a> {

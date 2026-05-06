@@ -1,0 +1,15 @@
+[package]
+name = "bun_spawn"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+libc.workspace = true
+bun_core.workspace = true
+bun_sys.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+bun_event_loop.workspace = true

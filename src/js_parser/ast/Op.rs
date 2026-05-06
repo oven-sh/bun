@@ -259,9 +259,36 @@ impl Op {
 // TODO(port): verify no callsite reads TableType as a value.
 pub type TableType = EnumMap<Code, Op>;
 
+/// Newtype around the lazily-built `EnumMap<Code, Op>` so downstream callers
+/// can use the Zig `std.EnumArray` surface (`getPtrConst`/`get`) without
+/// knowing about `LazyLock`/`EnumMap`. Derefs to `EnumMap` so `TABLE[code]`
+/// keeps working.
+pub struct Table(LazyLock<EnumMap<Code, Op>>);
+
+impl Table {
+    /// Zig: `Op.Table.getPtrConst(code) -> *const Op`.
+    #[inline]
+    pub fn get_ptr_const(&'static self, code: Code) -> &'static Op {
+        &(*self.0)[code]
+    }
+    /// Zig: `Op.Table.get(code) -> Op`.
+    #[inline]
+    pub fn get(&'static self, code: Code) -> Op {
+        (*self.0)[code]
+    }
+}
+
+impl core::ops::Deref for Table {
+    type Target = EnumMap<Code, Op>;
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 // PERF(port): Zig built this at comptime via labeled block; enum_map! is not
 // const-evaluable so we use LazyLock — profile in Phase B (likely cold).
-pub static TABLE: LazyLock<EnumMap<Code, Op>> = LazyLock::new(|| {
+pub static TABLE: Table = Table(LazyLock::new(|| {
     enum_map! {
         // Prefix
         Code::UnPos    => Op::init(b"+", Level::Prefix, false),
@@ -328,7 +355,7 @@ pub static TABLE: LazyLock<EnumMap<Code, Op>> = LazyLock::new(|| {
         Code::BinLogicalOrAssign         => Op::init(b"||=", Level::Assign, false),
         Code::BinLogicalAndAssign        => Op::init(b"&&=", Level::Assign, false),
     }
-});
+}));
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

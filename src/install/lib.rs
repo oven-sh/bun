@@ -589,7 +589,11 @@ pub mod dependency {
     #[derive(Default)]
     pub struct NpmInfo {
         pub name: SemverString,
-        // TODO(b2): bun_semver::query::Group once lifetime story is settled
+        /// Zig: `version: Semver.Query.Group` (src/install/dependency.zig).
+        // TODO(b2): `Group<'a>` borrows the version literal's source buffer. The
+        // stub pins `'static` (default `input: b""`) so dependents type-check;
+        // un-gating `dependency.rs` will thread the real lifetime.
+        pub version: bun_semver::query::Group<'static>,
         pub is_alias: bool,
     }
 
@@ -703,10 +707,38 @@ pub mod hosted_git_info {
     pub enum Representation { Shortcut, Https, Ssh, Git }
 
     pub struct ParsedUrl {
-        // TODO(b2): real type is `*jsc.URL` — needs bun_jsc dep (not allowed in
-        // bun_install). Phase B will route this through bun_url or an opaque ptr.
-        pub url: Box<dyn core::any::Any>,
+        /// Zig: `url: *jsc.URL` (WTF::URL handle, src/install/hosted_git_info.zig).
+        /// `MOVE_DOWN(b0)` placed the WTF::URL FFI in `bun_url::whatwg`, so this
+        /// no longer needs a `bun_jsc` dep.
+        pub url: WhatwgUrl,
         pub proto: UrlProtocol,
+    }
+
+    /// Owned WTF::URL handle — RAII over `bun_url::whatwg::URL` (opaque C++).
+    /// Zig held `*jsc.URL` and called `.deinit()` at scope exit; `Drop` does it here.
+    pub struct WhatwgUrl(core::ptr::NonNull<bun_url::whatwg::URL>);
+    impl WhatwgUrl {
+        pub fn from_string(s: &bun_string::String) -> Option<Self> {
+            bun_url::whatwg::URL::from_string(s).map(Self)
+        }
+        pub fn from_utf8(input: &[u8]) -> Option<Self> {
+            bun_url::whatwg::URL::from_utf8(input).map(Self)
+        }
+        /// Zig: `jsc.URL.href()` → `bun.String`.
+        pub fn href(&mut self) -> bun_string::String {
+            // SAFETY: handle is live for `'self`; C++ side reads, never invalidates.
+            unsafe { self.0.as_mut() }.href()
+        }
+        pub fn as_raw(&mut self) -> &mut bun_url::whatwg::URL {
+            // SAFETY: handle is live for `'self`.
+            unsafe { self.0.as_mut() }
+        }
+    }
+    impl Drop for WhatwgUrl {
+        fn drop(&mut self) {
+            // SAFETY: `from_string`/`from_utf8` returned a heap-allocated WTF::URL we own.
+            unsafe { self.0.as_mut() }.deinit();
+        }
     }
 
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]

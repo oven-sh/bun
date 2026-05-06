@@ -19,7 +19,15 @@ impl ExecCommand {
         // this is a hack: make dummy bundler so we can use its `.runEnvLoader()` function to populate environment variables probably should split out the functionality
         let mut bundle = Transpiler::init(
             ctx.log,
-            configure_transform_options_for_bun_vm(ctx.args)?,
+            {
+                // PORT NOTE: `bun_jsc::config` is `#[cfg(any())]`-gated; inline
+                // `configure_transform_options_for_bun_vm` (3 field writes).
+                let mut args = ctx.args;
+                args.write = Some(false);
+                args.resolve = Some(api::ResolveMode::Lazy);
+                args.target = Some(api::Target::Bun);
+                args
+            },
             None,
         )?;
         // PORT NOTE: reshaped for borrowck — read field before &mut method call

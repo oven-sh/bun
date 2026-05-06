@@ -193,7 +193,7 @@ pub(super) fn init_impl(options: Options<'_>) -> jsc::JsResult<Box<DevServer>> {
         memory_visualizer_timer: EventLoopTimer::init_paused(TimerTag::DevServerMemoryVisualizerTick),
         // DevServer.zig:328-330: `bake_debugging_features and
         // (options.dump_state_on_crash orelse BUN_DUMP_STATE_ON_CRASH.get())`.
-        has_pre_crash_handler: cfg!(feature = "bake_debugging_features")
+        has_pre_crash_handler: bun_core::feature_flags::BAKE_DEBUGGING_FEATURES
             && options.dump_state_on_crash.unwrap_or_else(|| {
                 bun_core::env_var::feature_flag::BUN_DUMP_STATE_ON_CRASH
                     .get()

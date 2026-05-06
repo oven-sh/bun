@@ -9,14 +9,14 @@ use bstr::BStr;
 use bun_collections::ArrayHashMap;
 use bun_core::{self, err, Output};
 use bun_paths::{self, PathBuffer};
-use bun_sourcemap::coverage::report::Text as CoverageReportText;
-use bun_sourcemap::coverage::Fraction as CoverageFraction;
+use bun_sourcemap_jsc::code_coverage::text as CoverageReportText;
+use bun_options_types::CodeCoverageOptions::{CodeCoverageOptions, Fraction as CoverageFraction};
 use bun_str::{strings, ZStr};
 use bun_sys::{self, Fd, File, O};
 
-use crate::test::parallel::coordinator::Coordinator;
-use crate::test_command::{self, TestCommand};
-use bun_jsc::jest::TestRunner;
+use crate::cli::test::parallel::coordinator::Coordinator;
+use crate::test_command;
+use crate::test_runner::jest::Summary;
 use bun_jsc::{self as jsc};
 
 fn attr_value(head: &[u8], name: &'static [u8]) -> u32 {

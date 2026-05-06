@@ -53,7 +53,7 @@ use bun_resolver::tsconfig_json::TSConfigJSON;
 use crate::api::BuildMessage;
 // `bun_schema::api` → schema lives in `bun_options_types::schema::api`.
 use bun_options_types::schema::api;
-use bun_str::{self as strings, String as BunString};
+use bun_str::{self as strings, String as BunString, ZigString};
 
 // TODO(port): `pub const js = jsc.Codegen.JSTranspiler;` and the toJS/fromJS/fromJSDirect
 // aliases are wired by `#[bun_jsc::JsClass]` codegen — see PORTING.md §JSC types.

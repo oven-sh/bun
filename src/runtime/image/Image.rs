@@ -14,9 +14,11 @@ use core::mem;
 use bun_core::base64;
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, JSGlobalObject, JSPromise, JSValue, JsRef, JsResult,
-    Strong, ZigString,
+    Strong,
 };
+use bun_string::ZigString;
 use crate::webcore::Blob;
+use crate::webcore::blob::ReadBytesResult;
 use bun_str::{self as strings, ZStr};
 use bun_sys as sys;
 

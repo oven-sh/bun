@@ -361,7 +361,7 @@ impl SocketConfig {
             };
             // PORT NOTE: `errdefer bun.memory.deinit(&ssl)` — ssl drops on `?`
             break 'blk SocketConfig {
-                hostname_or_unix: ZigString::Slice::empty(),
+                hostname_or_unix: ZigStringSlice::empty(),
                 port: None,
                 fd: generated.fd.map(Fd::from_uv),
                 ssl,
@@ -387,10 +387,9 @@ impl SocketConfig {
                 || slice.starts_with(b"unix://")
                 || slice.starts_with(b"sock://")
             {
-                let without_prefix = Box::<[u8]>::from(&slice[7..]);
+                let without_prefix = slice[7..].to_vec();
                 // PORT NOTE: reshaped for borrowck — drop borrow of slice before reassigning
-                result.hostname_or_unix = ZigString::Slice::from_owned(without_prefix);
-                // TODO(port): ZigString.Slice.init(allocator, buf) → from_owned(Box<[u8]>)
+                result.hostname_or_unix = ZigStringSlice::init_owned(without_prefix);
             }
         } else if let Some(hostname) = generated.hostname.get() {
             if hostname.length() == 0 {

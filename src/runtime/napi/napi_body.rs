@@ -132,6 +132,19 @@ pub mod napi_env_external_shared_descriptor {
     }
 }
 
+// SAFETY: NapiEnv refcount is managed externally by C++ via NapiEnv__ref/NapiEnv__deref;
+// the pointee remains valid while the count is > 0 (Zig: `external_shared_descriptor`).
+unsafe impl bun_ptr::ExternalSharedDescriptor for NapiEnv {
+    unsafe fn ext_ref(this: *mut Self) {
+        // SAFETY: caller contract — `this` is a valid C++-owned napi_env.
+        unsafe { NapiEnv__ref(this) }
+    }
+    unsafe fn ext_deref(this: *mut Self) {
+        // SAFETY: caller contract — `this` is a valid C++-owned napi_env.
+        unsafe { NapiEnv__deref(this) }
+    }
+}
+
 // TODO(port): bun.ptr.ExternalShared(NapiEnv) — intrusive externally-refcounted handle.
 pub type NapiEnvRef = bun_ptr::ExternalShared<NapiEnv>;
 

@@ -92,8 +92,7 @@ pub fn get_candidate_package_patterns<'a>(
                 break 'body;
             };
 
-            // TODO(port): exact variant paths for `bun_js_parser::Expr::Data` (E.Array/E.Object/E.String).
-            use bun_js_parser::expr::Data as ExprData;
+            use bun_js_parser::ExprData;
             let json_array = match &prop.expr.data {
                 ExprData::EArray(arr) => arr,
                 ExprData::EObject(obj) => {

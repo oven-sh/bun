@@ -67,9 +67,9 @@ use bun_core::Output;
 use bun_jsc::{
     self as jsc, CallFrame, ConcurrentTask, JSGlobalObject, JSValue, JsResult, Task, VirtualMachine,
 };
-use crate::node::Buffer;
+use crate::node::types::Buffer;
 use bun_str::{self, String as BunString, ZigString};
-use bun_threading::{WorkPool, WorkPoolTask};
+use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 use bun_zlib;
 
 bun_output::declare_scope!(zlib, hidden);

@@ -1381,9 +1381,9 @@ impl UDPSocket {
     #[bun_jsc::host_fn(getter)]
     pub fn get_binary_type(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(match this.config.binary_type {
-            ArrayBuffer::BinaryType::Buffer => global_this.common_strings().buffer(),
-            ArrayBuffer::BinaryType::Uint8Array => global_this.common_strings().uint8array(),
-            ArrayBuffer::BinaryType::ArrayBuffer => global_this.common_strings().arraybuffer(),
+            BinaryType::Buffer => global_this.common_strings().buffer(),
+            BinaryType::Uint8Array => global_this.common_strings().uint8array(),
+            BinaryType::ArrayBuffer => global_this.common_strings().arraybuffer(),
             _ => panic!("Invalid binary type"),
         })
     }

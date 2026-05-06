@@ -66,9 +66,13 @@ type AbortSignalRef = NonNull<AbortSignal>;
 use super::stat::Stats;
 use super::time_like::TimeLike;
 use super::types::{
-    ArgumentsSlice, Dirent, Encoding, FileSystemFlags, PathLike, PathOrFileDescriptor,
-    StringOrBuffer, VectorArrayBuffer,
+    ArgumentsSlice, Dirent, Encoding, FileSystemFlags, PathLike, StringOrBuffer,
+    VectorArrayBuffer,
 };
+// Re-exported publicly: `crate::node::fs::PathOrFileDescriptor` is the
+// canonical path used by `cli/build_command.rs` et al. (mirrors Zig's
+// `bun.api.node.fs.PathOrFileDescriptor`).
+pub use super::types::PathOrFileDescriptor;
 
 /// Local alias for the many `node::foo` call sites below — keeps the diff
 /// against `node_fs.zig` readable while routing to `super::*`.

@@ -335,8 +335,8 @@ pub mod Jest {
             BaseScopeCfg { self_mode: ScopeMode::Skip, ..Default::default() },
             scope_strings::XTEST.clone(),
         )?;
-        module.put(global_object, ZigString::static_str("xtest"), xtest_scope_functions);
-        module.put(global_object, ZigString::static_str("xit"), xtest_scope_functions);
+        module.put(global_object, b"xtest", xtest_scope_functions);
+        module.put(global_object, b"xit", xtest_scope_functions);
 
         let describe_scope_functions = create_bound(
             global_object,
@@ -345,7 +345,7 @@ pub mod Jest {
             BaseScopeCfg::default(),
             scope_strings::DESCRIBE.clone(),
         )?;
-        module.put(global_object, ZigString::static_str("describe"), describe_scope_functions);
+        module.put(global_object, b"describe", describe_scope_functions);
 
         let xdescribe_scope_functions = match create_bound(
             global_object,

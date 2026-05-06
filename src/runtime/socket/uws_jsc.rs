@@ -5,13 +5,14 @@
 use core::ffi::CStr;
 
 use bun_boringssl as boringssl;
-use bun_jsc::node::{BlobOrStringOrBuffer, StringOrBuffer};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, SystemError};
 use bun_str::String as BunString;
 use bun_uws::{
-    us_bun_verify_error_t, us_socket_stream_buffer_t, us_socket_t, AnyWebSocket,
-    CreateBunSocketError, RawWebSocket,
+    create_bun_socket_error_t, us_bun_verify_error_t, us_socket_stream_buffer_t, us_socket_t,
+    AnyWebSocket, RawWebSocket,
 };
+
+use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
 
 // ── create_bun_socket_error_t.toJS / us_bun_verify_error_t.toJS ────────────
 pub fn create_bun_socket_error_to_js(

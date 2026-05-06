@@ -1,6 +1,5 @@
 use crate::cli::command;
 use bun_install::package_manager::update_package_json_and_install_catch_error;
-// TODO(port): confirm the exact enum type/path for the subcommand tag (`.@"patch-commit"` in Zig).
 use bun_install::package_manager::Subcommand;
 
 pub struct PatchCommitCommand;

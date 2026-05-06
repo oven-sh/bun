@@ -143,7 +143,7 @@ impl<'a> LockedState<'a> {
     fn assert_unowned(&self, cast_ptr: *const u8) {
         if let Some(owned) = self.history.allocations.get(&cast_ptr) {
             Output::warn("Owned pointer allocated here:");
-            dump_stack_trace(owned.allocated_at.trace(), TRACE_LIMITS, TRACE_LIMITS);
+            dump_stack_trace(&owned.allocated_at.trace(), TRACE_LIMITS.clone());
             panic!("this pointer was owned by the allocation scope when it was not supposed to be");
         }
     }

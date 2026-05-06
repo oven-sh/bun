@@ -265,7 +265,7 @@ impl MimallocArena {
         {
             let heap = Box::new(DebugHeap {
                 inner: mimalloc_heap,
-                thread_lock: crate::stubs::ThreadLock::init_locked(),
+                thread_lock: bun_core::ThreadLock::init_locked(),
             });
             MimallocArena { heap }
         }

@@ -131,12 +131,9 @@ pub mod group {
     #[inline]
     pub fn get_log_enabled() -> bool {
         // bun.Environment.enable_logs gates the runtime check
-        #[cfg(feature = "debug_logs")]
-        {
+        if bun_core::Environment::ENABLE_LOGS {
             get_log_enabled_runtime()
-        }
-        #[cfg(not(feature = "debug_logs"))]
-        {
+        } else {
             get_log_enabled_static_false()
         }
     }

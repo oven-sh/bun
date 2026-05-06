@@ -83,6 +83,8 @@ use bun_url::URL as ZigURL;
 use bun_url::PercentEncoding;
 use bun_resolver::data_url::DataURL;
 use crate::socket::ssl_config::SSLConfig;
+#[allow(unused_imports)]
+use crate::socket::ssl_config;
 use crate::webcore::{AbortSignal, Blob, Body, FetchHeaders, ObjectURLRegistry, ReadableStream, Request, Response};
 use crate::webcore::{body, response, readable_stream, blob};
 use crate::webcore::body::{Value as BodyValue, Action as BodyValueLockedAction, InternalBlob};

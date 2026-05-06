@@ -462,12 +462,14 @@ impl DeferredPromise {
     }
 
     pub fn reset(&mut self) {
-        self.strong.deinit();
+        // Zig: `this.strong.deinit()` — `JSPromiseStrong` has no `deinit`; the
+        // underlying `JscStrong` is released by `Drop` when overwritten.
+        self.strong = jsc::JSPromiseStrong::empty();
         self.route_bundle_indices.clear_retaining_capacity();
     }
 
     pub fn deinit_idempotently(&mut self) {
-        self.strong.deinit();
+        self.strong = jsc::JSPromiseStrong::empty();
         self.route_bundle_indices = Default::default();
     }
 }

@@ -84,10 +84,12 @@ pub fn array_to_js(this: &E::Array, global: &JSGlobalObject) -> Result<JSValue, 
     Ok(array)
 }
 
-pub fn bool_to_js(this: &E::Boolean, ctx: &JSGlobalObject) -> jsc::c::JSValueRef {
-    // TODO(port): legacy C-API path; appears unused by data_to_js
-    // SAFETY: `ctx` is a live JSGlobalObject; pure FFI constructor.
-    unsafe { jsc::c::JSValueMakeBoolean(ctx.as_ptr(), this.value) }
+pub fn bool_to_js(this: &E::Boolean, _ctx: &JSGlobalObject) -> JSValue {
+    // Zig returns `jsc.C.JSValueRef` via `JSValueMakeBoolean`; the Rust C-API
+    // shim is `#[deprecated]` in favour of `JSValue`. `JSValue::js_boolean`
+    // yields the same encoded immediate (`ValueTrue`/`ValueFalse`) without the
+    // FFI hop. Callers needing a raw ref can `.as_ref()` on the result.
+    JSValue::js_boolean(this.value)
 }
 
 pub fn number_to_js(this: &E::Number) -> JSValue {

@@ -536,6 +536,9 @@ impl UDPSocket {
         // export directly — same call the Zig `toJS(*Self)` makes.
         // Signature must match the one `#[bun_jsc::JsClass]` emits for the same
         // link_name to avoid a clashing_extern_declarations diagnostic.
+        // `UDPSocket` is not `#[repr(C)]`, but the C++ side treats `ptr` as an
+        // opaque `void*` (stored verbatim in `m_ctx`), so layout is irrelevant.
+        #[allow(improper_ctypes)]
         unsafe extern "C" {
             #[link_name = "UDPSocket__create"]
             fn udp_socket_create(global: *mut JSGlobalObject, ptr: *mut UDPSocket) -> JSValue;

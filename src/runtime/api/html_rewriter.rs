@@ -775,14 +775,11 @@ impl BufferOutputSink {
             );
 
             // https://github.com/oven-sh/bun/issues/3334
-            if let Some(headers) = (*original).get_init_headers() {
-                // PORT NOTE: `clone_this` takes `&mut self`; `get_init_headers`
-                // gives `&FetchHeaders`. Cast through raw to obtain `&mut` —
-                // safe because `clone_this` only reads `self` (FFI mutates a
-                // freshly-allocated clone, not the receiver).
-                let headers_mut: &mut jsc::FetchHeaders =
-                    &mut *(headers as *const _ as *mut jsc::FetchHeaders);
-                let cloned = headers_mut.clone_this(global)?;
+            // PORT NOTE: `clone_this` takes `&mut self`, so use the `_mut`
+            // accessor (original is `*mut Response`). `clone_this` only reads
+            // `self` (FFI mutates a freshly-allocated clone, not the receiver).
+            if let Some(headers) = (*original).get_init_headers_mut() {
+                let cloned = headers.clone_this(global)?;
                 (*result).set_init_headers(cloned.map(|p| HeadersRef::adopt(p)));
             }
         }

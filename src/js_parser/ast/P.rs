@@ -7275,11 +7275,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                             // SAFETY: bump-arena slice; BabyList::from_bump_slice marks
                             // origin Borrowed so Drop is a no-op (matches Zig's
                             // `ImportRecord.List.init(dupe(...))` arena ownership).
-                            part.import_record_indices = unsafe {
-                                BabyList::from_bump_slice(
-                                    allocator.alloc_slice_copy(self.import_records_for_current_part.as_slice()),
-                                )
-                            };
+                            // The *old* value is a bitwise duplicate of
+                            // `parts[idx].import_record_indices` and may be Owned —
+                            // overwrite without running Drop to mirror Zig's plain
+                            // field assignment.
+                            core::mem::forget(core::mem::replace(
+                                &mut part.import_record_indices,
+                                unsafe {
+                                    BabyList::from_bump_slice(
+                                        allocator.alloc_slice_copy(self.import_records_for_current_part.as_slice()),
+                                    )
+                                },
+                            ));
                         } else {
                             part.import_record_indices
                                 .append_slice(self.import_records_for_current_part.as_slice())

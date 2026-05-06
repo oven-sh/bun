@@ -1594,6 +1594,7 @@ impl<'a> Transpiler<'a> {
                     pending_imports: Default::default(),
                     runtime_transpiler_cache: None,
                     empty: false,
+                    source_contents_backing: source_backing,
                 });
             }
             options::Loader::Wasm => {
@@ -1619,6 +1620,7 @@ impl<'a> Transpiler<'a> {
                         pending_imports: Default::default(),
                         runtime_transpiler_cache: None,
                         empty: false,
+                        source_contents_backing: source_backing,
                     });
                 }
             }

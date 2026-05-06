@@ -76,34 +76,39 @@ pub enum Size {
     Contain,
 }
 
-#[cfg(any())] // blocked_on: css::match_ignore_ascii_case! macro + LengthPercentage::{parse,to_css,is_compatible} + compat::Feature variant names
+/// Case-insensitive keyword dispatch for `Size`/`MaxSize` parse bodies.
+/// PORT NOTE: Zig used `bun.ComptimeStringMap(..).getASCIIICaseInsensitive` —
+/// expanded as an `if`-chain over `eql_case_insensitive_ascii::<true>` (≤14 keys;
+/// per PORTING.md a phf table is overkill at this size).
+macro_rules! size_ident_match {
+    ($ident:expr, { $($lit:literal => $val:expr,)+ } else $err:expr) => {{
+        let __ident: &[u8] = $ident;
+        $(if bun_string::strings::eql_case_insensitive_ascii::<true>(__ident, $lit) {
+            Ok($val)
+        } else)+ { $err }
+    }};
+}
+
 impl Size {
     pub fn parse(input: &mut css::Parser) -> css::Result<Size> {
         let res = input.try_parse(|i: &mut css::Parser| -> css::Result<Size> {
-            let ident = match i.expect_ident() {
-                Ok(v) => v,
-                Err(e) => return Err(e),
-            };
-
-            // TODO(port): bun.ComptimeEnumMap + getASCIIICaseInsensitive — phf custom hasher.
-            // Expanded inline as a case-insensitive match (same observable behavior).
-            css::match_ignore_ascii_case! { ident,
-                "auto" => Ok(Size::Auto),
-                "min-content" => Ok(Size::MinContent(VendorPrefix::NONE)),
-                "-webkit-min-content" => Ok(Size::MinContent(VendorPrefix::WEBKIT)),
-                "-moz-min-content" => Ok(Size::MinContent(VendorPrefix::MOZ)),
-                "max-content" => Ok(Size::MaxContent(VendorPrefix::NONE)),
-                "-webkit-max-content" => Ok(Size::MaxContent(VendorPrefix::WEBKIT)),
-                "-moz-max-content" => Ok(Size::MaxContent(VendorPrefix::MOZ)),
-                "stretch" => Ok(Size::Stretch(VendorPrefix::NONE)),
-                "-webkit-fill-available" => Ok(Size::Stretch(VendorPrefix::WEBKIT)),
-                "-moz-available" => Ok(Size::Stretch(VendorPrefix::MOZ)),
-                "fit-content" => Ok(Size::FitContent(VendorPrefix::NONE)),
-                "-webkit-fit-content" => Ok(Size::FitContent(VendorPrefix::WEBKIT)),
-                "-moz-fit-content" => Ok(Size::FitContent(VendorPrefix::MOZ)),
-                "contain" => Ok(Size::Contain),
-                _ => Err(i.new_custom_error(css::ParserError::InvalidValue)),
-            }
+            let ident = i.expect_ident()?;
+            size_ident_match!(ident, {
+                b"auto" => Size::Auto,
+                b"min-content" => Size::MinContent(VendorPrefix::NONE),
+                b"-webkit-min-content" => Size::MinContent(VendorPrefix::WEBKIT),
+                b"-moz-min-content" => Size::MinContent(VendorPrefix::MOZ),
+                b"max-content" => Size::MaxContent(VendorPrefix::NONE),
+                b"-webkit-max-content" => Size::MaxContent(VendorPrefix::WEBKIT),
+                b"-moz-max-content" => Size::MaxContent(VendorPrefix::MOZ),
+                b"stretch" => Size::Stretch(VendorPrefix::NONE),
+                b"-webkit-fill-available" => Size::Stretch(VendorPrefix::WEBKIT),
+                b"-moz-available" => Size::Stretch(VendorPrefix::MOZ),
+                b"fit-content" => Size::FitContent(VendorPrefix::NONE),
+                b"-webkit-fit-content" => Size::FitContent(VendorPrefix::WEBKIT),
+                b"-moz-fit-content" => Size::FitContent(VendorPrefix::MOZ),
+                b"contain" => Size::Contain,
+            } else Err(i.new_custom_error(css::ParserError::invalid_value)))
         });
 
         if res.is_ok() {
@@ -114,10 +119,7 @@ impl Size {
             return Ok(Size::FitContentFunction(v));
         }
 
-        let lp = match input.try_parse(LengthPercentage::parse) {
-            Ok(v) => v,
-            Err(e) => return Err(e),
-        };
+        let lp = input.try_parse(LengthPercentage::parse)?;
         Ok(Size::LengthPercentage(lp))
     }
 

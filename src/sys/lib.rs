@@ -585,70 +585,145 @@ fn err_with_path(tag: Tag, path: &ZStr) -> Error {
     err_with(tag).with_path(path.as_bytes())
 }
 
-// Syscall tags — subset; full enum in `lib_draft_b1.rs`.
+// Syscall tags — discriminants MUST match `sys.zig:218-326` positional
+// ordinals exactly (FFI-observable). Do not reorder; append-only.
 impl Tag {
-    pub const open: Tag = Tag(1);   pub const close: Tag = Tag(2);
-    pub const read: Tag = Tag(3);   pub const write: Tag = Tag(4);
-    pub const pread: Tag = Tag(5);  pub const pwrite: Tag = Tag(6);
-    pub const stat: Tag = Tag(7);   pub const fstat: Tag = Tag(8);
-    pub const lstat: Tag = Tag(9);  pub const mkdir: Tag = Tag(10);
-    pub const unlink: Tag = Tag(11);pub const rename: Tag = Tag(12);
-    pub const symlink: Tag = Tag(13);pub const readlink: Tag = Tag(14);
-    pub const dup: Tag = Tag(15);   pub const getcwd: Tag = Tag(16);
-    pub const fchmod: Tag = Tag(17);pub const fchown: Tag = Tag(18);
-    pub const ftruncate: Tag = Tag(19); pub const closeHandle: Tag = Tag(20);
-    pub const mkdirat: Tag = Tag(21);
-    pub const link: Tag = Tag(22);    pub const chmod: Tag = Tag(23);
-    pub const chown: Tag = Tag(24);   pub const access: Tag = Tag(25);
-    pub const futimens: Tag = Tag(26);pub const utimensat: Tag = Tag(27);
-    pub const fcntl: Tag = Tag(28);   pub const dup2: Tag = Tag(29);
-    pub const pipe: Tag = Tag(30);    pub const fstatat: Tag = Tag(31);
-    pub const ioctl: Tag = Tag(32);   pub const fsync: Tag = Tag(33);
-    pub const fdatasync: Tag = Tag(34);pub const chdir: Tag = Tag(35);
-    pub const realpath: Tag = Tag(36);pub const recv: Tag = Tag(37);
-    pub const send: Tag = Tag(38);    pub const socketpair: Tag = Tag(39);
-    pub const lseek: Tag = Tag(40);   pub const lchown: Tag = Tag(41);
-    pub const lchmod: Tag = Tag(42);  pub const linkat: Tag = Tag(43);
-    pub const fchmodat: Tag = Tag(44);pub const fchownat: Tag = Tag(45);
-    pub const symlinkat: Tag = Tag(46);pub const readlinkat: Tag = Tag(47);
-    pub const faccessat: Tag = Tag(48);pub const umask: Tag = Tag(49);
-    pub const isatty: Tag = Tag(50);  pub const sendfile: Tag = Tag(51);
-    pub const clonefile: Tag = Tag(52);pub const copyfile: Tag = Tag(53);
-    pub const fcopyfile: Tag = Tag(54);pub const mmap: Tag = Tag(55);
-    pub const munmap: Tag = Tag(56);  pub const fchdir: Tag = Tag(57);
-    pub const epoll_ctl: Tag = Tag(58); pub const kqueue: Tag = Tag(59);
-    pub const kevent: Tag = Tag(60);  pub const inotify: Tag = Tag(61);
-    pub const ppoll: Tag = Tag(62);   pub const fallocate: Tag = Tag(63);
-    pub const copy_file_range: Tag = Tag(64);
-    pub const pwritev: Tag = Tag(65);
-    pub const getdents64: Tag = Tag(66);
-    pub const getdirentries64: Tag = Tag(67);
-    pub const NtQueryDirectoryFile: Tag = Tag(68);
     pub const TODO: Tag = Tag(0);
-    /// Full tag enum (~200 variants) lives in `lib_draft_b1.rs`. This subset
-    /// covers the un-gated posix surface; B-2 widens as syscalls land.
+    pub const dup: Tag = Tag(1);
+    pub const access: Tag = Tag(2);
+    pub const connect: Tag = Tag(3);
+    pub const chmod: Tag = Tag(4);
+    pub const chown: Tag = Tag(5);
+    pub const clonefile: Tag = Tag(6);
+    pub const clonefileat: Tag = Tag(7);
+    pub const close: Tag = Tag(8);
+    pub const copy_file_range: Tag = Tag(9);
+    pub const copyfile: Tag = Tag(10);
+    pub const fchmod: Tag = Tag(11);
+    pub const fchmodat: Tag = Tag(12);
+    pub const fchown: Tag = Tag(13);
+    pub const fcntl: Tag = Tag(14);
+    pub const fdatasync: Tag = Tag(15);
+    pub const fstat: Tag = Tag(16);
+    pub const fstatat: Tag = Tag(17);
+    pub const fsync: Tag = Tag(18);
+    pub const ftruncate: Tag = Tag(19);
+    pub const futimens: Tag = Tag(20);
+    pub const getdents64: Tag = Tag(21);
+    pub const getdirentries64: Tag = Tag(22);
+    pub const lchmod: Tag = Tag(23);
+    pub const lchown: Tag = Tag(24);
+    pub const link: Tag = Tag(25);
+    pub const lseek: Tag = Tag(26);
+    pub const lstat: Tag = Tag(27);
+    pub const lutime: Tag = Tag(28);
+    pub const mkdir: Tag = Tag(29);
+    pub const mkdtemp: Tag = Tag(30);
+    pub const fnctl: Tag = Tag(31);
+    pub const memfd_create: Tag = Tag(32);
+    pub const mmap: Tag = Tag(33);
+    pub const munmap: Tag = Tag(34);
+    pub const open: Tag = Tag(35);
+    pub const pread: Tag = Tag(36);
+    pub const pwrite: Tag = Tag(37);
+    pub const read: Tag = Tag(38);
+    pub const readlink: Tag = Tag(39);
+    pub const rename: Tag = Tag(40);
+    pub const stat: Tag = Tag(41);
+    pub const statfs: Tag = Tag(42);
+    pub const symlink: Tag = Tag(43);
+    pub const symlinkat: Tag = Tag(44);
+    pub const unlink: Tag = Tag(45);
+    pub const utime: Tag = Tag(46);
+    pub const utimensat: Tag = Tag(47);
+    pub const write: Tag = Tag(48);
+    pub const getcwd: Tag = Tag(49);
+    pub const getenv: Tag = Tag(50);
+    pub const chdir: Tag = Tag(51);
+    pub const fcopyfile: Tag = Tag(52);
+    pub const recv: Tag = Tag(53);
+    pub const send: Tag = Tag(54);
+    pub const sendfile: Tag = Tag(55);
+    pub const sendmmsg: Tag = Tag(56);
+    pub const splice: Tag = Tag(57);
+    pub const rmdir: Tag = Tag(58);
+    pub const truncate: Tag = Tag(59);
+    pub const realpath: Tag = Tag(60);
+    pub const futime: Tag = Tag(61);
+    pub const pidfd_open: Tag = Tag(62);
+    pub const poll: Tag = Tag(63);
+    pub const ppoll: Tag = Tag(64);
+    pub const watch: Tag = Tag(65);
+    pub const scandir: Tag = Tag(66);
+    pub const kevent: Tag = Tag(67);
+    pub const kqueue: Tag = Tag(68);
+    pub const epoll_ctl: Tag = Tag(69);
+    pub const kill: Tag = Tag(70);
+    pub const waitpid: Tag = Tag(71);
+    pub const posix_spawn: Tag = Tag(72);
+    pub const getaddrinfo: Tag = Tag(73);
+    pub const writev: Tag = Tag(74);
+    pub const pwritev: Tag = Tag(75);
+    pub const readv: Tag = Tag(76);
+    pub const preadv: Tag = Tag(77);
+    pub const ioctl_ficlone: Tag = Tag(78);
+    pub const accept: Tag = Tag(79);
+    pub const bind2: Tag = Tag(80);
+    pub const connect2: Tag = Tag(81);
+    pub const listen: Tag = Tag(82);
+    pub const pipe: Tag = Tag(83);
+    pub const try_write: Tag = Tag(84);
+    pub const socketpair: Tag = Tag(85);
+    pub const setsockopt: Tag = Tag(86);
+    pub const statx: Tag = Tag(87);
+    pub const rm: Tag = Tag(88);
+    pub const uv_spawn: Tag = Tag(89);
+    pub const uv_pipe: Tag = Tag(90);
+    pub const uv_tty_set_mode: Tag = Tag(91);
+    pub const uv_open_osfhandle: Tag = Tag(92);
+    pub const uv_os_homedir: Tag = Tag(93);
+    pub const WriteFile: Tag = Tag(94);
+    pub const NtQueryDirectoryFile: Tag = Tag(95);
+    pub const NtSetInformationFile: Tag = Tag(96);
+    pub const GetFinalPathNameByHandle: Tag = Tag(97);
+    pub const CloseHandle: Tag = Tag(98);
+    pub const SetFilePointerEx: Tag = Tag(99);
+    pub const SetEndOfFile: Tag = Tag(100);
+    // ── PORT NOTE: tags below this line are Rust-port-only (no Zig ordinal).
+    // They sit above the Zig range so a Zig-produced `Tag` never collides.
+    // TODO(port): upstream these into sys.zig's `Tag` enum, then realign.
+    pub const dup2: Tag = Tag(101);
+    pub const fchdir: Tag = Tag(102);
+    pub const fchownat: Tag = Tag(103);
+    pub const ioctl: Tag = Tag(104);
+
+    /// `@tagName(self)` — must match sys.zig spelling exactly (JS-facing
+    /// `err.syscall` string; node-compat code matches on it).
     pub fn name(self) -> &'static str {
-        match self.0 {
-            0 => "TODO", 1 => "open", 2 => "close", 3 => "read", 4 => "write",
-            5 => "pread", 6 => "pwrite", 7 => "stat", 8 => "fstat", 9 => "lstat",
-            10 => "mkdir", 11 => "unlink", 12 => "rename", 13 => "symlink",
-            14 => "readlink", 15 => "dup", 16 => "getcwd", 17 => "fchmod",
-            18 => "fchown", 19 => "ftruncate", 20 => "closeHandle", 21 => "mkdirat",
-            22 => "link", 23 => "chmod", 24 => "chown", 25 => "access",
-            26 => "futimens", 27 => "utimensat", 28 => "fcntl", 29 => "dup2",
-            30 => "pipe", 31 => "fstatat", 32 => "ioctl", 33 => "fsync",
-            34 => "fdatasync", 35 => "chdir", 36 => "realpath", 37 => "recv",
-            38 => "send", 39 => "socketpair", 40 => "lseek", 41 => "lchown",
-            42 => "lchmod", 43 => "linkat", 44 => "fchmodat", 45 => "fchownat",
-            46 => "symlinkat", 47 => "readlinkat", 48 => "faccessat", 49 => "umask",
-            50 => "isatty", 51 => "sendfile", 52 => "clonefile", 53 => "copyfile",
-            54 => "fcopyfile", 55 => "mmap", 56 => "munmap", 57 => "fchdir",
-            58 => "epoll_ctl", 59 => "kqueue", 60 => "kevent", 61 => "inotify",
-            62 => "ppoll", 63 => "fallocate", 64 => "copy_file_range",
-            65 => "pwritev", 66 => "getdents64", 67 => "getdirentries64",
-            68 => "NtQueryDirectoryFile",
-            _ => "unknown",
-        }
+        const NAMES: [&str; 105] = [
+            "TODO", "dup", "access", "connect", "chmod", "chown", "clonefile",
+            "clonefileat", "close", "copy_file_range", "copyfile", "fchmod",
+            "fchmodat", "fchown", "fcntl", "fdatasync", "fstat", "fstatat",
+            "fsync", "ftruncate", "futimens", "getdents64", "getdirentries64",
+            "lchmod", "lchown", "link", "lseek", "lstat", "lutime", "mkdir",
+            "mkdtemp", "fnctl", "memfd_create", "mmap", "munmap", "open",
+            "pread", "pwrite", "read", "readlink", "rename", "stat", "statfs",
+            "symlink", "symlinkat", "unlink", "utime", "utimensat", "write",
+            "getcwd", "getenv", "chdir", "fcopyfile", "recv", "send",
+            "sendfile", "sendmmsg", "splice", "rmdir", "truncate", "realpath",
+            "futime", "pidfd_open", "poll", "ppoll", "watch", "scandir",
+            "kevent", "kqueue", "epoll_ctl", "kill", "waitpid", "posix_spawn",
+            "getaddrinfo", "writev", "pwritev", "readv", "preadv",
+            "ioctl_ficlone", "accept", "bind2", "connect2", "listen", "pipe",
+            "try_write", "socketpair", "setsockopt", "statx", "rm", "uv_spawn",
+            "uv_pipe", "uv_tty_set_mode", "uv_open_osfhandle", "uv_os_homedir",
+            "WriteFile", "NtQueryDirectoryFile", "NtSetInformationFile",
+            "GetFinalPathNameByHandle", "CloseHandle", "SetFilePointerEx",
+            "SetEndOfFile",
+            // port-only
+            "dup2", "fchdir", "fchownat", "ioctl",
+        ];
+        NAMES.get(self.0 as usize).copied().unwrap_or("unknown")
     }
 }
 impl From<Tag> for &'static str {

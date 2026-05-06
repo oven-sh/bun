@@ -249,6 +249,7 @@ impl<'a> Parser<'a> {
 // per-method-gated in the impl block below and replaces this stub once that
 // surface lands.
 impl<'a> Parser<'a> {
+    #[cfg_attr(not(target_arch = "wasm32"), allow(unused_mut))]
     pub fn parse(mut self) -> Result<js_ast::Result, Error> {
         // TODO(port): narrow error set
         #[cfg(target_arch = "wasm32")]

@@ -205,10 +205,26 @@ impl<'a> LinkerContext<'a> {
     }
 
     pub fn is_external_dynamic_import(&self, record: &ImportRecord, source_index: u32) -> bool {
+        use crate::linker_graph::FileListExt as _;
         self.graph.code_splitting
             && record.kind == ImportKind::Dynamic
             && self.graph.files.items_entry_point_kind()[record.source_index.get() as usize].is_entry_point()
             && record.source_index.get() != source_index
+    }
+
+    /// Spec: `LinkerContext.zig:checkForMemoryCorruption`.
+    ///
+    /// PORT NOTE: the Zig body calls `parse_graph.heap.helpCatchMemoryIssues()`
+    /// (a `MimallocArena` debug hook). `Graph.heap` is currently
+    /// `bun_alloc::Arena = bumpalo::Bump`, which has no such hook, so this is a
+    /// no-op until the arena type is swapped to the real `MimallocArena`. The
+    /// call sites are already gated on `FeatureFlags::HELP_CATCH_MEMORY_ISSUES`.
+    #[inline]
+    pub fn check_for_memory_corruption(&self) {
+        // For this to work, you need mimalloc's debug build enabled.
+        //    make mimalloc-debug
+        // TODO(b3): `unsafe { (*self.parse_graph).heap.help_catch_memory_issues() }`
+        // once `Graph.heap: MimallocArena`.
     }
 }
 
@@ -1031,7 +1047,10 @@ impl Default for SourceMapDataTask {
             source_index: 0,
             // TODO(b2-blocked): real callback is `Self::run_line_offset`
             // (gated below with `ThreadPool::Worker`).
-            thread_task: ThreadPoolLib::Task { callback: noop_task_callback },
+            thread_task: ThreadPoolLib::Task {
+                node: ThreadPoolLib::Node::default(),
+                callback: noop_task_callback,
+            },
         }
     }
 }
@@ -2170,9 +2189,9 @@ impl<'a> LinkerContext<'a> {
                 bstr::BStr::new(&parse_graph.input_files.get(source_index as usize).source.path.pretty),
                 part_index,
                 if !stmts.is_empty() { stmts[0].loc.start } else { Loc::EMPTY.start },
-                // Zig used `@tagName(stmts[0].data)`. `StmtData` is `#[derive(strum::IntoStaticStr)]`
-                // so the conversion is on the value, not the reference.
-                if !stmts.is_empty() { <&'static str>::from(&stmts[0].data) } else { "s_empty" },
+                // Zig used `@tagName(stmts[0].data)`. `StmtData::tag()` → `StmtTag` which
+                // derives `strum::IntoStaticStr`.
+                if !stmts.is_empty() { <&'static str>::from(stmts[0].data.tag()) } else { "s_empty" },
             );
         }
 

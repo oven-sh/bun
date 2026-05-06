@@ -988,21 +988,36 @@ fn transpile_source_code_inner(
                 // PORT NOTE: `ParseOptions::path` is `bun_logger::fs::Path`
                 // (the `'static`-slice flavour used by `logger::Source`), but
                 // `path` here is `bun_resolver::fs::Path<'_>`. The two structs
-                // are field-identical; the resolver-side slices are interned in
-                // `'static` BSSStringList stores (see resolver/lib.rs
-                // `dirname_store`/`filename_store`), so the lifetime extension
-                // is sound. Phase-B collapses both `Path` defs into one type.
-                // SAFETY: see PORT NOTE — `path.text` / `.namespace` / `.pretty`
-                // borrow `'static` interned storage.
-                let parse_path = unsafe {
+                // are field-identical. The resolver entry path interns into
+                // `'static` BSSStringList stores, but the `transpile_file`
+                // entry path borrows a heap `Utf8Slice` that drops at frame
+                // exit — so re-intern into the same `FilenameStore` here
+                // instead of transmuting the lifetime (PORTING.md §Forbidden).
+                // Phase-B collapses both `Path` defs into one type.
+                let parse_path = {
+                    let store = Fs::FilenameStore::instance();
+                    let text: &'static [u8] =
+                        bun_core::handle_oom(store.append(path.text));
+                    let pretty: &'static [u8] =
+                        if core::ptr::eq(path.pretty.as_ptr(), path.text.as_ptr())
+                            && path.pretty.len() == path.text.len()
+                        {
+                            text
+                        } else {
+                            bun_core::handle_oom(store.append(path.pretty))
+                        };
+                    // `Fs::Path::init` always sets namespace to the `b"file"`
+                    // literal; only intern if a caller overrode it.
+                    let namespace: &'static [u8] = if path.namespace == b"file" {
+                        b"file"
+                    } else {
+                        bun_core::handle_oom(store.append(path.namespace))
+                    };
                     bun_logger::fs::Path {
-                        pretty: core::mem::transmute::<&[u8], &'static [u8]>(path.pretty),
-                        text: core::mem::transmute::<&[u8], &'static [u8]>(path.text),
-                        namespace: core::mem::transmute::<&[u8], &'static [u8]>(path.namespace),
-                        name: bun_logger::fs::PathName::init(core::mem::transmute::<
-                            &[u8],
-                            &'static [u8],
-                        >(path.text)),
+                        pretty,
+                        text,
+                        namespace,
+                        name: bun_logger::fs::PathName::init(text),
                         is_disabled: path.is_disabled,
                         is_symlink: path.is_symlink,
                     }
@@ -1044,9 +1059,11 @@ fn transpile_source_code_inner(
                     } else {
                         None
                     },
-                    // TODO(b2-cycle): `vm.module_loader.eval_source` — field
-                    // not surfaced on `ModuleLoader` yet. Spec :247.
-                    remove_cjs_module_wrapper: false,
+                    // Spec :249 — strip the CJS wrapper for the eval/stdin
+                    // entry point.
+                    // SAFETY: `jsc_vm` is the live per-thread VM.
+                    remove_cjs_module_wrapper: is_main
+                        && unsafe { (*jsc_vm).module_loader.eval_source.is_some() },
                     macro_js_ctx: core::ptr::null_mut(),
                     replace_exports: Default::default(),
                 };

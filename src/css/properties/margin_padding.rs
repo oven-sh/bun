@@ -762,11 +762,9 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         context: &mut PropertyHandlerContext,
     ) -> bool {
         // Zig: `switch (@as(PropertyIdTag, property.*))` — the *raw* union
-        // discriminant. `property_id().tag()` is wrong for that:
-        // `Property::Unparsed(u).property_id()` returns the *inner*
-        // `u.property_id`, not `Unparsed`, which would route an unparsed
-        // `margin-top: var(--x)` into the `S::TOP` arm and panic in
-        // `extract_top`. Match the `Unparsed` variant directly first.
+        // discriminant, ported as `Property::variant_tag()`. The `.unparsed`
+        // arm needs the inner `property_id` to decide whether the unparsed
+        // value belongs to this handler, so it stays a structural match.
         if let Property::Unparsed(unparsed) = property {
             let id = unparsed.property_id.tag();
             if id == S::TOP
@@ -822,7 +820,7 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
             return true;
         }
 
-        let tag = property.property_id().tag();
+        let tag = property.variant_tag();
         if tag == S::TOP {
             self.property_helper(
                 PhysicalSlot::Top,

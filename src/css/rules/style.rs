@@ -241,7 +241,10 @@ impl<R> StyleRule<R> {
         &mut self,
         context: &mut MinifyContext<'_>,
         parent_is_unused: bool,
-    ) -> Result<bool, MinifyErr> {
+    ) -> Result<bool, MinifyErr>
+    where
+        R: for<'b> css::generics::DeepClone<'b>,
+    {
         use css::context::{DeclarationContext, PropertyHandlerContext};
 
         #[allow(unused_mut)]

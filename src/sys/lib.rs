@@ -2183,12 +2183,16 @@ mod windows_impl {
         // sys.zig:3231 — `if (Environment.isWindows) @compileError("not implemented")`.
         Err(Error::new(E::ENOTSUP, Tag::munmap))
     }
-    pub fn sendfile(src: Fd, dest: Fd, len: usize) -> Maybe<usize> {
-        // sys.zig:504 — windows: uv_fs_sendfile.
-        let mut req = uv::fs_t::uninitialized();
-        let rc = unsafe { uv::uv_fs_sendfile(core::ptr::null_mut(), &mut req, dest.uv(), src.uv(), 0, len, None) };
-        if let Some(err) = Error::from_uv_rc(rc as i32, Tag::sendfile) { return Err(err); }
-        Ok(rc as usize)
+    pub fn sendfile(src: Fd, _dest: Fd, _len: usize) -> Maybe<usize> {
+        // sys.zig:504 has NO Windows arm — `bun.sys.sendfile` is Linux-only
+        // (`std.os.linux.sendfile` with a *null* offset so the kernel advances
+        // the source fd's file position). The previous port called
+        // `uv_fs_sendfile(..., in_offset=0, ...)`, which (a) re-reads byte 0
+        // on every iteration of a chunked copy loop and (b) returned the int
+        // rc (always `0` on success) instead of `req.result`. Surface ENOSYS
+        // so callers fall back to the read/write copy loop, matching the
+        // non-Linux posix arm above.
+        Err(Error::new(E::ENOSYS, Tag::sendfile).with_fd(src))
     }
     pub type FcntlInt = isize;
     pub const MSG_DONTWAIT: i32 = 0;
@@ -4769,23 +4773,35 @@ pub mod fs {
     /// PERF(port): was inline field reads on a known struct.
     pub struct FsVTable {
         pub instance: fn() -> *const FileSystem,
-        pub entry_base: unsafe fn(*const Entry) -> &'static [u8],
-        pub entry_base_lowercase: unsafe fn(*const Entry) -> &'static [u8],
+        /// Zig: `f.top_level_dir` — cached process cwd captured at
+        /// `FileSystem::init`. Needed for `abs_buf` (fs.zig:495).
+        pub top_level_dir: unsafe fn(*const FileSystem) -> &'static [u8],
+        /// Zig: `FileSystem.setMaxFd` (fs.zig:62) — `max_fd = @max(fd, max_fd)`.
+        pub set_max_fd: fn(super::FdNative),
+        /// Returned slice may point INTO `*p` (tiny-string inline buffer,
+        /// immutable.zig:548) — caller must not promote past the `Entry`
+        /// borrow. Encoded as raw `(*const u8, usize)` to avoid laundering a
+        /// fake `'static` across the seam (PORTING.md §Forbidden).
+        pub entry_base: unsafe fn(*const Entry) -> (*const u8, usize),
+        pub entry_base_lowercase: unsafe fn(*const Entry) -> (*const u8, usize),
         pub entry_dir: unsafe fn(*const Entry) -> &'static [u8],
         pub entry_abs_path: unsafe fn(*const Entry) -> bun_string::PathString,
         pub entry_set_abs_path: unsafe fn(*mut Entry, bun_string::PathString),
         pub entry_cache: unsafe fn(*const Entry) -> EntryCache,
-        pub entry_kind: unsafe fn(*mut Entry, *mut core::ffi::c_void, bool) -> super::EntryKind,
+        pub entry_kind: unsafe fn(*mut Entry, *mut core::ffi::c_void, bool) -> FsEntryKind,
         pub dir_entry_has_comptime_query: unsafe fn(*const DirEntry, &'static [u8]) -> bool,
         pub dir_entry_data: unsafe fn(*const DirEntry) -> *const (),
         /// Snapshot the directory listing's value pointers into `out`.
         /// PERF(port): was `data.iterator()` — collected to flatten the
         /// `std::collections::hash_map::Values` type across the crate seam.
         pub dir_entry_collect: unsafe fn(*const DirEntry, *mut Vec<*mut Entry>),
+        /// Zig: `FileSystem.dirname_store` (fs.zig:76) — the resolver's
+        /// process-static `BSSStringList` instance.
+        pub dirname_store: unsafe fn(*const FileSystem) -> *const DirnameStore,
         pub dirname_store_append:
-            fn(&[u8]) -> core::result::Result<&'static [u8], bun_alloc::AllocError>,
+            unsafe fn(*const DirnameStore, &[u8]) -> core::result::Result<&'static [u8], bun_alloc::AllocError>,
         pub dirname_store_append_lower_case:
-            fn(&[u8]) -> core::result::Result<&'static [u8], bun_alloc::AllocError>,
+            unsafe fn(*const DirnameStore, &[u8]) -> core::result::Result<&'static [u8], bun_alloc::AllocError>,
     }
 
     /// Installed by `bun_resolver::fs::install_sys_fs_vtable()` at startup.
@@ -4824,47 +4840,44 @@ pub mod fs {
             // `FileSystem::init()` ran.
             unsafe { &*(vtable().instance)() }
         }
-        /// `fs.abs(parts)` — join `parts` against the cached cwd into a
-        /// thread-local buffer. CYCLEBREAK: real impl in `bun_resolver::fs`;
-        /// this delegates to `bun_paths::join_abs` against process cwd.
+        /// Zig: `f.top_level_dir` — cached cwd captured at `FileSystem::init`.
+        #[inline] pub fn top_level_dir(&self) -> &'static [u8] {
+            // SAFETY: `self` is the resolver's process-static singleton.
+            unsafe { (vtable().top_level_dir)(self) }
+        }
+        /// `fs.abs(parts)` — join `parts` against the cached `top_level_dir`.
+        /// Zig (fs.zig:489): `joinAbsString(f.top_level_dir, parts, .loose)`.
         pub fn abs(&self, parts: &[&[u8]]) -> Vec<u8> {
             let mut buf = bun_paths::PathBuffer::default();
-            self.abs_buf(parts, &mut buf).to_vec()
+            self.abs_buf(parts, &mut buf.0).to_vec()
         }
-        /// `fs.absBuf(parts, &mut buf)` — like `abs` but writes into `buf`.
-        pub fn abs_buf<'a>(&self, parts: &[&[u8]], buf: &'a mut bun_paths::PathBuffer) -> &'a [u8] {
-            // PORT NOTE: Zig threads cwd through the FileSystem singleton and
-            // calls `bun_paths::join_abs_string_buf::<Auto>`. That generic is
-            // `PlatformT`-monomorphised; until the resolver vtable lands we do
-            // a simple cwd-prefixed join (no `..` normalization).
-            let mut cwd = bun_paths::PathBuffer::default();
-            let cwd_len = super::getcwd(&mut cwd.0).unwrap_or(0);
-            let mut n = 0usize;
-            let push = |dst: &mut [u8], n: &mut usize, src: &[u8]| {
-                let m = src.len().min(dst.len().saturating_sub(*n));
-                dst[*n..*n + m].copy_from_slice(&src[..m]);
-                *n += m;
-            };
-            // Absolute first part wins; otherwise prefix cwd.
-            let first_abs = parts.first().map(|p| p.first() == Some(&bun_core::SEP)).unwrap_or(false);
-            if !first_abs { push(&mut buf.0, &mut n, &cwd.0[..cwd_len]); }
-            for p in parts {
-                if n > 0 && buf.0.get(n - 1) != Some(&bun_core::SEP) {
-                    push(&mut buf.0, &mut n, &[bun_core::SEP]);
-                }
-                push(&mut buf.0, &mut n, p);
-            }
-            &buf.0[..n]
+        /// `fs.absBuf(parts, &mut buf)` (fs.zig:495):
+        /// `path_handler.joinAbsStringBuf(f.top_level_dir, buf, parts, .loose)`.
+        /// Uses the cached `top_level_dir` (NOT a fresh `getcwd()` — Zig
+        /// captures it once at init so post-`chdir` resolution stays stable),
+        /// and `Platform::Loose` so both separator styles and Windows drive
+        /// letters are recognized as absolute.
+        pub fn abs_buf<'a>(&self, parts: &[&[u8]], buf: &'a mut [u8]) -> &'a [u8] {
+            let cwd = self.top_level_dir();
+            bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Loose>(
+                cwd, buf, parts,
+            )
         }
         /// `fs.dirnameStore` — interned-string store for parent dirs.
-        /// Stub: returns the resolver's global store once installed.
-        pub fn dirname_store(&self) -> &'static DirnameStore {
-            static STORE: DirnameStore = DirnameStore { _opaque: [] };
-            &STORE
+        /// Routes through the vtable to the resolver's real `BSSStringList`
+        /// singleton (NOT a function-local ZST — fs.zig:76 has TWO distinct
+        /// stores with different preallocation sizes).
+        pub fn dirname_store(&self) -> &DirnameStore {
+            // SAFETY: vtable returns the address of the process-static
+            // `DirnameStore::instance()`; never null after init.
+            unsafe { &*(vtable().dirname_store)(self) }
         }
-        /// `fs.setMaxFd(fd)` — track highest fd for stat-cache invalidation.
-        /// No-op stub; resolver overrides via vtable.
-        #[inline] pub fn set_max_fd(&self, _fd: super::FdNative) {}
+        /// `fs.setMaxFd(fd)` (fs.zig:62) — track highest fd seen so the
+        /// stat-cache fd-pressure heuristic (fs.zig:774 `file_limit >
+        /// (max_fd+1)*2`) has the right ceiling. No-op on Windows (fs.zig:64).
+        #[inline] pub fn set_max_fd(&self, fd: super::FdNative) {
+            (vtable().set_max_fd)(fd)
+        }
     }
     /// `bun.fs.Entry` — single cached directory entry (name + kind).
     #[repr(C)]
@@ -4873,19 +4886,27 @@ pub mod fs {
         // CYCLEBREAK: real fields/body live in `bun_resolver::fs::Entry`. These
         // accessors dispatch through `FS_VTABLE` so dependents type-check
         // against the `bun_sys::fs` path without an upward dep.
-        // PORT NOTE: return `&'static` (not `&'_ self`) — the real backing
-        // strings are interned in `DirnameStore`/`FilenameStore` and outlive
-        // the `Entry`; tying them to `&self` over-constrains borrowck at the
-        // call sites (e.g. `bun_router` holds `entry.base()` across a
-        // `&mut entry` reborrow).
-        #[inline] pub fn base(&self) -> &'static [u8] {
+        //
+        // PORT NOTE: `base()`/`base_lowercase()` MUST borrow `&self`, NOT
+        // `'static`. Zig's `Entry.base_` is a `StringOrTinyString`
+        // (fs.zig:333); for filenames ≤31 bytes (the overwhelming common case)
+        // `slice()` returns `&this.remainder_buf[..]` (immutable.zig:548) —
+        // bytes stored INLINE inside the `Entry` struct itself, not in any
+        // arena. Laundering that to `&'static [u8]` lets a caller hold
+        // `entry.base()` across a `&mut entry` reborrow → aliased `&`/`&mut`
+        // (UB under Stacked Borrows; PORTING.md §Forbidden lifetime-laundering).
+        // Call sites that need the basename across a mutation must copy it.
+        #[inline] pub fn base(&self) -> &[u8] {
             // SAFETY: `self` is an erased `&bun_resolver::fs::Entry`; vtable
-            // re-erases the FilenameStore-interned slice to `'static`.
-            unsafe { (vtable().entry_base)(self) }
+            // returns a (ptr,len) into either the `FilenameStore` arena OR
+            // `self.base_.remainder_buf`. Both outlive `&self`.
+            let (p, n) = unsafe { (vtable().entry_base)(self) };
+            unsafe { core::slice::from_raw_parts(p, n) }
         }
-        #[inline] pub fn base_lowercase(&self) -> &'static [u8] {
+        #[inline] pub fn base_lowercase(&self) -> &[u8] {
             // SAFETY: see `base()`.
-            unsafe { (vtable().entry_base_lowercase)(self) }
+            let (p, n) = unsafe { (vtable().entry_base_lowercase)(self) };
+            unsafe { core::slice::from_raw_parts(p, n) }
         }
         #[inline] pub fn dir(&self) -> &'static [u8] {
             // SAFETY: `dir` field is a `&'static [u8]` interned in DirnameStore.
@@ -4912,19 +4933,28 @@ pub mod fs {
         /// Zig: `Entry.kind(fs, store_fd)`. The `fs` arg is the resolver's
         /// `Implementation` (higher-tier); accepted as `*mut c_void` here so
         /// the dispatch stays tier-clean.
-        #[inline] pub fn kind(&mut self, fs: *mut core::ffi::c_void, store_fd: bool) -> super::EntryKind {
+        #[inline] pub fn kind(&mut self, fs: *mut core::ffi::c_void, store_fd: bool) -> FsEntryKind {
             // SAFETY: `self` is an erased `&mut bun_resolver::fs::Entry`; `fs`
             // is `&mut bun_resolver::fs::Implementation` per the caller contract
             // (router threads `resolver.fs_impl()`).
             unsafe { (vtable().entry_kind)(self, fs, store_fd) }
         }
     }
+    /// `bun.fs.Entry.Kind` (fs.zig:378-381) — exactly two variants. Distinct
+    /// from `bun_core::FileKind` (the 11-variant `std.fs.Dir.Entry.Kind` map);
+    /// the resolver collapses every stat result to one of these two before
+    /// caching, so callers can match exhaustively.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub enum FsEntryKind {
+        Dir,
+        File,
+    }
     /// `bun.fs.Entry.Cache` — cached stat result for an `Entry`.
     #[derive(Clone, Copy)]
     pub struct EntryCache {
         pub symlink: bun_string::PathString,
         pub fd: super::Fd,
-        pub kind: super::EntryKind,
+        pub kind: FsEntryKind,
     }
     /// `bun.fs.DirEntry` — directory entry cache record (name → Entry map).
     #[repr(C)]
@@ -4932,7 +4962,14 @@ pub mod fs {
     impl DirEntry {
         /// Zig: `DirEntry.hasComptimeQuery(comptime query)` — fast O(1) lookup
         /// of a known-at-compile-time filename in this directory's entry map.
+        /// Zig (fs.zig:305-310) ASCII-lowercases `query_str` at comptime
+        /// before hashing; the Rust seam pushes that onto callers, so the
+        /// argument MUST already be lowercase.
         #[inline] pub fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool {
+            debug_assert!(
+                query_lower.iter().all(|b| !b.is_ascii_uppercase()),
+                "has_comptime_query: query must be ASCII-lowercase (Zig lowercases at comptime; fs.zig:305)"
+            );
             // SAFETY: `self` is an erased `&bun_resolver::fs::DirEntry`.
             unsafe { (vtable().dir_entry_has_comptime_query)(self, query_lower) }
         }
@@ -4942,23 +4979,19 @@ pub mod fs {
             // SAFETY: `self` is an erased `&bun_resolver::fs::DirEntry`.
             unsafe { (vtable().dir_entry_data)(self) }
         }
-        /// Zig: `dir_entry.data.iterator()`. Yields `&mut Entry` for each file
-        /// in the cached directory listing.
+        /// Zig: `dir_entry.data.iterator()`. Yields a raw `*mut Entry` for each
+        /// file in the cached directory listing (Zig's `EntryMap` value type is
+        /// `*Entry`, fs.zig:117).
         ///
-        /// # Safety
-        /// Caller must ensure no other `DirEntryIter` (or any other live
-        /// `&mut Entry` into this directory's backing store) overlaps the
-        /// returned iterator's lifetime. `next()` hands out `&'a mut Entry`
-        /// derived from a shared `&'a DirEntry`, so two concurrent `iter()`
-        /// calls on the same `&DirEntry` would alias `&mut` (UB). Zig's
-        /// `data.iterator()` had no such constraint because Zig pointers don't
-        /// carry exclusivity; the sole caller (`bun_router::Router::load`)
-        /// upholds the single-iterator invariant under
-        /// `RealFS.entries_mutex`.
-        // PORT NOTE: would be `iter(&mut self)` to encode the invariant in the
-        // type, but `DirInfoRef::get_entries_const` (router) currently exposes
-        // only `&DirEntry`; tightening requires reshaping that vtable seam.
-        #[inline] pub unsafe fn iter(&self) -> DirEntryIter<'_> {
+        /// PORT NOTE: yields `*mut Entry` (NOT `&'a mut Entry`). Zig's
+        /// `data.iterator()` hands out raw `*Entry` with no exclusivity
+        /// guarantee; promoting that to `&mut` from a `&self` receiver allowed
+        /// two `iter()` calls on the same `&DirEntry` to produce two
+        /// simultaneous `&mut Entry` to the same backing object (instant UB).
+        /// Callers reborrow at the use site (`unsafe { &*p }` for reads,
+        /// `unsafe { &mut *p }` for the single-writer mutation path) where the
+        /// non-aliasing invariant is locally provable.
+        #[inline] pub fn iter(&self) -> DirEntryIter<'_> {
             let mut buf = Vec::new();
             // SAFETY: `self` is an erased `&bun_resolver::fs::DirEntry`; `buf`
             // is a fresh local the vtable fills with EntryStore-owned pointers.
@@ -4979,34 +5012,35 @@ pub mod fs {
         /// Hand-rolled `next` (router calls `iter.next()` directly).
         #[allow(clippy::should_implement_trait)]
         #[inline]
-        pub fn next(&mut self) -> Option<&'a mut Entry> {
+        pub fn next(&mut self) -> Option<*mut Entry> {
             let p = *self.buf.get(self.i)?;
             self.i += 1;
-            // SAFETY: `p` is an EntryStore-owned `*mut bun_resolver::fs::Entry`
-            // valid for the process lifetime. The single-iterator invariant is
-            // upheld by `DirEntry::iter`'s caller contract (see its `# Safety`
-            // doc) — at most one live `&mut` per element.
-            Some(unsafe { &mut *p })
+            Some(p)
         }
     }
     impl<'a> Iterator for DirEntryIter<'a> {
-        type Item = &'a mut Entry;
+        type Item = *mut Entry;
         #[inline]
-        fn next(&mut self) -> Option<&'a mut Entry> { DirEntryIter::next(self) }
+        fn next(&mut self) -> Option<*mut Entry> { DirEntryIter::next(self) }
     }
     /// `bun.fs.FileSystem.DirnameStore` — interned-dirname arena.
     #[repr(C)]
     pub struct DirnameStore { _opaque: [u8; 0] }
     impl DirnameStore {
         /// Intern `value` into the dirname arena, returning a `&'static` slice.
-        /// Zig: `DirnameStore.append(allocator, value)`.
+        /// Zig: `DirnameStore.append(allocator, value)` (allocators.zig
+        /// `BSSStringList.append`). Receiver is threaded through the vtable so
+        /// `DirnameStore` and `FilenameStore` (distinct preallocation sizes,
+        /// fs.zig:76-77) remain distinguishable.
         pub fn append(&self, value: &[u8]) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
-            (vtable().dirname_store_append)(value)
+            // SAFETY: `self` is an erased `&bun_resolver::fs::DirnameStore`.
+            unsafe { (vtable().dirname_store_append)(self, value) }
         }
         /// Intern the ASCII-lowercased form of `value`.
         /// Zig: `DirnameStore.appendLowerCase(allocator, value)`.
         pub fn append_lower_case(&self, value: &[u8]) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
-            (vtable().dirname_store_append_lower_case)(value)
+            // SAFETY: see `append()`.
+            unsafe { (vtable().dirname_store_append_lower_case)(self, value) }
         }
     }
     /// `bun.fs.DirEntry.Err` (fs.zig:239) — preserves both the original errno

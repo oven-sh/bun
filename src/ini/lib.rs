@@ -693,17 +693,6 @@ impl<'a> Parser<'a> {
                         return Ok(PrepareResult::Key(str_));
                     }
                 }
-                } // end #[cfg(any())] — TODO(b2-blocked): bun_interchange::json::parse_utf8_impl
-                // Runtime fallback while the JSON path is gated: behave as if
-                // JSON parse failed (matches Zig's `catch break :out;` arm).
-                if usage == Usage::Value {
-                    let expanded = self.expand_env_vars(bump, val)?;
-                    return Ok(PrepareResult::Value(Expr::init(
-                        E::EString::init(expanded),
-                        Loc { start: offset },
-                    )));
-                }
-                break 'out;
             }
         } else {
             const STACK_BUF_SIZE: usize = 1024;

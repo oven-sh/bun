@@ -1260,6 +1260,7 @@ use crate::selectors::parser as selector_parser;
 // into a small adaptor that implements the `ComposesCtx` dispatch trait.
 struct NestedComposesCtx<'a> {
     state: ComposesState,
+    allocator: &'a Bump,
     composes: &'a mut ComposesMap,
     composes_refs: &'a mut SmallList<ast::Ref, 2>,
 }
@@ -1269,14 +1270,7 @@ impl<'a> ComposesCtx for NestedComposesCtx<'a> {
     fn record_composes(&mut self, composes: &mut Composes) {
         for ref_ in self.composes_refs.slice() {
             let entry = self.composes.entry(*ref_).or_insert_with(ComposesEntry::default);
-            // blocked_on: `Composes::deep_clone(&Arena)` — the Zig original
-            // threads `input.allocator()` here. The `ComposesCtx` trait has no
-            // arena param yet (declaration.rs callers); until `'bump` threads,
-            // the arena-backed deep clone stays gated and we todo-stub.
-            
-            { let _ = entry.composes.append(composes.deep_clone()); }
-            #[cfg(any())]
-            { let _ = (entry, &composes); todo("record_composes: Composes::deep_clone arena threading"); }
+            let _ = entry.composes.append(composes.deep_clone(self.allocator));
         }
     }
 }
@@ -2158,7 +2152,7 @@ impl<'a, T: CustomAtRuleParser> QualifiedRuleParser for NestedRuleParser<'a, T> 
             // structure is real; only the bitset population stays gated.
              {
             let len = input.position() - location;
-            let mut usage = PropertyBitset::default();
+            let mut usage = PropertyBitset::init_empty();
             let mut custom_properties: BabyList<&[u8]> = BabyList::default();
             fill_property_bit_set(&mut usage, &declarations, &mut custom_properties);
 
@@ -2208,6 +2202,7 @@ impl<'a, T: CustomAtRuleParser> DeclarationParser for NestedRuleParser<'a, T> {
         // PORT NOTE: split-borrow — see `NestedComposesCtx` above.
         let mut ctx = NestedComposesCtx {
             state: this.composes_state,
+            allocator: input.allocator(),
             composes: &mut *this.composes,
             composes_refs: &mut *this.composes_refs,
         };
@@ -2436,12 +2431,12 @@ pub fn fill_property_bit_set(
     for prop in block.declarations.iter() {
         let tag = match prop {
             Property::Custom(c) => {
-                custom_properties.push(c.name.as_str());
+                let _ = custom_properties.append(c.name.as_str());
                 continue;
             }
-            Property::Unparsed(u) => PropertyIdTag::from(&u.property_id),
+            Property::Unparsed(u) => u.property_id.tag(),
             Property::Composes(_) => continue,
-            _ => PropertyIdTag::from(prop),
+            _ => prop.property_id().tag(),
         };
         let int: u16 = tag as u16;
         bitset.set(int as usize);
@@ -2449,12 +2444,12 @@ pub fn fill_property_bit_set(
     for prop in block.important_declarations.iter() {
         let tag = match prop {
             Property::Custom(c) => {
-                custom_properties.push(c.name.as_str());
+                let _ = custom_properties.append(c.name.as_str());
                 continue;
             }
-            Property::Unparsed(u) => PropertyIdTag::from(&u.property_id),
+            Property::Unparsed(u) => u.property_id.tag(),
             Property::Composes(_) => continue,
-            _ => PropertyIdTag::from(prop),
+            _ => prop.property_id().tag(),
         };
         let int: u16 = tag as u16;
         bitset.set(int as usize);
@@ -2527,24 +2522,30 @@ impl<AtRule> StyleSheet<AtRule> {
         allocator: &Bump,
         options: &MinifyOptions,
         extra: &StylesheetExtra,
-    ) -> Maybe<(), Err<MinifyErrorKind>> {
-        // blocked_on: PropertyHandlerContext::new unused_symbols arg type
-        // (`&HashSet<String>` vs `&ArrayHashMap<Box<[u8]>,()>`).
-        let ctx = PropertyHandlerContext::new(options.targets, &options.unused_symbols);
-        let mut handler = DeclarationHandler::default();
-        let mut important_handler = DeclarationHandler::default();
+    ) -> Maybe<(), Err<MinifyErrorKind>>
+    where
+        AtRule: for<'b> generic::DeepClone<'b>,
+    {
+        // SAFETY: crate-wide `'bump`-erasure — `allocator` owns the AST and
+        // outlives every `DeclarationList`/handler produced here.
+        let bump: &'static Bump = unsafe { &*(allocator as *const Bump) };
+        let ctx = PropertyHandlerContext::new(bump, options.targets, &options.unused_symbols);
+        let mut handler = DeclarationHandler::new(bump);
+        let mut important_handler = DeclarationHandler::new(bump);
 
         // @custom-media rules may be defined after they are referenced, but
         // may only be defined at the top level of a stylesheet. Do a pre-scan
         // here and create a lookup table by name.
         let custom_media: Option<ArrayHashMap<Box<[u8]>, css_rules::custom_media::CustomMediaRule>> =
             if self.options.flags.contains(ParserFlags::CUSTOM_MEDIA)
-                && options.targets.should_compile_same(Features::CUSTOM_MEDIA_QUERIES)
+                && options.targets.should_compile_same(compat::Feature::CustomMediaQueries)
             {
                 let mut custom_media = ArrayHashMap::default();
                 for rule in self.rules.v.iter() {
                     if let CssRule::CustomMedia(cm) = rule {
-                        custom_media.insert(cm.name.v.into(), cm.deep_clone(allocator));
+                        // SAFETY: `DashedIdent.v` points into the parser arena.
+                        let key: Box<[u8]> = unsafe { &*cm.name.v }.into();
+                        custom_media.insert(key, cm.deep_clone(allocator));
                     }
                 }
                 Some(custom_media)

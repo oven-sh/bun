@@ -18,8 +18,7 @@ pub use crate::Error;
 // ─────────────────────────────────────────────────────────────────────────
 pub struct CssModule<'a> {
     pub config: &'a Config,
-    // TODO(port): LIFETIMES.tsv says Vec<String> but §Strings mandates bytes — fix TSV (Phase B: &'a [&'a [u8]] and drop .as_bytes() calls)
-    pub sources: &'a Vec<String>,
+    pub sources: &'a Vec<Box<[u8]>>,
     pub hashes: BumpVec<'a, &'a [u8]>,
     pub exports_by_source_index: BumpVec<'a, CssModuleExports<'a>>,
     pub references: &'a mut CssModuleReferences<'a>,
@@ -29,7 +28,7 @@ impl<'a> CssModule<'a> {
     pub fn new(
         bump: &'a Bump,
         config: &'a Config,
-        sources: &'a Vec<String>,
+        sources: &'a Vec<Box<[u8]>>,
         project_root: Option<&[u8]>,
         references: &'a mut CssModuleReferences<'a>,
     ) -> CssModule<'a> {
@@ -44,10 +43,10 @@ impl<'a> CssModule<'a> {
                         // Zig: `bun.path.Platform.auto.isAbsolute(root)`
                         if bun_paths::is_absolute(root) {
                             alloced = true;
-                            break 'source bump.alloc_slice_copy(bun_paths::resolve_path::relative(root, path.as_bytes()));
+                            break 'source bump.alloc_slice_copy(bun_paths::resolve_path::relative(root, path.as_ref()));
                         }
                     }
-                    break 'source path.as_bytes();
+                    break 'source path.as_ref();
                 };
                 // PORT NOTE: Zig `defer if (alloced) allocator.free(source);` — arena-allocated, bulk-freed on bump.reset()
                 let _ = alloced;
@@ -95,7 +94,7 @@ impl<'a> CssModule<'a> {
                         bump,
                         BumpVec::new_in(bump),
                         self.hashes[source_index as usize],
-                        self.sources[source_index as usize].as_bytes(),
+                        self.sources[source_index as usize].as_ref(),
                         name,
                     ),
                     composes: BumpVec::new_in(bump),
@@ -150,7 +149,7 @@ impl<'a> CssModule<'a> {
                                 bump,
                                 res,
                                 self.hashes[source_index as usize],
-                                self.sources[source_index as usize].as_bytes(),
+                                self.sources[source_index as usize].as_ref(),
                                 &name[2..],
                             ),
                             composes: BumpVec::new_in(bump),
@@ -216,7 +215,7 @@ impl<'a> CssModule<'a> {
                     bump,
                     b"--",
                     self.hashes[source_index as usize],
-                    self.sources[source_index as usize].as_bytes(),
+                    self.sources[source_index as usize].as_ref(),
                     &local[2..],
                 ),
                 composes: BumpVec::new_in(bump),
@@ -236,7 +235,7 @@ impl<'a> CssModule<'a> {
                     bump,
                     BumpVec::new_in(bump),
                     self.hashes[source_index as usize],
-                    self.sources[source_index as usize].as_bytes(),
+                    self.sources[source_index as usize].as_ref(),
                     local,
                 ),
                 composes: BumpVec::new_in(bump),

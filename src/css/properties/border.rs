@@ -523,10 +523,11 @@ struct BorderShorthand {
     color: Option<CssColor>,
 }
 
- // blocked_on: css::implement_eql blanket + GenericBorder method bodies + DeepClone trait bound
 impl BorderShorthand {
     pub fn eql(&self, rhs: &Self) -> bool {
-        css::implement_eql(self, rhs)
+        css::generic::eql(&self.width, &rhs.width)
+            && css::generic::eql(&self.style, &rhs.style)
+            && css::generic::eql(&self.color, &rhs.color)
     }
 
     // `border: anytype` — any GenericBorder<S, P>

@@ -575,10 +575,10 @@ mod inherent_bridge {
     // ── properties/border ──
     use crate::properties::border::{
         BorderBlockColor, BorderBlockStyle, BorderBlockWidth, BorderColor, BorderInlineColor,
-        BorderInlineStyle, BorderInlineWidth, BorderShorthand, BorderSideWidth, BorderStyle,
+        BorderInlineStyle, BorderInlineWidth, BorderSideWidth, BorderStyle,
         BorderWidth, GenericBorder, LineStyle,
     };
-    bridge_eql!(BorderSideWidth, BorderShorthand);
+    bridge_eql!(BorderSideWidth);
     bridge_eql_partialeq!(LineStyle);
     bridge_deep_clone!(BorderSideWidth);
     bridge_deep_clone_copy!(LineStyle);
@@ -664,9 +664,32 @@ mod inherent_bridge {
         FontWeight, FontSize, FontStretch, FontStyle, FontVariantCaps, LineHeight, FontFamily,
     );
     bridge_deep_clone!(FontFamily);
-    bridge_eql!(FontFamily);
-    bridge_deep_clone!(Font);
-    bridge_eql!(Font);
+    bridge_eql_partialeq!(FontFamily);
+    // `Font` carries a `BabyList<FontFamily>` so derives don't apply — field-wise impl.
+    impl<'bump> DeepClone<'bump> for Font {
+        fn deep_clone(&self, bump: &'bump Arena) -> Self {
+            Font {
+                family: self.family.deep_clone(bump),
+                size: self.size.deep_clone(bump),
+                style: self.style.deep_clone(bump),
+                weight: self.weight.deep_clone(bump),
+                stretch: self.stretch.deep_clone(bump),
+                line_height: self.line_height.deep_clone(bump),
+                variant_caps: self.variant_caps.deep_clone(bump),
+            }
+        }
+    }
+    impl CssEql for Font {
+        fn eql(&self, other: &Self) -> bool {
+            self.family.eql(&other.family)
+                && self.size.eql(&other.size)
+                && self.style.eql(&other.style)
+                && self.weight.eql(&other.weight)
+                && self.stretch.eql(&other.stretch)
+                && self.line_height.eql(&other.line_height)
+                && self.variant_caps.eql(&other.variant_caps)
+        }
+    }
 
     // ── properties/size ──
     use crate::properties::size::{AspectRatio, BoxSizing, MaxSize, Size};
@@ -724,8 +747,55 @@ mod inherent_bridge {
         GeometryBox, MaskMode, MaskClip, MaskComposite, MaskType, MaskBorderMode,
         WebKitMaskComposite, WebKitMaskSourceType,
     );
-    bridge_deep_clone!(Mask, MaskBorder);
-    bridge_eql!(Mask, MaskBorder);
+    // `Mask`/`MaskBorder` derives are gated on Image/Rect derives — field-wise impl.
+    impl<'bump> DeepClone<'bump> for Mask {
+        fn deep_clone(&self, bump: &'bump Arena) -> Self {
+            Mask {
+                image: self.image.deep_clone(bump),
+                position: self.position.deep_clone(bump),
+                size: self.size.deep_clone(bump),
+                repeat: self.repeat.deep_clone(bump),
+                clip: self.clip.deep_clone(bump),
+                origin: self.origin.deep_clone(bump),
+                composite: self.composite.deep_clone(bump),
+                mode: self.mode.deep_clone(bump),
+            }
+        }
+    }
+    impl CssEql for Mask {
+        fn eql(&self, other: &Self) -> bool {
+            self.image.eql(&other.image)
+                && self.position.eql(&other.position)
+                && self.size.eql(&other.size)
+                && self.repeat.eql(&other.repeat)
+                && self.clip.eql(&other.clip)
+                && self.origin.eql(&other.origin)
+                && self.composite.eql(&other.composite)
+                && self.mode.eql(&other.mode)
+        }
+    }
+    impl<'bump> DeepClone<'bump> for MaskBorder {
+        fn deep_clone(&self, bump: &'bump Arena) -> Self {
+            MaskBorder {
+                source: self.source.deep_clone(bump),
+                slice: self.slice.deep_clone(bump),
+                width: self.width.deep_clone(bump),
+                outset: self.outset.deep_clone(bump),
+                repeat: self.repeat.deep_clone(bump),
+                mode: self.mode.deep_clone(bump),
+            }
+        }
+    }
+    impl CssEql for MaskBorder {
+        fn eql(&self, other: &Self) -> bool {
+            self.source.eql(&other.source)
+                && self.slice.eql(&other.slice)
+                && self.width.eql(&other.width)
+                && self.outset.eql(&other.outset)
+                && self.repeat.eql(&other.repeat)
+                && self.mode.eql(&other.mode)
+        }
+    }
 
     // ── properties/ui ──
     use crate::properties::ui::ColorScheme;
@@ -757,7 +827,7 @@ mod inherent_bridge {
     // ── properties/properties_generated ──
     use crate::properties::properties_generated::PropertyId;
     bridge_deep_clone_copy!(PropertyId);
-    bridge_eql!(PropertyId);
+    bridge_eql_partialeq!(PropertyId);
 }
 
 // TODO(port): Zig also special-cases `@typeInfo(T).struct.layout == .packed` →

@@ -1641,7 +1641,10 @@ impl<Impl: SelectorImpl> Default for GenericSelectorList<Impl> {
 impl<Impl: SelectorImpl> Default for GenericSelector<Impl> {
     fn default() -> Self {
         Self {
-            specificity_and_flags: SpecificityAndFlags::default(),
+            specificity_and_flags: SpecificityAndFlags {
+                specificity: 0,
+                flags: SelectorFlags::empty(),
+            },
             components: Vec::new(),
         }
     }

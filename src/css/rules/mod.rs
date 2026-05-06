@@ -367,7 +367,10 @@ impl<R> media::MediaRule<R> {
         &mut self,
         context: &mut MinifyContext<'_>,
         parent_is_unused: bool,
-    ) -> Result<bool, MinifyErr> {
+    ) -> Result<bool, MinifyErr>
+    where
+        R: for<'b> css::generics::DeepClone<'b>,
+    {
         self.rules.minify(context, parent_is_unused)?;
         Ok(self.rules.v.is_empty() || self.query.never_matches())
     }
@@ -490,7 +493,10 @@ impl<R> CssRuleList<R> {
         &mut self,
         context: &mut MinifyContext<'_>,
         parent_is_unused: bool,
-    ) -> Result<(), MinifyErr> {
+    ) -> Result<(), MinifyErr>
+    where
+        R: for<'b> css::generics::DeepClone<'b>,
+    {
         // blocked_on (style arm only): StyleRule::{minify,is_compatible,
         // update_prefix,hash_key,is_duplicate}, selector::{is_compatible,
         // is_equivalent,Selector::from_component}, SelectorList::deep_clone,
@@ -657,7 +663,7 @@ impl<R> CssRule<R> {
 // ── `.style` arm body — preserved verbatim port, gated on StyleRule
 // behavior + selector helpers + DeclarationBlock::deep_clone. ──
 
-fn minify_style_arm<R>(
+fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
     rule: &mut CssRule<R>,
     rules: &mut Vec<CssRule<R>>,
     style_rules: &mut StyleRuleKeyMap,
@@ -746,8 +752,9 @@ fn minify_style_arm<R>(
     }
     let mut incompatible_rules: SmallList<IncompatibleRuleEntry<R>, 1> =
         SmallList::init_capacity(incompatible.len());
-    for sel in incompatible.slice_mut() {
-        let list = SelectorList { v: SmallList::with_one(core::mem::take(sel)) };
+    while incompatible.len() > 0 {
+        let sel = incompatible.ordered_remove(0);
+        let list = SelectorList { v: SmallList::with_one(sel) };
         let mut clone = style::StyleRule::<R> {
             selectors: list,
             vendor_prefix: sty.vendor_prefix,
@@ -772,9 +779,13 @@ fn minify_style_arm<R>(
     {
         let mut rulesss = CssRuleList::<R>::default();
         core::mem::swap(&mut sty.rules, &mut rulesss);
+        // SAFETY: Phase-A 'static erasure on `DeclarationBlock<'static>` —
+        // matches existing pattern in declaration.rs / css_parser.rs.
+        let bump: &'static bumpalo::Bump =
+            unsafe { &*(context.allocator as *const bun_alloc::Arena) };
         Some(style::StyleRule {
             selectors: sty.selectors.deep_clone(),
-            declarations: css::DeclarationBlock::default(),
+            declarations: css::DeclarationBlock::new_in(bump),
             rules: rulesss,
             vendor_prefix: sty.vendor_prefix,
             loc: sty.loc,
@@ -813,16 +824,17 @@ fn minify_style_arm<R>(
         rules.append(&mut log.v);
     }
     rules.extend(supps);
-    for entry in incompatible_rules.slice_mut() {
+    while incompatible_rules.len() > 0 {
+        let entry = incompatible_rules.ordered_remove(0);
         if !entry.rule.is_empty() {
-            rules.push(CssRule::Style(core::mem::take(&mut entry.rule)));
+            rules.push(CssRule::Style(entry.rule));
         }
         if !entry.logical.is_empty() {
-            let mut log = CssRuleList { v: core::mem::take(&mut entry.logical) };
+            let mut log = CssRuleList { v: entry.logical };
             log.minify(context, parent_is_unused)?;
             rules.append(&mut log.v);
         }
-        rules.extend(core::mem::take(&mut entry.supports));
+        rules.extend(entry.supports);
     }
     if let Some(nested) = nested_rule {
         rules.push(CssRule::Style(nested));
@@ -926,13 +938,11 @@ pub fn merge_style_rules<R>(
             last_style_rule
                 .declarations
                 .declarations
-                .extend_from_slice_copy(&sty.declarations.declarations);
-            sty.declarations.declarations.clear();
+                .extend(sty.declarations.declarations.drain(..));
             last_style_rule
                 .declarations
                 .important_declarations
-                .extend_from_slice_copy(&sty.declarations.important_declarations);
-            sty.declarations.important_declarations.clear();
+                .extend(sty.declarations.important_declarations.drain(..));
             last_style_rule.declarations.minify(
                 context.handler,
                 context.important_handler,
@@ -964,11 +974,12 @@ pub fn merge_style_rules<R>(
 
             // Append the selectors to the last rule if the declarations are the same, and all selectors are compatible.
             if sty.is_compatible(*context.targets) && last_style_rule.is_compatible(*context.targets) {
-                last_style_rule
-                    .selectors
-                    .v
-                    .append_slice(sty.selectors.v.slice());
-                sty.selectors.v.clear_retaining_capacity();
+                while sty.selectors.v.len() > 0 {
+                    last_style_rule
+                        .selectors
+                        .v
+                        .append(sty.selectors.v.ordered_remove(0));
+                }
                 if sty.vendor_prefix.contains(VendorPrefix::NONE)
                     && context.targets.should_compile_selectors()
                 {

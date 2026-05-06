@@ -1434,7 +1434,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         let _ = log.print(bun_core::Output::error_writer());
 
         let failure = {
-            let buf = bun_paths::path_buffer_pool::get();
+            let mut buf = bun_paths::path_buffer_pool::get();
             let key_ptr: *const [u8] = &*self.bundled_files.keys()[idx];
             // SAFETY: sibling-field `relative_path` reads `dev.root` only.
             let owner_display_name =
@@ -1653,7 +1653,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             ChunkKind::InitialResponse => {
                 end_list.extend_from_slice(b"}, {\n  main: ");
                 if !options.initial_response_entry_point.is_empty() {
-                    let buf = bun_paths::path_buffer_pool::get();
+                    let mut buf = bun_paths::path_buffer_pool::get();
                     // SAFETY: `relative_path` reads `dev.root` only.
                     let rel = unsafe {
                         (*dev).relative_path(&mut *buf, options.initial_response_entry_point)

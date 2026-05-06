@@ -1941,7 +1941,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         signal: signal.take().map(|p| p.as_ptr()),
         global_this: Some(global_static),
         ssl_config: ssl_config.take(),
-        hostname: hostname.take().map(|z| z.into_bytes()),
+        hostname: hostname.take().map(|z| Box::<[u8]>::from(z.as_bytes())),
         upgraded_connection,
         force_http2,
         force_http3,

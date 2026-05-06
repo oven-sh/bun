@@ -2609,20 +2609,28 @@ impl<'a> Transpiler<'a> {
             | options::Loader::Md => {
                 // PORT NOTE: borrowck — `parse` consumes `&mut self`, so capture
                 // the option fields needed for `ParseOptions` first.
-                let jsx = resolve_result.jsx.clone();
+                let jsx = jsx_pragma_from_resolver(&resolve_result.jsx);
                 let dirname_fd = resolve_result.dirname_fd;
                 let emit_decorator_metadata =
                     resolve_result.flags.emit_decorator_metadata();
                 let experimental_decorators = resolve_result.flags.experimental_decorators();
-                let macro_remappings = self
-                    .options
-                    .macro_remap
-                    .clone()
-                    .map_err(|_| bun_core::err!("OutOfMemory"))?;
+                // TODO(port): `MacroRemap` (StringArrayHashMap of StringArrayHashMap)
+                // has no nested `Clone` impl; the Zig copied it by value. Re-key
+                // shallowly here matching the build-command conversion.
+                let macro_remappings = {
+                    let mut m = MacroRemap::default();
+                    for (k, v) in self.options.macro_remap.iter() {
+                        let inner = v
+                            .clone()
+                            .map_err(|_| bun_core::err!("OutOfMemory"))?;
+                        m.insert(k, inner);
+                    }
+                    m
+                };
 
                 let parse_opts = ParseOptions {
                     allocator: self.allocator,
-                    path: logger::fs::Path::init(file_path.text),
+                    path: logger::fs::Path::init(file_path_text),
                     loader,
                     dirname_fd,
                     file_descriptor: None,
@@ -2651,7 +2659,7 @@ impl<'a> Transpiler<'a> {
                 };
 
                 if !self.options.transform_only {
-                    let origin = self.options.origin.borrow();
+                    let origin = self.options.origin.url();
                     if !self.options.target.is_bun() {
                         self.linker.link::<false, false>(
                             &file_path,
@@ -2687,7 +2695,7 @@ impl<'a> Transpiler<'a> {
                 };
             }
             options::Loader::Dataurl | options::Loader::Base64 => {
-                bun_core::Output::panic("TODO: dataurl, base64", ());
+                bun_core::Output::panic(format_args!("TODO: dataurl, base64"));
             }
             options::Loader::Css => {
                 // TODO(port): CSS --no-bundle path — `bun_css` is feature-gated

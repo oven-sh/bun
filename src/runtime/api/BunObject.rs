@@ -2237,11 +2237,13 @@ pub fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
             }
         }
 
-        // TODO(port): `bun.sys.mmapFile` — `bun_sys::mmap_file` lives in
-        // `src/sys/lib_draft_b1.rs` and is not yet re-exported from `bun_sys`.
-        let _ = (buf_z, flags, map_size, offset);
-        let map: &'static mut [u8] =
-            todo!("blocked_on: bun_sys::mmap_file (lib_draft_b1.rs not re-exported)");
+        let map: &'static mut [u8] = match bun_sys::mmap_file(buf_z, flags, map_size, offset) {
+            bun_sys::Maybe::Ok(map) => map,
+            bun_sys::Maybe::Err(err) => {
+                use bun_jsc::SysErrorJsc as _;
+                return Err(global_this.throw_value(err.to_js(global_this)));
+            }
+        };
 
         extern "C" fn munmap_dealloc(ptr: *mut c_void, size: *mut c_void) {
             // SAFETY: ptr is the original mmap base, size is its length stuffed into a pointer.

@@ -416,7 +416,7 @@ fn iterate_included_project_tree(
         // TODO(port): errdefer-style close — scopeguard captures `dir` by ref;
         // Phase B should make Dir RAII.
 
-        let mut dir_iter = DirIterator::iterate(Fd::from_std_dir(&dir), DirIterator::Encoding::U8);
+        let mut dir_iter = DirIterator::iterate(Fd::from_std_dir(&dir));
         'next_entry: while let Some(entry) = dir_iter.next().unwrap().ok().flatten() {
             // TODO(port): `.unwrap() catch null` → on iterator error, treat as end
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
@@ -615,7 +615,7 @@ fn add_entire_tree(
             }
         }
 
-        let mut iter = DirIterator::iterate(Fd::from_std_dir(&dir), DirIterator::Encoding::U8);
+        let mut iter = DirIterator::iterate(Fd::from_std_dir(&dir));
         'next_entry: while let Some(entry) = iter.next().unwrap().ok().flatten() {
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
                 continue;
@@ -753,7 +753,7 @@ fn iterate_bundled_deps(
 
     let mut additional_bundled_deps: Vec<DirInfo> = Vec::new();
 
-    let mut iter = DirIterator::iterate(Fd::from_std_dir(&dir), DirIterator::Encoding::U8);
+    let mut iter = DirIterator::iterate(Fd::from_std_dir(&dir));
     while let Some(entry) = iter.next().unwrap().ok().flatten() {
         if entry.kind != bun_sys::FileKind::Directory {
             continue;
@@ -888,7 +888,7 @@ fn add_bundled_dep(
         let DirInfo(mut dir, dir_subpath, dir_depth) = dir_info;
         let _close = scopeguard::guard((), |_| dir.close());
 
-        let mut iter = DirIterator::iterate(Fd::from_std_dir(&dir), DirIterator::Encoding::U8);
+        let mut iter = DirIterator::iterate(Fd::from_std_dir(&dir));
         while let Some(entry) = iter.next().unwrap().ok().flatten() {
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
                 continue;
@@ -1106,7 +1106,7 @@ fn iterate_project_tree(
             }
         }
 
-        let mut dir_iter = DirIterator::iterate(Fd::from_std_dir(&dir), DirIterator::Encoding::U8);
+        let mut dir_iter = DirIterator::iterate(Fd::from_std_dir(&dir));
         'next_entry: while let Some(entry) = dir_iter.next().unwrap().ok().flatten() {
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
                 continue;

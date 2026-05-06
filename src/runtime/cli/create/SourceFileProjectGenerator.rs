@@ -244,19 +244,19 @@ fn run_install(argv: &mut Vec<&[u8]>) -> Result<(), bun_core::Error> {
 
     argv[0] = bun_core::self_exe_path()?;
 
-    // TODO(port): bun.spawnSync — confirm crate path (crate::process::spawn_sync)
-    let process = match crate::process::spawn_sync(&crate::process::SpawnOptions {
-        argv,
+    let process = match spawn_sync::spawn(&spawn_sync::Options {
+        argv: argv.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
         envp: None,
-        cwd: bun_fs::FileSystem::instance().top_level_dir,
-        stderr: crate::process::Stdio::Inherit,
-        stdout: crate::process::Stdio::Inherit,
-        stdin: crate::process::Stdio::Inherit,
+        cwd: Box::<[u8]>::from(FileSystem::instance().top_level_dir()),
+        stderr: spawn_sync::SyncStdio::Inherit,
+        stdout: spawn_sync::SyncStdio::Inherit,
+        stdin: spawn_sync::SyncStdio::Inherit,
 
         #[cfg(windows)]
-        windows: crate::process::WindowsOptions {
+        windows: bun_process::WindowsOptions {
             loop_: bun_jsc::EventLoopHandle::init(bun_event_loop::MiniEventLoop::init_global(None, None)),
         },
+        ..Default::default()
     }) {
         Ok(p) => p,
         Err(err) => {
@@ -278,8 +278,8 @@ fn run_install(argv: &mut Vec<&[u8]>) -> Result<(), bun_core::Error> {
                     }
                 }
 
-                if let crate::process::Status::Exited { code, .. } = spawn_result.status {
-                    Global::exit(code);
+                if let bun_process::Status::Exited(exited) = spawn_result.status {
+                    Global::exit(exited.code);
                 }
 
                 Global::crash();

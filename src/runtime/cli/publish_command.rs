@@ -1314,8 +1314,8 @@ impl PublishCommand {
             match &bin_query.expr.data {
                 Expr::Data::EString(bin_str) => {
                     let mut bin_props: Vec<G::Property> = Vec::new();
-                    let normalized = strings::without_prefix_z(
-                        path::normalize_buf_z(
+                    let normalized = strings::without_prefix_comptime_z(
+                        normalize_buf_z(
                             &bin_str.string()?,
                             &mut path_buf,
                             path::Platform::Posix,

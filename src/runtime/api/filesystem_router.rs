@@ -404,11 +404,12 @@ impl FileSystemRouter {
             },
         )
         .expect("unreachable");
+        let config_dir = router.config.dir.clone();
         if let Err(_) = router.load_routes(
             &mut log,
             root_dir_info,
             &mut vm.transpiler.resolver,
-            router.config.dir,
+            &config_dir,
         ) {
             // Build the JS error before arena teardown: `log` is backed by the arena allocator.
             // Declaration order (arena before log) guarantees `log` drops first on return.

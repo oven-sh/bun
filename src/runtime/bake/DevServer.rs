@@ -3853,7 +3853,7 @@ pub fn finalize_bundle(
         // PORT NOTE: erase the agent borrow to a raw pointer so it can be passed
         // through `send_serialized_failures` (which also borrows `dev`) and then
         // re-used below — Zig passed the optional pointer by value.
-        let inspector_agent_ptr: Option<*mut BunFrontendDevServerAgent> =
+        let mut inspector_agent_ptr: Option<*mut BunFrontendDevServerAgent> =
             unsafe { dev.inspector() }.map(|a| a as *mut _);
         if current_bundle!().promise.strong.has_value() {
             // SAFETY: see `current_bundle!` SAFETY; guard runs before `_outer_defer`.
@@ -3914,7 +3914,7 @@ pub fn finalize_bundle(
     }
 
     if dev.bundling_failures.is_empty() {
-        if current_bundle.had_reload_event {
+        if current_bundle!().had_reload_event {
             let clear_terminal = !bun_output::scope_is_visible!(DevServer)
                 // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
                 && !unsafe { &*(*dev.vm).transpiler.env }
@@ -3936,21 +3936,21 @@ pub fn finalize_bundle(
             dev.print_memory_line();
         }
 
-        let ms_elapsed = u64::try_from(current_bundle.timer.elapsed().as_millis()).unwrap();
+        let ms_elapsed = u64::try_from(current_bundle!().timer.elapsed().as_millis()).unwrap();
 
         Output::pretty_error(format_args!(
             "<green>{} in {}ms<r>",
-            if current_bundle.had_reload_event { "Reloaded" } else { "Bundled page" },
+            if current_bundle!().had_reload_event { "Reloaded" } else { "Bundled page" },
             ms_elapsed,
         ));
 
         // Intentionally creating a new scope here so we can limit the lifetime
         // of the `relative_path_buf`
         {
-            let buf = paths::path_buffer_pool::get();
+            let mut buf = paths::path_buffer_pool::get();
 
             // Compute a file name to display
-            let file_name: Option<&[u8]> = if current_bundle.had_reload_event {
+            let file_name: Option<&[u8]> = if current_bundle!().had_reload_event {
                 if !bv2.graph.entry_points.is_empty() {
                     Some(dev.relative_path(&mut *buf, {
                         use bun_bundler::Graph::InputFileListExt as _;
@@ -3965,20 +3965,22 @@ pub fn finalize_bundle(
             } else {
                 'brk: {
                     let route_bundle_index = 'rbi: {
-                        let first = current_bundle.requests.first;
+                        let first = current_bundle!().requests.first;
                         if !first.is_null() {
                             // SAFETY: first is an intrusive list node valid while current_bundle.requests holds it
                             // SAFETY: `data` was initialized by `defer_request`.
                             break 'rbi unsafe { (*first).data.assume_init_ref() }.route_bundle_index;
                         }
-                        let route_bundle_indices = current_bundle.promise.route_bundle_indices.keys();
+                        let route_bundle_indices = current_bundle!().promise.route_bundle_indices.keys();
                         if route_bundle_indices.is_empty() {
                             break 'brk None;
                         }
                         break 'rbi route_bundle_indices[0];
                     };
 
-                    break 'brk match &dev.route_bundle_ptr(route_bundle_index).data {
+                    // PORT NOTE: index `route_bundles` immutably so `dev.relative_path`
+                    // / `dev.router` / `dev.server_graph` reads below stay disjoint.
+                    break 'brk match &dev.route_bundles[route_bundle_index.get() as usize].data {
                         route_bundle::Data::Html(html) => {
                             Some(dev.relative_path(&mut *buf, &unsafe { &*html.html_bundle }.bundle.path))
                         }

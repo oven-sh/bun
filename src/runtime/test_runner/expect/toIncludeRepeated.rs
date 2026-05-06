@@ -12,10 +12,9 @@ impl Expect {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        // TODO(port): `defer this.postMatch(global)` — scopeguard captures &mut Self and
-        // conflicts with later uses; Phase B may need an inner-fn + post_match-on-exit reshape.
-        let _post = scopeguard::guard((), |_| this.post_match(global));
-        // PORT NOTE: reshaped for borrowck (see above)
+        // PORT NOTE: `defer this.postMatch(global)` — reshaped as a scopeguard owning the
+        // `&mut Expect` so post_match runs on every exit; the body re-borrows `this` via DerefMut.
+        let mut this = scopeguard::guard(this, |t| t.post_match(global));
 
         let this_value = frame.this();
         let arguments_ = frame.arguments_old::<2>();
@@ -88,13 +87,17 @@ impl Expect {
             return Ok(JSValue::UNDEFINED);
         }
 
+        // PORT NOTE: Zig aliased one `*Formatter` for all three fmt adapters; Rust `to_fmt` takes
+        // `&mut Formatter` and the returned adapter holds that borrow live, so three concurrent
+        // adapters need three formatters. `make_formatter` is a trivial struct init with no shared
+        // state between values.
         let mut formatter = super::make_formatter(global);
+        let mut formatter2 = super::make_formatter(global);
+        let mut formatter3 = super::make_formatter(global);
         // defer formatter.deinit() → handled by Drop
-        // PORT NOTE: to_fmt borrows the formatter; three live borrows below would alias under
-        // &mut. Using shared & here; Phase B may need interior mutability on Formatter.
         let expect_string_fmt = expect_string.to_fmt(&mut formatter);
-        let substring_fmt = substring.to_fmt(&mut formatter);
-        let times_fmt = count.to_fmt(&mut formatter);
+        let substring_fmt = substring.to_fmt(&mut formatter2);
+        let times_fmt = count.to_fmt(&mut formatter3);
 
         // PORT NOTE: Zig builds `"\n\n" ++ expected_line ++ received_line` at comptime via named
         // consts; Rust `concat!` only accepts literal tokens (not `const` items), so the pieces are

@@ -1213,8 +1213,11 @@ impl<'a> BlobReadChain<'a> {
             outer: jsc::JSPromiseStrong::init(global),
         });
         let promise = chain.outer.value();
-        // TODO(port): `read_bytes_to_handler` generic-handler signature.
-        blob.read_bytes_to_handler(Box::into_raw(chain), global)?;
+        // TODO(port): `read_bytes_to_handler` takes `&mut H: ReadBytesHandler`;
+        // BlobReadChain needs to impl that trait + ownership reshuffle (Box vs &mut).
+        let _ = (blob, chain);
+        todo!("blocked_on: webcore::blob::ReadBytesHandler impl for BlobReadChain");
+        #[allow(unreachable_code)]
         Ok(promise)
     }
 

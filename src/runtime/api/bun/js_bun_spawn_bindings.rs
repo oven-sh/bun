@@ -740,7 +740,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                         // SAFETY: NUL written above at buf[written-1]
                         unsafe { ZStr::from_raw(ipc_env_buf.as_ptr(), written - 1) }
                     }
-                    Err(_) => return global_this.throw_out_of_memory(),
+                    Err(_) => return Err(global_this.throw_out_of_memory()),
                 }
             };
             // PERF(port): was assume_capacity

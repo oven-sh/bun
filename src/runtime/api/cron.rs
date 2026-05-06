@@ -1671,11 +1671,13 @@ impl CronJob {
     }
 }
 
-// TODO(port): move to <area>_sys / codegen exports
+// TODO(port): move to <area>_sys / codegen exports.
+// PORT NOTE: `#[bun_jsc::host_fn]` already emits an extern-"C" shim
+// `__jsc_host_<name>`; expose those under the C++ export names.
 #[unsafe(no_mangle)]
-pub static Bun__CronJob__onPromiseResolve: jsc::JSHostFn = jsc::to_js_host_fn(on_promise_resolve);
+pub static Bun__CronJob__onPromiseResolve: jsc::JSHostFn = __jsc_host_on_promise_resolve;
 #[unsafe(no_mangle)]
-pub static Bun__CronJob__onPromiseReject: jsc::JSHostFn = jsc::to_js_host_fn(on_promise_reject);
+pub static Bun__CronJob__onPromiseReject: jsc::JSHostFn = __jsc_host_on_promise_reject;
 
 #[bun_jsc::host_fn]
 fn on_promise_resolve(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {

@@ -1088,13 +1088,14 @@ impl BunxCommand {
             // PORT NOTE: `defer package_json.close()` → Drop.
         }
 
-        let mut args: BoundedArray<&[u8], 8> = BoundedArray::from_slice(&[
-            bun_core::self_exe_path()?,
+        let install_args: [&[u8]; 4] = [
+            bun_core::self_exe_path()?.as_bytes(),
             b"add",
-            &install_param,
+            install_param.as_slice(),
             b"--no-summary",
-        ])
-        .expect("unreachable"); // upper bound is known
+        ];
+        let mut args: BoundedArray<&[u8], 8> =
+            BoundedArray::from_slice(&install_args).expect("unreachable"); // upper bound is known
 
         if do_cache_bust {
             // disable the manifest cache when a tag is specified

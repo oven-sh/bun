@@ -224,7 +224,8 @@ impl FileRoute {
                     write!(w, "{}", status).expect("unreachable");
                     16 - w.len()
                 };
-                r.write_status(&b[..written]);
+                // SAFETY: `r` is a live `*mut h3::Response` held by `AnyResponse`.
+                unsafe { (*r).write_status(&b[..written]) };
             }
         }
     }

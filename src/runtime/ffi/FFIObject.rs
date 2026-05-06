@@ -5,6 +5,7 @@ use bun_jsc::{
     JSValue, JsResult,
 };
 use bun_jsc::host_fn::DomCall;
+#[allow(unused_imports)]
 use bun_str::{self as strings, ZigString};
 
 // TODO(port): `bun.api.FFI` lives in `src/runtime/ffi/FFI.zig` → `crate::ffi::FFI`

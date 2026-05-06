@@ -195,15 +195,22 @@ impl H2VMExt for bun_jsc::VM {
     }
 }
 
-// Local shim: `JSValue::to(u32)` from Zig — coerce to u32 via i32 path.
+// Local shim: `JSValue::to(u32)` / `JSValue::to(u64)` from Zig — coerce via the
+// double path (callers gate on `is_number()`).
 pub(crate) trait H2JSValueExt {
     fn to_u32(self) -> u32;
+    fn to_u64(self) -> u64;
 }
 impl H2JSValueExt for JSValue {
     #[inline]
     fn to_u32(self) -> u32 {
         // Matches Zig `value.to(u32)` semantics (truncating reinterpret of i32).
         self.to_int32() as u32
+    }
+    #[inline]
+    fn to_u64(self) -> u64 {
+        // Matches Zig `value.to(u64)` semantics (truncate the double).
+        self.as_number() as u64
     }
 }
 

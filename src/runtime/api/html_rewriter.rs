@@ -474,10 +474,11 @@ impl HTMLRewriterLoader {
             Ok(r) => r,
             Err(_) => {
                 output.end(None);
-                // TODO(port): lifetime — Zig returns a borrowed slice from
-                // lol-html's threadlocal last-error buffer. Treat as 'static
-                // for now; caller must consume before next lol-html call.
-                return Some(lolhtml::HTMLString::last_error().slice());
+                // PORT NOTE: Zig returned a borrowed `[]const u8` into
+                // lol-html's threadlocal last-error buffer. Rust can't return a
+                // slice tied to a temporary, so return the owning `HTMLString`
+                // (caller calls `.slice()` then `.deinit()`).
+                return Some(lolhtml::HTMLString::last_error());
             }
         };
 

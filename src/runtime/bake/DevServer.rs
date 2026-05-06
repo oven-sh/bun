@@ -1053,53 +1053,22 @@ impl DevServer<'_> {
         // TODO: all paths here must be prefixed with publicPath if set.
         self.server = Some(AnyServer::from(server));
         // SAFETY: app is set before set_routes is called (server init path)
-        let app = unsafe { &mut *server.app.unwrap() };
-        // TODO(port): `is_ssl` was extracted via @typeInfo(@TypeOf(app)).pointer.child.is_ssl
-        macro_rules! route {
-            ($method:ident, $path:expr, $handler:expr) => {
-                app.$method($path, self as *mut _, wrap_generic_request_handler::<_, SSL>($handler));
-            };
-        }
-        // TODO(port): comptime string concat → const_format::concatcp!
-        route!(get, const_format::concatcp!(CLIENT_PREFIX, "/:route"), on_js_request);
-        route!(get, const_format::concatcp!(ASSET_PREFIX, "/:asset"), on_asset_request);
-        route!(get, const_format::concatcp!(INTERNAL_PREFIX, "/src/*"), on_src_request);
-        route!(post, const_format::concatcp!(INTERNAL_PREFIX, "/report_error"), ErrorReportRequest::run);
-        route!(post, const_format::concatcp!(INTERNAL_PREFIX, "/unref"), UnrefSourceMapRequest::run);
-
-        route!(any, INTERNAL_PREFIX, on_not_found);
-
-        app.ws(
-            const_format::concatcp!(INTERNAL_PREFIX, "/hmr"),
-            self as *mut _,
-            0,
-            WebSocketBehavior::wrap::<DevServer, HmrSocket, SSL>(Default::default()),
+        let _app = unsafe { &mut *server.app.unwrap() };
+        // TODO(port): blocked_on: bun_uws_sys::App::{get,post,any,ws} —
+        // upstream signature is `(pattern: &[u8], handler: extern "C" fn, *mut c_void)`;
+        // `wrap_generic_request_handler` returning `impl Fn` cannot coerce to a
+        // C fn pointer for a const-generic `SSL`. Needs an extern "C" trampoline
+        // table per (handler, SSL) pair (see DevServer.zig:810-840).
+        // Silence unused warnings on the handlers we'd register here.
+        let _ = (
+            on_js_request as fn(_, _, _),
+            on_asset_request as fn(_, _, _),
+            on_src_request as fn(_, _, _),
+            on_not_found as fn(_, _, _),
+            on_incremental_visualizer as fn(_, _, _),
+            on_memory_visualizer as fn(_, _, _),
         );
-
-        #[cfg(feature = "bake_debugging_features")]
-        {
-            route!(get, const_format::concatcp!(INTERNAL_PREFIX, "/incremental_visualizer"), on_incremental_visualizer);
-            route!(get, const_format::concatcp!(INTERNAL_PREFIX, "/memory_visualizer"), on_memory_visualizer);
-            app.get(
-                const_format::concatcp!(INTERNAL_PREFIX, "/iv"),
-                self as *mut _,
-                redirect_handler::<SSL>(const_format::concatcp!(INTERNAL_PREFIX, "/incremental_visualizer").as_bytes()),
-            );
-            app.get(
-                const_format::concatcp!(INTERNAL_PREFIX, "/mv"),
-                self as *mut _,
-                redirect_handler::<SSL>(const_format::concatcp!(INTERNAL_PREFIX, "/memory_visualizer").as_bytes()),
-            );
-        }
-
-        // Only attach a catch-all handler if the framework has filesystem router
-        // types. Otherwise, this can just be Bun.serve's default handler.
-        if !self.framework.file_system_router_types.is_empty() {
-            route!(any, "/*", on_request);
-            Ok(true)
-        } else {
-            Ok(false)
-        }
+        todo!("blocked_on: bun_uws_sys::App route-handler closure adapter + WebSocketBehavior::wrap")
     }
 }
 

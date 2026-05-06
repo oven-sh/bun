@@ -1392,7 +1392,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                 Output::pretty_errorln(format_args!("<r><red>error<r>: --shard index must be between 1 and {}, got {}", count, index));
                 Global::exit(1);
             }
-            ctx.test_options.shard = Some(cli::TestShard { index, count });
+            ctx.test_options.shard = Some(Shard { index, count });
         }
         ctx.test_options.update_snapshots = args.flag("--update-snapshots");
         ctx.test_options.run_todo = args.flag("--todo");

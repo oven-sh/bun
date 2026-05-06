@@ -163,7 +163,7 @@ static mut FSEVENTS_DEFAULT_LOOP: Option<NonNull<FSEventsLoop>> = None;
 
 fn dlsym<T>(handle: *mut c_void, symbol: &core::ffi::CStr) -> Option<T> {
     // SAFETY: handle is a valid dlopen handle; symbol is NUL-terminated
-    let ptr = unsafe { bun_sys::dlsym(handle, symbol.as_ptr()) };
+    let ptr = unsafe { bun_sys::c::dlsym(handle, symbol.as_ptr()) };
     if ptr.is_null() {
         return None;
     }

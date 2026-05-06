@@ -318,7 +318,7 @@ impl BunxCommand {
                 if let Some(dir_name) = bin_prop.expr.as_string() {
                     let bin_dir = bun_sys::openat_a(dir_fd, &dir_name, O::RDONLY | O::DIRECTORY, 0).unwrap_result()?;
                     // PORT NOTE: `defer bin_dir.close()` → Drop.
-                    let mut iterator = bun_sys::DirIterator::iterate(bin_dir, bun_sys::DirIteratorEncoding::U8);
+                    let mut iterator = bun_sys::dir_iterator::iterate(bin_dir);
                     let mut entry = iterator.next();
                     loop {
                         let current = match entry {

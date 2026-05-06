@@ -502,7 +502,7 @@ impl TrustCommand {
                         info.scripts_list.print_scripts(
                             &resolution,
                             buf,
-                            Lockfile::Package::Scripts::PrintKind::Completed,
+                            lockfile::package::scripts::PrintFormat::Completed,
                         );
                     }
                     Output::print(format_args!("\n"));

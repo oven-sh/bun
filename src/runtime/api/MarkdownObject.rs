@@ -262,11 +262,10 @@ pub fn render(
     // Run parser with the JS callback renderer
     if let Err(err) = md::render_with_renderer(input, options, js_renderer.renderer()) {
         return match err {
-            e if e == bun_core::err!("JSError")
-                || e == bun_core::err!("JSTerminated")
-                || e == bun_core::err!("OutOfMemory") => Err(e.into()),
-            e if e == bun_core::err!("StackOverflow") => global_this.throw_stack_overflow(),
-            e => Err(e.into()),
+            ParserError::JSError => Err(bun_jsc::JsError::Thrown),
+            ParserError::JSTerminated => Err(bun_jsc::JsError::Terminated),
+            ParserError::OutOfMemory => global_this.throw_out_of_memory(),
+            ParserError::StackOverflow => global_this.throw_stack_overflow(),
         };
     }
 

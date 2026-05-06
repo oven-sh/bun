@@ -112,8 +112,8 @@ pub const CONV: &str = "C";
 #[path = "JSValue.rs"] pub mod js_value;
 
 pub use self::js_value::{
-    js_value_hash, BackingInt, CoerceTo, ForEachCallback, FromJsEnum, JSValue, PropertyIteratorFn,
-    ProxyField, ProxyInternalField, SerializedFlags, SerializedScriptValue,
+    js_value_hash, BackingInt, CoerceTo, ComparisonResult, ForEachCallback, FromJsEnum, JSValue,
+    PropertyIteratorFn, ProxyField, ProxyInternalField, SerializedFlags, SerializedScriptValue,
 };
 
 pub use self::task::{Taskable, RUN_TASK_HOOK, set_run_task_hook};

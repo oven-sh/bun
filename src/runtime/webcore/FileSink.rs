@@ -1155,7 +1155,7 @@ impl FlushPendingTask {
                 .sub(offset_of!(FileSink, run_pending_later))
                 .cast::<FileSink>()
         };
-        let _guard = scopeguard::guard((), move |_| unsafe { (*this).deref() });
+        let _guard = scopeguard::guard((), move |_| unsafe { FileSink::deref(this) });
         if had {
             unsafe { (*this).run_pending() };
         }
@@ -1193,7 +1193,7 @@ fn on_resolve_stream(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsR
     let args = callframe.arguments();
     let this: *mut FileSink = args[args.len() - 1].as_promise_ptr::<FileSink>();
     // SAFETY: `this` is kept alive by the ref taken in `assign_to_stream`; this deref balances it.
-    let _guard = scopeguard::guard((), move |_| unsafe { (*this).deref() });
+    let _guard = scopeguard::guard((), move |_| unsafe { FileSink::deref(this) });
     // SAFETY: `as_promise_ptr` recovers the `*mut FileSink` stashed by `assign_to_stream`.
     unsafe { (*this).handle_resolve_stream(global_this) };
     Ok(JSValue::UNDEFINED)
@@ -1206,7 +1206,7 @@ fn on_reject_stream(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
     let this: *mut FileSink = args[args.len() - 1].as_promise_ptr::<FileSink>();
     let err = args[0];
     // SAFETY: `this` is kept alive by the ref taken in `assign_to_stream`; this deref balances it.
-    let _guard = scopeguard::guard((), move |_| unsafe { (*this).deref() });
+    let _guard = scopeguard::guard((), move |_| unsafe { FileSink::deref(this) });
     // SAFETY: `as_promise_ptr` recovers the `*mut FileSink` stashed by `assign_to_stream`.
     unsafe { (*this).handle_reject_stream(global_this, err) };
     Ok(JSValue::UNDEFINED)

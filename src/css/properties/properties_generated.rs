@@ -5507,7 +5507,18 @@ impl Property {
     // blocked_on: shorthand_handler_port — leaf shorthand types lack `.longhand()` (Zig body is `@compileError(todo_stuff.depth)`, .zig:7087-7160)
     pub fn longhand(&self, property_id: &PropertyId) -> Option<Property> {
         #[inline(always)]
-        fn lh<T: ?Sized>(_v: &T, _id: &PropertyId) -> Option<Property> { None }
+        fn lh<T: ?Sized>(_v: &T, _id: &PropertyId) -> Option<Property> {
+            // PORT NOTE: per-type `v.longhand(property_id)` is
+            // `@compileError(todo_stuff.depth)` in Zig and never instantiated.
+            // Trip in debug so callers can't accidentally rely on the
+            // always-`None` placeholder before `DefineShorthand::longhand`
+            // is ported.
+            debug_assert!(
+                false,
+                "Property::longhand: per-type DefineShorthand::longhand not yet ported"
+            );
+            None
+        }
         match self {
             Property::BackgroundPosition(v) => lh(v, property_id),
             Property::Overflow(v) => lh(v, property_id),

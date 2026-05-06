@@ -53,13 +53,11 @@ pub struct ZigException {
 
 impl ZigException {
     pub fn collect_source_lines(&mut self, value: JSValue, global: &JSGlobalObject) {
-        // SAFETY: `self` is a valid &mut; global borrow outlives the call.
+        // SAFETY: `self` is a valid &mut; `global.as_mut_ptr()` derives a `*mut`
+        // with write provenance via `UnsafeCell::get()` (JSGlobalObject is an
+        // opaque interior-mutable FFI handle), so C++ may mutate through it.
         unsafe {
-            ZigException__collectSourceLines(
-                value,
-                global as *const JSGlobalObject as *mut JSGlobalObject,
-                self,
-            );
+            ZigException__collectSourceLines(value, global.as_mut_ptr(), self);
         }
     }
 

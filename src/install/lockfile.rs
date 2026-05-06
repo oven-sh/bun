@@ -2865,9 +2865,28 @@ const MAX_DEFAULT_TRUSTED_DEPENDENCIES: usize = 512;
 /// Sorted list of default trusted dependency names.
 ///
 /// Zig builds this at comptime from `default-trusted-dependencies.txt` via
-/// `@embedFile` + tokenize + sort. Rust generates the same slice via `build.rs`.
-pub static DEFAULT_TRUSTED_DEPENDENCIES_LIST: &[&[u8]] =
-    include!(concat!(env!("OUT_DIR"), "/default_trusted_dependencies_list.rs"));
+/// `@embedFile` + tokenize + sort. Rust cannot tokenize/sort at const time, so
+/// we embed the file with `include_str!` and build the sorted slice on first
+/// access. Kept alphabetical so `bun pm trusted --default` need not re-sort.
+pub static DEFAULT_TRUSTED_DEPENDENCIES_LIST: std::sync::LazyLock<Vec<&'static [u8]>> =
+    std::sync::LazyLock::new(|| {
+        // Zig: @embedFile("./default-trusted-dependencies.txt")
+        const DATA: &str = include_str!("default-trusted-dependencies.txt");
+        // Zig: std.mem.tokenizeAny(u8, data, " \r\n\t")
+        let mut names: Vec<&'static [u8]> = DATA
+            .split([' ', '\r', '\n', '\t'])
+            .filter(|s| !s.is_empty())
+            .map(str::as_bytes)
+            .collect();
+        // Zig: std.sort.pdq with std.mem.order(u8, ..) == .lt
+        names.sort_unstable();
+        debug_assert!(
+            names.len() <= MAX_DEFAULT_TRUSTED_DEPENDENCIES,
+            "default-trusted-dependencies.txt is too large, please increase \
+             'MAX_DEFAULT_TRUSTED_DEPENDENCIES' in lockfile.rs"
+        );
+        names
+    });
 
 /// The default list of trusted dependencies is a static hashmap.
 ///
@@ -2908,8 +2927,7 @@ pub mod default_trusted_dependencies {
 
     static MAP: LazyLock<Box<Map>> = LazyLock::new(|| {
         let mut map = Box::<Map>::default();
-        for &dep in DEFAULT_TRUSTED_DEPENDENCIES_LIST {
-            // build.rs already enforces ≤512 entries and no duplicates.
+        for &dep in DEFAULT_TRUSTED_DEPENDENCIES_LIST.iter() {
             debug_assert!(map.len < MAX_DEFAULT_TRUSTED_DEPENDENCIES);
             let entry = map.get_or_put_assume_capacity(dep);
             debug_assert!(!entry.found_existing);

@@ -641,7 +641,7 @@ pub mod lockfile {
                 Ordering::Less => true,
                 Ordering::Greater => false,
                 Ordering::Equal => {
-                    bun_string::order(
+                    bun_string::strings::order(
                         l_dep.name.slice(string_buf),
                         r_dep.name.slice(string_buf),
                     ) == Ordering::Less

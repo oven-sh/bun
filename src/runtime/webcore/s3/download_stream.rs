@@ -6,6 +6,7 @@ use bun_aio::KeepAlive;
 use bun_core::Error;
 use bun_http::{AsyncHTTP, HTTPClientResult, Headers, Signals};
 use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
+use bun_event_loop::{task_tag, TaskTag, Taskable};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_s3_signing::credentials::SignResult;
 use bun_s3_signing::error::S3Error;

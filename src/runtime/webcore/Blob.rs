@@ -418,11 +418,8 @@ impl Blob {
         }
     }
 
-    pub fn detach(&mut self) {
-        // Zig: `if (this.store != null) this.store.?.deref(); this.store = null;`
-        // `StoreRef::drop` calls `Store::deref()`.
-        self.store = None;
-    }
+    // detach: defined once below in the JSC-gated impl block; duplicate removed
+    // here to fix E0592/E0034.
 
     pub fn shared_view(&self) -> &[u8] {
         if self.size == 0 || self.store.is_none() {

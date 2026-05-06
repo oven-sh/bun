@@ -229,14 +229,14 @@ impl Promise {
         value: &mut protocol::RESPValue,
     ) -> Result<(), jsc::JsTerminated> {
         // TODO(port): bun.JSTerminated! mapping
-        let options = protocol::RESPValue::ToJSOptions {
+        let options = ToJSOptions {
             return_as_buffer: self.meta.contains(Meta::RETURN_AS_BUFFER),
         };
 
-        let js_value = match value.to_js_with_options(global_object, options) {
+        let js_value = match resp_value_to_js_with_options(value, global_object, options) {
             Ok(v) => v,
             Err(err) => {
-                self.reject(global_object, global_object.take_error(err))?;
+                self.reject(global_object, Ok(global_object.take_error(err)))?;
                 return Ok(());
             }
         };

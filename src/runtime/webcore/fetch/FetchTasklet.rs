@@ -483,6 +483,7 @@ impl FetchTasklet {
                     body,
                     BodyValue::InternalBlob(InternalBlob {
                         bytes: scheduled_response_buffer,
+                        was_string: false,
                     }),
                 );
                 bun_output::scoped_log!(
@@ -506,7 +507,7 @@ impl FetchTasklet {
         Ok(())
     }
 
-    pub fn on_progress_update(&mut self) -> bun_jsc::JsTerminatedResult<()> {
+    pub fn on_progress_update(&mut self) -> JsTerminatedResult<()> {
         jsc::mark_binding!();
         bun_output::scoped_log!(FetchTasklet, "onProgressUpdate");
         self.mutex.lock();

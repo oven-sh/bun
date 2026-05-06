@@ -1957,15 +1957,9 @@ impl Drop for PipeReader {
 // StdioKind & helpers
 // ───────────────────────────────────────────────────────────────────────────
 
-#[derive(EnumSetType, Debug, IntoStaticStr)]
-pub enum StdioKind {
-    #[strum(serialize = "stdin")]
-    Stdin,
-    #[strum(serialize = "stdout")]
-    Stdout,
-    #[strum(serialize = "stderr")]
-    Stderr,
-}
+// `StdioKind` is re-exported from `crate::api::bun_subprocess` at the top of
+// this file so the `StaticPipeWriterProcess` trait impl uses the exact same
+// enum the trait was declared with.
 
 #[inline]
 pub fn assert_stdio_result(result: StdioResult) {

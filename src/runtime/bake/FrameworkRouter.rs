@@ -1400,11 +1400,11 @@ pub struct TinyLog {
 }
 
 impl TinyLog {
-    pub const fn empty() -> TinyLog {
+    pub fn empty() -> TinyLog {
         TinyLog {
             cursor_at: u32::MAX,
             cursor_len: 0,
-            msg: BoundedArray::new(),
+            msg: BoundedArray::default(),
         }
     }
 
@@ -1422,39 +1422,44 @@ impl TinyLog {
 
     pub fn write(&mut self, args: fmt::Arguments<'_>) {
         use std::io::Write as _;
-        let buf = self.msg.buffer_mut();
-        let mut cursor: &mut [u8] = buf;
+        // PORT NOTE: BoundedArray exposes no `buffer_mut()`; format into a stack
+        // scratch buffer (same capacity) and copy into the BoundedArray.
+        let mut buf = [0u8; TINY_LOG_CAP];
+        let mut cursor: &mut [u8] = &mut buf[..];
         let len = match cursor.write_fmt(args) {
-            Ok(()) => buf.len() - cursor.len(),
+            Ok(()) => TINY_LOG_CAP - cursor.len(),
             Err(_) => {
                 // truncation should never happen because the buffer is HUGE. handle it anyways
-                let n = buf.len();
-                buf[n - 3..].copy_from_slice(b"...");
-                n
+                buf[TINY_LOG_CAP - 3..].copy_from_slice(b"...");
+                TINY_LOG_CAP
             }
         };
-        self.msg.set_len(u32::try_from(len).unwrap());
+        self.msg.clear();
+        self.msg.resize(len).unwrap();
+        self.msg.slice().copy_from_slice(&buf[..len]);
     }
 
     pub fn print(&self, rel_path: &[u8]) {
         let cursor_at = self.cursor_at as usize;
         let cursor_len = self.cursor_len as usize;
         let after = &rel_path[cursor_at.max(0)..];
-        Output::err_generic(format_args!(
+        Output::err_generic(
             "\"{}<blue>{}<r>{}\" is not a valid route",
-            bstr::BStr::new(&rel_path[0..cursor_at.max(0)]),
-            bstr::BStr::new(&after[0..cursor_len.min(after.len())]),
-            bstr::BStr::new(&after[cursor_len.min(after.len())..]),
-        ));
-        let mut w = Output::error_writer_buffered();
-        if w.splat_byte_all(b' ', "error: \"".len() + cursor_at).is_err() {
+            (
+                bstr::BStr::new(&rel_path[0..cursor_at.max(0)]),
+                bstr::BStr::new(&after[0..cursor_len.min(after.len())]),
+                bstr::BStr::new(&after[cursor_len.min(after.len())..]),
+            ),
+        );
+        let w = Output::error_writer_buffered();
+        if writer_splat_byte_all(w, b' ', "error: \"".len() + cursor_at).is_err() {
             return;
         }
         if Output::enable_ansi_colors_stderr() {
             let symbols = bun_core::fmt::TableSymbols::UNICODE;
             Output::pretty_error(format_args!("<blue>{}", symbols.top_column_sep()));
             if cursor_len > 1 {
-                if w.splat_bytes_all(symbols.horizontal_edge(), cursor_len - 1).is_err() {
+                if writer_splat_bytes_all(w, symbols.horizontal_edge(), cursor_len - 1).is_err() {
                     return;
                 }
             }
@@ -1464,18 +1469,18 @@ impl TinyLog {
                     return;
                 }
             } else {
-                if w.splat_byte_all(b'-', cursor_len - 1).is_err() {
+                if writer_splat_byte_all(w, b'-', cursor_len - 1).is_err() {
                     return;
                 }
             }
         }
-        if w.write_byte(b'\n').is_err() {
+        if w.write_all(b"\n").is_err() {
             return;
         }
-        if w.splat_byte_all(b' ', "error: \"".len() + cursor_at).is_err() {
+        if writer_splat_byte_all(w, b' ', "error: \"".len() + cursor_at).is_err() {
             return;
         }
-        if w.write_all(self.msg.slice()).is_err() {
+        if w.write_all(self.msg.const_slice()).is_err() {
             return;
         }
         Output::pretty_error(format_args!("<r>\n"));

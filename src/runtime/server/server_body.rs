@@ -4477,10 +4477,10 @@ impl AnyServer {
     pub fn on_request(&self, req: &mut uws::Request, resp: uws::AnyResponse) {
         match self.ptr.tag() {
             // SAFETY: tag was just checked; as_unchecked yields the matching live *mut.
-            t if t == <TaggedPtrUnion<_>>::case::<HTTPServer>() => unsafe { &mut *self.ptr.as_unchecked::<HTTPServer>() }.on_request(req, resp.assert_no_ssl()),
-            t if t == <TaggedPtrUnion<_>>::case::<HTTPSServer>() => unsafe { &mut *self.ptr.as_unchecked::<HTTPSServer>() }.on_request(req, resp.assert_ssl()),
-            t if t == <TaggedPtrUnion<_>>::case::<DebugHTTPServer>() => unsafe { &mut *self.ptr.as_unchecked::<DebugHTTPServer>() }.on_request(req, resp.assert_no_ssl()),
-            t if t == <TaggedPtrUnion<_>>::case::<DebugHTTPSServer>() => unsafe { &mut *self.ptr.as_unchecked::<DebugHTTPSServer>() }.on_request(req, resp.assert_ssl()),
+            t if t == <TaggedPtrUnion<_>>::case::<HTTPServer>() => unsafe { &mut *self.ptr.as_unchecked::<HTTPServer>() }.on_request(req, unsafe { &mut *resp.assert_no_ssl() }),
+            t if t == <TaggedPtrUnion<_>>::case::<HTTPSServer>() => unsafe { &mut *self.ptr.as_unchecked::<HTTPSServer>() }.on_request(req, unsafe { &mut *resp.assert_ssl() }),
+            t if t == <TaggedPtrUnion<_>>::case::<DebugHTTPServer>() => unsafe { &mut *self.ptr.as_unchecked::<DebugHTTPServer>() }.on_request(req, unsafe { &mut *resp.assert_no_ssl() }),
+            t if t == <TaggedPtrUnion<_>>::case::<DebugHTTPSServer>() => unsafe { &mut *self.ptr.as_unchecked::<DebugHTTPSServer>() }.on_request(req, unsafe { &mut *resp.assert_ssl() }),
             _ => unreachable!("Invalid pointer tag"),
         }
     }
@@ -4505,7 +4505,10 @@ impl AnyServer {
     }
 
     pub fn publish(&self, topic: &[u8], message: &[u8], opcode: Opcode, compress: bool) -> bool {
-        any_server_dispatch!(self, |s| unsafe { &*s.app.unwrap() }.publish(topic, message, opcode, compress))
+        // bun_uws::Opcode and bun_uws_sys::Opcode are both `#[repr(transparent)] struct(i32)`;
+        // map by inner value (no transmute — see PORTING.md §Forbidden).
+        let sys_opcode = uws_sys::Opcode(opcode.0);
+        any_server_dispatch!(self, |s| unsafe { &mut *s.app.unwrap() }.publish(topic, message, sys_opcode, compress))
     }
 
     pub fn on_saved_request<const EXTRA_ARG_COUNT: usize>(
@@ -4563,7 +4566,7 @@ impl AnyServer {
     }
 
     pub fn num_subscribers(&self, topic: &[u8]) -> u32 {
-        any_server_dispatch!(self, |s| unsafe { &*s.app.unwrap() }.num_subscribers(topic))
+        any_server_dispatch!(self, |s| unsafe { &mut *s.app.unwrap() }.num_subscribers(topic))
     }
 
     pub fn dev_server(&self) -> Option<&bake::dev_server::DevServer> {

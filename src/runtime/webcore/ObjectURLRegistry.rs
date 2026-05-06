@@ -183,7 +183,7 @@ pub fn bun_create_object_url(
     // SAFETY: `JSValue::as_::<Blob>()` returns a non-null `*mut Blob` backed by
     // the JS object's wrapped native cell, valid for the duration of this call.
     let uuid = registry.register(global_object.bun_vm(), unsafe { &*blob });
-    let str = bun_str::String::create_format(format_args!("blob:{}", uuid));
+    let mut str = bun_str::String::create_format(format_args!("blob:{}", uuid));
     str.transfer_to_js(global_object)
 }
 

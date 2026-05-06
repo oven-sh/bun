@@ -3594,22 +3594,107 @@ pub mod JSZstd {
 // bun_jsc::btjs::dump_btjs_trace.
 
 // LazyProperty initializers for stdin/stderr/stdout
-pub fn create_bun_stdin(global_this: &JSGlobalObject) -> JSValue {
-    // SAFETY: bun_vm() returns the thread-local VM raw ptr; non-null on JS thread.
-    let _rare_data = unsafe { &mut *global_this.bun_vm() }.rare_data();
-    todo!("blocked_on: bun_jsc::rare_data::RareData::stdin + bun_jsc::WebCore::Blob::{{new,init_with_store}}")
+//
+// PORT NOTE (layering): `RareData.{stdin,stdout,stderr}_store` are typed as
+// `Option<Arc<high_tier::BlobStore>>` opaque stubs in `bun_jsc`. The real
+// `Blob::Store` (intrusively refcounted, with `File` payload) lives in this
+// crate and can't move down without dragging `node::PathLike`/S3/aio. The Zig
+// spec stores them on RareData purely for per-VM lazy init; that is per-thread
+// in practice (`VirtualMachine::get()` is thread-local), so cache the
+// `StoreRef`s here.
+mod stdio_stores {
+    use super::*;
+    use crate::webcore::blob::{Blob, Store, StoreRef};
+    use crate::webcore::blob::store::{Data, File as FileStore};
+    use crate::node::types::PathOrFileDescriptor;
+    use core::sync::atomic::AtomicU32;
+
+    thread_local! {
+        static STDIN: core::cell::RefCell<Option<StoreRef>> = const { core::cell::RefCell::new(None) };
+        static STDOUT: core::cell::RefCell<Option<StoreRef>> = const { core::cell::RefCell::new(None) };
+        static STDERR: core::cell::RefCell<Option<StoreRef>> = const { core::cell::RefCell::new(None) };
+    }
+
+    fn build_store(uv_fd: i32, is_atty: bool) -> StoreRef {
+        let fd = bun_sys::Fd::from_uv(uv_fd);
+        let mode: bun_sys::Mode = match bun_sys::fstat(fd) {
+            bun_sys::Maybe::Ok(stat) => bun_sys::Mode::try_from(stat.st_mode).unwrap_or(0),
+            bun_sys::Maybe::Err(_) => 0,
+        };
+        // PORT NOTE: Zig set `ref_count = 2` to account for the RareData slot
+        // plus the Blob; with `StoreRef` (intrusive RAII) the slot is +1 and
+        // the Blob takes its own +1 via `clone()`.
+        let store = Store::new(Store {
+            data: Data::File(FileStore {
+                pathlike: PathOrFileDescriptor::Fd(fd),
+                is_atty: Some(is_atty),
+                mode,
+                ..Default::default()
+            }),
+            mime_type: bun_http_types::MimeType::NONE,
+            ref_count: AtomicU32::new(1),
+            is_all_ascii: None,
+        });
+        StoreRef::from(store)
+    }
+
+    fn make_blob(
+        global_this: &JSGlobalObject,
+        slot: &'static std::thread::LocalKey<core::cell::RefCell<Option<StoreRef>>>,
+        uv_fd: i32,
+        is_atty: bool,
+        feature: fn(),
+    ) -> JSValue {
+        feature();
+        let store = slot.with(|cell| {
+            let mut s = cell.borrow_mut();
+            if s.is_none() {
+                *s = Some(build_store(uv_fd, is_atty));
+            }
+            // store.ref() — extra +1 for the new Blob.
+            s.as_ref().unwrap().clone()
+        });
+        let blob = Blob::new(Blob::init_with_store(store, global_this));
+        // SAFETY: `Blob::new` heap-allocates; the JS wrapper takes ownership.
+        unsafe { (*blob).to_js(global_this) }
+    }
+
+    pub fn stdin(global_this: &JSGlobalObject) -> JSValue {
+        let is_atty = bun_sys::isatty(bun_sys::Fd::from_uv(0));
+        make_blob(global_this, &STDIN, 0, is_atty, bun_core::analytics::Features::bun_stdin_inc)
+    }
+    pub fn stdout(global_this: &JSGlobalObject) -> JSValue {
+        let is_atty = matches!(
+            bun_core::output::stdout_descriptor_type(),
+            bun_core::output::OutputStreamDescriptor::Terminal
+        );
+        make_blob(global_this, &STDOUT, 1, is_atty, bun_core::analytics::Features::bun_stdout_inc)
+    }
+    pub fn stderr(global_this: &JSGlobalObject) -> JSValue {
+        let is_atty = matches!(
+            bun_core::output::stderr_descriptor_type(),
+            bun_core::output::OutputStreamDescriptor::Terminal
+        );
+        make_blob(global_this, &STDERR, 2, is_atty, bun_core::analytics::Features::bun_stderr_inc)
+    }
 }
 
-pub fn create_bun_stderr(global_this: &JSGlobalObject) -> JSValue {
-    // SAFETY: bun_vm() returns the thread-local VM raw ptr; non-null on JS thread.
-    let _rare_data = unsafe { &mut *global_this.bun_vm() }.rare_data();
-    todo!("blocked_on: bun_jsc::rare_data::RareData::stderr + bun_jsc::WebCore::Blob::{{new,init_with_store}}")
+#[unsafe(no_mangle)]
+pub extern "C" fn BunObject__createBunStdin(global_this: *mut JSGlobalObject) -> JSValue {
+    // SAFETY: caller is C++ with a live global.
+    stdio_stores::stdin(unsafe { &*global_this })
 }
 
-pub fn create_bun_stdout(global_this: &JSGlobalObject) -> JSValue {
-    // SAFETY: bun_vm() returns the thread-local VM raw ptr; non-null on JS thread.
-    let _rare_data = unsafe { &mut *global_this.bun_vm() }.rare_data();
-    todo!("blocked_on: bun_jsc::rare_data::RareData::stdout + bun_jsc::WebCore::Blob::{{new,init_with_store}}")
+#[unsafe(no_mangle)]
+pub extern "C" fn BunObject__createBunStderr(global_this: *mut JSGlobalObject) -> JSValue {
+    // SAFETY: caller is C++ with a live global.
+    stdio_stores::stderr(unsafe { &*global_this })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn BunObject__createBunStdout(global_this: *mut JSGlobalObject) -> JSValue {
+    // SAFETY: caller is C++ with a live global.
+    stdio_stores::stdout(unsafe { &*global_this })
 }
 
 } // mod _jsc_gated

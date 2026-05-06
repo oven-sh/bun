@@ -638,38 +638,57 @@ pub mod api {
     #[allow(non_snake_case)]
     pub mod JSBundler {
         use bun_options_types::ImportKind;
+        use bun_string::String as BunString;
         use crate::options::{Loader, Target};
         use crate::options_impl::TargetExt;
         use crate::parse_task::ParseTask;
         use super::super::BundleV2;
 
         /// `Plugin = opaque {}` — backed by C++ `BunPlugin`. The bundler only
-        /// calls `has_any_matches` / `match_on_load` / `match_on_resolve`,
-        /// which are `extern "C"` entry points; the body lives in T6.
+        /// calls `has_any_matches`; JS-aware methods (`match_on_load`,
+        /// `match_on_resolve`, `add_plugin`, …) are added by `bun_runtime` via
+        /// the `PluginJscExt` extension trait so this crate stays free of
+        /// `JSValue` / `JSGlobalObject`.
         #[repr(C)]
         pub struct Plugin {
-            _opaque: [u8; 0],
+            _p: [u8; 0],
+            _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
         }
-        // `Path<'_>` is not `#[repr(C)]` yet; the C++ shim treats it as an opaque
-        // pointer (it only reads `.namespace`/`.text` via the Zig-side wrapper),
-        // so the layout warning is benign here.
-        #[allow(improper_ctypes)]
         unsafe extern "C" {
             #[link_name = "JSBundlerPlugin__anyMatches"]
-            fn JSBundlerPlugin__anyMatches(this: *const Plugin, path: *const crate::ungate_support::bun_fs::Path, is_on_load: bool) -> bool;
+            fn JSBundlerPlugin__anyMatches(
+                this: *const Plugin,
+                namespace: *const BunString,
+                path: *const BunString,
+                is_on_load: bool,
+            ) -> bool;
         }
         impl Plugin {
-            #[inline]
-            pub fn has_any_matches(&self, path: &crate::ungate_support::bun_fs::Path, is_on_load: bool) -> bool {
-                // SAFETY: `self` is a live opaque C++ BunPlugin; FFI signature matches.
-                unsafe { JSBundlerPlugin__anyMatches(self, path, is_on_load) }
+            pub fn has_any_matches(
+                &self,
+                path: &crate::ungate_support::bun_fs::Path,
+                is_on_load: bool,
+            ) -> bool {
+                let namespace_string = if path.is_file() {
+                    BunString::empty()
+                } else {
+                    BunString::clone_utf8(path.namespace)
+                };
+                let path_string = BunString::clone_utf8(path.text);
+                // namespace_string/path_string deref on Drop
+                // SAFETY: `self` is a live opaque C++ BunPlugin; FFI signature matches
+                // JSBundlerPlugin.cpp `JSBundlerPlugin__anyMatches`.
+                unsafe {
+                    JSBundlerPlugin__anyMatches(self, &namespace_string, &path_string, is_on_load)
+                }
             }
         }
 
         /// Mirrors `JSBundler.FileMap` — virtual in-memory files for the build.
         /// The Zig value type is `jsc.Node.BlobOrStringOrBuffer` (T6); bundler
-        /// only ever reads `.slice()`, so the moved-down map stores raw bytes
-        /// and T6 owns the JSC handle that keeps those bytes alive.
+        /// only ever reads `.slice()`, so the moved-down map stores raw bytes.
+        /// `bun_runtime`'s `from_js` parses JS values via `BlobOrStringOrBuffer`
+        /// in async (owning-copy) mode and inserts the extracted bytes here.
         #[derive(Default)]
         pub struct FileMap {
             pub map: bun_collections::StringHashMap<Box<[u8]>>,
@@ -683,32 +702,152 @@ pub mod api {
                 {
                     let mut buf = bun_paths::path_buffer_pool::get();
                     let normalized = bun_paths::resolve_path::path_to_posix_buf(specifier, &mut **buf);
-                    let r = self.map.get(normalized).map(|b| b.as_ref());
-                    drop(buf);
-                    r
+                    self.map.get(normalized).map(|b| b.as_ref())
                 }
             }
             #[inline]
-            pub fn contains(&self, specifier: &[u8]) -> bool { self.get(specifier).is_some() }
-            /// Minimal `resolve` — bundler only needs the owned key back so it
-            /// can build a `Resolver::Result` around it.
-            pub fn resolve(&self, _source_file: &[u8], specifier: &[u8]) -> Option<bun_resolver::Result> {
+            pub fn contains(&self, specifier: &[u8]) -> bool {
+                if self.map.is_empty() { return false; }
+                #[cfg(not(windows))]
+                { self.map.contains_key(specifier) }
+                #[cfg(windows)]
+                {
+                    let mut buf = bun_paths::path_buffer_pool::get();
+                    let normalized = bun_paths::resolve_path::path_to_posix_buf(specifier, &mut **buf);
+                    self.map.contains_key(normalized)
+                }
+            }
+            /// Returns a `resolver::Result` for a file in the map, or `None` if
+            /// not found. Handles direct key matches and relative specifiers
+            /// joined against `dirname(source_file)` (with Windows
+            /// drive-letter / separator normalization).
+            pub fn resolve(
+                &self,
+                source_file: &[u8],
+                specifier: &[u8],
+            ) -> Option<bun_resolver::Result> {
                 if self.map.is_empty() { return None; }
-                let (key, _) = self.map.get_key_value(specifier)?;
-                // SAFETY: Zig `getKey` returns the map-owned key slice; the Rust
+
+                // Direct key match (must use `getKey` to return the map-owned
+                // key, not the parameter).
+                #[cfg(not(windows))]
+                if let Some((key, _)) = self.map.get_key_value(specifier) {
+                    return Some(Self::result_for_key(key.as_ref()));
+                }
+                #[cfg(windows)]
+                {
+                    let mut buf = bun_paths::path_buffer_pool::get();
+                    let normalized =
+                        bun_paths::resolve_path::path_to_posix_buf(specifier, &mut **buf);
+                    if let Some((key, _)) = self.map.get_key_value(normalized) {
+                        return Some(Self::result_for_key(key.as_ref()));
+                    }
+                }
+
+                // Also try joining a relative specifier against the importer's
+                // directory. Relative = not posix-absolute and not Windows
+                // drive-absolute (e.g. `C:/`).
+                if !specifier.is_empty()
+                    && specifier[0] != b'/'
+                    && !(specifier.len() >= 3
+                        && specifier[1] == b':'
+                        && (specifier[2] == b'/' || specifier[2] == b'\\'))
+                {
+                    // `source_file` may itself be relative (e.g. on Windows
+                    // when the bundler stores paths relative to cwd).
+                    let mut abs_source_buf = bun_paths::path_buffer_pool::get();
+                    let abs_source_file: &[u8] = if Self::is_absolute_path(source_file) {
+                        source_file
+                    } else {
+                        bun_resolver::fs::FileSystem::instance()
+                            .abs_buf(&[source_file], &mut *abs_source_buf)
+                    };
+
+                    // Normalize `source_file` to forward slashes (Windows paths
+                    // from the real filesystem may use backslashes).
+                    let mut source_file_buf = bun_paths::path_buffer_pool::get();
+                    let normalized_source_file = bun_paths::resolve_path::path_to_posix_buf::<u8>(
+                        abs_source_file,
+                        &mut **source_file_buf,
+                    );
+
+                    let mut buf = bun_paths::path_buffer_pool::get();
+                    let source_dir = bun_paths::resolve_path::dirname::<
+                        bun_paths::platform::Posix,
+                    >(normalized_source_file);
+                    // If `dirname` returns empty but the path has a drive
+                    // letter, use the drive root.
+                    let effective_source_dir: &[u8] = if source_dir.is_empty() {
+                        if normalized_source_file.len() >= 3
+                            && normalized_source_file[1] == b':'
+                            && normalized_source_file[2] == b'/'
+                        {
+                            &normalized_source_file[0..3] // "C:/"
+                        } else if !normalized_source_file.is_empty()
+                            && normalized_source_file[0] == b'/'
+                        {
+                            b"/"
+                        } else {
+                            bun_resolver::fs::FileSystem::instance().top_level_dir
+                        }
+                    } else {
+                        source_dir
+                    };
+                    // `.loose` preserves Windows drive letters; normalize
+                    // separators in-place on Windows afterwards.
+                    let joined_len = bun_paths::resolve_path::join_abs_string_buf::<
+                        bun_paths::platform::Loose,
+                    >(effective_source_dir, &mut **buf, &[specifier])
+                    .len();
+                    if cfg!(windows) {
+                        bun_paths::resolve_path::platform_to_posix_in_place::<u8>(
+                            &mut buf[0..joined_len],
+                        );
+                    }
+                    let joined = &buf[0..joined_len];
+                    if let Some((key, _)) = self.map.get_key_value(joined) {
+                        return Some(Self::result_for_key(key.as_ref()));
+                    }
+                }
+
+                None
+            }
+
+            #[inline]
+            fn result_for_key(key: &[u8]) -> bun_resolver::Result {
+                // SAFETY: Zig `getKey` hands back a borrow into `self.map`;
                 // `bun_resolver::Result` stores `Path<'static>` as the porting
-                // convention for Zig `[]const u8` fields. The borrow is valid for
-                // the lifetime of `self.map` — callers must not outlive the
-                // `FileMap`. PERF(port): revisit once `Result` is lifetime-generic.
+                // convention for `[]const u8` fields. The map outlives every
+                // returned `Result` (FileMap is owned by the build's Config).
+                // PERF(port): revisit once `Result` is lifetime-generic.
                 let key: &'static [u8] =
-                    unsafe { core::mem::transmute::<&[u8], &'static [u8]>(key.as_ref()) };
-                Some(bun_resolver::Result {
+                    unsafe { core::mem::transmute::<&[u8], &'static [u8]>(key) };
+                bun_resolver::Result {
                     path_pair: bun_resolver::PathPair {
-                        primary: crate::ungate_support::bun_fs::Path::init_with_namespace(key, b"file"),
+                        primary: crate::ungate_support::bun_fs::Path::init_with_namespace(
+                            key, b"file",
+                        ),
                         ..Default::default()
                     },
+                    module_type: crate::options::ModuleType::Unknown,
                     ..Default::default()
-                })
+                }
+            }
+
+            /// Posix or Windows (drive-letter / UNC) absolute path check.
+            fn is_absolute_path(path: &[u8]) -> bool {
+                if path.is_empty() { return false; }
+                if path[0] == b'/' { return true; }
+                if path.len() >= 3
+                    && path[1] == b':'
+                    && (path[2] == b'/' || path[2] == b'\\')
+                {
+                    return matches!(path[0], b'a'..=b'z' | b'A'..=b'Z');
+                }
+                if path.len() >= 2 && path[0] == b'\\' && path[1] == b'\\' {
+                    return true;
+                }
+                false
             }
         }
 

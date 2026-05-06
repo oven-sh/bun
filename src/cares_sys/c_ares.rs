@@ -1569,6 +1569,22 @@ pub struct struct_ares_addr_port_node {
     pub tcp_port: c_int,
 }
 
+impl struct_ares_addr_port_node {
+    /// Type-erased pointer to the in_addr/in6_addr union, for `ares_inet_ntop`.
+    /// The union field stays private (active arm depends on `family`), but
+    /// callers need its address to round-trip through c-ares' presentation
+    /// converters.
+    #[inline]
+    pub fn addr_ptr(&self) -> *const c_void {
+        ptr::addr_of!(self.addr) as *const c_void
+    }
+    /// Mutable counterpart of `addr_ptr` for `ares_inet_pton` to fill.
+    #[inline]
+    pub fn addr_mut_ptr(&mut self) -> *mut c_void {
+        ptr::addr_of_mut!(self.addr) as *mut c_void
+    }
+}
+
 unsafe extern "C" {
     pub fn ares_set_servers(channel: *mut Channel, servers: *mut struct_ares_addr_node) -> c_int;
     pub fn ares_set_servers_ports(channel: *mut Channel, servers: *mut struct_ares_addr_port_node) -> c_int;

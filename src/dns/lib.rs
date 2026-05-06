@@ -42,9 +42,9 @@ impl GetAddrInfo {
         }
     }
 
-    pub fn to_cares(&self) -> bun_cares_sys::c_ares::AddrInfo_hints {
+    pub fn to_cares(&self) -> bun_cares_sys::c_ares_draft::AddrInfo_hints {
         // SAFETY: all-zero is a valid AddrInfo_hints (C POD struct)
-        let mut hints: bun_cares_sys::c_ares::AddrInfo_hints = unsafe { core::mem::zeroed() };
+        let mut hints: bun_cares_sys::c_ares_draft::AddrInfo_hints = unsafe { core::mem::zeroed() };
 
         hints.ai_family = self.options.family.to_libc();
         hints.ai_socktype = self.options.socktype.to_libc();

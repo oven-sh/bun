@@ -440,36 +440,6 @@ where
         }
     }
 
-    // C-ABI thunks for `JSValue::then_with_value` (which takes `JSHostFn`).
-    // The `#[bun_jsc::host_fn]` proc-macro can't wrap associated fns inside a
-    // generic impl, so spell the `to_js_host_fn_result` shim out by hand. The
-    // per-monomorphization `#[no_mangle]` exports at the bottom of this file
-    // forward to the same bodies for the C++ side.
-    #[bun_jsc::host_call]
-    unsafe extern "C" fn on_resolve_host(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
-        // SAFETY: JSC passes live global/callframe to promise reaction host fns.
-        let (g, f) = unsafe { (&*g, &*f) };
-        bun_jsc::to_js_host_fn_result(g, Self::on_resolve(g, f))
-    }
-    #[bun_jsc::host_call]
-    unsafe extern "C" fn on_reject_host(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
-        // SAFETY: JSC passes live global/callframe to promise reaction host fns.
-        let (g, f) = unsafe { (&*g, &*f) };
-        bun_jsc::to_js_host_fn_result(g, Self::on_reject(g, f))
-    }
-    #[bun_jsc::host_call]
-    unsafe extern "C" fn on_resolve_stream_host(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
-        // SAFETY: JSC passes live global/callframe to promise reaction host fns.
-        let (g, f) = unsafe { (&*g, &*f) };
-        bun_jsc::to_js_host_fn_result(g, Self::on_resolve_stream(g, f))
-    }
-    #[bun_jsc::host_call]
-    unsafe extern "C" fn on_reject_stream_host(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
-        // SAFETY: JSC passes live global/callframe to promise reaction host fns.
-        let (g, f) = unsafe { (&*g, &*f) };
-        bun_jsc::to_js_host_fn_result(g, Self::on_reject_stream(g, f))
-    }
-
     pub fn on_resolve(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         ctx_log!("onResolve");
 

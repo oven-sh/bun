@@ -240,9 +240,7 @@ pub extern "C" fn Bun__SSLConfig__fromJS(
     // SAFETY: `global` is the live per-thread global; `out` is a caller stack
     // `SSLConfig` (sql_jsc passes `&mut SSLConfig as *mut c_void`).
     let global = unsafe { &*global };
-    // SAFETY: bun_vm() never null for a Bun-owned global.
-    let vm = unsafe { &*global.bun_vm() };
-    match crate::socket::SSLConfig::from_js(vm, global, value) {
+    match crate::socket::SSLConfig::from_js(global.bun_vm(), global, value) {
         Ok(Some(cfg)) => {
             // SAFETY: `out` is a caller stack `crate::socket::SSLConfig` slot;
             // the previous value is the zeroed default (no Drop side-effects).
@@ -359,9 +357,11 @@ pub extern "C" fn bindgen_BunObject_dispatchBraces1(
     // SAFETY: `global` is the live per-thread global; `arg_input`/`arg_options`
     // are valid C++ stack locals (see GeneratedBindings.zig:203 call site).
     let global = unsafe { &*global };
-    // Zig spec passes `arg_input.*` (bitwise copy of the ref-counted handle);
-    // bump the refcount so the callee may hold/convert it independently.
-    let input = unsafe { (*arg_input).dupe_ref() };
+    // Zig spec passes `arg_input.*` (bitwise copy of the ref-counted handle,
+    // **no** refcount bump). `bun_string::String` is `Copy` with no `Drop`, so
+    // a plain deref matches that exactly; `braces` only borrows the bytes via
+    // `to_utf8()` and never derefs the handle.
+    let input = unsafe { *arg_input };
     let opts = unsafe { *arg_options };
     bun_jsc::host_fn::to_js_host_call(global, core::panic::Location::caller(), || {
         crate::api::bun_object::braces(global, input, opts)

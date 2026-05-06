@@ -1437,6 +1437,37 @@ impl AnyServer {
         any_server_dispatch_mut!(self, |s| s.config.websocket.as_mut().map(|ws| &mut ws.handler))
     }
 
+    /// `server.zig:3591` — wraps a stack-lifetime µWS request into a
+    /// JS-visible `Request` + heap `RequestContext` so it can outlive the
+    /// handler frame (used by bake's deferred bundling path).
+    pub fn prepare_and_save_js_request_context(
+        &self,
+        _req: &mut uws::Request,
+        _resp: uws::AnyResponse,
+        _global: &jsc::JSGlobalObject,
+        _method: Option<bun_http::Method>,
+    ) -> jsc::JsResult<Option<SavedRequest>> {
+        // TODO(port): `mod.rs::NewServer` lacks `prepare_js_request_context` /
+        // `RequestContext::save` (bodies live in `server_body::NewServer`,
+        // which is a parallel type). Port those once the two `NewServer`
+        // definitions collapse; until then this path is unreachable because
+        // bake's `set_routes` is gated on the same collapse.
+        todo!("blocked_on: server::NewServer::prepare_js_request_context (mod.rs ↔ server_body unification)")
+    }
+
+    /// `server.zig:3574` — invoke the user's route handler for a request that
+    /// was deferred (bake bundle-then-serve flow).
+    pub fn on_saved_request<const EXTRA_ARG_COUNT: usize>(
+        &self,
+        _req: SavedRequestUnion<'_>,
+        _resp: uws::AnyResponse,
+        _callback: jsc::JSValue,
+        _extra_args: [jsc::JSValue; EXTRA_ARG_COUNT],
+    ) {
+        // TODO(port): same blocker as `prepare_and_save_js_request_context`.
+        todo!("blocked_on: server::NewServer::on_saved_request (mod.rs ↔ server_body unification)")
+    }
+
     /// Mutable handle to the DevServer (when configured). HTMLBundle's request
     /// path mutates DevServer state (`respond_for_html_bundle`).
     pub fn dev_server_mut(&self) -> Option<&mut crate::bake::DevServer::DevServer> {
@@ -1503,6 +1534,14 @@ impl SavedRequest {
         self.js_request.deinit();
         self.ctx.deref();
     }
+}
+
+/// `server.zig:SavedRequest.Union`.
+pub enum SavedRequestUnion<'a> {
+    /// Direct pointer to a µWebSockets request that is still on the stack.
+    Stack(&'a mut uws::Request),
+    /// Heap-allocated copy that persists beyond the initial handler frame.
+    Saved(SavedRequest),
 }
 
 // ─── ServerAllConnectionsClosedTask ──────────────────────────────────────────

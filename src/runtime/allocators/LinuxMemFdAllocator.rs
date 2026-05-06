@@ -30,30 +30,22 @@ use crate::webcore::blob::store::Bytes as BlobStoreBytes;
 ///
 /// `ref_count` must stay at this field offset for `bun_ptr::IntrusiveArc<Self>`.
 pub struct LinuxMemFdAllocator {
-    ref_count: bun_ptr::RefCount<LinuxMemFdAllocator>,
+    ref_count: bun_ptr::ThreadSafeRefCount<LinuxMemFdAllocator>,
     pub fd: Fd,
     pub size: usize,
 }
 
 // Zig: `bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{})`
-// → intrusive atomic refcount; ref/deref provided by IntrusiveArc, drop runs `deinit`.
-//
-// PORT NOTE: Zig used `ThreadSafeRefCount` (atomic). `bun_ptr::RefPtr<T>`
-// requires `T: AnyRefCounted`, but the upstream crate only provides a blanket
-// impl for the single-threaded `RefCounted` flavor (the thread-safe blanket is
-// blocked on overlapping-impl rules; see `bun_ptr::ref_count` TODO). Until that
-// lands we implement `RefCounted` here so `IntrusiveArc<Self>` type-checks.
-// TODO(port): switch to `ThreadSafeRefCount` once
-// blocked_on: bun_ptr::ThreadSafeRefCounted → AnyRefCounted blanket impl.
-impl bun_ptr::RefCounted for LinuxMemFdAllocator {
-    type DestructorCtx = ();
-
-    unsafe fn get_ref_count(this: *mut Self) -> *mut bun_ptr::RefCount<Self> {
+// → intrusive *atomic* refcount. Blob stores (and thus this allocator, smuggled
+// through `StdAllocator.ptr`) cross threads, so the single-threaded `RefCount`
+// flavor would data-race on ref/deref.
+impl bun_ptr::ThreadSafeRefCounted for LinuxMemFdAllocator {
+    unsafe fn get_ref_count(this: *mut Self) -> *mut bun_ptr::ThreadSafeRefCount<Self> {
         // SAFETY: caller contract — `this` points to a live Self.
         unsafe { core::ptr::addr_of_mut!((*this).ref_count) }
     }
 
-    unsafe fn destructor(this: *mut Self, _ctx: ()) {
+    unsafe fn destructor(this: *mut Self) {
         // Zig `deinit`: close fd, then `bun.destroy(self)`.
         // SAFETY: refcount hit 0; `this` came from `Box::into_raw` in
         // `IntrusiveArc::new`. Closing fd before reclaiming the Box.
@@ -63,6 +55,10 @@ impl bun_ptr::RefCounted for LinuxMemFdAllocator {
     }
 }
 
+// `RefPtr<T>` requires `T: AnyRefCounted`; the blanket only covers the
+// single-threaded flavor (overlapping-impl rules), so opt in explicitly.
+bun_ptr::impl_thread_safe_any_ref_counted!(LinuxMemFdAllocator);
+
 pub type Ref = bun_ptr::IntrusiveArc<LinuxMemFdAllocator>;
 
 static MEMFD_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -71,7 +67,7 @@ impl LinuxMemFdAllocator {
     /// Zig: `pub const new = bun.TrivialNew(@This());`
     pub fn new(fd: Fd, size: usize) -> bun_ptr::IntrusiveArc<Self> {
         bun_ptr::IntrusiveArc::new(Self {
-            ref_count: bun_ptr::RefCount::init(),
+            ref_count: bun_ptr::ThreadSafeRefCount::init(),
             fd,
             size,
         })
@@ -79,9 +75,9 @@ impl LinuxMemFdAllocator {
 
     /// Zig: `pub const ref = RefCount.ref;`
     pub fn ref_(&self) {
-        // SAFETY: `self` is a live `Self`; `RefCount::ref_` only touches the
-        // interior-mutable `ref_count` field.
-        unsafe { bun_ptr::RefCount::<Self>::ref_(self as *const Self as *mut Self) };
+        // SAFETY: `self` is a live `Self`; `ThreadSafeRefCount::ref_` only
+        // touches the interior-mutable atomic `ref_count` field.
+        unsafe { bun_ptr::ThreadSafeRefCount::<Self>::ref_(self as *const Self as *mut Self) };
     }
 
     /// Zig: `pub const deref = RefCount.deref;`
@@ -100,7 +96,7 @@ impl LinuxMemFdAllocator {
     pub unsafe fn deref(this: *mut Self) {
         // SAFETY: caller contract — `this` is live and Box-allocated; forwards
         // to the intrusive refcount which runs `destructor` on zero.
-        unsafe { bun_ptr::RefCount::<Self>::deref(this) };
+        unsafe { bun_ptr::ThreadSafeRefCount::<Self>::deref(this) };
     }
 
     /// Zig: `.{ .ptr = self, .vtable = AllocatorInterface.VTable }`
@@ -147,8 +143,11 @@ impl LinuxMemFdAllocator {
         let page = bun_alloc::page_size();
         size = (size + page - 1) & !(page - 1);
 
-        // Zig: `flags_mut.TYPE = .SHARED;`
-        let flags_mut = flags | libc::MAP_SHARED;
+        // Zig: `flags_mut.TYPE = .SHARED;` — `TYPE` is the low-4-bit field of
+        // `std.posix.MAP`, so this *replaces* it (not OR). Mask out the
+        // existing TYPE bits first so e.g. an incoming `MAP_PRIVATE` (0x02)
+        // becomes `MAP_SHARED` (0x01), not `MAP_SHARED_VALIDATE` (0x03).
+        let flags_mut = (flags & !libc::MAP_TYPE) | libc::MAP_SHARED;
 
         // SAFETY: `this` is live per caller contract; we only read scalar fields.
         let self_size = unsafe { (*this).size };
@@ -195,8 +194,7 @@ impl LinuxMemFdAllocator {
                 return false;
             }
 
-            // MOVE_DOWN: VirtualMachine::is_smol_mode → bun_alloc (process-global flag; move-in pending).
-            if bun_alloc::stubs::is_smol_mode() {
+            if crate::jsc::VirtualMachine::is_smol_mode() {
                 return bytes.len() >= 1024 * 1024 * 1;
             }
 

@@ -937,7 +937,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 // loop without a crate-cycle.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) pub struct Run {
+pub(crate) struct Run {
     vm: *mut VirtualMachine,
     entry_path: &'static [u8],
     /// Snapshot of `ctx.runtime_options.eval.eval_and_print` (the full

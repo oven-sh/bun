@@ -9,11 +9,12 @@ pub mod api {
     pub use bun_http_types::ETag::StringPointer;
 }
 
-// TODO(b2-blocked): bun_http_types::HeaderName — arrives via move-in (TYPE_ONLY
-// from bun_runtime::webcore::fetch_headers::HeaderName); not yet present in T3.
-#[derive(Copy, Clone)]
-pub struct HeaderName(());
-impl HeaderName { pub const ContentType: Self = Self(()); }
+// TYPE_ONLY moved-in: `bun_http_types::Method::HeaderName` is the `#[repr(u8)]`
+// enum mirroring WebCore's `HTTPHeaderNames.in` (same discriminants as
+// `bun_jsc::HTTPHeaderName`). Re-export for the `FetchHeadersVTable::fast_has`
+// signature so vtable impls can forward the discriminant straight to
+// `WebCore__FetchHeaders__fastHas_`.
+pub use bun_http_types::Method::HeaderName;
 
 // ──────────────────────── cycle-break vtables ────────────────────────
 // `FetchHeaders` and `blob::Any` live in bun_runtime (T6); http is T5. The

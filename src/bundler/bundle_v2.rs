@@ -3745,7 +3745,12 @@ impl<'a> BundleV2<'a> {
     ) -> bool {
         if let Some(mut plugins_ptr) = self.plugins {
             let plugins = unsafe { plugins_ptr.as_mut() };
-            if plugins.has_any_matches(&import_record.path, false) {
+            // PORT NOTE: `ImportRecord.path` is `bun_paths::fs::Path`; `has_any_matches`
+            // takes the structurally-identical `bun_resolver::fs::Path`. Rebuild the
+            // resolver-crate variant from the same backing slices (Zig has a single
+            // `Fs.Path` type — the FFI side only reads `.text` / `.namespace`).
+            let match_path = Fs::Path::init_with_namespace(import_record.path.text, import_record.path.namespace);
+            if plugins.has_any_matches(&match_path, false) {
                 // This is where onResolve plugins are enqueued
                 let resolve = Box::new(jsc_api::JSBundler::Resolve::default());
                 bun_core::scoped_log!(Bundle, "enqueue onResolve: {}:{}",

@@ -751,6 +751,7 @@ pub fn post_process_js_chunk(
 
 /// Recursively walk a binding and add all declared names to `ModuleInfo`.
 /// Handles `b_identifier`, `b_array`, `b_object`, and `b_missing`.
+#[allow(dead_code)] // call site is `todo!`-gated until renamer threading lands (Phase B)
 fn add_binding_vars_to_module_info(
     mi: &mut ModuleInfo,
     binding: Binding,
@@ -1075,7 +1076,7 @@ pub fn generate_entry_point_tail_js(
                                             func: G::Fn {
                                                 body: G::FnBody {
                                                     loc: Logger::Loc::EMPTY,
-                                                    stmts: fn_body,
+                                                    stmts: fn_body as *mut [Stmt],
                                                 },
                                                 ..Default::default()
                                             },

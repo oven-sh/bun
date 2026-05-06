@@ -93,13 +93,6 @@ impl LinkerGraph {
 
 impl LinkerGraph {
     pub fn init(bump: &Arena, file_count: usize) -> Result<Self, bun_core::Error> {
-        let mut this = Self::default();
-        this.bump = bump as *const Arena;
-        this.files_live = BitSet::init_empty(file_count)?;
-        Ok(this)
-    }
-
-    fn _init_full(bump: &Arena, file_count: usize) -> Result<Self, bun_core::Error> {
         // TODO(port): narrow error set
         Ok(LinkerGraph {
             files: FileList::default(),
@@ -115,6 +108,27 @@ impl LinkerGraph {
             is_scb_bitset: BitSet::default(),
             ts_enums: js_ast::ast::ast::TsEnumsMap::default(),
         })
+    }
+}
+
+impl Default for LinkerGraph {
+    fn default() -> Self {
+        LinkerGraph {
+            files: FileList::default(),
+            files_live: BitSet::default(),
+            entry_points: entry_point::List::default(),
+            symbols: symbol::Map::default(),
+            // PORT NOTE: `bump` is a backref assigned in `init`/`LinkerContext::load`;
+            // null sentinel mirrors Zig's `undefined`.
+            bump: core::ptr::null(),
+            code_splitting: false,
+            ast: MultiArrayList::default(),
+            meta: MultiArrayList::default(),
+            reachable_files: BabyList::default(),
+            stable_source_indices: BabyList::default(),
+            is_scb_bitset: BitSet::default(),
+            ts_enums: js_ast::ast::ast::TsEnumsMap::default(),
+        }
     }
 }
 

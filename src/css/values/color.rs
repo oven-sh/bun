@@ -722,13 +722,13 @@ impl CssColor {
         Some(result_color.into_css_color())
     }
 
-    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash11) {
+    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
         // PORT NOTE: Zig `css.implementHash` — variant-tag prefix + payload fields.
         // Hash the discriminant + the active variant's f32 components explicitly;
         // never reinterpret a `repr(Rust)` enum as raw bytes (unspecified layout /
         // padding → UB and non-deterministic hashes).
         #[inline]
-        fn hash_components(hasher: &mut bun_wyhash::Wyhash11, tag: u32, (a, b, c, alpha): (f32, f32, f32, f32)) {
+        fn hash_components(hasher: &mut bun_wyhash::Wyhash, tag: u32, (a, b, c, alpha): (f32, f32, f32, f32)) {
             hasher.update(&tag.to_ne_bytes());
             hasher.update(&a.to_ne_bytes());
             hasher.update(&b.to_ne_bytes());

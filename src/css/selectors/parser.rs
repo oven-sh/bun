@@ -9,7 +9,7 @@ use bun_css::css_values::ident::{CustomIdent, Ident};
 use bun_css::selector::serialize;
 use bun_css::{CSSStringFns, IdentFns, Parser as CssParser, ParserOptions, PrintErr, Printer, SmallList, Token, TokenList};
 use bun_string::strings;
-use bun_wyhash::Wyhash11 as Wyhash;
+use bun_wyhash::Wyhash;
 
 use super::impl_;
 

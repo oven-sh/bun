@@ -38,6 +38,11 @@ use enum_map::{EnumMap, Enum};
 
 pub use crate::defines;
 pub use defines::Define;
+// B-3: `Define::init` / `DefineData::{from_input,parse}` are extension-trait
+// methods (the canonical types live in `bun_js_parser::defines`); bring the
+// traits into scope so the associated-fn call syntax below resolves.
+#[allow(unused_imports)]
+use crate::defines::{DefineDataExt as _, DefineExt as _};
 pub use bun_options_types::GlobalCache::GlobalCache;
 
 // ── B-2 type aliases for incomplete lower-tier surfaces ──

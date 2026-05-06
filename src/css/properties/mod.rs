@@ -80,7 +80,7 @@ macro_rules! prop_value_stub {
         // payload type-checks. Unit struct → trivial bodies.
         impl $T {
             #[inline] pub fn eql(&self, _other: &Self) -> bool { true }
-            #[inline] pub fn hash(&self, _hasher: &mut ::bun_wyhash::Wyhash11) {}
+            #[inline] pub fn hash(&self, _hasher: &mut ::bun_wyhash::Wyhash) {}
             #[inline] pub fn deep_clone(&self, _bump: &::bun_alloc::Arena) -> Self { Self }
             // Serialization surface so un-gated `TokenList::to_css` /
             // `Property::value_to_css` arms that name a still-stubbed payload

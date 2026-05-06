@@ -44,7 +44,7 @@ use crate::properties::animation::AnimationName;
 use crate::rules::supports::SupportsCondition;
 
 use bun_string::strings;
-use bun_wyhash::Wyhash11 as Wyhash;
+use bun_wyhash::Wyhash;
 
 use crate::generics::{CssEql, CssHash, DeepClone};
 use bun_alloc::Arena;

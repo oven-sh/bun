@@ -38,7 +38,7 @@ impl<R> StyleRule<R> {
     /// Includes the selectors and properties.
     pub fn hash_key(&self) -> u64 {
         // std.hash.Wyhash.init(0) — same algorithm as bun.hash
-        let mut hasher = bun_wyhash::Wyhash11::init(0);
+        let mut hasher = bun_wyhash::Wyhash::init(0);
         self.selectors.hash(&mut hasher);
         // PORT NOTE: `DeclarationBlock::hash_property_ids` is still
         // `#[cfg(any())]`-gated in declaration.rs; inline its body here. The

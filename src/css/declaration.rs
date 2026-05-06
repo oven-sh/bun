@@ -264,7 +264,7 @@ impl DeclarationBlock<'static> {
 // per-variant trait impls land in `properties_generated.rs`.
 #[cfg(any())]
 impl<'bump> DeclarationBlock<'bump> {
-    pub fn hash_property_ids(&self, hasher: &mut bun_wyhash::Wyhash11) {
+    pub fn hash_property_ids(&self, hasher: &mut bun_wyhash::Wyhash) {
         for decl in self.declarations.iter() {
             decl.property_id().hash(hasher);
         }

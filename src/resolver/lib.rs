@@ -4336,7 +4336,7 @@ impl<'a> Resolver<'a> {
                                 .map_err(Into::<bun_core::Error>::into)?;
                             // SAFETY: `entries_mutex` held by resolver mutex; no other live
                             // borrow of this Entry's cache for the duration of this write.
-                            unsafe { unsafe { &mut *query.entry }.cache_mut() }.fd = file;
+                            unsafe { (*query.entry).cache_mut() }.fd = file;
                             Fs::FileSystem::set_max_fd(file.native());
                         }
 
@@ -4368,7 +4368,7 @@ impl<'a> Resolver<'a> {
                             ));
                         }
                         // SAFETY: `entries_mutex` held by resolver mutex; sole writer.
-                        unsafe { unsafe { &mut *query.entry }.cache_mut() }.symlink = PathString::init(symlink);
+                        unsafe { (*query.entry).cache_mut() }.symlink = PathString::init(symlink);
                         if !result.file_fd.is_valid() && store_fd {
                             result.file_fd = unsafe { &mut *query.entry }.cache().fd;
                         }
@@ -7856,7 +7856,7 @@ impl<'a> Resolver<'a> {
                         let entries_fd = unsafe { &*entries_ptr }.fd;
                         if entries_fd.is_valid() && !unsafe { &mut *lookup.entry }.cache().fd.is_valid() && self.store_fd {
                             // SAFETY: `entries_mutex` held by caller; sole writer.
-                            unsafe { unsafe { &mut *lookup.entry }.cache_mut() }.fd = entries_fd;
+                            unsafe { (*lookup.entry).cache_mut() }.fd = entries_fd;
                         }
                         // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
                 // dies (NLL) before any later `&mut` to this slot.
@@ -7884,7 +7884,7 @@ impl<'a> Resolver<'a> {
                                 logs.add_note(buf);
                             }
                             // SAFETY: `entries_mutex` held by caller; sole writer.
-                            unsafe { unsafe { &mut *lookup.entry }.cache_mut() }.symlink = PathString::init(symlink);
+                            unsafe { (*lookup.entry).cache_mut() }.symlink = PathString::init(symlink);
                             info.abs_real_path = symlink;
                         }
                     }
@@ -8089,7 +8089,7 @@ impl<'a> Resolver<'a> {
     pub fn deinit(&mut self) {
         // SAFETY: ARENA — `DirInfo::hash_map_instance()` singleton; never freed.
         // Caller is the sole remaining owner at shutdown; no other Resolver alias is live.
-        for di in unsafe { unsafe { self.dir_cache() } }.values_mut() {
+        for di in unsafe { self.dir_cache() }.values_mut() {
             // Zig: `di.deinit()` — releases owned PackageJSON / TSConfigJSON resources
             // in-place (side effects beyond memory: those Drops close cached fds /
             // deref intrusive refcounts). Ported as `DirInfo::reset`.

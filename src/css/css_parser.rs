@@ -382,7 +382,7 @@ pub trait EnumProperty: Sized + Copy + Into<&'static str> {
         *self
     }
 
-    fn hash(&self, hasher: &mut bun_wyhash::Wyhash11)
+    fn hash(&self, hasher: &mut bun_wyhash::Wyhash)
     where
         Self: Into<u32>,
     {
@@ -5524,7 +5524,7 @@ impl Token {
     }
 
     #[cfg(any())] // blocked_on: generics::CssHash
-    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash11) {
+    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
         generic::implement_hash(self, hasher)
     }
 
@@ -5799,12 +5799,12 @@ pub use crate::{Num, Dimension};
 #[cfg(any())]
 impl Num {
     pub fn eql(lhs: &Num, rhs: &Num) -> bool { generic::implement_eql(lhs, rhs) }
-    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash11) { generic::implement_hash(self, hasher) }
+    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) { generic::implement_hash(self, hasher) }
 }
 #[cfg(any())]
 impl Dimension {
     pub fn eql(lhs: &Self, rhs: &Self) -> bool { generic::implement_eql(lhs, rhs) }
-    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash11) { generic::implement_hash(self, hasher) }
+    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) { generic::implement_hash(self, hasher) }
 }
 
 pub enum CopyOnWriteStr<'a> {

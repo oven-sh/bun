@@ -161,7 +161,7 @@ impl Url {
 
     // TODO: dedupe import records??
     // This might not fucking work
-    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash11) {
+    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
         // PORT NOTE: Zig `css.implementHash` is field-wise reflection. Only
         // `import_record_idx` participates in identity (matches `eql` above);
         // `loc` is presentation metadata.

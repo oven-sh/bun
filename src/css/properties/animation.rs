@@ -259,7 +259,7 @@ impl AnimationName {
         }
     }
 
-    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash11) {
+    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
         match self {
             AnimationName::None => hasher.update(&0u32.to_ne_bytes()),
             AnimationName::Ident(i) => {

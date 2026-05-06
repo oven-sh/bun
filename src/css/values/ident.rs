@@ -4,7 +4,7 @@ use crate::SmallList;
 
 use bun_logger::Ref;
 use bun_string::strings;
-use bun_wyhash::Wyhash11 as Wyhash;
+use bun_wyhash::Wyhash;
 
 /// SAFETY: `s` borrows the parser source / arena which outlives every `Token`
 /// constructed from it. Same trick as `css_parser::src_str` (private) — `'static`

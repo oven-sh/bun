@@ -4,7 +4,7 @@ use std::io::Write as _;
 use bumpalo::collections::Vec as BumpVec;
 use bun_alloc::Arena as Bump;
 use bun_collections::ArrayHashMap;
-use bun_wyhash::Wyhash11;
+use bun_wyhash::Wyhash;
 
 use crate as css;
 use crate::PrintErr;
@@ -463,7 +463,7 @@ impl<'a> CssModuleReference<'a> {
 // TODO: replace with bun's hash
 pub fn hash<'a>(bump: &'a Bump, args: Arguments<'_>, at_start: bool) -> &'a [u8] {
     // PERF(port): was stack-fallback alloc (StackFallbackAllocator 128B) — profile in Phase B
-    let mut hasher = Wyhash11::init(0);
+    let mut hasher = Wyhash::init(0);
     // PORT NOTE: std.fmt.count + allocPrint collapsed; write into a scratch
     // Vec then hash. Freed immediately (Zig used stack-fallback for this).
     let mut fmt_str: Vec<u8> = Vec::with_capacity(128);

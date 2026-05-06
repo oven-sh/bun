@@ -372,7 +372,7 @@ use bun_sys::Fd as FD;
 use bun_string::strings;
 use bun_resolver::package_json::MacroMap as MacroRemap;
 use crate::entry_points as EntryPoints;
-use crate::cache::RuntimeTranspilerCache;
+use crate::cache::{RuntimeTranspilerCache, RuntimeTranspilerCacheExt as _};
 use crate::ungate_support::bun_node_fallbacks as NodeFallbackModules;
 
 /// Port of `transpiler.zig:ParseResult.AlreadyBundled` (tagged union).

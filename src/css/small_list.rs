@@ -522,7 +522,7 @@ impl<T, const N: usize> SmallList<T, N> {
         }
     }
 
-    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash11)
+    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash)
     where
         T: generic::CssHash,
     {

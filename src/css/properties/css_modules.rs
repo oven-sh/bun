@@ -8,7 +8,7 @@ use crate::css_values::ident::{CustomIdent, CustomIdentList};
 use crate::dependencies::Location;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export (CSS is an AST/arena crate)
-use bun_wyhash::Wyhash11 as Wyhash;
+use bun_wyhash::Wyhash;
 
 /// A value for the [composes](https://github.com/css-modules/css-modules/#dependencies) property from CSS modules.
 pub struct Composes {

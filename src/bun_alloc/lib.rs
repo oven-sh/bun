@@ -905,6 +905,9 @@ pub mod heap_breakdown {
     }
     #[cfg(not(target_os = "macos"))]
     pub use stubs::{malloc_zone_calloc, malloc_zone_free, malloc_zone_malloc};
+
+    // `Zone` participates in `&dyn Allocator` identity checks (`is_instance`).
+    impl crate::Allocator for Zone {}
 }
 
 /// Comptime-literal form of `heap_breakdown::get_zone` — expands a per-name `OnceLock`.

@@ -39,16 +39,20 @@ use super::{get_dl_error, ABIType, Compiled, Function, Step, FFI};
 unsafe extern "C" {
     /// `JSFFI.symbolsValueSetCached` — caches `obj` on the JS wrapper so the
     /// per-symbol `JSFunction`s stay rooted.
+    // PORT NOTE: `global` is `*const` (not `*mut`) — `JSGlobalObject` is an
+    // opaque ZST handle; C++ mutates only C++-owned storage past the ZST, so
+    // a `&JSGlobalObject`-derived pointer is sound. Avoids a `&T as *const T
+    // as *mut T` provenance laundering at the call sites.
     fn FFIPrototype__symbolsValueSetCached(
         this_value: JSValue,
-        global: *mut JSGlobalObject,
+        global: *const JSGlobalObject,
         value: JSValue,
     );
     /// `.classes.ts` `toJS` — boxes `*mut FFI` into a freshly-allocated JSCell.
-    fn FFI__create(global: *mut JSGlobalObject, ptr: *mut FFI) -> JSValue;
+    fn FFI__create(global: *const JSGlobalObject, ptr: *mut FFI) -> JSValue;
     /// `host_fn::NewRuntimeFunction` — `Bun__CreateFFIFunctionValue`.
     fn Bun__CreateFFIFunctionValue(
-        global: *mut JSGlobalObject,
+        global: *const JSGlobalObject,
         symbol_name: *const ZigString,
         arg_count: u32,
         function_pointer: *const c_void,

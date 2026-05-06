@@ -53,9 +53,11 @@ impl JSModuleLoader {
     ) -> JSValue {
         // SAFETY: thin wrapper over C++ JSC__JSModuleLoader__evaluate; caller guarantees
         // ptr/len pairs are valid for reads and `exception` points to a writable JSValue slot.
+        // `global_object` is an opaque ZST handle — passed as `*const` per the FFI convention
+        // in `JSGlobalObject.rs`; C++-side mutation is outside Rust's aliasing model.
         unsafe {
             JSC__JSModuleLoader__evaluate(
-                global_object as *const _ as *mut _,
+                global_object,
                 source_code_ptr,
                 source_code_len,
                 origin_url_ptr,
@@ -73,10 +75,11 @@ impl JSModuleLoader {
         module_name: Option<&BunString>,
     ) -> Option<&'a JSInternalPromise> {
         // SAFETY: C++ side accepts a nullable `const BunString*` and returns a nullable
-        // JSInternalPromise cell pointer owned by the JSC heap.
+        // JSInternalPromise cell pointer owned by the JSC heap. `global_object` is an
+        // opaque ZST handle passed as `*const` per the FFI convention in `JSGlobalObject.rs`.
         unsafe {
             JSC__JSModuleLoader__loadAndEvaluateModule(
-                global_object as *const _ as *mut _,
+                global_object,
                 module_name.map_or(core::ptr::null(), |p| p as *const _),
             )
             .as_ref()

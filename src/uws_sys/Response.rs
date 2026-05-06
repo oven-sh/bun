@@ -624,7 +624,12 @@ macro_rules! any_dispatch {
     ($self:expr, |$r:ident| $body:expr) => {
         match $self {
             AnyResponse::SSL(ptr) => {
-                // SAFETY: AnyResponse stores a live FFI handle; valid while caller holds it.
+                // SAFETY: AnyResponse stores a live FFI handle valid while the
+                // caller holds it. The pointee is a zero-sized opaque (C++ owns
+                // the real bytes; Rust only ever passes the pointer back through
+                // FFI), so materializing `&mut` here cannot alias any
+                // Rust-visible memory, and no other `&mut` to it is live in
+                // this scope.
                 let $r = unsafe { &mut *ptr };
                 $body
             }

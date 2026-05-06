@@ -1081,7 +1081,7 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
         self.list.tail().append(value)
     }
 
-    fn reset(&mut self) {
+    pub fn reset(&mut self) {
         for block in self.list.slice() {
             block.as_mut().expect("alloc").used = 0;
         }

@@ -6030,162 +6030,156 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     // Helper extracted from lower_class to keep that fn readable.
     // TODO(port): this condenses the Zig per-kind metadata switch (lines 5024-5105).
     // Phase B should diff against Zig to verify exact arg ordering for get/set.
-    #[cfg(any())] // blocked_on: lower_class (only caller); G::Property kind enum + flags::Property::init; E::Function StoreRef field shape
     fn emit_decorator_metadata_for_prop(
         &mut self,
         prop: &G::Property,
         array: &mut BumpVec<'a, Expr>,
         loc: logger::Loc,
     ) {
+        use js_ast::g::PropertyKind;
+
+        // Local helper: bump-alloc an arg pair and call __legacyMetadataTS.
+        // PORT NOTE: pulled out of the per-arm code to cut a ~3x repetition vs Zig.
+        macro_rules! push_metadata {
+            ($label:expr, $value:expr) => {{
+                let label = self.new_expr(E::EString::from_static($label), logger::Loc::EMPTY);
+                let value = $value;
+                let args = self.allocator.alloc_slice_copy(&[label, value]);
+                // SAFETY: arena slice; never grown.
+                let args = unsafe { ExprNodeList::from_bump_slice(args) };
+                array.push(self.call_runtime(loc, b"__legacyMetadataTS", args));
+            }};
+        }
+
         match prop.kind {
-            Property::Kind::Normal | Property::Kind::Abstract => {
+            PropertyKind::Normal | PropertyKind::Abstract => {
                 {
                     // design:type
-                    let args = self.allocator.alloc_slice_copy(&[
-                        self.new_expr(E::String { data: b"design:type" }, logger::Loc::EMPTY),
-                        self.serialize_metadata(prop.ts_metadata).expect("unreachable"),
-                    ]);
-                    array.push(self.call_runtime(loc, b"__legacyMetadataTS", args));
+                    let v = self.serialize_metadata(prop.ts_metadata.clone()).expect("unreachable");
+                    push_metadata!(b"design:type", v);
                 }
                 // design:paramtypes and design:returntype if method
                 if prop.flags.contains(Flags::Property::IsMethod) {
-                    if let Some(prop_value) = &prop.value {
+                    if let Some(prop_value) = prop.value {
+                        let func = prop_value.data.e_function().unwrap();
+                        // SAFETY: arena-owned `*mut [Arg]` valid for 'a.
+                        let method_args: &[G::Arg] = unsafe { &*func.func.args };
                         {
-                            let method_args = prop_value.data.e_function().func.args;
                             let args_array = self.allocator.alloc_slice_fill_default::<Expr>(method_args.len());
                             for (entry, method_arg) in args_array.iter_mut().zip(method_args) {
-                                *entry = self.serialize_metadata(method_arg.ts_metadata).expect("unreachable");
+                                *entry = self.serialize_metadata(method_arg.ts_metadata.clone()).expect("unreachable");
                             }
-                            let args = self.allocator.alloc_slice_copy(&[
-                                self.new_expr(E::String { data: b"design:paramtypes" }, logger::Loc::EMPTY),
-                                self.new_expr(E::Array { items: ExprNodeList::from_owned_slice(args_array), ..Default::default() }, logger::Loc::EMPTY),
-                            ]);
-                            array.push(self.call_runtime(loc, b"__legacyMetadataTS", args));
+                            // SAFETY: arena slice; never grown.
+                            let items = unsafe { ExprNodeList::from_bump_slice(args_array) };
+                            let arr = self.new_expr(E::Array { items, ..Default::default() }, logger::Loc::EMPTY);
+                            push_metadata!(b"design:paramtypes", arr);
                         }
                         {
-                            let args = self.allocator.alloc_slice_copy(&[
-                                self.new_expr(E::String { data: b"design:returntype" }, logger::Loc::EMPTY),
-                                self.serialize_metadata(prop_value.data.e_function().func.return_ts_metadata).expect("unreachable"),
-                            ]);
-                            array.push(self.call_runtime(loc, b"__legacyMetadataTS", args));
+                            let v = self.serialize_metadata(func.func.return_ts_metadata.clone()).expect("unreachable");
+                            push_metadata!(b"design:returntype", v);
                         }
                     }
                 }
             }
-            Property::Kind::Get => {
+            PropertyKind::Get => {
                 if prop.flags.contains(Flags::Property::IsMethod) {
                     // typescript sets design:type to the return value & design:paramtypes to [].
-                    if let Some(prop_value) = &prop.value {
+                    if let Some(prop_value) = prop.value {
+                        let func = prop_value.data.e_function().unwrap();
                         {
-                            let args = self.allocator.alloc_slice_copy(&[
-                                self.new_expr(E::String { data: b"design:type" }, logger::Loc::EMPTY),
-                                self.serialize_metadata(prop_value.data.e_function().func.return_ts_metadata).expect("unreachable"),
-                            ]);
-                            array.push(self.call_runtime(loc, b"__legacyMetadataTS", args));
+                            let v = self.serialize_metadata(func.func.return_ts_metadata.clone()).expect("unreachable");
+                            push_metadata!(b"design:type", v);
                         }
                         {
-                            let args = self.allocator.alloc_slice_copy(&[
-                                self.new_expr(E::String { data: b"design:paramtypes" }, logger::Loc::EMPTY),
-                                self.new_expr(E::Array { items: ExprNodeList::EMPTY, ..Default::default() }, logger::Loc::EMPTY),
-                            ]);
-                            array.push(self.call_runtime(loc, b"__legacyMetadataTS", args));
+                            let arr = self.new_expr(E::Array { items: ExprNodeList::default(), ..Default::default() }, logger::Loc::EMPTY);
+                            push_metadata!(b"design:paramtypes", arr);
                         }
                     }
                 }
             }
-            Property::Kind::Set => {
+            PropertyKind::Set => {
                 if prop.flags.contains(Flags::Property::IsMethod) {
                     // typescript sets design:type to the return value & design:paramtypes to [arg].
                     // note that typescript does not allow you to put a decorator on both the getter and the setter.
                     // if you do anyway, bun will set design:type and design:paramtypes twice, so it's fine.
-                    if let Some(prop_value) = &prop.value {
-                        let method_args = prop_value.data.e_function().func.args;
+                    if let Some(prop_value) = prop.value {
+                        let func = prop_value.data.e_function().unwrap();
+                        // SAFETY: arena-owned `*mut [Arg]` valid for 'a.
+                        let method_args: &[G::Arg] = unsafe { &*func.func.args };
                         {
                             let args_array = self.allocator.alloc_slice_fill_default::<Expr>(method_args.len());
                             for (entry, method_arg) in args_array.iter_mut().zip(method_args) {
-                                *entry = self.serialize_metadata(method_arg.ts_metadata).expect("unreachable");
+                                *entry = self.serialize_metadata(method_arg.ts_metadata.clone()).expect("unreachable");
                             }
-                            let args = self.allocator.alloc_slice_copy(&[
-                                self.new_expr(E::String { data: b"design:paramtypes" }, logger::Loc::EMPTY),
-                                self.new_expr(E::Array { items: ExprNodeList::from_owned_slice(args_array), ..Default::default() }, logger::Loc::EMPTY),
-                            ]);
-                            array.push(self.call_runtime(loc, b"__legacyMetadataTS", args));
+                            // SAFETY: arena slice; never grown.
+                            let items = unsafe { ExprNodeList::from_bump_slice(args_array) };
+                            let arr = self.new_expr(E::Array { items, ..Default::default() }, logger::Loc::EMPTY);
+                            push_metadata!(b"design:paramtypes", arr);
                         }
                         if !method_args.is_empty() {
-                            let args = self.allocator.alloc_slice_copy(&[
-                                self.new_expr(E::String { data: b"design:type" }, logger::Loc::EMPTY),
-                                self.serialize_metadata(method_args[0].ts_metadata).expect("unreachable"),
-                            ]);
-                            array.push(self.call_runtime(loc, b"__legacyMetadataTS", args));
+                            let v = self.serialize_metadata(method_args[0].ts_metadata.clone()).expect("unreachable");
+                            push_metadata!(b"design:type", v);
                         }
                     }
                 }
             }
-            Property::Kind::Spread | Property::Kind::Declare | Property::Kind::AutoAccessor => {} // not allowed in a class (auto_accessor is standard decorators only)
-            Property::Kind::ClassStaticBlock => {} // not allowed to decorate this
+            PropertyKind::Spread | PropertyKind::Declare | PropertyKind::AutoAccessor => {} // not allowed in a class (auto_accessor is standard decorators only)
+            PropertyKind::ClassStaticBlock => {} // not allowed to decorate this
         }
     }
 
-    #[cfg(any())] // blocked_on: TypeScript::Metadata variant set (currently a stub enum lacking Void/Unknown/Symbol/...); only caller is lower_class
     fn serialize_metadata(&mut self, ts_metadata: TypeScript::Metadata) -> Result<Expr, bun_core::Error> {
         use TypeScript::Metadata as M;
+        // Local: `find_symbol` for a builtin name as an E::Identifier expr.
+        macro_rules! ident {
+            ($name:expr) => {{
+                let r = self.find_symbol(logger::Loc::EMPTY, $name).expect("unreachable").r#ref;
+                self.new_expr(E::Identifier::init(r), logger::Loc::EMPTY)
+            }};
+        }
         Ok(match ts_metadata {
-            M::None | M::Any | M::Unknown | M::Object => self.new_expr(
-                E::Identifier { r#ref: self.find_symbol(logger::Loc::EMPTY, b"Object").expect("unreachable").r#ref, ..Default::default() },
-                logger::Loc::EMPTY,
-            ),
-            M::Never | M::Undefined | M::Null | M::Void => self.new_expr(E::Undefined {}, logger::Loc::EMPTY),
-            M::String => self.new_expr(
-                E::Identifier { r#ref: self.find_symbol(logger::Loc::EMPTY, b"String").expect("unreachable").r#ref, ..Default::default() },
-                logger::Loc::EMPTY,
-            ),
-            M::Number => self.new_expr(
-                E::Identifier { r#ref: self.find_symbol(logger::Loc::EMPTY, b"Number").expect("unreachable").r#ref, ..Default::default() },
-                logger::Loc::EMPTY,
-            ),
-            M::Function => self.new_expr(
-                E::Identifier { r#ref: self.find_symbol(logger::Loc::EMPTY, b"Function").expect("unreachable").r#ref, ..Default::default() },
-                logger::Loc::EMPTY,
-            ),
-            M::Boolean => self.new_expr(
-                E::Identifier { r#ref: self.find_symbol(logger::Loc::EMPTY, b"Boolean").expect("unreachable").r#ref, ..Default::default() },
-                logger::Loc::EMPTY,
-            ),
-            M::Array => self.new_expr(
-                E::Identifier { r#ref: self.find_symbol(logger::Loc::EMPTY, b"Array").expect("unreachable").r#ref, ..Default::default() },
-                logger::Loc::EMPTY,
-            ),
-            M::Bigint => self.maybe_defined_helper(self.new_expr(
-                E::Identifier { r#ref: self.find_symbol(logger::Loc::EMPTY, b"BigInt").expect("unreachable").r#ref, ..Default::default() },
-                logger::Loc::EMPTY,
-            ))?,
-            M::Symbol => self.maybe_defined_helper(self.new_expr(
-                E::Identifier { r#ref: self.find_symbol(logger::Loc::EMPTY, b"Symbol").expect("unreachable").r#ref, ..Default::default() },
-                logger::Loc::EMPTY,
-            ))?,
-            M::Promise => self.new_expr(
-                E::Identifier { r#ref: self.find_symbol(logger::Loc::EMPTY, b"Promise").expect("unreachable").r#ref, ..Default::default() },
-                logger::Loc::EMPTY,
-            ),
-            M::Identifier(r#ref) => {
-                self.record_usage(r#ref);
-                if self.is_import_item.contains(&r#ref) {
-                    return self.maybe_defined_helper(
-                        self.new_expr(E::ImportIdentifier { r#ref, ..Default::default() }, logger::Loc::EMPTY),
-                    );
-                }
-                return self.maybe_defined_helper(
-                    self.new_expr(E::Identifier { r#ref, ..Default::default() }, logger::Loc::EMPTY),
-                );
+            M::MNone | M::MAny | M::MUnknown | M::MObject => ident!(b"Object"),
+            M::MNever | M::MUndefined | M::MNull | M::MVoid => self.new_expr(E::Undefined {}, logger::Loc::EMPTY),
+            M::MString => ident!(b"String"),
+            M::MNumber => ident!(b"Number"),
+            M::MFunction => ident!(b"Function"),
+            M::MBoolean => ident!(b"Boolean"),
+            M::MArray => ident!(b"Array"),
+            M::MBigint => {
+                let e = ident!(b"BigInt");
+                self.maybe_defined_helper(e)?
             }
-            M::Dot(_refs) => {
-                let mut refs = _refs;
+            M::MSymbol => {
+                let e = ident!(b"Symbol");
+                self.maybe_defined_helper(e)?
+            }
+            M::MPromise => ident!(b"Promise"),
+            M::MIdentifier(ref_) => {
+                self.record_usage(ref_);
+                let e = if self.is_import_item.contains_key(&ref_) {
+                    self.new_expr(E::ImportIdentifier { ref_, ..Default::default() }, logger::Loc::EMPTY)
+                } else {
+                    self.new_expr(E::Identifier::init(ref_), logger::Loc::EMPTY)
+                };
+                return self.maybe_defined_helper(e);
+            }
+            M::MDot(refs) => {
                 debug_assert!(refs.len() >= 2);
                 // (refs.deinit(p.allocator) — arena-backed; nothing to free in Rust)
 
+                // PORT NOTE: E::Dot.name is `&'static [u8]` pending crate-wide
+                // 'bump threading. `load_name_from_ref` returns `&'a [u8]`;
+                // erase the lifetime to fit the placeholder field type.
+                // SAFETY: arena-owned slice valid for the AST lifetime.
+                macro_rules! ref_name {
+                    ($r:expr) => {
+                        unsafe { core::mem::transmute::<&[u8], &'static [u8]>(self.load_name_from_ref($r)) }
+                    };
+                }
+
                 let mut dots = self.new_expr(
                     E::Dot {
-                        name: self.load_name_from_ref(refs[refs.len() - 1]),
+                        name: ref_name!(refs[refs.len() - 1]),
                         name_loc: logger::Loc::EMPTY,
                         target: Expr::default(), // patched below
                         ..Default::default()
@@ -6193,41 +6187,41 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                     logger::Loc::EMPTY,
                 );
 
-                let mut current_expr: *mut Expr = &mut dots.data.e_dot_mut().target;
+                let mut current_expr: *mut Expr = &mut dots.data.e_dot_mut().unwrap().target;
                 let mut i: usize = refs.len() - 2;
                 while i > 0 {
-                    // SAFETY: arena-owned pointer valid for parser 'a lifetime; no aliasing &mut outstanding
+                    // SAFETY: arena-owned pointer valid for 'a; no aliasing &mut outstanding.
                     unsafe {
                         *current_expr = self.new_expr(
                             E::Dot {
-                                name: self.load_name_from_ref(refs[i]),
+                                name: ref_name!(refs[i]),
                                 name_loc: logger::Loc::EMPTY,
                                 target: Expr::default(),
                                 ..Default::default()
                             },
                             logger::Loc::EMPTY,
                         );
-                        current_expr = &mut (*current_expr).data.e_dot_mut().target;
+                        current_expr = &mut (*current_expr).data.e_dot_mut().unwrap().target;
                     }
                     i -= 1;
                 }
 
-                // SAFETY: arena-owned pointer valid for parser 'a lifetime; no aliasing &mut outstanding
+                // SAFETY: arena-owned pointer valid for 'a; no aliasing &mut outstanding.
                 unsafe {
-                    if self.is_import_item.contains(&refs[0]) {
-                        *current_expr = self.new_expr(E::ImportIdentifier { r#ref: refs[0], ..Default::default() }, logger::Loc::EMPTY);
+                    if self.is_import_item.contains_key(&refs[0]) {
+                        *current_expr = self.new_expr(E::ImportIdentifier { ref_: refs[0], ..Default::default() }, logger::Loc::EMPTY);
                     } else {
-                        *current_expr = self.new_expr(E::Identifier { r#ref: refs[0], ..Default::default() }, logger::Loc::EMPTY);
+                        *current_expr = self.new_expr(E::Identifier::init(refs[0]), logger::Loc::EMPTY);
                     }
                 }
 
-                // SAFETY: raw *mut Expr into arena-owned tree; parser holds exclusive access during visit
+                // SAFETY: raw *mut Expr into arena-owned tree; parser holds exclusive access during visit.
                 let dot_identifier = unsafe { *current_expr };
                 let mut current_dot = dots;
 
                 let mut maybe_defined_dots = self.new_expr(
                     E::Binary {
-                        op: js_ast::op::Code::BinLogicalOr,
+                        op: js_ast::OpCode::BinLogicalOr,
                         right: self.check_if_defined_helper(current_dot)?,
                         left: Expr::default(), // patched below
                     },
@@ -6235,41 +6229,35 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                 );
 
                 if i < refs.len() - 2 {
-                    current_dot = current_dot.data.e_dot().target;
+                    current_dot = current_dot.data.e_dot().unwrap().target;
                 }
-                current_expr = &mut maybe_defined_dots.data.e_binary_mut().left;
+                current_expr = &mut maybe_defined_dots.data.e_binary_mut().unwrap().left;
 
                 while i < refs.len() - 2 {
-                    // SAFETY: arena-owned pointer valid for parser 'a lifetime; no aliasing &mut outstanding
+                    // SAFETY: arena-owned pointer valid for 'a; no aliasing &mut outstanding.
                     unsafe {
                         *current_expr = self.new_expr(
                             E::Binary {
-                                op: js_ast::op::Code::BinLogicalOr,
+                                op: js_ast::OpCode::BinLogicalOr,
                                 right: self.check_if_defined_helper(current_dot)?,
                                 left: Expr::default(),
                             },
                             logger::Loc::EMPTY,
                         );
-                        current_expr = &mut (*current_expr).data.e_binary_mut().left;
+                        current_expr = &mut (*current_expr).data.e_binary_mut().unwrap().left;
                     }
                     i += 1;
                     if i < refs.len() - 2 {
-                        current_dot = current_dot.data.e_dot().target;
+                        current_dot = current_dot.data.e_dot().unwrap().target;
                     }
                 }
 
-                // SAFETY: raw *mut Expr into arena-owned tree; parser holds exclusive access during visit
+                // SAFETY: raw *mut Expr into arena-owned tree; parser holds exclusive access during visit.
                 unsafe { *current_expr = self.check_if_defined_helper(dot_identifier)? };
 
+                let yes = ident!(b"Object");
                 let root = self.new_expr(
-                    E::If {
-                        yes: self.new_expr(
-                            E::Identifier { r#ref: self.find_symbol(logger::Loc::EMPTY, b"Object").expect("unreachable").r#ref, ..Default::default() },
-                            logger::Loc::EMPTY,
-                        ),
-                        no: dots,
-                        test_: maybe_defined_dots,
-                    },
+                    E::If { yes, no: dots, test_: maybe_defined_dots },
                     logger::Loc::EMPTY,
                 );
 

@@ -173,7 +173,7 @@ pub type Result<T> = CssResult<T>;
 type PrintResult<T> = core::result::Result<T, PrintErr>;
 
 /// PERF: nullable optimization
-#[derive(Default)]
+#[derive(Default, CssEql, CssHash, DeepClone)]
 pub struct TokenList {
     pub v: Vec<TokenOrValue>,
 }
@@ -685,22 +685,7 @@ impl TokenList {
         fallbacks
     }
 
-    #[cfg(any())] // blocked_on: generics::CssEql blanket impl for TokenOrValue payload set
-    pub fn eql(&self, rhs: &TokenList) -> bool {
-        css::generic::eql_list(&self.v, &rhs.v)
-    }
-
-    #[cfg(any())] // blocked_on: generics::CssHash blanket impl
-    pub fn hash(&self, hasher: &mut Wyhash) {
-        css::implement_hash(self, hasher)
-    }
-
-    #[cfg(any())] // blocked_on: TokenOrValue::deep_clone un-gate
-    pub fn deep_clone(&self) -> TokenList {
-        TokenList {
-            v: self.v.iter().map(|t| t.deep_clone()).collect(),
-        }
-    }
+    // eql / hash / deep_clone — provided by `#[derive(CssEql, CssHash, DeepClone)]`.
 }
 
 pub type TokenListFns = TokenList;
@@ -711,6 +696,7 @@ pub type Fallbacks = (SupportsCondition, TokenList);
 /// These can be converted from the modern slash syntax to older comma syntax.
 /// This can only be done when the only unresolved component is the alpha
 /// since variables can resolve to multiple tokens.
+#[derive(CssEql, CssHash, DeepClone)]
 pub enum UnresolvedColor {
     /// An rgb() color.
     RGB {
@@ -744,36 +730,7 @@ pub enum UnresolvedColor {
 }
 
 impl UnresolvedColor {
-    #[cfg(any())] // blocked_on: generics::CssEql/CssHash blanket impls
-    pub fn eql(&self, rhs: &Self) -> bool {
-        css::implement_eql(self, rhs)
-    }
-    #[cfg(any())]
-    pub fn hash(&self, hasher: &mut Wyhash) {
-        css::implement_hash(self, hasher)
-    }
-
-    #[cfg(any())] // blocked_on: TokenList::deep_clone un-gate
-    pub fn deep_clone(&self) -> Self {
-        match self {
-            UnresolvedColor::RGB { r, g, b, alpha } => UnresolvedColor::RGB {
-                r: *r,
-                g: *g,
-                b: *b,
-                alpha: alpha.deep_clone(),
-            },
-            UnresolvedColor::HSL { h, s, l, alpha } => UnresolvedColor::HSL {
-                h: *h,
-                s: *s,
-                l: *l,
-                alpha: alpha.deep_clone(),
-            },
-            UnresolvedColor::LightDark { light, dark } => UnresolvedColor::LightDark {
-                light: light.deep_clone(),
-                dark: dark.deep_clone(),
-            },
-        }
-    }
+    // eql / hash / deep_clone — provided by `#[derive(CssEql, CssHash, DeepClone)]`.
 
     // deinit(): body only freed owned `TokenList` fields — handled by `Drop`.
 
@@ -919,6 +876,7 @@ impl UnresolvedColor {
 }
 
 /// A CSS variable reference.
+#[derive(CssEql, CssHash, DeepClone)]
 pub struct Variable {
     /// The variable name.
     pub name: DashedIdentReference,
@@ -963,25 +921,11 @@ impl Variable {
         }
     }
 
-    #[cfg(any())] // blocked_on: generics::CssEql/CssHash blanket impls
-    pub fn eql(&self, rhs: &Self) -> bool {
-        css::implement_eql(self, rhs)
-    }
-    #[cfg(any())]
-    pub fn hash(&self, hasher: &mut Wyhash) {
-        css::implement_hash(self, hasher)
-    }
-
-    #[cfg(any())] // blocked_on: TokenList::deep_clone
-    pub fn deep_clone(&self) -> Variable {
-        Variable {
-            name: self.name,
-            fallback: self.fallback.as_ref().map(|fallback| fallback.deep_clone()),
-        }
-    }
+    // eql / hash / deep_clone — provided by `#[derive(CssEql, CssHash, DeepClone)]`.
 }
 
 /// A CSS environment variable reference.
+#[derive(CssEql, CssHash, DeepClone)]
 pub struct EnvironmentVariable {
     /// The environment variable name.
     pub name: EnvironmentVariableName,
@@ -1051,27 +995,11 @@ impl EnvironmentVariable {
         }
     }
 
-    #[cfg(any())] // blocked_on: generics::CssEql/CssHash
-    pub fn eql(&self, rhs: &Self) -> bool {
-        css::implement_eql(self, rhs)
-    }
-    #[cfg(any())]
-    pub fn hash(&self, hasher: &mut Wyhash) {
-        css::implement_hash(self, hasher)
-    }
-
-    #[cfg(any())] // blocked_on: TokenList::deep_clone
-    pub fn deep_clone(&self) -> EnvironmentVariable {
-        EnvironmentVariable {
-            name: self.name.clone(),
-            indices: self.indices.clone(),
-            fallback: self.fallback.as_ref().map(|fallback| fallback.deep_clone()),
-        }
-    }
+    // eql / hash / deep_clone — provided by `#[derive(CssEql, CssHash, DeepClone)]`.
 }
 
 /// A CSS environment variable name.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, CssEql, CssHash, DeepClone)]
 pub enum EnvironmentVariableName {
     /// A UA-defined environment variable.
     Ua(UAEnvironmentVariable),
@@ -1082,14 +1010,7 @@ pub enum EnvironmentVariableName {
 }
 
 impl EnvironmentVariableName {
-    #[cfg(any())] // blocked_on: generics::CssEql/CssHash
-    pub fn eql(&self, rhs: &Self) -> bool {
-        css::implement_eql(self, rhs)
-    }
-    #[cfg(any())]
-    pub fn hash(&self, hasher: &mut Wyhash) {
-        css::implement_hash(self, hasher)
-    }
+    // eql / hash — provided by `#[derive(CssEql, CssHash)]`.
 
     #[cfg(any())]
     // blocked_on: DashedIdentReference::parse_with_options.
@@ -1123,7 +1044,7 @@ impl EnvironmentVariableName {
 // PORT NOTE: Zig `css.DefineEnumProperty(@This())` provides eql/hash/parse/
 // to_css/deep_clone via comptime reflection over @tagName. Replaced by an
 // `EnumProperty` impl below (kebab-case match) — same protocol surface.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, strum::IntoStaticStr)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, strum::IntoStaticStr, CssEql, CssHash, DeepClone)]
 pub enum UAEnvironmentVariable {
     /// The safe area inset from the top of the viewport.
     #[strum(serialize = "safe-area-inset-top")]
@@ -1183,6 +1104,7 @@ impl EnumProperty for UAEnvironmentVariable {
 }
 
 /// A custom CSS function.
+#[derive(CssEql, CssHash, DeepClone)]
 pub struct Function {
     /// The function name.
     pub name: Ident,
@@ -1201,22 +1123,7 @@ impl Function {
         dest.write_char(b')')
     }
 
-    #[cfg(any())] // blocked_on: generics::CssEql/CssHash
-    pub fn eql(&self, rhs: &Self) -> bool {
-        css::implement_eql(self, rhs)
-    }
-    #[cfg(any())]
-    pub fn hash(&self, hasher: &mut Wyhash) {
-        css::implement_hash(self, hasher)
-    }
-
-    #[cfg(any())] // blocked_on: TokenList::deep_clone + Ident::deep_clone
-    pub fn deep_clone(&self) -> Function {
-        Function {
-            name: self.name,
-            arguments: self.arguments.deep_clone(),
-        }
-    }
+    // eql / hash / deep_clone — provided by `#[derive(CssEql, CssHash, DeepClone)]`.
 
     #[cfg(any())] // blocked_on: TokenList::get_fallback + Ident::deep_clone
     pub fn get_fallback(&self, kind: ColorFallbackKind) -> Self {
@@ -1228,6 +1135,7 @@ impl Function {
 }
 
 /// A raw CSS token, or a parsed value.
+#[derive(CssEql, CssHash, DeepClone)]
 pub enum TokenOrValue {
     /// A token.
     Token(Token),

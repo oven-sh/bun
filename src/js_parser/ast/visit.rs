@@ -1187,7 +1187,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
             let mut preprocessed_enum_i: usize = 0;
 
-            for stmt in stmts.iter_mut() {
+            'stmt_loop: for stmt in stmts.iter_mut() {
                 let list: &mut ListManaged<'a, Stmt> = 'list_getter: {
                     match stmt.data {
                         StmtData::SExportEquals(_) => {
@@ -1223,7 +1223,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                             // Zig: `p.scope_order_to_visit = p.scope_order_to_visit[enum_scope_count..]`
                             let taken = core::mem::take(&mut p.scope_order_to_visit);
                             p.scope_order_to_visit = &mut taken[enum_scope_count..];
-                            continue;
+                            continue 'stmt_loop;
                         }
                         _ => {}
                     }

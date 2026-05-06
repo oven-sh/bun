@@ -40,6 +40,14 @@ mod bun_test {
     pub use crate::test_runner::execution::{
         Basic as BasicResult, ExpectAssertions, PendingIs as PendingMode,
     };
+    /// Zig nests `FirstLast` under `BunTestRoot`; the Rust port hoisted it to
+    /// module scope. Alias here so `bun_test::BunTestRoot::FirstLast` paths in
+    /// the body resolve without a 2k-line rewrite. Phase B may collapse the
+    /// alias back into an inherent associated type once the body is normalised.
+    pub use crate::test_runner::bun_test::FirstLast as BunTestRootFirstLast;
+    /// `add_result()` queue payload — Zig spells it `bun_test.ResultMsg.start`;
+    /// Rust port collapsed it into `RefDataValue`.
+    pub use crate::test_runner::bun_test::RefDataValue as ResultMsg;
     #[allow(non_snake_case)]
     pub mod Execution {
         pub use crate::test_runner::execution::*;

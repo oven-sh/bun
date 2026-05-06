@@ -12,15 +12,9 @@ pub struct Overflow {
 
 impl Overflow {
     pub fn parse(input: &mut Parser) -> css::Result<Overflow> {
-        let x = match OverflowKeyword::parse(input) {
-            css::Result::Ok(v) => v,
-            css::Result::Err(e) => return css::Result::Err(e),
-        };
-        let y = match input.try_parse(OverflowKeyword::parse, ()) {
-            css::Result::Ok(v) => v,
-            _ => x,
-        };
-        css::Result::Ok(Overflow { x, y })
+        let x = OverflowKeyword::parse(input)?;
+        let y = input.try_parse(OverflowKeyword::parse).unwrap_or(x);
+        Ok(Overflow { x, y })
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -47,11 +41,9 @@ impl Overflow {
 
 /// An [overflow](https://www.w3.org/TR/css-overflow-3/#overflow-properties) keyword
 /// as used in the `overflow-x`, `overflow-y`, and `overflow` properties.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-// TODO(port): css.DefineEnumProperty(@This()) — comptime mixin providing
-// eql/hash/parse/to_css/deep_clone from @tagName. Phase B: targeted
-// #[derive(css::EnumProperty)] proc-macro (trait-first per PORTING.md §Comptime reflection).
-#[derive(css::EnumProperty)]
+// PORT NOTE: css.DefineEnumProperty(@This()) — comptime mixin providing
+// eql/hash/parse/to_css/deep_clone from @tagName.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
 pub enum OverflowKeyword {
     /// Overflowing content is visible.
     Visible,
@@ -66,9 +58,7 @@ pub enum OverflowKeyword {
 }
 
 /// A value for the [text-overflow](https://www.w3.org/TR/css-overflow-3/#text-overflow) property.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-// TODO(port): css.DefineEnumProperty(@This()) — see OverflowKeyword.
-#[derive(css::EnumProperty)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
 pub enum TextOverflow {
     /// Overflowing text is clipped.
     Clip,

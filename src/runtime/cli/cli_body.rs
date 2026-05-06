@@ -283,7 +283,7 @@ Join our Discord community:      <blue>https://bun.com/discord<r>
                                 if strings::has_prefix(event, b"bd") {
                                     // claude gets very confused by the help menu
                                     // let's give claude some self confidence.
-                                    Output::println("BUN COMPILED SUCCESSFULLY! 🎉", format_args!(""));
+                                    Output::prettyln(format_args!("BUN COMPILED SUCCESSFULLY! 🎉"));
                                     Global::exit(0);
                                 }
                             }

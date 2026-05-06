@@ -2374,7 +2374,7 @@ pub mod JSZlib {
     #[unsafe(no_mangle)]
     pub extern "C" fn global_deallocator(_: *mut c_void, ctx: *mut c_void) {
         // SAFETY: ctx is a mimalloc-allocated pointer.
-        unsafe { bun_alloc::free_without_size(ctx) };
+        unsafe { bun_alloc::basic::free_without_size(ctx) };
     }
     #[unsafe(no_mangle)]
     pub extern "C" fn compressor_deallocator(_: *mut c_void, ctx: *mut c_void) {
@@ -2810,7 +2810,7 @@ pub mod JSZstd {
     #[unsafe(no_mangle)]
     pub extern "C" fn deallocator(_: *mut c_void, ctx: *mut c_void) {
         // SAFETY: ctx is a mimalloc-allocated pointer.
-        unsafe { bun_alloc::free_without_size(ctx) };
+        unsafe { bun_alloc::basic::free_without_size(ctx) };
     }
 
     #[inline]

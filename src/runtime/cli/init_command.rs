@@ -244,7 +244,7 @@ impl InitCommand {
                     }
 
                     // Read arrow key
-                    let arrow = match bun_sys::stdin_read_byte() {
+                    let arrow = match stdin.take_byte() {
                         Ok(b) => b,
                         Err(_) => {
                             reprint_menu = false;

@@ -200,7 +200,8 @@ impl NativeBrotli {
             return Ok(JSValue::FALSE);
         }
 
-        let params_ = arguments.ptr[0].as_array_buffer(global_this).unwrap().as_u32();
+        let mut params_buf = arguments.ptr[0].as_array_buffer(global_this).unwrap();
+        let params_ = params_buf.as_u32();
 
         for (i, &d) in params_.iter().enumerate() {
             // (d == -1) {

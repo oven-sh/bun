@@ -108,14 +108,35 @@ use super::fetch_tasklet::{HTTPRequestBody, FetchOptions};
 trait FetchGlobalErrExt {
     fn to_type_error(&self, code: jsc::ErrorCode, msg: &'static str) -> JSValue;
     fn to_type_error_fmt(&self, code: jsc::ErrorCode, args: core::fmt::Arguments<'_>) -> JSValue;
+    fn throw_not_enough_arguments(&self, name: &'static str, expected: usize, got: usize) -> jsc::JsError;
 }
 impl FetchGlobalErrExt for JSGlobalObject {
     fn to_type_error(&self, code: jsc::ErrorCode, msg: &'static str) -> JSValue {
-        self.err(code, format_args!("{msg}")).to_js()
+        code.fmt(self, format_args!("{msg}"))
     }
     fn to_type_error_fmt(&self, code: jsc::ErrorCode, args: core::fmt::Arguments<'_>) -> JSValue {
-        self.err(code, args).to_js()
+        code.fmt(self, args)
     }
+    fn throw_not_enough_arguments(&self, name: &'static str, expected: usize, got: usize) -> jsc::JsError {
+        self.throw_invalid_arguments(format_args!(
+            "{name} requires at least {expected} argument{}, but only {got} were passed",
+            if expected == 1 { "" } else { "s" }
+        ))
+    }
+}
+
+/// `jsc.URL.fileURLFromString` — the un-gated `bun_jsc::URL` stub only has
+/// `href_from_js` / `path_from_file_url`; the file-URL builder is gated.
+#[inline]
+fn jsc_url_file_url_from_string(_s: BunString) -> BunString {
+    todo!("blocked_on: bun_jsc::URL::file_url_from_string")
+}
+
+/// Convert the runtime-tier `socket::ssl_config::SSLConfig` into the
+/// `bun_http::ssl_config::SharedPtr` shape FetchTasklet expects.
+#[inline]
+fn ssl_config_intern_for_http(_config: SSLConfig) -> http::ssl_config::SharedPtr {
+    todo!("blocked_on: bun_http::ssl_config::SharedPtr::from(crate::socket::ssl_config::SSLConfig)")
 }
 
 /// `JSValue::getOptionalEnum::<T>()` — upstream lives in `bun_jsc` but is
@@ -161,6 +182,39 @@ fn fetch_headers_ref<'a>(_h: &'a FetchHeaders) -> FetchHeadersRef<'a> {
     todo!("blocked_on: bun_http::headers::FetchHeadersRef::from(&bun_jsc::FetchHeaders)")
 }
 
+/// Erase an `&AnyBlob` into the vtable-based `bun_http::headers::AnyBlobRef`
+/// expected by `Headers::from`.
+fn any_blob_ref<'a>(_b: Option<&'a mut blob::Any>) -> Option<bun_http::headers::AnyBlobRef<'a>> {
+    todo!("blocked_on: bun_http::headers::AnyBlobRef::from(&webcore::blob::Any)")
+}
+
+/// `HTTPRequestBody` accessor shims missing from FetchTasklet.rs.
+trait HTTPRequestBodyExt {
+    fn any_blob(&self) -> &blob::Any;
+    fn sendfile_mut(&mut self) -> &mut http::SendFile;
+    fn clone_ref(&self) -> HTTPRequestBody;
+}
+impl HTTPRequestBodyExt for HTTPRequestBody {
+    fn any_blob(&self) -> &blob::Any {
+        match self {
+            HTTPRequestBody::AnyBlob(b) => b,
+            _ => unreachable!("HTTPRequestBody::any_blob() on non-AnyBlob"),
+        }
+    }
+    fn sendfile_mut(&mut self) -> &mut http::SendFile {
+        match self {
+            HTTPRequestBody::Sendfile(sf) => sf,
+            _ => unreachable!("HTTPRequestBody::sendfile_mut() on non-Sendfile"),
+        }
+    }
+    fn clone_ref(&self) -> HTTPRequestBody {
+        // PORT NOTE: Zig `http_body = body` was a shallow struct copy that bumped
+        // refcounts where the union arm is refcounted. AnyBlob/ReadableStream are
+        // not yet `Clone` here.
+        todo!("blocked_on: HTTPRequestBody::clone_ref (shallow refcount-bumping copy)")
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // dataURLResponse
 // ──────────────────────────────────────────────────────────────────────────
@@ -171,7 +225,7 @@ fn data_url_response(data_url_: DataURL, global_this: &JSGlobalObject) -> JSValu
     let data = match data_url.decode_data() {
         Ok(d) => d,
         Err(_) => {
-            let err = global_this.create_error_instance("{}", format_args!("failed to fetch the data URL"));
+            let err = global_this.create_error_instance("failed to fetch the data URL");
             return JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                 global_this,
                 err,
@@ -427,7 +481,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         break 'brk None;
     };
 
-    let request: Option<&mut Request> = 'brk: {
+    // PORT NOTE: kept as raw `*mut Request` because the body re-borrows it
+    // multiple times across long-lived option/init reads (Zig had no borrowck).
+    let request: Option<*mut Request> = 'brk: {
         if first_arg.is_cell() {
             if let Some(request_) = first_arg.as_direct::<Request>() {
                 break 'brk Some(request_);
@@ -435,6 +491,14 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
         break 'brk None;
     };
+    // Helper macro: short-lived `&mut Request` reborrow of the optional pointer.
+    macro_rules! request_mut {
+        () => {
+            // SAFETY: `request` was obtained from a live JS-owned Request via
+            // `as_direct`; each reborrow is non-overlapping at the call site.
+            request.map(|p| unsafe { &mut *p })
+        };
+    }
 
     // If it's NOT a Request or a subclass of Request, treat the first argument as a URL.
     let url_str_optional = if first_arg.as_::<Request>().is_none() {
@@ -505,7 +569,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         let data_url = match DataURL::parse_without_check(url_slice.slice()) {
             Ok(d) => d,
             Err(_) => {
-                let err = ctx.create_error_instance("{}", format_args!("failed to fetch the data URL"));
+                let err = ctx.create_error_instance("failed to fetch the data URL");
                 is_error = true;
                 return Ok(
                     JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
@@ -649,7 +713,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                             Ok(Some(config)) => {
                                 // Intern via GlobalRegistry for deduplication and pointer equality
                                 break 'extract_ssl_config Some(
-                                    ssl_config::GlobalRegistry::intern(config),
+                                    ssl_config_intern_for_http(config),
                                 );
                             }
                             Ok(None) => {}
@@ -1253,7 +1317,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             Some(Headers::from(
                 Some(fetch_headers_ref(headers_ref)),
                 HeadersOptions {
-                    body: body.get_any_blob(),
+                    body: any_blob_ref(body.get_any_blob()),
                 },
             ))
         } else {
@@ -1412,13 +1476,13 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 }
             };
 
-            url_string = jsc::URL::file_url_from_string(BunString::borrow_utf8(temp_file_path));
+            url_string = jsc_url_file_url_from_string(BunString::borrow_utf8(temp_file_path));
 
             // PORT NOTE: `find_or_create_file_from_path` is typed against the
             // `crate::webcore::node_types` stub (until it's swapped to a
             // re-export of `crate::node::types`); construct that variant here.
             let mut pathlike = crate::webcore::node_types::PathOrFileDescriptor::Path(
-                crate::webcore::node_types::PathLike::Buffer(temp_file_path.to_vec()),
+                crate::webcore::node_types::PathLike::EncodedSlice(ZigStringSlice::init_owned(temp_file_path.to_vec())),
             );
 
             break 'blob Blob::find_or_create_file_from_path(&mut pathlike, global_this, true);
@@ -1476,7 +1540,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         headers = Some(Headers::from(
             None,
             HeadersOptions {
-                body: body.get_any_blob(),
+                body: any_blob_ref(body.get_any_blob()),
             },
         ));
     }
@@ -1798,19 +1862,19 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             verbose,
             proxy: proxy.take(),
             proxy_headers: proxy_headers.take(),
-            url_proxy_buffer: core::mem::take(&mut url_proxy_buffer),
-            signal: signal.take(),
-            global_this,
+            url_proxy_buffer: core::mem::take(&mut url_proxy_buffer).into_boxed_slice(),
+            signal: signal.take().map(|p| p.as_ptr()),
+            global_this: Some(global_this),
             ssl_config: ssl_config.take(),
-            hostname: hostname.take(),
+            hostname: hostname.take().map(|z| z.as_bytes().to_vec().into_boxed_slice()),
             upgraded_connection,
             force_http2,
             force_http3,
             force_http1,
             check_server_identity: if check_server_identity.is_empty_or_undefined_or_null() {
-                jsc::Strong::default()
+                jsc::strong::Optional::empty()
             } else {
-                jsc::Strong::create(check_server_identity, global_this)
+                jsc::strong::Optional::create(check_server_identity, global_this)
             },
             unix_socket_path: core::mem::replace(
                 &mut unix_socket_path,

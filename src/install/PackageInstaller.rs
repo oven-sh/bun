@@ -492,7 +492,7 @@ impl<'a> PackageInstaller<'a> {
                     target_package_name,
                     string_buf,
                     extern_string_buf: lockfile.buffers.extern_strings.as_slice(),
-                    seen: &mut self.seen_bin_links,
+                    seen: Some(&mut self.seen_bin_links),
                     node_modules_path: &mut node_modules_path,
                     target_node_modules_path: match target_node_modules_path_opt.as_mut() {
                         Some(path) => path,
@@ -501,8 +501,8 @@ impl<'a> PackageInstaller<'a> {
                     abs_target_buf: link_target_buf,
                     abs_dest_buf: link_dest_buf,
                     rel_buf: link_rel_buf,
-                    // TODO(port): Bin::Linker has additional default-initialized fields
-                    ..Default::default()
+                    err: None,
+                    skipped_due_to_missing_bin: false,
                 };
 
                 bin_linker.link(global);

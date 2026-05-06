@@ -628,6 +628,7 @@ pub mod node {
     /// disambiguating name for callers building the dependency vec.
     pub use super::Ids as DependencyIds;
 
+    #[derive(MultiArrayElement)]
     pub struct Node {
         pub dep_id: DependencyID,
         pub pkg_id: PackageID,
@@ -641,6 +642,19 @@ pub mod node {
         // each node in this list becomes a symlink in the package's node_modules
         // Zig default: `.empty`
         pub nodes: Vec<Id>,
+    }
+
+    impl Default for Node {
+        fn default() -> Self {
+            Self {
+                dep_id: INVALID_DEPENDENCY_ID,
+                pkg_id: 0,
+                parent_id: Id::INVALID,
+                dependencies: Vec::new(),
+                peers: Peers::EMPTY,
+                nodes: Vec::new(),
+            }
+        }
     }
 
     #[derive(Copy, Clone)]

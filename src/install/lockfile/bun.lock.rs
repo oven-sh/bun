@@ -49,6 +49,17 @@ use super::{
 };
 use super::package::Meta;
 
+/// `core::fmt::Write` → `bun_io::Write` bridge for callees that take
+/// `impl fmt::Write` (e.g. `Negatable::to_json`, `Bin::to_json`). The
+/// underlying byte error is squashed into `fmt::Error`; callers map it back.
+struct FmtBridge<'a>(&'a mut Writer);
+impl core::fmt::Write for FmtBridge<'_> {
+    #[inline]
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        self.0.write_all(s.as_bytes()).map_err(|_| core::fmt::Error)
+    }
+}
+
 // PORT NOTE: Zig `String.arrayHashContext(lockfile, null)` constructs a context
 // keyed off the lockfile's string buffer. The Rust `ArrayHashMap` over
 // `bun_semver::String` keys hashes the handle directly (see CatalogMap), so the
@@ -922,7 +933,7 @@ impl Stringifier {
                 any = true;
             }
             writer.write_all(b" \"os\": ")?;
-            Negatable::<Npm::OperatingSystem>::to_json(meta.os, &mut bun_io::FmtWriter(writer))
+            Negatable::<Npm::OperatingSystem>::to_json(meta.os, &mut FmtBridge(writer))
                 .map_err(|_| bun_core::err!("WriteFailed"))?;
         }
 

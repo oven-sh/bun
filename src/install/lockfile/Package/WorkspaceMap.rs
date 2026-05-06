@@ -134,15 +134,16 @@ fn process_workspace_name(
 
 impl WorkspaceMap {
     pub fn process_names_array(
-        workspace_names: &mut WorkspaceMap,
+        &mut self,
         json_cache: &mut WorkspacePackageJSONCache,
         log: &mut logger::Log,
         arr: &mut js_ast::E::Array,
         source: &logger::Source,
         loc: logger::Loc,
-        mut string_builder: Option<&mut StringBuilder>,
+        mut string_builder: Option<&mut StringBuilder<'_>>,
     ) -> Result<u32, bun_core::Error> {
-        if arr.items.len() == 0 {
+        let workspace_names = self;
+        if arr.items.len == 0 {
             return Ok(0);
         }
 
@@ -151,11 +152,14 @@ impl WorkspaceMap {
         let mut workspace_globs: Vec<Box<[u8]>> = Vec::new();
         let mut filepath_buf_os: Box<PathBuffer> = Box::new(PathBuffer::uninit());
         // PERF(port): Zig used allocator.create(PathBuffer) to avoid large stack frame
-        let filepath_buf: &mut [u8] = filepath_buf_os.as_bytes_mut();
+        let filepath_buf: &mut [u8] = &mut filepath_buf_os.0[..];
+
+        // Scratch arena for `as_string_z` (Zig threaded the heap allocator).
+        let scratch = Arena::new();
 
         for item in arr.slice() {
             // TODO: when does this get deallocated?
-            let Some(input_path) = item.as_string_z()? else {
+            let Some(input_path) = item.as_string_z(&scratch)? else {
                 let _ = log.add_error_fmt(
                     Some(source),
                     item.loc,

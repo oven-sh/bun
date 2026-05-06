@@ -351,7 +351,9 @@ impl Options {
         if base.url.is_empty() {
             base.url = Npm::registry::DEFAULT_URL.as_bytes().into();
         }
-        self.scope = Npm::registry::Scope::from_api(b"", base, env)?;
+        // PORT NOTE: Zig passes `base` by-value (struct copy); clone so the
+        // `base.url` fallback below in the scoped-registry loop stays valid.
+        self.scope = Npm::registry::Scope::from_api(b"", base.clone(), env)?;
         // PORT NOTE: Zig `defer { this.did_override_default_scope = ... }` moved to end of fn;
         // on the OOM error path the field is irrelevant (process aborts).
 

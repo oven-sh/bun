@@ -5694,5 +5694,5 @@ pub extern "C" fn Blob__deref(self_: &mut Blob) {
 //   source:     src/runtime/webcore/Blob.zig (5155 lines)
 //   confidence: low
 //   todos:      45
-//   notes:      Huge JSC class; comptime-fn dispatch (do_read_file/lifetime_wrap), Store intrusive-vs-Arc semantics (transfer/ref), content_type dual-ownership, S3 locked-body upload paths, FileSink open branches, and Windows libuv FileOpener all need Phase B attention. fromJS stack uses on-stack ArrayVec<JSValue,128> for GC safety (Zig spilled to heap past 128).
+//   notes:      Huge JSC class; comptime-fn dispatch (do_read_file/lifetime_wrap), content_type dual-ownership, S3 locked-body upload paths, FileSink open branches, and Windows libuv FileOpener all need Phase B attention. Store refcount is intrusive via StoreRef (NonNull<Store> + ref_/deref). fromJS stack uses on-stack ArrayVec<JSValue,128> for GC safety (Zig spilled to heap past 128).
 // ──────────────────────────────────────────────────────────────────────────

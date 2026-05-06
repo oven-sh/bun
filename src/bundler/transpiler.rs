@@ -246,7 +246,128 @@ fn dup_source(s: &logger::Source) -> logger::Source {
     }
 }
 
+use bun_options_types::schema::api;
+
 impl<'a> Transpiler<'a> {
+    /// Port of `transpiler.zig:Transpiler.init`.
+    ///
+    /// Un-gated B-2 so [`init_runtime_state`](../runtime/jsc_hooks.rs)
+    /// (spec `VirtualMachine.zig:1241`) can write `vm.transpiler`. The
+    /// Store-create / `FileSystem::init` / dotenv-singleton prelude is live;
+    /// the struct-literal tail is sub-gated on the two lower-tier
+    /// constructors that are still `#[cfg(any())]`:
+    ///   * [`options::BundleOptions::from_api`] — `bun_bundler::options`
+    ///   * [`Resolver::init1`] — `bun_resolver` (private `mod options`
+    ///     prevents inline construction from this crate)
+    ///
+    /// PORT NOTE: `log` / `env_loader_` are raw pointers (not `&'a mut`) to
+    /// match the un-gated struct field types — Zig aliased the same `*Log`
+    /// into `linker.log` / `resolver.log` (see `set_log`).
+    pub fn init(
+        allocator: &'a Arena,
+        log: *mut logger::Log,
+        opts: api::TransformOptions,
+        env_loader_: Option<*mut dot_env::Loader<'static>>,
+    ) -> Result<Transpiler<'a>, bun_core::Error> {
+        // TODO(port): narrow error set
+        js_ast::ast::expr::data::Store::create();
+        js_ast::ast::stmt::data::Store::create();
+
+        // PORT NOTE: `FileSystem::init` interns the cwd into its 'static
+        // singleton; Zig passed a borrowed slice. Leak the owned `Box<[u8]>`
+        // so the borrow outlives `opts` (process-lifetime singleton — same
+        // STATIC classification as the `dot_env` leak below).
+        let cwd: Option<&'static [u8]> = opts
+            .absolute_working_dir
+            .as_deref()
+            .map(|s| &*Box::leak(Box::<[u8]>::from(s)));
+        let fs: *mut Fs::FileSystem = Fs::FileSystem::init(cwd)?;
+
+        let env_loader: *mut dot_env::Loader<'static> = match env_loader_ {
+            Some(l) => l,
+            None => match dot_env::instance() {
+                Some(l) => l,
+                None => {
+                    // TODO(port): Box::leak for &'static — Zig used
+                    // allocator.create; classified STATIC (process-lifetime
+                    // dotenv singleton, set_instance below).
+                    let map = Box::leak(Box::new(dot_env::Map::init()));
+                    Box::leak(Box::new(dot_env::Loader::init(map)))
+                }
+            },
+        };
+
+        if dot_env::instance().is_none() {
+            dot_env::set_instance(env_loader);
+        }
+
+        // hide elapsed time when loglevel is warn or error
+        // SAFETY: caller contract — `log` is the freshly-boxed per-VM `Log`
+        // (`VirtualMachine::init`), `env_loader` is either caller-owned or the
+        // leak above; no other live `&mut` to either at this point.
+        unsafe {
+            (*env_loader).quiet = !(*log).level.at_least(logger::Level::Info);
+        }
+
+        // var pool = try allocator.create(ThreadPool);
+        // try pool.init(ThreadPool.InitConfig{
+        //     .allocator = allocator,
+        // });
+
+        // TODO(b2-blocked): `options::BundleOptions::from_api` (this crate,
+        // options.rs:2267) and `Resolver::init1` (bun_resolver lib.rs:2754)
+        // are both `#[cfg(any())]`. `Resolver` cannot be inlined here either —
+        // its `opts` field has private-module type
+        // `bun_resolver::options::BundleOptions` (resolver lib.rs:1880
+        // `mod options`). Un-gate this block once both surface; the un-gated
+        // fallthrough returns `Err(TODO)` so `init_runtime_state` logs and
+        // leaves `vm.transpiler` zeroed (same failure mode as before this
+        // function existed).
+        #[cfg(any())]
+        {
+            // SAFETY: `from_api` only reads `log` to push diagnostics; aliased
+            // again into `Resolver::init1` below (see header PORT NOTE).
+            let bundle_options =
+                options::BundleOptions::from_api(unsafe { &mut *fs }, unsafe { &mut *log }, opts)?;
+            let resolve_results = Box::new(ResolveResults::default());
+            return Ok(Transpiler {
+                options: bundle_options,
+                fs,
+                allocator,
+                timer: SystemTimer::start().expect("Timer fail"),
+                resolver: Resolver::init1(
+                    unsafe { &mut *log },
+                    unsafe { &mut *fs },
+                    bundle_options,
+                ),
+                log,
+                // .thread_pool = pool,
+                // TODO(port): Zig used `undefined`; configureLinker assigns later.
+                // `crate::Linker` is the unit stub `struct Linker(())` in lib.rs.
+                linker: unsafe { core::mem::zeroed::<crate::Linker>() },
+                result: options::TransformResult {
+                    outbase: bundle_options.output_dir,
+                    ..Default::default()
+                },
+                resolve_results,
+                resolve_queue: ResolveQueue::default(),
+                output_files: Vec::new(),
+                env: env_loader.cast(),
+                elapsed: 0,
+                needs_runtime: false,
+                router: None,
+                source_map: options::SourceMapOption::None,
+                macro_context: None,
+            });
+        }
+
+        #[allow(unreachable_code)]
+        {
+            let _ = (allocator, fs, env_loader, opts);
+            Err(bun_core::Error::TODO)
+        }
+    }
+
     pub fn parse(
         &mut self,
         this_parse: ParseOptions<'_>,

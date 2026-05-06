@@ -376,9 +376,83 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         #[allow(unreachable_code)] expr
     }
     fn e_template(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
-        let _ = (p, in_);
-        todo!("G-round-4: e_template body — see _draft");
-        #[allow(unreachable_code)] expr
+        let _ = in_;
+        let mut e_ = expr.data.e_template().unwrap();
+        if let Some(tag) = e_.tag {
+            e_.tag = Some(p.visit_expr(tag));
+
+            if Self::ALLOW_MACROS {
+                let ref_ = match &e_.tag.unwrap().data {
+                    Data::EImportIdentifier(ident) => Some(ident.ref_),
+                    Data::EDot(dot) => match &dot.target.data {
+                        Data::EIdentifier(id) => Some(id.ref_),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+
+                if ref_.is_some() && !p.options.features.is_macro_runtime {
+                    if let Some(macro_ref_data) = p.macro_.refs.get(&ref_.unwrap()).copied() {
+                        p.ignore_usage(ref_.unwrap());
+                        if p.is_control_flow_dead {
+                            return p.new_expr(E::Undefined {}, e_.tag.unwrap().loc);
+                        }
+
+                        // this ordering incase someone wants to use a macro in a node_module conditionally
+                        if p.options.features.no_macros {
+                            p.log
+                                .add_error(Some(p.source), tag.loc, b"Macros are disabled")
+                                .expect("unreachable");
+                            return p.new_expr(E::Undefined {}, e_.tag.unwrap().loc);
+                        }
+
+                        // blocked_on: bun_logger::fs::Path::is_node_module (Zig: `path.isNodeModule()`).
+                        #[cfg(any())]
+                        if p.source.path.is_node_module() {
+                            p.log
+                                .add_error(
+                                    Some(p.source),
+                                    expr.loc,
+                                    b"For security reasons, macros cannot be run from node_modules.",
+                                )
+                                .expect("unreachable");
+                            return p.new_expr(E::Undefined {}, expr.loc);
+                        }
+
+                        // blocked_on: MacroContext::call surface — `p.options.macro_context` is
+                        // `Option<&'a mut MacroContext>` placeholder; the cross-FFI call shape
+                        // (record.path, source_dir, log, source, range, expr, name) → !Result<Expr>
+                        // isn't ported. Body preserved verbatim in `_draft::e_template`.
+                        let _ = macro_ref_data;
+                        todo!("e_template: MacroContext::call dispatch — see _draft");
+                    }
+                }
+            }
+        }
+
+        // PORT NOTE: `Template.parts` is `&'static [TemplatePart]` (arena-owned slice masquerading
+        // as 'static — see E.rs TODO(port)). The Zig type is `[]E.TemplatePart` (mutable arena
+        // slice). Detach via raw ptr → `&mut` (actual lifetime is the AST arena).
+        // SAFETY: arena-owned, no aliasing &mut outstanding for this node during the visit pass.
+        let parts: &mut [E::TemplatePart] = unsafe {
+            core::slice::from_raw_parts_mut(
+                e_.parts.as_ptr() as *mut E::TemplatePart,
+                e_.parts.len(),
+            )
+        };
+        for part in parts.iter_mut() {
+            part.value = p.visit_expr(part.value);
+        }
+
+        // When mangling, inline string values into the template literal. Note that
+        // it may no longer be a template literal after this point (it may turn into
+        // a plain string literal instead).
+        if p.should_fold_typescript_constant_expressions || p.options.features.inlining {
+            // blocked_on: E::Template::fold (E.rs `#[cfg(any())]` ~2141 — depends on
+            // E::Number::to_string + Expr::Data::ETemplate(self) by-ref store).
+            todo!("e_template: E::Template::fold (gated)");
+        }
+        expr
     }
     fn e_binary(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
         use crate::ast::visit_binary_expression::BinaryExpressionVisitor;
@@ -1287,9 +1361,52 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         expr
     }
     fn e_import(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
-        let _ = (p, in_);
-        todo!("G-round-4: e_import body — see _draft");
-        #[allow(unreachable_code)] expr
+        let _ = in_;
+        let mut e_ = expr.data.e_import().unwrap();
+        // We want to forcefully fold constants inside of imports
+        // even when minification is disabled, so that if we have an
+        // import based on a string template, it does not cause a
+        // bundle error. This is especially relevant for bundling NAPI
+        // modules with 'bun build --compile':
+        //
+        // const binding = await import(`./${process.platform}-${process.arch}.node`);
+        //
+        // PORT NOTE: Zig `defer` restores at scope exit; restored manually before each return.
+        let prev_should_fold_typescript_constant_expressions = true;
+        p.should_fold_typescript_constant_expressions = true;
+
+        e_.expr = p.visit_expr(e_.expr);
+        e_.options = p.visit_expr(e_.options);
+
+        // Import transposition is able to duplicate the options structure, so
+        // only perform it if the expression is side effect free.
+        //
+        // TODO: make this more like esbuild by emitting warnings that explain
+        // why this import was not analyzed. (see esbuild 'unsupported-dynamic-import')
+        if p.expr_can_be_removed_if_unused(&e_.options) {
+            let state = TransposeState {
+                is_await_target: matches!(
+                    p.await_target,
+                    Some(Data::EImport(at)) if core::ptr::eq(&*e_ as *const _, &*at as *const _)
+                ),
+                is_then_catch_target: p.then_catch_chain.has_catch
+                    && matches!(
+                        p.then_catch_chain.next_target,
+                        Data::EImport(nt) if core::ptr::eq(&*e_ as *const _, &*nt as *const _)
+                    ),
+                import_options: e_.options,
+                loc: e_.expr.loc,
+                import_loader: e_.import_record_loader(),
+                ..Default::default()
+            };
+
+            p.should_fold_typescript_constant_expressions =
+                prev_should_fold_typescript_constant_expressions;
+            return p.import_transposer.maybe_transpose_if(e_.expr, state);
+        }
+        p.should_fold_typescript_constant_expressions =
+            prev_should_fold_typescript_constant_expressions;
+        expr
     }
     fn e_call(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
         let mut e_ = expr.data.e_call().unwrap();

@@ -43,12 +43,7 @@ mod options {
 }
 // TODO(b2-blocked): bun_collections::StringMap (array-backed string→string map)
 pub type StringMap = StringArrayHashMap<Box<[u8]>>;
-// TODO(b2-blocked): bun_collections::StringHashMapUnownedKey
-#[derive(Clone, Hash, PartialEq, Eq)]
-pub struct StringHashMapUnownedKey(u64);
-impl StringHashMapUnownedKey {
-    pub fn init(s: &[u8]) -> Self { Self(bun_wyhash::hash(s)) }
-}
+pub use bun_collections::StringHashMapUnownedKey;
 use bun_glob as glob;
 
 // Assume they're not going to have hundreds of main fields or browser map
@@ -302,18 +297,22 @@ impl FileSystemPackageJsonExt for crate::fs::FileSystem {
         // PORT NOTE: Zig `FileSystem.abs` joins against `top_level_dir` into a
         // threadlocal buffer. `join_abs_string` writes into its own threadlocal;
         // SAFETY: re-erase to 'static (caller immediately interns via dirname_store).
-        let out = resolve_path::resolve_path::join_abs_string::<resolve_path::resolve_path::platform::Auto>(
+        let out = resolve_path::resolve_path::join_abs_string::<resolve_path::resolve_path::platform::Loose>(
             self.top_level_dir,
             parts,
         );
         unsafe { core::slice::from_raw_parts(out.as_ptr(), out.len()) }
     }
     fn join(&self, parts: &[&[u8]]) -> &'static [u8] {
-        resolve_path::resolve_path::join::<resolve_path::resolve_path::platform::Auto>(parts)
+        resolve_path::resolve_path::join::<resolve_path::resolve_path::platform::Loose>(parts)
     }
     fn normalize(&self, str: &[u8]) -> &'static [u8] {
-        // PORT NOTE: Zig `FileSystem.normalize` is `joinAbsStringBuf(cwd, &.{str})`.
-        self.abs(&[str])
+        // PORT NOTE: Zig `FileSystem.normalize` (fs.zig) is
+        // `path_handler.normalizeString(str, true, .auto)` — collapses `.`/`..`/dup-separators
+        // only; it does NOT join against cwd. Writes into a threadlocal buffer.
+        // SAFETY: re-erase to 'static (caller immediately interns via dirname_store).
+        let out = resolve_path::resolve_path::normalize_string::<true, resolve_path::resolve_path::platform::Auto>(str);
+        unsafe { core::slice::from_raw_parts(out.as_ptr(), out.len()) }
     }
 }
 

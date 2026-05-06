@@ -617,7 +617,7 @@ pub mod random {
             length: size as usize,
             result: (),
         };
-        Job::init_and_schedule(global, callback, &ctx)?;
+        Job::init_and_schedule(global, callback, ctx)?;
 
         Ok(JSValue::UNDEFINED)
     }
@@ -708,7 +708,7 @@ pub mod random {
             length: size as usize,
             result: (),
         };
-        Job::init_and_schedule(global, callback, &ctx)?;
+        Job::init_and_schedule(global, callback, ctx)?;
 
         Ok(JSValue::UNDEFINED)
     }

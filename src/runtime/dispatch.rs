@@ -486,7 +486,12 @@ pub fn run_task(
         task_tag::PosixSignalTask => {
             // Zig: `PosixSignalTask.runFromJSThread(@intCast(task.asUintptr()), global)`
             // — `ptr` here is *not* a pointer but a packed signal number.
-            PosixSignalTask::run_from_js_thread(task.ptr as usize as u8, global);
+            // `bun_jsc::PosixSignalTask` is the event_loop stub re-export; the
+            // real `run_from_js_thread` lives in the gated
+            // `bun_jsc::posix_signal_handle` module.
+            let _ = (task.ptr as usize as u8, global);
+            let _: &PosixSignalTask;
+            todo!("blocked_on: bun_jsc::posix_signal_handle::PosixSignalTask::run_from_js_thread");
         }
         task_tag::NativePromiseContextDeferredDerefTask => {
             // Zig: `runFromJSThread(@intCast(task.asUintptr()))` — `ptr` packs an int.

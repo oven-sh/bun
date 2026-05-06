@@ -905,11 +905,13 @@ impl Drop for DevServer<'_> {
         }
 
         if self.has_pre_crash_handler {
-            bun_crash_handler::remove_pre_crash_handler(self);
+            bun_crash_handler::remove_pre_crash_handler(self as *mut _ as *mut c_void);
         }
 
         for failure in self.bundling_failures.keys() {
-            failure.deinit(self);
+            // TODO(port): blocked_on: SerializedFailure::deinit — Drop on the
+            // owning map handles the allocation; explicit deinit was Zig-side.
+            let _ = failure;
         }
 
         if self.current_bundle.is_some() {

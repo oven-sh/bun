@@ -900,6 +900,23 @@ enum RemoveState {
     Failed,
 }
 
+impl BufferedReaderParent for CronRemoveJob {
+    const HAS_ON_READ_CHUNK: bool = false;
+    unsafe fn on_reader_done(this: *mut Self) {
+        unsafe { &mut *this }.on_reader_done()
+    }
+    unsafe fn on_reader_error(this: *mut Self, err: sys::Error) {
+        unsafe { &mut *this }.on_reader_error(err)
+    }
+    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
+        <Self as CronJobBase>::loop_(unsafe { &*this }).cast()
+    }
+    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
+        let _ = this;
+        todo!("blocked_on: bun_io::EventLoopHandle from jsc::EventLoopHandle")
+    }
+}
+
 impl CronJobBase for CronRemoveJob {
     fn remaining_fds_mut(&mut self) -> &mut i8 { &mut self.remaining_fds }
     fn err_msg_mut(&mut self) -> &mut Option<Vec<u8>> { &mut self.err_msg }

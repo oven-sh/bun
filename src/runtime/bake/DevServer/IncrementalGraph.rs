@@ -2012,7 +2012,7 @@ impl IncrementalGraph<Server> {
             kind: FileKind::Css,
         };
 
-        *ctx.get_cached_index(Side::Server, index) = Some(file_index).into();
+        *ctx.get_cached_index(Side::Server, index) = CachedFileIndex(file_index.get());
         Ok(())
     }
 }
@@ -2039,9 +2039,8 @@ impl<S: GraphSide> IncrementalGraph<S> {
         // `comptime assert(mode == .abs_path)` becomes a debug_assert.
         let (gop_index, found_existing, file_index) = match key {
             InsertFailureKey::AbsPath(abs_path) => {
-                let gop = self.bundled_files.get_or_put(abs_path)?;
+                let gop = self.bundled_files.get_or_put(Box::<[u8]>::from(abs_path))?;
                 if !gop.found_existing {
-                    *gop.key_ptr = Box::<[u8]>::from(abs_path);
                     self.first_dep.push(OptionalEdgeIndex::NONE);
                     self.first_import.push(OptionalEdgeIndex::NONE);
                 }

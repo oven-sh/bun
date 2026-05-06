@@ -9,8 +9,9 @@
 use core::mem::offset_of;
 
 use bun_alloc::Arena as Bump; // bumpalo::Bump re-export
-use bun_collections::{ArrayHashMap, MultiArrayList};
+use bun_collections::ArrayHashMap;
 use bun_collections::linear_fifo::StaticBuffer;
+#[allow(unused_imports)]
 use bun_core::Output;
 use bun_str::string_joiner::StringJoiner;
 use bun_sourcemap::{self as source_map, SourceMapState};

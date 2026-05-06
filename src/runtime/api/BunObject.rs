@@ -2606,7 +2606,7 @@ pub mod JSZlib {
 
         match library {
             Library::Zlib => {
-                let reader = match zlib::ZlibReaderArrayList::init_with_options(
+                let mut reader = match zlib::ZlibReaderArrayList::init_with_options(
                     compressed,
                     &mut list,
                     zlib::Options {
@@ -2618,41 +2618,46 @@ pub mod JSZlib {
                     Ok(r) => r,
                     Err(err) => {
                         drop(list);
-                        if err == bun_core::err!("InvalidArgument") {
-                            return global_this
-                                .throw("Zlib error: Invalid argument", format_args!(""));
+                        if err == zlib::ZlibError::InvalidArgument {
+                            return Err(global_this
+                                .throw("Zlib error: Invalid argument"));
                         }
-                        return global_this.throw_error(err, "Zlib error");
+                        return Err(global_this.throw_error(err.into(), "Zlib error"));
                     }
                 };
 
                 if let Err(_) = reader.read_all(true) {
                     let msg = reader.error_message().unwrap_or(b"Zlib returned an error");
-                    return global_this
-                        .throw_value(ZigString::init(msg).to_error_instance(global_this));
+                    return Err(global_this
+                        .throw_value(ZigString::init(msg).to_error_instance(global_this)));
                 }
-                // PORT NOTE: Zig juggled list ownership into the reader so the
-                // ArrayBuffer's deallocator could free it. In Rust, leak the
-                // Vec into a raw slice and free via reader_deallocator.
-                reader.list = core::mem::take(&mut reader.list);
-                reader.list.shrink_to_fit();
-                // TODO(port): list_ptr self-reference is now redundant; verify
-                // ZlibReaderArrayList's Rust shape.
-                reader.list_ptr = &mut reader.list;
-
-                let mut array_buffer =
-                    ArrayBuffer::from_bytes(reader.list.as_slice(), jsc::TypedArrayType::Uint8Array);
-                Ok(array_buffer.to_js_with_context(
+                // PORT NOTE: Zig moved `list` into the reader and freed via
+                // `reader_deallocator`. In Rust the reader *borrows* `list_ptr`,
+                // so drop the reader to release the borrow, then leak the owned
+                // `list` directly into the ArrayBuffer (freed by
+                // `global_deallocator`).
+                drop(reader);
+                list.shrink_to_fit();
+                let ptr = list.as_mut_ptr();
+                let len = list.len();
+                core::mem::forget(list);
+                // SAFETY: ptr/len leaked from `list` just above; freed via
+                // `global_deallocator` once the ArrayBuffer is finalized.
+                let array_buffer = ArrayBuffer::from_bytes(
+                    unsafe { core::slice::from_raw_parts_mut(ptr, len) },
+                    jsc::JSType::Uint8Array,
+                );
+                array_buffer.to_js_with_context(
                     global_this,
-                    Box::into_raw(reader) as *mut c_void,
-                    reader_deallocator,
-                ))
+                    ptr as *mut c_void,
+                    Some(global_deallocator),
+                )
             }
             Library::Libdeflate => {
                 let decompressor_ptr = bun_libdeflate::Decompressor::alloc();
                 if decompressor_ptr.is_null() {
                     drop(list);
-                    return global_this.throw_out_of_memory();
+                    return Err(global_this.throw_out_of_memory());
                 }
                 // SAFETY: non-null per check above; freed via the scopeguard below.
                 let decompressor = unsafe { &mut *decompressor_ptr };
@@ -2661,12 +2666,11 @@ pub mod JSZlib {
                 });
                 loop {
                     // Zig passes list.allocatedSlice() (= [0..capacity]) every iteration;
-                    // libdeflate restarts decompression from scratch on each call. Reset len
-                    // so spare_capacity_mut_as_slice() yields the full [0..capacity] window.
-                    list.clear();
+                    // libdeflate restarts decompression from scratch on each call.
                     let result = decompressor.decompress(
                         compressed,
-                        list.spare_capacity_mut_as_slice(), // allocatedSlice()
+                        // SAFETY: see `allocated_slice` doc — set_len follows.
+                        unsafe { allocated_slice(&mut list) },
                         if is_gzip {
                             bun_libdeflate::Encoding::Gzip
                         } else {
@@ -2680,7 +2684,7 @@ pub mod JSZlib {
                     if result.status == bun_libdeflate::Status::InsufficientSpace {
                         if list.capacity() > 1024 * 1024 * 1024 {
                             drop(list);
-                            return global_this.throw_out_of_memory();
+                            return Err(global_this.throw_out_of_memory());
                         }
 
                         let new_cap = list.capacity() * 2;
@@ -2696,25 +2700,25 @@ pub mod JSZlib {
                     }
 
                     drop(list);
-                    return global_this.throw(
-                        "libdeflate returned an error: {s}",
-                        format_args!("{}", <&'static str>::from(result.status)),
-                    );
+                    return Err(global_this.throw(format_args!(
+                        "libdeflate returned an error: {}",
+                        libdeflate_status_str(result.status),
+                    )));
                 }
 
                 let ptr = list.as_mut_ptr();
                 let len = list.len();
                 core::mem::forget(list);
-                let mut array_buffer = ArrayBuffer::from_bytes(
+                let array_buffer = ArrayBuffer::from_bytes(
                     // SAFETY: ptr/len leaked from Vec just above.
-                    unsafe { core::slice::from_raw_parts(ptr, len) },
-                    jsc::TypedArrayType::Uint8Array,
+                    unsafe { core::slice::from_raw_parts_mut(ptr, len) },
+                    jsc::JSType::Uint8Array,
                 );
-                Ok(array_buffer.to_js_with_context(
+                array_buffer.to_js_with_context(
                     global_this,
                     ptr as *mut c_void,
-                    global_deallocator,
-                ))
+                    Some(global_deallocator),
+                )
             }
         }
     }
@@ -2737,17 +2741,16 @@ pub mod JSZlib {
 
             if let Some(library_value) = options_val.get_truthy(global_this, "library")? {
                 if !library_value.is_string() {
-                    return global_this
-                        .throw_invalid_arguments("Expected library to be a string", format_args!(""));
+                    return Err(global_this
+                        .throw_invalid_arguments("Expected library to be a string"));
                 }
 
-                library = match Library::MAP.from_js(global_this, library_value)? {
+                library = match LIBRARY_MAP.from_js(global_this, library_value)? {
                     Some(v) => v,
                     None => {
-                        return global_this.throw_invalid_arguments(
+                        return Err(global_this.throw_invalid_arguments(
                             "Expected library to be one of 'zlib' or 'libdeflate'",
-                            format_args!(""),
-                        )
+                        ))
                     }
                 };
             }
@@ -2775,7 +2778,7 @@ pub mod JSZlib {
                     32
                 });
 
-                let reader = match zlib::ZlibCompressorArrayList::init(
+                let mut reader = match zlib::ZlibCompressorArrayList::init(
                     compressed,
                     &mut list,
                     zlib::Options {
@@ -2788,35 +2791,41 @@ pub mod JSZlib {
                     Ok(r) => r,
                     Err(err) => {
                         drop(list);
-                        if err == bun_core::err!("InvalidArgument") {
-                            return global_this
-                                .throw("Zlib error: Invalid argument", format_args!(""));
+                        if err == zlib::ZlibError::InvalidArgument {
+                            return Err(global_this
+                                .throw("Zlib error: Invalid argument"));
                         }
-                        return global_this.throw_error(err, "Zlib error");
+                        return Err(global_this.throw_error(err.into(), "Zlib error"));
                     }
                 };
 
                 if let Err(_) = reader.read_all() {
                     let msg = reader.error_message().unwrap_or(b"Zlib returned an error");
-                    return global_this
-                        .throw_value(ZigString::init(msg).to_error_instance(global_this));
+                    return Err(global_this
+                        .throw_value(ZigString::init(msg).to_error_instance(global_this)));
                 }
-                reader.list = core::mem::take(&mut reader.list).into_boxed_slice().into_vec();
-                // TODO(port): list_ptr self-reference; see note in gunzip path.
-                reader.list_ptr = &mut reader.list;
-
-                let mut array_buffer =
-                    ArrayBuffer::from_bytes(reader.list.as_slice(), jsc::TypedArrayType::Uint8Array);
-                Ok(array_buffer.to_js_with_context(
+                // PORT NOTE: see gunzip path — reader borrows `list`, so drop
+                // it before leaking `list` into the ArrayBuffer.
+                drop(reader);
+                list.shrink_to_fit();
+                let ptr = list.as_mut_ptr();
+                let len = list.len();
+                core::mem::forget(list);
+                // SAFETY: ptr/len leaked from `list`; freed via `global_deallocator`.
+                let array_buffer = ArrayBuffer::from_bytes(
+                    unsafe { core::slice::from_raw_parts_mut(ptr, len) },
+                    jsc::JSType::Uint8Array,
+                );
+                array_buffer.to_js_with_context(
                     global_this,
-                    Box::into_raw(reader) as *mut c_void,
-                    reader_deallocator,
-                ))
+                    ptr as *mut c_void,
+                    Some(global_deallocator),
+                )
             }
             Library::Libdeflate => {
                 let compressor_ptr = bun_libdeflate::Compressor::alloc(level.unwrap_or(6));
                 if compressor_ptr.is_null() {
-                    return global_this.throw_out_of_memory();
+                    return Err(global_this.throw_out_of_memory());
                 }
                 // SAFETY: non-null per check above; freed via the scopeguard below.
                 let compressor = unsafe { &mut *compressor_ptr };
@@ -2836,8 +2845,12 @@ pub mod JSZlib {
 
                 loop {
                     // list.len() == 0 here (no retry path), so spare == [0..capacity] == allocatedSlice().
-                    let result =
-                        compressor.compress(compressed, list.spare_capacity_mut_as_slice(), encoding);
+                    let result = compressor.compress(
+                        compressed,
+                        // SAFETY: see `allocated_slice` doc — set_len follows.
+                        unsafe { allocated_slice(&mut list) },
+                        encoding,
+                    );
 
                     // SAFETY: result.written ≤ list.capacity() and bytes [0..written] were
                     // initialized by libdeflate above.
@@ -2850,26 +2863,26 @@ pub mod JSZlib {
                     }
 
                     drop(list);
-                    return global_this.throw(
-                        "libdeflate error: {s}",
-                        format_args!("{}", <&'static str>::from(result.status)),
-                    );
+                    return Err(global_this.throw(format_args!(
+                        "libdeflate error: {}",
+                        libdeflate_status_str(result.status),
+                    )));
                 }
 
                 let ptr = list.as_mut_ptr();
                 let len = list.len();
                 core::mem::forget(list);
-                let mut array_buffer = ArrayBuffer::from_bytes(
+                let array_buffer = ArrayBuffer::from_bytes(
                     // SAFETY: ptr/len leaked from the Vec just above; memory remains valid
                     // until global_deallocator frees it via the ArrayBuffer finalizer.
-                    unsafe { core::slice::from_raw_parts(ptr, len) },
-                    jsc::TypedArrayType::Uint8Array,
+                    unsafe { core::slice::from_raw_parts_mut(ptr, len) },
+                    jsc::JSType::Uint8Array,
                 );
-                Ok(array_buffer.to_js_with_context(
+                array_buffer.to_js_with_context(
                     global_this,
                     ptr as *mut c_void,
-                    global_deallocator,
-                ))
+                    Some(global_deallocator),
+                )
             }
         }
     }
@@ -2900,8 +2913,8 @@ pub mod JSZstd {
         let options_val: Option<JSValue> = if arguments.len() > 1 && arguments[1].is_object() {
             Some(arguments[1])
         } else if arguments.len() > 1 && !arguments[1].is_undefined() {
-            return global_this
-                .throw_invalid_arguments("Expected options to be an object", format_args!(""));
+            return Err(global_this
+                .throw_invalid_arguments("Expected options to be an object"));
         } else {
             None
         };
@@ -2910,8 +2923,8 @@ pub mod JSZstd {
             return Ok((buffer, options_val));
         }
 
-        global_this
-            .throw_invalid_arguments("Expected buffer to be a string or buffer", format_args!(""))
+        Err(global_this
+            .throw_invalid_arguments("Expected buffer to be a string or buffer"))
     }
 
     fn get_level(global_this: &JSGlobalObject, options_val: Option<JSValue>) -> JsResult<i32> {
@@ -2923,10 +2936,9 @@ pub mod JSZstd {
                 }
 
                 if value < 1 || value > 22 {
-                    return global_this.throw_invalid_arguments(
+                    return Err(global_this.throw_invalid_arguments(
                         "Compression level must be between 1 and 22",
-                        format_args!(""),
-                    );
+                    ));
                 }
 
                 return Ok(value);
@@ -2950,8 +2962,8 @@ pub mod JSZstd {
         let options_val: Option<JSValue> = if arguments.len() > 1 && arguments[1].is_object() {
             Some(arguments[1])
         } else if arguments.len() > 1 && !arguments[1].is_undefined() {
-            return global_this
-                .throw_invalid_arguments("Expected options to be an object", format_args!(""));
+            return Err(global_this
+                .throw_invalid_arguments("Expected options to be an object"));
         } else {
             None
         };
@@ -2968,8 +2980,8 @@ pub mod JSZstd {
             return Ok((buffer, options_val, level));
         }
 
-        global_this
-            .throw_invalid_arguments("Expected buffer to be a string or buffer", format_args!(""))
+        Err(global_this
+            .throw_invalid_arguments("Expected buffer to be a string or buffer"))
     }
 
     #[bun_jsc::host_fn]
@@ -2987,13 +2999,13 @@ pub mod JSZstd {
         // PERF(port): use Box::new_uninit_slice — profile in Phase B.
 
         // Perform compression with context
-        let compressed_size = match bun_zstd::compress(&mut output, input, level) {
+        let compressed_size = match bun_zstd::compress(&mut output, input, Some(level)) {
             bun_zstd::Result::Success(size) => size,
             bun_zstd::Result::Err(err) => {
                 drop(output);
-                return global_this
-                    .err(jsc::ErrCode::ZSTD, "{s}", format_args!("{}", bstr::BStr::new(err)))
-                    .throw();
+                return Err(global_this
+                    .err(jsc::ErrCode::ZSTD, format_args!("{}", bstr::BStr::new(err)))
+                    .throw());
             }
         };
 
@@ -3003,7 +3015,7 @@ pub mod JSZstd {
             output.shrink_to_fit();
         }
 
-        Ok(JSValue::create_buffer(global_this, output))
+        Ok(JSValue::create_buffer(global_this, output.leak()))
     }
 
     #[bun_jsc::host_fn]
@@ -3018,17 +3030,16 @@ pub mod JSZstd {
         let output = match bun_zstd::decompress_alloc(input) {
             Ok(v) => v,
             Err(err) => {
-                return global_this
+                return Err(global_this
                     .err(
                         jsc::ErrCode::ZSTD,
-                        "Decompression failed: {s}",
-                        format_args!("{}", err.name()),
+                        format_args!("Decompression failed: {}", err),
                     )
-                    .throw();
+                    .throw());
             }
         };
 
-        Ok(JSValue::create_buffer(global_this, output))
+        Ok(JSValue::create_buffer(global_this, output.leak()))
     }
 
     // --- Async versions ---
@@ -3061,9 +3072,13 @@ pub mod JSZstd {
             };
             let job = unsafe { &mut *job };
             let _enqueue = scopeguard::guard((), |_| {
-                job.vm.enqueue_task_concurrent(jsc::ConcurrentTask::ConcurrentTask::create(
-                    job.any_task.task(),
-                ));
+                // SAFETY: vm.event_loop is a self-pointer into the VM; the loop
+                // outlives the job (vm is &'static).
+                unsafe {
+                    (*job.vm.event_loop).enqueue_task_concurrent(
+                        jsc::ConcurrentTask::create(job.any_task.task()),
+                    );
+                }
             });
 
             let input = job.buffer.slice();
@@ -3072,20 +3087,14 @@ pub mod JSZstd {
                 // Compression path
                 // Calculate max compressed size
                 let max_size = bun_zstd::compress_bound(input.len());
-                job.output = match vec![0u8; max_size].try_into_ok() {
-                    // TODO(port): allocator.alloc(u8, n) — Zig didn't zero;
-                    // Rust Vec aborts on OOM. Preserve "Out of memory" path:
-                    Some(v) => v,
-                    None => {
-                        job.error_message = Some(b"Out of memory");
-                        return;
-                    }
-                };
-                // PORT NOTE: above try_into_ok() is a placeholder — Phase B
-                // should use a fallible alloc helper from bun_alloc.
+                // TODO(port): allocator.alloc(u8, n) — Zig left this uninitialized
+                // and surfaced OOM as an error. Rust's global allocator aborts on
+                // OOM, so the explicit "Out of memory" path is unreachable here.
+                // Phase B: route through a fallible bun_alloc helper.
+                job.output = vec![0u8; max_size];
 
                 // Perform compression
-                job.output = match bun_zstd::compress(&mut job.output, input, job.level) {
+                job.output = match bun_zstd::compress(&mut job.output, input, Some(job.level)) {
                     bun_zstd::Result::Success(size) => 'blk: {
                         // Resize to actual compressed size
                         if size < job.output.len() {
@@ -3125,21 +3134,23 @@ pub mod JSZstd {
                 return Ok(());
             }
 
-            let global_this = this.vm.global;
+            // SAFETY: vm.global is the live thread-local global; non-null while
+            // the VM is alive (checked via is_shutting_down above).
+            let global_this: &JSGlobalObject = unsafe { &*this.vm.global };
             let promise = this.promise.swap();
 
             if let Some(err_msg) = this.error_message {
                 promise.reject_with_async_stack(
                     global_this,
                     global_this
-                        .err(jsc::ErrCode::ZSTD, "{s}", format_args!("{}", bstr::BStr::new(err_msg)))
+                        .err(jsc::ErrCode::ZSTD, format_args!("{}", bstr::BStr::new(err_msg)))
                         .to_js(),
                 )?;
                 return Ok(());
             }
 
             let output_slice = core::mem::take(&mut this.output);
-            let buffer_value = JSValue::create_buffer(global_this, output_slice);
+            let buffer_value = JSValue::create_buffer(global_this, output_slice.leak());
             promise.resolve(global_this, buffer_value)?;
             Ok(())
         }
@@ -3151,7 +3162,9 @@ pub mod JSZstd {
         pub unsafe fn destroy(this: *mut ZstdJob) {
             // SAFETY: caller contract — `this` is the unique raw Box pointer.
             let mut boxed = unsafe { Box::from_raw(this) };
-            boxed.poll.unref(boxed.vm);
+            boxed.poll.unref(bun_aio::posix_event_loop::get_vm_ctx(
+                bun_aio::AllocatorType::Js,
+            ));
             boxed.buffer.deinit_and_unprotect();
             boxed.promise = Default::default();
             boxed.output = Vec::new();
@@ -3170,6 +3183,7 @@ pub mod JSZstd {
                 is_compress,
                 level,
                 task: jsc::WorkPoolTask {
+                    node: Default::default(),
                     callback: ZstdJob::run_task,
                 },
                 promise: Default::default(),
@@ -3193,7 +3207,9 @@ pub mod JSZstd {
                         .map_err(|_| core::ptr::null_mut::<()>())
                 },
             };
-            job_ref.poll.ref_(vm);
+            job_ref.poll.ref_(bun_aio::posix_event_loop::get_vm_ctx(
+                bun_aio::AllocatorType::Js,
+            ));
             WorkPool::schedule(&mut job_ref.task);
 
             job
@@ -3204,7 +3220,8 @@ pub mod JSZstd {
     pub fn compress(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let (buffer, _, level) = get_options_async(global_this, callframe)?;
 
-        let vm = global_this.bun_vm();
+        // SAFETY: bun_vm() returns the thread-local VM raw ptr; non-null on JS thread.
+        let vm: &'static VirtualMachine = unsafe { &*global_this.bun_vm() };
         let job = ZstdJob::create(vm, global_this, buffer, true, level);
         // SAFETY: job is live until run_from_js consumes it.
         Ok(unsafe { (*job).promise.value() })
@@ -3214,7 +3231,8 @@ pub mod JSZstd {
     pub fn decompress(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let (buffer, _, _) = get_options_async(global_this, callframe)?;
 
-        let vm = global_this.bun_vm();
+        // SAFETY: bun_vm() returns the thread-local VM raw ptr; non-null on JS thread.
+        let vm: &'static VirtualMachine = unsafe { &*global_this.bun_vm() };
         let job = ZstdJob::create(vm, global_this, buffer, false, 0); // level is ignored for decompression
         // SAFETY: job is live until run_from_js consumes it.
         Ok(unsafe { (*job).promise.value() })
@@ -3256,27 +3274,30 @@ pub mod JSZstd {
 
 // LazyProperty initializers for stdin/stderr/stdout
 pub fn create_bun_stdin(global_this: &JSGlobalObject) -> JSValue {
-    let rare_data = global_this.bun_vm().rare_data();
+    // SAFETY: bun_vm() returns the thread-local VM raw ptr; non-null on JS thread.
+    let rare_data = unsafe { &mut *global_this.bun_vm() }.rare_data();
     let store = rare_data.stdin();
     store.ref_();
-    let blob = WebCore::Blob::new(WebCore::Blob::init_with_store(store, global_this));
-    blob.to_js(global_this)
+    let _ = store;
+    todo!("blocked_on: bun_jsc::WebCore::Blob::{{new,init_with_store}}")
 }
 
 pub fn create_bun_stderr(global_this: &JSGlobalObject) -> JSValue {
-    let rare_data = global_this.bun_vm().rare_data();
+    // SAFETY: bun_vm() returns the thread-local VM raw ptr; non-null on JS thread.
+    let rare_data = unsafe { &mut *global_this.bun_vm() }.rare_data();
     let store = rare_data.stderr();
     store.ref_();
-    let blob = WebCore::Blob::new(WebCore::Blob::init_with_store(store, global_this));
-    blob.to_js(global_this)
+    let _ = store;
+    todo!("blocked_on: bun_jsc::WebCore::Blob::{{new,init_with_store}}")
 }
 
 pub fn create_bun_stdout(global_this: &JSGlobalObject) -> JSValue {
-    let rare_data = global_this.bun_vm().rare_data();
+    // SAFETY: bun_vm() returns the thread-local VM raw ptr; non-null on JS thread.
+    let rare_data = unsafe { &mut *global_this.bun_vm() }.rare_data();
     let store = rare_data.stdout();
     store.ref_();
-    let blob = WebCore::Blob::new(WebCore::Blob::init_with_store(store, global_this));
-    blob.to_js(global_this)
+    let _ = store;
+    todo!("blocked_on: bun_jsc::WebCore::Blob::{{new,init_with_store}}")
 }
 
 } // mod _jsc_gated

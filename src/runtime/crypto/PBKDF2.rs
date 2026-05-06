@@ -39,7 +39,8 @@ impl Default for PBKDF2 {
             iteration_count: 1,
             length: 0,
             // TODO(port): Zig had no default for `algorithm`; callers always set it.
-            algorithm: Algorithm::default(),
+            // Sha256 is an arbitrary placeholder so `Default` compiles.
+            algorithm: Algorithm::Sha256,
         }
     }
 }

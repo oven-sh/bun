@@ -330,20 +330,23 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     let mut argv0: Option<*const c_char> = None;
     let mut ipc_channel: i32 = -1;
     let mut timeout: Option<i32> = None;
-    let mut kill_signal: SignalCode = SignalCode::default();
+    let mut kill_signal: SignalCode = SignalCode::DEFAULT;
     let mut max_buffer: Option<i64> = None;
 
     let mut windows_hide: bool = false;
     let mut windows_verbatim_arguments: bool = false;
     let mut abort_signal: Option<*mut WebCore::AbortSignal> = None;
-    let mut terminal_info: Option<Terminal::CreateResult> = None;
+    let mut terminal_info: Option<TerminalCreateResult> = None;
     let mut existing_terminal: Option<*mut Terminal> = None; // Existing terminal passed by user
     let mut terminal_js_value: JSValue = JSValue::ZERO;
     // TODO(port): the Zig `defer` block at function end (abort_signal.unref + terminal cleanup)
     // is implemented via scopeguard below; disarmed where the Zig set the locals to null.
     let mut defer_guard = scopeguard::guard(
         (&mut abort_signal, &mut terminal_info),
-        |(abort_signal, terminal_info)| {
+        |(abort_signal, terminal_info): (
+            &mut Option<*mut WebCore::AbortSignal>,
+            &mut Option<TerminalCreateResult>,
+        )| {
             if let Some(signal) = abort_signal.take() {
                 // SAFETY: signal was ref()'d when stored; unref releases that ref.
                 unsafe { (*signal).unref() };
@@ -353,10 +356,11 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             // Downgrade the JSRef so the wrapper is GC-eligible, and mark
             // finalized so onReaderDone skips the JS exit callback — the user
             // never received this terminal (spawn threw).
-            if let Some(info) = terminal_info.take() {
-                info.terminal.this_value.downgrade();
-                info.terminal.flags.finalized = true;
-                info.terminal.close_internal();
+            if let Some(_info) = terminal_info.take() {
+                // TODO(port): Terminal body is gated; teardown (`this_value.downgrade()`,
+                // `flags.finalized = true`, `close_internal()`) lands once
+                // `bun_terminal_body` is un-gated.
+                let _ = _info;
             }
         },
     );

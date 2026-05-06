@@ -359,12 +359,10 @@ impl ServerConfig {
     }
 }
 
-// TODO(port): `applyStaticRoute` uses comptime closures over (ssl, T) passed as C-style
-// fn pointers to uws app.head/any/method. Rust cannot capture generics in fn pointers
-// without monomorphized free fns. Phase B: define a trait `StaticRouteHandler` with
-// `on_request` / `on_head_request` and generate the extern shims per (SSL, T).
-// TODO(b2-blocked): bun_uws_sys::App::{head, any, method} typed-handler overloads
-// (cycle-5-B). Gated until those land; struct/enum surface below is real.
+// PORT NOTE: Zig `applyStaticRoute` used comptime closures over (ssl, T) passed
+// as C-style fn pointers to uws app.head/any/method. Rust monomorphizes free
+// `extern "C"` fns per `<SSL, T>` and registers them via the raw
+// `c::uws_method_handler` overload — equivalent to the Zig `handler_wrap` struct.
 
 pub fn apply_static_route<const SSL: bool, T>(
     server: AnyServer,
@@ -378,13 +376,71 @@ pub fn apply_static_route<const SSL: bool, T>(
     // SAFETY: caller passes a live route pointer for the lifetime of the app.
     unsafe { &*entry }.set_server(server);
 
-    // TODO(b2-blocked): bun_uws_sys::NewApp::{head, any, method} expose only the
-    // raw `extern "C" fn(*mut uws_res, *mut Request, *mut c_void)` overload —
-    // the typed `(T, &mut Request, &mut Response<SSL>)` shim from Zig has not
-    // landed. Generate monomorphized `extern "C"` trampolines per (SSL, T) once
-    // the typed-handler overloads are available.
-    let _ = (app, path, method);
-    todo!("blocked_on: bun_uws_sys::NewApp typed handler overloads (head/any/method)");
+    // Trampolines: uWS hands us an opaque `uws_res*`, a live `Request*`, and the
+    // user_data pointer (= `entry`). Cast back to the typed `Response<SSL>` /
+    // `T` and dispatch into the trait. Monomorphized per `<SSL, T>`.
+    extern "C" fn handler<const SSL: bool, T: StaticRouteLike<SSL>>(
+        resp: *mut uws::uws_res,
+        req: *mut uws::Request,
+        user_data: *mut core::ffi::c_void,
+    ) {
+        // SAFETY: uWS invokes this with non-null `resp`/`req` for the duration
+        // of the callback; `user_data` is the `entry` pointer registered below,
+        // kept alive by the route table for the lifetime of the app.
+        let route: &T = unsafe { &*(user_data as *const T) };
+        let req: &mut uws::Request = unsafe { &mut *req };
+        let resp: &mut uws::NewAppResponse<SSL> =
+            unsafe { &mut *uws::NewAppResponse::<SSL>::cast_res(resp) };
+        if SSL {
+            // SAFETY: SSL == true ⇒ NewAppResponse<SSL> is NewAppResponse<true>;
+            // both are `#[repr(C)]` opaques over the same `uws_res`.
+            let resp: &mut uws::NewAppResponse<true> =
+                unsafe { &mut *(resp as *mut _ as *mut uws::NewAppResponse<true>) };
+            route.on_request(RequestUnion::H1(req), ResponseUnion::Ssl(resp));
+        } else {
+            // SAFETY: SSL == false ⇒ NewAppResponse<SSL> is NewAppResponse<false>.
+            let resp: &mut uws::NewAppResponse<false> =
+                unsafe { &mut *(resp as *mut _ as *mut uws::NewAppResponse<false>) };
+            route.on_request(RequestUnion::H1(req), ResponseUnion::Tcp(resp));
+        }
+    }
+
+    extern "C" fn head<const SSL: bool, T: StaticRouteLike<SSL>>(
+        resp: *mut uws::uws_res,
+        req: *mut uws::Request,
+        user_data: *mut core::ffi::c_void,
+    ) {
+        // SAFETY: see `handler` above.
+        let route: &T = unsafe { &*(user_data as *const T) };
+        let req: &mut uws::Request = unsafe { &mut *req };
+        let resp: &mut uws::NewAppResponse<SSL> =
+            unsafe { &mut *uws::NewAppResponse::<SSL>::cast_res(resp) };
+        if SSL {
+            // SAFETY: see `handler` above.
+            let resp: &mut uws::NewAppResponse<true> =
+                unsafe { &mut *(resp as *mut _ as *mut uws::NewAppResponse<true>) };
+            route.on_head_request(RequestUnion::H1(req), ResponseUnion::Ssl(resp));
+        } else {
+            // SAFETY: see `handler` above.
+            let resp: &mut uws::NewAppResponse<false> =
+                unsafe { &mut *(resp as *mut _ as *mut uws::NewAppResponse<false>) };
+            route.on_head_request(RequestUnion::H1(req), ResponseUnion::Tcp(resp));
+        }
+    }
+
+    let user_data = entry as *mut core::ffi::c_void;
+    app.head(path, Some(head::<SSL, T>), user_data);
+    match method {
+        http_method::Optional::Any => {
+            app.any(path, Some(handler::<SSL, T>), user_data);
+        }
+        http_method::Optional::Method(m) => {
+            let mut iter = m.iter();
+            while let Some(method_) = iter.next() {
+                app.method(method_, path, Some(handler::<SSL, T>), user_data);
+            }
+        }
+    }
 }
 
 

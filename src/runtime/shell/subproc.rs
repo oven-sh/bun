@@ -927,51 +927,12 @@ impl Writable {
         }
     }
 
-    // TODO(port): move to shell_jsc
-    pub fn to_js(&mut self, global_this: &JSGlobalObject, subprocess: &mut Subprocess) -> JSValue {
-        match core::mem::replace(self, Writable::Ignore) {
-            Writable::Fd(fd) => {
-                *self = Writable::Fd(fd);
-                let _ = global_this;
-                todo!("blocked_on: bun_core::Fd → JSValue numeric conversion")
-            }
-            Writable::Memfd(fd) => {
-                *self = Writable::Memfd(fd);
-                JSValue::UNDEFINED
-            }
-            Writable::Ignore => JSValue::UNDEFINED,
-            Writable::Buffer(b) => {
-                *self = Writable::Buffer(b);
-                JSValue::UNDEFINED
-            }
-            Writable::Inherit => {
-                *self = Writable::Inherit;
-                JSValue::UNDEFINED
-            }
-            Writable::Pipe(pipe) => {
-                *self = Writable::Ignore;
-                // TODO(port): `has_stdin_destructor_called` and `weak_file_sink_stdin_ptr`
-                // are referenced in the Zig but do NOT exist on ShellSubprocess (dead code
-                // path under Zig's lazy compilation). Mirrored here as TODOs.
-                if subprocess.proc().has_exited()
-                /* && !subprocess.flags.has_stdin_destructor_called */
-                {
-                    let _ = (pipe, &subprocess.proc().status);
-                    // TODO(port): Arc<FileSink> mut access for
-                    // on_attached_process_exit/to_js — dead under shell.
-                    todo!("blocked_on: webcore::FileSink::on_attached_process_exit via Arc")
-                } else {
-                    // subprocess.flags.has_stdin_destructor_called = false;
-                    // subprocess.weak_file_sink_stdin_ptr = pipe;
-                    // TODO(port): `webcore::SinkDestructor::Ptr` not yet ported; this
-                    // path is dead under shell (`has_stdin_destructor_called` doesn't
-                    // exist on ShellSubprocess — see Zig comment above).
-                    let _ = (global_this, subprocess, pipe);
-                    todo!("blocked_on: webcore::SinkDestructor::Ptr")
-                }
-            }
-        }
-    }
+    // PORT NOTE: `Writable::toJS` from the Zig spec is intentionally **not**
+    // ported. It references `subprocess.flags.has_stdin_destructor_called` and
+    // `subprocess.weak_file_sink_stdin_ptr`, neither of which exist on
+    // `ShellSubprocess` — the function is dead under Zig's lazy compilation
+    // (copy-pasted from the JSC `Subprocess`, never instantiated). The shell
+    // never exposes its stdin Writable to JS.
 
     pub fn finalize(&mut self) {
         // SAFETY: `self` points to ShellSubprocess.stdin (always — see Zig @fieldParentPtr).

@@ -758,10 +758,6 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
     }
 }
 
-// Silence unused-import for `ConcurrentTask` until `async_job_run` un-stubs.
-#[allow(dead_code)]
-fn _concurrent_task_anchor() -> *const ConcurrentTask { core::ptr::null() }
-
 // Zig: `pub const NativeZlib = jsc.Codegen.JSNativeZlib.getConstructor;` (etc.) —
 // in Rust the per-class `JS*` codegen submodules collapse into the generic
 // `jsc::codegen::js::get_constructor::<T>` helper (see src/jsc/lib.rs `pub mod codegen`).

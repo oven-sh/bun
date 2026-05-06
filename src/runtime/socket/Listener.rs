@@ -579,17 +579,31 @@ impl Listener {
         let sni_ctx: *mut boring_sys::SSL_CTX = if let Some(sc) = SecureContext::from_js(tls) {
             // SAFETY: from_js returned non-null; SecureContext is live for the call.
             unsafe { (*sc).borrow() }
-        } else if let Some(mut ssl_config) = {
+        } else if let Some(ssl_config) = {
             // SAFETY: per-thread VM; valid for program lifetime.
             let vm = unsafe { &mut *VirtualMachine::get() };
             SSLConfig::from_js(vm, global, tls)?
         } {
             // PORT NOTE: `defer cfg.deinit()` — handled by Drop on SSLConfig
-            let _ = ssl_config;
-            // `bun_jsc::rare_data::SSLContextCache` is an opaque stub; the real
-            // `get_or_create` lives in `crate::api::bun::SSLContextCache` and the
-            // RareData→runtime bridge isn't wired yet.
-            todo!("blocked_on: bun_jsc::rare_data::SSLContextCache::get_or_create")
+            let mut create_err = uws::create_bun_socket_error_t::none;
+            // SAFETY: `vm_ssl_ctx_cache()` returns the per-thread cache; only
+            // touched from the JS thread so the `&mut` is unique.
+            let cache = unsafe { &mut *vm_ssl_ctx_cache() };
+            match cache.get_or_create(&ssl_config, &mut create_err) {
+                Some(ctx) => ctx,
+                None => {
+                    if create_err != uws::create_bun_socket_error_t::none {
+                        return Err(global.throw_value(
+                            crate::socket::uws_jsc::create_bun_socket_error_to_js(create_err, global),
+                        ));
+                    }
+                    // SAFETY: FFI; ERR_get_error reads the thread-local BoringSSL error queue.
+                    let code = unsafe { boring_sys::ERR_get_error() };
+                    return Err(global.throw_value(
+                        crate::crypto::boringssl_jsc::err_to_js(global, code),
+                    ));
+                }
+            }
         } else {
             return Ok(JSValue::UNDEFINED);
         };
@@ -604,11 +618,17 @@ impl Listener {
         if !ok {
             // Old entry was already removed; failing silently would leave the
             // hostname with no SNI mapping at all. Surface it.
-            return Err(global.throw_value(global.create_error_instance(format_args!(
-                "Failed to register SNI for '{}'",
-                bstr::BStr::new(server_name_bytes)
-            ))));
-            // TODO(port): Zig used `global.ERR_BORINGSSL(...)` for the error code path.
+            return Err(global.throw_value(
+                global
+                    .err(
+                        jsc::ErrorCode::BORINGSSL,
+                        format_args!(
+                            "Failed to register SNI for '{}'",
+                            bstr::BStr::new(server_name_bytes)
+                        ),
+                    )
+                    .to_js(),
+            ));
         }
 
         Ok(JSValue::UNDEFINED)

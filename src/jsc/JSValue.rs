@@ -305,6 +305,28 @@ impl JSValue {
         // SAFETY: `global` is live.
         unsafe { JSC__JSValue__fromInt64NoTruncate(global, i) }
     }
+    /// `JSValue.fromEntries` (JSValue.zig:757) — build a plain object from
+    /// parallel `keys`/`values` `ZigString` arrays. When `clone` is true the
+    /// C++ side copies the string bytes (caller may free `keys`/`values`).
+    pub fn from_entries(
+        global: &JSGlobalObject,
+        keys: &mut [bun_string::ZigString],
+        values: &mut [bun_string::ZigString],
+        clone: bool,
+    ) -> JSValue {
+        debug_assert_eq!(keys.len(), values.len());
+        // SAFETY: `global` is live; `keys`/`values` are valid for `keys.len()`
+        // elements; the C++ binding only reads (and optionally clones) them.
+        unsafe {
+            JSC__JSValue__fromEntries(
+                global,
+                keys.as_mut_ptr(),
+                values.as_mut_ptr(),
+                keys.len(),
+                clone,
+            )
+        }
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -896,6 +918,13 @@ unsafe extern "C" {
     fn JSC__JSValue__dateInstanceFromNullTerminatedString(global: *const JSGlobalObject, s: *const c_char) -> JSValue;
     fn JSC__JSValue__dateInstanceFromNumber(global: *const JSGlobalObject, n: f64) -> JSValue;
     fn JSC__JSValue__fromInt64NoTruncate(global: *const JSGlobalObject, i: i64) -> JSValue;
+    fn JSC__JSValue__fromEntries(
+        global: *const JSGlobalObject,
+        keys: *mut bun_string::ZigString,
+        values: *mut bun_string::ZigString,
+        strings_count: usize,
+        clone: bool,
+    ) -> JSValue;
     fn JSC__JSValue__toBoolean(this: JSValue) -> bool;
     fn JSC__JSValue__toInt32(this: JSValue) -> i32;
     fn JSC__JSValue__toInt64(this: JSValue) -> i64;

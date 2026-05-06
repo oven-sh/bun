@@ -1734,8 +1734,8 @@ pub fn migrate_yarn_lockfile<'a>(
                 Some(name_hash),
                 dep_version_string.slice(this.buffers.string_bytes.as_slice()),
                 &sliced_string,
-                Some(log),
-                Some(manager),
+                Some(&mut *log),
+                Some(&mut *manager),
             )
             .unwrap_or_default();
 
@@ -1804,8 +1804,8 @@ pub fn migrate_yarn_lockfile<'a>(
                     Some(name_hash),
                     dep_version_string.slice(this.buffers.string_bytes.as_slice()),
                     &sliced_string,
-                    Some(log),
-                    Some(manager),
+                    Some(&mut *log),
+                    Some(&mut *manager),
                 )
                 .unwrap_or_default();
 
@@ -1856,8 +1856,8 @@ pub fn migrate_yarn_lockfile<'a>(
                     Some(name_hash),
                     dep_version_string.slice(this.buffers.string_bytes.as_slice()),
                     &sliced_string,
-                    Some(log),
-                    Some(manager),
+                    Some(&mut *log),
+                    Some(&mut *manager),
                 )
                 .unwrap_or_default();
 
@@ -1908,8 +1908,8 @@ pub fn migrate_yarn_lockfile<'a>(
                     Some(name_hash),
                     dep_version_string.slice(this.buffers.string_bytes.as_slice()),
                     &sliced_string,
-                    Some(log),
-                    Some(manager),
+                    Some(&mut *log),
+                    Some(&mut *manager),
                 )
                 .unwrap_or_default();
 
@@ -1960,8 +1960,8 @@ pub fn migrate_yarn_lockfile<'a>(
                     Some(name_hash),
                     dep_version_string.slice(this.buffers.string_bytes.as_slice()),
                     &sliced_string,
-                    Some(log),
-                    Some(manager),
+                    Some(&mut *log),
+                    Some(&mut *manager),
                 )
                 .unwrap_or_default();
 

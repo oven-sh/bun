@@ -178,12 +178,15 @@ impl Stringifier {
 
         let mut pkg_map: PkgMap<()> = PkgMap::init();
 
-        // TODO(port): `tree::Iterator` is currently typed against the
-        // `crate::lockfile` stub `Lockfile`; once the stub/real types unify
-        // (reconciler-6) this constructs against `super::Lockfile`. For now we
-        // todo!() the iterator construction so the rest of the body type-checks.
-        let mut pkgs_iter: tree::Iterator<'_, { tree::IteratorPathStyle::PkgPath }> =
-            todo!("blocked_on: tree::Iterator typed against stub Lockfile (reconciler-6)");
+        // PORT NOTE: `tree::Iterator::init` is typed against the stub
+        // `crate::lockfile::Lockfile`; construct from raw buffer slices so the
+        // real `lockfile_real::Lockfile` works without the type unification.
+        let mut pkgs_iter = tree::Iterator::<'_, { tree::IteratorPathStyle::PkgPath }>::from_slices(
+            lockfile.buffers.trees.as_slice(),
+            lockfile.buffers.hoisted_dependencies.as_slice(),
+            deps_buf,
+            buf,
+        );
 
         let mut path_buf = PathBuffer::uninit();
 

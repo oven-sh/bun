@@ -1074,10 +1074,19 @@ pub struct DevServer {
 }
 
 impl DevServer {
-    /// `DevServer.publish` — DevServer.zig:4163. Full body in gated `../DevServer.rs`
-    /// draft (depends on `AnyServer::publish`).
-    pub fn publish(&self, _topic: HmrTopic, _message: &[u8], _opcode: bun_uws::Opcode) {
-        todo!("blocked_on: dev_server::DevServer::publish (AnyServer::publish un-gate)")
+    /// `DevServer.publish` — DevServer.zig:4163.
+    pub fn publish(&self, topic: HmrTopic, message: &[u8], opcode: bun_uws::Opcode) {
+        if let Some(s) = &self.server {
+            let _ = s.publish(&[topic as u8], message, opcode, false);
+        }
+    }
+
+    /// `DevServer.numSubscribers` — DevServer.zig:4167.
+    pub fn num_subscribers(&self, topic: HmrTopic) -> u32 {
+        match &self.server {
+            Some(s) => s.num_subscribers(&[topic as u8]),
+            None => 0,
+        }
     }
 
     // `DevServer.startAsyncBundle` — real body lives in `lifecycle.rs`.

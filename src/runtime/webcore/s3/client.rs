@@ -466,23 +466,87 @@ pub fn writable_stream(
         Ok(())
     }
 
-    let _ = (
-        this,
-        path,
-        global_this,
+    // Thunks adapting typed callbacks to the erased `*mut c_void` signatures stored on
+    // MultiPartUpload (Zig used `@ptrCast` on the fn ptrs directly).
+    fn wrapper_callback_thunk(result: S3UploadResult, ctx: *mut c_void) -> JsTerminatedResult<()> {
+        // SAFETY: ctx was set to `response_stream: *mut NetworkSink` below.
+        wrapper_callback(result, unsafe { &mut *(ctx as *mut NetworkSink) })
+    }
+    fn on_writable_thunk(task: *mut MultiPartUpload, ctx: *mut c_void, flushed: u64) {
+        // SAFETY: task is the live MultiPartUpload; ctx is the NetworkSink set as callback_context.
+        let _ = NetworkSink::on_writable(
+            unsafe { &mut *task },
+            unsafe { &mut *(ctx as *mut NetworkSink) },
+            flushed,
+        );
+    }
+
+    let proxy_url = proxy.unwrap_or(b"");
+    // ref the credentials — `IntrusiveRc::init_ref` bumps the intrusive count and wraps.
+    // SAFETY: `this` points to a live heap-allocated `S3Credentials` (intrusive-refcounted).
+    let credentials = unsafe { bun_ptr::IntrusiveRc::init_ref(this as *mut S3Credentials) };
+    // SAFETY (JSC_BORROW): `global_this` outlives the task (it owns the VM/heap that owns the
+    // JS objects which keep the task alive); transmute the borrow to `'static` for storage in
+    // the heap-allocated MultiPartUpload, matching the Zig pointer field.
+    let global_static: &'static JSGlobalObject =
+        unsafe { core::mem::transmute::<&JSGlobalObject, &'static JSGlobalObject>(global_this) };
+    let part_size = options.part_size;
+    let task_ptr: *mut MultiPartUpload = Box::into_raw(Box::new(MultiPartUpload {
+        queue: None,
+        available: IntegerBitSet::init_full(),
+        current_part_number: 0,
+        ref_count: core::cell::Cell::new(2), // +1 for the stream
+        ended: false,
         options,
-        content_type,
-        content_disposition,
-        content_encoding,
-        proxy,
+        acl: None,
         storage_class,
         request_payer,
-        wrapper_callback as fn(_, _) -> _,
-    );
-    // TODO(port): MultiPartUpload struct-literal init requires `Arc<S3Credentials>` (we have
-    // `&mut S3Credentials`) and has no Default; the JSSink/SinkSignal codegen wrapper is also
-    // gated. Port the body once both are wired.
-    todo!("blocked_on: bun_s3::MultiPartUpload literal init (Arc<S3Credentials> from &mut) + sink::SinkSignal codegen")
+        credentials,
+        poll_ref: KeepAlive::init(),
+        vm: VirtualMachine::get(),
+        global_this: global_static,
+        buffered: StreamBuffer::default(),
+        path: Box::<[u8]>::from(path),
+        proxy: if !proxy_url.is_empty() { Box::<[u8]>::from(proxy_url) } else { Box::default() },
+        content_type: content_type.map(Box::<[u8]>::from),
+        content_disposition: content_disposition.map(Box::<[u8]>::from),
+        content_encoding: content_encoding.map(Box::<[u8]>::from),
+        upload_id: Box::default(),
+        uploadid_buffer: MutableString::default(),
+        multipart_etags: Vec::new(),
+        multipart_upload_list: Vec::new(),
+        state: MultiPartUploadState::NotStarted,
+        callback: wrapper_callback_thunk,
+        on_writable: None, // assigned below after response_stream exists
+        callback_context: core::ptr::null_mut(), // assigned below
+    }));
+    // SAFETY: freshly Box::into_raw'd; exclusive access here.
+    let task = unsafe { &mut *task_ptr };
+
+    task.poll_ref.ref_(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
+
+    // `NetworkSink.new(.{...}).toSink()` — heap-allocate; `JSSink<NetworkSink>` is layout-
+    // compatible (`{ sink: NetworkSink }`) so the cast in `to_sink()` is just a pointer reinterpret.
+    let response_stream: *mut NetworkSink = Box::into_raw(NetworkSink::new(NetworkSink {
+        task: NonNull::new(task_ptr),
+        global_this: global_this as *const JSGlobalObject,
+        high_water_mark: part_size as BlobSizeType,
+        ..Default::default()
+    }));
+
+    task.callback_context = response_stream as *mut c_void;
+    task.on_writable = Some(on_writable_thunk);
+
+    // SAFETY: freshly Box::into_raw'd; exclusive access here. Ownership transfers to the JS
+    // wrapper via `to_js()` (the C++ side stores it as m_ctx and calls `finalize` on collect).
+    let sink = unsafe { &mut *response_stream };
+    sink.signal = SinkSignal::<NetworkSink>::init(JSValue::ZERO);
+
+    // explicitly set it to a dead pointer
+    // we use this memory address to disable signals being sent
+    sink.signal.clear();
+    bun_core::assert!(sink.signal.is_dead());
+    Ok(sink.to_js(global_this))
 }
 
 // TODO(b2-blocked): ResumableS3UploadSink — `webcore::resumable_sink` is gated on
@@ -662,7 +726,7 @@ impl Drop for S3UploadStreamWrapper {
 
 /// consumes the readable stream and upload to s3
 pub fn upload_stream(
-    this: &S3Credentials,
+    this: &mut S3Credentials,
     path: &[u8],
     readable_stream: ReadableStream,
     global_this: &JSGlobalObject,

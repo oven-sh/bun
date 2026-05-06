@@ -454,13 +454,26 @@ impl<'a> GlobalMini<'a> {
     }
 
     #[inline]
-    pub fn enqueue_task_concurrent_wait_pid<T: 'static>(self, task: T) {
-        // `AnyTaskWithExtraContext` is a *module* re-export in bun_jsc; the type lives inside it.
-        // TODO(port): .from(task, "runFromMainThreadMini") — comptime field-name lookup
-        // resolves `T::runFromMainThreadMini` as the callback. Needs a trait bound or
-        // explicit fn pointer plumbed through.
-        let _ = task;
-        todo!("blocked_on: bun_jsc::AnyTaskWithExtraContext::from(comptime field)")
+    pub fn enqueue_task_concurrent_wait_pid<T: 'static>(
+        self,
+        task: *mut T,
+        // PORT NOTE: Zig `.from(task, "runFromMainThreadMini")` resolves the callback by
+        // comptime decl-name lookup. Rust cannot reflect on a method by string, so callers
+        // pass `T::run_from_main_thread_mini` explicitly (mirrors AnyTaskWithExtraContext::from).
+        run_from_main_thread_mini: fn(*mut T, *mut ()),
+    ) {
+        use bun_jsc::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
+        // Spec shell.zig GlobalMini.enqueueTaskConcurrentWaitPid:
+        //   `var anytask = create(AnyTaskWithExtraContext); _ = anytask.from(task, "runFromMainThreadMini");
+        //    mini.enqueueTaskConcurrent(anytask);`
+        let anytask = Box::into_raw(Box::new(AnyTaskWithExtraContext::default()));
+        // SAFETY: `anytask` was just heap-allocated and is exclusively owned here.
+        unsafe { (*anytask).from(task, run_from_main_thread_mini) };
+        // SAFETY: `mini` is a long-lived loop; the concurrent queue is thread-safe.
+        unsafe {
+            (*(self.mini as *const MiniEventLoop<'a> as *mut MiniEventLoop<'a>))
+                .enqueue_task_concurrent(anytask)
+        };
     }
 
     #[inline]
@@ -482,8 +495,14 @@ impl<'a> GlobalMini<'a> {
 
     #[inline]
     pub fn platform_event_loop(self) -> &'a PlatformEventLoop {
-        let _ = self.event_loop_ctx();
-        todo!("blocked_on: bun_jsc::AbstractVM::platform_event_loop")
+        // Spec shell.zig GlobalMini.platformEventLoop → MiniVM.platformEventLoop:
+        //   posix: `mini.loop`; windows: `mini.loop.uv_loop`.
+        #[cfg(windows)]
+        // SAFETY: `loop_` is the live C-owned uws loop; uv_loop is its embedded libuv loop.
+        unsafe { return &*(*self.mini.loop_).uv_loop(); }
+        #[cfg(not(windows))]
+        // SAFETY: `loop_` is set in MiniEventLoop::init() and outlives 'a.
+        unsafe { &*self.mini.loop_ }
     }
 }
 

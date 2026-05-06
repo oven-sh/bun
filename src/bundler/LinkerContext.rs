@@ -1186,21 +1186,18 @@ impl SourceMapDataTask {
         // was generated. This will be preserved so that remapping
         // stack traces can show the source code, even after incremental
         // rebuilds occur.
-        // SAFETY: `worker.ctx` is a `*mut BundleV2` backref; `transpiler` is a
-        // `*mut Transpiler` backref. Both valid for the worker's lifetime.
-        let alloc: *const Bump = unsafe {
-            if !(*(*worker.ctx).transpiler).options.dev_server.is_null() {
-                // CYCLEBREAK FORWARD_DECL: `bake::DevServer.allocator()` —
-                // dev_server is type-erased here (Option<()>); the real handle
-                // arrives with the bake crate. Fall through to the worker arena.
-                todo!("blocked_on: bake::DevServer::allocator")
-            } else {
-                worker.allocator
-            }
-        };
+        //
+        // PORT NOTE: Zig branched on `worker.ctx.transpiler.options.dev_server`
+        // to pick `dev.allocator()` vs `worker.allocator`, but
+        // `computeQuotedSourceContents` discards the allocator parameter
+        // (`_: std.mem.Allocator`) — it always allocates via
+        // `bun.default_allocator` internally. The branch is a no-op, so we
+        // pass the worker arena unconditionally; `DevServerHandle` does not
+        // expose an arena accessor (CYCLEBREAK §Dispatch).
+        let alloc: *const Bump = worker.allocator;
 
-        // SAFETY: `alloc` is either the dev-server's static arena or the
-        // thread-local worker arena (initialized by `Worker::create`).
+        // SAFETY: `alloc` is the thread-local worker arena (initialized by
+        // `Worker::create`); `compute_quoted_source_contents` ignores it.
         SourceMapData::compute_quoted_source_contents(ctx, unsafe { &*alloc }, task.source_index);
         worker.unget();
     }
@@ -1460,14 +1457,10 @@ impl<'a> LinkerContext<'a> {
                     hasher.write(piece.data());
                 }
             }
-            crate::chunk::IntermediateOutput::Joiner(_joiner) => {
-                // PORT NOTE: Zig walked `joiner.head` and hashed each
-                // `node.slice`; the Rust `StringJoiner::Node` keeps `slice` /
-                // `next` private (no public iterator yet). Hashing the joined
-                // output here would force an early `done()`, which would
-                // invalidate `IntermediateOutput::Joiner`. Defer until
-                // `StringJoiner` grows a node iterator.
-                todo!("blocked_on: StringJoiner node iterator (private fields)")
+            crate::chunk::IntermediateOutput::Joiner(joiner) => {
+                for slice in joiner.node_slices() {
+                    hasher.write(slice);
+                }
             }
             crate::chunk::IntermediateOutput::Empty => {}
         }

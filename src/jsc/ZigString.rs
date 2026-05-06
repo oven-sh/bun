@@ -137,22 +137,11 @@ pub fn to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObject) -> 
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// UN-GATED: `JSValue` / `JSGlobalObject` surface has landed; bytemuck +
-// `bun_string::encoding::Encoding` + simdutf now in the dep graph. The
+// `JSValue` / `JSGlobalObject` surface has landed; bytemuck +
+// `bun_string::encoding::Encoding` + simdutf are in the dep graph. The
 // `Slice` ownership model uses the enum-based `bun_string::ZigStringSlice`
-// (re-exported above) instead of the original `NullableAllocator`-backed
-// struct — that struct is preserved below behind `` for
-// reference until `bun_alloc::NullableAllocator` grows real methods.
-//
-// STILL GATED inside (per-item ``):
-//   - `encode`/`encode_with_allocator` — need `webcore::encoding::construct_from_*`
-//      (forward-dep cycle: bun_runtime → bun_jsc)
-//   - `to_js_string_ref` — `c_api::{JSStringRef, JSStringCreateWithCharactersNoCopy,
-//      JSStringCreateStatic}` not in javascript_core_c_api.rs
-//   - `to_ref` — `JSValue::as_ref_` missing
-//   - `to_base64_data_url` — `bun_core::base64` module missing
-//   - `index_of_any` — needs `&'static [u16]` adapter for `index_of_any16`
-//   - struct-based `Slice` + `NullableAllocator` plumbing
+// (re-exported above); the original `NullableAllocator`-backed struct is
+// preserved below in `_slice_struct` for FFI-shaped callers.
 // ──────────────────────────────────────────────────────────────────────────
 pub use self::_body::GithubActionFormatter;
 mod _body {

@@ -731,6 +731,12 @@ unsafe extern "C" {
 unsafe extern "system" {
     pub fn SetConsoleCP(wCodePageID: UINT) -> BOOL;
 
+    pub fn SetConsoleOutputCP(wCodePageID: UINT) -> BOOL;
+
+    pub fn GetConsoleMode(hConsoleHandle: HANDLE, lpMode: *mut DWORD) -> BOOL;
+
+    pub fn SetConsoleMode(hConsoleHandle: HANDLE, dwMode: DWORD) -> BOOL;
+
     pub fn InitializeProcThreadAttributeList(
         lpAttributeList: *mut u8,
         dwAttributeCount: DWORD,

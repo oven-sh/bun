@@ -1284,9 +1284,9 @@ where
     let result = match cb.call(
         global,
         this.this_object(),
-        // SAFETY: wrapper is a live heap allocation (ref'd above; guard deref
-        // runs after this call).
-        &[unsafe { (*wrapper).to_js(global) }],
+        // `wrapper` is a live heap allocation (ref'd above; guard deref runs
+        // after this call). `to_js` hands the raw pointer to the C++ wrapper.
+        &[Z::to_js(wrapper, global)],
     ) {
         Ok(v) => v,
         Err(_) => {
@@ -1660,8 +1660,8 @@ impl WrapperLike for TextChunk {
     fn init(v: *mut Self::Raw) -> *mut Self { Self::init(v) }
     fn ref_(&self) { self.ref_() }
     fn deref(this: *mut Self) { Self::deref(this) }
-    fn to_js(&self, _g: &JSGlobalObject) -> JSValue {
-        todo!("blocked_on: bun_jsc::JsClass to_js for *mut Self (intrusive-rc wrapper)")
+    fn to_js(this: *mut Self, g: &JSGlobalObject) -> JSValue {
+        wrap_ptr_as_js!("TextChunk", this, g)
     }
 }
 
@@ -1771,8 +1771,8 @@ impl WrapperLike for DocType {
     fn init(v: *mut Self::Raw) -> *mut Self { Self::init(v) }
     fn ref_(&self) { self.ref_() }
     fn deref(this: *mut Self) { Self::deref(this) }
-    fn to_js(&self, _g: &JSGlobalObject) -> JSValue {
-        todo!("blocked_on: bun_jsc::JsClass to_js for *mut Self (intrusive-rc wrapper)")
+    fn to_js(this: *mut Self, g: &JSGlobalObject) -> JSValue {
+        wrap_ptr_as_js!("DocType", this, g)
     }
 }
 

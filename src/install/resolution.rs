@@ -120,7 +120,9 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
             return Ok(Self::init(TaggedValue::Symlink(string_buf.append(link)?)));
         }
 
-        if let Some(workspace) = strings::without_prefix_if_possible_comptime(res_str, b"workspace:") {
+        if let Some(workspace) =
+            strings::without_prefix_if_possible_comptime(res_str, b"workspace:")
+        {
             return Ok(Self::init(TaggedValue::Workspace(
                 string_buf.append(workspace)?,
             )));
@@ -206,7 +208,8 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         if let Some(user_repo_tar_committish) =
             strings::without_prefix_if_possible_comptime(res_str, b"https://codeload.github.com/")
         {
-            let Some(user_end) = strings::index_of_char_usize(user_repo_tar_committish, b'/') else {
+            let Some(user_end) = strings::index_of_char_usize(user_repo_tar_committish, b'/')
+            else {
                 return Err(FromPnpmLockfileError::InvalidPnpmLockfile);
             };
             let user = &user_repo_tar_committish[..user_end];
@@ -263,9 +266,8 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
                 let version_literal = string_buf.append(res_str)?;
                 // PORT NOTE: this fn returns `Resolution` (= `ResolutionType<u64>`),
                 // not `Self`, so parse at `u64` regardless of the impl's SemverInt.
-                let parsed = semver::Version::parse(
-                    version_literal.sliced(string_buf.bytes.as_slice()),
-                );
+                let parsed =
+                    semver::Version::parse(version_literal.sliced(string_buf.bytes.as_slice()));
 
                 if !parsed.valid {
                     return Err(FromPnpmLockfileError::InvalidPnpmLockfile);
@@ -306,19 +308,22 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         unsafe {
             match self.tag {
                 Tag::Npm => self.value.npm.order(&rhs.value.npm, lhs_buf, rhs_buf),
-                Tag::LocalTarball => self
-                    .value
-                    .local_tarball
-                    .order(&rhs.value.local_tarball, lhs_buf, rhs_buf),
+                Tag::LocalTarball => {
+                    self.value
+                        .local_tarball
+                        .order(&rhs.value.local_tarball, lhs_buf, rhs_buf)
+                }
                 Tag::Folder => self.value.folder.order(&rhs.value.folder, lhs_buf, rhs_buf),
-                Tag::RemoteTarball => self
-                    .value
-                    .remote_tarball
-                    .order(&rhs.value.remote_tarball, lhs_buf, rhs_buf),
-                Tag::Workspace => self
-                    .value
-                    .workspace
-                    .order(&rhs.value.workspace, lhs_buf, rhs_buf),
+                Tag::RemoteTarball => {
+                    self.value
+                        .remote_tarball
+                        .order(&rhs.value.remote_tarball, lhs_buf, rhs_buf)
+                }
+                Tag::Workspace => {
+                    self.value
+                        .workspace
+                        .order(&rhs.value.workspace, lhs_buf, rhs_buf)
+                }
                 Tag::Symlink => self
                     .value
                     .symlink
@@ -390,10 +395,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
                 }
                 Tag::Root => Value::init(TaggedValue::Root),
                 Tag::Uninitialized => Value::init(TaggedValue::Uninitialized),
-                _ => panic!(
-                    "Internal error: unexpected resolution tag: {}",
-                    self.tag.0
-                ),
+                _ => panic!("Internal error: unexpected resolution tag: {}", self.tag.0),
             }
         };
         Self {
@@ -408,7 +410,9 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         unsafe {
             match self.tag {
                 Tag::Npm => Self::init(TaggedValue::Npm(self.value.npm)),
-                Tag::LocalTarball => Self::init(TaggedValue::LocalTarball(self.value.local_tarball)),
+                Tag::LocalTarball => {
+                    Self::init(TaggedValue::LocalTarball(self.value.local_tarball))
+                }
                 Tag::Folder => Self::init(TaggedValue::Folder(self.value.folder)),
                 Tag::RemoteTarball => {
                     Self::init(TaggedValue::RemoteTarball(self.value.remote_tarball))
@@ -422,15 +426,16 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
                 Tag::Github => Self::init(TaggedValue::Github(self.value.github)),
                 Tag::Root => Self::init(TaggedValue::Root),
                 Tag::Uninitialized => Self::init(TaggedValue::Uninitialized),
-                _ => panic!(
-                    "Internal error: unexpected resolution tag: {}",
-                    self.tag.0
-                ),
+                _ => panic!("Internal error: unexpected resolution tag: {}", self.tag.0),
             }
         }
     }
 
-    pub fn fmt<'a>(&'a self, string_bytes: &'a [u8], path_sep: PathSep) -> Formatter<'a, SemverInt> {
+    pub fn fmt<'a>(
+        &'a self,
+        string_bytes: &'a [u8],
+        path_sep: PathSep,
+    ) -> Formatter<'a, SemverInt> {
         Formatter {
             resolution: self,
             buf: string_bytes,
@@ -544,12 +549,20 @@ impl<'a, SemverInt: VersionInt> fmt::Display for StorePathFormatter<'a, SemverIn
                 Tag::Folder => write!(writer, "{}", res.folder.fmt_store_path(string_buf)),
                 Tag::Git => write!(writer, "{}", res.git.fmt_store_path("git+", string_buf)),
                 Tag::Github => {
-                    write!(writer, "{}", res.github.fmt_store_path("github+", string_buf))
+                    write!(
+                        writer,
+                        "{}",
+                        res.github.fmt_store_path("github+", string_buf)
+                    )
                 }
                 Tag::Workspace => write!(writer, "{}", res.workspace.fmt_store_path(string_buf)),
                 Tag::Symlink => write!(writer, "{}", res.symlink.fmt_store_path(string_buf)),
                 Tag::SingleFileModule => {
-                    write!(writer, "{}", res.single_file_module.fmt_store_path(string_buf))
+                    write!(
+                        writer,
+                        "{}",
+                        res.single_file_module.fmt_store_path(string_buf)
+                    )
                 }
                 _ => Ok(()),
             }
@@ -586,7 +599,11 @@ impl<'a, SemverInt: VersionInt> fmt::Display for URLFormatter<'a, SemverInt> {
                 Tag::Git => value.git.format_as("git+", buf, writer),
                 Tag::Github => value.github.format_as("github:", buf, writer),
                 Tag::Workspace => {
-                    write!(writer, "workspace:{}", BStr::new(value.workspace.slice(buf)))
+                    write!(
+                        writer,
+                        "workspace:{}",
+                        BStr::new(value.workspace.slice(buf))
+                    )
                 }
                 Tag::Symlink => write!(writer, "link:{}", BStr::new(value.symlink.slice(buf))),
                 Tag::SingleFileModule => write!(
@@ -681,7 +698,13 @@ impl<'a, SemverInt: VersionInt> fmt::Display for DebugFormatter<'a, SemverInt> {
         // SAFETY: each arm reads the union field corresponding to self.resolution.tag.
         unsafe {
             match self.resolution.tag {
-                Tag::Npm => self.resolution.value.npm.version.fmt(self.buf).fmt(writer)?,
+                Tag::Npm => self
+                    .resolution
+                    .value
+                    .npm
+                    .version
+                    .fmt(self.buf)
+                    .fmt(writer)?,
                 Tag::LocalTarball => write!(
                     writer,
                     "{}",

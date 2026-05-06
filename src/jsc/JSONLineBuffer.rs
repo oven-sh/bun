@@ -1,5 +1,5 @@
 use bun_collections::ByteList; // bun.ByteList == BabyList<u8> (#[repr(C)] ptr+len+cap)
-use bun_str::strings;
+use bun_string::strings;
 
 /// Buffer for newline-delimited data that tracks scan positions to avoid O(n²) scanning.
 /// Each byte is scanned exactly once. We track:
@@ -70,7 +70,8 @@ impl JSONLineBuffer {
         // SAFETY: both ranges lie within the same allocation of `data` (cap >= len >= head);
         // ptr::copy permits overlapping regions (memmove semantics), matching bun.copy.
         unsafe {
-            core::ptr::copy(self.data.ptr.add(head), self.data.ptr, active_len);
+            let base = self.data.ptr.as_ptr();
+            core::ptr::copy(base.add(head), base, active_len);
         }
         debug_assert!((active_len as u64) <= u32::MAX as u64);
         self.data.len = u32::try_from(active_len).unwrap();
@@ -139,7 +140,7 @@ impl JSONLineBuffer {
         self.head >= self.data.len
     }
 
-    pub fn unused_capacity_slice(&mut self) -> &mut [u8] {
+    pub fn unused_capacity_slice(&mut self) -> &mut [core::mem::MaybeUninit<u8>] {
         self.data.unused_capacity_slice()
     }
 

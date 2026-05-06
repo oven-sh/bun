@@ -490,14 +490,14 @@ fn message_with_type_and_level_(
         print_length = 1;
         let opts = vals_slice[1];
         if opts.is_object() {
-            if let Some(depth_prop) = opts.get(global, "depth")? {
+            if let Some(depth_prop) = opts.get(global, b"depth")? {
                 if depth_prop.is_int32() || depth_prop.is_number() || depth_prop.is_big_int() {
-                    print_options.max_depth = depth_prop.to_u16();
+                    print_options.max_depth = depth_prop.to_int32().clamp(0, i32::from(u16::MAX)) as u16;
                 } else if depth_prop.is_null() {
                     print_options.max_depth = u16::MAX;
                 }
             }
-            if let Some(colors_prop) = opts.get(global, "colors")? {
+            if let Some(colors_prop) = opts.get(global, b"colors")? {
                 if colors_prop.is_boolean() {
                     print_options.enable_colors = colors_prop.to_boolean();
                 }
@@ -575,7 +575,9 @@ impl<'a> TablePrinter<'a> {
             global_object,
             tabular_data,
             properties,
-            is_iterable: tabular_data.is_iterable(global_object)?,
+            // TODO(phase-c): `JSValue::is_iterable` not yet ported; treat as
+            // non-iterable so the property-iterator path is taken.
+            is_iterable: { let _ = global_object; false },
             jstype: tabular_data.js_type(),
             value_formatter: Formatter {
                 remaining_values: &[],

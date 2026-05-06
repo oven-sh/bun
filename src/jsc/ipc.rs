@@ -13,9 +13,9 @@ use crate as jsc;
 #[path = "JSONLineBuffer.rs"]
 mod json_line_buffer;
 use json_line_buffer::JSONLineBuffer;
+use crate::virtual_machine::VirtualMachine;
 use crate::{
-    CallFrame, JSGlobalObject, JSValue, JsError, JsResult, Task,
-    VirtualMachine, ZigString,
+    CallFrame, JSGlobalObject, JSValue, JsError, JsResult, Task, ZigString,
 };
 use bun_string::{strings, String as BunString};
 
@@ -1301,7 +1301,7 @@ impl SendQueue {
         // PORT NOTE: KeepAlive::{ref_,unref} take an `EventLoopCtx` (aio cycle-
         // break vtable), not `&VirtualMachine`. The Zig anytype dispatch is
         // routed through `bun_aio::get_vm_ctx` which `bun_runtime` registers.
-        let ctx = bun_aio::get_vm_ctx(bun_aio::AllocatorType::Js);
+        let ctx = bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js);
         if self.should_ref() {
             self.keep_alive.ref_(ctx);
         } else {

@@ -526,9 +526,12 @@ impl JSValue {
         if prop.is_symbol() {
             // JSValue.zig:1693 — `throwInvalidPropertyTypeValue(property, "string", prop)`
             // (Node-style ERR_INVALID_ARG_TYPE TypeError including received value's type).
-            // PORT NOTE: routed via `throw_invalid_argument_type_value` until
+            // PORT NOTE: routed via `throw_invalid_arguments` until
             // `JSGlobalObject::throw_invalid_property_type_value` is ported.
-            return Err(global.throw_invalid_argument_type_value(property, b"string", prop));
+            return Err(global.throw_invalid_arguments(format_args!(
+                "The \"{}\" property must be of type string. Received a symbol",
+                alloc::string::String::from_utf8_lossy(property),
+            )));
         }
         let s = prop.to_bun_string(global)?;
         if s.is_empty() { Ok(None) } else { Ok(Some(s)) }

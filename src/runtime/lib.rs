@@ -34,6 +34,7 @@ pub mod api;
 pub mod timer;
 pub mod dispatch;
 pub mod jsc_hooks;
+pub mod generated_classes; // include!()s ${BUN_CODEGEN_DIR}/generated_classes.rs
 
 // ─── un-gated in B-2 round 3 (each subdir owns a real `mod.rs`; heavy bodies
 //     re-gated *inside* those files) ────────────────────────────────────────

@@ -449,9 +449,11 @@ impl Response {
 mod _jsc_host_fns {
 use super::*;
 
-// TODO(b2-blocked): #[bun_jsc::host_fn]
-#[unsafe(no_mangle)]
-pub fn js_function_request_or_response_has_body_value(_global: &JSGlobalObject, callframe: &CallFrame) -> JSValue {
+#[unsafe(export_name = "jsFunctionRequestOrResponseHasBodyValue")]
+#[bun_jsc::host_call]
+pub fn js_function_request_or_response_has_body_value(_global: *mut JSGlobalObject, callframe: *mut CallFrame) -> JSValue {
+    // SAFETY: JSC passes a live callframe (global is unused).
+    let callframe = unsafe { &*callframe };
     let arguments = callframe.arguments_old::<1>();
     let this_value = arguments.ptr[0];
     if this_value.is_empty_or_undefined_or_null() {
@@ -469,12 +471,14 @@ pub fn js_function_request_or_response_has_body_value(_global: &JSGlobalObject, 
     JSValue::FALSE
 }
 
-// TODO(b2-blocked): #[bun_jsc::host_fn]
-#[unsafe(no_mangle)]
+#[unsafe(export_name = "jsFunctionGetCompleteRequestOrResponseBodyValueAsArrayBuffer")]
+#[bun_jsc::host_call]
 pub fn js_function_get_complete_request_or_response_body_value_as_array_buffer(
-    global_object: &JSGlobalObject,
-    callframe: &CallFrame,
+    global_object: *mut JSGlobalObject,
+    callframe: *mut CallFrame,
 ) -> JSValue {
+    // SAFETY: JSC passes live global/callframe.
+    let (global_object, callframe) = unsafe { (&*global_object, &*callframe) };
     let arguments = callframe.arguments_old::<1>();
     let this_value = arguments.ptr[0];
     if this_value.is_empty_or_undefined_or_null() {

@@ -231,64 +231,15 @@ pub extern "C" fn Bun__VM__useIsolationSourceProviderCache(vm: *mut VirtualMachi
 // Bun__Blob__getSizeForBindings
 
 // .classes.ts hooks (build/debug/codegen/ZigGeneratedClasses.zig)
-#[unsafe(no_mangle)]
-pub extern "C" fn Blob__estimatedSize(this: *mut Blob) -> usize {
-    0
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn BlobClass__finalize(this: *mut Blob) {
-    unreachable!("BlobClass__finalize: emitted by .classes.ts codegen (ZigGeneratedClasses); Rust codegen not yet emitted")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Blob__onStructuredCloneSerialize(
-    this: *mut Blob,
-    global: *mut JSGlobalObject,
-    ctx: *mut c_void,
-    write_bytes: WriteBytesFn,
-) {
-    unreachable!("Blob__onStructuredCloneSerialize: emitted by .classes.ts codegen (ZigGeneratedClasses); Rust codegen not yet emitted")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn Blob__onStructuredCloneDeserialize(
-    global: *mut JSGlobalObject,
-    ptr: *mut *mut u8,
-    end: *const u8,
-) -> JSValue {
-    unreachable!("Blob__onStructuredCloneDeserialize: emitted by .classes.ts codegen (ZigGeneratedClasses); Rust codegen not yet emitted")
-}
-
-// ── BlockList (.classes.ts hooks) ───────────────────────────────────────────
-// REAL: src/runtime/node/net/BlockList.rs
-
-#[unsafe(no_mangle)]
-pub extern "C" fn BlockList__estimatedSize(this: *mut BlockList) -> usize {
-    0
-}
-
-// REAL: now provided by bun_runtime (src/runtime/node/net/BlockList.rs).
-// BlockListClass__finalize
-
-#[unsafe(no_mangle)]
-pub extern "C" fn BlockList__onStructuredCloneSerialize(
-    this: *mut BlockList,
-    global: *mut JSGlobalObject,
-    ctx: *mut c_void,
-    write_bytes: WriteBytesFn,
-) {
-    unreachable!("BlockList__onStructuredCloneSerialize: emitted by .classes.ts codegen (ZigGeneratedClasses); Rust codegen not yet emitted")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn BlockList__onStructuredCloneDeserialize(
-    global: *mut JSGlobalObject,
-    ptr: *mut *mut u8,
-    end: *const u8,
-) -> JSValue {
-    unreachable!("BlockList__onStructuredCloneDeserialize: emitted by .classes.ts codegen (ZigGeneratedClasses); Rust codegen not yet emitted")
-}
+// REAL: now provided by bun_runtime::generated_classes
+//   (build/debug/codegen/generated_classes.rs via generateRust()).
+// Blob__estimatedSize
+// BlobClass__finalize
+// Blob__onStructuredCloneSerialize
+// Blob__onStructuredCloneDeserialize
+// BlockList__estimatedSize
+// BlockList__onStructuredCloneSerialize
+// BlockList__onStructuredCloneDeserialize
 
 // ── WebView process control ─────────────────────────────────────────────────
 // REAL: src/runtime/webview/{ChromeProcess,HostProcess}.rs (`mod webview` not

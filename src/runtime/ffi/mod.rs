@@ -35,6 +35,70 @@ pub mod ffi_object_draft;
 // TODO(b2-blocked): bun_tcc_sys::State (compile/relocate/add_symbol/define_symbol)
 pub mod ffi_object {}
 
+// ─── DOMCall slowpath C-ABI exports ──────────────────────────────────────────
+// Zig: `host_fn.DOMCall(class, Container, fn, effect)` emits a `comptime
+// @export(&slowpath, .{ .name = class ++ "__" ++ fn ++ "__slowpath" })` where
+// `slowpath(global, this, args_ptr, args_len)` calls `toJSHostCall(global,
+// @src(), Container.fn, .{ global, this, args[0..len] })`. The bodies live in
+// `ffi_object_draft::reader::*` / `ffi_object_draft::ptr` (already ported);
+// these shims are the missing `@export` wrappers.
+mod dom_call_slowpath {
+    use super::ffi_object_draft as ffi_object;
+    use crate::jsc::{JSGlobalObject, JSValue};
+
+    macro_rules! dom_call_slowpath {
+        ($( $sym:ident => $target:path ),* $(,)?) => {$(
+            #[unsafe(no_mangle)]
+            #[bun_jsc::host_call]
+            pub fn $sym(
+                global: *mut JSGlobalObject,
+                this_value: JSValue,
+                arguments_ptr: *const JSValue,
+                arguments_len: usize,
+            ) -> JSValue {
+                // SAFETY: C++ DOMJIT slowpath caller passes a live global and a
+                // valid `[JSValue; arguments_len]` span (ZigLazyStaticFunctions).
+                let (global, arguments) = unsafe {
+                    (&*global, core::slice::from_raw_parts(arguments_ptr, arguments_len))
+                };
+                bun_jsc::to_js_host_call(global, $target(global, this_value, arguments))
+            }
+        )*};
+    }
+
+    dom_call_slowpath! {
+        Reader__u8__slowpath     => ffi_object::reader::u8,
+        Reader__u16__slowpath    => ffi_object::reader::u16,
+        Reader__u32__slowpath    => ffi_object::reader::u32,
+        Reader__ptr__slowpath    => ffi_object::reader::ptr,
+        Reader__i8__slowpath     => ffi_object::reader::i8,
+        Reader__i16__slowpath    => ffi_object::reader::i16,
+        Reader__i32__slowpath    => ffi_object::reader::i32,
+        Reader__i64__slowpath    => ffi_object::reader::i64,
+        Reader__u64__slowpath    => ffi_object::reader::u64,
+        Reader__intptr__slowpath => ffi_object::reader::intptr,
+        Reader__f32__slowpath    => ffi_object::reader::f32,
+        Reader__f64__slowpath    => ffi_object::reader::f64,
+    }
+
+    // `FFI.ptr` slowpath — body returns bare `JSValue` (errors are values, not
+    // exceptions), so no `to_js_host_call` mapping.
+    #[unsafe(no_mangle)]
+    #[bun_jsc::host_call]
+    pub fn FFI__ptr__slowpath(
+        global: *mut JSGlobalObject,
+        this_value: JSValue,
+        arguments_ptr: *const JSValue,
+        arguments_len: usize,
+    ) -> JSValue {
+        // SAFETY: see `dom_call_slowpath!` above.
+        let (global, arguments) = unsafe {
+            (&*global, core::slice::from_raw_parts(arguments_ptr, arguments_len))
+        };
+        ffi_object::ptr(global, this_value, arguments)
+    }
+}
+
 // ─── TinyCC handle stub ──────────────────────────────────────────────────────
 // `bun_tcc_sys` currently exposes only an opaque marker; the method-ful
 // `State` (compile_string/relocate/add_symbol/…) is gated. Model the handle

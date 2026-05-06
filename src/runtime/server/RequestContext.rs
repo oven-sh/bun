@@ -3569,10 +3569,78 @@ where
 
 const MAX_REQUEST_BODY_PREALLOCATE_LENGTH: usize = 1024 * 256;
 
-// TODO(port): Zig `comptime { @export(...) }` block — these export
-// `Bun__HTTPRequestContext{Debug?}{H3|TLS|}__{onResolve,onReject,onResolveStream,onRejectStream}`.
-// Phase B: emit per-monomorphization `#[unsafe(no_mangle)] pub extern "C"` shims via macro
-// (cannot be generic). The `#[bun_jsc::host_fn]` attribute on the methods provides the ABI.
+// ─── per-monomorphization C-ABI exports ──────────────────────────────────────
+// Zig: `comptime { @export(&jsc.toJSHostFn(onResolve), .{ .name = export_prefix ++ "__onResolve" }); ... }`
+// where `export_prefix = "Bun__HTTPRequestContext" ++ (debug ? "Debug" : "") ++ (h3 ? "H3" : ssl ? "TLS" : "")`.
+// Rust generics cannot own `#[no_mangle]` symbols, so each of the 6 concrete
+// instantiations × 4 callbacks is spelled out via `request_ctx_exports!`. The
+// generic body lives on the `impl<ThisServer, ..> RequestContext` block above
+// (`on_resolve` / `on_reject` / `on_resolve_stream` / `on_reject_stream`); each
+// shim is the `toJSHostFn` result-mapping (`JsResult<JSValue>` → raw `JSValue`,
+// `.zero` on error) over the monomorphic associated fn.
+macro_rules! request_ctx_exports {
+    ($(
+        ($srv:ty, $ssl:literal, $dbg:literal, $h3:literal) =>
+        $on_resolve:ident, $on_reject:ident, $on_resolve_stream:ident, $on_reject_stream:ident
+    );* $(;)?) => {$(
+        #[unsafe(no_mangle)]
+        #[bun_jsc::host_call]
+        pub fn $on_resolve(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
+            // SAFETY: JSC passes live global/callframe to promise reaction host fns.
+            bun_jsc::to_js_host_fn(RequestContext::<$srv, $ssl, $dbg, $h3>::on_resolve)(g, f)
+        }
+        #[unsafe(no_mangle)]
+        #[bun_jsc::host_call]
+        pub fn $on_reject(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
+            // SAFETY: JSC passes live global/callframe to promise reaction host fns.
+            bun_jsc::to_js_host_fn(RequestContext::<$srv, $ssl, $dbg, $h3>::on_reject)(g, f)
+        }
+        #[unsafe(no_mangle)]
+        #[bun_jsc::host_call]
+        pub fn $on_resolve_stream(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
+            // SAFETY: JSC passes live global/callframe to promise reaction host fns.
+            bun_jsc::to_js_host_fn(RequestContext::<$srv, $ssl, $dbg, $h3>::on_resolve_stream)(g, f)
+        }
+        #[unsafe(no_mangle)]
+        #[bun_jsc::host_call]
+        pub fn $on_reject_stream(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
+            // SAFETY: JSC passes live global/callframe to promise reaction host fns.
+            bun_jsc::to_js_host_fn(RequestContext::<$srv, $ssl, $dbg, $h3>::on_reject_stream)(g, f)
+        }
+    )*};
+}
+request_ctx_exports! {
+    (crate::server::HTTPServer,       false, false, false) =>
+        Bun__HTTPRequestContext__onResolve,
+        Bun__HTTPRequestContext__onReject,
+        Bun__HTTPRequestContext__onResolveStream,
+        Bun__HTTPRequestContext__onRejectStream;
+    (crate::server::HTTPSServer,      true,  false, false) =>
+        Bun__HTTPRequestContextTLS__onResolve,
+        Bun__HTTPRequestContextTLS__onReject,
+        Bun__HTTPRequestContextTLS__onResolveStream,
+        Bun__HTTPRequestContextTLS__onRejectStream;
+    (crate::server::DebugHTTPServer,  false, true,  false) =>
+        Bun__HTTPRequestContextDebug__onResolve,
+        Bun__HTTPRequestContextDebug__onReject,
+        Bun__HTTPRequestContextDebug__onResolveStream,
+        Bun__HTTPRequestContextDebug__onRejectStream;
+    (crate::server::DebugHTTPSServer, true,  true,  false) =>
+        Bun__HTTPRequestContextDebugTLS__onResolve,
+        Bun__HTTPRequestContextDebugTLS__onReject,
+        Bun__HTTPRequestContextDebugTLS__onResolveStream,
+        Bun__HTTPRequestContextDebugTLS__onRejectStream;
+    (crate::server::HTTPSServer,      true,  false, true)  =>
+        Bun__HTTPRequestContextH3__onResolve,
+        Bun__HTTPRequestContextH3__onReject,
+        Bun__HTTPRequestContextH3__onResolveStream,
+        Bun__HTTPRequestContextH3__onRejectStream;
+    (crate::server::DebugHTTPSServer, true,  true,  true)  =>
+        Bun__HTTPRequestContextDebugH3__onResolve,
+        Bun__HTTPRequestContextDebugH3__onReject,
+        Bun__HTTPRequestContextDebugH3__onResolveStream,
+        Bun__HTTPRequestContextDebugH3__onRejectStream;
+}
 
 pub struct StreamPair<'a, ThisServer, const SSL: bool, const DBG: bool, const H3: bool> {
     pub this: &'a mut RequestContext<ThisServer, SSL, DBG, H3>,

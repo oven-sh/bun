@@ -2997,6 +2997,9 @@ pub fn on_file_stream_reject_request_stream(
 
 // C-ABI shims for `JSValue::then` (mirrors Zig `toJSHostFn`). The Rust-side
 // host fns above are `JSHostFnZig`; `then()` wants the raw `JSHostFn` shape.
+// Exported under the Zig `@export` names so C++ (`BunPromiseInlines.h`) links
+// the same symbol it does today.
+#[unsafe(export_name = "Bun__FileStreamWrapper__onResolveRequestStream")]
 unsafe extern "C" fn on_file_stream_resolve_request_stream_shim(
     global: *mut JSGlobalObject,
     callframe: *mut CallFrame,
@@ -3005,6 +3008,7 @@ unsafe extern "C" fn on_file_stream_resolve_request_stream_shim(
     let (global, callframe) = unsafe { (&*global, &*callframe) };
     bun_jsc::host_fn::to_js_host_fn_result(global, on_file_stream_resolve_request_stream(global, callframe))
 }
+#[unsafe(export_name = "Bun__FileStreamWrapper__onRejectRequestStream")]
 unsafe extern "C" fn on_file_stream_reject_request_stream_shim(
     global: *mut JSGlobalObject,
     callframe: *mut CallFrame,

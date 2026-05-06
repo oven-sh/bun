@@ -857,10 +857,51 @@ pub fn has_instance(_: JSValue, _global: &JSGlobalObject, value: JSValue) -> boo
 // JSS3File__stat      -> raw shim wrapping get_stat (method-with-context)
 
 pub mod exports {
-    // TODO(port): jsc.toJSHostFnWithContext(Blob, fn) — equivalent is the shim #[bun_jsc::host_fn(method)] emits;
-    // these consts are the raw `extern "sysv64"/"C"` fn pointers exported above.
-    pub const JSS3FILE_PRESIGN: () = ();
-    pub const JSS3FILE_STAT: () = ();
+    use super::*;
+
+    /// `@export(&construct, .{ .name = "JSS3File__construct" })` — bare ctor,
+    /// not routed through `toJSHostFn` (returns `?*Blob`, not `JSValue`).
+    #[unsafe(no_mangle)]
+    #[bun_jsc::host_call]
+    pub fn JSS3File__construct(global: *mut JSGlobalObject, callframe: *mut CallFrame) -> *mut Blob {
+        // SAFETY: JSC passes live global/callframe to constructors.
+        super::construct(unsafe { &*global }, unsafe { &*callframe })
+    }
+
+    /// `@export(&getBucket, .{ .name = "JSS3File__bucket" })` — getter
+    /// (`callconv(jsc.conv)`, takes `*Blob, *JSGlobalObject`, returns JSValue).
+    #[unsafe(no_mangle)]
+    #[bun_jsc::host_call]
+    pub fn JSS3File__bucket(this: *mut Blob, global: *mut JSGlobalObject) -> JSValue {
+        // SAFETY: C++ prototype getter passes the live `m_ctx` Blob and global.
+        let (this, global) = unsafe { (&*this, &*global) };
+        bun_jsc::to_js_host_call(global, super::get_bucket(this, global))
+    }
+
+    /// `@export(&jsc.toJSHostFnWithContext(Blob, getPresignUrl), ...)`.
+    #[unsafe(no_mangle)]
+    #[bun_jsc::host_call]
+    pub fn JSS3File__presign(
+        this: *mut Blob,
+        global: *mut JSGlobalObject,
+        callframe: *mut CallFrame,
+    ) -> JSValue {
+        // SAFETY: JSC method shim passes live `m_ctx`/global/callframe.
+        bun_jsc::to_js_host_fn_with_context(super::get_presign_url)(this, global, callframe)
+    }
+
+    /// `@export(&getStat, .{ .name = "JSS3File__stat" })` — direct
+    /// `callconv(jsc.conv)` method (Zig body already swallows JsError → .zero).
+    #[unsafe(no_mangle)]
+    #[bun_jsc::host_call]
+    pub fn JSS3File__stat(
+        this: *mut Blob,
+        global: *mut JSGlobalObject,
+        callframe: *mut CallFrame,
+    ) -> JSValue {
+        // SAFETY: JSC method shim passes live `m_ctx`/global/callframe.
+        bun_jsc::to_js_host_fn_with_context(super::get_stat)(this, global, callframe)
+    }
 }
 
 // TODO(port): move to <area>_sys

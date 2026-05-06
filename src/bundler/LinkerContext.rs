@@ -3792,15 +3792,6 @@ impl<'a> LinkerContext<'a> {
         &mut self,
         source_index: crate::IndexInt,
     ) -> Result<(), AllocError> {
-        let _ = source_index;
-        todo!("phase-c: rung 1 re-gated — generate_code_for_lazy_export body has ~12 type errs (Expr::Data/B::Identifier/LocRef.r#ref); bundler-linker not on -e/run path")
-    }
-
-     // blocked_on(phase-c): re-gated for rung-1 link — body has type errs; not on -e/run path
-    fn __generate_code_for_lazy_export_gated(
-        &mut self,
-        source_index: crate::IndexInt,
-    ) -> Result<(), AllocError> {
         let exports_kind = self.graph.ast.items_exports_kind()[source_index as usize];
         let module_ref = self.graph.ast.items_module_ref()[source_index as usize];
         // PORT NOTE: reshaped for borrowck — `parts` re-borrowed below after

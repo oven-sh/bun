@@ -379,20 +379,70 @@ mod platform {
     /// Zig: `name_data: if (use_windows_ospath) [257]u16 else [513]u8`.
     pub trait WindowsOsPath {
         type NameData: Sized;
-        type ResultT;
+        type Entry;
         const IS_U16: bool;
+        /// Max u16 codeunits that fit in `name_data` (reserving one for the
+        /// trailing NUL on the u16 path, or accounting for UTF-16→UTF-8
+        /// expansion on the u8 path).
+        fn max_name_u16() -> usize;
+        /// Convert the raw UTF-16 directory-entry name into the per-variant
+        /// result, writing into `name_data` (the iterator-owned scratch buffer
+        /// whose contents are valid until the next `next()` call).
+        fn make_entry(
+            name_data: &mut Self::NameData,
+            dir_info_name: &[u16],
+            kind: EntryKind,
+        ) -> Self::Entry;
     }
     pub struct OsPathFalse;
     pub struct OsPathTrue;
     impl WindowsOsPath for OsPathFalse {
         type NameData = [u8; 513];
-        type ResultT = Result;
+        type Entry = IteratorResult;
         const IS_U16: bool = false;
+        #[inline]
+        fn max_name_u16() -> usize {
+            // Zig: (self.name_data.len - 1) / 2
+            (513 - 1) / 2
+        }
+        fn make_entry(
+            name_data: &mut [u8; 513],
+            dir_info_name: &[u16],
+            kind: EntryKind,
+        ) -> IteratorResult {
+            // Trust that Windows gives us valid UTF-16LE
+            let name_utf8 = strings::paths::from_w_path(&mut name_data[..], dir_info_name);
+            IteratorResult {
+                name: PathString::init(name_utf8.as_bytes()),
+                kind,
+            }
+        }
     }
     impl WindowsOsPath for OsPathTrue {
         type NameData = [u16; 257];
-        type ResultT = ResultW;
+        type Entry = IteratorResultW;
         const IS_U16: bool = true;
+        #[inline]
+        fn max_name_u16() -> usize {
+            // Zig: self.name_data.len - 1
+            257 - 1
+        }
+        fn make_entry(
+            name_data: &mut [u16; 257],
+            dir_info_name: &[u16],
+            kind: EntryKind,
+        ) -> IteratorResultW {
+            let len = dir_info_name.len();
+            name_data[..len].copy_from_slice(dir_info_name);
+            name_data[len] = 0;
+            IteratorResultW {
+                name: IteratorResultWName {
+                    data_ptr: name_data.as_ptr(),
+                    data_len: len,
+                },
+                kind,
+            }
+        }
     }
     // Map the const bool to the marker type.
     pub type Select<const B: bool> = <() as SelectImpl<B>>::T;

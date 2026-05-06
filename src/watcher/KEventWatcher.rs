@@ -155,6 +155,6 @@ pub fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
 // PORT STATUS
 //   source:     src/watcher/KEventWatcher.zig (108 lines)
 //   confidence: medium
-//   todos:      1
+//   todos:      0
 //   notes:      watch_loop_cycle reshaped for borrowck (deduped events copied to Vec before write_trace_events/on_file_update)
 // ──────────────────────────────────────────────────────────────────────────

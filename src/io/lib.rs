@@ -449,8 +449,7 @@ impl Loop {
 
             // Process pending requests
             {
-                let mut pending_batch = self.pending.pop_batch();
-                let mut pending = pending_batch.iterator();
+                let mut pending = self.pending.pop_batch().iterator();
                 events_list.reserve(pending.batch.count);
                 // SAFETY: zero the spare capacity; EventType is POD.
                 unsafe {
@@ -461,7 +460,12 @@ impl Loop {
                     );
                 }
 
-                while let Some(request) = pending.next() {
+                loop {
+                    let request_ptr = pending.next();
+                    if request_ptr.is_null() { break; }
+                    // SAFETY: pop_batch yields live nodes pushed by `schedule()`.
+                    let request = unsafe { &mut *request_ptr };
+                    request.scheduled = false;
                     match (request.callback)(request) {
                         Action::Readable(readable) => {
                             let i = events_list.len();

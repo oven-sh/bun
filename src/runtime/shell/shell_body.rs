@@ -4841,7 +4841,7 @@ impl<'a> ShellSrcBuilder<'a> {
         let _guard = scopeguard::guard((), |_| bunstr.deref());
 
         // Check for null bytes in shell argument (security: prevent null byte injection)
-        if bunstr.index_of_ascii_char(0).is_some() {
+        if bunstr_index_of_ascii_char(&bunstr, 0).is_some() {
             return Err(self
                 .global_this
                 .err(jsc::ErrorCode::INVALID_ARG_VALUE, format_args!(

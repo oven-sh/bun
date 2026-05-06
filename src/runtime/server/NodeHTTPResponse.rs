@@ -1133,7 +1133,7 @@ pub fn Bun__NodeHTTPRequest__onReject(
         this.on_request_complete();
     }
 
-    let _ = global_object.bun_vm().uncaught_exception(global_object, err, true);
+    let _ = bun_vm_mut(global_object).uncaught_exception(global_object, err, true);
     this.deref();
     JSValue::UNDEFINED
 }

@@ -266,7 +266,8 @@ impl AnyRoute {
         match self {
             AnyRoute::Static(static_route) => static_route.memory_cost(),
             AnyRoute::File(file_route) => file_route.memory_cost(),
-            AnyRoute::Html(html_bundle_route) => html_bundle_route.data.memory_cost(),
+            // SAFETY: RefPtr.data is a live NonNull while held in the route table.
+            AnyRoute::Html(html_bundle_route) => unsafe { html_bundle_route.data.as_ref() }.memory_cost(),
             AnyRoute::FrameworkRouter(_) => mem::size_of::<bake::FileSystemRouterType>(),
         }
     }

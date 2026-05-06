@@ -416,7 +416,7 @@ pub fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
             }
             // SAFETY: chars is a freshly-allocated [u16] buffer; reinterpret as bytes.
             let output_bytes = unsafe {
-                slice::from_raw_parts_mut(chars.cast::<u8>(), chars_len * 2)
+                slice::from_raw_parts_mut(chars.as_mut_ptr().cast::<u8>(), chars_len * 2)
             };
             let out_len = output_bytes.len();
             output_bytes[out_len - 1] = 0;

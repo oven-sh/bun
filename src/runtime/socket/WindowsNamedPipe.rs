@@ -608,23 +608,25 @@ impl WindowsNamedPipe {
         ssl_options: Option<SSLConfig>,
         owned_ctx: Option<*mut boringssl::SSL_CTX>,
     ) -> Option<bun_sys::Result<()>> {
-        let handlers = WrapperType::Handlers {
+        let handlers = ssl_wrapper::Handlers {
             ctx: self as *mut _,
-            on_open: Self::on_open,
-            on_handshake: Self::on_handshake,
-            on_data: Self::on_data,
-            on_close: Self::on_close,
-            write: Self::internal_write,
+            on_open: Self::ssl_on_open,
+            on_handshake: Self::ssl_on_handshake,
+            on_data: Self::ssl_on_data,
+            on_close: Self::ssl_on_close,
+            write: Self::ssl_write,
         };
         if let Some(ctx) = owned_ctx {
             self.flags.set_is_ssl(true);
-            self.wrapper = match WrapperType::init_with_ctx(ctx, true, handlers) {
+            // SAFETY: caller passes Some only for a live SSL_CTX*; null would be a bug.
+            let ctx_nn = unsafe { NonNull::new_unchecked(ctx) };
+            self.wrapper = match WrapperType::init_with_ctx(ctx_nn, true, handlers) {
                 Ok(w) => Some(w),
                 Err(_) => {
                     // SAFETY: ctx is a valid SSL_CTX* with one adopted ref
                     unsafe { boringssl::SSL_CTX_free(ctx) };
                     return Some(bun_sys::Result::Err(bun_sys::Error {
-                        errno: bun_sys::E::PIPE as _,
+                        errno: bun_sys::E::EPIPE as _,
                         syscall: bun_sys::Tag::connect,
                         ..Default::default()
                     }));
@@ -634,11 +636,11 @@ impl WindowsNamedPipe {
         }
         if let Some(tls) = ssl_options {
             self.flags.set_is_ssl(true);
-            self.wrapper = match WrapperType::init(tls, true, handlers) {
+            self.wrapper = match WrapperType::init(&tls, true, handlers) {
                 Ok(w) => Some(w),
                 Err(_) => {
                     return Some(bun_sys::Result::Err(bun_sys::Error {
-                        errno: bun_sys::E::PIPE as _,
+                        errno: bun_sys::E::EPIPE as _,
                         syscall: bun_sys::Tag::connect,
                         ..Default::default()
                     }));

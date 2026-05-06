@@ -55,7 +55,7 @@ pub fn to_have_nth_returned_with(
 
     if index < calls_count {
         nth_call_exists = true;
-        let nth_result = returns.get_index(global, index);
+        let nth_result = returns.get_direct_index(global, index);
         if nth_result.is_object() {
             let result_type = nth_result.get(global, "type")?.unwrap_or(JSValue::UNDEFINED);
             if result_type.is_string() {

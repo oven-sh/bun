@@ -941,8 +941,8 @@ mod _gated_from_js {
 
     // PORT NOTE: Zig used an anonymous `union(enum)` param; named here.
     enum SingleFile<'a> {
-        String(WTFStringImpl),
-        Buffer(&'a jsc::JSCArrayBuffer),
+        String(bun_str::String),
+        Buffer(&'a mut jsc::JSCArrayBuffer),
         File(&'a mut crate::webcore::Blob),
     }
 
@@ -951,7 +951,7 @@ mod _gated_from_js {
         file: SingleFile<'_>,
     ) -> Result<CString, ReadFromBlobError> {
         match file {
-            SingleFile::String(string) => Ok(string.to_owned_slice_z()),
+            SingleFile::String(string) => Ok(zbox_into_cstring(string.to_owned_slice_z())),
             SingleFile::Buffer(jsc_buffer) => {
                 let buffer: jsc::ArrayBuffer = jsc_buffer.as_array_buffer();
                 let mut v = buffer.byte_slice().to_vec();

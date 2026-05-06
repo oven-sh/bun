@@ -545,11 +545,10 @@ fn on_received_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                     this.on_internal_receive_data(payload);
                 } else {
                     // node.js errors in this case with the same error, lets keep it consistent
-                    // TODO(port): confirm bun_jsc API for `globalObject.ERR(.STREAM_WRAP, fmt, args).toJS()`.
                     let error_value = global
                         .err(
                             bun_jsc::ErrorCode::STREAM_WRAP,
-                            "Stream has StringDecoder set or is in objectMode",
+                            format_args!("Stream has StringDecoder set or is in objectMode"),
                         )
                         .to_js();
                     error_value.ensure_still_alive();

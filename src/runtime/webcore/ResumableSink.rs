@@ -210,8 +210,8 @@ impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<'a, J
                 let bytes = byte_stream.drain();
                 // PORT NOTE: `defer bytes.deinit(...)` deleted — Drop frees it.
                 // lets write and see if we can still pipe or if we have backpressure
-                if bytes.len() > 0 {
-                    scoped_log!(ResumableSink, "onWrite {}", bytes.len());
+                if bytes.len > 0 {
+                    scoped_log!(ResumableSink, "onWrite {}", bytes.len);
                     // we ignore the return value here because we dont want to pause the stream
                     // if we pause will just buffer in the pipe and we can do the buffer in one place
                     let _ = Self::on_write(this_ref.context, bytes.slice());

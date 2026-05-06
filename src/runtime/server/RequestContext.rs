@@ -2877,11 +2877,11 @@ where
         if let Some(server) = self.server {
             // SAFETY: BACKREF
             let server = unsafe { &*server };
-            if !server.config().on_error.is_empty() && !self.flags.has_called_error_handler() {
+            if let Some(on_error) = server.config().on_error.as_ref()
+                && !self.flags.has_called_error_handler()
+            {
                 self.flags.set_has_called_error_handler(true);
-                let result = server
-                    .config()
-                    .on_error
+                let result = on_error
                     .call(
                         server.global_this(),
                         server.js_value().try_get().unwrap_or(JSValue::UNDEFINED),
@@ -2980,7 +2980,7 @@ where
     pub fn run_error_handler_with_status_code(&mut self, value: JSValue, status: u16) {
         jsc::mark_binding!();
         // SAFETY: FFI handle, just checked is_some()
-        if self.resp.is_none() || unsafe { (*self.resp.unwrap()).has_responded() } {
+        if self.resp.is_none() || unsafe { self.resp.unwrap().has_responded() } {
             return;
         }
 

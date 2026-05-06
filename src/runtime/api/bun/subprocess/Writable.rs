@@ -273,15 +273,15 @@ impl<'a> Writable<'a> {
                     _ => unreachable!(),
                 };
                 Ok(Writable::Buffer(StaticPipeWriter::create(
-                    event_loop,
-                    subprocess,
+                    evtloop,
+                    subprocess as *mut Subprocess<'a>,
                     result,
                     super::Source::Blob(blob),
                 )))
             }
             Stdio::ArrayBuffer(array_buffer) => Ok(Writable::Buffer(StaticPipeWriter::create(
-                event_loop,
-                subprocess,
+                evtloop,
+                subprocess as *mut Subprocess<'a>,
                 result,
                 super::Source::ArrayBuffer(core::mem::take(array_buffer)),
             ))),

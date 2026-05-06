@@ -797,7 +797,7 @@ impl StreamResult {
                     }
                     break 'brk js_err;
                 };
-                *result = StreamResult::Temporary(ByteList::default());
+                *result = StreamResult::Temporary(ManuallyDrop::new(ByteList::default()));
                 // SAFETY: promise GC-rooted; fresh temp `&mut` is sole borrow across
                 // this re-entrant call (no long-lived `&mut JSPromise` held).
                 let _ = unsafe { &mut *promise }.reject_with_async_stack(global_this, Ok(value));
@@ -812,7 +812,7 @@ impl StreamResult {
                 let value = match result.to_js(global_this) {
                     Ok(v) => v,
                     Err(err) => {
-                        *result = StreamResult::Temporary(ByteList::default());
+                        *result = StreamResult::Temporary(ManuallyDrop::new(ByteList::default()));
                         // SAFETY: see reject_with_async_stack above; fresh temp `&mut`.
                         let _ = unsafe { &mut *promise }.reject(global_this, Err(err));
                         // TODO: properly propagate exception upwards
@@ -823,7 +823,7 @@ impl StreamResult {
                 };
                 value.ensure_still_alive();
 
-                *result = StreamResult::Temporary(ByteList::default());
+                *result = StreamResult::Temporary(ManuallyDrop::new(ByteList::default()));
                 // SAFETY: see reject_with_async_stack above; fresh temp `&mut`.
                 let _ = unsafe { &mut *promise }.resolve(global_this, value);
                 // TODO: properly propagate exception upwards

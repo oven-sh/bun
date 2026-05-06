@@ -4551,7 +4551,7 @@ impl NodeFS {
 
     pub fn uv_read(&mut self, args: &args::Read, rc: i64) -> Maybe<ret::Read> {
         if rc < 0 {
-            return Maybe::Err(sys::Error { errno: (-rc) as _, syscall: sys::Tag::read, fd: args.fd, from_libuv: true, ..Default::default() });
+            return Maybe::Err(sys::Error { errno: (-rc) as _, syscall: sys::Tag::read, fd: args.fd, #[cfg(windows)] from_libuv: true, ..Default::default() });
         }
         Maybe::Ok(ret::Read { bytes_read: rc as u64 })
     }

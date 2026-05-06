@@ -1214,6 +1214,10 @@ pub mod dispatch {
         pub current_bundle_start_data: unsafe fn(*mut ()) -> *const (),
         /// `dev.barrel_files_with_deferrals.get_or_put(path)` + key dupe.
         pub register_barrel_with_deferrals: unsafe fn(*mut (), path: &[u8]) -> Result<(), bun_core::Error>,
+        /// `dev.barrel_needed_exports.get_or_put(path).get_or_put(alias)` — wraps the
+        /// full body of `barrel_imports.zig:persistBarrelExport` so the bundler crate
+        /// doesn't name DevServer.
+        pub register_barrel_export: unsafe fn(*mut (), barrel_path: &[u8], alias: &[u8]),
     }
     impl DevServerHandle {
         #[inline]

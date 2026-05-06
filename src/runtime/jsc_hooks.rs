@@ -2637,8 +2637,8 @@ unsafe fn transpile_file(
     // Spec :1085 + VirtualMachine.zig:489-494 — lazy-init the per-thread
     // shared printer. PORT NOTE: in Zig `loadExtraEnvAndSourceCodePrinter`
     // primes `source_code_printer` before the first import; the Rust
-    // `load_extra_env_and_source_code_printer` is a `todo!()` stub
-    // (VirtualMachine.rs:1568), so prime here on first use instead.
+    // `load_extra_env_and_source_code_printer` calls `ensure_source_code_printer`
+    // (VirtualMachine.rs), but prime defensively here on first use too.
     let printer_ptr: *mut bun_js_printer::BufferPrinter = TRANSPILE_PRINTER.with(|cell| {
         let mut p = cell.get();
         if p.is_null() {

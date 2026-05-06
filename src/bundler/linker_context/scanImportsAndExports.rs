@@ -4,17 +4,17 @@ use crate::ungate_support::js_meta::JSMetaListExt as _;
 use crate::Graph::InputFileListExt as _;
 use crate::linker_graph::FileListExt as _;
 use crate::ungate_support::EntryPointListExt as _;
-//!
-//! PORT NOTE: the Zig body takes ~20 simultaneous mutable column slices
-//! (`this.graph.ast.items(.field)`) and freely interleaves them with
-//! `&mut LinkerContext` method calls. Rust's borrowck forbids both holding
-//! overlapping `&mut [T]` columns from the same `MultiArrayList` and holding
-//! any `&mut` column across a `&mut self` call into `this.graph`. The columns
-//! are physically disjoint (SoA layout) and the underlying `MultiArrayList`
-//! never reallocates inside this function, so this port caches the column
-//! base pointers once via `Slice::items_raw` and dereferences them at each
-//! use site through `*mut [T]`. This is the documented escape hatch in
-//! `bun_collections::multi_array_list::Slice::items_raw`.
+//
+// PORT NOTE: the Zig body takes ~20 simultaneous mutable column slices
+// (`this.graph.ast.items(.field)`) and freely interleaves them with
+// `&mut LinkerContext` method calls. Rust's borrowck forbids both holding
+// overlapping `&mut [T]` columns from the same `MultiArrayList` and holding
+// any `&mut` column across a `&mut self` call into `this.graph`. The columns
+// are physically disjoint (SoA layout) and the underlying `MultiArrayList`
+// never reallocates inside this function, so this port caches the column
+// base pointers once via `Slice::items_raw` and dereferences them at each
+// use site through `*mut [T]`. This is the documented escape hatch in
+// `bun_collections::multi_array_list::Slice::items_raw`.
 
 use bun_alloc::AllocError;
 use bun_collections::{BabyList, HashMap, MultiArrayList};

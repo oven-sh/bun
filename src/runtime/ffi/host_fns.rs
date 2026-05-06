@@ -158,9 +158,9 @@ impl FFI {
     /// `Function::compile`, and return the JSCell wrapper.
     ///
     /// PORT NOTE: divergences from the Zig body while sibling crates settle:
-    ///   - `ModuleLoader::resolve_embedded_file` body is `todo!()` upstream;
-    ///     skipped here so `open()` doesn't panic on the standalone-binary
-    ///     embedded-asset path. See `ffi_body.rs:1386` for the full branch.
+    ///   - `ModuleLoader::resolve_embedded_file` lives in `bun_runtime::jsc_hooks`
+    ///     (dep-cycle); the standalone-binary embedded-asset path is handled in
+    ///     `ffi_body.rs:1386` rather than inline here.
     ///   - `Fs::FileSystem::instance().abs(..)` retry is skipped (the
     ///     `bun_resolver::fs` singleton is mid-port); error is reported on
     ///     first `dlopen` failure instead.

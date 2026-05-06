@@ -917,11 +917,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     }
                 }
 
-                // TODO(b2-blocked): h3_app.listen_with_config(..) — bun_uws_sys::h3's
-                // typed wrapper currently has an `unimplemented!()` trampoline and
-                // its `c::` module is private, so the raw FFI cannot be reached
-                // from here. Un-gate once h3.rs exposes a working listen path.
-                
+                // TODO(b2-blocked): h3_app.listen_with_config(..) — wire the
+                // bun_uws_sys::h3 typed wrapper here (h3.rs now exposes a real
+                // `listen_with_config` over `c::uws_h3_app_listen_with_config`).
+
                 if Self::HAS_H3 {
                     if let Some(_h3_app) = self_.h3_app {
                         compile_error!("see server_body.rs::listen — h3 listen_with_config")

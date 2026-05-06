@@ -847,8 +847,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let _ = loader;
         // PORT NOTE: `jsc::initialize(false)` + `Expr/Stmt::Store::create()` +
         // `MimallocArena::init()` precede VM init in Zig. `bun_jsc::initialize`
-        // is still `todo!()` (gated on `bun_analytics::Features` + `environ`);
-        // the dispatch hooks (`jsc_hooks::install_jsc_hooks`) are installed by
+        // is now real (calls `JSCInitialize` over `bun_sys::environ()`); the
+        // dispatch hooks (`jsc_hooks::install_jsc_hooks`) are installed by
         // `main.rs` before `Cli::start`, so `VirtualMachine::init` already sees
         // a populated `RuntimeHooks` table.
         // TODO(b2-blocked): `bun_jsc::initialize(false)` once un-gated.
@@ -1353,9 +1353,8 @@ impl RunCommand {
         }
 
         if !ctx.debug.loaded_bunfig {
-            // TODO(b2-blocked): `Arguments::load_config_path` body is `todo!()`;
-            // calling it would panic. Un-gate once bunfig parsing is real.
-            
+            // `Arguments::load_config_path` — loads global bunfig (if the
+            // command opts in via `read_global_config`) then `bunfig.toml`.
             let _ = arguments::load_config_path(true, b"bunfig.toml", ctx, CommandTag::RunCommand);
         }
 

@@ -5152,10 +5152,10 @@ pub fn construct_bun_file(
                                 break 'inner;
                             }
                             blob.content_type_was_set = true;
-                            // PORT NOTE: `vm.mime_type()` lookup skipped — current
-                            // VM stub is `todo!()` and requires `&mut`. Always
-                            // heap-dupe the lowercased type; revisit when the
-                            // mime cache is wired.
+                            // PORT NOTE: `vm.mime_type()` lookup skipped — it
+                            // requires `&mut VirtualMachine` (RareData cache).
+                            // Always heap-dupe the lowercased type; revisit when
+                            // the mime cache is wired through here.
                             let mut content_type_buf = vec![0u8; slice.len()];
                             strings::copy_lowercase(slice, &mut content_type_buf);
                             blob.content_type = Box::into_raw(content_type_buf.into_boxed_slice());

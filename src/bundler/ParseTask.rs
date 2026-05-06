@@ -1059,20 +1059,20 @@ fn get_ast(
                 && &source.path.pretty[source.path.pretty.len() - CSS_MODULE_SUFFIX.len()..]
                     == CSS_MODULE_SUFFIX;
             let parser_options = if enable_css_modules {
-                let mut parseropts = bun_css::ParserOptions::default(bump, &mut temp_log);
+                let mut parseropts = bun_css::ParserOptions::default(Some(&mut temp_log));
                 parseropts.filename = bun_paths::basename(source.path.pretty);
                 parseropts.css_modules = Some(bun_css::CssModuleConfig::default());
                 parseropts
             } else {
-                bun_css::ParserOptions::default(bump, &mut temp_log)
+                bun_css::ParserOptions::default(Some(&mut temp_log))
             };
 
-            let (mut css_ast, mut extra) = match bun_css::BundlerStyleSheet::parse_bundler(
+            let (mut css_ast, extra) = match bun_css::BundlerStyleSheet::parse_bundler(
                 bump,
                 source_code,
                 parser_options,
                 &mut import_records,
-                source.index.0,
+                bun_css::SrcIndex::source(source.index.0),
             ) {
                 Ok(v) => v,
                 Err(_e) => {
@@ -1088,11 +1088,11 @@ fn get_ast(
             let _ = &extra;
             if let Err(_e) = css_ast.minify(
                 bump,
-                bun_css::MinifyOptions {
+                &bun_css::MinifyOptions {
                     targets: bun_css::Targets::for_bundler_target(topts.target),
                     unused_symbols: Default::default(),
                 },
-                &mut extra,
+                &extra,
             ) {
                 // TODO(port): `e.add_to_logger` once `bun_css` error type carries it.
                 let _ = temp_log.append_to_maybe_recycled(log, source);
@@ -1113,7 +1113,14 @@ fn get_ast(
                     root,
                     source,
                     b"",
-                    extra.symbols,
+                    // PORT NOTE (blocked_on: `bun_logger::Symbol` / `bun_js_parser::Symbol`
+                    // unification): under `feature = "css"` `StylesheetExtra.symbols` is
+                    // `BabyList<bun_logger::Symbol>`, but `new_lazy_export_ast_impl` takes
+                    // `BabyList<bun_js_parser::Symbol>`. Both are independent ports of the
+                    // same Zig `js_ast.Symbol` and cannot interconvert without touching
+                    // either crate. Drop the CSS-module local symbols for now; the
+                    // resulting AST still carries `css_ast.local_scope` for the linker.
+                    { let _ = extra; bun_js_parser::ast::symbol::List::default() },
                 )?
                 .unwrap(),
             );

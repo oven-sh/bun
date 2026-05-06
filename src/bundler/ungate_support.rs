@@ -83,6 +83,8 @@ pub mod bun_css {
         use bun_collections::BabyList;
         use bun_options_types::ImportRecord;
 
+        pub use bun_options_types::BundleEnums::Index as SrcIndex;
+
         /// `css::BundlerStyleSheet` — arena-backed stylesheet AST. The real
         /// type is `StyleSheet<BundlerAtRule>` (`css_parser.rs`).
         #[derive(Default)]
@@ -100,7 +102,7 @@ pub mod bun_css {
                 _code: &[u8],
                 _options: ParserOptions,
                 _import_records: &mut BabyList<ImportRecord>,
-                _source_index: u32,
+                _source_index: SrcIndex,
             ) -> core::result::Result<(Self, StylesheetExtra), ()> {
                 Ok((Self::default(), StylesheetExtra::default()))
             }
@@ -108,8 +110,8 @@ pub mod bun_css {
             pub fn minify(
                 &mut self,
                 _allocator: &bun_alloc::Arena,
-                _options: MinifyOptions,
-                _extra: &mut StylesheetExtra,
+                _options: &MinifyOptions,
+                _extra: &StylesheetExtra,
             ) -> core::result::Result<(), ()> {
                 Ok(())
             }
@@ -123,7 +125,7 @@ pub mod bun_css {
             pub css_modules: Option<CssModuleConfig>,
         }
         impl ParserOptions {
-            pub fn default(_allocator: &bun_alloc::Arena, _log: &mut bun_logger::Log) -> Self {
+            pub fn default(_log: Option<&mut bun_logger::Log>) -> Self {
                 Self { filename: b"", css_modules: None }
             }
         }

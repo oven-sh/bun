@@ -256,7 +256,7 @@ fn expand_css_hash(input: DeriveInput) -> syn::Result<TokenStream2> {
                     .enumerate()
                     .filter(|(_, f)| !has_css_skip(&f.attrs))
                     .map(|(i, _)| syn::Index::from(i));
-                quote! { #( ::bun_css::generics::CssHash::hash(&self.#idx, __hasher); )* }
+                quote! { #( self.#idx.hash(__hasher); )* }
             }
             Fields::Named(fs) => {
                 let names: Vec<_> = fs
@@ -265,7 +265,7 @@ fn expand_css_hash(input: DeriveInput) -> syn::Result<TokenStream2> {
                     .filter(|f| !has_css_skip(&f.attrs))
                     .map(|f| f.ident.clone().unwrap())
                     .collect();
-                quote! { #( ::bun_css::generics::CssHash::hash(&self.#names, __hasher); )* }
+                quote! { #( self.#names.hash(__hasher); )* }
             }
         },
         Data::Enum(e) => {
@@ -292,7 +292,7 @@ fn expand_css_hash(input: DeriveInput) -> syn::Result<TokenStream2> {
                         quote! {
                             Self::#vname( #(#binds),* ) => {
                                 #tag
-                                #( ::bun_css::generics::CssHash::hash(#kept, __hasher); )*
+                                #( #kept.hash(__hasher); )*
                             }
                         }
                     }
@@ -308,7 +308,7 @@ fn expand_css_hash(input: DeriveInput) -> syn::Result<TokenStream2> {
                         quote! {
                             Self::#vname { #(#fnames),* } => {
                                 #tag
-                                #( ::bun_css::generics::CssHash::hash(#kept, __hasher); )*
+                                #( #kept.hash(__hasher); )*
                             }
                         }
                     }
@@ -535,7 +535,7 @@ fn expand_deep_clone(input: DeriveInput) -> syn::Result<TokenStream2> {
                         quote! {
                             Self::#vname( #(#binds),* ) =>
                                 Self::#vname( #(
-                                    ::bun_css::generics::DeepClone::deep_clone(#binds, __bump)
+                                    #binds.deep_clone(__bump)
                                 ),* ),
                         }
                     }
@@ -545,7 +545,7 @@ fn expand_deep_clone(input: DeriveInput) -> syn::Result<TokenStream2> {
                         quote! {
                             Self::#vname { #(#names),* } =>
                                 Self::#vname { #(
-                                    #names: ::bun_css::generics::DeepClone::deep_clone(#names, __bump)
+                                    #names: #names.deep_clone(__bump)
                                 ),* },
                         }
                     }
@@ -1231,7 +1231,7 @@ fn clone_fields(fields: &Fields, ctor: TokenStream2) -> TokenStream2 {
             let idx = (0..fs.unnamed.len()).map(syn::Index::from);
             quote! {
                 #ctor( #(
-                    ::bun_css::generics::DeepClone::deep_clone(&self.#idx, __bump)
+                    self.#idx.deep_clone(__bump)
                 ),* )
             }
         }
@@ -1239,7 +1239,7 @@ fn clone_fields(fields: &Fields, ctor: TokenStream2) -> TokenStream2 {
             let names: Vec<_> = fs.named.iter().map(|f| f.ident.clone().unwrap()).collect();
             quote! {
                 #ctor { #(
-                    #names: ::bun_css::generics::DeepClone::deep_clone(&self.#names, __bump)
+                    #names: self.#names.deep_clone(__bump)
                 ),* }
             }
         }

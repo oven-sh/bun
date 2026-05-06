@@ -31,13 +31,9 @@ impl ColorScheme {
         a == b
     }
 
-    #[cfg(any())] // blocked_on: Parser::try_parse(expect_ident, ()) two-arg form; ParserError::InvalidValue path
     pub fn parse(input: &mut css::Parser) -> css::Result<ColorScheme> {
         let mut res = ColorScheme::empty();
-        let ident = match input.expect_ident() {
-            Ok(ident) => ident,
-            Err(e) => return Err(e),
-        };
+        let ident = unsafe { css::css_parser::src_str(input.expect_ident()?) };
 
         if let Some(value) = color_scheme_map_get(ident) {
             match value {
@@ -48,16 +44,18 @@ impl ColorScheme {
             }
         }
 
-        while let Some(i) = input.try_parse(css::Parser::expect_ident, ()).ok() {
+        while let Ok(i) = input.try_parse(|p| {
+            p.expect_ident().map(|s| unsafe { css::css_parser::src_str(s) })
+        }) {
             if let Some(value) = color_scheme_map_get(i) {
                 match value {
                     ColorSchemeKeyword::Normal => {
-                        return Err(input.new_custom_error(css::ParserError::InvalidValue));
+                        return Err(input.new_custom_error(css::ParserError::invalid_value));
                     }
                     ColorSchemeKeyword::Only => {
                         // Only must be at the start or the end, not in the middle
                         if res.contains(ColorScheme::ONLY) {
-                            return Err(input.new_custom_error(css::ParserError::InvalidValue));
+                            return Err(input.new_custom_error(css::ParserError::invalid_value));
                         }
                         res.insert(ColorScheme::ONLY);
                         return Ok(res);

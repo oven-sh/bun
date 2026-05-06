@@ -78,6 +78,30 @@ impl LinkerGraph {
         // the lifetime of the link step that constructed this LinkerGraph.
         unsafe { &*self.bump }
     }
+
+    /// Spec: `LinkerGraph.zig:takeAstOwnership`.
+    ///
+    /// Transfers ownership of per-file AST `BabyList` allocations from worker
+    /// arenas back to the graph arena. Only meaningful when
+    /// `bun_collections::baby_list::SAFETY_CHECKS` is on (debug-assert builds);
+    /// in release the Zig body early-returns.
+    ///
+    /// PORT NOTE: the Zig body calls `BabyList::transfer_ownership(heap)` with
+    /// a `MimallocArena::Borrowed` downcast of the graph allocator. The Rust
+    /// `BabyList::transfer_ownership` (baby_list.rs:729) currently takes no
+    /// allocator argument and `Graph.heap` is `bumpalo::Bump` (no per-heap
+    /// ownership tracking), so the per-column transfer is a no-op until the
+    /// arena type is swapped to the real `MimallocArena`. Kept un-gated so
+    /// `scanImportsAndExports` resolves; the debug-only walk is restored
+    /// alongside the gated impl below when `MimallocArena` lands.
+    #[inline]
+    pub fn take_ast_ownership(&mut self) {
+        if !bun_collections::baby_list::SAFETY_CHECKS {
+            return;
+        }
+        // TODO(b3): per-column `transfer_ownership(heap)` once `Graph.heap:
+        // MimallocArena` and `BabyList::transfer_ownership` accepts an arena.
+    }
 }
 
 // TODO(b2-blocked): `init` constructs the SoA columns; gated alongside the

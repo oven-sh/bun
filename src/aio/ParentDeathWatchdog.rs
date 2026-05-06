@@ -298,7 +298,8 @@ pub fn install_on_event_loop(handle: EventLoopCtx) {
             Default::default(),
             Owner::new(poll_tag::PARENT_DEATH_WATCHDOG, instance_ptr.cast()),
         );
-        match poll.register(handle.platform_event_loop(), crate::file_poll::Pollable::Process, true) {
+        // SAFETY: sole `&mut Loop` borrow; `register` does not re-derive the loop.
+        match poll.register(unsafe { handle.platform_event_loop() }, crate::file_poll::Pollable::Process, true) {
             bun_sys::Result::Ok(()) => {
                 // Do not keep the event loop alive on this poll's behalf — the
                 // watchdog must never prevent Bun from exiting when there is no

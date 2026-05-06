@@ -87,7 +87,9 @@ fn prop_copy(p: &Property) -> Property {
         ts_decorators: ExprNodeList::default(),
         key: p.key,
         value: p.value,
-        ts_metadata: p.ts_metadata,
+        // SAFETY: `Metadata` is a plain data enum (no Drop); shallow read is the
+        // intended Zig copy semantic.
+        ts_metadata: unsafe { core::ptr::read(&p.ts_metadata) },
     }
 }
 
@@ -106,7 +108,8 @@ fn prop_full_copy(p: &Property) -> Property {
         ts_decorators,
         key: p.key,
         value: p.value,
-        ts_metadata: p.ts_metadata,
+        // SAFETY: see `prop_copy`.
+        ts_metadata: unsafe { core::ptr::read(&p.ts_metadata) },
     }
 }
 
@@ -307,11 +310,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
     /// Bump-format `_{prefix}{n}` (or just `_{prefix}` when n is omitted).
     fn bump_name(&self, prefix: &[u8], n: Option<usize>) -> &'a [u8] {
-        use std::io::Write as _;
         let mut v = BumpVec::<u8>::new_in(self.allocator);
         v.extend_from_slice(prefix);
         if let Some(n) = n {
-            let _ = write!(&mut v, "{}", n);
+            // PORT NOTE: bumpalo Vec<u8> doesn't impl io::Write; format into a
+            // bump String and copy the bytes.
+            let s = bumpalo::format!(in self.allocator, "{}", n);
+            v.extend_from_slice(s.as_bytes());
         }
         v.into_bump_slice()
     }

@@ -433,7 +433,7 @@ pub struct ParseResult {
     /// recycled instead of leaking via `mem::forget` (PORTING.md §Forbidden).
     /// `Contents::Empty`/`SharedBuffer` for the virtual-source / shared-buffer
     /// paths (no-op on drop).
-    pub source_contents_backing: crate::cache::Contents,
+    pub source_contents_backing: resolver::cache::Contents,
 }
 
 impl ParseResult {
@@ -442,7 +442,7 @@ impl ParseResult {
         source: logger::Source,
         loader: options::Loader,
         input_fd: Option<FD>,
-        source_contents_backing: crate::cache::Contents,
+        source_contents_backing: resolver::cache::Contents,
     ) -> Self {
         ParseResult {
             source,
@@ -757,7 +757,7 @@ impl<'a> Transpiler<'a> {
         // `mem::forget`-ed (PORTING.md §Forbidden patterns). For virtual /
         // client-entry / `node:` / shared-buffer paths it stays `Empty`
         // (`Drop` is a no-op).
-        let mut source_backing: crate::cache::Contents = crate::cache::Contents::Empty;
+        let mut source_backing: resolver::cache::Contents = resolver::cache::Contents::Empty;
 
         // PORT NOTE: Zig `&brk: { ... }` took the address of a temporary; Rust
         // owns the value and borrows it after the block.
@@ -815,7 +815,7 @@ impl<'a> Transpiler<'a> {
                         return None;
                     }
                 };
-                source_backing = crate::cache::Contents::from(body);
+                source_backing = resolver::cache::Contents::from(body);
                 // SAFETY: `source_backing` is moved into the returned
                 // `ParseResult` (or drops on `return None`); the re-borrow is
                 // sound for the lifetime of `source.contents`' consumers, which

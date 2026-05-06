@@ -336,13 +336,13 @@ impl FileSystem {
         }
     }
 
-    pub fn init(top_level_dir: Option<&'static [u8]>) -> Result<&'static mut FileSystem, bun_core::Error> {
+    pub fn init(top_level_dir: Option<&'static [u8]>) -> Result<*mut FileSystem, bun_core::Error> {
         Self::init_with_force::<false>(top_level_dir)
     }
 
     pub fn init_with_force<const FORCE: bool>(
         top_level_dir_: Option<&'static [u8]>,
-    ) -> Result<&'static mut FileSystem, bun_core::Error> {
+    ) -> Result<*mut FileSystem, bun_core::Error> {
         // TODO(port): Environment.isBrowser branch
         let top_level_dir: &'static [u8] = match top_level_dir_ {
             Some(d) => d,
@@ -379,15 +379,19 @@ impl FileSystem {
                 let _ = entry_store_backing();
             }
 
-            Ok(INSTANCE.assume_init_mut())
+            Ok((*(&raw mut INSTANCE)).as_mut_ptr())
         }
     }
 
     #[inline]
-    pub fn instance() -> &'static mut FileSystem {
-        // SAFETY: caller guarantees init() was called.
-        // `&raw mut` avoids the `static_mut_refs` edition-2024 deny lint.
-        unsafe { (*(&raw mut INSTANCE)).assume_init_mut() }
+    pub fn instance() -> *mut FileSystem {
+        // PORT NOTE: returns the raw `*mut` singleton (Zig `*FileSystem`). Do NOT
+        // materialize a `&'static mut` here — concurrent callers (resolver runs on a
+        // thread pool) would each hold a live `&'static mut` to the same object (UB).
+        // Form the `&mut` only for the duration of a single operation at the call site.
+        // SAFETY: caller guarantees `init()` was called; `&raw mut` avoids the
+        // `static_mut_refs` edition-2024 deny lint.
+        unsafe { (*(&raw mut INSTANCE)).as_mut_ptr() }
     }
 }
 
@@ -1466,7 +1470,9 @@ impl TmpfileWindows {
     #[inline]
     pub fn dir(&self) -> bun_sys::Dir {
         // TODO(port): Fs.FileSystem.instance.tmpdir() — needs &mut FileSystem
-        FileSystem::instance().tmpdir().expect("tmpdir")
+        // SAFETY: `instance()` is the process-lifetime singleton (Zig `*FileSystem`);
+        // `&mut` scoped to this call only (no `&'static mut` escapes).
+        unsafe { (*FileSystem::instance()).tmpdir().expect("tmpdir") }
     }
 
     #[inline]

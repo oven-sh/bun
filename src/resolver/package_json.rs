@@ -789,19 +789,15 @@ impl PackageJSON {
         // PERF(port): include_scripts_ was a comptime enum param — profile in Phase B
         let include_scripts = include_scripts_ == IncludeScripts::IncludeScripts;
 
-        // SAFETY: PORT (Stacked Borrows) — `r.fs()`/`r.log()` now return RAW `*mut`
-        // (see `Resolver::fs()` note in lib.rs). Binding a long-lived `&'a mut` here
-        // would let the two coexist as aliased uniques and be popped by any nested
-        // `r.fs()` retag. Hold the raw pointers and project `&mut *` per use via the
-        // `r_fs!()`/`r_log!()` macros below; each projection dies at end-of-expression.
-        // Caller upholds the single-thread `Resolver` aliasing contract (Zig had no
-        // borrow split here either — `r.fs`/`r.log` are accessed freely throughout `parse`).
-        let r_fs_ptr: *mut fs::FileSystem = r.fs();
-        let r_log_ptr: *mut logger::Log = r.log();
-        macro_rules! r_fs { () => { unsafe { &mut *r_fs_ptr } } }
-        macro_rules! r_log { () => { unsafe { &mut *r_log_ptr } } }
-        #[allow(unused)] let r_fs: &mut fs::FileSystem = r_fs!();
-        #[allow(unused)] let r_log: &mut logger::Log = r_log!();
+        // SAFETY: PORT (Stacked Borrows) — `r.fs()`/`r.log()` return RAW `*mut`
+        // (see `Resolver::fs()` note in lib.rs). `fs` and `log` are DISTINCT
+        // singletons so the two `&mut` projections below do not alias each other,
+        // and no other `&mut *r.fs` / `&mut *r.log` retag occurs while they are
+        // live in this function. Caller upholds the single-thread `Resolver`
+        // aliasing contract (Zig had no borrow split here either — `r.fs`/`r.log`
+        // are accessed freely throughout `parse`).
+        let r_fs: &mut fs::FileSystem = unsafe { &mut *r.fs() };
+        let r_log: &mut logger::Log = unsafe { &mut *r.log() };
 
         // TODO: remove this extra copy
         let parts: [&[u8]; 2] = [input_path, b"package.json"];

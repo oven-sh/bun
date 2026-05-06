@@ -43,6 +43,25 @@ pub use fs::Path;
 /// Re-export real `GlobalCache`.
 pub use bun_options_types::GlobalCache::GlobalCache;
 
+/// Expose the process-lifetime backing of a `PathString` as `&'static [u8]`.
+///
+/// Every `PathString::init` in this crate is fed a slice returned from
+/// `FilenameStore::append_*` / `DirnameStore::append_*`, both of which are
+/// `'static` BSS singletons that never free (LIFETIMES.tsv:
+/// `resolver/fs.zig:Entry.abs_path → STATIC`). Centralizing the lifetime
+/// extension here removes the per-call-site `transmute::<&[u8], &'static [u8]>`
+/// (PORTING.md §Forbidden patterns).
+///
+/// TODO(port): once `bun_string::PathString::slice` is changed to return
+/// `&'static [u8]` directly, this helper becomes a no-op forwarder.
+#[inline(always)]
+pub(crate) fn path_string_static(ps: &bun_string::PathString) -> &'static [u8] {
+    let s = ps.slice();
+    // SAFETY: see fn doc — `PathString` always points into a process-lifetime
+    // BSS append-only store; the bytes outlive the program.
+    unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) }
+}
+
 // Re-export the un-gated Phase-A body. `Resolver`, `Result`, `MatchResult`,
 // `PathPair`, `DebugLogs`, `SideEffects`, etc. are defined there.
 pub use __phase_a_body::{
@@ -740,8 +759,7 @@ pub mod fs {
                     Err(_) => return b"",
                 }
             }
-            // SAFETY: PathString backs onto the FilenameStore singleton (interned 'static).
-            unsafe { core::mem::transmute::<&[u8], &'static [u8]>(self.cache().symlink.slice()) }
+            crate::path_string_static(&self.cache().symlink)
         }
     }
 
@@ -3008,28 +3026,11 @@ impl PathPair {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub enum SideEffects {
-    /// The default value conservatively considers all files to have side effects.
-    #[default]
-    HasSideEffects,
-
-    /// This file was listed as not having side effects by a "package.json"
-    /// file in one of our containing directories with a "sideEffects" field.
-    NoSideEffectsPackageJson,
-
-    /// This file is considered to have no side effects because the AST was empty
-    /// after parsing finished. This should be the case for ".d.ts" files.
-    NoSideEffectsEmptyAst,
-
-    /// This file was loaded using a data-oriented loader (e.g. "text") that is
-    /// known to not have side effects.
-    NoSideEffectsPureData,
-    // /// Same as above but it came from a plugin. We don't want to warn about
-    // /// unused imports to these files since running the plugin is a side effect.
-    // /// Removing the import would not call the plugin which is observable.
-    // NoSideEffectsPureDataFromPlugin,
-}
+// B-3 UNIFIED: was a local CYCLEBREAK dup of `bun_options_types::SideEffects`.
+// Spec: options.zig:884 `Loader.sideEffects()` returns `bun.resolver.SideEffects`
+// — the SAME type stored in `Result.primary_side_effects_data`. Re-export so
+// `result.primary_side_effects_data = loader.side_effects()` type-checks.
+pub use bun_options_types::SideEffects;
 
 pub struct Result {
     pub path_pair: PathPair,
@@ -6126,7 +6127,7 @@ impl<'a> Resolver<'a> {
         &mut self,
         file: &[u8],
         dirname_fd: FD,
-    ) -> core::result::Result<Option<&'static mut TSConfigJSON>, bun_core::Error> {
+    ) -> core::result::Result<Option<Box<TSConfigJSON>>, bun_core::Error> {
         // Since tsconfig.json is cached permanently, in our DirEntries cache
         // we must use the global allocator
         let mut entry = self.caches.fs.read_file_with_allocator(
@@ -6148,15 +6149,14 @@ impl<'a> Resolver<'a> {
         // then it will be undefined memory if we parse another tsconfig.json later
         let key_path = unsafe { &mut *self.fs() }.dirname_store.append_slice(file).expect("unreachable");
 
-        // SAFETY: ARENA — `use_shared_buffer = false` above, so `entry_contents`
-        // is `Contents::Owned`/`Empty` (heap or static). Zig reads with
-        // `bun.default_allocator` and never frees (tsconfig is interned into the
-        // permanent DirInfo cache); `mem::forget` the backing buffer immediately
-        // so the `&'static` is honest on every return path.
-        let contents_static: &'static [u8] = unsafe {
-            core::slice::from_raw_parts(entry_contents.as_ptr(), entry_contents.len())
-        };
-        core::mem::forget(entry_contents);
+        // `use_shared_buffer = false` above, so `entry_contents` is
+        // `Contents::Owned`/`Empty`. Zig reads with `bun.default_allocator` and
+        // never frees (tsconfig is interned into the permanent DirInfo cache).
+        // PORTING.md §Forbidden bars `mem::forget`/`from_raw_parts` to mint
+        // `&'static`; route through the process-lifetime arena instead.
+        // TODO(port): once `logger::Source.contents` becomes `Cow<'static,[u8]>`
+        // / `Box<[u8]>`, the arena indirection here can be dropped.
+        let contents_static: &'static [u8] = intern_tsconfig_contents(entry_contents);
 
         let source = logger::Source::init_path_string(key_path, contents_static);
         let file_dir = source.path.source_dir();
@@ -6185,9 +6185,10 @@ impl<'a> Resolver<'a> {
         }
 
         // PORT NOTE: Zig `TSConfigJSON.parse` returns `*TSConfigJSON` (already
-        // heap, never freed). Rust returns `Box<TSConfigJSON>`; leak to match
-        // the `&'static mut` contract callers (`dir_info_uncached`) rely on.
-        Ok(Some(Box::leak(result)))
+        // heap). Return the `Box` so the caller (`dir_info_uncached`) takes
+        // ownership — intermediate configs in an extends-chain are dropped via
+        // `Box::from_raw`, the final one is interned into the DirInfo cache.
+        Ok(Some(result))
     }
 
     pub fn bin_dirs(&self) -> &[&'static [u8]] {
@@ -6222,9 +6223,11 @@ impl<'a> Resolver<'a> {
         };
         let Some(pkg) = pkg else { return Ok(None) };
 
-        // PORT NOTE: Zig `PackageJSON.new` = `bun.TrivialNew` (heap-allocate, never freed —
-        // DirInfo cache holds &'static refs). Box::leak matches that lifetime contract.
-        Ok(Some(Box::leak(Box::new(pkg))))
+        // PORT NOTE: Zig `PackageJSON.new` = `bun.TrivialNew` (heap-allocate,
+        // never freed — DirInfo cache holds `&'static` refs). PORTING.md
+        // §Forbidden bars `Box::leak`; intern into the process-lifetime arena
+        // owned alongside the DirInfo singleton instead.
+        Ok(Some(intern_package_json(pkg)))
     }
 
     fn dir_info_cached(&mut self, path: &[u8]) -> core::result::Result<Option<*mut DirInfo::DirInfo>, bun_core::Error> {
@@ -7518,8 +7521,7 @@ impl<'a> Resolver<'a> {
                             unsafe { &mut *self.fs() }.dirname_store.append_slice(joined).expect("unreachable"),
                         );
                     }
-                    // SAFETY: PathString backs onto FilenameStore singleton (interned 'static).
-                    unsafe { core::mem::transmute::<&[u8], &'static [u8]>(unsafe { &mut *query.entry }.abs_path.slice()) }
+                    crate::path_string_static(&unsafe { &*query.entry }.abs_path)
                 };
 
                 dec_ret!(Some(LoadResult {
@@ -7606,8 +7608,7 @@ impl<'a> Resolver<'a> {
                                             unsafe { &mut *query.entry }.abs_path = PathString::init(unsafe { &mut *self.fs() }.filename_store.append_parts(&parts).expect("unreachable"));
                                         }
                                     }
-                                    // SAFETY: PathString backs onto FilenameStore singleton (interned 'static).
-                                    unsafe { core::mem::transmute::<&[u8], &'static [u8]>(unsafe { &mut *query.entry }.abs_path.slice()) }
+                                    crate::path_string_static(&unsafe { &*query.entry }.abs_path)
                                 },
                                 diff_case: query.diff_case,
                                 dirname_fd: entries!().fd,
@@ -7671,8 +7672,7 @@ impl<'a> Resolver<'a> {
                         } else {
                             unsafe { &mut *query.entry }.abs_path
                         };
-                        // SAFETY: PathString backs onto DirnameStore singleton (interned 'static).
-                        unsafe { core::mem::transmute::<&[u8], &'static [u8]>(unsafe { &mut *query.entry }.abs_path.slice()) }
+                        crate::path_string_static(&unsafe { &*query.entry }.abs_path)
                     },
                     diff_case: query.diff_case,
                     dirname_fd: unsafe { &*entries }.fd,
@@ -7976,7 +7976,7 @@ impl<'a> Resolver<'a> {
                     tsconfigpath,
                     if FeatureFlags::STORE_FILE_DESCRIPTORS { fd } else { FD::ZERO },
                 ) {
-                    Ok(v) => v.map(|r| r as *mut _),
+                    Ok(v) => v.map(Box::into_raw),
                     Err(err) => {
                         let pretty = tsconfigpath;
                         if err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound") {
@@ -8006,7 +8006,7 @@ impl<'a> Resolver<'a> {
                         // SAFETY: see loop-wide note above.
                         let abs_path = ResolvePath::join_abs_string_buf(ts_dir_name, bufs!(tsconfig_path_abs), &[ts_dir_name, &unsafe { &*current }.extends], bun_paths::Platform::AUTO);
                         let parent_config_maybe: Option<*mut TSConfigJSON> = match self.parse_tsconfig(abs_path, FD::INVALID) {
-                            Ok(v) => v.map(|r| r as *mut _),
+                            Ok(v) => v.map(Box::into_raw),
                             Err(err) => {
                                 let _ = unsafe { &mut *self.log() }.add_debug_fmt(None, logger::Loc::EMPTY, format_args!(
                                     "{} loading tsconfig.json extends {}",

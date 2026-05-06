@@ -815,9 +815,12 @@ mod posix_impl {
         #[cfg(target_os = "macos")] { unsafe { super::nocancel::sendto(fd, buf, n, flags, core::ptr::null(), 0) } }
         #[cfg(not(target_os = "macos"))] { unsafe { libc::send(fd, buf, n, flags) } }
     }
-    // EINTR-retry: every syscall in sys.zig is wrapped in
-    // `while (true) { ...; if errno == .INTR continue; }`. We do the same in the
-    // check macro so every caller below gets it for free.
+    // EINTR-retry: most sys.zig wrappers loop `while (true) { …; if errno ==
+    // .INTR continue; }`. NOT all — the macOS `$NOCANCEL` arms for open/openat/
+    // read/write/recv/send (sys.zig:1706-1712,1851-1860,2138-2147,2252-2262,
+    // 2294-2306) issue exactly one call and surface EINTR to the caller without
+    // looping. `check!` keeps the retry for the common path; `check_once!`
+    // matches the spec's single-shot Darwin arms.
     macro_rules! check { ($rc:expr, $tag:expr) => {{
         loop {
             let rc = $rc;
@@ -840,12 +843,31 @@ mod posix_impl {
             break rc;
         }
     }}}
+    // Single-shot: no EINTR retry (Darwin `$NOCANCEL` arms).
+    macro_rules! check_once { ($rc:expr, $tag:expr) => {{
+        let rc = $rc;
+        if rc < 0 { return Err(Error::from_code_int(last_errno(), $tag)); }
+        rc
+    }}}
+    macro_rules! check_once_p { ($rc:expr, $tag:expr, $path:expr) => {{
+        let rc = $rc;
+        if rc < 0 { return Err(Error::from_code_int(last_errno(), $tag).with_path($path.as_bytes())); }
+        rc
+    }}}
 
     pub fn open(path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
+        // sys.zig:1706 — .mac arm: single `open$NOCANCEL`, no EINTR retry.
+        #[cfg(target_os = "macos")]
+        let rc = check_once_p!(unsafe { sys_open(path.as_ptr(), flags, mode as libc::c_uint) }, Tag::open, path);
+        #[cfg(not(target_os = "macos"))]
         let rc = check_p!(unsafe { sys_open(path.as_ptr(), flags, mode as libc::c_uint) }, Tag::open, path);
         Ok(Fd::from_native(rc))
     }
     pub fn openat(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
+        // sys.zig:1706-1712 — .mac arm: single `openat$NOCANCEL`, no EINTR retry.
+        #[cfg(target_os = "macos")]
+        let rc = check_once_p!(unsafe { sys_openat(dir.native(), path.as_ptr(), flags, mode as libc::c_uint) }, Tag::open, path);
+        #[cfg(not(target_os = "macos"))]
         let rc = check_p!(unsafe { sys_openat(dir.native(), path.as_ptr(), flags, mode as libc::c_uint) }, Tag::open, path);
         Ok(Fd::from_native(rc))
     }
@@ -861,11 +883,19 @@ mod posix_impl {
     }
     pub fn read(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
+        // sys.zig:2138-2147 — .mac arm: single `read$NOCANCEL`, no EINTR retry.
+        #[cfg(target_os = "macos")]
+        let n = check_once!(unsafe { sys_read(fd.native(), buf.as_mut_ptr().cast(), len) }, Tag::read);
+        #[cfg(not(target_os = "macos"))]
         let n = check!(unsafe { sys_read(fd.native(), buf.as_mut_ptr().cast(), len) }, Tag::read);
         Ok(n as usize)
     }
     pub fn write(fd: Fd, buf: &[u8]) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
+        // sys.zig:1851-1860 — .mac arm: single `write$NOCANCEL`, no EINTR retry.
+        #[cfg(target_os = "macos")]
+        let n = check_once!(unsafe { sys_write(fd.native(), buf.as_ptr().cast(), len) }, Tag::write);
+        #[cfg(not(target_os = "macos"))]
         let n = check!(unsafe { sys_write(fd.native(), buf.as_ptr().cast(), len) }, Tag::write);
         Ok(n as usize)
     }
@@ -1237,11 +1267,19 @@ mod posix_impl {
     // sys.zig exposes for shell/pipe IPC.
     pub fn recv(fd: Fd, buf: &mut [u8], flags: i32) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
+        // sys.zig:2252-2262 — isMac arm: single `recvfrom$NOCANCEL`, no EINTR retry.
+        #[cfg(target_os = "macos")]
+        let n = check_once!(unsafe { sys_recv(fd.native(), buf.as_mut_ptr().cast(), len, flags) }, Tag::recv);
+        #[cfg(not(target_os = "macos"))]
         let n = check!(unsafe { sys_recv(fd.native(), buf.as_mut_ptr().cast(), len, flags) }, Tag::recv);
         Ok(n as usize)
     }
     pub fn send(fd: Fd, buf: &[u8], flags: i32) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
+        // sys.zig:2294-2306 — isMac arm: single `sendto$NOCANCEL`, no EINTR retry.
+        #[cfg(target_os = "macos")]
+        let n = check_once!(unsafe { sys_send(fd.native(), buf.as_ptr().cast(), len, flags) }, Tag::send);
+        #[cfg(not(target_os = "macos"))]
         let n = check!(unsafe { sys_send(fd.native(), buf.as_ptr().cast(), len, flags) }, Tag::send);
         Ok(n as usize)
     }
@@ -1349,15 +1387,20 @@ mod posix_impl {
     }
 
     /// sys.zig:504 — `sendfile(src, dest, len)`. Clamps `len` (avoid EINVAL on
-    /// >2GB) and EINTR-retries via `check!`.
+    /// >2GB), EINTR-retries, and attaches the *source* fd to the error
+    /// (sys.zig:513 `errnoSysFd(rc, .sendfile, src)`).
     #[cfg(target_os = "linux")]
     pub fn sendfile(src: Fd, dest: Fd, len: usize) -> Maybe<usize> {
         let len = len.min(i32::MAX as usize - 1);
-        let n = check!(
-            unsafe { libc::sendfile(dest.native(), src.native(), core::ptr::null_mut(), len) },
-            Tag::sendfile
-        );
-        Ok(n as usize)
+        loop {
+            let rc = unsafe { libc::sendfile(dest.native(), src.native(), core::ptr::null_mut(), len) };
+            if rc < 0 {
+                let e = last_errno();
+                if e == libc::EINTR { continue; }
+                return Err(Error::from_code_int(e, Tag::sendfile).with_fd(src));
+            }
+            return Ok(rc as usize);
+        }
     }
     #[cfg(all(unix, not(target_os = "linux")))]
     pub fn sendfile(_src: Fd, _dest: Fd, _len: usize) -> Maybe<usize> {
@@ -2747,13 +2790,23 @@ pub mod posix {
     pub struct PollFd { pub fd: c_int, pub events: i16, pub revents: i16 }
     #[cfg(unix)] pub const POLL_IN: i16 = libc::POLLIN;
     #[cfg(unix)] pub const POLL_OUT: i16 = libc::POLLOUT;
-    /// `std.posix.poll(fds, timeout_ms)` — returns count ready or error.
+    /// `bun.sys.poll` (sys.zig:2211-2225) — `poll$NOCANCEL` on Darwin,
+    /// EINTR-retried, tagged `.poll` (NOT `.ppoll`).
     #[cfg(unix)]
     pub fn poll(fds: &mut [PollFd], timeout_ms: c_int) -> core::result::Result<c_int, super::Error> {
-        // SAFETY: PollFd is layout-identical to libc::pollfd.
-        let rc = unsafe { libc::poll(fds.as_mut_ptr().cast(), fds.len() as _, timeout_ms) };
-        if rc < 0 { return Err(super::err_with(super::Tag::ppoll)); }
-        Ok(rc)
+        loop {
+            // SAFETY: PollFd is layout-identical to libc::pollfd.
+            #[cfg(target_os = "macos")]
+            let rc = unsafe { super::nocancel::poll(fds.as_mut_ptr().cast(), fds.len() as _, timeout_ms) };
+            #[cfg(not(target_os = "macos"))]
+            let rc = unsafe { libc::poll(fds.as_mut_ptr().cast(), fds.len() as _, timeout_ms) };
+            if rc < 0 {
+                let e = super::last_errno();
+                if e == libc::EINTR { continue; }
+                return Err(super::Error::from_code_int(e, super::Tag::poll));
+            }
+            return Ok(rc);
+        }
     }
 
     // ── termios ──

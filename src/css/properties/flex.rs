@@ -82,7 +82,6 @@ pub struct FlexFlow {
 //   PropertyFieldMap = { direction: PropertyIdTag::FlexDirection, wrap: PropertyIdTag::FlexWrap }
 //   VendorPrefixMap  = { direction: true, wrap: true }
 
-#[cfg(any())] // blocked_on: css::Result.as_value() helper (Zig Maybe.asValue) + DefineEnumProperty parse on FlexDirection/FlexWrap
 impl FlexFlow {
     pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
         let mut direction: Option<FlexDirection> = None;
@@ -90,13 +89,13 @@ impl FlexFlow {
 
         loop {
             if direction.is_none() {
-                if let Some(value) = input.try_parse(FlexDirection::parse).as_value() {
+                if let Ok(value) = input.try_parse(FlexDirection::parse) {
                     direction = Some(value);
                     continue;
                 }
             }
             if wrap.is_none() {
-                if let Some(value) = input.try_parse(FlexWrap::parse).as_value() {
+                if let Ok(value) = input.try_parse(FlexWrap::parse) {
                     wrap = Some(value);
                     continue;
                 }
@@ -127,12 +126,13 @@ impl FlexFlow {
         Ok(())
     }
 
-    pub fn deep_clone(&self, allocator: &css::Allocator) -> Self {
-        css::implement_deep_clone(self, allocator)
+    pub fn deep_clone(&self, _allocator: &bun_alloc::Arena) -> Self {
+        // Both fields are Copy enum-property keywords.
+        self.clone()
     }
 
     pub fn eql(lhs: &Self, rhs: &Self) -> bool {
-        css::implement_eql(lhs, rhs)
+        lhs == rhs
     }
 }
 
@@ -153,10 +153,9 @@ pub struct Flex {
 //   PropertyFieldMap = { grow: PropertyIdTag::FlexGrow, shrink: PropertyIdTag::FlexShrink, basis: PropertyIdTag::FlexBasis }
 //   VendorPrefixMap  = { grow: true, shrink: true, basis: true }
 
-#[cfg(any())] // blocked_on: expect_ident_matching(&str) + LengthPercentageOrAuto::parse + CSSNumberFns::parse
 impl Flex {
     pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
-        if input.try_parse(|i| css::Parser::expect_ident_matching(i, "none")).is_ok() {
+        if input.try_parse(|i| i.expect_ident_matching(b"none")).is_ok() {
             return Ok(Flex {
                 grow: 0.0,
                 shrink: 0.0,
@@ -170,15 +169,15 @@ impl Flex {
 
         loop {
             if grow.is_none() {
-                if let Some(value) = input.try_parse(CSSNumberFns::parse).as_value() {
+                if let Ok(value) = input.try_parse(CSSNumberFns::parse) {
                     grow = Some(value);
-                    shrink = input.try_parse(CSSNumberFns::parse).as_value();
+                    shrink = input.try_parse(CSSNumberFns::parse).ok();
                     continue;
                 }
             }
 
             if basis.is_none() {
-                if let Some(value) = input.try_parse(LengthPercentageOrAuto::parse).as_value() {
+                if let Ok(value) = input.try_parse(LengthPercentageOrAuto::parse) {
                     basis = Some(value);
                     continue;
                 }
@@ -246,12 +245,12 @@ impl Flex {
         Ok(())
     }
 
-    pub fn deep_clone(&self, allocator: &css::Allocator) -> Self {
-        css::implement_deep_clone(self, allocator)
+    pub fn deep_clone(&self, _allocator: &bun_alloc::Arena) -> Self {
+        self.clone()
     }
 
     pub fn eql(lhs: &Self, rhs: &Self) -> bool {
-        css::implement_eql(lhs, rhs)
+        lhs == rhs
     }
 }
 

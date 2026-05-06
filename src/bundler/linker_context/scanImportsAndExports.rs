@@ -488,12 +488,21 @@ pub fn scan_imports_and_exports(
         // for CommonJS files, and is also necessary for other files if they are
         // imported using an import star statement.
         // Note: `do` will wait for all to finish before moving forward
-        // SAFETY: parse_graph backref; pool is valid for the link step.
-        unsafe { &mut *this.parse_graph }
-            .pool
-            .as_mut()
-            .worker_pool
-            .each(this, LinkerContext::do_step5, &reachable)?;
+        //
+        // PORT NOTE: Zig dispatched via `worker_pool.doPtr(allocator, this,
+        // do_step5, reachable)` (parallel fan-out, blocks until done).
+        // `bun_threading::ThreadPool::each` requires `Ctx: Sync` and
+        // `F: Fn(&Ctx, V, usize)`; `do_step5` takes `&mut LinkerContext` and the
+        // body mutates `this.graph` (not `Sync`), so the parallel form doesn't
+        // typecheck here. The Zig code actually serializes through
+        // `LinkerGraph` writes anyway (each step touches a distinct
+        // `source_index` SoA row), so run sequentially for now and revisit when
+        // the per-worker arena split (`ThreadPool::Worker`) un-gates.
+        // TODO(b3): restore parallel `worker_pool.each` once `do_step5` is
+        // expressed against per-worker state (no `&mut LinkerContext`).
+        for (i, source_index) in reachable.iter().copied().enumerate() {
+            this.do_step5(source_index, i);
+        }
 
         // Some parts of the AST may now be owned by worker allocators. Transfer ownership back
         // to the graph allocator.
@@ -696,7 +705,7 @@ pub fn scan_imports_and_exports(
                             let re_exports: &[Dependency] = unsafe { &*re_exports_ptr };
                             let total_len = parts_declaring_symbol.len()
                                 + re_exports.len()
-                                + part.dependencies.len() as usize;
+                                + part.dependencies.len as usize;
                             // PORT NOTE: bun.handleOom dropped — Vec growth aborts on OOM.
                             part.dependencies.ensure_total_capacity(total_len)?;
 
@@ -704,7 +713,7 @@ pub fn scan_imports_and_exports(
                             for resolved_part_index in parts_declaring_symbol {
                                 // PERF(port): was appendAssumeCapacity
                                 part.dependencies.append(Dependency {
-                                    source_index: Index::source(import_source_index),
+                                    source_index: js_ast::Index::source(import_source_index as usize),
                                     part_index: resolved_part_index,
                                 })?;
                             }
@@ -756,7 +765,11 @@ pub fn scan_imports_and_exports(
                     for part_index in top_to_parts {
                         // PERF(port): was appendAssumeCapacity
                         dependencies.push(Dependency {
-                            source_index: target_source_index,
+                            // PORT NOTE: `crate::Index` ↔ `js_ast::Index` are both
+                            // `#[repr(transparent)] u32` newtypes ported from the
+                            // same Zig `ast.Index`; bridge by `.value` until B-3
+                            // collapses them to a single re-export.
+                            source_index: js_ast::Index { value: target_source_index.get() },
                             part_index: *part_index,
                         });
                     }
@@ -768,7 +781,7 @@ pub fn scan_imports_and_exports(
                 if force_include_exports {
                     // PERF(port): was appendAssumeCapacity
                     dependencies.push(Dependency {
-                        source_index: Index::source(source_index),
+                        source_index: js_ast::Index::source(source_index as usize),
                         part_index: js_ast::NAMESPACE_EXPORT_PART_INDEX,
                     });
                 }
@@ -777,7 +790,7 @@ pub fn scan_imports_and_exports(
                 if add_wrapper {
                     // PERF(port): was appendAssumeCapacity
                     dependencies.push(Dependency {
-                        source_index: Index::source(source_index),
+                        source_index: js_ast::Index::source(source_index as usize),
                         part_index: col_ref!(wrapper_part_indices)[id].get(),
                     });
                 }
@@ -810,12 +823,12 @@ pub fn scan_imports_and_exports(
             bun_core::scoped_log!(
                 LinkerCtx,
                 "Binding {} imports for file {} (#{})",
-                col_ref!(import_records_list)[id].len(),
+                col_ref!(import_records_list)[id].len,
                 bstr::BStr::new(&source.path.text),
                 id
             );
 
-            let parts_len = col_ref!(parts_list)[id].len() as usize;
+            let parts_len = col_ref!(parts_list)[id].len as usize;
             for part_index in 0..parts_len {
                 let mut to_esm_uses: u32 = 0;
                 let mut to_common_js_uses: u32 = 0;
@@ -825,7 +838,7 @@ pub fn scan_imports_and_exports(
                 // PORT NOTE: iterate by index so each iteration re-borrows
                 // `import_records` (the body calls `&mut this.graph` methods).
                 let import_record_indices_len =
-                    col_ref!(parts_list)[id].slice()[part_index].import_record_indices.len() as usize;
+                    col_ref!(parts_list)[id].slice()[part_index].import_record_indices.len as usize;
                 for iri in 0..import_record_indices_len {
                     let import_record_index = col_ref!(parts_list)[id].slice()[part_index]
                         .import_record_indices

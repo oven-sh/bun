@@ -1342,12 +1342,21 @@ fn transpile_source_code_inner(
                 }
 
                 // Spec :481-510 — pending imports → AsyncModule queue.
+                // TODO(b2-blocked): `vm.modules.enqueue` — `AsyncModule::Queue`
+                // gated. Spec writes `*(*extra).promise_ptr` inside `enqueue`
+                // before `return error.AsyncModule`; without that write,
+                // returning AsyncModule trips `transpile_file`'s
+                // `debug_assert!(!promise.is_null())`. Gate the whole branch
+                // alongside the enqueue so the path falls through and surfaces
+                // a real error via the link/print tail instead.
+                #[cfg(any())]
                 if parse_result.pending_imports.len() > 0 {
                     if unsafe { (*extra).promise_ptr.is_null() } {
                         return Err(bun_core::err!("UnexpectedPendingResolution"));
                     }
-                    // TODO(b2-blocked): `vm.modules.enqueue` — `AsyncModule::Queue`
-                    // gated. Hands `arena` ownership to the queue.
+                    // `vm.modules.enqueue(.{ .promise_ptr = promise_ptr, ... })`
+                    // hands `arena` ownership to the queue and writes the
+                    // JSInternalPromise out-param.
                     arena_guard.2 = false;
                     return Err(bun_core::err!("AsyncModule"));
                 }
@@ -1631,6 +1640,26 @@ fn transpile_source_code_inner(
 /// Spec ModuleLoader.zig:273-291 / :319-336 — register the just-opened file
 /// with the dev-server watcher (if enabled, absolute, and not in
 /// `node_modules`). Factored out because the spec inlines it twice.
+///
+/// Un-gated no-op stub so the two live call sites compile; the real body
+/// below is `#[cfg(any())]`-gated on `ImportWatcher`. Un-gate both
+/// atomically.
+#[cfg(not(any()))]
+#[inline]
+#[allow(clippy::too_many_arguments)]
+fn maybe_watch_file(
+    _jsc_vm: *mut VirtualMachine,
+    _should_close_input_file_fd: &mut bool,
+    _input_file_fd: bun_sys::Fd,
+    _is_node_override: bool,
+    _path: &Fs::Path,
+    _hash: u32,
+    _loader: Loader,
+    _package_json: Option<*mut c_void>,
+) {
+    // TODO(b2-cycle): un-gate with `ImportWatcher` (`hot_reloader.rs`).
+}
+
 #[cfg(any())] // TODO(b2-cycle): un-gate with `ImportWatcher` (`hot_reloader.rs`).
 #[inline]
 fn maybe_watch_file(

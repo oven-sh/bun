@@ -89,13 +89,18 @@ pub struct EventLoopCtx {
 }
 
 impl EventLoopCtx {
+    /// SAFETY: `EventLoopCtx` is `Copy`; two calls would otherwise produce
+    /// aliased `&mut Loop` (UB). Caller must not hold another live `&mut` to
+    /// the same loop across this borrow (resolver-style accessor).
     #[inline]
-    pub fn platform_event_loop(&self) -> &mut Loop {
+    pub unsafe fn platform_event_loop(&self) -> &mut Loop {
         // SAFETY: vtable contract — returns the live uws loop for `owner`.
         unsafe { &mut *(self.vtable.platform_event_loop)(self.owner) }
     }
+    /// SAFETY: same aliasing hazard as [`platform_event_loop`] — caller must
+    /// not hold another live `&mut Store` across this borrow.
     #[inline]
-    pub fn file_polls(&self) -> &mut Store {
+    pub unsafe fn file_polls(&self) -> &mut Store {
         // SAFETY: vtable contract.
         unsafe { &mut *(self.vtable.file_polls)(self.owner) }
     }
@@ -202,7 +207,8 @@ impl KeepAlive {
             return;
         }
         self.status = KeepAliveStatus::Inactive;
-        event_loop_ctx.platform_event_loop().unref();
+        // SAFETY: sole `&mut Loop` borrow in this scope.
+        unsafe { event_loop_ctx.platform_event_loop() }.unref();
     }
 
     /// From another thread, Prevent a poll from keeping the process alive.
@@ -240,7 +246,8 @@ impl KeepAlive {
             return;
         }
         self.status = KeepAliveStatus::Active;
-        event_loop_ctx.platform_event_loop().ref_();
+        // SAFETY: sole `&mut Loop` borrow in this scope.
+        unsafe { event_loop_ctx.platform_event_loop() }.ref_();
     }
 
     /// Allow a poll to keep the process alive.
@@ -475,15 +482,18 @@ impl FilePoll {
     // put back via `Store::put`; Drop would be wrong here.
     pub fn deinit(&mut self) {
         let ctx = get_vm_ctx(self.allocator_type);
-        let loop_ = ctx.platform_event_loop();
-        let file_polls = ctx.file_polls();
+        // SAFETY: `loop_` and `file_polls` borrow disjoint VM fields; neither
+        // is reborrowed inside `deinit_possibly_defer`.
+        let loop_ = unsafe { ctx.platform_event_loop() };
+        let file_polls = unsafe { ctx.file_polls() };
         self.deinit_possibly_defer(ctx, loop_, file_polls, false);
     }
 
     pub fn deinit_force_unregister(&mut self) {
         let ctx = get_vm_ctx(self.allocator_type);
-        let loop_ = ctx.platform_event_loop();
-        let file_polls = ctx.file_polls();
+        // SAFETY: see `deinit`.
+        let loop_ = unsafe { ctx.platform_event_loop() };
+        let file_polls = unsafe { ctx.file_polls() };
         self.deinit_possibly_defer(ctx, loop_, file_polls, true);
     }
 
@@ -504,8 +514,9 @@ impl FilePoll {
     }
 
     pub fn deinit_with_vm(&mut self, vm: EventLoopCtx) {
-        let loop_ = vm.platform_event_loop();
-        let file_polls = vm.file_polls();
+        // SAFETY: see `deinit`.
+        let loop_ = unsafe { vm.platform_event_loop() };
+        let file_polls = unsafe { vm.file_polls() };
         self.deinit_possibly_defer(vm, loop_, file_polls, false);
     }
 
@@ -557,7 +568,8 @@ impl FilePoll {
     /// "active" controls whether or not the event loop should potentially idle
     pub fn disable_keeping_process_alive(&mut self, event_loop_ctx: EventLoopCtx) {
         loop_sub_active(
-            event_loop_ctx.platform_event_loop(),
+            // SAFETY: sole `&mut Loop` borrow in this scope.
+            unsafe { event_loop_ctx.platform_event_loop() },
             self.flags.contains(Flags::HasIncrementedActiveCount) as u32,
         );
 
@@ -585,7 +597,8 @@ impl FilePoll {
         }
 
         loop_add_active(
-            event_loop_ctx.platform_event_loop(),
+            // SAFETY: sole `&mut Loop` borrow in this scope.
+            unsafe { event_loop_ctx.platform_event_loop() },
             (!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32,
         );
 
@@ -623,7 +636,8 @@ impl FilePoll {
     // TODO(port): Zig branches on @TypeOf(vm) for *PackageManager, EventLoopHandle, else.
     // Phase B: callers normalize to EventLoopCtx before calling.
     pub fn init(vm: EventLoopCtx, fd: Fd, flags: FlagsSet, owner: Owner) -> *mut FilePoll {
-        let poll = vm.file_polls().get();
+        // SAFETY: sole `&mut Store` borrow in this scope.
+        let poll = unsafe { vm.file_polls() }.get();
         // SAFETY: Store::get returns a valid uninitialized slot from the hive.
         let poll = unsafe { &mut *poll };
         poll.fd = fd;
@@ -715,7 +729,8 @@ impl FilePoll {
     pub fn on_ended(&mut self, event_loop_ctx: EventLoopCtx) {
         self.flags.remove(Flags::KeepsEventLoopAlive);
         self.flags.insert(Flags::Closed);
-        self.deactivate(event_loop_ctx.platform_event_loop());
+        // SAFETY: sole `&mut Loop` borrow in this scope.
+        self.deactivate(unsafe { event_loop_ctx.platform_event_loop() });
     }
 
     #[inline]

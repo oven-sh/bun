@@ -11,3 +11,15 @@ pub mod braces;
 
 // Re-exports the Phase-A draft expected at crate root (it did `use crate::{...}`).
 pub use braces::{has_eq_sign, CharIter, InputChar, ShellCharIter, ShellCharIterState, StringEncoding};
+
+// ─── B-2 un-gate: lexer / parser / AST ──────────────────────────────────────
+// Port of `shell.zig` lex/parse — moved down from `bun_runtime::shell::shell_body`
+// so `Interpreter::parse` can consume it without the (still-gated) JSC bridge.
+#[path = "parse.rs"]
+pub mod parse;
+
+pub use parse::{
+    ast, ast as AST, is_valid_var_name, JSValueRaw, LexError, LexResult, Lexer, LexerAscii,
+    LexerError, LexerUnicode, ParseError, Parser, ParserError, SmolList, Token, TokenTag,
+    LEX_JS_OBJREF_PREFIX, LEX_JS_STRING_PREFIX,
+};

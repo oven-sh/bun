@@ -113,6 +113,23 @@ unsafe fn rtc_vtable_put(owner: *mut (), output: &[u8], source_map: &[u8], modul
 pub static RUNTIME_TRANSPILER_CACHE_VTABLE: bun_js_printer::RuntimeTranspilerCacheVTable =
     bun_js_printer::RuntimeTranspilerCacheVTable { put: rtc_vtable_put };
 
+/// Mirrors `RuntimeTranspilerCache.Encoding` (RuntimeTranspilerCache.zig:405).
+///
+/// PORT NOTE: this is the on-disk wire enum for `Metadata.output_encoding` —
+/// NOT `js_parser::ExportsKind` (an unrelated `#[repr(u8)]` enum that happens
+/// to start at 0). The bundler-side cache loader maps `Latin1`/`Utf16` blobs
+/// into a `bun.String` (RuntimeTranspilerCache.zig:310-318) and only feeds
+/// `Utf8` through `cloneUTF8`; callers must dispatch on these discriminants.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CacheEncoding {
+    #[default]
+    None = 0,
+    Utf8 = 1,
+    Utf16 = 2,
+    Latin1 = 3,
+}
+
 /// Mirrors `RuntimeTranspilerCache.ModuleType` (RuntimeTranspilerCache.zig:399).
 ///
 /// PORT NOTE: NOT `options::ModuleType` — the on-disk wire enum has `Esm`/`Cjs`

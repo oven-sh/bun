@@ -170,7 +170,6 @@ pub struct TextShadow {
 }
 
 impl TextShadow {
-    #[cfg(any())] // blocked_on: Length::parse / CssColor::parse / Parser::try_parse closure ergonomics
     pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
         let mut color: Option<CssColor> = None;
         type Lengths = (Length, Length, Length, Length);
@@ -209,7 +208,7 @@ impl TextShadow {
         }
 
         let Some(l) = lengths else {
-            return Err(input.new_error(css::BasicParseErrorKind::QualifiedRuleInvalid));
+            return Err(input.new_error(css::BasicParseErrorKind::qualified_rule_invalid));
         };
         Ok(Self {
             color: color.unwrap_or(CssColor::CurrentColor),
@@ -220,7 +219,6 @@ impl TextShadow {
         })
     }
 
-    #[cfg(any())] // blocked_on: LengthValue::{to_css,zero} / CssColor::to_css surface
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         self.x_offset.to_css(dest)?;
         dest.write_char(b' ')?;
@@ -244,7 +242,6 @@ impl TextShadow {
         Ok(())
     }
 
-    #[cfg(any())] // blocked_on: LengthValue::is_compatible / CssColor::is_compatible
     pub fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
         self.color.is_compatible(browsers)
             && self.x_offset.is_compatible(browsers)

@@ -2029,7 +2029,7 @@ impl<'a> LinkerContext<'a> {
             debug_tree_shake!(
                 "markFileLiveForTreeShaking({}, {} {}) = {}",
                 source_index,
-                bstr::BStr::new(&parse_graph.input_files.get(source_index).source.path.pretty),
+                bstr::BStr::new(&parse_graph.input_files.get(source_index as usize).source.path.pretty),
                 <&'static str>::from(parse_graph.ast.items_target()[source_index as usize].bake_graph()),
                 if self.graph.files_live.is_set(source_index as usize) { "already seen" } else { "first seen" },
             );

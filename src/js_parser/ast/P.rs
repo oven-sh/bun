@@ -687,60 +687,74 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Ok(b"")
     }
 
-    #[cfg(any())] // blocked_on: extract_dynamic_specifier_shape; options.allow_unresolved
     pub fn check_dynamic_specifier(
         &mut self,
         arg: Expr,
         loc: logger::Loc,
         kind: &'static str,
     ) -> Result<(), bun_core::Error> {
-        if !self.options.bundle || *self.options.allow_unresolved == options::AllowUnresolved::All {
+        // Zig: `if (!p.options.bundle or p.options.allow_unresolved.* == .all) return;`
+        // `options::AllowUnresolved` is currently a unit-struct stub whose only
+        // value is the Zig default `.all`, so the second predicate is always true
+        // — collapse to the bundle check until AllowUnresolved is fleshed out.
+        // TODO(b2-blocked): restore `*self.options.allow_unresolved == AllowUnresolved::All`
+        // once `options::AllowUnresolved` becomes the real enum.
+        let _ = self.options.allow_unresolved;
+        if !self.options.bundle || /* allow_unresolved == .all */ true {
+            let _ = (arg, loc, kind);
             return Ok(());
         }
 
-        let mut shape_buf = BumpVec::new_in(self.allocator);
-        let shape = self.extract_dynamic_specifier_shape(arg, &mut shape_buf)?;
-        if !self.options.allow_unresolved.allows(shape) {
-            let r = js_lexer::range_of_identifier(self.source, loc);
-            if !shape.is_empty() {
-                // Print a human-readable shape: replace \x00 with *
-                let display = self.allocator.alloc_slice_copy(shape);
-                for c in display.iter_mut() {
-                    if *c == 0 {
-                        *c = b'*';
+        // Unreachable while AllowUnresolved is the unit stub (the `|| true` above
+        // short-circuits). Body kept gated so it un-gates verbatim once the type
+        // lands; `extract_dynamic_specifier_shape` is gated for the same reason.
+        #[cfg(any())] // blocked_on: extract_dynamic_specifier_shape; options::AllowUnresolved::{All, allows}
+        {
+            let mut shape_buf = BumpVec::new_in(self.allocator);
+            let shape = self.extract_dynamic_specifier_shape(arg, &mut shape_buf)?;
+            if !self.options.allow_unresolved.allows(shape) {
+                let r = js_lexer::range_of_identifier(self.source, loc);
+                if !shape.is_empty() {
+                    // Print a human-readable shape: replace \x00 with *
+                    let display = self.allocator.alloc_slice_copy(shape);
+                    for c in display.iter_mut() {
+                        if *c == 0 {
+                            *c = b'*';
+                        }
                     }
+                    self.log.add_range_error_fmt_with_note(
+                        self.source,
+                        r,
+                        self.allocator,
+                        format_args!(
+                            "This {} expression will not be bundled because the argument is not a string literal",
+                            kind
+                        ),
+                        format_args!(
+                            "The specifier shape \"{0}\" does not match any --allow-unresolved pattern. \
+                             To allow it, add a matching pattern: Bun.build({{ allowUnresolved: [\"{0}\"] }}) or --allow-unresolved '{0}'",
+                            bstr::BStr::new(display)
+                        ),
+                        r,
+                    )?;
+                } else {
+                    self.log.add_range_error_fmt_with_note(
+                        self.source,
+                        r,
+                        self.allocator,
+                        format_args!(
+                            "This {} expression will not be bundled because the argument is not a string literal",
+                            kind
+                        ),
+                        format_args!(
+                            "To allow opaque dynamic specifiers, use Bun.build({{ allowUnresolved: [\"\"] }}) or pass --allow-unresolved with an empty-string pattern"
+                        ),
+                        r,
+                    )?;
                 }
-                self.log.add_range_error_fmt_with_note(
-                    self.source,
-                    r,
-                    self.allocator,
-                    format_args!(
-                        "This {} expression will not be bundled because the argument is not a string literal",
-                        kind
-                    ),
-                    format_args!(
-                        "The specifier shape \"{0}\" does not match any --allow-unresolved pattern. \
-                         To allow it, add a matching pattern: Bun.build({{ allowUnresolved: [\"{0}\"] }}) or --allow-unresolved '{0}'",
-                        bstr::BStr::new(display)
-                    ),
-                    r,
-                )?;
-            } else {
-                self.log.add_range_error_fmt_with_note(
-                    self.source,
-                    r,
-                    self.allocator,
-                    format_args!(
-                        "This {} expression will not be bundled because the argument is not a string literal",
-                        kind
-                    ),
-                    format_args!(
-                        "To allow opaque dynamic specifiers, use Bun.build({{ allowUnresolved: [\"\"] }}) or pass --allow-unresolved with an empty-string pattern"
-                    ),
-                    r,
-                )?;
             }
         }
+        #[allow(unreachable_code)]
         Ok(())
     }
 

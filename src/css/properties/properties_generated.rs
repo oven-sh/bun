@@ -3482,6 +3482,15 @@ impl Property {
     }
 }
 
+// PORT NOTE: `declaration::placeholder_property()` (the moved-out slot
+// sentinel in `DeclarationBlock::minify`) is `Property{ .all = .revert-layer }`
+// in Zig. Expose it via `Default` so the un-gated stub branch in
+// `declaration.rs` keeps compiling against the real enum.
+impl Default for Property {
+    #[inline]
+    fn default() -> Self { Property::All(CSSWideKeyword::RevertLayer) }
+}
+
 impl PropertyId {
     /// Static name for the `__to_css_helper` slow path on `Unparsed`.
     pub(crate) fn name_static(&self) -> &'static [u8] {

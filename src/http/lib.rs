@@ -691,6 +691,50 @@ mod boring_extra {
         ) -> *mut core::ffi::c_void; // STACK_OF(X509)*
         pub fn sk_X509_value(stack: *const core::ffi::c_void, idx: usize) -> *mut bun_boringssl::c::X509;
         pub fn SSL_set_tlsext_host_name(ssl: *mut bun_boringssl::c::SSL, name: *const core::ffi::c_char) -> c_int;
+        pub fn SSL_set_options(ssl: *mut bun_boringssl::c::SSL, options: u32) -> u32;
+        pub fn SSL_clear_options(ssl: *mut bun_boringssl::c::SSL, options: u32) -> u32;
+        pub fn SSL_set_alpn_protos(ssl: *mut bun_boringssl::c::SSL, protos: *const u8, protos_len: usize) -> c_int;
+        pub fn SSL_enable_signed_cert_timestamps(ssl: *mut bun_boringssl::c::SSL);
+        pub fn SSL_enable_ocsp_stapling(ssl: *mut bun_boringssl::c::SSL);
+    }
+
+    // BoringSSL defines this as 0 (a no-op flag), but we keep the
+    // clear/set pair to mirror the Zig spec exactly.
+    pub const SSL_OP_LEGACY_SERVER_CONNECT: u32 = 0;
+}
+
+/// Port of `BoringSSL.SSL.configureHTTPClientWithALPN` (boringssl.zig:19066).
+/// Sets SNI (when `hostname` is non-empty), the legacy-server-connect option,
+/// the ALPN protocol list for `offer`, and enables SCT/OCSP stapling. Called
+/// from `on_open` for every TLS socket — must run even when the hostname is an
+/// IP literal (with empty SNI) so ALPN is still advertised.
+fn configure_http_client_with_alpn(
+    ssl: *mut boringssl::c::SSL,
+    hostname: *const core::ffi::c_char,
+    offer: AlpnOffer,
+) {
+    // SAFETY: caller passes a live *mut SSL for a just-opened socket; `hostname`
+    // is either null or a NUL-terminated buffer that outlives this call.
+    unsafe {
+        if !hostname.is_null() {
+            boring_extra::SSL_set_tlsext_host_name(ssl, hostname);
+        }
+        boring_extra::SSL_clear_options(ssl, boring_extra::SSL_OP_LEGACY_SERVER_CONNECT);
+        boring_extra::SSL_set_options(ssl, boring_extra::SSL_OP_LEGACY_SERVER_CONNECT);
+
+        const ALPN_H1: &[u8] = &[8, b'h', b't', b't', b'p', b'/', b'1', b'.', b'1'];
+        const ALPN_H2: &[u8] = &[2, b'h', b'2'];
+        const ALPN_H2_H1: &[u8] = &[2, b'h', b'2', 8, b'h', b't', b't', b'p', b'/', b'1', b'.', b'1'];
+        let alpns: &'static [u8] = match offer {
+            AlpnOffer::H1 => ALPN_H1,
+            AlpnOffer::H1OrH2 => ALPN_H2_H1,
+            AlpnOffer::H2Only => ALPN_H2,
+        };
+        let rc = boring_extra::SSL_set_alpn_protos(ssl, alpns.as_ptr(), alpns.len());
+        debug_assert_eq!(rc, 0);
+
+        boring_extra::SSL_enable_signed_cert_timestamps(ssl);
+        boring_extra::SSL_enable_ocsp_stapling(ssl);
     }
 }
 
@@ -1790,11 +1834,15 @@ impl HTTPClient {
             if !ssl_ptr.is_null() && unsafe { boring_extra::SSL_is_init_finished(ssl_ptr) } == 0 {
                 let raw_hostname = get_tls_hostname(self, self.http_proxy.is_some());
 
+                // Build a NUL-terminated SNI string only when the hostname is not an
+                // IP literal (RFC 6066 forbids IP SNI). ALPN/SCT/OCSP must still be
+                // configured regardless, so the helper is called unconditionally
+                // below with `null` SNI in the IP case (http.zig:186-207).
                 let mut owned: Vec<u8>; // drops on scope exit
-                if !strings::is_ip_address(raw_hostname) {
+                let host_z: *const core::ffi::c_char = if !strings::is_ip_address(raw_hostname) {
                     // SAFETY: TEMP_HOSTNAME only accessed from HTTP thread
                     let temp = unsafe { &mut TEMP_HOSTNAME };
-                    let host_z: *const core::ffi::c_char = if raw_hostname.len() < temp.len() {
+                    if raw_hostname.len() < temp.len() {
                         temp[..raw_hostname.len()].copy_from_slice(raw_hostname);
                         temp[raw_hostname.len()] = 0;
                         temp.as_ptr() as *const core::ffi::c_char
@@ -1803,13 +1851,12 @@ impl HTTPClient {
                         owned.extend_from_slice(raw_hostname);
                         owned.push(0);
                         owned.as_ptr() as *const core::ffi::c_char
-                    };
-                    // SAFETY: ssl_ptr is live; host_z is NUL-terminated for the duration of this call.
-                    unsafe { boring_extra::SSL_set_tlsext_host_name(ssl_ptr, host_z) };
-                }
-                // TODO(b2): configure_http_client_with_alpn(hostname, self.alpn_offer())
-                // once bun_boringssl exposes the wrapper.
-                let _ = self.alpn_offer();
+                    }
+                } else {
+                    core::ptr::null()
+                };
+
+                configure_http_client_with_alpn(ssl_ptr, host_z, self.alpn_offer());
             }
         } else {
             self.first_call::<IS_SSL>(socket);

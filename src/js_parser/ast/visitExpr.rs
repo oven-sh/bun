@@ -2022,6 +2022,8 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         p.fn_only_data_visit.is_inside_async_arrow_fn = old_inside_async_arrow_fn;
         p.fn_or_arrow_data_visit = old_fn_or_arrow_data;
 
+        #[cfg(any())] // blocked_on: P::get_react_refresh_hook_signal_{decl,init},
+        //   handle_react_refresh_post_visit_function_body
         if let Some(hook) = react_hook_data.as_mut() {
             'try_mark_hook: {
                 let Some(mut stmts) = p.nearest_stmt_list else {
@@ -2032,12 +2034,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 unsafe { stmts.as_mut().push(decl) };
 
                 p.handle_react_refresh_post_visit_function_body(&mut stmts_list, hook);
-                e_.body.stmts = stmts_list.into_bump_slice() as *mut [Stmt];
+                e_.body.stmts = stmts_list.into_bump_slice_mut() as *mut [Stmt];
 
                 return p.get_react_refresh_hook_signal_init(hook, expr);
             }
         }
-        e_.body.stmts = stmts_list.into_bump_slice() as *mut [Stmt];
+        let _ = react_hook_data;
+        e_.body.stmts = stmts_list.into_bump_slice_mut() as *mut [Stmt];
         expr
     }
     fn e_function(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
@@ -2074,6 +2077,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         let mut final_expr = expr;
 
+        #[cfg(any())] // blocked_on: P::get_react_refresh_hook_signal_{decl,init}
         if let Some(hook) = react_hook_data.as_mut() {
             'try_mark_hook: {
                 let Some(mut stmts) = p.nearest_stmt_list else {
@@ -2085,6 +2089,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 final_expr = p.get_react_refresh_hook_signal_init(hook, expr);
             }
         }
+        let _ = react_hook_data;
 
         if let Some(name) = e_.func.name {
             final_expr = p.keep_expr_symbol_name(

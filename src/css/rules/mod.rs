@@ -2,18 +2,19 @@ use crate as css;
 
 use css::PrintErr;
 use css::Printer;
+use css::error::MinifyErr;
 
-// ─── B-2 round 5 status ────────────────────────────────────────────────────
-// Hub un-gated. All leaf rule modules now compile for real (struct/enum
-// bodies) with their behavior impls (`to_css`/`minify`/`parse`/`deep_clone`)
-// internally `#[cfg(any())]`-gated on the still-missing
-// `CssRuleList::{to_css,minify}`, `selector::` helpers, `PropertyId` methods,
-// `DeclarationBlock` behavior, `properties::{font,custom}` payloads, and the
-// css_parser rule-parser trait surface. Only `import`/`layer`/`custom_media`/
-// `namespace`/`unknown`/`tailwind` stay `gated_rule!`-stubbed below (their
-// data-only stubs already match the real layouts). The `CssRule` enum is
-// real; the heavy `to_css`/`minify` impl bodies are `#[cfg(any())]`-gated
-// until `declaration`/`context`/`properties_generated` un-gate.
+// ─── B-2 round 6 status ────────────────────────────────────────────────────
+// Hub un-gated. `CssRule` / `CssRuleList` / `MinifyContext` are real and
+// `CssRuleList::{to_css,minify}` now compile so `StyleSheet::{minify,to_css}`
+// can call through. Leaf-rule `to_css` impls remain individually
+// `#[cfg(any())]`-gated in their own files (blocked on `DeclarationBlock`,
+// `properties_generated`, `enum_property_util`, …); until each un-gates, the
+// dispatch in `CssRule::to_css` lands on the `to_css_shim!` no-ops below —
+// removing a shim is the un-gate signal (duplicate-method error). The heavy
+// `.style` minify arm and `merge_style_rules` body stay `#[cfg(any())]`
+// internally on `StyleRule::{minify,is_compatible,update_prefix,hash_key,
+// is_duplicate}` + selector helpers.
 
 macro_rules! gated_rule {
     ($name:ident) => {

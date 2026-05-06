@@ -400,7 +400,7 @@ pub mod Jest {
 
     fn create_mock_objects(global_object: &JSGlobalObject, module: JSValue) {
         let set_system_time = jsc::JSFunction::create(global_object, "setSystemTime", JSMock__jsSetSystemTime, 0, Default::default());
-        module.put(global_object, "setSystemTime", set_system_time);
+        module.put(global_object, b"setSystemTime", set_system_time);
 
         let mock_fn = jsc::JSFunction::create(global_object, "fn", JSMock__jsMockFn, 1, Default::default());
         let spy_on = jsc::JSFunction::create(global_object, "spyOn", JSMock__jsSpyOn, 2, Default::default());

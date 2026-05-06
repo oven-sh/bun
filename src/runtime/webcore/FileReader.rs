@@ -340,7 +340,8 @@ impl FileReader {
     }
 
     pub fn on_start(&mut self) -> streams::Start {
-        self.reader.set_parent(self as *mut Self as *mut _);
+        let parent_ptr = self as *mut Self as *mut _;
+        self.reader().set_parent(parent_ptr);
         let was_lazy = !matches!(self.lazy, Lazy::None);
         let mut pollable = false;
         let mut file_type = FileType::File;
@@ -374,13 +375,13 @@ impl FileReader {
                             #[cfg(unix)]
                             {
                                 use bun_io::pipe_reader::PosixFlags;
-                                self.reader.flags.set(PosixFlags::NONBLOCKING, opened.nonblocking);
-                                self.reader.flags.set(PosixFlags::POLLABLE, pollable);
+                                self.reader().flags.set(PosixFlags::NONBLOCKING, opened.nonblocking);
+                                self.reader().flags.set(PosixFlags::POLLABLE, pollable);
                             }
                             #[cfg(windows)]
                             {
-                                self.reader.flags.nonblocking = opened.nonblocking;
-                                self.reader.flags.pollable = pollable;
+                                self.reader().flags.nonblocking = opened.nonblocking;
+                                self.reader().flags.pollable = pollable;
                             }
                         }
                     }
@@ -389,7 +390,7 @@ impl FileReader {
         }
 
         {
-            let reader_fd = self.reader.get_fd();
+            let reader_fd = self.reader().get_fd();
             if reader_fd != Fd::INVALID && self.fd == Fd::INVALID {
                 self.fd = reader_fd;
             }
@@ -404,12 +405,12 @@ impl FileReader {
             unsafe { (*self.parent()).increment_count() };
             self.waiting_for_on_reader_done = true;
             if let Some(offset) = self.start_offset {
-                match self.reader.start_file_offset(self.fd, pollable, offset) {
+                match self.reader().start_file_offset(self.fd, pollable, offset) {
                     Ok(()) => {}
                     Err(e) => return streams::Start::Err(e),
                 }
             } else {
-                match self.reader.start(self.fd, pollable) {
+                match self.reader().start(self.fd, pollable) {
                     Ok(()) => {}
                     Err(e) => return streams::Start::Err(e),
                 }
@@ -418,7 +419,7 @@ impl FileReader {
             #[cfg(unix)]
             {
                 use bun_io::pipe_reader::PosixFlags;
-                if self.reader.flags.contains(PosixFlags::POLLABLE) && !self.reader.is_done() {
+                if self.reader().flags.contains(PosixFlags::POLLABLE) && !self.reader().is_done() {
                     self.waiting_for_on_reader_done = true;
                     // SAFETY: see `parent()`.
                     unsafe { (*self.parent()).increment_count() };

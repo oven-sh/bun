@@ -812,6 +812,8 @@ impl Task {
                             let patch_info =
                                 installer.package_patch_info(pkg_name, pkg_name_hash, &pkg_res)?;
 
+                            // SAFETY: read-only access to `PackageManager`; see top-of-fn note.
+                            let manager = unsafe { &*manager_ptr };
                             match tag {
                                 Resolution::Tag::Npm => manager.cached_npm_package_folder_name(
                                     pkg_name.slice(string_buf),
@@ -852,7 +854,14 @@ impl Task {
                     };
                     let pkg_cache_dir_subpath = AutoRelPath::from(pkg_cache_dir_subpath_init);
 
-                    let (cache_dir, cache_dir_path) = manager.get_cache_directory_and_abs_path();
+                    // SAFETY: idempotent cache-dir initialization (once-init internally).
+                    // Scoped tightly so the `&mut PackageManager` does not outlive this
+                    // statement; no `&*manager_ptr` is live on this thread across it.
+                    // Concurrent task threads may race the same once-init path — that
+                    // is a data-level race the once-init guards, not an aliasing
+                    // violation here because no long-lived `&mut PackageManager` exists.
+                    let (cache_dir, cache_dir_path) =
+                        unsafe { &mut *manager_ptr }.get_cache_directory_and_abs_path();
 
                     let mut dest_subpath = Path::<{ paths::os_unit::AUTO }>::init();
                     installer.append_real_store_path(&mut dest_subpath, self.entry_id, Which::Staging);
@@ -957,7 +966,8 @@ impl Task {
                                 }
                                 #[cfg(target_os = "macos")]
                                 {
-                                    if manager.options.log_level.is_verbose() {
+                                    // SAFETY: read-only `PackageManager` access; see top-of-fn note.
+                                    if unsafe { &*manager_ptr }.options.log_level.is_verbose() {
                                         Output::pretty_errorln(format_args!(
                                             "Cloning {} to {}",
                                             bun_core::fmt::fmt_os_path(
@@ -1289,7 +1299,8 @@ impl Task {
 
                 Step::RunPreinstall => {
                     let current_step = Step::RunPreinstall;
-                    if !manager.options.do_.run_scripts
+                    // SAFETY: read-only `PackageManager` access; see top-of-fn note.
+                    if !unsafe { &*manager_ptr }.options.do_.run_scripts
                         || self.entry_id == Store::Entry::Id::ROOT
                     {
                         step = self.next_step(current_step);

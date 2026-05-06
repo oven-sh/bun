@@ -1244,7 +1244,11 @@ pub struct OnBeforeParsePlugin<'a> {
     file_path: &'a mut Fs::Path<'a>,
     loader: &'a mut Loader,
     deferred_error: Option<AnyError>,
-    should_continue_running: &'a mut i32,
+    // Raw pointer (Zig: `*i32`). Must stay raw — `fetch_source_code` and
+    // `OnBeforeParsePlugin__isDone` re-enter via FFI while the outer `run`
+    // call has already handed this same i32 to C++; a `&'a mut i32` here
+    // would mean two live `&mut` to one i32 (aliased-`&mut` UB).
+    should_continue_running: *mut i32,
 
     // Raw pointer (Zig: `?*OnBeforeParseResult`). Must stay raw — the pointee
     // is `OnBeforeParseResultWrapper.result`, and `get_wrapper` walks back to
@@ -1466,7 +1470,12 @@ pub extern "C" fn fetch_source_code(
     // points back to), so holding both `&mut` is sound.
     let args = unsafe { &mut *args };
     let this = unsafe { &mut *args.context };
-    if this.log.errors > 0 || this.deferred_error.is_some() || *this.should_continue_running != 1 {
+    // SAFETY: `should_continue_running` points at the `run` caller's stack
+    // local for the duration of the plugin call.
+    if this.log.errors > 0
+        || this.deferred_error.is_some()
+        || unsafe { *this.should_continue_running } != 1
+    {
         return 1;
     }
 
@@ -1495,7 +1504,8 @@ pub extern "C" fn fetch_source_code(
             Ok(e) => e,
             Err(e) => {
                 this.deferred_error = Some(e);
-                *this.should_continue_running = 0;
+                // SAFETY: see deref above; same pointer, still live.
+                unsafe { *this.should_continue_running = 0 };
                 return 1;
             }
         };

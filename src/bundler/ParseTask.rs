@@ -1058,13 +1058,27 @@ fn get_ast(
             let enable_css_modules = source.path.pretty.len() > CSS_MODULE_SUFFIX.len()
                 && &source.path.pretty[source.path.pretty.len() - CSS_MODULE_SUFFIX.len()..]
                     == CSS_MODULE_SUFFIX;
-            let parser_options = if enable_css_modules {
-                let mut parseropts = bun_css::ParserOptions::default(Some(&mut temp_log));
-                parseropts.filename = bun_paths::basename(source.path.pretty);
-                parseropts.css_modules = Some(bun_css::CssModuleConfig::default());
+            // PORT NOTE: `parse_bundler` takes `ParserOptions<'static>` (the
+            // `'a` on `ParserOptions` is PhantomData-only; storage is a raw
+            // `NonNull<Log>`). Construct via `default(None)` to get `'static`,
+            // then poke the logger pointer in directly — `temp_log` outlives
+            // all parsing/minification below (mirrors Zig's `*Log` aliasing).
+            let parser_options = {
+                #[allow(unused_mut)]
+                let mut parseropts = bun_css::ParserOptions::default(None);
+                #[cfg(feature = "css")]
+                {
+                    parseropts.logger = Some(core::ptr::NonNull::from(&mut temp_log));
+                }
+                #[cfg(not(feature = "css"))]
+                {
+                    let _ = &mut temp_log;
+                }
+                if enable_css_modules {
+                    parseropts.filename = bun_paths::basename(source.path.pretty);
+                    parseropts.css_modules = Some(bun_css::CssModuleConfig::default());
+                }
                 parseropts
-            } else {
-                bun_css::ParserOptions::default(Some(&mut temp_log))
             };
 
             let (mut css_ast, extra) = match bun_css::BundlerStyleSheet::parse_bundler(

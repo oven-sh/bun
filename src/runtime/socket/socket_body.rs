@@ -892,15 +892,18 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         let handlers = self.get_handlers();
-        let callback = handlers.on_open;
-        let handshake_callback = handlers.on_handshake;
+        // SAFETY: short-lived field reads; raw-ptr-only across the reentrant
+        // `resolve_promise`/`callback.call` below — see `get_handlers`.
+        let callback = unsafe { (*handlers).on_open };
+        let handshake_callback = unsafe { (*handlers).on_handshake };
 
-        let global = handlers.global_object;
+        let global = unsafe { (*handlers).global_object };
         let this_value = self.get_this_value(global);
 
         self.mark_active();
         // TODO: properly propagate exception upwards
-        let _ = handlers.resolve_promise(this_value);
+        // SAFETY: re-derived; reborrow ends at `;`.
+        let _ = unsafe { (*handlers).resolve_promise(this_value) };
 
         if SSL {
             // only calls open callback if handshake callback is provided

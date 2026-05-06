@@ -62,7 +62,7 @@ pub fn generate_code_for_lazy_export(
     let part: &mut Part = unsafe { &mut (*parts)[1] };
 
     // SAFETY: `stmts: *mut [Stmt]` is an arena slice valid for the link pass.
-    if unsafe { (*part.stmts).is_empty() } {
+    if unsafe { (&*part.stmts).is_empty() } {
         panic!("Internal error: expected at least one statement in the lazy export");
     }
 

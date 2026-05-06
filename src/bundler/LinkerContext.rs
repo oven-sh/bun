@@ -381,13 +381,13 @@ impl<'a> LinkerContext<'a> {
             entry_points,
             sources,
             server_component_boundaries,
-            bundle.dynamic_import_entry_points.keys(),
+            dyn_entry_points.keys(),
             // SAFETY: parse_graph backref
             unsafe { &(*self.parse_graph).entry_point_original_names },
         )?;
         // PERF(port): was arena bulk-free — `dynamic_import_entry_points` is
         // now a global-alloc `ArrayHashMap`; clearing drops it.
-        bundle.dynamic_import_entry_points.clear_retaining_capacity();
+        dyn_entry_points.clear_retaining_capacity();
 
         let runtime_named_exports = &self.graph.ast.items_named_exports()[Index::RUNTIME.get() as usize];
 

@@ -2555,13 +2555,11 @@ impl VirtualMachine {
     }
 
     /// Spec VirtualMachine.zig:1586 `clearRefString`.
-    pub fn clear_ref_string(_: *mut c_void, ref_string: *mut crate::ref_string::RefString) {
-        // SAFETY: `ref_string` is the `*RefString` we stored in the map; the
-        // per-thread VM is live (called from the JS thread on string finalize).
-        unsafe {
-            let hash = (*ref_string).hash;
-            let _ = (*VirtualMachine::get()).ref_strings.remove(&hash);
-        }
+    ///
+    /// TODO(b2-cycle): `crate::ref_string::RefString` is gated (RefString.rs
+    /// not yet un-gated in lib.rs); param is type-erased until then.
+    pub fn clear_ref_string(_: *mut c_void, _ref_string: *mut c_void) {
+        todo!("blocked_on: crate::ref_string::RefString")
     }
 
     /// Spec VirtualMachine.zig:1590 `refCountedResolvedSource`.
@@ -2583,27 +2581,16 @@ impl VirtualMachine {
                 ..Default::default()
             };
         }
-        let source = if ADD_DOUBLE_REF {
+        let _source = if ADD_DOUBLE_REF {
             self.ref_counted_string::<false>(code, hash_)
         } else {
             self.ref_counted_string::<true>(code, hash_)
         };
-        if ADD_DOUBLE_REF {
-            // SAFETY: `source` is a live heap `RefString`.
-            unsafe {
-                (*source).ref_();
-                (*source).ref_();
-            }
-        }
-        ResolvedSource {
-            // SAFETY: `source.impl_` is the WTFStringImpl backing the code.
-            source_code: bun_string::String::init(unsafe { (*source).impl_ }),
-            specifier,
-            source_url: specifier.create_if_different(source_url),
-            allocator: source.cast(),
-            source_code_needs_deref: false,
-            ..Default::default()
-        }
+        // TODO(b2-cycle): `crate::ref_string::RefString` is gated; the real
+        // body derefs `_source` to read `.impl_` and bump refcounts. Restore
+        // once `ref_string` module is un-gated in lib.rs.
+        let _ = (specifier, source_url);
+        todo!("blocked_on: crate::ref_string::RefString")
     }
 
     fn ref_counted_string_with_was_new<const DUPE: bool>(

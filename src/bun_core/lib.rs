@@ -79,6 +79,15 @@ pub fn handle_oom<T, E>(r: core::result::Result<T, E>) -> T {
     }
 }
 
+/// Zig: `bun.handleErrorReturnTrace(err, @errorReturnTrace())` — captures the
+/// Zig error-return trace for crash reporting. Rust has no `@errorReturnTrace()`
+/// builtin (panics already carry a backtrace), so this tier-0 shim is a no-op
+/// that keeps call-site shape; the real reporter lives above in
+/// `bun_crash_handler::handle_error_return_trace`.
+#[inline(always)]
+pub fn handle_error_return_trace<E>(_err: E) {
+}
+
 // Real `declare_scope!`/`scoped_log!`/`pretty*!`/`warn!`/`note!` are
 // `#[macro_export]`ed from output.rs.
 

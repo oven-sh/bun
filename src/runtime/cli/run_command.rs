@@ -877,9 +877,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // dispatch hooks (`jsc_hooks::install_jsc_hooks`) are installed by
         // `main.rs` before `Cli::start`, so `VirtualMachine::init` already sees
         // a populated `RuntimeHooks` table.
-        // TODO(b2-blocked): `bun_jsc::initialize(false)` once un-gated.
-        // TODO(b2-blocked): `js_ast::{Expr,Stmt}::Data::Store::create()` once
-        // `bun_js_parser` exposes the store ctors at this tier.
+        bun_jsc::initialize(ctx.runtime_options.eval.eval_and_print);
+        bun_js_parser::Expr::data_store_create();
+        bun_js_parser::Stmt::data_store_create();
 
         let vm_ptr = VirtualMachine::init(VmInitOptions {
             smol: ctx.runtime_options.smol,

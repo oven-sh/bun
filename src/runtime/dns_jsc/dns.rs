@@ -4581,14 +4581,12 @@ impl Resolver {
         );
         let promise = unsafe { (*(*request).tail).promise.value() };
 
-        // TODO(port): blocked_on bun_cares_sys::c_ares_draft::Channel::get_addr_info —
-        // upstream API is `get_addr_info<T: AddrInfoHandler>(&mut self, host, port,
-        // hints: &[AddrInfo_hints], ctx: &mut T)` (trait-based callback).
-        // `GetAddrInfoRequest` does not yet impl `AddrInfoHandler`; the Zig version
-        // passed `(host, port, hints, ctx, callback)` directly. Additionally `hints_buf`
-        // is `bun_cares_sys::c_ares::AddrInfo_hints` (the un-gated minimal module),
-        // which is layout-identical but a distinct type from the draft's `AddrInfo_hints`.
-        let _ = (channel, &hints_buf, request);
+        // SAFETY: `channel` is the live c-ares channel owned by `self`; `request`
+        // is the freshly heap-allocated GetAddrInfoRequest. c-ares stores the ctx
+        // pointer and calls `AddrInfo::callback_wrapper::<GetAddrInfoRequest>`
+        // (→ `on_cares_complete`) which consumes the request, so the `&mut`
+        // borrow is not held past this call.
+        unsafe { (*channel).get_addr_info(&query.name, query.port, &hints_buf, &mut *request) };
 
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
         self.request_sent(unsafe { &*global_this.bun_vm() });
@@ -4704,10 +4702,7 @@ impl Resolver {
     ) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
         if arguments.is_empty() {
-            // TODO(port): blocked_on bun_jsc::JSGlobalObject::throw_not_enough_arguments (gated)
-            return Err(global_this.throw(format_args!(
-                "Not enough arguments to 'setLocalAddress'. Expected 1, got 0."
-            )));
+            return global_this.throw_not_enough_arguments("setLocalAddress", 1, 0);
         }
 
         let first_af = Self::set_channel_local_address(channel, global_this, arguments[0])?;
@@ -4776,10 +4771,7 @@ impl Resolver {
 
         let arguments = callframe.arguments();
         if arguments.is_empty() {
-            // TODO(port): blocked_on bun_jsc::JSGlobalObject::throw_not_enough_arguments (gated)
-            return Err(global_this.throw(format_args!(
-                "Not enough arguments to 'setServers'. Expected 1, got 0."
-            )));
+            return global_this.throw_not_enough_arguments("setServers", 1, 0);
         }
 
         let argument = arguments[0];
@@ -4912,11 +4904,7 @@ impl Resolver {
     pub fn global_lookup_service(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<2>();
         if arguments.len < 2 {
-            // TODO(port): blocked_on bun_jsc::JSGlobalObject::throw_not_enough_arguments (gated)
-            return Err(global_this.throw(format_args!(
-                "Not enough arguments to 'lookupService'. Expected 2, got {}.",
-                arguments.len
-            )));
+            return global_this.throw_not_enough_arguments("lookupService", 2, arguments.len);
         }
 
         let addr_value = arguments.ptr[0];
@@ -4945,13 +4933,7 @@ impl Resolver {
             &mut *(&mut sa as *mut _ as *mut libc::sockaddr)
         }) != 0
         {
-            // TODO(port): blocked_on bun_jsc::JSGlobalObject::throw_invalid_argument_value (gated)
-            return Err(global_this
-                .err(
-                    jsc::ErrorCode::INVALID_ARG_VALUE,
-                    format_args!("The argument 'address' is invalid."),
-                )
-                .throw());
+            return global_this.throw_invalid_argument_value("address", addr_value);
         }
 
         let resolver = global_resolver_mut(global_this);
@@ -5081,5 +5063,5 @@ export_host_fn!(
 //   source:     src/runtime/dns_jsc/dns.zig (3649 lines)
 //   confidence: low
 //   todos:      32
-//   notes:      Heavy comptime-type/@field reflection (per-record caches, getKey, getOrPutIntoResolvePendingCache) modeled via CAresRecordType trait + PendingCacheField enum + HasPendingCacheKey trait dispatch; Resolver refcount now IntrusiveRc (Arc removed); lookup deinit split into Drop+destroy(*mut Self) — callers still &mut self, reshape in Phase B; RequestKey split into borrowed + RequestKeyOwned; RequestResult thinned to NonNull for FFI layout — owning Box<[ResultEntry]> must move onto Request; ~100 unsafe blocks still need // SAFETY: annotation (cited hot paths done).
+//   notes:      Heavy comptime-type/@field reflection (per-record caches, getKey, getOrPutIntoResolvePendingCache) modeled via CAresRecordType trait + PendingCacheField enum + HasPendingCacheKey trait dispatch; Resolver refcount now IntrusiveRc (Arc removed); lookup deinit split into Drop+destroy(*mut Self) — callers still &mut self, reshape in Phase B; RequestKey split into borrowed + RequestKeyOwned; RequestResult thinned to NonNull for FFI view — owning Box<[ResultEntry]> lives on Request.result_buf; ResolveInfoRequest<T>/GetAddrInfoRequest now impl c_ares::ResolveHandler/AddrInfoHandler so Channel::resolve/get_addr_info actually dispatch; ~100 unsafe blocks still need // SAFETY: annotation (cited hot paths done).
 // ──────────────────────────────────────────────────────────────────────────

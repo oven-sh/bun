@@ -184,7 +184,14 @@ pub use self::js_value::{
     PropertyIteratorFn, ProxyField, ProxyInternalField, SerializedFlags, SerializedScriptValue,
 };
 
-pub use self::task::{Taskable, RUN_TASK_HOOK, set_run_task_hook};
+// LAYERING (PORTING.md §Dispatch): `Task.run` (jsc/Task.zig:39) is a giant
+// `switch` over every concrete task variant — most of which live in
+// `bun_runtime`. The Rust port follows the §Dispatch convention: this crate
+// stores the erased `(tag, *mut ())` `Task` and exposes the queue; the high
+// tier (`bun_runtime::dispatch::tick_queue_with_count`) owns the `match` loop
+// and is wired into `event_loop::tick` directly at link time. No fn-pointer
+// hook is re-exported from the crate root.
+pub use self::task::Taskable;
 pub use self::js_promise::JSPromise;
 pub use self::array_buffer::{ArrayBuffer, JSCArrayBuffer, MarkedArrayBuffer, TypedArrayType};
 pub use self::rare_data as RareData;
@@ -1761,9 +1768,9 @@ pub use self::js_object::{JSObject, ExternColumnIdentifier, ExternColumnIdentifi
 #[path = "CallFrame.rs"] pub mod call_frame;
 pub use self::call_frame::{CallFrame, ArgumentsSlice};
 
-// ──────────────────────────────────────────────────────────────────────────
-// B-2 Track A — JSArrayIterator (real struct; was stub_ty before).
-// ──────────────────────────────────────────────────────────────────────────
+/// `jsc.JSArrayIterator` (jsc.zig:92) — borrowed iterator over a `JSArray`'s
+/// indexed slots. `Iterator::next()` returns `Option<JSValue>` (skipping holes
+/// is the caller's job, matching Zig).
 pub struct JSArrayIterator<'a> {
     pub i: u32,
     pub len: u32,

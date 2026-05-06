@@ -15,7 +15,6 @@ use core::sync::atomic::{AtomicPtr, Ordering};
 use bun_core::{Timespec, TimespecMockMode};
 use bun_threading::Mutex;
 
-use crate::jsc::event_loop::WTFTimer as OpaqueWTFTimer;
 use crate::jsc::virtual_machine::{VirtualMachine, IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE};
 use crate::webcore::script_execution_context::Identifier as ScriptExecutionContextIdentifier;
 
@@ -48,10 +47,10 @@ pub struct WTFTimer {
     run_loop_timer: NonNull<RunLoopTimer>,
     pub event_loop_timer: EventLoopTimer,
     // TODO(port): lifetime — backref into `vm.eventLoop().imminent_gc_timer`.
-    // Typed against the low-tier opaque `WTFTimer` because that's the
-    // declared payload of `EventLoop.imminent_gc_timer`; `self` is cast at
-    // each compare_exchange (the hook in `dispatch.rs` casts back).
-    imminent: NonNull<AtomicPtr<OpaqueWTFTimer>>,
+    // Low tier stores `AtomicPtr<()>` (PORTING.md §Dispatch); `self` is cast
+    // to `*mut ()` at each compare_exchange (the hook in `dispatch.rs` casts
+    // back to `*mut WTFTimer`).
+    imminent: NonNull<AtomicPtr<()>>,
     repeat: bool,
     lock: Mutex,
     script_execution_context_id: ScriptExecutionContextIdentifier,
@@ -99,7 +98,7 @@ impl WTFTimer {
     /// # Safety
     /// `this` must point at a live heap-allocated `WTFTimer`.
     pub unsafe fn update(this: *mut Self, seconds: f64, repeat: bool) {
-        let self_opaque = this.cast::<OpaqueWTFTimer>();
+        let self_opaque = this.cast::<()>();
         // SAFETY: per fn contract.
         let imminent = unsafe { (*this).imminent.as_ref() };
 
@@ -166,7 +165,7 @@ impl WTFTimer {
         // SAFETY: per fn contract.
         if unsafe { (*this).script_execution_context_id }.valid() {
             // Only clear imminent if this timer was the one that set it.
-            let self_opaque = this.cast::<OpaqueWTFTimer>();
+            let self_opaque = this.cast::<()>();
             // SAFETY: `imminent` points into the VM's event loop, which outlives this timer.
             let _ = unsafe { (*this).imminent.as_ref() }.compare_exchange(
                 self_opaque,
@@ -198,7 +197,7 @@ impl WTFTimer {
         // SAFETY: per fn contract — `this` is live.
         unsafe { (*this).event_loop_timer.state = EventLoopTimerState::FIRED };
         // Only clear imminent if this timer was the one that set it.
-        let self_opaque = this.cast::<OpaqueWTFTimer>();
+        let self_opaque = this.cast::<()>();
         // SAFETY: `imminent` points into the VM's event loop, which outlives this timer.
         let _ = unsafe { (*this).imminent.as_ref() }.compare_exchange(
             self_opaque,
@@ -321,7 +320,7 @@ unsafe extern "C" {
 //   confidence: medium
 //   notes:      `vm.timer.{remove,update}` resolved via
 //               `jsc_hooks::runtime_state()` (b2-cycle — `bun_jsc::
-//               VirtualMachine.timer` is `()`); `imminent` typed against the
-//               low-tier opaque `bun_jsc::event_loop::WTFTimer` and `self`
-//               cast at each cmpxchg.
+//               VirtualMachine.timer` is `()`); `imminent` is the low-tier
+//               `AtomicPtr<()>` (PORTING.md §Dispatch) — `self` is cast to
+//               `*mut ()` at each cmpxchg.
 // ──────────────────────────────────────────────────────────────────────────

@@ -1177,19 +1177,22 @@ impl JSTranspiler {
         // In REPL mode, wrap potential object literals in parentheses
         // If code starts with { and doesn't end with ; it might be an object literal
         // that would otherwise be parsed as a block statement
-        let processed_code: std::borrow::Cow<'_, [u8]> =
-            if self.config.repl_mode && is_likely_object_literal(code) {
-                let mut buf = Vec::with_capacity(code.len() + 2);
-                buf.push(b'(');
-                buf.extend_from_slice(code);
-                buf.push(b')');
-                std::borrow::Cow::Owned(buf)
-                // Zig: allocPrint(allocator, "({s})", .{code}) catch code
-            } else {
-                std::borrow::Cow::Borrowed(code)
-            };
+        //
+        // Zig: `allocPrint(allocator, "({s})", .{code}) catch code` — allocated in the
+        // CALLER's arena so the bytes outlive `parse()` and the returned `ParseResult`
+        // (whose AST may hold slices into the source). A stack-local `Vec` would drop at
+        // the end of this fn and leave dangling references.
+        let processed_code: &[u8] = if self.config.repl_mode && is_likely_object_literal(code) {
+            let mut buf = ArenaVec::<u8>::with_capacity_in(code.len() + 2, arena);
+            buf.push(b'(');
+            buf.extend_from_slice(code);
+            buf.push(b')');
+            buf.into_bump_slice()
+        } else {
+            code
+        };
 
-        let source = logger::Source::init_path_string(name, &processed_code[..]);
+        let source = logger::Source::init_path_string(name, processed_code);
 
         let jsx = match self.config.tsconfig.as_deref() {
             Some(ts) => ts.merge_jsx(self.transpiler.options.jsx.clone().into()).into(),
@@ -1273,16 +1276,21 @@ impl JSTranspiler {
 
         // PERF(port): was MimallocArena bulk-free — profile in Phase B
         let arena = Arena::new();
-        let prev_allocator = self.transpiler.allocator;
-        // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
-        // allocator is restored to `prev_allocator` before return.
-        self.transpiler
-            .set_allocator(unsafe { &*(&arena as *const Arena) });
         let mut log = logger::Log::init();
         // defer log.deinit() → Drop
+        let prev_allocator = self.transpiler.allocator;
+        // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
+        // `_restore` (declared after `arena`/`log`, so dropped first) restores
+        // `prev_allocator` and `&self.config.log` before either local drops.
+        self.transpiler
+            .set_allocator(unsafe { &*(&arena as *const Arena) });
         self.transpiler.set_log(&mut log);
-        // TODO(port): errdefer — restore log/allocator on every exit. Phase B: scopeguard
-        // captures &mut self; borrowck conflict with body. For now, restore at tail only.
+        let _restore = TranspilerStateGuard {
+            transpiler: &mut self.transpiler,
+            prev_allocator,
+            restore_log: &mut self.config.log,
+            prev_macro_context: None,
+        };
 
         let mut ast_memory_allocator = JSAst::ASTMemoryAllocator::new(&arena);
         let _ast_scope = ast_memory_allocator.enter();
@@ -1311,10 +1319,6 @@ impl JSTranspiler {
         )?;
 
         let named_exports_value = named_exports_to_js(global, &mut parse_result.ast.named_exports)?;
-
-        // Restore log/allocator before returning.
-        self.transpiler.set_log(&mut self.config.log);
-        self.transpiler.allocator = prev_allocator;
 
         JSValue::create_object2(
             global,
@@ -1455,25 +1459,32 @@ impl JSTranspiler {
         let mut ast_memory_allocator = JSAst::ASTMemoryAllocator::new(&arena);
         let _ast_scope = ast_memory_allocator.enter();
 
-        // TODO(port): `Transpiler` is not Clone; Zig copied it by-value to restore on exit.
-        // For now, save/restore only allocator + log.
-        let prev_allocator = self.transpiler.allocator;
-        // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
-        // allocator is restored to `prev_allocator` before return.
-        self.transpiler
-            .set_allocator(unsafe { &*(&arena as *const Arena) });
-        self.transpiler.macro_context = None;
+        // PORT NOTE: spec snapshots the WHOLE `this.transpiler` by value
+        // (`prev_bundler = this.transpiler`) and restores it on exit. `Transpiler` is not
+        // bitwise-copyable in Rust, so explicitly snapshot the fields the body mutates
+        // (`allocator`, `log`, `macro_context`) and restore them via RAII guard.
         let mut log = logger::Log::init();
         log.level = self.config.log.level;
+        let prev_allocator = self.transpiler.allocator;
+        // `take()` both reads the prior value AND nulls it (spec: `macro_context = null`).
+        let prev_macro_context = self.transpiler.macro_context.take();
+        // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
+        // `_restore` (declared after `arena`/`log`, so dropped first) restores
+        // `prev_allocator`, `&self.config.log`, and `prev_macro_context` before either drops.
+        self.transpiler
+            .set_allocator(unsafe { &*(&arena as *const Arena) });
         self.transpiler.set_log(&mut log);
+        let _restore = TranspilerStateGuard {
+            transpiler: &mut self.transpiler,
+            prev_allocator,
+            restore_log: &mut self.config.log,
+            prev_macro_context: Some(prev_macro_context),
+        };
 
-        // TODO(port): errdefer — scopeguard captures &mut self; borrowck conflict with body.
-        // Phase B: restructure restore into explicit assignment at every return.
-
-        // MacroJSCtx is `*mut ()` cycle-break placeholder; thread the JSValue
-        // through once the bundler accepts it directly.
-        let _ = js_ctx_value;
-        let parse_result = self.get_parse_result(&arena, code, loader, core::ptr::null_mut());
+        // `MacroJSCtx` is the cycle-break `*mut ()` alias for `JSValue` (see
+        // bundler_jsc/PluginRunner.zig:4). Encode the value bits directly.
+        let macro_js_ctx: MacroJSCtx = js_ctx_value.0 as *mut ();
+        let parse_result = self.get_parse_result(&arena, code, loader, macro_js_ctx);
         // SAFETY: `transpiler.log` was just set to `&mut log` above.
         let log_ref = unsafe { &mut *self.transpiler.log };
         let Some(parse_result) = parse_result else {
@@ -1494,8 +1505,8 @@ impl JSTranspiler {
             writer
         });
 
-        // defer { this.buffer_writer = buffer_writer } — handled below at every exit
-        // TODO(port): restore buffer_writer to self on early returns too.
+        // defer { this.buffer_writer = buffer_writer } — only the print-error and tail
+        // paths reach past this point; both write `Some(..)` back explicitly.
 
         buffer_writer.reset();
         let mut printer = JSPrinter::BufferPrinter::init(buffer_writer);
@@ -1514,9 +1525,6 @@ impl JSTranspiler {
 
         let result = out.to_js(global);
         self.buffer_writer = Some(buffer_writer);
-        // Restore log/allocator.
-        self.transpiler.set_log(&mut self.config.log);
-        self.transpiler.allocator = prev_allocator;
         Ok(result)
     }
 }

@@ -3428,11 +3428,35 @@ pub fn finalize_bundle(
 
         let index = bun_js_parser::ast::Index::init(chunk.entry_point.source_index());
 
+        // PORT NOTE: `IntermediateOutput::code` takes `&mut self` (a field of
+        // `*chunk`) plus `chunk: &mut Chunk` and `chunks: &mut [Chunk]`;
+        // borrowck rejects the overlap. Zig aliased freely. Split via raw
+        // pointers — the callee never reborrows `chunk.intermediate_output`
+        // through the `chunk`/`chunks` params (it reads metadata only).
         let code = {
-            let _ = (&bv2.graph, &bv2.linker.graph, chunk as *mut _);
-            todo!("blocked_on: bun_bundler::IntermediateOutput::code (split self/chunk borrow)");
-            #[allow(unreachable_code)]
-            bundler::chunk::CodeResult { buffer: Vec::new().into(), shifts: Default::default() }
+            let chunk_ptr: *mut bundler::chunk::Chunk = chunk;
+            // SAFETY: `intermediate_output` is a disjoint field of `*chunk`;
+            // `code()` does not access it via the `chunk`/`chunks` arguments.
+            let io = unsafe { &mut (*chunk_ptr).intermediate_output };
+            io.code(
+                None,
+                &bv2.graph,
+                &bv2.linker.graph,
+                b"THIS_SHOULD_NEVER_BE_EMITTED_IN_DEV_MODE",
+                // SAFETY: see above; same allocation, disjoint field access.
+                unsafe { &mut *chunk_ptr },
+                // SAFETY: `result.chunks` outlives this loop body; Zig passed
+                // the same slice while iterating it.
+                unsafe {
+                    ::core::slice::from_raw_parts_mut(
+                        result.chunks.as_mut_ptr(),
+                        result.chunks.len(),
+                    )
+                },
+                None,
+                false,
+                false,
+            )?
         };
 
         // Create an entry for this file.

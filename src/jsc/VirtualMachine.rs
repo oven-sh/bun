@@ -2642,8 +2642,12 @@ impl VirtualMachine {
     }
 
     /// Spec VirtualMachine.zig:1016 `enqueueImmediateTask`.
+    ///
+    /// PORT NOTE (§Dispatch): `task` is an erased
+    /// `*mut bun_runtime::timer::ImmediateObject` — see
+    /// [`crate::event_loop::RunImmediateFn`].
     #[inline]
-    pub fn enqueue_immediate_task(&mut self, task: *mut crate::event_loop::ImmediateObject) {
+    pub fn enqueue_immediate_task(&mut self, task: *mut ()) {
         // SAFETY: `event_loop` is a self-pointer into this VM.
         unsafe { (*self.event_loop()).enqueue_immediate_task(task) };
     }

@@ -762,20 +762,19 @@ pub unsafe fn run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
 // Hook installation
 // ════════════════════════════════════════════════════════════════════════════
 
-/// `RUN_IMMEDIATE_HOOK` body — cast the opaque low-tier
-/// `bun_jsc::event_loop::ImmediateObject` to the real
-/// `crate::timer::ImmediateObject` and run the task.
+/// `RUN_IMMEDIATE_HOOK` body — cast the low-tier erased `*mut ()` to the real
+/// `crate::timer::ImmediateObject` and run the task (PORTING.md §Dispatch:
+/// low tier stores `*mut ()`, high tier owns the cast).
 ///
 /// # Safety
 /// `task` was produced by `enqueue_immediate_task` from a live
 /// `timer::ImmediateObject`; `vm` is the live per-thread VM.
 unsafe fn run_immediate_task_hook(
-    task: *mut bun_jsc::event_loop::ImmediateObject,
+    task: *mut (),
     vm: *mut bun_jsc::virtual_machine::VirtualMachine,
 ) -> bool {
-    // SAFETY: per fn contract — the low-tier `ImmediateObject` is an opaque
-    // forward-decl; the only producer (`TimerObjectInternals::init`) stores a
-    // `*mut crate::timer::ImmediateObject`, so the cast is the identity.
+    // SAFETY: per fn contract — the only producer (`TimerObjectInternals::init`)
+    // stores a `*mut crate::timer::ImmediateObject`, so the cast is the identity.
     unsafe {
         crate::timer::ImmediateObject::run_immediate_task(
             task.cast::<crate::timer::ImmediateObject>(),
@@ -784,19 +783,18 @@ unsafe fn run_immediate_task_hook(
     }
 }
 
-/// `RUN_WTF_TIMER_HOOK` body — cast the opaque low-tier
-/// `bun_jsc::event_loop::WTFTimer` to the real `crate::timer::WTFTimer` and
-/// fire it (spec event_loop.zig:302-306 `imminent_gc_timer.swap(null).?.run(vm)`).
+/// `RUN_WTF_TIMER_HOOK` body — cast the low-tier erased `*mut ()` to the real
+/// `crate::timer::WTFTimer` and fire it (spec event_loop.zig:302-306
+/// `imminent_gc_timer.swap(null).?.run(vm)`).
 ///
 /// # Safety
 /// `timer` was published by `WTFTimer::update` into `imminent_gc_timer` and
 /// remains live until consumed; `vm` is the live per-thread VM.
 unsafe fn run_wtf_timer_hook(
-    timer: *mut bun_jsc::event_loop::WTFTimer,
+    timer: *mut (),
     vm: *mut bun_jsc::virtual_machine::VirtualMachine,
 ) {
-    // SAFETY: per fn contract — the low-tier `WTFTimer` is an opaque
-    // forward-decl; the only producer (`WTFTimer::update`) stores a
+    // SAFETY: per fn contract — the only producer (`WTFTimer::update`) stores a
     // `*mut crate::timer::WTFTimer`, so the cast is the identity.
     let real = timer.cast::<crate::timer::WTFTimer>();
     // SAFETY: per fn contract — `real` is live until consumed; `vm` is the

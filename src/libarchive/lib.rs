@@ -126,6 +126,7 @@ pub mod lib {
 
         // entry
         fn archive_entry_new() -> *mut Entry;
+        fn archive_entry_new2(a: *mut Archive) -> *mut Entry;
         fn archive_entry_free(e: *mut Entry);
         fn archive_entry_clear(e: *mut Entry) -> *mut Entry;
         fn archive_entry_pathname(e: *mut Entry) -> *const c_char;
@@ -136,6 +137,7 @@ pub mod lib {
         fn archive_entry_size(e: *mut Entry) -> la_int64_t;
         fn archive_entry_filetype(e: *mut Entry) -> bun_sys::Mode;
         fn archive_entry_mtime(e: *mut Entry) -> time_t;
+        fn archive_entry_set_pathname(e: *mut Entry, name: *const c_char);
         fn archive_entry_set_pathname_utf8(e: *mut Entry, name: *const c_char);
         fn archive_entry_set_size(e: *mut Entry, s: la_int64_t);
         fn archive_entry_set_filetype(e: *mut Entry, t: c_uint);
@@ -486,6 +488,13 @@ pub mod lib {
             // SAFETY: FFI call with no preconditions.
             unsafe { archive_entry_new() }
         }
+        /// `archive_entry_new2(archive)` — ties the entry to the archive's
+        /// charset-conversion context (preferred over `new()` when an archive
+        /// is available).
+        pub fn new2(archive: *mut Archive) -> *mut Entry {
+            // SAFETY: `archive` came from `Archive::read_new()`/`write_new()`.
+            unsafe { archive_entry_new2(archive) }
+        }
         pub fn free(&self) {
             // SAFETY: self came from Entry::new(); not used after this.
             unsafe { archive_entry_free(self.as_mut_ptr()) }
@@ -493,6 +502,12 @@ pub mod lib {
         pub fn clear(&self) -> *mut Entry {
             // SAFETY: self valid.
             unsafe { archive_entry_clear(self.as_mut_ptr()) }
+        }
+        /// Raw `archive_entry_set_pathname` — bytes are stored verbatim (no
+        /// charset conversion). Matches Zig's `setPathname` on POSIX.
+        pub fn set_pathname(&self, name: &ZStr) {
+            // SAFETY: self valid; name is NUL-terminated.
+            unsafe { archive_entry_set_pathname(self.as_mut_ptr(), name.as_ptr()) }
         }
         pub fn set_pathname_utf8(&self, name: &ZStr) {
             // SAFETY: self valid; name is NUL-terminated.

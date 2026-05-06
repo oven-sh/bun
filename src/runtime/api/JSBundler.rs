@@ -782,7 +782,7 @@ pub mod js_bundler {
 
             // Parse the files option for in-memory files
             if let Some(files_obj) = config.get_own_object(global_this, "files")? {
-                this.files = FileMap::from_js(global_this, JSValue::from_cell(files_obj))?;
+                this.files = file_map_from_js(global_this, JSValue::from_cell(files_obj))?;
             }
 
             if let Some(flag) = config.get_boolean_loose(global_this, "emitDCEAnnotations")? {
@@ -1244,14 +1244,8 @@ pub mod js_bundler {
         }
     }
 
-    impl Drop for Config {
-        fn drop(&mut self) {
-            // entry_points, external, define, jsx, compile, loaders etc. drop automatically.
-            // TODO(port): FileMap::deinit_and_unprotect touches JS values; Config is !Send via
-            // its Strong fields so Drop runs on the JS thread, but verify in Phase B.
-            self.files.deinit_and_unprotect();
-        }
-    }
+    // `Config` owns only `Drop`-aware fields (`Box<[u8]>` map values, `Vec`s,
+    // `MutableString`, `Strong`); no manual `Drop` needed.
 
     pub struct Names {
         pub owned_entry_point: OwnedString,

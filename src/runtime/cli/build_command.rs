@@ -588,8 +588,7 @@ impl BuildCommand {
             if let Some(metafile_json) = build_result.metafile.as_deref() {
                 if !ctx.bundler_options.metafile.is_empty() {
                     // Use makeOpen which auto-creates parent directories on failure
-                    let file = match bun_sys::File::openat(
-                        Fd::cwd(),
+                    let file = match bun_sys::File::make_open(
                         &ctx.bundler_options.metafile,
                         bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
                         0o664,
@@ -632,8 +631,7 @@ impl BuildCommand {
                         }
                     };
                     if let Some(md_content) = metafile_md {
-                        let file = match bun_sys::File::openat(
-                            Fd::cwd(),
+                        let file = match bun_sys::File::make_open(
                             &ctx.bundler_options.metafile_md,
                             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
                             0o664,

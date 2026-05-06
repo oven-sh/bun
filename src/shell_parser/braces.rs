@@ -433,6 +433,7 @@ impl Token {
 // output is byte-compatible.
 
 fn json_escape_into(out: &mut Vec<u8>, s: &[u8]) {
+    use std::io::Write as _;
     out.push(b'"');
     for &b in s {
         match b {
@@ -442,7 +443,6 @@ fn json_escape_into(out: &mut Vec<u8>, s: &[u8]) {
             b'\r' => out.extend_from_slice(b"\\r"),
             b'\t' => out.extend_from_slice(b"\\t"),
             0x00..=0x1f => {
-                use core::fmt::Write as _;
                 let _ = write!(out, "\\u{:04x}", b);
             }
             _ => out.push(b),
@@ -452,7 +452,7 @@ fn json_escape_into(out: &mut Vec<u8>, s: &[u8]) {
 }
 
 pub fn tokens_to_json(tokens: &[Token]) -> Vec<u8> {
-    use core::fmt::Write as _;
+    use std::io::Write as _;
     let mut out = Vec::with_capacity(tokens.len() * 16 + 2);
     out.push(b'[');
     for (i, t) in tokens.iter().enumerate() {
@@ -510,7 +510,7 @@ fn ast_atom_to_json(atom: &ast::Atom, out: &mut Vec<u8>) {
 }
 
 fn ast_group_to_json(group: &ast::Group, out: &mut Vec<u8>) {
-    use core::fmt::Write as _;
+    use std::io::Write as _;
     out.extend_from_slice(b"{\"bubble_up\":");
     if group.bubble_up.is_null() {
         out.extend_from_slice(b"null");

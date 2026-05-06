@@ -578,9 +578,9 @@ impl TimerObjectInternals {
                     .sub(offset_of!(ImmediateObject, internals))
                     .cast::<ImmediateObject>()
             };
-            // SAFETY: `vm` is the live per-thread VM. The low-tier
-            // `bun_jsc::event_loop::ImmediateObject` is an opaque forward-decl
-            // for this crate's `ImmediateObject`; `.cast()` is the identity.
+            // SAFETY: `vm` is the live per-thread VM. Low tier stores `*mut ()`
+            // (PORTING.md §Dispatch); `run_immediate_task_hook` casts it back
+            // to `*mut ImmediateObject`.
             unsafe { (*vm).enqueue_immediate_task(parent.cast()) };
             self.set_enable_keeping_event_loop_alive(vm, true);
             // ref'd by event loop

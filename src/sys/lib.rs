@@ -2430,6 +2430,29 @@ impl File {
     pub fn open_at(dir: Fd, path: &[u8], flags: i32, mode: Mode) -> Maybe<Self> {
         Self::openat(dir, path, flags, mode)
     }
+    /// File.zig `makeOpen` — `openat` against cwd, auto-creating parent
+    /// directories on the first failure (mkdir -p of `dirname(path)`, then
+    /// retry once).
+    #[inline]
+    pub fn make_open(path: &[u8], flags: i32, mode: Mode) -> Maybe<Self> {
+        Self::make_openat(Fd::cwd(), path, flags, mode)
+    }
+    /// File.zig `makeOpenat` — `openat`; on failure, `bun.makePath(dir, dirname(path))`
+    /// (errors from `makePath` are swallowed, matching `catch {}` in Zig) then
+    /// retry the open once. If `path` has no dirname, the original error is
+    /// returned.
+    pub fn make_openat(dir: Fd, path: &[u8], flags: i32, mode: Mode) -> Maybe<Self> {
+        match openat_a(dir, path, flags, mode) {
+            Ok(fd) => Ok(Self::from_fd(fd)),
+            Err(err) => {
+                if let Some(dir_path) = bun_paths::dirname(path) {
+                    let _ = mkdir_recursive_at(dir, dir_path);
+                    return openat_a(dir, path, flags, mode).map(Self::from_fd);
+                }
+                Err(err)
+            }
+        }
+    }
     /// `std.fs.cwd().createFile(path, .{ .truncate })` replacement.
     pub fn create(dir: Fd, path: &[u8], truncate: bool) -> Maybe<Self> {
         let flags = O::WRONLY | O::CREAT | O::CLOEXEC | if truncate { O::TRUNC } else { 0 };

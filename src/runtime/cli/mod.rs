@@ -1276,7 +1276,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
             Tag::BuildCommand => arguments::BUILD_PARAMS.as_slice(),
             Tag::TestCommand => arguments::TEST_PARAMS.as_slice(),
             Tag::BunxCommand => arguments::RUN_PARAMS.as_slice(),
-            _ => arguments::BASE_PARAMS_,
+            _ => arguments::BASE_PARAMS_.as_slice(),
         }
     }
 

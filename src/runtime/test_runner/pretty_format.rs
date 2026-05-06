@@ -2357,6 +2357,12 @@ impl<'a> Formatter<'a> {
                         let prev_quote_strings = self.quote_strings;
                         self.quote_strings = true;
 
+                        // PORT NOTE: Zig registers `defer this.quote_strings = prev_quote_strings`
+                        // (and nested `defer this.indent -|= 1` scopes) so state is restored on
+                        // every exit, including thrown exceptions. Wrap the fallible body in a
+                        // closure (Ok(true) ⇒ children path printed the closing tag, so the
+                        // trailing " />" is skipped) and restore unconditionally afterward.
+                        let inner: JsResult<bool> = (|| {
                         // SAFETY: JSX props are always an object.
                         let props_obj = props.get_object().unwrap();
                         let mut props_iter = JSPropertyIterator::init(
@@ -2375,6 +2381,7 @@ impl<'a> Formatter<'a> {
                                 let count_without_children =
                                     props_iter.len - usize::from(children_prop.is_some());
 
+                                let loop_result: JsResult<()> = (|| {
                                 // PORT NOTE: `JSPropertyIterator::i` is private upstream;
                                 // track the 1-based iteration index locally (matches the
                                 // post-`next()` value of the Zig spec's `props_iter.i`).
@@ -2446,7 +2453,10 @@ impl<'a> Formatter<'a> {
                                         writer.write_all(b" ");
                                     }
                                 }
+                                Ok(())
+                                })();
                                 self.indent = self.indent.saturating_sub(1);
+                                loop_result?;
                             }
 
                             if let Some(children) = children_prop {
@@ -2490,15 +2500,18 @@ impl<'a> Formatter<'a> {
 
                                                 {
                                                     self.indent += 1;
-                                                    self.write_indent(writer.ctx)
-                                                        .expect("unreachable");
-                                                    self.format::<W, ENABLE_ANSI_COLORS>(
-                                                        Tag::get(children, self.global_this)?,
-                                                        writer.ctx,
-                                                        children,
-                                                        self.global_this,
-                                                    )?;
+                                                    let r: JsResult<()> = (|| {
+                                                        self.write_indent(writer.ctx)
+                                                            .expect("unreachable");
+                                                        self.format::<W, ENABLE_ANSI_COLORS>(
+                                                            Tag::get(children, self.global_this)?,
+                                                            writer.ctx,
+                                                            children,
+                                                            self.global_this,
+                                                        )
+                                                    })();
                                                     self.indent = self.indent.saturating_sub(1);
+                                                    r?;
                                                 }
 
                                                 writer.write_all(b"\n");
@@ -2520,29 +2533,33 @@ impl<'a> Formatter<'a> {
                                                     let _prev_quote_strings = self.quote_strings;
                                                     self.quote_strings = false;
 
-                                                    let mut j: usize = 0;
-                                                    while j < length {
-                                                        let child = JSObject::get_index(
-                                                            children,
-                                                            self.global_this,
-                                                            u32::try_from(j).unwrap(),
-                                                        )?;
-                                                        self.format::<W, ENABLE_ANSI_COLORS>(
-                                                            Tag::get(child, self.global_this)?,
-                                                            writer.ctx,
-                                                            child,
-                                                            self.global_this,
-                                                        )?;
-                                                        if j + 1 < length {
-                                                            writer.write_all(b"\n");
-                                                            self.write_indent(writer.ctx)
-                                                                .expect("unreachable");
+                                                    let r: JsResult<()> = (|| {
+                                                        let mut j: usize = 0;
+                                                        while j < length {
+                                                            let child = JSObject::get_index(
+                                                                children,
+                                                                self.global_this,
+                                                                u32::try_from(j).unwrap(),
+                                                            )?;
+                                                            self.format::<W, ENABLE_ANSI_COLORS>(
+                                                                Tag::get(child, self.global_this)?,
+                                                                writer.ctx,
+                                                                child,
+                                                                self.global_this,
+                                                            )?;
+                                                            if j + 1 < length {
+                                                                writer.write_all(b"\n");
+                                                                self.write_indent(writer.ctx)
+                                                                    .expect("unreachable");
+                                                            }
+                                                            j += 1;
                                                         }
-                                                        j += 1;
-                                                    }
+                                                        Ok(())
+                                                    })();
 
                                                     self.quote_strings = _prev_quote_strings;
                                                     self.indent = self.indent.saturating_sub(1);
+                                                    r?;
                                                 }
 
                                                 writer.write_all(b"\n");
@@ -2578,12 +2595,17 @@ impl<'a> Formatter<'a> {
                                         writer.write_all(b">");
                                     }
 
-                                    self.quote_strings = prev_quote_strings;
-                                    return Ok(());
+                                    return Ok(true);
                                 }
                             }
                         }
+                        Ok(false)
+                        })();
+
                         self.quote_strings = prev_quote_strings;
+                        if inner? {
+                            return Ok(());
+                        }
                     }
 
                     writer.write_all(b" />");

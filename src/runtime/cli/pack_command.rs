@@ -34,26 +34,6 @@ use crate::cli::run_command::RunCommand;
 // local shims for upstream-stub gaps
 // ───────────────────────────────────────────────────────────────────────────
 
-/// `LogLevel::isVerbose()` — upstream stub `bun_install::package_manager::LogLevel`
-/// has no inherent methods (real impl gated behind `package_manager_real`).
-trait LogLevelExt {
-    fn is_verbose(self) -> bool;
-    fn show_progress(self) -> bool;
-}
-impl LogLevelExt for LogLevel {
-    #[inline]
-    fn is_verbose(self) -> bool {
-        matches!(self, LogLevel::Verbose | LogLevel::VerboseNoProgress)
-    }
-    #[inline]
-    fn show_progress(self) -> bool {
-        !matches!(
-            self,
-            LogLevel::Silent | LogLevel::Quiet | LogLevel::DefaultNoProgress | LogLevel::VerboseNoProgress,
-        )
-    }
-}
-
 /// `std.fs.Dir.openDirZ(path, .{ .iterate = true })` — `bun_sys::Dir` has no
 /// such inherent method; route through `bun_sys::open_dir_at`.
 #[inline]
@@ -64,14 +44,19 @@ fn dir_open_dir_z(dir: &Dir, path: &ZStr, _opts: bun_sys::OpenDirOptions) -> Res
 }
 
 
-/// Process-lifetime bump arena for `Expr::as_string*` calls (CLI is one-shot;
-/// see `pm_pkg_command::dummy_bump`). `bun_alloc::Arena` (= `bumpalo::Bump`)
-/// is `!Sync`, so a `static OnceLock` is out; cache a leaked arena per thread.
+/// Process-lifetime bump arena for `Expr::as_string*` / `E::EString` data
+/// (Zig: `ctx.allocator`, an arena freed at process exit). `bun_alloc::Arena`
+/// (= `bumpalo::Bump`) is `!Sync`, so a `static LazyLock` is out; store the
+/// arena directly in a `thread_local!` and hand out a `'static` borrow — the
+/// CLI is single-threaded and the slot lives for the thread's lifetime.
 fn pack_bump() -> &'static bun_alloc::Arena {
     thread_local! {
-        static BUMP: &'static bun_alloc::Arena = Box::leak(Box::new(bun_alloc::Arena::new()));
+        static BUMP: bun_alloc::Arena = bun_alloc::Arena::new();
     }
-    BUMP.with(|b| *b)
+    // SAFETY: `BUMP` is never dropped (thread = process lifetime in `bun pm
+    // pack`), and `Arena` is `!Sync` so no cross-thread aliasing. Erase the
+    // borrow to `'static` to mirror Zig's allocator-owned slices.
+    BUMP.with(|b| unsafe { &*(b as *const bun_alloc::Arena) })
 }
 
 /// `bun.sys.File.toSourceAt` re-homed here (T1→T2 layering split: `bun_sys`

@@ -3850,26 +3850,32 @@ pub fn finalize_bundle(
         dev.bundles_since_last_error = 0;
 
         // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
-        let mut inspector_agent = unsafe { dev.inspector() };
-        if current_bundle.promise.strong.has_value() {
-            let _reset = scopeguard::guard((), |_| current_bundle.promise.reset());
-            current_bundle
+        // PORT NOTE: erase the agent borrow to a raw pointer so it can be passed
+        // through `send_serialized_failures` (which also borrows `dev`) and then
+        // re-used below — Zig passed the optional pointer by value.
+        let inspector_agent_ptr: Option<*mut BunFrontendDevServerAgent> =
+            unsafe { dev.inspector() }.map(|a| a as *mut _);
+        if current_bundle!().promise.strong.has_value() {
+            // SAFETY: see `current_bundle!` SAFETY; guard runs before `_outer_defer`.
+            let _reset = scopeguard::guard((), move |_| unsafe { (*current_bundle_ptr).promise.reset() });
+            current_bundle!()
                 .promise
                 .set_route_bundle_state(dev, route_bundle::State::PossibleBundlingFailures);
             // SAFETY: vm is JSC_BORROW; vm.global is valid for VM lifetime
             let global = unsafe { &*(*dev.vm).global };
             dev.send_serialized_failures(
                 DevResponse::Promise(PromiseResponse {
-                    promise: current_bundle.promise.strong.take(),
+                    promise: current_bundle!().promise.strong.take(),
                     global,
                 }),
                 dev.bundling_failures.keys(),
                 ErrorPageKind::Bundler,
-                inspector_agent,
+                // SAFETY: agent ptr is from `dev.inspector()` just above; live for this scope.
+                inspector_agent_ptr.map(|p| unsafe { &mut *p }),
             )?;
         }
 
-        while let Some(node) = current_bundle.requests.pop_first() {
+        while let Some(node) = current_bundle!().requests.pop_first() {
             // SAFETY: `pop_first` hands back ownership of the intrusive node;
             // `data` was initialized by `defer_request`.
             let req = unsafe { (*node).data.assume_init_mut() };

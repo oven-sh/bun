@@ -1305,9 +1305,7 @@ impl Blob {
             global_this: global_this,
         };
 
-        let _ = form_data;
-        todo!("blocked_on: bun_jsc::DOMFormData::for_each");
-        #[allow(unreachable_code)]
+        form_data.for_each(&mut |name, entry| context.on_entry(name, entry));
         if context.failed {
             // The joiner's Node structs are owned by the (former) arena, but each
             // node's data carries its own owner allocator — heap for non-ASCII
@@ -1781,11 +1779,8 @@ fn write_file_with_empty_source_to_destination(
 
             let promise = jsc::JSPromiseStrong::init(ctx);
             let promise_value = promise.value();
-            // TODO(port): `vm.transpiler.env.get_http_proxy(true, None, None)` once env API lands.
-            let proxy_url: Option<&[u8]> = {
-                let _ = ctx;
-                todo!("blocked_on: bun_jsc::VirtualMachine.transpiler.env.get_http_proxy")
-            };
+            let proxy_owned = http_proxy_href(ctx);
+            let proxy_url = proxy_owned.as_deref();
             s3_client::upload(
                 &aws_options.credentials,
                 s3.path(),

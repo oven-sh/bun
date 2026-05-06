@@ -525,10 +525,21 @@ impl BuildCommand {
                 this_transpiler.options.import_path_format =
                     options::ImportPathFormat::Relative;
                 this_transpiler.options.allow_runtime = false;
+                this_transpiler.resolver.opts.allow_runtime = false;
 
                 // TODO: refactor this .transform function
-                let _ = (&ctx.args,);
-                todo!("blocked_on: bun_bundler::Transpiler::transform");
+                let result = this_transpiler.transform(ctx.log, ctx.args.clone())?;
+
+                if log_ref.has_errors() {
+                    let _ = log_ref.print(Output::error_writer() as *mut bun_core::io::Writer);
+
+                    if !result.errors.is_empty() || result.output_files.is_empty() {
+                        Output::flush();
+                        exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
+                    }
+                }
+
+                break 'brk result.output_files.into_vec();
             }
 
             if ctx.bundler_options.outdir.is_empty()

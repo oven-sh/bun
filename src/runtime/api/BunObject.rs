@@ -289,8 +289,7 @@ pub fn get_hash_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
 }
 
 pub fn get_jsonc_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    let _ = global_this;
-    todo!("blocked_on: crate::api::jsonc_object::create (gated under private _jsc_gated)")
+    crate::api::jsonc_object::create(global_this)
 }
 
 pub fn get_markdown_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {

@@ -1549,14 +1549,16 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         headers = Some(Headers::from(
             None,
             HeadersOptions {
-                body: any_blob_ref(body.get_any_blob()),
+                body: any_blob_ref_opt(body.get_any_blob().map(|b| &*b)),
             },
         ));
     }
 
-    let mut http_body = body.clone_ref();
-    // TODO(port): `http_body = body` in Zig is a shallow struct copy; here we
-    // model HTTPRequestBody as move-only — clone_ref() bumps refcounts where needed.
+    // PORT NOTE: Zig kept a separate `http_body = body` shallow alias and later
+    // detached `body` after `FetchTasklet.queue`. With Rust move semantics the
+    // alias is unnecessary: `body` is mutated in place for the sendfile/readfile
+    // paths and then *moved* into `FetchOptions`, so the trailing `body.detach()`
+    // and the debug ref-count check that depended on the alias are dropped.
 
     if body.is_s3() {
         'prepare_body: {

@@ -878,16 +878,9 @@ unsafe fn fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, vm: *mut ()
         }
         EventLoopTimerTag::AbortSignalTimeout => {
             let container = container_of!(AbortSignalTimeout, event_loop_timer);
-            // SAFETY: per fn contract; `run` may free `container`.
-            // `crate::timer::AbortSignalTimeout` is the `#[repr(C)]` mirror of
-            // `bun_jsc::abort_signal::Timeout` (same field layout); cast to the
-            // lower-tier type so the real `run` body is reachable.
-            unsafe {
-                bun_jsc::abort_signal::Timeout::run(
-                    container.cast::<bun_jsc::abort_signal::Timeout>(),
-                    &*vm,
-                );
-            }
+            // SAFETY: per fn contract; `run` may free `container` (re-entrant
+            // `signal` → `~AbortSignal` → `Timeout::deinit`).
+            unsafe { AbortSignalTimeout::run(container, vm) };
         }
         EventLoopTimerTag::DateHeaderTimer => {
             let container = container_of!(DateHeaderTimer, event_loop_timer);

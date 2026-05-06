@@ -199,7 +199,7 @@ impl PackCommand {
         if manager.options.log_level != LogLevel::Silent && manager.options.log_level != LogLevel::Quiet {
             Output::prettyln(format_args!(
                 "<r><b>bun pack <r><d>v{}<r>",
-                Global::package_json_version_with_sha(),
+                Global::package_json_version_with_sha,
             ));
             Output::flush();
         }
@@ -301,11 +301,11 @@ impl PackCommand {
                 if !cli.silent {
                     if err == bun_core::err!("MissingPackageJSON") {
                         let mut cwd_buf = PathBuffer::uninit();
-                        match bun_sys::getcwd(&mut cwd_buf[..]) {
+                        match bun_sys::getcwd_z(&mut cwd_buf) {
                             Ok(cwd) => {
                                 Output::err_generic(
                                     "failed to find project package.json from: \"{}\"",
-                                    format_args!("{}", bstr::BStr::new(cwd)),
+                                    format_args!("{}", bstr::BStr::new(cwd.as_bytes())),
                                 );
                             }
                             Err(_) => {
@@ -2541,7 +2541,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
             package_name: package_name.into(),
             package_version: package_version.into(),
             abs_tarball_path: ZStr::boxed(abs_tarball_dest.as_bytes()),
-            tarball_bytes: tarball_bytes.into_boxed_slice(),
+            tarball_bytes: tarball_bytes.unwrap_or_default().into_boxed_slice(),
             shasum,
             integrity,
             uses_workspaces: false,

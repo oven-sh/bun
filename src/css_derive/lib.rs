@@ -39,6 +39,232 @@ pub fn derive_deep_clone(input: TokenStream) -> TokenStream {
         .into()
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// `CssEql` / `CssHash`
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Port of `implementEql` / `implementHash` in `src/css/generics.zig`.
+//
+// Zig's `implementEql` / `implementHash` use `@typeInfo(T)` to walk struct
+// fields or `union(enum)` variants and recurse via `eql(field.type, …)` /
+// `hash(field.type, …)`, which in turn dispatch to `T.eql` / `T.hash` if the
+// type `@hasDecl`s one. The derives below preserve that two-level dispatch by
+// emitting **method-syntax** calls (`field.eql(other)`, `field.hash(hasher)`)
+// with the trait brought into scope inside the body — so a field type may
+// satisfy the recursion either with an inherent `pub fn eql/hash` *or* a
+// `CssEql`/`CssHash` impl (Option, slices, primitives, … from
+// `bun_css::generics`).
+//
+// Unions: Zig prefixes the hash with `bun.writeAnyToHasher(@intFromEnum(this))`.
+// The derive feeds the variant index as a `u32` (CSS hashing is in-process
+// dedup only — self-consistency, not Zig-byte-identity, is the contract).
+
+#[proc_macro_derive(CssEql)]
+pub fn derive_css_eql(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    expand_css_eql(input)
+        .unwrap_or_else(|e| e.to_compile_error())
+        .into()
+}
+
+#[proc_macro_derive(CssHash)]
+pub fn derive_css_hash(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    expand_css_hash(input)
+        .unwrap_or_else(|e| e.to_compile_error())
+        .into()
+}
+
+/// Clone the input generics and append `where T: $trait_path` for every type
+/// parameter so generic containers (`Foo<T>`) constrain their payload.
+fn with_trait_bounds(input: &DeriveInput, trait_path: TokenStream2) -> syn::Generics {
+    let mut g = input.generics.clone();
+    let ty_params: Vec<_> = input.generics.type_params().map(|tp| tp.ident.clone()).collect();
+    if !ty_params.is_empty() {
+        let wc = g.make_where_clause();
+        for ident in ty_params {
+            wc.predicates.push(parse_quote! { #ident: #trait_path });
+        }
+    }
+    g
+}
+
+fn expand_css_eql(input: DeriveInput) -> syn::Result<TokenStream2> {
+    let name = &input.ident;
+    let generics = with_trait_bounds(&input, quote!(::bun_css::generics::CssEql));
+    let (impl_g, ty_g, where_g) = generics.split_for_impl();
+
+    let body = match &input.data {
+        Data::Struct(s) => match &s.fields {
+            Fields::Unit => quote! { true },
+            Fields::Unnamed(fs) => {
+                let idx = (0..fs.unnamed.len()).map(syn::Index::from);
+                quote! { #( self.#idx.eql(&__other.#idx) )&&* }
+            }
+            Fields::Named(fs) => {
+                let names: Vec<_> = fs.named.iter().map(|f| f.ident.clone().unwrap()).collect();
+                if names.is_empty() {
+                    quote! { true }
+                } else {
+                    quote! { #( self.#names.eql(&__other.#names) )&&* }
+                }
+            }
+        },
+        Data::Enum(e) => {
+            let arms = e.variants.iter().map(|v| {
+                let vname = &v.ident;
+                match &v.fields {
+                    Fields::Unit => quote! {
+                        (Self::#vname, Self::#vname) => true,
+                    },
+                    Fields::Unnamed(fs) => {
+                        let la: Vec<_> = (0..fs.unnamed.len())
+                            .map(|i| format_ident!("__l{}", i))
+                            .collect();
+                        let ra: Vec<_> = (0..fs.unnamed.len())
+                            .map(|i| format_ident!("__r{}", i))
+                            .collect();
+                        let cmp = if la.is_empty() {
+                            quote! { true }
+                        } else {
+                            quote! { #( #la.eql(#ra) )&&* }
+                        };
+                        quote! {
+                            (Self::#vname( #(#la),* ), Self::#vname( #(#ra),* )) => #cmp,
+                        }
+                    }
+                    Fields::Named(fs) => {
+                        let fnames: Vec<_> =
+                            fs.named.iter().map(|f| f.ident.clone().unwrap()).collect();
+                        let la: Vec<_> =
+                            fnames.iter().map(|n| format_ident!("__l_{}", n)).collect();
+                        let ra: Vec<_> =
+                            fnames.iter().map(|n| format_ident!("__r_{}", n)).collect();
+                        let cmp = if fnames.is_empty() {
+                            quote! { true }
+                        } else {
+                            quote! { #( #la.eql(#ra) )&&* }
+                        };
+                        quote! {
+                            (Self::#vname { #(#fnames: #la),* },
+                             Self::#vname { #(#fnames: #ra),* }) => #cmp,
+                        }
+                    }
+                }
+            });
+            // Zig: `if (@intFromEnum(this) != @intFromEnum(other)) return false;`
+            // — i.e. mismatched tags are simply unequal.
+            quote! {
+                match (self, __other) {
+                    #(#arms)*
+                    #[allow(unreachable_patterns)]
+                    _ => false,
+                }
+            }
+        }
+        Data::Union(_) => {
+            return Err(syn::Error::new_spanned(
+                name,
+                "#[derive(CssEql)] is not supported on `union`s",
+            ));
+        }
+    };
+
+    Ok(quote! {
+        #[automatically_derived]
+        impl #impl_g ::bun_css::generics::CssEql for #name #ty_g #where_g {
+            #[inline]
+            fn eql(&self, __other: &Self) -> bool {
+                #[allow(unused_imports)]
+                use ::bun_css::generics::CssEql as _;
+                #body
+            }
+        }
+    })
+}
+
+fn expand_css_hash(input: DeriveInput) -> syn::Result<TokenStream2> {
+    let name = &input.ident;
+    let generics = with_trait_bounds(&input, quote!(::bun_css::generics::CssHash));
+    let (impl_g, ty_g, where_g) = generics.split_for_impl();
+
+    let body = match &input.data {
+        Data::Struct(s) => match &s.fields {
+            Fields::Unit => quote! {},
+            Fields::Unnamed(fs) => {
+                let idx = (0..fs.unnamed.len()).map(syn::Index::from);
+                quote! { #( self.#idx.hash(__hasher); )* }
+            }
+            Fields::Named(fs) => {
+                let names: Vec<_> = fs.named.iter().map(|f| f.ident.clone().unwrap()).collect();
+                quote! { #( self.#names.hash(__hasher); )* }
+            }
+        },
+        Data::Enum(e) => {
+            let arms = e.variants.iter().enumerate().map(|(i, v)| {
+                let vname = &v.ident;
+                let disc = i as u32;
+                // Zig: `bun.writeAnyToHasher(hasher, @intFromEnum(this))`.
+                let tag = quote! { __hasher.update(&(#disc as u32).to_ne_bytes()); };
+                match &v.fields {
+                    Fields::Unit => quote! {
+                        Self::#vname => { #tag }
+                    },
+                    Fields::Unnamed(fs) => {
+                        let binds: Vec<_> = (0..fs.unnamed.len())
+                            .map(|j| format_ident!("__f{}", j))
+                            .collect();
+                        quote! {
+                            Self::#vname( #(#binds),* ) => {
+                                #tag
+                                #( #binds.hash(__hasher); )*
+                            }
+                        }
+                    }
+                    Fields::Named(fs) => {
+                        let fnames: Vec<_> =
+                            fs.named.iter().map(|f| f.ident.clone().unwrap()).collect();
+                        quote! {
+                            Self::#vname { #(#fnames),* } => {
+                                #tag
+                                #( #fnames.hash(__hasher); )*
+                            }
+                        }
+                    }
+                }
+            });
+            quote! { match self { #(#arms)* } }
+        }
+        Data::Union(_) => {
+            return Err(syn::Error::new_spanned(
+                name,
+                "#[derive(CssHash)] is not supported on `union`s",
+            ));
+        }
+    };
+
+    Ok(quote! {
+        #[automatically_derived]
+        impl #impl_g ::bun_css::generics::CssHash for #name #ty_g #where_g {
+            #[inline]
+            fn hash(&self, __hasher: &mut ::bun_css::generics::Wyhash) {
+                #[allow(unused_imports)]
+                use ::bun_css::generics::CssHash as _;
+                let _ = __hasher;
+                #body
+            }
+        }
+    })
+}
+
+#[proc_macro_derive(DeepCloneDummy_DoNotUse)]
+pub fn _derive_deep_clone_dummy(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    expand_deep_clone(input)
+        .unwrap_or_else(|e| e.to_compile_error())
+        .into()
+}
+
 fn expand_deep_clone(input: DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
 

@@ -273,14 +273,18 @@ impl<'a> Transpiler<'a> {
         js_ast::ast::expr::data::Store::create();
         js_ast::ast::stmt::data::Store::create();
 
-        // PORT NOTE: `FileSystem::init` interns the cwd into its 'static
-        // singleton; Zig passed a borrowed slice. Leak the owned `Box<[u8]>`
-        // so the borrow outlives `opts` (process-lifetime singleton — same
-        // STATIC classification as the `dot_env` leak below).
-        let cwd: Option<&'static [u8]> = opts
-            .absolute_working_dir
-            .as_deref()
-            .map(|s| &*Box::leak(Box::<[u8]>::from(s)));
+        // PORT NOTE: `FileSystem::init` wants `&'static [u8]`; Zig passed a
+        // borrowed slice (transpiler.zig:179). Intern via `DirnameStore`
+        // (the same path `FileSystem::init` already uses for the
+        // `None`/getcwd case — fs.rs:222) so the cwd lives in the
+        // process-lifetime BSS string store without `Box::leak`. PORTING.md
+        // §Forbidden bars `Box::leak` even for singletons; on subsequent
+        // per-worker `Transpiler::init` calls the previous leak was discarded
+        // (`FileSystem::init` only stores `top_level_dir` on first call).
+        let cwd: Option<&'static [u8]> = match opts.absolute_working_dir.as_deref() {
+            Some(s) => Some(Fs::DirnameStore::instance().append(s)?),
+            None => None,
+        };
         let fs: *mut Fs::FileSystem = Fs::FileSystem::init(cwd)?;
 
         let env_loader: *mut dot_env::Loader<'static> = match env_loader_ {

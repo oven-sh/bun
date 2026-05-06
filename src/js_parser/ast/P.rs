@@ -5636,7 +5636,6 @@ fn path_package_name<'a>(path: &fs::Path<'a>) -> Option<&'a [u8]> {
 // These depend on ImportScanner, ConvertESMExportsForHmr, full E-method
 // surface, repl_transforms, and the parse_*/visit_* sibling files. Gated
 // wholesale; the struct + scope-mgmt/allocate/error helpers above compile.
-#[cfg(any())]
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     P<'a, TYPESCRIPT, J, SCAN_ONLY>
 {

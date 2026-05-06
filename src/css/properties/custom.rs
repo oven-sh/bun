@@ -1,29 +1,57 @@
-use bun_css as css;
-use bun_css::values as css_values;
-use bun_css::{Printer, PrintErr};
-use css_values::ident::{DashedIdent, DashedIdentFns, Ident, IdentFns};
-pub use bun_css::Result;
+//! CSS custom properties / `var()` / `env()` / unparsed token lists.
+//!
+//! Ported from `src/css/properties/custom.zig`.
+//
+// ─── B-2 round 8 status ────────────────────────────────────────────────────
+// Module un-gated from `gated_prop!` so the *data types* (TokenList /
+// TokenOrValue / CustomProperty / CustomPropertyName / UnparsedProperty /
+// EnvironmentVariable / Variable / Function / UnresolvedColor /
+// UAEnvironmentVariable) are real and referenced by `properties_generated.rs`,
+// `media_query.rs`, `rules/{unknown,font_face,font_palette_values}.rs`,
+// `selectors/parser.rs`, and `context.rs`.
+//
+// Most `parse` / `to_css` / `deep_clone` / `eql` / `hash` *bodies* remain
+// `#[cfg(any())]`-gated below because they bottom out on still-gated leaf
+// surface (DashedIdent{,Reference}::to_css/parse_with_options, Url::parse,
+// ComponentParser, ColorFallbackKind::supports_condition, generics::CssEql/
+// CssHash/DeepClone blanket impls, AnimationName::to_css). Each gate carries
+// a `blocked_on:` note so the next round can lift bodies as their deps land.
 
-pub use css_values::color::{CssColor, RGBA, SRGB, HSL, ComponentParser};
-pub use css_values::number::{CSSInteger, CSSIntegerFns, CSSNumberFns};
-pub use css_values::percentage::Percentage;
-pub use css_values::url::Url;
-pub use css_values::ident::{DashedIdentReference, CustomIdent, CustomIdentFns};
-pub use css_values::length::LengthValue;
-pub use css_values::angle::Angle;
-pub use css_values::time::Time;
-pub use css_values::resolution::Resolution;
-pub use bun_css::properties::animation::AnimationName;
+use crate as css;
+use crate::css_parser::{
+    self, CssResult, Delimiters, EnumProperty, Parser, ParserOptions, ParserState,
+};
+use crate::error::{BasicParseErrorKind, ParseError, ParserError, ParserErrorKind};
+use crate::printer::Printer;
+use crate::PrintErr;
+use crate::Token;
 
-use bun_css::{SupportsCondition, ColorFallbackKind};
-use bun_str::strings;
-use bun_wyhash::Wyhash;
+use crate::values as css_values;
+use css_values::angle::Angle;
+use css_values::color::{ColorFallbackKind, CssColor, RGBA};
+use css_values::ident::{
+    CustomIdent, CustomIdentFns, DashedIdent, DashedIdentFns, DashedIdentReference, Ident, IdentFns,
+};
+use css_values::length::LengthValue;
+use css_values::number::{CSSInteger, CSSIntegerFns, CSSNumberFns};
+use css_values::percentage::Percentage;
+use css_values::resolution::Resolution;
+use css_values::time::Time;
+use css_values::url::Url;
+
+use crate::properties::animation::AnimationName;
+use crate::rules::supports::SupportsCondition;
+
+use bun_string::strings;
+use bun_wyhash::Wyhash11 as Wyhash;
 
 // PERF(port): css is listed as an AST crate (arena-backed) in PORTING.md, but
 // LIFETIMES.tsv pre-classified the token vecs here as plain `Vec<TokenOrValue>`.
 // Phase A drops allocator params and uses global-alloc `Vec`; Phase B may need
 // to thread `&'bump Bump` if profiling shows it.
 
+/// Zig: `pub fn Result(comptime T: type) type` → `Maybe(T, ParseError(ParserError))`.
+pub type Result<T> = CssResult<T>;
 type PrintResult<T> = core::result::Result<T, PrintErr>;
 
 /// PERF: nullable optimization
@@ -35,11 +63,10 @@ pub struct TokenList {
 impl TokenList {
     // deinit(): body only freed owned `Vec` fields — handled by `Drop` on `Vec`.
 
-    pub fn to_css(
-        &self,
-        dest: &mut Printer,
-        is_custom_property: bool,
-    ) -> PrintResult<()> {
+    #[cfg(any())]
+    // blocked_on: DashedIdentFns::to_css, AnimationName::to_css, Token::to_css,
+    // UnresolvedColor/Variable/EnvironmentVariable/Function::to_css un-gate.
+    pub fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
         if !dest.minify && self.v.len() == 1 && self.v[0].is_whitespace() {
             return Ok(());
         }
@@ -56,12 +83,19 @@ impl TokenList {
                     has_whitespace = false;
                 }
                 TokenOrValue::Url(url) => {
-                    if dest.dependencies.is_some() && is_custom_property && !url.is_absolute(dest.get_import_records()?) {
+                    if dest.dependencies.is_some()
+                        && is_custom_property
+                        && !url.is_absolute(dest.get_import_records()?)
+                    {
                         return dest.new_error(
-                            css::PrinterErrorKind::AmbiguousUrlInCustomProperty {
-                                url: dest.get_import_records()?.at(url.import_record_idx).path.pretty,
+                            css::PrinterErrorKind::ambiguous_url_in_custom_property {
+                                url: dest
+                                    .get_import_records()?
+                                    .at(url.import_record_idx as usize)
+                                    .path
+                                    .pretty,
                             },
-                            url.loc,
+                            Some(url.loc),
                         );
                     }
                     url.to_css(dest)?;
@@ -82,7 +116,7 @@ impl TokenList {
                 TokenOrValue::Length(v) => {
                     // Do not serialize unitless zero lengths in custom properties as it may break calc().
                     let (value, unit) = v.to_unit_value();
-                    css::serializer::serialize_dimension(value, unit, dest)?;
+                    css_parser::serializer::serialize_dimension(value, unit, dest)?;
                     has_whitespace = false;
                 }
                 TokenOrValue::Angle(v) => {
@@ -106,38 +140,39 @@ impl TokenList {
                     has_whitespace = false;
                 }
                 TokenOrValue::Token(token) => match token {
-                    css::Token::Delim(d) => {
-                        if *d == '+' as u32 || *d == '-' as u32 {
-                            dest.write_char(' ')?;
+                    Token::Delim(d) => {
+                        if *d == b'+' as u32 || *d == b'-' as u32 {
+                            dest.write_char(b' ')?;
                             debug_assert!(*d <= 0x7F);
-                            dest.write_char(u8::try_from(*d).unwrap() as char)?;
-                            dest.write_char(' ')?;
+                            dest.write_char(*d as u8)?;
+                            dest.write_char(b' ')?;
                         } else {
-                            let ws_before = !has_whitespace && (*d == '/' as u32 || *d == '*' as u32);
+                            let ws_before =
+                                !has_whitespace && (*d == b'/' as u32 || *d == b'*' as u32);
                             debug_assert!(*d <= 0x7F);
-                            dest.delim(u8::try_from(*d).unwrap() as char, ws_before)?;
+                            dest.delim(*d as u8, ws_before)?;
                         }
                         has_whitespace = true;
                     }
-                    css::Token::Comma => {
-                        dest.delim(',', false)?;
+                    Token::Comma => {
+                        dest.delim(b',', false)?;
                         has_whitespace = true;
                     }
-                    css::Token::CloseParen | css::Token::CloseSquare | css::Token::CloseCurly => {
+                    Token::CloseParen | Token::CloseSquare | Token::CloseCurly => {
                         token.to_css(dest)?;
                         has_whitespace = self.write_whitespace_if_needed(i, dest)?;
                     }
-                    css::Token::Dimension { num, unit, .. } => {
-                        css::serializer::serialize_dimension(num.value, unit, dest)?;
+                    Token::Dimension(dim) => {
+                        css_parser::serializer::serialize_dimension(dim.num.value, dim.unit, dest)?;
                         has_whitespace = false;
                     }
-                    css::Token::Number(v) => {
+                    Token::Number(v) => {
                         CSSNumberFns::to_css(&v.value, dest)?;
                         has_whitespace = false;
                     }
                     _ => {
                         token.to_css(dest)?;
-                        has_whitespace = matches!(token, css::Token::Whitespace(_));
+                        has_whitespace = matches!(token, Token::Whitespace(_));
                     }
                 },
             }
@@ -145,38 +180,36 @@ impl TokenList {
         Ok(())
     }
 
+    #[cfg(any())] // blocked_on: Token::to_css (only `to_css_generic` exists today)
     pub fn to_css_raw(&self, dest: &mut Printer) -> PrintResult<()> {
         for token_or_value in self.v.iter() {
             if let TokenOrValue::Token(token) = token_or_value {
                 token.to_css(dest)?;
             } else {
-                return dest.add_fmt_error();
+                return Err(dest.add_fmt_error());
             }
         }
         Ok(())
     }
 
-    pub fn write_whitespace_if_needed(
-        &self,
-        i: usize,
-        dest: &mut Printer,
-    ) -> PrintResult<bool> {
+    pub fn write_whitespace_if_needed(&self, i: usize, dest: &mut Printer) -> PrintResult<bool> {
         if !dest.minify
             && i != self.v.len() - 1
-            && !(matches!(
+            && !matches!(
                 &self.v[i + 1],
-                TokenOrValue::Token(css::Token::Comma | css::Token::CloseParen)
-            ))
+                TokenOrValue::Token(Token::Comma | Token::CloseParen)
+            )
         {
             // Whitespace is removed during parsing, so add it back if we aren't minifying.
-            dest.write_char(' ')?;
+            dest.write_char(b' ')?;
             Ok(true)
         } else {
             Ok(false)
         }
     }
 
-    pub fn parse(input: &mut css::Parser, options: &css::ParserOptions, depth: usize) -> Result<TokenList> {
+    #[cfg(any())] // blocked_on: TokenList::parse_into un-gate
+    pub fn parse(input: &mut Parser, options: &ParserOptions, depth: usize) -> Result<TokenList> {
         let mut tokens: Vec<TokenOrValue> = Vec::new(); // PERF: deinit on error
         TokenListFns::parse_into(input, &mut tokens, options, depth)?;
 
@@ -201,18 +234,19 @@ impl TokenList {
         Ok(TokenList { v: tokens })
     }
 
-    pub fn parse_with_options(input: &mut css::Parser, options: &css::ParserOptions) -> Result<TokenList> {
+    #[cfg(any())] // blocked_on: TokenList::parse un-gate
+    pub fn parse_with_options(input: &mut Parser, options: &ParserOptions) -> Result<TokenList> {
         Self::parse(input, options, 0)
     }
 
     pub fn parse_raw(
-        input: &mut css::Parser,
+        input: &mut Parser,
         tokens: &mut Vec<TokenOrValue>,
-        options: &css::ParserOptions,
+        options: &ParserOptions,
         depth: usize,
     ) -> Result<()> {
         if depth > 500 {
-            return Err(input.new_custom_error(css::ParserError::MaximumNestingDepth));
+            return Err(input.new_custom_error(ParserError::maximum_nesting_depth));
         }
 
         loop {
@@ -221,12 +255,12 @@ impl TokenList {
                 break;
             };
             match token {
-                css::Token::OpenParen | css::Token::OpenSquare | css::Token::OpenCurly => {
+                Token::OpenParen | Token::OpenSquare | Token::OpenCurly => {
                     let tok = token.clone();
                     let closing_delimiter = match tok {
-                        css::Token::OpenParen => css::Token::CloseParen,
-                        css::Token::OpenSquare => css::Token::CloseSquare,
-                        css::Token::OpenCurly => css::Token::CloseCurly,
+                        Token::OpenParen => Token::CloseParen,
+                        Token::OpenSquare => Token::CloseSquare,
+                        Token::OpenCurly => Token::CloseCurly,
                         _ => unreachable!(),
                     };
                     tokens.push(TokenOrValue::Token(tok));
@@ -235,17 +269,19 @@ impl TokenList {
                     })?;
                     tokens.push(TokenOrValue::Token(closing_delimiter));
                 }
-                css::Token::Function(_) => {
+                Token::Function(_) => {
                     tokens.push(TokenOrValue::Token(token.clone()));
                     input.parse_nested_block(|input2| {
                         TokenListFns::parse_raw(input2, tokens, options, depth + 1)
                     })?;
-                    tokens.push(TokenOrValue::Token(css::Token::CloseParen));
+                    tokens.push(TokenOrValue::Token(Token::CloseParen));
                 }
                 _ => {
                     if token.is_parse_error() {
-                        return Err(css::ParseError {
-                            kind: css::ParseErrorKind::Basic(css::BasicParseErrorKind::UnexpectedToken(token.clone())),
+                        return Err(ParseError {
+                            kind: ParserErrorKind::basic(BasicParseErrorKind::unexpected_token(
+                                token.clone(),
+                            )),
                             location: state.source_location(),
                         });
                     }
@@ -257,14 +293,18 @@ impl TokenList {
         Ok(())
     }
 
+    #[cfg(any())]
+    // blocked_on: Url::parse, UnresolvedColor::parse (ComponentParser),
+    // Variable::parse (DashedIdentReference::parse_with_options),
+    // EnvironmentVariable::parse_nested.
     pub fn parse_into(
-        input: &mut css::Parser,
+        input: &mut Parser,
         tokens: &mut Vec<TokenOrValue>,
-        options: &css::ParserOptions,
+        options: &ParserOptions,
         depth: usize,
     ) -> Result<()> {
         if depth > 500 {
-            return Err(input.new_custom_error(css::ParserError::MaximumNestingDepth));
+            return Err(input.new_custom_error(ParserError::maximum_nesting_depth));
         }
 
         let mut last_is_delim = false;
@@ -278,31 +318,33 @@ impl TokenList {
             // PORT NOTE: reshaped for borrowck — clone the token so we can call &mut methods on `input` below.
             let tok = tok.clone();
             match &tok {
-                css::Token::Whitespace(_) | css::Token::Comment(_) => {
+                Token::Whitespace(_) | Token::Comment(_) => {
                     // Skip whitespace if the last token was a delimiter.
                     // Otherwise, replace all whitespace and comments with a single space character.
                     if !last_is_delim {
-                        tokens.push(TokenOrValue::Token(css::Token::Whitespace(b" ")));
+                        tokens.push(TokenOrValue::Token(Token::Whitespace(b" ")));
                         last_is_whitespace = true;
                     }
                     continue;
                 }
-                css::Token::Function(f) => {
+                Token::Function(f) => {
                     // Attempt to parse embedded color values into hex tokens.
                     if let Some(color) = try_parse_color_token(f, &state, input) {
                         tokens.push(TokenOrValue::Color(color));
                         last_is_delim = false;
                         last_is_whitespace = false;
-                    } else if let Ok(color) = input.try_parse(|i| UnresolvedColor::parse(i, f, options)) {
+                    } else if let Ok(color) =
+                        input.try_parse(|i| UnresolvedColor::parse(i, f, options))
+                    {
                         tokens.push(TokenOrValue::UnresolvedColor(color));
                         last_is_delim = false;
                         last_is_whitespace = false;
-                    } else if f.as_ref() == b"url" {
+                    } else if *f == b"url" {
                         input.reset(&state);
                         tokens.push(TokenOrValue::Url(Url::parse(input)?));
                         last_is_delim = false;
                         last_is_whitespace = false;
-                    } else if f.as_ref() == b"var" {
+                    } else if *f == b"var" {
                         let var = input.parse_nested_block(|input2| {
                             let thevar = Variable::parse(input2, options, depth + 1)?;
                             Ok(TokenOrValue::Var(thevar))
@@ -310,7 +352,7 @@ impl TokenList {
                         tokens.push(var);
                         last_is_delim = true;
                         last_is_whitespace = false;
-                    } else if f.as_ref() == b"env" {
+                    } else if *f == b"env" {
                         let env = input.parse_nested_block(|input2| {
                             let env = EnvironmentVariable::parse_nested(input2, options, depth + 1)?;
                             Ok(TokenOrValue::Env(env))
@@ -319,11 +361,10 @@ impl TokenList {
                         last_is_delim = true;
                         last_is_whitespace = false;
                     } else {
-                        let arguments = input.parse_nested_block(|input2| {
-                            TokenListFns::parse(input2, options, depth + 1)
-                        })?;
+                        let arguments = input
+                            .parse_nested_block(|input2| TokenListFns::parse(input2, options, depth + 1))?;
                         tokens.push(TokenOrValue::Function(Function {
-                            name: Ident { v: f.clone() },
+                            name: Ident { v: *f as *const [u8] },
                             arguments,
                         }));
                         last_is_delim = true; // Whitespace is not required after any of these chars.
@@ -331,38 +372,45 @@ impl TokenList {
                     }
                     continue;
                 }
-                css::Token::UnrestrictedHash(h) | css::Token::IdHash(h) => {
+                Token::UnrestrictedHash(h) | Token::IdHash(h) => {
                     'brk: {
-                        let Some((r, g, b, a)) = css::color::parse_hash_color(h) else {
-                            tokens.push(TokenOrValue::Token(css::Token::UnrestrictedHash(h.clone())));
+                        let Some((r, g, b, a)) = css_parser::color::parse_hash_color(h) else {
+                            tokens.push(TokenOrValue::Token(Token::UnrestrictedHash(*h)));
                             break 'brk;
                         };
-                        tokens.push(TokenOrValue::Color(CssColor::Rgba(RGBA::new(r, g, b, a))));
+                        tokens.push(TokenOrValue::Color(CssColor::Rgba(RGBA::from_floats(
+                            r as f32 / 255.0,
+                            g as f32 / 255.0,
+                            b as f32 / 255.0,
+                            a,
+                        ))));
                     }
                     last_is_delim = false;
                     last_is_whitespace = false;
                     continue;
                 }
-                css::Token::UnquotedUrl(_) => {
+                Token::UnquotedUrl(_) => {
                     input.reset(&state);
                     tokens.push(TokenOrValue::Url(Url::parse(input)?));
                     last_is_delim = false;
                     last_is_whitespace = false;
                     continue;
                 }
-                css::Token::Ident(name) => {
-                    if name.as_ref().starts_with(b"--") {
-                        tokens.push(TokenOrValue::DashedIdent(DashedIdent { v: name.clone() }));
+                Token::Ident(name) => {
+                    if name.starts_with(b"--") {
+                        tokens.push(TokenOrValue::DashedIdent(DashedIdent {
+                            v: *name as *const [u8],
+                        }));
                         last_is_delim = false;
                         last_is_whitespace = false;
                         continue;
                     }
                 }
-                css::Token::OpenParen | css::Token::OpenSquare | css::Token::OpenCurly => {
+                Token::OpenParen | Token::OpenSquare | Token::OpenCurly => {
                     let closing_delimiter = match &tok {
-                        css::Token::OpenParen => css::Token::CloseParen,
-                        css::Token::OpenSquare => css::Token::CloseSquare,
-                        css::Token::OpenCurly => css::Token::CloseCurly,
+                        Token::OpenParen => Token::CloseParen,
+                        Token::OpenSquare => Token::CloseSquare,
+                        Token::OpenCurly => Token::CloseCurly,
                         _ => unreachable!(),
                     };
                     tokens.push(TokenOrValue::Token(tok.clone()));
@@ -374,7 +422,7 @@ impl TokenList {
                     last_is_whitespace = false;
                     continue;
                 }
-                css::Token::Dimension { .. } => {
+                Token::Dimension(_) => {
                     let value = if let Ok(length) = LengthValue::try_from_token(&tok) {
                         TokenOrValue::Length(length)
                     } else if let Ok(angle) = Angle::try_from_token(&tok) {
@@ -397,12 +445,12 @@ impl TokenList {
             }
 
             if tok.is_parse_error() {
-                return Err(css::ParseError {
-                    kind: css::ParseErrorKind::Basic(css::BasicParseErrorKind::UnexpectedToken(tok.clone())),
+                return Err(ParseError {
+                    kind: ParserErrorKind::basic(BasicParseErrorKind::unexpected_token(tok)),
                     location: state.source_location(),
                 });
             }
-            last_is_delim = matches!(&tok, css::Token::Delim(_) | css::Token::Comma);
+            last_is_delim = matches!(&tok, Token::Delim(_) | Token::Comma);
 
             // If this is a delimiter, and the last token was whitespace,
             // replace the whitespace with the delimiter since both are not required.
@@ -419,6 +467,9 @@ impl TokenList {
         Ok(())
     }
 
+    #[cfg(any())]
+    // blocked_on: CssColor::get_fallback (allocator-shaped), TokenOrValue::deep_clone,
+    // Function/Variable/EnvironmentVariable::get_fallback un-gate.
     pub fn get_fallback(&self, kind: ColorFallbackKind) -> Self {
         let mut tokens = TokenList::default();
         tokens.v.reserve_exact(self.v.len());
@@ -435,6 +486,9 @@ impl TokenList {
         tokens
     }
 
+    #[cfg(any())]
+    // blocked_on: ColorFallbackKind::supports_condition (gated_full_impl in
+    // values/color.rs) + TokenList::get_fallback.
     pub fn get_fallbacks(&mut self, targets: css::targets::Targets) -> css::SmallList<Fallbacks, 2> {
         // Get the full list of possible fallbacks, and remove the lowest one, which will replace
         // the original declaration. The remaining fallbacks need to be added as @supports rules.
@@ -442,10 +496,10 @@ impl TokenList {
         let lowest_fallback = fallbacks.lowest();
         fallbacks.remove(lowest_fallback);
 
-        let mut res = css::SmallList::<Fallbacks, 2>::new();
+        let mut res = css::SmallList::<Fallbacks, 2>::default();
         if fallbacks.contains(ColorFallbackKind::P3) {
             // PERF(port): was assume_capacity
-            res.push((
+            res.append((
                 ColorFallbackKind::P3.supports_condition(),
                 self.get_fallback(ColorFallbackKind::P3),
             ));
@@ -453,7 +507,7 @@ impl TokenList {
 
         if fallbacks.contains(ColorFallbackKind::LAB) {
             // PERF(port): was assume_capacity
-            res.push((
+            res.append((
                 ColorFallbackKind::LAB.supports_condition(),
                 self.get_fallback(ColorFallbackKind::LAB),
             ));
@@ -513,17 +567,20 @@ impl TokenList {
         fallbacks
     }
 
+    #[cfg(any())] // blocked_on: generics::CssEql blanket impl for TokenOrValue payload set
     pub fn eql(&self, rhs: &TokenList) -> bool {
         css::generic::eql_list(&self.v, &rhs.v)
     }
 
+    #[cfg(any())] // blocked_on: generics::CssHash blanket impl
     pub fn hash(&self, hasher: &mut Wyhash) {
         css::implement_hash(self, hasher)
     }
 
+    #[cfg(any())] // blocked_on: TokenOrValue::deep_clone un-gate
     pub fn deep_clone(&self) -> TokenList {
         TokenList {
-            v: css::deep_clone(&self.v),
+            v: self.v.iter().map(|t| t.deep_clone()).collect(),
         }
     }
 }
@@ -569,14 +626,16 @@ pub enum UnresolvedColor {
 }
 
 impl UnresolvedColor {
+    #[cfg(any())] // blocked_on: generics::CssEql/CssHash blanket impls
     pub fn eql(&self, rhs: &Self) -> bool {
         css::implement_eql(self, rhs)
     }
-
+    #[cfg(any())]
     pub fn hash(&self, hasher: &mut Wyhash) {
         css::implement_hash(self, hasher)
     }
 
+    #[cfg(any())] // blocked_on: TokenList::deep_clone un-gate
     pub fn deep_clone(&self) -> Self {
         match self {
             UnresolvedColor::RGB { r, g, b, alpha } => UnresolvedColor::RGB {
@@ -600,100 +659,103 @@ impl UnresolvedColor {
 
     // deinit(): body only freed owned `TokenList` fields — handled by `Drop`.
 
-    pub fn to_css(
-        &self,
-        dest: &mut Printer,
-        is_custom_property: bool,
-    ) -> PrintResult<()> {
+    #[cfg(any())] // blocked_on: TokenList::to_css un-gate
+    pub fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
         fn conv(c: f32) -> i32 {
             (c * 255.0).round().clamp(0.0, 255.0) as i32
         }
 
         match self {
             UnresolvedColor::RGB { r, g, b, alpha } => {
-                if dest.targets.should_compile_same(css::compat::Feature::SpaceSeparatedColorNotation) {
+                if dest
+                    .targets
+                    .should_compile_same(css::compat::Feature::SpaceSeparatedColorNotation)
+                {
                     dest.write_str("rgba(")?;
-                    css::to_css::integer::<i32>(conv(*r), dest)?;
-                    dest.delim(',', false)?;
-                    css::to_css::integer::<i32>(conv(*g), dest)?;
-                    dest.delim(',', false)?;
-                    css::to_css::integer::<i32>(conv(*b), dest)?;
+                    css_parser::to_css::integer(conv(*r), dest)?;
+                    dest.delim(b',', false)?;
+                    css_parser::to_css::integer(conv(*g), dest)?;
+                    dest.delim(b',', false)?;
+                    css_parser::to_css::integer(conv(*b), dest)?;
                     alpha.to_css(dest, is_custom_property)?;
-                    dest.write_char(')')?;
+                    dest.write_char(b')')?;
                     return Ok(());
                 }
 
                 dest.write_str("rgb(")?;
-                css::to_css::integer::<i32>(conv(*r), dest)?;
-                dest.write_char(' ')?;
-                css::to_css::integer::<i32>(conv(*g), dest)?;
-                dest.write_char(' ')?;
-                css::to_css::integer::<i32>(conv(*b), dest)?;
-                dest.delim('/', true)?;
+                css_parser::to_css::integer(conv(*r), dest)?;
+                dest.write_char(b' ')?;
+                css_parser::to_css::integer(conv(*g), dest)?;
+                dest.write_char(b' ')?;
+                css_parser::to_css::integer(conv(*b), dest)?;
+                dest.delim(b'/', true)?;
                 alpha.to_css(dest, is_custom_property)?;
-                dest.write_char(')')
+                dest.write_char(b')')
             }
             UnresolvedColor::HSL { h, s, l, alpha } => {
-                if dest.targets.should_compile_same(css::compat::Feature::SpaceSeparatedColorNotation) {
+                if dest
+                    .targets
+                    .should_compile_same(css::compat::Feature::SpaceSeparatedColorNotation)
+                {
                     dest.write_str("hsla(")?;
                     CSSNumberFns::to_css(h, dest)?;
-                    dest.delim(',', false)?;
+                    dest.delim(b',', false)?;
                     Percentage { v: *s }.to_css(dest)?;
-                    dest.delim(',', false)?;
+                    dest.delim(b',', false)?;
                     Percentage { v: *l }.to_css(dest)?;
-                    dest.delim(',', false)?;
+                    dest.delim(b',', false)?;
                     alpha.to_css(dest, is_custom_property)?;
-                    dest.write_char(')')?;
+                    dest.write_char(b')')?;
                     return Ok(());
                 }
 
                 dest.write_str("hsl(")?;
                 CSSNumberFns::to_css(h, dest)?;
-                dest.write_char(' ')?;
+                dest.write_char(b' ')?;
                 Percentage { v: *s }.to_css(dest)?;
-                dest.write_char(' ')?;
+                dest.write_char(b' ')?;
                 Percentage { v: *l }.to_css(dest)?;
-                dest.delim('/', true)?;
+                dest.delim(b'/', true)?;
                 alpha.to_css(dest, is_custom_property)?;
-                dest.write_char(')')
+                dest.write_char(b')')
             }
             UnresolvedColor::LightDark { light, dark } => {
                 if !dest.targets.is_compatible(css::compat::Feature::LightDark) {
                     dest.write_str("var(--buncss-light")?;
-                    dest.delim(',', false)?;
+                    dest.delim(b',', false)?;
                     light.to_css(dest, is_custom_property)?;
-                    dest.write_char(')')?;
+                    dest.write_char(b')')?;
                     dest.whitespace()?;
                     dest.write_str("var(--buncss-dark")?;
-                    dest.delim(',', false)?;
+                    dest.delim(b',', false)?;
                     dark.to_css(dest, is_custom_property)?;
-                    return dest.write_char(')');
+                    return dest.write_char(b')');
                 }
 
                 dest.write_str("light-dark(")?;
                 light.to_css(dest, is_custom_property)?;
-                dest.delim(',', false)?;
+                dest.delim(b',', false)?;
                 dark.to_css(dest, is_custom_property)?;
-                dest.write_char(')')
+                dest.write_char(b')')
             }
         }
     }
 
-    pub fn parse(
-        input: &mut css::Parser,
-        f: &[u8],
-        options: &css::ParserOptions,
-    ) -> Result<UnresolvedColor> {
+    #[cfg(any())]
+    // blocked_on: values::color::ComponentParser / parse_rgb_components /
+    // parse_hsl_hwb_components (gated_full_impl) + TokenList::parse.
+    pub fn parse(input: &mut Parser, f: &[u8], options: &ParserOptions) -> Result<UnresolvedColor> {
+        use css_values::color::{parse_hsl_hwb_components, parse_rgb_components, ComponentParser, HSL, SRGB};
         let mut parser = ComponentParser::new(false);
         // css.todo_stuff.match_ignore_ascii_case
         if strings::eql_case_insensitive_ascii_check_length(f, b"rgb") {
             return input.parse_nested_block(|input2| {
                 parser.parse_relative::<SRGB, UnresolvedColor, _>(input2, |i, p| {
-                    let (r, g, b, is_legacy) = css_values::color::parse_rgb_components(i, p)?;
+                    let (r, g, b, is_legacy) = parse_rgb_components(i, p)?;
                     if is_legacy {
-                        return Err(i.new_custom_error(css::ParserError::InvalidValue));
+                        return Err(i.new_custom_error(ParserError::invalid_value));
                     }
-                    i.expect_delim('/')?;
+                    i.expect_delim(b'/')?;
                     let alpha = TokenListFns::parse(i, options, 0)?;
                     Ok(UnresolvedColor::RGB { r, g, b, alpha })
                 })
@@ -701,11 +763,11 @@ impl UnresolvedColor {
         } else if strings::eql_case_insensitive_ascii_check_length(f, b"hsl") {
             return input.parse_nested_block(|input2| {
                 parser.parse_relative::<HSL, UnresolvedColor, _>(input2, |i, p| {
-                    let (h, s, l, is_legacy) = css_values::color::parse_hsl_hwb_components::<HSL>(i, p, false)?;
+                    let (h, s, l, is_legacy) = parse_hsl_hwb_components::<HSL>(i, p, false)?;
                     if is_legacy {
-                        return Err(i.new_custom_error(css::ParserError::InvalidValue));
+                        return Err(i.new_custom_error(ParserError::invalid_value));
                     }
-                    i.expect_delim('/')?;
+                    i.expect_delim(b'/')?;
                     let alpha = TokenListFns::parse(i, options, 0)?;
                     Ok(UnresolvedColor::HSL { h, s, l, alpha })
                 })
@@ -714,16 +776,15 @@ impl UnresolvedColor {
             return input.parse_nested_block(|input2| {
                 // errdefer doesn't fire on `return .{ .err = ... }` in Zig — but in Rust,
                 // `?` drops `light` automatically on the error path.
-                let light = input2.parse_until_before(
-                    css::Delimiters { comma: true, ..Default::default() },
-                    |i| TokenListFns::parse(i, options, 1),
-                )?;
+                let light = input2.parse_until_before(Delimiters::COMMA, |i| {
+                    TokenListFns::parse(i, options, 1)
+                })?;
                 input2.expect_comma()?;
                 let dark = TokenListFns::parse(input2, options, 0)?;
                 Ok(UnresolvedColor::LightDark { light, dark })
             });
         } else {
-            return Err(input.new_custom_error(css::ParserError::InvalidValue));
+            return Err(input.new_custom_error(ParserError::invalid_value));
         }
     }
 
@@ -750,14 +811,12 @@ pub struct Variable {
 impl Variable {
     // deinit(): body only freed owned `TokenList` field — handled by `Drop`.
 
-    pub fn parse(
-        input: &mut css::Parser,
-        options: &css::ParserOptions,
-        depth: usize,
-    ) -> Result<Self> {
+    #[cfg(any())]
+    // blocked_on: DashedIdentReference::parse_with_options + TokenList::parse.
+    pub fn parse(input: &mut Parser, options: &ParserOptions, depth: usize) -> Result<Self> {
         let name = DashedIdentReference::parse_with_options(input, options)?;
 
-        let fallback = if input.try_parse(css::Parser::expect_comma).is_ok() {
+        let fallback = if input.try_parse(Parser::expect_comma).is_ok() {
             Some(TokenList::parse(input, options, depth)?)
         } else {
             None
@@ -766,38 +825,39 @@ impl Variable {
         Ok(Variable { name, fallback })
     }
 
-    pub fn to_css(
-        &self,
-        dest: &mut Printer,
-        is_custom_property: bool,
-    ) -> PrintResult<()> {
+    #[cfg(any())]
+    // blocked_on: DashedIdentReference::to_css + TokenList::to_css.
+    pub fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
         dest.write_str("var(")?;
         self.name.to_css(dest)?;
         if let Some(fallback) = &self.fallback {
-            dest.delim(',', false)?;
+            dest.delim(b',', false)?;
             fallback.to_css(dest, is_custom_property)?;
         }
-        dest.write_char(')')
+        dest.write_char(b')')
     }
 
+    #[cfg(any())] // blocked_on: TokenList::get_fallback
     pub fn get_fallback(&self, kind: ColorFallbackKind) -> Self {
         Variable {
-            name: self.name.clone(),
+            name: self.name,
             fallback: self.fallback.as_ref().map(|fallback| fallback.get_fallback(kind)),
         }
     }
 
+    #[cfg(any())] // blocked_on: generics::CssEql/CssHash blanket impls
     pub fn eql(&self, rhs: &Self) -> bool {
         css::implement_eql(self, rhs)
     }
-
+    #[cfg(any())]
     pub fn hash(&self, hasher: &mut Wyhash) {
         css::implement_hash(self, hasher)
     }
 
+    #[cfg(any())] // blocked_on: TokenList::deep_clone
     pub fn deep_clone(&self) -> Variable {
         Variable {
-            name: self.name.clone(),
+            name: self.name,
             fallback: self.fallback.as_ref().map(|fallback| fallback.deep_clone()),
         }
     }
@@ -817,52 +877,54 @@ pub struct EnvironmentVariable {
 impl EnvironmentVariable {
     // deinit(): body only freed owned `Vec`/`TokenList` fields — handled by `Drop`.
 
-    pub fn parse(input: &mut css::Parser, options: &css::ParserOptions, depth: usize) -> Result<EnvironmentVariable> {
-        input.expect_function_matching("env")?;
+    #[cfg(any())] // blocked_on: EnvironmentVariable::parse_nested
+    pub fn parse(input: &mut Parser, options: &ParserOptions, depth: usize) -> Result<EnvironmentVariable> {
+        input.expect_function_matching(b"env")?;
         input.parse_nested_block(|i| EnvironmentVariable::parse_nested(i, options, depth))
     }
 
-    pub fn parse_nested(input: &mut css::Parser, options: &css::ParserOptions, depth: usize) -> Result<EnvironmentVariable> {
+    #[cfg(any())]
+    // blocked_on: EnvironmentVariableName::parse (DashedIdentReference) + TokenList::parse.
+    pub fn parse_nested(
+        input: &mut Parser,
+        options: &ParserOptions,
+        depth: usize,
+    ) -> Result<EnvironmentVariable> {
         let name = EnvironmentVariableName::parse(input)?;
         let mut indices: Vec<i32> = Vec::new();
         while let Ok(idx) = input.try_parse(CSSIntegerFns::parse) {
             indices.push(idx);
         }
 
-        let fallback = if input.try_parse(css::Parser::expect_comma).is_ok() {
+        let fallback = if input.try_parse(Parser::expect_comma).is_ok() {
             Some(TokenListFns::parse(input, options, depth + 1)?)
         } else {
             None
         };
 
-        Ok(EnvironmentVariable {
-            name,
-            indices,
-            fallback,
-        })
+        Ok(EnvironmentVariable { name, indices, fallback })
     }
 
-    pub fn to_css(
-        &self,
-        dest: &mut Printer,
-        is_custom_property: bool,
-    ) -> PrintResult<()> {
+    #[cfg(any())]
+    // blocked_on: EnvironmentVariableName::to_css + TokenList::to_css.
+    pub fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
         dest.write_str("env(")?;
         self.name.to_css(dest)?;
 
         for index in self.indices.iter() {
-            dest.write_char(' ')?;
-            css::to_css::integer::<i32>(*index, dest)?;
+            dest.write_char(b' ')?;
+            css_parser::to_css::integer(*index, dest)?;
         }
 
         if let Some(fallback) = &self.fallback {
-            dest.delim(',', false)?;
+            dest.delim(b',', false)?;
             fallback.to_css(dest, is_custom_property)?;
         }
 
-        dest.write_char(')')
+        dest.write_char(b')')
     }
 
+    #[cfg(any())] // blocked_on: TokenList::get_fallback
     pub fn get_fallback(&self, kind: ColorFallbackKind) -> Self {
         EnvironmentVariable {
             name: self.name.clone(),
@@ -871,14 +933,16 @@ impl EnvironmentVariable {
         }
     }
 
+    #[cfg(any())] // blocked_on: generics::CssEql/CssHash
     pub fn eql(&self, rhs: &Self) -> bool {
         css::implement_eql(self, rhs)
     }
-
+    #[cfg(any())]
     pub fn hash(&self, hasher: &mut Wyhash) {
         css::implement_hash(self, hasher)
     }
 
+    #[cfg(any())] // blocked_on: TokenList::deep_clone
     pub fn deep_clone(&self) -> EnvironmentVariable {
         EnvironmentVariable {
             name: self.name.clone(),
@@ -889,7 +953,7 @@ impl EnvironmentVariable {
 }
 
 /// A CSS environment variable name.
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub enum EnvironmentVariableName {
     /// A UA-defined environment variable.
     Ua(UAEnvironmentVariable),
@@ -900,21 +964,24 @@ pub enum EnvironmentVariableName {
 }
 
 impl EnvironmentVariableName {
+    #[cfg(any())] // blocked_on: generics::CssEql/CssHash
     pub fn eql(&self, rhs: &Self) -> bool {
         css::implement_eql(self, rhs)
     }
-
+    #[cfg(any())]
     pub fn hash(&self, hasher: &mut Wyhash) {
         css::implement_hash(self, hasher)
     }
 
-    pub fn parse(input: &mut css::Parser) -> Result<EnvironmentVariableName> {
+    #[cfg(any())]
+    // blocked_on: DashedIdentReference::parse_with_options.
+    pub fn parse(input: &mut Parser) -> Result<EnvironmentVariableName> {
         if let Ok(ua) = input.try_parse(UAEnvironmentVariable::parse) {
             return Ok(EnvironmentVariableName::Ua(ua));
         }
 
         if let Ok(dashed) = input.try_parse(|i| {
-            DashedIdentReference::parse_with_options(i, &css::ParserOptions::default(None))
+            DashedIdentReference::parse_with_options(i, &ParserOptions::default(None))
         }) {
             return Ok(EnvironmentVariableName::Custom(dashed));
         }
@@ -923,6 +990,8 @@ impl EnvironmentVariableName {
         Ok(EnvironmentVariableName::Unknown(ident))
     }
 
+    #[cfg(any())]
+    // blocked_on: DashedIdentReference::to_css + CustomIdentFns::to_css.
     pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         match self {
             EnvironmentVariableName::Ua(ua) => ua.to_css(dest),
@@ -933,7 +1002,9 @@ impl EnvironmentVariableName {
 }
 
 /// A UA-defined environment variable name.
-// TODO(port): css::DefineEnumProperty derive — generates eql/hash/parse/to_css/deep_clone
+// PORT NOTE: Zig `css.DefineEnumProperty(@This())` provides eql/hash/parse/
+// to_css/deep_clone via comptime reflection over @tagName. Replaced by an
+// `EnumProperty` impl below (kebab-case match) — same protocol surface.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, strum::IntoStaticStr)]
 pub enum UAEnvironmentVariable {
     /// The safe area inset from the top of the viewport.
@@ -968,8 +1039,30 @@ pub enum UAEnvironmentVariable {
     ViewportSegmentRight,
 }
 
-css::define_enum_property!(UAEnvironmentVariable);
-// TODO(port): the macro above must provide: eql, hash, parse, to_css, deep_clone
+impl EnumProperty for UAEnvironmentVariable {
+    fn from_ascii_case_insensitive(ident: &[u8]) -> Option<Self> {
+        // css.todo_stuff.match_ignore_ascii_case — Phase B: phf table.
+        use UAEnvironmentVariable::*;
+        const TABLE: &[(&[u8], UAEnvironmentVariable)] = &[
+            (b"safe-area-inset-top", SafeAreaInsetTop),
+            (b"safe-area-inset-right", SafeAreaInsetRight),
+            (b"safe-area-inset-bottom", SafeAreaInsetBottom),
+            (b"safe-area-inset-left", SafeAreaInsetLeft),
+            (b"viewport-segment-width", ViewportSegmentWidth),
+            (b"viewport-segment-height", ViewportSegmentHeight),
+            (b"viewport-segment-top", ViewportSegmentTop),
+            (b"viewport-segment-left", ViewportSegmentLeft),
+            (b"viewport-segment-bottom", ViewportSegmentBottom),
+            (b"viewport-segment-right", ViewportSegmentRight),
+        ];
+        for (k, v) in TABLE {
+            if strings::eql_case_insensitive_ascii_check_length(ident, k) {
+                return Some(*v);
+            }
+        }
+        None
+    }
+}
 
 /// A custom CSS function.
 pub struct Function {
@@ -982,35 +1075,35 @@ pub struct Function {
 impl Function {
     // deinit(): body only freed owned `TokenList` field — handled by `Drop`.
 
-    pub fn to_css(
-        &self,
-        dest: &mut Printer,
-        is_custom_property: bool,
-    ) -> PrintResult<()> {
+    #[cfg(any())] // blocked_on: TokenList::to_css
+    pub fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
         IdentFns::to_css(&self.name, dest)?;
-        dest.write_char('(')?;
+        dest.write_char(b'(')?;
         self.arguments.to_css(dest, is_custom_property)?;
-        dest.write_char(')')
+        dest.write_char(b')')
     }
 
+    #[cfg(any())] // blocked_on: generics::CssEql/CssHash
     pub fn eql(&self, rhs: &Self) -> bool {
         css::implement_eql(self, rhs)
     }
-
+    #[cfg(any())]
     pub fn hash(&self, hasher: &mut Wyhash) {
         css::implement_hash(self, hasher)
     }
 
+    #[cfg(any())] // blocked_on: TokenList::deep_clone + Ident::deep_clone
     pub fn deep_clone(&self) -> Function {
         Function {
-            name: self.name.clone(),
+            name: self.name,
             arguments: self.arguments.deep_clone(),
         }
     }
 
+    #[cfg(any())] // blocked_on: TokenList::get_fallback + Ident::deep_clone
     pub fn get_fallback(&self, kind: ColorFallbackKind) -> Self {
         Function {
-            name: self.name.deep_clone(),
+            name: self.name,
             arguments: self.arguments.get_fallback(kind),
         }
     }
@@ -1019,7 +1112,7 @@ impl Function {
 /// A raw CSS token, or a parsed value.
 pub enum TokenOrValue {
     /// A token.
-    Token(css::Token),
+    Token(Token),
     /// A parsed CSS color.
     Color(CssColor),
     /// A color with unresolved components.
@@ -1047,19 +1140,25 @@ pub enum TokenOrValue {
 }
 
 impl TokenOrValue {
+    #[cfg(any())] // blocked_on: generics::CssEql/CssHash blanket impls
     pub fn eql(&self, rhs: &TokenOrValue) -> bool {
         css::implement_eql(self, rhs)
     }
-
+    #[cfg(any())]
     pub fn hash(&self, hasher: &mut Wyhash) {
         css::implement_hash(self, hasher)
     }
 
+    #[cfg(any())]
+    // blocked_on: Url: Clone, UnresolvedColor/Variable/EnvironmentVariable/
+    // Function::deep_clone, AnimationName: Clone (stub already derives Clone).
     pub fn deep_clone(&self) -> TokenOrValue {
         match self {
             TokenOrValue::Token(t) => TokenOrValue::Token(t.clone()),
-            TokenOrValue::Color(color) => TokenOrValue::Color(color.deep_clone()),
-            TokenOrValue::UnresolvedColor(color) => TokenOrValue::UnresolvedColor(color.deep_clone()),
+            TokenOrValue::Color(color) => TokenOrValue::Color(color.clone()),
+            TokenOrValue::UnresolvedColor(color) => {
+                TokenOrValue::UnresolvedColor(color.deep_clone())
+            }
             TokenOrValue::Url(u) => TokenOrValue::Url(u.clone()),
             TokenOrValue::Var(var) => TokenOrValue::Var(var.deep_clone()),
             TokenOrValue::Env(env) => TokenOrValue::Env(env.deep_clone()),
@@ -1068,7 +1167,7 @@ impl TokenOrValue {
             TokenOrValue::Angle(v) => TokenOrValue::Angle(*v),
             TokenOrValue::Time(v) => TokenOrValue::Time(*v),
             TokenOrValue::Resolution(v) => TokenOrValue::Resolution(*v),
-            TokenOrValue::DashedIdent(v) => TokenOrValue::DashedIdent(v.clone()),
+            TokenOrValue::DashedIdent(v) => TokenOrValue::DashedIdent(*v),
             TokenOrValue::AnimationName(v) => TokenOrValue::AnimationName(v.clone()),
         }
     }
@@ -1076,7 +1175,7 @@ impl TokenOrValue {
     // deinit(): all arms only freed owned fields — handled by `Drop`.
 
     pub fn is_whitespace(&self) -> bool {
-        matches!(self, TokenOrValue::Token(css::Token::Whitespace(_)))
+        matches!(self, TokenOrValue::Token(Token::Whitespace(_)))
     }
 }
 
@@ -1087,40 +1186,54 @@ impl TokenOrValue {
 /// In this case, the raw tokens are stored instead.
 pub struct UnparsedProperty {
     /// The id of the property.
-    pub property_id: css::PropertyId,
+    pub property_id: css::properties::PropertyId,
     /// The property value, stored as a raw token list.
     pub value: TokenList,
 }
 
 impl UnparsedProperty {
-    pub fn parse(property_id: css::PropertyId, input: &mut css::Parser, options: &css::ParserOptions) -> Result<UnparsedProperty> {
-        let value = input.parse_until_before(
-            css::Delimiters { bang: true, semicolon: true, ..Default::default() },
-            |i| TokenList::parse(i, options, 0),
-        )?;
+    #[cfg(any())] // blocked_on: TokenList::parse
+    pub fn parse(
+        property_id: css::properties::PropertyId,
+        input: &mut Parser,
+        options: &ParserOptions,
+    ) -> Result<UnparsedProperty> {
+        let value = input.parse_until_before(Delimiters::BANG | Delimiters::SEMICOLON, |i| {
+            TokenList::parse(i, options, 0)
+        })?;
 
         Ok(UnparsedProperty { property_id, value })
     }
 
-    pub fn get_prefixed(&self, targets: css::Targets, feature: css::prefixes::Feature) -> UnparsedProperty {
+    #[cfg(any())]
+    // blocked_on: PropertyId::{prefix, with_prefix} + UnparsedProperty::deep_clone.
+    pub fn get_prefixed(
+        &self,
+        targets: css::targets::Targets,
+        feature: css::prefixes::Feature,
+    ) -> UnparsedProperty {
         let mut clone = self.deep_clone();
         let prefix = self.property_id.prefix();
-        clone.property_id = clone.property_id.with_prefix(targets.prefixes(prefix.or_none(), feature));
+        clone.property_id =
+            clone.property_id.with_prefix(targets.prefixes(prefix.or_none(), feature));
         clone
     }
 
     /// Returns a new UnparsedProperty with the same value and the given property id.
-    pub fn with_property_id(&self, property_id: css::PropertyId) -> UnparsedProperty {
+    #[cfg(any())] // blocked_on: TokenList::deep_clone
+    pub fn with_property_id(&self, property_id: css::properties::PropertyId) -> UnparsedProperty {
         UnparsedProperty {
             property_id,
             value: self.value.deep_clone(),
         }
     }
 
+    #[cfg(any())] // blocked_on: generics::DeepClone for UnparsedProperty
     pub fn deep_clone(&self) -> Self {
         css::implement_deep_clone(self)
     }
 
+    #[cfg(any())] // blocked_on: generics::CssEql
     pub fn eql(&self, rhs: &Self) -> bool {
         css::implement_eql(self, rhs)
     }
@@ -1135,25 +1248,32 @@ pub struct CustomProperty {
 }
 
 impl CustomProperty {
-    pub fn parse(name: CustomPropertyName, input: &mut css::Parser, options: &css::ParserOptions) -> Result<CustomProperty> {
-        let value = input.parse_until_before(
-            css::Delimiters { bang: true, semicolon: true, ..Default::default() },
-            |input2| TokenListFns::parse(input2, options, 0),
-        )?;
+    #[cfg(any())] // blocked_on: TokenList::parse
+    pub fn parse(
+        name: CustomPropertyName,
+        input: &mut Parser,
+        options: &ParserOptions,
+    ) -> Result<CustomProperty> {
+        let value = input.parse_until_before(Delimiters::BANG | Delimiters::SEMICOLON, |input2| {
+            TokenListFns::parse(input2, options, 0)
+        })?;
 
         Ok(CustomProperty { name, value })
     }
 
+    #[cfg(any())] // blocked_on: generics::DeepClone
     pub fn deep_clone(&self) -> Self {
         css::implement_deep_clone(self)
     }
 
+    #[cfg(any())] // blocked_on: generics::CssEql
     pub fn eql(&self, rhs: &Self) -> bool {
         css::implement_eql(self, rhs)
     }
 }
 
 /// A CSS custom property name.
+#[derive(Debug, Clone, Copy)]
 pub enum CustomPropertyName {
     /// An author-defined CSS custom property.
     Custom(DashedIdent),
@@ -1161,12 +1281,27 @@ pub enum CustomPropertyName {
     Unknown(Ident),
 }
 
+// PORT NOTE: `DashedIdent`/`Ident` carry `*const [u8]` arena slices and
+// intentionally don't derive `PartialEq` (pointer-eq would be wrong).
+// `PropertyId` derives `PartialEq`, so compare the underlying bytes here.
+impl PartialEq for CustomPropertyName {
+    fn eq(&self, other: &Self) -> bool {
+        // SAFETY: arena-owned slices live for the parse session.
+        unsafe { (&*self.as_ptr()).eq(&*other.as_ptr()) }
+    }
+}
+
 impl CustomPropertyName {
+    #[cfg(any())]
+    // blocked_on: DashedIdent::to_css (Printer::write_dashed_ident).
     pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         match self {
             CustomPropertyName::Custom(custom) => custom.to_css(dest),
             CustomPropertyName::Unknown(unknown) => {
-                css::serializer::serialize_identifier(&unknown.v, dest).map_err(|_| dest.add_fmt_error_value())
+                // SAFETY: arena-owned slice valid for printer lifetime.
+                let v = unsafe { &*unknown.v };
+                css_parser::serializer::serialize_identifier(v, dest)
+                    .map_err(|_| dest.add_fmt_error())
                 // TODO(port): Zig `catch return dest.addFmtError()` — exact error mapping needs Phase B
             }
         }
@@ -1174,28 +1309,44 @@ impl CustomPropertyName {
 
     pub fn from_str(name: &[u8]) -> CustomPropertyName {
         if name.starts_with(b"--") {
-            return CustomPropertyName::Custom(DashedIdent { v: name.into() });
+            return CustomPropertyName::Custom(DashedIdent { v: name as *const [u8] });
         }
-        CustomPropertyName::Unknown(Ident { v: name.into() })
+        CustomPropertyName::Unknown(Ident { v: name as *const [u8] })
     }
 
-    pub fn as_str(&self) -> &[u8] {
+    #[inline]
+    fn as_ptr(&self) -> *const [u8] {
         match self {
-            CustomPropertyName::Custom(custom) => custom.v.as_ref(),
-            CustomPropertyName::Unknown(unknown) => unknown.v.as_ref(),
+            CustomPropertyName::Custom(custom) => custom.v,
+            CustomPropertyName::Unknown(unknown) => unknown.v,
         }
     }
 
+    /// Borrow the underlying name slice.
+    /// SAFETY: caller must ensure the parser arena outlives the borrow
+    /// (slices are arena-owned `*const [u8]`; see `DashedIdent::as_slice`).
+    #[inline]
+    pub fn as_str(&self) -> &[u8] {
+        // SAFETY: see doc comment.
+        unsafe { &*self.as_ptr() }
+    }
+
+    #[cfg(any())] // blocked_on: generics::DeepClone
     pub fn deep_clone(&self) -> Self {
         css::implement_deep_clone(self)
     }
 
+    #[cfg(any())] // blocked_on: generics::CssEql (use `PartialEq` above instead)
     pub fn eql(&self, rhs: &Self) -> bool {
         css::implement_eql(self, rhs)
     }
 }
 
-pub fn try_parse_color_token(f: &[u8], state: &css::ParserState, input: &mut css::Parser) -> Option<CssColor> {
+pub fn try_parse_color_token(
+    f: &[u8],
+    state: &ParserState,
+    input: &mut Parser,
+) -> Option<CssColor> {
     // css.todo_stuff.match_ignore_ascii_case
     if strings::eql_case_insensitive_ascii_check_length(f, b"rgb")
         || strings::eql_case_insensitive_ascii_check_length(f, b"rgba")
@@ -1226,5 +1377,12 @@ pub fn try_parse_color_token(f: &[u8], state: &css::ParserState, input: &mut css
 //   source:     src/css/properties/custom.zig (1554 lines)
 //   confidence: medium
 //   todos:      3
-//   notes:      Allocator params dropped (Vec/global mimalloc per LIFETIMES.tsv — Phase B revisit for arena); Zig closure structs collapsed to Rust closures; css::Token variant shapes, ParserOptions::default arity, define_enum_property! macro, and implement_eql/hash/deep_clone helpers need Phase B wiring.
+//   notes:      module un-gated; all data types real; parse/to_css/deep_clone/
+//               eql/hash/get_fallback bodies internally gated on values::ident
+//               (DashedIdent{,Reference}::to_css/parse_with_options),
+//               values::url (Url::parse), values::color (ComponentParser /
+//               supports_condition), generics::CssEql/CssHash/DeepClone blanket
+//               impls, AnimationName::to_css. Allocator params dropped (Vec/
+//               global mimalloc per LIFETIMES.tsv — Phase B revisit for arena);
+//               Zig closure structs collapsed to Rust closures.
 // ──────────────────────────────────────────────────────────────────────────

@@ -186,6 +186,30 @@ impl Store {
     }
 
     
+    /// C-ABI trampoline for `bun_jsc::webcore::blob::Store::init_file` —
+    /// breaks the `bun_jsc → bun_webcore` forward-dep cycle (same pattern as
+    /// `Bun__Blob__sharedView`). `pathlike` is moved out of `*pathlike` by
+    /// `ptr::read`; caller must `mem::forget` its local.
+    #[no_mangle]
+    pub unsafe extern "C" fn Bun__Blob__Store__initFile(
+        pathlike: *mut PathOrFileDescriptor,
+        mime_type: *const MimeType,
+    ) -> *mut Store {
+        // SAFETY: caller guarantees `pathlike` points to an initialised
+        // `PathOrFileDescriptor` whose ownership is being transferred here.
+        let pathlike = unsafe { core::ptr::read(pathlike) };
+        let mime_type = if mime_type.is_null() {
+            None
+        } else {
+            // SAFETY: caller passes a live `&MimeType` when non-null.
+            Some(unsafe { (*mime_type).clone() })
+        };
+        match Store::init_file(pathlike, mime_type) {
+            Ok(b) => Box::into_raw(b),
+            Err(_) => core::ptr::null_mut(),
+        }
+    }
+
     pub fn init_file(
         pathlike: PathOrFileDescriptor,
         mime_type: Option<MimeType>,

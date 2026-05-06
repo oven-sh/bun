@@ -2069,6 +2069,27 @@ impl<const SSL: bool> NewSocketHandler<SSL> {
         }
     }
 
+    /// Wrap an already-open fd. Ext stores `*mut This`; the socket is linked
+    /// into `g` with kind `k`. Port of `NewSocketHandler.fromFd` (POSIX path —
+    /// the only caller, IPC, uses `windows_configure_client` on Windows).
+    pub fn from_fd<This>(
+        g: &mut SocketGroup,
+        k: SocketKind,
+        handle: bun_core::Fd,
+        this: *mut This,
+        is_ipc: bool,
+    ) -> Option<Self> {
+        let ext_size = core::mem::size_of::<Option<*mut This>>() as c_int;
+        let raw = g.from_fd(k, None, ext_size, handle.native() as LIBUS_SOCKET_DESCRIPTOR, is_ipc);
+        if raw.is_null() {
+            return None;
+        }
+        // SAFETY: ext storage was sized for `Option<*mut This>` above; `raw` is
+        // a freshly-created live socket.
+        unsafe { *sock_c::us_socket_ext(raw).cast::<Option<*mut This>>() = Some(this) };
+        Some(Self { socket: InternalSocket::Connected(raw) })
+    }
+
     /// Connect via a `SocketGroup` and stash `owner` in the socket ext.
     /// Replaces the deleted `connectAnon`/`connectPtr`.
     pub fn connect_group<Owner>(

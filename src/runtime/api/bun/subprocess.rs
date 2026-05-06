@@ -1039,9 +1039,9 @@ impl Subprocess<'_> {
         // For now we run them at the end and at early-return sites manually.
 
         if self.event_loop_timer.state == EventLoopTimerState::ACTIVE {
-            // TODO(blocked_on: bun_jsc::VirtualMachineRef::timer): `timer` is a `()`
-            // stub on the upstream VM type; wire `remove` once it lands.
-            let _ = &mut self.event_loop_timer;
+            // SAFETY: single JS thread; `timer_all()` points into the boxed
+            // per-thread `RuntimeState`.
+            unsafe { (*Self::timer_all()).remove(&mut self.event_loop_timer) };
         }
         self.set_event_loop_timer_refd(false);
 
@@ -1372,10 +1372,9 @@ impl Subprocess<'_> {
         unsafe { ManuallyDrop::drop(&mut this.process) };
 
         if this.event_loop_timer.state == EventLoopTimerState::ACTIVE {
-            // TODO(blocked_on: bun_jsc::VirtualMachineRef::timer): `timer` is a `()`
-            // stub on the upstream VM type; wire `remove` once it lands.
-            let _ = this.global_this().bun_vm();
-            let _ = &mut this.event_loop_timer;
+            // SAFETY: single JS thread; `timer_all()` points into the boxed
+            // per-thread `RuntimeState`.
+            unsafe { (*Self::timer_all()).remove(&mut this.event_loop_timer) };
         }
         this.set_event_loop_timer_refd(false);
 
@@ -1482,11 +1481,8 @@ impl Subprocess<'_> {
             IPC::DecodedIPCMessage::Internal(data) => {
                 bun_output::scoped_log!(IPC, "Received IPC internal message from child");
                 let global_this = self.global_this();
-                // TODO(blocked_on: node_cluster_binding::handle_internal_message_primary):
-                // signature currently takes `&mut bun_jsc::Subprocess` (stub type),
-                // not `&mut crate::api::bun_subprocess::Subprocess`.
-                let _ = (global_this, &mut *self, data);
-                let _ = node_cluster_binding::handle_internal_message_primary;
+                let _ =
+                    node_cluster_binding::handle_internal_message_primary(global_this, self, data);
             }
         }
     }

@@ -632,6 +632,91 @@ pub mod test {
             }
         }
     }
+
+    // ─── JSON serialization (port of `std.json.fmt(test_tokens, .{})`) ──────
+    // Zig: `union(TokenTag)` → `{"Tag":payload}`; void payload → `{"Tag":{}}`.
+    use bun_shell_parser::json_fmt::{encode_json_string, write_redirect_flags};
+    use core::fmt::Write as _;
+
+    impl<'a> TestToken<'a> {
+        pub fn write_json(&self, w: &mut impl core::fmt::Write) -> core::fmt::Result {
+            use TestToken as T;
+            macro_rules! unit {
+                ($tag:literal) => {{
+                    w.write_str(concat!("{\"", $tag, "\":{}}"))
+                }};
+            }
+            match self {
+                T::Pipe => unit!("Pipe"),
+                T::DoublePipe => unit!("DoublePipe"),
+                T::Ampersand => unit!("Ampersand"),
+                T::DoubleAmpersand => unit!("DoubleAmpersand"),
+                T::Redirect(r) => {
+                    w.write_str("{\"Redirect\":")?;
+                    write_redirect_flags(w, *r)?;
+                    w.write_char('}')
+                }
+                T::Dollar => unit!("Dollar"),
+                T::Asterisk => unit!("Asterisk"),
+                T::DoubleAsterisk => unit!("DoubleAsterisk"),
+                T::Eq => unit!("Eq"),
+                T::Semicolon => unit!("Semicolon"),
+                T::Newline => unit!("Newline"),
+                T::BraceBegin => unit!("BraceBegin"),
+                T::Comma => unit!("Comma"),
+                T::BraceEnd => unit!("BraceEnd"),
+                T::CmdSubstBegin => unit!("CmdSubstBegin"),
+                T::CmdSubstQuoted => unit!("CmdSubstQuoted"),
+                T::CmdSubstEnd => unit!("CmdSubstEnd"),
+                T::OpenParen => unit!("OpenParen"),
+                T::CloseParen => unit!("CloseParen"),
+                T::Var(s) => {
+                    w.write_str("{\"Var\":")?;
+                    encode_json_string(w, s)?;
+                    w.write_char('}')
+                }
+                T::VarArgv(n) => write!(w, "{{\"VarArgv\":{}}}", n),
+                T::Text(s) => {
+                    w.write_str("{\"Text\":")?;
+                    encode_json_string(w, s)?;
+                    w.write_char('}')
+                }
+                T::SingleQuotedText(s) => {
+                    w.write_str("{\"SingleQuotedText\":")?;
+                    encode_json_string(w, s)?;
+                    w.write_char('}')
+                }
+                T::DoubleQuotedText(s) => {
+                    w.write_str("{\"DoubleQuotedText\":")?;
+                    encode_json_string(w, s)?;
+                    w.write_char('}')
+                }
+                T::JSObjRef(n) => write!(w, "{{\"JSObjRef\":{}}}", n),
+                T::DoubleBracketOpen => unit!("DoubleBracketOpen"),
+                T::DoubleBracketClose => unit!("DoubleBracketClose"),
+                T::Delimit => unit!("Delimit"),
+                T::Eof => unit!("Eof"),
+            }
+        }
+    }
+
+    /// `Display` adapter mirroring `std.json.fmt(test_tokens.items, .{})`.
+    pub fn tokens_json_fmt<'b>(tokens: &'b [TestToken<'_>]) -> impl core::fmt::Display + 'b {
+        struct Fmt<'a, 'b>(&'b [TestToken<'a>]);
+        impl core::fmt::Display for Fmt<'_, '_> {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                f.write_char('[')?;
+                for (i, tok) in self.0.iter().enumerate() {
+                    if i != 0 {
+                        f.write_char(',')?;
+                    }
+                    tok.write_json(f)?;
+                }
+                f.write_char(']')
+            }
+        }
+        Fmt(tokens)
+    }
 }
 pub use test as Test;
 
@@ -1171,13 +1256,9 @@ pub mod testing_apis {
             test_tokens.push(test_tok);
         }
 
-        // TODO(port): std.json.fmt — serde_json or custom JSON serializer in Phase B.
-        let mut str = Vec::new();
-        let _ = &test_tokens;
-        todo!("blocked_on: bun_core::json::fmt");
-        #[allow(unreachable_code)]
-        let bun_str = BunString::from_bytes(&str);
-        // TODO(port): move to *_jsc — to_js() lives in StringJsc extension trait
+        // Spec: `std.fmt.allocPrint(..., "{f}", .{std.json.fmt(test_tokens.items, .{})})`.
+        let str = format!("{}", test::tokens_json_fmt(&test_tokens[..]));
+        let bun_str = BunString::from_bytes(str.as_bytes());
         bun_str.to_js(global)
     }
 
@@ -1259,12 +1340,9 @@ pub mod testing_apis {
             }
         };
 
-        // TODO(port): std.json.fmt
-        let mut str = Vec::new();
-        let _ = &script_ast;
-        todo!("blocked_on: bun_core::json::fmt");
-        #[allow(unreachable_code)]
-        bun_jsc::bun_string_jsc::create_utf8_for_js(global, &str)
+        // Spec: `std.fmt.allocPrint(..., "{f}", .{std.json.fmt(script_ast, .{})})`.
+        let str = format!("{}", bun_shell_parser::json_fmt::script_json_fmt(&script_ast));
+        bun_jsc::bun_string_jsc::create_utf8_for_js(global, str.as_bytes())
     }
 }
 pub use testing_apis as TestingAPIs;

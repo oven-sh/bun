@@ -385,6 +385,34 @@ pub mod lib {
             // SAFETY: self valid.
             unsafe { archive_write_set_format_pax_restricted(self.as_mut_ptr()) }
         }
+        pub fn write_add_filter_gzip(&self) -> Result {
+            // SAFETY: self valid.
+            unsafe { archive_write_add_filter_gzip(self.as_mut_ptr()) }
+        }
+        pub fn write_set_filter_option(
+            &self,
+            module: Option<&ZStr>,
+            option: &ZStr,
+            value: &ZStr,
+        ) -> Result {
+            // SAFETY: self valid; ZStr guarantees NUL-termination.
+            unsafe {
+                archive_write_set_filter_option(
+                    self.as_mut_ptr(),
+                    module.map_or(core::ptr::null(), |m| m.as_ptr().cast()),
+                    option.as_ptr().cast(),
+                    value.as_ptr().cast(),
+                )
+            }
+        }
+        pub fn write_set_options(&self, opts: &ZStr) -> Result {
+            // SAFETY: self valid; ZStr guarantees NUL-termination.
+            unsafe { archive_write_set_options(self.as_mut_ptr(), opts.as_ptr().cast()) }
+        }
+        pub fn write_open_filename(&self, filename: &ZStr) -> Result {
+            // SAFETY: self valid; ZStr guarantees NUL-termination.
+            unsafe { archive_write_open_filename(self.as_mut_ptr(), filename.as_ptr().cast()) }
+        }
         pub fn write_header(&self, entry: &Entry) -> Result {
             // SAFETY: self valid; entry came from Entry::new()/read_next_header().
             // `Entry` has interior mutability so `&Entry -> *mut Entry` is sound.

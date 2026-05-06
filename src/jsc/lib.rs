@@ -632,20 +632,22 @@ mod __macro_smoke {
 }
 
 
-// JSC Classes Bindings — opaque stubs (B-2: trimmed as real modules un-gate)
-stub_ty!(
-    CachedBytecode,
-    DOMFormData, DeferredError,
-    URL,
-    ZigStackTrace, ZigStackFrame,
-    JSBundler,
-);
+// JSC Classes Bindings — re-exported from their per-type modules (declared
+// above with `#[path = "…"] pub mod …;`). These were previously placeholder
+// newtypes; the real opaque-FFI structs now live in their own files and are
+// surfaced here at the crate root to match `jsc.zig`'s flat namespace.
+pub use self::cached_bytecode::CachedBytecode;
+pub use self::dom_form_data::DOMFormData;
+pub use self::deferred_error::DeferredError;
+pub use self::url::URL;
+pub use self::zig_stack_trace::ZigStackTrace;
+pub use self::zig_stack_frame::ZigStackFrame;
 pub use abort_signal::AbortSignal;
 
 // ──────────────────────────────────────────────────────────────────────────
 // `VM` / `JSGlobalObject` — opaque FFI handles to C++-owned objects.
 //
-// Unlike the `stub_ty!` placeholders above, these carry an `UnsafeCell`
+// Unlike the simple re-exports above, these carry an `UnsafeCell`
 // marker so a shared `&VM` / `&JSGlobalObject` does **not** assert
 // immutability of the pointee. The Zig spec (`VM.zig`, `JSGlobalObject.zig`)
 // passes `*VM` / `*JSGlobalObject` everywhere — Zig pointers freely alias and
@@ -1901,15 +1903,13 @@ pub use self::runtime_transpiler_store::RuntimeTranspilerStore;
 #[path = "web_worker.rs"] pub mod web_worker;
 pub use self::web_worker::WebWorker;
 
-// TODO(b1): bun_runtime crate not in dep-graph at this tier; gate re-exports.
-pub use bun_runtime::test_runner::jest as Jest;
-pub use bun_runtime::test_runner::jest::TestScope;
-pub use bun_runtime::test_runner::expect as Expect;
-pub use bun_runtime::test_runner::snapshot as Snapshot;
-pub mod Jest {}
-pub mod Expect {}
-pub mod Snapshot {}
-stub_ty!(TestScope);
+// LAYERING: `jsc.zig:121-124` re-exports `Jest`/`TestScope`/`Expect`/`Snapshot`
+// from `../runtime/test_runner/` — a forward-dep on `bun_runtime`, which itself
+// depends on `bun_jsc`. The Zig side gets away with this via lazy compilation;
+// in Rust it is a hard cycle. The Zig spec already marks these
+// `// TODO: move into bun.api`, so the Rust port executes that TODO: callers
+// reference `bun_runtime::test_runner::{jest, expect, snapshot}` directly
+// instead of routing through `bun_jsc`. No alias is exported here.
 
 pub use self::js_property_iterator::JSPropertyIterator;
 

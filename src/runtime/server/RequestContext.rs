@@ -2154,14 +2154,14 @@ where
                     let proxy_url = unsafe { (*env).get_http_proxy(true, None, None) }
                         .map(|proxy| proxy.href);
 
-                    // `s3.get_credentials()` yields `&Arc<webcore::s3_stub::S3Credentials>`
-                    // but `S3::client::stat` wants `&mut bun_s3_signing::S3Credentials`.
-                    // The two are distinct opaque types until the real bun_s3 crate lands.
-                    let _ = (credentials, path, proxy_url, this as *mut Self as *mut c_void);
-                    let _ = (Self::on_s3_size_resolved_thunk, s3.request_payer);
-                    let _ = &S3::client::stat;
-                    todo!("blocked_on: bun_s3::S3Credentials vs webcore::s3_stub::S3Credentials");
-                    #[allow(unreachable_code)]
+                    let _ = S3::client::stat(
+                        credentials,
+                        path,
+                        Self::on_s3_size_resolved_thunk,
+                        this as *mut Self as *mut c_void,
+                        proxy_url,
+                        s3.request_payer,
+                    ); // TODO: properly propagate exception upwards
                     return;
                 }
                 this.render_metadata();
@@ -2282,10 +2282,12 @@ where
                 jsc::PromiseResult::Pending => {
                     ctx.ref_();
                     let cell = NativePromiseContext::create(this.global_this(), ctx);
-                    // TODO(port): Zig `then_with_value(global, cell, on_resolve, on_reject)`
-                    let _ = (response_value, cell, this.global_this());
-                    let _: () = todo!("blocked_on: bun_jsc::JSValue::then_with_value");
-                    #[allow(unreachable_code)]
+                    response_value.then_with_value(
+                        this.global_this(),
+                        cell,
+                        Self::on_resolve,
+                        Self::on_reject,
+                    ); // TODO: properly propagate exception upwards
                     return;
                 }
                 jsc::PromiseResult::Fulfilled(fulfilled_value) => {
@@ -2971,9 +2973,12 @@ where
                 ctx.flags.set_is_error_promise_pending(true);
                 ctx.ref_();
                 let cell = NativePromiseContext::create(server.global_this(), ctx);
-                // TODO(port): Zig `then_with_value(global, cell, on_resolve, on_reject)`
-                let _ = (promise_js, cell, server.global_this());
-                let _: () = todo!("blocked_on: bun_jsc::JSValue::then_with_value");
+                promise_js.then_with_value(
+                    server.global_this(),
+                    cell,
+                    Self::on_resolve,
+                    Self::on_reject,
+                ); // TODO: properly propagate exception upwards
             }
             jsc::PromiseResult::Fulfilled(fulfilled_value) => {
                 // if you return a Response object or a Promise<Response>

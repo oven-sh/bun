@@ -50,12 +50,18 @@ pub extern "C" fn Bun__readOriginTimerStart(vm: &VirtualMachine) -> f64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__GlobalObject__connectedIPC(global: &JSGlobalObject) -> bool {
+    use crate::virtual_machine::IPCInstanceUnion;
     // SAFETY: bun_vm() never returns null for a Bun-owned global.
     let vm = unsafe { &*global.bun_vm() };
-    // TODO(b2-cycle): `vm.ipc` is `Option<()>` until `IPCInstanceUnion` lands;
-    // the connected/is_connected distinction is unrepresentable here. Mirror
-    // `hasIPC` for now (Zig only differs by checking `initialized.data.is_connected()`).
-    vm.ipc.is_some()
+    match &vm.ipc {
+        Some(IPCInstanceUnion::Initialized(inst)) => {
+            // SAFETY: `inst` was produced by `IPCInstance::new` (Box::into_raw)
+            // and remains live until `handleIPCClose` swaps `vm.ipc` to `None`.
+            unsafe { (**inst).data.is_connected() }
+        }
+        Some(IPCInstanceUnion::Waiting { .. }) => true,
+        None => false,
+    }
 }
 
 #[unsafe(no_mangle)]

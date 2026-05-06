@@ -63,6 +63,21 @@ impl SystemError {
         self.dest.ref_();
     }
 
+    /// Bitwise-copy + bump every `bun_str::String` ref. Mirrors Zig
+    /// `var v = this.*; v.ref();` (used by `Body.ValueError.dupe`).
+    /// `bun_str::String` has no `Clone` impl (intrusive WTF refcount), so
+    /// `#[derive(Clone)]` is unavailable; this is the manual equivalent.
+    pub fn dupe(&self) -> SystemError {
+        // SAFETY: `SystemError` is `#[repr(C)]` and every field is either `c_int`
+        // (trivially copyable) or `bun_str::String` — a `#[repr(C)]` smart-ptr
+        // whose bitwise copy is sound provided we immediately bump each ref
+        // (preventing a double-free on drop). This is exactly the Zig spec
+        // `var v = this.*; v.ref();`.
+        let mut v: SystemError = unsafe { core::ptr::read(self) };
+        v.ref_();
+        v
+    }
+
     pub fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue {
         // Zig: defer this.deref();
         // SAFETY: self is a valid #[repr(C)] SystemError read-only by C++; `global.as_mut_ptr()`

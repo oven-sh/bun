@@ -52,9 +52,13 @@ pub fn is_macro_path(str: &[u8]) -> bool {
 // MacroContext
 // ══════════════════════════════════════════════════════════════════════════
 
+// PORT NOTE: `resolver` / `env` are BACKREF raw pointers (Zig: `*Resolver`,
+// `*DotEnv.Loader`). `Transpiler<'a>` already stores `env` as `*mut` for the
+// same aliasing reason (see transpiler.rs PORT NOTE on `log`/`env`); a `&'a mut`
+// here would self-borrow the transpiler that owns the `MacroContext`.
 pub struct MacroContext<'a> {
-    pub resolver: &'a mut Resolver<'a>,
-    pub env: &'a mut DotEnvLoader<'a>,
+    pub resolver: *mut Resolver<'a>,
+    pub env: *mut DotEnvLoader<'a>,
     pub macros: MacroMap,
     pub remap: MacroRemap,
     pub javascript_object: JSValue,
@@ -72,20 +76,17 @@ impl<'a> MacroContext<'a> {
 }
 
 impl<'a> MacroContext<'a> {
-    // TODO(b2-blocked): bun_bundler::Transpiler (real fields — currently opaque stub)
-    
-    pub fn init(transpiler: &'a mut Transpiler) -> MacroContext<'a> {
-        b2_blocked! {
-        return MacroContext {
+    pub fn init(transpiler: &mut Transpiler<'a>) -> MacroContext<'a> {
+        MacroContext {
             macros: MacroMap::new(),
             resolver: &mut transpiler.resolver,
             env: transpiler.env,
-            remap: transpiler.options.macro_remap,
+            // PORT NOTE: Zig shallow-copies the hashmap header; Rust moves
+            // ownership instead. The transpiler never reads `macro_remap`
+            // after handing it to the macro context (Macro.zig:27).
+            remap: core::mem::take(&mut transpiler.options.macro_remap),
             javascript_object: JSValue::ZERO,
-        };
         }
-        let _ = transpiler;
-        todo!("blocked_on: bun_bundler::Transpiler real fields (resolver/env/options)")
     }
 
     pub fn call(

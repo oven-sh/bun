@@ -1,9 +1,9 @@
 use core::ffi::c_void;
 use core::marker::{PhantomData, PhantomPinned};
 
-use bun_jsc::{JSGlobalObject, JSValue, VM};
-use bun_runtime::webcore::Blob;
-use bun_str::ZigString;
+use crate::{JSGlobalObject, JSValue, VM};
+use crate::WebCore::Blob;
+use bun_string::ZigString;
 
 /// Opaque FFI handle to WebCore::DOMFormData (C++ side).
 #[repr(C)]

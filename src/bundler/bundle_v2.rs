@@ -2189,7 +2189,11 @@ impl<'a> BundleV2<'a> {
             // TODO(port): resolver.opts.tree_shaking — field absent on FORWARD_DECL BundleOptions subset
         }
 
-        this.linker.resolver = &mut this.transpiler.resolver;
+        // BACKREF: `LinkerContext.resolver` stores `*mut Resolver<'static>` as a
+        // lifetime-erased backref (see LIFETIMES.tsv). Cast through `*mut` to
+        // erase `'a` — the resolver lives in `transpiler` which outlives `self`.
+        this.linker.resolver =
+            (&mut this.transpiler.resolver as *mut Resolver<'a>).cast::<Resolver<'static>>();
         this.linker.graph.code_splitting = this.transpiler.options.code_splitting;
 
         this.linker.options.minify_syntax = this.transpiler.options.minify_syntax;
@@ -3525,7 +3529,7 @@ impl<'a> BundleV2<'a> {
                             ..Default::default()
                         }).expect("unreachable");
                         let task = Box::new(ParseTask {
-                            ctx: this,
+                            ctx: (this as *mut BundleV2).cast::<BundleV2<'static>>(),
                             path,
                             // unknown at this point:
                             contents_or_fd: parse_task::ContentsOrFd::Fd {

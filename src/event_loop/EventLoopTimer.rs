@@ -275,6 +275,93 @@ pub enum State {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// `TimerObjectInternals.Flags` + `Kind` — moved DOWN from `bun_runtime::timer`
+// (LAYERING: `bun_jsc::AbortSignal::Timeout` embeds `Flags` for the heap-order
+// epoch tiebreak; `bun_runtime` depends on `bun_jsc`, so the field type must
+// live in a crate both can see. Pure data — no high-tier deps.)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `setTimeout` / `setInterval` / `setImmediate` discriminant stored in the
+/// `Flags` bitfield. Zig: `enum(u2)`.
+#[repr(u8)]
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum Kind {
+    SetTimeout = 0,
+    SetInterval = 1,
+    SetImmediate = 2,
+}
+
+/// Packed per-JS-timer state. Zig: `packed struct(u32)`. Layout (LSB→MSB):
+///   epoch:u25, kind:u2, has_cleared_timer:1, is_keeping_event_loop_alive:1,
+///   has_accessed_primitive:1, has_js_ref:1, in_callback:1
+///
+/// Used by `TimeoutObject` / `ImmediateObject` / `AbortSignal::Timeout`.
+#[repr(transparent)]
+#[derive(Copy, Clone)]
+pub struct TimerFlags(u32);
+
+impl Default for TimerFlags {
+    fn default() -> Self {
+        // has_js_ref=true, everything else 0
+        Self(1 << 30)
+    }
+}
+
+impl TimerFlags {
+    const EPOCH_MASK: u32 = (1 << 25) - 1;
+    const KIND_SHIFT: u32 = 25;
+    const KIND_MASK: u32 = 0b11 << Self::KIND_SHIFT;
+    const HAS_CLEARED_TIMER: u32 = 1 << 27;
+    const IS_KEEPING_EVENT_LOOP_ALIVE: u32 = 1 << 28;
+    const HAS_ACCESSED_PRIMITIVE: u32 = 1 << 29;
+    const HAS_JS_REF: u32 = 1 << 30;
+    const IN_CALLBACK: u32 = 1 << 31;
+
+    /// Whenever a timer is inserted into the heap (creation or refresh), the
+    /// global epoch is incremented and the new epoch is set on the timer. For
+    /// JS timers, the epoch breaks ties between equal-deadline timers so that
+    /// refreshing a timer makes it fire after its peers (Node.js semantics).
+    #[inline] pub fn epoch(self) -> u32 { self.0 & Self::EPOCH_MASK }
+    #[inline] pub fn set_epoch(&mut self, v: u32) {
+        self.0 = (self.0 & !Self::EPOCH_MASK) | (v & Self::EPOCH_MASK);
+    }
+    /// Kind does not include AbortSignal's timeout since it has no
+    /// corresponding ID callback.
+    #[inline] pub fn kind(self) -> Kind {
+        // SAFETY: stored value always written via set_kind (range 0..=2)
+        unsafe { core::mem::transmute::<u8, Kind>(((self.0 & Self::KIND_MASK) >> Self::KIND_SHIFT) as u8) }
+    }
+    #[inline] pub fn set_kind(&mut self, k: Kind) {
+        self.0 = (self.0 & !Self::KIND_MASK) | ((k as u32) << Self::KIND_SHIFT);
+    }
+    /// We do not allow the timer to be refreshed after clearInterval/clearTimeout.
+    #[inline] pub fn has_cleared_timer(self) -> bool { self.0 & Self::HAS_CLEARED_TIMER != 0 }
+    #[inline] pub fn set_has_cleared_timer(&mut self, v: bool) {
+        if v { self.0 |= Self::HAS_CLEARED_TIMER } else { self.0 &= !Self::HAS_CLEARED_TIMER }
+    }
+    #[inline] pub fn is_keeping_event_loop_alive(self) -> bool { self.0 & Self::IS_KEEPING_EVENT_LOOP_ALIVE != 0 }
+    #[inline] pub fn set_is_keeping_event_loop_alive(&mut self, v: bool) {
+        if v { self.0 |= Self::IS_KEEPING_EVENT_LOOP_ALIVE } else { self.0 &= !Self::IS_KEEPING_EVENT_LOOP_ALIVE }
+    }
+    /// If they never access the timer by integer, don't create a hashmap entry.
+    #[inline] pub fn has_accessed_primitive(self) -> bool { self.0 & Self::HAS_ACCESSED_PRIMITIVE != 0 }
+    #[inline] pub fn set_has_accessed_primitive(&mut self, v: bool) {
+        if v { self.0 |= Self::HAS_ACCESSED_PRIMITIVE } else { self.0 &= !Self::HAS_ACCESSED_PRIMITIVE }
+    }
+    #[inline] pub fn has_js_ref(self) -> bool { self.0 & Self::HAS_JS_REF != 0 }
+    #[inline] pub fn set_has_js_ref(&mut self, v: bool) {
+        if v { self.0 |= Self::HAS_JS_REF } else { self.0 &= !Self::HAS_JS_REF }
+    }
+    /// Set to `true` only during execution of the JavaScript function so that
+    /// `_destroyed` can be false during the callback even though `state` will
+    /// be `FIRED`.
+    #[inline] pub fn in_callback(self) -> bool { self.0 & Self::IN_CALLBACK != 0 }
+    #[inline] pub fn set_in_callback(&mut self, v: bool) {
+        if v { self.0 |= Self::IN_CALLBACK } else { self.0 &= !Self::IN_CALLBACK }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/event_loop/EventLoopTimer.zig (245 lines)
 //   confidence: medium

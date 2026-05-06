@@ -1721,7 +1721,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         bun_sys::Result::Ok(JSValue::js_number(self.wrote as f64))
     }
 
-    pub fn sink(&mut self) -> Sink {
+    pub fn sink(&mut self) -> Sink<'_> {
         Sink::init(self)
     }
 

@@ -1,7 +1,10 @@
-//! This is just a wrapper around `bun_alloc::AllocationScope` that ensures that it is
+//! This is just a wrapper around `bun.AllocationScope` that ensures that it is
 //! zero-cost in release builds.
 
-use bun_alloc::{AllocationScope, Allocator};
+// `bun_alloc::AllocationScope` is a CYCLEBREAK unit stub; the real implementation was
+// hoisted into this crate at `crate::allocators::allocation_scope`. Import that one.
+use crate::allocators::allocation_scope::AllocationScope;
+use bun_alloc::StdAllocator;
 
 // TODO(port): `bun.Environment.enableAllocScopes` is mapped to `debug_assertions` here;
 // Phase B should confirm whether a dedicated `cfg(feature = "alloc_scopes")` is preferred.
@@ -14,21 +17,17 @@ pub struct AllocScope {
 }
 
 impl AllocScope {
-    pub fn begin_scope(alloc: &dyn Allocator) -> AllocScope {
-        
+    pub fn begin_scope(alloc: StdAllocator) -> AllocScope {
         #[cfg(debug_assertions)]
         {
-            // TODO(b2-blocked): bun_alloc::AllocationScope::init
             return AllocScope {
                 __scope: AllocationScope::init(alloc),
             };
         }
-        let _ = alloc;
-        AllocScope {
-            #[cfg(debug_assertions)]
-            __scope: AllocationScope,
-            #[cfg(not(debug_assertions))]
-            __scope: (),
+        #[cfg(not(debug_assertions))]
+        {
+            let _ = alloc;
+            AllocScope { __scope: () }
         }
     }
 
@@ -41,43 +40,47 @@ impl AllocScope {
     pub fn leak_slice<T>(&mut self, memory: &[T]) {
         // Zig: `_ = @typeInfo(@TypeOf(memory)).pointer;` — compile-time assert that
         // `memory` is a pointer/slice. Enforced here by the `&[T]` parameter type.
-        
         #[cfg(debug_assertions)]
         {
-            // TODO(b2-blocked): bun_alloc::AllocationScope::track_external_free
-            if let Err(err) = self.__scope.track_external_free(memory, None) {
-                panic!("invalid free: {}", err.name());
+            // `track_external_free` keys on the byte-slice base pointer; reinterpret
+            // `&[T]` as its underlying byte view (Zig passes the raw many-pointer).
+            // SAFETY: read-only reinterpret of an existing borrow's bytes.
+            let bytes = unsafe {
+                core::slice::from_raw_parts(
+                    memory.as_ptr() as *const u8,
+                    core::mem::size_of_val(memory),
+                )
+            };
+            if let Err(err) = self.__scope.track_external_free(bytes, None) {
+                panic!("invalid free: {:?}", err);
             }
         }
+        #[cfg(not(debug_assertions))]
         let _ = memory;
     }
 
     pub fn assert_in_scope<T>(&mut self, memory: &[T]) {
-        
         #[cfg(debug_assertions)]
         {
-            // TODO(b2-blocked): bun_alloc::AllocationScope::assert_owned
             self.__scope.assert_owned(memory);
         }
+        #[cfg(not(debug_assertions))]
         let _ = memory;
     }
 
     #[inline]
-    pub fn allocator(&mut self) -> &dyn Allocator {
+    pub fn allocator(&mut self) -> StdAllocator {
         // TODO(port): under the global-mimalloc model (`#[global_allocator]`), callers
         // use `Box`/`Vec` directly and this accessor may be obsolete. Kept for structural
         // parity; Phase B should decide whether `AllocScope` survives at all.
         #[cfg(debug_assertions)]
         {
-            let _ = &self.__scope;
-            // `bun_alloc::AllocationScope` is a unit stub (CYCLEBREAK); the real
-            // `AllocationScope` lives in `crate::allocators::allocation_scope` and
-            // returns `StdAllocator`, not `&dyn Allocator`. Phase B re-threads this.
-            todo!("blocked_on: bun_alloc::AllocationScope::allocator")
+            return self.__scope.allocator();
         }
         #[cfg(not(debug_assertions))]
         {
-            bun_alloc::default_allocator()
+            // Zig: `bun.default_allocator` — the mimalloc-backed `std.mem.Allocator`.
+            bun_alloc::basic::C_ALLOCATOR
         }
     }
 }
@@ -86,6 +89,6 @@ impl AllocScope {
 // PORT STATUS
 //   source:     src/shell/AllocScope.zig (43 lines)
 //   confidence: medium
-//   todos:      2
+//   todos:      1
 //   notes:      debug-only alloc tracker; whole type may be redundant under global-allocator model
 // ──────────────────────────────────────────────────────────────────────────

@@ -1360,27 +1360,27 @@ impl CreateCommand {
             let start_time = bun_core::time::nano_timestamp();
             let install_args: &[&[u8]] = &[npm_client.bin, b"install"];
             Output::flush();
-            Output::pretty(
+            Output::pretty(format_args!(
                 "\n<r><d>$ <b><cyan>{}<r><d> install",
-                format_args!("{}", <&'static str>::from(npm_client.tag)),
-            );
+                npm_client.tag.as_str(),
+            ));
 
             if install_args.len() > 2 {
                 for arg in &install_args[2..] {
-                    Output::pretty(" ", format_args!(""));
-                    Output::pretty("{}", format_args!("{}", bstr::BStr::new(arg)));
+                    Output::pretty(format_args!(" "));
+                    Output::pretty(format_args!("{}", bstr::BStr::new(arg)));
                 }
             }
 
-            Output::pretty("<r>\n", format_args!(""));
+            Output::pretty(format_args!("<r>\n"));
             Output::flush();
             let _trailer = scopeguard::guard((), |_| {
-                Output::print_errorln("\n", format_args!(""));
+                Output::print_errorln("\n");
                 Output::print_start_end(start_time, bun_core::time::nano_timestamp());
-                Output::pretty_error(
+                Output::pretty_error(format_args!(
                     " <r><d>{} install<r>\n",
-                    format_args!("{}", <&'static str>::from(npm_client.tag)),
-                );
+                    npm_client.tag.as_str(),
+                ));
                 Output::flush();
 
                 Output::print(format_args!("\n"));

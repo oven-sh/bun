@@ -53,6 +53,30 @@ pub struct Entry {
     _opaque_tail: (),
 }
 
+impl Entry {
+    /// `SourceMapStore.Entry.deinit` — full body in gated draft.
+    pub fn deinit(&mut self) {
+        // Drop releases `files`; ref_count must be 0.
+        debug_assert_eq!(self.ref_count, 0);
+    }
+
+    /// `SourceMapStore.Entry.renderJSON` — full body in gated draft.
+    pub fn render_json<D>(
+        &self,
+        _dev: &D,
+        _kind: ChunkKind,
+        _side: crate::bake::Side,
+    ) -> Result<Vec<u8>, bun_core::Error> {
+        todo!("blocked_on: SourceMapStore::Entry::render_json body un-gate")
+    }
+}
+
+impl Default for Entry {
+    fn default() -> Self {
+        Self { ref_count: 0, files: Default::default(), overlapping_memory_cost: 0, _opaque_tail: () }
+    }
+}
+
 /// Action for `SourceMapStore::remove_or_upgrade_weak_ref` (Zig: `WeakRefOp`).
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum RemoveOrUpgradeMode {

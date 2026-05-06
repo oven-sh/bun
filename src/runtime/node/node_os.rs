@@ -682,9 +682,9 @@ pub fn homedir(global: &JSGlobalObject) -> JsResult<BunString> {
             }
             // in uv__getpwuid_r, null result throws UV_ENOENT.
             #[cfg(not(target_os = "android"))]
-            return global.throw_value(
-                bun_sys::Error::from_code(bun_sys::E::NOENT, bun_sys::Tag::uv_os_homedir).to_js(global)?,
-            );
+            return Err(global.throw_value(
+                bun_sys::Error::from_code(bun_sys::E::ENOENT, bun_sys::Tag::uv_os_homedir).to_js(global),
+            ));
         }
 
         return Ok(if !pw.pw_dir.is_null() {

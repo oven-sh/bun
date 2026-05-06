@@ -943,7 +943,7 @@ impl<'a> BunTest<'a> {
         match self.phase {
             Phase::Collection => {
                 self.phase = Phase::Execution;
-                debug::dump_describe(self.collection.root_scope)?;
+                debug::dump_describe(&self.collection.root_scope)?;
 
                 let has_filter = if let Some(reporter) = self.reporter {
                     reporter.jest.filter_regex.is_some()

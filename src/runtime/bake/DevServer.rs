@@ -3181,10 +3181,7 @@ pub fn finalize_bundle(
         let source_map_json = if !dev.server_graph.current_chunk_source_maps.is_empty() {
             'json: {
                 // Create a temporary source map entry to render
-                let mut source_map_entry = source_map_store::Entry {
-                    ref_count: 1,
-                    files: Default::default(),
-                };
+                let mut source_map_entry = source_map_store::Entry { ref_count: 1, ..Default::default() };
 
                 // Fill the source map entry
                 // PERF(port): was ArenaAllocator

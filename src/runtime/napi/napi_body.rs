@@ -2002,7 +2002,7 @@ pub extern "C" fn napi_internal_register_cleanup_zig(env_: napi_env) {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn napi_internal_suppress_crash_on_abort_if_desired() {
-    if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT.get() {
+    if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT.get().unwrap_or(false) {
         bun_crash_handler::suppress_reporting();
     }
 }

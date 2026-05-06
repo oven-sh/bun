@@ -72,8 +72,8 @@ pub const STDIN_FD: Fd = Fd::from_uv(0);
 pub const STDOUT_FD: Fd = Fd::from_uv(1);
 pub const STDERR_FD: Fd = Fd::from_uv(2);
 
-pub const POSIX_DEV_NULL: &ZStr = ZStr::from_literal("/dev/null\0");
-pub const WINDOWS_DEV_NULL: &ZStr = ZStr::from_literal("NUL\0");
+pub const POSIX_DEV_NULL: &ZStr = bun_core::zstr!("/dev/null");
+pub const WINDOWS_DEV_NULL: &ZStr = bun_core::zstr!("NUL");
 
 // ───────────────────────────── ShellErr ─────────────────────────────
 

@@ -370,7 +370,7 @@ where
             if let Some(server) = self.server {
                 // SAFETY: server is valid while RequestContext is alive (BACKREF)
                 let global = unsafe { (*(server as *mut ThisServer)).global_this() };
-                signal.signal(global, reason);
+                shim::signal_fire(signal, global, reason);
             }
         }
     }

@@ -1315,6 +1315,10 @@ pub struct PipeReader {
     pub out_type: OutKind,
     pub captured_writer: CapturedWriter,
     pub buffered_output: BufferedOutput,
+    /// Backref so async read/write callbacks can drive `Yield::run`. See
+    /// `IOWriter::interp` / `IOReader::interp` for the same pattern. Null
+    /// until wired by the spawning Cmd.
+    pub interp: *mut crate::shell::interpreter::Interpreter,
     // ref_count: handled by Arc<PipeReader> per LIFETIMES.tsv.
     // TODO(port): Zig uses intrusive bun.ptr.RefCount and recovers *PipeReader via
     // @fieldParentPtr from CapturedWriter — incompatible with Arc's header layout.

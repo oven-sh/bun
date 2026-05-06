@@ -941,7 +941,7 @@ impl ServerWebSocket {
         let result = corker.result;
 
         if result.is_any_error() {
-            return global_this.throw_value(result);
+            return Err(global_this.throw_value(result));
         }
 
         Ok(result)

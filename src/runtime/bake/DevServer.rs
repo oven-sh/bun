@@ -5255,7 +5255,7 @@ struct UnrefSourceMapRequest {
     body: uws::BodyReaderMixin<Self>, // TODO(port): BodyReaderMixin(@This(), "body", runWithBody, finalize)
 }
 
-impl uws::body_reader_mixin::BodyReaderHandler for UnrefSourceMapRequest {
+impl bun_uws_sys::body_reader_mixin::BodyReaderHandler for UnrefSourceMapRequest {
     const MIXIN_OFFSET: usize = offset_of!(UnrefSourceMapRequest, body);
     fn on_body(&mut self, body: &[u8], resp: AnyResponse) -> Result<(), bun_core::Error> {
         Self::run_with_body(self, body, resp)

@@ -142,7 +142,7 @@ pub fn get_servername(this: &mut This, global: &JSGlobalObject, _frame: &CallFra
     Ok(ZigString::from_utf8(slice).to_js(global))
 }
 
-pub fnset_servername(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub fn set_servername(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     if this.is_server() {
         return global.throw("Cannot issue SNI from a TLS server-side socket");
     }
@@ -213,7 +213,7 @@ pub fnget_tls_version(this: &mut This, global: &JSGlobalObject, _frame: &CallFra
     Ok(ZigString::from_utf8(slice).to_js(global))
 }
 
-pub fnset_max_send_fragment(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub fn set_max_send_fragment(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     jsc::mark_binding(core::panic::Location::caller());
 
     let args = frame.arguments_old(1);
@@ -712,7 +712,7 @@ pub fnget_session(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) 
     Ok(buffer)
 }
 
-pub fnset_session(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub fn set_session(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     if this.socket.is_detached() {
         return Ok(JSValue::UNDEFINED);
     }
@@ -799,7 +799,7 @@ pub fnis_session_reused(this: &mut This, _global: &JSGlobalObject, _frame: &Call
     Ok(JSValue::from(unsafe { ffi::SSL_session_reused(ssl_ptr) } == 1))
 }
 
-pub fnset_verify_mode(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub fn set_verify_mode(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     if this.socket.is_detached() {
         return Ok(JSValue::UNDEFINED);
     }

@@ -2123,7 +2123,11 @@ pub fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResul
     let mut i: u32 = 0;
     let array = JSValue::create_empty_array(global_this, sort_indices.len())?;
     sort_indices.sort_by(|a, b| {
-        bun_standalone::StandaloneModuleGraph::File::less_than_by_index(unsorted_files, *a, *b)
+        if bun_standalone_graph::File::less_than_by_index(unsorted_files, *a, *b) {
+            core::cmp::Ordering::Less
+        } else {
+            core::cmp::Ordering::Greater
+        }
     });
     for index in &sort_indices {
         let file = &unsorted_files[*index as usize];

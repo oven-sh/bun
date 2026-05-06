@@ -1574,23 +1574,21 @@ impl ServerWebSocket {
         let mut text_buf = [0u8; 512];
 
         let address_bytes = self.websocket().get_remote_address(&mut buf);
-        // TODO(port): std.net.Address — using bun_core::fmt::format_ip which accepts raw 4/16-byte address
-        let text = match address_bytes.len() {
-            4 => bun_core::fmt::format_ip_v4(
+        // TODO(port): std.net.Address — bun_core::fmt::format_ip takes &impl Display;
+        // use std::net::IpAddr (pure value type, no I/O) until bun_sys::net::Address
+        // grows init_ip4/init_ip6.
+        let address: std::net::IpAddr = match address_bytes.len() {
+            4 => std::net::Ipv4Addr::from(
                 <[u8; 4]>::try_from(&address_bytes[0..4]).unwrap(),
-                0,
-                &mut text_buf,
-            ),
-            16 => bun_core::fmt::format_ip_v6(
+            )
+            .into(),
+            16 => std::net::Ipv6Addr::from(
                 <[u8; 16]>::try_from(&address_bytes[0..16]).unwrap(),
-                0,
-                0,
-                0,
-                &mut text_buf,
-            ),
+            )
+            .into(),
             _ => return Ok(JSValue::UNDEFINED),
-        }
-        .expect("unreachable");
+        };
+        let text = bun_core::fmt::format_ip(&address, &mut text_buf).expect("unreachable");
         bun_str::String::create_utf8_for_js(global_this, text)
     }
 }

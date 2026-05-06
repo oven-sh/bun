@@ -593,7 +593,8 @@ impl TimerObjectInternals {
         self.flags.set_has_js_ref(false);
 
         if did_have_js_ref {
-            self.set_enable_keeping_event_loop_alive(VirtualMachine::get(), false);
+            // SAFETY: `VirtualMachine::get()` returns the live per-thread VM; short-lived &mut at use site.
+            self.set_enable_keeping_event_loop_alive(unsafe { &mut *VirtualMachine::get() }, false);
         }
 
         this_value

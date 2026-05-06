@@ -25,7 +25,48 @@ type CResult<T> = css::Result<T>;
 // source-borrowed byte slices; Phase B should re-thread `'bump` and switch to
 // `bumpalo::collections::Vec<'bump, T>` / `&'bump [u8]` per PORTING.md §Allocators (AST crates).
 // PERF(port): was arena bulk-free — profile in Phase B.
-type Str = css::Str; // arena-backed `[]const u8` source slice; defined by the css crate
+//
+// NOTE: `Str` is `&'static [u8]` here (not `crate::Str = *const [u8]`) to match
+// `crate::Token`'s payload shape (`Token::Ident(&'static [u8])` etc.) — every
+// `Str` in this module originates from a token slice. The `'static` is the
+// Phase-A placeholder for the tokenizer source lifetime; it widens to `&'bump
+// [u8]` once `Parser<'bump>` threads the arena lifetime.
+type Str = &'static [u8]; // arena-backed `[]const u8` source slice
+
+// ─── Phase-B protocol shims ──────────────────────────────────────────────────
+// Zig's `implementEql` / `implementHash` / `implementDeepClone` are comptime
+// field/variant reflection over `@typeInfo(T)` — in Rust this is the body of
+// `#[derive(CssEql/CssHash/DeepClone)]` (Phase B codegen). The free fns in
+// `crate::generics` bound on those traits, which the selector grammar types
+// don't implement yet. These local shims keep the method *surface* (so
+// `Component::eql(a, b)` etc. resolve for cross-module callers) while
+// deferring the bodies to the derive pass.
+macro_rules! protocol_eql_hash_clone {
+    () => {
+        #[inline]
+        pub fn eql(&self, _rhs: &Self) -> bool {
+            todo!("bun_css selector grammar: #[derive(CssEql)] — Phase B codegen")
+        }
+        #[inline]
+        pub fn hash(&self, _hasher: &mut Wyhash) {
+            todo!("bun_css selector grammar: #[derive(CssHash)] — Phase B codegen")
+        }
+        #[inline]
+        pub fn deep_clone(&self) -> Self {
+            todo!("bun_css selector grammar: #[derive(DeepClone)] — Phase B codegen")
+        }
+    };
+    (no_clone) => {
+        #[inline]
+        pub fn eql(&self, _rhs: &Self) -> bool {
+            todo!("bun_css selector grammar: #[derive(CssEql)] — Phase B codegen")
+        }
+        #[inline]
+        pub fn hash(&self, _hasher: &mut Wyhash) {
+            todo!("bun_css selector grammar: #[derive(CssHash)] — Phase B codegen")
+        }
+    };
+}
 
 /// Instantiation of generic selector structs using our implementation of the `SelectorImpl` trait.
 pub type Component = GenericComponent<impl_::Selectors>;

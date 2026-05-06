@@ -876,8 +876,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             unsafe { &mut *this }.set_using_custom_expect_handler(true);
         }
 
-        // PORT NOTE: scope a single `&mut *this` for the address match — no
-        // other re-derive from `this` happens inside this block.
+        // PORT NOTE: scope a single `&mut *this` for the address match. The
+        // listen_* trampolines re-derive `&mut *this` synchronously inside the
+        // C callback, so `self_` (and anything borrowed from it) must not be
+        // used after `listen_with_config` / `listen_on_unix_socket` returns —
+        // every read happens before the call, and the binding is dropped at the
+        // end of this block before the post-listen `has_exception()` check.
+        {
         let self_ = unsafe { &mut *this };
         match &self_.config.address {
             server_config::Address::Tcp { port, hostname } => {
@@ -951,17 +956,18 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
             }
         }
+        } // drop `self_` — invalidated by the listen-trampoline re-derive.
 
         if global.has_exception() {
             Self::deinit(this);
             return JSValue::ZERO;
         }
 
-        self_.ref_();
+        unsafe { &mut *this }.ref_();
 
         // Starting up an HTTP server is a good time to GC.
-        // SAFETY: vm is STATIC per LIFETIMES.tsv.
-        let vm = unsafe { &*self_.vm };
+        // SAFETY: vm is STATIC per LIFETIMES.tsv; the `&*this` borrow ends at `;`.
+        let vm = unsafe { &*(*this).vm };
         if vm.aggressive_garbage_collection == jsc::virtual_machine::GCLevel::Aggressive {
             vm.auto_garbage_collect();
         } else {

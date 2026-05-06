@@ -254,6 +254,23 @@ pub fn set_run_immediate_hook(f: RunImmediateFn) {
     RUN_IMMEDIATE_HOOK.store(f as *mut (), Ordering::Release);
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// `WTFTimer::run` dispatch — `WTFTimer` is opaque at this tier (real type
+// lives in `bun_runtime::api::Timer`). The high tier installs the body at
+// startup; `run_imminent_gc_timer` below only swaps the slot when a hook is
+// present so an imminent-GC timer is never consumed without being fired
+// (spec event_loop.zig:302-306).
+// ──────────────────────────────────────────────────────────────────────────
+/// `fn(*mut WTFTimer, *mut VirtualMachine)` — mirrors `WTFTimer::run(vm)`.
+pub type RunWtfTimerFn = unsafe fn(*mut WTFTimer, *mut VirtualMachine);
+
+static RUN_WTF_TIMER_HOOK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+
+/// Called by `bun_runtime` at startup to install the real `WTFTimer::run` body.
+pub fn set_run_wtf_timer_hook(f: RunWtfTimerFn) {
+    RUN_WTF_TIMER_HOOK.store(f as *mut (), Ordering::Release);
+}
+
 impl EventLoop {
     /// Before your code enters JavaScript at the top of the event loop, call
     /// `loop.enter()`. If running a single callback, prefer `runCallback` instead.
@@ -435,11 +452,25 @@ impl EventLoop {
     }
 
     pub fn run_imminent_gc_timer(&mut self) {
+        // Spec event_loop.zig:302-306: `if (swap()) |timer| timer.run(vm)`.
+        // `WTFTimer` is opaque at this tier, so the body dispatches through
+        // [`RUN_WTF_TIMER_HOOK`]. Load the hook FIRST and bail without
+        // swapping when it's null — otherwise the swap would consume the
+        // scheduled timer and silently drop it (state-destroying no-op).
+        let hook = RUN_WTF_TIMER_HOOK.load(Ordering::Acquire);
+        if hook.is_null() {
+            // No high-tier dispatcher registered yet — leave `imminent_gc_timer`
+            // in place so it can fire once the hook is installed.
+            return;
+        }
         let ptr = self.imminent_gc_timer.swap(core::ptr::null_mut(), Ordering::SeqCst);
         if !ptr.is_null() {
-            // TODO(b2-cycle): `(*ptr).run(vm)` — `WTFTimer` lives in
-            // `bun_runtime::api::Timer` (forward-dep). High tier installs a hook.
-            let _ = ptr;
+            // SAFETY: `hook` was stored from a `RunWtfTimerFn` (same layout).
+            let f: RunWtfTimerFn =
+                unsafe { core::mem::transmute::<*mut (), RunWtfTimerFn>(hook) };
+            // SAFETY: `ptr` was published by `WTFTimer::update` and remains
+            // valid until `run` removes it; `vm()` is the live owning VM.
+            unsafe { f(ptr, self.vm()) };
         }
     }
 
@@ -648,10 +679,19 @@ impl EventLoop {
                 // live owning VM per caller contract.
                 exception_thrown = unsafe { f(*task, virtual_machine) };
             }
+        } else {
+            // No high-tier hook → tasks would be dropped without running and
+            // the `parent.ref_()` taken at enqueue time would leak. This is
+            // only sound when nothing was queued (unit tests); be loud
+            // otherwise so a missing `set_run_immediate_hook` registration
+            // surfaces immediately rather than as a silent setImmediate no-op.
+            debug_assert!(
+                to_run_now.is_empty(),
+                "RUN_IMMEDIATE_HOOK not installed but {} immediate task(s) queued — \
+                 bun_runtime must call set_run_immediate_hook() at startup",
+                to_run_now.len(),
+            );
         }
-        // No high-tier hook → tasks are dropped without running. Matches the
-        // pre-un-gate behaviour (gated body never ran them either); the swap
-        // above is the correctness-critical part for `has_pending_immediate`.
 
         // make sure microtasks are drained if the last task had an exception
         if exception_thrown {

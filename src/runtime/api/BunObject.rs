@@ -307,6 +307,105 @@ lazy_prop! {
     BunObject_lazyPropCb_argv            => |g, _o| get_argv(g, _o),
 }
 
+// ─── Bun.main getter/setter ─────────────────────────────────────────────────
+
+fn get_main(global_this: &JSGlobalObject) -> JSValue {
+    use bun_jsc::StringJsc as _;
+    use bun_str::String as BunString;
+
+    let vm = global_this.bun_vm();
+    // If JS has set it to a custom value, use that one
+    if let Some(overridden_main) = vm.overridden_main.get() {
+        return overridden_main;
+    }
+
+    // Attempt to use the resolved filesystem path
+    // This makes `eval('require.main === module')` work when the main module is a symlink.
+    // This behavior differs slightly from Node. Node sets the `id` to `.` when the main module is a symlink.
+    'use_resolved_path: {
+        if vm.main_resolved_path.is_empty() {
+            // If it's from eval, don't try to resolve it.
+            if vm.main.ends_with(b"[eval]") {
+                break 'use_resolved_path;
+            }
+            if vm.main.ends_with(b"[stdin]") {
+                break 'use_resolved_path;
+            }
+
+            let Ok(fd) = bun_sys::openat_a(
+                if cfg!(windows) {
+                    bun_sys::Fd::INVALID
+                } else {
+                    bun_sys::Fd::cwd()
+                },
+                vm.main,
+                // Open with the minimum permissions necessary for resolving the file path.
+                if cfg!(target_os = "linux") {
+                    bun_sys::O::PATH
+                } else {
+                    bun_sys::O::RDONLY
+                },
+                0,
+            ) else {
+                break 'use_resolved_path;
+            };
+
+            let _close = scopeguard::guard(fd, |fd| {
+                let _ = bun_sys::close(fd);
+            });
+            #[cfg(windows)]
+            {
+                let mut wpath = bun_paths::WPathBuffer::uninit();
+                let Ok(fdpath) = bun_sys::get_fd_path_w(fd, &mut wpath) else {
+                    break 'use_resolved_path;
+                };
+                vm.main_resolved_path = BunString::clone_utf16(fdpath);
+            }
+            #[cfg(not(windows))]
+            {
+                let mut path = bun_paths::PathBuffer::uninit();
+                let Ok(fdpath) = bun_sys::get_fd_path(fd, &mut path) else {
+                    break 'use_resolved_path;
+                };
+
+                // Bun.main === otherId will be compared many times, so let's try to create an atom string if we can.
+                if let Some(atom) = BunString::try_create_atom(fdpath) {
+                    vm.main_resolved_path = atom;
+                } else {
+                    vm.main_resolved_path = BunString::clone_utf8(fdpath);
+                }
+            }
+        }
+
+        return vm
+            .main_resolved_path
+            .to_js(global_this)
+            .unwrap_or(JSValue::ZERO);
+    }
+
+    bun_jsc::bun_string_jsc::create_utf8_for_js(global_this, vm.main).unwrap_or(JSValue::ZERO)
+}
+
+fn set_main(global_this: &JSGlobalObject, new_value: JSValue) -> bool {
+    global_this
+        .bun_vm()
+        .overridden_main
+        .set(global_this, new_value);
+    true
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn BunObject_getter_main(g: *mut JSGlobalObject) -> JSValue {
+    // SAFETY: JSC always passes a live global to property getters.
+    get_main(unsafe { &*g })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn BunObject_setter_main(g: *mut JSGlobalObject, v: JSValue) -> bool {
+    // SAFETY: JSC always passes a live global to property setters.
+    set_main(unsafe { &*g }, v)
+}
+
 // ─── host-fn bodies (the `Bun.*` surface proper) ────────────────────────────
 // Remaining `#[bun_jsc::host_fn]` entry points + lazy-getter shims that fan
 // out to still-gated targets (`webcore::Blob::construct_bun_file`, server

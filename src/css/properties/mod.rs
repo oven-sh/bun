@@ -27,35 +27,82 @@ macro_rules! gated_prop {
     };
 }
 
+/// Declares a property-handler ZST with the `handle_property` / `finalize`
+/// surface that `DeclarationHandler` (declaration.rs) composes over. The
+/// real handler bodies live in the gated leaf .rs files and depend on the
+/// `Property` enum variants from `properties_generated`; until that codegen
+/// lands, these no-op stubs let the `DeclarationHandler` struct + impl
+/// un-gate without pulling in the values/ calc lattice.
+///
+/// PORT NOTE: Zig handlers are plain structs with `handleProperty(*Self,
+/// *const Property, *DeclarationList, *PropertyHandlerContext) bool` +
+/// `finalize(*Self, *DeclarationList, *PropertyHandlerContext) void`. Same
+/// shape here; lifetimes on `DeclarationList<'bump>` / context are erased
+/// behind anonymous lifetimes since the stub bodies touch neither.
+macro_rules! handler_stub {
+    ($($Handler:ident),+ $(,)?) => {$(
+        #[derive(Default)]
+        pub struct $Handler;
+        impl $Handler {
+            #[inline]
+            pub fn handle_property(
+                &mut self,
+                _property: &crate::properties::Property,
+                _dest: &mut crate::DeclarationList<'_>,
+                _context: &mut crate::PropertyHandlerContext<'_>,
+            ) -> bool {
+                false
+            }
+            #[inline]
+            pub fn finalize(
+                &mut self,
+                _dest: &mut crate::DeclarationList<'_>,
+                _context: &mut crate::PropertyHandlerContext<'_>,
+            ) {
+            }
+        }
+    )+};
+}
+
 // ─── Submodule declarations ────────────────────────────────────────────────
 // (Zig: `pub const X = @import("./X.zig");`)
-gated_prop!(align);
+gated_prop!(align, { handler_stub!(AlignHandler); });
 gated_prop!(animation);
-gated_prop!(background);
-gated_prop!(border);
-gated_prop!(border_image);
-gated_prop!(border_radius);
-gated_prop!(box_shadow);
+gated_prop!(background, { handler_stub!(BackgroundHandler); });
+gated_prop!(border, { handler_stub!(BorderHandler); });
+gated_prop!(border_image, { handler_stub!(BorderImageHandler); });
+gated_prop!(border_radius, { handler_stub!(BorderRadiusHandler); });
+gated_prop!(box_shadow, { handler_stub!(BoxShadowHandler); });
 gated_prop!(contain);
 gated_prop!(display);
 gated_prop!(effects);
-gated_prop!(flex);
-gated_prop!(font);
+gated_prop!(flex, { handler_stub!(FlexHandler); });
+gated_prop!(font, { handler_stub!(FontHandler); });
 gated_prop!(grid);
 gated_prop!(list);
-gated_prop!(margin_padding);
+gated_prop!(margin_padding, {
+    // Zig: MarginHandler/PaddingHandler/ScrollMarginHandler/InsetHandler are
+    // four `NewSizeHandler(...)` instantiations of one comptime-generic struct.
+    handler_stub!(MarginHandler, PaddingHandler, ScrollMarginHandler, InsetHandler);
+});
 gated_prop!(masking);
 gated_prop!(outline);
 gated_prop!(overflow);
 gated_prop!(position);
-gated_prop!(prefix_handler);
+gated_prop!(prefix_handler, { handler_stub!(FallbackHandler); });
 gated_prop!(shape);
-gated_prop!(size);
+gated_prop!(size, { handler_stub!(SizeHandler); });
 gated_prop!(svg);
-gated_prop!(text);
-gated_prop!(transform);
-gated_prop!(transition);
-gated_prop!(ui);
+gated_prop!(text, {
+    /// [direction](https://drafts.csswg.org/css-writing-modes-3/#direction)
+    /// — data-only mirror of the gated `text.rs` enum so
+    /// `DeclarationHandler.direction: Option<Direction>` compiles.
+    #[derive(Clone, Copy, PartialEq, Eq, Hash)]
+    pub enum Direction { Ltr, Rtl }
+});
+gated_prop!(transform, { handler_stub!(TransformHandler); });
+gated_prop!(transition, { handler_stub!(TransitionHandler); });
+gated_prop!(ui, { handler_stub!(ColorSchemeHandler); });
 
 // `css_modules`: data-only stub for `Composes`/`Specifier` so
 // `css_parser::gated_shims` can later flip to `crate::properties::css_modules`.

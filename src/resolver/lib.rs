@@ -2986,12 +2986,15 @@ impl<'a> Resolver<'a> {
                             Fs::FileSystem::set_max_fd(file.native());
                         }
 
-                        // PORT NOTE: raw-ptr the entry so the `&mut query.entry` borrow ends
-                        // before the scopeguard closure (which captures `&mut self`).
+                        // PORT NOTE: snapshot `need_to_close_files` and raw-ptr the entry so
+                        // the `move` closure captures only Copy values — keeps `self` and
+                        // `query.entry` reborrowable across the guard's lifetime.
+                        let need_close = self.fs.fs.need_to_close_files();
                         let entry_ptr: *mut Fs::file_system::Entry = query.entry;
-                        let _close_guard = scopeguard::guard((), |_| {
-                            if self.fs.fs.need_to_close_files() {
-                                // SAFETY: ARENA — Entry lives in the BSSMap singleton.
+                        let _close_guard = scopeguard::guard((), move |_| {
+                            if need_close {
+                                // SAFETY: ARENA — Entry lives in the BSSMap singleton; guard
+                                // runs before the slot is reused (resolver mutex held).
                                 let e = unsafe { &mut *entry_ptr };
                                 if e.cache.fd.is_valid() {
                                     e.cache.fd.close();

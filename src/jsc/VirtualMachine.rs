@@ -14,7 +14,6 @@
 
 use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_void};
-use core::mem::offset_of;
 use core::ptr::NonNull;
 
 use bun_aio as Async;

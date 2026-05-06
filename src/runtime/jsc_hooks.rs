@@ -538,8 +538,14 @@ fn transpile_source_code_inner(
 
             // ── Swap `vm.transpiler.log` (and linker/resolver/pm logs) ──────
             // Spec :184-199.
-            // SAFETY: per fn contract; `args.log` is a valid `*mut Log`.
+            // TODO(b2-cycle): `vm.transpiler` is never initialized by
+            // `VirtualMachine::init` / `init_runtime_state` yet (zero-bit-
+            // pattern `Transpiler<'static>` — validity-invariant UB on first
+            // read). Gate the live read/write until `init_runtime_state`
+            // writes a real `Transpiler`.
+            #[cfg(any())]
             let old_log = unsafe { (*jsc_vm).transpiler.log };
+            #[cfg(any())]
             unsafe {
                 (*jsc_vm).transpiler.log = args.log;
                 // TODO(port): lifetime — `Resolver.log` is `&'static mut Log`
@@ -559,6 +565,7 @@ fn transpile_source_code_inner(
                     }
                 }
             }
+            #[cfg(any())]
             let _log_guard = scopeguard::guard(jsc_vm, move |jsc_vm| unsafe {
                 (*jsc_vm).transpiler.log = old_log;
                 #[cfg(any())]
@@ -582,11 +589,19 @@ fn transpile_source_code_inner(
             {
                 bun_resolver::package_json::MacroMap::default()
             } else {
-                // SAFETY: per fn contract.
-                // TODO(port): `MacroMap` may not be `Clone`; spec passes by
-                // value (Zig copies the struct). If `MacroMap` is by-ref only,
-                // change `ParseOptions::macro_remappings` to `&MacroMap`.
-                unsafe { (*jsc_vm).transpiler.options.macro_remap.clone() }
+                // TODO(b2-cycle): `vm.transpiler` is uninitialized (see log-swap
+                // note above) — reading `options.macro_remap` would be UB. Gate
+                // until `init_runtime_state` writes a real `Transpiler`.
+                #[cfg(any())]
+                {
+                    // SAFETY: per fn contract.
+                    // TODO(port): `MacroMap` may not be `Clone`; spec passes by
+                    // value (Zig copies the struct). If `MacroMap` is by-ref only,
+                    // change `ParseOptions::macro_remappings` to `&MacroMap`.
+                    unsafe { (*jsc_vm).transpiler.options.macro_remap.clone() }
+                }
+                #[cfg(not(any()))]
+                bun_resolver::package_json::MacroMap::default()
             };
 
             // Spec :211-215.

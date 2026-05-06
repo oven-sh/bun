@@ -51,114 +51,74 @@ pub use crate::values::{
     ident::{CustomIdent, CustomIdentList, DashedIdent, Ident},
 };
 
-// ── gated cross-module re-exports ────────────────────────────────────────
-// Real paths once the sibling hubs un-gate; until then `gated_shims` provides
-// data-layout-only stand-ins so the Parser/Tokenizer core type-checks.
-#[cfg(any())]
+// ── cross-module re-exports (B-2 round 5: un-gated) ──────────────────────
+// rules/, selectors/, media_query, declaration, context, properties hubs now
+// compile for real (data-layout level). Re-export their surface so the
+// rule-parser layer below can name `CssRule`/`SelectorList`/`DeclarationBlock`
+// directly. Leaf rule modules (keyframes, page, container, ...) remain
+// `gated_rule!`-stubbed inside rules/mod.rs — `gated_shims` below carries the
+// handful of types `AtRulePrelude` references that those stubs don't yet
+// expose.
 pub use crate::rules::{
     self as css_rules, CssRule, CssRuleList, Location, MinifyContext, StyleContext,
     import::{ImportConditions, ImportRule},
-    layer::{LayerName, LayerStatementRule},
+    layer::{LayerBlockRule, LayerName, LayerStatementRule},
     namespace::NamespaceRule,
     style::StyleRule,
     supports::{SupportsCondition, SupportsRule},
     tailwind::TailwindAtRule,
     unknown::UnknownAtRule,
 };
-#[cfg(any())]
 pub use crate::rules::custom_media::CustomMediaRule as CustomMedia;
-#[cfg(any())]
 pub use crate::media_query::{self, MediaFeatureType, MediaList};
+pub use crate::values::ident::{CustomIdentFns, DashedIdentFns, IdentFns};
+pub use crate::declaration::{self, DeclarationBlock, DeclarationHandler, DeclarationList};
+pub use crate::properties::{
+    self as css_properties, Property, PropertyId, PropertyIdTag,
+    css_modules::Composes,
+    custom::{TokenList, TokenListFns},
+};
+pub use crate::selectors::{
+    selector,
+    parser::{Component, PseudoClass, PseudoElement, Selector, SelectorList},
+};
+pub use crate::context::PropertyHandlerContext;
+
 #[cfg(any())]
 pub use crate::values::{
     color::ColorFallbackKind,
-    ident::{CustomIdentFns, DashedIdentFns, IdentFns},
     number::{CSSInteger, CSSIntegerFns, CSSNumber, CSSNumberFns},
     string::{CSSString, CSSStringFns},
     url::Url,
 };
-#[cfg(any())]
-pub use crate::declaration::{self, DeclarationBlock, DeclarationHandler, DeclarationList};
-#[cfg(any())]
-pub use crate::properties::{
-    self as css_properties, Property, PropertyId, PropertyIdTag,
-    css_modules::{Composes, Specifier},
-    custom::{TokenList, TokenListFns},
-};
-#[cfg(any())]
-pub use crate::selectors::selector::{
-    self,
-    parser::{Component, PseudoClass, PseudoElement, Selector, SelectorList},
-};
-#[cfg(any())]
-pub use crate::context::PropertyHandlerContext;
 
-#[cfg(not(any()))]
 pub use gated_shims::*;
 
-/// Minimal stand-ins for types that live in still-gated sibling modules
-/// (rules/, properties/, selectors/, declaration, media_query, context,
-/// values::{number,string,url}). Each is the smallest shape the *un-gated*
-/// portion of this file touches; the heavy rule-parser bodies that need the
-/// real layouts stay `#[cfg(any())]`-gated below. When a sibling un-gates,
-/// delete the matching shim and flip the `pub use` above to the real path.
-#[cfg(not(any()))]
+/// Minimal stand-ins for types that live in still-gated sibling *leaf* modules
+/// (rules/{keyframes,page,container,...}, values::{number,string}). The hub
+/// modules above are real; only the per-rule payload types `AtRulePrelude`
+/// reaches into by name remain shimmed here. When a leaf un-gates, delete the
+/// matching shim.
 mod gated_shims {
     use super::*;
 
-    // ── rules/ ────────────────────────────────────────────────────────────
-    pub use crate::Location;
-    /// `rules::layer::LayerName` — `SmallList<[]const u8, 1>` newtype.
+    // ── rules/ leaf-module payload shims ─────────────────────────────────
+    // `gated_rule!(keyframes/page/container/...)` in rules/mod.rs only stub
+    // the *Rule struct, not the prelude payload types `AtRulePrelude` carries.
+    // These are data-only stand-ins; the real layouts land when each leaf
+    // un-gates in rules/mod.rs.
+    /// `rules::keyframes::KeyframesName` — ident or string.
     #[derive(Default)]
-    pub struct LayerName { pub v: SmallList<&'static [u8], 1> }
-    impl LayerName {
-        pub fn deep_clone(&self) -> Self { Self::default() /* unreachable via shim */ }
-    }
-    /// `rules::import::ImportRule` — only the fields `on_import_rule` writes.
+    pub struct KeyframesName;
+    /// `rules::page::PageSelector` — `<ident>? <pseudo-page>*`.
     #[derive(Default)]
-    pub struct ImportRule {
-        pub url: &'static [u8],
-        pub import_record_idx: u32,
-        pub supports: Option<SupportsCondition>,
-    }
-    #[derive(Default, Clone)]
-    pub struct SupportsCondition;
-    /// `rules::StyleContext` — printer's nesting-context cursor.
-    pub struct StyleContext<'a> {
-        pub selectors: &'a SelectorList,
-        pub parent: Option<&'a StyleContext<'a>>,
-    }
-    pub use crate::rules as css_rules;
-
-    // ── media_query ──────────────────────────────────────────────────────
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    pub enum MediaFeatureType { Boolean, Number, Length, Integer, Ratio, Resolution, Ident }
-    #[derive(Default, Clone)]
-    pub struct MediaList;
-
-    // ── selectors ────────────────────────────────────────────────────────
-    #[derive(Default, Clone)]
-    pub struct SelectorList;
-
-    // ── properties ───────────────────────────────────────────────────────
-    pub type PropertyId = ();
-    pub type Property = ();
-    /// `properties::custom::TokenList` — `BabyList<TokenOrValue>` newtype.
-    #[derive(Default, Clone)]
-    pub struct TokenList;
-    pub struct TokenListFns;
-    impl TokenListFns {
-        pub fn parse(_input: &mut Parser, _opts: &ParserOptions, _depth: u32) -> CssResult<TokenList> {
-            // TODO(port): real impl in properties/custom.rs (gated).
-            Ok(TokenList::default())
-        }
-    }
-    #[derive(Default, Clone)]
-    pub struct Composes;
-
-    // ── declaration ──────────────────────────────────────────────────────
+    pub struct PageSelector;
+    /// `rules::container::ContainerName` — `<custom-ident>` newtype.
     #[derive(Default)]
-    pub struct DeclarationBlock;
+    pub struct ContainerName;
+    /// `rules::container::ContainerCondition` — size/style query tree.
+    #[derive(Default)]
+    pub struct ContainerCondition;
 
     // ── values::{number,string} ──────────────────────────────────────────
     pub type CSSNumber = f32;
@@ -514,7 +474,7 @@ fn parse_at_rule<P: AtRuleParser>(
     }
 }
 
-#[cfg(any())] // blocked_on: rules/ (AtRulePrelude payload types)
+#[cfg(any())] // blocked_on: properties/custom (TokenListFns::parse real impl)
 fn parse_custom_at_rule_prelude<T: CustomAtRuleParser>(
     name: &[u8],
     input: &mut Parser,
@@ -541,7 +501,6 @@ fn parse_custom_at_rule_prelude<T: CustomAtRuleParser>(
     Ok(AtRulePrelude::Unknown { name, tokens })
 }
 
-#[cfg(any())] // blocked_on: rules/ (CssRule)
 fn parse_custom_at_rule_without_block<T: CustomAtRuleParser>(
     prelude: T::Prelude,
     start: &ParserState,

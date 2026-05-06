@@ -230,7 +230,7 @@ impl Expr {
             } else {
                 &owned[..]
             };
-            let data = bump.alloc_slice_copy(unquoted);
+            let data = unsafe { arena_str(bump.alloc_slice_copy(unquoted)) };
             return Ok(Expr::init(
                 E::String { data, ..Default::default() },
                 loc,

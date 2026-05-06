@@ -79,6 +79,51 @@ impl JSValue {
         JSValue(cell as usize, PhantomData)
     }
 
+    /// `JSValue.fromPtrAddress` — encode an arbitrary native pointer as a JS
+    /// number (round-trips via `as_promise_ptr`). Used to smuggle a `*mut T`
+    /// context through `Promise.then` reaction arguments.
+    #[inline]
+    pub fn from_ptr_address(addr: usize) -> JSValue {
+        Self::js_number(addr as f64)
+    }
+
+    /// Attach `(resolve, reject)` reactions to this Promise, passing `ctx` as
+    /// the trailing argument to each. Thin wrapper over `JSC__JSValue___then`.
+    ///
+    /// Port of `JSValue.then(ctx: ?*anyopaque, resolve, reject)` (JSValue.zig).
+    /// The Zig version wraps in a `TopExceptionScope` and surfaces only
+    /// termination; every current call site does `catch {}`, so this returns
+    /// `()` and lets the caller's surrounding scope (or none) observe a
+    /// termination on its next check.
+    pub fn then<T>(
+        self,
+        global: &JSGlobalObject,
+        ctx: *mut T,
+        resolve: host_fn::JsHostFn,
+        reject: host_fn::JsHostFn,
+    ) {
+        unsafe extern "C" {
+            fn JSC__JSValue___then(
+                this: JSValue,
+                global: *mut JSGlobalObject,
+                ctx: JSValue,
+                resolve: host_fn::JsHostFn,
+                reject: host_fn::JsHostFn,
+            );
+        }
+        // SAFETY: FFI into JSC; `self` is a Promise (caller contract), `global`
+        // is live, and `resolve`/`reject` are valid C-ABI host fns.
+        unsafe {
+            JSC__JSValue___then(
+                self,
+                global as *const _ as *mut _,
+                JSValue::from_ptr_address(ctx as usize),
+                resolve,
+                reject,
+            );
+        }
+    }
+
     /// `@enumFromInt(@bitCast(@intFromPtr(ptr)))`.
     #[inline]
     pub fn cast<T>(ptr: *const T) -> JSValue { JSValue(ptr as usize, PhantomData) }

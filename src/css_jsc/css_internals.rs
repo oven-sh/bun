@@ -138,14 +138,14 @@ pub fn testing_impl(
         &arena,
         source.slice(),
         parser_options,
-        &mut import_records,
+        Some(&mut import_records),
         SrcIndex::INVALID,
     ) {
         Ok(ret) => {
-            let (mut stylesheet, mut extra) = ret;
+            let (mut stylesheet, extra) = ret;
             let mut minify_options = MinifyOptions::default();
             minify_options.targets.browsers = browsers;
-            match stylesheet.minify(&arena, minify_options, &mut extra) {
+            match stylesheet.minify(&minify_options, &extra) {
                 Ok(_) => {}
                 Err(err) => {
                     return Err(

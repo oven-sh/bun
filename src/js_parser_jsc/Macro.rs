@@ -350,8 +350,8 @@ impl Macro {
         }
 
         return Ok(Macro {
-            vm,
-            resolver,
+            vm: Some(vm),
+            resolver: Some(NonNull::from(resolver)),
             resolved: ResolveResult::default(), // TODO(port): Zig leaves `resolved` undefined
             disabled: false,
         });

@@ -742,6 +742,14 @@ pub static FD_PATH_HOOK: core::sync::atomic::AtomicPtr<()> =
     core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 type FdPathHookFn = unsafe fn(Fd, buf: *mut u8, cap: usize) -> isize;
 
+/// Wide-char variant of `FD_PATH_HOOK` (Windows `getFdPathW` →
+/// `GetFinalPathNameByHandleW`). bun_sys installs it at startup with signature
+/// `unsafe fn(Fd, *mut u16, cap: usize) -> isize` (>0 = code units, <0 = error).
+/// CYCLEBREAK: lets `bun_paths::Path::<u16>::init_fd_path` resolve an FD to a
+/// UTF-16 path without depending on `bun_sys`.
+pub static FD_PATH_HOOK_W: core::sync::atomic::AtomicPtr<()> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
 impl core::fmt::Display for Fd {
     fn fmt(&self, w: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let fd = *self;

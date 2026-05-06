@@ -1870,7 +1870,7 @@ impl JSValkeyClient {
         } else if channel_or_many.is_string() {
             // It is a single string channel
             let Some(channel) = from_js(global, channel_or_many)? else {
-                return global.throw_invalid_argument_type("unsubscribe", "channel", "string");
+                return Err(global.throw_invalid_argument_type("unsubscribe", "channel", "string"));
             };
             // PERF(port): was assume_capacity
             redis_channels.push(channel);
@@ -1878,7 +1878,7 @@ impl JSValkeyClient {
             this._subscription_ctx
                 .clear_receive_handlers(global, channel_or_many)?;
         } else {
-            return global.throw_invalid_argument_type("unsubscribe", "channel", "string or array");
+            return Err(global.throw_invalid_argument_type("unsubscribe", "channel", "string or array"));
         }
 
         // Now send the unsubscribe command and clean up if necessary

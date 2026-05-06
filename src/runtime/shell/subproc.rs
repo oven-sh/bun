@@ -1116,6 +1116,7 @@ impl Readable {
             )),
             Stdio::ReadableStream(_) => Readable::Ignore, // Shell doesn't use readable_stream
         }
+        }
     }
 
     pub fn close(&mut self) {

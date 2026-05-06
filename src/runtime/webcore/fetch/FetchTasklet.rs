@@ -298,16 +298,18 @@ impl FetchTasklet {
             }
             // this is really unlikely to happen, but can happen
             // lets make sure that we always call deinit from main thread
-            self_
-                .javascript_vm
-                .event_loop()
-                .enqueue_task_concurrent(ConcurrentTask::from_callback(this, FetchTasklet::deinit_callback));
+            // SAFETY: event_loop() is a self-ptr into the VM; uniquely accessed here.
+            unsafe {
+                (*self_.javascript_vm.event_loop()).enqueue_task_concurrent(
+                    ConcurrentTask::from_callback(this, FetchTasklet::deinit_callback),
+                );
+            }
         }
     }
 
-    // PORT NOTE: ConcurrentTask::from_callback takes `fn(*mut T) -> JsResult<()>`; Zig coerced
-    // `error{}!void` automatically, here we wrap.
-    fn deinit_callback(this: *mut FetchTasklet) -> JsResult<()> {
+    // PORT NOTE: ConcurrentTask::from_callback takes `fn(*mut T) -> bun_event_loop::JsResult<()>`
+    // (cycle-broken erased error); Zig coerced `error{}!void` automatically.
+    fn deinit_callback(this: *mut FetchTasklet) -> ElJsResult<()> {
         // SAFETY: enqueued with last ref; exclusive access on main thread
         unsafe { FetchTasklet::deinit(this) };
         Ok(())

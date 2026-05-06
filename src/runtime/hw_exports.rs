@@ -431,43 +431,31 @@ pub extern "C" fn bindgen_DevServer_dispatchGetDeinitCountForTesting1(
 // `NewRuntimeFunction` here.
 
 unsafe extern "C" {
-    fn Bun__CreateFFIFunctionValue(
-        global: *mut JSGlobalObject,
-        symbol_name: *const bun_string::ZigString,
-        arg_count: u32,
-        function: bun_jsc::host_fn::JSHostFn,
-        add_ptr_field: bool,
-        input_function_ptr: *mut c_void,
-    ) -> JSValue;
     // C++-side host fns (Generated*Bindings.cpp).
     fn bindgen_Fmt_jsc_jsFmtString(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
     fn bindgen_DevServer_jsGetDeinitCountForTesting(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue;
 }
 
-#[inline]
-fn new_runtime_function(
-    global: *mut JSGlobalObject,
-    name: &'static [u8],
-    arg_count: u32,
-    f: bun_jsc::host_fn::JSHostFn,
-) -> JSValue {
-    let zs = bun_string::ZigString::init_utf8(name);
-    // SAFETY: thin FFI wrapper; `global` is live, `zs` outlives the call.
-    unsafe { Bun__CreateFFIFunctionValue(global, &zs, arg_count, f, false, core::ptr::null_mut()) }
-}
-
 #[unsafe(export_name = "js2native_bindgen_fmt_jsc_fmtString")]
 pub extern "C" fn js2native_bindgen_fmt_jsc_fmt_string(global: *mut JSGlobalObject) -> JSValue {
-    new_runtime_function(global, b"fmtString", 3, bindgen_Fmt_jsc_jsFmtString)
+    // SAFETY: `global` is live (passed from JS2Native bridge).
+    let global = unsafe { &*global };
+    let name = bun_string::ZigString::init_utf8(b"fmtString");
+    bun_jsc::host_fn::new_runtime_function(global, Some(&name), 3, bindgen_Fmt_jsc_jsFmtString, false, None)
 }
 
 #[unsafe(export_name = "js2native_bindgen_DevServer_getDeinitCountForTesting")]
 pub extern "C" fn js2native_bindgen_dev_server_get_deinit_count(global: *mut JSGlobalObject) -> JSValue {
-    new_runtime_function(
+    // SAFETY: `global` is live (passed from JS2Native bridge).
+    let global = unsafe { &*global };
+    let name = bun_string::ZigString::init_utf8(b"getDeinitCountForTesting");
+    bun_jsc::host_fn::new_runtime_function(
         global,
-        b"getDeinitCountForTesting",
+        Some(&name),
         0,
         bindgen_DevServer_jsGetDeinitCountForTesting,
+        false,
+        None,
     )
 }
 

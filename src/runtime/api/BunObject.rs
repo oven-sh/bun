@@ -1953,37 +1953,87 @@ pub fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
     // SAFETY: same VM pointer; re-borrow after `args` is dropped.
     let vm = unsafe { &mut *global_object.bun_vm() };
 
+    // PORT NOTE (layering): Zig's `HotMap` is a `TaggedPtrUnion` over the four
+    // `NewServer` monomorphizations + sockets. `bun_jsc::rare_data::HotMapEntry`
+    // is the erased `(tag: u8, ptr: *mut ())` lowering of that union; the tag
+    // values for servers are pinned here to match `crate::server::AnyServerTag`
+    // (= the runtime-side discriminant) so a HotMap entry produced by `serve`
+    // is round-trippable through `serve` again on hot-reload.
+    use crate::server::{AnyServer, AnyServerTag};
+    use bun_jsc::rare_data::HotMapEntry;
+
     if config.allow_hot {
         if let Some(hot) = vm.hot_map() {
             if config.id.is_empty() {
                 config.id = config.compute_id().into();
             }
 
-            if let Some(_entry) = hot.get_entry(&config.id) {
-                // TODO(port): Zig used `@field(@TypeOf(entry.tag()), @typeName(Type))`
-                // to dispatch on the TaggedPtrUnion tag. The un-gated `HotMapEntry`
-                // is currently an erased `(tag: u8, ptr: *mut ())` placeholder
-                // (see rare_data.rs); typed `tag()/as_<T>()` are gated until the
-                // high-tier `TaggedPtrUnion` payload list lands.
-                let _ = &mut config;
-                todo!("blocked_on: jsc::rare_data::HotMapEntry typed tag()/as_<T>() (TaggedPtrUnion)");
+            if let Some(entry) = hot.get_entry(&config.id) {
+                macro_rules! reload {
+                    ($T:ty) => {{
+                        // SAFETY: tag was matched; ptr was inserted as `*mut $T` below.
+                        let server: &mut $T = unsafe { &mut *entry.ptr.cast::<$T>() };
+                        server.on_reload_from_zig(&mut config, global_object);
+                        return Ok(server.js_value.try_get().unwrap_or(JSValue::UNDEFINED));
+                    }};
+                }
+                match entry.tag {
+                    t if t == AnyServerTag::HTTPServer as u8 => reload!(crate::api::HTTPServer),
+                    t if t == AnyServerTag::DebugHTTPServer as u8 => reload!(crate::api::DebugHTTPServer),
+                    t if t == AnyServerTag::DebugHTTPSServer as u8 => reload!(crate::api::DebugHTTPSServer),
+                    t if t == AnyServerTag::HTTPSServer as u8 => reload!(crate::api::HTTPSServer),
+                    _ => {}
+                }
             }
         }
     }
 
     macro_rules! serve_with {
-        ($ServerType:ty) => {{
+        ($ServerType:ty, $tag:expr) => {{
             let server = <$ServerType>::init(&mut config, global_object)?;
             if global_object.has_exception() {
                 return Ok(JSValue::ZERO);
             }
-            // TODO(port): the rest of this body needs:
-            //   - `<$ServerType>::js::route_list_set_cached` (codegen `.classes.ts` output)
-            //   - typed `HotMap::insert<T>` (gated TaggedPtrUnion)
-            //   - `bun_jsc::api::AnyServer` for `Debugger.http_server_agent`
-            // none of which are available at this tier yet.
-            let _ = (server, vm);
-            todo!("blocked_on: server::js::route_list_set_cached + bun_jsc::api::AnyServer")
+            // SAFETY: `init` returned a live heap-allocated server pointer.
+            let server_ref: &mut $ServerType = unsafe { &mut *server };
+            let route_list_object = <$ServerType>::listen(server);
+            if global_object.has_exception() {
+                return Ok(JSValue::ZERO);
+            }
+            let obj = <$ServerType>::ptr_to_js(server, global_object);
+            if route_list_object != JSValue::ZERO {
+                // PORT NOTE: `ServerType.js.routeListSetCached` (codegen
+                // `.classes.ts`) — routed through the typed helper in
+                // `server_body` until per-type codegen externs land.
+                <$ServerType>::js_gc_route_list_set(obj, global_object, route_list_object);
+            }
+            server_ref.js_value.set_strong(obj, global_object);
+
+            if config.allow_hot {
+                // SAFETY: same VM pointer; re-borrow after the earlier `vm` mut
+                // borrow was released by the `hot_map()` arm above.
+                if let Some(hot) = unsafe { &mut *global_object.bun_vm() }.hot_map() {
+                    hot.insert_raw(
+                        &config.id,
+                        HotMapEntry { tag: $tag as u8, ptr: server.cast::<()>() },
+                    );
+                }
+            }
+
+            // SAFETY: bun_vm() returns the live thread-local VM.
+            if let Some(debugger) = unsafe { &mut *global_object.bun_vm() }.debugger.as_deref_mut() {
+                let any = AnyServer::from(server as *const $ServerType);
+                crate::server::http_server_agent::notify_server_started(
+                    &mut debugger.http_server_agent,
+                    any,
+                );
+                let _ = crate::server::http_server_agent::notify_server_routes_updated(
+                    &mut debugger.http_server_agent,
+                    any,
+                );
+            }
+
+            Ok(obj)
         }};
     }
 
@@ -1992,10 +2042,10 @@ pub fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
     let has_ssl_config = config.ssl_config.is_some();
     let development = config.is_development();
     match (development, has_ssl_config) {
-        (true, true) => serve_with!(crate::api::DebugHTTPSServer),
-        (true, false) => serve_with!(crate::api::DebugHTTPServer),
-        (false, true) => serve_with!(crate::api::HTTPSServer),
-        (false, false) => serve_with!(crate::api::HTTPServer),
+        (true, true) => serve_with!(crate::api::DebugHTTPSServer, AnyServerTag::DebugHTTPSServer),
+        (true, false) => serve_with!(crate::api::DebugHTTPServer, AnyServerTag::DebugHTTPServer),
+        (false, true) => serve_with!(crate::api::HTTPSServer, AnyServerTag::HTTPSServer),
+        (false, false) => serve_with!(crate::api::HTTPServer, AnyServerTag::HTTPServer),
     }
 }
 

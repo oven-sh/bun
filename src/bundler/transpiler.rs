@@ -2560,21 +2560,36 @@ impl<'a> Transpiler<'a> {
         let Some(file_path_ref) = resolve_result.path_const() else {
             return Ok(None);
         };
-        let mut file_path = file_path_ref.clone();
+        // PORT NOTE: `resolver::Result.path_pair` carries `bun_resolver::fs::Path<'_>`;
+        // downstream `linker.link`/`get_hashed_filename` and `OutputFile.src_path`
+        // expect `bun_paths::fs::Path<'_>` / `bun_logger::fs::Path`. Re-init via
+        // `text` (the only field both shapes share semantically).
+        let file_path_text: &'static [u8] = crate::linker::dupe(file_path_ref.text);
+        let file_path_ext: &'static [u8] = crate::linker::dupe(file_path_ref.name.ext);
+        // `client_entry_point_` is always `None` from the only in-tree caller;
+        // its source path uses the `logger::fs::Path` shape, so just override
+        // text/ext when present.
+        let (file_path_text, file_path_ext) = if let Some(cep) = client_entry_point_.as_deref() {
+            (
+                crate::linker::dupe(cep.source.path.text),
+                crate::linker::dupe(cep.source.path.name.ext),
+            )
+        } else {
+            (file_path_text, file_path_ext)
+        };
+
+        let mut file_path = bun_paths::fs::Path::init(file_path_text);
 
         // Step 1. Parse & scan
-        let loader = self.options.loader(file_path.name.ext);
-
-        if let Some(cep) = client_entry_point_.as_deref() {
-            file_path = cep.source.path.clone();
-        }
+        let loader = self.options.loader(file_path_ext);
 
         // SAFETY: `self.fs` is the process-lifetime singleton.
-        let rel = unsafe { &*self.fs }.relative_to(file_path.text);
+        let top_level_dir = unsafe { (*self.fs).top_level_dir };
+        let rel = bun_paths::resolve_path::relative(top_level_dir, file_path_text);
         file_path.pretty = crate::linker::dupe(rel);
 
         let mut output_file = options::OutputFile::zero_value();
-        output_file.src_path = logger::fs::Path::init(file_path.text);
+        output_file.src_path = logger::fs::Path::init(file_path_text);
         output_file.loader = loader;
         output_file.output_kind = options::OutputKind::Chunk;
         output_file.side = None;

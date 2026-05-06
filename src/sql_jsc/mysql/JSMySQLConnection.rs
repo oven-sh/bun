@@ -144,10 +144,18 @@ impl JSMySQLConnection {
     /// (jsc shim's `timer()` is `&mut self`). The VM is a JS-thread singleton;
     /// we never hold two `&mut` to it at once in this module.
     ///
-    /// SAFETY: `self.vm` is `&'static`; the cast reborrows the same singleton
+    /// SAFETY: `self.vm()` is `&'static`; the cast reborrows the same singleton
     /// the JS thread already owns. Do not call while another `&mut VirtualMachine`
     /// is live in this frame.
     #[inline]
+    fn vm(&self) -> &'static VirtualMachine {
+        // SAFETY: process-lifetime singleton.
+        unsafe { &*self.vm }
+    }
+    #[inline]
+    fn vm_ptr(&self) -> *mut VirtualMachine {
+        self.vm
+    }
     fn vm_mut(&self) -> &'static mut VirtualMachine {
         // Explicit `'static` so the return does not reborrow `*self` — callers
         // pair this with `&mut self.timer` in the same expression.
@@ -177,14 +185,14 @@ impl JSMySQLConnection {
         if !self.auto_flusher.registered // should not be registered
             && self.connection.can_flush()
         {
-            AutoFlusher::register_deferred_microtask_with_type_unchecked(self, self.vm);
+            AutoFlusher::register_deferred_microtask_with_type_unchecked(self, self.vm());
             self.auto_flusher.registered = true;
         }
     }
 
     fn unregister_auto_flusher(&mut self) {
         if self.auto_flusher.registered {
-            AutoFlusher::unregister_deferred_microtask_with_type(self, self.vm);
+            AutoFlusher::unregister_deferred_microtask_with_type(self, self.vm());
             self.auto_flusher.registered = false;
         }
     }
@@ -351,7 +359,7 @@ impl JSMySQLConnection {
                 Self::deref(p);
             }
         });
-        if self.vm.is_shutting_down() {
+        if self.vm().is_shutting_down() {
             self.connection.close();
         } else {
             self.connection
@@ -361,7 +369,7 @@ impl JSMySQLConnection {
 
     fn drain_internal(&mut self) {
         bun_core::scoped_log!(MySQLConnection, "drainInternal");
-        if self.vm.is_shutting_down() {
+        if self.vm().is_shutting_down() {
             return self.close();
         }
         self.ref_();
@@ -370,7 +378,7 @@ impl JSMySQLConnection {
         let p: *mut Self = self;
         // SAFETY: `p` from live `&mut self`; paired with `ref_()` above.
         let _ref_guard = scopeguard::guard((), move |_| unsafe { Self::deref(p) });
-        let event_loop = self.vm.event_loop();
+        let event_loop = self.vm().event_loop();
         event_loop.enter();
         let _loop_guard = scopeguard::guard((), |_| event_loop.exit());
         self.ensure_js_value_is_alive();
@@ -394,7 +402,7 @@ impl JSMySQLConnection {
         // unique owner; no `&`/`&mut Self` outlives the `Box::from_raw` below.
         unsafe {
             (*this).stop_timers();
-            (*this).poll_ref.unref((*this).vm);
+            (*this).poll_ref.unref((*this).vm());
             (*this).unregister_auto_flusher();
 
             (*this).connection.cleanup();
@@ -430,16 +438,16 @@ impl JSMySQLConnection {
             if self.connection.status == my_sql_connection::Status::Connected
                 && self.connection.is_idle()
             {
-                self.poll_ref.unref(self.vm);
+                self.poll_ref.unref(self.vm());
             } else {
-                self.poll_ref.r#ref(self.vm);
+                self.poll_ref.r#ref(self.vm());
             }
             return;
         }
         if self.js_value.is_not_empty() && self.js_value.is_strong() {
             self.js_value.downgrade();
         }
-        self.poll_ref.unref(self.vm);
+        self.poll_ref.unref(self.vm());
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(export = "MySQLConnection__createInstance")]
@@ -746,7 +754,7 @@ impl JSMySQLConnection {
     }
 
     fn consume_on_connect_callback(&self, global_object: &JSGlobalObject) -> Option<JSValue> {
-        if self.vm.is_shutting_down() {
+        if self.vm().is_shutting_down() {
             return None;
         }
         if let Some(value) = self.js_value.try_get() {
@@ -758,7 +766,7 @@ impl JSMySQLConnection {
     }
 
     fn consume_on_close_callback(&self, global_object: &JSGlobalObject) -> Option<JSValue> {
-        if self.vm.is_shutting_down() {
+        if self.vm().is_shutting_down() {
             return None;
         }
         if let Some(value) = self.js_value.try_get() {
@@ -770,7 +778,7 @@ impl JSMySQLConnection {
     }
 
     pub fn get_queries_array(&self) -> JSValue {
-        if self.vm.is_shutting_down() {
+        if self.vm().is_shutting_down() {
             return JSValue::UNDEFINED;
         }
         if let Some(value) = self.js_value.try_get() {
@@ -845,7 +853,7 @@ impl JSMySQLConnection {
         }
 
         self.connection.status = my_sql_connection::Status::Failed;
-        if self.vm.is_shutting_down() {
+        if self.vm().is_shutting_down() {
             return;
         }
 
@@ -853,7 +861,7 @@ impl JSMySQLConnection {
             return;
         };
         on_close.ensure_still_alive();
-        let loop_ = self.vm.event_loop();
+        let loop_ = self.vm().event_loop();
         // loop.enter();
         // defer loop.exit();
         self.ensure_js_value_is_alive();
@@ -888,7 +896,7 @@ impl JSMySQLConnection {
     }
 
     pub fn on_connection_estabilished(&mut self) {
-        if self.vm.is_shutting_down() {
+        if self.vm().is_shutting_down() {
             return;
         }
         let Some(on_connect) = self.consume_on_connect_callback(self.global_object) else {
@@ -978,7 +986,7 @@ impl JSMySQLConnection {
 
     pub fn on_error(&mut self, request: Option<&mut JSMySQLQuery>, err: AnyMySQLErrorT) {
         if let Some(request) = request {
-            if self.vm.is_shutting_down() {
+            if self.vm().is_shutting_down() {
                 request.mark_as_failed();
                 return;
             }
@@ -988,7 +996,7 @@ impl JSMySQLConnection {
                 request.reject(self.get_queries_array(), err);
             }
         } else {
-            if self.vm.is_shutting_down() {
+            if self.vm().is_shutting_down() {
                 self.close();
                 return;
             }
@@ -1002,7 +1010,7 @@ impl JSMySQLConnection {
 
     pub fn on_error_packet(&mut self, request: Option<&mut JSMySQLQuery>, err: ErrorPacket) {
         if let Some(request) = request {
-            if self.vm.is_shutting_down() {
+            if self.vm().is_shutting_down() {
                 request.mark_as_failed();
             } else {
                 if let Some(err_) = self.global_object.try_take_exception() {
@@ -1013,7 +1021,7 @@ impl JSMySQLConnection {
                 }
             }
         } else {
-            if self.vm.is_shutting_down() {
+            if self.vm().is_shutting_down() {
                 self.close();
                 return;
             }

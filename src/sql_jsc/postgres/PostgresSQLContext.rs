@@ -4,6 +4,7 @@
 
 use crate::jsc::{CallFrame, JSGlobalObject, JSGlobalObjectSqlExt, JSValue, StrongOptional};
 
+#[repr(C)]
 #[derive(Default)]
 pub struct PostgresSQLContext {
     // Zig: `Strong.Optional = .empty` → `StrongOptional::empty()` (Default).

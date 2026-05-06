@@ -499,8 +499,10 @@ impl Default for EventLoopTimer {
         Self { next: bun_core::Timespec::EPOCH, state: Default::default(), tag: Default::default(), heap: [0; 3] }
     }
 }
+#[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum EventLoopTimerState { #[default] Pending, ACTIVE, FIRED, CANCELLED }
+#[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum EventLoopTimerTag {
     #[default] Unset,

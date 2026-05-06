@@ -1572,9 +1572,8 @@ impl<'a> LinkerContext<'a> {
         Ok(true)
     }
 
-    pub fn runtime_function(&self, name: &[u8]) -> Ref {
-        self.graph.runtime_function(name)
-    }
+    // runtime_function: moved to the un-gated forward-decl impl block
+    // (see "Forward-decl shims for scanImportsAndExports.rs callees" below).
 
     pub fn print_code_for_file_in_chunk_js(
         &mut self,
@@ -2630,13 +2629,8 @@ impl<'a> LinkerContext<'a> {
         result
     }
 
-    pub fn top_level_symbols_to_parts(&self, id: u32, r#ref: Ref) -> &[u32] {
-        self.graph.top_level_symbol_to_parts(id, r#ref)
-    }
-
-    pub fn top_level_symbols_to_parts_for_runtime(&self, r#ref: Ref) -> &[u32] {
-        self.top_level_symbols_to_parts(Index::runtime().get(), r#ref)
-    }
+    // top_level_symbols_to_parts / top_level_symbols_to_parts_for_runtime:
+    // moved to the un-gated forward-decl impl block above.
 
     pub fn create_wrapper_for_file(
         &mut self,

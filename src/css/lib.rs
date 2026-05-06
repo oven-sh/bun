@@ -1,5 +1,10 @@
 #![allow(unused, non_snake_case, non_camel_case_types, non_upper_case_globals, clippy::all)]
 #![feature(inherent_associated_types)]
+// `specialization`: `generics::__ForwardInherentParseToCss` blanket uses
+// `default fn` so `#[derive(ToCss/Parse)]`-emitted concrete impls can coexist
+// with `impl_generic_parse_tocss!` batch registrations on the same type.
+#![feature(specialization)]
+#![allow(incomplete_features)]
 // Allow `use bun_css as css;` from inside the crate — the ported submodules
 // were translated against the crate's public surface and refer to it by name.
 extern crate self as bun_css;

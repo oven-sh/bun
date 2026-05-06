@@ -2690,6 +2690,7 @@ impl<AtRule> StyleSheet<AtRule> {
     }
 
     pub fn parse(
+        allocator: &'static Bump,
         code: &[u8],
         options: ParserOptions<'static>,
         import_records: Option<&mut BabyList<ImportRecord>>,
@@ -2701,6 +2702,7 @@ impl<AtRule> StyleSheet<AtRule> {
         // need a custom at-rule call `parse_with` directly.
         let mut default_at_rule_parser = DefaultAtRuleParser;
         StyleSheet::<DefaultAtRule>::parse_with(
+            allocator,
             code,
             options,
             &mut default_at_rule_parser,
@@ -2710,6 +2712,7 @@ impl<AtRule> StyleSheet<AtRule> {
     }
 
     pub fn parse_bundler(
+        allocator: &'static Bump,
         code: &[u8],
         options: ParserOptions,
         import_records: &mut BabyList<ImportRecord>,
@@ -2732,10 +2735,10 @@ impl<AtRule> StyleSheet<AtRule> {
         // blocked_on: BundlerAtRuleParser: CustomAtRuleParser impl (gated above
         // on BabyList push API). Signature kept; body re-enabled when that lands.
         #[cfg(any())] {
-        return Self::parse_with(code, options, &mut at_rule_parser, None, source_index);
+        return Self::parse_with(allocator, code, options, &mut at_rule_parser, None, source_index);
         }
         #[cfg(not(any()))] {
-        let _ = (code, source_index, &mut at_rule_parser);
+        let _ = (allocator, code, source_index, &mut at_rule_parser);
         todo!("StyleSheet::parse_bundler — gated on BundlerAtRuleParser: CustomAtRuleParser")
         }
     }
@@ -2745,19 +2748,20 @@ impl<AtRule> StyleSheet<AtRule> {
     // field's `'static` erasure; re-threads to `<'bump>` alongside the rest of
     // the crate.
     pub fn parse_with<P: CustomAtRuleParser<AtRule = AtRule>>(
+        allocator: &'static Bump,
         code: &[u8],
         options: ParserOptions<'static>,
         at_rule_parser: &mut P,
         import_records: Option<&mut BabyList<ImportRecord>>,
         source_index: SrcIndex,
     ) -> Maybe<(Self, StylesheetExtra), Err<ParserError>> {
-        // TODO(port): 'bump lifetime threading — the arena currently lives on
-        // this stack frame. Every arena-backed slice the parser hands back is
-        // detached to `'static` (matching the crate-wide erasure on
-        // `DeclarationBlock<'static>`/`Token` payloads). This is *unsound* once
-        // the returned `StyleSheet` outlives this fn; Phase B hoists the arena
-        // into `StyleSheet` (or threads `&'bump Bump` from the caller) and
-        // re-threads the lifetime through `CssRuleList<'bump, R>`.
+        // TODO(port): 'bump lifetime threading — every arena-backed slice the
+        // parser hands back is currently detached to `'static` (matching the
+        // crate-wide erasure on `DeclarationBlock<'static>`/`Token` payloads).
+        // The caller owns the arena (matching Zig's `allocator: Allocator`
+        // parameter) so the storage outlives the returned `StyleSheet`; Phase B
+        // re-threads the lifetime through `CssRuleList<'bump, R>` and drops the
+        // `'static` bound on `allocator`.
         let mut composes = ComposesMap::default();
         let mut parser_extra = ParserExtra {
             local_scope: LocalScope::default(),
@@ -2766,11 +2770,7 @@ impl<AtRule> StyleSheet<AtRule> {
         };
         let mut local_properties = LocalPropertyUsage::default();
 
-        let arena = Bump::new();
-        // SAFETY: same `'static` erasure as `DeclarationBlock::parse` /
-        // `TopLevelRuleParser::nested`. See note above.
-        let arena_ref: &'static Bump = unsafe { &*(&arena as *const Bump) };
-        let mut input = ParserInput::new(code, arena_ref);
+        let mut input = ParserInput::new(code, allocator);
         let mut parser = Parser::new(
             &mut input,
             import_records,
@@ -2798,7 +2798,7 @@ impl<AtRule> StyleSheet<AtRule> {
 
         let mut rules = CssRuleList::<AtRule>::default();
         let mut rule_parser = TopLevelRuleParser::new(
-            arena_ref,
+            allocator,
             &options,
             at_rule_parser,
             &mut rules,

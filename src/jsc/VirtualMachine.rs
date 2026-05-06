@@ -236,8 +236,7 @@ pub struct VirtualMachine {
     pub ipc: Option<()>,
     pub hot_reload_counter: u32,
 
-    // TODO(b2): `debugger` is `Option<Debugger>` (gated sibling).
-    pub debugger: Option<()>,
+    pub debugger: Option<Box<crate::debugger::Debugger>>,
     pub has_started_debugger: bool,
     pub has_terminated: bool,
 
@@ -1577,11 +1576,15 @@ impl<'a> SourceMapHandlerGetter<'a> {
     pub fn get(&mut self) -> bun_js_printer::SourceMapHandler<'_> {
         // SAFETY: `vm` was set from a live `&'a mut VirtualMachine` in
         // `source_map_handler`; the getter's lifetime `'a` bounds the borrow.
+        // VirtualMachine.zig:408: take the inline-sourcemap path only when a
+        // debugger is present AND it is *not* in `.connect` mode — `.connect`
+        // (VSCode-extension) clients fall through to the `source_mappings`
+        // fast-path handler.
         let wants_inline_source_map = unsafe {
-            // TODO(b2): once `debugger` widens from `Option<()>` to the real
-            // `Option<Debugger>`, also check `.mode != .connect` here
-            // (VirtualMachine.zig:408).
-            (*self.vm).debugger.is_some()
+            matches!(
+                (*self.vm).debugger,
+                Some(ref d) if d.mode != crate::debugger::Mode::Connect
+            )
         };
         if !wants_inline_source_map {
             // SAFETY: same provenance as above; `source_mappings` is a value

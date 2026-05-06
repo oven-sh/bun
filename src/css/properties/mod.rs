@@ -238,11 +238,11 @@ mod generic_registrations {
     }
 
     // ── crate::properties::* leaves with REAL inherent parse/to_css ──
-    // NOTE: types deriving `css::DefineEnumProperty` already get
-    // `generics::{Parse,ParseWithOptions,ToCss}` from the derive — listing
-    // them here would conflict (E0119). Only hand-rolled / `DeriveParse` /
-    // `DeriveToCss` payloads remain.
-    impl_generic_parse_tocss!(
+    // NOTE: types deriving `css::DefineEnumProperty` / `Parse` / `ToCss` already
+    // get `generics::{Parse,ParseWithOptions,ToCss}` from the derive — listing
+    // them here would conflict (E0119). Only payloads with hand-written
+    // inherent `parse`/`to_css` (no derive) need the forwarding shim.
+    impl_parse_tocss_via_inherent!(
         // align
         align::Gap,
         align::JustifyContent,

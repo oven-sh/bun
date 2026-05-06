@@ -145,11 +145,14 @@ impl<'a> AnyEventLoop<'a> {
         }
     }
 
-    pub fn pipe_read_buffer(&mut self) -> &mut [u8] {
+    /// Returns the shared pipe-read scratch buffer as a raw fat ptr (mirrors
+    /// Zig `[]u8`). Same VM-shared-storage aliasing concern as [`file_polls`] —
+    /// the `Js` arm cannot prove exclusive access, so callers deref locally.
+    pub fn pipe_read_buffer(&mut self) -> *mut [u8] {
         match self {
-            // SAFETY: vtable contract — returns a valid &mut [u8] owned by the VM.
-            AnyEventLoop::Js { owner, vtable } => unsafe { &mut *(vtable.pipe_read_buffer)(*owner) },
-            AnyEventLoop::Mini(mini) => mini.pipe_read_buffer(),
+            // SAFETY: vtable contract — slot returns a valid live *mut [u8].
+            AnyEventLoop::Js { owner, vtable } => unsafe { (vtable.pipe_read_buffer)(*owner) },
+            AnyEventLoop::Mini(mini) => mini.pipe_read_buffer() as *mut [u8],
         }
     }
 

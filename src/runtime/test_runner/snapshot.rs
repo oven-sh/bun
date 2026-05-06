@@ -292,7 +292,11 @@ impl<'a> Snapshots<'a> {
                     js_ast::StmtData::SExpr(expr) => {
                         if let js_ast::ExprData::EBinary(e_binary) = &mut expr.value.data {
                             if e_binary.op == js_ast::Op::Code::BinAssign {
-                                if let js_ast::ExprData::EIndex(e_index) = &mut e_binary.left.data {
+                                // PORT NOTE: split-borrow `left`/`right` upfront so the
+                                // nested matches don't keep an exclusive borrow on the
+                                // whole `e_binary` when we reach for `.right`.
+                                let (left, right) = (&mut e_binary.left, &mut e_binary.right);
+                                if let js_ast::ExprData::EIndex(e_index) = &mut left.data {
                                     // PORT NOTE: split-borrow `index`/`target` so we can take
                                     // `&mut` on `index` (EString::slice needs &mut) while reading
                                     // `target` immutably.
@@ -303,7 +307,7 @@ impl<'a> Snapshots<'a> {
                                     if target_is_exports {
                                         if let js_ast::ExprData::EString(index) = &mut e_index.index.data {
                                             if let js_ast::ExprData::EString(value_string) =
-                                                &mut e_binary.right.data
+                                                &mut right.data
                                             {
                                                 let key = index.slice(&arena);
                                                 let value = value_string.slice(&arena);

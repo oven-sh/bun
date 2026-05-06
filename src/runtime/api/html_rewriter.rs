@@ -1679,7 +1679,8 @@ impl DocType {
         }
         // SAFETY: self.doctype is non-null (checked above) and valid for the
         // duration of the lol-html callback.
-        let str = unsafe { lolhtml::DocType::get_public_id(self.doctype) }.slice();
+        let owned = unsafe { lolhtml::DocType::get_public_id(self.doctype) };
+        let str = owned.slice();
         if str.is_empty() {
             return JSValue::NULL;
         }

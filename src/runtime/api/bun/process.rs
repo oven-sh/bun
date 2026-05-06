@@ -1422,7 +1422,7 @@ pub mod waiter_thread_posix {
                     libc::sigemptyset(&mut current_mask);
                     libc::sigaddset(&mut current_mask, libc::SIGCHLD);
                     let act = libc::sigaction {
-                        sa_sigaction: wakeup as usize,
+                        sa_sigaction: wakeup as *const () as usize,
                         sa_mask: current_mask,
                         sa_flags: libc::SA_NOCLDSTOP,
                         sa_restorer: None,

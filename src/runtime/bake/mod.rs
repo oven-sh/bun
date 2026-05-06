@@ -319,9 +319,6 @@ pub mod framework_router {
         pub on_router_collision_error:
             fn(*mut (), &[u8], OpaqueFileId, FileKind) -> Result<(), bun_alloc::AllocError>,
     }
-    /// `FrameworkRouter.TinyLog` — small fixed-buffer log for parse errors.
-    #[derive(Default)]
-    pub struct TinyLog(());
 
     // ── re-exports from the full FrameworkRouter.rs draft ───────────────
     // production.rs needs `Part`, `init_empty`, `scan_all`, `route_ptr`,

@@ -2139,10 +2139,10 @@ pub enum DevResponse<'a> {
 
 /// When requests are waiting on a bundle, the relevant request information is
 /// prepared and stored in a linked list.
-pub struct DeferredRequest {
+pub struct DeferredRequest<'a> {
     pub route_bundle_index: route_bundle::Index,
     pub handler: Handler,
-    pub dev: *const DevServer, // BACKREF: owned by dev.deferred_request_pool
+    pub dev: *const DevServer<'a>, // BACKREF: owned by dev.deferred_request_pool
 
     /// This struct can be referenced by the dev server (`dev.current_bundle.requests`)
     pub referenced_by_devserver: bool,
@@ -5309,10 +5309,10 @@ impl TestingBatch {
 
 /// `test/bake/deinitialization.test.ts` checks for this as well as all tests
 /// using the dev server test harness.
-static DEV_SERVER_DEINIT_COUNT_FOR_TESTING: core::sync::atomic::AtomicUsize =
-    core::sync::atomic::AtomicUsize::new(0);
+static DEV_SERVER_DEINIT_COUNT_FOR_TESTING: ::core::sync::atomic::AtomicUsize =
+    ::core::sync::atomic::AtomicUsize::new(0);
 pub fn get_deinit_count_for_testing() -> usize {
-    DEV_SERVER_DEINIT_COUNT_FOR_TESTING.load(core::sync::atomic::Ordering::Relaxed)
+    DEV_SERVER_DEINIT_COUNT_FOR_TESTING.load(::core::sync::atomic::Ordering::Relaxed)
 }
 
 struct PromiseEnsureRouteBundledCtx<'a> {

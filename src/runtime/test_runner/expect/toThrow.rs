@@ -83,15 +83,10 @@ pub fn to_throw(
                 let message: JSValue = err
                     .get_truthy(global, "message")?
                     .unwrap_or(JSValue::UNDEFINED);
-                // TODO(port): comptime string concat — get_signature must be const fn for concatcp!
-                let fmt = const_format::concatcp!(
-                    get_signature("toThrow", "", true),
-                    "\n\nError name: <red>{}<r>\nError message: <red>{}<r>\n"
-                );
                 return global.throw_pretty(
-                    fmt,
+                    signature_no_args,
                     format_args!(
-                        "{}{}",
+                        "\n\nError name: <red>{}<r>\nError message: <red>{}<r>\n",
                         name.to_fmt(&mut formatter),
                         message.to_fmt(&mut formatter),
                     ),
@@ -99,15 +94,10 @@ pub fn to_throw(
             }
 
             // non error thrown
-            let fmt = const_format::concatcp!(
-                get_signature("toThrow", "", true),
-                "\n\nThrown value: <red>{}<r>\n"
+            return global.throw_pretty(
+                signature_no_args,
+                format_args!("\n\nThrown value: <red>{}<r>\n", result.to_fmt(&mut formatter)),
             );
-            return global.throw_pretty(fmt, format_args!("{}", result.to_fmt(&mut formatter)));
-            // TODO(port): throw_pretty arg-threading — Zig passes a tuple matched to {f}
-            // placeholders; Rust side likely wants format_args! directly. Revisit API shape.
-            #[allow(unreachable_code)]
-            let _ = signature_no_args;
         }
 
         if expected_value.is_string() {

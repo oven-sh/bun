@@ -1,8 +1,8 @@
 use core::mem::MaybeUninit;
 
-use bun_core::{output, Global};
+use bun_core::Global;
 use bun_glob as glob;
-use bun_json as json;
+use bun_interchange::json;
 use bun_logger::Log;
 use bun_paths::{self, PathBuffer};
 use bun_str::{strings, ZStr};

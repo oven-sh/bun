@@ -39,15 +39,64 @@ pub fn freemem() -> u64 {
 mod _impl {
 use super::*;
 use std::io::Write as _;
-use bun_core::{env_var, fmt as bun_fmt, HOST_NAME_MAX};
-use bun_jsc::{node::ErrorCode, CallFrame, JSArray, JSObject, SystemError};
+use bun_core::{env_var, fmt as bun_fmt};
+use bun_jsc::{CallFrame, JSArray, JSObject, SystemError};
+use crate::node::ErrorCode;
 use bun_paths::PathBuffer;
 use bun_str::{strings, ZigString};
 use bun_sys::c;
 #[cfg(windows)]
 use bun_sys::windows::{self, libuv};
-// TODO(port): generated bindings (bun.gen.node_os) — Phase B wires codegen output
-use crate::generated::node_os as gen_;
+
+// `bun.HOST_NAME_MAX` (bun.zig) — `std.posix.HOST_NAME_MAX` on unix, 256 on
+// Windows. Neither `bun_core` nor `bun_sys` re-export it yet; 256 is a safe
+// upper bound for the stack buffer on every platform.
+// TODO(port): hoist into `bun_sys` once that crate grows a `HOST_NAME_MAX`.
+const HOST_NAME_MAX: usize = 256;
+
+// TODO(port): generated bindings (`bun.gen.node_os` in Zig, emitted from
+// `node_os.bind.ts`) — the Rust bindgen backend does not exist yet, so the
+// `create_*_callback` thunks and the `UserInfoOptions` dictionary are stubbed
+// locally until Phase B wires the codegen output.
+mod gen_ {
+    use super::{JSGlobalObject, JSValue, BunString};
+
+    macro_rules! cb_stub {
+        ($($name:ident),* $(,)?) => {$(
+            #[allow(dead_code)]
+            pub fn $name(_global: &JSGlobalObject) -> JSValue {
+                todo!(concat!(
+                    "blocked_on: bun.gen.node_os.",
+                    stringify!($name),
+                    " (bindgen .bind.ts → Rust backend)"
+                ))
+            }
+        )*};
+    }
+    cb_stub!(
+        create_cpus_callback,
+        create_freemem_callback,
+        create_get_priority_callback,
+        create_homedir_callback,
+        create_hostname_callback,
+        create_loadavg_callback,
+        create_network_interfaces_callback,
+        create_release_callback,
+        create_totalmem_callback,
+        create_uptime_callback,
+        create_user_info_callback,
+        create_version_callback,
+        create_set_priority_callback,
+    );
+
+    /// `t.dictionary({ encoding: t.DOMString.default("") })` from
+    /// `node_os.bind.ts`. Only `encoding` exists; the field is currently
+    /// unused (see `user_info` body).
+    #[derive(Default)]
+    pub struct UserInfoOptions {
+        pub encoding: BunString,
+    }
+}
 
 pub fn create_node_os_binding(global: &JSGlobalObject) -> JsResult<JSValue> {
     // TODO(port): JSObject::create struct-literal API — Phase B defines a builder/macro
@@ -666,7 +715,7 @@ pub use network_interfaces_posix as network_interfaces;
 pub use network_interfaces_windows as network_interfaces;
 
 #[cfg(unix)]
-fn network_interfaces_posix(global_this: &JSGlobalObject) -> JsResult<JSValue> {
+pub fn network_interfaces_posix(global_this: &JSGlobalObject) -> JsResult<JSValue> {
     // getifaddrs sets a pointer to a linked list
     let mut interface_start: *mut c::ifaddrs = core::ptr::null_mut();
     // SAFETY: valid out-pointer

@@ -36,19 +36,19 @@ struct ScriptConfig {
 
 /// Wraps a BufferedReader and tracks whether it represents stdout or stderr,
 /// so output can be routed to the correct parent stream.
-struct PipeReader {
+struct PipeReader<'a> {
     reader: BufferedReader,
-    handle: *const ProcessHandle, // set in ProcessHandle::start()
+    handle: *const ProcessHandle<'a>, // set in ProcessHandle::start()
     is_stderr: bool,
     line_buffer: Vec<u8>,
 }
 
-impl PipeReader {
+impl<'a> PipeReader<'a> {
     fn new(is_stderr: bool) -> Self {
         Self {
             // TODO(port): BufferedReader::init(This) — Zig passes the parent type for vtable;
             // Rust BufferedReader likely takes a trait object or callback set.
-            reader: BufferedReader::init::<PipeReader>(),
+            reader: BufferedReader::init::<Self>(),
             handle: ptr::null(),
             is_stderr,
             line_buffer: Vec::new(),
@@ -96,8 +96,8 @@ pub struct ProcessHandle<'a> {
     state: *const State<'a>,
     color_idx: usize,
 
-    stdout_reader: PipeReader,
-    stderr_reader: PipeReader,
+    stdout_reader: PipeReader<'a>,
+    stderr_reader: PipeReader<'a>,
 
     process: Option<ProcessSlot>,
     options: SpawnOptions,

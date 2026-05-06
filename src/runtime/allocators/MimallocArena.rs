@@ -357,36 +357,35 @@ unsafe fn vtable_free(_: *mut c_void, buf: &mut [u8], alignment: Alignment, _: u
 /// `ret_addr` is optionally provided as the first return address of the
 /// allocation call stack. If the value is `0` it means no return address
 /// has been provided.
-fn vtable_remap(ptr: *mut c_void, buf: &mut [u8], alignment: Alignment, new_len: usize, _: usize) -> Option<NonNull<u8>> {
+unsafe fn vtable_remap(ptr: *mut c_void, buf: &mut [u8], alignment: Alignment, new_len: usize, _: usize) -> *mut u8 {
     let this = Borrowed::from_opaque(ptr);
     this.assert_thread_lock();
     let heap = this.get_mimalloc_heap();
     let aligned_size = alignment.to_byte_units();
     // SAFETY: FFI — heap is a live mi_heap_t*; buf.ptr was returned by a prior mi_* alloc on this
     // heap (vtable invariant).
-    let value = unsafe { mimalloc::mi_heap_realloc_aligned(heap, buf.as_mut_ptr().cast(), new_len, aligned_size) };
-    NonNull::new(value.cast::<u8>())
+    unsafe { mimalloc::mi_heap_realloc_aligned(heap, buf.as_mut_ptr().cast(), new_len, aligned_size) }.cast::<u8>()
 }
 
-fn global_vtable_alloc(_: *mut c_void, len: usize, alignment: Alignment, _: usize) -> Option<NonNull<u8>> {
-    crate::scoped_log!(mimalloc, "Malloc: {}\n", len);
+unsafe fn global_vtable_alloc(_: *mut c_void, len: usize, alignment: Alignment, _: usize) -> *mut u8 {
+    bun_output::scoped_log!(mimalloc, "Malloc: {}\n", len);
     // SAFETY: FFI — len/alignment are passed by value; mimalloc returns null on failure.
-    let ptr: *mut c_void = if mimalloc::must_use_aligned_alloc(alignment) {
+    let ptr: *mut c_void = if mimalloc::must_use_aligned_alloc(alignment.to_byte_units()) {
         unsafe { mimalloc::mi_malloc_aligned(len, alignment.to_byte_units()) }
     } else {
         unsafe { mimalloc::mi_malloc(len) }
     };
-    NonNull::new(ptr.cast::<u8>())
+    ptr.cast::<u8>()
 }
 
-fn global_vtable_resize(_: *mut c_void, buf: &mut [u8], _: Alignment, new_len: usize, _: usize) -> bool {
+unsafe fn global_vtable_resize(_: *mut c_void, buf: &mut [u8], _: Alignment, new_len: usize, _: usize) -> bool {
     // SAFETY: FFI — buf.ptr was returned by a prior mi_* alloc (vtable invariant).
     !unsafe { mimalloc::mi_expand(buf.as_mut_ptr().cast(), new_len) }.is_null()
 }
 
-fn global_vtable_remap(_: *mut c_void, buf: &mut [u8], alignment: Alignment, new_len: usize, _: usize) -> Option<NonNull<u8>> {
+unsafe fn global_vtable_remap(_: *mut c_void, buf: &mut [u8], alignment: Alignment, new_len: usize, _: usize) -> *mut u8 {
     // SAFETY: FFI — buf.ptr was returned by a prior mi_* alloc (vtable invariant).
-    NonNull::new(unsafe { mimalloc::mi_realloc_aligned(buf.as_mut_ptr().cast(), new_len, alignment.to_byte_units()) }.cast::<u8>())
+    unsafe { mimalloc::mi_realloc_aligned(buf.as_mut_ptr().cast(), new_len, alignment.to_byte_units()) }.cast::<u8>()
 }
 
 pub fn is_instance(alloc: ZigAllocator) -> bool {

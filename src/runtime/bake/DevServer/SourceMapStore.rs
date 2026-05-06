@@ -40,7 +40,7 @@ pub struct SourceMapStore {
     /// - The script loads and moves the ref into "strongly held" by the HmrSocket
     /// - The expiry time passes
     /// - Too many different weak references exist
-    pub weak_refs: bun_collections::LinearFifo<WeakRef, WEAK_REF_ENTRY_MAX>,
+    pub weak_refs: bun_collections::LinearFifo<WeakRef, StaticBuffer<WeakRef, WEAK_REF_ENTRY_MAX>>,
     // TODO(port): bun.LinearFifo(WeakRef, .{ .Static = N }) — confirm bun_collections::LinearFifo<T, N> API matches std.fifo.LinearFifo
     /// Shared
     pub weak_ref_sweep_timer: EventLoopTimer,
@@ -264,7 +264,7 @@ impl Entry {
                 };
                 if let Err(err) = dump_bundle(
                     dump_dir,
-                    if side == Side::Client { dev_server::Graph::Client } else { dev_server::Graph::Server },
+                    if side == Side::Client { bake::Graph::Client } else { bake::Graph::Server },
                     rel_path_escaped,
                     &json_bytes,
                     false,

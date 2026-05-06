@@ -18,8 +18,8 @@ pub use super::valkey::ValkeyClient;
 pub use super::valkey::Protocol;
 pub use super::valkey::Status;
 pub use super::valkey::Options;
-// TODO(port): ValkeyCommand.zig is a file-as-struct; Phase B should confirm the Rust module/type name.
-pub use super::valkey_command::ValkeyCommand as Command;
+// ValkeyCommand.zig is a file-as-struct; in Rust the module itself is the namespace.
+pub use super::valkey_command as Command;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

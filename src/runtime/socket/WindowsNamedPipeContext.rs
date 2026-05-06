@@ -10,9 +10,17 @@ use bun_sys::{self, Error as SysError, Fd, SystemErrno};
 use bun_boringssl_sys as boringssl;
 use bun_paths::PathBuffer;
 use bun_str::ZStr;
-use crate::api::server_config::SSLConfig;
+use crate::socket::SSLConfig;
 use crate::api::{TCPSocket, TLSSocket};
+#[cfg(windows)]
 use bun_sys::windows::libuv as uv;
+#[cfg(not(windows))]
+mod uv {
+    //! libuv shim for non-Windows builds. `WindowsNamedPipeContext` is only
+    //! reachable at runtime on Windows; on POSIX `crate::socket::WindowsNamedPipeContext`
+    //! is aliased to `()` in `mod.rs`, but this module still type-checks.
+    pub type Pipe = core::ffi::c_void;
+}
 
 bun_output::declare_scope!(WindowsNamedPipeContext, visible);
 

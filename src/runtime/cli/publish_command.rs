@@ -41,21 +41,21 @@ pub struct PublishCommand;
 // invariants (always None / never used when DIRECTORY_PUBLISH == false).
 pub struct Context<'a, const DIRECTORY_PUBLISH: bool> {
     pub manager: &'a mut PackageManager,
-    pub command_ctx: Command::Context,
+    pub command_ctx: Command::Context<'a>,
 
     pub package_name: Box<[u8]>,
     pub package_version: Box<[u8]>,
     pub abs_tarball_path: Box<ZStr>,
     pub tarball_bytes: Box<[u8]>,
-    pub shasum: sha::SHA1Digest,
-    pub integrity: sha::SHA512Digest,
+    pub shasum: SHA1Digest,
+    pub integrity: SHA512Digest,
     pub uses_workspaces: bool,
 
     pub normalized_pkg_info: Box<[u8]>,
 
     pub publish_script: Option<Box<[u8]>>,
     pub postpublish_script: Option<Box<[u8]>>,
-    pub script_env: Option<&'a mut dotenv::Loader>,
+    pub script_env: Option<&'a mut dotenv::Loader<'a>>,
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]

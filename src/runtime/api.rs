@@ -262,34 +262,32 @@ pub use crate::api::archive as Archive;
 pub use crate::api::js_transpiler as JSTranspiler;
 pub use crate::api::hash_object as HashObject;
 pub use crate::api::bun::h2_frame_parser::H2FrameParser;
+pub use crate::api::native_promise_context as NativePromiseContext;
+pub use crate::api::bun::secure_context as SecureContext;
+pub use crate::api::bun::ssl_context_cache as SSLContextCache;
+pub use crate::api::bun::subprocess as Subprocess;
+pub use crate::api::bun::terminal as Terminal;
+pub use crate::api::toml_object as TOMLObject;
+pub use crate::api::unsafe_object as UnsafeObject;
+pub use crate::api::json5_object as JSON5Object;
+pub use crate::api::yaml_object as YAMLObject;
+pub use crate::api::glob as Glob;
+// `dns_jsc/mod.rs` IS the public surface (Resolver, Order, RecordType, internal::*);
+// the full Phase-A `dns.rs` draft is mounted privately as `dns_body` inside it.
+pub use crate::dns_jsc as dns;
+pub use crate::node::zlib::native_brotli as NativeBrotli;
+pub use crate::node::zlib::native_zlib as NativeZlib;
+pub use crate::node::zlib::native_zstd as NativeZstd;
+pub use crate::node::net::block_list as BlockList;
+pub use bun_sql_jsc::postgres as Postgres;
+pub use bun_sql_jsc::mysql as MySQL;
+pub use crate::valkey_jsc::js_valkey::JSValkeyClient as Valkey;
 
-// ─── gated re-exports (target modules not yet declared / lower-tier missing) ─
-
+// ─── gated re-exports (target modules not yet declared in lib.rs) ────────────
+#[cfg(any())] // TODO(b2-blocked): crate::webview — lib.rs leaves it un-declared (bun_jsc method surface)
 mod _gated_reexports {
-    pub use crate::api::native_promise_context as NativePromiseContext;
-    pub use crate::api::bun::secure_context as SecureContext;
-    pub use crate::api::bun::ssl_context_cache as SSLContextCache;
-    pub use crate::api::bun::subprocess as Subprocess;
-    pub use crate::api::bun::terminal as Terminal;
-    // TODO(b2-blocked): crate::webview (module not declared)
     pub use crate::webview::host_process as WebViewHostProcess;
     pub use crate::webview::chrome_process as ChromeProcess;
-    pub use crate::api::toml_object as TOMLObject;
-    pub use crate::api::unsafe_object as UnsafeObject;
-    pub use crate::api::json5_object as JSON5Object;
-    pub use crate::api::yaml_object as YAMLObject;
-    // TODO(b2-blocked): crate::dns_jsc (module not declared)
-    pub use crate::dns_jsc::dns;
-    pub use crate::api::glob as Glob;
-    pub use crate::node::zlib::native_brotli as NativeBrotli;
-    pub use crate::node::zlib::native_zlib as NativeZlib;
-    // TODO(b2-blocked): bun_sql_jsc (not in deps)
-    pub use bun_sql_jsc::postgres as Postgres;
-    pub use bun_sql_jsc::mysql as MySQL;
-    // TODO(b2-blocked): crate::valkey_jsc (module not declared)
-    pub use crate::valkey_jsc::js_valkey::JSValkeyClient as Valkey;
-    pub use crate::node::net::block_list as BlockList;
-    pub use crate::node::zlib::native_zstd as NativeZstd;
 }
 
 // ──────────────────────────────────────────────────────────────────────────

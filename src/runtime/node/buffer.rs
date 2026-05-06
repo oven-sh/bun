@@ -26,84 +26,86 @@ impl BufferVectorized {
         // SAFETY: caller guarantees buf_ptr[0..fill_length] is a valid writable buffer.
         let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr, fill_length) };
 
+        // PORT NOTE: encoder::write_u8/write_u16 take the encoding as a const-generic
+        // `u8` (stable-Rust workaround for `adt_const_params`) — pass `Encoding::* as u8`.
         let result = match encoding {
             Encoding::Utf8 => {
                 if str.is_16_bit() {
                     let s = str.utf16_slice_aligned();
-                    encoder::write_u16(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len(), Encoding::Utf8, true)
+                    encoder::write_u16::<{ Encoding::Utf8 as u8 }, true>(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len())
                 } else {
                     let s = str.slice();
-                    encoder::write_u8(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len(), Encoding::Utf8)
+                    encoder::write_u8::<{ Encoding::Utf8 as u8 }>(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len())
                 }
             }
             Encoding::Ascii => {
                 if str.is_16_bit() {
                     let s = str.utf16_slice_aligned();
-                    encoder::write_u16(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len(), Encoding::Ascii, true)
+                    encoder::write_u16::<{ Encoding::Ascii as u8 }, true>(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len())
                 } else {
                     let s = str.slice();
-                    encoder::write_u8(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len(), Encoding::Ascii)
+                    encoder::write_u8::<{ Encoding::Ascii as u8 }>(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len())
                 }
             }
             Encoding::Latin1 => {
                 if str.is_16_bit() {
                     let s = str.utf16_slice_aligned();
-                    encoder::write_u16(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len(), Encoding::Latin1, true)
+                    encoder::write_u16::<{ Encoding::Latin1 as u8 }, true>(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len())
                 } else {
                     let s = str.slice();
-                    encoder::write_u8(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len(), Encoding::Latin1)
+                    encoder::write_u8::<{ Encoding::Latin1 as u8 }>(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len())
                 }
             }
             Encoding::Buffer => {
                 if str.is_16_bit() {
                     let s = str.utf16_slice_aligned();
-                    encoder::write_u16(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len(), Encoding::Buffer, true)
+                    encoder::write_u16::<{ Encoding::Buffer as u8 }, true>(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len())
                 } else {
                     let s = str.slice();
-                    encoder::write_u8(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len(), Encoding::Buffer)
+                    encoder::write_u8::<{ Encoding::Buffer as u8 }>(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len())
                 }
             }
             Encoding::Utf16le | Encoding::Ucs2 => {
                 if str.is_16_bit() {
                     let s = str.utf16_slice_aligned();
-                    encoder::write_u16(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len(), Encoding::Utf16le, true)
+                    encoder::write_u16::<{ Encoding::Utf16le as u8 }, true>(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len())
                 } else {
                     let s = str.slice();
-                    encoder::write_u8(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len(), Encoding::Utf16le)
+                    encoder::write_u8::<{ Encoding::Utf16le as u8 }>(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len())
                 }
             }
             Encoding::Base64 => {
                 if str.is_16_bit() {
                     let s = str.utf16_slice_aligned();
-                    encoder::write_u16(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len(), Encoding::Base64, true)
+                    encoder::write_u16::<{ Encoding::Base64 as u8 }, true>(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len())
                 } else {
                     let s = str.slice();
-                    encoder::write_u8(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len(), Encoding::Base64)
+                    encoder::write_u8::<{ Encoding::Base64 as u8 }>(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len())
                 }
             }
             Encoding::Base64url => {
                 if str.is_16_bit() {
                     let s = str.utf16_slice_aligned();
-                    encoder::write_u16(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len(), Encoding::Base64url, true)
+                    encoder::write_u16::<{ Encoding::Base64url as u8 }, true>(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len())
                 } else {
                     let s = str.slice();
-                    encoder::write_u8(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len(), Encoding::Base64url)
+                    encoder::write_u8::<{ Encoding::Base64url as u8 }>(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len())
                 }
             }
             Encoding::Hex => {
                 if str.is_16_bit() {
                     let s = str.utf16_slice_aligned();
-                    encoder::write_u16(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len(), Encoding::Hex, true)
+                    encoder::write_u16::<{ Encoding::Hex as u8 }, true>(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len())
                 } else {
                     let s = str.slice();
-                    encoder::write_u8(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len(), Encoding::Hex)
+                    encoder::write_u8::<{ Encoding::Hex as u8 }>(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len())
                 }
             }
         };
         // Zig writeU8/writeU16 return `!usize`; Rust port returns `Result<usize, _>` so `written` is already usize.
         let Ok(written) = result else { return false; };
 
-        if written == 0 && str.length() > 0 {
+        if written == 0 && str.len > 0 {
             return false;
         }
 

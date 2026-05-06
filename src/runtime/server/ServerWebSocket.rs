@@ -131,7 +131,7 @@ mod _gated {
 use super::*;
 use bun_core::Output;
 use bun_str as strings;
-use crate::server::jsc::{ArrayBuffer, CallFrame, JSString, JSUint8Array, ZigString};
+use crate::server::jsc::{ArrayBuffer, CallFrame, JSString, JSUint8Array, ZigStringSlice};
 use crate::server::WebSocketServerContext as WebSocketServer;
 
 bun_core::declare_scope!(WebSocketServer, visible);
@@ -148,10 +148,10 @@ impl ServerWebSocket {
     /// Initialize a ServerWebSocket with the given handler, data value, and signal.
     /// The signal will not be ref'd inside the ServerWebSocket init function, but will unref itself when the ServerWebSocket is destroyed.
     pub fn init(
-        handler: &'a WebSocketServerHandler,
+        handler: &WebSocketServerHandler,
         data_value: JSValue,
         signal: Option<Arc<AbortSignal>>,
-    ) -> *mut ServerWebSocket<'a> {
+    ) -> *mut ServerWebSocket {
         let global_object = handler.global_object;
         let this = Box::into_raw(Box::new(ServerWebSocket {
             handler,

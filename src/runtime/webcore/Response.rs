@@ -1212,5 +1212,5 @@ fn empty_with_status(_global: &JSGlobalObject, status: u16) -> *mut Response {
 //   source:     src/runtime/webcore/Response.zig (936 lines)
 //   confidence: medium
 //   todos:      11
-//   notes:      Intrusive refcount + WeakPtrData kept raw; Init.headers uses Rc<FetchHeaders> per LIFETIMES.tsv but FetchHeaders is FFI-backed (verify vs IntrusiveRc); js codegen module (gc.stream/bodySetCached) stubbed; write_format defer-dedent reshaped for borrowck; getURL JS getter renamed get_url_js (snake_case collision with getUrl).
+//   notes:      Intrusive refcount + WeakPtrData kept raw; Init.headers is Option<HeadersRef> — RAII NonNull<FetchHeaders> wrapper that deref()s the C++ handle on Drop (NOT Rc/Arc — payload lives on C++ heap); js codegen module (gc.stream/bodySetCached) stubbed; write_format defer-dedent reshaped for borrowck; getURL JS getter renamed get_url_js (snake_case collision with getUrl).
 // ──────────────────────────────────────────────────────────────────────────

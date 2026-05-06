@@ -14,6 +14,43 @@ pub mod css_modules {
         /// The referenced name comes from a source index (used during bundling).
         SourceIndex(u32),
     }
+
+    // PORT NOTE: hand-written (not `#[derive]`) because the `File` payload is a
+    // raw `*const [u8]` arena pointer — generics blanket impls cover `&[u8]`
+    // but not raw slices. Mirrors Zig `css.implementEql/Hash/DeepClone`.
+    impl crate::generics::CssEql for Specifier {
+        fn eql(&self, other: &Self) -> bool {
+            match (self, other) {
+                (Specifier::Global, Specifier::Global) => true,
+                (Specifier::File(a), Specifier::File(b)) => {
+                    // SAFETY: arena-owned slices live for the parse session.
+                    unsafe { bun_string::strings::eql(&**a, &**b) }
+                }
+                (Specifier::SourceIndex(a), Specifier::SourceIndex(b)) => a == b,
+                _ => false,
+            }
+        }
+    }
+    impl Specifier {
+        pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash11) {
+            match self {
+                Specifier::Global => hasher.update(&0u32.to_ne_bytes()),
+                Specifier::File(f) => {
+                    hasher.update(&1u32.to_ne_bytes());
+                    // SAFETY: arena-owned slice.
+                    hasher.update(unsafe { &**f });
+                }
+                Specifier::SourceIndex(i) => {
+                    hasher.update(&2u32.to_ne_bytes());
+                    hasher.update(&i.to_ne_bytes());
+                }
+            }
+        }
+        #[inline]
+        pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+            *self
+        }
+    }
 }
 
 // ─── B-2 round 2 status ───────────────────────────────────────────────────

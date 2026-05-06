@@ -5792,6 +5792,7 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
                         if self.options.features.emit_decorator_metadata {
                             // TODO(port): full design:type / design:paramtypes / design:returntype
                             // metadata emission ported below in condensed form.
+                            #[cfg(any())] // blocked_on: emit_decorator_metadata_for_prop (gated below)
                             self.emit_decorator_metadata_for_prop(prop, &mut array, loc);
                         }
 

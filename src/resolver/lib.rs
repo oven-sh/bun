@@ -4909,14 +4909,10 @@ impl<'a> Resolver<'a> {
                             if let Some(package_json) = pkg_dir_info.package_json {
                                 if let Some(exports_map) = package_json.exports.as_ref() {
                                     // The condition set is determined by the kind of import
-                                    let mut esmodule = ESModule {
-                                        conditions: match kind {
-                                            ast::ImportKind::Require | ast::ImportKind::RequireResolve => self.opts.conditions.require.clone(),
-                                            _ => self.opts.conditions.import.clone(),
-                                        },
-                                        module_type: &mut module_type,
-                                        // SAFETY: PORT — detach `&mut DebugLogs` from `self`; see same note above.
-                                        debug_logs: self.debug_logs.as_mut().map(|d| unsafe { &mut *(d as *mut _) }),
+                                    // PORT NOTE: reshaped for borrowck — see identical note above.
+                                    let conditions = match kind {
+                                        ast::ImportKind::Require | ast::ImportKind::RequireResolve => self.opts.conditions.require.clone(),
+                                        _ => self.opts.conditions.import.clone(),
                                     };
 
                                     // Resolve against the path "/", then join it with the absolute
@@ -4926,7 +4922,13 @@ impl<'a> Resolver<'a> {
                                     // paths. We also want to avoid any "%" characters in the absolute
                                     // directory path accidentally being interpreted as URL escapes.
                                     {
-                                        let esm_resolution = esmodule.resolve(b"/", esm.subpath, &exports_map.root);
+                                        // PERF(port): extra conditions clone vs Zig — profile in Phase B.
+                                        let esm_resolution = ESModule {
+                                            conditions: conditions.clone().expect("oom"),
+                                            debug_logs: self.debug_logs.as_mut(),
+                                            module_type: &mut module_type,
+                                        }
+                                        .resolve(b"/", esm.subpath, &exports_map.root);
 
                                         if let Some(result) = self.handle_esm_resolution(esm_resolution, abs_package_path, kind, package_json, esm.subpath) {
                                             let mut result_copy = result;
@@ -4943,7 +4945,12 @@ impl<'a> Resolver<'a> {
                                     // We limit this behavior just to ".js" files.
                                     let extname = bun_paths::extension(esm.subpath);
                                     if extname == b".js" && esm.subpath.len() > 3 {
-                                        let esm_resolution = esmodule.resolve(b"/", &esm.subpath[0..esm.subpath.len() - 3], &exports_map.root);
+                                        let esm_resolution = ESModule {
+                                            conditions,
+                                            debug_logs: self.debug_logs.as_mut(),
+                                            module_type: &mut module_type,
+                                        }
+                                        .resolve(b"/", &esm.subpath[0..esm.subpath.len() - 3], &exports_map.root);
                                         if let Some(result) = self.handle_esm_resolution(esm_resolution, abs_package_path, kind, package_json, esm.subpath) {
                                             let mut result_copy = result;
                                             result_copy.is_node_module = true;

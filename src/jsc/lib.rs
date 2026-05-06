@@ -1839,7 +1839,71 @@ pub use bun_webcore as WebCore;
 pub mod WebCore {
     // Forward stubs for the webcore types dependents reference. Real defs live
     // in the bun_webcore crate (not available at this tier).
-    crate::stub_ty!(Blob, Request, Response);
+    crate::stub_ty!(Request, Response);
+
+    /// Opaque handle to `bun_runtime::webcore::Blob`. Lower-tier crates that
+    /// need to *read* blob bytes (e.g. `bun_http_jsc::websocket_client`) go
+    /// through the C-ABI trampolines below to avoid a `bun_runtime` forward-dep
+    /// cycle. Field access is never performed at this tier — only `from_js` /
+    /// `shared_view`.
+    #[repr(C)]
+    pub struct Blob {
+        _opaque: [u8; 0],
+    }
+
+    // Codegen externs (build/debug/codegen/ZigGeneratedClasses.zig:407-408) —
+    // implemented in C++ (`JSBlob.cpp`). The `Blob*` they hand back is the
+    // native-side `m_ctx` pointer, which is layout-identical to
+    // `bun_runtime::webcore::Blob`.
+    // TODO(port): jsc.conv ABI — `extern "sysv64"` on windows-x64.
+    unsafe extern "C" {
+        fn Blob__fromJS(value: crate::JSValue) -> Option<core::ptr::NonNull<Blob>>;
+        fn Blob__fromJSDirect(value: crate::JSValue) -> Option<core::ptr::NonNull<Blob>>;
+        fn Blob__create(ptr: *mut Blob, global: *mut crate::JSGlobalObject) -> crate::JSValue;
+        /// Exported from `bun_runtime::webcore::Blob` as
+        /// `Bun__Blob__sharedView` (C-ABI trampoline; breaks the dep cycle).
+        fn Bun__Blob__sharedView(this: *const Blob, len: *mut usize) -> *const u8;
+    }
+
+    impl crate::JsClass for Blob {
+        fn from_js(value: crate::JSValue) -> Option<*mut Self> {
+            // SAFETY: codegen extern; `value` is a valid JSValue by contract.
+            unsafe { Blob__fromJS(value) }.map(|p| p.as_ptr())
+        }
+        fn from_js_direct(value: crate::JSValue) -> Option<*mut Self> {
+            // SAFETY: codegen extern; caller has already checked `is_cell()`.
+            unsafe { Blob__fromJSDirect(value) }.map(|p| p.as_ptr())
+        }
+        fn to_js(self, global: &crate::JSGlobalObject) -> crate::JSValue {
+            // PORT NOTE: opaque shim is zero-sized; real callers go through
+            // `bun_runtime::webcore::Blob::to_js` which boxes and hands the
+            // pointer to `Blob__create`. This path exists only to satisfy the
+            // trait — lower-tier crates never construct a `Blob` by value.
+            let _ = global;
+            // SAFETY: never called on the opaque shim (zero-sized, no state).
+            unsafe { core::hint::unreachable_unchecked() }
+        }
+    }
+
+    impl Blob {
+        /// `Blob.sharedView()` (src/runtime/webcore/Blob.zig:3737) — borrowed
+        /// view of the blob's in-memory bytes (`offset..offset+size` of the
+        /// backing store). Empty for file-backed / zero-length blobs.
+        #[inline]
+        pub fn shared_view(&self) -> &[u8] {
+            let mut len: usize = 0;
+            // SAFETY: `self` is a live `*const Blob` (m_ctx) per `from_js`;
+            // the extern returns a (ptr,len) pair into the blob's store, which
+            // outlives `&self` (store is ref-counted and pinned by the JS cell).
+            let ptr = unsafe { Bun__Blob__sharedView(self, &mut len) };
+            if ptr.is_null() || len == 0 {
+                return b"";
+            }
+            // SAFETY: extern guarantees `ptr[..len]` is valid for reads while
+            // the Blob's store is alive (held by `&self`'s JS owner).
+            unsafe { core::slice::from_raw_parts(ptr, len) }
+        }
+    }
 }
 /// `jsc.webcore` — lower-case alias for [`WebCore`] plus the nested `blob`
 /// namespace dependents reach for (`bun_jsc::webcore::blob::Store`).

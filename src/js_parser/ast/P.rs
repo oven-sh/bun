@@ -809,21 +809,21 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         arg: Expr,
         buf: &mut BumpVec<'a, u8>,
     ) -> Result<&'a [u8], bun_core::Error> {
-        if let Some(mut tmpl) = arg.data.e_template() {
+        if let Some(tmpl) = arg.data.e_template() {
             if tmpl.tag.is_some() {
                 return Ok(b""); // tagged template — opaque
             }
-            match &mut tmpl.head {
+            match &tmpl.head {
                 js_ast::e::TemplateContents::Cooked(head) => {
-                    buf.extend_from_slice(head.slice(self.allocator));
+                    buf.extend_from_slice(head.string(self.allocator)?);
                 }
                 js_ast::e::TemplateContents::Raw(_) => return Ok(b""), // shouldn't happen post-visit but be safe
             }
-            for part in tmpl.parts.slice_mut() {
+            for part in tmpl.parts.iter() {
                 buf.push(0); // \x00 placeholder per interpolation
-                match &mut part.tail {
+                match &part.tail {
                     js_ast::e::TemplateContents::Cooked(tail) => {
-                        buf.extend_from_slice(tail.slice(self.allocator));
+                        buf.extend_from_slice(tail.string(self.allocator)?);
                     }
                     js_ast::e::TemplateContents::Raw(_) => return Ok(b""), // raw tail — treat as opaque
                 }

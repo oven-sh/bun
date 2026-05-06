@@ -1268,6 +1268,10 @@ impl FilePoll {
         unsafe { (file_poll_vtable().has_flag)(self.0, f) }
     }
     #[inline]
+    pub fn set_flag(self, f: FilePollFlag) {
+        unsafe { (file_poll_vtable().set_flag)(self.0, f) }
+    }
+    #[inline]
     pub fn file_type(self) -> crate::pipes::FileType {
         unsafe { (file_poll_vtable().file_type)(self.0) }
     }

@@ -2,12 +2,14 @@ use core::ffi::{c_char, c_int, c_void};
 use core::mem::MaybeUninit;
 
 use bun_aio::KeepAlive;
-use bun_core::validators;
+use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::{
     ArrayBuffer, CallFrame, Codegen, JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer,
-    Ref as JscRef, SystemError, VirtualMachine, ZigString,
+    Ref as JscRef, SystemError, VirtualMachine,
 };
-use bun_str::{self as bun_string, String as BunString};
+use bun_str::{self as bun_string, String as BunString, ZigString, ZigStringSlice};
+
+use crate::node::validators;
 use bun_sys::{self, posix, SystemErrno};
 use bun_uws as uws;
 

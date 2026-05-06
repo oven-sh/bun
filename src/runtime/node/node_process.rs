@@ -380,7 +380,7 @@ pub extern "C" fn get_eval(global_object: *const JSGlobalObject) -> JSValue {
 // ───────────────────────────── cwd ─────────────────────────────
 
 #[bun_jsc::host_fn]
-#[export_name = "Bun__Process__getCwd"]
+#[unsafe(export_name = "Bun__Process__getCwd")]
 pub fn get_cwd(global_object: &JSGlobalObject) -> JsResult<JSValue> {
     let mut buf = PathBuffer::uninit();
     match super::path::get_cwd(&mut buf) {

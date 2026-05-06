@@ -23,7 +23,7 @@ use crate::timer::{EventLoopTimer, EventLoopTimerTag};
 bun_output::declare_scope!(UpgradedDuplex, visible);
 
 pub struct UpgradedDuplex<'a> {
-    pub wrapper: Option<WrapperType>,
+    pub wrapper: Option<WrapperType<'a>>,
     pub origin: Strong, // any duplex
     // JSC_BORROW per LIFETIMES.tsv — rust_type verbatim.
     pub global: Option<&'a JSGlobalObject>,
@@ -49,7 +49,7 @@ pub struct CertError {
 }
 // Zig `CertError.deinit` only freed `code`/`reason`; `Box<CStr>` drops automatically — no explicit Drop needed.
 
-type WrapperType = SSLWrapper<*mut UpgradedDuplex>;
+type WrapperType<'a> = SSLWrapper<*mut UpgradedDuplex<'a>>;
 
 pub struct Handlers {
     // BACKREF per LIFETIMES.tsv — container holding self as `.upgrade`.

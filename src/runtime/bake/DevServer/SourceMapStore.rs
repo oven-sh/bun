@@ -731,7 +731,7 @@ impl SourceMapStore {
             0, // unused
             Default::default(),
         ) {
-            source_map::mapping::ParseResult::Fail(fail) => {
+            source_map::ParseResult::Fail(fail) => {
                 Output::debug_warn(format_args!(
                     "Failed to re-parse source map: {}",
                     bstr::BStr::new(&fail.msg)

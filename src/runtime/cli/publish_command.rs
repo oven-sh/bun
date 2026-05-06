@@ -283,7 +283,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         sha1.final_(&mut shasum);
         drop(sha1);
 
-        let mut integrity: sha::SHA512Digest = Default::default();
+        let mut integrity: SHA512Digest = Default::default();
         let mut sha512 = sha::SHA512::init();
         sha512.update(&tarball_bytes);
         sha512.final_(&mut integrity);
@@ -1146,7 +1146,7 @@ impl PublishCommand {
         json: &mut Expr,
         json_source: &logger::Source,
         shasum: SHA1Digest,
-        integrity: sha::SHA512Digest,
+        integrity: SHA512Digest,
     ) -> Result<Box<[u8]>, AllocError> {
         debug_assert!(json.is_object());
 

@@ -88,9 +88,12 @@ pub fn to_be_type_of(
     }
 
     let mut formatter = super::make_formatter(global);
+    // PORT NOTE: ZigFormatter borrows &mut Formatter for its lifetime; need a second formatter
+    // so `received` and `expected_str` can coexist in one format_args!.
+    let mut formatter2 = super::make_formatter(global);
     // `defer formatter.deinit()` — handled by Drop.
     let received = value.to_fmt(&mut formatter);
-    let expected_str = expected.to_fmt(&mut formatter);
+    let expected_str = expected.to_fmt(&mut formatter2);
 
     if not {
         let signature = get_signature("toBeTypeOf", "", true);

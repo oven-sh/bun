@@ -216,7 +216,7 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
         }
         PathOrBlob::Blob(blob) => {
             // PORT NOTE: reshaped for borrowck — match consumes path_or_blob; rebuild to pass &mut PathOrBlob
-            let mut pob = PathOrBlob::Blob(blob);
+            let mut pob = crate::webcore::node_types::PathOrBlob::Blob(blob);
             blob::write_file_internal(
                 global,
                 &mut pob,

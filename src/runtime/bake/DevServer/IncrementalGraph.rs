@@ -1717,9 +1717,9 @@ impl<S: GraphSide> IncrementalGraph<S> {
                 let g: &mut IncrementalGraph<Server> =
                     unsafe { &mut *(self as *mut Self as *mut IncrementalGraph<Server>) };
                 let file = g.get_file_by_index(file_index);
-                let dev = g.owner();
                 if file.is_route {
-                    let route_index = dev.route_lookup.get(&ig::FileIndex::init(file_index.get())).copied().unwrap_or_else(|| {
+                    let route_index = g.owner().route_lookup.get(&ig::FileIndex::init(file_index.get())).copied();
+                    let route_index = route_index.unwrap_or_else(|| {
                         Output::panic(format_args!(
                             "Route not in lookup index: {} {}",
                             file_index.get(),
@@ -1727,10 +1727,10 @@ impl<S: GraphSide> IncrementalGraph<S> {
                         ))
                     });
                     ig_log!("\\<- Route");
-                    dev.incremental_result.framework_routes_affected.push(route_index);
+                    g.owner().incremental_result.framework_routes_affected.push(route_index);
                 }
                 if file.is_client_component_boundary {
-                    dev.incremental_result.client_components_affected.push(ig::FileIndex::init(file_index.get()));
+                    g.owner().incremental_result.client_components_affected.push(ig::FileIndex::init(file_index.get()));
                 }
                 // Certain files do not propagate updates to dependencies.
                 if goal == TraceDependencyGoal::StopAtBoundary && file.stops_dependency_trace() {

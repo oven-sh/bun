@@ -37,10 +37,10 @@ use crate::webcore;
 // ──────────────────────────────────────────────────────────────────────────
 pub trait MaybeSysResultExt<R>: Sized {
     fn get_errno(&self) -> E;
-    fn errno_sys<Rc: crate::node::SyscallRc + sys::GetErrno>(rc: Rc, syscall: sys::Tag) -> Option<Self>;
-    fn errno_sys_fd<Rc: crate::node::SyscallRc + sys::GetErrno>(rc: Rc, syscall: sys::Tag, fd: FD) -> Option<Self>;
-    fn errno_sys_p<Rc: crate::node::SyscallRc + sys::GetErrno>(rc: Rc, syscall: sys::Tag, path: impl AsRef<[u8]>) -> Option<Self>;
-    fn errno_sys_pd<Rc: crate::node::SyscallRc + sys::GetErrno>(rc: Rc, syscall: sys::Tag, path: impl AsRef<[u8]>, dest: impl AsRef<[u8]>) -> Option<Self>;
+    fn errno_sys<Rc: sys::GetErrno>(rc: Rc, syscall: sys::Tag) -> Option<Self>;
+    fn errno_sys_fd<Rc: sys::GetErrno>(rc: Rc, syscall: sys::Tag, fd: FD) -> Option<Self>;
+    fn errno_sys_p<Rc: sys::GetErrno>(rc: Rc, syscall: sys::Tag, path: impl AsRef<[u8]>) -> Option<Self>;
+    fn errno_sys_pd<Rc: sys::GetErrno>(rc: Rc, syscall: sys::Tag, path: impl AsRef<[u8]>, dest: impl AsRef<[u8]>) -> Option<Self>;
 }
 impl<R> MaybeSysResultExt<R> for Maybe<R> {
     #[inline]
@@ -48,28 +48,28 @@ impl<R> MaybeSysResultExt<R> for Maybe<R> {
         match self { Ok(_) => E::SUCCESS, Err(e) => e.get_errno() }
     }
     #[inline]
-    fn errno_sys<Rc: crate::node::SyscallRc + sys::GetErrno>(rc: Rc, syscall: sys::Tag) -> Option<Self> {
+    fn errno_sys<Rc: sys::GetErrno>(rc: Rc, syscall: sys::Tag) -> Option<Self> {
         match sys::get_errno(rc) {
             E::SUCCESS => None,
             e => Some(Err(sys::Error { errno: (e as u16), syscall, ..Default::default() })),
         }
     }
     #[inline]
-    fn errno_sys_fd<Rc: crate::node::SyscallRc + sys::GetErrno>(rc: Rc, syscall: sys::Tag, fd: FD) -> Option<Self> {
+    fn errno_sys_fd<Rc: sys::GetErrno>(rc: Rc, syscall: sys::Tag, fd: FD) -> Option<Self> {
         match sys::get_errno(rc) {
             E::SUCCESS => None,
             e => Some(Err(sys::Error { errno: (e as u16), syscall, fd, ..Default::default() })),
         }
     }
     #[inline]
-    fn errno_sys_p<Rc: crate::node::SyscallRc + sys::GetErrno>(rc: Rc, syscall: sys::Tag, path: impl AsRef<[u8]>) -> Option<Self> {
+    fn errno_sys_p<Rc: sys::GetErrno>(rc: Rc, syscall: sys::Tag, path: impl AsRef<[u8]>) -> Option<Self> {
         match sys::get_errno(rc) {
             E::SUCCESS => None,
             e => Some(Err(sys::Error { errno: (e as u16), syscall, path: path.as_ref().into(), ..Default::default() })),
         }
     }
     #[inline]
-    fn errno_sys_pd<Rc: crate::node::SyscallRc + sys::GetErrno>(rc: Rc, syscall: sys::Tag, path: impl AsRef<[u8]>, dest: impl AsRef<[u8]>) -> Option<Self> {
+    fn errno_sys_pd<Rc: sys::GetErrno>(rc: Rc, syscall: sys::Tag, path: impl AsRef<[u8]>, dest: impl AsRef<[u8]>) -> Option<Self> {
         match sys::get_errno(rc) {
             E::SUCCESS => None,
             e => Some(Err(sys::Error { errno: (e as u16), syscall, path: path.as_ref().into(), dest: dest.as_ref().into(), ..Default::default() })),

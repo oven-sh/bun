@@ -18,7 +18,7 @@ pub fn to_equal_ignoring_whitespace(
 ) -> JsResult<JSValue> {
     // Zig: `defer this.postMatch(globalThis);`
     // PORT NOTE: reshaped for borrowck — scopeguard owns the &mut Self for the scope.
-    let this = scopeguard::guard(this, |this| this.post_match(global));
+    let mut this = scopeguard::guard(this, |this| this.post_match(global));
     let this = &mut **this;
 
     let this_value = frame.this();

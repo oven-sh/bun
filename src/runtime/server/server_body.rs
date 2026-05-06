@@ -1714,19 +1714,21 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub fn on_reload(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
         if arguments.len() < 1 {
-            return global.throw_not_enough_arguments("reload", 1, 0);
+            return Err(global.throw_type_error(format_args!(
+                "Not enough arguments to 'reload'. Expected 1, got 0."
+            )));
         }
 
-        let mut args_slice = jsc::CallFrame::ArgumentsSlice::init(global.bun_vm(), arguments);
+        // SAFETY: bun_vm() returns the live per-thread VM singleton.
+        let mut args_slice = jsc::ArgumentsSlice::init(unsafe { &*global.bun_vm() }, arguments);
 
-        let mut new_config = ServerConfig::default();
-        ServerConfig::from_js(global, &mut new_config, &mut args_slice, server_config::FromJSOptions {
+        let mut new_config = ServerConfig::from_js(global, &mut args_slice, server_config::FromJSOptions {
             allow_bake_config: false,
             is_fetch_required: true,
             has_user_routes: !self.user_routes.is_empty(),
         })?;
         if global.has_exception() {
-            new_config.deinit();
+            drop(new_config);
             return Err(JsError::Thrown);
         }
 
@@ -1739,28 +1741,29 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub fn on_fetch(&mut self, ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         jsc::mark_binding!();
 
-        if self.config.on_request.is_empty() {
+        if self.config.on_request.is_none() {
             return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                 ctx,
                 ZigString::init(b"fetch() requires the server to have a fetch handler").to_error_instance(ctx),
             ));
         }
 
-        let arguments = callframe.arguments_old(2).slice();
+        let arguments = callframe.arguments_old::<2>().slice();
         if arguments.is_empty() {
             let fetch_error = Fetch::FETCH_ERROR_NO_ARGS;
             return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                 ctx,
-                ZigString::init(fetch_error).to_error_instance(ctx),
+                ZigString::init(fetch_error.as_bytes()).to_error_instance(ctx),
             ));
         }
 
-        let mut headers: Option<&FetchHeaders> = None;
+        let mut headers: Option<HeadersRef> = None;
         let mut method = Method::GET;
-        let mut args = jsc::CallFrame::ArgumentsSlice::init(ctx.bun_vm(), arguments);
+        // SAFETY: bun_vm() returns the live per-thread VM singleton.
+        let mut args = jsc::ArgumentsSlice::init(unsafe { &*ctx.bun_vm() }, arguments);
 
         let first_arg = args.next_eat().unwrap();
-        let mut body = Body::Value::Null;
+        let mut body = BodyValue::Null;
         let mut existing_request: Request;
         // TODO: set Host header
         // TODO: set User-Agent header
@@ -1773,7 +1776,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 let fetch_error = Fetch::FETCH_ERROR_BLANK_URL;
                 return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                     ctx,
-                    ZigString::init(fetch_error).to_error_instance(ctx),
+                    ZigString::init(fetch_error.as_bytes()).to_error_instance(ctx),
                 ));
             }
 
@@ -1784,6 +1787,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // buffer must be freed before we leave the block.
             let owned_url_buf: Vec<u8> = if url.hostname.is_empty() {
                 strings::append(&self.base_url_string_for_joining, url.pathname)
+                    .map_err(|_| ctx.throw_out_of_memory())?
+                    .into_vec()
             } else {
                 temp_url_str.to_vec()
             };

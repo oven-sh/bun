@@ -391,9 +391,10 @@ fn cpus_impl_freebsd(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
     let mut ncpu: c_uint = 0;
     let mut ncpu_len: usize = core::mem::size_of::<c_uint>();
     // TODO(port): std.posix.sysctlbynameZ → bun_sys::posix::sysctlbyname
-    bun_sys::posix::sysctlbyname(c"hw.ncpu", &mut ncpu as *mut _ as *mut c_void, &mut ncpu_len, core::ptr::null_mut(), 0)?;
+    bun_sys::posix::sysctlbyname(c"hw.ncpu", &mut ncpu as *mut _ as *mut c_void, &mut ncpu_len, core::ptr::null_mut(), 0)
+        .map_err(|_| OsError::Any)?;
     if ncpu == 0 {
-        return Err(bun_core::err!("no_processor_info"));
+        return Err(OsError::Any);
     }
 
     let mut model_buf = [0u8; 512];
@@ -411,7 +412,8 @@ fn cpus_impl_freebsd(global_this: &JSGlobalObject) -> Result<JSValue, OsError> {
     const CPU_STATES: usize = 5; // user, nice, sys, intr, idle
     let mut times_buf: Vec<c_long> = vec![0; ncpu as usize * CPU_STATES];
     let mut times_len: usize = times_buf.len() * core::mem::size_of::<c_long>();
-    bun_sys::posix::sysctlbyname(c"kern.cp_times", times_buf.as_mut_ptr() as *mut c_void, &mut times_len, core::ptr::null_mut(), 0)?;
+    bun_sys::posix::sysctlbyname(c"kern.cp_times", times_buf.as_mut_ptr() as *mut c_void, &mut times_len, core::ptr::null_mut(), 0)
+        .map_err(|_| OsError::Any)?;
 
     // SAFETY: pure FFI getter
     let ticks: i64 = unsafe { bun_sysconf__SC_CLK_TCK() } as i64;

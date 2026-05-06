@@ -67,10 +67,120 @@ use super::*;
 use bun_core::Error;
 use bun_http::Method;
 use bun_http_types::ETag;
-use bun_http_types::ETag::StringPointer;
+use bun_http_types::ETag::{HeaderEntryField, StringPointer};
 use crate::server::write_status;
 use crate::webcore::body::Value as BodyValue;
+use crate::webcore::blob::Blob;
 use crate::webcore::Response;
+
+// ─── local cycle-break shims ─────────────────────────────────────────────────
+// `bun_http::Headers::from` takes vtable-erased refs (`FetchHeadersRef` /
+// `AnyBlobRef`) because http (T5) cannot depend on runtime (T6). Build the
+// vtables here from the concrete `FetchHeaders` / `AnyBlob` types.
+
+static FETCH_HEADERS_VTABLE: bun_http::headers::FetchHeadersVTable =
+    bun_http::headers::FetchHeadersVTable {
+        count: |owner, header_count, buf_len| unsafe {
+            // SAFETY: `owner` is `&FetchHeaders` erased; `count` mutates only
+            // internal scratch state on the C++ side, hence the const→mut cast.
+            (*(owner as *mut FetchHeaders)).count(header_count, buf_len)
+        },
+        fast_has: |owner, _name| unsafe {
+            // Only ever called with HeaderName::ContentType (see Headers::from).
+            (*(owner as *mut FetchHeaders)).fast_has(HttpHeader::ContentType)
+        },
+        copy_to: |owner, names, values, buf| unsafe {
+            // SAFETY: `bun_http_types::ETag::StringPointer` and
+            // `bun_string::StringPointer` are both `#[repr(C)] {u32,u32}`.
+            (*(owner as *mut FetchHeaders)).copy_to(names.cast(), values.cast(), buf)
+        },
+    };
+
+#[inline]
+fn fetch_headers_ref(h: &FetchHeaders) -> bun_http::headers::FetchHeadersRef<'_> {
+    bun_http::headers::FetchHeadersRef {
+        owner: h as *const FetchHeaders as *const (),
+        vtable: &FETCH_HEADERS_VTABLE,
+        _phantom: core::marker::PhantomData,
+    }
+}
+
+static ANY_BLOB_VTABLE: bun_http::headers::AnyBlobVTable = bun_http::headers::AnyBlobVTable {
+    has_content_type_from_user: |owner| unsafe {
+        (*(owner as *const AnyBlob)).has_content_type_from_user()
+    },
+    content_type: |owner| unsafe {
+        let s = (*(owner as *const AnyBlob)).content_type();
+        (s.as_ptr(), s.len())
+    },
+};
+
+#[inline]
+fn any_blob_ref(b: &AnyBlob) -> bun_http::headers::AnyBlobRef<'_> {
+    bun_http::headers::AnyBlobRef {
+        owner: b as *const AnyBlob as *const (),
+        vtable: &ANY_BLOB_VTABLE,
+        _phantom: core::marker::PhantomData,
+    }
+}
+
+/// Local mirror of `bun_http_types::ETag::append_to_headers` that targets
+/// `bun_http::Headers` (the upstream version takes the http_types-local
+/// `Headers` placeholder, which is a distinct type).
+fn append_etag_to_headers(bytes: &[u8], headers: &mut Headers) {
+    let hash: u64 = bun_core::hash::xxhash64(0, bytes);
+    let mut etag_buf = [0u8; 40];
+    let len = {
+        use std::io::Write;
+        let mut cursor = &mut etag_buf[..];
+        write!(cursor, "\"{:016x}\"", hash).expect("unreachable");
+        40 - cursor.len()
+    };
+    headers.append(b"etag", &etag_buf[..len]);
+}
+
+/// `bun_uws::AnyRequest` only exposes `header()`; add the rest here as a local
+/// extension trait dispatching to the underlying `uws_sys` request types.
+trait AnyRequestExt {
+    fn set_yield(&mut self, y: bool);
+    fn method(&self) -> &[u8];
+}
+
+impl AnyRequestExt for AnyRequest {
+    fn set_yield(&mut self, y: bool) {
+        // SAFETY: variant pointers are non-null FFI handles owned by uWS for
+        // the duration of the request callback (see `AnyRequest::header`).
+        match self {
+            AnyRequest::H1(r) => unsafe { (**r).set_yield(y) },
+            AnyRequest::H3(r) => unsafe { (**r).set_yield(y) },
+        }
+    }
+    fn method(&self) -> &[u8] {
+        // SAFETY: see `set_yield`.
+        match self {
+            AnyRequest::H1(r) => unsafe { (**r).method() },
+            AnyRequest::H3(r) => unsafe { (**r).method() },
+        }
+    }
+}
+
+// ─── blocked shims (duplicate inherent methods upstream) ─────────────────────
+// `webcore::blob::Blob` currently has two `dupe` and two `needs_to_read_file`
+// inherent impls; method-call syntax is E0034-ambiguous and UFCS cannot
+// disambiguate same-type duplicates. Shim until Blob.rs is deduped.
+#[inline]
+fn blob_dupe(_b: &Blob) -> Blob {
+    todo!("blocked_on: webcore::blob::Blob::dupe (duplicate inherent impl)")
+}
+#[inline]
+fn blob_needs_to_read_file(_b: &Blob) -> bool {
+    todo!("blocked_on: webcore::blob::Blob::needs_to_read_file (duplicate inherent impl)")
+}
+/// `Response` does not yet implement `bun_jsc::JsClass`; downcast stub.
+#[inline]
+fn response_from_js(_value: JSValue) -> Option<*mut Response> {
+    todo!("blocked_on: bun_jsc::JsClass for webcore::Response")
+}
 
 impl StaticRoute {
     // pub const ref / deref — intrusive refcount accessors.
@@ -85,23 +195,28 @@ impl StaticRoute {
     /// must not hold any live `&`/`&mut` to `*this` across this call when the
     /// refcount may reach zero.
     pub unsafe fn deref_(this: *mut Self) {
-        let n = (*this).ref_count.get() - 1;
-        (*this).ref_count.set(n);
-        if n == 0 {
-            // SAFETY: ref_count hit zero; `this` was created via Box::into_raw and
-            // retains write provenance (no `&self` in the chain), so reconstituting
-            // the Box and dropping it is sound.
-            drop(Box::from_raw(this));
+        // SAFETY: caller contract — `this` is live and uniquely held when n→0.
+        unsafe {
+            let n = (*this).ref_count.get() - 1;
+            (*this).ref_count.set(n);
+            if n == 0 {
+                // ref_count hit zero; `this` was created via Box::into_raw and
+                // retains write provenance (no `&self` in the chain), so
+                // reconstituting the Box and dropping it is sound.
+                drop(Box::from_raw(this));
+            }
         }
     }
 
     /// Ownership of `blob` is transferred to this function.
     pub fn init_from_any_blob(blob: &AnyBlob, options: InitFromBytesOptions<'_>) -> *mut StaticRoute {
-        let mut headers = Headers::from(options.headers, HeadersFromOptions { body: Some(blob) });
-        // TODO(port): Headers::from signature — Zig passes allocator + .{ .body = blob }; allocator dropped per §Allocators
+        let mut headers = Headers::from(
+            options.headers.map(fetch_headers_ref),
+            HeadersFromOptions { body: Some(any_blob_ref(blob)) },
+        );
         if headers.get_content_type().is_none() {
             if let Some(mime_type) = options.mime_type {
-                headers.append(b"Content-Type", mime_type.value);
+                headers.append(b"Content-Type", &mime_type.value);
             } else if blob.has_content_type_from_user() {
                 headers.append(b"Content-Type", blob.content_type());
             }
@@ -110,17 +225,20 @@ impl StaticRoute {
         // Generate ETag if not already present
         if headers.get(b"etag").is_none() {
             if !blob.slice().is_empty() {
-                ETag::append_to_headers(blob.slice(), &mut headers);
+                append_etag_to_headers(blob.slice(), &mut headers);
             }
         }
 
+        let cached_blob_size = blob.size();
         Box::into_raw(Box::new(StaticRoute {
             ref_count: Cell::new(1),
-            blob: *blob,
-            cached_blob_size: blob.size(),
+            // SAFETY: doc-contract — ownership of `*blob` is transferred to this
+            // function (Zig: `blob.*` struct copy); caller must not use it again.
+            blob: unsafe { core::ptr::read(blob) },
+            cached_blob_size,
             has_content_disposition: false,
             headers,
-            server: options.server,
+            server: Cell::new(options.server),
             status_code: options.status_code,
         }))
     }
@@ -137,23 +255,27 @@ impl StaticRoute {
     }
 
     pub fn clone(&mut self, global_this: &JSGlobalObject) -> Result<*mut StaticRoute, Error> {
-        // TODO(port): narrow error set
         let blob = self.blob.to_blob(global_this);
+        let duped = blob_dupe(&blob);
         self.blob = AnyBlob::Blob(blob);
 
         Ok(Box::into_raw(Box::new(StaticRoute {
             ref_count: Cell::new(1),
-            blob: AnyBlob::Blob(blob.dupe()),
+            blob: AnyBlob::Blob(duped),
             cached_blob_size: self.cached_blob_size,
             has_content_disposition: self.has_content_disposition,
-            headers: self.headers.clone()?,
-            server: self.server,
+            headers: self.headers.clone(),
+            server: Cell::new(self.server.get()),
             status_code: self.status_code,
         })))
     }
 
     pub fn from_js(global_this: &JSGlobalObject, argument: JSValue) -> JsResult<Option<*mut StaticRoute>> {
-        if let Some(response) = argument.as_::<Response>() {
+        if let Some(response_ptr) = response_from_js(argument) {
+            // SAFETY: `response_from_js` returns a live JSC-owned Response cell
+            // valid for the duration of this call (GC cannot run mid-function).
+            let response = unsafe { &mut *response_ptr };
+
             // The user may want to pass in the same Response object multiple endpoints
             // Let's let them do that.
             let body_value = response.get_body_value();
@@ -164,7 +286,7 @@ impl StaticRoute {
                 match &*body_value {
                     BodyValue::Used => {
                         return Err(global_this
-                            .throw_invalid_arguments("Response body has already been used", ()));
+                            .throw_invalid_arguments("Response body has already been used"));
                     }
 
                     BodyValue::Null | BodyValue::Empty => {
@@ -176,19 +298,18 @@ impl StaticRoute {
 
                     BodyValue::Blob(_) | BodyValue::InternalBlob(_) | BodyValue::WTFStringImpl(_) => {
                         if let BodyValue::Blob(b) = &*body_value {
-                            if b.needs_to_read_file() {
+                            if blob_needs_to_read_file(b) {
                                 return Err(global_this
                                     .throw_todo("TODO: support Bun.file(path) in static routes"));
                             }
                         }
                         let mut blob = body_value.use_();
-                        blob.global_this = global_this;
-                        // TODO(port): Blob.global_this is a JSC_BORROW raw ptr; storing &JSGlobalObject here may need cast
+                        blob.global_this = global_this as *const JSGlobalObject;
                         debug_assert!(
                             !blob.is_heap_allocated(),
                             "expected blob not to be heap-allocated",
                         );
-                        *body_value = BodyValue::Blob(blob.dupe());
+                        *body_value = BodyValue::Blob(blob_dupe(&blob));
 
                         break 'brk AnyBlob::Blob(blob);
                     }
@@ -196,7 +317,6 @@ impl StaticRoute {
                     _ => {
                         return Err(global_this.throw_invalid_arguments(
                             "Body must be fully buffered before it can be used in a static route. Consider calling new Response(await response.blob()) to buffer the body.",
-                            (),
                         ));
                     }
                 }
@@ -204,21 +324,21 @@ impl StaticRoute {
 
             let mut has_content_disposition = false;
 
-            if let Some(headers) = response.get_init_headers() {
-                has_content_disposition = headers.fast_has(HttpHeader::ContentDisposition);
-                headers.fast_remove(HttpHeader::TransferEncoding);
-                headers.fast_remove(HttpHeader::ContentLength);
+            if let Some(h) = response.get_init_headers() {
+                // SAFETY: `fast_has`/`fast_remove` mutate C++-side state; the
+                // `&FetchHeaders` borrow is the only handle and the underlying
+                // object is not aliased elsewhere during this call.
+                let h = unsafe { &mut *(h as *const FetchHeaders as *mut FetchHeaders) };
+                has_content_disposition = h.fast_has(HttpHeader::ContentDisposition);
+                h.fast_remove(HttpHeader::TransferEncoding);
+                h.fast_remove(HttpHeader::ContentLength);
             }
 
             let mut headers: Headers = if let Some(h) = response.get_init_headers() {
-                match Headers::from(Some(h), HeadersFromOptions { body: Some(&blob) }) {
-                    Ok(v) => v,
-                    Err(_) => {
-                        blob.detach();
-                        global_this.throw_out_of_memory();
-                        return Err(bun_jsc::JsError::Thrown);
-                    }
-                }
+                Headers::from(
+                    Some(fetch_headers_ref(h)),
+                    HeadersFromOptions { body: Some(any_blob_ref(&blob)) },
+                )
             } else {
                 Headers::default()
             };
@@ -226,25 +346,25 @@ impl StaticRoute {
             if was_string && headers.get_content_type().is_none() {
                 headers.append(
                     b"Content-Type",
-                    MimeType::TEXT_PLAIN_CHARSET_UTF8.slice(),
-                    // TODO(port): MimeType.Table.@"text/plain; charset=utf-8" — exact const name TBD in bun_http
+                    &bun_http_types::MimeType::TEXT.value,
                 );
             }
 
             // Generate ETag if not already present
             if headers.get(b"etag").is_none() {
                 if !blob.slice().is_empty() {
-                    ETag::append_to_headers(blob.slice(), &mut headers)?;
+                    append_etag_to_headers(blob.slice(), &mut headers);
                 }
             }
 
+            let cached_blob_size = blob.size();
             return Ok(Some(Box::into_raw(Box::new(StaticRoute {
                 ref_count: Cell::new(1),
                 blob,
-                cached_blob_size: blob.size(),
+                cached_blob_size,
                 has_content_disposition,
                 headers,
-                server: None,
+                server: Cell::new(None),
                 status_code: response.status_code(),
             }))));
         }
@@ -257,29 +377,36 @@ impl StaticRoute {
     /// `this` must point to a live heap-allocated `StaticRoute` produced by one of
     /// the constructors (write provenance intact). Mirrors Zig `*StaticRoute` receiver.
     pub unsafe fn on_head_request(this: *mut Self, req: AnyRequest, resp: AnyResponse) {
-        // Check If-None-Match for HEAD requests with 200 status
-        if (*this).status_code == 200 {
-            if Self::render_304_not_modified_if_none_match(this, req, resp) {
-                return;
+        // SAFETY: caller contract.
+        unsafe {
+            // Check If-None-Match for HEAD requests with 200 status
+            if (*this).status_code == 200 {
+                if Self::render_304_not_modified_if_none_match(this, &req, resp) {
+                    return;
+                }
             }
-        }
 
-        // Continue with normal HEAD request handling
-        req.set_yield(false);
-        Self::on_head(this, resp);
+            // Continue with normal HEAD request handling
+            let mut req = req;
+            req.set_yield(false);
+            Self::on_head(this, resp);
+        }
     }
 
     /// # Safety
     /// See [`on_head_request`].
     pub unsafe fn on_head(this: *mut Self, resp: AnyResponse) {
-        debug_assert!((*this).server.is_some());
-        (*this).ref_();
-        if let Some(server) = (*this).server {
-            server.on_pending_request();
-            resp.timeout(server.config().idle_timeout);
+        // SAFETY: caller contract.
+        unsafe {
+            debug_assert!((*this).server.get().is_some());
+            (*this).ref_();
+            if let Some(mut server) = (*this).server.get() {
+                server.on_pending_request();
+                resp.timeout(server.config().idle_timeout);
+            }
+            resp.corked(|| (*this).render_metadata_and_end(resp));
+            Self::on_response_complete(this, resp);
         }
-        resp.corked(|| (*this).render_metadata_and_end(resp));
-        Self::on_response_complete(this, resp);
     }
 
     fn render_metadata_and_end(&self, resp: AnyResponse) {
@@ -291,13 +418,36 @@ impl StaticRoute {
     /// # Safety
     /// See [`on_head_request`].
     pub unsafe fn on_request(this: *mut Self, req: AnyRequest, resp: AnyResponse) {
-        let method = Method::find(req.method()).unwrap_or(Method::GET);
-        if method == Method::GET {
-            Self::on_get(this, req, resp);
-        } else if method == Method::HEAD {
-            Self::on_head_request(this, req, resp);
-        } else {
-            // For other methods, use the original behavior
+        // SAFETY: caller contract.
+        unsafe {
+            let method = Method::find(req.method()).unwrap_or(Method::GET);
+            if method == Method::GET {
+                Self::on_get(this, req, resp);
+            } else if method == Method::HEAD {
+                Self::on_head_request(this, req, resp);
+            } else {
+                // For other methods, use the original behavior
+                let mut req = req;
+                req.set_yield(false);
+                Self::on(this, resp);
+            }
+        }
+    }
+
+    /// # Safety
+    /// See [`on_head_request`].
+    pub unsafe fn on_get(this: *mut Self, req: AnyRequest, resp: AnyResponse) {
+        // SAFETY: caller contract.
+        unsafe {
+            // Check If-None-Match for GET requests with 200 status
+            if (*this).status_code == 200 {
+                if Self::render_304_not_modified_if_none_match(this, &req, resp) {
+                    return;
+                }
+            }
+
+            // Continue with normal GET request handling
+            let mut req = req;
             req.set_yield(false);
             Self::on(this, resp);
         }
@@ -305,36 +455,24 @@ impl StaticRoute {
 
     /// # Safety
     /// See [`on_head_request`].
-    pub unsafe fn on_get(this: *mut Self, req: AnyRequest, resp: AnyResponse) {
-        // Check If-None-Match for GET requests with 200 status
-        if (*this).status_code == 200 {
-            if Self::render_304_not_modified_if_none_match(this, req, resp) {
+    pub unsafe fn on(this: *mut Self, resp: AnyResponse) {
+        // SAFETY: caller contract.
+        unsafe {
+            debug_assert!((*this).server.get().is_some());
+            (*this).ref_();
+            if let Some(mut server) = (*this).server.get() {
+                server.on_pending_request();
+                resp.timeout(server.config().idle_timeout);
+            }
+            let mut finished = false;
+            (*this).do_render_blob(resp, &mut finished);
+            if finished {
+                Self::on_response_complete(this, resp);
                 return;
             }
-        }
 
-        // Continue with normal GET request handling
-        req.set_yield(false);
-        Self::on(this, resp);
-    }
-
-    /// # Safety
-    /// See [`on_head_request`].
-    pub unsafe fn on(this: *mut Self, resp: AnyResponse) {
-        debug_assert!((*this).server.is_some());
-        (*this).ref_();
-        if let Some(server) = (*this).server {
-            server.on_pending_request();
-            resp.timeout(server.config().idle_timeout);
+            Self::to_async(this, resp);
         }
-        let mut finished = false;
-        (*this).do_render_blob(resp, &mut finished);
-        if finished {
-            Self::on_response_complete(this, resp);
-            return;
-        }
-
-        Self::to_async(this, resp);
     }
 
     /// # Safety
@@ -343,28 +481,44 @@ impl StaticRoute {
     /// than `&self`) preserves write provenance through the FFI userdata round-trip
     /// so the eventual `Box::from_raw` in `deref_` is sound.
     unsafe fn to_async(this: *mut Self, resp: AnyResponse) {
-        resp.on_aborted::<StaticRoute>(Self::on_aborted, this);
-        resp.on_writable::<StaticRoute>(Self::on_writable, this);
-        // TODO(port): exact bun_uws::AnyResponse callback registration API
+        resp.on_aborted(
+            |this: *mut StaticRoute, resp| {
+                // SAFETY: uws invokes with the same userdata pointer registered
+                // below, on the same thread, while the route holds a ref.
+                unsafe { Self::on_aborted(this, resp) }
+            },
+            this,
+        );
+        resp.on_writable(
+            |this: *mut StaticRoute, off, resp| {
+                // SAFETY: see on_aborted closure above.
+                unsafe { Self::on_writable(this, off, resp) }
+            },
+            this,
+        );
     }
 
     /// # Safety
     /// uws callback: `this` is the userdata registered in `to_async`.
     unsafe fn on_aborted(this: *mut Self, resp: AnyResponse) {
-        Self::on_response_complete(this, resp);
+        // SAFETY: caller contract.
+        unsafe { Self::on_response_complete(this, resp) };
     }
 
     /// # Safety
     /// `this` must be a live heap-allocated route with write provenance; may free
     /// `*this` via `deref_` when the refcount reaches zero.
     unsafe fn on_response_complete(this: *mut Self, resp: AnyResponse) {
-        resp.clear_aborted();
-        resp.clear_on_writable();
-        resp.clear_timeout();
-        if let Some(server) = (*this).server {
-            server.on_static_request_complete();
+        // SAFETY: caller contract.
+        unsafe {
+            resp.clear_aborted();
+            resp.clear_on_writable();
+            resp.clear_timeout();
+            if let Some(mut server) = (*this).server.get() {
+                server.on_static_request_complete();
+            }
+            Self::deref_(this);
         }
-        Self::deref_(this);
     }
 
     fn do_render_blob(&self, resp: AnyResponse, did_finish: &mut bool) {
@@ -388,16 +542,19 @@ impl StaticRoute {
     /// # Safety
     /// uws callback: `this` is the userdata registered in `to_async`.
     unsafe fn on_writable(this: *mut Self, write_offset: u64, resp: AnyResponse) -> bool {
-        if let Some(server) = (*this).server {
-            resp.timeout(server.config().idle_timeout);
-        }
+        // SAFETY: caller contract.
+        unsafe {
+            if let Some(server) = (*this).server.get() {
+                resp.timeout(server.config().idle_timeout);
+            }
 
-        if !(*this).on_writable_bytes(write_offset, resp) {
-            return false;
-        }
+            if !(*this).on_writable_bytes(write_offset, resp) {
+                return false;
+            }
 
-        Self::on_response_complete(this, resp);
-        true
+            Self::on_response_complete(this, resp);
+            true
+        }
     }
 
     fn on_writable_bytes(&self, write_offset: u64, resp: AnyResponse) -> bool {
@@ -412,15 +569,17 @@ impl StaticRoute {
 
     fn do_write_status(&self, status: u16, resp: AnyResponse) {
         match resp {
-            AnyResponse::SSL(r) => write_status::<true>(r, status),
-            AnyResponse::TCP(r) => write_status::<false>(r, status),
+            // SAFETY: variant pointers are non-null live uWS response handles
+            // for the duration of the request callback.
+            AnyResponse::SSL(r) => write_status::<true>(unsafe { &mut *r }, status),
+            AnyResponse::TCP(r) => write_status::<false>(unsafe { &mut *r }, status),
             AnyResponse::H3(r) => {
                 use std::io::Write;
                 let mut b = [0u8; 16];
                 let mut cursor: &mut [u8] = &mut b[..];
                 write!(cursor, "{}", status).expect("unreachable");
                 let written = 16 - cursor.len();
-                // SAFETY: `r` is a live `*mut h3::Response` held by `AnyResponse`.
+                // SAFETY: see above.
                 unsafe { (*r).write_status(&b[..written]) };
             }
         }
@@ -429,42 +588,62 @@ impl StaticRoute {
     fn do_write_headers(&self, resp: AnyResponse) {
         // Zig: switch (resp) { inline else => |s, tag| { ... } } — expanded per arm.
         let entries = self.headers.entries.slice();
-        let names: &[StringPointer] = entries.items_name();
-        let values: &[StringPointer] = entries.items_value();
+        // SAFETY: `HeaderEntry` columns are both `StringPointer` (see
+        // `bun_http_types::ETag::HeaderEntry` MultiArrayElement impl).
+        let names: &[StringPointer] =
+            unsafe { entries.items::<StringPointer>(HeaderEntryField::Name) };
+        let values: &[StringPointer] =
+            unsafe { entries.items::<StringPointer>(HeaderEntryField::Value) };
         let buf = self.headers.buf.as_slice();
 
+        #[inline]
+        fn sp_slice(ptr: &StringPointer, buf: &[u8]) -> *const [u8] {
+            &buf[ptr.offset as usize..][..ptr.length as usize]
+        }
+
         match resp {
+            // SAFETY: variant pointers are non-null live uWS response handles
+            // for the duration of the request callback.
             AnyResponse::SSL(s) => {
+                let s = unsafe { &mut *s };
                 debug_assert_eq!(names.len(), values.len());
                 for (name, value) in names.iter().zip(values) {
-                    s.write_header(name.slice(buf), value.slice(buf));
+                    // SAFETY: sp_slice returns a borrow of `buf` which is live.
+                    s.write_header(unsafe { &*sp_slice(name, buf) }, unsafe {
+                        &*sp_slice(value, buf)
+                    });
                 }
-                if let Some(srv) = self.server {
+                if let Some(srv) = self.server.get() {
                     if let Some(alt) = srv.h3_alt_svc() {
                         s.write_header(b"alt-svc", alt);
                     }
                 }
             }
             AnyResponse::TCP(s) => {
+                let s = unsafe { &mut *s };
                 debug_assert_eq!(names.len(), values.len());
                 for (name, value) in names.iter().zip(values) {
-                    s.write_header(name.slice(buf), value.slice(buf));
+                    s.write_header(unsafe { &*sp_slice(name, buf) }, unsafe {
+                        &*sp_slice(value, buf)
+                    });
                 }
-                if let Some(srv) = self.server {
+                if let Some(srv) = self.server.get() {
                     if let Some(alt) = srv.h3_alt_svc() {
                         s.write_header(b"alt-svc", alt);
                     }
                 }
             }
             AnyResponse::H3(s) => {
+                let s = unsafe { &mut *s };
                 debug_assert_eq!(names.len(), values.len());
                 for (name, value) in names.iter().zip(values) {
-                    s.write_header(name.slice(buf), value.slice(buf));
+                    s.write_header(unsafe { &*sp_slice(name, buf) }, unsafe {
+                        &*sp_slice(value, buf)
+                    });
                 }
                 // tag == .H3: skip alt-svc
             }
         }
-        // TODO(port): MultiArrayList .items(.name)/.items(.value) accessor names on bun_collections::MultiArrayList
     }
 
     fn render_bytes(&self, resp: AnyResponse, did_finish: &mut bool) {
@@ -488,12 +667,15 @@ impl StaticRoute {
     /// # Safety
     /// See [`on_head_request`].
     pub unsafe fn on_with_method(this: *mut Self, method: Method, resp: AnyResponse) {
-        match method {
-            Method::GET => Self::on(this, resp),
-            Method::HEAD => Self::on_head(this, resp),
-            _ => {
-                (*this).do_write_status(405, resp); // Method not allowed
-                resp.end_without_body(resp.should_close_connection());
+        // SAFETY: caller contract.
+        unsafe {
+            match method {
+                Method::GET => Self::on(this, resp),
+                Method::HEAD => Self::on_head(this, resp),
+                _ => {
+                    (*this).do_write_status(405, resp); // Method not allowed
+                    resp.end_without_body(resp.should_close_connection());
+                }
             }
         }
     }
@@ -501,33 +683,35 @@ impl StaticRoute {
     /// # Safety
     /// See [`on_head_request`]. May free `*this` via `on_response_complete` when it
     /// returns `true`.
-    unsafe fn render_304_not_modified_if_none_match(this: *mut Self, req: AnyRequest, resp: AnyResponse) -> bool {
-        let Some(if_none_match) = req.header(b"if-none-match") else {
-            return false;
-        };
-        let Some(etag) = (*this).headers.get(b"etag") else {
-            return false;
-        };
-        if if_none_match.is_empty() || etag.is_empty() {
-            return false;
-        }
+    unsafe fn render_304_not_modified_if_none_match(this: *mut Self, req: &AnyRequest, resp: AnyResponse) -> bool {
+        // SAFETY: caller contract.
+        unsafe {
+            let Some(if_none_match) = req.header(b"if-none-match") else {
+                return false;
+            };
+            let Some(etag) = (*this).headers.get(b"etag") else {
+                return false;
+            };
+            if if_none_match.is_empty() || etag.is_empty() {
+                return false;
+            }
 
-        if !ETag::if_none_match(etag, if_none_match) {
-            return false;
-        }
+            if !ETag::if_none_match(etag, if_none_match) {
+                return false;
+            }
 
-        // Return 304 Not Modified
-        req.set_yield(false);
-        (*this).ref_();
-        if let Some(server) = (*this).server {
-            server.on_pending_request();
-            resp.timeout(server.config().idle_timeout);
+            // Return 304 Not Modified
+            (*this).ref_();
+            if let Some(mut server) = (*this).server.get() {
+                server.on_pending_request();
+                resp.timeout(server.config().idle_timeout);
+            }
+            (*this).do_write_status(304, resp);
+            (*this).do_write_headers(resp);
+            resp.end_without_body(resp.should_close_connection());
+            Self::on_response_complete(this, resp);
+            true
         }
-        (*this).do_write_status(304, resp);
-        (*this).do_write_headers(resp);
-        resp.end_without_body(resp.should_close_connection());
-        Self::on_response_complete(this, resp);
-        true
     }
 }
 

@@ -821,8 +821,10 @@ impl WindowsNamedPipe {
     }
 
     pub fn set_timeout_in_milliseconds(&mut self, ms: c_uint) {
-        if self.event_loop_timer.state == EventLoopTimer::State::ACTIVE {
-            self.vm.timer.remove(&mut self.event_loop_timer);
+        if self.event_loop_timer.state == EventLoopTimerState::ACTIVE {
+            // self.vm.timer.remove(&mut self.event_loop_timer);
+            let _ = &mut self.event_loop_timer;
+            todo!("blocked_on: bun_jsc::VirtualMachine::timer");
         }
         self.current_timeout = ms;
 
@@ -832,8 +834,12 @@ impl WindowsNamedPipe {
         }
 
         // reschedule the timer
-        self.event_loop_timer.next = timespec::ms_from_now(timespec::Mock::AllowMockedTime, ms);
-        self.vm.timer.insert(&mut self.event_loop_timer);
+        let next = timespec::ms_from_now(bun_core::TimespecMockMode::AllowMockedTime, ms as i64);
+        // TODO(b2-blocked): `bun_event_loop` carries a local `Timespec` stub instead of
+        // `bun_core::Timespec`; same `{sec,nsec}` shape, so re-pack until the lower tier unifies.
+        self.event_loop_timer.next = ElTimespec { sec: next.sec, nsec: next.nsec };
+        // self.vm.timer.insert(&mut self.event_loop_timer);
+        todo!("blocked_on: bun_jsc::VirtualMachine::timer");
     }
 
     pub fn set_timeout(&mut self, seconds: c_uint) {

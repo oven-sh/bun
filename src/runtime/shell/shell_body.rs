@@ -5607,7 +5607,7 @@ pub mod testing_apis {
 
         if !lex_result.errors.is_empty() {
             let str = lex_result.combine_errors(&arena);
-            return Err(global.throw_pretty(format_args!("{}", bstr::BStr::new(str))));
+            return Err(global.throw_pretty("{}", format_args!("{}", bstr::BStr::new(str))));
         }
 
         let mut test_tokens: Vec<test::TestToken> =

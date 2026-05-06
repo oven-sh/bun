@@ -2346,12 +2346,21 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_fd(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        this.socket.fd().to_js_without_making_libuv_owned()
+        // PORT NOTE: Zig `FD.toJSWithoutMakingLibuvOwned` — on POSIX this is
+        // `jsNumber(fd)`; on Windows it's `jsNumber(uv_get_osfhandle?…)` via
+        // `FD.uv()`. `bun_core::Fd` lacks the JS bridge, so inline the
+        // numeric form here (uv() does the right per-platform thing).
+        let fd = this.socket.fd();
+        if fd == bun_core::Fd::INVALID {
+            JSValue::js_number(-1.0)
+        } else {
+            JSValue::js_number(fd.uv() as f64)
+        }
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_bytes_written(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(this.bytes_written + this.buffered_data_for_node_net.len as u64)
+        JSValue::js_number((this.bytes_written + this.buffered_data_for_node_net.len as u64) as f64)
     }
 
     /// In-place TCP→TLS upgrade. The underlying `us_socket_t` is

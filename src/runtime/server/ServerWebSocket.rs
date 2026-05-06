@@ -1383,10 +1383,10 @@ impl ServerWebSocket {
         &mut self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
-        // Since close() can lead to the close() callback being called, let's always ensure the `this` value is up to date.
-        _this_value: JSValue,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old(2);
+        // Since close() can lead to the close() callback being called, let's always ensure the `this` value is up to date.
+        let _this_value = callframe.this();
+        let args = callframe.arguments_old::<2>();
         bun_output::scoped_log!(WebSocketServer, "close()");
 
         if self.is_closed() {
@@ -1394,24 +1394,24 @@ impl ServerWebSocket {
         }
 
         let code: i32 = 'brk: {
-            if args.ptr(0).is_empty() || args.ptr(0).is_undefined() {
+            if args.ptr[0].is_empty() || args.ptr[0].is_undefined() {
                 // default exception code
                 break 'brk 1000;
             }
 
-            if !args.ptr(0).is_number() {
-                return global_this
-                    .throw_invalid_arguments("close requires a numeric code or undefined");
+            if !args.ptr[0].is_number() {
+                return Err(global_this
+                    .throw_invalid_arguments("close requires a numeric code or undefined"));
             }
 
-            break 'brk args.ptr(0).coerce_i32(global_this)?;
+            break 'brk args.ptr[0].coerce_to_i32(global_this)?;
         };
 
         let message_value: ZigStringSlice = 'brk: {
-            if args.ptr(1).is_empty() || args.ptr(1).is_undefined() {
+            if args.ptr[1].is_empty() || args.ptr[1].is_undefined() {
                 break 'brk ZigStringSlice::empty();
             }
-            break 'brk args.ptr(1).to_slice_or_null(global_this)?;
+            break 'brk args.ptr[1].to_slice_or_null(global_this)?;
         };
 
         self.flags.set_closed(true);

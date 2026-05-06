@@ -1594,7 +1594,9 @@ where
 
         if self.blob.needs_to_read_file() {
             if !self.flags.has_sendfile_ctx() {
-                if let AnyBlob::Blob(b) = self.blob {
+                if let AnyBlob::Blob(b) =
+                    core::mem::replace(&mut self.blob, AnyBlob::InternalBlob(Default::default()))
+                {
                     self.do_sendfile(b);
                 }
             }

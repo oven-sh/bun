@@ -4427,7 +4427,10 @@ impl Resolver {
     ) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
         if arguments.is_empty() {
-            return global_this.throw_not_enough_arguments("setLocalAddress", 1, 0);
+            // TODO(port): blocked_on bun_jsc::JSGlobalObject::throw_not_enough_arguments (gated)
+            return Err(global_this.throw(format_args!(
+                "Not enough arguments to 'setLocalAddress'. Expected 1, got 0."
+            )));
         }
 
         let first_af = Self::set_channel_local_address(channel, global_this, arguments[0])?;
@@ -4443,8 +4446,8 @@ impl Resolver {
         }
 
         match first_af {
-            x if x == c_ares::AF::INET => global_this.throw_invalid_arguments("Cannot specify two IPv4 addresses.", &[]),
-            x if x == c_ares::AF::INET6 => global_this.throw_invalid_arguments("Cannot specify two IPv6 addresses.", &[]),
+            x if x == c_ares::AF::INET => Err(global_this.throw_invalid_arguments("Cannot specify two IPv4 addresses.")),
+            x if x == c_ares::AF::INET6 => Err(global_this.throw_invalid_arguments("Cannot specify two IPv6 addresses.")),
             _ => unreachable!(),
         }
     }

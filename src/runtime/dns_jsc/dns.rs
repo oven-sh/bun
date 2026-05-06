@@ -1591,43 +1591,47 @@ impl<T: CAresRecordType> CAresLookup<T> {
         let _free = scopeguard::guard(result, |r| {
             if let Some(r) = r {
                 // SAFETY: r is the c-ares-allocated reply; we own it on this path.
-                T::destroy(r);
+                unsafe { T::destroy(r) };
             }
         });
 
-        // SAFETY: JSGlobalObject outlives the request.
-        let global_this = &*(*this).global_this;
-        if let Some(err) = err_ {
-            err.to_deferred(syscall, Some(&(*this).name), &mut (*this).promise)
-                .reject_later(global_this);
-            Self::destroy(this);
-            return;
-        }
-        let Some(node) = result else {
-            c_ares::Error::ENOTFOUND
-                .to_deferred(syscall, Some(&(*this).name), &mut (*this).promise)
-                .reject_later(global_this);
-            Self::destroy(this);
-            return;
-        };
+        // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
+        unsafe {
+            let global_this = &*(*this).global_this;
+            if let Some(err) = err_ {
+                err.to_deferred(syscall, Some(&(*this).name), &mut (*this).promise)
+                    .reject_later(global_this);
+                Self::destroy(this);
+                return;
+            }
+            let Some(node) = result else {
+                c_ares::Error::ENOTFOUND
+                    .to_deferred(syscall, Some(&(*this).name), &mut (*this).promise)
+                    .reject_later(global_this);
+                Self::destroy(this);
+                return;
+            };
 
-        // SAFETY: node is a valid c-ares reply for the callback's duration; freed by `_free` guard.
-        let array = (*node).to_js_response(global_this, T::TYPE_NAME)
-            .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
-        Self::on_complete(this, array);
+            // node is a valid c-ares reply for the callback's duration; freed by `_free` guard.
+            let array = (*node).to_js_response(global_this, T::TYPE_NAME)
+                .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+            Self::on_complete(this, array);
+        }
     }
 
     /// SAFETY: see `process_resolve`.
     pub unsafe fn on_complete(this: *mut Self, result: JSValue) {
-        let promise = core::mem::take(&mut (*this).promise);
-        // SAFETY: JSGlobalObject outlives the request.
-        let global_this = &*(*this).global_this;
-        let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
-        if let Some(resolver) = (*this).resolver.as_ref() {
-            // SAFETY: IntrusiveRc holds a live ref; request_completed mutates pending_requests counter only.
-            (*resolver.data.as_ptr()).request_completed();
+        // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
+        unsafe {
+            let mut promise = core::mem::take(&mut (*this).promise);
+            let global_this = &*(*this).global_this;
+            let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
+            if let Some(resolver) = (*this).resolver.as_ref() {
+                // IntrusiveRc holds a live ref; request_completed mutates pending_requests counter only.
+                (*resolver.data.as_ptr()).request_completed();
+            }
+            Self::destroy(this);
         }
-        Self::destroy(this);
     }
 
     /// SAFETY: `this` must point at a live node; if `(*this).allocated`, it must be the
@@ -1687,25 +1691,29 @@ impl DNSLookup {
     /// freed via `Self::destroy`). No `&mut` may alias `*this` across this call.
     pub unsafe fn on_complete_native(this: *mut Self, result: GetAddrInfoResultAny) {
         bun_output::scoped_log!(DNSLookup, "onCompleteNative");
-        // SAFETY: JSGlobalObject outlives the request.
-        let array = super::options_jsc::result_any_to_js(&result, &*(*this).global_this)
-            .ok()
-            .flatten()
-            .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
-        Self::on_complete_with_array(this, array);
+        // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
+        unsafe {
+            let array = super::options_jsc::result_any_to_js(&result, &*(*this).global_this)
+                .ok()
+                .flatten()
+                .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+            Self::on_complete_with_array(this, array);
+        }
     }
 
     /// SAFETY: see `on_complete_native`.
     pub unsafe fn process_get_addr_info_native(this: *mut Self, status: i32, result: *mut libc::addrinfo) {
         bun_output::scoped_log!(DNSLookup, "processGetAddrInfoNative: status={}", status);
-        if let Some(err) = c_ares::Error::init_eai(status) {
-            // SAFETY: JSGlobalObject outlives the request.
-            err.to_deferred("getaddrinfo", None, &mut (*this).promise)
-                .reject_later(&*(*this).global_this);
-            Self::destroy(this);
-            return;
+        // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
+        unsafe {
+            if let Some(err) = c_ares::Error::init_eai(status) {
+                err.to_deferred("getaddrinfo", None, &mut (*this).promise)
+                    .reject_later(&*(*this).global_this);
+                Self::destroy(this);
+                return;
+            }
+            Self::on_complete_native(this, GetAddrInfoResultAny::Addrinfo(result));
         }
-        Self::on_complete_native(this, GetAddrInfoResultAny::Addrinfo(result));
     }
 
     /// SAFETY: see `on_complete_native`.
@@ -1722,51 +1730,58 @@ impl DNSLookup {
         let _free = scopeguard::guard(result, |r| {
             if let Some(r) = r {
                 // SAFETY: r is the c-ares-allocated AddrInfo; we own it on this path.
-                c_ares::AddrInfo::destroy(r);
+                unsafe { c_ares::AddrInfo::destroy(r) };
             }
         });
 
-        // SAFETY: JSGlobalObject outlives the request.
-        let global_this = &*(*this).global_this;
-        if let Some(err) = err_ {
-            err.to_deferred("getaddrinfo", None, &mut (*this).promise)
-                .reject_later(global_this);
-            Self::destroy(this);
-            return;
-        }
+        // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
+        unsafe {
+            let global_this = &*(*this).global_this;
+            if let Some(err) = err_ {
+                err.to_deferred("getaddrinfo", None, &mut (*this).promise)
+                    .reject_later(global_this);
+                Self::destroy(this);
+                return;
+            }
 
-        // SAFETY: `r` is the c-ares-allocated AddrInfo valid for the callback's duration.
-        let Some(r) = result.filter(|r| !(**r).node.is_null()) else {
-            c_ares::Error::ENOTFOUND
-                .to_deferred("getaddrinfo", None, &mut (*this).promise)
-                .reject_later(global_this);
-            Self::destroy(this);
-            return;
-        };
-        Self::on_complete(this, r);
+            // `r` is the c-ares-allocated AddrInfo valid for the callback's duration.
+            let Some(r) = result.filter(|r| !(**r).node.is_null()) else {
+                c_ares::Error::ENOTFOUND
+                    .to_deferred("getaddrinfo", None, &mut (*this).promise)
+                    .reject_later(global_this);
+                Self::destroy(this);
+                return;
+            };
+            Self::on_complete(this, r);
+        }
     }
 
     /// SAFETY: see `on_complete_native`.
     pub unsafe fn on_complete(this: *mut Self, result: *mut c_ares::AddrInfo) {
         bun_output::scoped_log!(DNSLookup, "onComplete");
-        // SAFETY: result is a live c-ares AddrInfo owned by the caller's scopeguard.
-        let array = super::cares_jsc::addr_info_to_js_array(&mut *result, &*(*this).global_this)
-            .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
-        Self::on_complete_with_array(this, array);
+        // SAFETY: caller contract — `this` is live; result is a live c-ares AddrInfo
+        // owned by the caller's scopeguard; JSGlobalObject outlives the request.
+        unsafe {
+            let array = super::cares_jsc::addr_info_to_js_array(&mut *result, &*(*this).global_this)
+                .unwrap_or(JSValue::ZERO); // TODO: properly propagate exception upwards
+            Self::on_complete_with_array(this, array);
+        }
     }
 
     /// SAFETY: see `on_complete_native`.
     pub unsafe fn on_complete_with_array(this: *mut Self, result: JSValue) {
         bun_output::scoped_log!(DNSLookup, "onCompleteWithArray");
-        let promise = core::mem::take(&mut (*this).promise);
-        // SAFETY: JSGlobalObject outlives the request.
-        let global_this = &*(*this).global_this;
-        let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
-        if let Some(resolver) = (*this).resolver.as_ref() {
-            // SAFETY: IntrusiveRc holds a live ref; request_completed mutates pending_requests counter only.
-            (*resolver.data.as_ptr()).request_completed();
+        // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
+        unsafe {
+            let mut promise = core::mem::take(&mut (*this).promise);
+            let global_this = &*(*this).global_this;
+            let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
+            if let Some(resolver) = (*this).resolver.as_ref() {
+                // IntrusiveRc holds a live ref; request_completed mutates pending_requests counter only.
+                (*resolver.data.as_ptr()).request_completed();
+            }
+            Self::destroy(this);
         }
-        Self::destroy(this);
     }
 
     /// SAFETY: `this` must point at a live node; if `(*this).allocated`, it must be the
@@ -2341,9 +2356,10 @@ pub mod internal {
             if (*req).key.port > 0 {
                 use std::io::Write;
                 let n = {
+                    let total = service_buf.len();
                     let mut cursor = &mut service_buf[..];
                     write!(cursor, "{}", (*req).key.port).expect("unreachable");
-                    service_buf.len() - cursor.len()
+                    total - cursor.len()
                 };
                 service_buf[n] = 0;
                 service_buf.as_ptr() as *const c_char
@@ -2397,9 +2413,10 @@ pub mod internal {
             if (*req).key.port > 0 {
                 use std::io::Write;
                 let n = {
+                    let total = service_buf.len();
                     let mut cursor = &mut service_buf[..];
                     write!(cursor, "{}", (*req).key.port).expect("unreachable");
-                    service_buf.len() - cursor.len()
+                    total - cursor.len()
                 };
                 service_buf[n] = 0;
                 service_buf.as_ptr() as *const c_char
@@ -2463,9 +2480,10 @@ pub mod internal {
                     let service: *const c_char = if (*req).key.port > 0 {
                         use std::io::Write;
                         let n = {
+                            let total = service_buf.len();
                             let mut cursor = &mut service_buf[..];
                             write!(cursor, "{}", (*req).key.port).expect("unreachable");
-                            service_buf.len() - cursor.len()
+                            total - cursor.len()
                         };
                         service_buf[n] = 0;
                         service_buf.as_ptr() as *const c_char
@@ -4459,17 +4477,19 @@ impl Resolver {
                 buf[size] = b']';
                 use std::io::Write;
                 let port_len = {
+                    let avail = buf.len() - (size + 1);
                     let mut cursor = &mut buf[size + 1..];
                     write!(cursor, ":{}", port).expect("unreachable");
-                    buf.len() - (size + 1) - cursor.len()
+                    avail - cursor.len()
                 };
                 values.put_index(global_this, i, bun_str::String::borrow_utf8(&buf[0..size + 1 + port_len]).to_js(global_this)?)?;
             } else {
                 use std::io::Write;
                 let port_len = {
+                    let avail = buf.len() - size;
                     let mut cursor = &mut buf[size..];
                     write!(cursor, ":{}", port).expect("unreachable");
-                    buf.len() - size - cursor.len()
+                    avail - cursor.len()
                 };
                 values.put_index(global_this, i, bun_str::String::borrow_utf8(&buf[1..size + port_len]).to_js(global_this)?)?;
             }

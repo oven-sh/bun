@@ -1492,7 +1492,7 @@ impl<S: GraphSide> IncrementalGraph<S> {
                 } else {
                     None
                 };
-                let cached = *ctx.get_cached_index(S::SIDE, import_record.source_index.into());
+                let cached = *ctx.get_cached_index(S::SIDE, import_record.source_index);
                 if cached.raw() != u32::MAX {
                     break 'brk (FileIndex::init(cached.raw()), kind);
                 } else if mode == EdgeAttachmentMode::Css {
@@ -1609,7 +1609,7 @@ impl<S: GraphSide> IncrementalGraph<S> {
                     let key = import_record.path.key_for_incremental_graph();
                     let imported_file_index: FileIndex = 'brk: {
                         if import_record.source_index.is_valid() {
-                            let cached = *ctx.get_cached_index(S::SIDE, import_record.source_index.into());
+                            let cached = *ctx.get_cached_index(S::SIDE, import_record.source_index);
                             if cached.raw() != u32::MAX {
                                 break 'brk FileIndex::init(cached.raw());
                             }

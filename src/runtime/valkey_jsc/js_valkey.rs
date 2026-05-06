@@ -1563,7 +1563,7 @@ impl JSValkeyClient {
     pub fn finalize(this: *mut Self) {
         // SAFETY: called by codegen finalize on the mutator thread.
         let this = unsafe { &mut *this };
-        let _d = scopeguard::guard((), |_| this.deref());
+        let _d = deref_guard(this);
 
         this.stop_timers();
         this.this_value.finalize();
@@ -1592,41 +1592,36 @@ impl JSValkeyClient {
     fn connect(&mut self) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         self.client.flags.needs_to_open_socket = false;
-        let vm = self.client.vm;
 
         self.ref_();
-        let _d = scopeguard::guard((), |_| self.deref());
+        let _d = deref_guard(self);
 
         let is_tls = self.client.tls != valkey::TLS::None;
-        let group = if is_tls {
-            vm.rare_data().valkey_group(vm, true)
-        } else {
-            vm.rare_data().valkey_group(vm, false)
+        // TODO(b2-blocked): `vm.rare_data().valkey_group(vm, ssl)` and
+        // `default_client_ssl_ctx()` / `ssl_ctx_cache()` exist on
+        // `bun_jsc::rare_data::RareData` but with const-generic / mut-receiver
+        // shapes that don't fit the type-erased `vm: *mut c_void` here. Restore
+        // once `ValkeyClient.vm` is typed.
+        let group: *mut uws::SocketGroup = {
+            let _ = is_tls;
+            todo!("blocked_on: bun_jsc::rare_data::RareData::valkey_group")
         };
+        #[allow(unreachable_code)]
         let ssl_ctx: Option<*mut uws::SslCtx> = match &mut self.client.tls {
             valkey::TLS::None => None,
-            valkey::TLS::Enabled => Some(vm.rare_data().default_client_ssl_ctx()),
+            valkey::TLS::Enabled => {
+                todo!("blocked_on: bun_jsc::rare_data::RareData::default_client_ssl_ctx")
+            }
             valkey::TLS::Custom(custom) => 'brk: {
                 // Reuse across reconnect — the SSL_CTX is the only thing the
                 // old `_socket_ctx` cache existed to preserve.
                 if self._secure.is_none() {
-                    let mut err = uws::create_bun_socket_error_t::None;
+                    let mut err = uws::create_bun_socket_error_t::none;
                     // Per-VM weak cache: a `duplicate()`'d client (or any
                     // other client with the same config) hits the same
                     // `SSL_CTX*` instead of rebuilding.
-                    match vm.rare_data().ssl_ctx_cache().get_or_create(custom, &mut err) {
-                        Some(ctx) => self._secure = Some(ctx),
-                        None => {
-                            self.client.flags.enable_auto_reconnect = false;
-                            self.client_fail(
-                                b"Failed to create TLS context",
-                                protocol::RedisError::ConnectionClosed,
-                            )?;
-                            self.client.on_valkey_close()?;
-                            self.client.status = valkey::Status::Disconnected;
-                            return Ok(());
-                        }
-                    }
+                    let _ = (custom, &mut err);
+                    todo!("blocked_on: bun_jsc::rare_data::RareData::ssl_ctx_cache");
                 }
                 break 'brk Some(self._secure.unwrap());
             }
@@ -1635,17 +1630,18 @@ impl JSValkeyClient {
         self.ref_();
         // Balance the ref above if connect() throws — the caller (e.g. send())
         // only knows to clean up its own state, not the keep-alive ref.
-        let errdefer_deref = scopeguard::guard((), |_| self.deref());
+        let self_ptr = self as *mut Self;
+        let errdefer_deref = scopeguard::guard(self_ptr, |p| unsafe { (*p).deref() });
         self.client.status = valkey::Status::Connecting;
         self.update_poll_ref();
-        let errdefer_status = scopeguard::guard((), |_| {
-            self.client.status = valkey::Status::Disconnected;
-            self.update_poll_ref();
+        let errdefer_status = scopeguard::guard(self_ptr, |p| unsafe {
+            (*p).client.status = valkey::Status::Disconnected;
+            (*p).update_poll_ref();
         });
         self.client.socket = self
             .client
             .address
-            .connect(&mut self.client, group, ssl_ctx, is_tls)?;
+            .connect(self_ptr, group, ssl_ctx, is_tls)?;
         // Disarm errdefers on success.
         scopeguard::ScopeGuard::into_inner(errdefer_status);
         scopeguard::ScopeGuard::into_inner(errdefer_deref);
@@ -1673,16 +1669,18 @@ impl JSValkeyClient {
                     )
                     .to_js();
                 let promise = JSPromise::create(global_this);
-                let event_loop = self.client.vm.event_loop();
-                event_loop.enter();
-                let _exit = scopeguard::guard((), |_| event_loop.exit());
-                promise.reject(global_this, err_value)?;
+                let event_loop = self.vm().event_loop();
+                // SAFETY: VM-owned; non-null on the JS thread.
+                unsafe { (*event_loop).enter() };
+                let _exit = scopeguard::guard(event_loop, |el| unsafe { (*el).exit() });
+                promise.reject(global_this, Ok(err_value))?;
                 return Ok(promise);
             }
             self.reset_connection_timeout();
         }
 
-        let _update = scopeguard::guard((), |_| self.update_poll_ref());
+        let self_ptr = self as *mut Self;
+        let _update = scopeguard::guard(self_ptr, |p| unsafe { (*p).update_poll_ref() });
         self.client.send(global_this, command)
     }
 
@@ -1696,13 +1694,13 @@ impl JSValkeyClient {
         memory_cost += self.client.read_buffer.byte_list.cap as usize;
 
         // Add queue sizes
-        memory_cost += self.client.in_flight.count
+        memory_cost += self.client.in_flight.readable_length()
             * core::mem::size_of::<super::valkey_command::PromisePair>();
         for command in self.client.queue.readable_slice(0) {
             memory_cost += command.serialized_data.len();
         }
-        memory_cost +=
-            self.client.queue.count * core::mem::size_of::<super::valkey_command::Entry>();
+        memory_cost += self.client.queue.readable_length()
+            * core::mem::size_of::<super::valkey_command::Entry>();
         memory_cost
     }
 

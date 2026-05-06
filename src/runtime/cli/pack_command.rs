@@ -1483,6 +1483,69 @@ impl ArchivePtrExt for *mut Archive {
     fn error_string(self) -> &'static [u8] {
         Archive::error_string(self)
     }
+    #[inline]
+    fn read_support_format_tar(self) -> ArchiveResult {
+        // SAFETY: `self` came from `Archive::read_new()`.
+        unsafe { &*self }.read_support_format_tar()
+    }
+    #[inline]
+    fn read_support_format_gnutar(self) -> ArchiveResult {
+        // SAFETY: `self` came from `Archive::read_new()`.
+        unsafe { &*self }.read_support_format_gnutar()
+    }
+    #[inline]
+    fn read_support_filter_gzip(self) -> ArchiveResult {
+        // SAFETY: `self` came from `Archive::read_new()`.
+        unsafe { &*self }.read_support_filter_gzip()
+    }
+    #[inline]
+    fn read_set_options(self, opts: &core::ffi::CStr) -> ArchiveResult {
+        // SAFETY: `self` came from `Archive::read_new()`.
+        unsafe { &*self }.read_set_options(opts)
+    }
+    #[inline]
+    fn read_open_memory(self, buf: &[u8]) -> ArchiveResult {
+        // SAFETY: `self` came from `Archive::read_new()`; `buf` outlives the archive.
+        unsafe { &*self }.read_open_memory(buf)
+    }
+    #[inline]
+    fn read_next_header(self, entry: &mut *mut ArchiveEntry) -> ArchiveResult {
+        // SAFETY: `self` came from `Archive::read_new()`.
+        unsafe { &*self }.read_next_header(entry)
+    }
+    #[inline]
+    fn read_data(self, buf: &mut [u8]) -> isize {
+        // SAFETY: `self` came from `Archive::read_new()`.
+        unsafe { &*self }.read_data(buf)
+    }
+    #[inline]
+    fn read_close(self) -> ArchiveResult {
+        // SAFETY: `self` came from `Archive::read_new()`.
+        unsafe { &*self }.read_close()
+    }
+    #[inline]
+    fn read_free(self) -> ArchiveResult {
+        // SAFETY: `self` came from `Archive::read_new()`; not used after.
+        unsafe { &*self }.read_free()
+    }
+}
+
+/// Local `@tagName` for `bun_core::FileKind` (Zig `std.fs.File.Kind` tag names).
+fn file_kind_tag(kind: bun_core::FileKind) -> &'static str {
+    use bun_core::FileKind as K;
+    match kind {
+        K::BlockDevice => "block_device",
+        K::CharacterDevice => "character_device",
+        K::Directory => "directory",
+        K::NamedPipe => "named_pipe",
+        K::SymLink => "sym_link",
+        K::File => "file",
+        K::UnixDomainSocket => "unix_domain_socket",
+        K::Whiteout => "whiteout",
+        K::Door => "door",
+        K::EventPort => "event_port",
+        K::Unknown => "unknown",
+    }
 }
 
 /// Construct a `BufferedFileReader` (no `Default`/`new` upstream because
@@ -3163,7 +3226,7 @@ fn is_special_file_or_variant(filename: &[u8], name: &'static [u8]) -> bool {
 
 pub mod bindings {
     use super::*;
-    use bun_jsc::{CallFrame, JSArray, JSGlobalObject, JSObject, JSValue, JsResult};
+    use bun_jsc::{CallFrame, JSArray, JSGlobalObject, JSObject, JSValue, JsResult, StringJsc as _, bun_string_jsc};
     use bun_str::String as BunString;
 
     #[bun_jsc::host_fn]
@@ -3213,11 +3276,11 @@ pub mod bindings {
         let mut sha512_digest: [u8; sha::SHA512::DIGEST] = [0; sha::SHA512::DIGEST];
         let mut sha512 = sha::SHA512::init();
         sha512.update(&tarball);
-        sha512.final_(&mut sha512_digest);
+        sha512.r#final(&mut sha512_digest);
         let mut base64_buf = vec![0u8; bun_base64::encode_len_from_size(sha::SHA512::DIGEST)];
         // TODO(port): comptime calcSize → const fn; using runtime helper
         let encode_count = bun_base64::encode(&mut base64_buf, &sha512_digest);
-        let integrity_value = BunString::create_utf8_for_js(global, &base64_buf[..encode_count])?;
+        let integrity_value = bun_string_jsc::create_utf8_for_js(global, &base64_buf[..encode_count])?;
 
         struct EntryInfo {
             pathname: BunString,
@@ -3232,33 +3295,33 @@ pub mod bindings {
 
         match archive.read_support_format_tar() {
             ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
-                return global.throw("failed to support tar: {}", format_args!("{}", bstr::BStr::new(archive.error_string())));
+                return Err(global.throw(format_args!("failed to support tar: {}", bstr::BStr::new(archive.error_string()))));
             }
             _ => {}
         }
         match archive.read_support_format_gnutar() {
             ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
-                return global.throw("failed to support gnutar: {}", format_args!("{}", bstr::BStr::new(archive.error_string())));
+                return Err(global.throw(format_args!("failed to support gnutar: {}", bstr::BStr::new(archive.error_string()))));
             }
             _ => {}
         }
         match archive.read_support_filter_gzip() {
             ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
-                return global.throw("failed to support gzip compression: {}", format_args!("{}", bstr::BStr::new(archive.error_string())));
+                return Err(global.throw(format_args!("failed to support gzip compression: {}", bstr::BStr::new(archive.error_string()))));
             }
             _ => {}
         }
 
-        match archive.read_set_options(zstr_lit(b"read_concatenated_archives\0")) {
+        match archive.read_set_options(c"read_concatenated_archives") {
             ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
-                return global.throw("failed to set read_concatenated_archives option: {}", format_args!("{}", bstr::BStr::new(archive.error_string())));
+                return Err(global.throw(format_args!("failed to set read_concatenated_archives option: {}", bstr::BStr::new(archive.error_string()))));
             }
             _ => {}
         }
 
         match archive.read_open_memory(&tarball) {
             ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
-                return global.throw("failed to open archive in memory: {}", format_args!("{}", bstr::BStr::new(archive.error_string())));
+                return Err(global.throw(format_args!("failed to open archive in memory: {}", bstr::BStr::new(archive.error_string()))));
             }
             _ => {}
         }
@@ -3276,11 +3339,10 @@ pub mod bindings {
                     continue;
                 }
                 ArchiveResult::Failed | ArchiveResult::Fatal => {
-                    return global.throw(
+                    return Err(global.throw(format_args!(
                         "failed to read archive header: {}",
-                        format_args!("{}", bstr::BStr::new(Archive::error_string(archive.cast()))),
-                        // TODO(port): @ptrCast(archive)
-                    );
+                        bstr::BStr::new(archive.error_string()),
+                    )));
                 }
                 _ => {
                     // SAFETY: read_next_header set archive_entry on success
@@ -3300,7 +3362,7 @@ pub mod bindings {
 
                     let mut entry_info = EntryInfo {
                         pathname: pathname_string,
-                        kind: BunString::static_(<&'static str>::from(kind)),
+                        kind: BunString::static_(file_kind_tag(kind)),
                         perm,
                         size: None,
                         contents: None,
@@ -3313,14 +3375,11 @@ pub mod bindings {
                         let read = archive.read_data(&mut read_buf);
                         if read < 0 {
                             let pathname_utf8 = entry_info.pathname.to_utf8();
-                            return global.throw(
+                            return Err(global.throw(format_args!(
                                 "failed to read archive entry \"{}\": {}",
-                                format_args!(
-                                    "{}: {}",
-                                    bstr::BStr::new(pathname_utf8.slice()),
-                                    bstr::BStr::new(Archive::error_string(archive.cast())),
-                                ),
-                            );
+                                bstr::BStr::new(pathname_utf8.slice()),
+                                bstr::BStr::new(archive.error_string()),
+                            )));
                         }
                         read_buf.truncate(usize::try_from(read).unwrap());
                         entry_info.contents = Some(BunString::clone_utf8(&read_buf));
@@ -3335,13 +3394,13 @@ pub mod bindings {
 
         match archive.read_close() {
             ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
-                return global.throw("failed to close read archive: {}", format_args!("{}", bstr::BStr::new(archive.error_string())));
+                return Err(global.throw(format_args!("failed to close read archive: {}", bstr::BStr::new(archive.error_string()))));
             }
             _ => {}
         }
         match archive.read_free() {
             ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
-                return global.throw("failed to close read archive: {}", format_args!("{}", bstr::BStr::new(archive.error_string())));
+                return Err(global.throw(format_args!("failed to close read archive: {}", bstr::BStr::new(archive.error_string()))));
             }
             _ => {}
         }
@@ -3350,20 +3409,20 @@ pub mod bindings {
 
         for (i, entry) in entries_info.iter().enumerate() {
             let obj = JSValue::create_empty_object(global, 0);
-            obj.put(global, "pathname", entry.pathname.to_js(global)?);
-            obj.put(global, "kind", entry.kind.to_js(global)?);
-            obj.put(global, "perm", JSValue::js_number(entry.perm));
+            obj.put(global, b"pathname", entry.pathname.to_js(global)?);
+            obj.put(global, b"kind", entry.kind.to_js(global)?);
+            obj.put(global, b"perm", JSValue::js_number(f64::from(entry.perm)));
             if let Some(contents) = &entry.contents {
-                obj.put(global, "contents", contents.to_js(global)?);
+                obj.put(global, b"contents", contents.to_js(global)?);
             }
             entries.put_index(global, u32::try_from(i).unwrap(), obj)?;
         }
 
         let result = JSValue::create_empty_object(global, 4);
-        result.put(global, "entries", entries);
-        result.put(global, "size", JSValue::js_number(tarball.len()));
-        result.put(global, "shasum", shasum_str.to_js(global)?);
-        result.put(global, "integrity", integrity_value);
+        result.put(global, b"entries", entries);
+        result.put(global, b"size", JSValue::js_number(tarball.len() as f64));
+        result.put(global, b"shasum", shasum_str.to_js(global)?);
+        result.put(global, b"integrity", integrity_value);
 
         Ok(result)
     }

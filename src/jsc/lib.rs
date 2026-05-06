@@ -1598,6 +1598,32 @@ impl JSGlobalObject {
         }
         Ok(Some(result))
     }
+
+    /// `runOnLoadPlugins(namespace, path, target)` (JSGlobalObject.zig:273) —
+    /// invokes the C++-side onLoad plugin chain (`Bun__runOnLoadPlugins`).
+    /// Empty namespace is passed as null.
+    pub fn run_on_load_plugins(
+        &self,
+        namespace: bun_string::String,
+        path: bun_string::String,
+        target: BunPluginTarget,
+    ) -> JsResult<Option<JSValue>> {
+        crate::mark_binding();
+        let ns_ptr: *const bun_string::String = if namespace.length() > 0 {
+            &namespace
+        } else {
+            core::ptr::null()
+        };
+        let result = host_fn::from_js_host_call(self, || {
+            // SAFETY: `self` is live; the `bun.String`s are borrowed for the
+            // call (C++ clones what it needs).
+            unsafe { Bun__runOnLoadPlugins(self.as_ptr(), ns_ptr, &path, target) }
+        })?;
+        if result.is_undefined_or_null() {
+            return Ok(None);
+        }
+        Ok(Some(result))
+    }
 }
 
 unsafe extern "C" {
@@ -1606,6 +1632,12 @@ unsafe extern "C" {
         namespace: *const bun_string::String,
         path: *const bun_string::String,
         source: *const bun_string::String,
+        target: BunPluginTarget,
+    ) -> JSValue;
+    fn Bun__runOnLoadPlugins(
+        global: *mut JSGlobalObject,
+        namespace: *const bun_string::String,
+        path: *const bun_string::String,
         target: BunPluginTarget,
     ) -> JSValue;
     fn Bun__ErrorCode__determineSpecificType(

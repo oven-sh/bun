@@ -397,7 +397,7 @@ pub extern "C" fn Bun__transpileFile(
     is_commonjs_require: bool,
     force_loader_type: u8, // bun.schema.api.Loader — passed as raw u8 across the cycle
 ) -> *mut c_void {
-    jsc::mark_binding(core::panic::Location::caller());
+    jsc::mark_binding();
     let Some(hooks) = loader_hooks() else {
         // SAFETY: C++ passed a valid out-param.
         unsafe {
@@ -433,7 +433,7 @@ pub extern "C" fn Bun__fetchBuiltinModule(
     referrer: *const bun_string::String,
     ret: *mut ErrorableResolvedSource,
 ) -> bool {
-    jsc::mark_binding(core::panic::Location::caller());
+    jsc::mark_binding();
     // SAFETY: C++ passed valid pointers; `jsc_vm` is the live per-thread VM.
     let (jsc_vm, specifier, referrer, ret) =
         unsafe { (&mut *jsc_vm, &*specifier, &*referrer, &mut *ret) };
@@ -468,7 +468,7 @@ pub extern "C" fn Bun__resolveAndFetchBuiltinModule(
     specifier: *mut bun_string::String,
     ret: *mut ErrorableResolvedSource,
 ) -> bool {
-    jsc::mark_binding(core::panic::Location::caller());
+    jsc::mark_binding();
     // SAFETY: C++ passed valid pointers; `jsc_vm` is the live per-thread VM.
     let specifier = unsafe { &*specifier };
     let spec_utf8 = specifier.to_utf8();
@@ -499,7 +499,7 @@ pub extern "C" fn Bun__resolveEmbeddedNodeFile(
     vm: *mut VirtualMachine,
     in_out_str: *mut bun_string::String,
 ) -> bool {
-    jsc::mark_binding(core::panic::Location::caller());
+    jsc::mark_binding();
     // SAFETY: C++ passed the live per-thread VM.
     if unsafe { (*vm).standalone_module_graph.is_none() } {
         return false;
@@ -594,7 +594,8 @@ pub extern "C" fn Bun__getDefaultLoader(
     str: &bun_string::String,
 ) -> bun_options_types::schema::api::Loader {
     use bun_options_types::schema::api;
-    let jsc_vm = global.bun_vm();
+    // SAFETY: `bun_vm()` returns the live per-thread VM for a Bun-owned global.
+    let jsc_vm = unsafe { &mut *global.bun_vm() };
     let filename = str.to_utf8();
     let loader = jsc_vm
         .transpiler
@@ -617,7 +618,7 @@ pub extern "C" fn Bun__transpileVirtualModule(
     loader: bun_options_types::schema::api::Loader,
     ret: *mut ErrorableResolvedSource,
 ) -> bool {
-    jsc::mark_binding(core::panic::Location::caller());
+    jsc::mark_binding();
     // Body drives `transpileSourceCode` through the per-thread `BufferPrinter`
     // (a `bun_runtime` thread-local), so per §Dispatch the low tier owns the
     // extern symbol and dispatches; `bun_runtime` installs the body. Same
@@ -643,10 +644,11 @@ pub extern "C" fn Bun__runVirtualModule(
     global: *mut JSGlobalObject,
     specifier_ptr: *const bun_string::String,
 ) -> JSValue {
-    jsc::mark_binding(core::panic::Location::caller());
+    jsc::mark_binding();
     // SAFETY: C++ passed the live JS-thread global; never null.
     let global = unsafe { &*global };
-    if global.bun_vm().plugin_runner.is_none() {
+    // SAFETY: `bun_vm()` returns the live per-thread VM for a Bun-owned global.
+    if unsafe { (*global.bun_vm()).plugin_runner.is_none() } {
         return JSValue::ZERO;
     }
 

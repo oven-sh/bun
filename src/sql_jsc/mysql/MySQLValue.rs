@@ -268,81 +268,107 @@ impl Value {
             FieldType::MYSQL_TYPE_TINY => Ok(Value::Bool(value.to_boolean())),
             FieldType::MYSQL_TYPE_SHORT => {
                 if unsigned {
-                    return Ok(Value::Ushort(global_object.validate_integer_range::<u16>(
-                        value,
-                        0,
-                        IntegerRange {
-                            min: u16::MIN as i128,
-                            max: u16::MAX as i128,
-                            field_name: b"u16",
-                            ..Default::default()
-                        },
-                    )?));
+                    return Ok(Value::Ushort(
+                        global_object
+                            .validate_integer_range::<u16>(
+                                value,
+                                0,
+                                IntegerRange {
+                                    min: u16::MIN as i128,
+                                    max: u16::MAX as i128,
+                                    field_name: b"u16",
+                                    ..Default::default()
+                                },
+                            )
+                            .map_err(js_error_to_mysql)?,
+                    ));
                 }
-                Ok(Value::Short(global_object.validate_integer_range::<i16>(
-                    value,
-                    0,
-                    IntegerRange {
-                        min: i16::MIN as i128,
-                        max: i16::MAX as i128,
-                        field_name: b"i16",
-                        ..Default::default()
-                    },
-                )?))
+                Ok(Value::Short(
+                    global_object
+                        .validate_integer_range::<i16>(
+                            value,
+                            0,
+                            IntegerRange {
+                                min: i16::MIN as i128,
+                                max: i16::MAX as i128,
+                                field_name: b"i16",
+                                ..Default::default()
+                            },
+                        )
+                        .map_err(js_error_to_mysql)?,
+                ))
             }
             FieldType::MYSQL_TYPE_LONG => {
                 if unsigned {
-                    return Ok(Value::Uint(global_object.validate_integer_range::<u32>(
-                        value,
-                        0,
-                        IntegerRange {
-                            min: u32::MIN as i128,
-                            max: u32::MAX as i128,
-                            field_name: b"u32",
-                            ..Default::default()
-                        },
-                    )?));
+                    return Ok(Value::Uint(
+                        global_object
+                            .validate_integer_range::<u32>(
+                                value,
+                                0,
+                                IntegerRange {
+                                    min: u32::MIN as i128,
+                                    max: u32::MAX as i128,
+                                    field_name: b"u32",
+                                    ..Default::default()
+                                },
+                            )
+                            .map_err(js_error_to_mysql)?,
+                    ));
                 }
-                Ok(Value::Int(global_object.validate_integer_range::<i32>(
-                    value,
-                    0,
-                    IntegerRange {
-                        min: i32::MIN as i128,
-                        max: i32::MAX as i128,
-                        field_name: b"i32",
-                        ..Default::default()
-                    },
-                )?))
+                Ok(Value::Int(
+                    global_object
+                        .validate_integer_range::<i32>(
+                            value,
+                            0,
+                            IntegerRange {
+                                min: i32::MIN as i128,
+                                max: i32::MAX as i128,
+                                field_name: b"i32",
+                                ..Default::default()
+                            },
+                        )
+                        .map_err(js_error_to_mysql)?,
+                ))
             }
             FieldType::MYSQL_TYPE_LONGLONG => {
                 if unsigned {
-                    return Ok(Value::Ulong(global_object.validate_big_int_range::<u64>(
-                        value,
-                        0,
-                        IntegerRange {
-                            min: 0,
-                            max: u64::MAX as i128,
-                            field_name: b"u64",
-                            ..Default::default()
-                        },
-                    )?));
+                    return Ok(Value::Ulong(
+                        global_object
+                            .validate_big_int_range::<u64>(
+                                value,
+                                0,
+                                IntegerRange {
+                                    min: 0,
+                                    max: u64::MAX as i128,
+                                    field_name: b"u64",
+                                    ..Default::default()
+                                },
+                            )
+                            .map_err(js_error_to_mysql)?,
+                    ));
                 }
-                Ok(Value::Long(global_object.validate_big_int_range::<i64>(
-                    value,
-                    0,
-                    IntegerRange {
-                        min: i64::MIN as i128,
-                        max: i64::MAX as i128,
-                        field_name: b"i64",
-                        ..Default::default()
-                    },
-                )?))
+                Ok(Value::Long(
+                    global_object
+                        .validate_big_int_range::<i64>(
+                            value,
+                            0,
+                            IntegerRange {
+                                min: i64::MIN as i128,
+                                max: i64::MAX as i128,
+                                field_name: b"i64",
+                                ..Default::default()
+                            },
+                        )
+                        .map_err(js_error_to_mysql)?,
+                ))
             }
 
-            FieldType::MYSQL_TYPE_FLOAT => {
-                Ok(Value::Float(value.coerce::<f64>(global_object)? as f32))
-            }
-            FieldType::MYSQL_TYPE_DOUBLE => Ok(Value::Double(value.coerce::<f64>(global_object)?)),
+            FieldType::MYSQL_TYPE_FLOAT => Ok(Value::Float(
+                value.coerce_f64(global_object).map_err(js_error_to_mysql)? as f32,
+            )),
+            FieldType::MYSQL_TYPE_DOUBLE => Ok(Value::Double(
+                value.coerce_f64(global_object).map_err(js_error_to_mysql)?,
+            )),
             FieldType::MYSQL_TYPE_TIME => Ok(Value::Time(Time::from_js(value, global_object)?)),
             FieldType::MYSQL_TYPE_DATE
             | FieldType::MYSQL_TYPE_TIMESTAMP
@@ -404,9 +430,10 @@ impl Value {
                     // by the JS cell rooted below for the lifetime of `Value`.
                     let blob = unsafe { &*blob };
                     if blob.needs_to_read_file() {
-                        return Err(global_object
-                            .throw_invalid_arguments("File blobs are not supported")
-                            .into());
+                        return Err(js_error_to_mysql(
+                            global_object
+                                .throw_invalid_arguments("File blobs are not supported"),
+                        ));
                     }
                     // Blob byte stores are immutable from JS (no detach),
                     // but user JS running for a later parameter could drop
@@ -420,25 +447,28 @@ impl Value {
                 }
 
                 if value.is_string() {
-                    let str = BunString::from_js(value, global_object)?;
+                    let str = BunString::from_js(value, global_object).map_err(js_error_to_mysql)?;
                     return Ok(Value::String(str.to_utf8()));
                 }
 
-                Err(global_object
-                    .throw_invalid_arguments("Expected a string, blob, or array buffer")
-                    .into())
+                Err(js_error_to_mysql(
+                    global_object
+                        .throw_invalid_arguments("Expected a string, blob, or array buffer"),
+                ))
             }
 
             FieldType::MYSQL_TYPE_JSON => {
                 let mut str: BunString = BunString::empty();
                 // Use jsonStringifyFast for SIMD-optimized serialization
-                value.json_stringify_fast(global_object, &mut str)?;
+                value
+                    .json_stringify_fast(global_object, &mut str)
+                    .map_err(js_error_to_mysql)?;
                 Ok(Value::String(str.to_utf8()))
             }
 
             //   FieldType::MYSQL_TYPE_VARCHAR | FieldType::MYSQL_TYPE_VAR_STRING | FieldType::MYSQL_TYPE_STRING => {
             _ => {
-                let str = BunString::from_js(value, global_object)?;
+                let str = BunString::from_js(value, global_object).map_err(js_error_to_mysql)?;
                 Ok(Value::String(str.to_utf8()))
             }
         }
@@ -615,9 +645,9 @@ impl DateTime {
             return Ok(DateTime::from_unix_timestamp(ts, ms * 1000));
         }
 
-        Err(global_object
-            .throw_invalid_arguments("Expected a date or number")
-            .into())
+        Err(js_error_to_mysql(
+            global_object.throw_invalid_arguments("Expected a date or number"),
+        ))
     }
 }
 
@@ -645,9 +675,9 @@ impl Time {
             let ms: u32 = (total_ms - (ts as f64 * 1000.0)) as u32;
             Ok(Time::from_unix_timestamp(ts, ms * 1000))
         } else {
-            Err(global_object
-                .throw_invalid_arguments("Expected a date or number")
-                .into())
+            Err(js_error_to_mysql(
+                global_object.throw_invalid_arguments("Expected a date or number"),
+            ))
         }
     }
 

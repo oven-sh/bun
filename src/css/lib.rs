@@ -169,7 +169,7 @@ pub mod values_stub {
     /// `values/color.rs` is now un-gated (B-2 round 6); re-export the real
     /// data + behavior surface so any remaining `values_stub::color::*` paths
     /// resolve to the canonical types. The previous data-only stub structs and
-    /// `todo!()`-gated `into_rgba`/`into_srgb`/`parse`/`to_css` impls are
+    /// placeholder `into_rgba`/`into_srgb`/`parse`/`to_css` impls are
     /// superseded by the real bodies in `crate::values::color`.
     pub mod color {
         pub use crate::values::color::*;

@@ -445,7 +445,6 @@ impl<'a> TOML<'a> {
         }
     }
 
-    #[cfg(any())]
     pub fn parse_assignment(
         &mut self,
         obj: &mut E::Object,
@@ -491,7 +490,6 @@ impl<'a> TOML<'a> {
         Ok(())
     }
 
-    #[cfg(any())]
     pub fn parse_value(&mut self) -> Result<Expr, bun_core::Error> {
         if !self.stack_check.is_safe_to_recurse() {
             // Zig: `bun.throwStackOverflow()`.

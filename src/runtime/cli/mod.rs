@@ -105,58 +105,42 @@ pub mod package_manager_command;
 pub mod test_command;
 /// `bun test` support modules (Scanner / ChangedFilesFilter / ParallelRunner).
 /// Mounted here so `test_command.rs` can `use crate::cli::test::scanner` etc.
-/// The heavy bodies inside each file are individually gated where they touch
-/// not-yet-un-gated sibling crates.
 pub mod test {
     #[path = "Scanner.rs"]
     pub mod scanner;
     pub use scanner::Scanner;
-    // ChangedFilesFilter / ParallelRunner are still entangled with the
-    // not-yet-un-gated `bun_bundler::BundleV2` + parallel runner pipe code;
-    // expose stub façades so `test_command` resolves the paths.
-    // TODO(b2-blocked): un-gate once `bun_bundler` and parallel/ compile.
-    #[allow(non_snake_case)]
-    pub mod changed_files_filter {
-        use bun_paths::PathString;
-        pub struct FilterResult {
-            pub test_files: Vec<PathString>,
-            pub module_graph_files: Vec<Box<[u8]>>,
-            pub changed_count: usize,
-            pub total_tests: usize,
-        }
-        pub fn filter<Ctx, Vm, Since>(
-            _ctx: &Ctx,
-            _vm: Vm,
-            _all: &[PathString],
-            _since: &Since,
-        ) -> Result<FilterResult, bun_core::Error> {
-            todo!("blocked_on: bun_bundler::BundleV2 (ChangedFilesFilter)")
-        }
-        pub fn init_watch_trigger() {
-            todo!("blocked_on: bun_bundler::BundleV2 (ChangedFilesFilter)")
-        }
-    }
-    #[allow(non_snake_case)]
-    pub mod parallel_runner {
-        pub fn worker_emit_test_done(_idx: u32, _line: &[u8]) {
-            todo!("blocked_on: crate::cli::test::parallel (ParallelRunner)")
-        }
-        pub fn run_as_worker<R, Vm, Ctx>(
-            _r: &mut R,
-            _vm: Vm,
-            _ctx: &Ctx,
-        ) -> Result<(), bun_core::Error> {
-            todo!("blocked_on: crate::cli::test::parallel (ParallelRunner)")
-        }
-        pub fn run_as_coordinator<R, Vm, F, Ctx, Cov>(
-            _r: &mut R,
-            _vm: Vm,
-            _files: F,
-            _ctx: &Ctx,
-            _cov: &mut Cov,
-        ) -> Result<bool, bun_core::Error> {
-            todo!("blocked_on: crate::cli::test::parallel (ParallelRunner)")
-        }
+
+    /// `bun test --changed`: git-diff → bundler module graph → reverse-import
+    /// walk to filter test files. See `test/ChangedFilesFilter.zig`.
+    #[path = "ChangedFilesFilter.rs"]
+    pub mod changed_files_filter;
+    pub use changed_files_filter as ChangedFilesFilter;
+
+    /// `bun test --parallel`: process-pool coordinator/worker entry points.
+    /// Thin façade re-exporting from `parallel::runner`.
+    #[path = "ParallelRunner.rs"]
+    pub mod parallel_runner;
+    pub use parallel_runner as ParallelRunner;
+
+    /// `test/parallel/` submodule directory (no `mod.rs` on disk; declared
+    /// inline so paths stay 1:1 with the Zig directory). `ParallelRunner.rs`
+    /// re-exports the public entry points from `runner`; the rest are
+    /// implementation detail of the coordinator/worker split.
+    pub mod parallel {
+        #[path = "runner.rs"]
+        pub mod runner;
+        #[path = "Coordinator.rs"]
+        pub mod coordinator;
+        #[path = "Worker.rs"]
+        pub mod worker;
+        #[path = "Channel.rs"]
+        pub mod channel;
+        #[path = "Frame.rs"]
+        pub mod frame;
+        #[path = "FileRange.rs"]
+        pub mod file_range;
+        #[path = "aggregate.rs"]
+        pub mod aggregate;
     }
 }
 #[path = "Arguments.rs"]

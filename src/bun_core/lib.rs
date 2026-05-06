@@ -81,6 +81,24 @@ pub fn handle_oom<T, E>(r: core::result::Result<T, E>) -> T {
 
 // Real `declare_scope!`/`scoped_log!`/`pretty*!`/`warn!`/`note!` are
 // `#[macro_export]`ed from output.rs.
+
+/// Zig: `bun.todoPanic(@src(), fmt, args)`. Intentional *runtime* "feature not
+/// yet implemented" path that the Zig source ships with — distinct from a
+/// Phase-A `todo!()` porting placeholder. Captures file/line via `file!()`/
+/// `line!()` (the `@src()` equivalent) and routes through `Output::panic`.
+// TODO(port): wire `bun_analytics::Features::todo_panic` once the analytics
+// crate is reachable from bun_core without a dep cycle.
+#[macro_export] macro_rules! todo_panic {
+    ($($arg:tt)*) => {{
+        $crate::output::panic(::core::format_args!(
+            "TODO: {} ({}:{})",
+            ::core::format_args!($($arg)*),
+            ::core::file!(),
+            ::core::line!(),
+        ))
+    }};
+}
+
 // `err!(Name)` / `err!("Name")` — Zig `error.Name` literal.
 //
 // Expands to a per-site `OnceLock<Error>` that interns the stringified name

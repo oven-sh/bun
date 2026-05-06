@@ -1277,16 +1277,16 @@ impl CommandLineReporter {
     /// workers to emit a fragment the coordinator merges.
     pub fn write_lcov_only(&mut self, vm: &mut VirtualMachine, opts: &CodeCoverageOptions, out_path: &bun_str::ZStr) -> Result<(), bun_core::Error> {
         let Some(map) = ByteRangeMapping::map() else { return Ok(()); };
-        let mut iter = map.value_iterator();
-        let mut byte_ranges: Vec<ByteRangeMapping> = Vec::with_capacity(map.count());
-        while let Some(entry) = iter.next() {
-            byte_ranges.push(*entry);
+        // PORT NOTE: see `generate_code_coverage` — collect borrows, not bitwise copies.
+        let mut byte_ranges: Vec<&mut ByteRangeMapping> = Vec::with_capacity(map.len());
+        for entry in map.values_mut() {
+            byte_ranges.push(entry);
             // PERF(port): was assume_capacity
         }
         if byte_ranges.is_empty() {
             return Ok(());
         }
-        byte_ranges.sort_by(ByteRangeMapping::is_less_than_cmp);
+        byte_ranges.sort_by(coverage::is_less_than_cmp);
 
         let relative_dir = vm.transpiler.fs.top_level_dir;
         let file = match File::openat(Fd::cwd(), out_path, bun_sys::O::CREAT | bun_sys::O::WRONLY | bun_sys::O::TRUNC | bun_sys::O::CLOEXEC, 0o644) {

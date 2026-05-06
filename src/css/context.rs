@@ -306,14 +306,14 @@ impl<'a> PropertyHandlerContext<'a> {
         }
     }
 
-    pub fn add_unparsed_fallbacks(&mut self, unparsed: &mut UnparsedProperty) {
+    pub fn add_unparsed_fallbacks(&mut self, bump: &bun_alloc::Arena, unparsed: &mut UnparsedProperty) {
         if self.context != DeclarationContext::StyleRule
             && self.context != DeclarationContext::StyleAttribute
         {
             return;
         }
 
-        let fallbacks = unparsed.value.get_fallbacks(self.targets);
+        let fallbacks = unparsed.value.get_fallbacks(bump, self.targets);
         // PORT NOTE: Zig `for (fallbacks.slice()) |c|` copies by value; `SmallList`
         // has no `IntoIterator`, so spill to a Vec to preserve P3-before-LAB order.
         for condition_and_fallback in fallbacks.to_owned_slice().into_vec() {

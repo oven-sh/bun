@@ -200,7 +200,7 @@ impl FallbackHandler {
             // TODO(port): re-enable once `PropertyHandlerContext::add_unparsed_fallbacks`
             // un-gates (blocked on `SupportsCondition::eql` in context.rs).
             
-            context.add_unparsed_fallbacks(&mut unparsed);
+            context.add_unparsed_fallbacks(allocator, &mut unparsed);
             let _ = &mut unparsed;
             if let Some(i) = *index {
                 dest[i] = Property::Unparsed(unparsed);

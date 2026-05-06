@@ -35,12 +35,98 @@ impl OperatingSystem {
     pub fn all() -> Self { Self(()) }
 }
 // TODO(b2-blocked): bun_bundler::options::{Framework, RouteConfig} — local opaque
-// stand-ins so `FrameworkRouterPair` type-checks; the heavy gated impl block below
-// references many more `options::*` items and stays gated until bun_bundler lands.
-mod options {
-    #[derive(Default)] pub struct Framework(());
-    #[derive(Default)] pub struct RouteConfig(());
+// FORWARD_DECL: legacy `options::Framework` and friends. The Zig
+// `package_json.zig:loadFramework*` block references `options.Framework`, which
+// no longer exists in `options.zig` (removed upstream); the loaders have no
+// callers. Port the field-shape locally so the bodies compile as-written —
+// MOVE_DOWN to `bun_options_types` if/when `bun_bundler` revives these.
+pub mod options {
+    use bun_options_types::schema::api;
+
+    pub use api::DotEnvBehavior as EnvBehavior;
+
+    #[derive(Default, Clone)]
+    pub struct EnvDefault {
+        pub key: Box<[u8]>,
+        pub value: Box<[u8]>,
+    }
+
+    #[derive(Default, Clone)]
+    pub struct Env {
+        pub behavior: EnvBehavior,
+        pub prefix: Box<[u8]>,
+        pub defaults: Vec<EnvDefault>,
+    }
+    impl Env {
+        pub fn init() -> Env { Env::default() }
+        /// `options.zig` Env::setBehaviorFromPrefix.
+        pub fn set_behavior_from_prefix(&mut self, prefix: Box<[u8]>) {
+            self.behavior = EnvBehavior::disable;
+            self.prefix = Box::default();
+            if &*prefix == b"*" {
+                self.behavior = EnvBehavior::load_all;
+            } else if !prefix.is_empty() {
+                self.behavior = EnvBehavior::prefix;
+                self.prefix = prefix;
+            }
+        }
+    }
+
+    #[derive(Default, Clone, Copy, PartialEq, Eq)]
+    pub enum EntryPointKind {
+        Client,
+        Server,
+        Fallback,
+        #[default]
+        Disabled,
+    }
+
+    #[derive(Default, Clone)]
+    pub struct EntryPoint {
+        pub path: Box<[u8]>,
+        pub env: Env,
+        pub kind: EntryPointKind,
+    }
+    impl EntryPoint {
+        pub fn is_enabled(&self) -> bool {
+            self.kind != EntryPointKind::Disabled && !self.path.is_empty()
+        }
+    }
+
+    #[derive(Default, Clone, Copy, PartialEq, Eq)]
+    pub enum CssInJs {
+        #[default]
+        AutoOnimportcss,
+        Facade,
+        FacadeOnimportcss,
+    }
+
+    #[derive(Default)]
+    pub struct Framework {
+        pub client: EntryPoint,
+        pub server: EntryPoint,
+        pub fallback: EntryPoint,
+        pub client_css_in_js: CssInJs,
+        pub override_modules: api::StringMap,
+        pub display_name: Box<[u8]>,
+        pub version: Box<[u8]>,
+        pub package: Box<[u8]>,
+        pub development: bool,
+        pub from_bundle: bool,
+        pub resolved_dir: Box<[u8]>,
+    }
+
+    #[derive(Default)]
+    pub struct RouteConfig {
+        pub static_dir: Box<[u8]>,
+        pub static_dir_enabled: bool,
+        pub asset_prefix_path: Box<[u8]>,
+        pub routes_enabled: bool,
+        pub dir: Box<[u8]>,
+        pub possible_dirs: Box<[Box<[u8]>]>,
+    }
 }
+use bun_options_types::schema::api;
 // TODO(b2-blocked): bun_collections::StringMap (array-backed string→string map)
 pub type StringMap = StringArrayHashMap<Box<[u8]>>;
 pub use bun_collections::StringHashMapUnownedKey;
@@ -516,14 +602,15 @@ impl PackageJSON {
         framework.client.is_enabled() || framework.server.is_enabled() || framework.fallback.is_enabled()
     }
 
-    pub fn load_framework_with_preference<const READ_DEFINES: bool, const LOAD_FRAMEWORK: LoadFramework>(
+    // PORT NOTE: Zig `comptime load_framework: LoadFramework` lowered to a runtime
+    // arg — `LoadFramework` is a plain enum (no `ConstParamTy`), and the only
+    // use is the trailing `match`. PERF(port): was comptime — irrelevant (dead).
+    pub fn load_framework_with_preference<const READ_DEFINES: bool>(
         package_json: &PackageJSON,
         pair: &mut FrameworkRouterPair<'_>,
         json: js_ast::Expr,
-    )
-    where
-        LoadFramework: core::marker::ConstParamTy, // TODO(port): derive ConstParamTy on LoadFramework
-    {
+        load_framework: LoadFramework,
+    ) {
         let Some(framework_object) = json.as_property(b"framework") else { return };
 
         if let Some(name) = framework_object.expr.as_property(b"displayName") {
@@ -553,7 +640,7 @@ impl PackageJSON {
 
         if let Some(asset_prefix) = framework_object.expr.as_property(b"assetPrefix") {
             if let Some(_str) = asset_prefix.expr.as_string() {
-                let str = bun_str::strings::trim_right(&_str, b" ");
+                let str = bun_string::strings::trim(&_str, b" ");
                 if !str.is_empty() {
                     pair.router.asset_prefix_path = Box::from(str);
                 }
@@ -645,7 +732,7 @@ impl PackageJSON {
             }
         }
 
-        match LOAD_FRAMEWORK {
+        match load_framework {
             LoadFramework::Development => {
                 if let Some(env) = framework_object.expr.as_property(b"development") {
                     if Self::load_framework_expression::<READ_DEFINES>(pair.framework, env.expr) {

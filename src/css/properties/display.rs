@@ -141,21 +141,21 @@ impl DisplayPair {
         // 8 keys → if-chain over `eql_case_insensitive_ascii::<true>` (phf values
         // would have to be const-eval, and `VendorPrefix` bitflags are not).
         use bun_string::strings::eql_case_insensitive_ascii as eq;
-        let inside = if eq::<true>(ident, b"inline-block") {
+        let inside = if eq(ident, b"inline-block", true) {
             DisplayInside::FlowRoot
-        } else if eq::<true>(ident, b"inline-table") {
+        } else if eq(ident, b"inline-table", true) {
             DisplayInside::Table
-        } else if eq::<true>(ident, b"inline-flex") {
+        } else if eq(ident, b"inline-flex", true) {
             DisplayInside::Flex(VendorPrefix::NONE)
-        } else if eq::<true>(ident, b"-webkit-inline-flex") {
+        } else if eq(ident, b"-webkit-inline-flex", true) {
             DisplayInside::Flex(VendorPrefix::WEBKIT)
-        } else if eq::<true>(ident, b"-ms-inline-flexbox") {
+        } else if eq(ident, b"-ms-inline-flexbox", true) {
             DisplayInside::Flex(VendorPrefix::MS)
-        } else if eq::<true>(ident, b"-webkit-inline-box") {
+        } else if eq(ident, b"-webkit-inline-box", true) {
             DisplayInside::Box(VendorPrefix::WEBKIT)
-        } else if eq::<true>(ident, b"-moz-inline-box") {
+        } else if eq(ident, b"-moz-inline-box", true) {
             DisplayInside::Box(VendorPrefix::MOZ)
-        } else if eq::<true>(ident, b"inline-grid") {
+        } else if eq(ident, b"inline-grid", true) {
             DisplayInside::Grid
         } else {
             return Err(location.new_unexpected_token_error(css::Token::Ident(ident)));
@@ -249,25 +249,25 @@ impl DisplayInside {
         // PORT NOTE: Zig used `bun.ComptimeStringMap(..).getASCIIICaseInsensitive`.
         // 10 keys → if-chain over `eql_case_insensitive_ascii::<true>`.
         use bun_string::strings::eql_case_insensitive_ascii as eq;
-        Ok(if eq::<true>(ident, b"flow") {
+        Ok(if eq(ident, b"flow", true) {
             DisplayInside::Flow
-        } else if eq::<true>(ident, b"flow-root") {
+        } else if eq(ident, b"flow-root", true) {
             DisplayInside::FlowRoot
-        } else if eq::<true>(ident, b"table") {
+        } else if eq(ident, b"table", true) {
             DisplayInside::Table
-        } else if eq::<true>(ident, b"flex") {
+        } else if eq(ident, b"flex", true) {
             DisplayInside::Flex(VendorPrefix::NONE)
-        } else if eq::<true>(ident, b"-webkit-flex") {
+        } else if eq(ident, b"-webkit-flex", true) {
             DisplayInside::Flex(VendorPrefix::WEBKIT)
-        } else if eq::<true>(ident, b"-ms-flexbox") {
+        } else if eq(ident, b"-ms-flexbox", true) {
             DisplayInside::Flex(VendorPrefix::MS)
-        } else if eq::<true>(ident, b"-webkit-box") {
+        } else if eq(ident, b"-webkit-box", true) {
             DisplayInside::Box(VendorPrefix::WEBKIT)
-        } else if eq::<true>(ident, b"-moz-box") {
+        } else if eq(ident, b"-moz-box", true) {
             DisplayInside::Box(VendorPrefix::MOZ)
-        } else if eq::<true>(ident, b"grid") {
+        } else if eq(ident, b"grid", true) {
             DisplayInside::Grid
-        } else if eq::<true>(ident, b"ruby") {
+        } else if eq(ident, b"ruby", true) {
             DisplayInside::Ruby
         } else {
             return Err(location.new_unexpected_token_error(css::Token::Ident(ident)));

@@ -1455,7 +1455,7 @@ impl BorderHandler {
         let logical_supported = !context.should_compile_logical(Feature::LogicalBorders);
         if logical_supported {
             let mut up = unparsed.deep_clone(allocator);
-            context.add_unparsed_fallbacks(&mut up);
+            context.add_unparsed_fallbacks(allocator, &mut up);
             self.flushed_properties
                 .insert(BorderProperty::try_from_property_id(up.property_id).unwrap());
             dest.push(Property::Unparsed(up));
@@ -1467,7 +1467,7 @@ impl BorderHandler {
                 let _ = &dest; // autofix (matches Zig: `_ = d;`)
                 let mut upppppppppp =
                     unparsed.with_property_id(allocator, PropertyId::$id);
-                context.add_unparsed_fallbacks(&mut upppppppppp);
+                context.add_unparsed_fallbacks(allocator, &mut upppppppppp);
                 self.flushed_properties
                     .insert(BorderProperty::try_from_property_id(PropertyIdTag::$id).unwrap());
                 // TODO(port): Zig did NOT push to dest here (likely a bug upstream) — preserved.
@@ -1506,7 +1506,7 @@ impl BorderHandler {
             PropertyIdTag::BorderBlockEndStyle => prop!(BorderBottomStyle),
             _ => {
                 let mut up = unparsed.deep_clone(allocator);
-                context.add_unparsed_fallbacks(&mut up);
+                context.add_unparsed_fallbacks(allocator, &mut up);
                 self.flushed_properties
                     .insert(BorderProperty::try_from_property_id(up.property_id).unwrap());
                 dest.push(Property::Unparsed(up));

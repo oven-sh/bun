@@ -833,7 +833,7 @@ impl BackgroundHandler {
                     self.flush(dest, context);
                     let allocator = dest.bump();
                     let mut unparsed = val.deep_clone(allocator);
-                    context.add_unparsed_fallbacks(&mut unparsed);
+                    context.add_unparsed_fallbacks(allocator, &mut unparsed);
                     if let Some(prop) = BackgroundProperty::try_from_property_id(val.property_id) {
                         self.flushed_properties.insert(prop);
                     }

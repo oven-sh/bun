@@ -17,7 +17,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use crate::node::StringOrBuffer;
 
 use crate::crypto::create_crypto_error;
-use crate::crypto::evp::{self, Algorithm};
+use crate::crypto::evp::{self, Algorithm, AlgorithmExt as _};
 
 // BoringSSL error code; not yet exported by `bun_boringssl_sys`
 // (Zig: src/boringssl_sys/boringssl.zig:6422).

@@ -808,19 +808,14 @@ impl BufferOutputSink {
             BufferOutputSink::deref(sink);
             return Ok(match buffering_error {
                 e if e == bun_core::err!("StreamAlreadyUsed") => {
-                    let err = SystemError {
-                        code: BunString::static_("ERR_STREAM_ALREADY_FINISHED"),
-                        message: BunString::static_("Stream already used, please create a new one"),
-                        ..Default::default()
-                    };
+                    let err = system_error(
+                        "ERR_STREAM_ALREADY_FINISHED",
+                        "Stream already used, please create a new one",
+                    );
                     err.to_error_instance(global_static)
                 }
                 _ => {
-                    let err = SystemError {
-                        code: BunString::static_("ERR_STREAM_CANNOT_PIPE"),
-                        message: BunString::static_("Failed to pipe stream"),
-                        ..Default::default()
-                    };
+                    let err = system_error("ERR_STREAM_CANNOT_PIPE", "Failed to pipe stream");
                     err.to_error_instance(global_static)
                 }
             });

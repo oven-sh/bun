@@ -878,13 +878,13 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             drop(spawn_options);
             let display_path: &ZStr = if !argv.is_empty() && argv[0].is_some() {
                 // SAFETY: argv[0] is a NUL-terminated string we built above.
-                unsafe { ZStr::from_ptr(argv[0].unwrap() as *const u8) }
+                unsafe { &*(CStr::from_ptr(argv[0].unwrap()).to_bytes() as *const [u8] as *const ZStr) }
             } else {
                 ZStr::EMPTY
             };
             let mut systemerror = sys::Error::from_code(
-                if err == bun_core::err!("EMFILE") { sys::Errno::MFILE } else { sys::Errno::NFILE },
-                sys::Tag::PosixSpawn,
+                if err == bun_core::err!("EMFILE") { sys::Errno::EMFILE } else { sys::Errno::ENFILE },
+                sys::Tag::posix_spawn,
             )
             .with_path(display_path)
             .to_system_error();
@@ -893,7 +893,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             } else {
                 -UV_E::NFILE
             };
-            return global_this.throw_value(systemerror.to_error_instance(global_this));
+            return Err(global_this.throw_value(SystemError::from(systemerror).to_error_instance(global_this)));
         }
         Err(err) => {
             drop(spawn_options);

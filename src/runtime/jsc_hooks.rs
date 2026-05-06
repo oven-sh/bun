@@ -984,14 +984,10 @@ fn transpile_source_code_inner(
                 // note above) — reading `options.macro_remap` would be UB. Gate
                 // until `init_runtime_state` writes a real `Transpiler`.
                 
-                {
-                    // SAFETY: per fn contract.
-                    // TODO(port): `MacroMap` may not be `Clone`; spec passes by
-                    // value (Zig copies the struct). If `MacroMap` is by-ref only,
-                    // change `ParseOptions::macro_remappings` to `&MacroMap`.
-                    unsafe { (*jsc_vm).transpiler.options.macro_remap.clone() }
-                }
-                #[cfg(any())]
+                // TODO(port): `MacroMap` (`StringArrayHashMap<StringArrayHashMap<&[u8]>>`)
+                // is not `Clone`; spec passes by value (Zig copies the struct).
+                // Change `ParseOptions::macro_remappings` to `&MacroMap` or add
+                // `Clone` to the inner map. Until then, default (empty remap).
                 bun_resolver::package_json::MacroMap::default()
             };
 

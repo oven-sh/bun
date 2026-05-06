@@ -3,7 +3,7 @@ use std::io::Write as _;
 use bstr::{BStr, ByteSlice};
 
 use bun_alloc::{AllocError, Arena};
-use crate::cli::command::{self, Command};
+use crate::cli::command;
 use crate::cli::run_command::RunCommand;
 use bun_core::{env_var, Global, Output};
 use bun_dotenv as DotEnv;
@@ -12,7 +12,7 @@ use bun_install::LogLevel;
 use bun_js_printer as JSPrinter;
 use bun_interchange::json as JSON;
 use bun_logger as logger;
-use bun_logger::js_ast::{self, ExprData};
+use bun_logger::js_ast::ExprData;
 use bun_paths::{resolve_path as path, resolve_path::platform as path_platform, PathBuffer};
 use crate::api::bun::process::sync::{spawn as spawn_sync, Options as SpawnSyncOptions, SyncStdio as Stdio};
 use crate::api::bun::process::Status as ProcStatus;

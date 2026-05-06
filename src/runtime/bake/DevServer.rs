@@ -1695,7 +1695,8 @@ impl DevServer<'_> {
         match &self.route_bundle_ptr(rbi).data {
             route_bundle::Data::Framework(bundle) => {
                 let mut route = self.router.route_ptr(bundle.route_index);
-                let router_type = self.router.type_ptr(route.r#type);
+                let route_type_idx = route.r#type;
+                let router_type = self.router.type_ptr(route_type_idx);
                 self.append_opaque_entry_point::<{ bake::Side::Server }>(
                     server_file_names,
                     entry_points,
@@ -1776,9 +1777,8 @@ impl DevServer<'_> {
         // SAFETY: vm is JSC_BORROW; vm.global is valid for VM lifetime
         let global = unsafe { &*(*self.vm).global };
         let route_bundle = self.route_bundle_ptr(route_bundle_index);
-        let router_type = self
-            .router
-            .type_ptr(self.router.route_ptr(framework_bundle.route_index).r#type);
+        let route_type_idx = self.router.route_ptr(framework_bundle.route_index).r#type;
+        let router_type = self.router.type_ptr(route_type_idx);
 
         Ok(FrameworkRequestArgs {
             // routerTypeMain
@@ -2351,7 +2351,7 @@ impl DeferredRequest<'_> {
                     // SAFETY: saved.request is a live *mut webcore::Request (held strong by ctx)
                     bstr::BStr::new(unsafe { &(*saved.request).url }.byte_slice())
                 );
-                saved.ctx.set_signal_aborted(crate::server::jsc::CommonAbortReason::ConnectionClosed);
+                saved.ctx.set_signal_aborted(jsc::CommonAbortReason::ConnectionClosed);
                 // PORT NOTE: saved.js_request (jsc::Strong) drops at end of arm
                 drop(saved);
             }

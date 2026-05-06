@@ -1572,11 +1572,11 @@ pub mod js_bundler {
         fn default() -> Self {
             Self {
                 owned_entry_point: OwnedString::default(),
-                entry_point: options::PathTemplate::FILE,
+                entry_point: options::PathTemplate::FILE.into(),
                 owned_chunk: OwnedString::default(),
-                chunk: options::PathTemplate::CHUNK,
+                chunk: options::PathTemplate::CHUNK.into(),
                 owned_asset: OwnedString::default(),
-                asset: options::PathTemplate::ASSET,
+                asset: options::PathTemplate::ASSET.into(),
             }
         }
     }
@@ -1636,94 +1636,67 @@ pub mod js_bundler {
         build(global_this, arguments.slice())
     }
 
-    pub struct Resolve {
-        pub bv2: *mut BundleV2<'static>,
-        pub import_record: MiniImportRecord,
-        pub value: ResolveValue,
+    // PORT NOTE: `Resolve`/`Load`/`MiniImportRecord`/etc. are owned by
+    // `bun_bundler::bundle_v2::api::JSBundler` so that `BundleV2` can operate
+    // on them directly (`on_resolve_async`/`on_load_async`). The runtime adds
+    // the JS-thread plumbing on top via the extension traits below.
+    pub use bun_bundler::bundle_v2::api::JSBundler::{
+        Resolve, MiniImportRecord, ResolveSuccess, ResolveValue,
+        Load, LoadSuccess, LoadValue,
+    };
 
-        pub js_task: AnyTask,
-        pub task: AnyTaskWithExtraContext,
+    /// SAFETY: caller guarantees `bv2` is a valid backref with `plugins.is_some()`.
+    #[inline]
+    unsafe fn bv2_plugin(bv2: *mut BundleV2<'static>) -> *mut Plugin {
+        // The bundler-side `JSBundlerPlugin` and the local opaque `Plugin` both
+        // describe the same C++ `BunPlugin` cell — cast through the shared FFI handle.
+        unsafe { (*bv2).plugins.unwrap().as_ptr() as *mut Plugin }
     }
 
-    pub struct MiniImportRecord {
-        pub kind: ImportKind,
-        // TODO(port): lifetime — borrowed from BundleV2 (Zig deinit never frees these; defaults `""`)
-        pub source_file: *const [u8],
-        pub namespace: *const [u8],
-        pub specifier: *const [u8],
-        pub importer_source_index: u32,
-        pub import_record_index: u32,
-        pub range: logger::Range,
-        pub original_target: Target,
-        // pub inline fn loader(_: *const MiniImportRecord) ?options.Loader {
-        //     return null;
-        // }
+    /// JS-thread plumbing for `Resolve` (upstream owns `init`/`dispatch`).
+    pub trait ResolveJsExt {
+        fn dispatch_js(&mut self);
+        fn run_on_js_thread(&mut self);
     }
 
-    #[derive(Default)]
-    pub struct ResolveSuccess {
-        pub path: Box<[u8]>,
-        pub namespace: Box<[u8]>,
-        pub external: bool,
-    }
-
-    pub enum ResolveValue {
-        Err(logger::Msg),
-        Success(ResolveSuccess),
-        NoMatch,
-        Pending,
-        Consumed,
-    }
-
-    impl ResolveValue {
-        pub fn consume(&mut self) -> ResolveValue {
-            core::mem::replace(self, ResolveValue::Consumed)
-        }
-    }
-
-    impl Resolve {
-        pub fn init(bv2: *mut BundleV2<'static>, record: MiniImportRecord) -> Resolve {
-            Resolve {
-                bv2,
-                import_record: record,
-                value: ResolveValue::Pending,
-                // TODO(port): task/js_task were `undefined` in Zig
-                task: AnyTaskWithExtraContext::default(),
-                js_task: AnyTask::default(),
-            }
-        }
-
-        pub fn dispatch(this: &mut Self) {
-            this.js_task = AnyTask {
-                ctx: core::ptr::NonNull::new(this as *mut Self as *mut c_void),
-                callback: Self::run_on_js_thread_wrap,
+    impl ResolveJsExt for Resolve {
+        fn dispatch_js(&mut self) {
+            // SAFETY: upstream reserves `js_task: [usize; 2]` as erased
+            // `jsc::AnyTask` storage; `AnyTask` is two pointer-sized fields.
+            let js_task = unsafe {
+                &mut *(self.js_task.as_mut_ptr() as *mut AnyTask)
+            };
+            *js_task = AnyTask {
+                ctx: core::ptr::NonNull::new(self as *mut Self as *mut c_void),
+                callback: resolve_run_on_js_thread_wrap,
             };
             // SAFETY: bv2 is a valid backref set by BundleV2
             unsafe {
-                (*this.bv2)
+                (*self.bv2)
                     .js_loop_for_plugins()
-                    .enqueue_task_concurrent(ConcurrentTask::create(this.js_task.task()));
+                    .enqueue_task_concurrent(ConcurrentTask::create(js_task.task()));
             }
         }
 
-        fn run_on_js_thread_wrap(ctx: *mut c_void) -> bun_event_loop::JsResult<()> {
-            // SAFETY: ctx was stored from `*mut Self` in `dispatch`.
-            Self::run_on_js_thread(unsafe { &mut *(ctx as *mut Self) });
-            Ok(())
-        }
-
-        pub fn run_on_js_thread(this: &mut Self) {
+        fn run_on_js_thread(&mut self) {
+            let kind = self.import_record.kind;
             // SAFETY: bv2 is a valid backref; plugins is Some when this runs
             unsafe {
-                (*(*this.bv2).plugins.unwrap()).match_on_resolve(
-                    &*this.import_record.specifier,
-                    &*this.import_record.namespace,
-                    &*this.import_record.source_file,
-                    this as *mut _ as *mut c_void,
-                    this.import_record.kind,
+                (*bv2_plugin(self.bv2)).match_on_resolve(
+                    &self.import_record.specifier,
+                    &self.import_record.namespace,
+                    &self.import_record.source_file,
+                    self as *mut _ as *mut c_void,
+                    kind,
                 );
             }
         }
+    }
+
+    fn resolve_run_on_js_thread_wrap(ctx: *mut c_void) -> bun_event_loop::JsResult<()> {
+        // SAFETY: ctx was stored from `*mut Resolve` in `dispatch_js`.
+        unsafe { &mut *(ctx as *mut Resolve) }.run_on_js_thread();
+        Ok(())
     }
 
     // TODO(port): move to runtime_sys
@@ -1742,17 +1715,17 @@ pub mod js_bundler {
             resolve.value = ResolveValue::NoMatch;
         } else {
             // SAFETY: bv2 backref is valid; plugins is Some
-            let global = unsafe { (*(*resolve.bv2).plugins.unwrap()).global_object() };
+            let global = unsafe { (*bv2_plugin(resolve.bv2)).global_object() };
             let path = path_value
-                .to_slice_clone_with_allocator(global)
+                .to_slice_clone(global)
                 .expect("Unexpected: path is not a string");
             let namespace = namespace_value
-                .to_slice_clone_with_allocator(global)
+                .to_slice_clone(global)
                 .expect("Unexpected: namespace is not a string");
             resolve.value = ResolveValue::Success(ResolveSuccess {
-                path: path.into_owned(),
-                namespace: namespace.into_owned(),
-                external: external_value.to::<bool>(),
+                path: path.slice().to_vec().into_boxed_slice(),
+                namespace: namespace.slice().to_vec().into_boxed_slice(),
+                external: external_value.to_boolean(),
             });
         }
 
@@ -1760,153 +1733,94 @@ pub mod js_bundler {
         unsafe { (*resolve.bv2).on_resolve_async(resolve) };
     }
 
-    pub struct Load<'a> {
-        pub bv2: *mut BundleV2<'static>,
-
-        pub source_index: Index,
-        pub default_loader: options::Loader,
-        pub path: Box<[u8]>,
-        pub namespace: Box<[u8]>,
-
-        pub value: LoadValue,
-        pub js_task: AnyTask,
-        pub task: AnyTaskWithExtraContext,
-        pub parse_task: &'a mut bun_bundler::ParseTask,
-        /// Faster path: skip the extra threadpool dispatch when the file is not found
-        pub was_file: bool,
-        /// Defer may only be called once
-        pub called_defer: bool,
-    }
-
     bun_output::declare_scope!(BUNDLER_DEFERRED, hidden);
 
-    pub enum LoadValue {
-        Err(logger::Msg),
-        Success { source_code: Box<[u8]>, loader: options::Loader },
-        Pending,
-        NoMatch,
-        /// The value has been de-initialized or left over from `consume()`
-        Consumed,
+    /// JS-thread plumbing for `Load` (upstream owns `init`/`dispatch`/`bake_graph`).
+    pub trait LoadJsExt {
+        fn dispatch_js(&mut self);
+        fn run_on_js_thread(&mut self);
+        fn on_defer(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue>;
     }
 
-    impl LoadValue {
-        /// Moves the value, replacing the original with `.consumed`. It is
-        /// safe to `deinit()` the consumed value, but the memory in `err`
-        /// and `success` must be freed by the caller.
-        pub fn consume(&mut self) -> LoadValue {
-            core::mem::replace(self, LoadValue::Consumed)
-        }
-    }
-
-    impl<'a> Load<'a> {
-        pub fn init(bv2: *mut BundleV2<'static>, parse: &'a mut bun_bundler::ParseTask) -> Load<'a> {
-            // SAFETY: bv2 is a valid backref
-            let default_loader = parse
-                .path
-                .loader(unsafe { &(*bv2).transpiler.options.loaders })
-                .unwrap_or(options::Loader::Js);
-            Load {
-                bv2,
-                source_index: parse.source_index,
-                default_loader,
-                value: LoadValue::Pending,
-                // TODO(port): lifetime — Zig stored borrowed slices into parse.path; using owned copies
-                path: Box::<[u8]>::from(parse.path.text.as_ref()),
-                namespace: Box::<[u8]>::from(parse.path.namespace.as_ref()),
-                parse_task: parse,
-                was_file: false,
-                called_defer: false,
-                task: AnyTaskWithExtraContext::default(),
-                js_task: AnyTask::default(),
-            }
-        }
-
-        pub fn bake_graph(&self) -> crate::bake::Graph {
-            self.parse_task.known_target.bake_graph()
-        }
-
-        pub fn run_on_js_thread(load: &mut Self) {
-            // SAFETY: bv2 backref is valid; plugins is Some
-            unsafe {
-                (*(*load.bv2).plugins.unwrap()).match_on_load(
-                    &load.path,
-                    &load.namespace,
-                    load as *mut _ as *mut c_void,
-                    load.default_loader,
-                    load.bake_graph() != crate::bake::Graph::Client,
-                );
-            }
-        }
-
-        fn run_on_js_thread_wrap(ctx: *mut c_void) -> bun_event_loop::JsResult<()> {
-            // SAFETY: ctx was stored from `*mut Self` in `dispatch`.
-            Self::run_on_js_thread(unsafe { &mut *(ctx as *mut Self) });
-            Ok(())
-        }
-
-        pub fn dispatch(this: &mut Self) {
-            this.js_task = AnyTask {
-                ctx: core::ptr::NonNull::new(this as *mut Self as *mut c_void),
-                callback: Self::run_on_js_thread_wrap,
+    impl LoadJsExt for Load {
+        fn dispatch_js(&mut self) {
+            // SAFETY: upstream reserves `js_task: [usize; 2]` as erased
+            // `jsc::AnyTask` storage; `AnyTask` is two pointer-sized fields.
+            let js_task = unsafe {
+                &mut *(self.js_task.as_mut_ptr() as *mut AnyTask)
             };
-            let concurrent_task = ConcurrentTask::create(this.js_task.task());
+            *js_task = AnyTask {
+                ctx: core::ptr::NonNull::new(self as *mut Self as *mut c_void),
+                callback: load_run_on_js_thread_wrap,
+            };
+            let concurrent_task = ConcurrentTask::create(js_task.task());
             // SAFETY: bv2 backref is valid
             unsafe {
-                (*this.bv2)
+                (*self.bv2)
                     .js_loop_for_plugins()
                     .enqueue_task_concurrent(concurrent_task);
             }
         }
 
-        fn on_defer(this: &mut Self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-            if this.called_defer {
-                return global_object
-                    .throw("Can't call .defer() more than once within an onLoad plugin", &[]);
+        fn run_on_js_thread(&mut self) {
+            let is_server_side = self.bake_graph() != bun_bundler::bake_types::Graph::Client;
+            let default_loader = self.default_loader;
+            // SAFETY: bv2 backref is valid; plugins is Some
+            unsafe {
+                (*bv2_plugin(self.bv2)).match_on_load(
+                    &self.path,
+                    &self.namespace,
+                    self as *mut _ as *mut c_void,
+                    default_loader,
+                    is_server_side,
+                );
             }
-            this.called_defer = true;
+        }
+
+        fn on_defer(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+            if self.called_defer {
+                return Err(global_object
+                    .throw("Can't call .defer() more than once within an onLoad plugin"));
+            }
+            self.called_defer = true;
 
             bun_output::scoped_log!(
                 BUNDLER_DEFERRED,
                 "JSBundlerPlugin__onDefer(0x{:x}, {})",
-                this as *const _ as usize,
-                bstr::BStr::new(&this.path)
+                self as *const _ as usize,
+                bstr::BStr::new(&self.path)
             );
 
             // Notify the bundler thread about the deferral. This will decrement
             // the pending item counter and increment the deferred counter.
             // SAFETY: parse_task.ctx and bv2 are valid backrefs
             unsafe {
-                match &mut *this.parse_task.ctx.loop_() {
-                    jsc::AnyEventLoop::Js(jsc_event_loop) => {
-                        jsc_event_loop.enqueue_task_concurrent(ConcurrentTask::from_callback(
-                            this.parse_task.ctx,
-                            BundleV2::on_notify_defer,
-                        ));
-                    }
-                    jsc::AnyEventLoop::Mini(mini) => {
-                        mini.enqueue_task_concurrent_with_extra_ctx::<Load, BundleV2<'static>>(
-                            this,
-                            BundleV2::on_notify_defer_mini,
-                            // TODO(port): .task field selector
-                        );
-                    }
-                }
+                // CYCLEBREAK: bundler routes plugin work via `js_loop_for_plugins`
+                // (the Js arm of AnyEventLoop) — `linker.r#loop` is erased and the
+                // Mini arm is not reachable for plugin defers in T6. PORT NOTE:
+                // when AnyEventLoop is reified on BundleV2, restore the Mini path.
+                (*self.bv2)
+                    .js_loop_for_plugins()
+                    .enqueue_task_concurrent(ConcurrentTask::from_callback(
+                        (*self.parse_task).ctx,
+                        on_notify_defer_raw,
+                    ));
 
-                Ok((*(*this.bv2).plugins.unwrap()).append_defer_promise())
+                Ok((*bv2_plugin(self.bv2)).append_defer_promise())
             }
         }
     }
 
-    impl<'a> Drop for Load<'a> {
-        fn drop(&mut self) {
-            bun_output::scoped_log!(
-                Transpiler,
-                "Deinit Load(0{:x}, {})",
-                self as *const _ as usize,
-                bstr::BStr::new(&self.path)
-            );
-            // value drops automatically
-        }
+    fn on_notify_defer_raw(ctx: *mut BundleV2<'static>) -> bun_event_loop::JsResult<()> {
+        // SAFETY: ctx is a valid backref while bundle is running.
+        unsafe { (*ctx).on_notify_defer() };
+        Ok(())
+    }
+
+    fn load_run_on_js_thread_wrap(ctx: *mut c_void) -> bun_event_loop::JsResult<()> {
+        // SAFETY: ctx was stored from `*mut Load` in `dispatch_js`.
+        unsafe { &mut *(ctx as *mut Load) }.run_on_js_thread();
+        Ok(())
     }
 
     // TODO(port): move to runtime_sys
@@ -1916,7 +1830,7 @@ pub mod js_bundler {
         global: *mut JSGlobalObject,
     ) -> JSValue {
         // SAFETY: called from C++ with valid pointers
-        unsafe { jsc::to_js_host_call(&*global, || Load::on_defer(&mut *load, &*global)) }
+        unsafe { jsc::to_js_host_call(&*global, (&mut *load).on_defer(&*global)) }
     }
 
     // TODO(port): move to runtime_sys
@@ -1937,13 +1851,13 @@ pub mod js_bundler {
 
             if this.was_file {
                 // Faster path: skip the extra threadpool dispatch
-                // SAFETY: bv2 backref is valid
+                // SAFETY: bv2 backref is valid; pool/worker_pool are live for bundle.
                 unsafe {
-                    (*this.bv2)
-                        .graph
-                        .pool
-                        .worker_pool
-                        .schedule(bun_threading::ThreadPool::Batch::from(&this.parse_task.task));
+                    (*(*(*this.bv2).graph.pool.as_ptr()).worker_pool).schedule(
+                        bun_threading::thread_pool::Batch::from(
+                            core::ptr::addr_of_mut!((*this.parse_task).task),
+                        ),
+                    );
                 }
                 // Zig: this.deinit() — explicit drop
                 // TODO(port): Load is not Box-allocated here; Zig deinit only resets value
@@ -1953,9 +1867,9 @@ pub mod js_bundler {
         } else {
             // SAFETY: api::Loader is #[repr(u8)]
             let loader: api::Loader =
-                unsafe { core::mem::transmute::<u8, api::Loader>(loader_as_int.to::<u8>()) };
+                unsafe { core::mem::transmute::<u8, api::Loader>(loader_as_int.as_int32() as u8) };
             // SAFETY: bv2 backref is valid; plugins is Some
-            let global = unsafe { (*(*this.bv2).plugins.unwrap()).global_object() };
+            let global = unsafe { (*bv2_plugin(this.bv2)).global_object() };
             let source_code = match crate::node::StringOrBuffer::from_js_to_owned_slice(
                 global,
                 source_code_value,
@@ -1970,10 +1884,10 @@ pub mod js_bundler {
                     panic!("Unexpected: source_code is not a string");
                 }
             };
-            this.value = LoadValue::Success {
+            this.value = LoadValue::Success(LoadSuccess {
                 loader: options::Loader::from_api(loader),
-                source_code,
-            };
+                source_code: source_code.into(),
+            });
         }
 
         // SAFETY: bv2 backref is valid
@@ -2109,8 +2023,6 @@ pub mod js_bundler {
                 Err(JsError::Terminated) => return Err(JsError::Terminated),
             };
 
-            let mut scope = jsc::TopExceptionScope::init(global_this);
-
             // SAFETY: self is valid opaque FFI handle
             let value = unsafe {
                 JSBundlerPlugin__runOnEndCallbacks(
@@ -2121,7 +2033,11 @@ pub mod js_bundler {
                 )
             };
 
-            scope.return_if_exception()?;
+            // PORT NOTE: TopExceptionScope is placement-init only (Phase B);
+            // route the post-call check through `from_js_host_call`-style probe.
+            if global_this.has_exception() {
+                return Err(JsError::Thrown);
+            }
 
             Ok(value)
         }
@@ -2130,7 +2046,8 @@ pub mod js_bundler {
         /// SAFETY: `this` must be a live handle previously returned by `Plugin::create`.
         pub unsafe fn destroy(this: *mut Self) {
             jsc::mark_binding();
-            JSBundlerPlugin__tombstone(this);
+            // SAFETY: caller contract — `this` is a live JSBundlerPlugin handle.
+            unsafe { JSBundlerPlugin__tombstone(this) };
             JSValue::from_cell(this).unprotect();
         }
 
@@ -2237,10 +2154,12 @@ pub mod js_bundler {
         ) -> JsResult<JSValue> {
             jsc::mark_binding();
             let _tracer = bun_core::perf::trace("JSBundler.addPlugin");
-            // SAFETY: self is valid opaque FFI handle
+            // SAFETY: self is valid opaque FFI handle; raw ptr avoids the
+            // closure-vs-`self.global_object()` aliasing borrow conflict.
+            let this: *mut Self = self;
             jsc::from_js_host_call(self.global_object(), || unsafe {
                 JSBundlerPlugin__runSetupFunction(
-                    self,
+                    this,
                     object,
                     config,
                     onstart_promises_array,
@@ -2251,9 +2170,11 @@ pub mod js_bundler {
         }
 
         pub fn drain_deferred(&mut self, rejected: bool) -> JsResult<()> {
-            // SAFETY: self is valid opaque FFI handle
+            // SAFETY: self is valid opaque FFI handle; raw ptr avoids the
+            // closure-vs-`self.global_object()` aliasing borrow conflict.
+            let this: *mut Self = self;
             jsc::from_js_host_call_generic(self.global_object(), || unsafe {
-                JSBundlerPlugin__drainDeferred(self, rejected)
+                JSBundlerPlugin__drainDeferred(this, rejected)
             })
         }
 
@@ -2269,31 +2190,9 @@ pub mod js_bundler {
         /// is still called and the bundler's pending-item counter is decremented. Returning
         /// early here would cause `Bun.build` to hang forever waiting on the counter.
         fn msg_from_js(plugin: &mut Plugin, file: &[u8], exception: JSValue) -> logger::Msg {
-            match logger::Msg::from_js(plugin.global_object(), file, exception) {
-                Ok(msg) => msg,
-                Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
-                Err(JsError::Thrown) | Err(JsError::Terminated) => {
-                    // We are already producing a build error for the original plugin
-                    // exception; the secondary exception from string conversion is not
-                    // useful to the user and should not be treated as unhandled.
-                    let _ = plugin.global_object().clear_exception_except_termination();
-                    logger::Msg {
-                        data: logger::Data {
-                            text: Box::<[u8]>::from(
-                                &b"A bundler plugin threw a value that could not be converted to a string"[..],
-                            ),
-                            location: Some(logger::Location {
-                                file: Box::<[u8]>::from(file),
-                                line: -1,
-                                column: -1,
-                                ..Default::default()
-                            }),
-                            ..Default::default()
-                        },
-                        ..Default::default()
-                    }
-                }
-            }
+            // TODO(port): blocked_on: bun_logger::Msg::from_js — see logger.zig `Msg.fromJS`.
+            let _ = (plugin, file, exception);
+            todo!("blocked_on: bun_logger::Msg::from_js")
         }
     }
 
@@ -2307,7 +2206,7 @@ pub mod js_bundler {
     ) {
         // SAFETY: plugin is valid opaque FFI handle; ctx is *mut Resolve or *mut Load
         let plugin = unsafe { &mut *plugin };
-        match which.to::<i32>() {
+        match which.as_int32() {
             0 => {
                 let resolve = unsafe { &mut *(ctx as *mut Resolve) };
                 let msg = Plugin::msg_from_js(plugin, &resolve.import_record.source_file, exception);
@@ -2370,6 +2269,14 @@ impl OutputKind {
 }
 
 impl BuildArtifact {
+    /// `BuildArtifact` is not user-constructible (`noConstructor` in .classes.ts).
+    pub fn constructor(
+        global_this: &JSGlobalObject,
+        _callframe: &CallFrame,
+    ) -> JsResult<*mut BuildArtifact> {
+        Err(global_this.throw("BuildArtifact is not constructable"))
+    }
+
     #[bun_jsc::host_fn(method)]
     pub fn get_text(
         this: &mut Self,
@@ -2422,28 +2329,31 @@ impl BuildArtifact {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_path(this: &Self, global_this: &JSGlobalObject) -> JSValue {
-        ZigString::from_utf8(&this.path).to_js(global_this)
+    pub fn get_path(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+        jsc::bun_string_jsc::create_utf8_for_js(global_this, &this.path)
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_loader(this: &Self, global_this: &JSGlobalObject) -> JSValue {
-        ZigString::from_utf8(<&'static str>::from(this.loader).as_bytes()).to_js(global_this)
+    pub fn get_loader(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+        jsc::bun_string_jsc::create_utf8_for_js(
+            global_this,
+            <&'static str>::from(this.loader).as_bytes(),
+        )
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_hash(this: &Self, global_this: &JSGlobalObject) -> JSValue {
+    pub fn get_hash(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         use std::io::Write;
         let mut buf = [0u8; 512];
         let mut cursor = &mut buf[..];
         write!(cursor, "{}", bun_core::fmt::truncated_hash32(this.hash)).expect("Unexpected");
         let written = 512 - cursor.len();
-        ZigString::init(&buf[..written]).to_js(global_this)
+        jsc::bun_string_jsc::create_utf8_for_js(global_this, &buf[..written])
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_size(this: &Self, global_object: &JSGlobalObject) -> JSValue {
-        Blob::get_size(&this.blob, global_object)
+    pub fn get_size(this: &mut Self, global_object: &JSGlobalObject) -> JSValue {
+        Blob::get_size(&mut this.blob, global_object)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -2452,13 +2362,17 @@ impl BuildArtifact {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_output_kind(this: &Self, global_object: &JSGlobalObject) -> JSValue {
-        ZigString::init(<&'static str>::from(this.output_kind).as_bytes()).to_js(global_object)
+    pub fn get_output_kind(this: &Self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+        jsc::bun_string_jsc::create_utf8_for_js(
+            global_object,
+            <&'static str>::from(this.output_kind).as_bytes(),
+        )
     }
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_source_map(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        if let Some(value) = this.sourcemap.get() {
+        let value = this.sourcemap.get();
+        if !value.is_empty() {
             return value;
         }
         JSValue::NULL

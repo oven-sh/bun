@@ -881,11 +881,11 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
                 run_in_bun,
             )?;
             let pkg_name: Box<[u8]> = if !pkgjson.name.is_empty() {
-                Box::from(pkgjson.name)
+                pkgjson.name
             } else {
                 // Fallback: use relative path from workspace root
                 Box::from(bun_paths::resolve_path::relative_platform::<
-                    bun_paths::platform::Posix,
+                    bun_paths::resolve_path::platform::Posix,
                     false,
                 >(resolve_root, pkg_path))
             };

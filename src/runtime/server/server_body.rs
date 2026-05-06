@@ -1118,11 +1118,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let Some(info) = request.request_context.get_remote_socket_info() else {
             return Ok(JSValue::NULL);
         };
-        SocketAddress::create_dto(
+        crate::socket::socket_address::SocketAddress::create_dto(
             // SAFETY: global_this set in init() and outlives ThisServer (JSC_BORROW per LIFETIMES.tsv)
             unsafe { &*self.global_this },
             info.ip,
-            i32::try_from(info.port).unwrap(),
+            u16::try_from(info.port).unwrap(),
             info.is_ipv6,
         )
     }

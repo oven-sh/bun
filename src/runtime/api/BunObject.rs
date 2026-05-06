@@ -2411,9 +2411,12 @@ pub mod JSZlib {
     #[unsafe(no_mangle)]
     pub extern "C" fn reader_deallocator(_: *mut c_void, ctx: *mut c_void) {
         // SAFETY: ctx was created from Box<ZlibReaderArrayList>::into_raw.
+        // PORT NOTE: Zig held an owned `ArrayListUnmanaged` in `.list`; the
+        // Rust port stores a borrowed `&mut Vec<u8>` in `.list_ptr` instead,
+        // so freeing the boxed reader (and zlib state via Drop) is sufficient.
         let reader: *mut zlib::ZlibReaderArrayList = ctx as *mut zlib::ZlibReaderArrayList;
         unsafe {
-            drop(core::mem::take(&mut (*reader).list));
+            drop(core::mem::take((*reader).list_ptr));
             drop(Box::from_raw(reader));
         }
     }
@@ -2425,9 +2428,10 @@ pub mod JSZlib {
     #[unsafe(no_mangle)]
     pub extern "C" fn compressor_deallocator(_: *mut c_void, ctx: *mut c_void) {
         // SAFETY: ctx was created from Box<ZlibCompressorArrayList>::into_raw.
+        // See `reader_deallocator` for the `.list` → `.list_ptr` port note.
         let compressor: *mut zlib::ZlibCompressorArrayList = ctx as *mut zlib::ZlibCompressorArrayList;
         unsafe {
-            drop(core::mem::take(&mut (*compressor).list));
+            drop(core::mem::take((*compressor).list_ptr));
             drop(Box::from_raw(compressor));
         }
     }

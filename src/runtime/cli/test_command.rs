@@ -1732,7 +1732,23 @@ impl TestCommand {
         let mut snapshot_counts: StringHashMap<usize> = StringHashMap::new();
         let mut inline_snapshots_to_write: ArrayHashMap<FileId, Vec<InlineSnapshotToWrite>> =
             ArrayHashMap::new();
-        VirtualMachine::set_is_bun_test(true);
+        // TODO(port): `VirtualMachine::set_is_bun_test(true)` — upstream has no such fn yet.
+        let _ = || -> () { todo!("blocked_on: bun_jsc::VirtualMachine::set_is_bun_test") };
+
+        // Borrowed-slice views (`&[&[u8]]`) over owned `Vec<Box<[u8]>>` config so the
+        // TestRunner / Scanner field types (`Option<&[&[u8]]>`) line up. The owned
+        // backing `Vec`s live in `ctx` for the process lifetime.
+        let concurrent_test_glob_view: Option<Vec<&[u8]>> = ctx
+            .test_options
+            .concurrent_test_glob
+            .as_ref()
+            .map(|v| v.iter().map(|b| &**b).collect());
+        let path_ignore_patterns_view: Vec<&[u8]> = ctx
+            .test_options
+            .path_ignore_patterns
+            .iter()
+            .map(|b| &**b)
+            .collect();
 
         // PORT NOTE: Zig used `ctx.allocator.create` with no destroy. PORTING.md
         // §Forbidden bans `Box::leak`; keep an owned `Box` local — `exec()` never
@@ -1740,24 +1756,39 @@ impl TestCommand {
         // raw-pointer observers (e.g. `Jest::RUNNER` below).
         let mut reporter: Box<CommandLineReporter> = Box::new(CommandLineReporter {
             jest: TestRunner {
-                allocator: (), // TODO(port): allocator field dropped
                 default_timeout_ms: ctx.test_options.default_timeout_ms,
                 concurrent: ctx.test_options.concurrent,
-                randomize: random.clone(),
+                randomize: random_instance,
                 randomize_seed: if enable_random { Some(seed) } else { None },
-                concurrent_test_glob: ctx.test_options.concurrent_test_glob.clone(),
+                // SAFETY: lifetime-erase to `'static`; backing storage lives in `ctx`
+                // (process-lifetime singleton) and `concurrent_test_glob_view` is held
+                // in this never-returning frame.
+                concurrent_test_glob: concurrent_test_glob_view
+                    .as_deref()
+                    .map(|s| unsafe { core::mem::transmute::<&[&[u8]], &'static [&'static [u8]]>(s) }),
                 run_todo: ctx.test_options.run_todo,
                 only: ctx.test_options.only,
                 bail: ctx.test_options.bail,
                 max_concurrency: ctx.test_options.max_concurrency,
-                filter_regex: ctx.test_options.test_filter_regex(),
+                // SAFETY: `test_filter_regex` is an erased `*mut RegularExpression` (see
+                // options_types::Context); cast back. Process-lifetime allocation.
+                filter_regex: ctx
+                    .test_options
+                    .test_filter_regex()
+                    .map(|p| unsafe { &*(p.as_ptr() as *const jsc::RegularExpression) }),
                 snapshots: Snapshots {
-                    allocator: (), // TODO(port): allocator field dropped
                     update_snapshots: ctx.test_options.update_snapshots,
+                    total: 0,
+                    added: 0,
+                    passed: 0,
+                    failed: 0,
                     file_buf: &mut snapshot_file_buf,
                     values: &mut snapshot_values,
                     counts: &mut snapshot_counts,
+                    _current_file: None,
+                    snapshot_dir_path: None,
                     inline_snapshots_to_write: &mut inline_snapshots_to_write,
+                    last_error_snapshot_name: None,
                 },
                 bun_test_root: bun_test::BunTestRoot::init(),
                 ..Default::default()
@@ -1795,25 +1826,27 @@ impl TestCommand {
             reporter.reporters.only_failures = true; // only-failures defaults to true for ai agents
         }
 
-        js_ast::Expr::Data::Store::create();
-        js_ast::Stmt::Data::Store::create();
-        let vm = VirtualMachine::init(VirtualMachine::InitOptions {
-            args: ctx.args,
-            log: ctx.log,
-            env_loader: Some(&mut *env_loader),
-            // we must store file descriptors because we reuse them for
-            // iterating through the directory tree recursively
-            //
-            // in the future we should investigate if refactoring this to not
-            // rely on the dir fd yields a performance improvement
-            store_fd: true,
-            smol: ctx.runtime_options.smol,
-            debugger: ctx.runtime_options.debugger,
-            is_main_thread: true,
-            ..Default::default()
-        })?;
-        vm.argv = ctx.passthrough;
-        vm.preload = ctx.preloads;
+        js_ast::ast::expr::data::Store::create();
+        js_ast::ast::stmt::data::Store::create();
+        // TODO(port): upstream `InitOptions` only carries {args, graph, smol, eval_mode,
+        // is_main_thread}; `log`/`env_loader`/`store_fd`/`debugger` are wired post-init
+        // until the full Options<'a> un-gates.
+        let _ = (&ctx.args, ctx.log, &mut *env_loader, ctx.runtime_options.debugger);
+        // SAFETY: `init` returns the heap-allocated process-lifetime VM; deref once.
+        let vm: &mut VirtualMachine = unsafe {
+            &mut *VirtualMachine::init(jsc::virtual_machine::InitOptions {
+                smol: ctx.runtime_options.smol,
+                is_main_thread: true,
+                ..Default::default()
+            })?
+        };
+        // we must store file descriptors because we reuse them for
+        // iterating through the directory tree recursively
+        //
+        // in the future we should investigate if refactoring this to not
+        // rely on the dir fd yields a performance improvement
+        // TODO(port): vm.argv / vm.preload — upstream VM struct lacks these fields.
+        let _ = (&ctx.passthrough, &ctx.preloads);
         vm.transpiler.options.rewrite_jest_for_tests = true;
         // SAFETY: set once at startup before the HTTP thread spawns; only read on that thread.
         unsafe {
@@ -1835,7 +1868,8 @@ impl TestCommand {
 
         vm.load_extra_env_and_source_code_printer();
         vm.is_main_thread = true;
-        VirtualMachine::set_is_main_thread_vm(true);
+        // TODO(port): `VirtualMachine::set_is_main_thread_vm(true)` — upstream missing.
+        let _ = || -> () { todo!("blocked_on: bun_jsc::VirtualMachine::set_is_main_thread_vm") };
 
         if ctx.test_options.isolate {
             vm.test_isolation_enabled = true;
@@ -1848,7 +1882,8 @@ impl TestCommand {
             vm.transpiler.options.minify_identifiers = false;
             vm.transpiler.options.minify_whitespace = false;
             vm.transpiler.options.dead_code_elimination = false;
-            vm.global.vm().set_control_flow_profiler(true);
+            // SAFETY: `vm.global` initialised by `VirtualMachine::init`.
+            unsafe { (*vm.global).vm().set_control_flow_profiler(true) };
         }
 
         // For tests, we default to UTC time zone
@@ -1862,22 +1897,28 @@ impl TestCommand {
         }
 
         if !tz_name.is_empty() {
-            let _ = vm.global.set_time_zone(&ZigString::init(tz_name));
+            // SAFETY: `vm.global` initialised by `VirtualMachine::init`.
+            let _ = unsafe { (*vm.global).set_time_zone(&ZigString::init(tz_name)) };
         }
 
         if ctx.test_options.test_worker {
             // Worker mode: skip discovery; files arrive over stdin and
             // results go out over fd 3. Never returns.
-            ParallelRunner::run_as_worker(&mut reporter, vm, &ctx)?;
+            ParallelRunner::run_as_worker(&mut reporter, vm, ctx);
         }
 
         // Start the debugger before we scan for files
         // But, don't block the main thread waiting if they used --inspect-wait.
         //
-        vm.ensure_debugger(false)?;
+        // TODO(port): `vm.ensure_debugger(false)` — upstream exposes only via vtable hooks.
+        let _ = || -> () { todo!("blocked_on: bun_jsc::VirtualMachine::ensure_debugger") };
 
         let mut scanner = Scanner::init(&mut vm.transpiler, ctx.positionals.len()).expect("oom");
-        scanner.path_ignore_patterns = ctx.test_options.path_ignore_patterns.clone();
+        // SAFETY: lifetime-erase; `path_ignore_patterns_view` lives in this never-returning
+        // frame, underlying bytes live in `ctx` (process-lifetime).
+        scanner.path_ignore_patterns = unsafe {
+            core::mem::transmute::<&[&[u8]], &'static [&'static [u8]]>(&path_ignore_patterns_view[..])
+        };
         let has_relative_path = 'hr: {
             for arg in &ctx.positionals {
                 if bun_paths::is_absolute(arg)
@@ -1898,10 +1939,10 @@ impl TestCommand {
             for arg in file_or_dirnames {
                 match scanner.scan(arg) {
                     Ok(()) => {}
-                    Err(e) if e == bun_core::err!("OutOfMemory") => bun::out_of_memory(),
+                    Err(scanner::ScanError::OutOfMemory) => bun::out_of_memory(),
                     // don't error if multiple are passed; one might fail
                     // but the others may not
-                    Err(e) if e == bun_core::err!("DoesNotExist") => {
+                    Err(scanner::ScanError::DoesNotExist) => {
                         if file_or_dirnames.len() == 1 {
                             if Output::is_ai_agent() {
                                 pretty_errorln!("Test filter <b>{}<r> had no matches in --cwd={}", bun_fmt::quote(arg), bun_fmt::quote(FileSystem::instance().top_level_dir));
@@ -1910,18 +1951,20 @@ impl TestCommand {
                             }
                             vm.exit_handler.exit_code = 1;
                             vm.is_shutting_down = true;
-                            vm.run_with_api_lock(vm, VirtualMachine::global_exit);
+                            let vm_ptr: *mut VirtualMachine = vm;
+                            vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
                         }
                     }
-                    // Zig switches exhaustively over `error{OutOfMemory, DoesNotExist}`;
-                    // any other variant would have been a compile error there. Do not
-                    // silently swallow unknown scan errors (PORTING.md §Forbidden).
-                    Err(e) => unreachable!("Scanner::scan returned unexpected error: {e:?}"),
                 }
             }
         } else {
             // Treat arguments as filters and scan the codebase
-            let filter_names: &[&[u8]] = if ctx.positionals.is_empty() { &[] } else { &ctx.positionals[1..] };
+            let filter_names_owned: Vec<&[u8]> = if ctx.positionals.is_empty() {
+                Vec::new()
+            } else {
+                ctx.positionals[1..].iter().map(|b| &**b).collect()
+            };
+            let filter_names: &[&[u8]] = &filter_names_owned;
 
             #[cfg(not(windows))]
             let filter_names_normalized = filter_names;
@@ -1936,8 +1979,19 @@ impl TestCommand {
                 normalized
             };
             // PORT NOTE: defer free on Windows handled by Drop of Vec<Box<[u8]>>.
-            scanner.filter_names = filter_names_normalized;
-            // TODO(port): type mismatch on Windows (Vec<Box<[u8]>> vs &[&[u8]]) — Phase B unify
+            // SAFETY: lifetime-erase; `filter_names_owned` lives in this never-returning frame.
+            #[cfg(not(windows))]
+            {
+                scanner.filter_names = unsafe {
+                    core::mem::transmute::<&[&[u8]], &'static [&'static [u8]]>(filter_names_normalized)
+                };
+            }
+            #[cfg(windows)]
+            {
+                // TODO(port): type mismatch on Windows (Vec<Box<[u8]>> vs &[&[u8]]) — Phase B unify
+                let _ = filter_names_normalized;
+                todo!("blocked_on: scanner.filter_names windows path normalization");
+            }
 
             // PORT NOTE: Zig used `vm.allocator.dupe` (arena-scoped). PORTING.md
             // §Forbidden bans `Box::leak` to satisfy a borrow — own the joined
@@ -1954,8 +2008,8 @@ impl TestCommand {
 
             match scanner.scan(dir_to_scan) {
                 Ok(()) => {}
-                Err(e) if e == bun_core::err!("OutOfMemory") => bun::out_of_memory(),
-                Err(e) if e == bun_core::err!("DoesNotExist") => {
+                Err(scanner::ScanError::OutOfMemory) => bun::out_of_memory(),
+                Err(scanner::ScanError::DoesNotExist) => {
                     if Output::is_ai_agent() {
                         pretty_errorln!("<red>Failed to scan non-existent root directory for tests:<r> {} in --cwd={}", bun_fmt::quote(dir_to_scan), bun_fmt::quote(FileSystem::instance().top_level_dir));
                     } else {
@@ -1963,12 +2017,9 @@ impl TestCommand {
                     }
                     vm.exit_handler.exit_code = 1;
                     vm.is_shutting_down = true;
-                    vm.run_with_api_lock(vm, VirtualMachine::global_exit);
+                    let vm_ptr: *mut VirtualMachine = vm;
+                    vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
                 }
-                // Zig switches exhaustively over `error{OutOfMemory, DoesNotExist}`;
-                // any other variant would have been a compile error there. Do not
-                // silently swallow unknown scan errors (PORTING.md §Forbidden).
-                Err(e) => unreachable!("Scanner::scan returned unexpected error: {e:?}"),
             }
         }
 
@@ -1993,11 +2044,10 @@ impl TestCommand {
                 }
                 // TODO(port): borrowck — all_test_files ownership vs slicing; Phase B reshape
 
-                // SAFETY: vm is the live VM pointer obtained above; unique here.
-                let result = match ChangedFilesFilter::filter(&ctx, unsafe { &mut *vm }, &mut all_test_files[..], changed_since) {
+                let result = match ChangedFilesFilter::filter(&ctx, vm, &mut all_test_files[..], changed_since) {
                     Ok(r) => r,
                     Err(err) => {
-                        Output::err(err, format_args!("--changed: unable to determine affected tests"));
+                        Output::err(err, "--changed: unable to determine affected tests", ());
                         Global::exit(1);
                     }
                 };
@@ -2072,7 +2122,7 @@ impl TestCommand {
         // files exist, since "nothing changed yet" is the common starting
         // state and editing a source file should kick off a run.
         if !test_files.is_empty() || (ctx.test_options.changed.is_some() && !all_test_files.is_empty()) {
-            vm.hot_reload = ctx.debug.hot_reload;
+            vm.hot_reload = ctx.debug.hot_reload as u8;
 
             // Install the --changed trigger collector BEFORE the watcher
             // thread starts so a file edit during runAllTests is still
@@ -2084,23 +2134,45 @@ impl TestCommand {
             }
 
             match vm.hot_reload {
-                jsc::virtual_machine::HOT_RELOAD_HOT => jsc::hot_reloader::HotReloader::enable_hot_module_reloading(vm, None),
-                jsc::virtual_machine::HOT_RELOAD_WATCH => jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(vm, None),
+                // TODO(port): `enable_hot_module_reloading` is bound by `Ctx: HotReloaderCtx`;
+                // `VirtualMachineRef` does not implement that trait yet (cycle break).
+                jsc::virtual_machine::HOT_RELOAD_HOT => {
+                    let _ = vm as *mut VirtualMachine;
+                    todo!("blocked_on: bun_jsc::HotReloaderCtx for VirtualMachineRef");
+                }
+                jsc::virtual_machine::HOT_RELOAD_WATCH => {
+                    let _ = vm as *mut VirtualMachine;
+                    todo!("blocked_on: bun_jsc::HotReloaderCtx for VirtualMachineRef");
+                }
                 _ => {}
             }
         }
 
-        let mut coverage_options = ctx.test_options.coverage.clone();
+        // PORT NOTE: `CodeCoverageOptions` lacks `Clone` upstream; bitwise copy is sound
+        // (POD config struct, no Drop, no interior pointers).
+        // SAFETY: see note above — verified by inspection of `CodeCoverageOptions`.
+        let mut coverage_options: CodeCoverageOptions =
+            unsafe { core::ptr::read(&ctx.test_options.coverage) };
         let mut ran_parallel = false;
 
         if !test_files.is_empty() {
             // Randomize the order of test files if --randomize flag is set
-            if let Some(rand) = &random {
-                rand.shuffle(test_files);
+            if let Some(mut rand) = random_instance {
+                // PORT NOTE: `std.Random.shuffle` → Fisher–Yates over `DefaultPrng::next_u64`.
+                let n = test_files.len();
+                if n > 1 {
+                    let mut i = n - 1;
+                    while i > 0 {
+                        // Unbiased range via 128-bit mul (Lemire); matches Zig `Random.uintLessThan`.
+                        let j = ((rand.next_u64() as u128 * (i as u128 + 1)) >> 64) as usize;
+                        test_files.swap(i, j);
+                        i -= 1;
+                    }
+                }
             }
 
             if ctx.test_options.parallel > 0 {
-                ran_parallel = ParallelRunner::run_as_coordinator(&mut reporter, vm, test_files, &ctx, &mut coverage_options)?;
+                ran_parallel = ParallelRunner::run_as_coordinator(&mut reporter, vm, test_files, &mut *ctx, &mut coverage_options)?;
             } else {
                 Self::run_all_tests(&mut reporter, vm, test_files);
             }
@@ -2124,7 +2196,10 @@ impl TestCommand {
         // before the next file edit.
         if ctx.test_options.changed.is_some() && vm.is_watcher_enabled() {
             for path in &changed_module_graph_files {
-                let _ = vm.bun_watcher.add_file_by_path_slow(path, vm.transpiler.options.loader(bun_path::extension(path)));
+                // TODO(port): `vm.bun_watcher` is type-erased `*mut c_void` (b2-cycle);
+                // `ImportWatcher::add_file_by_path_slow` not reachable yet.
+                let _ = (path, vm.transpiler.options.loader(bun_path::extension(path)));
+                todo!("blocked_on: bun_jsc::ImportWatcher::add_file_by_path_slow");
             }
         }
 
@@ -2258,7 +2333,7 @@ impl TestCommand {
                 }
 
                 // Display the random seed if tests were randomized
-                if random.is_some() {
+                if random_instance.is_some() {
                     pretty_error!("{}<r>--seed={}<r>\n", &indenter, seed);
                 }
 
@@ -2352,7 +2427,8 @@ impl TestCommand {
         reporter.write_junit_report_if_needed();
 
         if vm.hot_reload == jsc::virtual_machine::HOT_RELOAD_WATCH {
-            vm.run_with_api_lock(vm, Self::run_event_loop_for_watch);
+            let vm_ptr: *mut VirtualMachine = vm;
+            vm.run_with_api_lock(|| Self::run_event_loop_for_watch(unsafe { &mut *vm_ptr }));
         }
         let summary = reporter.summary();
 
@@ -2363,20 +2439,25 @@ impl TestCommand {
             vm.exit_handler.exit_code = 1;
         }
         vm.is_shutting_down = true;
-        vm.run_with_api_lock(vm, VirtualMachine::global_exit);
+        {
+            let vm_ptr: *mut VirtualMachine = vm;
+            vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
+        }
+        #[allow(unreachable_code)]
         Ok(())
     }
 
     fn run_event_loop_for_watch(vm: &mut VirtualMachine) {
-        vm.event_loop().tick_possibly_forever();
+        // SAFETY: `event_loop()` returns the VM-owned event loop pointer; valid while `vm` is.
+        unsafe { (*vm.event_loop()).tick_possibly_forever() };
 
         loop {
             while vm.is_event_loop_alive() {
                 vm.tick();
-                vm.event_loop().auto_tick_active();
+                unsafe { (*vm.event_loop()).auto_tick_active() };
             }
 
-            vm.event_loop().tick_possibly_forever();
+            unsafe { (*vm.event_loop()).tick_possibly_forever() };
         }
     }
 

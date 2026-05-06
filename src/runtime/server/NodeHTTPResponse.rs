@@ -98,7 +98,7 @@ impl Flags {
 }
 
 pub struct UpgradeCTX {
-    pub context: *mut uws::WebSocketUpgradeContext,
+    pub context: *mut uws_sys::WebSocketUpgradeContext,
     // request will be detached when go async
     pub request: *mut uws_sys::Request,
 

@@ -388,16 +388,25 @@ impl StringOrBuffer {
     #[inline]
     pub fn deinit(&self) {}
 
+    /// Zig `StringOrBuffer.protect` — mirrors `to_thread_safe` but only
+    /// protects the JS-side buffer value (no string conversion).
+    #[inline]
+    pub fn protect(&self) {
+        if let Self::Buffer(buffer) = self {
+            buffer.buffer.value.protect();
+        }
+    }
+
     /// Returns the buffer payload if this is `Self::Buffer`.
     #[inline]
     pub fn buffer(&self) -> Option<&Buffer> {
         if let Self::Buffer(b) = self { Some(b) } else { None }
     }
 
-    pub fn deinit_and_unprotect(self) {
-        // Alternate cleanup path (unprotects JS-side buffers); consumes `self`
-        // and skips Drop to avoid double-release.
-        match &self {
+    pub fn deinit_and_unprotect(&mut self) {
+        // Alternate cleanup path (unprotects JS-side buffers); leaves `self`
+        // empty so the subsequent Drop is a no-op.
+        match self {
             Self::ThreadsafeString(str) | Self::String(str) => {
                 // TODO(port): if SliceWithUnderlyingString gains Drop, this becomes implicit.
                 str.deinit();
@@ -406,10 +415,10 @@ impl StringOrBuffer {
                 buffer.buffer.value.unprotect();
             }
             Self::EncodedSlice(encoded) => {
-                encoded.deinit();
+                *encoded = ZigStringSlice::default();
             }
         }
-        core::mem::forget(self);
+        *self = Self::EMPTY;
     }
 
     pub fn from_js_maybe_async(

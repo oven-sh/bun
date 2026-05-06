@@ -106,7 +106,7 @@ const ALL: [Algorithm; 19] = [
     Algorithm::Shake256,
 ];
 
-pub const MAP: phf::Map<&'static [u8], Algorithm> = phf_map! {
+pub static MAP: phf::Map<&'static [u8], Algorithm> = phf_map! {
     b"blake2b256" => Algorithm::Blake2b256,
     b"blake2b512" => Algorithm::Blake2b512,
     b"blake2s256" => Algorithm::Blake2s256,

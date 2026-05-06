@@ -1905,13 +1905,11 @@ fn spawn_cmd_generic<T: SpawnCmdTarget>(
     };
 
     let spawned = match spawn::spawn_process(&spawn_options, argv.as_mut_ptr().cast(), envp) {
-        Ok(maybe) => match maybe.unwrap_result() {
-            Ok(s) => s,
-            Err(err) => {
-                this.set_err(format_args!("Failed to spawn process: {}", err.name()));
-                return T::finish(this);
-            }
-        },
+        Ok(Ok(s)) => s,
+        Ok(Err(err)) => {
+            this.set_err(format_args!("Failed to spawn process: {}", err.name()));
+            return T::finish(this);
+        }
         Err(e) => {
             this.set_err(format_args!("Failed to spawn process: {}", e.name()));
             return T::finish(this);

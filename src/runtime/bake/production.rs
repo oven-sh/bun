@@ -362,15 +362,15 @@ pub fn build_with_vm(
         debug_assert!(global.has_exception());
         return Err(bun_core::err!("JSError"));
     };
+    let config_promise_ptr = config_promise.as_ptr();
     // SAFETY: load_and_evaluate_module_ptr returned a non-null cell pointer owned
     // by the JSC heap; unique &mut for `set_handled`/`unwrap` on this thread.
-    let config_promise = unsafe { config_promise.as_ptr().as_mut().unwrap() };
-
-    config_promise.set_handled();
-    vm.wait_for_promise(AnyPromise::Internal(config_promise));
+    unsafe { (*config_promise_ptr).set_handled() };
+    vm.wait_for_promise(AnyPromise::Internal(config_promise_ptr));
     // SAFETY: vm.jsc_vm is live.
     let jsc_vm = unsafe { &mut *vm.jsc_vm };
-    let mut options = match config_promise.unwrap(jsc_vm, UnwrapMode::MarkHandled) {
+    // SAFETY: see above; promise cell is still live (rooted via the module loader).
+    let mut options = match unsafe { (*config_promise_ptr).unwrap(jsc_vm, UnwrapMode::MarkHandled) } {
         Unwrapped::Pending => unreachable!(),
         Unwrapped::Fulfilled(_) => {
             // SAFETY: FFI; global is live, key is a stack-held JSValue.

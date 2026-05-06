@@ -138,15 +138,18 @@ pub struct Zone {
 
 impl Zone {
     /// Zig: `pub fn init(comptime name: [:0]const u8) *Zone`
-    // TODO(port): [:0]const u8 → &ZStr per type map; using &CStr because only `.ptr` is consumed
-    // by `malloc_set_zone_name` and callers already construct CStr. Revisit if length is needed.
-    pub fn init(name: &'static core::ffi::CStr) -> &'static Zone {
+    ///
+    /// # Safety
+    /// `name` must point to a NUL-terminated C string that remains valid for
+    /// the entire process lifetime — `malloc_set_zone_name` stores the pointer
+    /// (does not copy).
+    pub unsafe fn init(name: *const c_char) -> &'static Zone {
         // SAFETY: malloc_create_zone is safe to call with (0, 0); returns a
-        // process-lifetime zone pointer. malloc_set_zone_name stores the pointer
-        // (does not copy), hence the 'static bound on `name`.
+        // process-lifetime zone pointer. Caller guarantees `name` outlives the
+        // process.
         unsafe {
             let zone = malloc_create_zone(0, 0);
-            malloc_set_zone_name(zone, name.as_ptr());
+            malloc_set_zone_name(zone, name);
             &*zone
         }
     }

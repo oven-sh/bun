@@ -339,6 +339,22 @@ impl ImportRule {
     }
 }
 
+// Compile-time check that the layout pun in `conditions()`/`conditions_mut()`
+// is valid: the {layer, supports, media} field run of ImportRule must match
+// ImportConditions field-for-field.
+const _: () = {
+    let base = core::mem::offset_of!(ImportRule, layer);
+    assert!(core::mem::offset_of!(ImportConditions, layer) == 0);
+    assert!(
+        core::mem::offset_of!(ImportRule, supports) - base
+            == core::mem::offset_of!(ImportConditions, supports)
+    );
+    assert!(
+        core::mem::offset_of!(ImportRule, media) - base
+            == core::mem::offset_of!(ImportConditions, media)
+    );
+};
+
 // silence unused-import warnings on the gated bodies' deps
 #[allow(unused_imports)]
 use {Arena as _Arena, BabyList as _BabyList, ImportRecord as _ImportRecord};

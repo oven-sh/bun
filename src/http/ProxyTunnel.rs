@@ -285,15 +285,16 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
 }
 
 fn on_handshake(ctx: *mut HTTPClient, handshake_success: bool, ssl_error: uws::us_bun_verify_error_t) {
-    // SAFETY: see on_open.
+    // SAFETY: see on_open. NLL ends `this` before any reentrant call below.
     let this = unsafe { &mut *ctx };
     let Some(proxy_nn) = this.proxy_tunnel else { return };
+    let proxy_ptr = proxy_nn.as_ptr();
     scoped_log!(http_proxy_tunnel, "ProxyTunnel onHandshake");
-    // SAFETY: live intrusive-refcounted tunnel.
-    let proxy = unsafe { &mut *proxy_nn.as_ptr() };
-    proxy.ref_();
+    // SAFETY: live intrusive-refcounted tunnel; raw field projection only —
+    // do NOT form `&mut ProxyTunnel` (see ALIASING NOTE).
+    unsafe { ref_raw(proxy_ptr) };
     let _guard = scopeguard::guard(proxy_nn, |p| {
-        // SAFETY: balances the ref_ above.
+        // SAFETY: balances the ref_raw above.
         unsafe { ProxyTunnel::deref(p.as_ptr()) };
     });
     this.state.response_stage = HTTPStage::ProxyHeaders;

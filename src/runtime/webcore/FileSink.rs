@@ -1268,10 +1268,8 @@ impl FileSink {
                     }
                     bun_jsc::js_promise::Status::Rejected => {
                         // These don't ref().
-                        // SAFETY: `js_promise` is non-null; `vm()` returns a
-                        // shared ref but `JSC__JSPromise__result` only reads.
-                        let vm = global_this.vm() as *const bun_jsc::VM as *mut bun_jsc::VM;
-                        let result = unsafe { (*js_promise).result(&mut *vm) };
+                        // SAFETY: `js_promise` is non-null (`as_any_promise`).
+                        let result = unsafe { (*js_promise).result(global_this.vm()) };
                         self.handle_reject_stream(global_this, result);
                     }
                 }

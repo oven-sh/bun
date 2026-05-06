@@ -830,9 +830,8 @@ pub fn download_stream(
         Box::<[u8]>::default()
     };
     let task_ptr = Box::into_raw(S3HttpDownloadStreamingTask::new(S3HttpDownloadStreamingTask {
-        // TODO(port): `http: undefined` — initialized below
-        // SAFETY: http is fully overwritten by AsyncHTTP::init below before any read
-        http: unsafe { core::mem::zeroed() },
+        // `http: undefined` — fully overwritten by `task.http.write(AsyncHTTP::init(...))` below.
+        http: core::mem::MaybeUninit::uninit(),
         sign_result: result,
         proxy_url: owned_proxy,
         // SAFETY: callers always pass a non-null context (Box-allocated wrapper).
@@ -881,7 +880,7 @@ pub fn download_stream(
     let verbose = vm_mut.get_verbose_fetch();
     let reject_unauthorized = vm_mut.get_tls_reject_unauthorized();
 
-    task.http = bun_http::AsyncHTTP::init(
+    task.http.write(bun_http::AsyncHTTP::init(
         bun_http::Method::GET,
         url,
         task.headers.entries.clone().expect("OOM"),
@@ -907,13 +906,15 @@ pub fn download_stream(
             reject_unauthorized: Some(reject_unauthorized),
             ..Default::default()
         },
-    );
+    ));
+    // SAFETY: `http` was initialised by `task.http.write(...)` immediately above.
+    let http = unsafe { task.http.assume_init_mut() };
     // enable streaming
-    task.http.enable_response_body_streaming();
+    http.enable_response_body_streaming();
     // queue http request
     bun_http::http_thread::init(&Default::default());
     let mut batch = bun_threading::thread_pool::Batch::default();
-    task.http.schedule(&mut batch);
+    http.schedule(&mut batch);
     bun_http::http_thread().schedule(batch);
 }
 

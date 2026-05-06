@@ -54,8 +54,8 @@ impl Default for S3HttpDownloadStreamingTask {
         // `..Default::default()`) overwrites before the task pointer escapes. `http` is zeroed
         // to mirror Zig's `= undefined` + later overwrite (see S3HttpSimpleTask PORT NOTE).
         Self {
-            // SAFETY: never read — fully overwritten by `AsyncHTTP::init` before first use.
-            http: unsafe { core::mem::zeroed() },
+            // never read — fully overwritten by `AsyncHTTP::init` before first use.
+            http: core::mem::MaybeUninit::uninit(),
             vm: core::ptr::null_mut(),
             sign_result: SignResult::default(),
             headers: Headers::default(),
@@ -240,8 +240,9 @@ impl S3HttpDownloadStreamingTask {
             // TODO(port): Zig does `this.http = async_http.*;` (struct copy). Phase B: confirm
             // AsyncHTTP copy/move semantics in Rust.
             // SAFETY: `async_http` points to a live AsyncHTTP owned by the HTTP thread; Zig does a
-            // plain struct copy (`this.http = async_http.*`) — bitwise read matches that.
-            self.http = unsafe { core::ptr::read(async_http) };
+            // plain struct copy (`this.http = async_http.*`) — bitwise read+write matches that.
+            // `self.http` was previously initialised in `execute_s3_streaming_download`.
+            unsafe { core::ptr::write(self.http.as_mut_ptr(), core::ptr::read(async_http)) };
         }
         wait_until_done
     }
@@ -344,7 +345,8 @@ impl Drop for S3HttpDownloadStreamingTask {
             .unref(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
         // response_buffer, reported_response_buffer, headers, sign_result, range, proxy_url:
         // dropped automatically (Box/Vec-backed fields).
-        self.http.clear_data();
+        // SAFETY: `http` is always initialised before the task is scheduled / dropped.
+        unsafe { self.http.assume_init_mut() }.clear_data();
     }
 }
 

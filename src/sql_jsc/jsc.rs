@@ -1078,7 +1078,7 @@ impl AutoFlusher {
         }
     }
     /// AutoFlusher.zig: `unregisterDeferredMicrotaskWithType`.
-    pub fn unregister_deferred_microtask_with_type<T>(this: *mut T, vm: &mut VirtualMachine) {
+    pub fn unregister_deferred_microtask_with_type<T>(this: *mut T, vm: &VirtualMachine) {
         // SAFETY: `vm` is live; `this` was previously registered.
         // TODO(port): export from Zig — `Bun__VM__unregisterDeferredTask`.
         unsafe { Bun__VM__unregisterDeferredTask(vm.as_mut_ptr(), this as *mut c_void) };
@@ -1384,6 +1384,10 @@ pub mod codegen {
                 let p = unsafe { $from_js_direct(v) };
                 if p.is_null() { None } else { Some(p as *mut $payload) }
             }
+            // Backs `JSValue::as_::<$payload>()` (Zig: `value.as(T)`).
+            impl crate::jsc::JsClass for $payload {
+                fn from_js(v: JSValue) -> Option<*mut Self> { from_js(v) }
+            }
         };
     }
 
@@ -1440,6 +1444,10 @@ pub mod codegen {
             MySQLConnectionPrototype__oncloseGetCachedValue,
             MySQLConnectionPrototype__oncloseSetCachedValue);
         get_constructor!(MySQLConnection__getConstructor);
+        js_class_fns!(crate::mysql::js_my_sql_connection::JSMySQLConnection,
+            MySQLConnection__create,
+            MySQLConnection__fromJS,
+            MySQLConnection__fromJSDirect);
     }
     #[allow(non_snake_case)]
     pub use js_mysql_connection as JSMySQLConnection;

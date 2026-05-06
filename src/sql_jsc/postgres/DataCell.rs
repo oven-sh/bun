@@ -118,7 +118,7 @@ fn parse_array(
     let closing_brace: u8 = if is_json_sub_array { b']' } else { b'}' };
     let opening_brace: u8 = if is_json_sub_array { b'[' } else { b'{' };
     if bytes.len() < 2 || bytes[0] != opening_brace {
-        return Err(err!("UnsupportedArrayFormat").into());
+        return Err(AnyPostgresError::UnsupportedArrayFormat);
     }
     // empty array
     if bytes.len() == 2 && bytes[1] == closing_brace {
@@ -149,7 +149,7 @@ fn parse_array(
     let mut slice = &bytes[1..];
     let mut reached_end = false;
     let separator: u8 = match array_type {
-        types::Tag::BoxArray => b';',
+        types::Tag::box_array => b';',
         _ => b',',
     };
 
@@ -158,7 +158,7 @@ fn parse_array(
         if ch == closing_brace {
             if reached_end {
                 // cannot reach end twice
-                return Err(err!("UnsupportedArrayFormat").into());
+                return Err(AnyPostgresError::UnsupportedArrayFormat);
             }
             // end of array
             reached_end = true;
@@ -186,10 +186,10 @@ fn parse_array(
             }
             // did not find a closing quote
             if current_idx == 0 {
-                return Err(err!("UnsupportedArrayFormat").into());
+                return Err(AnyPostgresError::UnsupportedArrayFormat);
             }
             match array_type {
-                types::Tag::ByteaArray => {
+                types::Tag::bytea_array => {
                     // this is a bytea array so we need to parse the bytea strings
                     let bytea_bytes = &slice[1..current_idx];
                     if bytea_bytes.starts_with(b"\\\\x") {
@@ -199,9 +199,9 @@ fn parse_array(
                         continue;
                     }
                     // invalid bytea array
-                    return Err(err!("UnsupportedByteaFormat").into());
+                    return Err(AnyPostgresError::UnsupportedByteaFormat);
                 }
-                types::Tag::TimestamptzArray | types::Tag::TimestampArray | types::Tag::DateArray => {
+                types::Tag::timestamptz_array | types::Tag::timestamp_array | types::Tag::date_array => {
                     let date_str = &slice[1..current_idx];
                     let str = BunString::init(date_str);
                     // defer str.deref() → Drop on BunString
@@ -214,7 +214,7 @@ fn parse_array(
                     slice = try_slice(slice, current_idx + 1);
                     continue;
                 }
-                types::Tag::JsonArray | types::Tag::JsonbArray => {
+                types::Tag::json_array | types::Tag::jsonb_array => {
                     let str_bytes = &slice[1..current_idx];
                     let needs_dynamic_buffer = str_bytes.len() > stack_buffer.len();
                     let mut dyn_buffer: Vec<u8>;
@@ -225,7 +225,7 @@ fn parse_array(
                         &mut stack_buffer[0..str_bytes.len()]
                     };
                     let unescaped = unescape_postgres_string(str_bytes, buffer)
-                        .map_err(|_| err!("InvalidByteSequence"))?;
+                        .map_err(|_| AnyPostgresError::InvalidByteSequence)?;
                     array.push(SQLDataCell {
                         tag: Tag::Json,
                         value: Value {
@@ -265,7 +265,7 @@ fn parse_array(
                 &mut stack_buffer[0..str_bytes.len()]
             };
             let string_bytes = unescape_postgres_string(str_bytes, buffer)
-                .map_err(|_| err!("InvalidByteSequence"))?;
+                .map_err(|_| AnyPostgresError::InvalidByteSequence)?;
             array.push(SQLDataCell {
                 tag: Tag::String,
                 value: Value {
@@ -288,36 +288,36 @@ fn parse_array(
         } else {
             match array_type {
                 // timez, date, time, interval are handled like single string cases
-                types::Tag::TimetzArray
-                | types::Tag::DateArray
-                | types::Tag::TimeArray
-                | types::Tag::IntervalArray
+                types::Tag::timetz_array
+                | types::Tag::date_array
+                | types::Tag::time_array
+                | types::Tag::interval_array
                 // text array types
-                | types::Tag::BpcharArray
-                | types::Tag::VarcharArray
-                | types::Tag::CharArray
-                | types::Tag::TextArray
-                | types::Tag::NameArray
-                | types::Tag::NumericArray
-                | types::Tag::MoneyArray
-                | types::Tag::VarbitArray
-                | types::Tag::Int2vectorArray
-                | types::Tag::BitArray
-                | types::Tag::PathArray
-                | types::Tag::XmlArray
-                | types::Tag::PointArray
-                | types::Tag::LsegArray
-                | types::Tag::BoxArray
-                | types::Tag::PolygonArray
-                | types::Tag::LineArray
-                | types::Tag::CidrArray
-                | types::Tag::CircleArray
-                | types::Tag::Macaddr8Array
-                | types::Tag::MacaddrArray
-                | types::Tag::InetArray
-                | types::Tag::AclitemArray
-                | types::Tag::PgDatabaseArray
-                | types::Tag::PgDatabaseArray2 => {
+                | types::Tag::bpchar_array
+                | types::Tag::varchar_array
+                | types::Tag::char_array
+                | types::Tag::text_array
+                | types::Tag::name_array
+                | types::Tag::numeric_array
+                | types::Tag::money_array
+                | types::Tag::varbit_array
+                | types::Tag::int2vector_array
+                | types::Tag::bit_array
+                | types::Tag::path_array
+                | types::Tag::xml_array
+                | types::Tag::point_array
+                | types::Tag::lseg_array
+                | types::Tag::box_array
+                | types::Tag::polygon_array
+                | types::Tag::line_array
+                | types::Tag::cidr_array
+                | types::Tag::circle_array
+                | types::Tag::macaddr8_array
+                | types::Tag::macaddr_array
+                | types::Tag::inet_array
+                | types::Tag::aclitem_array
+                | types::Tag::pg_database_array
+                | types::Tag::pg_database_array2 => {
                     // this is also a string until we reach "," or "}" but a single word string like Bun
                     let mut current_idx: usize = 0;
 
@@ -328,7 +328,7 @@ fn parse_array(
                         }
                     }
                     if current_idx == 0 {
-                        return Err(err!("UnsupportedArrayFormat").into());
+                        return Err(AnyPostgresError::UnsupportedArrayFormat);
                     }
                     let element = &slice[0..current_idx];
                     // lets handle NULL case here, if is a string "NULL" it will have quotes, if its a NULL it will be just NULL
@@ -341,7 +341,7 @@ fn parse_array(
                         slice = try_slice(slice, current_idx);
                         continue;
                     }
-                    if array_type == types::Tag::DateArray {
+                    if array_type == types::Tag::date_array {
                         let str = BunString::init(element);
                         array.push(SQLDataCell {
                             tag: Tag::Date,
@@ -383,7 +383,7 @@ fn parse_array(
                         b'N' => {
                             // null or nan
                             if slice.len() < 3 {
-                                return Err(err!("UnsupportedArrayFormat").into());
+                                return Err(AnyPostgresError::UnsupportedArrayFormat);
                             }
                             if slice.len() >= 4 {
                                 if &slice[0..4] == b"NULL" {
@@ -405,13 +405,13 @@ fn parse_array(
                                 slice = try_slice(slice, 3);
                                 continue;
                             }
-                            return Err(err!("UnsupportedArrayFormat").into());
+                            return Err(AnyPostgresError::UnsupportedArrayFormat);
                         }
                         b'f' => {
                             // false
-                            if array_type == types::Tag::JsonArray || array_type == types::Tag::JsonbArray {
+                            if array_type == types::Tag::json_array || array_type == types::Tag::jsonb_array {
                                 if slice.len() < 5 {
-                                    return Err(err!("UnsupportedArrayFormat").into());
+                                    return Err(AnyPostgresError::UnsupportedArrayFormat);
                                 }
                                 if &slice[0..5] == b"false" {
                                     array.push(SQLDataCell {
@@ -434,9 +434,9 @@ fn parse_array(
                         }
                         b't' => {
                             // true
-                            if array_type == types::Tag::JsonArray || array_type == types::Tag::JsonbArray {
+                            if array_type == types::Tag::json_array || array_type == types::Tag::jsonb_array {
                                 if slice.len() < 4 {
-                                    return Err(err!("UnsupportedArrayFormat").into());
+                                    return Err(AnyPostgresError::UnsupportedArrayFormat);
                                 }
                                 if &slice[0..4] == b"true" {
                                     array.push(SQLDataCell {
@@ -460,13 +460,13 @@ fn parse_array(
                         b'I' | b'i' => {
                             // infinity
                             if slice.len() < 8 {
-                                return Err(err!("UnsupportedArrayFormat").into());
+                                return Err(AnyPostgresError::UnsupportedArrayFormat);
                             }
 
                             if bun_core::strings::eql_case_insensitive_ascii(&slice[0..8], b"Infinity", false) {
                                 if matches!(
                                     array_type,
-                                    types::Tag::DateArray | types::Tag::TimestampArray | types::Tag::TimestamptzArray
+                                    types::Tag::date_array | types::Tag::timestamp_array | types::Tag::timestamptz_array
                                 ) {
                                     array.push(SQLDataCell {
                                         tag: Tag::Date,
@@ -484,7 +484,7 @@ fn parse_array(
                                 continue;
                             }
 
-                            return Err(err!("UnsupportedArrayFormat").into());
+                            return Err(AnyPostgresError::UnsupportedArrayFormat);
                         }
                         b'+' => {
                             slice = try_slice(slice, 1);
@@ -514,20 +514,20 @@ fn parse_array(
                                     }
                                     b'e' => {
                                         if !is_float {
-                                            return Err(err!("UnsupportedArrayFormat").into());
+                                            return Err(AnyPostgresError::UnsupportedArrayFormat);
                                         }
                                         if has_exponent {
-                                            return Err(err!("UnsupportedArrayFormat").into());
+                                            return Err(AnyPostgresError::UnsupportedArrayFormat);
                                         }
                                         has_exponent = true;
                                         continue;
                                     }
                                     b'+' => {
                                         if !has_exponent {
-                                            return Err(err!("UnsupportedArrayFormat").into());
+                                            return Err(AnyPostgresError::UnsupportedArrayFormat);
                                         }
                                         if has_positive_sign {
-                                            return Err(err!("UnsupportedArrayFormat").into());
+                                            return Err(AnyPostgresError::UnsupportedArrayFormat);
                                         }
                                         has_positive_sign = true;
                                         continue;
@@ -538,10 +538,10 @@ fn parse_array(
                                             continue;
                                         }
                                         if !has_exponent {
-                                            return Err(err!("UnsupportedArrayFormat").into());
+                                            return Err(AnyPostgresError::UnsupportedArrayFormat);
                                         }
                                         if has_negative_sign {
-                                            return Err(err!("UnsupportedArrayFormat").into());
+                                            return Err(AnyPostgresError::UnsupportedArrayFormat);
                                         }
                                         has_negative_sign = true;
                                         continue;
@@ -549,7 +549,7 @@ fn parse_array(
                                     b'.' => {
                                         // we can only have one dot and the dot must be before the exponent
                                         if is_float {
-                                            return Err(err!("UnsupportedArrayFormat").into());
+                                            return Err(AnyPostgresError::UnsupportedArrayFormat);
                                         }
                                         is_float = true;
                                     }
@@ -558,15 +558,15 @@ fn parse_array(
                                         is_infinity = true;
                                         let element = if is_negative { &slice[1..] } else { slice };
                                         if element.len() < 8 {
-                                            return Err(err!("UnsupportedArrayFormat").into());
+                                            return Err(AnyPostgresError::UnsupportedArrayFormat);
                                         }
                                         if bun_core::strings::eql_case_insensitive_ascii(&element[0..8], b"Infinity", false) {
                                             let val = if is_negative { -f64::INFINITY } else { f64::INFINITY };
                                             if matches!(
                                                 array_type,
-                                                types::Tag::DateArray
-                                                    | types::Tag::TimestampArray
-                                                    | types::Tag::TimestamptzArray
+                                                types::Tag::date_array
+                                                    | types::Tag::timestamp_array
+                                                    | types::Tag::timestamptz_array
                                             ) {
                                                 array.push(SQLDataCell {
                                                     tag: Tag::Date,
@@ -584,10 +584,10 @@ fn parse_array(
                                             break;
                                         }
 
-                                        return Err(err!("UnsupportedArrayFormat").into());
+                                        return Err(AnyPostgresError::UnsupportedArrayFormat);
                                     }
                                     _ => {
-                                        return Err(err!("UnsupportedArrayFormat").into());
+                                        return Err(AnyPostgresError::UnsupportedArrayFormat);
                                     }
                                 }
                             }
@@ -598,10 +598,10 @@ fn parse_array(
                                 continue;
                             }
                             if current_idx == 0 {
-                                return Err(err!("UnsupportedArrayFormat").into());
+                                return Err(AnyPostgresError::UnsupportedArrayFormat);
                             }
                             let element = &slice[0..current_idx];
-                            if is_float || array_type == types::Tag::Float8Array {
+                            if is_float || array_type == types::Tag::float8_array {
                                 array.push(SQLDataCell {
                                     tag: Tag::Float8,
                                     value: Value {
@@ -613,13 +613,13 @@ fn parse_array(
                                 continue;
                             }
                             match array_type {
-                                types::Tag::Int8Array => {
+                                types::Tag::int8_array => {
                                     if bigint {
                                         array.push(SQLDataCell {
                                             tag: Tag::Int8,
                                             value: Value {
                                                 int8: parse_int_i64(element)
-                                                    .ok_or_else(|| err!("UnsupportedArrayFormat"))?,
+                                                    .ok_or(AnyPostgresError::UnsupportedArrayFormat)?,
                                             },
                                             ..Default::default()
                                         });
@@ -640,7 +640,7 @@ fn parse_array(
                                     slice = try_slice(slice, current_idx);
                                     continue;
                                 }
-                                types::Tag::CidArray | types::Tag::XidArray | types::Tag::OidArray => {
+                                types::Tag::cid_array | types::Tag::xid_array | types::Tag::oid_array => {
                                     array.push(SQLDataCell {
                                         tag: Tag::Uint4,
                                         value: Value {
@@ -653,7 +653,7 @@ fn parse_array(
                                 }
                                 _ => {
                                     let value = parse_int_i32(element)
-                                        .ok_or_else(|| err!("UnsupportedArrayFormat"))?;
+                                        .ok_or(AnyPostgresError::UnsupportedArrayFormat)?;
 
                                     array.push(SQLDataCell {
                                         tag: Tag::Int4,
@@ -669,7 +669,7 @@ fn parse_array(
                             }
                         }
                         _ => {
-                            if array_type == types::Tag::JsonArray || array_type == types::Tag::JsonbArray {
+                            if array_type == types::Tag::json_array || array_type == types::Tag::jsonb_array {
                                 if slice[0] == b'[' {
                                     let mut sub_array_offset: usize = 0;
                                     let sub_array = parse_array(
@@ -685,7 +685,7 @@ fn parse_array(
                                     continue;
                                 }
                             }
-                            return Err(err!("UnsupportedArrayFormat").into());
+                            return Err(AnyPostgresError::UnsupportedArrayFormat);
                         }
                     }
                 }
@@ -702,7 +702,7 @@ fn parse_array(
         #[cold]
         fn cold() {}
         cold();
-        return Err(err!("UnsupportedArrayFormat").into());
+        return Err(AnyPostgresError::UnsupportedArrayFormat);
     }
 
     // disarm errdefer
@@ -730,7 +730,7 @@ fn from_bytes_typed_array<Elem>(
     bytes: &[u8],
 ) -> Result<SQLDataCell> {
     if bytes.len() < 12 {
-        return Err(err!("InvalidBinaryData").into());
+        return Err(AnyPostgresError::InvalidBinaryData);
     }
     // https://github.com/postgres/postgres/blob/master/src/backend/utils/adt/arrayfuncs.c#L1549-L1645
     let dimensions_raw: types::int4 = i32::from_ne_bytes(bytes[0..4].try_into().unwrap());
@@ -738,11 +738,11 @@ fn from_bytes_typed_array<Elem>(
 
     let dimensions = dimensions_raw.swap_bytes();
     if dimensions > 1 {
-        return Err(err!("MultidimensionalArrayNotSupportedYet").into());
+        return Err(AnyPostgresError::MultidimensionalArrayNotSupportedYet);
     }
 
     if contains_nulls != 0 {
-        return Err(err!("NullsInArrayNotSupportedYet").into());
+        return Err(AnyPostgresError::NullsInArrayNotSupportedYet);
     }
 
     let js_typed_array_type = tag.to_js_typed_array_type()?;
@@ -769,18 +769,18 @@ fn from_bytes_typed_array<Elem>(
     // server-controlled, so validate it against bytes.len before
     // slice() iterates to avoid reading/writing past the buffer.
     if bytes.len() < 20 {
-        return Err(err!("InvalidBinaryData").into());
+        return Err(AnyPostgresError::InvalidBinaryData);
     }
     let array_len: i32 = i32::from_ne_bytes(bytes[12..16].try_into().unwrap()).swap_bytes();
     if array_len < 0 {
-        return Err(err!("InvalidBinaryData").into());
+        return Err(AnyPostgresError::InvalidBinaryData);
     }
     // slice() consumes 2 * @sizeOf(element) bytes per element (the
     // 4-byte length prefix + the 4-byte value for int4/float4).
     let element_stride: usize = size_of::<Elem>() * 2;
     let max_elements = (bytes.len() - 20) / element_stride;
     if usize::try_from(array_len).unwrap() > max_elements {
-        return Err(err!("InvalidBinaryData").into());
+        return Err(AnyPostgresError::InvalidBinaryData);
     }
 
     // Zig: `tag.pgArrayType().init(bytes).slice()` — generic single-dimension

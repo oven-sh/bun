@@ -61,8 +61,8 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
     `Survey ${CRATE}: ONE cargo check → per-file errfiles. Repo /root/bun-5. Shard ${SHARD}/${NSHARDS}.
 
 1. \`rm -rf ${D} && mkdir -p ${D} && ${CHECK_CMD} > ${D}/full.log 2>&1\`
-2. total = \`grep -cE '^error(\\[|:)' ${D}/full.log\`
-3. If a *dependency* crate fails (not ${CRATE}): \`sleep 60\` then return {units:[], total:0, dep_broken:[<crate names from "could not compile">]} — DO NOT survey further. (sleep prevents spin-waste)
+2. **FIRST check dep-gate (DO NOT read full.log into context):** \`grep 'could not compile' ${D}/full.log\` — if output names a crate OTHER than \`${CRATE}\`, run \`sleep 90\` and return {units:[], total:0, dep_broken:[<names>]} immediately. Do not cat/head/read the log.
+3. total = \`grep -cE '^error(\\[|:)' ${D}/full.log\` (only if ${CRATE} is the failure or check passed)
 4. Per-file: \`grep -oP '\\-\\-> \\K${SRCDIR}/[^:]+\\.rs' ${D}/full.log | sort | uniq -c | sort -rn\`
 5. **Files with n>${SPLIT_THRESHOLD}** → split into line-buckets of ~${BUCKET_LINES} lines: extract error blocks where \`--> <file>:LINE:\` and LINE in [lo,hi). Write to \`${D}/<slug>_<lo>.err\`.
 6. **Other files** → whole-file error blocks: \`awk -v p='--> <file>:' 'BEGIN{RS="\\n\\n"} index($0,p){print $0"\\n"}' ${D}/full.log > ${D}/<slug>.err\`
@@ -77,8 +77,12 @@ Return {units:[{file, lo?, hi?, n, errfile}], total, dep_broken:[]}. units = ALL
   if (survey.dep_broken && survey.dep_broken.length > 0) {
     log(`${CRATE} blocked on deps: ${survey.dep_broken.join(",")} — backoff`);
     history.push({ round, dep_broken: survey.dep_broken });
-    // Backoff: spawn a haiku agent that just sleeps. Prevents 100-round spin-waste.
-    await agent(`Run \`sleep 90\` then return.`, { label: `backoff-${CRATE}-s${SHARD}`, model: "haiku" });
+    // Hard backoff: 3 consecutive dep_broken → bail (orchestrator relaunches when ready).
+    const recent = history.slice(-3);
+    if (recent.length >= 3 && recent.every(h => h.dep_broken)) {
+      return { rounds: round, done: false, bailed: "dep_broken_3x", history, shard: SHARD, crate: CRATE };
+    }
+    await agent(`Run \`sleep 120\` then return "ok".`, { label: `backoff-${CRATE}-s${SHARD}`, model: "haiku" });
     continue;
   }
   if (survey.total === 0) return { rounds: round, done: true, history, shard: SHARD, crate: CRATE };

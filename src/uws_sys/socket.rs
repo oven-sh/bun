@@ -163,7 +163,8 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
 
     pub fn start_tls(&self, is_client: bool) {
         if let Some(socket) = self.socket.get() {
-            unsafe { (*socket).open(is_client, None);
+            // SAFETY: `socket` is a live `*mut us_socket_t` from `get()`.
+            unsafe { (*socket).open(is_client, None) };
         }
     }
 
@@ -184,7 +185,7 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
     pub fn get_native_handle(&self) -> Option<*mut c_void> {
         let raw: Option<*mut c_void> = match &self.socket {
             InternalSocket::Connected(socket) => unsafe { (**socket).get_native_handle() },
-            InternalSocket::Connecting(socket) => unsafe { (**socket).get_native_handle() },
+            InternalSocket::Connecting(socket) => unsafe { Some((**socket).get_native_handle()) },
             InternalSocket::Detached => None,
             InternalSocket::UpgradedDuplex(socket) => {
                 if IS_SSL {
@@ -370,9 +371,9 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
                 unsafe { (**socket).get_error() }
             }
             InternalSocket::Detached => 0,
-            InternalSocket::UpgradedDuplex(socket) => socket.ssl_error().error_no,
+            InternalSocket::UpgradedDuplex(socket) => socket.ssl_error().error,
             #[cfg(windows)]
-            InternalSocket::Pipe(pipe) => pipe.ssl_error().error_no,
+            InternalSocket::Pipe(pipe) => pipe.ssl_error().error,
             #[cfg(not(windows))]
             InternalSocket::Pipe => 0,
         }
@@ -471,10 +472,19 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
         set_socket_field: Option<impl FnOnce(&mut This, Self)>,
         is_ipc: bool,
     ) -> Option<Self> {
-        let raw = g.from_fd(k, None, size_of::<Option<*mut This>>(), handle.native(), is_ipc)?;
+        let raw = g.from_fd(
+            k,
+            core::ptr::null_mut(),
+            size_of::<Option<*mut This>>() as c_int,
+            handle.native(),
+            is_ipc,
+        );
+        if raw.is_null() {
+            return None;
+        }
 
         // SAFETY: ext storage is sized for `?*This` and `raw` is live.
-        unsafe { *us_socket_t::ext::<Option<*mut This>>(raw) = Some(this) };
+        unsafe { *(*raw).ext::<Option<*mut This>>() = Some(this) };
         if let Some(set) = set_socket_field {
             // PORT NOTE: reshaped for borrowck — `Self` holds `&'a mut` (BORROW_PARAM)
             // so it isn't `Clone`; rebuild the `Connected(raw)` variant instead.
@@ -533,16 +543,25 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
         // PERF(port): @intCast — profile in Phase B
         let port: c_int = port.try_into().unwrap();
 
-        match g.connect(kind, ssl_ctx, host_z, port, opts, size_of::<Option<*mut Owner>>()) {
+        let ssl_ctx_ptr: *mut SslCtx = ssl_ctx.unwrap_or(core::ptr::null_mut());
+        match g.connect(
+            kind,
+            ssl_ctx_ptr,
+            // SAFETY: `host_z` is NUL-terminated by construction above.
+            unsafe { core::ffi::CStr::from_ptr(host_z.as_ptr()) },
+            port,
+            opts,
+            size_of::<Option<*mut Owner>>() as c_int,
+        ) {
             crate::ConnectResult::Failed => Err(ConnectError::FailedToOpenSocket),
             crate::ConnectResult::Socket(s) => {
                 // SAFETY: ext storage is sized for `?*Owner` and `s` is live.
-                unsafe { *us_socket_t::ext::<Option<*mut Owner>>(s) = Some(owner) };
+                unsafe { *(*s).ext::<Option<*mut Owner>>() = Some(owner) };
                 Ok(Self { socket: InternalSocket::Connected(s) })
             }
             crate::ConnectResult::Connecting(cs) => {
                 // SAFETY: ext storage is sized for `?*Owner` and `cs` is live.
-                unsafe { *ConnectingSocket::ext::<Option<*mut Owner>>(cs) = Some(owner) };
+                unsafe { *(*cs).ext::<Option<*mut Owner>>() = Some(owner) };
                 Ok(Self { socket: InternalSocket::Connecting(cs) })
             }
         }
@@ -557,18 +576,19 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
         allow_half_open: bool,
     ) -> Result<Self, ConnectError> {
         let opts: c_int = if allow_half_open { LIBUS_SOCKET_ALLOW_HALF_OPEN } else { 0 };
-        let Some(s) = g.connect_unix(
+        let ssl_ctx_ptr: *mut SslCtx = ssl_ctx.unwrap_or(core::ptr::null_mut());
+        let s = g.connect_unix(
             kind,
-            ssl_ctx,
-            path.as_ptr(),
-            path.len(),
+            ssl_ctx_ptr,
+            path,
             opts,
-            size_of::<Option<*mut Owner>>(),
-        ) else {
+            size_of::<Option<*mut Owner>>() as c_int,
+        );
+        if s.is_null() {
             return Err(ConnectError::FailedToOpenSocket);
-        };
+        }
         // SAFETY: ext storage is sized for `?*Owner` and `s` is live.
-        unsafe { *us_socket_t::ext::<Option<*mut Owner>>(s) = Some(owner) };
+        unsafe { *(*s).ext::<Option<*mut Owner>>() = Some(owner) };
         Ok(Self { socket: InternalSocket::Connected(s) })
     }
 
@@ -583,13 +603,15 @@ impl<'a, const IS_SSL: bool> NewSocketHandler<'a, IS_SSL> {
         owner: *mut Owner,
         set_socket_field: impl FnOnce(&mut Owner, Self),
     ) -> bool {
-        let Some(new_s) =
-            us_socket_t::adopt(tcp, g, kind, size_of::<*mut c_void>(), size_of::<*mut c_void>())
-        else {
+        // SAFETY: `tcp` is a live socket the caller is moving into `g`.
+        let Some(new_s) = (unsafe {
+            (*tcp).adopt(g, kind, size_of::<*mut c_void>() as i32, size_of::<*mut c_void>() as i32)
+        }) else {
             return false;
         };
+        let new_s = new_s.as_ptr();
         // SAFETY: ext storage is sized for `*anyopaque` and `new_s` is live.
-        unsafe { *us_socket_t::ext::<*mut c_void>(new_s) = owner.cast::<c_void>() };
+        unsafe { *(*new_s).ext::<*mut c_void>() = owner.cast::<c_void>() };
         // SAFETY: caller guarantees `owner` is a valid unique pointer.
         set_socket_field(unsafe { &mut *owner }, Self { socket: InternalSocket::Connected(new_s) });
         true
@@ -698,7 +720,7 @@ impl<'a> InternalSocket<'a> {
             | InternalSocket::Connecting(_)
             | InternalSocket::Detached => false,
             InternalSocket::Connected(socket) => {
-                unsafe { (**socket).set_keepalive(enabled, delay) } == 0
+                (unsafe { (**socket).set_keepalive(enabled, delay) }) == 0
             }
         }
     }
@@ -807,15 +829,15 @@ impl<'a> AnySocket<'a> {
 
     pub fn close(&mut self) {
         match self {
-            AnySocket::SocketTcp(s) => s.close(crate::CloseCode::Normal),
-            AnySocket::SocketTls(s) => s.close(crate::CloseCode::Normal),
+            AnySocket::SocketTcp(s) => s.close(crate::CloseCode::normal),
+            AnySocket::SocketTls(s) => s.close(crate::CloseCode::normal),
         }
     }
 
     pub fn terminate(&mut self) {
         match self {
-            AnySocket::SocketTcp(s) => s.close(crate::CloseCode::Failure),
-            AnySocket::SocketTls(s) => s.close(crate::CloseCode::Failure),
+            AnySocket::SocketTcp(s) => s.close(crate::CloseCode::failure),
+            AnySocket::SocketTls(s) => s.close(crate::CloseCode::failure),
         }
     }
 

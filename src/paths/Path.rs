@@ -227,7 +227,7 @@ impl PathUnit for u8 {
     }
     #[inline]
     unsafe fn zslice_from_raw<'a>(ptr: *const u8, len: usize) -> &'a ZStr {
-        ZStr::from_raw(ptr, len)
+        unsafe { ZStr::from_raw(ptr, len) }
     }
     fn pool_get() -> Box<PathBuffer> {
         crate::path_buffer_pool::get().into_box()
@@ -266,7 +266,7 @@ impl PathUnit for u16 {
     }
     #[inline]
     unsafe fn zslice_from_raw<'a>(ptr: *const u16, len: usize) -> &'a WStr {
-        WStr::from_raw(ptr, len)
+        unsafe { WStr::from_raw(ptr, len) }
     }
     fn pool_get() -> Box<WPathBuffer> {
         crate::w_path_buffer_pool::get().into_box()

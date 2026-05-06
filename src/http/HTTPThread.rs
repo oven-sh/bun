@@ -979,7 +979,7 @@ mod _event_loop_draft {
         bun_libdeflate_sys::libdeflate::load();
         let opts_copy = opts.clone();
         let thread = std::thread::Builder::new()
-            .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE)
+            .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
             .spawn(move || on_start(opts_copy));
         match thread {
             Ok(t) => drop(t), // detach

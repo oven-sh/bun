@@ -770,7 +770,7 @@ impl Decimal {
     pub fn to_binary(&self, _field_type: FieldType) -> Result<Data, bun_core::Error> {
         // Zig: `bun.todoPanic(@src(), "Decimal.toBinary not implemented", .{});`
         // Intentional shipped runtime "feature not yet implemented" — distinct
-        // from a Phase-A `todo!()` placeholder. The `Decimal` arm of `Value` is
+        // from a Phase-A porting placeholder. The `Decimal` arm of `Value` is
         // commented out, so this is unreachable today.
         bun_core::todo_panic!("Decimal.toBinary not implemented")
     }
@@ -780,7 +780,7 @@ impl Decimal {
     // }
 
     // pub fn from_binary(_: &[u8]) -> Decimal {
-    //     todo!("Decimal.toBinary not implemented")
+    //     bun_core::todo_panic!("Decimal.fromBinary not implemented")
     // }
 }
 

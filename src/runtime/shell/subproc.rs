@@ -702,7 +702,7 @@ impl ShellSubprocess {
             // SAFETY: cmd_parent backref outlives subprocess.
             let cmd = unsafe { &mut *self.cmd_parent };
             if cmd.exit_code.is_none() {
-                cmd.on_exit(code);
+                cmd.on_exit(code.into());
             }
         }
     }

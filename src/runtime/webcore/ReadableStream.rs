@@ -405,9 +405,9 @@ impl ReadableStream {
                     global_this,
                     context: FileReader {
                         // SAFETY: bun_vm()/event_loop() return non-null ptrs that outlive this call.
-                        event_loop: jsc::EventLoopHandle::init(unsafe {
-                            &*(*global_this.bun_vm()).event_loop()
-                        }),
+                        event_loop: jsc::EventLoopHandle::init(
+                            unsafe { (*global_this.bun_vm()).event_loop() }.cast(),
+                        ),
                         start_offset: Some(offset),
                         lazy: webcore::file_reader::Lazy::Blob(store.clone()),
                         ..Default::default()
@@ -433,9 +433,9 @@ impl ReadableStream {
             global_this,
             context: FileReader {
                 // SAFETY: bun_vm()/event_loop() return non-null ptrs that outlive this call.
-                event_loop: jsc::EventLoopHandle::init(unsafe {
-                    &*(*global_this.bun_vm()).event_loop()
-                }),
+                event_loop: jsc::EventLoopHandle::init(
+                    unsafe { (*global_this.bun_vm()).event_loop() }.cast(),
+                ),
                 ..Default::default()
             },
             ..Default::default()

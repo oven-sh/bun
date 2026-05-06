@@ -127,10 +127,8 @@ impl<'a> CopyFile<'a> {
             system_error.message = bun_str::String::static_("Failed to copy file");
         }
 
-        let instance = {
-            let _ = (&system_error, self.global_this, &promise);
-            todo!("blocked_on: bun_sys::SystemError::to_error_instance_with_async_stack")
-        };
+        let instance = to_jsc_system_error(system_error)
+            .to_error_instance_with_async_stack(self.global_this, promise);
         if let Some(store) = self.store.take() {
             drop(store); // deref()
         }

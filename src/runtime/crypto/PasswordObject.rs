@@ -202,13 +202,38 @@ impl AlgorithmValue {
                 }
             }
         } else {
-            return global_object.throw_invalid_argument_type("hash", "algorithm", "string");
+            return Err(global_object.throw_invalid_argument_type("hash", "algorithm", "string"));
         }
         #[allow(unreachable_code)]
         {
             unreachable!()
         }
     }
+}
+
+/// Zig: `Algorithm.label.getWithEql(input, ZigString.eqlComptime)`.
+/// `bun_string::ZigString` may be UTF-16 so a direct `phf` byte lookup is
+/// unsound; compare each (4-entry) label via the encoding-aware `eql_comptime`.
+fn algorithm_from_zig_string(s: &ZigString) -> Option<Algorithm> {
+    if s.eql_comptime(b"argon2i") {
+        Some(Algorithm::Argon2i)
+    } else if s.eql_comptime(b"argon2d") {
+        Some(Algorithm::Argon2d)
+    } else if s.eql_comptime(b"argon2id") {
+        Some(Algorithm::Argon2id)
+    } else if s.eql_comptime(b"bcrypt") {
+        Some(Algorithm::Bcrypt)
+    } else {
+        None
+    }
+}
+
+/// JS-thread `EventLoopCtx` for `KeepAlive::ref_/unref`. Zig passed the
+/// `*VirtualMachine` directly (anytype dispatch); the Rust split routes through
+/// the aio hook registered by `crate::init()`.
+#[inline]
+fn vm_ctx() -> bun_aio::EventLoopCtx {
+    bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js)
 }
 
 #[derive(Copy, Clone)]

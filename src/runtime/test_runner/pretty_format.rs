@@ -2949,8 +2949,10 @@ impl JestPrettyFormat {
                 return Ok(true);
             };
 
-            Self::print_asymmetric_matcher_promise_prefix(matcher.flags, this, writer);
-            if matcher.flags.not {
+            // SAFETY: see ExpectAnything branch.
+            let flags = unsafe { (*matcher).flags };
+            Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
+            if flags.not {
                 this.add_for_new_line(b"ObjectNotContaining ".len());
                 writer.write_all(b"ObjectNotContaining ");
             } else {

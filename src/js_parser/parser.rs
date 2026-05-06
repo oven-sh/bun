@@ -1344,20 +1344,145 @@ impl<'a> JSXTag<'a> {
 ///
 /// This makes sure that there's the lowest possible chance of having a generated name
 /// collide with a user's name. This is the easiest way to do so
-// TODO(port): const-eval wyhash + comptimePrint. Needs a `macro_rules!` or
-// build-time codegen so the hash suffix is computed at compile time. The Zig
-// version is `comptime { name ++ "_" ++ truncatedHash32(wyhash(0, name)) }`.
+//
+// Zig: `comptime { name ++ "_" ++ truncatedHash32(std.hash.Wyhash.hash(0, name)) }`.
+// `bun_wyhash::Wyhash::hash` and `bun_core::fmt::truncated_hash32` are not `const fn`,
+// so we keep a self-contained const-fn re-implementation here so the suffix is
+// computed at compile time and matches the Zig output byte-for-byte.
+#[doc(hidden)]
+pub mod __generated_symbol_hash {
+    // ── std.hash.Wyhash (final4 variant), seed 0 — const-fn port of
+    //    `bun_wyhash::Wyhash::hash`. Keep in lock-step with src/wyhash/lib.rs. ──
+    const SECRET: [u64; 4] = [
+        0xa0761d6478bd642f,
+        0xe7037ed1a0b428db,
+        0x8ebc6af09c88c6e3,
+        0x589965cc75374cc3,
+    ];
+
+    #[inline]
+    const fn mix(a: u64, b: u64) -> u64 {
+        let x = (a as u128).wrapping_mul(b as u128);
+        (x as u64) ^ ((x >> 64) as u64)
+    }
+
+    #[inline]
+    const fn read4(d: &[u8], o: usize) -> u64 {
+        u32::from_le_bytes([d[o], d[o + 1], d[o + 2], d[o + 3]]) as u64
+    }
+
+    #[inline]
+    const fn read8(d: &[u8], o: usize) -> u64 {
+        u64::from_le_bytes([
+            d[o], d[o + 1], d[o + 2], d[o + 3], d[o + 4], d[o + 5], d[o + 6], d[o + 7],
+        ])
+    }
+
+    /// `std.hash.Wyhash.hash(0, input)`.
+    pub const fn wyhash0(input: &[u8]) -> u64 {
+        let s0 = mix(SECRET[0], SECRET[1]); // seed=0 ⇒ 0 ^ mix(0 ^ S[0], S[1])
+        let mut state = [s0, s0, s0];
+        let len = input.len();
+        let a: u64;
+        let b: u64;
+
+        if len <= 16 {
+            // small_key
+            if len >= 4 {
+                let end = len - 4;
+                let quarter = (len >> 3) << 2;
+                a = (read4(input, 0) << 32) | read4(input, quarter);
+                b = (read4(input, end) << 32) | read4(input, end - quarter);
+            } else if len > 0 {
+                a = ((input[0] as u64) << 16)
+                    | ((input[len >> 1] as u64) << 8)
+                    | (input[len - 1] as u64);
+                b = 0;
+            } else {
+                a = 0;
+                b = 0;
+            }
+        } else {
+            let mut i: usize = 0;
+            if len >= 48 {
+                while i + 48 < len {
+                    // round
+                    state[0] = mix(read8(input, i) ^ SECRET[1], read8(input, i + 8) ^ state[0]);
+                    state[1] = mix(read8(input, i + 16) ^ SECRET[2], read8(input, i + 24) ^ state[1]);
+                    state[2] = mix(read8(input, i + 32) ^ SECRET[3], read8(input, i + 40) ^ state[2]);
+                    i += 48;
+                }
+                // final0
+                state[0] ^= state[1] ^ state[2];
+            }
+            // final1
+            let mut j = i;
+            while j + 16 < len {
+                state[0] = mix(read8(input, j) ^ SECRET[1], read8(input, j + 8) ^ state[0]);
+                j += 16;
+            }
+            a = read8(input, len - 16);
+            b = read8(input, len - 8);
+        }
+
+        // final2 (mum_ inlined)
+        let x = ((a ^ SECRET[1]) as u128).wrapping_mul((b ^ state[0]) as u128);
+        mix((x as u64) ^ SECRET[0] ^ (len as u64), ((x >> 64) as u64) ^ SECRET[1])
+    }
+
+    /// `bun.fmt.truncatedHash32` — 8-byte base32-ish suffix (native-endian, matches Zig).
+    pub const fn truncated_hash32(int: u64) -> [u8; 8] {
+        const CHARS: &[u8; 32] = b"0123456789abcdefghjkmnpqrstvwxyz";
+        let b = int.to_ne_bytes();
+        [
+            CHARS[(b[0] & 31) as usize],
+            CHARS[(b[1] & 31) as usize],
+            CHARS[(b[2] & 31) as usize],
+            CHARS[(b[3] & 31) as usize],
+            CHARS[(b[4] & 31) as usize],
+            CHARS[(b[5] & 31) as usize],
+            CHARS[(b[6] & 31) as usize],
+            CHARS[(b[7] & 31) as usize],
+        ]
+    }
+
+    #[cfg(test)]
+    #[test]
+    fn const_wyhash0_matches_runtime() {
+        for s in [&b""[..], b"a", b"abc", b"__require", b"0123456789abcdef0", b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"] {
+            assert_eq!(wyhash0(s), bun_wyhash::Wyhash::hash(0, s), "input: {s:?}");
+        }
+    }
+}
+
 #[macro_export]
 macro_rules! generated_symbol_name {
     ($name:literal) => {{
-        // PERF(port): Zig computes this at comptime; this runtime path must be
-        // replaced with a const-evaluable wyhash before Phase B ships.
-        const_format::concatcp!(
-            $name,
-            "_",
-            // TODO(port): bun_wyhash::const_hash($name) truncated to 32-bit hex
-            "TODO_PORT_HASH"
-        )
+        const __NAME: &str = $name;
+        const __LEN: usize = __NAME.len() + 1 + 8;
+        const __BYTES: [u8; __LEN] = {
+            let name = __NAME.as_bytes();
+            let suffix = $crate::parser::__generated_symbol_hash::truncated_hash32(
+                $crate::parser::__generated_symbol_hash::wyhash0(name),
+            );
+            let mut out = [0u8; __LEN];
+            let mut i = 0;
+            while i < name.len() {
+                out[i] = name[i];
+                i += 1;
+            }
+            out[i] = b'_';
+            let mut j = 0;
+            while j < 8 {
+                out[i + 1 + j] = suffix[j];
+                j += 1;
+            }
+            out
+        };
+        // SAFETY: `__NAME` is valid UTF-8 (a `&str` literal), '_' and the suffix
+        // bytes (drawn from the lowercase-alnum CHARS table) are all ASCII.
+        const __OUT: &str = unsafe { ::core::str::from_utf8_unchecked(&__BYTES) };
+        __OUT
     }};
 }
 

@@ -250,7 +250,7 @@ pub type ParseResult = css::CssResult<CssColor>;
 
 impl Default for CssColor {
     #[inline]
-    fn default() -> CssColor { CssColor::CurrentColor }
+    fn default() -> CssColor { CssColor::Rgba(RGBA::transparent()) }
 }
 
 impl CssColor {
@@ -822,6 +822,19 @@ impl ColorFallbackKind {
             return ColorFallbackKind::empty();
         }
         self | ColorFallbackKind::from_bits_truncate(self.bits() - 1)
+    }
+
+    pub fn supports_condition(self) -> css::SupportsCondition {
+        let s: &'static [u8] = match self.bits() {
+            b if b == ColorFallbackKind::P3.bits() => b"color(display-p3 0 0 0)",
+            b if b == ColorFallbackKind::LAB.bits() => b"lab(0% 0 0)",
+            _ => unreachable!("Expected P3 or LAB. This is a bug in Bun."),
+        };
+
+        css::SupportsCondition::Declaration(css::css_rules::supports::Declaration {
+            property_id: css::PropertyId::Color,
+            value: s,
+        })
     }
 }
 
@@ -2364,8 +2377,8 @@ pub fn parse_color_mix(input: &mut css::Parser) -> CssResult<CssColor> {
     let (p1, p2): (f32, f32) = if first_percent.is_none() && second_percent.is_none() {
         (0.5, 0.5)
     } else {
-        let p2 = second_percent.unwrap_or(1.0 - first_percent.unwrap());
-        let p1 = first_percent.unwrap_or(1.0 - second_percent.unwrap());
+        let p2 = second_percent.unwrap_or_else(|| 1.0 - first_percent.unwrap());
+        let p1 = first_percent.unwrap_or_else(|| 1.0 - second_percent.unwrap());
         (p1, p2)
     };
 

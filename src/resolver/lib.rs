@@ -129,6 +129,11 @@ pub mod fs {
     pub static mut INSTANCE: core::mem::MaybeUninit<FileSystem> = core::mem::MaybeUninit::uninit();
     pub static mut INSTANCE_LOADED: bool = false;
 
+    /// Port of `FileSystem.max_fd` global in `fs.zig`.
+    // PORT NOTE: Windows uses `HANDLE` (no monotone ordering); tracked POSIX-only.
+    #[cfg(not(windows))]
+    pub static mut MAX_FD: bun_sys::RawFd = 0;
+
     static TMPNAME_ID_NUMBER: AtomicU32 = AtomicU32::new(0);
 
     impl FileSystem {
@@ -176,7 +181,26 @@ pub mod fs {
         /// Port of `FileSystem.setMaxFd` in `fs.zig`.
         #[inline]
         pub fn set_max_fd(_fd: bun_sys::RawFd) {
-            // TODO(b2-blocked): rlimit-based fd-ceiling tracking (FileSystem.max_fd).
+            #[cfg(windows)]
+            {
+                return;
+            }
+            #[cfg(not(windows))]
+            {
+                if !bun_core::feature_flags::STORE_FILE_DESCRIPTORS {
+                    return;
+                }
+                // SAFETY: single-threaded mutation in resolver context (matches Zig global `max_fd`).
+                unsafe { MAX_FD = _fd.max(MAX_FD) };
+            }
+        }
+
+        /// Port of `FileSystem.max_fd` global in `fs.zig` — highest fd seen via `set_max_fd`.
+        #[inline]
+        #[cfg(not(windows))]
+        pub fn max_fd() -> bun_sys::RawFd {
+            // SAFETY: single-threaded read in resolver context (matches Zig global `max_fd`).
+            unsafe { MAX_FD }
         }
 
         /// Port of `FileSystem.absBuf` in `fs.zig`.
@@ -1123,14 +1147,14 @@ pub mod fs {
         }
         pub fn put(
             &mut self,
-            result: &crate::__phase_a_body::allocators::Result,
+            result: &mut crate::__phase_a_body::allocators::Result,
             value: EntriesOption,
         ) -> core::result::Result<*mut EntriesOption, bun_core::Error> {
-            // PORT NOTE: `BSSMapInner::put` mutates `result.index` to record placement; the
-            // resolver body passes `&Result` and never re-reads it post-`put`, so copy locally.
-            let mut r = *result;
+            // PORT NOTE: `BSSMapInner::put` mutates `result.index` to record placement; callers
+            // (e.g. `dir_info_cached_maybe_log`) re-read `result.index` post-`put`, so the
+            // mutation must be visible — pass through directly (Zig: `*Result`).
             self.inner()
-                .put(&mut r, value)
+                .put(result, value)
                 .map(|v| v as *mut EntriesOption)
                 .map_err(|_| bun_core::err!("OutOfMemory"))
         }
@@ -1208,7 +1232,7 @@ pub mod fs {
             err: bun_core::Error,
         ) -> core::result::Result<&'static mut EntriesOption, bun_core::Error> {
             if bun_core::FeatureFlags::ENABLE_ENTRY_CACHE {
-                let get_or_put_result = self.entries.get_or_put(dir)?;
+                let mut get_or_put_result = self.entries.get_or_put(dir)?;
                 if err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound") {
                     self.entries.mark_not_found(get_or_put_result);
                     return Ok(temp_entries_option_write(EntriesOption::Err(dir_entry::Err {
@@ -1217,7 +1241,7 @@ pub mod fs {
                     })));
                 } else {
                     let opt = self.entries.put(
-                        &get_or_put_result,
+                        &mut get_or_put_result,
                         EntriesOption::Err(dir_entry::Err { original_err: err, canonical_error: err }),
                     )?;
                     // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
@@ -1386,7 +1410,7 @@ pub mod fs {
                     unsafe { &mut *entries_ptr },
                 );
 
-                let out = self.entries.put(cache_result.as_ref().unwrap(), result)?;
+                let out = self.entries.put(cache_result.as_mut().unwrap(), result)?;
                 // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
                 return Ok(unsafe { &mut *out });
             }

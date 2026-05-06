@@ -1626,7 +1626,6 @@ impl<'a> Parser<'a> {
             if !p.options.features.inject_jest_globals {
                 break 'outer;
             }
-            let jest: &mut Jest = &mut p.jest;
 
             for item in p.import_records.items() {
                 // skip if they did import it

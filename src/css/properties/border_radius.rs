@@ -11,7 +11,10 @@ use crate::DeclarationList;
 use crate::PropertyHandlerContext;
 
 /// A value for the [border-radius](https://www.w3.org/TR/css-backgrounds-3/#border-radius) property.
-#[derive(Clone, PartialEq)]
+// PORT NOTE: `Size2D<T>` carries no `Clone`/`PartialEq` derives (it exposes
+// inherent `deep_clone`/`eql` instead, matching the Zig protocol surface), so
+// `BorderRadius` can't `#[derive]` them either. The handler below uses
+// `Size2D::deep_clone`/`Size2D::eql` directly.
 pub struct BorderRadius {
     /// The x and y radius values for the top left corner.
     pub top_left: Size2D<LengthPercentage>,
@@ -24,6 +27,22 @@ pub struct BorderRadius {
 }
 
 impl BorderRadius {
+    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+        BorderRadius {
+            top_left: self.top_left.deep_clone(bump),
+            top_right: self.top_right.deep_clone(bump),
+            bottom_right: self.bottom_right.deep_clone(bump),
+            bottom_left: self.bottom_left.deep_clone(bump),
+        }
+    }
+
+    pub fn eql(&self, other: &Self) -> bool {
+        Size2D::eql(&self.top_left, &other.top_left)
+            && Size2D::eql(&self.top_right, &other.top_right)
+            && Size2D::eql(&self.bottom_right, &other.bottom_right)
+            && Size2D::eql(&self.bottom_left, &other.bottom_left)
+    }
+
     // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"border-radius", PropertyFieldMap);
 
     // TODO(port): PropertyFieldMap / VendorPrefixMap were Zig anonymous-struct decl literals

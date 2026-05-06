@@ -204,7 +204,7 @@ impl BoxShadowHandler {
                 }
             }
             Property::Unparsed(unp) => {
-                if unp.property_id.tag() == css::PropertyIdTag::BoxShadow {
+                if unp.property_id.tag() == css::css_properties::PropertyIdTag::BoxShadow {
                     self.flush(dest, context);
 
                     let mut unparsed = unp.deep_clone(allocator);

@@ -720,105 +720,147 @@ is_compatible_container!(
 );
 
 // ───────────────────────────────────────────────────────────────────────────────
-// Parse / ParseWithOptions / ToCss / Numeric helpers
+// Parse / ParseWithOptions
 // ───────────────────────────────────────────────────────────────────────────────
-// These protocols depend on still-gated `css_parser` internals (`Parser`
-// methods, `Result<T>`, `*Fns` helpers, `to_css::from_list`) and
-// `values::angle::Angle`. The trait *shapes* are stable; the impls re-enable
-// when those hubs un-gate.
-#[cfg(any())]
-mod parse_tocss_numeric_gated {
-use super::*;
+// Zig's `generic.parse(T, input)` / `generic.parseWithOptions(T, input, opts)`
+// dispatch via `@hasDecl(T, "parse"[WithOptions])`. In Rust each leaf value
+// type either hand-writes an inherent `parse(&mut Parser) -> CssResult<Self>`
+// or derives one via `#[derive(Parse)]` / `#[derive(DefineEnumProperty)]`; the
+// trait below is the uniform bound that `Property::parse` and the container
+// blanket impls (`SmallList`/`BabyList`/`Option`/`Size2D`/`Rect`) need.
+//
+// `Parse` is intentionally lifetime-free: every value-type parser takes
+// `&mut Parser<'_>` (the borrowed source slice) and returns an owned value.
+// `'bump` arena threading is a Phase-B follow-up; until then the parser holds
+// the arena and arena-backed lists go through `from_list(Vec)`.
 
-pub trait Parse<'bump>: Sized {
-    fn parse(input: &mut Parser<'bump>) -> Result<Self>;
+/// `T::parse(&mut Parser) -> CssResult<T>`.
+pub trait Parse: Sized {
+    fn parse(input: &mut Parser) -> CssResult<Self>;
 }
 
-pub trait ParseWithOptions<'bump>: Sized {
-    fn parse_with_options(input: &mut Parser<'bump>, options: &ParserOptions) -> Result<Self>;
+/// `T::parse_with_options(&mut Parser, &ParserOptions) -> CssResult<T>`.
+///
+/// Zig falls through to `parse` when a type has no `parseWithOptions` decl.
+/// Here that's the trait's *default method* — leaf impls only override when the
+/// type actually consumes options (e.g. CSS-modules `Composes`, `TokenList`).
+pub trait ParseWithOptions: Sized {
+    fn parse_with_options(input: &mut Parser, options: &ParserOptions) -> CssResult<Self>;
 }
 
 #[inline]
-pub fn parse_with_options<'bump, T: ParseWithOptions<'bump>>(
-    input: &mut Parser<'bump>,
+pub fn parse_with_options<T: ParseWithOptions>(
+    input: &mut Parser,
     options: &ParserOptions,
-) -> Result<T> {
+) -> CssResult<T> {
     T::parse_with_options(input, options)
 }
 
 #[inline]
-pub fn parse<'bump, T: Parse<'bump>>(input: &mut Parser<'bump>) -> Result<T> {
+pub fn parse<T: Parse>(input: &mut Parser) -> CssResult<T> {
     T::parse(input)
 }
 
 #[inline]
-pub fn parse_for<'bump, T: Parse<'bump>>() -> fn(&mut Parser<'bump>) -> Result<T> {
+pub fn parse_for<T: Parse>() -> fn(&mut Parser) -> CssResult<T> {
     |input| T::parse(input)
 }
 
-// Default: anything that implements `Parse` implements `ParseWithOptions` by
-// ignoring options (matches Zig fallthrough to `parse`).
-impl<'bump, T: Parse<'bump>> ParseWithOptions<'bump> for T {
+// ── container / primitive Parse impls ────────────────────────────────────────
+
+impl<T: Parse> Parse for Option<T> {
     #[inline]
-    default fn parse_with_options(input: &mut Parser<'bump>, _options: &ParserOptions) -> Result<Self> {
-        // TODO(port): uses specialization (`default fn`) so types with their own
-        // `parseWithOptions` can override. If specialization is unavailable in
-        // Phase B, split into a separate trait with manual impls.
-        T::parse(input)
+    fn parse(input: &mut Parser) -> CssResult<Self> {
+        Ok(input.try_parse(T::parse).ok())
     }
 }
 
-impl<'bump, T: Parse<'bump>> Parse<'bump> for &'bump T {
+impl<T: Parse> Parse for Vec<T> {
     #[inline]
-    fn parse(input: &mut Parser<'bump>) -> Result<Self> {
-        match T::parse(input) {
-            Result::Ok(v) => Result::Ok(input.allocator().alloc(v)),
-            Result::Err(e) => Result::Err(e),
-        }
+    fn parse(input: &mut Parser) -> CssResult<Self> {
+        input.parse_comma_separated(T::parse)
     }
 }
 
-impl<'bump, T: Parse<'bump>> Parse<'bump> for Option<T> {
+impl<T: Parse, const N: usize> Parse for SmallList<T, N> {
     #[inline]
-    fn parse(input: &mut Parser<'bump>) -> Result<Self> {
-        Result::Ok(input.try_parse(parse_for::<T>()).as_value())
+    fn parse(input: &mut Parser) -> CssResult<Self> {
+        input.parse_comma_separated(T::parse).map(SmallList::from_list)
+    }
+}
+impl<T: Parse, const N: usize> ParseWithOptions for SmallList<T, N> {
+    #[inline]
+    fn parse_with_options(input: &mut Parser, _options: &ParserOptions) -> CssResult<Self> {
+        <Self as Parse>::parse(input)
     }
 }
 
-impl<'bump, T: Parse<'bump>> Parse<'bump> for ArrayList<'bump, T> {
+impl<T: Parse> Parse for BabyList<T> {
     #[inline]
-    fn parse(input: &mut Parser<'bump>) -> Result<Self> {
-        input.parse_comma_separated(parse_for::<T>())
+    fn parse(input: &mut Parser) -> CssResult<Self> {
+        input.parse_comma_separated(T::parse).map(BabyList::move_from_list)
+    }
+}
+impl<T: Parse> ParseWithOptions for BabyList<T> {
+    #[inline]
+    fn parse_with_options(input: &mut Parser, _options: &ParserOptions) -> CssResult<Self> {
+        <Self as Parse>::parse(input)
     }
 }
 
-impl<'bump> Parse<'bump> for f32 {
+impl<T: Parse + Clone + PartialEq> Parse for Size2D<T> {
     #[inline]
-    fn parse(input: &mut Parser<'bump>) -> Result<Self> {
+    fn parse(input: &mut Parser) -> CssResult<Self> {
+        Size2D::<T>::parse(input)
+    }
+}
+impl<T: Parse + Clone + PartialEq> ParseWithOptions for Size2D<T> {
+    #[inline]
+    fn parse_with_options(input: &mut Parser, _options: &ParserOptions) -> CssResult<Self> {
+        Size2D::<T>::parse(input)
+    }
+}
+
+impl<T: Parse + Clone> Parse for Rect<T> {
+    #[inline]
+    fn parse(input: &mut Parser) -> CssResult<Self> {
+        Rect::<T>::parse(input)
+    }
+}
+impl<T: Parse + Clone> ParseWithOptions for Rect<T> {
+    #[inline]
+    fn parse_with_options(input: &mut Parser, _options: &ParserOptions) -> CssResult<Self> {
+        Rect::<T>::parse(input)
+    }
+}
+
+impl Parse for f32 {
+    #[inline]
+    fn parse(input: &mut Parser) -> CssResult<Self> {
         CSSNumberFns::parse(input)
     }
 }
-impl<'bump> Parse<'bump> for CSSInteger {
+impl Parse for CSSInteger {
     #[inline]
-    fn parse(input: &mut Parser<'bump>) -> Result<Self> {
+    fn parse(input: &mut Parser) -> CssResult<Self> {
         CSSIntegerFns::parse(input)
     }
 }
-impl<'bump> Parse<'bump> for CustomIdent {
+impl Parse for CustomIdent {
     #[inline]
-    fn parse(input: &mut Parser<'bump>) -> Result<Self> {
+    fn parse(input: &mut Parser) -> CssResult<Self> {
         CustomIdentFns::parse(input)
     }
 }
-impl<'bump> Parse<'bump> for DashedIdent {
+impl Parse for DashedIdent {
     #[inline]
-    fn parse(input: &mut Parser<'bump>) -> Result<Self> {
+    fn parse(input: &mut Parser) -> CssResult<Self> {
         DashedIdentFns::parse(input)
     }
 }
-impl<'bump> Parse<'bump> for Ident {
+impl Parse for Ident {
     #[inline]
-    fn parse(input: &mut Parser<'bump>) -> Result<Self> {
+    fn parse(input: &mut Parser) -> CssResult<Self> {
         IdentFns::parse(input)
     }
 }
@@ -865,7 +907,40 @@ impl<'bump, T: ToCss> ToCss for ArrayList<'bump, T> {
     }
 }
 
-// TODO(port): Zig had `@compileError("TODO")` for BabyList/SmallList ToCss.
+impl<T: ToCss> ToCss for Vec<T> {
+    #[inline]
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        css::to_css::from_list(self.as_slice(), dest)
+    }
+}
+
+impl<T: ToCss, const N: usize> ToCss for SmallList<T, N> {
+    #[inline]
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        css::to_css::from_list(self.slice(), dest)
+    }
+}
+
+impl<T: ToCss> ToCss for BabyList<T> {
+    #[inline]
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        css::to_css::from_list(self.slice(), dest)
+    }
+}
+
+impl<T: ToCss + Clone + PartialEq> ToCss for Size2D<T> {
+    #[inline]
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        Size2D::<T>::to_css(self, dest)
+    }
+}
+
+impl<T: ToCss + PartialEq> ToCss for Rect<T> {
+    #[inline]
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        Rect::<T>::to_css(self, dest)
+    }
+}
 
 impl ToCss for f32 {
     #[inline]
@@ -898,6 +973,57 @@ impl ToCss for Ident {
     }
 }
 
+// ── leaf-type forwarding macro ───────────────────────────────────────────────
+// Every CSS leaf value type carries inherent `parse` / `to_css` (hand-written
+// or derived). This macro batch-registers them as `generic::{Parse,ToCss,
+// ParseWithOptions}` impls so `Property::{parse,value_to_css}` can dispatch
+// uniformly. `ParseWithOptions` ignores options (Zig fallthrough); types that
+// genuinely consume options override with a hand-written impl instead of
+// listing themselves here.
+#[macro_export]
+macro_rules! impl_generic_parse_tocss {
+    ($($ty:ty),+ $(,)?) => {$(
+        impl $crate::generics::Parse for $ty {
+            #[inline]
+            fn parse(input: &mut $crate::css_parser::Parser) -> $crate::css_parser::CssResult<Self> {
+                <$ty>::parse(input)
+            }
+        }
+        impl $crate::generics::ParseWithOptions for $ty {
+            #[inline]
+            fn parse_with_options(
+                input: &mut $crate::css_parser::Parser,
+                _options: &$crate::css_parser::ParserOptions,
+            ) -> $crate::css_parser::CssResult<Self> {
+                <$ty>::parse(input)
+            }
+        }
+        impl $crate::generics::ToCss for $ty {
+            #[inline]
+            fn to_css(
+                &self,
+                dest: &mut $crate::printer::Printer,
+            ) -> ::core::result::Result<(), $crate::PrintErr> {
+                <$ty>::to_css(self, dest)
+            }
+        }
+    )+};
+}
+
+/// `ParseWithOptions` for primitives — same fallthrough as the macro, but
+/// listed once rather than duplicated per call site.
+macro_rules! impl_pwo_via_parse {
+    ($($ty:ty),+ $(,)?) => {$(
+        impl ParseWithOptions for $ty {
+            #[inline]
+            fn parse_with_options(input: &mut Parser, _options: &ParserOptions) -> CssResult<Self> {
+                <$ty as Parse>::parse(input)
+            }
+        }
+    )+};
+}
+impl_pwo_via_parse!(f32, CSSInteger, CustomIdent, DashedIdent, Ident);
+
 // ───────────────────────────────────────────────────────────────────────────────
 // Numeric helpers (tryFromAngle / trySign / tryMap / tryOp / tryOpTo / partialCmp)
 // ───────────────────────────────────────────────────────────────────────────────
@@ -915,12 +1041,6 @@ impl TryFromAngle for CSSNumber {
     #[inline]
     fn try_from_angle(angle: Angle) -> Option<Self> {
         CSSNumberFns::try_from_angle(angle)
-    }
-}
-impl TryFromAngle for Angle {
-    #[inline]
-    fn try_from_angle(angle: Angle) -> Option<Self> {
-        Angle::try_from_angle(angle)
     }
 }
 
@@ -991,12 +1111,6 @@ pub fn try_op<T: TryOp, C>(lhs: &T, rhs: &T, ctx: C, op_fn: impl Fn(C, f32, f32)
     lhs.try_op(rhs, ctx, op_fn)
 }
 
-impl TryOp for Angle {
-    #[inline]
-    fn try_op<C>(&self, rhs: &Self, ctx: C, op_fn: impl Fn(C, f32, f32) -> f32) -> Option<Self> {
-        Angle::try_op(self, rhs, ctx, op_fn)
-    }
-}
 impl TryOp for CSSNumber {
     #[inline]
     fn try_op<C>(&self, rhs: &Self, ctx: C, op_fn: impl Fn(C, f32, f32) -> f32) -> Option<Self> {
@@ -1040,54 +1154,6 @@ impl PartialCmp for CSSInteger {
     fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> {
         Some(Ord::cmp(self, rhs))
     }
-}
-impl PartialCmp for css_values::angle::Angle {
-    #[inline]
-    fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> {
-        css_values::angle::Angle::partial_cmp(self, rhs)
-    }
-}
-} // mod parse_tocss_numeric_gated
-
-// Un-gated trait *shapes* so sibling modules can name them as bounds; concrete
-// impls live in `parse_tocss_numeric_gated` until css_parser/values un-gate.
-pub trait ToCss {
-    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr>;
-}
-#[inline]
-pub fn to_css<T: ToCss>(this: &T, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-    this.to_css(dest)
-}
-
-pub trait TrySign {
-    fn try_sign(&self) -> Option<f32>;
-}
-pub trait TryMap: Sized {
-    fn try_map(&self, map_fn: impl Fn(f32) -> f32) -> Option<Self>;
-}
-pub trait TryOp: Sized {
-    fn try_op<C>(&self, rhs: &Self, ctx: C, op_fn: impl Fn(C, f32, f32) -> f32) -> Option<Self>;
-}
-pub trait TryOpTo<R>: Sized {
-    fn try_op_to<C>(&self, rhs: &Self, ctx: C, op_fn: impl Fn(C, f32, f32) -> R) -> Option<R>;
-}
-pub trait PartialCmp {
-    fn partial_cmp(&self, rhs: &Self) -> Option<Ordering>;
-}
-#[inline]
-pub fn partial_cmp_f32(lhs: &f32, rhs: &f32) -> Option<Ordering> {
-    let lte = *lhs <= *rhs;
-    let rte = *lhs >= *rhs;
-    if !lte && !rte {
-        return None;
-    }
-    if !lte && rte {
-        return Some(Ordering::Greater);
-    }
-    if lte && !rte {
-        return Some(Ordering::Less);
-    }
-    Some(Ordering::Equal)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

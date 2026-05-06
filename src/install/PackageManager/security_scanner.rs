@@ -10,7 +10,7 @@ use crate::package_manager_real::Command::Context as CommandContext;
 use bun_collections::ArrayHashMap;
 use bun_core::{self, err, Error, Output};
 use crate::bun_fs::FileSystem;
-use crate::bun_json::ExprAccessors as _;
+use crate::bun_json::{Expr, ExprAccessors as _, ExprData};
 use bun_install::{
     invalid_dependency_id, invalid_package_id, DependencyID, PackageID, PackageManager,
 };
@@ -19,7 +19,6 @@ use bun_io::pipe_reader::{BufferedReaderParent, PosixFlags};
 // MOVE_DOWN(b0): bun_jsc::subprocess → bun_spawn::subprocess; bun_jsc::EventLoopHandle → bun_event_loop.
 use bun_spawn::subprocess::{self, StdioResult};
 use bun_event_loop::{AnyEventLoop, EventLoopHandle};
-use bun_js_parser::{Expr, ExprData};
 use bun_logger as logger;
 use bun_spawn::{self as spawn, Process, Rusage, SpawnOptions, Status, Stdio};
 use bun_str::strings;
@@ -846,6 +845,13 @@ fn attempt_security_scan_with_retry(
     };
     let json_data = json_builder.build_package_json()?;
     // `defer manager.allocator.free(json_data)` — Box<[u8]> drops at scope exit.
+
+    // PORT NOTE: destructure `collector` here to release its `&PackageManager`
+    // borrow before constructing `SecurityScanSubprocess` (which needs `&mut`).
+    // Only `package_paths` and the dedupe count are read past this point.
+    let PackageCollector { dedupe, package_paths, .. } = collector;
+    let mut package_paths = package_paths;
+    let packages_scanned = dedupe.count();
 
     let mut code: Vec<u8> = Vec::new();
 

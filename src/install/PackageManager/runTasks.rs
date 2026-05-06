@@ -220,14 +220,12 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             let resolution =
                                 &manager.lockfile.packages.items_resolution()[pkg_id as usize];
 
-                            installer.install_package_with_name_and_resolution(
+                            installer.install_package_with_name_and_resolution::<false, false>(
                                 ctx.dependency_id,
                                 pkg_id,
                                 log_level,
-                                &apply.pkgname,
+                                apply.pkgname,
                                 resolution,
-                                false,
-                                false,
                             );
                         }
                     }

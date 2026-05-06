@@ -218,8 +218,9 @@ impl Options {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Default, Debug)]
 pub enum LogLevel {
+    #[default]
     Default,
     Verbose,
     Silent,

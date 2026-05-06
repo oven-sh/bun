@@ -1408,25 +1408,12 @@ pub mod package_manager {
     /// Stub: `PackageManager.Options` (src/install/PackageManager/PackageManagerOptions.zig).
     #[allow(non_snake_case)]
     pub mod Options {
-        #[derive(Copy, Clone, PartialEq, Eq, Default, Debug)]
-        pub enum LogLevel {
-            #[default] Default,
-            Verbose,
-            Silent,
-            Quiet,
-            DefaultNoProgress,
-            VerboseNoProgress,
-        }
-        impl LogLevel {
-            #[inline]
-            pub fn is_verbose(self) -> bool {
-                matches!(self, LogLevel::VerboseNoProgress | LogLevel::Verbose)
-            }
-            #[inline]
-            pub fn show_progress(self) -> bool {
-                matches!(self, LogLevel::Default | LogLevel::Verbose)
-            }
-        }
+        /// Re-export the file-backed `LogLevel` so the stub
+        /// `package_manager::Options::LogLevel` and the real
+        /// `package_manager_real::package_manager_options::LogLevel` are the
+        /// SAME type — callers in `PackageInstaller` (stub path) and
+        /// `runTasks` (real path) must agree on a single enum.
+        pub use crate::package_manager_real::package_manager_options::LogLevel;
         /// Port of `Options.openGlobalDir` (src/install/PackageManager/PackageManagerOptions.zig).
         /// Resolution order matches Zig: `$BUN_INSTALL_GLOBAL_DIR` → explicit arg →
         /// `$BUN_INSTALL/install/global` → `{$XDG_CACHE_HOME,$HOME}/.bun/install/global`.

@@ -444,19 +444,19 @@ impl<Id: 'static> Args<Id> {
         self.clap.flag(name)
     }
 
-    pub fn option(&self, name: &'static [u8]) -> Option<&[u8]> {
+    pub fn option(&self, name: &'static [u8]) -> Option<&'static [u8]> {
         self.clap.option(name)
     }
 
-    pub fn options(&self, name: &'static [u8]) -> &[&[u8]] {
+    pub fn options(&self, name: &'static [u8]) -> &[&'static [u8]] {
         self.clap.options(name)
     }
 
-    pub fn positionals(&self) -> &[&[u8]] {
+    pub fn positionals(&self) -> &[&'static [u8]] {
         self.clap.positionals()
     }
 
-    pub fn remaining(&self) -> &[&[u8]] {
+    pub fn remaining(&self) -> &[&'static [u8]] {
         self.clap.remaining()
     }
 

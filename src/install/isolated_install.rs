@@ -647,7 +647,7 @@ pub fn install_isolated_packages(
             };
 
             if let Some(parent_id) = entry.parent_id.try_get() {
-                node_nodes[parent_id].push(node_id);
+                node_nodes[parent_id as usize].push(node_id);
                 // PERF(port): was appendAssumeCapacity — profile in Phase B
             }
 
@@ -1081,7 +1081,7 @@ pub fn install_isolated_packages(
                         string_buf,
                         dependencies,
                     };
-                    entry_dependencies[entry_parent_id].insert(
+                    entry_dependencies[entry_parent_id as usize].insert(
                         store::entry::DependenciesItem {
                             entry_id: new_entry_id,
                             dep_id: new_entry_dep_id,

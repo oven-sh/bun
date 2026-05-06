@@ -16,7 +16,7 @@ use bun_str::strings;
 use bun_paths::{self as Path, PathBuffer};
 use bun_install::npm as Npm;
 use crate::package_install;
-use bun_install::package_manager::Subcommand;
+use crate::package_manager_real::Subcommand;
 // TODO(b0): PackageManagerCommand arrives from move-in
 // (bun_runtime::cli::package_manager_command::PackageManagerCommand → install::PackageManager::CommandLineArguments).
 use crate::package_manager_real::PackageManagerCommand;
@@ -846,11 +846,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
     }
 
     // TODO(port): narrow error set
-    pub fn parse<const SUBCOMMAND: Subcommand>() -> Result<CommandLineArguments, bun_core::Error> {
+    pub fn parse(subcommand: Subcommand) -> Result<CommandLineArguments, bun_core::Error> {
         // PERF(port): was comptime monomorphization on `subcommand` — profile in Phase B
         Output::set_is_verbose(Output::is_verbose());
 
-        let params: &'static [ParamType] = match SUBCOMMAND {
+        let params: &'static [ParamType] = match subcommand {
             Subcommand::Install => INSTALL_PARAMS.as_slice(),
             Subcommand::Update => UPDATE_PARAMS.as_slice(),
             Subcommand::Pm => PM_PARAMS.as_slice(),

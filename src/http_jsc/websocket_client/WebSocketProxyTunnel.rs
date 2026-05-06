@@ -274,8 +274,9 @@ impl WebSocketProxyTunnel {
     /// SSLWrapper callback: Called after TLS handshake completes
     fn on_handshake(this: *mut WebSocketProxyTunnel, success: bool, ssl_error: us_bun_verify_error_t) {
         // SAFETY: ctx pointer set in `start`; SSLWrapper guarantees it is live during callbacks.
+        let _guard = unsafe { Self::ref_scope(this) };
+        // SAFETY: ref_scope holds a ref; `this` is live for the rest of this scope.
         let this = unsafe { &mut *this };
-        let _guard = this.ref_scope();
 
         bun_output::scoped_log!(WebSocketProxyTunnel, "onHandshake: success={}", success);
 

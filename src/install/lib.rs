@@ -835,6 +835,9 @@ pub mod lockfile {
         }
     }
     pub use package::Package;
+    /// `Lockfile.Scripts` (src/install/lockfile.zig) — re-export the real
+    /// impl so `Lockfile::Scripts::NAMES` resolves for lifecycle scripts.
+    pub use crate::lockfile_real::Scripts;
     pub mod tree {
         use crate::DependencyID;
         use super::DependencyIDSlice;

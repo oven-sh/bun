@@ -4801,6 +4801,32 @@ pub mod make_path {
         make_path_w(dir.fd, sub_path).map_err(Into::into)
     }
 }
+/// Port of `WindowsSymlinkOptions` (sys.zig:2653) — Windows-only flag struct
+/// plus a process-global "symlink creation has failed once" sticky bit. The
+/// flag is checked by the install linker to decide whether to fall back to
+/// junctions; on POSIX the flag is harmless dead state. Only the sticky bit
+/// is needed cross-platform (`PackageManager::init` sets it when
+/// `BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS` is on).
+#[derive(Default, Clone, Copy)]
+pub struct WindowsSymlinkOptions {
+    pub directory: bool,
+}
+impl WindowsSymlinkOptions {
+    /// Zig: `pub var has_failed_to_create_symlink = false;` (sys.zig:2669).
+    pub static HAS_FAILED_TO_CREATE_SYMLINK: core::sync::atomic::AtomicBool =
+        core::sync::atomic::AtomicBool::new(false);
+}
+impl WindowsSymlinkOptions {
+    #[inline]
+    pub fn set_has_failed_to_create_symlink(v: bool) {
+        Self::HAS_FAILED_TO_CREATE_SYMLINK.store(v, core::sync::atomic::Ordering::Relaxed);
+    }
+    #[inline]
+    pub fn has_failed_to_create_symlink() -> bool {
+        Self::HAS_FAILED_TO_CREATE_SYMLINK.load(core::sync::atomic::Ordering::Relaxed)
+    }
+}
+
 /// Type-style alias so callers can write `bun_sys::MakePath::make_path::<T>(..)`
 /// (Zig: `bun.MakePath` namespace re-export).
 pub use make_path as MakePath;

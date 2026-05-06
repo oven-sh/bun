@@ -2650,8 +2650,20 @@ impl<'a> BundleV2<'a> {
             side_effects: loader.side_effects(),
             ..Default::default()
         })?;
-        let task = self.allocator().alloc(ParseTask {
-            ctx: self,
+        // Compute borrow-heavy fields up front so the `&self` borrow taken by
+        // `allocator()` doesn't overlap `&mut self` uses inside the literal.
+        let jsx = if known_target == Target::BakeServerComponentsSsr
+            && !self.framework.as_ref().unwrap().server_components.as_ref().unwrap().separate_ssr_graph
+        {
+            self.transpiler.options.jsx.clone()
+        } else {
+            self.transpiler_for_target(known_target).options.jsx.clone()
+        };
+        let tree_shaking = self.linker.options.tree_shaking;
+        // SAFETY: arena (`self.graph.heap`) outlives the bundle pass; coerce the
+        // `&mut ParseTask` to `*mut` immediately so the `&self` borrow from
+        // `allocator()` ends before we take `&mut self` below.
+        let task: *mut ParseTask = self.allocator().alloc(ParseTask {
             // PORT NOTE: Zig had a single `fs.Path`; Rust split it into
             // `bun_logger::fs::Path` (on `Source`) and `bun_resolver::fs::Path`
             // (on `ParseTask`). Reconstruct from the `text` slice — `pretty`/
@@ -2663,32 +2675,30 @@ impl<'a> BundleV2<'a> {
                 core::mem::transmute::<&[u8], &'static [u8]>(source.contents())
             }),
             side_effects: _resolver::SideEffects::HasSideEffects,
-            jsx: if known_target == Target::BakeServerComponentsSsr
-                && !self.framework.as_ref().unwrap().server_components.as_ref().unwrap().separate_ssr_graph
-            {
-                self.transpiler.options.jsx.clone()
-            } else {
-                self.transpiler_for_target(known_target).options.jsx.clone()
-            },
+            jsx,
             source_index: js_ast::Index::init(source_index.get()),
             module_type: options::ModuleType::Unknown,
             emit_decorator_metadata: false, // TODO
             package_version: b"",
             loader: Some(loader),
-            tree_shaking: self.linker.options.tree_shaking,
+            tree_shaking,
             known_target,
             ..Default::default()
         });
-        task.task.node.next = core::ptr::null_mut();
-        task.io_task.node.next = core::ptr::null_mut();
+        unsafe {
+            // BACKREF — lifetime erased per ParseTask::ctx convention.
+            (*task).ctx = self as *mut _ as *mut BundleV2<'static>;
+            (*task).task.node.next = core::ptr::null_mut();
+            (*task).io_task.node.next = core::ptr::null_mut();
+        }
 
         self.increment_scan_counter();
 
         // Handle onLoad plugins
-        if !self.enqueue_on_load_plugin_if_needed(task) {
+        if !self.enqueue_on_load_plugin_if_needed(unsafe { &mut *task }) {
             if loader.should_copy_for_bundling() {
                 let additional_files: &mut BabyList<crate::AdditionalFile> = &mut self.graph.input_files.items_additional_files_mut()[source_index.get() as usize];
-                additional_files.append(crate::AdditionalFile::SourceIndex(task.source_index.get())).expect("oom");
+                additional_files.append(crate::AdditionalFile::SourceIndex(source_index.get())).expect("oom");
                 self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] = _resolver::SideEffects::NoSideEffectsPureData;
                 self.graph.estimated_file_loader_count += 1;
             }

@@ -331,7 +331,7 @@ pub fn get_tls_finished_message(this: &mut This, global: &JSGlobalObject, _frame
     let mut dummy: [u8; 1] = [0; 1];
     // SAFETY: ssl_ptr is a live *mut SSL; dummy is a valid 1-byte writable buffer.
     let size = unsafe {
-        boringssl::SSL_get_finished(ssl_ptr, dummy.as_mut_ptr().cast::<c_void>(), core::mem::size_of_val(&dummy))
+        ffi::SSL_get_finished(ssl_ptr, dummy.as_mut_ptr().cast::<c_void>(), core::mem::size_of_val(&dummy))
     };
     if size == 0 {
         return Ok(JSValue::UNDEFINED);
@@ -342,7 +342,7 @@ pub fn get_tls_finished_message(this: &mut This, global: &JSGlobalObject, _frame
     let buffer_ptr = buffer.as_array_buffer(global).unwrap().ptr.cast::<c_void>();
 
     // SAFETY: ssl_ptr is a live *mut SSL; buffer_ptr points to a buffer_size-byte JS ArrayBuffer kept alive on the stack.
-    let result_size = unsafe { boringssl::SSL_get_finished(ssl_ptr, buffer_ptr, buffer_size) };
+    let result_size = unsafe { ffi::SSL_get_finished(ssl_ptr, buffer_ptr, buffer_size) };
     debug_assert!(result_size == size);
     Ok(buffer)
 }

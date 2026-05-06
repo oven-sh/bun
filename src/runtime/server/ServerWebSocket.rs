@@ -1593,6 +1593,36 @@ impl ServerWebSocket {
     }
 }
 
+// Zig: `WebSocketBehavior.Wrap(ServerType, @This(), ssl)` duck-types `@This()`
+// for `onOpen`/`onMessage`/etc. via `@hasDecl`. Rust needs an explicit trait
+// impl; delegate straight to the inherent methods above.
+impl bun_uws_sys::web_socket::WebSocketHandler for ServerWebSocket {
+    #[inline(always)]
+    fn on_open(&mut self, ws: AnyWebSocket) {
+        ServerWebSocket::on_open(self, ws)
+    }
+    #[inline(always)]
+    fn on_message(&mut self, ws: AnyWebSocket, message: &[u8], opcode: Opcode) {
+        ServerWebSocket::on_message(self, ws, message, opcode)
+    }
+    #[inline(always)]
+    fn on_drain(&mut self, ws: AnyWebSocket) {
+        ServerWebSocket::on_drain(self, ws)
+    }
+    #[inline(always)]
+    fn on_ping(&mut self, ws: AnyWebSocket, message: &[u8]) {
+        ServerWebSocket::on_ping(self, ws, message)
+    }
+    #[inline(always)]
+    fn on_pong(&mut self, ws: AnyWebSocket, message: &[u8]) {
+        ServerWebSocket::on_pong(self, ws, message)
+    }
+    #[inline(always)]
+    fn on_close(&mut self, ws: AnyWebSocket, code: i32, message: &[u8]) {
+        ServerWebSocket::on_close(self, ws, code, message)
+    }
+}
+
 struct Corker<'a> {
     args: &'a [JSValue],
     global_object: &'a JSGlobalObject,

@@ -1139,17 +1139,28 @@ impl Listener {
             16 => global.common_strings().ipv6(),
             _ => return Ok(JSValue::UNDEFINED),
         };
-        let formatted = match address_bytes.len() {
-            4 => bun_core::fmt::format_ip4(
-                <[u8; 4]>::try_from(address_bytes).unwrap(),
-                0,
+        // .zig: `std.net.Address.initIp{4,6}` → `bun.fmt.formatIp` (which strips
+        // `:port` and `[]`). Mirror with `SocketAddrV{4,6}` so `format_ip`'s
+        // strip logic sees the same `addr:port` / `[addr]:port` shape.
+        let formatted: &[u8] = match address_bytes.len() {
+            4 => bun_core::fmt::format_ip(
+                &std::net::SocketAddrV4::new(
+                    std::net::Ipv4Addr::from(<[u8; 4]>::try_from(address_bytes).unwrap()),
+                    0,
+                ),
                 &mut text_buf,
-            ),
-            16 => bun_core::fmt::format_ip6(
-                <[u8; 16]>::try_from(address_bytes).unwrap(),
-                0,
+            )
+            .unwrap(),
+            16 => bun_core::fmt::format_ip(
+                &std::net::SocketAddrV6::new(
+                    std::net::Ipv6Addr::from(<[u8; 16]>::try_from(address_bytes).unwrap()),
+                    0,
+                    0,
+                    0,
+                ),
                 &mut text_buf,
-            ),
+            )
+            .unwrap(),
             _ => return Ok(JSValue::UNDEFINED),
         };
         let address_js = ZigString::init(formatted).to_js(global);

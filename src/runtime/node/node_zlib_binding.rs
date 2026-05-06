@@ -415,16 +415,22 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // SAFETY: `global_this` is the JSC_BORROW backref stored at construct
         // time; the global outlives this m_ctx payload.
         let global_this: &JSGlobalObject = unsafe { &*this.global_this() };
-        // TODO(port): blocked_on: bun_jsc::JSGlobalObject::bun_vm_concurrently —
-        // Zig calls `bunVMConcurrently()` (thread-safe accessor); fall back to
-        // `bun_vm()` here since the result is only consumed by the todo!-gated
-        // enqueue below.
-        let vm = global_this.bun_vm();
+        // Zig: `bunVMConcurrently()` — thread-safe accessor (skips the
+        // JS-thread debug assert; same backing pointer as `bun_vm()`).
+        let vm = global_this.bun_vm_concurrently();
 
         this.stream_mut().do_work();
 
-        let _ = vm;
-        todo!("blocked_on: bun_event_loop::Taskable for Native{{Zlib,Brotli,Zstd}} — vm.enqueue_task_concurrent(ConcurrentTask::create(Task::init(this)))");
+        // Zig: `vm.enqueueTaskConcurrent(ConcurrentTask.create(Task.init(this)))`.
+        // SAFETY: `event_loop()` is a self-pointer into a live VM; the
+        // `enqueue_task_concurrent` body only touches the lock-free
+        // `concurrent_tasks` queue (thread-safe). `this` is the heap-allocated
+        // `m_ctx` payload — the matching `ref()` in `write()` keeps it alive
+        // until `run_from_js_thread` runs and calls `deref()`.
+        unsafe {
+            (*vm.event_loop())
+                .enqueue_task_concurrent(ConcurrentTask::create(Task::init(this as *mut T)));
+        }
     }
 
     pub fn run_from_js_thread(this: &mut T) {

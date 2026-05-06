@@ -1217,7 +1217,12 @@ pub trait WrapperLike {
     fn init(value: *mut Self::Raw) -> *mut Self;
     fn ref_(&self);
     fn deref(this: *mut Self);
-    fn to_js(&self, global: &JSGlobalObject) -> JSValue;
+    /// `jsc.Codegen.JS${T}.toJS` — wraps the *existing* heap allocation `this`
+    /// in a JS wrapper (the codegen `${T}__create`). Takes `*mut Self` (not
+    /// `&self`) because the C++ side stores the raw heap pointer in `m_ctx`;
+    /// deriving it from a `&self` would launder shared-borrow provenance into
+    /// the GC's exclusive-owner pointer.
+    fn to_js(this: *mut Self, global: &JSGlobalObject) -> JSValue;
     /// Some wrapper types (Element) hand out sub-objects that borrow from the
     /// underlying lol-html value and must be detached along with the wrapper
     /// itself. Default: no-op (caller passes a `clear_field` closure instead).

@@ -1792,8 +1792,8 @@ pub fn migrate_yarn_lockfile<'a>(
                 let dep_version_literal: &[u8] = *dep_version_ref;
 
                 let name_hash = string_hash(dep_name);
-                let dep_name_string = string_buf.append_with_hash(dep_name, name_hash)?;
-                let dep_version_string = string_buf.append(dep_version_literal)?;
+                let dep_name_string = sbuf!().append_with_hash(dep_name, name_hash)?;
+                let dep_version_string = sbuf!().append(dep_version_literal)?;
                 let sliced_string = SlicedString::init(
                     dep_version_string.slice(this.buffers.string_bytes.as_slice()),
                     dep_version_string.slice(this.buffers.string_bytes.as_slice()),
@@ -1843,9 +1843,9 @@ pub fn migrate_yarn_lockfile<'a>(
                 let dep_version_literal: &[u8] = *dep_version_ref;
 
                 let name_hash = string_hash(dep_name);
-                let dep_name_string = string_buf.append_with_hash(dep_name, name_hash)?;
+                let dep_name_string = sbuf!().append_with_hash(dep_name, name_hash)?;
 
-                let dep_version_string = string_buf.append(dep_version_literal)?;
+                let dep_version_string = sbuf!().append(dep_version_literal)?;
                 let sliced_string = SlicedString::init(
                     dep_version_string.slice(this.buffers.string_bytes.as_slice()),
                     dep_version_string.slice(this.buffers.string_bytes.as_slice()),
@@ -1895,9 +1895,9 @@ pub fn migrate_yarn_lockfile<'a>(
                 let dep_version_literal: &[u8] = *dep_version_ref;
 
                 let name_hash = string_hash(dep_name);
-                let dep_name_string = string_buf.append_with_hash(dep_name, name_hash)?;
+                let dep_name_string = sbuf!().append_with_hash(dep_name, name_hash)?;
 
-                let dep_version_string = string_buf.append(dep_version_literal)?;
+                let dep_version_string = sbuf!().append(dep_version_literal)?;
                 let sliced_string = SlicedString::init(
                     dep_version_string.slice(this.buffers.string_bytes.as_slice()),
                     dep_version_string.slice(this.buffers.string_bytes.as_slice()),
@@ -1947,9 +1947,9 @@ pub fn migrate_yarn_lockfile<'a>(
                 let dep_version_literal: &[u8] = *dep_version_ref;
 
                 let name_hash = string_hash(dep_name);
-                let dep_name_string = string_buf.append_with_hash(dep_name, name_hash)?;
+                let dep_name_string = sbuf!().append_with_hash(dep_name, name_hash)?;
 
-                let dep_version_string = string_buf.append(dep_version_literal)?;
+                let dep_version_string = sbuf!().append(dep_version_literal)?;
                 let sliced_string = SlicedString::init(
                     dep_version_string.slice(this.buffers.string_bytes.as_slice()),
                     dep_version_string.slice(this.buffers.string_bytes.as_slice()),

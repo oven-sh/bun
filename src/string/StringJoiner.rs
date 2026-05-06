@@ -289,6 +289,27 @@ impl StringJoiner {
     }
 }
 
+/// Borrowing iterator over a `StringJoiner`'s node slices.
+pub struct NodeSlices<'a> {
+    cur: *const Node,
+    _joiner: core::marker::PhantomData<&'a StringJoiner>,
+}
+
+impl<'a> Iterator for NodeSlices<'a> {
+    type Item = &'a [u8];
+    fn next(&mut self) -> Option<&'a [u8]> {
+        if self.cur.is_null() {
+            return None;
+        }
+        // SAFETY: `cur` walks the live node chain owned by the borrowed
+        // `StringJoiner`; nodes are not freed while the borrow is held.
+        let node = unsafe { &*self.cur };
+        self.cur = node.next;
+        // SAFETY: node slice valid for the borrow of the joiner (`'a`).
+        Some(unsafe { &*node.slice })
+    }
+}
+
 impl Drop for StringJoiner {
     fn drop(&mut self) {
         let Some(head) = self.head.take() else {

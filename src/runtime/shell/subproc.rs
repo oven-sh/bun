@@ -450,12 +450,16 @@ impl ShellSubprocess {
 
         if !spawn_args.override_env && spawn_args.env_array.is_empty() {
             // spawn_args.env_array.items = jsc_vm.transpiler.env.map.createNullDelimitedEnvMap(allocator);
-            // TODO(port): EventLoopHandle::create_null_delimited_env_map returns a
-            // `NullDelimitedEnvMap` (boxed `[?*const c_char]`) shaped differently
-            // from `Vec<*const c_char>`. The shell always populates `env_array`
-            // via `fill_env` (override_env=true) before reaching here, so this
-            // branch is dead in practice.
-            todo!("blocked_on: bun_jsc::EventLoopHandle::create_null_delimited_env_map shape");
+            // PORT NOTE: Zig assigned the `[:null]?[*:0]const u8` slice straight
+            // into `env_array.items`. The Rust port stores `Vec<*const c_char>`,
+            // so unwrap each `Option` (None → null) into a fresh Vec. The
+            // trailing null sentinel is appended below regardless.
+            let env_map = bun_core::handle_oom(event_loop.create_null_delimited_env_map());
+            spawn_args.env_array = env_map
+                .into_vec()
+                .into_iter()
+                .map(|opt| opt.unwrap_or(core::ptr::null()))
+                .collect();
         }
 
         // Until ownership transfers into Writable/Readable, deinit any caller-provided

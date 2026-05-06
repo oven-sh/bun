@@ -75,6 +75,15 @@ impl MkdirpTarget for CopyFile<'_> {
     fn set_system_error(&mut self, e: SystemError) { self.system_error = Some(e); }
 }
 
+impl jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for CopyFile<'_> {
+    fn run(&mut self) {
+        self.run_async();
+    }
+    fn then(&mut self, promise: &mut JSPromise) -> Result<(), jsc::JsTerminated> {
+        CopyFile::then(self, promise)
+    }
+}
+
 impl<'a> CopyFile<'a> {
     pub fn create(
         store: StoreRef,

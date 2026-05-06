@@ -468,9 +468,30 @@ pub mod random {
                 .throw();
         }
 
-        // TODO(port): Zig uses `std.crypto.random.intRangeLessThan(i64, min, max)`.
-        // Phase B should wire this to the same CSPRNG (BoringSSL RAND_bytes-backed).
-        let res = bun_core::crypto_random::int_range_less_than::<i64>(min, max);
+        // Zig: `std.crypto.random.intRangeLessThan(i64, min, max)` — port of
+        // `std.Random.uintLessThan(u64, max - min)` (Lemire's nearly-divisionless
+        // rejection sampling) backed by `bun_core::csprng` (BoringSSL RAND_bytes).
+        let res: i64 = {
+            let range = (max - min) as u64;
+            debug_assert!(range > 0);
+            let mut buf = [0u8; 8];
+            let x = loop {
+                bun_core::csprng(&mut buf);
+                let x = u64::from_ne_bytes(buf);
+                let m = (x as u128).wrapping_mul(range as u128);
+                let l = m as u64;
+                if l < range {
+                    let t = range.wrapping_neg() % range;
+                    if l >= t {
+                        break (m >> 64) as u64;
+                    }
+                    // else: rejected, loop again
+                } else {
+                    break (m >> 64) as u64;
+                }
+            };
+            min.wrapping_add(x as i64)
+        };
 
         if !callback.is_undefined() {
             callback.call_next_tick(global, [JSValue::UNDEFINED, JSValue::js_number(res)])?;

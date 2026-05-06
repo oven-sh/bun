@@ -1813,7 +1813,7 @@ struct Analyzer<'a> {
 impl<'a> Analyzer<'a> {
     pub fn on_analyze(
         this: &mut Self,
-        result: &mut bun_bundler::bundle_v2::DependenciesScannerResult,
+        result: &mut bun_bundler::bundle_v2::__phase_a_draft::DependenciesScannerResult,
     ) -> Result<(), bun_core::Error> {
         this.node.end();
 

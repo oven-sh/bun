@@ -285,23 +285,23 @@ pub fn rapidhash(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
 // ──────────────────────────────────────────────────────────────────────────
 
 pub fn create(global: &JSGlobalObject) -> JSValue {
-    let function = JSFunction::create(global, "hash", wyhash, 1, Default::default());
+    let function = JSFunction::create(global, "hash", __jsc_host_wyhash, 1, Default::default());
     // Zig used `inline for` + `@field(HashObject, name)` to look up each fn
     // by string name at comptime. Rust pairs the JS-visible name with the
-    // host fn explicitly.
+    // C-ABI shim (`__jsc_host_*`, emitted by `#[bun_jsc::host_fn]`) explicitly.
     const FNS: &[(&str, jsc::JSHostFn)] = &[
-        ("wyhash", wyhash),
-        ("adler32", adler32),
-        ("crc32", crc32),
-        ("cityHash32", city_hash32),
-        ("cityHash64", city_hash64),
-        ("xxHash32", xx_hash32),
-        ("xxHash64", xx_hash64),
-        ("xxHash3", xx_hash3),
-        ("murmur32v2", murmur32v2),
-        ("murmur32v3", murmur32v3),
-        ("murmur64v2", murmur64v2),
-        ("rapidhash", rapidhash),
+        ("wyhash", __jsc_host_wyhash),
+        ("adler32", __jsc_host_adler32),
+        ("crc32", __jsc_host_crc32),
+        ("cityHash32", __jsc_host_city_hash32),
+        ("cityHash64", __jsc_host_city_hash64),
+        ("xxHash32", __jsc_host_xx_hash32),
+        ("xxHash64", __jsc_host_xx_hash64),
+        ("xxHash3", __jsc_host_xx_hash3),
+        ("murmur32v2", __jsc_host_murmur32v2),
+        ("murmur32v3", __jsc_host_murmur32v3),
+        ("murmur64v2", __jsc_host_murmur64v2),
+        ("rapidhash", __jsc_host_rapidhash),
     ];
     for &(name, host_fn) in FNS {
         let value = JSFunction::create(global, name, host_fn, 1, Default::default());

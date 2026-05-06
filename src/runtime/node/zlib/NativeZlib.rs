@@ -1,12 +1,25 @@
-use core::cell::Cell;
 use core::ffi::{c_char, c_int};
 use core::mem;
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, Strong};
-use bun_threading::WorkPoolTask;
 use bun_zlib as c; // bun.zlib — C zlib FFI (NodeMode, z_stream, ReturnCode, FlushValue, deflate*, inflate*)
 
-use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive, Error};
+use crate::node::node_zlib_binding::Error;
+
+// ─── gated: JsClass payload + host fns ────────────────────────────────────
+// `NativeZlib` carries `#[bun_jsc::JsClass]` and its methods are
+// `#[bun_jsc::host_fn]`s; field types (`Strong`, `WorkPoolTask`) are not yet
+// exported with the expected shapes. The pure-FFI `Context` (zlib state
+// machine) is hoisted below as the non-JSC body.
+// TODO(b2-blocked): un-gate once bun_jsc Strong/JsClass + bun_threading::WorkPoolTask land.
+#[cfg(any())]
+mod _impl {
+use super::*;
+use core::cell::Cell;
+
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, Strong};
+use bun_threading::WorkPoolTask;
+
+use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive};
 use crate::node::util::validators;
 
 // TODO(port): codegen — jsc.Codegen.JSNativeZlib (toJS / fromJS / fromJSDirect /
@@ -177,6 +190,9 @@ impl NativeZlib {
         }
     }
 }
+} // mod _impl
+
+// ─── non-JSC body (real): zlib stream Context ─────────────────────────────
 
 pub struct Context {
     pub mode: c::NodeMode,
@@ -244,9 +260,11 @@ impl Context {
             None => b"" as *const [u8],
         };
 
+        // SAFETY: FFI — `state` is a valid #[repr(C)] z_stream; zlibVersion()
+        // returns a static C string.
         match self.mode {
             NONE => unreachable!(),
-            DEFLATE | GZIP | DEFLATERAW => {
+            DEFLATE | GZIP | DEFLATERAW => unsafe {
                 self.err = c::deflateInit2_(
                     &mut self.state,
                     level,
@@ -254,18 +272,18 @@ impl Context {
                     window_bits_actual,
                     mem_level,
                     strategy,
-                    c::zlibVersion(),
+                    c::zlibVersion().cast(),
                     c_int::try_from(mem::size_of::<c::z_stream>()).unwrap(),
                 );
-            }
-            INFLATE | GUNZIP | UNZIP | INFLATERAW => {
+            },
+            INFLATE | GUNZIP | UNZIP | INFLATERAW => unsafe {
                 self.err = c::inflateInit2_(
                     &mut self.state,
                     window_bits_actual,
-                    c::zlibVersion(),
+                    c::zlibVersion().cast(),
                     c_int::try_from(mem::size_of::<c::z_stream>()).unwrap(),
                 );
-            }
+            },
             BROTLI_DECODE | BROTLI_ENCODE => unreachable!(),
             ZSTD_COMPRESS | ZSTD_DECOMPRESS => unreachable!(),
         }
@@ -284,21 +302,22 @@ impl Context {
             return Error::ok();
         }
         self.err = c::ReturnCode::Ok;
+        // SAFETY: FFI — state is initialized; dict points into a rooted ArrayBuffer.
         match self.mode {
-            DEFLATE | DEFLATERAW => {
+            DEFLATE | DEFLATERAW => unsafe {
                 self.err = c::deflateSetDictionary(
                     &mut self.state,
                     dict.as_ptr(),
                     u32::try_from(dict.len()).unwrap(),
                 );
-            }
-            INFLATERAW => {
+            },
+            INFLATERAW => unsafe {
                 self.err = c::inflateSetDictionary(
                     &mut self.state,
                     dict.as_ptr(),
                     u32::try_from(dict.len()).unwrap(),
                 );
-            }
+            },
             _ => {}
         }
         if self.err != c::ReturnCode::Ok {
@@ -310,10 +329,11 @@ impl Context {
     pub fn set_params(&mut self, level: c_int, strategy: c_int) -> Error {
         use c::NodeMode::*;
         self.err = c::ReturnCode::Ok;
+        // SAFETY: FFI — state is an initialized deflate stream.
         match self.mode {
-            DEFLATE | DEFLATERAW => {
+            DEFLATE | DEFLATERAW => unsafe {
                 self.err = c::deflateParams(&mut self.state, level, strategy);
-            }
+            },
             _ => {}
         }
         if self.err != c::ReturnCode::Ok && self.err != c::ReturnCode::BufError {
@@ -331,16 +351,17 @@ impl Context {
             msg: message,
             err: self.err as c_int,
             code: match self.err {
-                c::ReturnCode::Ok => b"Z_OK",
-                c::ReturnCode::StreamEnd => b"Z_STREAM_END",
-                c::ReturnCode::NeedDict => b"Z_NEED_DICT",
-                c::ReturnCode::ErrNo => b"Z_ERRNO",
-                c::ReturnCode::StreamError => b"Z_STREAM_ERROR",
-                c::ReturnCode::DataError => b"Z_DATA_ERROR",
-                c::ReturnCode::MemError => b"Z_MEM_ERROR",
-                c::ReturnCode::BufError => b"Z_BUF_ERROR",
-                c::ReturnCode::VersionError => b"Z_VERSION_ERROR",
-            },
+                c::ReturnCode::Ok => c"Z_OK",
+                c::ReturnCode::StreamEnd => c"Z_STREAM_END",
+                c::ReturnCode::NeedDict => c"Z_NEED_DICT",
+                c::ReturnCode::ErrNo => c"Z_ERRNO",
+                c::ReturnCode::StreamError => c"Z_STREAM_ERROR",
+                c::ReturnCode::DataError => c"Z_DATA_ERROR",
+                c::ReturnCode::MemError => c"Z_MEM_ERROR",
+                c::ReturnCode::BufError => c"Z_BUF_ERROR",
+                c::ReturnCode::VersionError => c"Z_VERSION_ERROR",
+            }
+            .as_ptr(),
         }
     }
 

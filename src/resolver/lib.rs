@@ -5052,7 +5052,7 @@ impl<'a> Resolver<'a> {
                                         format_args!(
                                             "Cannot read directory \"{}\": {}",
                                             bstr::BStr::new(pretty),
-                                            err.name()
+                                            bstr::BStr::new(err.name())
                                         ),
                                     );
                                 }
@@ -5791,7 +5791,7 @@ impl<'a> Resolver<'a> {
             Ok(None) => dec_ret!(None),
             Err(err) => {
                 #[cfg(debug_assertions)]
-                Output::pretty_errorln(format_args!("err: {} reading {}", err.name(), bstr::BStr::new(path)));
+                Output::pretty_errorln(format_args!("err: {} reading {}", bstr::BStr::new(err.name()), bstr::BStr::new(path)));
                 dec_ret!(None);
             }
         };
@@ -5957,7 +5957,7 @@ impl<'a> Resolver<'a> {
                         format_args!(
                             "Cannot read directory \"{}\": {}",
                             bstr::BStr::new(dir_path),
-                            err.original_err.name()
+                            bstr::BStr::new(err.original_err.name())
                         ),
                     );
                 }
@@ -6105,7 +6105,7 @@ impl<'a> Resolver<'a> {
         base: &[u8],
         path: &[u8],
         ext: &[u8],
-        entries: &mut Fs::file_system::DirEntry,
+        entries: &Fs::file_system::DirEntry,
     ) -> Option<LoadResult> {
         let rfs: &mut Fs::file_system::RealFS = &mut self.fs.fs;
         let buffer = &mut bufs!(load_as_file)[0..path.len() + ext.len()];
@@ -6165,7 +6165,7 @@ impl<'a> Resolver<'a> {
             // point into a reused threadlocal scratch buffer, or a later resolution will
             // corrupt cached entries. Callers must intern it (e.g. via `DirnameStore`) first.
             bun_core::assertf!(
-                !allocators::is_slice_in_buffer(path, bufs!(path_in_global_disk_cache).as_slice()),
+                !allocators::is_slice_in_buffer(path, &bufs!(path_in_global_disk_cache)[..]),
                 "DirInfo.abs_path must not point into the threadlocal path_in_global_disk_cache buffer (got \"{}\")",
                 bstr::BStr::new(path)
             );
@@ -6399,22 +6399,24 @@ impl<'a> Resolver<'a> {
             }
 
             if let Some(tsconfigpath) = tsconfig_path {
-                info.tsconfig_json = match self.parse_tsconfig(
+                let parsed_tsconfig: Option<*mut TSConfigJSON> = match self.parse_tsconfig(
                     tsconfigpath,
                     if FeatureFlags::STORE_FILE_DESCRIPTORS { fd } else { FD::ZERO },
                 ) {
-                    Ok(v) => v,
+                    Ok(v) => v.map(|r| r as *mut _),
                     Err(err) => {
                         let pretty = tsconfigpath;
                         if err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound") {
                             let _ = self.log.add_error_fmt(None, logger::Loc::EMPTY, format_args!("Cannot find tsconfig file {}", bun_core::fmt::quote(pretty)));
                         } else if err != bun_core::err!("ParseErrorAlreadyLogged") && err != bun_core::err!("IsDir") && err != bun_core::err!("EISDIR") {
-                            let _ = self.log.add_error_fmt(None, logger::Loc::EMPTY, format_args!("Cannot read file {}: {}", bun_core::fmt::quote(pretty), err.name()));
+                            let _ = self.log.add_error_fmt(None, logger::Loc::EMPTY, format_args!("Cannot read file {}: {}", bun_core::fmt::quote(pretty), bstr::BStr::new(err.name())));
                         }
                         None
                     }
                 };
-                if let Some(tsconfig_json) = info.tsconfig_json {
+                // SAFETY: parse_tsconfig leaks a Box<TSConfigJSON>; interned into DirInfo for 'static.
+                info.tsconfig_json = parsed_tsconfig.map(|p| unsafe { &*p });
+                if let Some(tsconfig_json) = parsed_tsconfig {
                     let mut parent_configs: BoundedArray<*mut TSConfigJSON, 64> = BoundedArray::default();
                     parent_configs.append(tsconfig_json)?;
                     let mut current = tsconfig_json;
@@ -6423,15 +6425,15 @@ impl<'a> Resolver<'a> {
                     // owned by this extends-chain walk and freed via Box::from_raw below.
                     while !unsafe { &*current }.extends.is_empty() {
                         // SAFETY: see loop-wide note above.
-                        let ts_dir_name = Dirname::dirname(unsafe { &*current }.abs_path);
+                        let ts_dir_name = Dirname::dirname(&unsafe { &*current }.abs_path);
                         // SAFETY: see loop-wide note above.
-                        let abs_path = ResolvePath::join_abs_string_buf(ts_dir_name, bufs!(tsconfig_path_abs), &[ts_dir_name, unsafe { &*current }.extends], bun_paths::Platform::AUTO);
-                        let parent_config_maybe = match self.parse_tsconfig(abs_path, FD::INVALID) {
-                            Ok(v) => v,
+                        let abs_path = ResolvePath::join_abs_string_buf(ts_dir_name, bufs!(tsconfig_path_abs), &[ts_dir_name, &unsafe { &*current }.extends], bun_paths::Platform::AUTO);
+                        let parent_config_maybe: Option<*mut TSConfigJSON> = match self.parse_tsconfig(abs_path, FD::INVALID) {
+                            Ok(v) => v.map(|r| r as *mut _),
                             Err(err) => {
                                 let _ = self.log.add_debug_fmt(None, logger::Loc::EMPTY, format_args!(
                                     "{} loading tsconfig.json extends {}",
-                                    err.name(),
+                                    bstr::BStr::new(err.name()),
                                     bun_core::fmt::quote(abs_path)
                                 ));
                                 break;
@@ -6455,10 +6457,10 @@ impl<'a> Resolver<'a> {
                         let mc = unsafe { &mut *merged_config };
                         mc.emit_decorator_metadata = mc.emit_decorator_metadata || parent_config.emit_decorator_metadata;
                         if !parent_config.base_url.is_empty() {
-                            mc.base_url = parent_config.base_url;
+                            mc.base_url = core::mem::take(&mut parent_config.base_url);
                         }
                         mc.jsx = parent_config.merge_jsx(mc.jsx.clone());
-                        mc.jsx_flags.set_union(parent_config.jsx_flags);
+                        mc.jsx_flags.insert_all(parent_config.jsx_flags);
 
                         if let Some(value) = parent_config.preserve_imports_not_used_as_values {
                             mc.preserve_imports_not_used_as_values = Some(value);
@@ -6478,7 +6480,7 @@ impl<'a> Resolver<'a> {
                             // (tsconfig_json.zig), so free those before the map itself.
                             // (In Rust, dropping the map frees values automatically.)
                             mc.paths = core::mem::take(&mut parent_config.paths);
-                            mc.base_url_for_paths = parent_config.base_url_for_paths;
+                            mc.base_url_for_paths = core::mem::take(&mut parent_config.base_url_for_paths);
                         } else {
                             // paths were not moved to merged_config, so they're still owned
                             // by parent_config. base_url_for_paths.len == 0 implies the map
@@ -6496,7 +6498,7 @@ impl<'a> Resolver<'a> {
                         drop(unsafe { Box::from_raw(parent_config_ptr) });
                     }
                     // SAFETY: `merged_config` is a leaked Box (Box::into_raw) interned into DirInfo; outlives the resolver.
-                    info.tsconfig_json = Some(unsafe { &mut *merged_config });
+                    info.tsconfig_json = Some(unsafe { &*merged_config });
                 }
                 info.enclosing_tsconfig_json = info.tsconfig_json.map(|p| &*p);
             }

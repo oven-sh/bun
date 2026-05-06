@@ -302,9 +302,9 @@ impl ArrayBuffer {
         })
     }
 
-    pub fn alloc(global: &JSGlobalObject, kind: JSType, len: u32) -> JsResult<(JSValue, &mut [u8])> {
+    pub fn alloc<const KIND: JSType>(global: &JSGlobalObject, len: u32) -> JsResult<(JSValue, &mut [u8])> {
         let mut ptr_out: *mut u8 = ptr::null_mut();
-        let buf = match kind {
+        let buf = match KIND {
             // SAFETY: FFI — global is valid; ptr_out is a valid out-param written by callee on success.
             JSType::Uint8Array => crate::host_fn::from_js_host_call(global, || unsafe {
                 Bun__allocUint8ArrayForCopy(global as *const _ as *mut _, len as usize, (&mut ptr_out as *mut *mut u8).cast())
@@ -313,7 +313,7 @@ impl ArrayBuffer {
             JSType::ArrayBuffer => crate::host_fn::from_js_host_call(global, || unsafe {
                 Bun__allocArrayBufferForCopy(global as *const _ as *mut _, len as usize, (&mut ptr_out as *mut *mut u8).cast())
             })?,
-            _ => unreachable!("Not implemented yet"), // Zig: @compileError
+            _ => panic!("ArrayBuffer::alloc: KIND not implemented"), // Zig: @compileError
         };
         // SAFETY: Bun__alloc*ForCopy writes a valid `len`-byte buffer pointer into ptr_out on success.
         let slice = unsafe { core::slice::from_raw_parts_mut(ptr_out, len as usize) };
@@ -366,11 +366,11 @@ impl ArrayBuffer {
         // that's just silly.
         if self.byte_len == 0 {
             if self.typed_array_type == JSType::ArrayBuffer {
-                return Self::create(ctx, JSType::ArrayBuffer, b"");
+                return Self::create::<{ JSType::ArrayBuffer }>(ctx, b"");
             }
 
             if self.typed_array_type == JSType::Uint8Array {
-                return Self::create(ctx, JSType::Uint8Array, b"");
+                return Self::create::<{ JSType::Uint8Array }>(ctx, b"");
             }
 
             // TODO: others
@@ -1018,5 +1018,5 @@ impl JSCArrayBuffer {
 //   source:     src/jsc/array_buffer.zig (692 lines)
 //   confidence: medium
 //   todos:      16
-//   notes:      const-generic JSType needs ConstParamTy; unaligned u16/u32 slices need a Rust strategy; ArrayBufferStrong.clear references nonexistent field upstream; MarkedArrayBuffer allocator field collapsed to owns_buffer bool
+//   notes:      const-generic JSType KIND restored via adt_const_params; unaligned u16/u32 slices need a Rust strategy; ArrayBufferStrong.clear references nonexistent field upstream; MarkedArrayBuffer allocator field collapsed to owns_buffer bool
 // ──────────────────────────────────────────────────────────────────────────

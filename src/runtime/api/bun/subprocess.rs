@@ -1358,5 +1358,5 @@ pub mod testing_apis {
 //   source:     src/runtime/api/bun/subprocess.zig (1024 lines)
 //   confidence: medium
 //   todos:      8
-//   notes:      Subprocess gained <'a> (terminal/global_this per LIFETIMES.tsv); ref/deref via bun_ptr::IntrusiveRc; process held in ManuallyDrop so finalize releases at Zig timing; on_process_exit defers reshaped to manual calls at return points.
+//   notes:      Subprocess gained <'a> (terminal/global_this per LIFETIMES.tsv); ref/deref via bun_ptr::RefCount<Self> + RefCounted impl; PROCESS_EXIT_VTABLE wired for §Dispatch; process held in ManuallyDrop<Arc<Process>> so finalize releases at Zig timing; on_process_exit defers reshaped to manual calls at return points.
 // ──────────────────────────────────────────────────────────────────────────

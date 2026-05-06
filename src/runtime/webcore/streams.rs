@@ -455,8 +455,6 @@ impl WritableHandler {
     }
 }
 
-// TODO(b2-blocked): bun_jsc::* — JSPromiseStrong::swap, Writable::fulfill_promise.
-#[cfg(any())]
 impl WritablePending {
     pub fn run(&mut self) {
         if self.state != PendingState::Pending {
@@ -470,7 +468,7 @@ impl WritablePending {
                 let global = unsafe { &*global };
                 Writable::fulfill_promise(
                     core::mem::replace(&mut self.result, Writable::Done),
-                    strong.swap(),
+                    strong.swap() as *mut JSPromise,
                     global,
                 );
                 // TODO(port): Zig moved p out then reassigned future = .none; mem::replace mirrors this
@@ -501,19 +499,15 @@ impl Writable {
         )
     }
 
-    // TODO(b2-blocked): bun_jsc::* — JSPromise::reject_with_async_stack/resolve, JSValue::unprotect.
-    #[cfg(any())]
     pub fn fulfill_promise(result: Writable, promise: *mut JSPromise, global_this: &JSGlobalObject) {
         // SAFETY: promise is a valid GC-rooted JSPromise (protected by caller)
         let promise = unsafe { &mut *promise };
-        let _guard = scopeguard::guard((), |_| promise.to_js().unprotect());
+        let promise_value = promise.to_js();
+        let _guard = scopeguard::guard((), |_| promise_value.unprotect());
         // PORT NOTE: defer promise.toJS().unprotect() — runs on all paths
         match result {
             Writable::Err(err) => {
-                let _ = promise.reject_with_async_stack(
-                    global_this,
-                    err.to_js(global_this).unwrap_or(JSValue::ZERO),
-                );
+                let _ = promise.reject_with_async_stack(global_this, err.to_js(global_this));
                 // TODO: properly propagate exception upwards
             }
             Writable::Done => {
@@ -527,14 +521,11 @@ impl Writable {
         }
     }
 
-    // TODO(b2-blocked): bun_jsc::* — JSValue::js_number, JSPromise::rejected_promise.
-    #[cfg(any())]
     pub fn to_js(self, global_this: &JSGlobalObject) -> JSValue {
         match self {
-            Writable::Err(err) => match err.to_js(global_this) {
-                Ok(v) => JSPromise::rejected_promise(global_this, v).to_js(),
-                Err(_) => JSValue::ZERO,
-            },
+            Writable::Err(err) => {
+                JSPromise::rejected_promise(global_this, err.to_js(global_this)).to_js()
+            }
             Writable::Owned(len) => JSValue::js_number(len as f64),
             Writable::OwnedAndDone(len) => JSValue::js_number(len as f64),
             Writable::TemporaryAndDone(len) => JSValue::js_number(len as f64),
@@ -546,7 +537,9 @@ impl Writable {
             Writable::Done => JSValue::TRUE,
             Writable::Pending(pending) => {
                 // SAFETY: pending is a valid borrowed pointer per BORROW_PARAM classification
-                unsafe { &mut *pending }.promise(global_this).to_js()
+                let prom = unsafe { &mut *pending }.promise(global_this);
+                // SAFETY: prom is a live GC-rooted JSPromise
+                unsafe { &*prom }.to_js()
             }
         }
     }
@@ -603,10 +596,8 @@ impl Pending {
         self.state = PendingState::Pending;
     }
 
-    // TODO(b2-blocked): bun_jsc::* — JSPromise::create, VirtualMachine::get/event_loop.
-    #[cfg(any())]
     pub fn promise(&mut self, global_object: &JSGlobalObject) -> *mut JSPromise {
-        let prom = JSPromise::create(global_object);
+        let prom = JSPromise::create(global_object) as *mut JSPromise;
         self.future = PendingFuture::Promise {
             promise: prom,
             global_this: global_object as *const _,
@@ -615,7 +606,6 @@ impl Pending {
         prom
     }
 
-    #[cfg(any())]
     pub fn run_on_next_tick(&mut self) {
         if self.state != PendingState::Pending {
             return;
@@ -630,10 +620,10 @@ impl Pending {
         // self.future to Default (Zig left it untouched — no reader observes it after this).
         self.state = PendingState::None;
         self.result = StreamResult::Done;
-        vm.event_loop().enqueue_task(Task::init(Box::into_raw(clone)));
+        vm.event_loop()
+            .enqueue_task(bun_event_loop::Task::init(Box::into_raw(clone)));
     }
 
-    #[cfg(any())]
     pub fn run_from_js_thread(this: *mut Pending) {
         // SAFETY: this was Box::into_raw'd in run_on_next_tick
         let mut boxed = unsafe { Box::from_raw(this) };
@@ -695,12 +685,7 @@ pub enum PendingState {
 // ──────────────────────────────────────────────────────────────────────────
 // JSC-integration: Pending::run, StreamResult::to_js/fulfill_promise, Signal,
 // HTTPServerWritable<*> impl, NetworkSink impl, BufferAction, ReadResult.
-// TODO(b2-blocked): bun_jsc::* — JSPromise/JSValue methods, VirtualMachine::get,
-// Task::init, ArrayBuffer::create. Type defs are kept above; impls gated.
 // ──────────────────────────────────────────────────────────────────────────
-#[cfg(any())]
-mod _jsc_gated2 {
-use super::*;
 
 impl Pending {
     pub fn run(&mut self) {
@@ -748,7 +733,8 @@ impl StreamResult {
         let _unprotect = scopeguard::guard((), |_| promise_value.unprotect());
 
         event_loop.enter();
-        let _exit = scopeguard::guard((), |_| event_loop.exit());
+        // PORT NOTE: cannot capture &mut event_loop in scopeguard while also using
+        // `promise` (borrowck); call exit() explicitly on each path instead.
 
         match result {
             StreamResult::Err(err) => {
@@ -773,8 +759,9 @@ impl StreamResult {
                     Ok(v) => v,
                     Err(err) => {
                         *result = StreamResult::Temporary(ByteList::default());
-                        let _ = promise.reject(global_this, err);
+                        let _ = promise.reject(global_this, Err(err));
                         // TODO: properly propagate exception upwards
+                        event_loop.exit();
                         return;
                     }
                 };
@@ -785,9 +772,10 @@ impl StreamResult {
                 // TODO: properly propagate exception upwards
             }
         }
+        event_loop.exit();
     }
 
-    pub fn to_js(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         if VirtualMachine::get().is_shutting_down() {
             // TODO(port): Zig copies *self to `that` and deinits the copy; ownership unclear — calling deinit on a clone-ish
             // Leaving as no-op deinit on self would be wrong (self is &). Phase B: revisit.
@@ -795,16 +783,12 @@ impl StreamResult {
         }
 
         match self {
-            StreamResult::Owned(list) => Ok(ArrayBuffer::from_bytes(
-                list.slice(),
-                ArrayBuffer::Kind::Uint8Array,
-            )
-            .to_js(global_this)),
-            StreamResult::OwnedAndDone(list) => Ok(ArrayBuffer::from_bytes(
-                list.slice(),
-                ArrayBuffer::Kind::Uint8Array,
-            )
-            .to_js(global_this)),
+            StreamResult::Owned(list) => {
+                ArrayBuffer::from_bytes(list.slice_mut(), JSType::Uint8Array).to_js(global_this)
+            }
+            StreamResult::OwnedAndDone(list) => {
+                ArrayBuffer::from_bytes(list.slice_mut(), JSType::Uint8Array).to_js(global_this)
+            }
             StreamResult::Temporary(temp) => {
                 let array =
                     JSValue::create_uninitialized_uint8_array(global_this, temp.len as usize)?;
@@ -855,7 +839,7 @@ impl StreamResult {
 #[derive(Default)]
 pub struct Signal {
     pub ptr: Option<NonNull<c_void>>,
-    pub vtable: Option<&'static SignalVTable>,
+    pub vtable: SignalVTable,
 }
 
 impl Signal {
@@ -867,37 +851,41 @@ impl Signal {
         self.ptr.is_none()
     }
 
-    pub fn init_with_type<T: SignalHandler>(handler: &mut T) -> Signal {
+    /// # Safety
+    /// `handler` must be either null (dead signal) or a valid `*mut T` that
+    /// outlives every call routed through this `Signal`.
+    pub unsafe fn init_with_type<T: SignalHandler>(handler: *mut T) -> Signal {
         // this is nullable when used as a JSValue
         Signal {
-            ptr: NonNull::new(handler as *mut T as *mut c_void),
-            vtable: Some(SignalVTable::wrap::<T>()),
+            ptr: NonNull::new(handler as *mut c_void),
+            vtable: SignalVTable::wrap::<T>(),
         }
     }
 
     pub fn init<T: SignalHandler>(handler: &mut T) -> Signal {
-        Self::init_with_type(handler)
+        // SAFETY: &mut T is a valid non-null pointer
+        unsafe { Self::init_with_type(handler as *mut T) }
     }
 
     pub fn close(&mut self, err: Option<SysError>) {
         if self.is_dead() {
             return;
         }
-        (self.vtable.unwrap().close)(self.ptr.unwrap().as_ptr(), err);
+        (self.vtable.close)(self.ptr.unwrap().as_ptr(), err);
     }
 
     pub fn ready(&mut self, amount: Option<BlobSizeType>, offset: Option<BlobSizeType>) {
         if self.is_dead() {
             return;
         }
-        (self.vtable.unwrap().ready)(self.ptr.unwrap().as_ptr(), amount, offset);
+        (self.vtable.ready)(self.ptr.unwrap().as_ptr(), amount, offset);
     }
 
     pub fn start(&mut self) {
         if self.is_dead() {
             return;
         }
-        (self.vtable.unwrap().start)(self.ptr.unwrap().as_ptr());
+        (self.vtable.start)(self.ptr.unwrap().as_ptr());
     }
 }
 
@@ -906,10 +894,20 @@ pub type SignalOnReadyFn =
     fn(this: *mut c_void, amount: Option<BlobSizeType>, offset: Option<BlobSizeType>);
 pub type SignalOnStartFn = fn(this: *mut c_void);
 
+#[derive(Copy, Clone)]
 pub struct SignalVTable {
     pub close: SignalOnCloseFn,
     pub ready: SignalOnReadyFn,
     pub start: SignalOnStartFn,
+}
+
+impl Default for SignalVTable {
+    fn default() -> Self {
+        fn dead_close(_: *mut c_void, _: Option<SysError>) {}
+        fn dead_ready(_: *mut c_void, _: Option<BlobSizeType>, _: Option<BlobSizeType>) {}
+        fn dead_start(_: *mut c_void) {}
+        SignalVTable { close: dead_close, ready: dead_ready, start: dead_start }
+    }
 }
 
 /// Trait replacing Zig's `@hasDecl(Wrapped, "onClose")` duck-typing.
@@ -921,7 +919,7 @@ pub trait SignalHandler {
 }
 
 impl SignalVTable {
-    pub fn wrap<W: SignalHandler>() -> &'static SignalVTable {
+    pub fn wrap<W: SignalHandler>() -> SignalVTable {
         fn on_close<W: SignalHandler>(this: *mut c_void, err: Option<SysError>) {
             // SAFETY: this was stored from &mut W in Signal::init_with_type
             unsafe { &mut *(this as *mut W) }.on_close(err);
@@ -939,13 +937,16 @@ impl SignalVTable {
             unsafe { &mut *(this as *mut W) }.on_start();
         }
 
-        // TODO(port): Zig used `comptime &VTable.wrap(Type)` for static address — need const-promotable static
-        &SignalVTable {
+        // PORT NOTE: Zig used `comptime &VTable.wrap(Type)` for a static address.
+        // Rust cannot const-promote a generic-dependent struct literal to
+        // `&'static`, so the vtable is stored by-value in `Signal` instead
+        // (three fn pointers — same size as the Zig `*const VTable` payload
+        // would dereference to anyway).
+        SignalVTable {
             close: on_close::<W>,
             ready: on_ready::<W>,
             start: on_start::<W>,
         }
-        // PORT NOTE: returning &'static via rvalue static promotion; verify in Phase B
     }
 }
 

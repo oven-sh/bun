@@ -68,10 +68,7 @@ impl JSXPragma {
     }
 }
 
-// TODO(port): `ConstParamTy` derive needs unstable `adt_const_params`; the
-// `NewLexer<const J: JSONOptions>` alias is gated above, so the derive is
-// not needed for compilation.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
 pub struct JSONOptions {
     /// Enable JSON-specific warnings/errors
     pub is_json: bool,
@@ -116,10 +113,11 @@ impl Default for JSONOptions {
 /// type. In Rust we model this as a generic over the eight comptime bools.
 ///
 /// `Lexer` (below) is the default instantiation (`NewLexer(.{})`).
-// TODO(port): `NewLexer<const J: JSONOptions>` requires unstable
-// `adt_const_params` + `generic_const_exprs` for field projection in const
-// position. Callers inline the eight bools at each instantiation site instead.
-#[cfg(any())]
+///
+/// `JSONOptions` derives `ConstParamTy` (nightly `adt_const_params`), and
+/// `generic_const_exprs` lets each field project into a `const bool` slot, so
+/// callers write `NewLexer<'a, { JSONOptions { is_json: true, ..JSONOptions::DEFAULT } }>`
+/// instead of spelling out eight positional bools.
 pub type NewLexer<'a, const J: JSONOptions> = LexerType<
     'a,
     { J.is_json },

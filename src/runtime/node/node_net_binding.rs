@@ -4,14 +4,36 @@
 use core::cell::Cell;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
-
-use super::util::validators;
-use crate::api::{Listener, TCPSocket, TLSSocket};
+// ─── type defs (real) ─────────────────────────────────────────────────────
 
 // Zig: `pub var autoSelectFamilyDefault: bool = true;`
 // PORT NOTE: reshaped for borrowck — Rust forbids safe `static mut`; use AtomicBool.
 pub static AUTO_SELECT_FAMILY_DEFAULT: AtomicBool = AtomicBool::new(true);
+
+/// This is only used to provide the getDefaultAutoSelectFamilyAttemptTimeout and
+/// setDefaultAutoSelectFamilyAttemptTimeout functions, not currently read by any other code. It's
+/// `threadlocal` because Node.js expects each Worker to have its own copy of this, and currently
+/// it can only be accessed by accessor functions which run on each Worker's main JavaScript thread.
+///
+/// If this becomes used in more places, and especially if it can be read by other threads, we may
+/// need to store it as a field in the VirtualMachine instead of in a `threadlocal`.
+thread_local! {
+    pub static AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_DEFAULT: Cell<u32> = const { Cell::new(250) };
+}
+
+// ─── gated: JSC binding fns ───────────────────────────────────────────────
+// All bodies build `JSFunction`/`JSValue` and reach `crate::api::{Listener,
+// TCPSocket, TLSSocket}` whose struct shapes / `bun_jsc::codegen` re-exports
+// are not yet stable. The two statics above are the only JSC-free state.
+// TODO(b2-blocked): un-gate once bun_jsc JSFunction/codegen + crate::api socket types land.
+#[cfg(any())]
+mod _impl {
+use super::*;
+
+use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
+
+use crate::node::util::validators;
+use crate::api::{Listener, TCPSocket, TLSSocket};
 
 pub fn get_default_auto_select_family(global: &JSGlobalObject) -> JSValue {
     #[bun_jsc::host_fn]
@@ -37,17 +59,6 @@ pub fn set_default_auto_select_family(global: &JSGlobalObject) -> JSValue {
         Ok(JSValue::from(value))
     }
     JSFunction::create(global, "setDefaultAutoSelectFamily", setter, 1, Default::default())
-}
-
-/// This is only used to provide the getDefaultAutoSelectFamilyAttemptTimeout and
-/// setDefaultAutoSelectFamilyAttemptTimeout functions, not currently read by any other code. It's
-/// `threadlocal` because Node.js expects each Worker to have its own copy of this, and currently
-/// it can only be accessed by accessor functions which run on each Worker's main JavaScript thread.
-///
-/// If this becomes used in more places, and especially if it can be read by other threads, we may
-/// need to store it as a field in the VirtualMachine instead of in a `threadlocal`.
-thread_local! {
-    pub static AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_DEFAULT: Cell<u32> = const { Cell::new(250) };
 }
 
 pub fn get_default_auto_select_family_attempt_timeout(global: &JSGlobalObject) -> JSValue {
@@ -130,6 +141,7 @@ pub fn do_connect(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
     let maybe_tls = prev.as_type::<TLSSocket>();
     Listener::connect_inner(global, maybe_tcp, maybe_tls, opts)
 }
+} // mod _impl
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

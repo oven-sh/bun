@@ -1004,9 +1004,10 @@ pub fn is_absolute_windows_t<T: PathChar>(path: &[T]) -> bool {
 //     resolve/to_namespaced) and their JSC bindings.                         ──
 // Blocked on:
 //   - bun_jsc method surface (`BunString::create_utf8_for_js`, validators)
-//   - `<const PLATFORM: Platform>` (adt_const_params; bun_paths uses
-//     `PlatformT` trait instead — Phase B should switch normalize_string_t)
 //   - cwd helpers (`_cwd` mod above; bun_fs::FileSystem)
+// `<const PLATFORM: Platform>` is no longer a blocker — `bun_paths::Platform`
+// now derives `ConstParamTy` (nightly `adt_const_params`), and
+// `normalize_string_t` below uses the const-generic form directly.
 // is_sep_*_t / is_absolute_*_t / is_windows_device_root_t hoisted above.
 // TODO(b2-blocked): un-gate once bun_jsc + bun_fs land.
 #[cfg(any())]

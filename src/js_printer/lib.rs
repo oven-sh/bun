@@ -1213,22 +1213,22 @@ pub mod options {
     pub use super::{Indentation, IndentationCharacter};
 }
 
-/// Downstream-compat: `print_json` callers pass this. The real fn body lives in
-/// `__gated_entry_points` and ignores everything but `indent`/`mangled_props`.
+/// Downstream-compat: `print_json` callers pass this. The real fn body (still
+/// `#[cfg(any())]`-gated below) ignores everything but `indent`/`mangled_props`.
 #[derive(Default)]
 pub struct PrintJsonOptions<'a> {
     pub indent: Indentation,
     pub mangled_props: Option<&'a MangledProps>,
 }
 
-/// B-2 shadow stub — real body in `__gated_entry_points::print_json`.
-// TODO(b2-blocked): bun_js_parser::Expr (real body)
+/// B-2 shadow stub — real body is the `#[cfg(any())]`-gated `print_json` below.
+// TODO(b2-blocked): bun_js_parser::Ast::init_test / Symbol::List::from_borrowed_slice_dangerous
 pub fn print_json<W: WriterTrait>(
     _writer: W,
     _expr: js_ast::Expr,
     _opts: PrintJsonOptions<'_>,
 ) -> Result<usize, bun_core::Error> {
-    todo!("b2 stub: print_json — un-gate __gated_entry_points")
+    todo!("b2 stub: print_json — un-gate once Ast::init_test lands")
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -6698,15 +6698,15 @@ impl GenerateSourceMap {
 
 // ───────────────────────────────────────────────────────────────────────────
 // Top-level print entry points — `get_source_map_builder` / `print` /
-// `print_with_writer{,_and_platform}` / `print_common_js` are now live.
+// `print_with_writer{,_and_platform}` / `print_common_js` are live (the
+// `bun_crash_handler::current_action` / `bun_core::perf::trace` /
+// `bun_sourcemap::chunk::Builder: Default` blockers are all real now, so the
+// former `__gated_entry_points` wrapper has been flattened away).
 // `print_ast`'s minify-renamer driver and `print_json` remain individually
 // re-gated on lower-tier surface (see TODO(b2-blocked) markers inline).
 // ───────────────────────────────────────────────────────────────────────────
-pub mod __gated_entry_points {
-use super::*;
-use super::__gated_printer::*;
+use self::__gated_printer::{Printer, slice_of};
 use js_ast::Ast;
-use js_ast::ast::op::Level;
 
 // PORT NOTE: Zig had `comptime generate_source_map`; Rust's `generic_const_exprs`
 // can't compute a non-`bool` const-generic from a `bool` const-generic without
@@ -6958,7 +6958,7 @@ pub fn print<'a, const GENERATE_SOURCE_MAPS: bool>(
     parts: &[js_ast::Part],
     renamer: rename::Renamer<'a, 'a>,
 ) -> PrintResult {
-    // TODO(b2-blocked): bun_core::perf::trace("JSPrinter.print")
+    let _trace = bun_core::perf::trace("JSPrinter.print");
 
     let buffer_writer = BufferWriter::init();
     let mut buffer_printer = BufferPrinter::init(buffer_writer);
@@ -7145,8 +7145,6 @@ pub fn print_common_js<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERAT
 
     Ok(usize::try_from(printer.writer.written().max(0)).unwrap())
 }
-} // mod __gated_entry_points
-pub use self::__gated_entry_points::{get_source_map_builder, print, print_with_writer, print_with_writer_and_platform, print_common_js};
 
 /// Serializes ModuleInfo to an owned byte slice. Returns null on failure.
 /// The caller is responsible for freeing the returned slice.

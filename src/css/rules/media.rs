@@ -1,6 +1,8 @@
-use bun_css as css;
-use bun_css::css_rules::Location;
-use bun_css::{CssRuleList, MediaList, MinifyContext, MinifyErr, PrintErr, Printer};
+use crate as css;
+use crate::css_rules::{CssRuleList, Location, MinifyContext};
+use crate::error::MinifyErr;
+use crate::media_query::MediaList;
+use crate::{PrintErr, Printer};
 
 /// A `@media` rule.
 pub struct MediaRule<R> {
@@ -12,6 +14,11 @@ pub struct MediaRule<R> {
     pub loc: Location,
 }
 
+// ─── behavior bodies ──────────────────────────────────────────────────────
+// blocked_on: CssRuleList::{minify,to_css} (gated in rules/mod.rs until leaf
+// rules un-gate) and MediaList::{always_matches,never_matches,to_css} (gated
+// in media_query.rs until the values/ calc lattice un-gates).
+#[cfg(any())]
 impl<R> MediaRule<R> {
     pub fn minify(&mut self, context: &mut MinifyContext, parent_is_unused: bool) -> Result<bool, MinifyErr> {
         self.rules.minify(context, parent_is_unused)?;
@@ -51,5 +58,5 @@ impl<R> MediaRule<R> {
 //   source:     src/css/rules/media.zig (51 lines)
 //   confidence: high
 //   todos:      1
-//   notes:      deep_clone relies on reflection helper; rules.v assumed Vec-like (.len()).
+//   notes:      struct un-gated; minify/to_css/deep_clone bodies gated on CssRuleList + MediaList behavior; rules.v assumed Vec-like (.len()).
 // ──────────────────────────────────────────────────────────────────────────

@@ -1,8 +1,10 @@
 //! Port of `src/bun_alloc/bun_alloc.zig`.
+#![feature(sync_unsafe_cell)]
 
+use core::cell::SyncUnsafeCell;
 use core::fmt::Write as _;
-use core::mem::size_of;
-use core::ptr::NonNull;
+use core::mem::{size_of, MaybeUninit};
+use core::ptr::{addr_of_mut, NonNull};
 use core::sync::atomic::{AtomicU16, Ordering};
 use std::collections::HashMap;
 

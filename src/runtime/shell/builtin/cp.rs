@@ -120,6 +120,7 @@ impl Cp {
 
     pub fn next(interp: &mut Interpreter, cmd: NodeId) -> Yield {
         loop {
+            #[allow(dead_code)]
             enum Action { Done(ExitCode), Schedule { start: usize, target: usize }, Ebusy }
             let action = match &mut Self::state_mut(interp, cmd).state {
                 State::Idle => panic!(

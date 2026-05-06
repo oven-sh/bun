@@ -578,37 +578,38 @@ impl<'a> Loader<'a> {
                 true
             };
 
-            let mut key_buf: Vec<u8> = Vec::new();
-            // PORT NOTE: borrowck — iterate parallel slices instead of `iterator()` so the
-            // map borrow stays shared while we call into the vtable.
-            let keys = self.map.map.keys();
-            let values = self.map.map.values();
             if any_prefix_match {
-            for (k, v) in keys.iter().zip(values.iter()) {
-                if k.is_empty() {
-                    continue;
-                }
-                let value: &[u8] = &v.value;
+                let mut key_buf: Vec<u8> = Vec::new();
+                // PORT NOTE: borrowck — iterate parallel slices instead of `iterator()` so the
+                // map borrow stays shared while we call into the vtable.
+                let keys = self.map.map.keys();
+                let values = self.map.map.values();
+                for (k, v) in keys.iter().zip(values.iter()) {
+                    if k.is_empty() {
+                        continue;
+                    }
+                    let value: &[u8] = &v.value;
 
-                if behavior == DotEnvBehavior::Prefix {
-                    if strings::starts_with(k, prefix) {
+                    if behavior == DotEnvBehavior::Prefix {
+                        if strings::starts_with(k, prefix) {
+                            key_buf.clear();
+                            key_buf.extend_from_slice(PROCESS_ENV);
+                            key_buf.extend_from_slice(k);
+                            to_string.put_string_define(&key_buf, value)?;
+                        } else {
+                            let hash = bun_wyhash::hash(k);
+                            debug_assert!(hash != INVALID_HASH);
+                            if let Some(key_i) = string_map_hashes.iter().position(|&h| h == hash) {
+                                to_string
+                                    .put_string_define(framework_defaults_keys[key_i], value)?;
+                            }
+                        }
+                    } else {
                         key_buf.clear();
                         key_buf.extend_from_slice(PROCESS_ENV);
                         key_buf.extend_from_slice(k);
                         to_string.put_string_define(&key_buf, value)?;
-                    } else {
-                        let hash = bun_wyhash::hash(k);
-                        debug_assert!(hash != INVALID_HASH);
-                        if let Some(key_i) = string_map_hashes.iter().position(|&h| h == hash) {
-                            to_string
-                                .put_string_define(framework_defaults_keys[key_i], value)?;
-                        }
                     }
-                } else {
-                    key_buf.clear();
-                    key_buf.extend_from_slice(PROCESS_ENV);
-                    key_buf.extend_from_slice(k);
-                    to_string.put_string_define(&key_buf, value)?;
                 }
             }
         }

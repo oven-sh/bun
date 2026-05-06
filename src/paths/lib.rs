@@ -1,4 +1,10 @@
 #![allow(unused, non_snake_case, non_camel_case_types, clippy::all)]
+// `Platform` is used as a const-generic param (Zig: `comptime _platform: Platform`)
+// in resolve_path.rs and downstream (`bun_runtime::node::path::normalize_string_t`).
+// Pinned nightly — enable the structural-match subset directly instead of the
+// `PlatformT` sealed-trait workaround.
+#![feature(adt_const_params)]
+#![allow(incomplete_features)]
 
 // `bun.w_path_buffer_pool` — u16 sibling. Backed by the same generic
 // thread-local pool as the u8 one (path_buffer_pool.rs already handles both

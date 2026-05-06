@@ -1,4 +1,4 @@
-#![allow(unused_imports, unused_variables, dead_code, unused_mut)]
+#![allow(unused_imports, unused_variables, dead_code, unused_mut, clippy::single_match)]
 use bun_core::{self, err};
 use bun_logger as logger;
 use bun_string::strings;
@@ -10,10 +10,10 @@ use crate::lexer as js_lexer;
 use js_ast::{Binding, Expr, LocRef, Stmt, Symbol, G, S};
 use js_ast::op::Level;
 use js_lexer::T;
-use G::Decl;
 
 use crate::parser::{
-    DeferredTsDecorators, JsxT, ParseStatementOptions, ParsedPath, Ref, StmtList, TypeScript,
+    AwaitOrYield, DeferredTsDecorators, JsxT, LexicalDecl, ParseStatementOptions, ParsedPath, Ref,
+    StmtList, TypeScript,
 };
 use bun_options_types::ImportKind;
 
@@ -23,24 +23,841 @@ type Result<T> = core::result::Result<T, bun_core::Error>;
 // Zig: `pub fn ParseStmt(comptime ts, comptime jsx, comptime scan_only) type { return struct {...} }`
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
 // a direct `impl P` block. The 25+ per-token `t_*` helpers are private; only `parse_stmt` is
-// surfaced. Full draft body preserved under #[cfg(any())] mod _draft below.
+// surfaced. Round-G un-gated the simpler `t_*` bodies; `t_export`/`t_import`/fallthrough remain
+// blocked on helper availability (see #[cfg(any())] mod _draft_heavy below).
 
 impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, J, SCAN_ONLY> {
+    fn t_semicolon(p: &mut Self) -> Result<Stmt> {
+        p.lexer.next()?;
+        Ok(Stmt::empty())
+    }
+
+    fn t_function(
+        p: &mut Self,
+        opts: &mut ParseStatementOptions,
+        loc: logger::Loc,
+    ) -> Result<Stmt> {
+        p.lexer.next()?;
+        p.parse_fn_stmt(loc, opts, None)
+    }
+
+    fn t_enum(
+        p: &mut Self,
+        opts: &mut ParseStatementOptions,
+        loc: logger::Loc,
+    ) -> Result<Stmt> {
+        if !Self::IS_TYPESCRIPT_ENABLED {
+            p.lexer.unexpected()?;
+            return Err(err!("SyntaxError"));
+        }
+        p.parse_typescript_enum_stmt(loc, opts)
+    }
+
+    fn t_at(p: &mut Self, opts: &mut ParseStatementOptions) -> Result<Stmt> {
+        // Parse decorators before class statements, which are potentially exported
+        if Self::IS_TYPESCRIPT_ENABLED || p.options.features.standard_decorators {
+            let scope_index = p.scopes_in_order.len();
+            let ts_decorators = p.parse_type_script_decorators()?;
+
+            // If this turns out to be a "declare class" statement, we need to undo the
+            // scopes that were potentially pushed while parsing the decorator arguments.
+            // That can look like any one of the following:
+            //
+            //   "@decorator declare class Foo {}"
+            //   "@decorator declare abstract class Foo {}"
+            //   "@decorator export declare class Foo {}"
+            //   "@decorator export declare abstract class Foo {}"
+            //
+            // PORT NOTE: ExprNodeList = BabyList<Expr> wraps arena-owned data; leak the slice
+            // into the &'a [Expr] DeferredTsDecorators expects. Arena outlives `opts`.
+            let ts_decorators_slice: &'a [Expr] = unsafe {
+                core::slice::from_raw_parts(ts_decorators.ptr.as_ptr(), ts_decorators.len as usize)
+            };
+            core::mem::forget(ts_decorators);
+            opts.ts_decorators = Some(DeferredTsDecorators {
+                values: ts_decorators_slice,
+                scope_index,
+            });
+
+            // "@decorator class Foo {}"
+            // "@decorator abstract class Foo {}"
+            // "@decorator declare class Foo {}"
+            // "@decorator declare abstract class Foo {}"
+            // "@decorator export class Foo {}"
+            // "@decorator export abstract class Foo {}"
+            // "@decorator export declare class Foo {}"
+            // "@decorator export declare abstract class Foo {}"
+            // "@decorator export default class Foo {}"
+            // "@decorator export default abstract class Foo {}"
+            if p.lexer.token != T::TClass
+                && p.lexer.token != T::TExport
+                && !(Self::IS_TYPESCRIPT_ENABLED && p.lexer.is_contextual_keyword(b"abstract"))
+                && !(Self::IS_TYPESCRIPT_ENABLED && p.lexer.is_contextual_keyword(b"declare"))
+            {
+                p.lexer.expected(T::TClass)?;
+            }
+
+            return p.parse_stmt(opts);
+        }
+        // notimpl();
+
+        p.lexer.unexpected()?;
+        Err(err!("SyntaxError"))
+    }
+
+    fn t_class(
+        p: &mut Self,
+        opts: &mut ParseStatementOptions,
+        loc: logger::Loc,
+    ) -> Result<Stmt> {
+        if opts.lexical_decl != LexicalDecl::AllowAll {
+            p.forbid_lexical_decl(loc)?;
+        }
+
+        p.parse_class_stmt(loc, opts)
+    }
+
+    fn t_var(
+        p: &mut Self,
+        opts: &mut ParseStatementOptions,
+        loc: logger::Loc,
+    ) -> Result<Stmt> {
+        p.lexer.next()?;
+        let decls = p.parse_and_declare_decls(js_ast::symbol::Kind::Hoisted, opts)?;
+        p.lexer.expect_or_insert_semicolon()?;
+        Ok(p.s(
+            S::Local {
+                kind: js_ast::s::Kind::KVar,
+                decls,
+                is_export: opts.is_export,
+                ..Default::default()
+            },
+            loc,
+        ))
+    }
+
+    fn t_const(
+        p: &mut Self,
+        opts: &mut ParseStatementOptions,
+        loc: logger::Loc,
+    ) -> Result<Stmt> {
+        if opts.lexical_decl != LexicalDecl::AllowAll {
+            p.forbid_lexical_decl(loc)?;
+        }
+        // p.markSyntaxFeature(compat.Const, p.lexer.Range())
+
+        p.lexer.next()?;
+
+        if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TEnum {
+            return p.parse_typescript_enum_stmt(loc, opts);
+        }
+
+        let decls = p.parse_and_declare_decls(js_ast::symbol::Kind::Constant, opts)?;
+        p.lexer.expect_or_insert_semicolon()?;
+
+        if !opts.is_typescript_declare {
+            p.require_initializers(js_ast::s::Kind::KConst, decls.slice())?;
+        }
+
+        Ok(p.s(
+            S::Local {
+                kind: js_ast::s::Kind::KConst,
+                decls,
+                is_export: opts.is_export,
+                ..Default::default()
+            },
+            loc,
+        ))
+    }
+
+    fn t_if(
+        p: &mut Self,
+        _: &mut ParseStatementOptions,
+        loc: logger::Loc,
+    ) -> Result<Stmt> {
+        let mut current_loc = loc;
+        let mut root_if: Option<Stmt> = None;
+        // PORT NOTE: raw *mut into arena-allocated S::If — borrowck cannot express the
+        // back-reference into the previous iteration's allocation. Arena keeps nodes alive.
+        let mut current_if: Option<*mut S::If> = None;
+
+        loop {
+            p.lexer.next()?;
+            p.lexer.expect(T::TOpenParen)?;
+            let test_ = p.parse_expr(Level::Lowest)?;
+            p.lexer.expect(T::TCloseParen)?;
+            let mut stmt_opts = ParseStatementOptions {
+                lexical_decl: LexicalDecl::AllowFnInsideIf,
+                ..Default::default()
+            };
+            let yes = p.parse_stmt(&mut stmt_opts)?;
+
+            // Create the if node
+            let if_stmt = p.s(
+                S::If {
+                    test_,
+                    yes,
+                    no: None,
+                },
+                current_loc,
+            );
+
+            // First if statement becomes root
+            if root_if.is_none() {
+                root_if = Some(if_stmt);
+            }
+
+            // Link to previous if statement's else branch
+            if let Some(prev_if) = current_if {
+                // SAFETY: prev_if points into arena-allocated S::If from prior iteration; arena outlives this fn.
+                unsafe { (*prev_if).no = Some(if_stmt); }
+            }
+
+            // Set current if for next iteration. The S::If was just allocated via Stmt::alloc;
+            // recover its arena pointer through the StmtData payload.
+            current_if = match if_stmt.data {
+                js_ast::StmtData::SIf(mut s_if) => Some(&mut *s_if as *mut S::If),
+                _ => unreachable!(),
+            };
+
+            if p.lexer.token != T::TElse {
+                return Ok(root_if.unwrap());
+            }
+
+            p.lexer.next()?;
+
+            // Handle final else
+            if p.lexer.token != T::TIf {
+                stmt_opts = ParseStatementOptions {
+                    lexical_decl: LexicalDecl::AllowFnInsideIf,
+                    ..Default::default()
+                };
+                // SAFETY: current_if was set just above in this iteration; arena keeps it alive.
+                unsafe {
+                    (*current_if.unwrap()).no = Some(p.parse_stmt(&mut stmt_opts)?);
+                }
+                return Ok(root_if.unwrap());
+            }
+
+            // Continue with else if
+            current_loc = p.lexer.loc();
+        }
+    }
+
+    fn t_do(
+        p: &mut Self,
+        _: &mut ParseStatementOptions,
+        loc: logger::Loc,
+    ) -> Result<Stmt> {
+        p.lexer.next()?;
+        let mut stmt_opts = ParseStatementOptions::default();
+        let body = p.parse_stmt(&mut stmt_opts)?;
+        p.lexer.expect(T::TWhile)?;
+        p.lexer.expect(T::TOpenParen)?;
+        let test_ = p.parse_expr(Level::Lowest)?;
+        p.lexer.expect(T::TCloseParen)?;
+
+        // This is a weird corner case where automatic semicolon insertion applies
+        // even without a newline present
+        if p.lexer.token == T::TSemicolon {
+            p.lexer.next()?;
+        }
+        Ok(p.s(S::DoWhile { body, test_ }, loc))
+    }
+
+    fn t_while(
+        p: &mut Self,
+        _: &mut ParseStatementOptions,
+        loc: logger::Loc,
+    ) -> Result<Stmt> {
+        p.lexer.next()?;
+
+        p.lexer.expect(T::TOpenParen)?;
+        let test_ = p.parse_expr(Level::Lowest)?;
+        p.lexer.expect(T::TCloseParen)?;
+
+        let mut stmt_opts = ParseStatementOptions::default();
+        let body = p.parse_stmt(&mut stmt_opts)?;
+
+        Ok(p.s(S::While { body, test_ }, loc))
+    }
+
+    fn t_with(
+        p: &mut Self,
+        _: &mut ParseStatementOptions,
+        loc: logger::Loc,
+    ) -> Result<Stmt> {
+        p.lexer.next()?;
+        p.lexer.expect(T::TOpenParen)?;
+        let test_ = p.parse_expr(Level::Lowest)?;
+        let body_loc = p.lexer.loc();
+        p.lexer.expect(T::TCloseParen)?;
+
+        // Push a scope so we make sure to prevent any bare identifiers referenced
+        // within the body from being renamed. Renaming them might change the
+        // semantics of the code.
+        let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::With, body_loc)?;
+        let mut stmt_opts = ParseStatementOptions::default();
+        let body = p.parse_stmt(&mut stmt_opts)?;
+        p.pop_scope();
+
+        Ok(p.s(
+            S::With {
+                body,
+                body_loc,
+                value: test_,
+            },
+            loc,
+        ))
+    }
+
+    fn t_switch(
+        p: &mut Self,
+        _: &mut ParseStatementOptions,
+        loc: logger::Loc,
+    ) -> Result<Stmt> {
+        p.lexer.next()?;
+
+        p.lexer.expect(T::TOpenParen)?;
+        let test_ = p.parse_expr(Level::Lowest)?;
+        p.lexer.expect(T::TCloseParen)?;
+
+        let body_loc = p.lexer.loc();
+        let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::Block, body_loc)?;
+        // TODO(port): was `defer p.popScope()` — manual pop_scope before each return until a
+        // borrowck-safe scopeguard pattern is settled.
+
+        p.lexer.expect(T::TOpenBrace)?;
+        let mut cases = bumpalo::collections::Vec::<js_ast::Case>::new_in(p.allocator);
+        let mut found_default = false;
+        let mut stmt_opts = ParseStatementOptions {
+            lexical_decl: LexicalDecl::AllowAll,
+            ..Default::default()
+        };
+        let mut value: Option<js_ast::Expr> = None;
+        while p.lexer.token != T::TCloseBrace {
+            let mut body = StmtList::new_in(p.allocator);
+            value = None;
+            if p.lexer.token == T::TDefault {
+                if found_default {
+                    p.log.add_range_error(
+                        Some(p.source),
+                        p.lexer.range(),
+                        b"Multiple default clauses are not allowed",
+                    )?;
+                    p.pop_scope();
+                    return Err(err!("SyntaxError"));
+                }
+
+                found_default = true;
+                p.lexer.next()?;
+                p.lexer.expect(T::TColon)?;
+            } else {
+                p.lexer.expect(T::TCase)?;
+                value = Some(p.parse_expr(Level::Lowest)?);
+                p.lexer.expect(T::TColon)?;
+            }
+
+            'case_body: loop {
+                match p.lexer.token {
+                    T::TCloseBrace | T::TCase | T::TDefault => {
+                        break 'case_body;
+                    }
+                    _ => {
+                        stmt_opts = ParseStatementOptions {
+                            lexical_decl: LexicalDecl::AllowAll,
+                            ..Default::default()
+                        };
+                        body.push(p.parse_stmt(&mut stmt_opts)?);
+                    }
+                }
+            }
+            cases.push(js_ast::Case {
+                value,
+                body: body.into_bump_slice_mut(),
+                loc: logger::Loc::EMPTY,
+            });
+        }
+        p.lexer.expect(T::TCloseBrace)?;
+        p.pop_scope();
+        Ok(p.s(
+            S::Switch {
+                test_,
+                body_loc,
+                cases: cases.into_bump_slice(),
+            },
+            loc,
+        ))
+    }
+
+    fn t_try(
+        p: &mut Self,
+        _: &mut ParseStatementOptions,
+        loc: logger::Loc,
+    ) -> Result<Stmt> {
+        p.lexer.next()?;
+        let body_loc = p.lexer.loc();
+        p.lexer.expect(T::TOpenBrace)?;
+        let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::Block, loc)?;
+        let mut stmt_opts = ParseStatementOptions::default();
+        let body = p.parse_stmts_up_to(T::TCloseBrace, &mut stmt_opts)?;
+        p.pop_scope();
+        p.lexer.next()?;
+
+        let mut catch_: Option<js_ast::Catch> = None;
+        let mut finally: Option<js_ast::Finally> = None;
+
+        if p.lexer.token == T::TCatch {
+            let catch_loc = p.lexer.loc();
+            let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::CatchBinding, catch_loc)?;
+            p.lexer.next()?;
+            let mut binding: Option<js_ast::Binding> = None;
+
+            // The catch binding is optional, and can be omitted
+            if p.lexer.token != T::TOpenBrace {
+                p.lexer.expect(T::TOpenParen)?;
+                let mut value = p.parse_binding(Default::default())?;
+
+                // Skip over types
+                if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon {
+                    p.lexer.expect(T::TColon)?;
+                    p.skip_type_script_type(Level::Lowest)?;
+                }
+
+                p.lexer.expect(T::TCloseParen)?;
+
+                // Bare identifiers are a special case
+                let kind = match value.data {
+                    js_ast::binding::B::BIdentifier(_) => js_ast::symbol::Kind::CatchIdentifier,
+                    _ => js_ast::symbol::Kind::Other,
+                };
+                p.declare_binding(kind, &mut value, &mut stmt_opts)?;
+                binding = Some(value);
+            }
+
+            let catch_body_loc = p.lexer.loc();
+            p.lexer.expect(T::TOpenBrace)?;
+
+            let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::Block, catch_body_loc)?;
+            let stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut stmt_opts)?;
+            p.pop_scope();
+            p.lexer.next()?;
+            catch_ = Some(js_ast::Catch {
+                loc: catch_loc,
+                binding,
+                body: stmts.into_bump_slice(),
+                body_loc: catch_body_loc,
+            });
+            p.pop_scope();
+        }
+
+        if p.lexer.token == T::TFinally || catch_.is_none() {
+            let finally_loc = p.lexer.loc();
+            let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::Block, finally_loc)?;
+            p.lexer.expect(T::TFinally)?;
+            p.lexer.expect(T::TOpenBrace)?;
+            let stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut stmt_opts)?;
+            p.lexer.next()?;
+            finally = Some(js_ast::Finally {
+                loc: finally_loc,
+                stmts: stmts.into_bump_slice(),
+            });
+            p.pop_scope();
+        }
+
+        Ok(p.s(
+            S::Try {
+                body_loc,
+                body: body.into_bump_slice(),
+                catch_,
+                finally,
+            },
+            loc,
+        ))
+    }
+
+    fn t_for(
+        p: &mut Self,
+        _: &mut ParseStatementOptions,
+        loc: logger::Loc,
+    ) -> Result<Stmt> {
+        let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::Block, loc)?;
+        // TODO(port): was `defer p.popScope()` — manual pop_scope before each return.
+
+        p.lexer.next()?;
+
+        // "for await (let x of y) {}"
+        let mut is_for_await = p.lexer.is_contextual_keyword(b"await");
+        if is_for_await {
+            let await_range = p.lexer.range();
+            if p.fn_or_arrow_data_parse.allow_await != AwaitOrYield::AllowExpr {
+                p.log.add_range_error(
+                    p.source,
+                    await_range,
+                    "Cannot use \"await\" outside an async function",
+                )?;
+                is_for_await = false;
+            } else {
+                // TODO: improve error handling here
+                //                 didGenerateError := p.markSyntaxFeature(compat.ForAwait, awaitRange)
+                if p.fn_or_arrow_data_parse.is_top_level {
+                    p.top_level_await_keyword = await_range;
+                    // p.markSyntaxFeature(compat.TopLevelAwait, awaitRange)
+                }
+            }
+            p.lexer.next()?;
+        }
+
+        p.lexer.expect(T::TOpenParen)?;
+
+        let mut init_: Option<Stmt> = None;
+        let mut test_: Option<Expr> = None;
+        let mut update: Option<Expr> = None;
+
+        // "in" expressions aren't allowed here
+        p.allow_in = false;
+
+        let mut bad_let_range: Option<logger::Range> = None;
+        if p.lexer.is_contextual_keyword(b"let") {
+            bad_let_range = Some(p.lexer.range());
+        }
+
+        let mut decls: G::DeclList = Default::default();
+        let init_loc = p.lexer.loc();
+        let mut is_var = false;
+        match p.lexer.token {
+            // for (var )
+            T::TVar => {
+                is_var = true;
+                p.lexer.next()?;
+                let mut stmt_opts = ParseStatementOptions::default();
+                decls = p.parse_and_declare_decls(js_ast::symbol::Kind::Hoisted, &mut stmt_opts)?;
+                init_ = Some(p.s(
+                    S::Local {
+                        kind: js_ast::s::Kind::KVar,
+                        decls,
+                        ..Default::default()
+                    },
+                    init_loc,
+                ));
+            }
+            // for (const )
+            T::TConst => {
+                p.lexer.next()?;
+                let mut stmt_opts = ParseStatementOptions::default();
+                decls = p.parse_and_declare_decls(js_ast::symbol::Kind::Constant, &mut stmt_opts)?;
+                init_ = Some(p.s(
+                    S::Local {
+                        kind: js_ast::s::Kind::KConst,
+                        decls,
+                        ..Default::default()
+                    },
+                    init_loc,
+                ));
+            }
+            // for (;)
+            T::TSemicolon => {}
+            _ => {
+                let mut stmt_opts = ParseStatementOptions {
+                    lexical_decl: LexicalDecl::AllowAll,
+                    is_for_loop_init: true,
+                    ..Default::default()
+                };
+
+                let res = p.parse_expr_or_let_stmt(&mut stmt_opts)?;
+                match res.stmt_or_expr {
+                    js_ast::StmtOrExpr::Stmt(stmt) => {
+                        bad_let_range = None;
+                        init_ = Some(stmt);
+                    }
+                    js_ast::StmtOrExpr::Expr(expr) => {
+                        init_ = Some(p.s(S::SExpr { value: expr, ..Default::default() }, init_loc));
+                    }
+                }
+            }
+        }
+
+        // "in" expressions are allowed again
+        p.allow_in = true;
+
+        // Detect for-of loops
+        if p.lexer.is_contextual_keyword(b"of") || is_for_await {
+            if let Some(r) = bad_let_range {
+                p.log.add_range_error(
+                    p.source,
+                    r,
+                    "\"let\" must be wrapped in parentheses to be used as an expression here",
+                )?;
+                p.pop_scope();
+                return Err(err!("SyntaxError"));
+            }
+
+            if is_for_await && !p.lexer.is_contextual_keyword(b"of") {
+                if init_.is_some() {
+                    p.lexer.expected_string(b"\"of\"")?;
+                } else {
+                    p.lexer.unexpected()?;
+                    p.pop_scope();
+                    return Err(err!("SyntaxError"));
+                }
+            }
+
+            p.forbid_initializers(decls.slice(), b"of", false)?;
+            p.lexer.next()?;
+            let value = p.parse_expr(Level::Comma)?;
+            p.lexer.expect(T::TCloseParen)?;
+            let mut stmt_opts = ParseStatementOptions::default();
+            let body = p.parse_stmt(&mut stmt_opts)?;
+            p.pop_scope();
+            return Ok(p.s(
+                S::ForOf {
+                    is_await: is_for_await,
+                    init: init_.unwrap(),
+                    value,
+                    body,
+                },
+                loc,
+            ));
+        }
+
+        // Detect for-in loops
+        if p.lexer.token == T::TIn {
+            p.forbid_initializers(decls.slice(), b"in", is_var)?;
+            p.lexer.next()?;
+            let value = p.parse_expr(Level::Lowest)?;
+            p.lexer.expect(T::TCloseParen)?;
+            let mut stmt_opts = ParseStatementOptions::default();
+            let body = p.parse_stmt(&mut stmt_opts)?;
+            p.pop_scope();
+            return Ok(p.s(
+                S::ForIn {
+                    init: init_.unwrap(),
+                    value,
+                    body,
+                },
+                loc,
+            ));
+        }
+
+        // Only require "const" statement initializers when we know we're a normal for loop
+        if let Some(init_stmt) = &init_ {
+            match &init_stmt.data {
+                js_ast::StmtData::SLocal(local) => {
+                    if local.kind == js_ast::s::Kind::KConst {
+                        p.require_initializers(js_ast::s::Kind::KConst, decls.slice())?;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        p.lexer.expect(T::TSemicolon)?;
+        if p.lexer.token != T::TSemicolon {
+            test_ = Some(p.parse_expr(Level::Lowest)?);
+        }
+
+        p.lexer.expect(T::TSemicolon)?;
+
+        if p.lexer.token != T::TCloseParen {
+            update = Some(p.parse_expr(Level::Lowest)?);
+        }
+
+        p.lexer.expect(T::TCloseParen)?;
+        let mut stmt_opts = ParseStatementOptions::default();
+        let body = p.parse_stmt(&mut stmt_opts)?;
+        p.pop_scope();
+        Ok(p.s(
+            S::For {
+                init: init_,
+                test_,
+                update,
+                body,
+            },
+            loc,
+        ))
+    }
+
+    fn t_break(
+        p: &mut Self,
+        _: &mut ParseStatementOptions,
+        loc: logger::Loc,
+    ) -> Result<Stmt> {
+        p.lexer.next()?;
+        let name = p.parse_label_name()?;
+        p.lexer.expect_or_insert_semicolon()?;
+        Ok(p.s(S::Break { label: name }, loc))
+    }
+
+    fn t_continue(
+        p: &mut Self,
+        _: &mut ParseStatementOptions,
+        loc: logger::Loc,
+    ) -> Result<Stmt> {
+        p.lexer.next()?;
+        let name = p.parse_label_name()?;
+        p.lexer.expect_or_insert_semicolon()?;
+        Ok(p.s(S::Continue { label: name }, loc))
+    }
+
+    fn t_return(
+        p: &mut Self,
+        _: &mut ParseStatementOptions,
+        loc: logger::Loc,
+    ) -> Result<Stmt> {
+        if p.fn_or_arrow_data_parse.is_return_disallowed {
+            p.log.add_range_error(
+                p.source,
+                p.lexer.range(),
+                "A return statement cannot be used here",
+            )?;
+        }
+        p.lexer.next()?;
+        let mut value: Option<Expr> = None;
+        if p.lexer.token != T::TSemicolon
+            && !p.lexer.has_newline_before
+            && p.lexer.token != T::TCloseBrace
+            && p.lexer.token != T::TEndOfFile
+        {
+            value = Some(p.parse_expr(Level::Lowest)?);
+        }
+        p.latest_return_had_semicolon = p.lexer.token == T::TSemicolon;
+        p.lexer.expect_or_insert_semicolon()?;
+
+        Ok(p.s(S::Return { value }, loc))
+    }
+
+    fn t_throw(
+        p: &mut Self,
+        _: &mut ParseStatementOptions,
+        loc: logger::Loc,
+    ) -> Result<Stmt> {
+        p.lexer.next()?;
+        if p.lexer.has_newline_before {
+            p.log.add_error(
+                p.source,
+                logger::Loc { start: loc.start + 5 },
+                "Unexpected newline after \"throw\"",
+            )?;
+            return Err(err!("SyntaxError"));
+        }
+        let expr = p.parse_expr(Level::Lowest)?;
+        p.lexer.expect_or_insert_semicolon()?;
+        Ok(p.s(S::Throw { value: expr }, loc))
+    }
+
+    fn t_debugger(
+        p: &mut Self,
+        _: &mut ParseStatementOptions,
+        loc: logger::Loc,
+    ) -> Result<Stmt> {
+        p.lexer.next()?;
+        p.lexer.expect_or_insert_semicolon()?;
+        Ok(p.s(S::Debugger {}, loc))
+    }
+
+    fn t_open_brace(
+        p: &mut Self,
+        _: &mut ParseStatementOptions,
+        loc: logger::Loc,
+    ) -> Result<Stmt> {
+        let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::Block, loc)?;
+        // TODO(port): was `defer p.popScope()` — manual pop_scope before return.
+        p.lexer.next()?;
+        let mut stmt_opts = ParseStatementOptions::default();
+        let stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut stmt_opts)?;
+        let close_brace_loc = p.lexer.loc();
+        p.lexer.next()?;
+        p.pop_scope();
+        Ok(p.s(
+            S::Block {
+                stmts: stmts.into_bump_slice(),
+                close_brace_loc,
+            },
+            loc,
+        ))
+    }
+
+    // ─── heavy bodies still blocked ──────────────────────────────────────────
+    // t_export / t_import / parse_stmt_fallthrough touch helpers that are not
+    // yet real on P (create_default_name, default_name_for_expr, parse_clause_alias,
+    // add_import_record, fs::PathName, ImportTag, p.panic, p.import_records mut
+    // accessors, current_scope field write, S::Import Default). Full draft bodies
+    // preserved verbatim under #[cfg(any())] mod _draft_heavy below.
+
+    fn t_export(
+        p: &mut Self,
+        opts: &mut ParseStatementOptions,
+        loc: logger::Loc,
+    ) -> Result<Stmt> {
+        let _ = (opts, loc);
+        todo!("G-round-4: t_export body — see _draft_heavy")
+    }
+
+    fn t_import(
+        p: &mut Self,
+        opts: &mut ParseStatementOptions,
+        loc: logger::Loc,
+    ) -> Result<Stmt> {
+        let _ = (opts, loc);
+        todo!("G-round-4: t_import body — see _draft_heavy")
+    }
+
+    fn parse_stmt_fallthrough(
+        p: &mut Self,
+        opts: &mut ParseStatementOptions,
+        loc: logger::Loc,
+    ) -> Result<Stmt> {
+        let _ = (opts, loc);
+        todo!("G-round-4: parse_stmt_fallthrough body — see _draft_heavy")
+    }
+
     pub fn parse_stmt(&mut self, opts: &mut ParseStatementOptions) -> Result<Stmt> {
-        let _ = opts;
-        todo!("b2-ast-E: parse_stmt body")
+        if !self.stack_check.is_safe_to_recurse() {
+            bun_core::throw_stack_overflow()?;
+        }
+
+        // Zig used `inline ... => |function| @field(@This(), @tagName(function))(...)` to dispatch
+        // by token name via comptime reflection. Rust has no `@field`/`@tagName`; expand the arms.
+        let loc = self.lexer.loc();
+        match self.lexer.token {
+            T::TSemicolon => Self::t_semicolon(self),
+            T::TAt => Self::t_at(self, opts),
+
+            T::TExport => Self::t_export(self, opts, loc),
+            T::TFunction => Self::t_function(self, opts, loc),
+            T::TEnum => Self::t_enum(self, opts, loc),
+            T::TClass => Self::t_class(self, opts, loc),
+            T::TVar => Self::t_var(self, opts, loc),
+            T::TConst => Self::t_const(self, opts, loc),
+            T::TIf => Self::t_if(self, opts, loc),
+            T::TDo => Self::t_do(self, opts, loc),
+            T::TWhile => Self::t_while(self, opts, loc),
+            T::TWith => Self::t_with(self, opts, loc),
+            T::TSwitch => Self::t_switch(self, opts, loc),
+            T::TTry => Self::t_try(self, opts, loc),
+            T::TFor => Self::t_for(self, opts, loc),
+            T::TImport => Self::t_import(self, opts, loc),
+            T::TBreak => Self::t_break(self, opts, loc),
+            T::TContinue => Self::t_continue(self, opts, loc),
+            T::TReturn => Self::t_return(self, opts, loc),
+            T::TThrow => Self::t_throw(self, opts, loc),
+            T::TDebugger => Self::t_debugger(self, opts, loc),
+            T::TOpenBrace => Self::t_open_brace(self, opts, loc),
+
+            _ => Self::parse_stmt_fallthrough(self, opts, loc),
+        }
     }
 }
 
 #[cfg(any())]
-// blocked_on: P::{push_scope_for_parse_pass, pop_scope, declare_symbol, store_name_in_ref,
-//   add_import_record, process_import_statement, forbid_lexical_decl, mark_type_script_only,
-//   discard_scopes_up_to, create_default_name, require_initializers, forbid_initializers}
-//   all gated (P.rs:640 impl block); _draft uses `const JSX: JSXTransformType` const-generic
-//   (needs J: JsxT lowering); S::* struct-init shapes (no Default — full field set);
-//   StmtNodeList = *mut [Stmt]; ~1770-line bodies, >30 path/shape errors per method.
+// blocked_on: P::{create_default_name, default_name_for_expr, parse_clause_alias,
+//   add_import_record, has_export_default, has_es_module_syntax, panic,
+//   import_records.as_mut_slice}; fs::PathName; ImportTag; S::Import Default;
+//   stmt.data.s_function() accessor; current_scope.is_after_const_local_prefix
+//   field-write through *mut Scope. Draft bodies preserved verbatim from the
+//   pre-round-G _draft mod for t_export / t_import / parse_stmt_fallthrough.
 #[allow(warnings)]
-mod _draft {
+mod _draft_heavy {
 use bun_core::{self, err};
 use bun_logger as logger;
 use bun_string::strings;
@@ -64,14 +881,9 @@ use bun_options_types::ImportKind;
 // TODO(port): narrow error set
 type Result<T> = core::result::Result<T, bun_core::Error>;
 
-/// Type alias for the monomorphized parser. Mirrors Zig's
-/// `const P = js_parser.NewParser_(ts, jsx, scan_only);`
 type P<const TS: bool, const JSX: JSXTransformType, const SCAN: bool> =
     js_parser::NewParser_<TS, JSX, SCAN>;
 
-/// Zig: `pub fn ParseStmt(comptime ts, comptime jsx, comptime scan_only) type { return struct {...} }`
-/// Rust: zero-sized struct carrying the const-generic parser features; all methods are
-/// associated fns that take `p: &mut P<..>` explicitly (matching the Zig free-fn shape).
 pub struct ParseStmt<
     const PARSER_FEATURE_TYPESCRIPT: bool,
     const PARSER_FEATURE_JSX: JSXTransformType,
@@ -79,16 +891,9 @@ pub struct ParseStmt<
 >;
 
 impl<const TS: bool, const JSX: JSXTransformType, const SCAN: bool> ParseStmt<TS, JSX, SCAN> {
-    // const createDefaultName = P.createDefaultName;            → call as p.create_default_name(..)
-    // const extractDeclsForBinding = P.extractDeclsForBinding;  → call as P::<..>::extract_decls_for_binding(..)
     const IS_TYPESCRIPT_ENABLED: bool = P::<TS, JSX, SCAN>::IS_TYPESCRIPT_ENABLED;
     const TRACK_SYMBOL_USAGE_DURING_PARSE_PASS: bool =
         P::<TS, JSX, SCAN>::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS;
-
-    fn t_semicolon(p: &mut P<TS, JSX, SCAN>) -> Result<Stmt> {
-        p.lexer.next()?;
-        Ok(Stmt::empty())
-    }
 
     fn t_export(
         p: &mut P<TS, JSX, SCAN>,
@@ -597,644 +1402,6 @@ impl<const TS: bool, const JSX: JSXTransformType, const SCAN: bool> ParseStmt<TS
         }
     }
 
-    fn t_function(
-        p: &mut P<TS, JSX, SCAN>,
-        opts: &mut ParseStatementOptions,
-        loc: logger::Loc,
-    ) -> Result<Stmt> {
-        p.lexer.next()?;
-        p.parse_fn_stmt(loc, opts, None)
-    }
-
-    fn t_enum(
-        p: &mut P<TS, JSX, SCAN>,
-        opts: &mut ParseStatementOptions,
-        loc: logger::Loc,
-    ) -> Result<Stmt> {
-        if !Self::IS_TYPESCRIPT_ENABLED {
-            p.lexer.unexpected()?;
-            return Err(err!("SyntaxError"));
-        }
-        p.parse_typescript_enum_stmt(loc, opts)
-    }
-
-    fn t_at(p: &mut P<TS, JSX, SCAN>, opts: &mut ParseStatementOptions) -> Result<Stmt> {
-        // Parse decorators before class statements, which are potentially exported
-        if Self::IS_TYPESCRIPT_ENABLED || p.options.features.standard_decorators {
-            let scope_index = p.scopes_in_order.len();
-            let ts_decorators = p.parse_type_script_decorators()?;
-
-            // If this turns out to be a "declare class" statement, we need to undo the
-            // scopes that were potentially pushed while parsing the decorator arguments.
-            // That can look like any one of the following:
-            //
-            //   "@decorator declare class Foo {}"
-            //   "@decorator declare abstract class Foo {}"
-            //   "@decorator export declare class Foo {}"
-            //   "@decorator export declare abstract class Foo {}"
-            //
-            opts.ts_decorators = Some(DeferredTsDecorators {
-                values: ts_decorators,
-                scope_index,
-            });
-
-            // "@decorator class Foo {}"
-            // "@decorator abstract class Foo {}"
-            // "@decorator declare class Foo {}"
-            // "@decorator declare abstract class Foo {}"
-            // "@decorator export class Foo {}"
-            // "@decorator export abstract class Foo {}"
-            // "@decorator export declare class Foo {}"
-            // "@decorator export declare abstract class Foo {}"
-            // "@decorator export default class Foo {}"
-            // "@decorator export default abstract class Foo {}"
-            if p.lexer.token != T::TClass
-                && p.lexer.token != T::TExport
-                && !(Self::IS_TYPESCRIPT_ENABLED && p.lexer.is_contextual_keyword(b"abstract"))
-                && !(Self::IS_TYPESCRIPT_ENABLED && p.lexer.is_contextual_keyword(b"declare"))
-            {
-                p.lexer.expected(T::TClass)?;
-            }
-
-            return p.parse_stmt(opts);
-        }
-        // notimpl();
-
-        p.lexer.unexpected()?;
-        Err(err!("SyntaxError"))
-    }
-
-    fn t_class(
-        p: &mut P<TS, JSX, SCAN>,
-        opts: &mut ParseStatementOptions,
-        loc: logger::Loc,
-    ) -> Result<Stmt> {
-        if opts.lexical_decl != LexicalDecl::AllowAll {
-            p.forbid_lexical_decl(loc)?;
-        }
-
-        p.parse_class_stmt(loc, opts)
-    }
-
-    fn t_var(
-        p: &mut P<TS, JSX, SCAN>,
-        opts: &mut ParseStatementOptions,
-        loc: logger::Loc,
-    ) -> Result<Stmt> {
-        p.lexer.next()?;
-        let mut decls = p.parse_and_declare_decls(Symbol::Kind::Hoisted, opts)?;
-        p.lexer.expect_or_insert_semicolon()?;
-        Ok(p.s(
-            S::Local {
-                kind: S::Local::Kind::KVar,
-                decls: Decl::List::move_from_list(&mut decls),
-                is_export: opts.is_export,
-                ..Default::default()
-            },
-            loc,
-        ))
-    }
-
-    fn t_const(
-        p: &mut P<TS, JSX, SCAN>,
-        opts: &mut ParseStatementOptions,
-        loc: logger::Loc,
-    ) -> Result<Stmt> {
-        if opts.lexical_decl != LexicalDecl::AllowAll {
-            p.forbid_lexical_decl(loc)?;
-        }
-        // p.markSyntaxFeature(compat.Const, p.lexer.Range())
-
-        p.lexer.next()?;
-
-        if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TEnum {
-            return p.parse_typescript_enum_stmt(loc, opts);
-        }
-
-        let mut decls = p.parse_and_declare_decls(Symbol::Kind::Constant, opts)?;
-        p.lexer.expect_or_insert_semicolon()?;
-
-        if !opts.is_typescript_declare {
-            p.require_initializers(S::Local::Kind::KConst, decls.as_slice())?;
-        }
-
-        Ok(p.s(
-            S::Local {
-                kind: S::Local::Kind::KConst,
-                decls: Decl::List::move_from_list(&mut decls),
-                is_export: opts.is_export,
-                ..Default::default()
-            },
-            loc,
-        ))
-    }
-
-    fn t_if(
-        p: &mut P<TS, JSX, SCAN>,
-        _: &mut ParseStatementOptions,
-        loc: logger::Loc,
-    ) -> Result<Stmt> {
-        let mut current_loc = loc;
-        let mut root_if: Option<Stmt> = None;
-        // PORT NOTE: raw *mut into arena-allocated S::If — borrowck cannot express the
-        // back-reference into the previous iteration's allocation. Arena keeps nodes alive.
-        let mut current_if: Option<*mut S::If> = None;
-
-        loop {
-            p.lexer.next()?;
-            p.lexer.expect(T::TOpenParen)?;
-            let test_ = p.parse_expr(Level::Lowest)?;
-            p.lexer.expect(T::TCloseParen)?;
-            let mut stmt_opts = ParseStatementOptions {
-                lexical_decl: LexicalDecl::AllowFnInsideIf,
-                ..Default::default()
-            };
-            let yes = p.parse_stmt(&mut stmt_opts)?;
-
-            // Create the if node
-            let if_stmt = p.s(
-                S::If {
-                    test_,
-                    yes,
-                    no: None,
-                },
-                current_loc,
-            );
-
-            // First if statement becomes root
-            if root_if.is_none() {
-                root_if = Some(if_stmt);
-            }
-
-            // Link to previous if statement's else branch
-            if let Some(prev_if) = current_if {
-                // SAFETY: prev_if points into arena-allocated S::If from prior iteration; arena outlives this fn.
-                unsafe { (*prev_if).no = Some(if_stmt); }
-            }
-
-            // Set current if for next iteration
-            // TODO(port): `if_stmt.data.s_if` accessor returning *mut S::If into arena
-            current_if = Some(if_stmt.data.s_if_mut());
-
-            if p.lexer.token != T::TElse {
-                return Ok(root_if.unwrap());
-            }
-
-            p.lexer.next()?;
-
-            // Handle final else
-            if p.lexer.token != T::TIf {
-                stmt_opts = ParseStatementOptions {
-                    lexical_decl: LexicalDecl::AllowFnInsideIf,
-                    ..Default::default()
-                };
-                // SAFETY: current_if was set just above in this iteration; arena keeps it alive.
-                unsafe {
-                    (*current_if.unwrap()).no = Some(p.parse_stmt(&mut stmt_opts)?);
-                }
-                return Ok(root_if.unwrap());
-            }
-
-            // Continue with else if
-            current_loc = p.lexer.loc();
-        }
-
-        #[allow(unreachable_code)]
-        { unreachable!() }
-    }
-
-    fn t_do(
-        p: &mut P<TS, JSX, SCAN>,
-        _: &mut ParseStatementOptions,
-        loc: logger::Loc,
-    ) -> Result<Stmt> {
-        p.lexer.next()?;
-        let mut stmt_opts = ParseStatementOptions::default();
-        let body = p.parse_stmt(&mut stmt_opts)?;
-        p.lexer.expect(T::TWhile)?;
-        p.lexer.expect(T::TOpenParen)?;
-        let test_ = p.parse_expr(Level::Lowest)?;
-        p.lexer.expect(T::TCloseParen)?;
-
-        // This is a weird corner case where automatic semicolon insertion applies
-        // even without a newline present
-        if p.lexer.token == T::TSemicolon {
-            p.lexer.next()?;
-        }
-        Ok(p.s(S::DoWhile { body, test_ }, loc))
-    }
-
-    fn t_while(
-        p: &mut P<TS, JSX, SCAN>,
-        _: &mut ParseStatementOptions,
-        loc: logger::Loc,
-    ) -> Result<Stmt> {
-        p.lexer.next()?;
-
-        p.lexer.expect(T::TOpenParen)?;
-        let test_ = p.parse_expr(Level::Lowest)?;
-        p.lexer.expect(T::TCloseParen)?;
-
-        let mut stmt_opts = ParseStatementOptions::default();
-        let body = p.parse_stmt(&mut stmt_opts)?;
-
-        Ok(p.s(S::While { body, test_ }, loc))
-    }
-
-    fn t_with(
-        p: &mut P<TS, JSX, SCAN>,
-        _: &mut ParseStatementOptions,
-        loc: logger::Loc,
-    ) -> Result<Stmt> {
-        p.lexer.next()?;
-        p.lexer.expect(T::TOpenParen)?;
-        let test_ = p.parse_expr(Level::Lowest)?;
-        let body_loc = p.lexer.loc();
-        p.lexer.expect(T::TCloseParen)?;
-
-        // Push a scope so we make sure to prevent any bare identifiers referenced
-        // within the body from being renamed. Renaming them might change the
-        // semantics of the code.
-        let _ = p.push_scope_for_parse_pass(Scope::Kind::With, body_loc)?;
-        let mut stmt_opts = ParseStatementOptions::default();
-        let body = p.parse_stmt(&mut stmt_opts)?;
-        p.pop_scope();
-
-        Ok(p.s(
-            S::With {
-                body,
-                body_loc,
-                value: test_,
-            },
-            loc,
-        ))
-    }
-
-    fn t_switch(
-        p: &mut P<TS, JSX, SCAN>,
-        _: &mut ParseStatementOptions,
-        loc: logger::Loc,
-    ) -> Result<Stmt> {
-        p.lexer.next()?;
-
-        p.lexer.expect(T::TOpenParen)?;
-        let test_ = p.parse_expr(Level::Lowest)?;
-        p.lexer.expect(T::TCloseParen)?;
-
-        let body_loc = p.lexer.loc();
-        let _ = p.push_scope_for_parse_pass(Scope::Kind::Block, body_loc)?;
-        // TODO(port): was `defer p.popScope()` — scopeguard captures &mut p; verify error-path cleanup in Phase B
-        scopeguard::defer! { p.pop_scope(); }
-
-        p.lexer.expect(T::TOpenBrace)?;
-        let mut cases = bumpalo::collections::Vec::<js_ast::Case>::new_in(p.allocator);
-        let mut found_default = false;
-        let mut stmt_opts = ParseStatementOptions {
-            lexical_decl: LexicalDecl::AllowAll,
-            ..Default::default()
-        };
-        let mut value: Option<js_ast::Expr> = None;
-        while p.lexer.token != T::TCloseBrace {
-            let mut body = StmtList::new_in(p.allocator);
-            value = None;
-            if p.lexer.token == T::TDefault {
-                if found_default {
-                    p.log.add_range_error(
-                        p.source,
-                        p.lexer.range(),
-                        "Multiple default clauses are not allowed",
-                    )?;
-                    return Err(err!("SyntaxError"));
-                }
-
-                found_default = true;
-                p.lexer.next()?;
-                p.lexer.expect(T::TColon)?;
-            } else {
-                p.lexer.expect(T::TCase)?;
-                value = Some(p.parse_expr(Level::Lowest)?);
-                p.lexer.expect(T::TColon)?;
-            }
-
-            'case_body: loop {
-                match p.lexer.token {
-                    T::TCloseBrace | T::TCase | T::TDefault => {
-                        break 'case_body;
-                    }
-                    _ => {
-                        stmt_opts = ParseStatementOptions {
-                            lexical_decl: LexicalDecl::AllowAll,
-                            ..Default::default()
-                        };
-                        body.push(p.parse_stmt(&mut stmt_opts)?);
-                    }
-                }
-            }
-            cases.push(js_ast::Case {
-                value,
-                body: body.into_items(),
-                loc: logger::Loc::EMPTY,
-            });
-        }
-        p.lexer.expect(T::TCloseBrace)?;
-        Ok(p.s(
-            S::Switch {
-                test_,
-                body_loc,
-                cases: cases.into_bump_slice(),
-            },
-            loc,
-        ))
-    }
-
-    fn t_try(
-        p: &mut P<TS, JSX, SCAN>,
-        _: &mut ParseStatementOptions,
-        loc: logger::Loc,
-    ) -> Result<Stmt> {
-        p.lexer.next()?;
-        let body_loc = p.lexer.loc();
-        p.lexer.expect(T::TOpenBrace)?;
-        let _ = p.push_scope_for_parse_pass(Scope::Kind::Block, loc)?;
-        let mut stmt_opts = ParseStatementOptions::default();
-        let body = p.parse_stmts_up_to(T::TCloseBrace, &mut stmt_opts)?;
-        p.pop_scope();
-        p.lexer.next()?;
-
-        let mut catch_: Option<js_ast::Catch> = None;
-        let mut finally: Option<js_ast::Finally> = None;
-
-        if p.lexer.token == T::TCatch {
-            let catch_loc = p.lexer.loc();
-            let _ = p.push_scope_for_parse_pass(Scope::Kind::CatchBinding, catch_loc)?;
-            p.lexer.next()?;
-            let mut binding: Option<js_ast::Binding> = None;
-
-            // The catch binding is optional, and can be omitted
-            if p.lexer.token != T::TOpenBrace {
-                p.lexer.expect(T::TOpenParen)?;
-                let mut value = p.parse_binding(Default::default())?;
-
-                // Skip over types
-                if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon {
-                    p.lexer.expect(T::TColon)?;
-                    p.skip_type_script_type(Level::Lowest)?;
-                }
-
-                p.lexer.expect(T::TCloseParen)?;
-
-                // Bare identifiers are a special case
-                let mut kind = Symbol::Kind::Other;
-                match value.data {
-                    Binding::Data::BIdentifier(_) => {
-                        kind = Symbol::Kind::CatchIdentifier;
-                    }
-                    _ => {}
-                }
-                p.declare_binding(kind, &mut value, &mut stmt_opts)?;
-                binding = Some(value);
-            }
-
-            let catch_body_loc = p.lexer.loc();
-            p.lexer.expect(T::TOpenBrace)?;
-
-            let _ = p.push_scope_for_parse_pass(Scope::Kind::Block, catch_body_loc)?;
-            let stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut stmt_opts)?;
-            p.pop_scope();
-            p.lexer.next()?;
-            catch_ = Some(js_ast::Catch {
-                loc: catch_loc,
-                binding,
-                body: stmts,
-                body_loc: catch_body_loc,
-            });
-            p.pop_scope();
-        }
-
-        if p.lexer.token == T::TFinally || catch_.is_none() {
-            let finally_loc = p.lexer.loc();
-            let _ = p.push_scope_for_parse_pass(Scope::Kind::Block, finally_loc)?;
-            p.lexer.expect(T::TFinally)?;
-            p.lexer.expect(T::TOpenBrace)?;
-            let stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut stmt_opts)?;
-            p.lexer.next()?;
-            finally = Some(js_ast::Finally {
-                loc: finally_loc,
-                stmts,
-            });
-            p.pop_scope();
-        }
-
-        Ok(p.s(
-            S::Try {
-                body_loc,
-                body,
-                catch_,
-                finally,
-            },
-            loc,
-        ))
-    }
-
-    fn t_for(
-        p: &mut P<TS, JSX, SCAN>,
-        _: &mut ParseStatementOptions,
-        loc: logger::Loc,
-    ) -> Result<Stmt> {
-        let _ = p.push_scope_for_parse_pass(Scope::Kind::Block, loc)?;
-        // TODO(port): was `defer p.popScope()` — verify error-path cleanup in Phase B
-        scopeguard::defer! { p.pop_scope(); }
-
-        p.lexer.next()?;
-
-        // "for await (let x of y) {}"
-        let mut is_for_await = p.lexer.is_contextual_keyword(b"await");
-        if is_for_await {
-            let await_range = p.lexer.range();
-            if p.fn_or_arrow_data_parse.allow_await != AllowAwait::AllowExpr {
-                p.log.add_range_error(
-                    p.source,
-                    await_range,
-                    "Cannot use \"await\" outside an async function",
-                )?;
-                is_for_await = false;
-            } else {
-                // TODO: improve error handling here
-                //                 didGenerateError := p.markSyntaxFeature(compat.ForAwait, awaitRange)
-                if p.fn_or_arrow_data_parse.is_top_level {
-                    p.top_level_await_keyword = await_range;
-                    // p.markSyntaxFeature(compat.TopLevelAwait, awaitRange)
-                }
-            }
-            p.lexer.next()?;
-        }
-
-        p.lexer.expect(T::TOpenParen)?;
-
-        let mut init_: Option<Stmt> = None;
-        let mut test_: Option<Expr> = None;
-        let mut update: Option<Expr> = None;
-
-        // "in" expressions aren't allowed here
-        p.allow_in = false;
-
-        let mut bad_let_range: Option<logger::Range> = None;
-        if p.lexer.is_contextual_keyword(b"let") {
-            bad_let_range = Some(p.lexer.range());
-        }
-
-        let mut decls: G::Decl::List = Default::default();
-        let init_loc = p.lexer.loc();
-        let mut is_var = false;
-        match p.lexer.token {
-            // for (var )
-            T::TVar => {
-                is_var = true;
-                p.lexer.next()?;
-                let mut stmt_opts = ParseStatementOptions::default();
-                let mut decls_list = p.parse_and_declare_decls(Symbol::Kind::Hoisted, &mut stmt_opts)?;
-                decls = G::Decl::List::move_from_list(&mut decls_list);
-                init_ = Some(p.s(
-                    S::Local {
-                        kind: S::Local::Kind::KVar,
-                        decls,
-                        ..Default::default()
-                    },
-                    init_loc,
-                ));
-            }
-            // for (const )
-            T::TConst => {
-                p.lexer.next()?;
-                let mut stmt_opts = ParseStatementOptions::default();
-                let mut decls_list = p.parse_and_declare_decls(Symbol::Kind::Constant, &mut stmt_opts)?;
-                decls = G::Decl::List::move_from_list(&mut decls_list);
-                init_ = Some(p.s(
-                    S::Local {
-                        kind: S::Local::Kind::KConst,
-                        decls,
-                        ..Default::default()
-                    },
-                    init_loc,
-                ));
-            }
-            // for (;)
-            T::TSemicolon => {}
-            _ => {
-                let mut stmt_opts = ParseStatementOptions {
-                    lexical_decl: LexicalDecl::AllowAll,
-                    is_for_loop_init: true,
-                    ..Default::default()
-                };
-
-                let res = p.parse_expr_or_let_stmt(&mut stmt_opts)?;
-                match res.stmt_or_expr {
-                    js_ast::StmtOrExpr::Stmt(stmt) => {
-                        bad_let_range = None;
-                        init_ = Some(stmt);
-                    }
-                    js_ast::StmtOrExpr::Expr(expr) => {
-                        init_ = Some(p.s(S::SExpr { value: expr, ..Default::default() }, init_loc));
-                    }
-                }
-            }
-        }
-
-        // "in" expressions are allowed again
-        p.allow_in = true;
-
-        // Detect for-of loops
-        if p.lexer.is_contextual_keyword(b"of") || is_for_await {
-            if let Some(r) = bad_let_range {
-                p.log.add_range_error(
-                    p.source,
-                    r,
-                    "\"let\" must be wrapped in parentheses to be used as an expression here",
-                )?;
-                return Err(err!("SyntaxError"));
-            }
-
-            if is_for_await && !p.lexer.is_contextual_keyword(b"of") {
-                if init_.is_some() {
-                    p.lexer.expected_string(b"\"of\"")?;
-                } else {
-                    p.lexer.unexpected()?;
-                    return Err(err!("SyntaxError"));
-                }
-            }
-
-            p.forbid_initializers(decls.slice(), b"of", false)?;
-            p.lexer.next()?;
-            let value = p.parse_expr(Level::Comma)?;
-            p.lexer.expect(T::TCloseParen)?;
-            let mut stmt_opts = ParseStatementOptions::default();
-            let body = p.parse_stmt(&mut stmt_opts)?;
-            return Ok(p.s(
-                S::ForOf {
-                    is_await: is_for_await,
-                    init: init_.unwrap(),
-                    value,
-                    body,
-                },
-                loc,
-            ));
-        }
-
-        // Detect for-in loops
-        if p.lexer.token == T::TIn {
-            p.forbid_initializers(decls.slice(), b"in", is_var)?;
-            p.lexer.next()?;
-            let value = p.parse_expr(Level::Lowest)?;
-            p.lexer.expect(T::TCloseParen)?;
-            let mut stmt_opts = ParseStatementOptions::default();
-            let body = p.parse_stmt(&mut stmt_opts)?;
-            return Ok(p.s(
-                S::ForIn {
-                    init: init_.unwrap(),
-                    value,
-                    body,
-                },
-                loc,
-            ));
-        }
-
-        // Only require "const" statement initializers when we know we're a normal for loop
-        if let Some(init_stmt) = &init_ {
-            match &init_stmt.data {
-                Stmt::Data::SLocal(local) => {
-                    if local.kind == S::Local::Kind::KConst {
-                        p.require_initializers(S::Local::Kind::KConst, decls.slice())?;
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        p.lexer.expect(T::TSemicolon)?;
-        if p.lexer.token != T::TSemicolon {
-            test_ = Some(p.parse_expr(Level::Lowest)?);
-        }
-
-        p.lexer.expect(T::TSemicolon)?;
-
-        if p.lexer.token != T::TCloseParen {
-            update = Some(p.parse_expr(Level::Lowest)?);
-        }
-
-        p.lexer.expect(T::TCloseParen)?;
-        let mut stmt_opts = ParseStatementOptions::default();
-        let body = p.parse_stmt(&mut stmt_opts)?;
-        Ok(p.s(
-            S::For {
-                init: init_,
-                test_,
-                update,
-                body,
-            },
-            loc,
-        ))
-    }
-
     fn t_import(
         p: &mut P<TS, JSX, SCAN>,
         opts: &mut ParseStatementOptions,
@@ -1448,106 +1615,6 @@ impl<const TS: bool, const JSX: JSXTransformType, const SCAN: bool> ParseStmt<TS
         p.process_import_statement(stmt, path, loc, was_originally_bare_import)
     }
 
-    fn t_break(
-        p: &mut P<TS, JSX, SCAN>,
-        _: &mut ParseStatementOptions,
-        loc: logger::Loc,
-    ) -> Result<Stmt> {
-        p.lexer.next()?;
-        let name = p.parse_label_name()?;
-        p.lexer.expect_or_insert_semicolon()?;
-        Ok(p.s(S::Break { label: name }, loc))
-    }
-
-    fn t_continue(
-        p: &mut P<TS, JSX, SCAN>,
-        _: &mut ParseStatementOptions,
-        loc: logger::Loc,
-    ) -> Result<Stmt> {
-        p.lexer.next()?;
-        let name = p.parse_label_name()?;
-        p.lexer.expect_or_insert_semicolon()?;
-        Ok(p.s(S::Continue { label: name }, loc))
-    }
-
-    fn t_return(
-        p: &mut P<TS, JSX, SCAN>,
-        _: &mut ParseStatementOptions,
-        loc: logger::Loc,
-    ) -> Result<Stmt> {
-        if p.fn_or_arrow_data_parse.is_return_disallowed {
-            p.log.add_range_error(
-                p.source,
-                p.lexer.range(),
-                "A return statement cannot be used here",
-            )?;
-        }
-        p.lexer.next()?;
-        let mut value: Option<Expr> = None;
-        if p.lexer.token != T::TSemicolon
-            && !p.lexer.has_newline_before
-            && p.lexer.token != T::TCloseBrace
-            && p.lexer.token != T::TEndOfFile
-        {
-            value = Some(p.parse_expr(Level::Lowest)?);
-        }
-        p.latest_return_had_semicolon = p.lexer.token == T::TSemicolon;
-        p.lexer.expect_or_insert_semicolon()?;
-
-        Ok(p.s(S::Return { value }, loc))
-    }
-
-    fn t_throw(
-        p: &mut P<TS, JSX, SCAN>,
-        _: &mut ParseStatementOptions,
-        loc: logger::Loc,
-    ) -> Result<Stmt> {
-        p.lexer.next()?;
-        if p.lexer.has_newline_before {
-            p.log.add_error(
-                p.source,
-                logger::Loc { start: loc.start + 5 },
-                "Unexpected newline after \"throw\"",
-            )?;
-            return Err(err!("SyntaxError"));
-        }
-        let expr = p.parse_expr(Level::Lowest)?;
-        p.lexer.expect_or_insert_semicolon()?;
-        Ok(p.s(S::Throw { value: expr }, loc))
-    }
-
-    fn t_debugger(
-        p: &mut P<TS, JSX, SCAN>,
-        _: &mut ParseStatementOptions,
-        loc: logger::Loc,
-    ) -> Result<Stmt> {
-        p.lexer.next()?;
-        p.lexer.expect_or_insert_semicolon()?;
-        Ok(p.s(S::Debugger {}, loc))
-    }
-
-    fn t_open_brace(
-        p: &mut P<TS, JSX, SCAN>,
-        _: &mut ParseStatementOptions,
-        loc: logger::Loc,
-    ) -> Result<Stmt> {
-        let _ = p.push_scope_for_parse_pass(Scope::Kind::Block, loc)?;
-        // TODO(port): was `defer p.popScope()` — verify error-path cleanup in Phase B
-        scopeguard::defer! { p.pop_scope(); }
-        p.lexer.next()?;
-        let mut stmt_opts = ParseStatementOptions::default();
-        let stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut stmt_opts)?;
-        let close_brace_loc = p.lexer.loc();
-        p.lexer.next()?;
-        Ok(p.s(
-            S::Block {
-                stmts,
-                close_brace_loc,
-            },
-            loc,
-        ))
-    }
-
     fn parse_stmt_fallthrough(
         p: &mut P<TS, JSX, SCAN>,
         opts: &mut ParseStatementOptions,
@@ -1757,45 +1824,6 @@ impl<const TS: bool, const JSX: JSXTransformType, const SCAN: bool> ParseStmt<TS
         p.lexer.expect_or_insert_semicolon()?;
         Ok(p.s(S::SExpr { value: expr, ..Default::default() }, loc))
     }
-
-    pub fn parse_stmt(
-        p: &mut P<TS, JSX, SCAN>,
-        opts: &mut ParseStatementOptions,
-    ) -> Result<Stmt> {
-        if !p.stack_check.is_safe_to_recurse() {
-            bun_core::throw_stack_overflow()?;
-        }
-
-        // Zig used `inline ... => |function| @field(@This(), @tagName(function))(...)` to dispatch
-        // by token name via comptime reflection. Rust has no `@field`/`@tagName`; expand the arms.
-        match p.lexer.token {
-            T::TSemicolon => Self::t_semicolon(p),
-            T::TAt => Self::t_at(p, opts),
-
-            T::TExport => Self::t_export(p, opts, p.lexer.loc()),
-            T::TFunction => Self::t_function(p, opts, p.lexer.loc()),
-            T::TEnum => Self::t_enum(p, opts, p.lexer.loc()),
-            T::TClass => Self::t_class(p, opts, p.lexer.loc()),
-            T::TVar => Self::t_var(p, opts, p.lexer.loc()),
-            T::TConst => Self::t_const(p, opts, p.lexer.loc()),
-            T::TIf => Self::t_if(p, opts, p.lexer.loc()),
-            T::TDo => Self::t_do(p, opts, p.lexer.loc()),
-            T::TWhile => Self::t_while(p, opts, p.lexer.loc()),
-            T::TWith => Self::t_with(p, opts, p.lexer.loc()),
-            T::TSwitch => Self::t_switch(p, opts, p.lexer.loc()),
-            T::TTry => Self::t_try(p, opts, p.lexer.loc()),
-            T::TFor => Self::t_for(p, opts, p.lexer.loc()),
-            T::TImport => Self::t_import(p, opts, p.lexer.loc()),
-            T::TBreak => Self::t_break(p, opts, p.lexer.loc()),
-            T::TContinue => Self::t_continue(p, opts, p.lexer.loc()),
-            T::TReturn => Self::t_return(p, opts, p.lexer.loc()),
-            T::TThrow => Self::t_throw(p, opts, p.lexer.loc()),
-            T::TDebugger => Self::t_debugger(p, opts, p.lexer.loc()),
-            T::TOpenBrace => Self::t_open_brace(p, opts, p.lexer.loc()),
-
-            _ => Self::parse_stmt_fallthrough(p, opts, p.lexer.loc()),
-        }
-    }
 }
 
 // TODO(port): these enum paths are guesses at the cross-file Rust names; Phase B fixes imports.
@@ -1811,4 +1839,4 @@ use js_ast::Scope;
 //   todos:      8
 //   notes:      const-generic ZST mirrors Zig comptime type-generator; `defer p.popScope()` → scopeguard (borrowck TBD); `t_if` keeps raw *mut S::If into arena; Stmt::Data/Expr::Data variant paths and LexicalDecl/AllowAwait/ImportTag/Scope::Kind import paths are placeholders for Phase B.
 // ──────────────────────────────────────────────────────────────────────────
-} // end mod _draft
+} // end mod _draft_heavy

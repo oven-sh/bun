@@ -1,5 +1,50 @@
-use core::cmp::Ordering;
 use core::ffi::c_void;
+
+// ─── non-JSC helpers (real) ───────────────────────────────────────────────
+// `Rule` and the IP-compare helpers depend on `sockaddr` from the sibling
+// `socket_address` module (lives in `crate::socket`, not `super::`), so they
+// stay gated below. Only the structured-clone byte-shuffling is JSC-free and
+// dependency-free.
+
+struct StructuredCloneWriter {
+    ctx: *mut c_void,
+    // TODO(port): callconv(jsc.conv) — see note on `on_structured_clone_serialize`.
+    impl_: extern "C" fn(*mut c_void, *const u8, u32),
+}
+
+impl StructuredCloneWriter {
+    fn write(&self, bytes: &[u8]) -> usize {
+        (self.impl_)(self.ctx, bytes.as_ptr(), bytes.len() as u32);
+        bytes.len()
+    }
+
+    fn write_int_le(&self, v: usize) {
+        let bytes = v.to_le_bytes();
+        self.write(&bytes);
+    }
+}
+
+fn read_int_le_usize(buf: &[u8], pos: &mut usize) -> Option<usize> {
+    const N: usize = core::mem::size_of::<usize>();
+    if buf.len() - *pos < N {
+        return None;
+    }
+    let mut arr = [0u8; N];
+    arr.copy_from_slice(&buf[*pos..*pos + N]);
+    *pos += N;
+    Some(usize::from_le_bytes(arr))
+}
+
+// ─── gated: JsClass payload + host fns ────────────────────────────────────
+// `BlockList` is the `m_ctx` payload for a `.classes.ts` wrapper; every method
+// is a `#[bun_jsc::host_fn]` and the struct itself carries `#[bun_jsc::JsClass]`.
+// `Rule`/`_compare` further depend on `socket_address::sockaddr` which lives
+// in `crate::socket` (not yet wired as a sibling of this module).
+// TODO(b2-blocked): un-gate once bun_jsc JsClass derive + crate::socket::SocketAddress are reachable.
+#[cfg(any())]
+mod _impl {
+use super::*;
+use core::cmp::Ordering;
 use core::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
 use bun_jsc::{CallFrame, JSArray, JSGlobalObject, JSValue, JsResult};
@@ -389,35 +434,6 @@ impl BlockList {
     }
 }
 
-struct StructuredCloneWriter {
-    ctx: *mut c_void,
-    // TODO(port): callconv(jsc.conv) — see note on `on_structured_clone_serialize`.
-    impl_: extern "C" fn(*mut c_void, *const u8, u32),
-}
-
-impl StructuredCloneWriter {
-    fn write(&self, bytes: &[u8]) -> usize {
-        (self.impl_)(self.ctx, bytes.as_ptr(), bytes.len() as u32);
-        bytes.len()
-    }
-
-    fn write_int_le(&self, v: usize) {
-        let bytes = v.to_le_bytes();
-        self.write(&bytes);
-    }
-}
-
-fn read_int_le_usize(buf: &[u8], pos: &mut usize) -> Option<usize> {
-    const N: usize = core::mem::size_of::<usize>();
-    if buf.len() - *pos < N {
-        return None;
-    }
-    let mut arr = [0u8; N];
-    arr.copy_from_slice(&buf[*pos..*pos + N]);
-    *pos += N;
-    Some(usize::from_le_bytes(arr))
-}
-
 pub enum Rule {
     Addr(sockaddr),
     Range { start: sockaddr, end: sockaddr },
@@ -441,6 +457,7 @@ fn _compare_ipv6(l: &sockaddr::In6, r: &sockaddr::In6) -> Ordering {
     let r128 = u128::from_ne_bytes(r.addr).swap_bytes();
     l128.cmp(&r128)
 }
+} // mod _impl
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

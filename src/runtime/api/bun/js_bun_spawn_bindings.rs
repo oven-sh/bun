@@ -425,9 +425,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                 if !stdio_val.is_empty_or_undefined_or_null() {
                     if stdio_val.js_type().is_array() {
                         let mut stdio_iter = stdio_val.array_iterator(global_this)?;
-                        let mut i: u32 = 0;
+                        let mut i: i32 = 0;
                         while let Some(value) = stdio_iter.next()? {
-                            stdio[i as usize].extract(global_this, i, value, IS_SYNC)?;
+                            Stdio::extract(&mut stdio[i as usize], global_this, i, value, IS_SYNC)?;
                             if i == 2 {
                                 break;
                             }
@@ -439,7 +439,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                             // extract() leaves `out_stdio` untouched when `value` is undefined, so this
                             // must be initialized to a sane default instead of `undefined`.
                             let mut new_item: Stdio = Stdio::Ignore;
-                            new_item.extract(global_this, i, value, IS_SYNC)?;
+                            Stdio::extract(&mut new_item, global_this, i, value, IS_SYNC)?;
 
                             let opt = match new_item.as_spawn_option(i) {
                                 stdio::ResultT::Result(opt) => opt,
@@ -464,15 +464,15 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                 }
             } else {
                 if let Some(value) = args.get(global_this, "stdin")? {
-                    stdio[0].extract(global_this, 0, value, IS_SYNC)?;
+                    Stdio::extract(&mut stdio[0], global_this, 0, value, IS_SYNC)?;
                 }
 
                 if let Some(value) = args.get(global_this, "stderr")? {
-                    stdio[2].extract(global_this, 2, value, IS_SYNC)?;
+                    Stdio::extract(&mut stdio[2], global_this, 2, value, IS_SYNC)?;
                 }
 
                 if let Some(value) = args.get(global_this, "stdout")? {
-                    stdio[1].extract(global_this, 1, value, IS_SYNC)?;
+                    Stdio::extract(&mut stdio[1], global_this, 1, value, IS_SYNC)?;
                 }
             }
 
@@ -653,7 +653,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     // PORT NOTE: Zig `inline for (0..stdio.len)` — unrolled here as a regular for; const N=3.
     for fd_index in 0..stdio.len() {
         if stdio[fd_index].can_use_memfd(IS_SYNC, fd_index > 0 && max_buffer.is_some()) {
-            if stdio[fd_index].use_memfd(fd_index) {
+            if stdio[fd_index].use_memfd(fd_index as u32) {
                 jsc_vm.counters.mark(jsc::Counter::SpawnMemfd);
             }
         }
@@ -747,7 +747,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     if IS_SYNC {
         for (i, io) in stdio.iter_mut().enumerate() {
-            io.to_sync(i as u8);
+            io.to_sync(i as u32);
         }
     }
 
@@ -912,7 +912,11 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     };
 
     // Use the isolated loop for spawnSync operations
-    let process = spawned.to_process(loop_handle, IS_SYNC);
+    // TODO(port): `to_process` returns `*mut Process` on POSIX vs `Arc<Process>`
+    // on Windows (both currently re-gated in process.rs). The Subprocess field
+    // is `ManuallyDrop<Arc<Process>>`; reconcile once process.rs settles on a
+    // single intrusive RefPtr<Process> shape.
+    let process = core::mem::ManuallyDrop::new(spawned.to_process(loop_handle, IS_SYNC));
 
     let subprocess = Box::into_raw(Box::new(SubprocessT {
         ref_count: bun_ptr::RefCount::init(),
@@ -1022,9 +1026,11 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             {
                 for r in [spawned.stdout, spawned.stderr] {
                     match r {
-                        spawn::WindowsPipe::Buffer(pipe) => pipe.close(Subprocess::on_pipe_close),
-                        spawn::WindowsPipe::BufferFd(fd) => fd.close(),
-                        spawn::WindowsPipe::Unavailable => {}
+                        spawn::WindowsStdioResult::Buffer(pipe) => {
+                            pipe.close(Subprocess::on_pipe_close)
+                        }
+                        spawn::WindowsStdioResult::BufferFd(fd) => fd.close(),
+                        spawn::WindowsStdioResult::Unavailable => {}
                     }
                 }
             }
@@ -1133,7 +1139,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             }
             // uws owns the fd now (owns_fd=1); neutralize the slot so finalizeStreams doesn't double-close.
             subprocess.stdio_pipes[usize::try_from(ipc_channel).unwrap()] =
-                spawn::ExtraPipe::Unavailable;
+                ExtraPipe::Unavailable;
         }
         #[cfg(not(unix))]
         {
@@ -1147,7 +1153,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                 return global_this.throw_value(err.to_js(global_this)?);
             }
             subprocess.stdio_pipes[usize::try_from(ipc_channel).unwrap()] =
-                spawn::ExtraPipe::Unavailable;
+                ExtraPipe::Unavailable;
         }
         ipc_data.write_version_packet(global_this);
     }
@@ -1464,7 +1470,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     let exited_due_to_timeout = did_timeout;
     let exited_due_to_max_buffer = subprocess.exited_due_to_maxbuf;
     let result_pid = JSValue::js_number_from_int32(subprocess.pid());
-    subprocess.finalize();
+    SubprocessT::finalize(subprocess as *mut SubprocessT);
 
     let sync_value = JSValue::create_empty_object(global_this, 0);
     sync_value.put(global_this, ZigString::static_("exitCode"), exit_code);

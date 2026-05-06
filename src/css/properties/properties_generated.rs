@@ -3444,7 +3444,13 @@ impl Property {
             Property::MaskBoxImageRepeat(v) => (b"mask-box-image-repeat", v.1),
             Property::ColorScheme(..) => (b"color-scheme", VendorPrefix::NONE),
             Property::All(..) => (b"all", VendorPrefix::NONE),
-            Property::Unparsed(u) => return (u.property_id.name_static(), u.property_id.prefix()),
+            Property::Unparsed(u) => {
+                let mut p = u.property_id.prefix();
+                if p.is_empty() {
+                    p = VendorPrefix::NONE;
+                }
+                return (u.property_id.name_static(), p);
+            }
             Property::Custom(..) => unreachable!(),
         }
     }

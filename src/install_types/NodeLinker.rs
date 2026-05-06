@@ -82,7 +82,7 @@ pub mod npm {
 use core::ptr::{null_mut, NonNull};
 use core::sync::atomic::{AtomicPtr, Ordering};
 
-use bun_alloc::AllocError;
+use bun_alloc::{AllocError, Arena};
 use bun_logger as logger;
 use bun_logger::ast;
 use bun_string::{strings, String as BunString};

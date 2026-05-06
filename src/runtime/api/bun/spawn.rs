@@ -106,15 +106,16 @@ pub mod bun_spawn {
         Open = 3,
     }
 
-    // TODO(port): LIFETIMES.tsv classifies `path` as Option<CString> (OWNED), but this
-    // struct is #[repr(C)] and crosses FFI to posix_spawn_bun via *const Action. CString
-    // is a fat pointer and not ABI-compatible with `?[*:0]const u8`. Phase B must either
-    // (a) keep Option<CString> here and marshal to a thin-ptr mirror struct at the FFI
-    // boundary, or (b) revert this field to *const c_char with a manual Drop.
+    // ABI: this struct crosses FFI to posix_spawn_bun via *const Action (see
+    // ActionsList below) and must match spawn.zig's `extern struct` / bun-spawn.cpp's
+    // C struct exactly. `path` is `?[*:0]const u8` on the Zig/C side — an 8-byte thin
+    // nullable pointer — so it MUST be `*const c_char` here, not `Option<CString>`
+    // (which is a 16-byte fat pointer and would shift `fds`/`flags`/`mode`). The
+    // owning `CString` backing each non-null `path` lives in `Actions.paths`.
     #[repr(C)]
     pub struct Action {
         pub kind: FileActionType,
-        pub path: Option<CString>,
+        pub path: *const c_char,
         pub fds: [fd_t; 2],
         pub flags: c_int,
         pub mode: c_int,
@@ -124,7 +125,7 @@ pub mod bun_spawn {
         fn default() -> Self {
             Self {
                 kind: FileActionType::None,
-                path: None,
+                path: ptr::null(),
                 fds: [0; 2],
                 flags: 0,
                 mode: 0,
@@ -137,14 +138,19 @@ pub mod bun_spawn {
             // TODO(port): narrow error set
             Ok(Action::default())
         }
-        // deinit: body only freed `path` when kind == .open; Option<CString> drops
-        // automatically (it is None for other kinds), so no explicit Drop needed.
+        // deinit: body only freed `path` when kind == .open; ownership now lives on
+        // `Actions.paths`, which drops automatically.
     }
 
     #[derive(Default)]
     pub struct Actions {
         pub chdir_buf: Option<CString>,
         pub actions: Vec<Action>,
+        /// Owns the C strings pointed to by `Action.path` for `.Open` actions.
+        /// `CString`'s heap buffer does not move when this Vec reallocates, so
+        /// raw pointers stored in `actions[i].path` remain valid for the life
+        /// of `Actions`.
+        pub paths: Vec<CString>,
         pub detached: bool,
     }
 
@@ -169,9 +175,13 @@ pub mod bun_spawn {
             flags: u32,
             mode: i32,
         ) -> Result<(), Error> {
+            self.paths.push(path.to_owned());
+            // SAFETY: CString's heap buffer is stable across Vec<CString> reallocs;
+            // pointer outlives this Action because both are owned by `self`.
+            let path_ptr = self.paths.last().unwrap().as_ptr();
             self.actions.push(Action {
                 kind: FileActionType::Open,
-                path: Some(path.to_owned()),
+                path: path_ptr,
                 flags: i32::try_from(flags).unwrap(),
                 mode: i32::try_from(mode).unwrap(),
                 fds: [fd.native(), 0],
@@ -209,7 +219,7 @@ pub mod bun_spawn {
         }
     }
 
-    #[derive(Default, Clone, Copy)]
+    #[derive(Clone, Copy)]
     pub struct Attr {
         pub detached: bool,
         pub new_process_group: bool,
@@ -219,12 +229,25 @@ pub mod bun_spawn {
         pub linux_pdeathsig: i32,
     }
 
+    impl Default for Attr {
+        // Must match Zig field defaults (spawn.zig Attr): `pty_slave_fd: i32 = -1`.
+        // `#[derive(Default)]` would yield `0` (stdin), which makes `spawn_z` take
+        // the PTY path and call setsid()+ioctl(TIOCSCTTY, 0) in the child.
+        fn default() -> Self {
+            Self {
+                detached: false,
+                new_process_group: false,
+                pty_slave_fd: -1,
+                flags: 0,
+                reset_signals: false,
+                linux_pdeathsig: 0,
+            }
+        }
+    }
+
     impl Attr {
         pub fn init() -> Result<Attr, Error> {
-            Ok(Attr {
-                pty_slave_fd: -1,
-                ..Default::default()
-            })
+            Ok(Attr::default())
         }
 
         pub fn get(self) -> Result<u16, Error> {
@@ -713,7 +736,9 @@ pub mod posix_spawn {
                             }
                         }
                         bun_spawn::FileActionType::Open => {
-                            let p = action.path.as_deref().unwrap();
+                            // SAFETY: `.Open` actions always have a non-null path
+                            // backed by a CString in `act.paths` (see `open_z`).
+                            let p = unsafe { CStr::from_ptr(action.path) };
                             if let Err(e) = posix_actions.open_z(
                                 Fd::from_native(action.fds[0]),
                                 p,

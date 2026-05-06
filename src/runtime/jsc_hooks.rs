@@ -107,13 +107,13 @@ unsafe fn init_runtime_state(
     // the low tier (`VirtualMachine::init` writes it immediately before calling
     // this hook), so no uws wiring is repeated here.
 
-    // TODO(b2-cycle): per-worker leak — `Box::into_raw` is never paired with
-    // `Box::from_raw`. Spec VirtualMachine.zig stores `timer`/`entry_point` as
-    // value fields freed in worker `destroy()`. Fix: add `deinit_runtime_state`
-    // slot to `RuntimeHooks`, store the returned ptr in a VM field, and
-    // `drop(Box::from_raw(state))` + clear the TLS from the worker destroy
-    // path. PORTING.md §Forbidden permits `Box::leak` only for true
-    // process-lifetime singletons via `OnceLock`; this is per-VM.
+    // PORT NOTE: `Box::into_raw` is paired with `Box::from_raw` in
+    // [`deinit_runtime_state`] below — called from `VirtualMachine::deinit` /
+    // worker `destroy()` via the `RuntimeHooks::deinit_runtime_state` slot.
+    // Spec VirtualMachine.zig stores `timer`/`entry_point` as value fields
+    // freed in worker `destroy()`; PORTING.md §Forbidden permits
+    // `into_raw`-without-reclaim only for true process-lifetime singletons via
+    // `OnceLock`, which this is not (per-VM / per-Worker-thread).
     let state = Box::into_raw(Box::new(RuntimeState {
         timer: timer::All::init(),
         entry_point: ServerEntryPoint::default(),
@@ -127,6 +127,26 @@ unsafe fn init_runtime_state(
     // option mapping (spec VirtualMachine.zig:1266+).
 
     state.cast()
+}
+
+/// Reclaim the per-VM [`RuntimeState`] boxed in [`init_runtime_state`]. Called
+/// from `VirtualMachine::deinit` / worker `destroy()` with the opaque pointer
+/// returned by `init_runtime_state`. Clears the thread-local and drops the
+/// `Box`, freeing `timer` + `entry_point` (spec VirtualMachine.zig: value
+/// fields freed in worker `destroy()`).
+///
+/// # Safety
+/// `state` must be the exact pointer returned by [`init_runtime_state`] for
+/// this thread (or null), and must not be used again after this call.
+pub unsafe fn deinit_runtime_state(_vm: *mut VirtualMachine, state: OpaqueRuntimeState) {
+    RUNTIME_STATE.with(|c| c.set(ptr::null_mut()));
+    if state.is_null() {
+        return;
+    }
+    // SAFETY: per fn contract — `state` is the unique `Box::into_raw` result
+    // from `init_runtime_state`; the TLS was just cleared so no other live
+    // alias exists on this thread.
+    drop(unsafe { Box::from_raw(state.cast::<RuntimeState>()) });
 }
 
 /// `ServerEntryPoint.generate(watch, entry_path)` — produces the synthetic
@@ -228,9 +248,17 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     // ── poll the I/O loop with the next-timer deadline ──────────────────
     let state = runtime_state();
     if state.is_null() {
-        // No high-tier state (unit test) — fall back to a non-blocking tick.
-        // SAFETY: `el` is the live per-thread event loop.
-        unsafe { (*el).tick() };
+        // No high-tier state (unit test) — fall back to a non-blocking I/O
+        // poll. Spec event_loop.zig:398-413 always polls the uws loop
+        // (`tickWithTimeout`/`tickWithoutIdle`); `EventLoop::tick()` would only
+        // drain JS tasks and never touch kqueue/epoll.
+        // SAFETY: `loop_` is the live per-thread uws loop.
+        unsafe { (*loop_).tick_without_idle() };
+        // Spec event_loop.zig:419-420 — still run the post-poll hooks.
+        // SAFETY: per fn contract.
+        unsafe { (*vm).on_after_event_loop() };
+        // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
+        unsafe { (*(*vm).global).handle_rejected_promises() };
         return;
     }
 
@@ -239,8 +267,18 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     // due `WTFTimer` heap entries), so it must stay guarded by `is_active()`
     // rather than running unconditionally.
     {
-        // SAFETY: `el` is live; field read only.
+        // PORT NOTE: spec Timer.zig:251-256 reads `immediate_tasks.items.len`
+        // AFTER `tickImmediateTasks` swaps `next_immediate_tasks` in, so it
+        // reflects next-tick immediates. With `tick_immediate_tasks` gated
+        // above, reading `immediate_tasks` here would see un-drained current
+        // immediates → `get_timeout` returns `{0,0}` forever → busy-spin and
+        // the immediates never run. Gate the read alongside the tick (same
+        // hazard the Windows wakeup gating at lines 200-206 avoids); restore
+        // the live read once `tick_immediate_tasks` un-gates.
+        #[cfg(any())]
         let has_pending_immediate = !unsafe { &*el }.immediate_tasks.is_empty();
+        #[cfg(not(any()))]
+        let has_pending_immediate = false;
         // Spec Timer.zig:261-268: fold the QUIC deadline into the poll timeout.
         // SAFETY: `loop_` is the live per-thread uws loop.
         let quic_next_tick_us = unsafe {

@@ -42,7 +42,6 @@ pub struct ExecState {
     pub started: bool,
 }
 
-#[derive(Default)]
 pub struct Opts {
     /// `--no-preserve-root` / `--preserve-root` — if false, allow recursive
     /// removal of `/`.
@@ -57,6 +56,19 @@ pub struct Opts {
     pub verbose: bool,
     /// `-d`, `--dir` — remove empty directories without `-r`.
     pub remove_empty_dirs: bool,
+}
+
+impl Default for Opts {
+    fn default() -> Self {
+        Self {
+            preserve_root: true,
+            force: false,
+            prompt_behaviour: PromptBehaviour::Never,
+            recursive: false,
+            verbose: false,
+            remove_empty_dirs: false,
+        }
+    }
 }
 
 #[derive(Default, Clone, Copy)]

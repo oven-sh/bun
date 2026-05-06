@@ -14,10 +14,134 @@ use self::lexer::T;
 
 // Zig: `js_ast.E.Object.Rope`. The MOVE_DOWN landed it at
 // `bun_logger::js_ast::e::object::Rope` (lowercase `e` namespace mirrors the
-// per-variant submodule layout). Field set is still a stub `(())`; the
-// `parse_key` / `run_parser_impl` bodies that construct `Rope { head, next }`
-// stay gated below until the real shape lands.
+// per-variant submodule layout).
 type Rope = js_ast::e::object::Rope;
+use js_ast::e::object::SetError;
+use js_ast::expr::Data as ExprData;
+
+// ──────────────────────────────────────────────────────────────────────────
+// E::Object extension — `set_rope` / `get_or_put_array`
+//
+// `bun_logger::js_ast::E::Object` ships `get_or_put_object` but not the two
+// siblings the TOML parser drives. Defining them here (T3) keeps the
+// MOVE_DOWN'd T2 surface minimal; both are straight ports of
+// `src/js_parser/ast/E.zig` `setRope` / `getOrPutArray`.
+// ──────────────────────────────────────────────────────────────────────────
+
+trait ObjectRopeExt {
+    fn set_rope(&mut self, rope: &Rope, bump: &Bump, value: Expr) -> Result<(), SetError>;
+    fn get_or_put_array(&mut self, rope: &Rope, bump: &Bump) -> Result<Expr, SetError>;
+}
+
+impl ObjectRopeExt for E::Object {
+    fn set_rope(&mut self, rope: &Rope, bump: &Bump, value: Expr) -> Result<(), SetError> {
+        let head_key = match rope.head.data.e_string() {
+            Some(s) => s.data,
+            None => return Err(SetError::Clobber),
+        };
+        if let Some(existing) = self.get(head_key) {
+            match existing.data {
+                ExprData::EArray(mut array) => {
+                    if rope.next.is_null() {
+                        array.push(bump, value)?;
+                        return Ok(());
+                    }
+                    if let Some(last) = array.items.last() {
+                        let ExprData::EObject(mut obj) = last.data else {
+                            return Err(SetError::Clobber);
+                        };
+                        // SAFETY: rope.next non-null (checked) and arena-owned.
+                        return obj.set_rope(unsafe { &*rope.next }, bump, value);
+                    }
+                    array.push(bump, value)?;
+                    return Ok(());
+                }
+                ExprData::EObject(mut object) => {
+                    if !rope.next.is_null() {
+                        // SAFETY: rope.next non-null and arena-owned.
+                        return object.set_rope(unsafe { &*rope.next }, bump, value);
+                    }
+                    return Err(SetError::Clobber);
+                }
+                _ => return Err(SetError::Clobber),
+            }
+        }
+
+        let mut value_ = value;
+        if !rope.next.is_null() {
+            let obj = Expr::init(E::Object::default(), rope.head.loc);
+            // SAFETY: rope.next non-null and arena-owned.
+            obj.data
+                .e_object()
+                .unwrap()
+                .set_rope(unsafe { &*rope.next }, bump, value)?;
+            value_ = obj;
+        }
+
+        self.properties.append(js_ast::G::Property {
+            key: Some(rope.head),
+            value: Some(value_),
+            ..Default::default()
+        })?;
+        Ok(())
+    }
+
+    fn get_or_put_array(&mut self, rope: &Rope, bump: &Bump) -> Result<Expr, SetError> {
+        let head_key = match rope.head.data.e_string() {
+            Some(s) => s.data,
+            None => return Err(SetError::Clobber),
+        };
+        if let Some(existing) = self.get(head_key) {
+            match existing.data {
+                ExprData::EArray(mut array) => {
+                    if rope.next.is_null() {
+                        return Ok(existing);
+                    }
+                    if let Some(last) = array.items.last() {
+                        let ExprData::EObject(mut obj) = last.data else {
+                            return Err(SetError::Clobber);
+                        };
+                        // SAFETY: rope.next non-null (checked) and arena-owned.
+                        return obj.get_or_put_array(unsafe { &*rope.next }, bump);
+                    }
+                    return Err(SetError::Clobber);
+                }
+                ExprData::EObject(mut object) => {
+                    if rope.next.is_null() {
+                        return Err(SetError::Clobber);
+                    }
+                    // SAFETY: rope.next non-null and arena-owned.
+                    return object.get_or_put_array(unsafe { &*rope.next }, bump);
+                }
+                _ => return Err(SetError::Clobber),
+            }
+        }
+
+        if !rope.next.is_null() {
+            let obj = Expr::init(E::Object::default(), rope.head.loc);
+            // SAFETY: rope.next non-null and arena-owned.
+            let out = obj
+                .data
+                .e_object()
+                .unwrap()
+                .get_or_put_array(unsafe { &*rope.next }, bump)?;
+            self.properties.append(js_ast::G::Property {
+                key: Some(rope.head),
+                value: Some(obj),
+                ..Default::default()
+            })?;
+            return Ok(out);
+        }
+
+        let out = Expr::init(E::Array::default(), rope.head.loc);
+        self.properties.append(js_ast::G::Property {
+            key: Some(rope.head),
+            value: Some(out),
+            ..Default::default()
+        })?;
+        Ok(out)
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // HashMapPool

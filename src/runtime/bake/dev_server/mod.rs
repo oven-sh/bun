@@ -246,6 +246,22 @@ impl IncrementalResult {
         client_components_removed: Vec::new(),
         client_components_affected: Vec::new(),
     };
+
+    /// DevServer.zig:3528 `IncrementalResult.reset` — `clearRetainingCapacity()`
+    /// on each list, asserts `failures_removed` was already drained, and
+    /// intentionally leaves `had_adjusted_edges` untouched.
+    pub fn reset(&mut self) {
+        self.framework_routes_affected.clear();
+        self.html_routes_soft_affected.clear();
+        self.html_routes_hard_affected.clear();
+        self.client_components_added.clear();
+        self.client_components_removed.clear();
+        debug_assert!(self.failures_removed.is_empty());
+        self.failures_removed.clear();
+        self.client_components_affected.clear();
+        self.failures_added.clear();
+        // NOTE: `had_adjusted_edges` is NOT reset here (matches spec).
+    }
 }
 
 pub struct GraphTraceState {
@@ -308,12 +324,18 @@ pub struct DeferredPromise {
 /// One bundle executes at a time; this holds its in-flight state.
 pub struct CurrentBundle {
     /// OWNED (LIFETIMES.tsv): `BundleV2.init()` → `deinitWithoutFreeingArena()`.
-    /// `bun_bundler::BundleV2` is currently an opaque `(())` stub; field-access
-    /// callsites stay in the gated `DevServer.rs` draft.
-    pub bv2: Box<bun_bundler::BundleV2>,
-    /// `bundle_v2.BakeBundleStart` — opaque until `bundle_v2.rs` is un-gated.
-    // TODO(b2-blocked): bun_bundler::DevServerInput — gated in bundle_v2.rs.
-    pub start_data: *const (),
+    /// PORT NOTE: `'static` is a stand-in for the DevServer-self lifetime —
+    /// `BundleV2<'a>` borrows the three `Transpiler<'_>` fields stored inline
+    /// in `DevServer`, so the true bound is the `Box<DevServer>` allocation
+    /// (stable address, never moved post-init). Threading a real `'dev` would
+    /// make `DevServer` self-referential; raw-ptr aliasing inside `BundleV2`
+    /// already encodes that contract.
+    pub bv2: Box<bun_bundler::BundleV2<'static>>,
+    /// `bundle_v2.DevServerInput` (was `BakeBundleStart` in Zig). Stored erased
+    /// because the concrete type lives in the gated `__phase_a_draft` of
+    /// `bundle_v2.rs`; `current_bundle_start_data` vtable slot casts back.
+    // TODO(b2): `bun_bundler::bundle_v2::DevServerInput` once un-gated.
+    pub start_data: *mut (),
     pub timer: std::time::Instant,
     pub had_reload_event: bool,
     pub requests: deferred_request::List,
@@ -350,6 +372,7 @@ pub mod assets;
 pub mod source_map_store;
 pub mod serialized_failure;
 pub mod packed_map;
+mod lifecycle;
 
 pub use assets::Assets;
 pub use incremental_graph::IncrementalGraph;
@@ -479,10 +502,18 @@ pub struct DevServer {
 
     pub framework: Framework,
     pub bundler_options: SplitBundlerOptions,
-    /// `bun_bundler::Transpiler` is currently an opaque `(())` stub.
-    pub server_transpiler: bun_bundler::Transpiler,
-    pub client_transpiler: bun_bundler::Transpiler,
-    pub ssr_transpiler: bun_bundler::Transpiler,
+    /// PORT NOTE: `'static` is the DevServer-self lifetime stand-in (see
+    /// `CurrentBundle.bv2`). `Transpiler<'a>` borrows the global
+    /// `Fs::FileSystem` singleton + `dot_env::Loader`, both of which outlive
+    /// the server.
+    ///
+    /// `MaybeUninit` until `Framework::init_transpiler` (gated in
+    /// `bake_body.rs`) populates them in place — `Transpiler` contains a
+    /// non-nullable `&Arena`, so neither `Default` nor `mem::zeroed()` are
+    /// sound (PORTING.md §Forbidden).
+    pub server_transpiler: core::mem::MaybeUninit<bun_bundler::Transpiler<'static>>,
+    pub client_transpiler: core::mem::MaybeUninit<bun_bundler::Transpiler<'static>>,
+    pub ssr_transpiler: core::mem::MaybeUninit<bun_bundler::Transpiler<'static>>,
     pub log: Log,
     pub plugin_state: PluginState,
     pub current_bundle: Option<CurrentBundle>,
@@ -643,13 +674,9 @@ impl DevServer {
     ///     impl for DevServer — gated in `HotReloadEvent.rs`)
     ///   - `FrameworkRouter::init_empty` (needs `bun_resolver::DirInfo`)
     ///
-    /// This stub records the `vm` borrow shape and the field-init order so
-    /// Phase B can un-gate the body without re-deriving it.
-    // TODO(b2-blocked): un-gate full init() body from `../DevServer.rs:335-697`.
-    pub fn init(_options: Options<'_>) -> jsc::JsResult<Box<DevServer>> {
-        // PORTING.md §Forbidden bans bare `todo!()` in non-gated fns; this is
-        // genuinely blocked on a higher-tier dep (bun_jsc), so the contract
-        // permits it. The string makes the blocker greppable.
-        unimplemented!("bake::DevServer::init — blocked on bun_jsc + BundleV2 (keystone L)")
+    /// Body un-gated in `lifecycle.rs`.
+    #[inline]
+    pub fn init(options: Options<'_>) -> jsc::JsResult<Box<DevServer>> {
+        lifecycle::init_impl(options)
     }
 }

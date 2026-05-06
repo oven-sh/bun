@@ -12,8 +12,12 @@
 
 use core::ptr::NonNull;
 
-// ─── gated Phase-A drafts (full bodies preserved, not compiled) ──────────────
-#[cfg(any())]
+// ─── Phase-A drafts ──────────────────────────────────────────────────────────
+// `bake_body.rs` (Framework/UserOptions/BuildConfigSubset `from_js` + the
+// `init_server_runtime`/`get_hmr_runtime` host fns) is un-gated here so the
+// keystone types above stop being opaque `(())` shells. DevServer/
+// FrameworkRouter/production drafts stay gated — they need BundleV2 field
+// access and the full IncrementalGraph surface.
 #[path = "bake_body.rs"]
 mod bake_body;
 #[cfg(any())]

@@ -558,14 +558,18 @@ impl HTMLRewriterLoader {
             }
             StreamResult::TemporaryAndDone(bytes) => {
                 let len = bytes.len as webcore::BlobSizeType;
-                if let Some(err) = self.write_bytes::<false>(bytes) {
+                if let Some(err) =
+                    self.write_bytes::<false>(core::mem::ManuallyDrop::into_inner(bytes))
+                {
                     return Writable::Err(err);
                 }
                 Writable::TemporaryAndDone(len)
             }
             StreamResult::Temporary(bytes) => {
                 let len = bytes.len as webcore::BlobSizeType;
-                if let Some(err) = self.write_bytes::<false>(bytes) {
+                if let Some(err) =
+                    self.write_bytes::<false>(core::mem::ManuallyDrop::into_inner(bytes))
+                {
                     return Writable::Err(err);
                 }
                 Writable::Temporary(len)

@@ -542,12 +542,6 @@ impl ImmediateObject {
     }
 }
 
-impl TimerObjectInternals {
-    pub fn cancel(&mut self, _vm: *mut VirtualMachine) {
-        todo!("blocked_on: timer::TimerObjectInternals::cancel (unify with timer_object_internals_draft)")
-    }
-}
-
 impl DateHeaderTimer {
     pub fn enable(&mut self, _vm: *mut VirtualMachine, _now: &Timespec) {
         todo!("blocked_on: timer::DateHeaderTimer::enable (unify with date_header_timer_draft)")

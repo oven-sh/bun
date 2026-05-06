@@ -1227,7 +1227,7 @@ fn pbkdf2(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSVa
 
     // SAFETY: `VirtualMachine::get()` returns the thread-local VM, non-null on the JS thread.
     let vm: *mut VirtualMachine = VirtualMachine::get();
-    let job = PBKDF2Job::create(vm, global_this, &data);
+    let job = PBKDF2Job::create(vm, global_this, data);
     // SAFETY: `job` was just boxed by `create()` and is live.
     Ok(unsafe { (*job).promise.value() })
 }

@@ -62,7 +62,7 @@ impl Default for SourceMapStore {
         Self {
             entries: ArrayHashMap::new(),
             weak_ref_sweep_timer: EventLoopTimer::init_paused(EventLoopTimerTag::DevServerSweepSourceMaps),
-            weak_refs: bun_collections::LinearFifo::init(),
+            weak_refs: bun_collections::LinearFifo::<WeakRef, StaticBuffer<WeakRef, WEAK_REF_ENTRY_MAX>>::init(),
         }
     }
 }

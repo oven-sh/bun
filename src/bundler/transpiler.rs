@@ -1062,29 +1062,75 @@ impl<'a> Transpiler<'a> {
                     js_ast::Result::AlreadyBundled(already_bundled) => ParseResult {
                         // TODO(port): Zig used `undefined` for ast here.
                         ast: js_ast::Ast::empty(),
-                        // TODO(port): spec transpiler.zig:973-991 reads
-                        // `<path>.jsc` from disk via `bun.sys.File.toSourceAt`
-                        // for the `.bytecode{,_cjs}` variants when
-                        // `virtual_source.is_none() && allow_bytecode_cache`.
-                        // `bun_sys::File::to_source_at` is not yet on the live
-                        // surface; fall back to the same `default_value` the
-                        // Zig path uses on read failure. Full body preserved in
-                        // `__phase_a_draft` below.
                         already_bundled: match already_bundled {
                             js_ast::AlreadyBundled::Bun => AlreadyBundled::SourceCode,
                             js_ast::AlreadyBundled::BunCjs => {
                                 AlreadyBundled::SourceCodeCjs
                             }
-                            js_ast::AlreadyBundled::BytecodeCjs => {
-                                let _ = (
-                                    this_parse.virtual_source,
-                                    this_parse.allow_bytecode_cache,
-                                    dirname_fd,
+                            js_ast::AlreadyBundled::BytecodeCjs
+                            | js_ast::AlreadyBundled::Bytecode => 'brk: {
+                                // Spec transpiler.zig:971-984: when the parser
+                                // saw `// @bun @bytecode`, attempt to load the
+                                // sidecar `<path>.jsc` cached bytecode. Only
+                                // fall back to re-parsing source on read
+                                // failure / empty file.
+                                let is_cjs = matches!(
+                                    already_bundled,
+                                    js_ast::AlreadyBundled::BytecodeCjs
                                 );
-                                AlreadyBundled::SourceCodeCjs
-                            }
-                            js_ast::AlreadyBundled::Bytecode => {
-                                AlreadyBundled::SourceCode
+                                let default_value = if is_cjs {
+                                    AlreadyBundled::SourceCodeCjs
+                                } else {
+                                    AlreadyBundled::SourceCode
+                                };
+                                if this_parse.virtual_source.is_none()
+                                    && this_parse.allow_bytecode_cache
+                                {
+                                    // PORT NOTE: `bun.bytecode_extension`
+                                    // (bun.zig:3502) — no Rust const re-export
+                                    // in `bun_core` yet, so inline the literal.
+                                    const BYTECODE_EXT: &[u8] = b".jsc";
+                                    let mut path_buf2 = bun_paths::PathBuffer::uninit();
+                                    let n = path.text.len();
+                                    path_buf2[..n].copy_from_slice(path.text);
+                                    path_buf2[n..][..BYTECODE_EXT.len()]
+                                        .copy_from_slice(BYTECODE_EXT);
+                                    let total = n + BYTECODE_EXT.len();
+                                    // PathBuffer is zero-initialized so
+                                    // `path_buf2[total] == 0` already; safe to
+                                    // borrow as a NUL-terminated ZStr.
+                                    let zpath = unsafe {
+                                        bun_core::ZStr::from_raw(
+                                            path_buf2.as_ptr(),
+                                            total,
+                                        )
+                                    };
+                                    // PORT NOTE: spec calls
+                                    // `bun.sys.File.toSourceAt(...)` which is
+                                    // `read_from` + wrap-in-`logger::Source`.
+                                    // We only need `.contents`, so call
+                                    // `read_from` directly (the `to_source_at`
+                                    // wrapper is gated as a T1→T2 move-in,
+                                    // sys/File.rs:446).
+                                    let dir = dirname_fd
+                                        .unwrap_valid()
+                                        .unwrap_or_else(FD::cwd);
+                                    match bun_sys::File::read_from(dir, zpath) {
+                                        Ok(contents) if !contents.is_empty() => {
+                                            break 'brk if is_cjs {
+                                                AlreadyBundled::BytecodeCjs(
+                                                    contents.into_boxed_slice(),
+                                                )
+                                            } else {
+                                                AlreadyBundled::Bytecode(
+                                                    contents.into_boxed_slice(),
+                                                )
+                                            };
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                                default_value
                             }
                         },
                         source: dup_source(source),

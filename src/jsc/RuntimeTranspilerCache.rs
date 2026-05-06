@@ -546,10 +546,11 @@ impl Entry {
             }
         };
 
-        // PORT NOTE: Zig errdefer freed `output_code` if a later read failed;
-        // here it stays in `self` until `Entry` is dropped/`deinit()`ed.
-        // Behavioural diff only if a caller inspects a partially-loaded Entry
-        // after error — `from_file_with_cache_file_path` discards on error.
+        // Zig: errdefer { switch (this.output_code) { .utf8 => free, .string => deref } }
+        // BunString is Copy with no Drop, so dropping `Entry` on error does NOT
+        // deref the WTFStringImpl — must do it explicitly here.
+        let output_code_errdefer =
+            scopeguard::guard(&mut self.output_code, |oc| oc.deinit());
 
         if self.metadata.sourcemap_byte_length > 0 {
             let mut sourcemap =
@@ -581,6 +582,7 @@ impl Entry {
             self.esm_record = esm_record;
         }
 
+        scopeguard::ScopeGuard::into_inner(output_code_errdefer);
         Ok(())
     }
 }
@@ -988,9 +990,9 @@ impl RuntimeTranspilerCache {
         }
         debug_assert!(self.entry.is_none());
         let output_code = BunString::clone_latin1(output_code_bytes);
-        // PORT NOTE: Zig stored `output_code` then passed the same handle to to_file;
-        // BunString is refcounted so dupe_ref + store is equivalent.
-        self.output_code = Some(output_code.dupe_ref());
+        // Zig: `this.output_code = output_code;` — refcount stays at 1, sole owner.
+        // BunString is Copy with no Drop, so an extra dupe_ref here would leak.
+        self.output_code = Some(output_code);
 
         if let Err(err) = Self::to_file(
             self.input_byte_length.unwrap(),

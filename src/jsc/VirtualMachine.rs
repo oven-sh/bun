@@ -1552,6 +1552,120 @@ pub fn process_fetch_log(
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// SourceMapHandlerGetter — port of VirtualMachine.zig:403 `SourceMapHandlerGetter`.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Port of `SourceMapHandlerGetter` (VirtualMachine.zig:403). Holds raw
+/// pointers to the VM and the active `BufferPrinter` so that `get()` can
+/// return an erased `js_printer::SourceMapHandler` borrowing either the VM's
+/// `source_mappings` (fast path) or `self` (debugger / inline-sourcemap path)
+/// without the two `&mut` borrows colliding.
+///
+/// PORT NOTE: Zig stored `*VirtualMachine` / `*BufferPrinter` directly. Here
+/// we keep raw pointers + a `PhantomData<&'a mut ()>` so the getter's lifetime
+/// is tied to the `&'a mut VirtualMachine` / `&'a mut BufferPrinter` it was
+/// built from in `source_map_handler`, but `get()` can still hand out a
+/// `SourceMapHandler<'_>` over `vm.source_mappings` without tripping borrowck
+/// on the disjoint `self.vm` reborrow.
+pub struct SourceMapHandlerGetter<'a> {
+    vm: *mut VirtualMachine,
+    printer: *mut bun_js_printer::BufferPrinter,
+    _marker: core::marker::PhantomData<&'a mut ()>,
+}
+
+impl<'a> SourceMapHandlerGetter<'a> {
+    pub fn get(&mut self) -> bun_js_printer::SourceMapHandler<'_> {
+        // SAFETY: `vm` was set from a live `&'a mut VirtualMachine` in
+        // `source_map_handler`; the getter's lifetime `'a` bounds the borrow.
+        let wants_inline_source_map = unsafe {
+            // TODO(b2): once `debugger` widens from `Option<()>` to the real
+            // `Option<Debugger>`, also check `.mode != .connect` here
+            // (VirtualMachine.zig:408).
+            (*self.vm).debugger.is_some()
+        };
+        if !wants_inline_source_map {
+            // SAFETY: same provenance as above; `source_mappings` is a value
+            // field on the VM, exclusively borrowed for the returned handler's
+            // lifetime (which is bounded by `&mut self`).
+            let source_mappings = unsafe { &mut (*self.vm).source_mappings };
+            return bun_js_printer::SourceMapHandler::for_(source_mappings);
+        }
+        bun_js_printer::SourceMapHandler::for_(self)
+    }
+}
+
+impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
+    /// Port of `SourceMapHandlerGetter.onChunk` (VirtualMachine.zig:418).
+    ///
+    /// When the inspector is enabled, we want to generate an inline sourcemap.
+    /// And, for now, we also store it in `source_mappings` like normal.
+    /// This is hideously expensive memory-wise...
+    fn on_source_map_chunk(
+        &mut self,
+        chunk: bun_sourcemap::Chunk,
+        source: &logger::Source,
+    ) -> Result<(), bun_core::Error> {
+        let mut temp_json_buffer = bun_string::MutableString::init_empty();
+        // `defer temp_json_buffer.deinit()` → Drop.
+        chunk.print_source_map_contents_from_internal::<true>(
+            source,
+            &mut temp_json_buffer,
+            true,
+        )?;
+        const SOURCE_MAP_URL_PREFIX_START: &[u8] =
+            b"//# sourceMappingURL=data:application/json;base64,";
+        // TODO: do we need to %-encode the path?
+        let source_url_len = source.path.text.len();
+        const SOURCE_MAPPING_URL: &[u8] = b"\n//# sourceURL=";
+        let prefix_len =
+            SOURCE_MAP_URL_PREFIX_START.len() + SOURCE_MAPPING_URL.len() + source_url_len;
+
+        // SAFETY: `vm` / `printer` were set from live `&'a mut` borrows in
+        // `source_map_handler`; both outlive this getter (`'a`).
+        let vm = unsafe { &mut *self.vm };
+        let printer = unsafe { &mut *self.printer };
+
+        vm.source_mappings.put_mappings(source, chunk.buffer)?;
+        let encode_len = bun_base64::encode_len(temp_json_buffer.list.as_slice());
+        printer.ctx.buffer.grow_if_needed(encode_len + prefix_len + 2)?;
+        // Zig: "\n" ++ source_map_url_prefix_start
+        printer.ctx.buffer.append_assume_capacity(b"\n");
+        printer
+            .ctx
+            .buffer
+            .append_assume_capacity(SOURCE_MAP_URL_PREFIX_START);
+        {
+            // Zig wrote into `buffer.list.items.ptr[len..capacity]` then bumped
+            // `items.len`. `MutableString::list` is a `Vec<u8>`; mirror that with
+            // a spare-capacity write + `set_len`.
+            let buf = &mut printer.ctx.buffer.list;
+            let old_len = buf.len();
+            debug_assert!(buf.capacity() - old_len >= encode_len);
+            // SAFETY: capacity reserved by `grow_if_needed` above; `encode`
+            // writes exactly `wrote <= encode_len` initialized bytes into the
+            // spare region, and `set_len` only exposes the initialized prefix.
+            let wrote = unsafe {
+                let spare = core::slice::from_raw_parts_mut(
+                    buf.as_mut_ptr().add(old_len),
+                    encode_len,
+                );
+                bun_base64::encode(spare, temp_json_buffer.list.as_slice())
+            };
+            // PORT NOTE: Zig added `encode_len` unconditionally; the simdutf
+            // encoder returns the exact bytes written, so use that — same value
+            // for the standard alphabet (`encode_len` is the calc-size upper
+            // bound which equals the output for non-URL base64).
+            unsafe { buf.set_len(old_len + wrote) };
+        }
+        printer.ctx.buffer.append_assume_capacity(SOURCE_MAPPING_URL);
+        // TODO: do we need to %-encode the path?
+        printer.ctx.buffer.append_assume_capacity(source.path.text);
+        printer.ctx.buffer.append(b"\n")?;
+        Ok(())
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // `bun_runtime` / `bun_schema` / gated-sibling-dependent impl — preserved
 // verbatim from the Phase-A draft. Un-gate piecewise once the cycle breaks.
 // ──────────────────────────────────────────────────────────────────────────
@@ -1579,7 +1693,6 @@ impl VirtualMachine {
     pub fn on_subprocess_exit(&mut self, process: &mut bun_spawn::Process) { todo!() }
     pub fn get_verbose_fetch(&mut self) -> bun_http::HTTPVerboseLevel { todo!() }
     pub fn mime_type(&mut self, str: &[u8]) -> Option<bun_http::MimeType> { todo!() }
-    pub fn source_map_handler<'a>(&'a self, printer: &'a mut bun_js_printer::BufferPrinter) { todo!() }
     pub fn load_extra_env_and_source_code_printer(&mut self) { todo!() }
     pub fn unhandled_rejection(&mut self, global_object: &JSGlobalObject, reason: JSValue, promise: JSValue) { todo!() }
     pub fn report_exception_in_hot_reloaded_module_if_needed(&mut self) { todo!() }

@@ -478,22 +478,22 @@ mod posix_impl {
     }
     pub fn read(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
-        let n = check!(unsafe { libc::read(fd.native(), buf.as_mut_ptr().cast(), len) }, Tag::read);
+        let n = check!(unsafe { sys_read(fd.native(), buf.as_mut_ptr().cast(), len) }, Tag::read);
         Ok(n as usize)
     }
     pub fn write(fd: Fd, buf: &[u8]) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
-        let n = check!(unsafe { libc::write(fd.native(), buf.as_ptr().cast(), len) }, Tag::write);
+        let n = check!(unsafe { sys_write(fd.native(), buf.as_ptr().cast(), len) }, Tag::write);
         Ok(n as usize)
     }
     pub fn pread(fd: Fd, buf: &mut [u8], off: i64) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
-        let n = check!(unsafe { libc::pread(fd.native(), buf.as_mut_ptr().cast(), len, off) }, Tag::pread);
+        let n = check!(unsafe { sys_pread(fd.native(), buf.as_mut_ptr().cast(), len, off) }, Tag::pread);
         Ok(n as usize)
     }
     pub fn pwrite(fd: Fd, buf: &[u8], off: i64) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
-        let n = check!(unsafe { libc::pwrite(fd.native(), buf.as_ptr().cast(), len, off) }, Tag::pwrite);
+        let n = check!(unsafe { sys_pwrite(fd.native(), buf.as_ptr().cast(), len, off) }, Tag::pwrite);
         Ok(n as usize)
     }
     pub fn stat(path: &ZStr) -> Maybe<Stat> {
@@ -852,12 +852,12 @@ mod posix_impl {
     // sys.zig exposes for shell/pipe IPC.
     pub fn recv(fd: Fd, buf: &mut [u8], flags: i32) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
-        let n = check!(unsafe { libc::recv(fd.native(), buf.as_mut_ptr().cast(), len, flags) }, Tag::recv);
+        let n = check!(unsafe { sys_recv(fd.native(), buf.as_mut_ptr().cast(), len, flags) }, Tag::recv);
         Ok(n as usize)
     }
     pub fn send(fd: Fd, buf: &[u8], flags: i32) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
-        let n = check!(unsafe { libc::send(fd.native(), buf.as_ptr().cast(), len, flags) }, Tag::send);
+        let n = check!(unsafe { sys_send(fd.native(), buf.as_ptr().cast(), len, flags) }, Tag::send);
         Ok(n as usize)
     }
     pub fn recv_non_block(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
@@ -2128,6 +2128,28 @@ pub fn clonefile(from: &ZStr, to: &ZStr) -> Maybe<()> {
 
 // ── getFdPath ──
 
+/// sys.zig:632 `LinuxKernel.get()` — cached probe of `/proc/version` for
+/// "freebsd" (linprocfs hardcodes "des@freebsd.org"). Under FreeBSD's
+/// Linuxulator `/proc/self/fd/*` doesn't readlink, but `/dev/fd/*` does.
+#[cfg(target_os = "linux")]
+fn linux_kernel_is_freebsd() -> bool {
+    use core::sync::atomic::{AtomicU8, Ordering};
+    static CACHED: AtomicU8 = AtomicU8::new(0); // 0=unknown, 1=linux, 2=freebsd
+    let v = CACHED.load(Ordering::Acquire);
+    if v != 0 { return v == 2; }
+    let detected: u8 = 'detect: {
+        // SAFETY: literal is NUL-terminated.
+        let z = unsafe { ZStr::from_raw(b"/proc/version\0".as_ptr(), 13) };
+        let Ok(fd) = open(z, O::RDONLY | O::NOCTTY, 0) else { break 'detect 1 };
+        let mut buf = [0u8; 512];
+        let n = read(fd, &mut buf).unwrap_or(0);
+        let _ = close(fd);
+        if buf[..n].windows(7).any(|w| w.eq_ignore_ascii_case(b"freebsd")) { 2 } else { 1 }
+    };
+    CACHED.store(detected, Ordering::Release);
+    detected == 2
+}
+
 /// sys.zig:2940 — fd → absolute path. Linux: readlink `/proc/self/fd/N`;
 /// macOS: `fcntl(F_GETPATH)`; Windows: `GetFinalPathNameByHandle`.
 pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a mut [u8]> {
@@ -2141,8 +2163,27 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
         };
         // SAFETY: NUL written above.
         let z = unsafe { ZStr::from_raw(proc.as_ptr(), n) };
-        let len = readlink(z, &mut out.0)?;
-        return Ok(&mut out.0[..len]);
+        match readlink(z, &mut out.0) {
+            Ok(len) => return Ok(&mut out.0[..len]),
+            Err(e) => {
+                // sys.zig:2975 — under FreeBSD Linuxulator, fall back to
+                // `getFdPathFreeBSDLinuxulator` (`/dev/fd/N`).
+                if linux_kernel_is_freebsd() {
+                    let mut dev = [0u8; 32];
+                    let n = {
+                        use std::io::Write as _;
+                        let mut c = std::io::Cursor::new(&mut dev[..]);
+                        let _ = write!(c, "/dev/fd/{}\0", fd.native());
+                        c.position() as usize - 1
+                    };
+                    // SAFETY: NUL written above.
+                    let z = unsafe { ZStr::from_raw(dev.as_ptr(), n) };
+                    let len = readlink(z, &mut out.0)?;
+                    return Ok(&mut out.0[..len]);
+                }
+                return Err(e);
+            }
+        }
     }
     #[cfg(target_os = "macos")] {
         out.0.fill(0);

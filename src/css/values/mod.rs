@@ -29,8 +29,9 @@ pub mod css_modules {
 // Zero/MulF32/TryAdd protocol traits.
 // ─── B-2 round 4: scalar leaves + ident/url un-gated ─────────────────────
 // alpha/ratio/resolution are real. ident.rs is real (Ident/DashedIdent/
-// CustomIdent parse + IdentOrRef packing); to_css/deep_clone stay gated on
-// Printer::write_ident/write_dashed_ident. url.rs is real (struct +
+// CustomIdent parse + IdentOrRef packing + DashedIdentReference::
+// parse_with_options); DashedIdentReference::to_css stays gated on
+// CssModule::reference_dashed. url.rs is real (struct +
 // is_absolute); parse/to_css gated on Parser::add_import_record + WriteAll
 // for Vec<u8>. position.rs stays gated on length::LengthPercentage.
 pub mod number;

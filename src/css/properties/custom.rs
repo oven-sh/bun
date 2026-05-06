@@ -148,28 +148,27 @@ mod ext {
         Ok(())
     }
 
-    /// Inline of `DashedIdentReference::parse_with_options` (gated in
-    /// `values/ident.rs`).
-    // `properties::css_modules::Specifier::parse` is real now; the CSS-Modules
-    // `from <specifier>` suffix path is still routed through the gated
-    // `DashedIdentReference::parse_with_options` (ident.rs) — this inline stub
-    // covers the non-CSS-Modules callers, which never set
-    // `options.css_modules.dashed_idents`, so `from` is always `None` here.
+    /// Forwarder to `DashedIdentReference::parse_with_options` (now un-gated
+    /// in `values/ident.rs`). Honors `options.css_modules.dashed_idents` and
+    /// parses the `from <specifier>` suffix when enabled.
+    #[inline]
     pub(super) fn dashed_ident_ref_parse(
         input: &mut Parser,
-        _options: &ParserOptions,
+        options: &ParserOptions,
     ) -> Result<DashedIdentReference> {
-        let ident = DashedIdent::parse(input)?;
-        Ok(DashedIdentReference { ident, from: None })
+        DashedIdentReference::parse_with_options(input, options)
     }
 
     /// Inline of `DashedIdentReference::to_css` (gated in `values/ident.rs`).
     /// The `css_module.reference_dashed` branch is itself still gated
-    /// (`css_modules.rs:110`); fall through to `write_dashed_ident` which is
+    /// (`css_modules.rs`); fall through to `write_dashed_ident` which is
     /// the non-CSS-Modules path and the tail of the original body.
-    // blocked_on: CssModule::reference_dashed — CSS-Modules dashed-ident
-    // remapping is skipped until that un-gates; non-CSS-Modules output is
-    // byte-identical.
+    // TODO(port): CSS-Modules dashed-ident remapping (ident.zig:44-52) is
+    // skipped — blocked on `CssModule::reference_dashed` un-gating in
+    // css_modules.rs. Once that lands, replace this body with a forward to
+    // `DashedIdentReference::to_css` (ident.rs). Non-CSS-Modules output is
+    // byte-identical today; with `dashed_idents` enabled the original ident
+    // is emitted instead of the hashed/remapped name.
     pub(super) fn dashed_ident_ref_to_css(
         this: &DashedIdentReference,
         dest: &mut Printer,

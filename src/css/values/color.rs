@@ -723,7 +723,18 @@ impl CssColor {
     }
 
     pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash11) {
-        // PORT NOTE: Zig `css.implementHash` — variant-tag prefix + payload bytes.
+        // PORT NOTE: Zig `css.implementHash` — variant-tag prefix + payload fields.
+        // Hash the discriminant + the active variant's f32 components explicitly;
+        // never reinterpret a `repr(Rust)` enum as raw bytes (unspecified layout /
+        // padding → UB and non-deterministic hashes).
+        #[inline]
+        fn hash_components(hasher: &mut bun_wyhash::Wyhash11, tag: u32, (a, b, c, alpha): (f32, f32, f32, f32)) {
+            hasher.update(&tag.to_ne_bytes());
+            hasher.update(&a.to_ne_bytes());
+            hasher.update(&b.to_ne_bytes());
+            hasher.update(&c.to_ne_bytes());
+            hasher.update(&alpha.to_ne_bytes());
+        }
         match self {
             CssColor::CurrentColor => hasher.update(&0u32.to_ne_bytes()),
             CssColor::Rgba(rgba) => {
@@ -732,32 +743,33 @@ impl CssColor {
             }
             CssColor::Lab(lab) => {
                 hasher.update(&2u32.to_ne_bytes());
-                // SAFETY: LABColor is `repr(Rust)` POD (4×f32 + tag); hashing the
-                // raw bytes matches Zig's `bun.writeAnyToHasher`.
-                hasher.update(unsafe {
-                    core::slice::from_raw_parts(
-                        (&**lab) as *const _ as *const u8,
-                        core::mem::size_of::<LABColor>(),
-                    )
-                });
+                match **lab {
+                    LABColor::Lab(v) => hash_components(hasher, 0, v.components()),
+                    LABColor::Lch(v) => hash_components(hasher, 1, v.components()),
+                    LABColor::Oklab(v) => hash_components(hasher, 2, v.components()),
+                    LABColor::Oklch(v) => hash_components(hasher, 3, v.components()),
+                }
             }
             CssColor::Predefined(p) => {
                 hasher.update(&3u32.to_ne_bytes());
-                hasher.update(unsafe {
-                    core::slice::from_raw_parts(
-                        (&**p) as *const _ as *const u8,
-                        core::mem::size_of::<PredefinedColor>(),
-                    )
-                });
+                match **p {
+                    PredefinedColor::Srgb(v) => hash_components(hasher, 0, v.components()),
+                    PredefinedColor::SrgbLinear(v) => hash_components(hasher, 1, v.components()),
+                    PredefinedColor::DisplayP3(v) => hash_components(hasher, 2, v.components()),
+                    PredefinedColor::A98(v) => hash_components(hasher, 3, v.components()),
+                    PredefinedColor::Prophoto(v) => hash_components(hasher, 4, v.components()),
+                    PredefinedColor::Rec2020(v) => hash_components(hasher, 5, v.components()),
+                    PredefinedColor::XyzD50(v) => hash_components(hasher, 6, v.components()),
+                    PredefinedColor::XyzD65(v) => hash_components(hasher, 7, v.components()),
+                }
             }
             CssColor::Float(fl) => {
                 hasher.update(&4u32.to_ne_bytes());
-                hasher.update(unsafe {
-                    core::slice::from_raw_parts(
-                        (&**fl) as *const _ as *const u8,
-                        core::mem::size_of::<FloatColor>(),
-                    )
-                });
+                match **fl {
+                    FloatColor::Rgb(v) => hash_components(hasher, 0, v.components()),
+                    FloatColor::Hsl(v) => hash_components(hasher, 1, v.components()),
+                    FloatColor::Hwb(v) => hash_components(hasher, 2, v.components()),
+                }
             }
             CssColor::LightDark { light, dark } => {
                 hasher.update(&5u32.to_ne_bytes());

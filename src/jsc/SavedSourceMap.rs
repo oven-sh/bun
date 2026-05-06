@@ -220,25 +220,20 @@ impl SavedSourceMap {
 // TODO(port): std.HashMap(u64, *anyopaque, bun.IdentityContext(u64), 80) — needs identity (passthrough) hasher and 80% max load.
 pub type HashTable = HashMap<u64, *mut c_void>;
 
-impl SavedSourceMap {
-    pub fn on_source_map_chunk(
+impl bun_js_printer::OnSourceMapChunk for SavedSourceMap {
+    fn on_source_map_chunk(
         &mut self,
         chunk: SourceMap::Chunk,
         source: &logger::Source,
     ) -> Result<(), bun_core::Error> {
-        #[cfg(any())] // TODO(b2-blocked): bun_sourcemap::Chunk.buffer field name
-        {
-            return self.put_mappings(source, chunk.buffer);
-        }
-        let _ = (chunk, source);
-        Ok(())
+        self.put_mappings(source, chunk.buffer)
     }
 }
 
-// TODO(port): js_printer.SourceMapHandler.For(SavedSourceMap, onSourceMapChunk) — comptime type-generator;
-// implement `bun_js_printer::SourceMapHandler` trait for `SavedSourceMap` in Phase B.
-// TODO(b2-blocked): bun_js_printer::SourceMapHandler is `<'a>` (lifetime), not `<Ctx>` —
-// the Zig `For(T, callback)` adapter needs a Rust-side trait or fn-pointer wrapper.
+/// Port of `SavedSourceMap.SourceMapHandler` (SavedSourceMap.zig) —
+/// `js_printer.SourceMapHandler.For(SavedSourceMap, onSourceMapChunk)`. The Zig
+/// comptime type-generator is replaced by `SourceMapHandler::for_::<SavedSourceMap>`,
+/// monomorphized over the `OnSourceMapChunk` impl above.
 pub type SourceMapHandler<'a> = bun_js_printer::SourceMapHandler<'a>;
 
 impl Drop for SavedSourceMap {

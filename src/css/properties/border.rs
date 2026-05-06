@@ -278,8 +278,6 @@ macro_rules! define_rect_shorthand {
     ) => {
         $(#[$meta])*
         #[derive(Clone, PartialEq)]
-        // TODO(port): #[derive(css::DefineRectShorthand)] — provides parse/to_css over `$inner`.
-        // Gated until the proc-macro derive lands; data shape is real.
         pub struct $name {
             pub top: $inner,
             pub right: $inner,
@@ -298,6 +296,22 @@ macro_rules! define_rect_shorthand {
                 ("left", PropertyIdTag::$left_id),
             ];
 
+            // Zig `css.DefineRectShorthand(@This(), V)` — parse/serialize via `Rect<V>`.
+            pub fn parse(input: &mut Parser) -> CssResult<Self> {
+                let rect = css::css_values::rect::Rect::<$inner>::parse(input)?;
+                Ok(Self { top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left })
+            }
+
+            pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+                css::css_values::rect::Rect::<&$inner> {
+                    top: &self.top,
+                    right: &self.right,
+                    bottom: &self.bottom,
+                    left: &self.left,
+                }
+                .to_css(dest)
+            }
+
             pub fn deep_clone(&self, _allocator: &Bump) -> Self {
                 self.clone()
             }
@@ -306,6 +320,7 @@ macro_rules! define_rect_shorthand {
                 self == rhs
             }
         }
+        crate::impl_generic_parse_tocss!($name);
     };
 }
 
@@ -351,8 +366,6 @@ macro_rules! define_size_shorthand {
     ) => {
         $(#[$meta])*
         #[derive(Clone, PartialEq)]
-        // TODO(port): #[derive(css::DefineSizeShorthand)] — provides parse/to_css over `$inner`.
-        // Gated until the proc-macro derive lands; data shape is real.
         pub struct $name {
             /// The start value.
             pub start: $inner,
@@ -369,6 +382,22 @@ macro_rules! define_size_shorthand {
                 ("end", PropertyIdTag::$end_id),
             ];
 
+            // Zig `css.DefineSizeShorthand(@This(), V)` — parse/serialize via `Size2D<V>`.
+            pub fn parse(input: &mut Parser) -> CssResult<Self> {
+                let size = css::css_values::size::Size2D::<$inner>::parse(input)?;
+                Ok(Self { start: size.a, end: size.b })
+            }
+
+            pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+                use css::generic::ToCss as _;
+                self.start.to_css(dest)?;
+                if self.start != self.end {
+                    dest.write_str(b" ")?;
+                    self.end.to_css(dest)?;
+                }
+                Ok(())
+            }
+
             pub fn deep_clone(&self, _allocator: &Bump) -> Self {
                 self.clone()
             }
@@ -377,6 +406,7 @@ macro_rules! define_size_shorthand {
                 self == rhs
             }
         }
+        crate::impl_generic_parse_tocss!($name);
     };
 }
 

@@ -882,11 +882,58 @@ impl UpgradeCommand {
                         tmpname.as_bytes(),
                     ];
 
-                    // TODO(port): Zig used std.process.Child here directly; PORTING.md bans
-                    // std::process. The buffered/cwd-aware spawn_sync helper is not yet
-                    // available at this layer.
-                    let _ = (&unzip_argv, &tmpdir_path_buf[..tmpdir_path_len], &save_dir);
-                    todo!("blocked_on: bun_core::spawn_sync (std.process.Child port)");
+                    // PORT NOTE: Zig used `std.process.Child` directly with all stdio
+                    // set to `.Inherit` and `.spawnAndWait()`. PORTING.md / src/CLAUDE.md
+                    // map this to `bun.spawnSync` → `crate::api::bun::process::sync::spawn`.
+                    let unzip_result = match spawn_sync::spawn(&spawn_sync::Options {
+                        argv: build_argv(&unzip_argv),
+                        envp: None,
+                        cwd: Box::<[u8]>::from(&tmpdir_path_buf[..tmpdir_path_len]),
+                        stdin: spawn_sync::SyncStdio::Inherit,
+                        stdout: spawn_sync::SyncStdio::Inherit,
+                        stderr: spawn_sync::SyncStdio::Inherit,
+                        #[cfg(windows)]
+                        windows: spawn_windows_options(),
+                        ..Default::default()
+                    }) {
+                        Ok(Ok(r)) => r,
+                        Ok(Err(err)) => {
+                            let _ = sys::unlinkat(save_dir.fd(), tmpname);
+                            Output::pretty_errorln(format_args!(
+                                "<r><red>error:<r> Failed to spawn unzip due to {}.",
+                                bstr::BStr::new(err.name())
+                            ));
+                            Global::exit(1);
+                        }
+                        Err(err) => {
+                            let _ = sys::unlinkat(save_dir.fd(), tmpname);
+                            Output::pretty_errorln(format_args!(
+                                "<r><red>error:<r> Failed to spawn unzip due to {}.",
+                                err.name()
+                            ));
+                            Global::exit(1);
+                        }
+                    };
+
+                    match unzip_result.status {
+                        Status::Exited(e) if e.code == 0 => {}
+                        Status::Exited(e) => {
+                            Output::pretty_errorln(format_args!(
+                                "<r><red>Unzip failed<r> (exit code: {})",
+                                e.code
+                            ));
+                            let _ = sys::unlinkat(save_dir.fd(), tmpname);
+                            Global::exit(1);
+                        }
+                        other => {
+                            Output::pretty_errorln(format_args!(
+                                "<r><red>Unzip failed<r> ({})",
+                                other
+                            ));
+                            let _ = sys::unlinkat(save_dir.fd(), tmpname);
+                            Global::exit(1);
+                        }
+                    }
                 }
                 #[cfg(windows)]
                 {

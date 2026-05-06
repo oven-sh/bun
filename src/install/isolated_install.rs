@@ -1810,10 +1810,10 @@ pub fn install_isolated_packages(
 
                         bun_core::handle_oom(workspace_node_modules.append(b"node_modules"));
 
-                        let rename_path_save = rename_path.save();
-                        // TODO(port): defer save.restore() — Phase B should use
-                        // ResetScope's Drop directly.
-                        let _restore = scopeguard::guard(rename_path_save, |s| s.restore());
+                        // PORT NOTE: reshaped for borrowck — Zig `save()/restore()`
+                        // holds a `*Path`; capture the length and truncate manually
+                        // so `rename_path` stays unborrowed between save/restore.
+                        let rename_path_save = rename_path.len();
 
                         bun_core::handle_oom(rename_path.append_fmt(format_args!(
                             ".old_{}_modules",
@@ -1826,6 +1826,8 @@ pub fn install_isolated_packages(
                             Fd::cwd(),
                             rename_path.slice_z(),
                         );
+
+                        rename_path.set_length(rename_path_save);
                     }
                 }
 

@@ -6774,7 +6774,7 @@ fn map_anyerror_to_errno_rm_narrow(err: bun_core::Error) -> E {
 
 fn throw_invalid_fd_error(global: &JSGlobalObject, value: JSValue) -> JsError {
     if value.is_number() {
-        return global.err_out_of_range(format_args!(
+        return global.err(bun_jsc::ErrorCode::OUT_OF_RANGE, format_args!(
             "The value of \"fd\" is out of range. It must be an integer. Received {}",
             bun_core::fmt::double(value.as_number())
         )).throw();

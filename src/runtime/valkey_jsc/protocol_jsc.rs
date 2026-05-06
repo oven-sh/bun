@@ -120,7 +120,7 @@ pub fn resp_value_to_js_with_options(
         RESPValue::Boolean(b) => Ok(JSValue::from(*b)),
         RESPValue::BlobError(str) => Ok(valkey_error_to_js(
             global,
-            Some(str),
+            &**str,
             RedisError::InvalidBlobError,
         )),
         RESPValue::VerbatimString(verbatim) => {

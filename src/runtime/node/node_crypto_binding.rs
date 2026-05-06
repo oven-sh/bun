@@ -357,7 +357,10 @@ impl<Ctx: CryptoJobCtx> CryptoJob<Ctx> {
         let vm = global.bun_vm();
         let job = Box::into_raw(Box::new(CryptoJob {
             vm,
-            task: WorkPoolTask { callback: Self::run_task },
+            task: WorkPoolTask {
+                node: Default::default(),
+                callback: Self::run_task,
+            },
             // SAFETY: any_task is overwritten below before any use.
             any_task: unsafe { core::mem::zeroed() },
             poll: KeepAlive::default(),

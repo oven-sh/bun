@@ -1,10 +1,11 @@
+#![allow(dead_code, unused_imports, unused_variables, unreachable_code)]
 use core::mem::offset_of;
 
 use bun_collections::{ArrayHashMap, DynamicBitSet};
 use bun_core::{Output, fmt as bun_fmt};
 use bun_logger::Log;
 use bun_paths::path_buffer_pool;
-use bun_sourcemap::{self as SourceMap, VLQ};
+use bun_sourcemap as SourceMap;
 use bun_str::strings;
 
 use crate::bake::{self as bake, Side};
@@ -19,10 +20,9 @@ use super::source_map_store_body::Entry as SourceMapStoreEntry;
 use crate::bake::dev_server::route_bundle::Index as RouteBundleIndex;
 use crate::bake::dev_server::source_map_store::Key as SourceMapStoreKey;
 use crate::bake::dev_server_body::{self as dev_server_body, DevAllocator, HotUpdateContext, ig_log, debug_log};
-use crate::bake::dev_server::memory_cost_body::{memory_cost_array_hash_map, memory_cost_array_list, memory_cost_slice};
+use crate::bake::dev_server::memory_cost_body::{memory_cost_array_hash_map, memory_cost_array_list};
 use super::packed_map_body::{PackedMap, Shared as PackedMapShared, LineCount};
-use crate::bake::framework_router::{self as FrameworkRouter, Route};
-use bun_bundler::{self as bundle_v2, BundleV2, Chunk};
+use bun_bundler::BundleV2;
 use bun_options_types::ImportRecord;
 use bun_js_parser::ast;
 

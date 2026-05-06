@@ -106,8 +106,8 @@ pub fn to_have_property(
         if !received_property.is_empty() {
             // deep equal case
             let diff_format = DiffFormatter {
-                received: received_property,
-                expected: expected_property.unwrap(),
+                received: Some(received_property),
+                expected: expected_property,
                 global_this: Some(global),
                 ..Default::default()
             };

@@ -1193,35 +1193,43 @@ impl PathLike {
                 Ok(Some(Self::from_bun_string(ctx, &str, arguments.will_be_async)?))
             }
             _ => {
-                if let Some(domurl) = arg.as_::<jsc::DOMURL>() {
+                if let Some(domurl) = jsc::DOMURL::cast(arg) {
+                    use jsc::dom_url::ToFileSystemPathError;
                     let str: bun_str::String = match domurl.file_system_path() {
                         Ok(s) => s,
-                        Err(e) if e == bun_core::err!("NotFileUrl") => {
-                            return ctx
-                                .err(jsc::ErrorCode::INVALID_URL_SCHEME)
-                                .fmt(format_args!("URL must be a non-empty \"file:\" path"))
-                                .throw();
+                        Err(ToFileSystemPathError::NotFileUrl) => {
+                            return Err(ctx
+                                .err(
+                                    jsc::ErrorCode::INVALID_URL_SCHEME,
+                                    format_args!("URL must be a non-empty \"file:\" path"),
+                                )
+                                .throw());
                         }
-                        Err(e) if e == bun_core::err!("InvalidPath") => {
-                            return ctx
-                                .err(jsc::ErrorCode::INVALID_FILE_URL_PATH)
-                                .fmt(format_args!("URL must be a non-empty \"file:\" path"))
-                                .throw();
+                        Err(ToFileSystemPathError::InvalidPath) => {
+                            return Err(ctx
+                                .err(
+                                    jsc::ErrorCode::INVALID_FILE_URL_PATH,
+                                    format_args!("URL must be a non-empty \"file:\" path"),
+                                )
+                                .throw());
                         }
-                        Err(e) if e == bun_core::err!("InvalidHost") => {
-                            return ctx
-                                .err(jsc::ErrorCode::INVALID_FILE_URL_HOST)
-                                .fmt(format_args!("URL must be a non-empty \"file:\" path"))
-                                .throw();
+                        Err(ToFileSystemPathError::InvalidHost) => {
+                            return Err(ctx
+                                .err(
+                                    jsc::ErrorCode::INVALID_FILE_URL_HOST,
+                                    format_args!("URL must be a non-empty \"file:\" path"),
+                                )
+                                .throw());
                         }
-                        Err(_) => unreachable!(),
                     };
                     // str.deref() on Drop
                     if str.is_empty() {
-                        return ctx
-                            .err(jsc::ErrorCode::INVALID_ARG_VALUE)
-                            .fmt(format_args!("URL must be a non-empty \"file:\" path"))
-                            .throw();
+                        return Err(ctx
+                            .err(
+                                jsc::ErrorCode::INVALID_ARG_VALUE,
+                                format_args!("URL must be a non-empty \"file:\" path"),
+                            )
+                            .throw());
                     }
                     arguments.eat();
 

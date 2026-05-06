@@ -1132,3 +1132,173 @@ unsafe extern "C" {
     fn Bun__serializeJSValue(global: *const JSGlobalObject, value: JSValue, flags: u8) -> SerializedScriptValueExternal;
     fn Bun__SerializedScriptSlice__free(handle: *mut c_void);
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// Jest / test-runner support (JSValue.zig — `jestDeepEquals` family,
+// `asBigIntCompare`, `keys`/`values`, `isInstanceOf`, `isConstructor`,
+// `isObjectEmpty`, `getIfPropertyExistsFromPath`, `stringIncludes`,
+// `toMatch`). Third tranche, ported for `bun_runtime::test_runner::expect`.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `JSValue.ComparisonResult` (JSValue.zig:923) — result of
+/// [`JSValue::as_big_int_compare`].
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ComparisonResult {
+    Equal = 0,
+    Undefined = 1,
+    GreaterThan = 2,
+    LessThan = 3,
+    InvalidComparison = 4,
+}
+
+impl JSValue {
+    // ── Jest deep-equality (JSValue.zig:1957-1975). ───────────────────────
+    /// `JSValue.jestDeepEquals` — Jest's recursive `expect(a).toEqual(b)`
+    /// semantics (asymmetric matchers, undefined-equals-missing, etc.).
+    pub fn jest_deep_equals(self, other: JSValue, global: &JSGlobalObject) -> JsResult<bool> {
+        // SAFETY: `global` is live; FFI may set an exception.
+        host_fn::from_js_host_call_generic(global, || unsafe {
+            JSC__JSValue__jestDeepEquals(self, other, global)
+        })
+    }
+    /// `JSValue.jestStrictDeepEquals` — `expect(a).toStrictEqual(b)`.
+    pub fn jest_strict_deep_equals(self, other: JSValue, global: &JSGlobalObject) -> JsResult<bool> {
+        // SAFETY: `global` is live; FFI may set an exception.
+        host_fn::from_js_host_call_generic(global, || unsafe {
+            JSC__JSValue__jestStrictDeepEquals(self, other, global)
+        })
+    }
+    /// `JSValue.jestDeepMatch` — `expect(a).toMatchObject(b)` /
+    /// snapshot-property-matcher subset comparison.
+    pub fn jest_deep_match(
+        self,
+        subset: JSValue,
+        global: &JSGlobalObject,
+        replace_props_with_asymmetric_matchers: bool,
+    ) -> JsResult<bool> {
+        // SAFETY: `global` is live; FFI may set an exception.
+        host_fn::from_js_host_call_generic(global, || unsafe {
+            JSC__JSValue__jestDeepMatch(self, subset, global, replace_props_with_asymmetric_matchers)
+        })
+    }
+
+    // ── BigInt ordering (JSValue.zig:931). ────────────────────────────────
+    /// `JSValue.asBigIntCompare` — compare a BigInt against another BigInt or
+    /// Number. Returns [`ComparisonResult::InvalidComparison`] if `self` is
+    /// not a BigInt or `other` is neither BigInt nor Number.
+    pub fn as_big_int_compare(self, global: &JSGlobalObject, other: JSValue) -> ComparisonResult {
+        if !self.is_big_int() || (!other.is_big_int() && !other.is_number()) {
+            return ComparisonResult::InvalidComparison;
+        }
+        // SAFETY: `self` is a BigInt cell, `other` is BigInt-or-Number; pure FFI.
+        unsafe { JSC__JSValue__asBigIntCompare(self, global, other) }
+    }
+
+    // ── Object.keys / Object.values (JSValue.zig:767-786). ────────────────
+    /// `JSValue.keys` — `Object.keys(self)`.
+    pub fn keys(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        // SAFETY: `global` is live; FFI may set an exception.
+        host_fn::from_js_host_call(global, || unsafe {
+            JSC__JSValue__keys(global, self)
+        })
+    }
+    /// `JSValue.values` — `Object.values(self)`. `self` must not be
+    /// empty/undefined/null (caller-checked).
+    pub fn values(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        debug_assert!(!self.is_empty_or_undefined_or_null());
+        // SAFETY: `global` is live; FFI may set an exception.
+        host_fn::from_js_host_call(global, || unsafe {
+            JSC__JSValue__values(global, self)
+        })
+    }
+
+    // ── instanceof / constructor (JSValue.zig:229, 1113). ─────────────────
+    /// `JSValue.isInstanceOf` — `self instanceof constructor`.
+    pub fn is_instance_of(self, global: &JSGlobalObject, constructor: JSValue) -> JsResult<bool> {
+        if !self.is_cell() {
+            return Ok(false);
+        }
+        // SAFETY: `global` is live; `instanceof` may invoke user
+        // `Symbol.hasInstance` and throw.
+        host_fn::from_js_host_call_generic(global, || unsafe {
+            JSC__JSValue__isInstanceOf(self, global, constructor)
+        })
+    }
+    /// `JSValue.isConstructor`.
+    #[inline]
+    pub fn is_constructor(self) -> bool {
+        if !self.is_cell() { return false; }
+        // SAFETY: `self` is a cell; pure FFI predicate.
+        unsafe { JSC__JSValue__isConstructor(self) }
+    }
+
+    // ── Jest "is empty object" (JSValue.zig:1097). ────────────────────────
+    /// `JSValue.isObjectEmpty` — Jest-extended `toBeEmptyObject` semantics:
+    /// Map/Set/RegExp/Date are *not* empty objects; otherwise an object with
+    /// zero own-enumerable keys.
+    pub fn is_object_empty(self, global: &JSGlobalObject) -> JsResult<bool> {
+        let ty = self.js_type();
+        // https://github.com/jestjs/jest/blob/main/packages/jest-get-type/src/index.ts#L26
+        if ty.is_map() || ty.is_set() || ty == JSType::RegExpObject || self.is_date() {
+            return Ok(false);
+        }
+        Ok(ty.is_object() && self.keys(global)?.get_length(global)? == 0)
+    }
+
+    // ── Length introspection (JSValue.zig:2189). ──────────────────────────
+    /// `JSValue.getLengthIfPropertyExistsInternal` — returns `f64::MAX` when
+    /// no `length`-ish property exists. Do not call directly; prefer
+    /// [`JSValue::get_length`].
+    pub fn get_length_if_property_exists_internal(self, global: &JSGlobalObject) -> JsResult<f64> {
+        // SAFETY: `global` is live; FFI may invoke a `length` getter and throw.
+        host_fn::from_js_host_call_generic(global, || unsafe {
+            JSC__JSValue__getLengthIfPropertyExistsInternal(self, global)
+        })
+    }
+
+    // ── Path lookup (JSValue.zig:1457). ───────────────────────────────────
+    /// `JSValue.getIfPropertyExistsFromPath` — Jest `toHaveProperty` path
+    /// resolution (accepts `"a.b[0].c"` string or array path).
+    pub fn get_if_property_exists_from_path(
+        self,
+        global: &JSGlobalObject,
+        path: JSValue,
+    ) -> JsResult<JSValue> {
+        // SAFETY: `global` is live; FFI may invoke getters and throw.
+        let result = unsafe { JSC__JSValue__getIfPropertyExistsFromPath(self, global, path) };
+        if global.has_exception() { return Err(JsError::Thrown); }
+        Ok(result)
+    }
+
+    // ── String / RegExp matching (JSValue.zig:1202, 2225). ────────────────
+    /// `JSValue.stringIncludes` — `self.includes(other)` for JS strings.
+    pub fn string_includes(self, global: &JSGlobalObject, other: JSValue) -> JsResult<bool> {
+        // SAFETY: `global` is live; FFI may set an exception.
+        host_fn::from_js_host_call_generic(global, || unsafe {
+            JSC__JSValue__stringIncludes(self, global, other)
+        })
+    }
+    /// `JSValue.toMatch` — `self` is a RegExp, `other` is a string;
+    /// returns `self.test(other)`.
+    pub fn to_match(self, global: &JSGlobalObject, other: JSValue) -> JsResult<bool> {
+        // SAFETY: `global` is live; FFI may set an exception.
+        host_fn::from_js_host_call_generic(global, || unsafe {
+            JSC__JSValue__toMatch(self, global, other)
+        })
+    }
+}
+
+unsafe extern "C" {
+    fn JSC__JSValue__jestDeepEquals(this: JSValue, other: JSValue, global: *const JSGlobalObject) -> bool;
+    fn JSC__JSValue__jestStrictDeepEquals(this: JSValue, other: JSValue, global: *const JSGlobalObject) -> bool;
+    fn JSC__JSValue__jestDeepMatch(this: JSValue, subset: JSValue, global: *const JSGlobalObject, replace_props: bool) -> bool;
+    fn JSC__JSValue__asBigIntCompare(this: JSValue, global: *const JSGlobalObject, other: JSValue) -> ComparisonResult;
+    fn JSC__JSValue__keys(global: *const JSGlobalObject, value: JSValue) -> JSValue;
+    fn JSC__JSValue__values(global: *const JSGlobalObject, value: JSValue) -> JSValue;
+    fn JSC__JSValue__isInstanceOf(this: JSValue, global: *const JSGlobalObject, constructor: JSValue) -> bool;
+    fn JSC__JSValue__isConstructor(this: JSValue) -> bool;
+    fn JSC__JSValue__getIfPropertyExistsFromPath(this: JSValue, global: *const JSGlobalObject, path: JSValue) -> JSValue;
+    fn JSC__JSValue__stringIncludes(this: JSValue, global: *const JSGlobalObject, other: JSValue) -> bool;
+    fn JSC__JSValue__toMatch(this: JSValue, global: *const JSGlobalObject, other: JSValue) -> bool;
+}

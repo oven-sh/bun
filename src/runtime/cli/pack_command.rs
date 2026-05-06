@@ -12,9 +12,9 @@ use bun_install::{Dependency, Lockfile, PackageManager};
 use bun_install::package_manager::LogLevel;
 use bun_install::package_manager::workspace_package_json_cache as WorkspacePackageJSONCache;
 use bun_interchange::json as JSON;
-use bun_js_parser::{E, Expr};
+use bun_js_parser::{E, Expr, ExprData};
 use bun_js_printer as js_printer;
-use bun_libarchive::lib::{Archive, Entry as ArchiveEntry};
+use bun_libarchive::lib::{Archive, Entry as ArchiveEntry, Result as ArchiveStatus};
 use bun_paths::{self as path, PathBuffer, SEP_STR};
 // `bun.ptr.CowString = CowSlice(u8)` — the lifetime-free struct port (init_owned/
 // borrow_subslice/length live on `cow_slice::CowSliceZ`, not on the `std::borrow::Cow`

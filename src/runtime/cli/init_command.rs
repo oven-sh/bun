@@ -1086,14 +1086,14 @@ impl Assets {
     }
 
     fn create_full_with_contents(
-        /// name of asset file to create
+        // name of asset file to create
         filename: &[u8],
         contents: &'static [u8],
-        /// optionally add a suffix to the end of the `+ filename` message. Must have a leading space.
+        // optionally add a suffix to the end of the `+ filename` message. Must have a leading space.
         message_suffix: &'static str,
-        /// Treat the asset as a format string, using `args` to populate it. Only applies to known assets.
+        // Treat the asset as a format string, using `args` to populate it. Only applies to known assets.
         is_template: bool,
-        /// Format arguments
+        // Format arguments
         args: Option<core::fmt::Arguments<'_>>,
     ) -> Result<(), Error> {
         // TODO(port): std.fs.cwd().createFile(filename, .{ .truncate = true })

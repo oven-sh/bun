@@ -28,9 +28,10 @@ pub struct SerializedFailure {
 pub enum Owner {
     None,
     Route(super::route_bundle::Index),
-    // TODO(port): IncrementalGraph<const SIDE> associated FileIndex types — verify Rust spelling
-    Client(<IncrementalGraph<{ Side::Client }> as super::incremental_graph::Graph>::FileIndex),
-    Server(<IncrementalGraph<{ Side::Server }> as super::incremental_graph::Graph>::FileIndex),
+    // `IncrementalGraph` is monomorphic in Rust until `adt_const_params` lands;
+    // `ClientFileIndex`/`ServerFileIndex` are aliases for the same `FileIndex`.
+    Client(ClientFileIndex),
+    Server(ServerFileIndex),
 }
 
 impl Owner {

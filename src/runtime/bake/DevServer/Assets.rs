@@ -6,9 +6,10 @@ use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::{fmt as bun_fmt, Output};
 use bun_http::MimeType;
 use crate::api::server::StaticRoute;
-use crate::webcore::blob::AnyBlob;
+use crate::webcore::AnyBlob;
 
-use super::{memory_cost_array_hash_map, memory_cost_array_list, DevServer};
+use super::memory_cost_body::{memory_cost_array_hash_map, memory_cost_array_list};
+use super::DevServer;
 
 /// Storage for hashed assets on `/_bun/asset/{hash}.ext`
 pub struct Assets {

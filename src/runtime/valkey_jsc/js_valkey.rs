@@ -1557,7 +1557,7 @@ impl JSValkeyClient {
             };
         }
 
-        self.client.vm.enqueue_task(jsc::Task::init(unsafe { &mut (*holder).task }));
+        self.vm().enqueue_task(jsc::Task::init(unsafe { &mut (*holder).task }));
     }
 
     pub fn finalize(this: *mut Self) {

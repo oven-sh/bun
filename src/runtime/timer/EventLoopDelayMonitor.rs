@@ -89,7 +89,7 @@ impl EventLoopDelayMonitor {
         self.last_fire_ns = now_ns;
 
         // Reschedule
-        self.event_loop_timer.next = now.add_ms(u64::try_from(self.resolution_ms).unwrap());
+        self.event_loop_timer.next = now.add_ms(i64::from(self.resolution_ms));
         vm.timer.insert(&mut self.event_loop_timer);
     }
 }

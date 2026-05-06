@@ -536,10 +536,9 @@ impl Drop for StaticRoute {
     }
 }
 
-// TODO(port): these are placeholder type refs for items whose exact module path is TBD in Phase B.
-use crate::webcore::blob::InternalBlob;
-use crate::webcore::fetch_headers::HttpHeader;
-use bun_http::HeadersFromOptions;
+use crate::webcore::InternalBlob;
+use bun_jsc::HTTPHeaderName as HttpHeader;
+use bun_http::headers::Options as HeadersFromOptions;
 } // mod _gated
 
 // ──────────────────────────────────────────────────────────────────────────

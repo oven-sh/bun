@@ -100,7 +100,7 @@ impl<'a> Borrowed<'a> {
                         *cell = Some(DebugHeap {
                             // SAFETY: mi_heap_main() never returns null.
                             inner: NonNull::new_unchecked(heap),
-                            thread_lock: crate::stubs::ThreadLock::init_locked(),
+                            thread_lock: bun_core::ThreadLock::init_locked(),
                         });
                     }
                 }

@@ -15,11 +15,17 @@ use bun_alloc::Arena;
 use bun_core::{Global, Output};
 use bun_jsc::{self as jsc, JSGlobalObject, VirtualMachine};
 use bun_js_parser as js_ast;
-use crate::api::dns::Resolver as DNSResolver;
+use crate::dns_jsc::Order as DnsOrder;
 use bun_str::ZigString;
 
-use crate::repl::Repl;
-use crate::{Arguments, Command};
+// `repl.rs` is a sibling file with no other consumers; declare it as a child
+// module here so `Repl` resolves without touching `cli/mod.rs`.
+#[path = "repl.rs"]
+mod repl;
+use repl::Repl;
+
+use crate::cli::Arguments;
+use crate::Command;
 
 pub struct ReplCommand;
 

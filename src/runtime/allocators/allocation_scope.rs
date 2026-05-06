@@ -1,5 +1,8 @@
 //! AllocationScope wraps another allocator, providing leak and invalid free assertions.
 //! It also allows measuring how much memory a scope has allocated.
+// `feature = "alloc_scopes"` / `feature = "asan"` mirror Zig `bun.Environment.enableAllocScopes` /
+// `enable_asan`; not yet declared cargo features (Phase B wires via build.rs).
+#![allow(unexpected_cfgs)]
 
 use core::ffi::c_void;
 

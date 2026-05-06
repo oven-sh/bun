@@ -12,7 +12,7 @@ use bun_ptr::IntrusiveRc;
 use bun_str::String as BunString;
 
 use crate::node::{ErrorCode, StringOrBuffer};
-use crate::webcore::fetch::FetchTasklet;
+use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
 use crate::webcore::s3::client::S3UploadStreamWrapper;
 use crate::webcore::streams::Result as StreamResult;
 use crate::webcore::{ByteStream, Pipe, ReadableStream};

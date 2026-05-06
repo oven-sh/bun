@@ -55,10 +55,8 @@ pub struct ServerFile {
 impl ServerFile {
     // `ClientFile` has a separate packed version, but `ServerFile` is already packed.
     // We still need to define a `Packed` type, though, so we can write `File::Packed`
-    // regardless of `side`.
-    pub type Packed = ServerFile;
-
-    pub fn pack(&self) -> Self::Packed {
+    // regardless of `side`. (See `FileLike::Packed` for the associated type.)
+    pub fn pack(&self) -> ServerFile {
         *self
     }
 

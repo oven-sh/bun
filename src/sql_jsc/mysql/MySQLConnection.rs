@@ -320,11 +320,10 @@ impl MySQLConnection {
         let Socket::SocketTcp(tcp) = &self.socket else { return Ok(()) };
         let uws::InternalSocket::Connected(raw) = tcp.socket else { return Ok(()) };
 
-        let vm = crate::jsc::VirtualMachine::get();
         // PORT NOTE: reshaped for borrowck — `rare_data()` borrows `vm` mutably
         // while `mysql_group` also wants `&VirtualMachine`; route through a raw
         // pointer (Zig passed the same `vm` twice with no aliasing rules).
-        let vm_ptr: *mut crate::jsc::VirtualMachine = vm;
+        let vm_ptr: *mut crate::jsc::VirtualMachine = crate::jsc::VirtualMachine::get();
         // SAFETY: `vm_ptr` is the live VM singleton; the two derefs do not
         // produce overlapping `&mut` (rare_data accesses a disjoint field).
         let tls_group = unsafe { (*vm_ptr).rare_data().mysql_group(&*vm_ptr, true) };

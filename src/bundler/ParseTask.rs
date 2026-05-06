@@ -2192,10 +2192,14 @@ fn run_from_thread_pool_impl(this: &mut ParseTask) {
 }
 
 pub fn on_complete(result: *mut Result) {
-    // SAFETY: result allocated via Box::into_raw above; ctx backref valid.
+    // SAFETY: result allocated via Box::into_raw above; uniquely owned here.
     let r = unsafe { &mut *result };
-    // SAFETY: ctx points to a live BundleV2 for the duration of the bundle pass.
-    BundleV2::on_parse_task_complete(r, unsafe { &mut *(r.ctx as *mut BundleV2) });
+    let ctx = r.ctx;
+    // SAFETY: `ctx` is a `*mut BundleV2` BACKREF (Zig `*BundleV2`) stored with
+    // write provenance in `ParseTask::init`; the BundleV2 outlives the bundle
+    // pass and no other `&mut BundleV2` is live on this (main) thread when the
+    // event-loop callback fires. `r` and `*ctx` are disjoint allocations.
+    BundleV2::on_parse_task_complete(r, unsafe { &mut *ctx });
 }
 } // end mod parse_worker
 

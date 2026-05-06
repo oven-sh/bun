@@ -14,6 +14,9 @@ use bun_wyhash::{Wyhash, Wyhash11};
 
 use crate::ast::{Expr, Ref};
 
+// Zig: `embedDebugFallback` — defined but currently unused upstream as well.
+// Kept for port parity; callers may be re-introduced when codegen_embed wiring lands.
+#[allow(dead_code)]
 fn embed_debug_fallback(msg: &'static str, code: &'static [u8]) -> &'static [u8] {
     static HAS_PRINTED: AtomicBool = AtomicBool::new(false);
     if !HAS_PRINTED.swap(true, Ordering::Relaxed) {
@@ -617,8 +620,8 @@ impl Imports {
     ];
 
     /// Zig computed this at comptime via `std.sort.pdq`. Rust stable cannot sort in
-    /// `const`; precomputed here. Phase B: add a `#[test]` that re-derives and asserts.
-    // TODO(port): verify ALL_SORTED / ALL_SORTED_INDEX match Zig comptime output
+    /// `const`; precomputed here and verified by `tests::all_sorted_matches_zig_comptime`.
+    #[cfg_attr(not(test), allow(dead_code))]
     const ALL_SORTED: [&'static str; 25] = [
         "$$typeof",
         "__callDispose",
@@ -836,6 +839,34 @@ impl ImportsIterator<'_> {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Imports;
+
+    /// Port of the Zig comptime block that derives `all_sorted` / `all_sorted_index`.
+    /// Rust stable cannot sort in `const`, so the tables above are hand-precomputed;
+    /// this test re-derives them at runtime and asserts they match.
+    #[test]
+    fn all_sorted_matches_zig_comptime() {
+        // const all_sorted = brk: { var list = all; std.sort.pdq(...); break :brk list; };
+        let mut list = Imports::ALL;
+        list.sort_unstable();
+        assert_eq!(list, Imports::ALL_SORTED, "ALL_SORTED drifted from sorted(ALL)");
+
+        // pub const all_sorted_index = brk: { for (all) |name, i| for (all_sorted) |cmp, j| ... };
+        let mut out = [0usize; Imports::ALL.len()];
+        for (i, name) in Imports::ALL.iter().enumerate() {
+            for (j, cmp) in list.iter().enumerate() {
+                if name == cmp {
+                    out[i] = j;
+                    break;
+                }
+            }
+        }
+        assert_eq!(out, Imports::ALL_SORTED_INDEX, "ALL_SORTED_INDEX drifted from derivation");
     }
 }
 

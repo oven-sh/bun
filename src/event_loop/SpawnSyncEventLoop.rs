@@ -15,6 +15,7 @@
 //!
 //! Similar to Node.js's approach in vendor/node/src/spawn_sync.cc but adapted for Bun's architecture.
 
+use core::cell::Cell;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicPtr, Ordering};
 

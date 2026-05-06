@@ -151,7 +151,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
             manager.progress.maybe_refresh();
         }
     });
-    let _ = extract_ctx_ptr; // used by nested guards below
 
     let mut patch_tasks_batch = manager.patch_task_queue.pop_batch();
     let mut patch_tasks_iter = patch_tasks_batch.iterator();

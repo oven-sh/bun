@@ -1068,22 +1068,27 @@ impl SourceMapDataTask {
                 .sub(offset_of!(SourceMapDataTask, thread_task))
                 .cast::<SourceMapDataTask>())
         };
+        let ctx: *mut LinkerContext = task.ctx;
         let _guard = scopeguard::guard((), |_| {
             // SAFETY: ctx backref valid for task lifetime
             unsafe {
-                (*task.ctx).mark_pending_task_done();
-                (*task.ctx).source_maps.line_offset_wait_group.finish();
+                (*ctx).mark_pending_task_done();
+                (*ctx).source_maps.line_offset_wait_group.finish();
             }
         });
 
-        // SAFETY: ctx is &mut BundleV2.linker; container_of
-        let bundle = unsafe {
-            &mut *((task.ctx as *mut u8).sub(offset_of!(BundleV2, linker)).cast::<BundleV2>())
+        // SAFETY: ctx is BundleV2.linker; container_of recovers the parent. We
+        // deliberately do NOT materialize `&mut BundleV2` here — these tasks
+        // run concurrently across the worker pool (one per source_index), so
+        // any `&mut` to the shared `BundleV2`/`LinkerContext` would be aliased
+        // UB. `Worker::get` only needs `&BundleV2` (reads `graph.pool`), and
+        // that shared borrow ends before any per-slot write below.
+        let bundle: *const BundleV2 = unsafe {
+            (ctx as *const u8).sub(offset_of!(BundleV2, linker)).cast::<BundleV2>()
         };
-        let worker = ThreadPool::Worker::get(bundle);
+        let worker = ThreadPool::Worker::get(unsafe { &*bundle });
         let _wguard = scopeguard::guard((), |_| worker.unget());
-        // SAFETY: ctx backref
-        SourceMapData::compute_line_offsets(unsafe { &mut *task.ctx }, worker.allocator, task.source_index);
+        SourceMapData::compute_line_offsets(ctx, worker.allocator, task.source_index);
     }
 
     pub fn run_quoted_source_contents(thread_task: *mut ThreadPoolLib::Task) {
@@ -1093,19 +1098,21 @@ impl SourceMapDataTask {
                 .sub(offset_of!(SourceMapDataTask, thread_task))
                 .cast::<SourceMapDataTask>())
         };
+        let ctx: *mut LinkerContext = task.ctx;
         let _guard = scopeguard::guard((), |_| {
             // SAFETY: ctx backref
             unsafe {
-                (*task.ctx).mark_pending_task_done();
-                (*task.ctx).source_maps.quoted_contents_wait_group.finish();
+                (*ctx).mark_pending_task_done();
+                (*ctx).source_maps.quoted_contents_wait_group.finish();
             }
         });
 
-        // SAFETY: container_of
-        let bundle = unsafe {
-            &mut *((task.ctx as *mut u8).sub(offset_of!(BundleV2, linker)).cast::<BundleV2>())
+        // SAFETY: see `run_line_offset` — raw-ptr container_of, no `&mut`
+        // materialized over the shared `BundleV2` while peer tasks are live.
+        let bundle: *const BundleV2 = unsafe {
+            (ctx as *const u8).sub(offset_of!(BundleV2, linker)).cast::<BundleV2>()
         };
-        let worker = ThreadPool::Worker::get(bundle);
+        let worker = ThreadPool::Worker::get(unsafe { &*bundle });
         let _wguard = scopeguard::guard((), |_| worker.unget());
 
         // Use the default allocator when using DevServer and the file
@@ -1118,8 +1125,7 @@ impl SourceMapDataTask {
             worker.allocator
         };
 
-        // SAFETY: ctx backref
-        SourceMapData::compute_quoted_source_contents(unsafe { &mut *task.ctx }, alloc, task.source_index);
+        SourceMapData::compute_quoted_source_contents(ctx, alloc, task.source_index);
     }
 }
 

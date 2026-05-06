@@ -291,31 +291,40 @@ impl<'a> Parser<'a> {
         scan_pass: &'a mut ScanPassResult,
     ) -> Result<(), Error> {
         type Pi<'a, const TS: bool, JX> = P<'a, TS, JX, true>;
+        // Zig moves lexer/options by value into `P` (Parser.zig) and only
+        // `defer p.lexer.deinit()` cleans up — Zig has no implicit destructor
+        // on `Parser.lexer`. In Rust, `Lexer` owns `Vec`s and `Options` owns
+        // `jsx: Pragma` boxes, so a bitwise `ptr::read` would double-free
+        // when `self` later drops. Move them out, leaving inert placeholders.
+        //
+        // Order matters: the placeholder lexer's `&'a mut Log` must be created
+        // *before* the `&'a mut Log` handed to `P::init`, so the latter sits
+        // on top of the borrow stack (the placeholder is never touched again).
+        let lexer = core::mem::replace(
+            &mut self.lexer,
+            js_lexer::Lexer::init_without_reading(
+                // SAFETY: `self.log` aliases the `&'a mut Log` originally
+                // given to `Parser::init`; reborrow for the inert placeholder
+                // lexer (never read after this point).
+                unsafe { &mut *self.log.as_ptr() },
+                self.source,
+                self.bump,
+            ),
+        );
+        let options = core::mem::take(&mut self.options);
         let mut p = Pi::<TS, JX>::init(
             self.bump,
             // SAFETY: `log` was created from the `&'a mut Log` passed to
             // `Parser::init`; the unique borrow is being handed off to `P`
             // (which also receives the lexer). Matches Zig's two-`*Log` model.
+            // NOTE: `P` storing both `p.log` and `p.lexer.log` as `&'a mut Log`
+            // is a known structural alias (Zig held two `*Log`); the proper fix
+            // is changing `P.log` to `NonNull<Log>` (tracked in P.rs).
             unsafe { &mut *self.log.as_ptr() },
             self.source,
             self.define,
-            // Zig moves lexer/options by value into `P` (Parser.zig) and only
-            // `defer p.lexer.deinit()` cleans up — Zig has no implicit destructor
-            // on `Parser.lexer`. In Rust, `Lexer` owns `Vec`s and `Options` owns
-            // `jsx: Pragma` boxes, so a bitwise `ptr::read` would double-free
-            // when `self` later drops. Move them out, leaving inert placeholders.
-            core::mem::replace(
-                &mut self.lexer,
-                js_lexer::Lexer::init_without_reading(
-                    // SAFETY: `self.log` aliases the `&'a mut Log` originally
-                    // given to `Parser::init`; the prior unique borrow lived in
-                    // the lexer we just moved out, so reborrowing here is sound.
-                    unsafe { &mut *self.log.as_ptr() },
-                    self.source,
-                    self.bump,
-                ),
-            ),
-            core::mem::take(&mut self.options),
+            lexer,
+            options,
         )?;
         p.import_records = crate::ast::p::ImportRecordList::Borrowed(&mut scan_pass.import_records);
         p.named_imports = crate::ast::p::NamedImportsType::Borrowed(&mut scan_pass.named_imports);
@@ -419,29 +428,37 @@ impl<'a> Parser<'a> {
         symbols: js_ast::symbol::List,
     ) -> Result<js_ast::Result, Error> {
         // TODO(port): narrow error set
+        // Zig moves lexer/options by value into `P` (Parser.zig) and only
+        // `defer p.lexer.deinit()` cleans up — Zig has no implicit destructor
+        // on `Parser.lexer`. In Rust we move them out and leave inert
+        // placeholders so `self` may drop without double-free.
+        //
+        // Order matters: see `_scan_imports` — placeholder's `&mut Log` must be
+        // created *before* the one handed to `P::init`.
+        let lexer = core::mem::replace(
+            &mut self.lexer,
+            js_lexer::Lexer::init_without_reading(
+                // SAFETY: reborrow of the unique Log handle for the inert
+                // placeholder lexer (never actually read).
+                unsafe { &mut *self.log.as_ptr() },
+                self.source,
+                self.bump,
+            ),
+        );
+        let options = core::mem::take(&mut self.options);
         let mut p = JavaScriptParser::init(
             self.bump,
             // SAFETY: `log` was created from the `&'a mut Log` passed to
             // `Parser::init`; the unique borrow is being handed off to `P`
             // (which also receives the lexer). Matches Zig's two-`*Log` model.
+            // NOTE: `P` storing both `p.log` and `p.lexer.log` as `&'a mut Log`
+            // is a known structural alias (Zig held two `*Log`); the proper fix
+            // is changing `P.log` to `NonNull<Log>` (tracked in P.rs).
             unsafe { &mut *self.log.as_ptr() },
             self.source,
             self.define,
-            // Zig moves lexer/options by value into `P` (Parser.zig) and only
-            // `defer p.lexer.deinit()` cleans up — Zig has no implicit destructor
-            // on `Parser.lexer`. In Rust we move them out and leave inert
-            // placeholders so `self` may drop without double-free.
-            core::mem::replace(
-                &mut self.lexer,
-                js_lexer::Lexer::init_without_reading(
-                    // SAFETY: see above — reborrow of the unique Log handle for
-                    // the inert placeholder lexer (never actually read).
-                    unsafe { &mut *self.log.as_ptr() },
-                    self.source,
-                    self.bump,
-                ),
-            ),
-            core::mem::take(&mut self.options),
+            lexer,
+            options,
         )?;
 
         p.lexer.track_comments = p.options.features.minify_identifiers;

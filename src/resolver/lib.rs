@@ -7871,6 +7871,8 @@ impl<'a> Resolver<'a> {
                         if unsafe { &*lookup.entry }.abs_path.is_empty() {
                             let parts = [dir_info.abs_path, &base[..]];
                             let out_buf_ = self.fs_ref().abs_buf(&parts, bufs!(index));
+                            // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
+                            // evaluated before LHS `&mut Entry` is materialized.
                             unsafe { &mut *lookup.entry }.abs_path =
                                 PathString::init(self.fs_ref().dirname_store.append_slice(out_buf_).expect("unreachable"));
                         }
@@ -8258,9 +8260,9 @@ impl<'a> Resolver<'a> {
                 let abs_path: &'static [u8] = {
                     if unsafe { &*query.entry }.abs_path.is_empty() {
                         let abs_path_parts = [unsafe { &*query.entry }.dir, unsafe { &*query.entry }.base()];
-                        // PORT NOTE: split into two statements so the two `&mut FileSystem`
-                        // borrows from `unsafe { &mut *self.fs() }` don't overlap (Stacked Borrows).
                         let joined = self.fs_ref().abs_buf(&abs_path_parts, bufs!(load_as_file));
+                        // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
+                        // evaluated before LHS `&mut Entry` is materialized.
                         unsafe { &mut *query.entry }.abs_path = PathString::init(
                             self.fs_ref().dirname_store.append_slice(joined).expect("unreachable"),
                         );

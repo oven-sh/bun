@@ -469,18 +469,20 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     }
 
     const BUF1_LEN: usize = w::PATH_MAX_WIDE + 3; // + "\"\" ".len
-    let mut buf1: [u16; BUF1_LEN] = unsafe { MaybeUninit::uninit().assume_init() };
-    // SAFETY: stack buffer; uninitialized contents are never read before being written.
-    let mut buf2: [u16; BUF2_U16_LEN] = unsafe { MaybeUninit::uninit().assume_init() };
-    // SAFETY: same as above.
+    // Keep storage as MaybeUninit — calling `assume_init()` on an uninitialized integer array
+    // is immediate UB in Rust. All access goes through the raw pointers derived below.
+    let mut buf1 = MaybeUninit::<[u16; BUF1_LEN]>::uninit();
+    let mut buf2 = MaybeUninit::<[u16; BUF2_U16_LEN]>::uninit();
 
     // TODO(port): the Zig source slices these as `[comptime buf1.len..]` on a `[*]T` cast,
     // whose semantics are unclear; from usage they are base-of-buffer raw pointers.
-    let buf1_u8: *mut u8 = buf1.as_mut_ptr().cast::<u8>();
-    let buf1_u16: *mut u16 = buf1.as_mut_ptr();
+    // Derive each view from a single `as_mut_ptr()` call so the raw pointers share one
+    // borrow tag (a second `as_mut_ptr()` would invalidate the first under Stacked Borrows).
+    let buf1_u16: *mut u16 = buf1.as_mut_ptr().cast::<u16>();
+    let buf1_u8: *mut u8 = buf1_u16.cast::<u8>();
 
-    let buf2_u8: *mut u8 = buf2.as_mut_ptr().cast::<u8>();
-    let buf2_u16: *mut u16 = buf2.as_mut_ptr();
+    let buf2_u16: *mut u16 = buf2.as_mut_ptr().cast::<u16>();
+    let buf2_u8: *mut u8 = buf2_u16.cast::<u8>();
 
     // The NT prefix is not needed for non-standalone, as we only need this
     // for reading the metadata file which is skipped in non-standalone.
@@ -548,8 +550,8 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             Buffer: buf1_u16,
         };
         if DBG {
-            debug!("NtCreateFile({})", fmt16(unicode_string_to_u16(nt_name)));
-            debug!("NtCreateFile({})", fmt16(unicode_string_to_u16(nt_name)));
+            debug!("NtCreateFile({})", fmt16(unsafe { unicode_string_to_u16(&nt_name) }));
+            debug!("NtCreateFile({})", fmt16(unsafe { unicode_string_to_u16(&nt_name) }));
         }
         let mut attr = w::OBJECT_ATTRIBUTES {
             Length: size_of::<w::OBJECT_ATTRIBUTES>() as u32,
@@ -562,8 +564,8 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         // NtCreateFile will fail for absolute paths if we do not pass an OBJECT name
         // so we need the prefix here. This is an extra sanity check.
         if DBG {
-            debug_assert!(unicode_string_to_u16(nt_name).starts_with(&NT_OBJECT_PREFIX));
-            debug_assert!(unicode_string_to_u16(nt_name).ends_with(bun_str::w!(".bunx")));
+            debug_assert!(unsafe { unicode_string_to_u16(&nt_name) }.starts_with(&NT_OBJECT_PREFIX));
+            debug_assert!(unsafe { unicode_string_to_u16(&nt_name) }.ends_with(bun_str::w!(".bunx")));
         }
         // SAFETY: all out-pointers are valid stack locations; attr is fully initialized.
         let rc = unsafe {
@@ -782,7 +784,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
 
     // SAFETY: read_len >= sizeof(Flags) for any valid .bunx; if not, the unaligned read below
     // will read garbage and `is_valid()` will reject it.
-    read_ptr = ((read_ptr as usize) + read_len - size_of::<Flags>()) as *mut u16;
+    read_ptr = read_ptr.cast::<u8>().wrapping_add(read_len).wrapping_sub(size_of::<Flags>()).cast::<u16>();
     // SAFETY: Flags is a packed u16; read_ptr is within buf1.
     let flags: Flags = unsafe { read_ptr.cast::<Flags>().read_unaligned() };
 
@@ -834,7 +836,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             //
             // BUF1: '\??"C:\Users\chloe\project\node_modules\my-cli\src\app.js" --flag!!!!!'
             let argument_start_ptr: *mut u8 =
-                ((read_ptr as usize) - 2 * 1 /* "\x00".len */) as *mut u8;
+                read_ptr.cast::<u8>().wrapping_sub(2 * 1 /* "\x00".len */);
             if !user_arguments_u8.is_empty() {
                 // SAFETY: argument_start_ptr is within buf1 with room for user_arguments_u8.
                 unsafe {
@@ -873,7 +875,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
 
             // BUF1: '\??\C:\Users\chloe\project\node_modules\my-cli\src\app.js"#node #####!!!!!!!!!!'
             //                                                                        ^ new read_ptr
-            read_ptr = ((read_ptr as usize) - size_of::<ShebangMetadataPacked>()) as *mut u16;
+            read_ptr = read_ptr.cast::<u8>().wrapping_sub(size_of::<ShebangMetadataPacked>()).cast::<u16>();
             // SAFETY: read_ptr is within buf1; ShebangMetadataPacked is 8 bytes packed.
             let shebang_metadata: ShebangMetadataPacked =
                 unsafe { read_ptr.cast::<ShebangMetadataPacked>().read_unaligned() };
@@ -939,7 +941,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             //                                                                   ^~~~^
             //                                                                   ^ read_ptr
             // BUF2: 'node !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!'
-            read_ptr = ((read_ptr as usize) - shebang_arg_len_u8 as usize) as *mut u16;
+            read_ptr = read_ptr.cast::<u8>().wrapping_sub(shebang_arg_len_u8 as usize).cast::<u16>();
             // SAFETY: copying shebang_arg_len_u8 bytes from buf1 into buf2; both in bounds.
             unsafe {
                 core::ptr::copy_nonoverlapping(
@@ -1010,7 +1012,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                 );
             }
             let advance = shebang_arg_len_u8 as usize + 2 * 1 /* "\"".len */ + length_of_filename_u8;
-            let mut write_ptr: *mut u16 = ((buf2_u8 as usize) + advance) as *mut u16;
+            let mut write_ptr: *mut u16 = buf2_u8.wrapping_add(advance).cast::<u16>();
             // The quote was already validated above, this is just a sanity check in debug mode
             if DBG {
                 debug_assert!(unsafe { *write_ptr.sub(1) } == '"' as u16);
@@ -1031,7 +1033,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                         user_arguments_u8.len(),
                     );
                 }
-                write_ptr = ((write_ptr as usize) + user_arguments_u8.len()) as *mut u16;
+                write_ptr = write_ptr.cast::<u8>().wrapping_add(user_arguments_u8.len()).cast::<u16>();
             }
 
             // BUF2: 'node "C:\Users\chloe\project\node_modules\my-cli\src\app.js" --flags#!!!!!!!!!!'

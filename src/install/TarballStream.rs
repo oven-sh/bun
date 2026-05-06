@@ -270,39 +270,46 @@ impl TarballStream {
     /// Pull whatever compressed bytes are available into libarchive, writing
     /// entries to disk, until libarchive reports `ARCHIVE_RETRY` (out of
     /// input — yield) or a terminal state (EOF / error — finish).
-    fn drain(&mut self) {
+    ///
+    /// # Safety
+    /// `this` must be the live pointer returned by `init()`. Runs on a
+    /// worker thread; the HTTP thread may concurrently call `on_chunk()`
+    /// touching the mutex-guarded producer fields, so this never holds a
+    /// `&mut TarballStream` across those accesses. May free `*this` (via
+    /// `finish`) — caller must not touch `this` after return.
+    unsafe fn drain(this: *mut Self) {
         Output::Source::configure_thread();
 
         loop {
-            if self.fail.is_none() && self.phase != Phase::Done {
+            if (*this).fail.is_none() && (*this).phase != Phase::Done {
                 // Only pull bytes into `reading` while libarchive is still
                 // going to consume them. After EOF/failure `step()` is
                 // never called again, so appending here would let
                 // `reading` grow by one HTTP chunk per wakeup for the
                 // remainder of the download.
-                let more = self.take_pending();
+                let more = Self::take_pending(this);
 
-                if let Err(err) = self.step() {
-                    self.fail = Some(err);
-                    self.close_output_file();
+                if let Err(err) = (*this).step() {
+                    (*this).fail = Some(err);
+                    (*this).close_output_file();
                 }
 
-                if self.fail.is_none() && self.phase != Phase::Done {
+                if (*this).fail.is_none() && (*this).phase != Phase::Done {
                     if more {
                         continue;
                     }
                     // libarchive consumed everything we had. Yield the
                     // worker until the HTTP thread delivers the next
                     // chunk.
-                    self.draining.store(false, Ordering::Release);
+                    (*this).draining.store(false, Ordering::Release);
                     // Close the race between clearing `draining` and a
                     // chunk arriving: if `pending` is non-empty now, try
                     // to reclaim the flag ourselves instead of waiting
                     // for the next schedule.
-                    self.mutex.lock();
-                    let again = !self.pending.is_empty() || self.closed;
-                    self.mutex.unlock();
-                    if again && !self.draining.swap(true, Ordering::AcqRel) {
+                    (*this).mutex.lock();
+                    let again = !(*this).pending.is_empty() || (*this).closed;
+                    (*this).mutex.unlock();
+                    if again && !(*this).draining.swap(true, Ordering::AcqRel) {
                         continue;
                     }
                     return;
@@ -314,48 +321,49 @@ impl TarballStream {
             // now rather than carrying its capacity until `finish()`.
             // `reading` is drain-local (only the read callback touches
             // it, and that runs inside `step()`), so this needs no lock.
-            self.reading = Vec::new();
-            self.read_pos = 0;
+            (*this).reading = Vec::new();
+            (*this).read_pos = 0;
 
-            self.mutex.lock();
+            (*this).mutex.lock();
             // Hash any bytes that arrived after libarchive hit
             // end-of-archive so the integrity digest covers the full
             // response (tar zero-padding, gzip footer). Skip this once
             // an error is recorded — the digest won't be checked anyway.
-            if self.fail.is_none() && !self.pending.is_empty() {
-                self.hasher.update(&self.pending);
+            if (*this).fail.is_none() && !(*this).pending.is_empty() {
+                (*this).hasher.update(&(*this).pending);
             }
             // After EOF/failure we stop feeding libarchive but must keep
             // consuming (and discarding) chunks until the HTTP thread
             // closes the stream; freeing ourselves earlier would let the
             // next `notify` dereference a dead pointer.
-            self.pending.clear();
-            let closed = self.closed;
-            let http_err = self.http_err;
-            self.mutex.unlock();
+            (*this).pending.clear();
+            let closed = (*this).closed;
+            let http_err = (*this).http_err;
+            (*this).mutex.unlock();
             // A transport error that arrives *after* libarchive reached
             // EOF (e.g. the server RSTs the connection once the last
             // byte is on the wire) must not override a successful
             // extraction; the integrity check in `populate_result()` is
             // the sole arbiter of correctness once `Done` is reached.
             if let Some(e) = http_err {
-                if self.fail.is_none() && self.phase != Phase::Done {
-                    self.fail = Some(e);
+                if (*this).fail.is_none() && (*this).phase != Phase::Done {
+                    (*this).fail = Some(e);
                 }
             }
             if closed {
-                self.finish();
+                Self::finish(this);
+                // `this` is freed; nothing below may touch it.
                 return;
             }
 
             // Archive is done (or failed) but the HTTP response has not
             // finished yet. Yield; the next `on_chunk` will reschedule us
             // to discard the new bytes and eventually observe `closed`.
-            self.draining.store(false, Ordering::Release);
-            self.mutex.lock();
-            let again = !self.pending.is_empty() || self.closed;
-            self.mutex.unlock();
-            if again && !self.draining.swap(true, Ordering::AcqRel) {
+            (*this).draining.store(false, Ordering::Release);
+            (*this).mutex.lock();
+            let again = !(*this).pending.is_empty() || (*this).closed;
+            (*this).mutex.unlock();
+            if again && !(*this).draining.swap(true, Ordering::AcqRel) {
                 continue;
             }
             return;

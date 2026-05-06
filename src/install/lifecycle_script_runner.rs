@@ -545,57 +545,60 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         {
             if let Some(stdout) = spawned.stdout {
                 if !spawned.memfds[1] {
-                    self.stdout.set_parent(self);
+                    (*this).stdout.set_parent(this);
                     let _ = bun_sys::set_nonblocking(stdout);
-                    self.remaining_fds += 1;
+                    (*this).remaining_fds += 1;
 
-                    Self::reset_output_flags(&mut self.stdout, stdout);
-                    self.stdout.start(stdout, true)?;
-                    if let Some(poll) = self.stdout.handle.get_poll() {
+                    Self::reset_output_flags(&mut (*this).stdout, stdout);
+                    (*this).stdout.start(stdout, true)?;
+                    if let Some(poll) = (*this).stdout.handle.get_poll() {
                         poll.flags.insert(bun_aio::PollFlag::Socket);
                     }
                 } else {
-                    self.stdout.set_parent(self);
-                    self.stdout.start_memfd(stdout);
+                    (*this).stdout.set_parent(this);
+                    (*this).stdout.start_memfd(stdout);
                 }
             }
             if let Some(stderr) = spawned.stderr {
                 if !spawned.memfds[2] {
-                    self.stderr.set_parent(self);
+                    (*this).stderr.set_parent(this);
                     let _ = bun_sys::set_nonblocking(stderr);
-                    self.remaining_fds += 1;
+                    (*this).remaining_fds += 1;
 
-                    Self::reset_output_flags(&mut self.stderr, stderr);
-                    self.stderr.start(stderr, true)?;
-                    if let Some(poll) = self.stderr.handle.get_poll() {
+                    Self::reset_output_flags(&mut (*this).stderr, stderr);
+                    (*this).stderr.start(stderr, true)?;
+                    if let Some(poll) = (*this).stderr.handle.get_poll() {
                         poll.flags.insert(bun_aio::PollFlag::Socket);
                     }
                 } else {
-                    self.stderr.set_parent(self);
-                    self.stderr.start_memfd(stderr);
+                    (*this).stderr.set_parent(this);
+                    (*this).stderr.start_memfd(stderr);
                 }
             }
         }
         #[cfg(windows)]
         {
             if matches!(spawned.stdout, bun_spawn::Stdio::Buffer { .. }) {
-                self.stdout.parent = self;
-                self.remaining_fds += 1;
-                self.stdout.start_with_current_pipe()?;
+                (*this).stdout.parent = this;
+                (*this).remaining_fds += 1;
+                (*this).stdout.start_with_current_pipe()?;
             }
             if matches!(spawned.stderr, bun_spawn::Stdio::Buffer { .. }) {
-                self.stderr.parent = self;
-                self.remaining_fds += 1;
-                self.stderr.start_with_current_pipe()?;
+                (*this).stderr.parent = this;
+                (*this).remaining_fds += 1;
+                (*this).stderr.start_with_current_pipe()?;
             }
         }
 
-        let event_loop = &self.manager.event_loop;
+        let event_loop = &(*this).manager.event_loop;
         let process = spawned.to_process(event_loop, false);
 
-        bun_core::assertf!(self.process.is_none(), "forgot to call `resetPolls`");
-        self.process = Some(process.clone());
-        process.set_exit_handler(self);
+        bun_core::assertf!((*this).process.is_none(), "forgot to call `resetPolls`");
+        (*this).process = Some(process.clone());
+        // Store the allocation-rooted `this` as the exit-handler owner. We hold no
+        // live `&mut Self` here, so the synchronous `on_exit` dispatch below may
+        // reenter `on_process_exit` through `this` without aliasing.
+        process.set_exit_handler(this);
 
         match process.watch_or_reap() {
             bun_sys::Result::Err(err) => {
@@ -752,9 +755,16 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 {
                     if self.scripts.items[new_script_index].is_some() {
                         self.reset_polls();
-                        if let Err(err) = self
-                            .spawn_next_script(u8::try_from(new_script_index).unwrap())
-                        {
+                        // SAFETY: `self` was created by `Self::new` (Box::into_raw) and is
+                        // uniquely owned here; we do not touch `self` again on the
+                        // success path before `return`, so the stored backrefs derived
+                        // from this pointer are not invalidated by a later reborrow.
+                        if let Err(err) = unsafe {
+                            Self::spawn_next_script(
+                                self as *mut Self,
+                                u8::try_from(new_script_index).unwrap(),
+                            )
+                        } {
                             Output::err_generic(format_args!(
                                 "Failed to run script <b>{}<r> due to error <b>{}<r>",
                                 bstr::BStr::new(Lockfile::Scripts::NAMES[new_script_index]),

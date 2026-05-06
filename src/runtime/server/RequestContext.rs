@@ -3493,31 +3493,39 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
     }
 }
 
- // TODO(b2-blocked): FetchHeaders::fast_get + MimeType::init/sniff/by_name.
 fn get_content_type(
     headers: Option<&FetchHeaders>,
     blob: &AnyBlob,
-) -> (bun_http_types::MimeType::MimeType, bool, bool) {
+) -> (MimeType, bool, bool) {
     let mut needs_content_type = true;
     let mut content_type_needs_free = false;
 
     let content_type: MimeType = 'brk: {
         if let Some(headers_) = headers {
-            if let Some(content) = headers_.fast_get(jsc::HTTPHeaderName::ContentType) {
+            // SAFETY: `fast_get` is logically const (reads a header into an
+            // out-param via FFI); the `&mut self` receiver is over-broad. The
+            // single caller holds an exclusive borrow on the owning `Response`.
+            let headers_mut = unsafe { &mut *(headers_ as *const FetchHeaders as *mut FetchHeaders) };
+            if let Some(content) = headers_mut.fast_get(jsc::HTTPHeaderName::ContentType) {
                 needs_content_type = false;
 
                 let content_slice = content.to_slice();
-                // TODO(port): Zig passes allocator iff the slice was heap-allocated; here
-                // MimeType::init takes ownership of a clone when needed and reports via the flag.
-                let mt = MimeType::init(content_slice.slice(), &mut content_type_needs_free);
+                // Zig: `if (content_slice.allocator.isNull()) null else allocator` —
+                // i.e. dupe only when the latin1/utf16 slice was heap-converted.
+                let dupe = content_slice.is_allocated();
+                let mt = MimeType::init(
+                    content_slice.slice(),
+                    dupe,
+                    Some(&mut content_type_needs_free),
+                );
                 drop(content_slice);
                 break 'brk mt;
             }
         }
 
         if !blob.content_type().is_empty() {
-            MimeType::by_name(blob.content_type())
-        } else if let Some(content) = MimeType::sniff(blob.slice()) {
+            bun_http_types::MimeType::by_name(blob.content_type())
+        } else if let Some(content) = bun_http_types::MimeType::sniff(blob.slice()) {
             content
         } else if blob.was_string() {
             bun_http_types::MimeType::TEXT
@@ -3529,16 +3537,6 @@ fn get_content_type(
     };
 
     (content_type, needs_content_type, content_type_needs_free)
-}
-
-// Active stub used while the real body above remains gated on
-// `FetchHeaders::fast_get` returning the right slice type and the
-// 3-arg `MimeType::init` shape.
-fn get_content_type(
-    _headers: Option<&FetchHeaders>,
-    _blob: &AnyBlob,
-) -> (MimeType, bool, bool) {
-    todo!("blocked_on: FetchHeaders::fast_get / MimeType::init signature")
 }
 
 // `ServerLike` lives in `crate::server` (mod.rs) and is impl'd for the four

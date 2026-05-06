@@ -634,6 +634,7 @@ unsafe extern "C" {
     pub fn SSL_set0_verify_cert_store(ssl: *mut SSL, store: *mut X509_STORE) -> c_int;
     pub fn SSL_set_renegotiate_mode(ssl: *mut SSL, mode: ssl_renegotiate_mode_t);
     pub fn SSL_renegotiate(ssl: *mut SSL) -> c_int;
+    pub fn SSL_get_servername(ssl: *const SSL, ty: c_int) -> *const c_char;
 
     // ── BIO ──────────────────────────────────────────────────────────────
     pub fn BIO_new(method: *const BIO_METHOD) -> *mut BIO;

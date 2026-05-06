@@ -1144,25 +1144,52 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         // had no u16 variant either — Path.zig `relative` calls `relativeBufZ`
         // unconditionally, which would compile-error on a u16 instantiation
         // (Zig's lazy eval hides that). Rust monomorphizes eagerly, so we
-        // TypeId-dispatch: u8 → identity-cast and call; u16 → panic (matches
-        // Zig's effective behavior). TODO(port): width-generic
-        // `relative_buf_z_t<C>` if a u16 caller ever materializes.
+        // TypeId-dispatch: u8 → identity-cast and call; u16 → transcode through
+        // temp u8 buffers and back. TODO(port): width-generic
+        // `relative_buf_z_t<C>` if u16 callers turn out to be hot.
         use core::any::TypeId;
-        if TypeId::of::<U>() != TypeId::of::<u8>() {
-            unimplemented!("Path::relative is u8-only (no u16 relativeBufZ in Zig either)");
-        }
-
         let mut output: RelPath<U, SEP_OPT, CHECK> = Path::init();
-        // SAFETY: TypeId check above proves U == u8; identity slice casts.
-        let pooled: &mut [u8] =
-            unsafe { core::mem::transmute(U::buffer_as_mut_slice(&mut output._buf.pooled)) };
-        // SAFETY: TypeId check above proves U == u8; identity slice cast.
-        let from_u8: &[u8] = unsafe { core::mem::transmute(self.slice()) };
-        // SAFETY: TypeId check above proves U == u8; identity slice cast.
-        let to_u8: &[u8] = unsafe { core::mem::transmute(to.slice()) };
-        let rel = path::relative_buf_z(pooled, from_u8, to_u8);
-        let trimmed = trim_input(TrimInputKind::Rel, rel.as_bytes());
-        output._buf.len = trimmed.len();
+
+        if TypeId::of::<U>() == TypeId::of::<u8>() {
+            // SAFETY: TypeId check above proves U == u8; identity slice casts.
+            let pooled: &mut [u8] =
+                unsafe { core::mem::transmute(U::buffer_as_mut_slice(&mut output._buf.pooled)) };
+            // SAFETY: TypeId check above proves U == u8; identity slice cast.
+            let from_u8: &[u8] = unsafe { core::mem::transmute(self.slice()) };
+            // SAFETY: TypeId check above proves U == u8; identity slice cast.
+            let to_u8: &[u8] = unsafe { core::mem::transmute(to.slice()) };
+            let rel = path::relative_buf_z(pooled, from_u8, to_u8);
+            let trimmed = trim_input(TrimInputKind::Rel, rel.as_bytes());
+            output._buf.len = trimmed.len();
+        } else {
+            // U == u16: transcode from/to → u8 scratch buffers, compute the
+            // relative path in u8-space, then transcode back into the u16
+            // output buffer. Mirrors the cross-width arms in `append_join`.
+            // PERF(port): three pooled buffers + two transcodes — profile in
+            // Phase B; only ever reached on Windows wide-path callers.
+            // SAFETY: PathUnit is sealed to {u8, u16}; not-u8 ⇒ u16; identity slice casts.
+            let from_u16: &[u16] = unsafe { core::mem::transmute(self.slice()) };
+            // SAFETY: PathUnit is sealed to {u8, u16}; not-u8 ⇒ u16; identity slice cast.
+            let to_u16: &[u16] = unsafe { core::mem::transmute(to.slice()) };
+
+            let mut from_buf = crate::path_buffer_pool::get();
+            let mut to_buf = crate::path_buffer_pool::get();
+            let mut rel_buf = crate::path_buffer_pool::get();
+
+            let from_u8 = strings::convert_utf16_to_utf8_in_buffer(&mut from_buf[..], from_u16)
+                .expect("unreachable");
+            let to_u8 = strings::convert_utf16_to_utf8_in_buffer(&mut to_buf[..], to_u16)
+                .expect("unreachable");
+
+            let rel = path::relative_buf_z(&mut rel_buf[..], from_u8, to_u8);
+            let trimmed = trim_input(TrimInputKind::Rel, rel.as_bytes());
+
+            // SAFETY: PathUnit is sealed to {u8, u16}; not-u8 ⇒ u16; identity slice cast.
+            let pooled: &mut [u16] =
+                unsafe { core::mem::transmute(U::buffer_as_mut_slice(&mut output._buf.pooled)) };
+            let converted = strings::convert_utf8_to_utf16_in_buffer(pooled, trimmed);
+            output._buf.len = converted.len();
+        }
         output
     }
 

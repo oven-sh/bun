@@ -39,8 +39,9 @@ describe.skipIf(!isLinux)("Bun.file() with extreme mtime", () => {
 
         // fs.fstatSync with bigint: true goes through a separate ms
         // conversion (Stat.zig toTimeMS) that had the same overflow.
+        // 1e19 ms clamps to maxInt(i64).
         const st = fs.fstatSync(fd, { bigint: true });
-        expect(typeof st.mtimeMs).toBe("bigint");
+        expect(st.mtimeMs).toBe(9223372036854775807n);
       } finally {
         fs.closeSync(fd);
       }

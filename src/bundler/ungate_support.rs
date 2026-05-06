@@ -171,10 +171,6 @@ pub mod bun_css {
             Ok(())
         }
     }
-    #[cfg(not(feature = "css"))]
-    pub struct PrinterOptions;
-    #[cfg(not(feature = "css"))]
-    pub struct Printer;
 }
 
 // ──────────────────────────────────────────────────────────────────────────

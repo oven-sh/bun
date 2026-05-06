@@ -97,6 +97,18 @@ impl Stmt {
     }
 }
 
+impl Default for Stmt {
+    /// Zig: `nullStmtData = Stmt.Data{ .s_empty = s_missing }` (P.zig) — used to
+    /// zero-init `loop_body` and bulk-fill stmt slices before population.
+    #[inline]
+    fn default() -> Self {
+        Stmt {
+            data: Data::SEmpty(NONE),
+            loc: logger::Loc::default(),
+        }
+    }
+}
+
 const NONE: S::Empty = S::Empty {};
 
 // PORT NOTE: Zig `pub var icount: usize = 0;` is a plain mutable global (not

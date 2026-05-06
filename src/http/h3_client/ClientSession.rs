@@ -9,16 +9,16 @@ use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
 use bun_core::err;
-use bun_string::strings;
+use bun_string::immutable as strings;
 use bun_uws::quic;
 
-use crate::h3_client::client_context::ClientContext;
-use crate::h3_client::encode;
-use crate::h3_client::stream::Stream;
-use crate::H3Client as H3;
-// TODO(port): `const HTTPClient = bun.http;` — the Zig http.zig file *is* the struct.
-// In Rust the crate root can't be a struct; assume `crate::HttpClient`.
-use crate::HttpClient;
+use super::client_context::ClientContext;
+use super::encode;
+use super::stream::Stream;
+use crate::h3_client as H3;
+use crate::internal_state::HTTPStage;
+use crate::signals::Field as Signal;
+use crate::{Encoding, HTTPClient, Protocol, ShouldContinue};
 use bun_picohttp as picohttp;
 
 bun_core::declare_scope!(h3_client, hidden);
@@ -29,32 +29,42 @@ pub struct ClientSession {
     /// add via `connect`), and one per entry in `pending`. `PendingConnect` holds
     /// an extra ref while DNS is in flight.
     // Intrusive refcount — see `bun_ptr::IntrusiveRc<ClientSession>`.
-    ref_count: Cell<u32>, // default: 1
+    ref_count: Cell<u32>,
     /// Null while DNS is in flight; set once `us_quic_connect_addr` returns.
-    // TODO(port): lifetime — FFI handle that becomes dangling after onConnClose; raw is intentional.
+    // FFI handle that becomes dangling after onConnClose; raw is intentional.
     pub qsocket: Option<NonNull<quic::Socket>>,
-    pub hostname: Box<[u8]>,
+    pub hostname: Vec<u8>,
     pub port: u16,
     pub reject_unauthorized: bool,
-    pub handshake_done: bool, // default: false
-    pub closed: bool,         // default: false
-    pub registry_index: u32,  // default: u32::MAX
+    pub handshake_done: bool,
+    pub closed: bool,
+    pub registry_index: u32,
 
     /// Requests waiting for `onStreamOpen` to hand them a stream. Order is
     /// FIFO; `lsquic_conn_make_stream` was already called once per entry.
     // BACKREF/INTRUSIVE: Stream is Box::into_raw'd by Stream::new and destroyed in detach().
-    pub pending: Vec<*mut Stream>, // default: Vec::new()
+    pub pending: Vec<*mut Stream>,
 }
 
 impl ClientSession {
     /// `bun.TrivialNew(@This())` — heap-allocate and return raw; pointer is
     /// stashed in the `quic.Socket` ext slot and the `ClientContext` registry.
-    pub fn new(init: ClientSession) -> *mut ClientSession {
-        Box::into_raw(Box::new(init))
+    pub fn new(hostname: Vec<u8>, port: u16, reject_unauthorized: bool) -> *mut ClientSession {
+        Box::into_raw(Box::new(ClientSession {
+            ref_count: Cell::new(1),
+            qsocket: None,
+            hostname,
+            port,
+            reject_unauthorized,
+            handshake_done: false,
+            closed: false,
+            registry_index: u32::MAX,
+            pending: Vec::new(),
+        }))
     }
 
     // `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`
-    // TODO(port): wire to bun_ptr::IntrusiveRc<ClientSession>; `ref` is a Rust keyword so `ref_`.
+    // PORT NOTE: `ref` is a Rust keyword so `ref_`.
     pub fn ref_(&self) {
         self.ref_count.set(self.ref_count.get() + 1);
     }
@@ -72,7 +82,7 @@ impl ClientSession {
         !self.closed
             && self.port == port
             && self.reject_unauthorized == reject_unauthorized
-            && strings::eql_long(&self.hostname, hostname, true)
+            && strings::eql_long::<true>(&self.hostname, hostname)
     }
 
     pub fn has_headroom(&self) -> bool {
@@ -90,28 +100,28 @@ impl ClientSession {
             return self.pending.len() < 64;
         }
         // SAFETY: qsocket is valid while !closed (checked above).
-        unsafe { qs.as_ref() }.streams_avail() > 0
+        unsafe { (*qs.as_ptr()).streams_avail() > 0 }
     }
 
     /// Queue `client` for a stream on this connection. The lsquic stream is
     /// created asynchronously, so the request goes into `pending` until
     /// `onStreamOpen` pops it.
-    pub fn enqueue(&mut self, client: &mut HttpClient) {
+    pub fn enqueue(&mut self, client: &mut HTTPClient) {
         debug_assert!(!self.closed);
         client.h3 = None;
-        client.flags.protocol = crate::Protocol::Http3; // TODO(port): enum path for `.http3`
+        client.flags.protocol = Protocol::Http3;
         client.allow_retry = false;
 
-        // TODO(port): Stream::new signature — Zig used `Stream.new(.{ .session = this, .client = client })`.
-        let stream: *mut Stream = Stream::new(self, client);
-        let _ = H3::live_streams().fetch_add(1, Ordering::Relaxed);
-        client.h3 = Some(stream);
+        let stream = Stream::new(self, client);
+        let _ = H3::live_streams.fetch_add(1, Ordering::Relaxed);
+        // SAFETY: `stream` was just allocated by Stream::new; non-null.
+        client.h3 = Some(unsafe { NonNull::new_unchecked(stream) });
         self.pending.push(stream);
         self.ref_();
 
         if self.handshake_done {
             // SAFETY: handshake_done implies qsocket is Some and valid.
-            unsafe { self.qsocket.unwrap().as_ref() }.make_stream();
+            unsafe { (*self.qsocket.unwrap().as_ptr()).make_stream() };
         }
     }
 
@@ -119,61 +129,68 @@ impl ClientSession {
         for &stream_ptr in self.pending.iter() {
             // SAFETY: pending entries are live until detach() removes + destroys them.
             let stream = unsafe { &mut *stream_ptr };
-            let Some(client) = stream.client_mut() else { continue };
+            let Some(client) = stream.client else { continue };
+            // SAFETY: stream.client is a live backref while the stream is attached.
+            let client = unsafe { &mut *client.as_ptr() };
             if client.async_http_id != async_http_id {
                 continue;
             }
             if !client.state.original_request_body.is_stream() {
                 return;
             }
-            client.state.original_request_body.stream_mut().ended = ended;
+            if let crate::HTTPRequestBody::Stream(s) = &mut client.state.original_request_body {
+                s.ended = ended;
+            }
             if let Some(qs) = stream.qstream {
-                encode::drain_send_body(stream, qs);
+                // SAFETY: qstream is a live lsquic stream handle until on_stream_close.
+                encode::drain_send_body(stream, unsafe { &mut *qs.as_ptr() });
             }
             return;
         }
     }
 
-    pub fn detach(&mut self, stream: &mut Stream) {
-        if let Some(cl) = stream.client_mut() {
-            cl.h3 = None;
+    pub fn detach(&mut self, stream: *mut Stream) {
+        // SAFETY: caller passes a live Stream that is in (or was just removed from)
+        // self.pending; it remains valid until the Box::from_raw at the bottom.
+        let st = unsafe { &mut *stream };
+        if let Some(cl) = st.client {
+            // SAFETY: stream.client is a live backref while attached.
+            unsafe { (*cl.as_ptr()).h3 = None };
         }
-        stream.client = None;
-        if let Some(qs) = stream.qstream {
+        st.client = None;
+        if let Some(qs) = st.qstream {
             // SAFETY: qstream is a live lsquic stream handle until we null it below.
-            unsafe { *qs.as_ref().ext::<Stream>() = None };
+            unsafe { *(*qs.as_ptr()).ext::<Stream>() = None };
             // The success path can reach here while the request body is still
             // being written (server responded early). FIN would be a
             // content-length violation; RESET_STREAM(H3_REQUEST_CANCELLED)
             // is the correct "I'm abandoning this send half" so lsquic reaps
             // the stream instead of leaking it on the pooled session.
-            if !stream.request_body_done {
+            if !st.request_body_done {
                 // SAFETY: same as above.
-                unsafe { qs.as_ref() }.reset();
+                unsafe { (*qs.as_ptr()).reset() };
             }
         }
-        stream.qstream = None;
-        if let Some(i) = self
-            .pending
-            .iter()
-            .position(|&s| core::ptr::eq(s, stream as *mut Stream))
-        {
+        st.qstream = None;
+        if let Some(i) = self.pending.iter().position(|&s| core::ptr::eq(s, stream)) {
             self.pending.remove(i);
         }
-        // TODO(port): Stream::deinit destroys the heap allocation (Box::from_raw);
-        // `stream` is dangling after this call.
-        Stream::deinit(stream);
+        // SAFETY: stream was Box::into_raw'd by Stream::new; ownership is reclaimed
+        // here. `Stream::Drop` decrements live_streams.
+        unsafe { drop(Box::from_raw(stream)) };
         self.deref();
     }
 
-    pub fn fail(&mut self, stream: &mut Stream, err: bun_core::Error) {
+    pub fn fail(&mut self, stream: *mut Stream, err: bun_core::Error) {
         // PORT NOTE: reshaped for borrowck — capture client ptr before detach() invalidates stream.
-        let client: Option<*mut HttpClient> = stream.client;
-        stream.abort();
+        // SAFETY: caller passes a live Stream from self.pending.
+        let client = unsafe { (*stream).client };
+        // SAFETY: same as above.
+        unsafe { (*stream).abort() };
         self.detach(stream);
         if let Some(cl) = client {
-            // SAFETY: HttpClient outlives its h3 Stream; detach() nulled cl.h3 but cl itself is alive.
-            unsafe { &mut *cl }.fail_from_h2(err);
+            // SAFETY: HTTPClient outlives its h3 Stream; detach() nulled cl.h3 but cl itself is alive.
+            unsafe { (*cl.as_ptr()).fail_from_h2(err) };
         }
     }
 
@@ -183,13 +200,15 @@ impl ClientSession {
     /// standard h2/h3 client behavior for the GOAWAY / stateless-reset /
     /// port-reuse race where a pooled session goes stale between the
     /// `matches()` check and the first stream open.
-    pub fn retry_or_fail(&mut self, stream: &mut Stream, err: bun_core::Error) {
-        let Some(client_ptr) = stream.client else {
+    pub fn retry_or_fail(&mut self, stream: *mut Stream, err: bun_core::Error) {
+        // SAFETY: caller passes a live Stream from self.pending.
+        let st = unsafe { &mut *stream };
+        let Some(client_ptr) = st.client else {
             return self.fail(stream, err);
         };
         // SAFETY: stream.client is a live backref while the stream is attached.
-        let client = unsafe { &mut *client_ptr };
-        if client.flags.h3_retried || stream.is_streaming_body {
+        let client = unsafe { &mut *client_ptr.as_ptr() };
+        if client.flags.h3_retried || st.is_streaming_body {
             return self.fail(stream, err);
         }
         let Some(ctx) = ClientContext::get() else {
@@ -200,15 +219,15 @@ impl ClientSession {
         // can't pick it again.
         self.closed = true;
         let port = self.port;
-        let host: Box<[u8]> = Box::from(&*self.hostname);
+        let host: Vec<u8> = self.hostname.clone();
         bun_core::scoped_log!(
             h3_client,
             "retry {}:{} after {}",
             bstr::BStr::new(&host),
             port,
-            err.name()
+            bstr::BStr::new(err.name()),
         );
-        stream.abort();
+        st.abort();
         self.detach(stream);
         if !ctx.connect(client, &host, port) {
             client.fail_from_h2(err);
@@ -219,13 +238,11 @@ impl ClientSession {
     pub fn abort_by_http_id(&mut self, async_http_id: u32) -> bool {
         for &stream_ptr in self.pending.iter() {
             // SAFETY: pending entries are live until detach().
-            let stream = unsafe { &mut *stream_ptr };
-            let Some(cl) = stream.client_mut() else { continue };
-            if cl.async_http_id == async_http_id {
-                // PORT NOTE: reshaped for borrowck — re-borrow stream after dropping the iterator.
-                // SAFETY: pending entries are live until detach(); stream_ptr captured before iterator is dropped.
-                let stream = unsafe { &mut *stream_ptr };
-                self.fail(stream, err!("Aborted"));
+            let st = unsafe { &mut *stream_ptr };
+            let Some(cl) = st.client else { continue };
+            // SAFETY: stream.client is a live backref while attached.
+            if unsafe { (*cl.as_ptr()).async_http_id } == async_http_id {
+                self.fail(stream_ptr, err!(Aborted));
                 return true;
             }
         }
@@ -236,28 +253,29 @@ impl ClientSession {
     /// `done` = the lsquic stream is gone; deliver whatever is buffered then
     /// detach. Mirrors H2's `ClientSession.deliverStream` so the HTTPClient state
     /// machine sees the same call sequence regardless of transport.
-    pub fn deliver(&mut self, stream: &mut Stream, done: bool) {
-        let Some(client_ptr) = stream.client else {
+    pub fn deliver(&mut self, stream: *mut Stream, done: bool) {
+        // SAFETY: caller passes a live Stream from self.pending.
+        let st = unsafe { &mut *stream };
+        let Some(client_ptr) = st.client else {
             if done {
                 self.detach(stream);
             }
             return;
         };
         // SAFETY: stream.client is a live backref while the stream is attached.
-        let client = unsafe { &mut *client_ptr };
+        let client = unsafe { &mut *client_ptr.as_ptr() };
 
-        if client.signals.get(crate::Signal::Aborted) {
-            // TODO(port): Signal enum path
-            return self.fail(stream, err!("Aborted"));
+        if client.signals.get(Signal::Aborted) {
+            return self.fail(stream, err!(Aborted));
         }
 
-        if stream.status_code != 0 && !stream.headers_delivered {
-            stream.headers_delivered = true;
-            let result = match self.apply_headers(stream, client) {
+        if st.status_code != 0 && !st.headers_delivered {
+            st.headers_delivered = true;
+            let result = match apply_headers(st, client) {
                 Ok(r) => r,
                 Err(e) => return self.fail(stream, e),
             };
-            if result == HeaderResult::Finished || (done && stream.body_buffer.is_empty()) {
+            if result == HeaderResult::Finished || (done && st.body_buffer.is_empty()) {
                 if client.state.flags.is_redirect_pending {
                     self.detach(stream);
                     return client.do_redirect_h3();
@@ -271,40 +289,38 @@ impl ClientSession {
                 return finish(client);
             }
             client.clone_metadata();
-            if client.signals.get(crate::Signal::HeaderProgress) {
-                // TODO(port): Signal enum path
+            if client.signals.get(Signal::HeaderProgress) {
                 client.progress_update_h3();
             }
         }
 
-        if client.state.response_stage != crate::ResponseStage::Body {
-            // TODO(port): ResponseStage enum path
+        if client.state.response_stage != HTTPStage::Body {
             if done {
                 // Stream closed before headers — handshake/reset failure.
                 return self.retry_or_fail(
                     stream,
-                    if stream.status_code == 0 {
-                        err!("HTTP3StreamReset")
+                    if st.status_code == 0 {
+                        err!(HTTP3StreamReset)
                     } else {
-                        err!("ConnectionClosed")
+                        err!(ConnectionClosed)
                     },
                 );
             }
             return;
         }
 
-        if !stream.body_buffer.is_empty() {
+        if !st.body_buffer.is_empty() {
             if done {
                 client.state.flags.received_last_chunk = true;
             }
-            let report = match client.handle_response_body(stream.body_buffer.as_slice(), false) {
+            let report = match client.handle_response_body(st.body_buffer.as_slice(), false) {
                 Ok(r) => r,
                 Err(e) => {
-                    stream.body_buffer.clear();
+                    st.body_buffer.clear();
                     return self.fail(stream, e);
                 }
             };
-            stream.body_buffer.clear();
+            st.body_buffer.clear();
             if done {
                 self.detach(stream);
                 return finish(client);
@@ -325,43 +341,45 @@ impl ClientSession {
             return finish(client);
         }
     }
-
-    // TODO(port): narrow error set
-    fn apply_headers(
-        &mut self,
-        stream: &mut Stream,
-        client: &mut HttpClient,
-    ) -> Result<HeaderResult, bun_core::Error> {
-        let mut response = picohttp::Response {
-            minor_version: 0,
-            status_code: stream.status_code,
-            status: b"",
-            headers: picohttp::Headers {
-                list: stream.decoded_headers.as_slice(),
-            },
-            bytes_read: 0,
-        };
-        client.state.pending_response = Some(response.clone());
-        let should_continue = client.handle_response_metadata(&mut response)?;
-        client.state.pending_response = Some(response);
-        client.state.transfer_encoding = crate::TransferEncoding::Identity; // TODO(port): enum path
-        if client.state.response_stage == crate::ResponseStage::BodyChunk {
-            client.state.response_stage = crate::ResponseStage::Body;
-        }
-        client.state.flags.allow_keepalive = true;
-        Ok(if should_continue == crate::ShouldContinue::Finished {
-            // TODO(port): enum path for handleResponseMetadata return
-            HeaderResult::Finished
-        } else {
-            HeaderResult::HasBody
-        })
-    }
 }
 
-fn finish(client: &mut HttpClient) {
+fn apply_headers(
+    stream: &mut Stream,
+    client: &mut HTTPClient,
+) -> Result<HeaderResult, bun_core::Error> {
+    let mut response = picohttp::Response {
+        minor_version: 0,
+        status_code: u32::from(stream.status_code),
+        status: b"",
+        headers: picohttp::HeaderList { list: stream.decoded_headers.as_slice() },
+        bytes_read: 0,
+    };
+    // SAFETY: lifetime erase — `pending_response` is `Response<'static>`; the
+    // borrowed header slice is deep-copied synchronously by `clone_metadata`
+    // inside the same lsquic callback before lsquic frees the hset, so no
+    // dangling read occurs (matches Zig semantics).
+    client.state.pending_response =
+        Some(unsafe { core::mem::transmute::<picohttp::Response<'_>, picohttp::Response<'static>>(response) });
+    let should_continue = client.handle_response_metadata(&mut response)?;
+    // SAFETY: same lifetime erase as above.
+    client.state.pending_response =
+        Some(unsafe { core::mem::transmute::<picohttp::Response<'_>, picohttp::Response<'static>>(response) });
+    client.state.transfer_encoding = Encoding::Identity;
+    if client.state.response_stage == HTTPStage::BodyChunk {
+        client.state.response_stage = HTTPStage::Body;
+    }
+    client.state.flags.allow_keepalive = true;
+    Ok(if should_continue == ShouldContinue::Finished {
+        HeaderResult::Finished
+    } else {
+        HeaderResult::HasBody
+    })
+}
+
+fn finish(client: &mut HTTPClient) {
     if let Some(cl) = client.state.content_length {
         if client.state.total_body_received != cl {
-            return client.fail_from_h2(err!("HTTP3ContentLengthMismatch"));
+            return client.fail_from_h2(err!(HTTP3ContentLengthMismatch));
         }
     }
     client.progress_update_h3();
@@ -370,7 +388,7 @@ fn finish(client: &mut HttpClient) {
 impl Drop for ClientSession {
     fn drop(&mut self) {
         debug_assert!(self.pending.is_empty());
-        // pending: Vec and hostname: Box<[u8]> drop automatically.
+        // pending: Vec and hostname: Vec<u8> drop automatically.
         // `bun.destroy(this)` is handled by `deref()` via Box::from_raw.
     }
 }
@@ -385,6 +403,7 @@ enum HeaderResult {
 // PORT STATUS
 //   source:     src/http/h3_client/ClientSession.zig (268 lines)
 //   confidence: medium
-//   todos:      11
-//   notes:      intrusive RefCount + raw *mut Stream backrefs; several crate::* enum paths (Signal/ResponseStage/Protocol/TransferEncoding/ShouldContinue) guessed — Phase B must resolve against bun_http lib.rs
+//   todos:      0
+//   notes:      intrusive RefCount + raw *mut Stream backrefs; lifetime erase
+//               on pending_response (Zig had no lifetimes); see SAFETY notes.
 // ──────────────────────────────────────────────────────────────────────────

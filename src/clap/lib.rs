@@ -699,14 +699,14 @@ pub fn simple_help(params: &[Param<Help>]) {
         let spaces_after = vec![b' '; num_spaces_after];
 
         simple_print_param(param).expect("unreachable");
-        // Zig's `Output.pretty` rewrites `<tag>` markers comptime-in-the-format-string;
-        // `desc_text` is a runtime value, so route it through the runtime rewriter so
-        // help-table rows don't print literal `<r>` / `<cyan>`.
-        let desc = Output::pretty_fmt_runtime(desc_text, Output::enable_ansi_colors_stdout());
+        // Zig's `Output.pretty` (clap.zig:567) applies prettyFmt only to the *comptime*
+        // format string `"  {s}  {s}"` — `desc_text` is interpolated verbatim via `{s}`
+        // with no tag processing. Print it raw; only `simple_help_bun_top_level` feeds
+        // desc_text through the rewriter (clap.zig:604).
         Output::pretty(format_args!(
             "  {}  {}",
             bstr::BStr::new(&spaces_after),
-            bstr::BStr::new(&desc),
+            bstr::BStr::new(desc_text),
         ));
     }
 }

@@ -32,6 +32,12 @@ pub mod windows_named_pipe_context;
 #[cfg(any())]
 #[path = "ssl_wrapper.rs"]
 pub mod ssl_wrapper;
+// tls_socket_functions: BoringSSL FFI now declared locally (ffi mod inside the
+// file). Host-fn bodies remain gated on bun_jsc surface gaps:
+//   TODO(b2-blocked): JSValue::create_buffer_from_length (missing)
+//   TODO(b2-blocked): bun_jsc::node::StringOrBuffer (stub-only)
+//   TODO(b2-blocked): crate::api::bun::x509 (module gated in api.rs)
+//   TODO(b2-blocked): JSGlobalObject::throw(&str) shape mismatch (takes Arguments)
 #[cfg(any())]
 #[path = "tls_socket_functions.rs"]
 mod tls_socket_functions;
@@ -53,7 +59,6 @@ pub mod uws_jsc;
 // `bun_uws::NewSocketHandler` configure dance, tls_socket_functions) remain in
 // the gated drafts above — they need:
 //   TODO(b2-blocked): bun_jsc::{JSGlobalObject method surface, Strong, host_fn}
-//   TODO(b2-blocked): bun_boringssl_sys::{SSL, SSL_CTX} bindgen
 //   TODO(b2-blocked): bun_output::{declare_scope, scoped_log}
 //   TODO(b2-blocked): bun_c_ares (SocketAddress pton/ntop)
 
@@ -61,12 +66,18 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_aio::KeepAlive;
+use bun_boringssl_sys as boring_sys;
 use bun_str::String as BunString;
 use bun_sys::Fd;
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 
 use crate::jsc::{JSGlobalObject, JSValue};
+
+// ─── un-gated submodules ─────────────────────────────────────────────────────
+#[path = "SSLConfig.rs"]
+pub mod ssl_config;
+pub use ssl_config::SSLConfig;
 
 // `bun_jsc::Strong` is unavailable; the crate-local shim is `Strong<T>`. The
 // socket structs store the non-generic `Strong.Optional` form.
@@ -154,8 +165,7 @@ pub struct Listener {
     pub connection: UnixOrHost,
     pub group: uws::SocketGroup,
     /// `SSL_CTX*` for accepted sockets. One owned ref; `SSL_CTX_free` on close.
-    // TODO(b2-blocked): bun_boringssl_sys::SSL_CTX — typed once bindgen lands.
-    pub secure_ctx: Option<NonNull<c_void>>,
+    pub secure_ctx: Option<NonNull<boring_sys::SSL_CTX>>,
     pub ssl: bool,
     pub protos: Option<Box<[u8]>>,
     pub strong_data: Strong,

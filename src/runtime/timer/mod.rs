@@ -604,15 +604,39 @@ impl All {
     }
 
     pub fn drain_timers(&mut self, vm: *mut () /* erased *mut VirtualMachine */) {
+        // PORT NOTE (§Forbidden aliased-&mut): spec Timer.zig:346-354 takes
+        // `*All` (raw pointer) because fired handlers re-enter `vm.timer`
+        // (e.g. setInterval reschedule → `vm.timer.update(...)`, `cancel()` →
+        // `vm.timer.remove(...)`). In Rust those re-entrant calls resolve to
+        // `(*runtime_state()).timer.{update,remove}()`, minting a fresh
+        // `&mut All` to this same allocation while the outer `&mut self` is
+        // live → UB under Stacked Borrows. Convert `self` to a raw pointer
+        // up-front and form a *short-lived* `&mut` only around `next()`,
+        // dropping it before `fire()` so no `&mut All` is held across the
+        // re-entrant call (mirroring the raw-ptr pattern in
+        // `TimerObjectInternals::run_immediate_task`).
+        //
+        // TODO(b2): the call-site auto-ref at jsc_hooks.rs (`(*state).timer
+        // .drain_timers(...)`) still creates a `&mut All` for the call frame
+        // itself; switch it to `All::drain_timers(core::ptr::addr_of_mut!(
+        // (*state).timer), vm)` and change this signature to `this: *mut Self`.
+        let this: *mut Self = self;
         let mut now = Timespec { sec: 0, nsec: 0 };
         let mut has_set_now = false;
-        while let Some(t) = self.next(&mut has_set_now, &mut now) {
+        loop {
+            // SAFETY: `this` derived from `&mut self`; short-lived exclusive
+            // borrow scoped to this `next()` call only — dropped before fire().
+            let Some(t) = (unsafe { &mut *this }).next(&mut has_set_now, &mut now) else {
+                break;
+            };
             // PORT NOTE: re-pack into bun_event_loop's local Timespec stub
             // until the lower tier unifies on bun_core::Timespec.
             let el_now = ElTimespec { sec: now.sec, nsec: now.nsec };
             // SAFETY: `t` was just popped from the intrusive heap and is live.
-            // `fire` dispatches through the FIRE_TIMER hook (§Dispatch hot path).
-            unsafe { &mut *t }.fire(&el_now, vm);
+            // `fire` dispatches through the FIRE_TIMER hook (§Dispatch hot
+            // path) and may re-enter `(*runtime_state()).timer` — no `&mut`
+            // to `All` is live here.
+            unsafe { (*t).fire(&el_now, vm) };
         }
     }
 

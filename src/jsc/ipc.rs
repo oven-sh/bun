@@ -2447,6 +2447,14 @@ pub fn ipc_parse(
 // PORT STATUS
 //   source:     src/jsc/ipc.zig (1545 lines)
 //   confidence: medium
-//   todos:      23
-//   notes:      WindowsWrite Box vs raw-ptr ownership conflicts with libuv callback reclaim; on_data2/on_read reshaped heavily for borrowck (re-match on send_queue.incoming each iteration); defer update_ref/loop.exit inlined at returns pending scopeguard; windows_configure_* / on_server_pipe_close cfg(windows)-gated (SocketType differs by platform)
+//   todos:      19
+//   notes:      Body un-gated. ManagedTask/JSONLineBuffer real; Subprocess /
+//               IPCInstance dispatch routed through SendQueueOwner vtable +
+//               IPC_HOOKS (cycle-break to bun_runtime). WindowsWrite Box vs
+//               raw-ptr ownership still conflicts with libuv callback
+//               reclaim; on_data2/on_read reshaped heavily for borrowck
+//               (re-match on send_queue.incoming each iteration); defer
+//               update_ref/loop.exit inlined at returns pending scopeguard;
+//               windows_configure_* / on_server_pipe_close cfg(windows)-gated
+//               (SocketType differs by platform).
 // ──────────────────────────────────────────────────────────────────────────

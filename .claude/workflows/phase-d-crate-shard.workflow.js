@@ -62,7 +62,7 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
 
 1. \`rm -rf ${D} && mkdir -p ${D} && ${CHECK_CMD} > ${D}/full.log 2>&1\`
 2. total = \`grep -cE '^error(\\[|:)' ${D}/full.log\`
-3. If a *dependency* crate fails (not ${CRATE}): return {units:[], total:0, dep_broken:[<crate names from "could not compile">]} — DO NOT survey further.
+3. If a *dependency* crate fails (not ${CRATE}): \`sleep 60\` then return {units:[], total:0, dep_broken:[<crate names from "could not compile">]} — DO NOT survey further. (sleep prevents spin-waste)
 4. Per-file: \`grep -oP '\\-\\-> \\K${SRCDIR}/[^:]+\\.rs' ${D}/full.log | sort | uniq -c | sort -rn\`
 5. **Files with n>${SPLIT_THRESHOLD}** → split into line-buckets of ~${BUCKET_LINES} lines: extract error blocks where \`--> <file>:LINE:\` and LINE in [lo,hi). Write to \`${D}/<slug>_<lo>.err\`.
 6. **Other files** → whole-file error blocks: \`awk -v p='--> <file>:' 'BEGIN{RS="\\n\\n"} index($0,p){print $0"\\n"}' ${D}/full.log > ${D}/<slug>.err\`
@@ -75,8 +75,10 @@ Return {units:[{file, lo?, hi?, n, errfile}], total, dep_broken:[]}. units = ALL
     continue;
   }
   if (survey.dep_broken && survey.dep_broken.length > 0) {
-    log(`${CRATE} blocked on deps: ${survey.dep_broken.join(",")} — waiting`);
+    log(`${CRATE} blocked on deps: ${survey.dep_broken.join(",")} — backoff`);
     history.push({ round, dep_broken: survey.dep_broken });
+    // Backoff: spawn a haiku agent that just sleeps. Prevents 100-round spin-waste.
+    await agent(`Run \`sleep 90\` then return.`, { label: `backoff-${CRATE}-s${SHARD}`, model: "haiku" });
     continue;
   }
   if (survey.total === 0) return { rounds: round, done: true, history, shard: SHARD, crate: CRATE };

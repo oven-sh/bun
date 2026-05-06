@@ -3,16 +3,17 @@ use crate as css;
 use css::PrintErr;
 use css::Printer;
 
-// ─── B-2 round 4 status ────────────────────────────────────────────────────
-// Hub un-gated. `style` / `media` / `supports` leaf modules now compile for
-// real (struct/enum bodies) with their behavior impls (`to_css`/`minify`/
-// `parse`/`deep_clone`) internally `#[cfg(any())]`-gated on the still-missing
+// ─── B-2 round 5 status ────────────────────────────────────────────────────
+// Hub un-gated. All leaf rule modules now compile for real (struct/enum
+// bodies) with their behavior impls (`to_css`/`minify`/`parse`/`deep_clone`)
+// internally `#[cfg(any())]`-gated on the still-missing
 // `CssRuleList::{to_css,minify}`, `selector::` helpers, `PropertyId` methods,
-// and `DeclarationBlock` behavior. Remaining leaves (`keyframes`,
-// `font_face`, ...) stay `gated_rule!`-stubbed below and re-expose data-only
-// stubs for the types `css_parser::AtRulePrelude` / `TopLevelRuleParser`
-// reach into by name. The `CssRule` enum is real; the heavy `to_css`/`minify`
-// impl bodies are `#[cfg(any())]`-gated until the rest of the leaves un-gate.
+// `DeclarationBlock` behavior, `properties::{font,custom}` payloads, and the
+// css_parser rule-parser trait surface. Only `import`/`layer`/`custom_media`/
+// `namespace`/`unknown`/`tailwind` stay `gated_rule!`-stubbed below (their
+// data-only stubs already match the real layouts). The `CssRule` enum is
+// real; the heavy `to_css`/`minify` impl bodies are `#[cfg(any())]`-gated
+// until `declaration`/`context`/`properties_generated` un-gate.
 
 macro_rules! gated_rule {
     ($name:ident) => {
@@ -240,5 +241,5 @@ pub struct MinifyContext<'a> {
 //   source:     src/css/rules/rules.zig (681 lines)
 //   confidence: medium
 //   todos:      4
-//   notes:      hub un-gated; leaf rule modules internally gated on declaration/context/values lattice; CssRule<R> real (data-only payloads), to_css/minify bodies gated; 'bump arena lifetime dropped from CssRuleList until leaves un-gate
+//   notes:      hub un-gated; keyframes/page/container/font_face/font_palette_values/viewport/property/scope/document/nesting/starting_style/counter_style leaf modules un-gated (data types real, behavior impls internally cfg-gated on declaration/context/properties/parser-trait surface); CssRule<R> real, to_css/minify bodies gated; 'bump arena lifetime dropped from CssRuleList until crate-wide thread
 // ──────────────────────────────────────────────────────────────────────────

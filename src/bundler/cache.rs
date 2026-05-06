@@ -205,16 +205,75 @@ impl Default for ExternalFreeFunction {
     }
 }
 
-/// Port of `Fs.Entry` (cache.zig:19). `contents` is a lifetime-erased slice
-/// (`string` in Zig) that may borrow:
-///   • the per-thread `shared_buffer` (when `use_shared_buffer`),
-///   • a `Box::leak`ed allocation owned by this entry (default-allocator path),
-///   • native-plugin memory freed via `external_free_function`, or
-///   • static/arena bytes the caller keeps alive.
-/// Ownership is **manual** (`deinit`), matching Zig — callers thread `Entry`
-/// through `logger::Source.contents: &'static [u8]` and free explicitly.
+/// Provenance-tagged backing for `Entry` source bytes.
+///
+/// Replaces the prior `&'static [u8]` + `Box::leak`/`Box::from_raw` pair
+/// (forbidden per docs/PORTING.md §Forbidden patterns). Zig's `string` field
+/// (cache.zig:20) carried an implicit allocator contract; Rust makes that
+/// explicit so `deinit` matches on the variant instead of guessing provenance.
+pub enum Contents {
+    /// Empty / static literal.
+    Empty,
+    /// Heap-owned buffer (default-allocator path). Freed when this variant
+    /// drops. Stored as `Vec<u8>` (not `Box<[u8]>`) so a sentinel NUL can sit
+    /// in spare capacity past `len`, matching fs.zig:1289.
+    Owned(Vec<u8>),
+    /// Borrows the per-thread `shared_buffer` (or other caller-kept-alive
+    /// storage). Caller guarantees the pointee outlives all reads through this
+    /// `Entry`. NOT freed on `deinit`.
+    SharedBuffer { ptr: *const u8, len: usize },
+    /// Native-plugin memory; freed via `Entry.external_free_function.call()`.
+    External { ptr: *const u8, len: usize },
+}
+
+impl Default for Contents {
+    fn default() -> Self {
+        Contents::Empty
+    }
+}
+
+impl Contents {
+    #[inline]
+    pub fn as_slice(&self) -> &[u8] {
+        match self {
+            Contents::Empty => b"",
+            Contents::Owned(v) => v.as_slice(),
+            // SAFETY: ARENA — caller-established invariant (see variant docs):
+            // `ptr[..len]` is valid for reads for the lifetime of this `Entry`.
+            Contents::SharedBuffer { ptr, len } | Contents::External { ptr, len } => unsafe {
+                core::slice::from_raw_parts(*ptr, *len)
+            },
+        }
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        match self {
+            Contents::Empty => true,
+            Contents::Owned(v) => v.is_empty(),
+            Contents::SharedBuffer { len, .. } | Contents::External { len, .. } => *len == 0,
+        }
+    }
+}
+
+impl From<Vec<u8>> for Contents {
+    fn from(v: Vec<u8>) -> Self {
+        if v.is_empty() { Contents::Empty } else { Contents::Owned(v) }
+    }
+}
+
+impl From<Box<[u8]>> for Contents {
+    fn from(b: Box<[u8]>) -> Self {
+        if b.is_empty() { Contents::Empty } else { Contents::Owned(b.into_vec()) }
+    }
+}
+
+/// Port of `Fs.Entry` (cache.zig:19). `contents` is provenance-tagged (see
+/// [`Contents`]); callers feed `entry.contents()` into `logger::Source`.
+/// Ownership is **manual** (`deinit`), matching Zig — callers frequently hand
+/// the bytes off to a `Source` that outlives the `Entry`.
 pub struct Entry {
-    pub contents: &'static [u8],
+    pub contents: Contents,
     pub fd: Fd,
     /// When `contents` comes from a native plugin, this field is populated
     /// with information on how to free it.
@@ -223,25 +282,25 @@ pub struct Entry {
 
 impl Default for Entry {
     fn default() -> Self {
-        Entry { contents: b"", fd: Fd::INVALID, external_free_function: ExternalFreeFunction::NONE }
+        Entry {
+            contents: Contents::Empty,
+            fd: Fd::INVALID,
+            external_free_function: ExternalFreeFunction::NONE,
+        }
     }
 }
 
 impl Entry {
-    /// Convenience: take ownership of a heap buffer, leak it into the
-    /// lifetime-erased `contents` slot. `deinit` reconstitutes and frees it.
+    /// Convenience: take ownership of a heap buffer.
     pub fn new(contents: Box<[u8]>, fd: Fd, external_free_function: ExternalFreeFunction) -> Entry {
-        // PORT NOTE: Zig stored an allocator+slice pair; Rust leaks the Box
-        // and reclaims it in `deinit` to keep `contents` a plain `&[u8]`
-        // assignable to `logger::Source.contents`.
-        let contents: &'static [u8] =
-            if contents.is_empty() { b"" } else { Box::leak(contents) };
-        Entry { contents, fd, external_free_function }
+        // PORT NOTE: Zig stored an allocator+slice pair; Rust tags provenance
+        // so `deinit` matches instead of guessing.
+        Entry { contents: Contents::from(contents), fd, external_free_function }
     }
 
     #[inline]
     pub fn contents(&self) -> &[u8] {
-        self.contents
+        self.contents.as_slice()
     }
 
     /// Port of `Entry.deinit` (cache.zig:39). NOT `Drop` — Zig callers free
@@ -251,20 +310,12 @@ impl Entry {
         if let Some(func) = self.external_free_function.function {
             // SAFETY: ctx/function pair was supplied together by the native plugin.
             unsafe { func(self.external_free_function.ctx) };
-        } else if !self.contents.is_empty() {
-            // SAFETY: ARENA — `contents` was produced by `Box::leak` in
-            // `Entry::new` / `read_file*`; reconstructing the Box matches Zig's
-            // `allocator.free(entry.contents)`. Callers that stored a borrowed
-            // (shared-buffer / static) slice must NOT call `deinit` — same
-            // contract as the Zig original.
-            unsafe {
-                drop(Box::<[u8]>::from_raw(core::ptr::slice_from_raw_parts_mut(
-                    self.contents.as_ptr() as *mut u8,
-                    self.contents.len(),
-                )));
-            }
-            self.contents = b"";
+            self.external_free_function = ExternalFreeFunction::NONE;
         }
+        // `Owned` frees on drop; `SharedBuffer`/`External`/`Empty` are no-ops —
+        // matches Zig's `allocator.free(entry.contents)` which only freed the
+        // default-allocator path.
+        self.contents = Contents::Empty;
     }
 }
 

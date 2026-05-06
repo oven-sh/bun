@@ -1808,7 +1808,7 @@ fn encode_trace_string(opts: &TraceString<'_>, writer: &mut impl Write) -> Resul
 
         CrashReason::ZigError(err) => {
             writer.write_byte(b'8')?;
-            writer.write_all(err.name())?;
+            writer.write_all(err.name().as_bytes())?;
         }
 
         CrashReason::OutOfMemory => writer.write_byte(b'9')?,
@@ -2096,7 +2096,7 @@ fn handle_error_return_trace_extra<const IS_ROOT: bool>(err: bun_core::Error, ma
     }
 
     if let Some(trace) = maybe_trace {
-        cold_handle_error_return_trace::<IS_ROOT>(err.errno as u16, trace);
+        cold_handle_error_return_trace::<IS_ROOT>(err.as_u16(), trace);
     }
 }
 

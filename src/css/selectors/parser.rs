@@ -1224,7 +1224,16 @@ impl<'a> SelectorParser<'a> {
             return Ok(PseudoElement::CustomFunction { name, arguments: TokenList { v: args } });
         }
         #[cfg(not(any()))]
-        Ok(PseudoElement::CustomFunction { name, arguments: TokenList::default() })
+        {
+            // Spec (parser.zig:1088-1094) calls `TokenList.parseRaw(input, ...)`
+            // which consumes the function-argument tokens. Until
+            // `TokenList::parse_raw` un-gates, drain the nested block so the
+            // caller's `parse_nested_block` → `expect_exhausted` passes and the
+            // selector grammar accepts the same inputs as the spec.
+            // TODO(port): un-gate `TokenList::parse_raw` and store the args.
+            while input.next().is_ok() {}
+            Ok(PseudoElement::CustomFunction { name, arguments: TokenList::default() })
+        }
     }
 
     fn parse_is_and_where(&self) -> bool {
@@ -1340,7 +1349,16 @@ impl<'a> SelectorParser<'a> {
                     };
                 }
                 #[cfg(not(any()))]
-                break 'pseudo_class PseudoClass::CustomFunction { name, arguments: TokenList::default() };
+                {
+                    // Spec (parser.zig:1286-1296) calls `TokenListFns.parseRaw(parser, ...)`
+                    // which consumes the function-argument tokens. Until
+                    // `TokenList::parse_raw` un-gates, drain the nested block so
+                    // `parse_nested_block` → `expect_exhausted` passes and the
+                    // selector grammar accepts the same inputs as the spec.
+                    // TODO(port): un-gate `TokenList::parse_raw` and store the args.
+                    while parser.next().is_ok() {}
+                    break 'pseudo_class PseudoClass::CustomFunction { name, arguments: TokenList::default() };
+                }
             }
         };
 

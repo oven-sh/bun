@@ -768,11 +768,18 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     // firstCall only acts on .opened/.pending, so both
                     // become no-ops for the CONNECT/handshake phases.
                     // SAFETY: tunnel strong ref transferred from pool.
+                    //
                     // TODO(b2-blocked): ProxyTunnel::adopt is gated in
-                    // ProxyTunnel.rs; wire once that un-gates.
-                    let _ = tunnel;
-                    client.on_open::<SSL>(sock)?;
-                    client.on_writable::<true, SSL>(sock);
+                    // ProxyTunnel.rs; the want_tunnel guard in
+                    // `existing_socket` makes this arm unreachable until
+                    // `adopt` un-gates. When it does, restore:
+                    //   unsafe { (*tunnel.as_ptr()).adopt::<SSL>(client, sock) };
+                    //   client.on_open::<SSL>(sock)?;
+                    //   client.on_writable::<true, SSL>(sock);
+                    // and drop the early-return guard above.
+                    // Defensive: release the transferred ref so it never leaks.
+                    unsafe { (*tunnel.as_ptr()).deref() };
+                    unreachable!("pooled-tunnel reuse is disabled until ProxyTunnel::adopt un-gates");
                 } else {
                     client.on_open::<SSL>(sock)?;
                     if SSL {
@@ -797,20 +804,29 @@ impl<const SSL: bool> HTTPContext<SSL> {
             if client.can_offer_h2() {
                 let cfg = SSLConfig::raw_ptr(client.tls_props.as_ref())
                     .and_then(|p| NonNull::new(p as *mut SSLConfig));
-                let pc = h2::PendingConnect::new(h2::PendingConnect {
+                let mut pc = h2::PendingConnect::new(h2::PendingConnect {
                     hostname: Box::<[u8]>::from(hostname),
                     port,
                     ssl_config: cfg,
                     ..Default::default()
                 });
-                // TODO(port): `client.pending_h2 = pc` stores a backref into
-                // the Vec-owned Box; HTTPClient.pending_h2 is `Option<Box<_>>`
-                // but here ownership stays with the context. Kept as a raw
-                // pointer write until the field is reshaped.
-                client.pending_h2 = Some(unsafe {
-                    Box::from_raw(&*pc as *const h2::PendingConnect as *mut h2::PendingConnect)
-                });
-                core::mem::forget(client.pending_h2.take()); // PORT NOTE: ownership stays in pending_h2_connects
+                // Spec HTTPContext.zig:824 — `client.pending_h2 = pc` stores a
+                // *borrowed* backref into the Vec-owned allocation so
+                // `resolvePendingH2` (http.zig:2101) can dispatch coalesced
+                // waiters once ALPN resolves. Ownership stays with
+                // `pending_h2_connects`.
+                //
+                // TODO(port): retype `HTTPClient.pending_h2` (lib.rs) to
+                // `Option<NonNull<h2::PendingConnect>>` (matching Zig
+                // `?*H2.PendingConnect`) and write
+                //   `client.pending_h2 = Some(NonNull::from(&mut *pc));`
+                // here. The previous `Box::from_raw` + `mem::forget(.take())`
+                // dance was a no-op (left the field None) and used a
+                // §Forbidden pattern; it has been removed. Until the field is
+                // retyped, the backref cannot be stored without aliasing a
+                // `Box` (double-free on `HTTPClient::drop`), so the leader's
+                // h2-coalescing resolution remains blocked on that retype.
+                let _ = NonNull::from(&mut *pc); // backref target (see TODO above)
                 self.pending_h2_connects.push(pc);
             }
         }

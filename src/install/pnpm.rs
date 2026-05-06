@@ -127,20 +127,19 @@ impl From<MigratePnpmLockfileError> for bun_core::Error {
     }
 }
 
-pub fn migrate_pnpm_lockfile(
-    lockfile: &mut Lockfile,
+pub fn migrate_pnpm_lockfile<'a>(
+    lockfile: &'a mut Lockfile,
     manager: &mut PackageManager,
     log: &mut logger::Log,
     data: &[u8],
     dir: Fd,
-) -> Result<LoadResult, MigratePnpmLockfileError> {
+) -> Result<LoadResult<'a>, MigratePnpmLockfileError> {
     let mut buf: Vec<u8> = Vec::new();
     let _ = &buf; // TODO(port): `buf` appears unused in the Zig source
 
     lockfile.init_empty();
     crate::initialize_store();
-    bun_analytics::Features::pnpm_migration_inc(1);
-    // TODO(port): analytics counter increment — verify API shape in Phase B
+    bun_analytics::features::pnpm_migration.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
     // PERF(port): was arena bulk-free for YAML parsing
     let yaml_arena = bun_alloc::Arena::new();
@@ -226,7 +225,7 @@ pub fn migrate_pnpm_lockfile(
         let mut string_buf = lockfile.string_buf();
 
         if let Some(catalogs_expr) = root.get_object(b"catalogs") {
-            lockfile::CatalogMap::from_pnpm_lockfile(
+            crate::lockfile_real::CatalogMap::from_pnpm_lockfile(
                 lockfile,
                 log,
                 catalogs_expr.data.as_e_object(),
@@ -445,7 +444,7 @@ pub fn migrate_pnpm_lockfile(
 
         let mut pkg_map: StringArrayHashMap<PackageID> = StringArrayHashMap::new();
 
-        pkg_map.put_no_clobber(bun_fs::FileSystem::instance().top_level_dir(), 0)?;
+        pkg_map.put_no_clobber(crate::bun_fs::FileSystem::instance().top_level_dir(), 0)?;
 
         let workspace_pkgs_off = lockfile.packages.len();
 
@@ -578,7 +577,7 @@ pub fn migrate_pnpm_lockfile(
                         let version_without_suffix = remove_suffix(version_str);
 
                         if let Some(link_path) =
-                            strings::without_prefix_if_possible(version_without_suffix, b"link:")
+                            strings::without_prefix_if_possible_comptime(version_without_suffix, b"link:")
                         {
                             // create a link package for the workspace dependency only if it doesn't already exist
                             if dep.version.tag == dependency::Version::Tag::Workspace {
@@ -919,7 +918,7 @@ pub fn migrate_pnpm_lockfile(
             let version_without_suffix = remove_suffix(version);
 
             if let Some(maybe_symlink_or_folder_or_workspace_path) =
-                strings::without_prefix_if_possible(version_without_suffix, b"link:")
+                strings::without_prefix_if_possible_comptime(version_without_suffix, b"link:")
             {
                 let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
                 path_buf.join(&[maybe_symlink_or_folder_or_workspace_path]);
@@ -981,7 +980,7 @@ pub fn migrate_pnpm_lockfile(
             let version_without_suffix = remove_suffix(version);
 
             if let Some(maybe_symlink_or_folder_or_workspace_path) =
-                strings::without_prefix_if_possible(version_without_suffix, b"link:")
+                strings::without_prefix_if_possible_comptime(version_without_suffix, b"link:")
             {
                 let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
                 path_buf.join(&[workspace_path, maybe_symlink_or_folder_or_workspace_path]);

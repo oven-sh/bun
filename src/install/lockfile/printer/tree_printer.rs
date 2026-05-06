@@ -294,23 +294,19 @@ where
     {
         // TODO(port): Output.prettyFmt comptime ANSI format string
         let fmt = if ENABLE_ANSI_COLORS {
-            Output::pretty_fmt_str::<ENABLE_ANSI_COLORS>(
-                "<r><green>+<r> <b>{s}<r><d>@{f}<r> <d>(<blue>v{f} available<r><d>)<r>\n",
-            )
+            "<r><green>+<r> <b>{s}<r><d>@{f}<r> <d>(<blue>v{f} available<r><d>)<r>\n"
         } else {
-            Output::pretty_fmt_str::<ENABLE_ANSI_COLORS>(
-                "<r>+ {s}<r><d>@{f}<r> <d>(v{f} available)<r>\n",
-            )
+            "<r>+ {s}<r><d>@{f}<r> <d>(v{f} available)<r>\n"
         };
         write!(
             writer,
             "{}",
-            Output::apply_fmt(
+            Output::pretty_fmt_args(
                 fmt,
-                format_args!(
-                    "{} {} {}",
+                ENABLE_ANSI_COLORS,
+                (
                     bstr::BStr::new(name),
-                    resolution.fmt(string_buf, bun_paths::Style::Posix),
+                    resolution.fmt(string_buf, PathSep::Posix),
                     later_version_fmt,
                 ),
             ),
@@ -321,20 +317,20 @@ where
 
     // TODO(port): Output.prettyFmt comptime ANSI format string
     let fmt = if ENABLE_ANSI_COLORS {
-        Output::pretty_fmt_str::<ENABLE_ANSI_COLORS>("<r><green>+<r> <b>{s}<r><d>@{f}<r>\n")
+        "<r><green>+<r> <b>{s}<r><d>@{f}<r>\n"
     } else {
-        Output::pretty_fmt_str::<ENABLE_ANSI_COLORS>("<r>+ {s}<r><d>@{f}<r>\n")
+        "<r>+ {s}<r><d>@{f}<r>\n"
     };
 
     write!(
         writer,
         "{}",
-        Output::apply_fmt(
+        Output::pretty_fmt_args(
             fmt,
-            format_args!(
-                "{} {}",
+            ENABLE_ANSI_COLORS,
+            (
                 bstr::BStr::new(name),
-                resolution.fmt(string_buf, bun_paths::Style::Posix),
+                resolution.fmt(string_buf, PathSep::Posix),
             ),
         ),
     )?;
@@ -486,12 +482,12 @@ where
             write!(
                 writer,
                 "{}",
-                Output::pretty_fmt::<ENABLE_ANSI_COLORS>(
+                Output::pretty_fmt_args(
                     " <r><b>{s}<r><d>@<b>{f}<r>\n",
-                    format_args!(
-                        "{} {}",
+                    ENABLE_ANSI_COLORS,
+                    (
                         bstr::BStr::new(package_name),
-                        resolved[package_id as usize].fmt(string_buf, bun_paths::Style::Auto),
+                        resolved[package_id as usize].fmt(string_buf, PathSep::Auto),
                     ),
                 ),
             )?;
@@ -526,19 +522,15 @@ where
                 printed_installed_update_request = true;
 
                 // TODO(port): Output.prettyFmt comptime ANSI format string
-                let fmt = Output::pretty_fmt_str::<ENABLE_ANSI_COLORS>(
-                    "<r><green>installed<r> <b>{s}<r><d>@{f}<r>\n",
-                );
-
                 write!(
                     writer,
                     "{}",
-                    Output::apply_fmt(
-                        fmt,
-                        format_args!(
-                            "{} {}",
+                    Output::pretty_fmt_args(
+                        "<r><green>installed<r> <b>{s}<r><d>@{f}<r>\n",
+                        ENABLE_ANSI_COLORS,
+                        (
                             bstr::BStr::new(package_name),
-                            resolved[package_id as usize].fmt(string_buf, bun_paths::Style::Posix),
+                            resolved[package_id as usize].fmt(string_buf, PathSep::Posix),
                         ),
                     ),
                 )?;
@@ -555,19 +547,15 @@ where
 
                 {
                     // TODO(port): Output.prettyFmt comptime ANSI format string
-                    let fmt = Output::pretty_fmt_str::<ENABLE_ANSI_COLORS>(
-                        "<r><green>installed<r> {s}<r><d>@{f}<r> with binaries:\n",
-                    );
-
                     write!(
                         writer,
                         "{}",
-                        Output::apply_fmt(
-                            fmt,
-                            format_args!(
-                                "{} {}",
+                        Output::pretty_fmt_args(
+                            "<r><green>installed<r> {s}<r><d>@{f}<r> with binaries:\n",
+                            ENABLE_ANSI_COLORS,
+                            (
                                 bstr::BStr::new(package_name),
-                                resolved[package_id as usize].fmt(string_buf, bun_paths::Style::Posix),
+                                resolved[package_id as usize].fmt(string_buf, PathSep::Posix),
                             ),
                         ),
                     )?;
@@ -575,22 +563,23 @@ where
 
                 {
                     // TODO(port): Output.prettyFmt comptime ANSI format string
-                    let fmt = Output::pretty_fmt_str::<ENABLE_ANSI_COLORS>(
-                        "<r> <d>- <r><b>{s}<r>\n",
-                    );
+                    let fmt = "<r> <d>- <r><b>{s}<r>\n";
 
-                    if matches!(manager.track_installed_bin, install::TrackInstalledBin::Pending) {
+                    if matches!(manager.track_installed_bin, TrackInstalledBin::Pending) {
                         // TODO(port): `iterator.next()` returns `Result<Option<&[u8]>, E>` in Zig (`!?[]const u8`);
                         // `catch null` → `.unwrap_or(None)`.
                         if let Some(bin_name) = iterator.next().unwrap_or(None) {
-                            manager.track_installed_bin = install::TrackInstalledBin::Basename {
-                                basename: Box::<[u8]>::from(bin_name),
-                            };
+                            manager.track_installed_bin =
+                                TrackInstalledBin::Basename(Box::<[u8]>::from(bin_name));
 
                             write!(
                                 writer,
                                 "{}",
-                                Output::apply_fmt(fmt, format_args!("{}", bstr::BStr::new(bin_name))),
+                                Output::pretty_fmt_args(
+                                    fmt,
+                                    ENABLE_ANSI_COLORS,
+                                    (bstr::BStr::new(bin_name),),
+                                ),
                             )?;
                         }
                     }
@@ -599,7 +588,11 @@ where
                         write!(
                             writer,
                             "{}",
-                            Output::apply_fmt(fmt, format_args!("{}", bstr::BStr::new(bin_name))),
+                            Output::pretty_fmt_args(
+                                fmt,
+                                ENABLE_ANSI_COLORS,
+                                (bstr::BStr::new(bin_name),),
+                            ),
                         )?;
                     }
                 }

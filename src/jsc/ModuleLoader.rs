@@ -668,7 +668,7 @@ pub extern "C" fn Bun__runVirtualModule(
     match global.run_on_load_plugins(
         bun_string::String::init(bun_string::ZigString::init(namespace)),
         bun_string::String::init(bun_string::ZigString::init(after_namespace)),
-        crate::js_global_object::BunPluginTarget::Bun,
+        crate::BunPluginTarget::Bun,
     ) {
         // `catch return .zero` / `orelse return .zero`
         Ok(Some(v)) => v,

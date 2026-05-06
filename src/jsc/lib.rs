@@ -1816,7 +1816,8 @@ impl URL {
 #[path = "JSString.rs"] pub mod js_string;
 pub use self::js_string::JSString;
 
-pub mod ref_string {}
+#[path = "RefString.rs"]
+pub mod ref_string;
 pub use self::ref_string as RefString;
 
 #[path = "Debugger.rs"] pub mod debugger;

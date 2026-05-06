@@ -2625,7 +2625,7 @@ impl VirtualMachine {
         self.ref_strings_mutex.lock();
         // PORT NOTE: Zig `defer unlock()`.
         let entry = self.ref_strings.entry(hash);
-        use bun_collections::map::Entry;
+        use std::collections::hash_map::Entry;
         let result = match entry {
             Entry::Occupied(e) => {
                 *new = false;
@@ -2685,12 +2685,17 @@ impl VirtualMachine {
     }
 
     /// Spec VirtualMachine.zig:1656 `fetchWithoutOnLoadPlugins`.
-    pub fn fetch_without_on_load_plugins<const FLAGS: FetchFlags>(
+    // PORT NOTE: Zig `comptime flags: FetchFlags` lowered to a runtime arg —
+    // `FetchFlags` would need `ConstParamTy` (unstable derive on the enum's
+    // owning module) to stay a const generic; the only branches are cheap
+    // equality tests so the runtime form is fine. PERF(port): revisit.
+    pub fn fetch_without_on_load_plugins(
         jsc_vm: &mut VirtualMachine,
         global_object: &JSGlobalObject,
         specifier: bun_string::String,
         referrer: bun_string::String,
         log: &mut logger::Log,
+        flags: FetchFlags,
     ) -> Result<ResolvedSource, bun_core::Error> {
         debug_assert!(VirtualMachine::is_loaded());
 
@@ -2702,7 +2707,7 @@ impl VirtualMachine {
         let referrer_clone = referrer.to_utf8();
 
         let mut virtual_source_to_use: Option<logger::Source> = None;
-        let mut blob_to_deinit: Option<bun_runtime::webcore::Blob> = None;
+        let mut blob_to_deinit: Option<crate::webcore::Blob> = None;
         let lr = bun_bundler::options::get_loader_and_virtual_source(
             specifier_clone.slice(),
             jsc_vm,
@@ -2729,7 +2734,7 @@ impl VirtualMachine {
                 }
             }
         }
-        let mut guard = ArenaReset(jsc_vm, FLAGS != FetchFlags::PrintSource);
+        let mut guard = ArenaReset(jsc_vm, flags != FetchFlags::PrintSource);
 
         let printer = SOURCE_CODE_PRINTER
             .get()
@@ -2753,10 +2758,10 @@ impl VirtualMachine {
             // SAFETY: `printer` is a leaked Box; live for thread lifetime.
             unsafe { &mut *printer.as_ptr() },
             global_object,
-            FLAGS,
+            flags,
         );
 
-        if result.is_err() && FLAGS == FetchFlags::PrintSource {
+        if result.is_err() && flags == FetchFlags::PrintSource {
             guard.1 = true; // errdefer
         }
         drop(blob_to_deinit);
@@ -2897,7 +2902,7 @@ impl VirtualMachine {
                     );
                     logger::Msg {
                         data: logger::range_data(None, logger::Range::NONE, printed.clone()),
-                        metadata: logger::Metadata::Resolve(logger::ResolveMetadata {
+                        metadata: logger::Metadata::Resolve(logger::MetadataResolve {
                             specifier: logger::BabyString::in_(&printed, specifier_utf8.slice()),
                             import_kind,
                             err,
@@ -3417,40 +3422,45 @@ impl VirtualMachine {
             // PERF(port): Zig used `std.fmt.count` to test if the formatter
             // emits anything; here we format into a small buffer.
             let has_name = {
+                // PERF(port): Zig used `std.fmt.count`; format into a scratch
+                // `String` to probe — `bun_string::CountingWriter` does not
+                // exist yet. Tiny formatter, allocation is negligible.
                 use core::fmt::Write as _;
-                let mut probe = bun_string::CountingWriter::default();
+                let mut probe = String::new();
                 let _ = write!(probe, "{name_fmt}");
-                probe.len() > 0
+                !probe.is_empty()
             };
 
             // PORT NOTE: Zig used `comptime Output.prettyFmt(...)` per arm;
-            // route through the runtime `pretty_fmt!` macro instead.
+            // route through `bun_core::pretty_fmt!` with a local wrapper that
+            // dispatches on the runtime `allow_ansi_colors` flag.
+            macro_rules! pretty_write {
+                ($fmt:literal $(, $arg:expr)* $(,)?) => {
+                    if allow_ansi_colors {
+                        write!(writer, bun_core::pretty_fmt!($fmt, true) $(, $arg)*)
+                    } else {
+                        write!(writer, bun_core::pretty_fmt!($fmt, false) $(, $arg)*)
+                    }
+                };
+            }
             if has_name && !frame.position.is_invalid() {
-                bun_core::pretty_write!(
-                    writer,
-                    allow_ansi_colors,
+                pretty_write!(
                     "<r>      <d>at <r>{}<d> (<r>{}<d>)<r>\n",
                     name_fmt,
                     frame.source_url_formatter(dir, origin, false, allow_ansi_colors)
                 )?;
             } else if !frame.position.is_invalid() {
-                bun_core::pretty_write!(
-                    writer,
-                    allow_ansi_colors,
+                pretty_write!(
                     "<r>      <d>at <r>{}\n",
                     frame.source_url_formatter(dir, origin, false, allow_ansi_colors)
                 )?;
             } else if has_name {
-                bun_core::pretty_write!(
-                    writer,
-                    allow_ansi_colors,
+                pretty_write!(
                     "<r>      <d>at <r>{}<d>\n",
                     name_fmt
                 )?;
             } else {
-                bun_core::pretty_write!(
-                    writer,
-                    allow_ansi_colors,
+                pretty_write!(
                     "<r>      <d>at <r>{}<d>\n",
                     frame.source_url_formatter(dir, origin, false, allow_ansi_colors)
                 )?;

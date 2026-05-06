@@ -1662,7 +1662,7 @@ impl<S: GraphSide> IncrementalGraph<S> {
                             bun_fmt::quote(&g.bundled_files.keys()[file_index.get() as usize])
                         ))
                     });
-                    DevServer::ig_log(format_args!("\\<- Route"));
+                    ig_log!("\\<- Route");
                     dev.incremental_result.framework_routes_affected.push(route_index);
                 }
                 if file.is_client_component_boundary {
@@ -1670,7 +1670,7 @@ impl<S: GraphSide> IncrementalGraph<S> {
                 }
                 // Certain files do not propagate updates to dependencies.
                 if goal == TraceDependencyGoal::StopAtBoundary && file.stops_dependency_trace() {
-                    DevServer::ig_log(format_args!("\\<- this file stops propagation"));
+                    ig_log!("\\<- this file stops propagation");
                     return Ok(());
                 }
             }

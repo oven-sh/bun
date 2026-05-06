@@ -1,11 +1,10 @@
-use core::cell::Cell;
 use core::ffi::c_void;
 use core::mem::offset_of;
-use std::sync::Arc;
+use core::ptr::NonNull;
 
 use bun_aio::KeepAlive;
 use bun_boringssl as boringssl;
-use bun_core::{self, timespec};
+use bun_collections::LinearFifo;
 use bun_jsc::{
     self as jsc, CallFrame, JSArray, JSGlobalObject, JSMap, JSPromise, JSValue, JsRef, JsResult,
 };
@@ -24,6 +23,71 @@ use super::protocol_jsc;
 
 /// `bun.JSTerminated!T` — convenience alias (no public re-export in `bun_jsc` yet).
 type JsTerminatedResult<T> = Result<T, jsc::JsTerminated>;
+
+// ───────────────────────────────────────────────────────────────────────────
+// Local shims / extension traits (Phase-D adapt-on-our-side)
+// ───────────────────────────────────────────────────────────────────────────
+
+/// Bridge JS-thread `VirtualMachine` to the aio-level `EventLoopCtx` used by
+/// `KeepAlive::ref_/unref`. Valkey always runs on the JS event loop.
+#[inline]
+fn vm_event_loop_ctx() -> bun_aio::EventLoopCtx {
+    bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js)
+}
+
+/// `JSValue::push` — appends to an array-typed JS value (Zig `JSValue.push`).
+trait JsValueArrayPush {
+    fn push(self, global: &JSGlobalObject, value: JSValue) -> JsResult<()>;
+}
+impl JsValueArrayPush for JSValue {
+    fn push(self, _global: &JSGlobalObject, _value: JSValue) -> JsResult<()> {
+        todo!("blocked_on: bun_jsc::JSValue::push")
+    }
+}
+
+/// `JSValue::getOptionalInt` — typed integer property fetch.
+trait JsValueGetOptionalInt {
+    fn get_optional_int<T>(self, global: &JSGlobalObject, name: &'static str) -> JsResult<Option<T>>;
+}
+impl JsValueGetOptionalInt for JSValue {
+    fn get_optional_int<T>(self, _global: &JSGlobalObject, _name: &'static str) -> JsResult<Option<T>> {
+        todo!("blocked_on: bun_jsc::JSValue::get_optional_int")
+    }
+}
+
+/// `AnySocket::isClosed` — dispatches to the inner handler.
+trait AnySocketIsClosed {
+    fn is_closed(&self) -> bool;
+}
+impl AnySocketIsClosed for uws::AnySocket {
+    #[inline]
+    fn is_closed(&self) -> bool {
+        match self {
+            uws::AnySocket::SocketTcp(s) => s.is_closed(),
+            uws::AnySocket::SocketTls(s) => s.is_closed(),
+        }
+    }
+}
+
+/// `JSGlobalObject::queueMicrotask(fn, args)` — JS-callback variant.
+trait GlobalQueueMicrotask {
+    fn queue_microtask(&self, function: JSValue, args: &[JSValue]);
+}
+impl GlobalQueueMicrotask for JSGlobalObject {
+    fn queue_microtask(&self, _function: JSValue, _args: &[JSValue]) {
+        todo!("blocked_on: bun_jsc::JSGlobalObject::queue_microtask(JSValue, &[JSValue])")
+    }
+}
+
+/// Scope-guarded `ref/deref` over a raw pointer — sidesteps the
+/// `scopeguard`-captures-`&self` borrowck conflict that pervades this file.
+/// Mirrors Zig's `defer this.deref()` which had no aliasing restriction.
+#[inline]
+fn deref_guard(
+    this: *mut JSValkeyClient,
+) -> scopeguard::ScopeGuard<*mut JSValkeyClient, fn(*mut JSValkeyClient)> {
+    scopeguard::guard(this, |p| unsafe { (*p).deref() })
+}
 
 bun_output::declare_scope!(RedisJS, visible);
 macro_rules! debug {

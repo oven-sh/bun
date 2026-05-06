@@ -1794,12 +1794,15 @@ impl TestCommand {
                     added: 0,
                     passed: 0,
                     failed: 0,
-                    file_buf: &mut snapshot_file_buf,
-                    values: &mut snapshot_values,
-                    counts: &mut snapshot_counts,
+                    // SAFETY: lifetime-erase to `'static`; the backing locals are
+                    // declared in this never-returning frame (`exec()` only exits
+                    // via process exit), mirroring Zig's stack-address capture.
+                    file_buf: unsafe { &mut *(&mut snapshot_file_buf as *mut _) },
+                    values: unsafe { &mut *(&mut snapshot_values as *mut _) },
+                    counts: unsafe { &mut *(&mut snapshot_counts as *mut _) },
                     _current_file: None,
                     snapshot_dir_path: None,
-                    inline_snapshots_to_write: &mut inline_snapshots_to_write,
+                    inline_snapshots_to_write: unsafe { &mut *(&mut inline_snapshots_to_write as *mut _) },
                     last_error_snapshot_name: None,
                 },
                 bun_test_root: bun_test::BunTestRoot::init(),
@@ -1860,7 +1863,7 @@ impl TestCommand {
         // TODO(port): upstream `InitOptions` only carries {args, graph, smol, eval_mode,
         // is_main_thread}; `log`/`env_loader`/`store_fd`/`debugger` are wired post-init
         // until the full Options<'a> un-gates.
-        let _ = (&ctx.args, ctx.log, &mut *env_loader, ctx.runtime_options.debugger);
+        let _ = (&ctx.args, ctx.log, &mut *env_loader, &ctx.runtime_options.debugger);
         // SAFETY: `init` returns the heap-allocated process-lifetime VM; deref once.
         let vm: &mut VirtualMachine = unsafe {
             &mut *VirtualMachine::init(jsc::virtual_machine::InitOptions {
@@ -2060,6 +2063,9 @@ impl TestCommand {
         }
 
         let mut all_test_files = scanner.take_found_test_files().expect("oom");
+        // Snapshot the count before `test_files` mutably borrows `all_test_files`
+        // so the watcher-enable check below can read it without reborrowing.
+        let all_test_files_count = all_test_files.len();
         let search_count = scanner.search_count;
         drop(scanner);
 
@@ -2157,7 +2163,7 @@ impl TestCommand {
         // With --changed we always want to keep watching as long as any test
         // files exist, since "nothing changed yet" is the common starting
         // state and editing a source file should kick off a run.
-        if !test_files.is_empty() || (ctx.test_options.changed.is_some() && !all_test_files.is_empty()) {
+        if !test_files.is_empty() || (ctx.test_options.changed.is_some() && all_test_files_count != 0) {
             vm.hot_reload = ctx.debug.hot_reload as u8;
 
             // Install the --changed trigger collector BEFORE the watcher
@@ -2346,7 +2352,10 @@ impl TestCommand {
                 // TODO(port): generic param order is <TEXT, LCOV, COLORS>; verify mapping in Phase B
             }
 
-            let summary = reporter.summary();
+            // `Summary` is `Copy`; take a value snapshot so the `&mut` from
+            // `reporter.summary()` doesn't span the whole printing block and
+            // conflict with the `reporter.jest.*` reads below.
+            let summary: Summary = *reporter.summary();
             let did_label_filter_out_all_tests = summary.did_label_filter_out_all_tests() && reporter.jest.unhandled_errors_between_tests == 0;
 
             if !did_label_filter_out_all_tests {
@@ -2400,7 +2409,7 @@ impl TestCommand {
                     pretty_error!("{}<r><red>{:5>} error{}<r>\n", &indenter, reporter.jest.unhandled_errors_between_tests, if reporter.jest.unhandled_errors_between_tests > 1 { "s" } else { "" });
                 }
 
-                let mut print_expect_calls = reporter.summary().expectations > 0;
+                let mut print_expect_calls = summary.expectations > 0;
                 if reporter.jest.snapshots.total > 0 {
                     let passed = reporter.jest.snapshots.passed;
                     let failed = reporter.jest.snapshots.failed;
@@ -2409,7 +2418,7 @@ impl TestCommand {
                     let mut first = true;
                     if print_expect_calls && added == 0 && failed == 0 {
                         print_expect_calls = false;
-                        pretty_error!("{}{:5>} snapshots, {:5>} expect() calls", &indenter, reporter.jest.snapshots.total, reporter.summary().expectations);
+                        pretty_error!("{}{:5>} snapshots, {:5>} expect() calls", &indenter, reporter.jest.snapshots.total, summary.expectations);
                     } else {
                         pretty_error!("<d>snapshots:<r> ");
 
@@ -2441,7 +2450,7 @@ impl TestCommand {
                 }
 
                 if print_expect_calls {
-                    pretty_error!("{}{:5>} expect() calls\n", &indenter, reporter.summary().expectations);
+                    pretty_error!("{}{:5>} expect() calls\n", &indenter, summary.expectations);
                 }
 
                 reporter.print_summary();
@@ -2583,17 +2592,21 @@ impl TestCommand {
 
         // Restore test.only state after each module.
         let prev_only = reporter.jest.only;
-        let _restore_only = scopeguard::guard((), |_| { reporter.jest.only = prev_only; });
-        // TODO(port): borrowck — guard captures reporter; Phase B reshape
+        let reporter_ptr: *mut CommandLineReporter = reporter;
+        // SAFETY: `reporter` is caller-owned and outlives this guard; raw-ptr
+        // escape mirrors Zig's `defer` so the closure does not hold a borrowck
+        // lock on `reporter` for the entire function body.
+        let _restore_only = scopeguard::guard((), move |_| unsafe { (*reporter_ptr).jest.only = prev_only; });
 
         let resolution = vm.transpiler.resolve_entry_point(file_name)?;
         vm.clear_entry_point().map_err(|_| bun_core::err!(JSError))?;
 
-        let file_path = {
-            // Appender is implemented for `&FilenameStore`; bind mutably to call it.
-            let mut store = FileSystem::instance().filename_store;
-            store.append(resolution.path_pair.primary.text).expect("oom")
-        };
+        // `append_slice` interns into the process-static `FilenameStore` and
+        // returns `&'static [u8]`, matching Zig's `FilenameStore.append`.
+        let file_path: &'static [u8] = FileSystem::instance()
+            .filename_store
+            .append_slice(resolution.path_pair.primary.text)
+            .expect("oom");
         let file_title = resolve_path::relative(FileSystem::instance().top_level_dir, file_path);
         let file_id = jest::Jest::runner().unwrap().get_or_put_file(file_path).file_id;
 

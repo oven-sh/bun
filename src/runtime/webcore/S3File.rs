@@ -325,13 +325,16 @@ pub fn construct_s3_file_with_s3_credentials_and_options(
     default_storage_class: Option<s3::StorageClass>,
     default_request_payer: bool,
 ) -> JsResult<Blob> {
-    let _ = (default_options, default_acl, default_storage_class, default_request_payer);
-    // `S3Credentials` is intrusive-refcounted (not `Clone`); the Zig spec passes it
-    // by value here. Phase B must thread `IntrusiveRc<S3Credentials>` / `dupe()` through.
-    let aws_options: bun_s3_signing::S3CredentialsWithOptions =
-        todo!("blocked_on: bun_s3_signing::S3Credentials::dupe (intrusive clone for get_credentials_with_options)");
+    let aws_options = <s3::S3Credentials>::get_credentials_with_options(
+        default_credentials,
+        default_options,
+        options,
+        default_acl,
+        default_storage_class,
+        default_request_payer,
+        global,
+    )?;
 
-    #[allow(unreachable_code)]
     let mut store = 'brk: {
         if aws_options.changed_credentials {
             break 'brk blob::Store::init_s3(path, None, aws_options.credentials).expect("oom");
@@ -383,7 +386,7 @@ pub fn construct_s3_file_with_s3_credentials(
     existing_credentials: s3::S3Credentials,
 ) -> JsResult<Blob> {
     let aws_options = <s3::S3Credentials>::get_credentials_with_options(
-        existing_credentials,
+        &existing_credentials,
         Default::default(),
         options,
         None,

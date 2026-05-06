@@ -1650,7 +1650,10 @@ impl DevServer<'_> {
         let Some(deferred_ptr) = self.deferred_request_pool.get() else { return Ok(()) };
         // SAFETY: HiveArray::get returns an exclusively-owned, live node ptr.
         let deferred = unsafe { &mut *deferred_ptr };
-        debug_log!("DeferredRequest(0x{:x}).init", &deferred.data as *const _ as usize);
+        // Precompute the data slot pointer (used inside the initializer for
+        // abort-callback registration) before borrowing `deferred.data` for `.write()`.
+        let deferred_data_ptr: *mut c_void = deferred.data.as_mut_ptr() as *mut c_void;
+        debug_log!("DeferredRequest(0x{:x}).init", deferred_data_ptr as usize);
 
         let method = match &req {
             // SAFETY: r is a uws Request ptr valid for the duration of the handler callback
@@ -1718,10 +1721,12 @@ impl DevServer<'_> {
                     break 'brk Handler::ServerHandler(server_handler);
                 }
             },
-        };
+        });
 
-        if matches!(deferred.data.handler, Handler::ServerHandler(_)) {
-            deferred.data.weak_ref();
+        // SAFETY: `deferred.data` was just initialized above.
+        let deferred_data = unsafe { deferred.data.assume_init_mut() };
+        if matches!(deferred_data.handler, Handler::ServerHandler(_)) {
+            deferred_data.weak_ref();
         }
 
         requests_array.prepend(deferred_ptr);

@@ -906,9 +906,16 @@ impl PmPkgCommand {
         if !found {
             return Ok(false);
         }
+        let old_len = old_props.len();
+        // G::Property is !Copy/!Clone in Rust. Zig bitwise-copies each kept
+        // entry and leaves the old buffer to the arena. Mirror that: take the
+        // old list, ptr::read kept entries into the new list, then forget the
+        // old buffer (CLI is one-shot — leak is intentional, see
+        // load_package_json).
+        let old = core::mem::take(&mut e_obj.properties);
         let mut new_props: BabyList<G::Property> =
-            BabyList::init_capacity(old_props.len() - 1)?;
-        for prop in old_props {
+            BabyList::init_capacity(old_len - 1)?;
+        for prop in old.slice() {
             if let Some(k) = &prop.key {
                 if let ExprData::EString(s) = &k.data {
                     if strings::eql(&s.data, key) {
@@ -916,8 +923,11 @@ impl PmPkgCommand {
                     }
                 }
             }
-            new_props.append_assume_capacity(*prop);
+            // SAFETY: `old` is forgotten below so each Property is moved (not
+            // duplicated) into `new_props`, matching Zig's value-copy loop.
+            new_props.append_assume_capacity(unsafe { core::ptr::read(prop) });
         }
+        core::mem::forget(old);
         e_obj.properties = new_props;
 
         Ok(true)

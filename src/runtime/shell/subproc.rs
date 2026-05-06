@@ -609,7 +609,7 @@ impl ShellSubprocess {
         *out_subproc = subprocess;
         // SAFETY: subprocess was just allocated and is uniquely owned here.
         let subproc = unsafe { &mut *subprocess };
-        subproc.proc().set_exit_handler::<ShellSubprocess>(subprocess);
+        subproc.proc().set_exit_handler(subprocess as *mut (), &SHELL_EXIT_VTABLE);
         stdio_consumed = true;
         let _ = scopeguard::ScopeGuard::into_inner(stdio_guard);
 

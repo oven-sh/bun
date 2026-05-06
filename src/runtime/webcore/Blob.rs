@@ -5303,7 +5303,9 @@ pub fn construct_bun_file(
                 );
             }
         }
-        let _path_cleanup = scopeguard::guard((), |_| path.deinit_and_unprotect());
+        // Move `path` into the guard so the cleanup closure owns it (avoids
+        // borrow conflict with the `&mut` below) and deref through the guard.
+        let mut path = scopeguard::guard(path, |p| p.deinit_and_unprotect());
 
         let mut blob = Blob::find_or_create_file_from_path(&mut path, global_object, false);
 

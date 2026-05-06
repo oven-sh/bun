@@ -275,11 +275,8 @@ impl<'a> fmt::Display for GroupFormatter<'a> {
     }
 }
 
-impl<'a> Group<'a> {
-    pub fn fmt<'b>(&'b self, buf: &'b [u8]) -> GroupFormatter<'b>
-    where
-        'a: 'b,
-    {
+impl Group {
+    pub fn fmt<'b>(&'b self, buf: &'b [u8]) -> GroupFormatter<'b> {
         GroupFormatter { group: self, buf }
     }
 
@@ -289,7 +286,11 @@ impl<'a> Group<'a> {
         let temp = {
             use std::io::Write as _;
             let mut v: Vec<u8> = Vec::new();
-            let _ = write!(&mut v, "{}", self.fmt(self.input));
+            // SAFETY: `input` points into the parse source buffer which the
+            // caller must keep alive for the lifetime of this Group (Zig
+            // stored a bare `[]const u8` with the same contract).
+            let input = unsafe { &*self.input };
+            let _ = write!(&mut v, "{}", self.fmt(input));
             v
         };
         // Placeholder: write raw; Phase B must JSON-escape.

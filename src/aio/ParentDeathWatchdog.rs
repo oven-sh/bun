@@ -298,19 +298,9 @@ pub fn install_on_event_loop(handle: EventLoopCtx) {
             Default::default(),
             Owner::new(poll_tag::PARENT_DEATH_WATCHDOG, instance_ptr.cast()),
         );
-<<<<<<< Updated upstream
         // SAFETY: sole `&mut Loop` borrow; `register` does not re-derive the loop.
         match poll.register(unsafe { handle.platform_event_loop() }, crate::file_poll::Pollable::Process, true) {
             bun_sys::Result::Ok(()) => {
-||||||| Stash base
-        match poll.register(handle.platform_event_loop(), crate::file_poll::Pollable::Process, true) {
-            bun_sys::Result::Ok(()) => {
-=======
-        // SAFETY: FilePoll::init returns a valid pool slot.
-        let poll = unsafe { &mut *poll };
-        match poll.register(handle.platform_event_loop(), crate::file_poll::Pollable::Process, true) {
-            Ok(()) => {
->>>>>>> Stashed changes
                 // Do not keep the event loop alive on this poll's behalf — the
                 // watchdog must never prevent Bun from exiting when there is no
                 // other work. `register()` only bumps the *active* count when
@@ -318,16 +308,8 @@ pub fn install_on_event_loop(handle: EventLoopCtx) {
             }
             Err(err) => {
                 // ESRCH: parent already gone before we registered — treat as fired.
-<<<<<<< Updated upstream
                 if err.get_errno() == bun_sys::E::ESRCH {
                     Global::exit(EXIT_CODE);
-||||||| Stash base
-                if err.errno() == bun_sys::Errno::SRCH {
-                    Global::exit(EXIT_CODE);
-=======
-                if err.get_errno() == bun_sys::E::ESRCH {
-                    bun_core::exit(EXIT_CODE as u32);
->>>>>>> Stashed changes
                 }
                 // Any other registration error: best-effort feature, just don't watch.
             }

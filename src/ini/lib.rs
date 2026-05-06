@@ -228,15 +228,7 @@ pub enum ScopeError {
 // TODO(b2-blocked): bun_api::NpmRegistryMap
 // TODO(b2-blocked): bun_api::npm_registry::Parser
 // TODO(b2-blocked): bun_api::Ca
-<<<<<<< Updated upstream
 // TODO(b2-blocked): bun_install_types::NodeLinker::PnpmMatcher::from_expr
-||||||| Stash base
-// TODO(b2-blocked): bun_logger::source_from_file (was bun_sys::File::to_source — moved up)
-// TODO(b2-blocked): bun_install_types::NodeLinker::PnpmMatcher::from_expr
-// TODO(b2-blocked): bun_interchange::json::parse_utf8_impl
-=======
-// TODO(b2-blocked): bun_interchange::json::parse_utf8_impl (returns stub Expr, not bun_js_parser::Expr)
->>>>>>> Stashed changes
 
 pub use draft::{
     ConfigIterator, Parser, ScopeItem, ScopeIterator, ToStringFormatter,
@@ -358,18 +350,10 @@ impl<'a> Parser<'a> {
         let src = self.src;
         let mut iter = src.split(|&b| b == b'\n');
         // TODO(port): borrowck — `head` aliases into `self.out.data.e_object` while
-<<<<<<< Updated upstream
         // `self` is also borrowed mutably for prepare_str(). Kept as raw `*mut`
         // (the underlying `E::Object` lives in the Expr Store, not on `self`).
         let mut head: *mut E::Object =
             self.out.data.e_object_mut().expect("Parser.out is E.Object") as *mut E::Object;
-||||||| Stash base
-        // `self` is also borrowed mutably for prepare_str(). Phase B may need raw ptr.
-        let mut head: *mut E::Object = self.out.data.e_object_mut();
-=======
-        // `self` is also borrowed mutably for prepare_str(). Phase B may need raw ptr.
-        let mut head: *mut E::Object = self.out.data.e_object().unwrap().as_ptr();
->>>>>>> Stashed changes
 
         // var duplicates = bun.StringArrayHashMapUnmanaged(u32){};
         // defer duplicates.deinit(allocator);
@@ -425,36 +409,12 @@ impl<'a> Parser<'a> {
                         )?
                         .into_section();
                     // PERF(port): was `rope_stack.fixed_buffer_allocator.reset()` here.
-<<<<<<< Updated upstream
                     // SAFETY: `self.out` was constructed as `E.Object` in `init()`.
                     let root = self.out.data.e_object_mut().expect("Parser.out is E.Object");
                     let mut parent_object = match root.get_or_put_object(section, bump) {
-||||||| Stash base
-                    // SAFETY: head is a valid &mut E::Object derived from self.out.
-                    let root = unsafe { &mut *self.out.data.e_object_mut() };
-                    let parent_object = match root.get_or_put_object(section, bump) {
-=======
-                    // SAFETY: `self.out.data` is `EObject` (set in `init`); StoreRef
-                    // points into a live Store/arena block valid for parse() duration.
-                    let root: &mut E::Object =
-                        unsafe { &mut *self.out.data.e_object().unwrap().as_ptr() };
-                    let parent_object = match root.get_or_put_object(section, bump) {
->>>>>>> Stashed changes
                         Ok(v) => v,
-<<<<<<< Updated upstream
                         Err(E::SetError::OutOfMemory) => return Err(AllocError),
                         Err(E::SetError::Clobber) => {
-||||||| Stash base
-                        Err(e) if e == bun_core::err!("OutOfMemory") => {
-                            return Err(AllocError);
-                        }
-                        Err(_clobber) => {
-=======
-                        Err(E::SetError::OutOfMemory) => {
-                            return Err(AllocError);
-                        }
-                        Err(E::SetError::Clobber) => {
->>>>>>> Stashed changes
                             // We're in here if key exists but it is not an object
                             //
                             // This is possible if someone did:
@@ -490,17 +450,11 @@ impl<'a> Parser<'a> {
                             break 'treat_as_key;
                         }
                     };
-<<<<<<< Updated upstream
                     head = parent_object
                         .data
                         .e_object_mut()
                         .expect("get_or_put_object returns E.Object")
                         as *mut E::Object;
-||||||| Stash base
-                    head = parent_object.data.e_object_mut();
-=======
-                    head = parent_object.data.e_object().unwrap().as_ptr();
->>>>>>> Stashed changes
                     break 'treat_as_key;
                 }
                 if !treat_as_key {
@@ -598,21 +552,7 @@ impl<'a> Parser<'a> {
                         head_ref.put(bump, key, Expr::init(arr, Loc::EMPTY))?;
                     }
                 } else {
-<<<<<<< Updated upstream
                     head_ref.put(bump, key, Expr::init(E::Array::default(), Loc::EMPTY))?;
-||||||| Stash base
-                    head_ref.put(
-                        bump,
-                        key,
-                        Expr::init(E::Array(E::Array::default()), Loc::EMPTY),
-                    )?;
-=======
-                    head_ref.put(
-                        bump,
-                        key,
-                        Expr::init(E::Array::default(), Loc::EMPTY),
-                    )?;
->>>>>>> Stashed changes
                 }
             }
 
@@ -655,7 +595,6 @@ impl<'a> Parser<'a> {
                     };
                     offset += 1;
                 }
-<<<<<<< Updated upstream
                 // `bun_interchange::json::parse_utf8_impl` returns the T2
                 // value-subset `bun_logger::js_ast::Expr`; lift it into the T4
                 // `bun_js_parser::Expr` (via the `From` impl in
@@ -667,30 +606,10 @@ impl<'a> Parser<'a> {
                 let val_s: &'static [u8] =
                     unsafe { core::mem::transmute::<&[u8], &'static [u8]>(val) };
                 let src = Source::init_path_string(self.source.path.text, val_s);
-||||||| Stash base
-                let src = Source::init_path_string(self.source.path.text.as_slice(), val);
-=======
-                #[cfg(any())]
-                // TODO(b2-blocked): bun_interchange::json::parse_utf8_impl
-                //   (interchange stub returns its own opaque `Expr`, not
-                //   `bun_js_parser::Expr`; un-gate once interchange re-exports
-                //   the real AST type)
-                {
-                let src = Source::init_path_string(self.source.path.text.as_slice(), val);
->>>>>>> Stashed changes
                 let mut log = Log::init();
                 // Try to parse it and if it fails will just treat it as a string
-<<<<<<< Updated upstream
                 let json_val: Expr = match bun_interchange::json::parse_utf8_impl::<true>(&src, &mut log, bump) {
                     Ok(v) => Expr::from(v),
-||||||| Stash base
-                // TODO(b2-blocked): bun_interchange::json::parse_utf8_impl
-                let json_val: Expr = match bun_interchange::json::parse_utf8_impl(&src, &mut log, bump, true) {
-                    Ok(v) => v,
-=======
-                let json_val: Expr = match bun_interchange::json::parse_utf8_impl::<true>(&src, &mut log, bump) {
-                    Ok(v) => v,
->>>>>>> Stashed changes
                     Err(_) => {
                         // JSON parse failed (e.g., single-quoted string like '${VAR}')
                         // Still need to expand env vars in the content
@@ -966,15 +885,8 @@ impl<'a> Parser<'a> {
         }
         if usage == Usage::Key {
             // TODO(port): lifetime — `val` borrows `val_` (caller line slice);
-<<<<<<< Updated upstream
             // Zig returns it directly. Dupe into the bump for now.
             return Ok(PrepareResult::Key(bump.alloc_slice_copy(val)));
-||||||| Stash base
-            // Zig returns it directly. Phase B may need bump.alloc_slice_copy here.
-=======
-            // Zig returns it directly. Phase B may need bump.alloc_slice_copy here.
-            return Ok(PrepareResult::Key(bump.alloc_slice_copy(val)));
->>>>>>> Stashed changes
         }
         Ok(PrepareResult::Section(Self::str_to_rope(ropealloc, val)?))
     }

@@ -19,18 +19,7 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicPtr, Ordering};
 
 use bun_uws as uws;
-<<<<<<< Updated upstream
 use bun_core::{Timespec, TimespecMockMode};
-||||||| Stash base
-// TODO(b2-blocked): bun_core::Timespec — using in-crate stub from EventLoopTimer.rs
-// until the real Timespec lands in bun_core.
-use crate::EventLoopTimer::Timespec;
-=======
-// PORT NOTE: `bun_core::Timespec` provides `now`/`duration`/`order`;
-// `uws::Loop::tick_with_timeout` expects `&uws::Timespec`. Both are
-// `#[repr(C)] { sec: i64, nsec: i64 }`, so a field-wise rebuild bridges them.
-use bun_core::{Timespec, TimespecMockMode};
->>>>>>> Stashed changes
 #[cfg(windows)]
 use bun_sys::windows::libuv;
 
@@ -115,7 +104,6 @@ mod handler {
     pub unsafe extern "C" fn post(_loop: *mut uws::Loop) {
         // No-op: no post-tick work needed for spawnSync
     }
-<<<<<<< Updated upstream
 
     /// Adapter for `uws::Loop::create<H: LoopHandler>()` — Zig's
     /// `comptime Handler` with `wakeup`/`pre`/`post` decls maps to a trait
@@ -126,17 +114,6 @@ mod handler {
         const PRE: Option<unsafe extern "C" fn(*mut uws::Loop)> = Some(pre);
         const POST: Option<unsafe extern "C" fn(*mut uws::Loop)> = Some(post);
     }
-||||||| Stash base
-=======
-
-    /// Zig `comptime Handler` type for `Loop::create`.
-    pub struct Handler;
-    impl uws::LoopHandler for Handler {
-        const WAKEUP: unsafe extern "C" fn(*mut uws::Loop) = wakeup;
-        const PRE: Option<unsafe extern "C" fn(*mut uws::Loop)> = Some(pre);
-        const POST: Option<unsafe extern "C" fn(*mut uws::Loop)> = Some(post);
-    }
->>>>>>> Stashed changes
 }
 
 impl SpawnSyncEventLoop {
@@ -148,22 +125,9 @@ impl SpawnSyncEventLoop {
         this: &mut core::mem::MaybeUninit<Self>,
         vm: *mut (), /* SAFETY: erased *mut VirtualMachine */
     ) {
-<<<<<<< Updated upstream
         // PORT NOTE: Zig passes a comptime `Handler` type with wakeup/pre/post decls.
         // The Rust wrapper takes a `LoopHandler` impl with associated-const fn ptrs.
         let loop_ = uws::Loop::create::<handler::Handler>();
-||||||| Stash base
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_uws::Loop::create
-            // TODO(port): Zig passes a comptime `Handler` type with wakeup/pre/post decls.
-            // Assuming the Rust wrapper takes three fn pointers; adjust to actual `bun_uws` API.
-            let loop_ = uws::Loop::create(handler::wakeup, handler::pre, handler::post);
-=======
-        // PORT NOTE: Zig passes a comptime `Handler` type with wakeup/pre/post decls;
-        // Rust models this via `uws::LoopHandler` (see `handler::Handler` above).
-        let loop_ = uws::Loop::create::<handler::Handler>();
->>>>>>> Stashed changes
 
         // SAFETY: `Loop::create` never returns null (asserts on OOM in uws).
         let loop_ = unsafe { NonNull::new_unchecked(loop_) };
@@ -183,7 +147,6 @@ impl SpawnSyncEventLoop {
             vm,
         });
 
-<<<<<<< Updated upstream
         // Set up the loop's internal data to point to this isolated event loop
         // SAFETY: uws_loop was just created above and is exclusively owned here; `this` was fully
         // written immediately above so `assume_init_mut` is sound.
@@ -196,35 +159,6 @@ impl SpawnSyncEventLoop {
                 .internal_loop_data
                 .set_parent_raw(tag, ptr);
             (*this.uws_loop.as_ptr()).internal_loop_data.jsc_vm = core::ptr::null();
-||||||| Stash base
-            // Set up the loop's internal data to point to this isolated event loop
-            // SAFETY: uws_loop was just created above and is exclusively owned here; `this` was fully
-            // written immediately above so `assume_init_mut` is sound.
-            unsafe {
-                let this = this.assume_init_mut();
-                // TODO(b2-blocked): bun_uws::Loop::internal_loop_data
-                // TODO(b2-blocked): bun_uws::InternalLoopData::set_parent_event_loop
-                // TODO(b2-blocked): bun_uws::InternalLoopData::jsc_vm
-                (*this.uws_loop.as_ptr())
-                    .internal_loop_data
-                    .set_parent_event_loop(EventLoopHandle::init(this.event_loop));
-                (*this.uws_loop.as_ptr()).internal_loop_data.jsc_vm = core::ptr::null_mut();
-            }
-            return;
-=======
-        // Set up the loop's internal data to point to this isolated event loop
-        // SAFETY: uws_loop was just created above and is exclusively owned here; `this` was fully
-        // written immediately above so `assume_init_mut` is sound.
-        unsafe {
-            let this = this.assume_init_mut();
-            // PORT NOTE: typed `set_parent_event_loop` lives in a higher-tier
-            // wrapper that names `EventLoopHandle`; call the lower-tier
-            // `set_parent_raw(tag, ptr)` instead — tag 1 = jsc::EventLoop.
-            (*this.uws_loop.as_ptr())
-                .internal_loop_data
-                .set_parent_raw(1, this.event_loop.cast());
-            (*this.uws_loop.as_ptr()).internal_loop_data.jsc_vm = core::ptr::null_mut();
->>>>>>> Stashed changes
         }
     }
 }
@@ -260,22 +194,8 @@ impl Drop for SpawnSyncEventLoop {
         // PORT NOTE: Zig order was `event_loop.deinit()` then `uws_loop.deinit()`.
         // SAFETY: vtable contract — frees the heap-allocated EventLoop from `init`.
         unsafe { (vt().destroy_event_loop)(self.event_loop) };
-<<<<<<< Updated upstream
         // SAFETY: uws_loop was returned by `us_create_loop` in `init` and not yet freed.
         unsafe { uws::Loop::destroy(self.uws_loop.as_ptr()) };
-||||||| Stash base
-        #[cfg(any())]
-        {
-            // SAFETY: uws_loop is valid and owned; deinit frees it.
-            // TODO(b2-blocked): bun_uws::Loop::deinit
-            unsafe { (*self.uws_loop.as_ptr()).deinit() };
-        }
-        // TODO(b2-blocked): bun_uws::Loop::deinit — leaking uws_loop until Loop is un-gated.
-=======
-        // SAFETY: uws_loop was returned by `Loop::create` in `init` and not yet
-        // freed; `destroy` calls `us_loop_free`.
-        unsafe { uws::Loop::destroy(self.uws_loop.as_ptr()) };
->>>>>>> Stashed changes
     }
 }
 
@@ -383,7 +303,6 @@ impl SpawnSyncEventLoop {
             None => None,
         };
 
-<<<<<<< Updated upstream
         #[cfg(windows)]
         {
             if let Some(ts) = duration {
@@ -420,42 +339,6 @@ impl SpawnSyncEventLoop {
         unsafe { (*self.uws_loop.as_ptr()).tick_with_timeout(uws_ts.as_ref()) };
 
         if let Some(ts) = timeout {
-||||||| Stash base
-=======
-        #[cfg(windows)]
-        {
-            if let Some(ts) = duration {
-                self.prepare_timer_on_windows(ts);
-            }
-        }
-
-        // Suppress microtask drain for the entire tick, including the uws loop tick.
-        // On Windows, uv_run() fires callbacks inline (e.g. uv_process exit, pipe I/O)
-        // which call onProcessExit → onExit. If any code path in those callbacks
-        // reaches drainMicrotasksWithGlobal, we must already have the flag set.
-        // On POSIX, the uws tick only polls I/O; callbacks are dispatched later
-        // via the task queue, but we set the flag here uniformly for safety.
-        let vm = self.vm;
-        // SAFETY: vtable contract — `vm` is a valid backref set in `init`/`prepare`;
-        // the VM outlives this SpawnSyncEventLoop by construction.
-        let prev_suppress = unsafe { (vt().vm_swap_suppress_microtask_drain)(vm, true) };
-        let _guard = scopeguard::guard((), |_| {
-            // SAFETY: same as above.
-            unsafe { (vt().vm_swap_suppress_microtask_drain)(vm, prev_suppress) };
-        });
-        // PORT NOTE: Zig `defer` restores at scope exit; scopeguard mirrors that.
-
-        // Tick the isolated uws loop with the specified timeout
-        // This will only process I/O related to this subprocess
-        // and will NOT interfere with the main event loop
-        // PORT NOTE: `Loop::tick_with_timeout` takes `&uws::Timespec`; rebuild
-        // field-wise from `bun_core::Timespec` (both `#[repr(C)] {i64,i64}`).
-        let uws_dur = duration.map(|d| uws::Timespec { sec: d.sec, nsec: d.nsec });
-        // SAFETY: uws_loop is valid and exclusively owned.
-        unsafe { (*self.uws_loop.as_ptr()).tick_with_timeout(uws_dur.as_ref()) };
-
-        if let Some(ts) = timeout {
->>>>>>> Stashed changes
             #[cfg(windows)]
             {
                 // SAFETY: uv_timer is Some when timeout is Some (set in prepare_timer_on_windows).

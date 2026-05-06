@@ -17,14 +17,6 @@ use bun_alloc::AllocError;
 use bun_collections::{BabyList, StringHashMap};
 use bun_core::{self, StackCheck};
 // MOVE_DOWN(b0): bun_js_parser::ast → bun_logger::ast (js_ast remapped into logger, T2)
-<<<<<<< Updated upstream
-||||||| Stash base
-// TODO(b2-blocked): bun_logger::js_ast — MOVE_DOWN not yet landed in T2.
-#[cfg(any())]
-=======
-// `Expr`/`E`/`G` resolve to T2 stub shapes; AST-producing parse_* fns stay
-// gated below until the real `E::*` field sets land.
->>>>>>> Stashed changes
 use bun_logger::ast::{self, Expr, E, G};
 use bun_logger::{self as logger, Loc, Log, Source};
 
@@ -40,17 +32,9 @@ impl YAML {
         log: &mut logger::Log,
         bump: &bumpalo::Bump,
     ) -> Result<Expr, YamlParseError> {
-<<<<<<< Updated upstream
         // Zig: `bun.analytics.Features.yaml_parse += 1;` — the MOVE_DOWN'd
         // counter API is `yaml_parse_inc()` (atomic fetch_add by 1, no arg).
         bun_core::analytics::Features::yaml_parse_inc();
-||||||| Stash base
-        bun_core::analytics::Features::yaml_parse_inc(1);
-=======
-        // TODO(b2-blocked): bun_core::analytics::Features::yaml_parse_inc
-        #[cfg(any())]
-        bun_core::analytics::Features::yaml_parse_inc(1);
->>>>>>> Stashed changes
 
         // PORT NOTE: the Zig allocator param was dropped from `Parser::init`
         // (global mimalloc); `bump` is accepted for signature parity with Zig
@@ -430,7 +414,6 @@ pub trait Encoding: Copy + 'static {
     /// `enc.literal("...")` — comptime string literal in the target encoding.
     /// TODO(port): for Utf16 this needs `bun_str::w!("...")`; callers pass ASCII only.
     fn literal(s: &'static [u8]) -> &'static [Self::Unit];
-<<<<<<< Updated upstream
 
     /// Reinterpret a `&[Unit]` slice as `&[u8]` for `StringHashMap` keying
     /// (`anchors` / `tag_handles`). Zig's `bun.StringHashMap` is keyed by
@@ -448,19 +431,6 @@ pub trait Encoding: Copy + 'static {
     /// `text.append(@intCast(cp))` paths in `scanDoubleQuotedScalar` /
     /// `decodeHexCodePoint` where `unit() == u16`.
     fn unit_from_u16(u: u16) -> Self::Unit;
-||||||| Stash base
-=======
-
-    /// Reinterpret a `&[Unit]` slice as `&[u8]` for `StringHashMap` keying
-    /// (`anchors` / `tag_handles`). Zig's `bun.StringHashMap` is keyed by
-    /// `[]const u8`; calls like `tag_handles.put(handle.slice(self.input), {})`
-    /// only type-check there for `unit() == u8` thanks to lazy generic
-    /// instantiation. Rust eagerly checks generics, so we route through this
-    /// method — identity for `u8` encodings, `unimplemented!()` for `Utf16`
-    /// (matching the Zig behavior of "compile error on Utf16 instantiation").
-    /// TODO(port): Utf16 needs a real keying story (transcode or u16-keyed map).
-    fn key_bytes(s: &[Self::Unit]) -> &[u8];
->>>>>>> Stashed changes
 }
 
 #[derive(Clone, Copy)]
@@ -480,7 +450,6 @@ impl Encoding for Latin1 {
     fn literal(s: &'static [u8]) -> &'static [u8] {
         s
     }
-<<<<<<< Updated upstream
     #[inline]
     fn key_bytes(s: &[u8]) -> &[u8] {
         s
@@ -490,13 +459,6 @@ impl Encoding for Latin1 {
         // Only reachable from `EncodingKind::Utf16`-gated arms.
         unreachable!("unit_from_u16 on Latin1")
     }
-||||||| Stash base
-=======
-    #[inline]
-    fn key_bytes(s: &[u8]) -> &[u8] {
-        s
-    }
->>>>>>> Stashed changes
 }
 
 impl Encoding for Utf8 {
@@ -509,7 +471,6 @@ impl Encoding for Utf8 {
     fn literal(s: &'static [u8]) -> &'static [u8] {
         s
     }
-<<<<<<< Updated upstream
     #[inline]
     fn key_bytes(s: &[u8]) -> &[u8] {
         s
@@ -519,13 +480,6 @@ impl Encoding for Utf8 {
         // Only reachable from `EncodingKind::Utf16`-gated arms.
         unreachable!("unit_from_u16 on Utf8")
     }
-||||||| Stash base
-=======
-    #[inline]
-    fn key_bytes(s: &[u8]) -> &[u8] {
-        s
-    }
->>>>>>> Stashed changes
 }
 
 impl Encoding for Utf16 {
@@ -540,7 +494,6 @@ impl Encoding for Utf16 {
         // a const transcoding macro (e.g. bun_str::w!). Phase B.
         unimplemented!("Utf16::literal requires const utf8->utf16 macro")
     }
-<<<<<<< Updated upstream
     fn key_bytes(_s: &[u16]) -> &[u8] {
         // TODO(port): Zig's `bun.StringHashMap` is u8-keyed; the Zig source
         // would also fail to compile this call for Utf16. Phase B decides
@@ -551,15 +504,6 @@ impl Encoding for Utf16 {
     fn unit_from_u16(u: u16) -> u16 {
         u
     }
-||||||| Stash base
-=======
-    fn key_bytes(_s: &[u16]) -> &[u8] {
-        // TODO(port): Zig's `bun.StringHashMap` is u8-keyed; the Zig source
-        // would also fail to compile this call for Utf16. Phase B decides
-        // whether to transcode or switch to a u16-keyed map.
-        unimplemented!("Utf16::key_bytes — StringHashMap is u8-keyed")
-    }
->>>>>>> Stashed changes
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -2390,22 +2334,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     pub fn parse_document(&mut self) -> Result<Document, ParseError> {
         let mut directives: Vec<Directive> = Vec::new();
 
-<<<<<<< Updated upstream
         // PORT NOTE: Zig `clearRetainingCapacity()`; the T2 `StringHashMap`
         // wraps `std::HashMap`, whose `.clear()` already retains capacity.
         self.anchors.clear();
         self.tag_handles.clear();
-||||||| Stash base
-        self.anchors.clear_retaining_capacity();
-        self.tag_handles.clear_retaining_capacity();
-=======
-        // PORT NOTE: Zig `clearRetainingCapacity()`; the T2 `StringHashMap`
-        // wraps `std::HashMap`, which has no capacity-retaining clear. Plain
-        // `.clear()` is correct — capacity retention is best-effort.
-        // PERF(port): was clearRetainingCapacity — profile in Phase B
-        self.anchors.clear();
-        self.tag_handles.clear();
->>>>>>> Stashed changes
 
         let mut has_yaml_directive = false;
 
@@ -3206,27 +3138,6 @@ impl Escape {
 // ───────────────────────────────────────────────────────────────────────────
 
 impl<'i, Enc: Encoding> Parser<'i, Enc> {
-<<<<<<< Updated upstream
-||||||| Stash base
-    // TODO(b2-blocked): bun_logger::js_ast::{Expr, E, ExprData}
-    #[cfg(any())]
-=======
-    // TODO(b2-blocked): bun_logger::js_ast::{Expr::init, E, ExprData}
-    //   Body constructs `E::*` payloads and matches on `ExprData` variants;
-    //   the T2 stub shapes are field-less `(())` newtypes. Re-gated body-only
-    //   so the `parse → parse_stream → parse_document → parse_node` call chain
-    //   compiles for downstream symbol resolution.
-    #[cfg(not(any()))]
-    fn parse_node(&mut self, opts: ParseNodeOptions<Enc>) -> Result<Expr, ParseError> {
-        if !self.stack_check.is_safe_to_recurse() {
-            return Err(ParseError::StackOverflow);
-        }
-        let _ = opts;
-        todo!("b2-blocked: bun_logger::js_ast::E (parse_node)")
-    }
-
-    #[cfg(any())]
->>>>>>> Stashed changes
     fn parse_node(&mut self, opts: ParseNodeOptions<Enc>) -> Result<Expr, ParseError> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(ParseError::StackOverflow);

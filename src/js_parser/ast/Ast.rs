@@ -177,26 +177,12 @@ impl Ast {
     }
 
     // Zig `initTest` borrowed `parts` and relied on explicit `deinit` never
-<<<<<<< Updated upstream
     // being called. In Rust `Ast` has implicit Drop, and release builds lack
     // the `Origin::Borrowed` debug guard — unwrapping `ManuallyDrop` here
     // would free the caller's slice. Gate until test callers are surveyed and
     // can switch to owned input (see Symbol::init_with_one_list, same issue).
     
     pub fn init_test(parts: &[Part]) -> Ast {
-||||||| Stash base
-    // being called. In Rust `Ast` has implicit Drop, and release builds lack
-    // the `Origin::Borrowed` debug guard — unwrapping `ManuallyDrop` here
-    // would free the caller's slice. Gate until test callers are surveyed and
-    // can switch to owned input (see Symbol::init_with_one_list, same issue).
-    #[cfg(any())]
-    pub fn init_test(parts: &[Part]) -> Ast {
-=======
-    // being called. In Rust `Ast` has implicit Drop, so the caller hands over
-    // ownership instead — test-only callers construct the Vec inline.
-    // PORT NOTE: signature differs from Zig (`[]Part` borrow → `Vec<Part>` move).
-    pub fn init_test(parts: Vec<Part>) -> Ast {
->>>>>>> Stashed changes
         Ast {
             parts: PartList::from_owned_slice(parts.into_boxed_slice()),
             runtime_imports: Default::default(),

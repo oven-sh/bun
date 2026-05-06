@@ -128,7 +128,6 @@ pub fn init_global(
     env: Option<&'static mut DotEnvLoader<'static>>,
     cwd: Option<&[u8]>,
 ) -> &'static mut MiniEventLoop<'static> {
-<<<<<<< Updated upstream
     if GLOBAL_INITIALIZED.with(|g| g.get()) {
         // SAFETY: GLOBAL was set on a previous call (GLOBAL_INITIALIZED gate).
         return unsafe { &mut *GLOBAL.with(|g| g.get()) };
@@ -151,39 +150,7 @@ pub fn init_global(
         // SAFETY: `loop_` is the live C-owned uws loop set in `MiniEventLoop::init`.
         unsafe { (*global.loop_).internal_loop_data.set_parent_raw(tag, ptr) };
     }
-||||||| Stash base
-    #[cfg(any())]
-    {
-        if GLOBAL_INITIALIZED.with(|g| g.get()) {
-            // SAFETY: GLOBAL was set on a previous call (GLOBAL_INITIALIZED gate).
-            return unsafe { &mut *GLOBAL.with(|g| g.get()) };
-        }
-        let loop_ = MiniEventLoop::init();
-        // PORT NOTE: §Forbidden bans `Box::leak` for `&'static`; this is a
-        // thread-lifetime singleton, so use `Box::into_raw` (intrusive ownership)
-        // and store the raw pointer in the thread-local — same as Zig
-        // `bun.default_allocator.create` + `threadlocal var global: *MiniEventLoop`.
-        let global: *mut MiniEventLoop<'static> = Box::into_raw(Box::new(loop_));
-        GLOBAL.with(|g| g.set(global));
-        // SAFETY: just allocated above; exclusive on this thread.
-        let global = unsafe { &mut *global };
-=======
-    if GLOBAL_INITIALIZED.with(|g| g.get()) {
-        // SAFETY: GLOBAL was set on a previous call (GLOBAL_INITIALIZED gate).
-        return unsafe { &mut *GLOBAL.with(|g| g.get()) };
-    }
-    let loop_ = MiniEventLoop::init();
-    // PORT NOTE: §Forbidden bans `Box::leak` for `&'static`; this is a
-    // thread-lifetime singleton, so use `Box::into_raw` (intrusive ownership)
-    // and store the raw pointer in the thread-local — same as Zig
-    // `bun.default_allocator.create` + `threadlocal var global: *MiniEventLoop`.
-    let global: *mut MiniEventLoop<'static> = Box::into_raw(Box::new(loop_));
-    GLOBAL.with(|g| g.set(global));
-    // SAFETY: just allocated above; exclusive on this thread.
-    let global = unsafe { &mut *global };
->>>>>>> Stashed changes
 
-<<<<<<< Updated upstream
     // PORT NOTE: Zig `bun.DotEnv.instance` is a `?*Loader` global. The Rust
     // port stores it as `AtomicPtr<Loader<'static>>`.
     global.env = env.map(NonNull::from).or_else(|| {
@@ -201,27 +168,7 @@ pub fn init_global(
         // SAFETY: `Box::into_raw` never returns null.
         global.env = Some(unsafe { NonNull::new_unchecked(loader) });
     }
-||||||| Stash base
-        // TODO(b2-blocked): bun_uws::Loop::internal_loop_data
-        // TODO(b2-blocked): bun_uws::InternalLoopData::set_parent_event_loop
-        global
-            .loop_
-            .internal_loop_data()
-            .set_parent_event_loop(EventLoopHandle::init_mini(global));
-=======
-    // PORT NOTE: `InternalLoopData::set_parent_event_loop` (typed) lives in a
-    // higher-tier trait wrapper that names `EventLoopHandle`; this crate calls
-    // the lower-tier `set_parent_raw(tag, ptr)` instead — tag values per
-    // `bun_uws_sys::InternalLoopData`: 1 = jsc::EventLoop, 2 = MiniEventLoop.
-    // SAFETY: `global.loop_` is the C-owned uws loop singleton from `Loop::get`.
-    unsafe {
-        (*global.loop_)
-            .internal_loop_data
-            .set_parent_raw(2, (global as *mut MiniEventLoop<'static>).cast());
-    }
->>>>>>> Stashed changes
 
-<<<<<<< Updated upstream
     // Set top_level_dir from provided cwd or get current working directory
     if let Some(dir) = cwd {
         // PORT NOTE: Zig borrowed `dir`; we dupe to keep Box<[u8]> ownership uniform.
@@ -234,62 +181,6 @@ pub fn init_global(
             }
             Err(_) => {
                 global.top_level_dir = Box::default();
-||||||| Stash base
-        // TODO(b2-blocked): bun_dotenv::instance
-        global.env = env.or_else(|| dotenv::instance());
-        if global.env.is_none() {
-            // Thread-lifetime singletons (matches Zig `bun.default_allocator.create`).
-            let map: *mut dotenv::Map = Box::into_raw(Box::new(dotenv::Map::init()));
-            // SAFETY: `map` lives for the thread (singleton); never freed (Zig parity).
-            let loader: *mut DotEnvLoader<'static> =
-                Box::into_raw(Box::new(DotEnvLoader::init(unsafe { &mut *map })));
-            // SAFETY: same lifetime reasoning as above.
-            global.env = Some(unsafe { &*loader });
-        }
-
-        // Set top_level_dir from provided cwd or get current working directory
-        if let Some(dir) = cwd {
-            // PORT NOTE: Zig borrowed `dir`; we dupe to keep Box<[u8]> ownership uniform.
-            global.top_level_dir = Box::<[u8]>::from(dir);
-        } else if global.top_level_dir.is_empty() {
-            let mut buf = bun_paths::PathBuffer::uninit();
-            // TODO(b2-blocked): bun_sys::getcwd (returns Maybe<usize>, not slice — reshape)
-            match sys::getcwd(&mut buf) {
-                Ok(len) => {
-                    global.top_level_dir = Box::<[u8]>::from(&buf[..len]);
-                }
-                Err(_) => {
-                    global.top_level_dir = Box::default();
-                }
-=======
-    // Zig: `env orelse bun.DotEnv.instance` — dotenv stores a raw ptr in
-    // `OnceLock<usize>` (single-thread invariant; see env_loader.rs PORT NOTE).
-    global.env = env
-        .map(NonNull::from)
-        .or_else(|| dotenv::INSTANCE.get().and_then(|&p| NonNull::new(p as *mut DotEnvLoader<'static>)));
-    if global.env.is_none() {
-        // Thread-lifetime singletons (matches Zig `bun.default_allocator.create`).
-        let map: *mut dotenv::Map = Box::into_raw(Box::new(dotenv::Map::init()));
-        // SAFETY: `map` lives for the thread (singleton); never freed (Zig parity).
-        let loader: *mut DotEnvLoader<'static> =
-            Box::into_raw(Box::new(DotEnvLoader::init(unsafe { &mut *map })));
-        // SAFETY: Box::into_raw never returns null.
-        global.env = Some(unsafe { NonNull::new_unchecked(loader) });
-    }
-
-    // Set top_level_dir from provided cwd or get current working directory
-    if let Some(dir) = cwd {
-        // PORT NOTE: Zig borrowed `dir`; we dupe to keep Box<[u8]> ownership uniform.
-        global.top_level_dir = Box::<[u8]>::from(dir);
-    } else if global.top_level_dir.is_empty() {
-        let mut buf = bun_paths::PathBuffer::uninit();
-        match sys::getcwd(&mut buf) {
-            Ok(len) => {
-                global.top_level_dir = Box::<[u8]>::from(&buf[..len]);
-            }
-            Err(_) => {
-                global.top_level_dir = Box::default();
->>>>>>> Stashed changes
             }
         }
     }
@@ -400,33 +291,12 @@ impl<'a> MiniEventLoop<'a> {
     }
 
     pub fn tick_once(&mut self, context: *mut c_void) {
-<<<<<<< Updated upstream
         if self.tick_concurrent_with_count() == 0 && self.tasks.readable_length() == 0 {
             // SAFETY: `loop_` is the live C-owned uws loop set in `init()`.
             unsafe {
                 (*self.loop_).inc();
                 (*self.loop_).tick();
                 (*self.loop_).dec();
-||||||| Stash base
-        #[cfg(any())]
-        {
-            if self.tick_concurrent_with_count() == 0 && self.tasks.readable_length() == 0 {
-                // TODO(b2-blocked): bun_uws::Loop::inc
-                // TODO(b2-blocked): bun_uws::Loop::tick
-                // TODO(b2-blocked): bun_uws::Loop::dec
-                self.loop_.inc();
-                self.loop_.tick();
-                self.loop_.dec();
-                // PORT NOTE: Zig `defer this.onAfterEventLoop()` was block-scoped to this `if`.
-                self.on_after_event_loop();
-=======
-        if self.tick_concurrent_with_count() == 0 && self.tasks.readable_length() == 0 {
-            // SAFETY: `loop_` is the C-owned uws loop set in `init`; valid for self's lifetime.
-            unsafe {
-                (*self.loop_).inc();
-                (*self.loop_).tick();
-                (*self.loop_).dec();
->>>>>>> Stashed changes
             }
             // PORT NOTE: Zig `defer this.onAfterEventLoop()` was block-scoped to this `if`.
             self.on_after_event_loop();
@@ -439,7 +309,6 @@ impl<'a> MiniEventLoop<'a> {
     }
 
     pub fn tick_without_idle(&mut self, context: *mut c_void) {
-<<<<<<< Updated upstream
         loop {
             let _ = self.tick_concurrent_with_count();
             while let Some(task) = self.tasks.read_item() {
@@ -452,36 +321,6 @@ impl<'a> MiniEventLoop<'a> {
 
             if self.tasks.readable_length() == 0 && self.tick_concurrent_with_count() == 0 {
                 break;
-||||||| Stash base
-        #[cfg(any())]
-        {
-            loop {
-                let _ = self.tick_concurrent_with_count();
-                while let Some(task) = self.tasks.read_item() {
-                    // SAFETY: see tick_once.
-                    unsafe { (*task).run(context) };
-                }
-
-                // TODO(b2-blocked): bun_uws::Loop::tick_without_idle
-                self.loop_.tick_without_idle();
-
-                if self.tasks.readable_length() == 0 && self.tick_concurrent_with_count() == 0 {
-                    break;
-                }
-=======
-        loop {
-            let _ = self.tick_concurrent_with_count();
-            while let Some(task) = self.tasks.read_item() {
-                // SAFETY: see tick_once.
-                unsafe { (*task).run(context) };
-            }
-
-            // SAFETY: `loop_` is the C-owned uws loop set in `init`; valid for self's lifetime.
-            unsafe { (*self.loop_).tick_without_idle() };
-
-            if self.tasks.readable_length() == 0 && self.tick_concurrent_with_count() == 0 {
-                break;
->>>>>>> Stashed changes
             }
         }
         // PORT NOTE: Zig `defer this.onAfterEventLoop()` at fn scope; no early returns above.
@@ -492,7 +331,6 @@ impl<'a> MiniEventLoop<'a> {
     where
         F: Fn(*mut c_void) -> bool,
     {
-<<<<<<< Updated upstream
         // PERF(port): Zig `comptime isDone: *const fn` monomorphized per callsite; generic `F`
         // here also monomorphizes — should match.
         while !is_done(context) {
@@ -502,35 +340,6 @@ impl<'a> MiniEventLoop<'a> {
                     (*self.loop_).inc();
                     (*self.loop_).tick();
                     (*self.loop_).dec();
-||||||| Stash base
-        #[cfg(any())]
-        {
-            // PERF(port): Zig `comptime isDone: *const fn` monomorphized per callsite; generic `F`
-            // here also monomorphizes — should match.
-            while !is_done(context) {
-                if self.tick_concurrent_with_count() == 0 && self.tasks.readable_length() == 0 {
-                    // TODO(b2-blocked): bun_uws::Loop::inc / tick / dec
-                    self.loop_.inc();
-                    self.loop_.tick();
-                    self.loop_.dec();
-                    // PORT NOTE: Zig `defer` was block-scoped to this `if`.
-                    self.on_after_event_loop();
-                }
-
-                while let Some(task) = self.tasks.read_item() {
-                    // SAFETY: see tick_once.
-                    unsafe { (*task).run(context) };
-=======
-        // PERF(port): Zig `comptime isDone: *const fn` monomorphized per callsite; generic `F`
-        // here also monomorphizes — should match.
-        while !is_done(context) {
-            if self.tick_concurrent_with_count() == 0 && self.tasks.readable_length() == 0 {
-                // SAFETY: `loop_` is the C-owned uws loop set in `init`; valid for self's lifetime.
-                unsafe {
-                    (*self.loop_).inc();
-                    (*self.loop_).tick();
-                    (*self.loop_).dec();
->>>>>>> Stashed changes
                 }
                 // PORT NOTE: Zig `defer` was block-scoped to this `if`.
                 self.on_after_event_loop();
@@ -559,26 +368,9 @@ impl<'a> MiniEventLoop<'a> {
     }
 
     pub fn enqueue_task_concurrent(&mut self, task: *mut AnyTaskWithExtraContext) {
-<<<<<<< Updated upstream
         self.concurrent_tasks.push(task);
         // SAFETY: `loop_` is the live C-owned uws loop set in `init()`.
         unsafe { (*self.loop_).wakeup() };
-||||||| Stash base
-        #[cfg(any())]
-        {
-            self.concurrent_tasks.push(task);
-            // TODO(b2-blocked): bun_uws::Loop::wakeup
-            self.loop_.wakeup();
-            return;
-        }
-        let _ = task;
-        // TODO(b2-blocked): bun_uws::Loop::wakeup
-        todo!("MiniEventLoop::enqueue_task_concurrent — blocked on bun_uws::Loop::wakeup")
-=======
-        self.concurrent_tasks.push(task);
-        // SAFETY: `loop_` is the C-owned uws loop set in `init`; valid for self's lifetime.
-        unsafe { (*self.loop_).wakeup() };
->>>>>>> Stashed changes
     }
 
     // TODO(port): same comptime-reflection problem as `enqueue_task` (uses `@field` +
@@ -683,7 +475,6 @@ mod mini_ctx {
         // Zig MiniVM.incrementPendingUnrefCounter: `@panic("FIXME TODO")`.
         unimplemented!("FIXME TODO");
     }
-<<<<<<< Updated upstream
     unsafe fn ref_concurrently(_: *mut ()) {
         // Zig has NO Mini-side `refConcurrently` — `KeepAlive::refConcurrently`
         // (src/aio/posix_event_loop.zig) only accepts `*jsc.VirtualMachine`;
@@ -691,48 +482,11 @@ mod mini_ctx {
         // invariant here rather than non-atomically mutating the uws PosixLoop
         // counters from off-thread (data race) and omitting `wakeup()`.
         unimplemented!("FIXME TODO");
-||||||| Stash base
-    unsafe fn ref_concurrently(owner: *mut ()) {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_uws::Loop::ref_
-            unsafe { (*(*cast(owner)).loop_).ref_() };
-            return;
-        }
-        let _ = owner;
-        // TODO(b2-blocked): bun_uws::Loop::ref_
-        todo!("MiniEventLoop EventLoopCtx::ref_concurrently — blocked on bun_uws::Loop::ref_")
-=======
-    unsafe fn ref_concurrently(_: *mut ()) {
-        // Zig has NO mini-arm `refConcurrently`: `KeepAlive.refConcurrently` is
-        // hard-typed `*jsc.VirtualMachine` (posix_event_loop.zig) and
-        // `EventLoopHandle` exposes only same-thread `ref()`/`unref()`. Calling
-        // `uws::Loop::ref_()` here would be a cross-thread data race on
-        // non-atomic `num_polls`/`active`. Mirror `increment_pending_unref_counter`.
-        unimplemented!("FIXME TODO");
->>>>>>> Stashed changes
     }
-<<<<<<< Updated upstream
     unsafe fn unref_concurrently(_: *mut ()) {
         // See `ref_concurrently` — Zig `KeepAlive::unrefConcurrently` only
         // accepts `*jsc.VirtualMachine`; unreachable for Mini.
         unimplemented!("FIXME TODO");
-||||||| Stash base
-    unsafe fn unref_concurrently(owner: *mut ()) {
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_uws::Loop::unref
-            unsafe { (*(*cast(owner)).loop_).unref() };
-            return;
-        }
-        let _ = owner;
-        // TODO(b2-blocked): bun_uws::Loop::unref
-        todo!("MiniEventLoop EventLoopCtx::unref_concurrently — blocked on bun_uws::Loop::unref")
-=======
-    unsafe fn unref_concurrently(_: *mut ()) {
-        // See `ref_concurrently` — no Zig mini-arm sibling exists.
-        unimplemented!("FIXME TODO");
->>>>>>> Stashed changes
     }
     unsafe fn after_event_loop_callback(owner: *mut ()) -> Option<OpaqueCallback> {
         unsafe { (*cast(owner)).after_event_loop_callback }

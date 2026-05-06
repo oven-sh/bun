@@ -528,32 +528,14 @@ pub fn crash_handler(
             PANIC_STAGE.with(|s| s.set(1));
             let _ = PANICKING.fetch_add(1, Ordering::SeqCst);
 
-<<<<<<< Updated upstream
             if let Some(handlers) = BEFORE_CRASH_HANDLERS.try_lock() {
                 for CrashHandlerEntry(ptr, cb) in handlers.iter() {
                     cb(*ptr);
-||||||| Stash base
-            if BEFORE_CRASH_HANDLERS_MUTEX.try_lock() {
-                // SAFETY: guarded by BEFORE_CRASH_HANDLERS_MUTEX
-                for &(ptr, cb) in unsafe { BEFORE_CRASH_HANDLERS_LIST.iter() } {
-                    cb(ptr);
-=======
-            if let Some(handlers) = BEFORE_CRASH_HANDLERS.try_lock() {
-                for &CrashHandlerEntry(ptr, cb) in handlers.iter() {
-                    cb(ptr);
->>>>>>> Stashed changes
                 }
             }
 
             {
-<<<<<<< Updated upstream
                 let _panic_guard = PANIC_MUTEX.lock();
-||||||| Stash base
-                PANIC_MUTEX.lock();
-                let _guard = scopeguard::guard((), |_| PANIC_MUTEX.unlock());
-=======
-                let _guard = PANIC_MUTEX.lock();
->>>>>>> Stashed changes
 
                 // Use an raw unbuffered writer to stderr to avoid losing information on
                 // panic in a panic. There is also a possibility that `Output` related code
@@ -561,17 +543,9 @@ pub fn crash_handler(
                 //
                 // Output.errorWriter() is not used here because it may not be configured
                 // if the program crashes immediately at startup.
-<<<<<<< Updated upstream
                 // TODO(port): std.fs.File.stderr().writerStreaming — local raw StderrWriter (bun_sys
                 //             FileWriter only impls std::io::Write, not the local byte-Write trait)
                 let writer = &mut stderr_writer();
-||||||| Stash base
-                // TODO(port): std.fs.File.stderr().writerStreaming — using bun_sys raw stderr writer
-                let writer = &mut bun_sys::stderr_writer();
-=======
-                // PORT NOTE: std.fs.File.stderr().writerStreaming → local raw stderr writer
-                let writer = &mut stderr_writer();
->>>>>>> Stashed changes
 
                 // The format of the panic trace is slightly different in debug
                 // builds. Mainly, we demangle the backtrace immediately instead
@@ -604,18 +578,10 @@ pub fn crash_handler(
                         // SAFETY: name was set from a valid NUL-terminated C string
                         let native_plugin_name = unsafe { core::ffi::CStr::from_ptr(name) }.to_bytes();
                         let fmt = "\nBun has encountered a crash while running the <red><d>\"{s}\"<r> native plugin.\n\nThis indicates either a bug in the native plugin or in Bun.\n";
-<<<<<<< Updated upstream
                         if write!(writer, "{}", Output::pretty_fmt_args(fmt, true, format_args!("{}", bstr::BStr::new(native_plugin_name)))).is_err() { abort(); }
                     } else if UNSUPPORTED_UV_FUNCTION.with(|c| c.get()).is_some() {
                         // TODO(b2-blocked): bun_analytics::Features::unsupported_uv_function — using
                         // the threadlocal as a stand-in for the global counter check.
-||||||| Stash base
-                        if write!(writer, "{}", Output::pretty_fmt_args(fmt, true, format_args!("{}", bstr::BStr::new(native_plugin_name)))).is_err() { bun_sys::posix::abort(); }
-                    } else if bun_analytics::Features::unsupported_uv_function() > 0 {
-=======
-                        if write!(writer, "{}", Output::pretty_fmt_args(fmt, true, format_args!("{}", bstr::BStr::new(native_plugin_name)))).is_err() { abort(); }
-                    } else if bun_analytics::features::unsupported_uv_function.load(Ordering::Relaxed) > 0 {
->>>>>>> Stashed changes
                         let name: &[u8] = UNSUPPORTED_UV_FUNCTION.with(|c| c.get())
                             .map(|p| {
                                 // SAFETY: p was set from a valid NUL-terminated C string via CrashHandler__unsupportedUVFunction
@@ -628,66 +594,26 @@ pub fn crash_handler(
                         unsafe { HAS_PRINTED_MESSAGE = true; }
                     }
                 } else {
-<<<<<<< Updated upstream
                     if enable_ansi_colors_stderr() {
                         if writer.write_all(&Output::pretty_fmt::<true>("<red>")).is_err() { abort(); }
-||||||| Stash base
-                    if Output::enable_ansi_colors_stderr() {
-                        if writer.write_all(Output::pretty_fmt("<red>", true)).is_err() { bun_sys::posix::abort(); }
-=======
-                    if enable_ansi_colors_stderr() {
-                        if writer.write_all(&Output::pretty_fmt("<red>", true)).is_err() { abort(); }
->>>>>>> Stashed changes
                     }
-<<<<<<< Updated upstream
                     if writer.write_all(b"oh no").is_err() { abort(); }
                     if enable_ansi_colors_stderr() {
                         if writer.write_all(&Output::pretty_fmt::<true>("<r><d>: multiple threads are crashing<r>\n")).is_err() { abort(); }
-||||||| Stash base
-                    if writer.write_all(b"oh no").is_err() { bun_sys::posix::abort(); }
-                    if Output::enable_ansi_colors_stderr() {
-                        if writer.write_all(Output::pretty_fmt("<r><d>: multiple threads are crashing<r>\n", true)).is_err() { bun_sys::posix::abort(); }
-=======
-                    if writer.write_all(b"oh no").is_err() { abort(); }
-                    if enable_ansi_colors_stderr() {
-                        if writer.write_all(&Output::pretty_fmt("<r><d>: multiple threads are crashing<r>\n", true)).is_err() { abort(); }
->>>>>>> Stashed changes
                     } else {
-<<<<<<< Updated upstream
                         if writer.write_all(&Output::pretty_fmt::<true>(": multiple threads are crashing\n")).is_err() { abort(); }
-||||||| Stash base
-                        if writer.write_all(Output::pretty_fmt(": multiple threads are crashing\n", true)).is_err() { bun_sys::posix::abort(); }
-=======
-                        if writer.write_all(&Output::pretty_fmt(": multiple threads are crashing\n", true)).is_err() { abort(); }
->>>>>>> Stashed changes
                     }
                 }
 
                 if !matches!(reason, CrashReason::OutOfMemory) || debug_trace {
-<<<<<<< Updated upstream
                     if enable_ansi_colors_stderr() {
                         if writer.write_all(&Output::pretty_fmt::<true>("<red>")).is_err() { abort(); }
-||||||| Stash base
-                    if Output::enable_ansi_colors_stderr() {
-                        if writer.write_all(Output::pretty_fmt("<red>", true)).is_err() { bun_sys::posix::abort(); }
-=======
-                    if enable_ansi_colors_stderr() {
-                        if writer.write_all(&Output::pretty_fmt("<red>", true)).is_err() { abort(); }
->>>>>>> Stashed changes
                     }
 
                     if writer.write_all(b"panic").is_err() { abort(); }
 
-<<<<<<< Updated upstream
                     if enable_ansi_colors_stderr() {
                         if writer.write_all(&Output::pretty_fmt::<true>("<r><d>")).is_err() { abort(); }
-||||||| Stash base
-                    if Output::enable_ansi_colors_stderr() {
-                        if writer.write_all(Output::pretty_fmt("<r><d>", true)).is_err() { bun_sys::posix::abort(); }
-=======
-                    if enable_ansi_colors_stderr() {
-                        if writer.write_all(&Output::pretty_fmt("<r><d>", true)).is_err() { abort(); }
->>>>>>> Stashed changes
                     }
 
                     if cli_state::is_main_thread() {
@@ -710,14 +636,7 @@ pub fn crash_handler(
                                 if write!(writer, "({})", bun_fmt::utf16(span)).is_err() { abort(); }
                             } else {
                                 // SAFETY: GetCurrentThreadId is an infallible Win32 call with no pointer/precondition requirements
-<<<<<<< Updated upstream
                                 if write!(writer, "(thread {})", unsafe { bun_sys::c::GetCurrentThreadId() }).is_err() { abort(); }
-||||||| Stash base
-                                if write!(writer, "(thread {})", unsafe { bun_sys::c::GetCurrentThreadId() }).is_err() { bun_sys::posix::abort(); }
-=======
-                                if write!(writer, "(thread {})", unsafe { bun_sys::c::GetCurrentThreadId() }).is_err() { abort(); }
-                            }
->>>>>>> Stashed changes
                             }
                         }
                         #[cfg(any(target_os = "macos", target_os = "linux", target_os = "freebsd"))]
@@ -725,19 +644,9 @@ pub fn crash_handler(
                         // TODO(port): wasm @compileError("TODO")
                     }
 
-<<<<<<< Updated upstream
                     if writer.write_all(b": ").is_err() { abort(); }
                     if enable_ansi_colors_stderr() {
                         if writer.write_all(&Output::pretty_fmt::<true>("<r>")).is_err() { abort(); }
-||||||| Stash base
-                    if writer.write_all(b": ").is_err() { bun_sys::posix::abort(); }
-                    if Output::enable_ansi_colors_stderr() {
-                        if writer.write_all(Output::pretty_fmt("<r>", true)).is_err() { bun_sys::posix::abort(); }
-=======
-                    if writer.write_all(b": ").is_err() { abort(); }
-                    if enable_ansi_colors_stderr() {
-                        if writer.write_all(&Output::pretty_fmt("<r>", true)).is_err() { abort(); }
->>>>>>> Stashed changes
                     }
                     if write!(writer, "{}\n", reason).is_err() { abort(); }
                 }
@@ -750,86 +659,32 @@ pub fn crash_handler(
                 let trace_buf: StackTrace;
 
                 // If a trace was not provided, compute one now
-<<<<<<< Updated upstream
                 // PORT NOTE: reshaped for borrowck — Zig held a StackTrace
                 // borrowing addr_buf while overwriting addr_buf; here we capture
                 // the index into a scalar, drop the borrow, mutate, then rebuild.
-||||||| Stash base
-=======
-                // PORT NOTE: reshaped for borrowck — Zig mutated `addr_buf` while
-                // `trace_buf.instruction_addresses` aliased it. In Rust we capture
-                // into a temporary, drop the borrow, then rebuild `trace_buf` once
-                // `addr_buf` is finalized.
->>>>>>> Stashed changes
                 let trace: &StackTrace = 'blk: {
                     if let Some(ert) = error_return_trace {
                         if ert.index > 0 {
                             break 'blk ert;
                         }
                     }
-<<<<<<< Updated upstream
                     let desired_begin_addr = begin_addr.unwrap_or_else(|| debug::return_address());
                     let mut idx: usize = debug::capture_stack_trace(desired_begin_addr, &mut addr_buf);
-||||||| Stash base
-                    trace_buf = StackTrace {
-                        index: 0,
-                        instruction_addresses: &mut addr_buf,
-                    };
-                    let desired_begin_addr = begin_addr.unwrap_or_else(|| bun_debug::return_address());
-                    debug::capture_stack_trace(desired_begin_addr, &mut trace_buf);
-=======
-                    let desired_begin_addr = begin_addr.unwrap_or_else(debug::return_address);
-                    let mut captured_index;
-                    {
-                        let mut tmp = StackTrace { index: 0, instruction_addresses: &addr_buf };
-                        debug::capture_stack_trace(desired_begin_addr, &mut tmp);
-                        captured_index = tmp.index;
-                    }
->>>>>>> Stashed changes
 
                     #[cfg(all(target_os = "linux", target_env = "gnu"))]
                     {
                         let mut addr_buf_libc: [usize; 20] = [0; 20];
-<<<<<<< Updated upstream
                         // capture_libc_backtrace only writes `.index` on the StackTrace and
                         // writes frames into `addrs`; pass an empty-slice trace for the index.
                         let mut idx_holder = StackTrace { index: 0, instruction_addresses: &[] };
                         capture_libc_backtrace(desired_begin_addr, &mut addr_buf_libc, &mut idx_holder);
-||||||| Stash base
-                        let mut trace_buf_libc = StackTrace {
-                            index: 0,
-                            instruction_addresses: &mut addr_buf_libc,
-                        };
-                        capture_libc_backtrace(desired_begin_addr, &mut trace_buf_libc);
-=======
-                        let mut tmp_libc = StackTrace { index: 0, instruction_addresses: &[] };
-                        capture_libc_backtrace(desired_begin_addr, &mut addr_buf_libc, &mut tmp_libc);
-                        let libc_index = tmp_libc.index;
->>>>>>> Stashed changes
                         // Use stack trace from glibc's backtrace() if it has more frames
-<<<<<<< Updated upstream
                         if idx_holder.index > idx {
-||||||| Stash base
-                        if trace_buf_libc.index > trace_buf.index {
-=======
-                        if libc_index > captured_index {
->>>>>>> Stashed changes
                             addr_buf = addr_buf_libc;
-<<<<<<< Updated upstream
                             idx = idx_holder.index;
-||||||| Stash base
-                            trace_buf.index = trace_buf_libc.index;
-=======
-                            captured_index = libc_index;
->>>>>>> Stashed changes
                         }
                     }
-<<<<<<< Updated upstream
                     trace_buf = StackTrace { index: idx, instruction_addresses: &addr_buf };
-||||||| Stash base
-=======
-                    trace_buf = StackTrace { index: captured_index, instruction_addresses: &addr_buf };
->>>>>>> Stashed changes
                     break 'blk &trace_buf;
                 };
 
@@ -849,27 +704,11 @@ pub fn crash_handler(
                     if unsafe { !HAS_PRINTED_MESSAGE } {
                         // SAFETY: single-threaded mutation under panic_mutex
                         unsafe { HAS_PRINTED_MESSAGE = true; }
-<<<<<<< Updated upstream
                         if writer.write_all(b"oh no").is_err() { abort(); }
                         if enable_ansi_colors_stderr() {
                             if writer.write_all(&Output::pretty_fmt::<true>("<r><d>:<r> ")).is_err() { abort(); }
-||||||| Stash base
-                        if writer.write_all(b"oh no").is_err() { bun_sys::posix::abort(); }
-                        if Output::enable_ansi_colors_stderr() {
-                            if writer.write_all(Output::pretty_fmt("<r><d>:<r> ", true)).is_err() { bun_sys::posix::abort(); }
-=======
-                        if writer.write_all(b"oh no").is_err() { abort(); }
-                        if enable_ansi_colors_stderr() {
-                            if writer.write_all(&Output::pretty_fmt("<r><d>:<r> ", true)).is_err() { abort(); }
->>>>>>> Stashed changes
                         } else {
-<<<<<<< Updated upstream
                             if writer.write_all(&Output::pretty_fmt::<true>(": ")).is_err() { abort(); }
-||||||| Stash base
-                            if writer.write_all(Output::pretty_fmt(": ", true)).is_err() { bun_sys::posix::abort(); }
-=======
-                            if writer.write_all(&Output::pretty_fmt(": ", true)).is_err() { abort(); }
->>>>>>> Stashed changes
                         }
                         if let Some(name) = INSIDE_NATIVE_PLUGIN.with(|c| c.get()) {
                             // SAFETY: name was set from a valid NUL-terminated C string
@@ -878,17 +717,9 @@ pub fn crash_handler(
                                 "Bun has encountered a crash while running the <red><d>\"{s}\"<r> native plugin.\n\nTo send a redacted crash report to Bun's team,\nplease file a GitHub issue using the link below:\n\n",
                                 true,
                                 format_args!("{}", bstr::BStr::new(native_plugin_name)),
-<<<<<<< Updated upstream
                             )).is_err() { abort(); }
                         } else if UNSUPPORTED_UV_FUNCTION.with(|c| c.get()).is_some() {
                             // TODO(b2-blocked): bun_analytics::Features::unsupported_uv_function
-||||||| Stash base
-                            )).is_err() { bun_sys::posix::abort(); }
-                        } else if bun_analytics::Features::unsupported_uv_function() > 0 {
-=======
-                            )).is_err() { abort(); }
-                        } else if bun_analytics::features::unsupported_uv_function.load(Ordering::Relaxed) > 0 {
->>>>>>> Stashed changes
                             let name: &[u8] = UNSUPPORTED_UV_FUNCTION.with(|c| c.get())
                                 .map(|p| {
                                     // SAFETY: p was set from a valid NUL-terminated C string via CrashHandler__unsupportedUVFunction
@@ -908,16 +739,8 @@ pub fn crash_handler(
                         }
                     }
 
-<<<<<<< Updated upstream
                     if enable_ansi_colors_stderr() {
                         if writer.write_all(&Output::pretty_fmt::<true>("<cyan>")).is_err() { abort(); }
-||||||| Stash base
-                    if Output::enable_ansi_colors_stderr() {
-                        if writer.write_all(Output::pretty_fmt("<cyan>", true)).is_err() { bun_sys::posix::abort(); }
-=======
-                    if enable_ansi_colors_stderr() {
-                        if writer.write_all(&Output::pretty_fmt("<cyan>", true)).is_err() { abort(); }
->>>>>>> Stashed changes
                     }
 
                     if writer.write_all(b" ").is_err() { abort(); }
@@ -928,27 +751,13 @@ pub fn crash_handler(
                         action: TraceStringAction::OpenIssue,
                     }).is_err() { abort(); }
 
-<<<<<<< Updated upstream
                     if writer.write_all(trace_str_buf.const_slice()).is_err() { abort(); }
-||||||| Stash base
-                    if writer.write_all(trace_str_buf.slice()).is_err() { bun_sys::posix::abort(); }
-=======
-                    if writer.write_all(trace_str_buf.slice()).is_err() { abort(); }
->>>>>>> Stashed changes
 
                     if writer.write_all(b"\n").is_err() { abort(); }
                 }
 
-<<<<<<< Updated upstream
                 if enable_ansi_colors_stderr() {
                     if writer.write_all(&Output::pretty_fmt::<true>("<r>\n")).is_err() { abort(); }
-||||||| Stash base
-                if Output::enable_ansi_colors_stderr() {
-                    if writer.write_all(Output::pretty_fmt("<r>\n", true)).is_err() { bun_sys::posix::abort(); }
-=======
-                if enable_ansi_colors_stderr() {
-                    if writer.write_all(&Output::pretty_fmt("<r>\n", true)).is_err() { abort(); }
->>>>>>> Stashed changes
                 } else {
                     if writer.write_all(b"\n").is_err() { abort(); }
                 }
@@ -976,30 +785,11 @@ pub fn crash_handler(
                 // attempt to prevent a double panic
                 bun_core::set_auto_reload_on_crash(false);
 
-<<<<<<< Updated upstream
                 // TODO(port): pretty_fmt! color tags — runtime rewrite via pretty_fmt_args
                 Output::pretty_errorln(
                     "<d>--- Bun is auto-restarting due to crash <d>[time: <b>{s}<r><d>] ---<r>",
                     (bun_core::time::milli_timestamp().max(0),),
                 );
-||||||| Stash base
-                Output::pretty_errorln(
-                    "<d>--- Bun is auto-restarting due to crash <d>[time: <b>{}<r><d>] ---<r>",
-                    format_args!("{}", bun_core::time::milli_timestamp().max(0)),
-                );
-=======
-                // PORT NOTE: Zig `Output.prettyErrorln(fmt, .{ts})` — Rust port's
-                // `pretty_errorln` takes a single pre-formatted `Arguments`; route
-                // through `pretty_fmt_args` to get the runtime <tag> rewrite.
-                Output::pretty_errorln(format_args!(
-                    "{}",
-                    Output::pretty_fmt_args(
-                        "<d>--- Bun is auto-restarting due to crash <d>[time: <b>{}<r><d>] ---<r>",
-                        enable_ansi_colors_stderr(),
-                        format_args!("{}", bun_core::time::milli_timestamp().max(0)),
-                    ),
-                ));
->>>>>>> Stashed changes
                 Output::flush();
 
                 // TODO(port): comptime assert void == @TypeOf(bun.reloadProcess(...))
@@ -1466,29 +1256,14 @@ pub fn print_metadata(writer: &mut impl Write) -> Result<(), bun_core::Error> {
         }
     }
 
-<<<<<<< Updated upstream
     if enable_ansi_colors_stderr() {
         writer.write_all(&Output::pretty_fmt::<true>("<r><d>"))?;
-||||||| Stash base
-    if Output::enable_ansi_colors_stderr() {
-        writer.write_all(Output::pretty_fmt("<r><d>", true))?;
-=======
-    if enable_ansi_colors_stderr() {
-        writer.write_all(&Output::pretty_fmt("<r><d>", true))?;
->>>>>>> Stashed changes
     }
 
     let mut is_ancient_cpu = false;
 
     writer.write_all(METADATA_VERSION_LINE.as_bytes())?;
     {
-<<<<<<< Updated upstream
-||||||| Stash base
-        let platform = bun_analytics::GenerateHeader::GeneratePlatform::for_os();
-=======
-        use bun_analytics::generate_header::generate_platform;
-        let platform = generate_platform::for_os();
->>>>>>> Stashed changes
         let cpu_features = CPUFeatures::get();
         
         // TODO(b2-blocked): bun_analytics::GenerateHeader::GeneratePlatform
@@ -1504,19 +1279,9 @@ pub fn print_metadata(writer: &mut impl Write) -> Result<(), bun_core::Error> {
                 // SAFETY: non-null branch — gnu_get_libc_version returned a valid C string.
                 unsafe { core::ffi::CStr::from_ptr(version) }.to_bytes()
             };
-<<<<<<< Updated upstream
             let kernel_version = bun_analytics::GenerateHeader::generate_platform::kernel_version();
             if platform.os == bun_analytics::schema::analytics::OperatingSystem::wsl {
                 write!(writer, "WSL Kernel v{}.{}.{} | glibc v{}\n", kernel_version.major, kernel_version.minor, kernel_version.patch, bstr::BStr::new(version_bytes)).map_err(fmt_err)?;
-||||||| Stash base
-            let kernel_version = bun_analytics::GenerateHeader::GeneratePlatform::kernel_version();
-            if platform.os == bun_analytics::PlatformOs::Wsl {
-                write!(writer, "WSL Kernel v{}.{}.{} | glibc v{}\n", kernel_version.major, kernel_version.minor, kernel_version.patch, bstr::BStr::new(version_bytes))?;
-=======
-            let kernel_version = generate_platform::kernel_version();
-            if platform.os == bun_analytics::schema::analytics::OperatingSystem::wsl {
-                write!(writer, "WSL Kernel v{}.{}.{} | glibc v{}\n", kernel_version.major, kernel_version.minor, kernel_version.patch, bstr::BStr::new(version_bytes)).map_err(fmt_err)?;
->>>>>>> Stashed changes
             } else {
                 write!(writer, "Linux Kernel v{}.{}.{} | glibc v{}\n", kernel_version.major, kernel_version.minor, kernel_version.patch, bstr::BStr::new(version_bytes)).map_err(fmt_err)?;
             }
@@ -1544,12 +1309,7 @@ pub fn print_metadata(writer: &mut impl Write) -> Result<(), bun_core::Error> {
             // TODO(port): std.zig.system.windows.detectRuntimeVersion()
             write!(writer, "Windows v{}\n", bun_sys::windows::detect_runtime_version()).map_err(fmt_err)?;
         }
-<<<<<<< Updated upstream
         } // end  — bun_analytics platform block
-||||||| Stash base
-=======
-        let _ = platform;
->>>>>>> Stashed changes
 
         #[cfg(target_arch = "x86_64")]
         {
@@ -1574,16 +1334,10 @@ pub fn print_metadata(writer: &mut impl Write) -> Result<(), bun_core::Error> {
             }
         }
     }
-<<<<<<< Updated upstream
     
     // TODO(b2-blocked): bun_analytics::Features::formatter
     { write!(writer, "\n{}", bun_analytics::features::formatter()).map_err(fmt_err)?; }
     writer.write_all(b"\n")?;
-||||||| Stash base
-    write!(writer, "\n{}", bun_analytics::Features::formatter())?;
-=======
-    write!(writer, "\n{}", bun_analytics::features::formatter()).map_err(fmt_err)?;
->>>>>>> Stashed changes
 
     if bun_core::USE_MIMALLOC {
         let mut elapsed_msecs: usize = 0;
@@ -1621,29 +1375,14 @@ pub fn print_metadata(writer: &mut impl Write) -> Result<(), bun_core::Error> {
 
         // SAFETY: read-only access to exported global
         if unsafe { Bun__reported_memory_size } > 0 {
-<<<<<<< Updated upstream
             write!(writer, " | Machine: {}", bun_fmt::bytes(unsafe { Bun__reported_memory_size })).map_err(fmt_err)?;
-||||||| Stash base
-            write!(writer, " | Machine: {}", bun_fmt::bytes(unsafe { Bun__reported_memory_size }))?;
-=======
-            // SAFETY: read-only access to exported global
-            write!(writer, " | Machine: {}", bun_fmt::bytes(unsafe { Bun__reported_memory_size })).map_err(fmt_err)?;
->>>>>>> Stashed changes
         }
 
         writer.write_all(b"\n")?;
     }
 
-<<<<<<< Updated upstream
     if enable_ansi_colors_stderr() {
         writer.write_all(&Output::pretty_fmt::<true>("<r>"))?;
-||||||| Stash base
-    if Output::enable_ansi_colors_stderr() {
-        writer.write_all(Output::pretty_fmt("<r>", true))?;
-=======
-    if enable_ansi_colors_stderr() {
-        writer.write_all(&Output::pretty_fmt("<r>", true))?;
->>>>>>> Stashed changes
     }
     writer.write_all(b"\n")?;
 
@@ -2227,7 +1966,6 @@ fn report(url: &[u8]) {
     }
     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "freebsd"))]
     {
-<<<<<<< Updated upstream
         // SAFETY: all-zero is a valid PathBuffer (#[repr(C)] [u8; N], no NonNull/NonZero fields)
         let mut buf: bun_core::PathBuffer = unsafe { core::mem::zeroed() };
         // SAFETY: as above
@@ -2239,25 +1977,6 @@ fn report(url: &[u8]) {
         let cwd_bytes = cwd.as_bytes();
         let Some(curl) = bun_core::which(&mut buf, path_env, cwd_bytes, b"curl") else { return; };
         let mut cmd_line = BoundedArray::<u8, 4096>::default();
-||||||| Stash base
-        let mut buf = bun_paths::PathBuffer::uninit();
-        let mut buf2 = bun_paths::PathBuffer::uninit();
-        let Some(path_env) = env_var::PATH::get() else { return; };
-        let Ok(cwd) = bun_core::getcwd(&mut buf2) else { return; };
-        let Some(curl) = bun_core::which(&mut buf, path_env, cwd, b"curl") else { return; };
-        let mut cmd_line = BoundedArray::<u8, 4096>::new();
-=======
-        let mut buf = bun_core::PathBuffer::uninit();
-        let mut buf2 = bun_core::PathBuffer::uninit();
-        // SAFETY: PathBuffer is `#[repr(transparent)] [u8; N]`; uninit bytes are fine for a
-        // write-only scratch buffer (getcwd/which write before any read).
-        let buf = unsafe { buf.assume_init_mut() };
-        let buf2 = unsafe { buf2.assume_init_mut() };
-        let Some(path_env) = env_var::PATH.get() else { return; };
-        let Ok(cwd) = bun_core::getcwd(buf2) else { return; };
-        let Some(curl) = bun_core::which(buf, path_env, cwd.as_bytes(), b"curl") else { return; };
-        let mut cmd_line = BoundedArray::<u8, 4096>::default();
->>>>>>> Stashed changes
         if cmd_line.append_slice(url).is_err() { return; }
         if cmd_line.append_slice(b"/ack").is_err() { return; }
         if cmd_line.append(0).is_err() { return; }
@@ -2265,13 +1984,7 @@ fn report(url: &[u8]) {
         let argv: [*const c_char; 4] = [
             curl.as_ptr(),
             b"-fsSL\0".as_ptr().cast(),
-<<<<<<< Updated upstream
             cmd_line.const_slice().as_ptr().cast(),
-||||||| Stash base
-            cmd_line.buffer().as_ptr().cast(),
-=======
-            cmd_line.slice().as_ptr().cast(),
->>>>>>> Stashed changes
             core::ptr::null(),
         ];
         // SAFETY: fork is async-signal-safe; we're already in the crash path
@@ -2283,38 +1996,19 @@ fn report(url: &[u8]) {
                     // SAFETY: closing stdin/stdout in child
                     unsafe { libc::close(i); }
                 }
-<<<<<<< Updated upstream
                 unsafe extern "C" { static environ: *const *const c_char; }
                 // SAFETY: argv is NUL-terminated array of NUL-terminated strings; environ is the
                 // process environment block
                 unsafe { libc::execve(argv[0], argv.as_ptr(), environ); }
                 // SAFETY: _exit is async-signal-safe in the forked child
                 unsafe { libc::_exit(0); }
-||||||| Stash base
-                // SAFETY: argv is NUL-terminated array of NUL-terminated strings
-                unsafe { bun_sys::c::execve(argv[0], argv.as_ptr(), bun_sys::c::environ()); }
-                unsafe { bun_sys::c::exit(0); }
-=======
-                unsafe extern "C" { static environ: *const *const c_char; }
-                // SAFETY: argv is NUL-terminated array of NUL-terminated strings; environ is the
-                // process environment block.
-                unsafe { libc::execve(argv[0], argv.as_ptr(), environ); }
-                // SAFETY: _exit is async-signal-safe
-                unsafe { libc::_exit(0); }
->>>>>>> Stashed changes
             }
             // success and failure cases: ignore the result
             _ => return,
         }
     }
     // TODO(port): wasm @compileError("Not implemented")
-<<<<<<< Updated upstream
     let _ = url;
-||||||| Stash base
-    } // end #[cfg(any())]
-    let _ = url;
-=======
->>>>>>> Stashed changes
 }
 
 /// Crash. Make sure segfault handlers are off so that this doesnt trigger the crash handler.
@@ -2557,26 +2251,8 @@ fn spawn_symbolizer(program: &bun_core::ZStr, trace: &StackTrace) -> Result<(), 
         argv.push(format!("0x{:X}", line.address).into_bytes());
     }
 
-<<<<<<< Updated upstream
     // PORTING.md: no std::process — routed through bun_core::spawn_sync_inherit (posix_spawn).
     let stderr = &mut stderr_writer();
-||||||| Stash base
-    // TODO(port): std.process.Child — banned per PORTING.md (no std::process). Phase B should
-    // route this through bun_core::spawn_sync or a raw posix_spawn. Preserving logic shape only.
-    let stderr = &mut bun_sys::stderr_writer();
-=======
-    // PORT NOTE: Zig's `std.process.Child` → bun_core::spawn_sync_inherit (raw fork/execve on
-    // posix; PORTING.md forbids std::process).
-    let stderr = &mut stderr_writer();
-    // Local helper: Zig `bun.fmt.fmtSlice(argv, " ")` — joins items with a separator.
-    let fmt_argv = |w: &mut dyn core::fmt::Write, argv: &[Vec<u8>]| -> core::fmt::Result {
-        for (i, a) in argv.iter().enumerate() {
-            if i != 0 { w.write_str(" ")?; }
-            write!(w, "{}", bstr::BStr::new(a))?;
-        }
-        Ok(())
-    };
->>>>>>> Stashed changes
     let result = bun_core::spawn_sync_inherit(&argv).map_err(|err| {
         let _ = stderr.write_all(b"Failed to invoke command: ");
         let _ = fmt_argv(stderr, &argv);
@@ -3013,32 +2689,14 @@ fn print_line_from_file_any_os(
 ) -> Result<(), bun_core::Error> {
     // Need this to always block even in async I/O mode, because this could potentially
     // be called from e.g. the event loop code crashing.
-<<<<<<< Updated upstream
     // PORT NOTE: `File::open_at` wants `&ZStr` but `source_location.file_name`
     // is a `Box<[u8]>` (no NUL guarantee from the debug-info backend), so route
     // through the byte-slice `openat_a` and wrap the fd.
     let fd = bun_sys::openat_a(bun_sys::Fd::cwd(), &source_location.file_name, bun_sys::O::RDONLY, 0)
-||||||| Stash base
-    let mut f = bun_sys::File::open_at(bun_sys::Fd::cwd(), &source_location.file_name, bun_sys::O::RDONLY, 0)
-=======
-    // PORT NOTE: source_location.file_name is a `Box<[u8]>`; copy into a NUL-terminated buffer
-    // for the openat syscall.
-    let path_z = bun_core::ZBox::from_vec_with_nul(source_location.file_name.to_vec());
-    let f = bun_sys::File::open_at(bun_sys::Fd::cwd(), path_z.as_zstr(), bun_sys::O::RDONLY, 0)
->>>>>>> Stashed changes
         .map_err(bun_core::Error::from)?;
-<<<<<<< Updated upstream
     let f = bun_sys::File::from_fd(fd);
     // TODO(port): errdefer — f closed on all paths via guard
     let f = scopeguard::guard(f, |f| { let _ = f.close(); });
-||||||| Stash base
-    let _close = scopeguard::guard((), |_| { let _ = f.close(); });
-    // TODO(port): errdefer — f closed on all paths via guard
-=======
-    // PORT NOTE: errdefer — f closed on all paths via scopeguard (close() takes self by value
-    // in Rust, so guard owns the File).
-    let f = scopeguard::guard(f, |f| { let _ = f.close(); });
->>>>>>> Stashed changes
 
     let mut line_buf: [u8; 4096] = [0; 4096];
     let mut fbs_len: usize = 0;
@@ -3135,19 +2793,9 @@ fn print_line_from_file_any_os(
     let highlight = &line_without_newline[left..right];
     let mut after_before_comment = &line_without_newline[right..];
     let mut comment: &[u8] = b"";
-<<<<<<< Updated upstream
     if let Some(pos) = index_of(after_before_comment, b"//") {
         comment = &after_before_comment[pos..];
         after_before_comment = &after_before_comment[0..pos];
-||||||| Stash base
-    if let Some(pos) = strings::index_of(after_before_comment, b"//") {
-        comment = &after_before_comment[pos as usize..];
-        after_before_comment = &after_before_comment[0..pos as usize];
-=======
-    if let Some(pos) = bstr::ByteSlice::find(after_before_comment, b"//") {
-        comment = &after_before_comment[pos..];
-        after_before_comment = &after_before_comment[0..pos];
->>>>>>> Stashed changes
     }
     tty_config.set_color(out_stream, TtyConfig::RED)?;
     tty_config.set_color(out_stream, TtyConfig::DIM)?;

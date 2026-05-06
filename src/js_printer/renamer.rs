@@ -64,23 +64,9 @@ impl<'a> NoOpRenamer<'a> {
             // SAFETY: `original_name` is an AST-arena slice that outlives the renamer.
             unsafe { &*symbol.original_name }
         } else {
-<<<<<<< Updated upstream
             // TODO(port): include `self.source.path.text` once `bun_logger::fs::Path`
             // exposes the text accessor.
             Output::panic(format_args!("Invalid symbol {}", ref_));
-||||||| Stash base
-            Output::panic(format_args!(
-                "Invalid symbol {} in {}",
-                ref_,
-                bstr::BStr::new(&self.source.path.text)
-            ));
-=======
-            Output::panic(format_args!(
-                "Invalid symbol {} in {}",
-                ref_,
-                bstr::BStr::new(self.source.path.text())
-            ));
->>>>>>> Stashed changes
         }
     }
 
@@ -99,16 +85,8 @@ pub enum Renamer<'r, 'src> {
     MinifyRenamer(Box<MinifyRenamer>),
 }
 
-<<<<<<< Updated upstream
 impl<'r, 'src> Renamer<'r, 'src> {
     pub fn symbols(&self) -> &symbol::Map {
-||||||| Stash base
-impl<'a> Renamer<'a> {
-    pub fn symbols(&self) -> &js_ast::symbol::Map {
-=======
-impl<'a> Renamer<'a> {
-    pub fn symbols(&self) -> &symbol::Map {
->>>>>>> Stashed changes
         match self {
             Renamer::NumberRenamer(r) => &r.symbols,
             Renamer::NoOpRenamer(r) => &r.symbols,
@@ -397,13 +375,7 @@ impl MinifyRenamer {
         let mut sorted: Vec<SlotAndCount> = Vec::new();
 
         // PERF(port): was `inline for` over enum values — profile in Phase B
-<<<<<<< Updated upstream
         for &ns in SLOT_NAMESPACES.iter() {
-||||||| Stash base
-        for ns in js_ast::symbol::SlotNamespace::values() {
-=======
-        for ns in symbol::SlotNamespace::values() {
->>>>>>> Stashed changes
             let slots = &mut self.slots[ns];
             sorted.clear();
             sorted.reserve(slots.len().saturating_sub(sorted.len()));
@@ -443,16 +415,8 @@ impl MinifyRenamer {
                             }
                         }
                     }
-<<<<<<< Updated upstream
                     symbol::SlotNamespace::Label => {
                         while js_lexer::Keywords.contains_key(name_buf.as_slice()) {
-||||||| Stash base
-                    js_ast::symbol::SlotNamespace::Label => {
-                        while js_lexer::Keywords::has(name_buf.as_slice()) {
-=======
-                    symbol::SlotNamespace::Label => {
-                        while js_lexer::Keywords::has(name_buf.as_slice()) {
->>>>>>> Stashed changes
                             name_minifier.number_to_minified_name(&mut name_buf, next_name)?;
                             next_name += 1;
                         }
@@ -677,17 +641,9 @@ impl NumberRenamer {
         }
 
         // Don't rename unbound symbols, symbols marked as reserved names, labels, or private names
-<<<<<<< Updated upstream
         // SAFETY: `Map::get` yields an arena-backed `*mut Symbol`.
         let symbol: &Symbol = unsafe { &*self.symbols.get(ref_).unwrap() };
         if symbol.slot_namespace() != SlotNamespace::Default {
-||||||| Stash base
-        let symbol = self.symbols.get(ref_).unwrap();
-        if symbol.slot_namespace() != js_ast::symbol::SlotNamespace::Default {
-=======
-        let symbol = self.symbols.get(ref_).unwrap();
-        if symbol.slot_namespace() != symbol::SlotNamespace::Default {
->>>>>>> Stashed changes
             return;
         }
 
@@ -1207,18 +1163,10 @@ pub fn compute_reserved_names_for_scope(
     // In Rust we mutate through &mut directly.
 
     for member in scope.members.values() {
-<<<<<<< Updated upstream
         // SAFETY: `Map::get` yields an arena-backed `*mut Symbol`.
         let symbol: &Symbol = unsafe { &*symbols.get(member.ref_).unwrap() };
         if symbol.kind == symbol::Kind::Unbound || symbol.must_not_be_renamed {
             // SAFETY: `original_name` is an AST-arena slice.
-||||||| Stash base
-        let symbol = symbols.get(member.ref_).unwrap();
-        if symbol.kind == js_ast::symbol::Kind::Unbound || symbol.must_not_be_renamed {
-=======
-        let symbol = symbols.get(member.ref_).unwrap();
-        if symbol.kind == symbol::Kind::Unbound || symbol.must_not_be_renamed {
->>>>>>> Stashed changes
             names
                 .put(unsafe { &*symbol.original_name }, 1)
                 .expect("unreachable");
@@ -1226,18 +1174,10 @@ pub fn compute_reserved_names_for_scope(
     }
 
     for ref_ in scope.generated.slice() {
-<<<<<<< Updated upstream
         // SAFETY: `Map::get` yields an arena-backed `*mut Symbol`.
         let symbol: &Symbol = unsafe { &*symbols.get(*ref_).unwrap() };
         if symbol.kind == symbol::Kind::Unbound || symbol.must_not_be_renamed {
             // SAFETY: `original_name` is an AST-arena slice.
-||||||| Stash base
-        let symbol = symbols.get(*ref_).unwrap();
-        if symbol.kind == js_ast::symbol::Kind::Unbound || symbol.must_not_be_renamed {
-=======
-        let symbol = symbols.get(*ref_).unwrap();
-        if symbol.kind == symbol::Kind::Unbound || symbol.must_not_be_renamed {
->>>>>>> Stashed changes
             names
                 .put(unsafe { &*symbol.original_name }, 1)
                 .expect("unreachable");

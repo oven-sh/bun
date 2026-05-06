@@ -309,19 +309,9 @@ pub enum BackendFromJsError {
     JSError,
 }
 
-<<<<<<< Updated upstream
 // TODO(port): std.net.Address — std::net is banned. `bun_sys::net::Address`
 // wraps `libc::sockaddr_storage`; `.in/.in6/.un` views are accessed via raw
 // casts on `as_sockaddr()` here until bun_sys grows typed accessors.
-||||||| Stash base
-// TODO(port): std.net.Address — std::net is banned. Need a bun_sys (or bun_net)
-// SocketAddress wrapper over libc::sockaddr_storage with .in/.in6/.un views.
-// TODO(b2-blocked): bun_sys::net::Address
-#[cfg(any())]
-=======
-// std.net.Address — std::net is banned. bun_sys::net::Address wraps
-// libc::sockaddr_storage with family()/as_sockaddr()/init_posix().
->>>>>>> Stashed changes
 pub type Address = bun_sys::net::Address;
 
 pub struct GetAddrInfoResult {
@@ -385,7 +375,6 @@ impl GetAddrInfoResult {
 }
 
 pub fn address_to_string(address: &Address) -> Result<BunString, AllocError> {
-<<<<<<< Updated upstream
     // PORT NOTE: reshaped — bun_sys::net::Address exposes family()/as_sockaddr()
     // rather than .in/.in6/.un union views, so each arm casts the raw sockaddr.
     match address.family() {
@@ -436,113 +425,6 @@ pub fn address_to_string(address: &Address) -> Result<BunString, AllocError> {
             Ok(BunString::clone_latin1(path))
         }
         _ => Ok(BunString::EMPTY),
-||||||| Stash base
-    // TODO(b2-blocked): bun_sys::net::Address
-    // Body requires .any()/.in_()/.in6()/.un() views on Address; the stub
-    // `Address(())` exposes none. Signature is un-gated so tier-6 callers link.
-    #[cfg(any())]
-    {
-        return match address.any().family() {
-            f if f == libc::AF_INET => {
-                let self_ = address.in_();
-                let bytes: [u8; 4] = self_.sa_addr_bytes();
-                Ok(BunString::create_format(format_args!(
-                    "{}.{}.{}.{}",
-                    bytes[0], bytes[1], bytes[2], bytes[3]
-                )))
-            }
-            f if f == libc::AF_INET6 => {
-                // PERF(port): was stack-fallback alloc — profile in Phase B
-                let mut out: Vec<u8> = Vec::new();
-                // TODO(port): std.net.Address Display impl — need bun_sys::net::Address Display
-                write!(&mut out, "{}", address).map_err(|_| AllocError)?;
-                // TODO: this is a hack, fix it
-                // This removes [.*]:port
-                //              ^  ^^^^^^
-                let port = address.in6().get_port();
-                let port_digits = {
-                    let mut buf: Vec<u8> = Vec::new();
-                    write!(&mut buf, "{}", port).expect("unreachable");
-                    buf.len()
-                };
-                Ok(BunString::clone_latin1(
-                    &out[1..out.len() - 1 - port_digits - 1],
-                ))
-            }
-            f if f == libc::AF_UNIX => {
-                #[cfg(unix)]
-                {
-                    return Ok(BunString::clone_latin1(address.un().path()));
-                }
-                #[allow(unreachable_code)]
-                Ok(BunString::EMPTY)
-            }
-            _ => Ok(BunString::EMPTY),
-        };
-    }
-    #[cfg(not(any()))]
-    {
-        let _ = address;
-        todo!("b2-blocked: bun_sys::net::Address")
-=======
-    // bun_sys::net::Address only exposes family()/as_sockaddr(); reach into the
-    // underlying sockaddr via casts (mirrors Zig's `address.in` / `.in6` / `.un`
-    // union-field access on `std.net.Address`).
-    match address.family() {
-        f if f == libc::AF_INET => {
-            // SAFETY: family checked; storage holds a sockaddr_in.
-            let v4 = unsafe { &*address.as_sockaddr().cast::<libc::sockaddr_in>() };
-            let bytes: [u8; 4] = v4.sin_addr.s_addr.to_ne_bytes();
-            Ok(BunString::create_format(format_args!(
-                "{}.{}.{}.{}",
-                bytes[0], bytes[1], bytes[2], bytes[3]
-            )))
-        }
-        f if f == libc::AF_INET6 => {
-            // TODO(b2-blocked): bun_sys::net::Address Display for AF_INET6 —
-            // Zig used `{f}` on std.net.Address (yields "[ip6]:port") then stripped
-            // brackets+port. bun_sys::net::Address::fmt only handles AF_INET today,
-            // so the strip-brackets approach can't compile. Re-gated body until
-            // bun_sys::net grows IPv6 Display or .in6() view.
-            #[cfg(any())]
-            {
-                // PERF(port): was stack-fallback alloc — profile in Phase B
-                let mut out: Vec<u8> = Vec::new();
-                write!(&mut out, "{}", address).map_err(|_| AllocError)?;
-                // TODO: this is a hack, fix it
-                // This removes [.*]:port
-                //              ^  ^^^^^^
-                // SAFETY: family checked; storage holds a sockaddr_in6.
-                let v6 = unsafe { &*address.as_sockaddr().cast::<libc::sockaddr_in6>() };
-                let port = u16::from_be(v6.sin6_port);
-                let port_digits = {
-                    let mut buf: Vec<u8> = Vec::new();
-                    write!(&mut buf, "{}", port).expect("unreachable");
-                    buf.len()
-                };
-                return Ok(BunString::clone_latin1(
-                    &out[1..out.len() - 1 - port_digits - 1],
-                ));
-            }
-            #[cfg(not(any()))]
-            {
-                let _ = address;
-                todo!("b2-blocked: bun_sys::net::Address Display for AF_INET6")
-            }
-        }
-        #[cfg(unix)]
-        f if f == libc::AF_UNIX => {
-            // SAFETY: family checked; storage holds a sockaddr_un.
-            let un = unsafe { &*address.as_sockaddr().cast::<libc::sockaddr_un>() };
-            // sun_path is [c_char; N]; reinterpret as bytes (Latin-1 path bytes).
-            // SAFETY: c_char and u8 have identical layout; len is the array length.
-            let path = unsafe {
-                core::slice::from_raw_parts(un.sun_path.as_ptr().cast::<u8>(), un.sun_path.len())
-            };
-            Ok(BunString::clone_latin1(path))
-        }
-        _ => Ok(BunString::EMPTY),
->>>>>>> Stashed changes
     }
 }
 

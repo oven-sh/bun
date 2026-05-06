@@ -43,7 +43,6 @@ macro_rules! syslog {
     ($($arg:tt)*) => {{ let _ = ::core::format_args!($($arg)*); }};
 }
 
-<<<<<<< Updated upstream
 /// Local port of `Maybe(T).errnoSys` (Zig: src/runtime/node.zig). `bun_sys`
 /// does not yet expose this helper on `Result<T>`; once it does, drop this and
 /// call `sys::Result::<()>::errno_sys` directly.
@@ -58,21 +57,6 @@ where
     }
 }
 
-||||||| Stash base
-=======
-/// Port helper for Zig `Maybe(void).errnoSys(rc, tag)` — returns `Some(Err(e))`
-/// if `rc` indicates failure (errno != SUCCESS), else `None`.
-#[inline]
-fn errno_sys(rc: i64, tag: sys::Tag) -> Option<sys::Result<()>> {
-    let e = sys::get_errno(rc);
-    if e == sys::E::SUCCESS {
-        None
-    } else {
-        Some(sys::Result::Err(sys::Error::from_code(e, tag)))
-    }
-}
-
->>>>>>> Stashed changes
 // ──────────────────────────────────────────────────────────────────────────
 // EventLoopCtx — manual vtable (cycle-break for bun_jsc::{AbstractVm,
 // EventLoopHandle, VirtualMachine, MiniEventLoop, EventLoop})
@@ -201,15 +185,7 @@ impl KeepAlive {
             return;
         }
         self.status = KeepAliveStatus::Inactive;
-<<<<<<< Updated upstream
         loop_sub_active(loop_, 1);
-||||||| Stash base
-        #[cfg(any())]
-        loop_.sub_active(1);
-        // TODO(b2-blocked): bun_uws_sys::Loop::sub_active
-=======
-        loop_.sub_active(1);
->>>>>>> Stashed changes
     }
 
     /// Only intended to be used from EventLoop.Pollable
@@ -218,15 +194,7 @@ impl KeepAlive {
             return;
         }
         self.status = KeepAliveStatus::Active;
-<<<<<<< Updated upstream
         loop_add_active(loop_, 1);
-||||||| Stash base
-        #[cfg(any())]
-        loop_.add_active(1);
-        // TODO(b2-blocked): bun_uws_sys::Loop::add_active
-=======
-        loop_.add_active(1);
->>>>>>> Stashed changes
     }
 
     pub fn init() -> KeepAlive {
@@ -239,16 +207,8 @@ impl KeepAlive {
             return;
         }
         self.status = KeepAliveStatus::Inactive;
-<<<<<<< Updated upstream
         // SAFETY: sole `&mut Loop` borrow in this scope.
         unsafe { event_loop_ctx.platform_event_loop() }.unref();
-||||||| Stash base
-        #[cfg(any())]
-        event_loop_ctx.platform_event_loop().unref();
-        // TODO(b2-blocked): bun_uws_sys::Loop::unref
-=======
-        event_loop_ctx.platform_event_loop().unref();
->>>>>>> Stashed changes
     }
 
     /// From another thread, Prevent a poll from keeping the process alive.
@@ -286,7 +246,6 @@ impl KeepAlive {
             return;
         }
         self.status = KeepAliveStatus::Active;
-<<<<<<< Updated upstream
         // SAFETY: sole `&mut Loop` borrow in this scope.
         unsafe { event_loop_ctx.platform_event_loop() }.ref_();
     }
@@ -299,13 +258,6 @@ impl KeepAlive {
     #[inline]
     pub fn r#ref(&mut self, event_loop_ctx: EventLoopCtx) {
         self.ref_(event_loop_ctx)
-||||||| Stash base
-        #[cfg(any())]
-        event_loop_ctx.platform_event_loop().ref_();
-        // TODO(b2-blocked): bun_uws_sys::Loop::ref_
-=======
-        event_loop_ctx.platform_event_loop().ref_();
->>>>>>> Stashed changes
     }
 
     /// Allow a poll to keep the process alive.
@@ -615,23 +567,11 @@ impl FilePoll {
     /// This decrements the active counter if it was previously incremented
     /// "active" controls whether or not the event loop should potentially idle
     pub fn disable_keeping_process_alive(&mut self, event_loop_ctx: EventLoopCtx) {
-<<<<<<< Updated upstream
         loop_sub_active(
             // SAFETY: sole `&mut Loop` borrow in this scope.
             unsafe { event_loop_ctx.platform_event_loop() },
             self.flags.contains(Flags::HasIncrementedActiveCount) as u32,
         );
-||||||| Stash base
-        #[cfg(any())]
-        event_loop_ctx
-            .platform_event_loop()
-            .sub_active(self.flags.contains(Flags::HasIncrementedActiveCount) as u32);
-        // TODO(b2-blocked): bun_uws_sys::Loop::sub_active
-=======
-        event_loop_ctx
-            .platform_event_loop()
-            .sub_active(self.flags.contains(Flags::HasIncrementedActiveCount) as u32);
->>>>>>> Stashed changes
 
         self.flags.remove(Flags::KeepsEventLoopAlive);
         self.flags.remove(Flags::HasIncrementedActiveCount);
@@ -656,23 +596,11 @@ impl FilePoll {
             return;
         }
 
-<<<<<<< Updated upstream
         loop_add_active(
             // SAFETY: sole `&mut Loop` borrow in this scope.
             unsafe { event_loop_ctx.platform_event_loop() },
             (!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32,
         );
-||||||| Stash base
-        #[cfg(any())]
-        event_loop_ctx
-            .platform_event_loop()
-            .add_active((!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32);
-        // TODO(b2-blocked): bun_uws_sys::Loop::add_active
-=======
-        event_loop_ctx
-            .platform_event_loop()
-            .add_active((!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32);
->>>>>>> Stashed changes
 
         self.flags.insert(Flags::KeepsEventLoopAlive);
         self.flags.insert(Flags::HasIncrementedActiveCount);
@@ -685,15 +613,7 @@ impl FilePoll {
         }
         self.flags.remove(Flags::HasIncrementedPollCount);
 
-<<<<<<< Updated upstream
         loop_sub_active(loop_, self.flags.contains(Flags::HasIncrementedActiveCount) as u32);
-||||||| Stash base
-        #[cfg(any())]
-        loop_.sub_active(self.flags.contains(Flags::HasIncrementedActiveCount) as u32);
-        // TODO(b2-blocked): bun_uws_sys::Loop::sub_active
-=======
-        loop_.sub_active(self.flags.contains(Flags::HasIncrementedActiveCount) as u32);
->>>>>>> Stashed changes
         self.flags.remove(Flags::KeepsEventLoopAlive);
         self.flags.remove(Flags::HasIncrementedActiveCount);
     }
@@ -708,15 +628,7 @@ impl FilePoll {
         self.flags.insert(Flags::HasIncrementedPollCount);
 
         if self.flags.contains(Flags::KeepsEventLoopAlive) {
-<<<<<<< Updated upstream
             loop_add_active(loop_, (!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32);
-||||||| Stash base
-            #[cfg(any())]
-            loop_.add_active((!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32);
-            // TODO(b2-blocked): bun_uws_sys::Loop::add_active
-=======
-            loop_.add_active((!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32);
->>>>>>> Stashed changes
             self.flags.insert(Flags::HasIncrementedActiveCount);
         }
     }
@@ -842,7 +754,6 @@ impl FilePoll {
         one_shot: OneShotFlag,
         fd: Fd,
     ) -> sys::Result<()> {
-<<<<<<< Updated upstream
         #[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
         return self.register_with_fd_impl(loop_, flag, one_shot, fd);
         #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "freebsd")))]
@@ -850,24 +761,9 @@ impl FilePoll {
             let _ = (loop_, flag, one_shot, fd);
             sys::Result::Ok(())
         }
-||||||| Stash base
-        #[cfg(any())]
-        return self.register_with_fd_impl(loop_, flag, one_shot, fd);
-        // TODO(b2-blocked): bun_uws_sys::Loop (fd field) + bun_sys::linux::epoll_ctl /
-        // bun_sys::darwin::kevent64 + bun_collections::TaggedPtrUnion (Pollable).
-        let _ = (loop_, flag, one_shot, fd);
-        sys::Result::Ok(())
-=======
-        self.register_with_fd_impl(loop_, flag, one_shot, fd)
->>>>>>> Stashed changes
     }
 
-<<<<<<< Updated upstream
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
-||||||| Stash base
-    #[cfg(any())]
-=======
->>>>>>> Stashed changes
     fn register_with_fd_impl(
         &mut self,
         loop_: &mut Loop,
@@ -922,46 +818,19 @@ impl FilePoll {
             // libc::epoll_event flattens the union to a single `u64` field.
             let mut event = linux::epoll_event {
                 events: flags,
-<<<<<<< Updated upstream
                 u64: Pollable::init(self).ptr() as u64,
-||||||| Stash base
-                data: linux::epoll_data {
-                    u64_: Pollable::init(self).ptr() as u64,
-                },
-=======
-                u64: Pollable::init(self as *const _).ptr() as u64,
->>>>>>> Stashed changes
             };
 
-<<<<<<< Updated upstream
             let op: c_int = if self.is_registered() || self.flags.contains(Flags::NeedsRearm) {
-||||||| Stash base
-            let op: u32 = if self.is_registered() || self.flags.contains(Flags::NeedsRearm) {
-=======
-            let op: i32 = if self.is_registered() || self.flags.contains(Flags::NeedsRearm) {
->>>>>>> Stashed changes
                 EPOLL::CTL_MOD
             } else {
                 EPOLL::CTL_ADD
             };
 
-<<<<<<< Updated upstream
             // SAFETY: FFI syscall; `event` is a stack-local valid for the call.
             let ctl = unsafe { linux::epoll_ctl(watcher_fd, op, fd.native(), &mut event) };
-||||||| Stash base
-            let ctl = linux::epoll_ctl(watcher_fd, op, fd.cast(), &mut event);
-=======
-            // SAFETY: FFI syscall; `event` lives on the stack for the call.
-            let ctl = unsafe { linux::epoll_ctl(watcher_fd, op, fd.cast(), &mut event) };
->>>>>>> Stashed changes
             self.flags.insert(Flags::WasEverRegistered);
-<<<<<<< Updated upstream
             if let Some(errno) = errno_sys(ctl, sys::Tag::epoll_ctl) {
-||||||| Stash base
-            if let Some(errno) = sys::Result::<()>::errno_sys(ctl, sys::Tag::epoll_ctl) {
-=======
-            if let Some(errno) = errno_sys(ctl as i64, sys::Tag::epoll_ctl) {
->>>>>>> Stashed changes
                 self.deactivate(loop_);
                 return errno;
             }
@@ -1136,13 +1005,7 @@ impl FilePoll {
             };
 
             self.flags.insert(Flags::WasEverRegistered);
-<<<<<<< Updated upstream
             if let Some(err) = errno_sys(rc, sys::Tag::kevent) {
-||||||| Stash base
-            if let Some(err) = sys::Result::<()>::errno_sys(rc, sys::Tag::kevent) {
-=======
-            if let Some(err) = errno_sys(rc as i64, sys::Tag::kevent) {
->>>>>>> Stashed changes
                 self.deactivate(loop_);
                 return err;
             }
@@ -1183,34 +1046,15 @@ impl FilePoll {
         // PORT NOTE: reshaped for borrowck (Zig `defer this.deactivate(loop)`) — compute the
         // syscall result first, then unconditionally deactivate. Avoids the raw-pointer scopeguard
         // the literal translation would require.
-<<<<<<< Updated upstream
         #[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
-||||||| Stash base
-        #[cfg(any())]
-=======
->>>>>>> Stashed changes
         let result = self.unregister_with_fd_impl(loop_, fd, force_unregister);
-<<<<<<< Updated upstream
         #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "freebsd")))]
         let result: sys::Result<()> = { let _ = (fd, force_unregister); sys::Result::Ok(()) };
-||||||| Stash base
-        // TODO(b2-blocked): bun_uws_sys::Loop + bun_sys::linux::epoll_ctl
-        #[cfg(not(any()))]
-        let result: sys::Result<()> = { let _ = (fd, force_unregister); sys::Result::Ok(()) };
-=======
->>>>>>> Stashed changes
         self.deactivate(loop_);
         result
     }
 
-<<<<<<< Updated upstream
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
-||||||| Stash base
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_uws_sys::Loop (fd field) + bun_sys::linux::epoll_ctl /
-    // bun_sys::darwin::kevent64 + bun_collections::TaggedPtrUnion (Pollable).
-=======
->>>>>>> Stashed changes
     fn unregister_with_fd_impl(
         &mut self,
         loop_: &mut Loop,
@@ -1275,23 +1119,10 @@ impl FilePoll {
         {
             use bun_sys::linux::{self, EPOLL};
             // CTL_DEL keys on fd alone, so both directions are removed together.
-<<<<<<< Updated upstream
             // SAFETY: FFI syscall; null event is valid for CTL_DEL on Linux ≥2.6.9.
             let ctl = unsafe { linux::epoll_ctl(watcher_fd, EPOLL::CTL_DEL, fd.native(), ptr::null_mut()) };
-||||||| Stash base
-            let ctl = linux::epoll_ctl(watcher_fd, EPOLL::CTL_DEL, fd.cast(), ptr::null_mut());
-=======
-            // SAFETY: FFI syscall; null event ptr is valid for CTL_DEL.
-            let ctl = unsafe { linux::epoll_ctl(watcher_fd, EPOLL::CTL_DEL, fd.cast(), ptr::null_mut()) };
->>>>>>> Stashed changes
 
-<<<<<<< Updated upstream
             if let Some(errno) = errno_sys(ctl, sys::Tag::epoll_ctl) {
-||||||| Stash base
-            if let Some(errno) = sys::Result::<()>::errno_sys(ctl, sys::Tag::epoll_ctl) {
-=======
-            if let Some(errno) = errno_sys(ctl as i64, sys::Tag::epoll_ctl) {
->>>>>>> Stashed changes
                 return errno;
             }
         }
@@ -1382,13 +1213,7 @@ impl FilePoll {
             // was not written, so per-entry checks below would read our
             // own input. Report errno and stop.
             if rc < 0 {
-<<<<<<< Updated upstream
                 return sys::Result::Err(sys::Error::from_code(errno, sys::Tag::kevent));
-||||||| Stash base
-                return sys::Result::<()>::errno_sys(errno as i64, sys::Tag::kevent).unwrap();
-=======
-                return errno_sys(errno as i64, sys::Tag::kevent).unwrap();
->>>>>>> Stashed changes
             }
 
             // If an error occurs while processing an element of the changelist
@@ -1472,13 +1297,7 @@ impl FilePoll {
                     ptr::null(),
                 )
             };
-<<<<<<< Updated upstream
             if let Some(err) = errno_sys(rc, sys::Tag::kevent) {
-||||||| Stash base
-            if let Some(err) = sys::Result::<()>::errno_sys(rc, sys::Tag::kevent) {
-=======
-            if let Some(err) = errno_sys(rc as i64, sys::Tag::kevent) {
->>>>>>> Stashed changes
                 return err;
             }
         }
@@ -1571,31 +1390,12 @@ impl Flags {
         }
     }
 
-<<<<<<< Updated upstream
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-||||||| Stash base
-    #[cfg(any())] // TODO(b2-blocked): bun_sys::darwin::EVFILT
-    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-=======
-    #[cfg(any())] // TODO(b2-blocked): bun_sys::freebsd::EVFILT (FreeBSD arm)
-    #[cfg(target_os = "freebsd")]
->>>>>>> Stashed changes
     pub fn from_kqueue_event(kqueue_event: &KQueueEvent) -> FlagsSet {
-<<<<<<< Updated upstream
         #[cfg(target_os = "macos")]
         use bun_sys::darwin::EVFILT;
         #[cfg(target_os = "freebsd")]
         use bun_sys::freebsd::EVFILT;
-||||||| Stash base
-        use bun_sys::darwin::EVFILT; // TODO(port): freebsd EVFILT path
-=======
-        unimplemented!()
-    }
-
-    #[cfg(target_os = "macos")]
-    pub fn from_kqueue_event(kqueue_event: &KQueueEvent) -> FlagsSet {
-        use bun_sys::darwin::EVFILT;
->>>>>>> Stashed changes
         let mut flags = FlagsSet::empty();
         if kqueue_event.filter == EVFILT::READ {
             flags.insert(Flags::Readable);
@@ -1740,7 +1540,6 @@ impl Store {
 // onTick (exported)
 // ──────────────────────────────────────────────────────────────────────────
 
-<<<<<<< Updated upstream
 // `Pollable` mirrors Zig `bun.TaggedPointerUnion(.{FilePoll})`.
 //
 // PORT NOTE: `bun_collections::TaggedPtrUnion<(FilePoll,)>` cannot be
@@ -1752,28 +1551,7 @@ impl Store {
 pub struct Pollable {
     repr: bun_collections::TaggedPointer,
 }
-||||||| Stash base
-#[cfg(any())] // TODO(b2-blocked): bun_collections::TaggedPtrUnion
-type Pollable = bun_collections::TaggedPtrUnion<(FilePoll,)>;
-=======
-// PORT NOTE: `impl_tagged_ptr_union!` impls `TypeList` for a tuple, which hits
-// orphan rules from this crate. Single-element union → hand-roll a local marker.
-pub struct PollableTypes;
-impl bun_ptr::tagged_pointer::TypeList for PollableTypes {
-    const LEN: usize = 1;
-    const MIN_TAG: bun_ptr::tagged_pointer::TagType = 1024;
-    fn type_name_from_tag(tag: bun_ptr::tagged_pointer::TagType) -> Option<&'static str> {
-        if tag == 1024 { Some("FilePoll") } else { None }
-    }
-}
-impl bun_ptr::tagged_pointer::UnionMember<PollableTypes> for FilePoll {
-    const TAG: bun_ptr::tagged_pointer::TagType = 1024;
-    const NAME: &'static str = "FilePoll";
-}
-type Pollable = bun_collections::TaggedPtrUnion<PollableTypes>;
->>>>>>> Stashed changes
 
-<<<<<<< Updated upstream
 impl Pollable {
     /// Tag value for `FilePoll` (index 0 in the Zig type tuple → `1024 - 0`).
     pub const FILE_POLL_TAG: u16 = 1024;
@@ -1808,34 +1586,16 @@ impl Pollable {
 // on Windows the libuv loop drives readiness, so this entry point is never
 // linked there. Restrict to the platforms where the fields are present.
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
-||||||| Stash base
-#[cfg(any())]
-// TODO(b2-blocked): bun_collections::TaggedPtrUnion + bun_uws_sys::Loop fields
-// (current_ready_poll, ready_polls).
-=======
->>>>>>> Stashed changes
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__internal_dispatch_ready_poll(loop_: *mut Loop, tagged_pointer: *mut c_void) {
     let tag = Pollable::from(Some(tagged_pointer));
 
-<<<<<<< Updated upstream
     if tag.tag() != Pollable::FILE_POLL_TAG {
-||||||| Stash base
-    if tag.tag() != Pollable::tag_of::<FilePoll>() {
-=======
-    if tag.tag() != Pollable::case::<FilePoll>() {
->>>>>>> Stashed changes
         return;
     }
 
     // SAFETY: tag matched FilePoll; pointer was set via Pollable::init in register_with_fd.
-<<<<<<< Updated upstream
     let file_poll: &mut FilePoll = unsafe { &mut *tag.as_file_poll() };
-||||||| Stash base
-    let file_poll: &mut FilePoll = unsafe { &mut *tag.as_ptr::<FilePoll>() };
-=======
-    let file_poll: &mut FilePoll = unsafe { &mut *tag.as_unchecked::<FilePoll>() };
->>>>>>> Stashed changes
     if file_poll.flags.contains(Flags::IgnoreUpdates) {
         return;
     }
@@ -1859,15 +1619,7 @@ pub extern "C" fn Bun__internal_dispatch_ready_poll(loop_: *mut Loop, tagged_poi
 }
 
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-<<<<<<< Updated upstream
 static TIMEOUT: bun_sys::posix::timespec = bun_sys::posix::timespec { tv_sec: 0, tv_nsec: 0 };
-||||||| Stash base
-// SAFETY: all-zero is a valid timespec
-static TIMEOUT: bun_sys::posix::timespec = unsafe { core::mem::zeroed() };
-=======
-static TIMEOUT: bun_sys::posix::timespec =
-    bun_sys::posix::timespec { tv_sec: 0, tv_nsec: 0 };
->>>>>>> Stashed changes
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -1898,27 +1650,9 @@ pub struct LinuxWaker {
 impl LinuxWaker {
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     pub fn init() -> Result<Self, bun_core::Error> {
-<<<<<<< Updated upstream
         // TODO(port): std.posix.eventfd → bun_sys::eventfd
         let fd = bun_sys::eventfd(0, 0).map_err(|_| bun_core::err!("SystemResources"))?;
         Ok(Self::init_with_file_descriptor(fd))
-||||||| Stash base
-        // TODO(port): std.posix.eventfd → bun_sys::eventfd
-        let fd = bun_sys::eventfd(0, 0)?;
-        Ok(Self::init_with_file_descriptor(Fd::from_native(fd)))
-=======
-        #[cfg(target_os = "linux")]
-        let fd = bun_sys::eventfd(0, 0).map_err(|_| bun_core::err!("EventFdFailed"))?;
-        #[cfg(target_os = "freebsd")]
-        // TODO(b2-blocked): bun_sys::freebsd::eventfd — FreeBSD 13+ has eventfd(2).
-        let fd = {
-            // SAFETY: eventfd(2) is safe to call with any args.
-            let rc = unsafe { libc::eventfd(0, 0) };
-            if rc < 0 { return Err(bun_core::err!("EventFdFailed")); }
-            Fd::from_native(rc)
-        };
-        Ok(Self::init_with_file_descriptor(fd))
->>>>>>> Stashed changes
     }
 
     pub fn get_fd(&self) -> Fd {
@@ -1995,18 +1729,9 @@ impl KEventWaker {
     }
 
     pub fn init() -> Result<Self, bun_core::Error> {
-<<<<<<< Updated upstream
         // TODO(port): std.posix.kqueue → bun_sys::kqueue
         let kq = bun_sys::kqueue().map_err(|_| bun_core::err!("SystemResources"))?;
         Self::init_with_file_descriptor(kq.native())
-||||||| Stash base
-        // TODO(port): std.posix.kqueue → bun_sys::kqueue
-        let kq = bun_sys::posix::kqueue()?;
-        Self::init_with_file_descriptor(kq)
-=======
-        let kq = bun_sys::kqueue().map_err(|_| bun_core::err!("KqueueFailed"))?;
-        Self::init_with_file_descriptor(kq.cast())
->>>>>>> Stashed changes
     }
 
     pub fn init_with_file_descriptor(kq: i32) -> Result<Self, bun_core::Error> {

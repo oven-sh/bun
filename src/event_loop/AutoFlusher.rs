@@ -64,20 +64,10 @@ pub fn unregister_deferred_microtask_with_type_unchecked<T: HasAutoFlusher>(
     deferred: &mut DeferredTaskQueue,
 ) {
     debug_assert!(this.auto_flusher().registered);
-<<<<<<< Updated upstream
     // PORT NOTE: Zig `bun.assert(expr)` evaluates `expr` unconditionally; the
     // *check* is debug-only but the side effect must run in release too.
     let removed = deferred.unregister_task(NonNull::new(this as *mut T as *mut c_void));
     debug_assert!(removed);
-||||||| Stash base
-    debug_assert!(deferred.unregister_task(NonNull::new(this as *mut T as *mut c_void)));
-=======
-    // PORT NOTE: Zig `bun.assert(expr)` always evaluates `expr`; Rust
-    // `debug_assert!` does NOT in release. Hoist the side-effecting call out so
-    // the task is removed in all build modes.
-    let removed = deferred.unregister_task(NonNull::new(this as *mut T as *mut c_void));
-    debug_assert!(removed);
->>>>>>> Stashed changes
     this.auto_flusher().registered = false;
 }
 
@@ -87,18 +77,8 @@ pub fn register_deferred_microtask_with_type_unchecked<T: HasAutoFlusher>(
 ) {
     debug_assert!(!this.auto_flusher().registered);
     this.auto_flusher().registered = true;
-<<<<<<< Updated upstream
     let found_existing = deferred.post_task(
-||||||| Stash base
-    debug_assert!(!deferred.post_task(
-=======
-    // PORT NOTE: Zig `bun.assert(expr)` always evaluates `expr`; Rust
-    // `debug_assert!` does NOT in release. Hoist the side-effecting `post_task`
-    // out so the task is registered in all build modes.
-    let existed = deferred.post_task(
->>>>>>> Stashed changes
         NonNull::new(this as *mut T as *mut c_void),
-<<<<<<< Updated upstream
         erase_flush_callback::<T>(),
     );
     debug_assert!(!found_existing);
@@ -143,28 +123,6 @@ impl AutoFlusher {
     ) {
         unregister_deferred_microtask_with_type_unchecked(this, deferred);
     }
-||||||| Stash base
-        // SAFETY: Zig `@ptrCast(&Type.onAutoFlush)` — erases the typed fn pointer
-        // to the DeferredTaskQueue callback ABI. Layout is identical (single
-        // pointer arg, bool return).
-        unsafe {
-            core::mem::transmute::<fn(*mut T) -> bool, fn(*mut c_void) -> bool>(
-                T::on_auto_flush as fn(*mut T) -> bool,
-            )
-        },
-    ));
-=======
-        // SAFETY: Zig `@ptrCast(&Type.onAutoFlush)` — erases the typed fn pointer
-        // to the DeferredTaskQueue callback ABI. Layout is identical (single
-        // pointer arg, bool return).
-        unsafe {
-            core::mem::transmute::<fn(*mut T) -> bool, fn(*mut c_void) -> bool>(
-                T::on_auto_flush as fn(*mut T) -> bool,
-            )
-        },
-    );
-    debug_assert!(!existed);
->>>>>>> Stashed changes
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -112,7 +112,6 @@ pub fn is_enabled() -> bool {
 pub mod features {
     use super::*;
 
-<<<<<<< Updated upstream
     // PORT NOTE (cyclebreak): the Zig original is
     // `EnumSet(bun.jsc.ModuleLoader.HardcodedModule)`. That enum lives in
     // `bun_resolve_builtins` (T5) and pulling it here would create a forward
@@ -126,53 +125,8 @@ pub mod features {
     pub static BUILTIN_MODULES: parking_lot::Mutex<
         std::collections::BTreeSet<&'static str>,
     > = parking_lot::const_mutex(std::collections::BTreeSet::new());
-||||||| Stash base
-    // TODO(b2-blocked): bun_resolve_builtins::HardcodedModule
-    // The real `HardcodedModule` enum (Zig: `bun.jsc.ModuleLoader.HardcodedModule`)
-    // lives in `bun_resolve_builtins` (per CYCLEBREAK.md, TYPE_ONLY move target
-    // is `options_types`). It must derive `enumset::EnumSetType` for use in
-    // `EnumSet<HardcodedModule>` here; that derive is not yet present, and the
-    // crate is not yet a dep of `bun_analytics`. Re-gate just this static and
-    // the formatter's builtins iterator below.
-    #[cfg(any())]
-    pub static BUILTIN_MODULES: parking_lot::Mutex<
-        enumset::EnumSet<bun_resolve_builtins::HardcodedModule::HardcodedModule>,
-    > = parking_lot::const_mutex(enumset::EnumSet::empty());
-=======
-    // Zig: `pub var builtin_modules = std.enums.EnumSet(HardcodedModule).initEmpty();`
-    //
-    // PORT NOTE: Phase-A drafted this as `enumset::EnumSet<HardcodedModule>`,
-    // but `HardcodedModule` lives in `bun_resolve_builtins` (sibling tier; per
-    // CYCLEBREAK.md the TYPE_ONLY move target is `options_types`) and does not
-    // derive `EnumSetType`. Rather than take a cross-tier type dep, store the
-    // tag name (`&'static str`) directly — `HardcodedModule` already derives
-    // `strum::IntoStaticStr`, and the only operations are insert + iterate for
-    // the crash-report formatter below. Consumer (bun_jsc::ModuleLoader)
-    // inserts via `builtin_modules().insert(hardcoded.into())`.
-    //
-    // `BTreeSet` gives deterministic (lexicographic) iteration; Zig's
-    // `EnumSet.iterator()` is declaration-order, but this output is diagnostic
-    // text only.
-    //
->>>>>>> Stashed changes
     // PORT NOTE: Zig used a plain mutable global; wrapped in a Mutex here
-<<<<<<< Updated upstream
     // because the set is not a single atomic word.
-||||||| Stash base
-    // because `EnumSet` is not a single atomic word for large enums.
-=======
-    // (PORTING.md §Concurrency: parking_lot, no `static mut`).
-    pub static BUILTIN_MODULES: parking_lot::Mutex<
-        std::collections::BTreeSet<&'static str>,
-    > = parking_lot::const_mutex(std::collections::BTreeSet::new());
-
-    /// Accessor matching Zig `Features.builtin_modules` mutable-global
-    /// semantics. Returns a lock guard; callers `.insert(tag_name)`.
-    pub fn builtin_modules()
-    -> parking_lot::MutexGuard<'static, std::collections::BTreeSet<&'static str>> {
-        BUILTIN_MODULES.lock()
-    }
->>>>>>> Stashed changes
 
     macro_rules! define_features {
         ( $( $(#[$doc:meta])* $idx:literal => ($ident:ident, $name:literal) ),* $(,)? ) => {
@@ -261,14 +215,8 @@ pub mod features {
                         writer.write_str("\n")?;
                     }
 
-<<<<<<< Updated upstream
                     // See BUILTIN_MODULES above — stores `&'static str` names
                     // directly (cyclebreak), so no `@tagName` conversion needed.
-||||||| Stash base
-                    // TODO(b2-blocked): bun_resolve_builtins::HardcodedModule
-                    #[cfg(any())]
-=======
->>>>>>> Stashed changes
                     {
                         let builtins = BUILTIN_MODULES.lock();
                         let mut iter = builtins.iter();

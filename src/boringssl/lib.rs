@@ -80,7 +80,6 @@ pub fn load() {
     }
 }
 
-<<<<<<< Updated upstream
 // ──────────────────────────────────────────────────────────────────────────
 // Extra FFI surface not yet exposed by `bun_boringssl_sys` (hand-curated
 // subset). Ground truth: src/boringssl_sys/boringssl.zig + openssl/ssl.h.
@@ -118,89 +117,6 @@ unsafe extern "C" fn noop_custom_verify(
     ssl_verify_ok
 }
 
-||||||| Stash base
-=======
-// ──────────────────────────────────────────────────────────────────────────
-// Local FFI surface for `SSL_CTX.init()`/`setup()` (boringssl_sys/boringssl.zig
-// :19197-19208). These symbols are not yet in the curated `bun_boringssl_sys`
-// subset, so declare them here until the bindgen pipeline lands.
-// ──────────────────────────────────────────────────────────────────────────
-
-/// `struct crypto_buffer_pool_st` (`typedef ... CRYPTO_BUFFER_POOL`).
-#[repr(C)]
-pub struct CRYPTO_BUFFER_POOL {
-    _p: [u8; 0],
-    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
-}
-
-/// `enum ssl_verify_result_t` — return type of the custom-verify callback.
-#[allow(non_camel_case_types)]
-pub type ssl_verify_result_t = c_uint;
-#[allow(non_upper_case_globals)]
-pub const ssl_verify_ok: ssl_verify_result_t = 0;
-
-/// `enum ssl_verify_result_t (*)(SSL *ssl, uint8_t *out_alert)`.
-#[allow(non_camel_case_types)]
-pub type SSL_custom_verify_cb =
-    unsafe extern "C" fn(*mut boring::SSL, *mut u8) -> ssl_verify_result_t;
-
-/// `#define SSL_DEFAULT_CIPHER_LIST "ALL"`.
-pub const SSL_DEFAULT_CIPHER_LIST: &CStr = c"ALL";
-
-unsafe extern "C" {
-    fn SSL_CTX_set_custom_verify(
-        ctx: *mut boring::SSL_CTX,
-        mode: c_int,
-        callback: Option<SSL_custom_verify_cb>,
-    );
-    fn SSL_CTX_set0_buffer_pool(ctx: *mut boring::SSL_CTX, pool: *mut CRYPTO_BUFFER_POOL);
-    fn SSL_CTX_set_cipher_list(ctx: *mut boring::SSL_CTX, str: *const c_char) -> c_int;
-    fn CRYPTO_BUFFER_POOL_new() -> *mut CRYPTO_BUFFER_POOL;
-}
-
-/// Zig: `fn noop_custom_verify(_: *SSL, _: [*c]u8) callconv(.c) VerifyResult { return .ok; }`
-unsafe extern "C" fn noop_custom_verify(
-    _ssl: *mut boring::SSL,
-    _out_alert: *mut u8,
-) -> ssl_verify_result_t {
-    ssl_verify_ok
-}
-
-// Zig: `threadlocal var auto_crypto_buffer_pool: ?*CRYPTO_BUFFER_POOL = null;`
-std::thread_local! {
-    static AUTO_CRYPTO_BUFFER_POOL: Cell<*mut CRYPTO_BUFFER_POOL> =
-        const { Cell::new(ptr::null_mut()) };
-}
-
-/// Zig: `SSL_CTX.init()` (boringssl_sys/boringssl.zig:19197) —
-/// `SSL_CTX_new(TLS_with_buffers_method())` followed by
-/// `setCustomVerify(noop_custom_verify)` and `setup()`.
-unsafe fn ssl_ctx_init() -> *mut boring::SSL_CTX {
-    let ctx = unsafe { boring::SSL_CTX_new(boring::TLS_with_buffers_method()) };
-    if ctx.is_null() {
-        return ctx;
-    }
-    // Zig: `ctx.setCustomVerify(noop_custom_verify)` → `SSL_CTX_set_custom_verify(ctx, 0, cb)`.
-    unsafe { SSL_CTX_set_custom_verify(ctx, 0, Some(noop_custom_verify)) };
-    // Zig: `ctx.setup()`.
-    unsafe { ssl_ctx_setup(ctx) };
-    ctx
-}
-
-/// Zig: `SSL_CTX.setup()` (boringssl_sys/boringssl.zig:19204) — lazily create
-/// the threadlocal `CRYPTO_BUFFER_POOL`, attach it, and apply the default
-/// cipher list.
-unsafe fn ssl_ctx_setup(ctx: *mut boring::SSL_CTX) {
-    AUTO_CRYPTO_BUFFER_POOL.with(|pool| {
-        if pool.get().is_null() {
-            pool.set(unsafe { CRYPTO_BUFFER_POOL_new() });
-        }
-        unsafe { SSL_CTX_set0_buffer_pool(ctx, pool.get()) };
-    });
-    let _ = unsafe { SSL_CTX_set_cipher_list(ctx, SSL_DEFAULT_CIPHER_LIST.as_ptr()) };
-}
-
->>>>>>> Stashed changes
 static mut CTX_STORE: Option<*mut boring::SSL_CTX> = None;
 // Zig: `threadlocal var auto_crypto_buffer_pool` — only ever populated on the
 // first `init_client()` call (guarded by `CTX_STORE`), so a plain static under
@@ -217,7 +133,6 @@ pub fn init_client() -> *mut boring::SSL {
         let ctx = match CTX_STORE {
             Some(ctx) => ctx,
             None => 'brk: {
-<<<<<<< Updated upstream
                 // Zig: `SSL_CTX.init()` — see boringssl.zig:19197. Three steps:
                 //   1. SSL_CTX_new(TLS_with_buffers_method())
                 //   2. setCustomVerify(noop_custom_verify) → SSL_CTX_set_custom_verify(ctx, 0, cb)
@@ -231,15 +146,6 @@ pub fn init_client() -> *mut boring::SSL {
                 let _ = SSL_CTX_set_cipher_list(ctx, SSL_DEFAULT_CIPHER_LIST);
                 CTX_STORE = Some(ctx);
                 break 'brk ctx;
-||||||| Stash base
-                // Zig: `SSL_CTX.init()` = `SSL_CTX_new(TLS_with_buffers_method())`
-                CTX_STORE = Some(boring::SSL_CTX_new(boring::TLS_with_buffers_method()));
-                break 'brk CTX_STORE.unwrap();
-=======
-                // Zig: `boring.SSL_CTX.init().?` — see `ssl_ctx_init` above.
-                CTX_STORE = Some(ssl_ctx_init());
-                break 'brk CTX_STORE.unwrap();
->>>>>>> Stashed changes
             }
         };
 

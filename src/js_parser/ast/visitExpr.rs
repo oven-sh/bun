@@ -183,20 +183,21 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         let is_delete_target = matches!(p.delete_target, Data::EImportMeta(..));
 
         if let Some(meta) = p.define.dots.get(b"meta".as_slice()) {
-            for define in meta {
-                // blocked_on: P::is_dot_define_match + P::value_for_define live in the
-                // gated round-D impl (P.rs `` ~5380); `defines::DotDefine.parts`
-                // is the round-C `Vec<Box<[u8]>>` stub (full type is `*const [*const [u8]]`).
-                // TODO: clean up how we do define matches
-                let is_match: bool = {
-                    let _ = &define.parts;
-                    todo!("e_import_meta: P::is_dot_define_match (gated)")
-                };
-                if is_match {
-                    // Substitute user-specified defines
-                    let _ = (in_.assign_target, is_delete_target, &define.data);
-                    return todo!("e_import_meta: P::value_for_define (gated)");
+            for i in 0..meta.len() {
+                // PORT NOTE: erase the &Define borrow before calling `&mut self`
+                // helpers — `p.define: &'a Define` is disjoint from the parser
+                // arena, but rustc can't see through the field reborrow.
+                let define = unsafe { &*(&meta[i] as *const crate::defines::DotDefine) };
+                if !p.is_dot_define_match(expr, &define.parts) {
+                    continue;
                 }
+                // Substitute user-specified defines
+                return p.value_for_define(
+                    expr.loc,
+                    in_.assign_target,
+                    is_delete_target,
+                    &define.data,
+                );
             }
         }
 

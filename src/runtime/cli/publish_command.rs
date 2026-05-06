@@ -60,14 +60,23 @@ pub struct Context<'a, const DIRECTORY_PUBLISH: bool> {
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum FromTarballError {
+    #[error("OutOfMemory")]
     OutOfMemory,
+    #[error("MissingPackageJSON")]
     MissingPackageJSON,
+    #[error("InvalidPackageJSON")]
     InvalidPackageJSON,
+    #[error("MissingPackageName")]
     MissingPackageName,
+    #[error("MissingPackageVersion")]
     MissingPackageVersion,
+    #[error("InvalidPackageName")]
     InvalidPackageName,
+    #[error("InvalidPackageVersion")]
     InvalidPackageVersion,
+    #[error("PrivatePackage")]
     PrivatePackage,
+    #[error("RestrictedUnscopedPackage")]
     RestrictedUnscopedPackage,
 }
 impl From<AllocError> for FromTarballError {

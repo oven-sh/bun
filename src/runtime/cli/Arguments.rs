@@ -1487,7 +1487,10 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
 
     let mut opts: api::TransformOptions = ctx.args.clone();
 
-    let defines_tuple = DefineColonList::resolve(args.options(b"--define"))?;
+    // PORT NOTE: bypass Args::options wrapper (which narrows inner lifetime to &'_)
+    // and use ComptimeClap::options directly, which yields &[&'static [u8]] as
+    // required by ColonListType::resolve. argv slices are process-lifetime.
+    let defines_tuple = DefineColonList::resolve(args.clap.options(b"--define"))?;
 
     if !defines_tuple.keys.is_empty() {
         opts.define = Some(api::StringMap {
@@ -1502,7 +1505,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
     // Node added a `--loader` flag (that's kinda like `--register`). It's
     // completely different from ours.
     let loader_tuple = if CMD != Command::Tag::RunAsNodeCommand {
-        LoaderColonList::resolve(args.options(b"--loader"))?
+        LoaderColonList::resolve(args.clap.options(b"--loader"))?
     } else {
         ColonListType { keys: Vec::new(), values: Vec::new() }
     };

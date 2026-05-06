@@ -1368,7 +1368,11 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
 
     pub fn create_mini(
         cp_args: args::Cp,
-        mini: &mut MiniEventLoop,
+        // PORT NOTE: `EventLoopHandle::Mini` stores `*mut MiniEventLoop<'static>` (a
+        // non-owning erased backref, see `bun_event_loop::AnyEventLoop`). Taking the
+        // raw pointer here avoids forcing every caller's `MiniEventLoop` borrow to be
+        // `'static` — Zig passed `*MiniEventLoop` and the task never outlives it.
+        mini: *mut MiniEventLoop<'static>,
         shelltask: *mut ShellCpTask,
     ) -> *mut Self {
         let mut task = Box::new(Self {

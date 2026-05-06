@@ -385,11 +385,11 @@ impl CreateCommand {
 
         match example_tag {
             ExampleTag::JslikeFile => {
-                return run_on_entry_point(ctx, example_tag, template, &mut progress, &mut node);
+                return run_on_entry_point(ctx, example_tag, template, &mut progress, node);
             }
             ExampleTag::GithubRepository | ExampleTag::Official => {
                 let tarball_bytes: MutableString = match example_tag {
-                    ExampleTag::Official => match Example::fetch(ctx, &mut env_loader, template, &mut progress, &mut node) {
+                    ExampleTag::Official => match Example::fetch(ctx, &mut env_loader, template, &mut progress, node) {
                         Ok(b) => b,
                         Err(err) => {
                             if err == bun_core::err!("HTTPForbidden") || err == bun_core::err!("ExampleNotFound") {

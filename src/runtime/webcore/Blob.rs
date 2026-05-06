@@ -1158,9 +1158,10 @@ impl Blob {
             ),
         )
         .to_mime_type();
+        let content_type_ptr = store.mime_type.value.as_ref() as *const [u8];
 
-        let mut blob = Blob::init_with_store(store.clone(), global_this);
-        blob.content_type = store.mime_type.value.as_ref() as *const [u8];
+        let mut blob = Blob::init_with_store(store, global_this);
+        blob.content_type = content_type_ptr;
         blob.content_type_was_set = true;
         blob
     }

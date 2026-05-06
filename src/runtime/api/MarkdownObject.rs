@@ -441,7 +441,11 @@ struct ParseStackEntry {
     span_type: Option<md::SpanType>,
     data: u32,
     flags: u32,
-    detail: md::SpanDetail,
+    // PORT NOTE: `SpanDetail` borrows from `src_text`; the `RendererImpl`
+    // trait erases that lifetime, so we extend it to `'static` at the
+    // `enter_span` boundary (see SAFETY note there). Entries are popped
+    // and consumed strictly before `src_text` is dropped.
+    detail: md::SpanDetail<'static>,
 }
 
 impl Default for ParseStackEntry {

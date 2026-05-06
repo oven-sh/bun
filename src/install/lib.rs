@@ -612,6 +612,59 @@ pub mod package_manager {
         }
     }
     pub use Options::LogLevel;
+
+    /// Stub: `WorkspaceFilter` (src/install/PackageManager.zig). Real body in
+    /// gated `package_manager_real`. Variant payloads are owned glob patterns.
+    pub enum WorkspaceFilter {
+        All,
+        Name(Box<[u8]>),
+        Path(Box<[u8]>),
+    }
+    impl WorkspaceFilter {
+        pub fn init(
+            _input: &[u8],
+            _cwd: &[u8],
+            _path_buf: &mut bun_paths::PathBuffer,
+        ) -> Self {
+            todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6)")
+        }
+    }
+
+    /// Stub: `populateManifestCache` `Packages` union
+    /// (src/install/PackageManager/PopulateManifestCache.zig).
+    pub enum ManifestCacheOptions<'a> {
+        Ids(&'a [crate::PackageID]),
+        Names(&'a [&'a [u8]]),
+    }
+    /// Alias used by `outdated_command.rs`.
+    pub type ManifestCacheRequest<'a> = ManifestCacheOptions<'a>;
+
+    /// Stub: `PackageManifestMap.load` `When` enum.
+    #[derive(Clone, Copy)]
+    pub enum ManifestLoad { LoadFromMemory, LoadFromDisk, LoadFromMemoryFallbackToDisk }
+
+    /// Stub: `WorkspacePackageJSONCache`
+    /// (src/install/PackageManager/WorkspacePackageJSONCache.zig).
+    pub mod workspace_package_json_cache {
+        #[derive(Default)]
+        pub struct MapEntry {
+            pub root: bun_logger::js_ast::Expr,
+            pub source: bun_logger::Source,
+            pub indentation: bun_js_printer::Indentation,
+        }
+        #[derive(Default, Clone, Copy)]
+        pub struct GetJsonOptions {
+            pub guess_indentation: bool,
+        }
+        pub enum GetJsonResult<'a> {
+            Entry(&'a mut MapEntry),
+            ReadErr(bun_core::Error),
+            ParseErr(bun_core::Error),
+        }
+    }
+    pub use workspace_package_json_cache::MapEntry as WorkspacePackageJsonCacheEntry;
+    pub use workspace_package_json_cache::{GetJsonOptions, GetJsonResult};
+
     /// Stub: real body lives in `PackageManager/CommandLineArguments.rs`,
     /// gated behind `package_manager_real` (`#![cfg(any())]` reconciler-6).
     /// Only the `AuditLevel` enum is surfaced for `bun_runtime::cli::audit_command`.

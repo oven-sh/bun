@@ -794,7 +794,7 @@ impl BunxCommand {
                 cache = BStr::new(bunx_cache_dir),
                 sep = bun_paths::SEP as char,
                 bin = BStr::new(initial_bin_name),
-                exe = bun_core::EXE_SUFFIX,
+                exe = EXE_SUFFIX,
             )
             .map_err(|_| bun_core::err!("PathTooLong"))?;
             let written = absolute_in_cache_dir_buf.len() - cursor.len();

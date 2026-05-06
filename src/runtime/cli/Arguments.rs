@@ -1703,8 +1703,8 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             ctx.runtime_options.debugger = if inspect_flag.is_empty() {
                 Debugger::Enable(Default::default())
             } else {
-                Command::Debugger::Enable(Command::DebuggerEnable {
-                    path_or_port: Some(inspect_flag),
+                Debugger::Enable(DebuggerEnable {
+                    path_or_port: Box::<[u8]>::from(inspect_flag),
                     ..Default::default()
                 })
             };
@@ -1715,8 +1715,8 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                     ..Default::default()
                 })
             } else {
-                Command::Debugger::Enable(Command::DebuggerEnable {
-                    path_or_port: Some(inspect_flag),
+                Debugger::Enable(DebuggerEnable {
+                    path_or_port: Box::<[u8]>::from(inspect_flag),
                     wait_for_connection: true,
                     ..Default::default()
                 })
@@ -1729,8 +1729,8 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                     ..Default::default()
                 })
             } else {
-                Command::Debugger::Enable(Command::DebuggerEnable {
-                    path_or_port: Some(inspect_flag),
+                Debugger::Enable(DebuggerEnable {
+                    path_or_port: Box::<[u8]>::from(inspect_flag),
                     wait_for_connection: true,
                     set_breakpoint_on_first_line: true,
                     ..Default::default()

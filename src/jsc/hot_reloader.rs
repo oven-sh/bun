@@ -116,6 +116,55 @@ impl ImportWatcher {
 
 pub type HotReloader = NewHotReloader<VirtualMachine, EventLoop, false>;
 pub type WatchReloader = NewHotReloader<VirtualMachine, EventLoop, true>;
+
+impl HotReloaderCtx for VirtualMachine {
+    type EventLoop = EventLoop;
+
+    fn event_loop(&self) -> *mut EventLoop {
+        VirtualMachine::event_loop(self)
+    }
+
+    fn bun_watcher_mut(&mut self) -> &mut Watcher {
+        // PORT NOTE: Zig's three-way `@TypeOf(this.ctx.bun_watcher)` reflection
+        // collapses here — `VirtualMachine.bun_watcher` is the type-erased
+        // `*mut ImportWatcher` (TODO(b2-cycle) field comment in
+        // VirtualMachine.rs), and `getContext` only runs after
+        // `enable_hot_module_reloading` has populated it, so the `.None` arm
+        // is unreachable.
+        // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set by
+        // `enable_hot_module_reloading`; non-null whenever the reloader is
+        // running. The cast recovers the concrete type the field was erased to.
+        let import_watcher = unsafe { &mut *(self.bun_watcher as *mut ImportWatcher) };
+        match import_watcher {
+            ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => &mut **w,
+            ImportWatcher::None => unreachable!("bun_watcher_mut on un-enabled reloader"),
+        }
+    }
+
+    fn reload(&mut self, _task: &mut dyn HotReloadTaskView) {
+        // The inherent `reload` ignores its task argument (spec
+        // VirtualMachine.zig:769 takes `_: ?*HotReloader.HotReloadTask`), so
+        // pass `None` rather than threading the dyn view through.
+        VirtualMachine::reload(self, None);
+    }
+
+    fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
+        VirtualMachine::bust_dir_cache(self, path)
+    }
+
+    fn get_loaders(&self) -> &bun_bundler::options::LoaderHashTable {
+        &self.transpiler.options.loaders
+    }
+
+    fn log_level_at_least_info(&self) -> bool {
+        // Zig: `if (@hasField(Ctx, "log")) this.log.level.atLeast(.info)`.
+        // SAFETY: `log` is set in `VirtualMachine::init` and never cleared.
+        self.log
+            .map(|l| unsafe { l.as_ref() }.level >= bun_logger::Level::Info)
+            .unwrap_or(false)
+    }
+}
+
 /// The concrete `HotReloadTask` instance the JS event loop dispatches
 /// (`jsc.hot_reloader.HotReloader.Task` in Zig). The dyn trait of the same
 /// name below is the type-erased view used by `HotReloaderCtx::reload`.

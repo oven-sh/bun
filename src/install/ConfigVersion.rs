@@ -52,6 +52,5 @@ impl ConfigVersion {
 // PORT STATUS
 //   source:     src/install/ConfigVersion.zig (45 lines)
 //   confidence: high
-//   todos:      1
-//   notes:      Expr.data ENumber variant name/shape assumed; verify against bun_js_parser
+//   todos:      0
 // ──────────────────────────────────────────────────────────────────────────

@@ -9,7 +9,7 @@ use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 
 use crate::server::jsc::{self, JSGlobalObject, JSValue, JsResult, StrongOptional, VirtualMachine};
-use crate::server::{AnyServer, HTTPStatusText, ServerWebSocket};
+use crate::server::{AnyServer, AnyServerTag, HTTPStatusText, ServerWebSocket};
 use crate::webcore::AutoFlusher;
 
 /// Intrusive ref-counted; `ref_count` is managed by `bun_ptr::RefPtr<Self>`

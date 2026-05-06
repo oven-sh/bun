@@ -605,39 +605,38 @@ impl Default for Request {
 
 // `bun.UnboundedQueue(Request, .next)` — intrusive MPSC queue keyed on the
 // `next` field.
-// TODO(b2-blocked): bun_threading::UnboundedQueue — bun_threading crate fails
-// to compile (channel.rs references missing bun_collections::LinearFifoBufferType).
-// Local placeholder until that lower-tier crate is fixed; preserves the
-// `push`/`pop_batch().iterator()` shape used by `tick_epoll`/`tick_kqueue`.
-#[derive(Default)]
-pub struct RequestQueue {
-    back: AtomicPtr<Request>,
-}
-pub struct RequestBatch { front: *mut Request, pub count: usize }
-pub struct RequestBatchIter { front: *mut Request }
-impl RequestQueue {
-    pub fn push(&self, _item: *mut Request) {
-        // TODO(b2-blocked): bun_threading::UnboundedQueue
-        todo!("RequestQueue::push — blocked on bun_threading")
+//
+// Zig's `Request.next: ?*Request` is a plain optional pointer that the queue
+// reads/writes both atomically and non-atomically via `@atomicLoad`/`@field`.
+// The Rust port stores it as `AtomicPtr<Request>`; the non-atomic accessor
+// paths (`get_next`/`set_next`, used only by the batch iterator and the
+// debug-mode `pushBatch` reachability assert) lower to `Relaxed` ops, which is
+// no weaker than the original.
+// SAFETY: all four accessors touch the same `next` field; `atomic_*` delegate
+// to `AtomicPtr` with the requested ordering.
+unsafe impl bun_threading::unbounded_queue::Node for Request {
+    #[inline]
+    unsafe fn get_next(item: *mut Self) -> *mut Self {
+        (*item).next.load(Ordering::Relaxed)
     }
-    pub fn pop_batch(&self) -> RequestBatch {
-        // TODO(b2-blocked): bun_threading::UnboundedQueue
-        RequestBatch { front: ptr::null_mut(), count: 0 }
+    #[inline]
+    unsafe fn set_next(item: *mut Self, ptr: *mut Self) {
+        (*item).next.store(ptr, Ordering::Relaxed);
     }
-}
-impl RequestBatch {
-    pub fn iterator(self) -> RequestBatchIter { RequestBatchIter { front: self.front } }
-}
-impl RequestBatchIter {
-    pub fn next(&mut self) -> *mut Request {
-        let f = self.front;
-        if !f.is_null() {
-            // SAFETY: `f` is a live Request linked via `next`.
-            self.front = unsafe { (*f).next.load(Ordering::Relaxed) };
-        }
-        f
+    #[inline]
+    unsafe fn atomic_load_next(item: *mut Self, ordering: Ordering) -> *mut Self {
+        (*item).next.load(ordering)
+    }
+    #[inline]
+    unsafe fn atomic_store_next(item: *mut Self, ptr: *mut Self, ordering: Ordering) {
+        (*item).next.store(ptr, ordering);
     }
 }
+
+/// Zig: `pub const Queue = bun.UnboundedQueue(Request, .next);`
+pub type RequestQueue = bun_threading::UnboundedQueue<Request>;
+pub type RequestBatch = bun_threading::unbounded_queue::Batch<Request>;
+pub type RequestBatchIter = bun_threading::unbounded_queue::BatchIterator<Request>;
 
 // ─── Action ───────────────────────────────────────────────────────────────────
 

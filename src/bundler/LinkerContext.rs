@@ -3642,7 +3642,7 @@ impl<'a> LinkerContext<'a> {
                     decls: G::DeclList::from_slice(&[G::Decl {
                         binding: Binding::alloc(
                             allocator,
-                            bun_js_parser::ast::b::Identifier { ref_: exports_ref },
+                            bun_js_parser::ast::b::Identifier { r#ref: exports_ref },
                             loc,
                         ),
                         value: Some(Expr::allocate(allocator, E::Object::default(), loc)),

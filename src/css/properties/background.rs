@@ -1127,8 +1127,5 @@ fn is_background_property(property_id: PropertyId) -> bool {
 // PORT STATUS
 //   source:     src/css/properties/background.zig (1068 lines)
 //   confidence: medium
-//   todos:      4
 //   notes:      @field-based helpers (initSmallListHelper/flushHelper/push) expanded to macro_rules!; DefineEnumProperty assumed as #[css::define_enum_property] derive; several borrowck reshapes in BackgroundHandler::flush/handle_property; BackgroundHandler.decls left as std Vec pending 'bump threading.
 // ──────────────────────────────────────────────────────────────────────────
-
-} // mod background_handler_body

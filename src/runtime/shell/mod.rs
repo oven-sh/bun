@@ -347,6 +347,14 @@ impl ShellErr {
     pub fn new_sys(e: bun_sys::Error) -> Self {
         Self(e)
     }
+    /// Spec `ShellErr.newSys(jsc.SystemError)` — recover the syscall errno
+    /// from the JS-facing struct (`to_shell_system_error` negated it).
+    pub fn from_system(e: &bun_sys::SystemError) -> Self {
+        Self(bun_sys::Error {
+            errno: e.errno.unsigned_abs() as u16,
+            ..Default::default()
+        })
+    }
 }
 pub struct ParsedShellScript(());
 pub struct Subprocess(());

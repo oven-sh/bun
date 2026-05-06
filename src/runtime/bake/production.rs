@@ -804,7 +804,7 @@ pub fn build_with_vm(
                 "The file {} is missing the \"prerender\" export, which defines how to generate static files.",
                 bun_core::fmt::quote(resolve_path::relative(
                     cwd,
-                    entry_points.files.keys()[router_type.server_file.get() as usize].abs_path()
+                    entry_points.files.keys()[server_file.get() as usize].abs_path()
                 ))
             );
             Global::crash();
@@ -830,7 +830,7 @@ pub fn build_with_vm(
                         "The file {} is missing the \"getParams\" export, which defines how to generate static files.",
                         bun_core::fmt::quote(resolve_path::relative(
                             cwd,
-                            entry_points.files.keys()[router_type.server_file.get() as usize].abs_path()
+                            entry_points.files.keys()[server_file.get() as usize].abs_path()
                         ))
                     );
                     Global::crash();
@@ -843,14 +843,12 @@ pub fn build_with_vm(
         server_param_funcs.put_index(global, u32::try_from(i).unwrap(), server_param_func)?;
     }
 
-    let mut navigatable_routes: Vec<framework_router::RouteIndex> = Vec::new();
+    let mut navigatable_routes: Vec<fr::RouteIndex> = Vec::new();
     for (i, route) in router.routes.iter().enumerate() {
         if route.file_page.is_none() {
             continue;
         }
-        navigatable_routes.push(framework_router::RouteIndex::init(
-            u32::try_from(i).unwrap(),
-        ));
+        navigatable_routes.push(fr::RouteIndex::init(u32::try_from(i).unwrap()));
     }
 
     let mut css_chunk_js_strings: Vec<JSValue> = vec![JSValue::ZERO; css_chunks_count];

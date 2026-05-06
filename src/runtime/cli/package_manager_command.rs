@@ -598,12 +598,12 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                     Global::exit(1);
                 }
             }
-            let load_lockfile = bun_install::migration::detect_and_load_other_lockfile(
-                pm.lockfile,
-                Fd::cwd(),
-                pm,
-                pm.log,
-            );
+            // TODO(port): bun_install::migration is an empty stub (file body is
+            // `#![cfg(any())]` per reconciler-6). Real call:
+            //   migration::detect_and_load_other_lockfile(&mut pm.lockfile, Fd::cwd(), pm, pm.log)
+            let load_lockfile: Lockfile::LoadResult =
+                todo!("blocked_on: bun_install::migration::detect_and_load_other_lockfile (reconciler-6)");
+            let _ = Fd::cwd();
             if matches!(load_lockfile, Lockfile::LoadResult::NotFound) {
                 Output::pretty_errorln(
                     "<r><red>error<r>: could not find any other lockfile",

@@ -11,9 +11,9 @@
 use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
 
-use bun_uws::{us_bun_verify_error_t, ConnectingSocket, NewSocketHandler};
+use bun_uws::{ConnectingSocket, NewSocketHandler};
 use bun_uws_sys::vtable::Handler as VHandler;
-use bun_uws_sys::{us_socket_t, CloseCode};
+use bun_uws_sys::{us_bun_verify_error_t, us_socket_t, CloseCode};
 
 use bun_http_jsc::websocket_client;
 use bun_http_jsc::websocket_client::websocket_upgrade_client;

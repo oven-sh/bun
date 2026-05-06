@@ -692,7 +692,8 @@ impl TimerObjectInternals {
     pub fn to_primitive(&mut self) -> JsResult<JSValue> {
         if !self.flags.has_accessed_primitive() {
             self.flags.set_has_accessed_primitive(true);
-            let vm = VirtualMachine::get();
+            // SAFETY: `VirtualMachine::get()` returns the live per-thread VM; short-lived &mut at use site.
+            let vm = unsafe { &mut *VirtualMachine::get() };
             // PORT NOTE: reshaped for borrowck — capture event_loop_timer ptr before borrowing vm.timer.maps
             let elt = self.event_loop_timer() as *mut EventLoopTimer;
             vm.timer.maps.get(self.flags.kind()).put(self.id, elt)?;

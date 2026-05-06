@@ -2329,7 +2329,9 @@ pub mod environment_variables {
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__reportError(global_object: *mut JSGlobalObject, err: JSValue) {
     // SAFETY: caller is C++ with a live global.
-    let _ = VirtualMachine::get().uncaught_exception(unsafe { &*global_object }, err, false);
+    // SAFETY: VirtualMachine::get() returns the thread-local VM raw pointer.
+    let vm = unsafe { &mut *jsc::virtual_machine::VirtualMachine::get() };
+    let _ = vm.uncaught_exception(unsafe { &*global_object }, err, false);
 }
 
 #[allow(non_snake_case)]

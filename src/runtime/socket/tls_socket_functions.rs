@@ -176,7 +176,7 @@ pub fn set_servername(this: &mut This, global: &JSGlobalObject, frame: &CallFram
     Ok(JSValue::UNDEFINED)
 }
 
-pub fnget_peer_x509_certificate(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub fn get_peer_x509_certificate(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::UNDEFINED) };
     // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
     let cert = unsafe { boringssl::SSL_get_peer_certificate(ssl_ptr) };
@@ -186,7 +186,7 @@ pub fnget_peer_x509_certificate(this: &mut This, global: &JSGlobalObject, _frame
     Ok(JSValue::UNDEFINED)
 }
 
-pub fnget_x509_certificate(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub fn get_x509_certificate(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::UNDEFINED) };
     // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
     let cert = unsafe { boringssl::SSL_get_certificate(ssl_ptr) };
@@ -196,7 +196,7 @@ pub fnget_x509_certificate(this: &mut This, global: &JSGlobalObject, _frame: &Ca
     Ok(JSValue::UNDEFINED)
 }
 
-pub fnget_tls_version(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub fn get_tls_version(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     jsc::mark_binding(core::panic::Location::caller());
 
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::NULL) };
@@ -241,7 +241,7 @@ pub fn set_max_send_fragment(this: &mut This, global: &JSGlobalObject, frame: &C
     ))
 }
 
-pub fnget_peer_certificate(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub fn get_peer_certificate(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     jsc::mark_binding(core::panic::Location::caller());
 
     let args = frame.arguments_old(1);
@@ -310,7 +310,7 @@ pub fnget_peer_certificate(this: &mut This, global: &JSGlobalObject, frame: &Cal
     Ok(JSValue::UNDEFINED)
 }
 
-pub fnget_certificate(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub fn get_certificate(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::UNDEFINED) };
     // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
     let cert = unsafe { boringssl::SSL_get_certificate(ssl_ptr) };
@@ -321,7 +321,7 @@ pub fnget_certificate(this: &mut This, global: &JSGlobalObject, _frame: &CallFra
     Ok(JSValue::UNDEFINED)
 }
 
-pub fnget_tls_finished_message(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub fn get_tls_finished_message(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::UNDEFINED) };
     // We cannot just pass nullptr to SSL_get_finished()
     // because it would further be propagated to memcpy(),
@@ -347,7 +347,7 @@ pub fnget_tls_finished_message(this: &mut This, global: &JSGlobalObject, _frame:
     Ok(buffer)
 }
 
-pub fnget_shared_sigalgs(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub fn get_shared_sigalgs(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     jsc::mark_binding(core::panic::Location::caller());
 
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::NULL) };
@@ -444,7 +444,7 @@ pub fnget_shared_sigalgs(this: &mut This, global: &JSGlobalObject, _frame: &Call
     Ok(array)
 }
 
-pub fnget_cipher(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub fn get_cipher(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::UNDEFINED) };
     // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
     let cipher = unsafe { boringssl::SSL_get_current_cipher(ssl_ptr) };
@@ -490,7 +490,7 @@ pub fnget_cipher(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -
     Ok(result)
 }
 
-pub fnget_tls_peer_finished_message(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub fn get_tls_peer_finished_message(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::UNDEFINED) };
     // We cannot just pass nullptr to SSL_get_peer_finished()
     // because it would further be propagated to memcpy(),
@@ -600,7 +600,7 @@ pub fnexport_keying_material(this: &mut This, global: &JSGlobalObject, frame: &C
     }
 }
 
-pub fnget_ephemeral_key_info(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub fn get_ephemeral_key_info(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     // only available for clients
     if this.is_server() {
         return Ok(JSValue::NULL);
@@ -690,7 +690,7 @@ pub fn get_alpn_protocol(this: &This, global: &JSGlobalObject) -> JsResult<JSVal
     Ok(ZigString::from_utf8(slice).to_js(global))
 }
 
-pub fnget_session(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub fn get_session(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::UNDEFINED) };
     // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
     let Some(session) = (unsafe { boringssl::SSL_get_session(ssl_ptr) }) else {
@@ -750,7 +750,7 @@ pub fn set_session(this: &mut This, global: &JSGlobalObject, frame: &CallFrame) 
     }
 }
 
-pub fnget_tls_ticket(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub fn get_tls_ticket(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::UNDEFINED) };
     // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
     let Some(session) = (unsafe { boringssl::SSL_get_session(ssl_ptr) }) else {

@@ -2461,10 +2461,10 @@ impl DevServer<'_> {
                     }
                     serialized_failure::Owner::Server(index) => self
                         .server_graph
-                        .trace_dependencies(index, &mut gts, incremental_graph::TraceStop::NoStop, index)?,
+                        .trace_dependencies(index, &mut gts, incremental_graph::TraceDependencyGoal::NoStop, index)?,
                     serialized_failure::Owner::Client(index) => self
                         .client_graph
-                        .trace_dependencies(index, &mut gts, incremental_graph::TraceStop::NoStop, index)?,
+                        .trace_dependencies(index, &mut gts, incremental_graph::TraceDependencyGoal::NoStop, index)?,
                 }
             }
 
@@ -2567,7 +2567,7 @@ impl DevServer<'_> {
         let script_id = route_bundle.source_map_id();
         map_log!("inc {:x}, 1 for generateClientBundle", script_id.get());
         match self.source_maps.put_or_increment_ref_count(script_id, 1)? {
-            source_map_store::PutResult::Uninitialized(entry) => {
+            source_map_store::PutOrIncrementRefCount::Uninitialized(entry) => {
                 let _guard = scopeguard::guard((), |_| self.source_maps.unref(script_id));
                 // TODO(port): errdefer â disarm on success
                 gts.clear_and_free();
@@ -2575,10 +2575,10 @@ impl DevServer<'_> {
                 self.client_graph.take_source_map(entry)?;
                 scopeguard::ScopeGuard::into_inner(_guard);
             }
-            source_map_store::PutResult::Shared(_) => {}
+            source_map_store::PutOrIncrementRefCount::Shared(_) => {}
         }
 
-        let client_bundle = self.client_graph.take_js_bundle(&incremental_graph::TakeOptions {
+        let client_bundle = self.client_graph.take_js_bundle(&incremental_graph::TakeJSBundleOptionsClient {
             kind: ChunkKind::InitialResponse,
             initial_response_entry_point: if let Some(index) = client_file {
                 &self.client_graph.bundled_files.keys()[index.get() as usize]
@@ -2714,7 +2714,7 @@ pub struct HotUpdateContext<'a> {
     /// bundle_v2.Graph.ast.items(.import_records)
     pub import_records: &'a [bun_collections::BabyList<ImportRecord>],
     /// bundle_v2.Graph.server_component_boundaries.slice()
-    pub scbs: bun_js_parser::ast::ServerComponentBoundaryListSlice<'a>,
+    pub scbs: bun_js_parser::ast::server_component_boundary::Slice<'a>,
     /// bundle_v2.Graph.input_files.items(.loader)
     pub loaders: &'a [Loader],
     /// Which files have a server-component boundary.
@@ -2760,7 +2760,7 @@ impl<'a> HotUpdateContext<'a> {
 pub fn finalize_bundle(
     dev: &mut DevServer,
     bv2: &mut BundleV2,
-    result: &bundler::DevServerOutput,
+    result: &bundler::bundle_v2::DevServerOutput,
 ) -> JsResult<()> {
     debug_assert!(dev.magic == Magic::Valid);
     let mut had_sent_hmr_event = false;
@@ -2854,7 +2854,7 @@ pub fn finalize_bundle(
     }
 
     let mut resolved_index_cache = vec![
-        incremental_graph::FileIndexOptional::<{ bake::Side::Server }>::NONE.raw();
+        CachedFileIndex::NONE.raw();
         input_file_sources.len() * 2
     ];
 
@@ -2892,8 +2892,8 @@ pub fn finalize_bundle(
             Some(c) => c,
             None => 'brk: {
                 // The source map is `null` if empty
-                debug_assert!(matches!(compile_result.javascript().result, bundler::JsResult::Result(_)));
-                debug_assert!(dev.server_transpiler.options.source_map != bundler::SourceMapOption::None);
+                debug_assert!(matches!(compile_result.javascript().result, bun_js_printer::PrintResult::Result(_)));
+                debug_assert!(dev.server_transpiler.options.source_map != bundler::options::SourceMapOption::None);
                 debug_assert!(!part_range.source_index.is_runtime());
                 break 'brk SourceMap::Chunk::init_empty();
             }
@@ -2903,9 +2903,9 @@ pub fn finalize_bundle(
             bake::Graph::Client => dev.client_graph.receive_chunk(
                 &mut ctx,
                 index,
-                incremental_graph::ChunkContent::Js(incremental_graph::JsChunk {
+                incremental_graph::ReceiveChunkContent::Js {
                     code: compile_result.javascript().code(),
-                    source_map: Some(incremental_graph::SourceMapData {
+                    source_map: Some(incremental_graph::ReceiveChunkSourceMap {
                         chunk: source_map,
                         escaped_source: quoted_contents,
                     }),
@@ -2915,9 +2915,9 @@ pub fn finalize_bundle(
             graph @ (bake::Graph::Server | bake::Graph::Ssr) => dev.server_graph.receive_chunk(
                 &mut ctx,
                 index,
-                incremental_graph::ChunkContent::Js(incremental_graph::JsChunk {
+                incremental_graph::ReceiveChunkContent::Js {
                     code: compile_result.javascript().code(),
-                    source_map: Some(incremental_graph::SourceMapData {
+                    source_map: Some(incremental_graph::ReceiveChunkSourceMap {
                         chunk: source_map,
                         escaped_source: quoted_contents,
                     }),
@@ -2928,7 +2928,7 @@ pub fn finalize_bundle(
     }
 
     for (chunk, metadata) in result.css_chunks().iter_mut().zip(result.css_file_list.values()) {
-        debug_assert!(matches!(chunk.content, bundler::ChunkContent::Css(_)));
+        debug_assert!(matches!(chunk.content, bundler::chunk::Content::Css(_)));
 
         let index = bun_js_parser::ast::Index::init(chunk.entry_point.source_index);
 
@@ -2973,7 +2973,7 @@ pub fn finalize_bundle(
         }
 
         dev.client_graph
-            .receive_chunk(&mut ctx, index, incremental_graph::ChunkContent::Css(h), false)?;
+            .receive_chunk(&mut ctx, index, incremental_graph::ReceiveChunkContent::Css(h), false)?;
 
         // If imported on server, there needs to be a server-side file entry
         // so that edges can be attached.
@@ -2994,7 +2994,7 @@ pub fn finalize_bundle(
         dev.client_graph.receive_chunk(
             &mut ctx,
             index,
-            incremental_graph::ChunkContent::Js(incremental_graph::JsChunk {
+            incremental_graph::ReceiveChunkContent::Js {
                 code: &generated_js,
                 source_map: None,
             }),
@@ -3020,7 +3020,7 @@ pub fn finalize_bundle(
         dev.allocation_scope.assert_owned(&compile_result.code);
         html.bundled_html_text = Some(compile_result.code.clone()); // TODO(port): ownership transfer
         html.script_injection_offset =
-            route_bundle::ScriptOffset::init(compile_result.script_injection_offset);
+            Some(route_bundle::ByteOffset(compile_result.script_injection_offset));
 
         chunk.entry_point.entry_point_id = u32::try_from(route_bundle_index.get()).unwrap();
     }
@@ -3039,12 +3039,12 @@ pub fn finalize_bundle(
         match targets[part_range.source_index.get() as usize].bake_graph() {
             bake::Graph::Server | bake::Graph::Ssr => dev.server_graph.process_chunk_dependencies(
                 &mut ctx,
-                incremental_graph::DepKind::Normal,
+                incremental_graph::ProcessMode::Normal,
                 part_range.source_index,
             )?,
             bake::Graph::Client => dev.client_graph.process_chunk_dependencies(
                 &mut ctx,
-                incremental_graph::DepKind::Normal,
+                incremental_graph::ProcessMode::Normal,
                 part_range.source_index,
             )?,
         }
@@ -3052,12 +3052,12 @@ pub fn finalize_bundle(
     for chunk in result.html_chunks() {
         let index = bun_js_parser::ast::Index::init(chunk.entry_point.source_index);
         dev.client_graph
-            .process_chunk_dependencies(&mut ctx, incremental_graph::DepKind::Normal, index)?;
+            .process_chunk_dependencies(&mut ctx, incremental_graph::ProcessMode::Normal, index)?;
     }
     for chunk in result.css_chunks() {
         let entry_index = bun_js_parser::ast::Index::init(chunk.entry_point.source_index);
         dev.client_graph
-            .process_chunk_dependencies(&mut ctx, incremental_graph::DepKind::Css, entry_index)?;
+            .process_chunk_dependencies(&mut ctx, incremental_graph::ProcessMode::Css, entry_index)?;
     }
 
     // Index all failed files now that the incremental graph has been updated.
@@ -3119,10 +3119,9 @@ pub fn finalize_bundle(
         };
         // _ = source_map_json freed by Drop
 
-        let server_bundle = dev.server_graph.take_js_bundle(&incremental_graph::TakeOptions {
+        let server_bundle = dev.server_graph.take_js_bundle(&incremental_graph::TakeJSBundleOptionsServer {
             kind: ChunkKind::HmrChunk,
             script_id: server_script_id,
-            ..Default::default()
         })?;
         // freed by Drop
 
@@ -3256,7 +3255,7 @@ pub fn finalize_bundle(
 
         for index in &dev.incremental_result.client_components_affected {
             dev.server_graph
-                .trace_dependencies(*index, ctx.gts, incremental_graph::TraceStop::NoStop, *index)?;
+                .trace_dependencies(*index, ctx.gts, incremental_graph::TraceDependencyGoal::NoStop, *index)?;
         }
 
         for request in &dev.incremental_result.framework_routes_affected {
@@ -3393,11 +3392,11 @@ pub fn finalize_bundle(
                 }
                 map_log!("inc {:x}, for {} sockets", script_id.get(), sockets);
                 let entry = match dev.source_maps.put_or_increment_ref_count(script_id, sockets)? {
-                    source_map_store::PutResult::Uninitialized(entry) => 'brk: {
+                    source_map_store::PutOrIncrementRefCount::Uninitialized(entry) => 'brk: {
                         dev.client_graph.take_source_map(entry)?;
                         break 'brk entry;
                     }
-                    source_map_store::PutResult::Shared(entry) => entry,
+                    source_map_store::PutOrIncrementRefCount::Shared(entry) => entry,
                 };
                 w_int!(u32, entry.overlapping_memory_cost);
 

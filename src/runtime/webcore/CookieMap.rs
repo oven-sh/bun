@@ -31,19 +31,20 @@ impl CookieMap {
         kind: ResponseKind,
         uws_http_response: *mut c_void,
     ) -> JsResult<()> {
-        // TODO(port): @src() has no direct Rust equivalent; bun_jsc::from_js_host_call_generic
-        // likely wants a `core::panic::Location` or a codegen'd source-loc macro here.
-        bun_jsc::from_js_host_call_generic(
-            global_this,
-            /* @src() */
-            CookieMap__write,
-            (
-                self as *mut CookieMap,
-                global_this as *const _ as *mut JSGlobalObject,
-                kind,
-                uws_http_response,
-            ),
-        )
+        // @src() is supplied via `#[track_caller]` on `from_js_host_call_generic`.
+        bun_jsc::from_js_host_call_generic(global_this, || {
+            // SAFETY: `self` is a uniquely-borrowed opaque FFI handle. `JSGlobalObject`
+            // wraps `UnsafeCell`, so `as_ptr()` yields a `*mut` the C++ side may write
+            // through without violating `&JSGlobalObject`'s aliasing guarantees.
+            unsafe {
+                CookieMap__write(
+                    self as *mut CookieMap,
+                    global_this.as_ptr(),
+                    kind,
+                    uws_http_response,
+                )
+            }
+        })
     }
 
     pub fn deref(&mut self) {
@@ -61,6 +62,6 @@ impl CookieMap {
 // PORT STATUS
 //   source:     src/runtime/webcore/CookieMap.zig (17 lines)
 //   confidence: medium
-//   todos:      2
-//   notes:      from_js_host_call_generic signature + @src() mapping need Phase B resolution
+//   todos:      1
+//   notes:      extern decls should move to runtime_sys
 // ──────────────────────────────────────────────────────────────────────────

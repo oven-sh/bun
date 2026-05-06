@@ -1,4 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSString, JSUint8Array, JSValue, JsResult};
+use bun_simdutf_sys::simdutf;
 use bun_str::strings;
 
 bun_output::declare_scope!(TextEncoderStreamEncoder, visible);

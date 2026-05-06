@@ -2,7 +2,6 @@ use core::mem;
 
 use bun_collections::{ArrayHashMap, ArrayIdentityContext, MultiArrayList, StringSet};
 use bun_core::{Global, Output};
-use bun_js_parser::ast::Expr;
 use bun_logger as logger;
 use bun_paths::{self as path, resolve_path, AutoAbsPath, PathBuffer, MAX_PATH_BYTES};
 // MOVE_DOWN(b0): bun_resolver::fs → bun_sys::fs
@@ -19,7 +18,7 @@ use crate::{
     Npm, PackageID, PackageJSON, PackageManager, PackageNameHash, Repository,
     TruncatedPackageNameHash, UpdateRequest,
 };
-use crate::bun_json::ExprAccessors;
+use crate::bun_json::{Expr, ExprAccessors, ExprData};
 use crate::dependency::Behavior;
 // `Package.rs` is mounted as `crate::lockfile_real::package`; the parent module
 // (`super`) is the real `lockfile.rs`, distinct from the `crate::lockfile`
@@ -1995,7 +1994,7 @@ impl Package<u64> {
         }
 
         if let Some(patched_deps) = json.as_property(b"patchedDependencies") {
-            if let bun_js_parser::ast::ExprData::EObject(obj) = &patched_deps.expr.data {
+            if let ExprData::EObject(obj) = &patched_deps.expr.data {
                 for prop in obj.properties.slice() {
                     let key = prop.key.unwrap();
                     let value = prop.value.unwrap();
@@ -2016,7 +2015,7 @@ impl Package<u64> {
         'bin: {
             if let Some(bin) = json.as_property(b"bin") {
                 match &bin.expr.data {
-                    bun_js_parser::ast::ExprData::EObject(obj) => {
+                    ExprData::EObject(obj) => {
                         for bin_prop in obj.properties.slice() {
                             let Some(k) = bin_prop.key.unwrap().as_string() else {
                                 break 'bin;
@@ -2029,7 +2028,7 @@ impl Package<u64> {
                         }
                         break 'bin;
                     }
-                    bun_js_parser::ast::ExprData::EString(_) => {
+                    ExprData::EString(_) => {
                         if let Some(str_) = bin.expr.as_string() {
                             string_builder.count(str_);
                             break 'bin;
@@ -2093,7 +2092,7 @@ impl Package<u64> {
 
         if FEATURES.peer_dependencies {
             if let Some(peer_dependencies_meta) = json.as_property(b"peerDependenciesMeta") {
-                if let bun_js_parser::ast::ExprData::EObject(obj) =
+                if let ExprData::EObject(obj) =
                     &peer_dependencies_meta.expr.data
                 {
                     let props = obj.properties.slice();
@@ -2102,7 +2101,7 @@ impl Package<u64> {
                         if let Some(optional) = prop.value.unwrap().as_property(b"optional") {
                             if !matches!(
                                 &optional.expr.data,
-                                bun_js_parser::ast::ExprData::EBoolean(b) if b.value
+                                ExprData::EBoolean(b) if b.value
                             ) {
                                 continue;
                             }
@@ -2130,7 +2129,7 @@ impl Package<u64> {
             if let Some(dependencies_q) = json.as_property(group.prop) {
                 'brk: {
                     match &dependencies_q.expr.data {
-                        bun_js_parser::ast::ExprData::EArray(arr) => {
+                        ExprData::EArray(arr) => {
                             if !group.behavior.is_workspace() {
                                 let _ = log.add_error_fmt(
                                     source,
@@ -2151,7 +2150,7 @@ impl Package<u64> {
                                 Some(&mut string_builder),
                             )?;
                         }
-                        bun_js_parser::ast::ExprData::EObject(obj) => {
+                        ExprData::EObject(obj) => {
                             if group.behavior.is_workspace() {
                                 // yarn workspaces expects a "workspaces" property shaped like this:
                                 //
@@ -2165,7 +2164,7 @@ impl Package<u64> {
                                     let packages_expr = packages_query.expr;
                                     if !matches!(
                                         packages_expr.data,
-                                        bun_js_parser::ast::ExprData::EArray(_)
+                                        ExprData::EArray(_)
                                     ) {
                                         let _ = log.add_error_fmt(
                                             source,
@@ -2177,7 +2176,7 @@ impl Package<u64> {
                                         );
                                         return Err(bun_core::err!("InvalidPackageJSON"));
                                     }
-                                    let bun_js_parser::ast::ExprData::EArray(packages_arr) =
+                                    let ExprData::EArray(packages_arr) =
                                         &packages_expr.data
                                     else {
                                         unreachable!()
@@ -2254,7 +2253,7 @@ impl Package<u64> {
         if FEATURES.trusted_dependencies {
             if let Some(q) = json.as_property(b"trustedDependencies") {
                 match &q.expr.data {
-                    bun_js_parser::ast::ExprData::EArray(arr) => {
+                    ExprData::EArray(arr) => {
                         if lockfile.trusted_dependencies.is_none() {
                             lockfile.trusted_dependencies = Some(Default::default());
                         }
@@ -2381,7 +2380,7 @@ impl Package<u64> {
         }
 
         if let Some(patched_deps) = json.as_property(b"patchedDependencies") {
-            if let bun_js_parser::ast::ExprData::EObject(obj) = &patched_deps.expr.data {
+            if let ExprData::EObject(obj) = &patched_deps.expr.data {
                 lockfile
                     .patched_dependencies
                     .ensure_total_capacity(obj.properties.len as usize)
@@ -2407,7 +2406,7 @@ impl Package<u64> {
         'bin: {
             if let Some(bin) = json.as_property(b"bin") {
                 match &bin.expr.data {
-                    bun_js_parser::ast::ExprData::EObject(obj) => {
+                    ExprData::EObject(obj) => {
                         match obj.properties.len {
                             0 => {}
                             1 => {
@@ -2480,7 +2479,7 @@ impl Package<u64> {
 
                         break 'bin;
                     }
-                    bun_js_parser::ast::ExprData::EString(stri) => {
+                    ExprData::EString(stri) => {
                         if !stri.data.is_empty() {
                             self.bin = Bin {
                                 tag: bin::Tag::File,
@@ -2542,10 +2541,10 @@ impl Package<u64> {
                 .or_else(|| json.get(b"bundledDependencies"))
             {
                 match &bundled_deps_expr.data {
-                    bun_js_parser::ast::ExprData::EBoolean(boolean) => {
+                    ExprData::EBoolean(boolean) => {
                         bundle_all_deps = boolean.value;
                     }
-                    bun_js_parser::ast::ExprData::EArray(arr) => {
+                    ExprData::EArray(arr) => {
                         for item in arr.slice() {
                             let Some(s) = item.as_string() else { continue };
                             bundled_deps.insert(s)?;
@@ -2715,7 +2714,7 @@ impl Package<u64> {
             } else {
                 if let Some(dependencies_q) = json.as_property(group.prop) {
                     match &dependencies_q.expr.data {
-                        bun_js_parser::ast::ExprData::EObject(obj) => {
+                        ExprData::EObject(obj) => {
                             for item in obj.properties.slice() {
                                 let key = item.key.unwrap();
                                 let value = item.value.unwrap();

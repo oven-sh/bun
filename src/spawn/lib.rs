@@ -117,6 +117,7 @@ pub mod subprocess {
     /// Zig type is `?bun.FD`; on Windows it is a tagged union over `Pipe` /
     /// `Fd` / unavailable. Unified into a single enum here so callers can
     /// construct it cross-platform via [`StdioResult::from_fd`].
+    #[derive(Copy, Clone)]
     pub enum StdioResult {
         Fd(Fd),
         /// Windows-only: parent end of an overlapped `uv_pipe_t`. Stored as a

@@ -165,6 +165,10 @@ pub mod repository {
     use bun_semver::semver_string::Buf as StringBuf;
     use bun_string::strings;
 
+    // Re-export the process-lifetime git env singleton so callers naming
+    // `crate::repository::SHARED_ENV` resolve to the real static.
+    pub use crate::repository_real::{SHARED_ENV, SharedEnv};
+
     #[derive(Default, Clone, Copy)]
     #[repr(C)]
     pub struct Repository {
@@ -190,13 +194,13 @@ pub mod repository {
         /// (src/install/repository.zig). Forwards to `repository_real`.
         #[inline]
         pub fn find_commit(
-            env: &bun_dotenv::Map,
+            env: &mut bun_dotenv::Loader,
             log: &mut bun_logger::Log,
-            repo_dir: bun_sys::Fd,
+            repo_dir: bun_sys::Dir,
             name: &[u8],
             committish: &[u8],
             task_id: crate::package_manager_task::Id,
-        ) -> Result<Box<[u8]>, bun_core::Error> {
+        ) -> Result<Vec<u8>, bun_core::Error> {
             crate::repository_real::Repository::find_commit(
                 env, log, repo_dir, name, committish, task_id,
             )
@@ -206,13 +210,23 @@ pub mod repository {
         /// (src/install/repository.zig). Forwards to `repository_real`.
         #[inline]
         pub fn create_dependency_name_from_version_literal(
-            allocator: bun_alloc::Allocator,
-            dep: &crate::Dependency,
-            lockfile: &crate::Lockfile,
+            repository: &Self,
+            lockfile: &mut crate::Lockfile,
             dep_id: crate::DependencyID,
-        ) -> Box<[u8]> {
+        ) -> Vec<u8> {
+            // The facade `repository::Repository` and `repository_real::Repository`
+            // are both `#[repr(C)] Copy` views over the same five
+            // `bun_semver::String` handles. Bridge by value until the facade
+            // dissolves into a re-export.
+            let real = crate::repository_real::Repository {
+                owner: repository.owner,
+                repo: repository.repo,
+                committish: repository.committish,
+                resolved: repository.resolved,
+                package_name: repository.package_name,
+            };
             crate::repository_real::Repository::create_dependency_name_from_version_literal(
-                allocator, dep, lockfile, dep_id,
+                &real, lockfile, dep_id,
             )
         }
 
@@ -1517,6 +1531,25 @@ pub mod package_manager {
     /// Stub: real body lives in `PackageManager/CommandLineArguments.rs`,
     /// Only the `AuditLevel` enum is surfaced for `bun_runtime::cli::audit_command`.
     pub mod command_line_arguments {
+        /// Port of `PackageManager.CommandLineArguments`
+        /// (src/install/PackageManager/CommandLineArguments.zig). Real struct lives at
+        /// `package_manager_real::command_line_arguments::CommandLineArguments`; this stub
+        /// surfaces only the `parse` constructor so CLI subcommands (`bun_runtime::cli::*`)
+        /// can call `CommandLineArguments::parse(subcommand)` against the stub
+        /// `crate::PackageManager` until the stub/real `PackageManager` structs unify
+        /// (reconciler-6).
+        #[derive(Default)]
+        pub struct CommandLineArguments;
+        impl CommandLineArguments {
+            /// Port of `CommandLineArguments.parse` (src/install/PackageManager/CommandLineArguments.zig).
+            /// Real body in `package_manager_real::command_line_arguments::CommandLineArguments::parse`;
+            /// this stub forwards once the two `PackageManager` structs unify so
+            /// `PackageManager::init` can accept the real parsed value (reconciler-6).
+            pub fn parse(_subcommand: super::Subcommand) -> Result<Self, bun_core::Error> {
+                todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) - stub CommandLineArguments::parse forwards to package_manager_real::command_line_arguments::CommandLineArguments::parse once crate::PackageManager unifies with package_manager_real::PackageManager")
+            }
+        }
+
         #[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord)]
         pub enum AuditLevel { Low, Moderate, High, Critical }
         impl AuditLevel {
@@ -2159,6 +2192,20 @@ impl PreallocatedResolveTasksStub {
     #[inline] pub fn put<T>(&mut self, _value: *mut T) {}
 }
 impl PackageManager {
+    /// Port of `PackageManager.init` (src/install/PackageManager.zig). Real body
+    /// in `package_manager_real::init`; this stub forwards once the stub/real
+    /// `PackageManager` structs unify (reconciler-6). Generic over `Ctx` because
+    /// `bun_runtime::cli::Command::Context` would be a circular dep. Returns
+    /// `&'static mut` (Zig: process-singleton `*PackageManager`) plus the owned
+    /// original cwd buffer (Zig: `ctx.allocator.free(cwd)` deferred by callers).
+    pub fn init<Ctx>(
+        _ctx: Ctx,
+        _cli: &package_manager::command_line_arguments::CommandLineArguments,
+        _subcommand: Subcommand,
+    ) -> Result<(&'static mut PackageManager, Box<[u8]>), bun_core::Error> {
+        todo!("blocked_on: bun_install::package_manager_real un-gate (reconciler-6) - package_manager_real::init returns *mut package_manager_real::PackageManager; stub forwards once the two PackageManager structs unify")
+    }
+
     /// Zig field-access `manager.log` derefs the borrowed `*logger.Log`.
     /// SAFETY: `log` is non-null after `init()`; mirrors Zig non-optional `*Log`.
     #[inline]

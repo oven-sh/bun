@@ -24,12 +24,14 @@ use bun_paths::{self as paths, DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP};
 #[cfg(windows)]
 use bun_paths::WPathBuffer;
 use bun_resolver::dir_info::DirInfo;
+use bun_resolver::package_json::PackageJSON;
 use bun_string::strings;
-use bun_sys as sys;
+use bun_sys::{self as sys, Fd};
 use bun_which::which;
 
 use crate::cli;
 use crate::cli::arguments;
+use crate::cli::shell_completions::ShellCompletions;
 use crate::cli::Command;
 use crate::cli::command::{ContextData, Tag as CommandTag};
 
@@ -1303,17 +1305,11 @@ impl RunCommand {
         path: &[u8],
         loader: Option<Loader>,
     ) -> bool {
-        // TODO(b2-blocked): `Loader::Md` → `render_markdown_file_and_exit`
-        // (needs bun_md + bun_http remote-image prefetch). See phase_a_draft.
-        
         if matches!(
             loader.or_else(|| Self::default_loader_for(path)),
             Some(Loader::Md)
         ) {
-            // PORT NOTE: real impl lives in `phase_a_draft::render_markdown_file_and_exit`;
-            // blocked on `bun_md` + remote-image prefetch landing in this tier.
-            let _ = path;
-            todo!("blocked_on: RunCommand::render_markdown_file_and_exit");
+            Self::render_markdown_file_and_exit(path);
         }
 
         Global::configure_allocator(core::Global::AllocatorConfiguration {

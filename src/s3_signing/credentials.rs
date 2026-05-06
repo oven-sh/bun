@@ -216,6 +216,28 @@ pub struct S3Credentials {
     pub virtual_hosted_style: bool,
 }
 
+// PORT NOTE: Zig `S3Credentials` is a value type with `[]const u8` fields and is
+// freely copied (e.g. `default_credentials.*`). The Rust port owns its bytes via
+// `Box<[u8]>`, so a manual `Clone` deep-copies them and resets `ref_count` — the
+// intrusive count only applies to heap (`IntrusiveRc`) instances; a fresh value
+// must start at 1.
+impl Clone for S3Credentials {
+    fn clone(&self) -> Self {
+        Self {
+            ref_count: RefCount::init(),
+            access_key_id: dupe_slice(&self.access_key_id),
+            secret_access_key: dupe_slice(&self.secret_access_key),
+            region: dupe_slice(&self.region),
+            endpoint: dupe_slice(&self.endpoint),
+            bucket: dupe_slice(&self.bucket),
+            session_token: dupe_slice(&self.session_token),
+            storage_class: self.storage_class,
+            insecure_http: self.insecure_http,
+            virtual_hosted_style: self.virtual_hosted_style,
+        }
+    }
+}
+
 // `bun.ptr.RefCount(...)` mixin → IntrusiveRc handles ref/deref; when count hits
 // zero the boxed allocation is dropped, which drops the Box<[u8]> fields. The
 // Zig `deinit` body only freed those fields + `bun.destroy(this)`, so no

@@ -1253,10 +1253,10 @@ fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::Ini
             );
         }
         http::InitError::InvalidCA => {
-            Output::err("HTTPThread", "the CA is invalid", &[]);
+            Output::err("HTTPThread", "the CA is invalid", ());
         }
         http::InitError::FailedToOpenSocket => {
-            Output::err_generic("failed to start HTTP client thread", &[]);
+            Output::err_generic("failed to start HTTP client thread", ());
         }
     }
     Global::crash();
@@ -1670,13 +1670,18 @@ pub fn init(
         ROOT_PACKAGE_JSON_PATH = ZStr::from_raw(ROOT_PACKAGE_JSON_PATH_BUF.as_ptr(), plen);
     }
 
-    // Zig: `fs.fs.readDirectory(fs.top_level_dir, ...)` — the resolver-tier
-    // `RealFS` cache. The opaque `bun_sys::fs::FileSystem` doesn't expose
-    // `fs.read_directory` (it lives behind the vtable). For init purposes the
-    // root dir is only used to seed `manager.root_dir` for env-file discovery.
-    // TODO(port): blocked_on bun_sys::fs vtable read_directory
-    let entries_option: &'static mut fs::DirEntry =
-        todo!("blocked_on: bun_sys::fs::FsVTable::read_directory (resolver T4 hook)");
+    // Zig: `try fs.fs.readDirectory(fs.top_level_dir, null, 0, true)` — the
+    // resolver-tier `RealFS` cache. Routed through `FsVTable::read_directory`
+    // so install can call it without an upward `bun_resolver` dep.
+    let entries_option: &'static mut fs::DirEntry = match fs.read_directory(fs.top_level_dir(), 0, true)? {
+        fs::EntriesOption::Err(e) => return Err(e.canonical_error),
+        fs::EntriesOption::Entries(p) => {
+            // SAFETY: `p` is an erased `*mut bun_resolver::fs::DirEntry` owned
+            // by the resolver's process-static BSSMap (never freed). Single-
+            // threaded init; matches Zig's `*Fs.FileSystem.DirEntry`.
+            unsafe { &mut *(p as *mut fs::DirEntry) }
+        }
+    };
 
     // SAFETY: `init()` runs once on the main thread before any other access to the singleton.
     // `dot_env::Loader<'a>` borrows `&'a mut Map`, so the pair is self-referential; allocate

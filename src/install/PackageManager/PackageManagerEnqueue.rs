@@ -389,17 +389,22 @@ pub fn enqueue_package_for_download(
     let is_required = this.lockfile.buffers.dependencies[dependency_id as usize]
         .behavior
         .is_required();
+    let package = this.lockfile.packages.get(package_id);
 
-    if let Some(task) = run_tasks::generate_network_task_for_tarball(this,
+    if let Some(task) = run_tasks::generate_network_task_for_tarball(
+        this,
         task_id,
         url,
         is_required,
         dependency_id,
-        this.lockfile.packages.get(package_id),
+        package,
         patch_name_and_version_hash,
         crate::network_task::Authorization::AllowAuthorization,
     )? {
-        task.schedule(&mut this.network_tarball_batch);
+        // PORT NOTE: reshaped for borrowck — see `enqueue_tarball_for_download`.
+        let task: *mut NetworkTask = task;
+        // SAFETY: `task` is the unique handle to a freshly-vended pool slot.
+        unsafe { (*task).schedule(&mut this.network_tarball_batch) };
         if this.network_tarball_batch.len > 0 {
             let _ = this.schedule_tasks();
         }
@@ -440,7 +445,7 @@ pub fn enqueue_dependency_to_root(
         let dummy = Dependency {
             name: SemverString::init(name, name),
             name_hash: Semver::string::Builder::string_hash(name),
-            version: *version,
+            version: version.clone(),
             behavior,
         };
         dummy.count_with_different_buffers(name, version_buf, &mut builder);
@@ -449,8 +454,15 @@ pub fn enqueue_dependency_to_root(
             return DependencyToEnqueue::Failure(err.into());
         }
 
+        // PORT NOTE: reshaped for borrowck — `clone_with_different_buffers`
+        // takes `&mut PackageManager`; `builder` already borrows
+        // `this.lockfile`. Detach `builder` via a raw pointer for the call
+        // (Zig passes both freely).
+        let builder_ptr: *mut Lockfile::StringBuilder<'_> = &mut builder;
+        // SAFETY: `builder` borrows `this.lockfile.buffers.string_bytes`;
+        // `clone_with_different_buffers` does not touch `this.lockfile`.
         let dep = dummy
-            .clone_with_different_buffers(this, name, version_buf, &mut builder)
+            .clone_with_different_buffers(this, name, version_buf, unsafe { &mut *builder_ptr })
             .expect("unreachable");
         builder.clamp();
         let index = this.lockfile.buffers.dependencies.len();
@@ -468,7 +480,7 @@ pub fn enqueue_dependency_to_root(
         // Copy to the stack: `enqueueDependencyWithMainAndSuccessFn` can call
         // `Lockfile.Package.fromNPM`, which grows `buffers.dependencies` and
         // would invalidate a pointer taken directly into it.
-        let dependency = this.lockfile.buffers.dependencies[dep_id as usize];
+        let dependency = this.lockfile.buffers.dependencies[dep_id as usize].clone();
         if let Err(err) = enqueue_dependency_with_main_and_success_fn(
             this,
             dep_id,

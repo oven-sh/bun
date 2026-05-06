@@ -22,6 +22,7 @@ pub use __phase_a_draft::{
     JSMeta, ImportData, ExportData, ImportTracker, DevServerOutput,
     EntryPoint, EntryPointKind, EntryPointList, generic_path_with_pretty_initialized,
 };
+pub use __phase_a_draft::{DependenciesScanner, DependenciesScannerResult};
 pub use crate::ungate_support::RefImportData;
 use self::bake_types as bake;
 
@@ -5358,33 +5359,101 @@ impl<'a> BundleV2<'a> {
                 }
                 result.ast.import_records = import_records;
 
+                // For files with use directives, index and prepare the other side.
+                // PORT NOTE: evaluate the boundary condition + capture
+                // `named_exports` *before* `result.ast` is moved into
+                // `graph.ast` below — Zig copied the struct by value so it
+                // could read `result.ast.named_exports` afterward.
+                let result_use_directive = result.use_directive;
+                let scb_named_exports = if result_use_directive != crate::UseDirective::None
+                    && if this.framework.as_ref().unwrap().server_components.as_ref().unwrap().separate_ssr_graph {
+                        (result_use_directive == crate::UseDirective::Client) == (result_ast_target == Target::Browser)
+                    } else {
+                        (result_use_directive == crate::UseDirective::Client) != (result_ast_target == Target::Browser)
+                    }
+                {
+                    Some(result.ast.named_exports.clone().expect("oom"))
+                } else {
+                    None
+                };
+
                 this.graph.ast.set(result_source_index, core::mem::replace(&mut result.ast, JSAst::empty()));
 
                 // Barrel optimization: eagerly record import requests and
                 // un-defer barrel records that are now needed.
                 // TODO(b2-blocked): `schedule_barrel_deferred_imports` is gated.
 
-                // For files with use directives, index and prepare the other side.
-                if result.use_directive != crate::UseDirective::None
-                    && if this.framework.as_ref().unwrap().server_components.as_ref().unwrap().separate_ssr_graph {
-                        (result.use_directive == crate::UseDirective::Client) == (result_ast_target == Target::Browser)
-                    } else {
-                        (result.use_directive == crate::UseDirective::Client) != (result_ast_target == Target::Browser)
-                    }
-                {
-                    if result.use_directive == crate::UseDirective::Server {
+                if let Some(named_exports) = scb_named_exports {
+                    if result_use_directive == crate::UseDirective::Server {
                         bun_core::todo_panic!("\"use server\"");
                     }
 
-                    // blocked_on: `Logger::Source.path` is `bun_logger::fs::Path` but
-                    // `path_with_pretty_initialized` takes/returns `Fs::Path`
-                    // (`bun_resolver::Path<'_>`) — types not yet unified. Additionally
-                    // `result.ast` / `result.source` were consumed above (moved into
-                    // `graph.ast` / swapped into `graph.input_files`), so the Zig data
-                    // flow that builds `ReferenceProxy { other_source, named_exports }`
-                    // from `result` needs re-threading from `graph` once unified.
-                    let _ = (result_ast_target, &source_path_owned, result_source_index);
-                    todo!("blocked_on: Logger::fs::Path vs Fs::Path unification + ServerComponentParseTask::ReferenceProxy data flow");
+                    // PORT NOTE: `result.source` was swapped into
+                    // `graph.input_files[idx]` above; re-read the canonical
+                    // source from the graph (Zig's `result.source` was a value
+                    // copy so both stayed identical after the assignment).
+                    let separate_ssr_graph = this.framework.as_ref().unwrap()
+                        .server_components.as_ref().unwrap().separate_ssr_graph;
+                    let loader = this.graph.input_files.items_loader()[result_source_index];
+
+                    let (reference_source_index, ssr_index): (IndexInt, IndexInt) = if separate_ssr_graph {
+                        // Enqueue two files, one in server graph, one in ssr graph.
+                        let other_source = dup_source(
+                            &this.graph.input_files.items_source()[result_source_index],
+                        );
+                        let source_without_index = dup_source(&other_source);
+                        let reference_source_index = this.enqueue_server_component_generated_file(
+                            crate::ServerComponentParseTask::Data::ClientReferenceProxy(
+                                crate::ServerComponentParseTask::ReferenceProxy { other_source, named_exports },
+                            ),
+                            source_without_index,
+                        ).expect("oom");
+
+                        let mut ssr_source = dup_source(
+                            &this.graph.input_files.items_source()[result_source_index],
+                        );
+                        let mut fs_path = fs_path_from_logger(&ssr_source.path);
+                        fs_path.pretty = fs_path.text;
+                        fs_path = this.path_with_pretty_initialized(fs_path, Target::BakeServerComponentsSsr).expect("oom");
+                        ssr_source.path = logger_path_from_fs(&fs_path);
+                        let ssr_index = this.enqueue_parse_task2(
+                            &mut ssr_source,
+                            loader,
+                            Target::BakeServerComponentsSsr,
+                        ).expect("oom");
+
+                        (reference_source_index, ssr_index)
+                    } else {
+                        // Enqueue only one file
+                        let mut server_source = dup_source(
+                            &this.graph.input_files.items_source()[result_source_index],
+                        );
+                        let mut fs_path = fs_path_from_logger(&server_source.path);
+                        fs_path.pretty = fs_path.text;
+                        let server_target = this.transpiler.options.target;
+                        fs_path = this.path_with_pretty_initialized(fs_path, server_target).expect("oom");
+                        server_source.path = logger_path_from_fs(&fs_path);
+                        let server_index = this.enqueue_parse_task2(
+                            &mut server_source,
+                            loader,
+                            Target::Browser,
+                        ).expect("oom");
+
+                        (server_index, Index::INVALID.get())
+                    };
+
+                    this.graph.path_to_source_index_map(result_ast_target)
+                        .put(source_path_text, reference_source_index)
+                        .expect("oom");
+
+                    this.graph.server_component_boundaries.put(
+                        result_source_index as IndexInt,
+                        result_use_directive,
+                        reference_source_index,
+                        ssr_index,
+                    ).expect("oom");
+
+                    let _ = source_path_owned;
                 }
             }
             parse_task::ResultValue::Err(err) => {

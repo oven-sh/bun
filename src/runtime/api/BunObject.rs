@@ -73,145 +73,8 @@ pub fn get_public_path_with_asset_prefix<W: core::fmt::Write>(
     }
 }
 
-// ─── un-gated host-fn bodies (B-2) ──────────────────────────────────────────
-// `bun_jsc` + `#[bun_jsc::host_fn]` are real now. The self-contained `Bun.*`
-// callbacks below compile against the un-gated bun_jsc surface and export the
-// `BunObject_callback_<name>` symbols C++ links against (BunObject.cpp). The
-// bulk of `bun_object` (export tables, lazy-property fan-out, JSZlib/JSZstd,
-// env-map FFI, serve(), file()) stays in `_jsc_gated` until the sibling api/*
-// modules they fan out to are themselves declared/un-gated.
 
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-
-// phase-d: top-level draft copy — `#[bun_jsc::host_fn]` removed to avoid
-// duplicate codegen with `_jsc_gated::sleep_sync` (the canonical impl).
-#[allow(dead_code)]
-pub fn sleep_sync(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let arguments = callframe.arguments();
-
-    // Expect at least one argument.  We allow more than one but ignore them; this
-    //  is useful for supporting things like `[1, 2].map(sleepSync)`
-    if arguments.is_empty() {
-        return Err(global_object.throw_invalid_arguments(format_args!(
-            "sleepSync expects 1 argument but received 0"
-        )));
-    }
-    let arg = arguments[0];
-
-    // The argument must be a number
-    if !arg.is_number() {
-        return Err(global_object.throw_invalid_argument_type(
-            "sleepSync",
-            "milliseconds",
-            "number",
-        ));
-    }
-
-    //NOTE: if argument is > max(i32) then it will be truncated
-    let milliseconds = arg.coerce::<i32>(global_object)?;
-    if milliseconds < 0 {
-        return Err(global_object.throw_invalid_arguments(format_args!(
-            "argument to sleepSync must not be negative, got {milliseconds}"
-        )));
-    }
-
-    std::thread::sleep(core::time::Duration::from_millis(
-        u64::try_from(milliseconds).unwrap(),
-    ));
-    Ok(JSValue::UNDEFINED)
-}
-
-#[allow(dead_code)]
-pub fn nanoseconds(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-    // PORT NOTE: Zig's `std.time.Timer.read()` → `Instant::elapsed().as_nanos()`.
-    // SAFETY: bun_vm() returns a live VirtualMachine pointer for a Bun-owned global.
-    let ns = unsafe { (*global_this.bun_vm()).origin_timer.elapsed().as_nanos() as u64 };
-    Ok(JSValue::js_number_from_uint64(ns))
-}
-
-#[allow(dead_code)]
-pub fn shrink(global_object: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-    // PORT NOTE: `bun_jsc::VM` (the lib.rs stub) lacks `shrink_footprint`; the
-    // real method lives on `bun_jsc::vm::VM`. Call the C++ symbol directly to
-    // avoid touching the upstream crate.
-    unsafe extern "C" {
-        fn JSC__VM__shrinkFootprint(vm: *mut core::ffi::c_void);
-    }
-    // SAFETY: `vm_ptr()` returns the live JSC::VM*; FFI mutates it in place.
-    unsafe { JSC__VM__shrinkFootprint(global_object.vm_ptr().cast()) };
-    Ok(JSValue::UNDEFINED)
-}
-
-// phase-d: `Bun__gc` / `Bun__reportError` C exports live in `_jsc_gated` below;
-// these top-level copies are kept as plain Rust fns (no `#[no_mangle]`) so
-// existing `pub use … as gc` re-exports keep resolving without colliding at
-// codegen.
-pub use Bun__gc as gc;
-pub extern "C" fn Bun__gc(vm: *mut VirtualMachine, sync: bool) -> usize {
-    // SAFETY: caller is C++ passing a live VM.
-    unsafe { (*vm).garbage_collect(sync) }
-}
-
-pub extern "C" fn Bun__reportError(global_object: *mut JSGlobalObject, err: JSValue) {
-    // SAFETY: caller is C++ with a live global; VirtualMachine::get() is the singleton.
-    let _ = unsafe { (*VirtualMachine::get()).uncaught_exception(&*global_object, err, false) };
-}
-
-// ─── un-gated host-fn bodies (B-2, round 3) ─────────────────────────────────
-// `Bun.indexOfLine` / `Bun.allocUnsafe` are self-contained against the bun_jsc
-// stub surface; the lazy-property getters below fan out to sibling api/*
-// modules whose `create()` is already un-gated.
-
-use bun_jsc::JSObject;
-use bun_str::strings;
-
-#[allow(dead_code)]
-pub fn index_of_line(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let arguments_ = callframe.arguments_old::<2>();
-    let arguments = arguments_.slice();
-    if arguments.is_empty() {
-        return Ok(JSValue::js_number_from_int32(-1));
-    }
-
-    let Some(buffer) = arguments[0].as_array_buffer(global_this) else {
-        return Ok(JSValue::js_number_from_int32(-1));
-    };
-
-    let mut offset: usize = 0;
-    if arguments.len() > 1 {
-        offset = arguments[1].coerce_to_int64(global_this)?.max(0) as usize;
-    }
-
-    let bytes = buffer.byte_slice();
-    let mut current_offset = offset;
-    let end = bytes.len() as u32;
-
-    while current_offset < end as usize {
-        if let Some(i) = strings::index_of_newline_or_non_ascii(bytes, current_offset as u32) {
-            let byte = bytes[i as usize];
-            if byte > 0x7F {
-                current_offset += (strings::wtf8_byte_sequence_length(byte) as usize).max(1);
-                continue;
-            }
-
-            if byte == b'\n' {
-                return Ok(JSValue::from(i));
-            }
-
-            current_offset = i as usize + 1;
-        } else {
-            break;
-        }
-    }
-
-    Ok(JSValue::js_number_from_int32(-1))
-}
-
-// `Bun.allocUnsafe(size)` — wraps the C++ `JSC__JSValue__createUninitializedUint8Array`
-// directly; the bun_jsc helper for these (`is_uint32_as_any_int` /
-// `to_uint64_no_truncate` / `create_uninitialized_uint8_array`) lives in the
-// still-gated `JSValue.rs`.
+// `Bun.allocUnsafe(size)` — wraps `JSC__JSValue__createUninitializedUint8Array`.
 unsafe extern "C" {
     fn JSC__JSValue__isUInt32AsAnyInt(this: JSValue) -> bool;
     fn JSC__JSValue__toUInt64NoTruncate(this: JSValue) -> u64;
@@ -221,28 +84,7 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-#[allow(dead_code)]
-pub fn alloc_unsafe(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let arguments = callframe.arguments_old::<1>();
-    let size = arguments.ptr[0];
-    // SAFETY: pure FFI predicate; C++ handles any tagged JSValue.
-    if !unsafe { JSC__JSValue__isUInt32AsAnyInt(size) } {
-        return Err(
-            global_this.throw_invalid_arguments(format_args!("Expected a positive number"))
-        );
-    }
-    // SAFETY: `size` is now known to encode a non-negative integer (per the
-    // predicate above); `global_this` is a live borrow.
-    Ok(unsafe {
-        JSC__JSValue__createUninitializedUint8Array(
-            global_this,
-            JSC__JSValue__toUInt64NoTruncate(size) as usize,
-        )
-    })
-}
-
-/// phase-c stub: `Bun.color()` requires the `css` feature (bun_css crate),
-/// which is intentionally off the `bun_bin` dep graph. With the feature
+/// `Bun.color()` requires the `css` feature (bun_css crate). With the feature
 /// enabled this is replaced by `bun_css::CssColor::js_function_color`.
 #[cfg(not(feature = "css"))]
 pub fn color_unsupported(
@@ -254,183 +96,8 @@ pub fn color_unsupported(
     )))
 }
 
-// ─── lazy-property getters (un-gated targets only) ──────────────────────────
-// Zig: `toJSLazyPropertyCallback(wrapped)` emits a `callconv(jsc.conv)` shim
-// that calls `bun.jsc.toJSHostCall(global, @src(), wrapped, .{global, object})`
-// and `@export`s it as `BunObject_lazyPropCb_<name>`. The getter bodies here
-// are infallible (return `JSValue` directly), so the shim is a straight call.
-//
-// `lazy_prop!` expands one shim per (export-name, body) pair. Ident concat via
-// `${concat()}` would need `#![feature(macro_metavar_expr_concat)]` at the
-// crate root (out of scope for this file), so the export symbol is supplied
-// verbatim instead.
-#[allow(unused_macros)] // superseded by `bun_object::export_lazy_prop_callbacks!`
-macro_rules! lazy_prop {
-    ($( $sym:ident => |$g:ident, $obj:ident| $body:expr ),* $(,)?) => {
-        $(
-            #[unsafe(no_mangle)]
-            pub extern "C" fn $sym(
-                global: *mut JSGlobalObject,
-                object: *mut JSObject,
-            ) -> JSValue {
-                // SAFETY: JSC always passes live `global` / `object` pointers
-                // to lazy-property callbacks (BunObject.cpp).
-                let $g: &JSGlobalObject = unsafe { &*global };
-                #[allow(unused_variables)]
-                let $obj: &JSObject = unsafe { &*object };
-                bun_jsc::host_fn::to_js_host_call($g, (|| -> JsResult<JSValue> { Ok($body) })())
-            }
-        )*
-    };
-}
-
-pub fn get_hash_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    crate::api::hash_object::create(global_this)
-}
-
-pub fn get_jsonc_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    let _ = global_this;
-    todo!("blocked_on: crate::api::jsonc_object::create (gated under private _jsc_gated)")
-}
-
-pub fn get_markdown_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    crate::api::markdown_object::create(global_this)
-}
-
-pub fn enable_ansi_colors(_global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    use bun_core::Output;
-    JSValue::js_boolean(Output::enable_ansi_colors_stdout() || Output::enable_ansi_colors_stderr())
-}
-
-pub fn get_cwd(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    // SAFETY: `transpiler.fs` is the process-lifetime resolver FileSystem
-    // singleton (set during VM init, never freed); see get_public_path_* above.
-    let fs = unsafe { &*(*VirtualMachine::get()).transpiler.fs };
-    // PORT NOTE: Zig used `ZigString.init(..).toJS()`; that helper is gated in
-    // bun_jsc, so route through the un-gated `BunString__createUTF8ForJS` FFI.
-    bun_jsc::bun_string_jsc::create_utf8_for_js(global_this, &fs.top_level_dir)
-        .unwrap_or(JSValue::ZERO)
-}
-
-pub fn get_origin(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    // SAFETY: VirtualMachine::get() returns the live singleton.
-    let origin = unsafe { (*VirtualMachine::get()).origin.origin };
-    bun_jsc::bun_string_jsc::create_utf8_for_js(global_this, origin)
-        .unwrap_or(JSValue::ZERO)
-}
-
-pub fn get_argv(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    // PORT NOTE: Zig forwards to `node.process.getArgv`, which is itself a
-    // shim over the C++ `Bun__Process__getArgv` (BunProcess.cpp). That Rust
-    // module is still body-gated, so call the C symbol directly.
-    unsafe extern "C" {
-        fn Bun__Process__getArgv(global: *const JSGlobalObject) -> JSValue;
-    }
-    // SAFETY: `global_this` is a live borrow; C++ reads it without retaining.
-    unsafe { Bun__Process__getArgv(global_this) }
-}
-
-// (lazy_prop! invocations folded into `bun_object::export_lazy_prop_callbacks!`
-// below — the per-symbol shims are emitted there to avoid duplicate
-// `#[no_mangle]` exports.)
-
-// ─── Bun.main getter/setter ─────────────────────────────────────────────────
-
-fn get_main(global_this: &JSGlobalObject) -> JSValue {
-    use bun_jsc::StringJsc as _;
-    use bun_str::String as BunString;
-
-    // SAFETY: bun_vm() returns the live singleton VirtualMachine for a Bun-owned global.
-    let vm = unsafe { &mut *global_this.bun_vm() };
-    // If JS has set it to a custom value, use that one
-    if let Some(overridden_main) = vm.overridden_main.get() {
-        return overridden_main;
-    }
-
-    // Attempt to use the resolved filesystem path
-    // This makes `eval('require.main === module')` work when the main module is a symlink.
-    // This behavior differs slightly from Node. Node sets the `id` to `.` when the main module is a symlink.
-    'use_resolved_path: {
-        if vm.main_resolved_path.is_empty() {
-            // If it's from eval, don't try to resolve it.
-            if vm.main.ends_with(b"[eval]") {
-                break 'use_resolved_path;
-            }
-            if vm.main.ends_with(b"[stdin]") {
-                break 'use_resolved_path;
-            }
-
-            let Ok(fd) = bun_sys::openat_a(
-                if cfg!(windows) {
-                    bun_sys::Fd::INVALID
-                } else {
-                    bun_sys::Fd::cwd()
-                },
-                vm.main,
-                // Open with the minimum permissions necessary for resolving the file path.
-                if cfg!(target_os = "linux") {
-                    bun_sys::O::PATH
-                } else {
-                    bun_sys::O::RDONLY
-                },
-                0,
-            ) else {
-                break 'use_resolved_path;
-            };
-
-            let _close = scopeguard::guard(fd, |fd| {
-                use bun_sys::FdExt as _;
-                fd.close();
-            });
-            #[cfg(windows)]
-            {
-                let mut wpath = bun_paths::WPathBuffer::uninit();
-                let Ok(fdpath) = bun_sys::get_fd_path_w(fd, &mut wpath) else {
-                    break 'use_resolved_path;
-                };
-                vm.main_resolved_path = BunString::clone_utf16(fdpath);
-            }
-            #[cfg(not(windows))]
-            {
-                let mut path = bun_paths::PathBuffer::uninit();
-                let Ok(fdpath) = bun_sys::get_fd_path(fd, &mut path) else {
-                    break 'use_resolved_path;
-                };
-
-                // Bun.main === otherId will be compared many times, so let's try to create an atom string if we can.
-                if let Some(atom) = BunString::try_create_atom(fdpath) {
-                    vm.main_resolved_path = atom;
-                } else {
-                    vm.main_resolved_path = BunString::clone_utf8(fdpath);
-                }
-            }
-        }
-
-        return vm
-            .main_resolved_path
-            .to_js(global_this)
-            .unwrap_or(JSValue::ZERO);
-    }
-
-    bun_jsc::bun_string_jsc::create_utf8_for_js(global_this, vm.main).unwrap_or(JSValue::ZERO)
-}
-
-fn set_main(global_this: &JSGlobalObject, new_value: JSValue) -> bool {
-    // SAFETY: bun_vm() returns the live singleton VirtualMachine for a Bun-owned global.
-    unsafe { (*global_this.bun_vm()).overridden_main.set(global_this, new_value) };
-    true
-}
-
 // ─── host-fn bodies (the `Bun.*` surface proper) ────────────────────────────
-// Remaining `#[bun_jsc::host_fn]` entry points + lazy-getter shims that fan
-// out to still-gated targets (`webcore::Blob::construct_bun_file`, server
-// `init/listen`, JSZlib/JSZstd, env-map FFI, …). Preserved verbatim.
-// TODO(b2-blocked): bun_gen codegen crate + sibling api/* mod declarations
-// (FFIObject/Subprocess/webcore::Blob/jsc::api::*). bun_jsc itself is
-// un-gated now — remaining blockers are the fan-out targets.
 
-#[allow(dead_code, deprecated)]
-mod _jsc_gated {
 use core::ffi::{c_char, c_int, c_void};
 use std::io::Write as _;
 
@@ -710,7 +377,7 @@ pub mod bun_object {
         #[cfg(feature = "css")]
         BunObject_callback_color => bun_css::CssColor::js_function_color,
         #[cfg(not(feature = "css"))]
-        BunObject_callback_color => super::super::color_unsupported,
+        BunObject_callback_color => color_unsupported,
         BunObject_callback_connect => super::static_adapters::listener_connect,
         BunObject_callback_createParsedShellScript => super::static_adapters::parsed_shell_script_create,
         BunObject_callback_createShellInterpreter => super::static_adapters::shell_interpreter_create,
@@ -2001,14 +1668,14 @@ pub fn alloc_unsafe(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
     let arguments = callframe.arguments_old::<1>();
     let size = arguments.ptr[0];
     // SAFETY: pure FFI predicate; C++ handles any tagged JSValue.
-    if !unsafe { super::JSC__JSValue__isUInt32AsAnyInt(size) } {
+    if !unsafe { JSC__JSValue__isUInt32AsAnyInt(size) } {
         return Err(global_this.throw_invalid_arguments("Expected a positive number"));
     }
     // SAFETY: `size` encodes a non-negative integer (checked above); `global_this` is live.
     Ok(unsafe {
-        super::JSC__JSValue__createUninitializedUint8Array(
+        JSC__JSValue__createUninitializedUint8Array(
             global_this,
-            super::JSC__JSValue__toUInt64NoTruncate(size) as usize,
+            JSC__JSValue__toUInt64NoTruncate(size) as usize,
         )
     })
 }
@@ -3309,12 +2976,7 @@ pub fn create_bun_stdout(global_this: &JSGlobalObject) -> JSValue {
     todo!("blocked_on: bun_jsc::rare_data::RareData::stdout + bun_jsc::WebCore::Blob::{{new,init_with_store}}")
 }
 
-} // mod _jsc_gated
 
-// Re-export so `crate::api::bun_object::get_public_path` is reachable from
-// `filesystem_router` and `jsc_hooks` (the bun_io::Write variant lives inside
-// the gated mod alongside its `_with_asset_prefix` sibling).
-pub use _jsc_gated::get_public_path;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

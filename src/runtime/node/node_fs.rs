@@ -971,25 +971,12 @@ impl FsArgument for args::WriteFile {
 }
 
 /// Convert an async-FS result payload to a `JSValue`. Mirrors Zig's
-/// `globalObject.toJS(res)` (a generic `anytype` dispatcher that calls
-/// `res.toJS(globalObject)`). Each `ret::*` type implements this; the default
-/// body is a porting stub.
+/// `globalObject.toJS(res)` → `JSValue.fromAny(globalObject, T, res)`, the
+/// comptime dispatcher in `JSValue.zig` that prefers `T.toJSNewlyCreated`
+/// then falls back to `T.toJS`. Each `ret::*` type implements this trait by
+/// forwarding to its inherent method.
 pub trait FsReturn {
     fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue>;
-}
-macro_rules! impl_fs_return_stub {
-    ( $( $ty:ty ),+ $(,)? ) => {
-        $( impl FsReturn for $ty {
-            #[inline]
-            fn fs_to_js(&mut self, _global: &JSGlobalObject) -> JsResult<JSValue> {
-                // TODO(port): forward to inherent `to_js` once all `ret::*`
-                // grow uniform signatures; until then this keeps the generic
-                // `AsyncFSTask::run_from_js_thread` body type-correct.
-                let _ = _global;
-                todo!("blocked_on: ret::{}::to_js", core::any::type_name::<$ty>())
-            }
-        } )+
-    };
 }
 impl FsReturn for () {
     #[inline]
@@ -1005,10 +992,72 @@ impl FsReturn for Null {
     #[inline]
     fn fs_to_js(&mut self, _global: &JSGlobalObject) -> JsResult<JSValue> { Ok(JSValue::NULL) }
 }
-impl_fs_return_stub!(
-    Stats, FD, ZigString, StringOrBuffer, StringOrUndefined,
-    ret::Read, ret::Write, node::StatFS, ret::Readdir, StatOrNotFound,
-);
+impl FsReturn for Stats {
+    // `fromAny` prefers `toJSNewlyCreated` (2-param) over `toJS`.
+    #[inline]
+    fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        self.to_js_newly_created(global)
+    }
+}
+impl FsReturn for FD {
+    #[inline]
+    fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(super::types::FdJsc::to_js(*self, global))
+    }
+}
+impl FsReturn for ZigString {
+    #[inline]
+    fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(self.to_js(global))
+    }
+}
+impl FsReturn for StringOrBuffer {
+    #[inline]
+    fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        self.to_js(global)
+    }
+}
+impl FsReturn for StringOrUndefined {
+    #[inline]
+    fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        self.to_js(global)
+    }
+}
+impl FsReturn for ret::Read {
+    #[inline]
+    fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(self.to_js(global))
+    }
+}
+impl FsReturn for ret::Write {
+    #[inline]
+    fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(self.to_js(global))
+    }
+}
+impl FsReturn for node::StatFS {
+    // `fromAny` prefers `toJSNewlyCreated` (2-param) over `toJS`.
+    #[inline]
+    fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        self.to_js_newly_created(global)
+    }
+}
+impl FsReturn for ret::Readdir {
+    #[inline]
+    fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        // `Readdir::to_js` consumes `self` (frees the backing slices). The
+        // `Maybe<Readdir>` slot in `AsyncFSTask` is dropped immediately after
+        // this returns, so move out via `mem::replace` with an empty variant.
+        core::mem::replace(self, ret::Readdir::Files(Box::default())).to_js(global)
+    }
+}
+impl FsReturn for StatOrNotFound {
+    // `fromAny` prefers `toJSNewlyCreated` (2-param) over `toJS`.
+    #[inline]
+    fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        self.to_js_newly_created(global)
+    }
+}
 
 /// `Taskable` glue so `ConcurrentTask::create_from(this)` resolves on the
 /// generic `AsyncFSTask<R, A, F>`. The Zig source mapped each instantiation to
@@ -3691,13 +3740,31 @@ pub mod ret {
                     Ok(array)
                 }
                 Readdir::Buffers(items) => {
-                    let _ = (&global_object, &items);
-                    todo!("blocked_on: bun_jsc::JSValue::from_any")
+                    // Zig: `defer bun.default_allocator.free(this.buffers);
+                    //        return .fromAny(globalObject, []Buffer, this.buffers);`
+                    // `fromAny` for a slice of `T` with a `toJS` builds a JS
+                    // array element-wise. The `Box<[Buffer]>` drops on return
+                    // (= the Zig `defer free`); ownership of each buffer's
+                    // bytes transfers to JSC inside `MarkedArrayBuffer::to_js`.
+                    let array = JSValue::create_empty_array(global_object, items.len())?;
+                    for (i, item) in items.iter().enumerate() {
+                        let res = item.to_js(global_object)?;
+                        if res == JSValue::ZERO { return Ok(JSValue::ZERO); }
+                        array.put_index(global_object, i as u32, res)?;
+                    }
+                    Ok(array)
                 }
                 Readdir::Files(items) => {
-                    // automatically freed
-                    let _ = (&global_object, &items);
-                    todo!("blocked_on: bun_jsc::JSValue::from_any")
+                    // Zig: `return .fromAny(globalObject, []const bun.String, this.files);`
+                    // `fromAny` special-cases `[]const bun.String`:
+                    //   defer { for (value) |out| out.deref(); free(value); }
+                    //   return bun.String.toJSArray(globalObject, value);
+                    let result = bun_jsc::bun_string_jsc::to_js_array(global_object, &items);
+                    for out in items.iter() {
+                        out.deref();
+                    }
+                    // `Box<[BunString]>` drops here → frees the backing slice.
+                    result
                 }
             }
         }

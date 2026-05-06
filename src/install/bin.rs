@@ -1259,10 +1259,7 @@ impl<'a> Linker<'a> {
     fn chmod_on_ok(err: &Option<Error>, abs_target: &ZStr) {
         // PORT NOTE: hoisted from `defer` block in create_symlink
         if err.is_none() {
-            let _ = sys::chmod(
-                abs_target,
-                Mode::try_from(UMASK.load(Ordering::Acquire)).unwrap() | 0o777,
-            );
+            let _ = sys::chmod(abs_target, UMASK.load(Ordering::Acquire) as Mode | 0o777);
         }
     }
 
@@ -1291,12 +1288,20 @@ impl<'a> Linker<'a> {
     ///
     /// Falls through to (1) when nothing exists so the existing
     /// `skipped_due_to_missing_bin` retry-without-redirect path still fires.
-    fn resolve_bin_target<'b>(&self, package_dir: &'b [u8], target: &[u8], bin_name: &[u8]) -> &'b ZStr {
-        // TODO(port): path.joinAbsStringZ uses a threadlocal buffer; the returned &ZStr
-        // borrows that. Phase B must ensure no re-entry between calls below.
+    // PORT NOTE: reshaped for borrowck — Zig took `*const Linker` but only read
+    // `is_native_binlink_redirect()`. Hoist that bool to a parameter so the
+    // caller can drop its `&self` borrow before mutably calling
+    // `link_bin_or_create_shim`. Result borrows the threadlocal join buffer
+    // (lifetime tied to `package_dir` per `join_abs_string_z`'s signature).
+    fn resolve_bin_target<'b>(
+        is_native_binlink_redirect: bool,
+        package_dir: &'b [u8],
+        target: &[u8],
+        bin_name: &[u8],
+    ) -> &'b ZStr {
         let primary = resolve_path::join_abs_string_z::<PlatformAuto>(package_dir, &[target]);
 
-        if !self.is_native_binlink_redirect() {
+        if !is_native_binlink_redirect {
             return primary;
         }
 

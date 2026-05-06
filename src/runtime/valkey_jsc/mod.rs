@@ -1,27 +1,15 @@
 //! Valkey/Redis client — JSC bindings.
 //!
-//! B-2 un-gate: type surface for `ValkeyClient` (the protocol/state machine)
-//! and `JSValkeyClient` (the `.classes.ts` wrapper). Full method bodies stay
-//! gated in the Phase-A drafts — they need `bun_jsc` surface that doesn't
-//! exist yet (`JSPromise.Strong`, `Error::REDIS_*`, `node::BlobOrStringOrBuffer`,
-//! `webcore::AutoFlusher`, `codegen::JSRedisClient`).
+//! The protocol/state machine lives in `valkey.rs` (`ValkeyClient`); the
+//! `.classes.ts` JS wrapper lives in `js_valkey.rs` (`JSValkeyClient`).
+//! This file mounts the per-file modules and re-exports the canonical types.
 
-use core::cell::Cell;
-use core::ffi::c_void;
+use crate::jsc::{JSGlobalObject, JSValue};
 
-use bun_aio::KeepAlive;
-use bun_collections::{LinearFifo, OffsetByteList};
-use bun_collections::linear_fifo::DynamicBuffer;
-use bun_uws::{self as uws, AnySocket, SocketGroup};
-use bun_valkey::valkey_protocol as protocol;
-use bun_valkey::valkey_protocol::RedisError;
-
-use crate::jsc::{JSGlobalObject, JSValue, JsRef};
-
-// ─── gated Phase-A drafts (preserved on disk, not compiled) ──────────────────
+// ─── per-file submodules ─────────────────────────────────────────────────────
 
 #[path = "valkey.rs"]
-pub mod valkey_body; // ValkeyClient methods, DeferredFailure::run, fail/reject paths
+pub mod valkey_body; // ValkeyClient state machine + DeferredFailure
 
 #[path = "js_valkey.rs"]
 pub mod js_valkey_body; // JSValkeyClient host fns, SocketHandler, constructor
@@ -35,7 +23,6 @@ pub mod valkey_command_body; // Command::serialize, Promise::resolve/reject
 #[path = "index.rs"]
 pub mod index;
 
-// ─── compiling submodules ────────────────────────────────────────────────────
 #[path = "ValkeyContext.rs"]
 pub mod valkey_context;
 pub use valkey_context::ValkeyContext;
@@ -44,464 +31,68 @@ pub use valkey_context::ValkeyContext;
 pub mod protocol_jsc; // RESPValue → JSValue, RedisError → JS Error
 pub use protocol_jsc::{resp_value_to_js, resp_value_to_js_with_options, valkey_error_to_js, ToJSOptions};
 
-// ─── real type surface (B-2 struct/state un-gate) ────────────────────────────
-// Method bodies remain in the gated drafts above — they need:
-//   TODO(b2-blocked): bun_jsc::Error::REDIS_* / JSGlobalObject::err_redis_*
-//   TODO(b2-blocked): bun_jsc::JSPromise::Strong (JSPromiseStrong)
-//   TODO(b2-blocked): bun_jsc::node::BlobOrStringOrBuffer
-//   TODO(b2-blocked): bun_jsc::webcore::AutoFlusher
-//   TODO(b2-blocked): bun_jsc::codegen::JSRedisClient (cached-slot accessors)
-//   TODO(b2-blocked): crate::server::server_config::SSLConfig (TLS::Custom)
+// ─── canonical module aliases ────────────────────────────────────────────────
+// Phase-A drafts are now the source of truth; the old inline B-2 type-surface
+// stubs that lived here (with `todo!()` bodies) have been dissolved into the
+// real per-file modules. External code references `valkey_jsc::valkey::…` /
+// `valkey_jsc::js_valkey::…`, so alias the body modules under those names.
+pub use valkey_body as valkey;
+pub use js_valkey_body as js_valkey;
+
+pub use valkey::{ValkeyClient, Status, Protocol, Options};
+pub use js_valkey::JSValkeyClient;
 
 // ── ValkeyCommand ────────────────────────────────────────────────────────────
 pub mod valkey_command {
-    use super::*;
-
     // Zig's `ValkeyCommand.zig` is a file-as-struct: it is both the namespace
     // *and* the `Command` type. `index.rs` re-exports it via
     // `super::valkey_command::ValkeyCommand`, so surface the module alias here
     // publicly (the parent's `pub use valkey_command as ValkeyCommand` only
-    // reached this scope through the private `use super::*` glob).
+    // reached this scope through the private glob).
     pub use super::ValkeyCommand;
 
     // The Phase-A draft in `ValkeyCommand.rs` (mounted as `valkey_command_body`)
-    // is now the source of truth for these types — re-export instead of
-    // duplicating so `Command.meta` (a `valkey_command_body::Meta`) unifies
-    // with `command::PromisePair.meta` etc.
+    // is the source of truth for these types — re-export instead of duplicating
+    // so `Command.meta` (a `valkey_command_body::Meta`) unifies with
+    // `command::PromisePair.meta` etc.
     pub use super::valkey_command_body::{Entry, Meta, Promise, PromisePair, entry, promise_pair};
 }
 pub use valkey_command as ValkeyCommand;
 
-// ── valkey (core client) ─────────────────────────────────────────────────────
-pub mod valkey {
-    use super::*;
+// ── JsClass wiring (codegen name = "RedisClient", see valkey.classes.ts) ─────
+// The `.classes.ts` generator already emits the
+// `RedisClient__{fromJS,fromJSDirect,create,getConstructor}` externs (and
+// safe wrappers) into `crate::generated_classes::RedisClient` against an
+// opaque pointee. Route through those instead of redeclaring the externs
+// here — a second `extern "C"` block with a different pointee trips
+// `clashing_extern_declarations`. The opaque `RedisClient` and
+// `JSValkeyClient` name the same `m_ctx` heap allocation on the C++ side,
+// so the pointer cast is identity.
+use crate::generated_classes::RedisClient as CodegenRedisClient;
 
-    /// Connection flags to track Valkey client state.
-    pub struct ConnectionFlags {
-        pub is_authenticated: bool,
-        pub is_manually_closed: bool,
-        pub is_selecting_db_internal: bool,
-        pub enable_offline_queue: bool,
-        pub needs_to_open_socket: bool,
-        pub enable_auto_reconnect: bool,
-        pub is_reconnecting: bool,
-        pub failed: bool,
-        pub enable_auto_pipelining: bool,
-        pub finalized: bool,
-        pub connection_promise_returns_client: bool,
+impl crate::jsc::JsClass for JSValkeyClient {
+    fn from_js(value: JSValue) -> Option<*mut Self> {
+        CodegenRedisClient::from_js(value).map(|p| p.as_ptr().cast::<Self>())
     }
-    impl Default for ConnectionFlags {
-        fn default() -> Self {
-            Self {
-                is_authenticated: false,
-                is_manually_closed: false,
-                is_selecting_db_internal: false,
-                enable_offline_queue: true,
-                needs_to_open_socket: true,
-                enable_auto_reconnect: true,
-                is_reconnecting: false,
-                failed: false,
-                enable_auto_pipelining: true,
-                finalized: false,
-                connection_promise_returns_client: false,
-            }
-        }
+    fn from_js_direct(value: JSValue) -> Option<*mut Self> {
+        CodegenRedisClient::from_js_direct(value).map(|p| p.as_ptr().cast::<Self>())
     }
-
-    #[derive(Copy, Clone, Eq, PartialEq)]
-    pub enum Status {
-        Disconnected,
-        Connecting,
-        Connected,
+    fn to_js(self, global: &JSGlobalObject) -> JSValue {
+        // Ownership transfers to the C++ wrapper (freed via `finalize`).
+        let ptr = JSValkeyClient::new(self);
+        CodegenRedisClient::to_js(ptr.cast::<CodegenRedisClient>(), global)
     }
-    impl Status {
-        #[inline]
-        pub fn is_active(self) -> bool {
-            matches!(self, Status::Connected | Status::Connecting)
-        }
-    }
-
-    #[derive(Copy, Clone, Eq, PartialEq)]
-    pub enum Protocol {
-        Standalone,
-        StandaloneUnix,
-        StandaloneTls,
-        StandaloneTlsUnix,
-    }
-    impl Protocol {
-        pub const MAP: phf::Map<&'static [u8], Protocol> = phf::phf_map! {
-            b"valkey" => Protocol::Standalone,
-            b"valkeys" => Protocol::StandaloneTls,
-            b"valkey+tls" => Protocol::StandaloneTls,
-            b"valkey+unix" => Protocol::StandaloneUnix,
-            b"valkey+tls+unix" => Protocol::StandaloneTlsUnix,
-            b"redis" => Protocol::Standalone,
-            b"rediss" => Protocol::StandaloneTls,
-            b"redis+tls" => Protocol::StandaloneTls,
-            b"redis+unix" => Protocol::StandaloneUnix,
-            b"redis+tls+unix" => Protocol::StandaloneTlsUnix,
-        };
-        #[inline]
-        pub fn is_tls(self) -> bool {
-            matches!(self, Protocol::StandaloneTls | Protocol::StandaloneTlsUnix)
-        }
-        #[inline]
-        pub fn is_unix(self) -> bool {
-            matches!(self, Protocol::StandaloneUnix | Protocol::StandaloneTlsUnix)
-        }
-    }
-
-    #[derive(Default)]
-    pub enum TLS {
-        #[default]
-        None,
-        Enabled,
-        Custom(crate::socket::SSLConfig),
-    }
-    // Call sites only ever compare against `TLS::None` / `TLS::Enabled`;
-    // `SSLConfig` doesn't (and shouldn't) implement `PartialEq`, so compare by
-    // discriminant — matches Zig's tagged-union `==` semantics for tag checks.
-    impl PartialEq for TLS {
-        fn eq(&self, other: &Self) -> bool {
-            core::mem::discriminant(self) == core::mem::discriminant(other)
-        }
-    }
-
-    pub struct Options {
-        pub idle_timeout_ms: u32,
-        pub connection_timeout_ms: u32,
-        pub enable_auto_reconnect: bool,
-        pub max_retries: u32,
-        pub enable_offline_queue: bool,
-        pub enable_auto_pipelining: bool,
-        pub enable_debug_logging: bool,
-        pub tls: TLS,
-    }
-    impl Default for Options {
-        fn default() -> Self {
-            Self {
-                idle_timeout_ms: 0,
-                connection_timeout_ms: 10000,
-                enable_auto_reconnect: true,
-                max_retries: 20,
-                enable_offline_queue: true,
-                enable_auto_pipelining: true,
-                enable_debug_logging: false,
-                tls: TLS::None,
-            }
-        }
-    }
-
-    pub enum Address {
-        // TODO(port): in Zig these slices borrow from `connection_strings`
-        // (self-referential). Owned in Phase A.
-        Unix(Box<[u8]>),
-        Host { host: Box<[u8]>, port: u16 },
-    }
-    impl Address {
-        pub fn hostname(&self) -> &[u8] {
-            match self {
-                Address::Unix(u) => u,
-                Address::Host { host, .. } => host,
-            }
-        }
-
-        /// Spec valkey.zig `Address.connect` — open a TCP/TLS/Unix socket via
-        /// `uws::Socket{TLS,TCP}::connect_*_group`. Full body lives in the
-        /// gated `valkey_body` draft (`valkey.rs`).
-        #[allow(unused_variables)]
-        pub fn connect<C, G, S>(
-            &self,
-            client: C,
-            group: G,
-            ssl_ctx: Option<S>,
-            is_tls: bool,
-        ) -> Result<AnySocket, bun_core::Error> {
-            todo!("blocked_on: bun_uws::SocketTLS/SocketTCP::connect_group / connect_unix_group")
-        }
-    }
-
-    /// Core Valkey client implementation.
-    pub struct ValkeyClient {
-        pub socket: AnySocket,
-        pub status: Status,
-
-        pub write_buffer: OffsetByteList,
-        pub read_buffer: OffsetByteList,
-
-        /// In-flight commands, after the data has been written to the socket.
-        pub in_flight: super::valkey_command::promise_pair::Queue,
-        /// Commands waiting to be sent.
-        pub queue: super::valkey_command::entry::Queue,
-
-        pub password: Box<[u8]>,
-        pub username: Box<[u8]>,
-        pub database: u32,
-        pub address: Address,
-        pub protocol: Protocol,
-        pub connection_strings: Box<[u8]>,
-
-        pub tls: TLS,
-
-        pub idle_timeout_interval_ms: u32,
-        pub connection_timeout_ms: u32,
-        pub retry_attempts: u32,
-        pub max_retries: u32,
-
-        pub flags: ConnectionFlags,
-
-        // TODO(b2-blocked): bun_jsc::webcore::AutoFlusher — erased.
-        pub auto_flusher: (),
-
-        // TODO(port): lifetime — JSC_BORROW; raw ptr until &'static lands.
-        pub vm: *mut c_void,
-    }
-
-    // ── ValkeyClient method surface (bodies live in the gated `valkey_body`
-    // draft; declared here so `js_valkey.rs` compiles) ────────────────────────
-    #[allow(unused_variables)]
-    impl ValkeyClient {
-        pub fn disconnect(&mut self) {
-            todo!("blocked_on: crate::valkey_jsc::valkey_body::ValkeyClient::disconnect")
-        }
-        pub fn get_timeout_interval(&self) -> u32 {
-            match self.status {
-                Status::Connected => self.idle_timeout_interval_ms,
-                _ => self.connection_timeout_ms,
-            }
-        }
-        pub fn get_reconnect_delay(&self) -> u32 {
-            todo!("blocked_on: crate::valkey_jsc::valkey_body::ValkeyClient::get_reconnect_delay")
-        }
-        pub fn has_any_pending_commands(&self) -> bool {
-            self.in_flight.readable_length() > 0 || self.queue.readable_length() > 0
-        }
-        pub fn on_writable(&mut self) {
-            todo!("blocked_on: crate::valkey_jsc::valkey_body::ValkeyClient::on_writable")
-        }
-        pub fn on_data(&mut self, data: &[u8]) -> Result<(), bun_jsc::JsTerminated> {
-            todo!("blocked_on: crate::valkey_jsc::valkey_body::ValkeyClient::on_data")
-        }
-        pub fn on_open(&mut self, socket: AnySocket) -> Result<(), bun_jsc::JsTerminated> {
-            todo!("blocked_on: crate::valkey_jsc::valkey_body::ValkeyClient::on_open")
-        }
-        pub fn on_close(&mut self) -> Result<(), bun_jsc::JsTerminated> {
-            todo!("blocked_on: crate::valkey_jsc::valkey_body::ValkeyClient::on_close")
-        }
-        pub fn start(&mut self) -> Result<(), bun_jsc::JsTerminated> {
-            todo!("blocked_on: crate::valkey_jsc::valkey_body::ValkeyClient::start")
-        }
-        pub fn close(&mut self) {
-            todo!("blocked_on: crate::valkey_jsc::valkey_body::ValkeyClient::close")
-        }
-        pub fn fail(
-            &mut self,
-            message: &[u8],
-            err: RedisError,
-        ) -> Result<(), bun_jsc::JsTerminated> {
-            todo!("blocked_on: crate::valkey_jsc::valkey_body::ValkeyClient::fail")
-        }
-        pub fn fail_with_js_value(
-            &mut self,
-            global: &JSGlobalObject,
-            value: JSValue,
-        ) -> Result<(), bun_jsc::JsTerminated> {
-            todo!("blocked_on: crate::valkey_jsc::valkey_body::ValkeyClient::fail_with_js_value")
-        }
-        pub fn send(
-            &mut self,
-            global: &JSGlobalObject,
-            command: &super::valkey_command_body::Command<'_>,
-        ) -> Result<*mut bun_jsc::JSPromise, bun_core::Error> {
-            todo!("blocked_on: crate::valkey_jsc::valkey_body::ValkeyClient::send")
-        }
-        pub fn deinit(&mut self, deferred: Option<&mut DeferredFailure>) {
-            todo!("blocked_on: crate::valkey_jsc::valkey_body::ValkeyClient::deinit")
-        }
-    }
-
-    impl TLS {
-        /// Spec valkey.zig `TLS.rejectUnauthorized` — whether to verify the
-        /// server certificate chain.
-        pub fn reject_unauthorized(&self, _vm: *mut c_void) -> bool {
-            match self {
-                TLS::None => false,
-                TLS::Enabled => true,
-                TLS::Custom(cfg) => {
-                    let _ = cfg;
-                    todo!("blocked_on: crate::socket::SSLConfig::reject_unauthorized")
-                }
-            }
-        }
-    }
-
-    pub struct DeferredFailure {
-        pub message: Box<[u8]>,
-        pub err: RedisError,
-        pub global_this: *const JSGlobalObject,
-        pub in_flight: super::valkey_command::promise_pair::Queue,
-        pub queue: super::valkey_command::entry::Queue,
+    fn get_constructor(global: &JSGlobalObject) -> JSValue {
+        CodegenRedisClient::get_constructor(global)
     }
 }
-pub use valkey::{ValkeyClient, Status, Protocol, Options};
 
-// ── js_valkey (JS wrapper) ───────────────────────────────────────────────────
-pub mod js_valkey {
-    use super::*;
-    use crate::timer::EventLoopTimer;
-
-    pub struct SubscriptionCtx {
-        pub is_subscriber: bool,
-        pub original_enable_offline_queue: bool,
-        pub original_enable_auto_pipelining: bool,
-    }
-
-    /// Valkey client wrapper for JavaScript (`.classes.ts` payload of
-    /// `JSRedisClient`). The `#[bun_jsc::JsClass]` derive on the gated draft
-    /// generates `toJS`/`fromJS`/`fromJSDirect` and the cached-slot accessors.
-    pub struct JSValkeyClient {
-        pub client: super::valkey::ValkeyClient,
-        pub global_object: *const JSGlobalObject,
-        pub this_value: JsRef,
-        pub poll_ref: KeepAlive,
-
-        pub _subscription_ctx: SubscriptionCtx,
-        /// `us_ssl_ctx_t` for `tls: { …custom CA… }`. `tls: true` borrows
-        /// `RareData.defaultClientSslCtx()` instead; `tls: false` leaves null.
-        // TODO(b2-blocked): bun_uws::SslCtx — erased until typed.
-        pub _secure: Option<*mut c_void>,
-
-        pub timer: EventLoopTimer,
-        pub reconnect_timer: EventLoopTimer,
-        pub ref_count: Cell<u32>,
-    }
-
-    impl JSValkeyClient {
-        /// Spec js_valkey.zig `isSubscriber` — true once any (P)SUBSCRIBE has
-        /// been sent and not fully unsubscribed.
-        #[inline]
-        pub fn is_subscriber(&self) -> bool {
-            self._subscription_ctx.is_subscriber
-        }
-
-        /// Spec js_valkey.zig `onConnectionTimeout` — fail the connect promise
-        /// and tear down. Body in the gated `_jsc_gated` draft.
-        pub fn on_connection_timeout(&mut self) {
-            todo!("blocked_on: crate::valkey_jsc::js_valkey::JSValkeyClient::on_connection_timeout")
-        }
-
-        /// Spec js_valkey.zig `onReconnectTimer` — kick off the next reconnect
-        /// attempt. Body in the gated `_jsc_gated` draft.
-        pub fn on_reconnect_timer(&mut self) {
-            todo!("blocked_on: crate::valkey_jsc::js_valkey::JSValkeyClient::on_reconnect_timer")
-        }
-
-        /// Spec js_valkey.zig `send` — serialize+enqueue a command, returning the
-        /// promise that resolves with the reply. Body in `js_valkey_body`.
-        pub fn send(
-            &mut self,
-            _global: &JSGlobalObject,
-            _this_value: JSValue,
-            _command: &super::valkey_command_body::Command<'_>,
-        ) -> Result<*mut bun_jsc::JSPromise, RedisError> {
-            todo!("blocked_on: crate::valkey_jsc::js_valkey_body::JSValkeyClient::send")
-        }
-
-        /// Spec js_valkey.zig `cloneWithoutConnecting`.
-        pub fn clone_without_connecting(
-            &self,
-            _global: &JSGlobalObject,
-        ) -> bun_jsc::JsResult<*mut JSValkeyClient> {
-            todo!("blocked_on: crate::valkey_jsc::js_valkey_body::JSValkeyClient::clone_without_connecting")
-        }
-
-        /// Spec js_valkey.zig `doConnect`.
-        pub fn do_connect(
-            &mut self,
-            _global: &JSGlobalObject,
-            _this_value: JSValue,
-        ) -> bun_jsc::JsResult<JSValue> {
-            todo!("blocked_on: crate::valkey_jsc::js_valkey_body::JSValkeyClient::do_connect")
-        }
-
-        /// Wrap an already-heap-allocated client pointer in its JS object.
-        /// Ownership transfers to the C++ wrapper (freed via `finalize`).
-        pub fn ptr_to_js(ptr: *mut Self, global: &JSGlobalObject) -> JSValue {
-            // `ptr` was produced by `JSValkeyClient::new` (heap-allocated) and
-            // is hereby owned by the JS wrapper. Cast through the codegen's
-            // opaque `RedisClient` newtype — it's the same `m_ctx` pointer.
-            CodegenRedisClient::to_js(ptr.cast::<CodegenRedisClient>(), global)
-        }
-    }
-
-    impl SubscriptionCtx {
-        pub fn init(_parent: &mut JSValkeyClient) -> bun_jsc::JsResult<Self> {
-            todo!("blocked_on: crate::valkey_jsc::js_valkey_body::SubscriptionCtx::init")
-        }
-
-        pub fn upsert_receive_handler(
-            &mut self,
-            _global: &JSGlobalObject,
-            _channel_name: JSValue,
-            _callback: JSValue,
-        ) -> bun_jsc::JsResult<()> {
-            todo!("blocked_on: crate::valkey_jsc::js_valkey_body::SubscriptionCtx::upsert_receive_handler")
-        }
-
-        pub fn clear_receive_handlers(
-            &mut self,
-            _global: &JSGlobalObject,
-            _channel_name: JSValue,
-        ) -> bun_jsc::JsResult<()> {
-            todo!("blocked_on: crate::valkey_jsc::js_valkey_body::SubscriptionCtx::clear_receive_handlers")
-        }
-
-        pub fn clear_all_receive_handlers(
-            &mut self,
-            _global: &JSGlobalObject,
-        ) -> bun_jsc::JsResult<()> {
-            todo!("blocked_on: crate::valkey_jsc::js_valkey_body::SubscriptionCtx::clear_all_receive_handlers")
-        }
-
-        pub fn remove_receive_handler(
-            &mut self,
-            _global: &JSGlobalObject,
-            _channel_name: JSValue,
-            _callback: JSValue,
-        ) -> bun_jsc::JsResult<Option<usize>> {
-            todo!("blocked_on: crate::valkey_jsc::js_valkey_body::SubscriptionCtx::remove_receive_handler")
-        }
-    }
-
-    /// `SocketHandler<SSL>` — uws dispatch vtable target. Methods gated.
-    pub struct SocketHandler<const SSL: bool>;
-
-    // ── JsClass wiring (codegen name = "RedisClient", see valkey.classes.ts) ──
-    // The `.classes.ts` generator already emits the
-    // `RedisClient__{fromJS,fromJSDirect,create,getConstructor}` externs (and
-    // safe wrappers) into `crate::generated_classes::RedisClient` against an
-    // opaque pointee. Route through those instead of redeclaring the externs
-    // here — a second `extern "C"` block with a different pointee trips
-    // `clashing_extern_declarations`. The opaque `RedisClient` and
-    // `JSValkeyClient` name the same `m_ctx` heap allocation on the C++ side,
-    // so the pointer cast is identity.
-    use crate::generated_classes::RedisClient as CodegenRedisClient;
-
-    impl crate::jsc::JsClass for JSValkeyClient {
-        fn from_js(value: JSValue) -> Option<*mut Self> {
-            CodegenRedisClient::from_js(value).map(|p| p.as_ptr().cast::<Self>())
-        }
-        fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-            CodegenRedisClient::from_js_direct(value).map(|p| p.as_ptr().cast::<Self>())
-        }
-        fn to_js(self, global: &JSGlobalObject) -> JSValue {
-            let ptr = Box::into_raw(Box::new(self));
-            // Ownership transfers to the C++ wrapper (freed via finalize).
-            CodegenRedisClient::to_js(ptr.cast::<CodegenRedisClient>(), global)
-        }
-        fn get_constructor(global: &JSGlobalObject) -> JSValue {
-            CodegenRedisClient::get_constructor(global)
-        }
+impl JSValkeyClient {
+    /// Wrap an already-heap-allocated client pointer in its JS object.
+    /// Ownership transfers to the C++ wrapper (freed via `finalize`).
+    ///
+    /// `ptr` must have been produced by `JSValkeyClient::new` (heap-allocated).
+    pub fn ptr_to_js(ptr: *mut Self, global: &JSGlobalObject) -> JSValue {
+        CodegenRedisClient::to_js(ptr.cast::<CodegenRedisClient>(), global)
     }
 }
-pub use js_valkey::JSValkeyClient;

@@ -1233,11 +1233,22 @@ impl IncrementalGraph<Server> {
                     .push(ig::FileIndex::init(file_index.get()));
             }
 
-            let value = &mut self.bundled_files.values_mut()[gop_index];
-            if value.failed {
-                value.failed = false;
-                // TODO(port): blocked_on: bun_collections::ArrayHashMap::fetch_swap_remove_adapted
-                todo!("blocked_on: bun_collections::ArrayHashMap::fetch_swap_remove_adapted");
+            // PORT NOTE: reshaped for borrowck — drop the `bundled_files` borrow
+            // before `owner()`.
+            if self.bundled_files.values()[gop_index].failed {
+                self.bundled_files.values_mut()[gop_index].failed = false;
+                let dev = self.owner();
+                let owner = serialized_failure::OwnerPacked::new(
+                    Side::Server,
+                    ig::FileIndex::init(file_index.get()),
+                );
+                let (_, fail) = dev
+                    .bundling_failures
+                    .fetch_swap_remove(&owner)
+                    .unwrap_or_else(|| {
+                        Output::panic(format_args!("Missing failure in IncrementalGraph"))
+                    });
+                dev.incremental_result.failures_removed.push(fail);
             }
         }
 
@@ -1844,9 +1855,20 @@ impl<S: GraphSide> IncrementalGraph<S> {
                     }
                 }
                 if goal == TraceImportGoal::FindErrors && file.failed {
-                    let _ = &g.owner().bundling_failures;
-                    // TODO(port): blocked_on: bun_collections::ArrayHashMap::get_key_adapted
-                    todo!("blocked_on: bun_collections::ArrayHashMap::get_key_adapted");
+                    let dev = g.owner();
+                    let owner = serialized_failure::OwnerPacked::new(
+                        Side::Server,
+                        ig::FileIndex::init(file_index.get()),
+                    );
+                    // PERF(port): Zig pushed a slice-header copy into the list;
+                    // here we deep-clone the failure since `failures_added`
+                    // owns its elements — profile in Phase B.
+                    let fail = dev
+                        .bundling_failures
+                        .get(&owner)
+                        .cloned()
+                        .unwrap_or_else(|| panic!("Failed to get bundling failure"));
+                    dev.incremental_result.failures_added.push(fail);
                 }
             }
             Side::Client => {
@@ -1877,9 +1899,19 @@ impl<S: GraphSide> IncrementalGraph<S> {
                 }
 
                 if goal == TraceImportGoal::FindErrors && file.failed {
-                    let _ = &g.owner().bundling_failures;
-                    // TODO(port): blocked_on: bun_collections::ArrayHashMap::get_key_adapted
-                    todo!("blocked_on: bun_collections::ArrayHashMap::get_key_adapted");
+                    let dev = g.owner();
+                    let owner = serialized_failure::OwnerPacked::new(
+                        Side::Client,
+                        ig::FileIndex::init(file_index.get()),
+                    );
+                    // PERF(port): see server arm above.
+                    let fail = dev
+                        .bundling_failures
+                        .get(&owner)
+                        .cloned()
+                        .unwrap_or_else(|| panic!("Failed to get bundling failure"));
+                    dev.incremental_result.failures_added.push(fail);
+                    return Ok(());
                 }
             }
         }

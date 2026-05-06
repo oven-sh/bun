@@ -503,6 +503,10 @@ impl CompressionContext for Context {
     }
 }
 
+impl bun_event_loop::Taskable for NativeBrotli {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::NativeBrotli;
+}
+
 impl CompressionStreamImpl for NativeBrotli {
     type Stream = Context;
 

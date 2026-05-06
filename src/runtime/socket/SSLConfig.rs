@@ -3,8 +3,14 @@ use std::ffi::CString;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 
+use bun_jsc::{self as jsc, ArrayBuffer, JSGlobalObject, JSValue, JsError, JsResult, SysErrorJsc as _};
+use bun_jsc::virtual_machine::VirtualMachine;
 use bun_uws as uws;
 use bun_wyhash::Wyhash11;
+
+use crate::node::fs as node_fs;
+use crate::webcore::Blob;
+use crate::webcore::blob::store::Data as StoreData;
 
 // ──────────────────────────────────────────────────────────────────────────
 // SSLConfig
@@ -98,6 +104,74 @@ impl SSLConfig {
     pub fn raw_ptr(maybe_shared: Option<&SharedPtr>) -> Option<*const SSLConfig> {
         maybe_shared.map(|s| Arc::as_ptr(s))
     }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// ReadFromBlobError
+// ──────────────────────────────────────────────────────────────────────────
+
+// PORT NOTE: cannot derive `thiserror::Error` because `JsError` is not
+// `std::error::Error`/`Display`. Manual `From<JsError>` instead.
+#[derive(Debug)]
+pub enum ReadFromBlobError {
+    Js(JsError),
+    NullStore,
+    NotAFile,
+    EmptyFile,
+}
+
+impl From<JsError> for ReadFromBlobError {
+    #[inline]
+    fn from(e: JsError) -> Self {
+        ReadFromBlobError::Js(e)
+    }
+}
+
+/// Convert a `ZBox` (NUL-terminated owned byte buffer) into a `CString`
+/// without re-allocating. Matches Zig `toOwnedSliceZ` semantics (no
+/// interior-NUL check).
+#[inline]
+fn zbox_into_cstring(z: bun_core::ZBox) -> CString {
+    // SAFETY: `ZBox` guarantees a single trailing NUL; we hand the bytes
+    // (including the sentinel) to `CString` without re-allocating.
+    unsafe { CString::from_vec_with_nul_unchecked(z.into_vec_with_nul()) }
+}
+
+fn read_from_blob(
+    global: &JSGlobalObject,
+    blob: &Blob,
+) -> Result<CString, ReadFromBlobError> {
+    let store = blob.store.as_ref().ok_or(ReadFromBlobError::NullStore)?;
+    let file = match &store.data {
+        StoreData::File(f) => f,
+        _ => return Err(ReadFromBlobError::NotAFile),
+    };
+    let mut fs = node_fs::NodeFS::default();
+    let read_args = node_fs::args::ReadFile {
+        path: file.pathlike.clone(),
+        ..Default::default()
+    };
+    let maybe = fs.read_file_with_options(
+        &read_args,
+        node_fs::Flavor::Sync,
+        node_fs::ReadFileStringType::NullTerminated,
+    );
+    let result = match maybe {
+        Ok(result) => result,
+        Err(err) => {
+            return Err(global.throw_value(err.to_js(global)).into());
+        }
+    };
+    // `read_file_with_options(NullTerminated)` transfers ownership of the
+    // returned buffer to the caller, so we can return it directly without
+    // duplicating.
+    let node_fs::ret::ReadFileWithOptions::NullTerminated(zbox) = result else {
+        unreachable!("ReadFileStringType::NullTerminated always yields the NullTerminated variant");
+    };
+    if zbox.is_empty() {
+        return Err(ReadFromBlobError::EmptyFile);
+    }
+    Ok(zbox_into_cstring(zbox))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -434,167 +508,116 @@ fn hash_scalar<T: Copy>(hasher: &mut Wyhash11, value: &T) {
 /// because the weak ref keeps the allocation alive (even if strong==0 and
 /// `drop()` is running on another thread). The mutex only protects map
 /// structure and the invariant that entry content is intact while in the map.
+#[allow(non_snake_case)]
 pub mod GlobalRegistry {
     use super::*;
 
-    // TODO(port): Zig used ArrayHashMapUnmanaged with a custom MapContext that
-    // hashes/compares by *content* (content_hash / is_same) while the key is a
-    // raw `*SSLConfig`. That shape is UB in Rust: when a stored config's strong
-    // count hits 0, std `Arc` materializes a `&mut SSLConfig` (via
-    // `drop_in_place`) *before* `Drop::drop` reaches `remove()`'s mutex; a
-    // concurrent `intern()` probing the map would form a `&SSLConfig` to the
-    // same allocation via the raw-ptr key, aliasing that live `&mut`. Zig's
-    // model tolerates read-while-deinit-blocked (.zig:336-341/.zig:356); Rust's
-    // does not, regardless of the mutex.
+    // PORT NOTE: Zig used `ArrayHashMapUnmanaged(*SSLConfig, WeakPtr, MapContext)`
+    // keyed by `*SSLConfig` with content-based hash/eql. That shape is unsound
+    // in Rust: when a stored config's strong count hits 0, std `Arc` materializes
+    // a `&mut SSLConfig` (via `drop_in_place`) *before* `Drop::drop` reaches
+    // `remove()`'s mutex; a concurrent `intern()` probing the map would form a
+    // `&SSLConfig` to the same allocation via the raw-ptr key, aliasing that live
+    // `&mut`. The mutex does not help — the exclusive borrow is taken before the
+    // lock.
     //
-    // Correct Rust shape: key the map by the precomputed `u64` content hash
-    // (call `content_hash()` on the owned `config` *before* `Arc::new`), store
-    // `Weak<SSLConfig>` as the value, and on probe perform `is_same` only after
-    // a successful `Weak::upgrade()` — so the comparand is always reached via a
-    // fresh strong `Arc`, never via a raw pointer that may alias Drop's `&mut`.
-    // `remove()` then looks up by the dying config's `cached_hash` and confirms
-    // identity by comparing `Weak::as_ptr` against `self as *const _`.
+    // Instead, store only `Weak<SSLConfig>` and compare by content **after** a
+    // successful `Weak::upgrade()`, so the comparand is always reached via a
+    // fresh strong `Arc`. `remove()` confirms identity via `Weak::as_ptr()`
+    // (pointer comparison only — no deref of the dying value).
     //
-    // Backing storage + intern() are gated until the content-hash MapContext
-    // adapter exists; remove() is a no-op while no map is populated.
+    // The number of distinct interned SSL configs in a process is tiny (<10 in
+    // practice), so a `Vec` with linear scan is both correct and fast enough —
+    // `ArrayHashMap` itself does linear scans below its index-header threshold.
+
+    static CONFIGS: parking_lot::Mutex<Vec<WeakPtr>> = parking_lot::Mutex::new(Vec::new());
+
+    /// Takes a by-value SSLConfig, wraps it in a `SharedPtr` (strong=1), and
+    /// either returns an existing equivalent (upgraded) or the new one. Either
+    /// way, caller owns exactly one strong ref on the result.
+    ///
+    /// The returned `SharedPtr` is dropped normally.
+    pub fn intern(config: SSLConfig) -> SharedPtr {
+        // Compute the hash on the owned value (writes `cached_hash`) before
+        // wrapping in `Arc`, so `remove()` can read it from `&mut self` later
+        // without recomputation.
+        let _ = config.content_hash();
+        let new_shared: SharedPtr = Arc::new(config);
+
+        // Deferred cleanup MUST run after the mutex is released (Drop re-locks
+        // the registry mutex via `SSLConfig::drop -> remove`).
+        let mut dispose_new: Option<SharedPtr> = None;
+        let mut dispose_old_weak: Option<WeakPtr> = None;
+
+        // PORT NOTE: reshaped for borrowck — Zig returned directly while holding
+        // the mutex, then ran `defer`s. We compute `result` in a labeled block,
+        // drop the guard, then dispose deferred values.
+        let result = 'locked: {
+            let mut configs = CONFIGS.lock();
+
+            // `getOrPutContext`: scan for an existing content-equal entry. We
+            // only compare against entries we can `upgrade()` — entries whose
+            // strong count is 0 are skipped here (their `remove()` will reap
+            // them once it acquires the lock).
+            let mut found_idx: Option<usize> = None;
+            for (idx, weak) in configs.iter().enumerate() {
+                if let Some(existing) = weak.upgrade() {
+                    if existing.is_same(&new_shared) {
+                        // Existing config is still alive; dispose the new
+                        // duplicate after releasing the lock.
+                        dispose_new = Some(new_shared);
+                        break 'locked existing;
+                    }
+                } else if found_idx.is_none() {
+                    // strong==0: existing is dying. Its `drop()` is blocked in
+                    // `remove()` waiting for this mutex. Remember the slot so
+                    // we can recycle it (the dying config's `remove()` will
+                    // pointer-mismatch and no-op when it runs).
+                    found_idx = Some(idx);
+                }
+            }
+
+            let weak = Arc::downgrade(&new_shared);
+            if let Some(idx) = found_idx {
+                dispose_old_weak = Some(core::mem::replace(&mut configs[idx], weak));
+            } else {
+                configs.push(weak);
+            }
+            new_shared
+        };
+        // guard dropped here; now safe to drop dispose_new / dispose_old_weak.
+        drop(dispose_new);
+        drop(dispose_old_weak);
+        result
+    }
 
     /// Called from `SSLConfig::drop()` on strong 1->0. If `intern()` replaced
     /// our slot while we blocked on the mutex, the pointer-identity check
     /// fails and we skip (intern already disposed our weak ref).
     ///
     /// No-op for configs that were never interned.
-    pub(super) fn remove(_config: *const SSLConfig) {
-        // No-op until intern() and the static map land. Every SSLConfig is
-        // currently un-interned, so the Zig path would early-return on
-        // `configs.count() == 0` anyway.
-        // TODO(port): wire to ArrayHashMap once content-hash context is available.
-    }
-
-    // Re-export so `GlobalRegistry::intern` is reachable from sibling modules
-    // (e.g. `SecureContext`) while the implementation stays gated below.
-    pub use _gated_intern::intern;
-
-    mod _gated_intern {
-        use super::*;
-        use bun_collections::ArrayHashMap;
-
-        // bun_threading::Mutex has no `const fn new()`; use parking_lot here
-        // (already a workspace dep) until a const constructor lands.
-        static MUTEX: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
-
-        struct MapContext;
-        impl MapContext {
-            fn hash(key: *const SSLConfig) -> u32 {
-                // SAFETY VIOLATION (gated): forming `&SSLConfig` from a stored
-                // `Arc::as_ptr` key here is UB once that Arc's strong count is
-                // 0 — std `Arc` already holds a `&mut SSLConfig` inside
-                // `drop_in_place` while the dropping thread blocks on `MUTEX`
-                // in `remove()`, so this `&` aliases a live `&mut`. The mutex
-                // does not help; the exclusive borrow is taken before the lock.
-                // See module TODO for the u64-key + Weak::upgrade redesign that
-                // must replace this before un-gating.
-                unsafe { (*key).content_hash() as u32 }
-            }
-            fn eql(a: *const SSLConfig, b: *const SSLConfig) -> bool {
-                // SAFETY VIOLATION (gated): same aliased-&mut hazard as `hash`
-                // above — `is_same` reads non-atomic CString/CStringList fields
-                // through a `&SSLConfig` that may alias Drop's `&mut`. Must be
-                // replaced by `Weak::upgrade()`-then-compare before un-gating.
-                unsafe { (*a).is_same(&*b) }
-            }
+    pub(super) fn remove(config: &SSLConfig) {
+        // Fast path for un-interned configs: `cached_hash` is only set by
+        // `content_hash()`, which `intern()` always calls. If 0, this config
+        // was never hashed → never interned. Avoids locking the mutex on the
+        // hot value-type drop path (e.g. transient configs in `from_js`).
+        if config.cached_hash.load(Ordering::Relaxed) == 0 {
+            return;
         }
-
-        /// Module-level storage. Zig: `var configs: ArrayHashMapUnmanaged(...) = .empty`.
-        ///
-        /// Access discipline: every caller holds `MUTEX` for the full lifetime of
-        /// the returned `&'static mut`, so the `static mut` aliasing rules are
-        /// upheld by that lock (PORTING.md §Concurrency: lock owns data, but
-        /// `ArrayHashMap` has no `const fn new()` so it can't sit inside the
-        /// `Mutex` directly — lazy `Option` init under the lock instead).
-        fn configs() -> &'static mut ArrayHashMap<*const SSLConfig, WeakPtr> {
-            // Raw-pointer key makes the map `!Sync`; `static mut` sidesteps
-            // the auto-trait bound and matches Zig's plain `var`.
-            static mut CONFIGS: Option<ArrayHashMap<*const SSLConfig, WeakPtr>> = None;
-            // SAFETY: only ever entered while `MUTEX` is held (see `intern` /
-            // `remove`), guaranteeing a single live `&mut` at a time.
-            #[allow(static_mut_refs)]
-            unsafe {
-                CONFIGS.get_or_insert_with(ArrayHashMap::new)
-            }
+        let config_ptr: *const SSLConfig = config;
+        let mut configs = CONFIGS.lock();
+        if configs.is_empty() {
+            return;
         }
-
-        /// Takes a by-value SSLConfig, wraps it in a `SharedPtr` (strong=1), and
-        /// either returns an existing equivalent (upgraded) or the new one. Either
-        /// way, caller owns exactly one strong ref on the result.
-        ///
-        /// The returned `SharedPtr` is dropped normally.
-        pub fn intern(config: SSLConfig) -> SharedPtr {
-            let new_shared: SharedPtr = Arc::new(config);
-            // NOTE: `new_ptr` is currently the map key for the gated draft. Per
-            // the module TODO this must become a precomputed `u64` content hash
-            // (taken from the owned `config` before `Arc::new`) so probing never
-            // dereferences a `*const SSLConfig` derived from `Arc::as_ptr` —
-            // such derefs can alias the `&mut` that std `Arc` holds during
-            // `drop_in_place` on another thread. Until then `new_ptr` is used
-            // only as an identity token; do not read through it once stored.
-            let new_ptr: *const SSLConfig = Arc::as_ptr(&new_shared);
-
-            // Deferred cleanup MUST run after the mutex is released (Drop re-locks
-            // the registry mutex via `SSLConfig::drop -> remove`).
-            let mut dispose_new: Option<SharedPtr> = None;
-            let mut dispose_old_weak: Option<WeakPtr> = None;
-
-            // PORT NOTE: reshaped for borrowck — Zig returned directly while holding
-            // the mutex, then ran `defer`s. We compute `result` in a labeled block,
-            // drop the guard, then dispose deferred values.
-            let result = 'locked: {
-                let _guard = MUTEX.lock();
-                let configs = configs();
-
-                // TODO(port): get_or_put_context with MapContext (content hash/eq)
-                let gop = bun_core::handle_oom(configs.get_or_put(new_ptr));
-                if gop.found_existing {
-                    if let Some(existing_shared) = gop.value_ptr.upgrade() {
-                        // Existing config is still alive; dispose the new duplicate.
-                        dispose_new = Some(new_shared);
-                        break 'locked existing_shared;
-                    } else {
-                        // strong==0: existing is dying. Its `drop()` is blocked in
-                        // `remove()` waiting for this mutex, so content is still
-                        // intact (fields not yet freed). Replace the slot; the
-                        // dying config's `remove()` will pointer-mismatch and no-op
-                        // when it runs.
-                        dispose_old_weak = Some(core::mem::replace(gop.value_ptr, Weak::new()));
-                        *gop.key_ptr = new_ptr;
-                        *gop.value_ptr = Arc::downgrade(&new_shared);
-                        new_shared
-                    }
-                } else {
-                    *gop.value_ptr = Arc::downgrade(&new_shared);
-                    new_shared
-                }
-            };
-            // _guard dropped here; now safe to drop dispose_new / dispose_old_weak.
-            drop(dispose_new);
-            drop(dispose_old_weak);
-            result
-        }
-
-        pub(in super::super) fn remove(config: *const SSLConfig) {
-            let _guard = MUTEX.lock();
-            let configs = configs();
-            if configs.count() == 0 {
-                return;
-            }
-            // TODO(port): get_index_context with MapContext
-            let Some(idx) = configs.get_index(&config) else { return };
-            if configs.keys()[idx] != config {
-                return;
-            }
-            let weak = configs.values()[idx].clone();
-            configs.swap_remove_at(idx);
-            drop(weak);
-        }
+        // Find by pointer identity only — never deref `config` for content
+        // (we hold `&mut SSLConfig` exclusively here; comparing addresses is
+        // all that's needed and matches Zig's `keys()[idx] != config` check).
+        let Some(idx) = configs.iter().position(|w| core::ptr::eq(w.as_ptr(), config_ptr)) else {
+            return;
+        };
+        let weak = configs.swap_remove(idx);
+        drop(configs);
+        drop(weak);
     }
 }
 
@@ -639,329 +662,242 @@ impl SSLConfig {
 // ──────────────────────────────────────────────────────────────────────────
 // fromJS / fromGenerated
 // ──────────────────────────────────────────────────────────────────────────
-//
-// Gated: depends on `crate::webcore::Blob` store layout, `crate::node::fs::NodeFS`
-// readFile-with-NullTerminated variant, and `bun_jsc::generated::SSLConfig*`
-// GenVal/GenOpt accessor shapes (`.get()` returning WTFStringImpl). Re-enable
-// once those tier-6 surfaces stabilise.
 
-mod _gated_from_js {
-    use super::*;
-    use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, SysErrorJsc};
-    use bun_jsc::virtual_machine::VirtualMachine;
-
-    /// Convert a `ZBox` (NUL-terminated owned byte buffer) into a `CString`
-    /// without re-allocating. Matches Zig `toOwnedSliceZ` semantics (no
-    /// interior-NUL check).
-    #[inline]
-    fn zbox_into_cstring(z: bun_core::ZBox) -> CString {
-        // SAFETY: `ZBox` guarantees a single trailing NUL; we hand the bytes
-        // (including the sentinel) to `CString` without re-allocating.
-        unsafe { CString::from_vec_with_nul_unchecked(z.into_vec_with_nul()) }
-    }
-
-    // ── ReadFromBlobError ────────────────────────────────────────────────
-    // PORT NOTE: cannot derive `thiserror::Error` because `JsError` is not
-    // `std::error::Error`/`Display`. Manual `From<JsError>` instead.
-    #[derive(Debug, strum::IntoStaticStr)]
-    pub enum ReadFromBlobError {
-        Js(JsError),
-        NullStore,
-        NotAFile,
-        EmptyFile,
-    }
-
-    impl From<JsError> for ReadFromBlobError {
-        #[inline]
-        fn from(e: JsError) -> Self {
-            ReadFromBlobError::Js(e)
-        }
-    }
-
-    fn read_from_blob(
+impl SSLConfig {
+    pub fn from_js(
+        vm: &VirtualMachine,
         global: &JSGlobalObject,
-        blob: &mut crate::webcore::Blob,
-    ) -> Result<CString, ReadFromBlobError> {
-        let store = blob.store.as_ref().ok_or(ReadFromBlobError::NullStore)?;
-        let file = match &store.data {
-            crate::webcore::blob::store::Data::File(f) => f,
-            _ => return Err(ReadFromBlobError::NotAFile),
-        };
-        let mut fs = crate::node::fs::NodeFS::default();
-        // TODO(port): Zig copied `file.pathlike` by value into the args struct;
-        // `PathOrFileDescriptor` is not `Clone` in Rust yet, so the path field
-        // is stubbed until a borrow-taking read_file variant or `Clone` lands.
-        let _ = file;
-        let read_args = crate::node::fs::args::ReadFile {
-            path: todo!("blocked_on: node::types::PathOrFileDescriptor Clone (Zig did a value copy of file.pathlike)"),
-            ..Default::default()
-        };
-        let maybe = fs.read_file_with_options(
-            &read_args,
-            crate::node::fs::Flavor::Sync,
-            crate::node::fs::ReadFileStringType::NullTerminated,
-        );
-        let result = match maybe {
-            bun_sys::Result::Ok(result) => result,
-            bun_sys::Result::Err(err) => {
-                return Err(global.throw_value(err.to_js(global)).into());
-            }
-        };
-        // `read_file_with_options(NullTerminated)` transfers ownership of the
-        // returned buffer to the caller, so we can return it directly without
-        // duplicating.
-        let crate::node::fs::ret::ReadFileWithOptions::NullTerminated(zbox) = result else {
-            unreachable!("ReadFileStringType::NullTerminated always yields the NullTerminated variant");
-        };
-        if zbox.is_empty() {
-            return Err(ReadFromBlobError::EmptyFile);
-        }
-        // SAFETY: `ZBox` guarantees a single trailing NUL; we hand the bytes
-        // (including the sentinel) to `CString` without re-allocating.
-        Ok(unsafe { CString::from_vec_with_nul_unchecked(zbox.into_vec_with_nul()) })
+        value: JSValue,
+    ) -> JsResult<Option<SSLConfig>> {
+        let generated = jsc::generated::SSLConfig::from_js(global, value)?;
+        // `generated` dropped at scope exit
+        Self::from_generated(vm, global, &generated)
     }
 
-    impl SSLConfig {
-        pub fn from_js(
-            vm: &VirtualMachine,
-            global: &JSGlobalObject,
-            value: JSValue,
-        ) -> JsResult<Option<SSLConfig>> {
-            let generated = jsc::generated::SSLConfig::from_js(global, value)?;
-            // `generated` dropped at scope exit
-            Self::from_generated(vm, global, &generated)
-        }
-
-        pub fn from_generated(
-            vm: &VirtualMachine,
-            global: &JSGlobalObject,
-            generated: &jsc::generated::SSLConfig,
-        ) -> JsResult<Option<SSLConfig>> {
-            let mut result = SSLConfig::zero();
-            // errdefer result.deinit() — handled by Drop on error-path `?`
-            let mut any = false;
-
-            if let Some(passphrase) = generated.passphrase.get() {
-                result.passphrase = Some(zbox_into_cstring(passphrase.to_owned_slice_z()));
-                any = true;
-            }
-            if let Some(dh_params_file) = generated.dh_params_file.get() {
-                result.dh_params_file_name = Some(handle_path(global, "dhParamsFile", &dh_params_file)?);
-                any = true;
-            }
-            if let Some(server_name) = generated.server_name.get() {
-                result.server_name = Some(zbox_into_cstring(server_name.to_owned_slice_z()));
-                result.requires_custom_request_ctx = true;
-            }
-
-            result.low_memory_mode = generated.low_memory_mode;
-            result.reject_unauthorized = generated
-                .reject_unauthorized
-                .unwrap_or_else(|| vm.get_tls_reject_unauthorized())
-                as i32;
-            result.request_cert = generated.request_cert as i32;
-            result.secure_options = generated.secure_options;
-            any = any
-                || result.low_memory_mode
-                || generated.reject_unauthorized.is_some()
-                || generated.request_cert
-                || result.secure_options != 0;
-
-            result.ca = handle_file_for_field(global, "ca", &generated.ca)?.map(CStringList::from_vec);
-            result.cert = handle_file_for_field(global, "cert", &generated.cert)?.map(CStringList::from_vec);
-            result.key = handle_file_for_field(global, "key", &generated.key)?.map(CStringList::from_vec);
-            result.requires_custom_request_ctx = result.requires_custom_request_ctx
-                || result.ca.is_some()
-                || result.cert.is_some()
-                || result.key.is_some();
-
-            if let Some(key_file) = generated.key_file.get() {
-                result.key_file_name = Some(handle_path(global, "keyFile", &key_file)?);
-                result.requires_custom_request_ctx = true;
-            }
-            if let Some(cert_file) = generated.cert_file.get() {
-                result.cert_file_name = Some(handle_path(global, "certFile", &cert_file)?);
-                result.requires_custom_request_ctx = true;
-            }
-            if let Some(ca_file) = generated.ca_file.get() {
-                result.ca_file_name = Some(handle_path(global, "caFile", &ca_file)?);
-                result.requires_custom_request_ctx = true;
-            }
-
-            let protocols: Option<CString> = match &generated.alpn_protocols {
-                jsc::generated::SSLConfigAlpnProtocols::None => None,
-                jsc::generated::SSLConfigAlpnProtocols::String(val) => {
-                    Some(zbox_into_cstring(val.get().to_owned_slice_z()))
-                }
-                jsc::generated::SSLConfigAlpnProtocols::Buffer(val) => {
-                    // SAFETY: `val.get()` returns a non-null `*mut JSCArrayBuffer`
-                    // owned by the GenVal for the duration of `generated`.
-                    let buffer: jsc::ArrayBuffer = unsafe { (*val.get()).as_array_buffer() };
-                    let mut v = buffer.byte_slice().to_vec();
-                    v.push(0);
-                    // SAFETY: we just appended the only NUL we rely on; matches Zig
-                    // `dupeZ` (no interior-NUL check).
-                    Some(unsafe { CString::from_vec_with_nul_unchecked(v) })
-                }
-            };
-            if let Some(some_protocols) = protocols {
-                result.protos = Some(some_protocols);
-                result.requires_custom_request_ctx = true;
-            }
-            if let Some(ciphers) = generated.ciphers.get() {
-                result.ssl_ciphers = Some(zbox_into_cstring(ciphers.to_owned_slice_z()));
-                result.is_using_default_ciphers = false;
-                result.requires_custom_request_ctx = true;
-            }
-
-            result.client_renegotiation_limit = generated.client_renegotiation_limit;
-            result.client_renegotiation_window = generated.client_renegotiation_window;
-            any = any
-                || result.requires_custom_request_ctx
-                || result.client_renegotiation_limit != 0
-                || generated.client_renegotiation_window != 0;
-
-            // We don't need to deinit `result` if `any` is false.
-            if any { Ok(Some(result)) } else { Ok(None) }
-        }
-    }
-
-    // ── handlePath / handleFile helpers ──────────────────────────────────
-
-    // PERF(port): was comptime monomorphization (comptime field: []const u8) —
-    // demoted to runtime &'static str since only used in cold error message.
-    fn handle_path(
+    pub fn from_generated(
+        vm: &VirtualMachine,
         global: &JSGlobalObject,
-        field: &'static str,
-        string: &bun_str::String,
-    ) -> JsResult<CString> {
-        let name = string.to_owned_slice_z();
-        // TODO(port): bun_sys::access wrapper; Zig called std.posix.system.access.
-        // SAFETY: `name` is a valid NUL-terminated buffer; access(2) only reads it.
-        if unsafe { libc::access(name.as_ptr(), libc::F_OK) } != 0 {
-            // errdefer: free_sensitive(name) — scopeguard not needed; name drops on
-            // return, but we need zeroing:
-            free_sensitive_bytes(name.into_vec_with_nul());
-            return Err(global.throw_invalid_arguments(
-                format_args!("Unable to access {} path", field),
-            ));
-        }
-        Ok(zbox_into_cstring(name))
-    }
+        generated: &jsc::generated::SSLConfig,
+    ) -> JsResult<Option<SSLConfig>> {
+        let mut result = SSLConfig::zero();
+        // errdefer result.deinit() — handled by Drop on error-path `?`
+        let mut any = false;
 
-    fn handle_file_for_field(
-        global: &JSGlobalObject,
-        field: &'static str,
-        file: &jsc::generated::SSLConfigFile,
-    ) -> JsResult<Option<Vec<CString>>> {
-        match handle_file(global, file) {
-            Ok(v) => Ok(v),
-            Err(ReadFromBlobError::Js(e)) => Err(e),
-            Err(ReadFromBlobError::EmptyFile) => Err(global.throw_invalid_arguments(
-                format_args!("TLSOptions.{} is an empty file", field),
-            )),
-            Err(ReadFromBlobError::NullStore) | Err(ReadFromBlobError::NotAFile) => {
-                Err(global.throw_invalid_arguments(
-                    format_args!(
-                        "TLSOptions.{} is not a valid BunFile (non-BunFile `Blob`s are not supported)",
-                        field
-                    ),
-                ))
+        if let Some(passphrase) = generated.passphrase.get() {
+            result.passphrase = Some(zbox_into_cstring(passphrase.to_owned_slice_z()));
+            any = true;
+        }
+        if let Some(dh_params_file) = generated.dh_params_file.get() {
+            result.dh_params_file_name = Some(handle_path(global, "dhParamsFile", &dh_params_file)?);
+            any = true;
+        }
+        if let Some(server_name) = generated.server_name.get() {
+            result.server_name = Some(zbox_into_cstring(server_name.to_owned_slice_z()));
+            result.requires_custom_request_ctx = true;
+        }
+
+        result.low_memory_mode = generated.low_memory_mode;
+        result.reject_unauthorized = generated
+            .reject_unauthorized
+            .unwrap_or_else(|| vm.get_tls_reject_unauthorized())
+            as i32;
+        result.request_cert = generated.request_cert as i32;
+        result.secure_options = generated.secure_options;
+        any = any
+            || result.low_memory_mode
+            || generated.reject_unauthorized.is_some()
+            || generated.request_cert
+            || result.secure_options != 0;
+
+        result.ca = handle_file_for_field(global, "ca", &generated.ca)?.map(CStringList::from_vec);
+        result.cert =
+            handle_file_for_field(global, "cert", &generated.cert)?.map(CStringList::from_vec);
+        result.key =
+            handle_file_for_field(global, "key", &generated.key)?.map(CStringList::from_vec);
+        result.requires_custom_request_ctx = result.requires_custom_request_ctx
+            || result.ca.is_some()
+            || result.cert.is_some()
+            || result.key.is_some();
+
+        if let Some(key_file) = generated.key_file.get() {
+            result.key_file_name = Some(handle_path(global, "keyFile", &key_file)?);
+            result.requires_custom_request_ctx = true;
+        }
+        if let Some(cert_file) = generated.cert_file.get() {
+            result.cert_file_name = Some(handle_path(global, "certFile", &cert_file)?);
+            result.requires_custom_request_ctx = true;
+        }
+        if let Some(ca_file) = generated.ca_file.get() {
+            result.ca_file_name = Some(handle_path(global, "caFile", &ca_file)?);
+            result.requires_custom_request_ctx = true;
+        }
+
+        let protocols: Option<CString> = match &generated.alpn_protocols {
+            jsc::generated::SSLConfigAlpnProtocols::None => None,
+            jsc::generated::SSLConfigAlpnProtocols::String(val) => {
+                Some(zbox_into_cstring(val.get().to_owned_slice_z()))
             }
-        }
-    }
-
-    fn handle_file(
-        global: &JSGlobalObject,
-        file: &jsc::generated::SSLConfigFile,
-    ) -> Result<Option<Vec<CString>>, ReadFromBlobError> {
-        let single = handle_single_file(
-            global,
-            match file {
-                jsc::generated::SSLConfigFile::None => return Ok(None),
-                jsc::generated::SSLConfigFile::String(val) => SingleFile::String(val.get()),
-                // SAFETY: GenVal::get() yields a non-null pointer valid for the
-                // lifetime of `generated`; we narrow it to `&mut` for the call.
-                jsc::generated::SSLConfigFile::Buffer(val) => {
-                    SingleFile::Buffer(unsafe { &mut *val.get() })
-                }
-                // SAFETY: opaque `bun_jsc::WebCore::Blob` is layout-identical to
-                // `crate::webcore::Blob` (the JS class `m_ctx` pointer).
-                jsc::generated::SSLConfigFile::File(val) => {
-                    SingleFile::File(unsafe { &mut *(val.get() as *mut crate::webcore::Blob) })
-                }
-                jsc::generated::SSLConfigFile::Array(list) => {
-                    return handle_file_array(global, list.items());
-                }
-            },
-        )?;
-        // errdefer free_sensitive(single) — on the only fallible op below (alloc),
-        // Rust aborts on OOM, so no errdefer needed.
-        let mut result = Vec::with_capacity(1);
-        result.push(single);
-        Ok(Some(result))
-    }
-
-    fn handle_file_array(
-        global: &JSGlobalObject,
-        elements: &[jsc::generated::SSLConfigSingleFile],
-    ) -> Result<Option<Vec<CString>>, ReadFromBlobError> {
-        if elements.is_empty() {
-            return Ok(None);
-        }
-        let mut result: Vec<CString> = Vec::with_capacity(elements.len());
-        // errdefer { free_sensitive each; drop result } — need zeroing on error:
-        let mut guard = scopeguard::guard(&mut result, |r| {
-            for string in r.drain(..) {
-                free_sensitive_bytes(string.into_bytes_with_nul());
-            }
-        });
-        for elem in elements {
-            // PERF(port): was appendAssumeCapacity
-            guard.push(handle_single_file(
-                global,
-                match elem {
-                    jsc::generated::SSLConfigSingleFile::String(val) => SingleFile::String(val.get()),
-                    // SAFETY: see `handle_file` above — non-null GenVal pointers
-                    // valid for the lifetime of `generated`.
-                    jsc::generated::SSLConfigSingleFile::Buffer(val) => {
-                        SingleFile::Buffer(unsafe { &mut *val.get() })
-                    }
-                    // SAFETY: opaque `bun_jsc::WebCore::Blob` is layout-identical
-                    // to `crate::webcore::Blob`.
-                    jsc::generated::SSLConfigSingleFile::File(val) => {
-                        SingleFile::File(unsafe { &mut *(val.get() as *mut crate::webcore::Blob) })
-                    }
-                },
-            )?);
-        }
-        let result = scopeguard::ScopeGuard::into_inner(guard);
-        Ok(Some(core::mem::take(result)))
-    }
-
-    // PORT NOTE: Zig used an anonymous `union(enum)` param; named here.
-    enum SingleFile<'a> {
-        String(bun_str::String),
-        Buffer(&'a mut jsc::JSCArrayBuffer),
-        File(&'a mut crate::webcore::Blob),
-    }
-
-    fn handle_single_file(
-        global: &JSGlobalObject,
-        file: SingleFile<'_>,
-    ) -> Result<CString, ReadFromBlobError> {
-        match file {
-            SingleFile::String(string) => Ok(zbox_into_cstring(string.to_owned_slice_z())),
-            SingleFile::Buffer(jsc_buffer) => {
-                let buffer: jsc::ArrayBuffer = jsc_buffer.as_array_buffer();
+            jsc::generated::SSLConfigAlpnProtocols::Buffer(val) => {
+                // SAFETY: `val.get()` returns a non-null `*mut JSCArrayBuffer`
+                // owned by the GenVal for the duration of `generated`.
+                let buffer: ArrayBuffer = unsafe { (*val.get()).as_array_buffer() };
                 let mut v = buffer.byte_slice().to_vec();
                 v.push(0);
                 // SAFETY: we just appended the only NUL we rely on; matches Zig
                 // `dupeZ` (no interior-NUL check).
-                Ok(unsafe { CString::from_vec_with_nul_unchecked(v) })
+                Some(unsafe { CString::from_vec_with_nul_unchecked(v) })
             }
-            SingleFile::File(blob) => read_from_blob(global, blob),
+        };
+        if let Some(some_protocols) = protocols {
+            result.protos = Some(some_protocols);
+            result.requires_custom_request_ctx = true;
         }
+        if let Some(ciphers) = generated.ciphers.get() {
+            result.ssl_ciphers = Some(zbox_into_cstring(ciphers.to_owned_slice_z()));
+            result.is_using_default_ciphers = false;
+            result.requires_custom_request_ctx = true;
+        }
+
+        result.client_renegotiation_limit = generated.client_renegotiation_limit;
+        result.client_renegotiation_window = generated.client_renegotiation_window;
+        any = any
+            || result.requires_custom_request_ctx
+            || result.client_renegotiation_limit != 0
+            || generated.client_renegotiation_window != 0;
+
+        // We don't need to deinit `result` if `any` is false.
+        if any { Ok(Some(result)) } else { Ok(None) }
+    }
+}
+
+// ── handlePath / handleFile helpers ──────────────────────────────────────────
+
+// PERF(port): was comptime monomorphization (comptime field: []const u8) —
+// demoted to runtime &'static str since only used in cold error message.
+fn handle_path(
+    global: &JSGlobalObject,
+    field: &'static str,
+    string: &bun_str::String,
+) -> JsResult<CString> {
+    let name = string.to_owned_slice_z();
+    // SAFETY: `name` is a valid NUL-terminated buffer; access(2) only reads it.
+    if unsafe { libc::access(name.as_ptr(), libc::F_OK) } != 0 {
+        // errdefer bun.freeSensitive: zero before freeing on the error path.
+        free_sensitive_bytes(name.into_vec_with_nul());
+        return Err(global.throw_invalid_arguments(
+            format_args!("Unable to access {field} path"),
+        ));
+    }
+    Ok(zbox_into_cstring(name))
+}
+
+fn handle_file_for_field(
+    global: &JSGlobalObject,
+    field: &'static str,
+    file: &jsc::generated::SSLConfigFile,
+) -> JsResult<Option<Vec<CString>>> {
+    match handle_file(global, file) {
+        Ok(v) => Ok(v),
+        Err(ReadFromBlobError::Js(e)) => Err(e),
+        Err(ReadFromBlobError::EmptyFile) => Err(global.throw_invalid_arguments(
+            format_args!("TLSOptions.{field} is an empty file"),
+        )),
+        Err(ReadFromBlobError::NullStore) | Err(ReadFromBlobError::NotAFile) => {
+            Err(global.throw_invalid_arguments(format_args!(
+                "TLSOptions.{field} is not a valid BunFile (non-BunFile `Blob`s are not supported)",
+            )))
+        }
+    }
+}
+
+fn handle_file(
+    global: &JSGlobalObject,
+    file: &jsc::generated::SSLConfigFile,
+) -> Result<Option<Vec<CString>>, ReadFromBlobError> {
+    let single = handle_single_file(
+        global,
+        match file {
+            jsc::generated::SSLConfigFile::None => return Ok(None),
+            jsc::generated::SSLConfigFile::String(val) => SingleFile::String(val.get()),
+            // SAFETY: GenVal::get() yields a non-null pointer valid for the
+            // lifetime of `generated`; we narrow it to `&mut` for the call.
+            jsc::generated::SSLConfigFile::Buffer(val) => {
+                SingleFile::Buffer(unsafe { &mut *val.get() })
+            }
+            // SAFETY: opaque `bun_jsc::WebCore::Blob` is layout-identical to
+            // `crate::webcore::Blob` (the JS class `m_ctx` pointer).
+            jsc::generated::SSLConfigFile::File(val) => {
+                SingleFile::File(unsafe { &*(val.get() as *const Blob) })
+            }
+            jsc::generated::SSLConfigFile::Array(list) => {
+                return handle_file_array(global, list.items());
+            }
+        },
+    )?;
+    // errdefer free_sensitive(single) — on the only fallible op below (alloc),
+    // Rust aborts on OOM, so no errdefer needed.
+    Ok(Some(vec![single]))
+}
+
+fn handle_file_array(
+    global: &JSGlobalObject,
+    elements: &[jsc::generated::SSLConfigSingleFile],
+) -> Result<Option<Vec<CString>>, ReadFromBlobError> {
+    if elements.is_empty() {
+        return Ok(None);
+    }
+    let mut result: Vec<CString> = Vec::with_capacity(elements.len());
+    // errdefer { free_sensitive each; drop result } — need zeroing on error:
+    let mut guard = scopeguard::guard(&mut result, |r| {
+        for string in r.drain(..) {
+            free_sensitive_bytes(string.into_bytes_with_nul());
+        }
+    });
+    for elem in elements {
+        // PERF(port): was appendAssumeCapacity
+        guard.push(handle_single_file(
+            global,
+            match elem {
+                jsc::generated::SSLConfigSingleFile::String(val) => SingleFile::String(val.get()),
+                // SAFETY: see `handle_file` above — non-null GenVal pointers
+                // valid for the lifetime of `generated`.
+                jsc::generated::SSLConfigSingleFile::Buffer(val) => {
+                    SingleFile::Buffer(unsafe { &mut *val.get() })
+                }
+                // SAFETY: opaque `bun_jsc::WebCore::Blob` is layout-identical
+                // to `crate::webcore::Blob`.
+                jsc::generated::SSLConfigSingleFile::File(val) => {
+                    SingleFile::File(unsafe { &*(val.get() as *const Blob) })
+                }
+            },
+        )?);
+    }
+    let result = scopeguard::ScopeGuard::into_inner(guard);
+    Ok(Some(core::mem::take(result)))
+}
+
+// PORT NOTE: Zig used an anonymous `union(enum)` param; named here.
+enum SingleFile<'a> {
+    String(bun_str::String),
+    Buffer(&'a mut jsc::JSCArrayBuffer),
+    File(&'a Blob),
+}
+
+fn handle_single_file(
+    global: &JSGlobalObject,
+    file: SingleFile<'_>,
+) -> Result<CString, ReadFromBlobError> {
+    match file {
+        SingleFile::String(string) => Ok(zbox_into_cstring(string.to_owned_slice_z())),
+        SingleFile::Buffer(jsc_buffer) => {
+            let buffer: ArrayBuffer = jsc_buffer.as_array_buffer();
+            let mut v = buffer.byte_slice().to_vec();
+            v.push(0);
+            // SAFETY: we just appended the only NUL we rely on; matches Zig
+            // `dupeZ` (no interior-NUL check).
+            Ok(unsafe { CString::from_vec_with_nul_unchecked(v) })
+        }
+        SingleFile::File(blob) => read_from_blob(global, blob),
     }
 }
 
@@ -985,14 +921,12 @@ impl SSLConfig {
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
-//   source:     src/runtime/socket/SSLConfig.zig (577 lines)
-//   confidence: medium
-//   todos:      10
-//   notes:      Struct + Default/Clone/Drop/is_same/content_hash/as_usockets/
-//               take_{protos,server_name} real. from_js/from_generated/file
-//               helpers + GlobalRegistry::intern gated on tier-6 surfaces
-//               (webcore::Blob store, node::fs::NodeFS, generated GenVal
-//               accessors, ArrayHashMap content-hash context). key/cert/ca use
-//               CStringList (owned CString + thin-ptr side-buffer) so
-//               as_usockets() hands a layout-correct **const c_char to uSockets.
+//   source:     src/runtime/socket/SSLConfig.zig
+//   confidence: high
+//   notes:      Full port. GlobalRegistry uses Vec<Weak> + linear scan (sound
+//               under Rust aliasing; semantically equivalent to Zig's
+//               ArrayHashMap content-hash dedup for the small-N regime).
+//               key/cert/ca use CStringList (owned CString + thin-ptr
+//               side-buffer) so as_usockets() hands a layout-correct
+//               **const c_char to uSockets.
 // ──────────────────────────────────────────────────────────────────────────

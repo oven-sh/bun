@@ -2,9 +2,10 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_alloc::Arena;
 use bun_glob::BunGlobWalker as GlobWalker;
+use bun_jsc::concurrent_promise_task::{ConcurrentPromiseTask, ConcurrentPromiseTaskContext};
 use bun_jsc::{
-    ArgumentsSlice, CallFrame, ConcurrentPromiseTask, JSGlobalObject, JSPromise, JSValue, JsResult,
-    JsTerminated, StringJsc as _, SysErrorJsc as _,
+    ArgumentsSlice, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, JsTerminated,
+    StringJsc as _, SysErrorJsc as _,
 };
 use bun_jsc::bun_string_jsc;
 use bun_paths::{self as resolve_path, platform, PathBuffer, MAX_PATH_BYTES};

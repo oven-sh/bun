@@ -22,14 +22,15 @@ use bun_logger::js_ast::{expr::Data as ExprData, E, Expr, ExprTag};
 
 use bun_options_types::schema::api;
 use bun_options_types::CodeCoverageOptions::Reporters as CoverageReporters;
-use bun_options_types::Context::MacroOptions;
+use bun_options_types::Context::{MacroImportReplacementMap, MacroMap, MacroOptions};
 use bun_options_types::GlobalCache::GlobalCache;
 use bun_options_types::OfflineMode::PREFER as OFFLINE_PREFER;
 
-use crate::cli::command::{ContextData, Tag as CommandTag};
+use bun_install_types::NodeLinker::{FromExprError, PnpmMatcher};
+use bun_url::URL;
+use std::io::Write as _;
 
-pub type MacroImportReplacementMap = ArrayHashMap<Box<[u8]>, Box<[u8]>>;
-pub type MacroMap = ArrayHashMap<Box<[u8]>, MacroImportReplacementMap>;
+use crate::cli::command::{ContextData, Tag as CommandTag};
 
 // Re-exports (Zig: `pub const OfflineMode = @import("../options_types/OfflineMode.zig").OfflineMode;`)
 pub use bun_options_types::OfflineMode::OfflineMode;

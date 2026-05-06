@@ -187,15 +187,16 @@ pub mod js_bundler {
     /// This allows bundling with virtual files that may not exist on disk.
     #[derive(Default)]
     pub struct FileMap {
-        pub map: StringHashMap<jsc::node::BlobOrStringOrBuffer>,
+        // PORT NOTE: Zig used `jsc.Node.BlobOrStringOrBuffer`; in Rust that
+        // type lives in `bun_runtime::node` (forward-dep on `webcore::Blob`),
+        // not the `bun_jsc::node` stub.
+        pub map: StringHashMap<crate::node::BlobOrStringOrBuffer>,
     }
 
     impl FileMap {
         pub fn deinit_and_unprotect(&mut self) {
-            for (key, value) in self.map.drain() {
-                // TODO(port): BlobOrStringOrBuffer is currently a stub in bun_jsc
-                let _ = value;
-                let _ = todo!("blocked_on: bun_jsc::Node::BlobOrStringOrBuffer::deinit_and_unprotect");
+            for (key, mut value) in self.map.drain() {
+                value.deinit_and_unprotect();
                 drop(key);
             }
             // map dropped automatically
@@ -213,8 +214,7 @@ pub mod js_bundler {
             #[cfg(not(windows))]
             {
                 let entry = self.map.get(specifier)?;
-                let _ = entry;
-                return Some(todo!("blocked_on: bun_jsc::Node::BlobOrStringOrBuffer::slice"));
+                return Some(entry.slice());
             }
 
             #[cfg(windows)]

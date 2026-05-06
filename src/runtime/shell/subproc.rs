@@ -1182,78 +1182,13 @@ pub struct SpawnArgs<'a> {
     // ipc_callback: JSValue,
 }
 
-pub struct EnvMapIter<'a> {
-    pub map: &'a DotEnvMap,
-    pub iter: <bun_dotenv::HashTable as bun_collections::ArrayHashMapExt>::Iterator<'a>,
-    // alloc param dropped — global allocator
-}
-
-pub struct EnvMapIterEntry<'a> {
-    pub key: EnvMapIterKey<'a>,
-    pub value: EnvMapIterValue,
-}
-
-pub struct EnvMapIterKey<'a> {
-    pub val: &'a [u8],
-}
-
-impl core::fmt::Display for EnvMapIterKey<'_> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{}", bstr::BStr::new(self.val))
-    }
-}
-
-impl EnvMapIterKey<'_> {
-    pub fn eql_comptime(&self, str: &'static [u8]) -> bool {
-        self.val == str
-    }
-}
-
-pub struct EnvMapIterValue {
-    pub val: &'static bun_str::ZStr,
-    // TODO(port): Zig stores `[:0]const u8` allocated from arena; using leaked &'static ZStr here.
-}
-
-impl core::fmt::Display for EnvMapIterValue {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{}", bstr::BStr::new(self.val.as_bytes()))
-    }
-}
-
-impl<'a> EnvMapIter<'a> {
-    pub fn init(_map: &'a DotEnvMap) -> EnvMapIter<'a> {
-        // TODO(port): `DotEnvMap::iterator()` takes `&mut self` but the shell
-        // only ever holds a shared `&DotEnvMap` here. The sole caller
-        // (`fill_env_from_process`) was already dead under Zig lazy
-        // compilation (type-mismatched call to `fill_env`).
-        todo!("blocked_on: bun_dotenv::Map::iterator(&mut self) needs shared variant")
-    }
-
-    pub fn len(&self) -> usize {
-        // TODO(port): map.map.unmanaged.entries — bun_dotenv internals not
-        // exposed; dead code (see `init`).
-        0
-    }
-
-    pub fn next(&mut self) -> Result<Option<EnvMapIterEntry<'a>>, bun_alloc::AllocError> {
-        let Some(entry) = self.iter.next() else {
-            return Ok(None);
-        };
-        let value_bytes: &[u8] = &entry.value_ptr.value;
-        let mut value = vec![0u8; value_bytes.len() + 1];
-        value[..value_bytes.len()].copy_from_slice(value_bytes);
-        value[value_bytes.len()] = 0;
-        // SAFETY: NUL-terminated above.
-        let zstr = unsafe { bun_str::ZStr::from_raw(value.leak().as_ptr(), value_bytes.len()) };
-        // TODO(port): leaked Vec — Zig used arena alloc; revisit ownership.
-        Ok(Some(EnvMapIterEntry {
-            key: EnvMapIterKey {
-                val: &entry.key_ptr[..],
-            },
-            value: EnvMapIterValue { val: zstr },
-        }))
-    }
-}
+// PORT NOTE: `SpawnArgs.EnvMapIter` (and `fillEnvFromProcess`) from the Zig
+// spec are intentionally **not** ported. `fillEnvFromProcess` calls
+// `this.fillEnv(globalThis, &env_iter, false)` with the wrong iterator type
+// (`EnvMapIter` vs `*bun.shell.EnvMap.Iterator`) and an extra `globalThis`
+// argument — it never type-checked under Zig's lazy compilation and has no
+// callers. The shell always populates env via `fill_env` from its own
+// `EnvMap`.
 
 impl<'a> SpawnArgs<'a> {
     pub fn default<const IS_SYNC: bool>(
@@ -1294,13 +1229,6 @@ impl<'a> SpawnArgs<'a> {
             out.stdio[2] = Stdio::Pipe;
         }
         out
-    }
-
-    pub fn fill_env_from_process(&mut self, global_this: &JSGlobalObject) {
-        // TODO(port): Zig calls self.fill_env(globalThis, &env_iter, false) but fill_env
-        // takes *bun.shell.EnvMap.Iterator, not EnvMapIter — type mismatch in original Zig
-        // (dead code under lazy compilation). Mirrored as TODO.
-        let _ = global_this;
     }
 
     /// `object_iter` should be a some type with the following fields:

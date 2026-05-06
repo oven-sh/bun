@@ -3,7 +3,7 @@ use core::ptr::NonNull;
 use std::io::Write as _;
 
 use bun_collections::BabyList;
-use bun_core::{fmt as bun_fmt, Output, SignalCode, StackCheck, Timespec, TimespecMockMode, ZBox};
+use bun_core::{fmt as bun_fmt, Output, StackCheck, Timespec, TimespecMockMode, ZBox};
 use bun_sys::UV_E;
 use bun_event_loop::SpawnSyncEventLoop::TickState;
 use bun_io::max_buf::{MaxBuf, MaxBufOwnerVTable};
@@ -15,7 +15,7 @@ use bun_jsc::{JsClass as _, SysErrorJsc as _};
 use bun_jsc::ipc as IPC;
 use bun_paths::PathBuffer;
 use bun_str::{self as strings_mod, strings, String as BunString, ZStr, ZigString};
-use bun_sys::{self as sys, Fd, FdExt as _};
+use bun_sys::{self as sys, Fd, FdExt as _, SignalCode};
 
 // Process / spawn machinery is local to this crate (api/bun/process.rs).
 use crate::api::bun_process::{
@@ -24,7 +24,10 @@ use crate::api::bun_process::{
 // User-facing JS `Stdio` enum (extract/as_spawn_option/is_piped).
 use crate::api::bun_spawn::stdio::{self, Stdio};
 use crate::api::bun_subprocess::{self as Subprocess, Readable, Subprocess as SubprocessT, Writable};
-use crate::api::bun::terminal::Terminal;
+use crate::api::bun_terminal_body::{
+    self as terminal_mod, CreateResult as TerminalCreateResult, InitError as TerminalInitError,
+    Options as TerminalOptions, Terminal,
+};
 use crate::webcore as WebCore;
 
 // ── local shims for upstream-crate methods not yet available ────────────────

@@ -624,9 +624,9 @@ fn any_route_from_js(
     global: &JSGlobalObject,
     path: &[u8],
     argument: JSValue,
-    init_ctx: &mut super::super::server_body::ServerInitContext,
+    init_ctx: &mut super::server_body::ServerInitContext,
 ) -> JsResult<Option<AnyRoute>> {
-    use super::super::server_body::AnyRoute as BodyAnyRoute;
+    use super::server_body::AnyRoute as BodyAnyRoute;
     Ok(BodyAnyRoute::from_js(global, path, argument, init_ctx)?.map(|r| match r {
         BodyAnyRoute::Static(rc) => AnyRoute::Static(rc),
         BodyAnyRoute::File(rc) => AnyRoute::File(rc),
@@ -684,10 +684,6 @@ fn get_routes_object(global: &JSGlobalObject, arg: JSValue) -> JsResult<Option<J
     }
     Ok(None)
 }
-
-// `FromJSOptions` lives at module scope (super::FromJSOptions) — re-export for
-// callers that reach it via `_gated_from_js::FromJSOptions`.
-pub use super::FromJSOptions;
 
 impl ServerConfig {
     pub fn from_js(
@@ -846,7 +842,7 @@ impl ServerConfig {
             )?;
             // iter drops at scope end
 
-            let mut init_ctx_ = super::super::server_body::ServerInitContext {
+            let mut init_ctx_ = super::server_body::ServerInitContext {
                 // TODO(port): Zig used std.heap.ArenaAllocator here; ServerInitContext
                 // dropped its `arena` field in the Rust port (bake owns it instead).
                 dedupe_html_bundle_map: Default::default(),
@@ -1151,7 +1147,7 @@ impl ServerConfig {
             }
 
             // errdefer ssl_config.deinit() — drops with args on error
-            args.websocket = Some(super::super::web_socket_server_context::on_create(global, websocket_object)?);
+            args.websocket = Some(super::web_socket_server_context::on_create(global, websocket_object)?);
         }
         if global.has_exception() {
             return Err(JsError::Thrown);
@@ -1618,7 +1614,6 @@ impl ServerConfig {
         Ok(args)
     }
 }
-} // mod _gated_from_js
 
 #[derive(Clone, Copy)]
 pub struct FromJSOptions {

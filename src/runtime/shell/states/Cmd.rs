@@ -5,11 +5,13 @@
 
 use crate::shell::ast;
 use crate::shell::builtin::{Builtin, Kind as BuiltinKind};
-use crate::shell::interpreter::{log, CowFd, Interpreter, Node, NodeId, ShellExecEnv, StateKind};
-use crate::shell::io::IO;
+use crate::shell::interpreter::{log, ByteList, CowFd, Interpreter, Node, NodeId, ShellExecEnv, StateKind};
+use crate::shell::io::{IO, OutKind as IoOutKind};
+use crate::shell::shell_body::subproc::{Readable, ShellSubprocess, StdioKind};
 use crate::shell::states::assigns::{AssignCtx, Assigns};
 use crate::shell::states::base::Base;
 use crate::shell::states::expansion::{Expansion, ExpansionOpts};
+use crate::shell::util::{OutKind, Stdio};
 use crate::shell::yield_::Yield;
 use crate::shell::ExitCode;
 
@@ -23,6 +25,12 @@ pub struct Cmd {
     pub redirection_fd: Option<*mut CowFd>,
     pub exec: Exec,
     pub exit_code: Option<ExitCode>,
+    /// PORT NOTE: in Zig this guarded the `spawn_arena` (an `ArenaAllocator`
+    /// holding argv/env scratch). The Rust port heap-allocates argv as
+    /// `Vec<Vec<u8>>` so there is no arena to free, but the flag is kept to
+    /// preserve `bufferedOutputClose`'s control-flow split (post-spawn vs
+    /// pre-spawn completion).
+    pub spawn_arena_freed: bool,
 }
 
 #[derive(Default, strum::IntoStaticStr)]

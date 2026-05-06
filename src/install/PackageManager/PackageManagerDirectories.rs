@@ -205,7 +205,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
     }
 
     let mut buf = PathBuffer::uninit();
-    let temp_dir_path = match sys::get_fd_path_z(Fd::from_std_dir(tempdir), &mut buf) {
+    let temp_dir_path = match sys::get_fd_path_z(Fd::from_std_dir(&tempdir), &mut buf) {
         Ok(p) => p,
         Err(err) => {
             Output::err(
@@ -233,20 +233,20 @@ fn ensure_cache_directory(this: &mut PackageManager) -> Dir {
             // `NonNull<Loader>` borrows the process-global env map (singleton-leaked).
             let env = unsafe { this.env.expect("env initialised").as_mut() };
             let cache_dir = fetch_cache_directory_path(env, Some(&this.options));
-            this.cache_directory_path = ZStr::boxed(&cache_dir.path);
+            this.cache_directory_path = ZBox::from_bytes(&cache_dir.path);
 
             match Dir::cwd().make_open_path(&cache_dir.path, Default::default()) {
                 Ok(d) => return d,
                 Err(_) => {
                     this.options.enable.set(Enable::CACHE, false);
                     // PORT NOTE: allocator.free(this.cache_directory_path) — Box drop handles it
-                    this.cache_directory_path = ZStr::boxed(b"");
+                    this.cache_directory_path = ZBox::from_bytes(b"");
                     continue;
                 }
             }
         }
 
-        this.cache_directory_path = ZStr::boxed(path::resolve_path::join_abs_string::<path::platform::Auto>(
+        this.cache_directory_path = ZBox::from_bytes(path::resolve_path::join_abs_string::<path::platform::Auto>(
             FileSystem::instance().top_level_dir(),
             &[b"node_modules", b".cache"],
         ));
@@ -546,7 +546,7 @@ pub fn cached_tarball_folder_name(this: &PackageManager, url: SemverString, patc
 }
 
 pub fn is_folder_in_cache(this: &mut PackageManager, folder_path: &ZStr) -> bool {
-    sys::directory_exists_at(Fd::from_std_dir(get_cache_directory(this)), folder_path)
+    sys::directory_exists_at(Fd::from_std_dir(&get_cache_directory(this)), folder_path)
         .unwrap_or(false)
 }
 
@@ -589,13 +589,13 @@ pub fn global_link_dir(this: &mut PackageManager) -> Dir {
             Output::err(
                 err,
                 "failed to open global link dir node_modules at '{}'",
-                (Fd::from_std_dir(global_dir),),
+                (Fd::from_std_dir(&global_dir),),
             );
             Global::exit(1);
         }
     });
     let mut buf = PathBuffer::uninit();
-    let path_ = match sys::get_fd_path(Fd::from_std_dir(this.global_link_dir.unwrap()), &mut buf) {
+    let path_ = match sys::get_fd_path(Fd::from_std_dir(&this.global_link_dir.unwrap()), &mut buf) {
         Ok(p) => p,
         Err(err) => {
             Output::err(err, "failed to get the full path of the global directory", ());
@@ -638,7 +638,7 @@ pub fn path_for_cached_npm_path<'a>(
 
     cache_path_buf[package_name.len()] = SEP;
 
-    let cache_dir: Fd = Fd::from_std_dir(get_cache_directory(this));
+    let cache_dir: Fd = Fd::from_std_dir(&get_cache_directory(this));
 
     #[cfg(windows)]
     {
@@ -792,7 +792,7 @@ pub fn compute_cache_dir_and_subpath<'a>(
                     ptr[off] = SEP;
                     off += 1;
                 }
-                ptr[off..off + folder.len()].copy_from_slice(folder);
+                ptr[off..off + folder.len()].copy_from_slice(&folder);
                 off += folder.len();
                 ptr[off] = 0;
                 let len = off;

@@ -111,17 +111,34 @@ impl GetOptionalEnum for JSValue {
 // re-exports are provided by `#[bun_jsc::JsClass]` codegen — see PORTING.md
 // §JSC types. `js.sourceJSSetCached` / `js.sourceJSGetCached` are likewise
 // codegen'd cached-property accessors on the wrapper.
-// TODO(port): the cached-slot accessors are emitted by `.classes.ts` codegen
-// (Image.classes.ts → `sourceJS` cached value) but the Rust codegen doesn't
-// surface them yet. Stubbed here so call sites type-check.
+//
+// The Rust class codegen emits the same C-ABI symbols as the C++ side
+// (`ImagePrototype__sourceJS{Set,Get}CachedValue`); declare them here so the
+// pipeline doesn't depend on whether `crate::generated_classes::Image` and
+// this `Image` are unified yet.
+unsafe extern "C" {
+    fn ImagePrototype__sourceJSSetCachedValue(
+        this_value: JSValue,
+        global: *mut JSGlobalObject,
+        value: JSValue,
+    );
+    fn ImagePrototype__sourceJSGetCachedValue(this_value: JSValue) -> JSValue;
+}
 impl Image {
+    /// `Image.sourceJS` cached-value setter (GC-visited via WriteBarrier).
     #[inline]
-    fn source_js_set_cached(_this: JSValue, _global: &JSGlobalObject, _value: JSValue) {
-        todo!("blocked_on: bun_jsc::JsClass cached-value accessor codegen (sourceJSSetCached)")
+    fn source_js_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
+        // SAFETY: C++ stores `value` into the JSImage wrapper's `m_sourceJS`
+        // WriteBarrier slot; both pointers are live JS-heap objects.
+        unsafe { ImagePrototype__sourceJSSetCachedValue(this, global.as_mut_ptr(), value) }
     }
+    /// `Image.sourceJS` cached-value getter; `None` when never set.
     #[inline]
-    fn source_js_get_cached(_this: JSValue) -> Option<JSValue> {
-        todo!("blocked_on: bun_jsc::JsClass cached-value accessor codegen (sourceJSGetCached)")
+    fn source_js_get_cached(this: JSValue) -> Option<JSValue> {
+        // SAFETY: C++ reads the wrapper's `m_sourceJS` slot; returns `.zero`
+        // (encoded empty) if it was never set.
+        let v = unsafe { ImagePrototype__sourceJSGetCachedValue(this) };
+        if v.is_empty() { None } else { Some(v) }
     }
 }
 

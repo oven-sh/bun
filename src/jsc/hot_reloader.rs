@@ -895,11 +895,16 @@ where
                                     .get(PathName::find_extname(changed_name))
                                     .copied()
                                     .unwrap_or(bun_bundler::options::Loader::File);
+                                // PORT NOTE: Zig declares `prev_entry_id` per-iteration and
+                                // reassigns it just before `break`; the write is dead there
+                                // too. Keep the shape for fidelity, silence the lint.
+                                #[allow(unused_assignments)]
                                 let mut prev_entry_id: usize = usize::MAX;
                                 if loader != bun_bundler::options::Loader::File {
-                                    let mut path_string: bun_string::PathString =
-                                        Default::default();
-                                    let mut file_hash: bun_watcher::HashType = last_file_hash;
+                                    // Zig leaves these `undefined` / overwritten; both arms
+                                    // of `'brk` assign before any read.
+                                    let path_string: bun_string::PathString;
+                                    let file_hash: bun_watcher::HashType;
                                     let abs_path: &[u8] = 'brk: {
                                         if let Some(file_ent) =
                                             dir_ent.entries().get(changed_name)

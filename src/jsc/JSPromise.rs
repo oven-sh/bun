@@ -329,7 +329,7 @@ impl JSPromise {
         // `ci_assert`-gated `location` field is set inside `init` itself, so calling `init`
         // on uninit storage is sound (matches the Zig `= undefined; .init()` pattern).
         unsafe {
-            (*scope_ptr).init(
+            (*scope_ptr).init_in_place(
                 global,
                 SourceLocation {
                     fn_name: c"JSPromise::wrap".as_ptr(),

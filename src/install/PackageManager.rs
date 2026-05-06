@@ -907,7 +907,7 @@ impl PackageManager {
         // and survives the callback's `&mut *this` retag.
         // SAFETY: `this` is valid per fn contract; `&raw mut` does not create a
         // reference, only a place projection.
-        let event_loop: *mut AnyEventLoop = unsafe { &raw mut (*this).event_loop };
+        let event_loop: *mut AnyEventLoop<'static> = unsafe { &raw mut (*this).event_loop };
         // SAFETY: `tick_raw` reborrows `*event_loop` only between `is_done`
         // calls (never across them), so the callback's `&mut PackageManager`
         // never overlaps a live `&mut AnyEventLoop`.
@@ -960,7 +960,8 @@ fn configure_env_for_scripts_run(
     // PORT NOTE: `var this_transpiler: Transpiler = undefined` — Zig leaves it uninit and
     // RunCommand.configureEnvForRun fully initializes via out-param. Transpiler is NOT
     // all-zero-valid POD, so `zeroed()` is wrong; use MaybeUninit and assume_init after fill.
-    let mut this_transpiler_slot = core::mem::MaybeUninit::<transpiler::Transpiler>::uninit();
+    let mut this_transpiler_slot =
+        core::mem::MaybeUninit::<transpiler::Transpiler<'static>>::uninit();
     // Zig spec PackageManager.zig:322 passes `this.env` (a `*DotEnv.Loader`).
     // `self.env` is `Option<NonNull<Loader>>` here; pass the raw pointer so the
     // shim's `Transpiler::init` reuses the manager's loader instead of
@@ -1953,21 +1954,21 @@ pub fn init_with_runtime(
     // launder at the resolver call site.
     bun_install: Option<&Api::BunInstall>,
     cli: CommandLineArguments,
-    env: &mut dot_env::Loader,
+    env: &mut dot_env::Loader<'static>,
 ) -> *mut PackageManager {
     INIT_WITH_RUNTIME_ONCE.call((log, bun_install, cli, env));
     get()
 }
 
 static INIT_WITH_RUNTIME_ONCE: Once<
-    fn(&mut logger::Log, Option<&Api::BunInstall>, CommandLineArguments, &mut dot_env::Loader),
+    fn(&mut logger::Log, Option<&Api::BunInstall>, CommandLineArguments, &mut dot_env::Loader<'static>),
 > = Once::new(init_with_runtime_once);
 
 pub fn init_with_runtime_once(
     log: &mut logger::Log,
     bun_install: Option<&Api::BunInstall>,
     cli: CommandLineArguments,
-    env: &mut dot_env::Loader,
+    env: &mut dot_env::Loader<'static>,
 ) {
     if env.get("BUN_INSTALL_VERBOSE").is_some() {
         // SAFETY: main-thread init

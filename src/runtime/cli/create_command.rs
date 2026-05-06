@@ -2534,13 +2534,16 @@ impl GitHandler {
 
         // TODO(port): std.Thread.spawn — destination/path borrowed across thread; Zig relied on
         // them being long-lived (filesystem dirname_store / env). Phase B: ensure 'static or own.
-        let thread = match bun_threading::Thread::spawn(
-            Default::default(),
-            move || Self::spawn_thread(destination, path, verbose),
-        ) {
+        // SAFETY: `destination` lives in `filesystem.dirname_store` and `path` in env loader;
+        // both are 'static for the CLI process. Extend lifetimes to satisfy `spawn`.
+        let destination: &'static [u8] = unsafe { core::mem::transmute::<&[u8], &'static [u8]>(destination) };
+        let path: &'static [u8] = unsafe { core::mem::transmute::<&[u8], &'static [u8]>(path) };
+        let thread = match std::thread::Builder::new()
+            .spawn(move || Self::spawn_thread(destination, path, verbose))
+        {
             Ok(t) => t,
             Err(err) => {
-                Output::pretty_errorln("<r><red>{}<r>", format_args!("{}", err.name()));
+                Output::pretty_errorln("<r><red>{}<r>", format_args!("{}", err));
                 Global::exit(1);
             }
         };
@@ -2568,7 +2571,7 @@ impl GitHandler {
 
         let outcome = SUCCESS.load(Ordering::Acquire) == 1;
         // SAFETY: THREAD set in spawn() on this same thread before wait() called
-        unsafe { THREAD.take() }.unwrap().join();
+        let _ = unsafe { THREAD.take() }.unwrap().join();
         outcome
     }
 

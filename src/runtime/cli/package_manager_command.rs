@@ -182,9 +182,11 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
     }
 
     pub fn exec(ctx: &Command::Context) -> Result<(), bun_core::Error> {
-        // TODO(port): std.process.argsAlloc → bun_core equivalent (no std::env in this codebase)
-        let mut args: &[&[u8]] = &bun_core::process_args()[1..];
-        let _ = &mut args;
+        // PORT NOTE: Zig `std.process.argsAlloc(ctx.allocator)` → collect bun.argv
+        // (process-static ZBox storage) into a borrowed-slice Vec so downstream
+        // `&[&[u8]]` callers (TrustCommand/UntrustedCommand) keep their shape.
+        let args_vec: Vec<&'static [u8]> = bun_core::argv().into_iter().skip(1).collect();
+        let args: &[&[u8]] = &args_vec;
 
         // Check if we're being invoked directly as "bun whoami" instead of "bun pm whoami"
         let is_direct_whoami = if bun_core::argv().len() > 1 {

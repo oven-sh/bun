@@ -138,7 +138,7 @@ impl ArgumentsSlice {
         Some(v)
     }
     #[inline]
-    pub fn init(vm: *mut jsc::VirtualMachine, args: &'static [JSValue]) -> Self {
+    pub fn init(vm: *mut jsc::VirtualMachineRef, args: &'static [JSValue]) -> Self {
         Self { remaining: args, will_be_async: false, vm }
     }
 }

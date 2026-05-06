@@ -1369,7 +1369,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         while subprocess.compute_has_pending_activity() {
             // Re-evaluate this at each iteration of the loop since it may change between iterations.
             let bun_test_timeout: bun_core::timespec::Timespec =
-                if let Some(runner) = jsc::Jest::Jest::runner() {
+                if let Some(runner) = crate::test_runner::jest::Jest::runner() {
                     runner.get_active_timeout()
                 } else {
                     bun_core::timespec::EPOCH
@@ -1408,10 +1408,10 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             } else {
                 None
             }) {
-                jsc::TickResult::Completed => {
+                TickState::Completed => {
                     now = bun_core::timespec::now(bun_core::timespec::Mode::AllowMockedTime);
                 }
-                jsc::TickResult::Timeout => {
+                TickState::Timeout => {
                     now = bun_core::timespec::now(bun_core::timespec::Mode::AllowMockedTime);
                     let did_user_timeout = has_user_timespec
                         && (absolute_timespec.eql(&user_timespec)

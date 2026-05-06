@@ -340,11 +340,7 @@ impl StaticRoute {
 
             let mut has_content_disposition = false;
 
-            if let Some(h) = response.get_init_headers() {
-                // SAFETY: `fast_has`/`fast_remove` mutate C++-side state; the
-                // `&FetchHeaders` borrow is the only handle and the underlying
-                // object is not aliased elsewhere during this call.
-                let h = unsafe { &mut *(h as *const FetchHeaders as *mut FetchHeaders) };
+            if let Some(h) = response.get_init_headers_mut() {
                 has_content_disposition = h.fast_has(HttpHeader::ContentDisposition);
                 h.fast_remove(HttpHeader::TransferEncoding);
                 h.fast_remove(HttpHeader::ContentLength);

@@ -378,7 +378,7 @@ enum SettingsFlags {
 // Non-exhaustive enum in Zig (`_` catch-all) → newtype over u32
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct ErrorCode(u32);
+pub struct ErrorCode(u32);
 impl ErrorCode {
     const NO_ERROR: Self = Self(0x0);
     const PROTOCOL_ERROR: Self = Self(0x1);
@@ -425,7 +425,7 @@ fn u32_from_bytes(src: &[u8]) -> u32 {
 
 #[repr(transparent)]
 #[derive(Clone, Copy, Default)]
-struct UInt31WithReserved(u32);
+pub struct UInt31WithReserved(u32);
 
 impl UInt31WithReserved {
     #[inline]

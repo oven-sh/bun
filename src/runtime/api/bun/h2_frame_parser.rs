@@ -1549,7 +1549,7 @@ impl Stream {
                         client.dispatch_with_extra(
                             JSH2FrameParser::Gc::onStreamEnd,
                             identifier,
-                            JSValue::js_number(self.state as u8),
+                            JSValue::js_number(self.state as u8 as f64),
                         );
                     }
                 }

@@ -1130,7 +1130,7 @@ pub fn build_with_vm(
         &mut *BakeRenderRoutesForProdStatic(
             global,
             BunString::init(&*root_dir_path),
-            pt.all_server_files.get(),
+            pt.all_server_files.as_ref().unwrap().get(),
             server_render_funcs,
             server_param_funcs,
             client_entry_urls,
@@ -1635,7 +1635,7 @@ impl<'a> PerThread<'a> {
         load_module(
             self.vm,
             global,
-            self.module_keys[id.get() as usize].to_js(global)?,
+            self.module_keys[id.get() as usize].to_js(global).map_err(js_err)?,
         )
     }
 
@@ -1686,7 +1686,7 @@ pub extern "C" fn BakeProdLoad(pt: *mut PerThread, key: BunString) -> BunString 
     log!("BakeProdLoad: {}\n", BStr::new(utf8.slice()));
     if let Some(value) = pt.module_map.get(utf8.slice()) {
         log!("  found in module_map: {}\n", BStr::new(utf8.slice()));
-        return pt.bundled_outputs[value.0 as usize].value.to_bun_string();
+        return pt.bundled_outputs[value.0 as usize].value.clone().to_bun_string();
     }
     BunString::dead()
 }
@@ -1699,7 +1699,7 @@ pub extern "C" fn BakeProdSourceMap(pt: *mut PerThread, key: BunString) -> BunSt
     let pt = unsafe { &*pt };
     let utf8 = key.to_utf8();
     if let Some(value) = pt.source_maps.get(utf8.slice()) {
-        return pt.bundled_outputs[value.0 as usize].value.to_bun_string();
+        return pt.bundled_outputs[value.0 as usize].value.clone().to_bun_string();
     }
     BunString::dead()
 }

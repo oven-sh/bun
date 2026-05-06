@@ -374,7 +374,7 @@ impl Entry {
             match &map_files[i] {
                 packed_map::Shared::Some(source_map) => {
                     let source_index = i + 1;
-                    let content: &packed_map::PackedMap = source_map;
+                    let content: &packed_map::PackedMap = &**source_map;
                     let start_state = SourceMapState {
                         source_index: i32::try_from(source_index).unwrap(),
                         generated_line: i32::try_from(lines_between).unwrap(),

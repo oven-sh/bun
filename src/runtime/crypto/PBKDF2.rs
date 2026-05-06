@@ -215,16 +215,16 @@ impl PBKDF2 {
         )? {
             Some(v) => v,
             None => {
-                return global_this.throw_invalid_argument_type_value(
+                return Err(global_this.throw_invalid_argument_type_value(
                     "salt",
                     "string or buffer",
                     arg1,
-                );
+                ));
             }
         };
 
         if guard.salt.slice().len() > i32::MAX as usize {
-            return global_this.throw_invalid_arguments("salt is too long", ());
+            return Err(global_this.throw_invalid_arguments("salt is too long"));
         }
 
         guard.password = match StringOrBuffer::from_js_maybe_async(

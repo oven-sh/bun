@@ -2174,7 +2174,7 @@ impl<'a> Repl<'a> {
                 let item = match completions.get_index(global, i) {
                     Ok(v) => v,
                     Err(_) => {
-                        global.clear_exception();
+                        global_clear_exception(global);
                         JSValue::UNDEFINED
                     }
                 };
@@ -2184,7 +2184,7 @@ impl<'a> Repl<'a> {
                             self.print(format_args!("  {}{}{}\n", Color::CYAN, BStr::new(slice.slice()), Color::RESET));
                         }
                         Err(_) => {
-                            global.clear_exception();
+                            global_clear_exception(global);
                             i += 1;
                             continue;
                         }
@@ -2221,7 +2221,7 @@ extern "C" fn sigint_handler(_: c_int) {
     // SAFETY: written/read on the JS thread; signal handler runs while main thread blocked in wait
     unsafe {
         if let Some(vm) = SIGINT_VM {
-            (*vm).set_execution_forbidden(true);
+            vm_set_execution_forbidden(vm, true);
         }
     }
 }

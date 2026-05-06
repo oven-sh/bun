@@ -958,7 +958,7 @@ unsafe fn fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, vm: *mut ()
             // `crate::api::cron::CronJob` is currently an opaque `struct CronJob(())`
             // (real type lives in `_jsc_gated`); no `event_loop_timer` field /
             // `on_timer_fire` to recover yet.
-            let _: &CronJob;
+            let _ = core::marker::PhantomData::<CronJob>;
             todo!("blocked_on: crate::api::cron::CronJob::on_timer_fire");
         }
     }

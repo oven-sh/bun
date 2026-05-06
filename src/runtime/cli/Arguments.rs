@@ -998,18 +998,23 @@ fn load_bunfig<const CMD: Command::Tag>(
             Global::exit(1);
         }
     };
-    js_ast::Stmt::data::Store::create();
-    js_ast::Expr::data::Store::create();
+    js_ast::ast::stmt::data::Store::create();
+    js_ast::ast::expr::data::Store::create();
     let _store_reset = scopeguard::guard((), |_| {
-        js_ast::Stmt::data::Store::reset();
-        js_ast::Expr::data::Store::reset();
+        js_ast::ast::stmt::data::Store::reset();
+        js_ast::ast::expr::data::Store::reset();
     });
-    let original_level = ctx.log.level;
-    let _level_reset = scopeguard::guard(original_level, |lvl| {
-        // TODO(port): borrow of ctx.log inside guard closure may need reshaping
-        ctx.log.level = lvl;
+    // PORT NOTE: reshaped for borrowck — route through the raw `*mut Log`.
+    let log_ptr: *mut logger::Log = ctx.log;
+    debug_assert!(!log_ptr.is_null());
+    // SAFETY: process-global Log written once during single-threaded CLI startup.
+    let original_level = unsafe { (*log_ptr).level };
+    let _level_reset = scopeguard::guard((), move |_| {
+        // SAFETY: same as above; runs on the same thread.
+        unsafe { (*log_ptr).level = original_level };
     });
-    ctx.log.level = logger::Level::Warn;
+    // SAFETY: see above.
+    unsafe { (*log_ptr).level = logger::Level::Warn };
     ctx.debug.loaded_bunfig = true;
     Bunfig::parse(CMD, &source, ctx)
 }
@@ -1036,24 +1041,29 @@ pub fn load_config<const CMD: Command::Tag>(
     // unless an explicit config path was provided via --config
     if user_config_path_.is_none() {
         if let Some(graph) = StandaloneModuleGraph::get() {
-            if graph.flags.disable_autoload_bunfig {
+            // SAFETY: `get()` returns a process-lifetime singleton pointer.
+            if unsafe { (*graph).flags }
+                .contains(bun_standalone_graph::StandaloneModuleGraph::Flags::DISABLE_AUTOLOAD_BUNFIG)
+            {
                 return Ok(());
             }
         }
     }
 
     let mut config_buf = PathBuffer::uninit();
-    if const { CMD.read_global_config() } {
+    if CMD.read_global_config() {
         if !ctx.has_loaded_global_config {
             ctx.has_loaded_global_config = true;
 
             if let Some(path) = get_home_config_path(&mut config_buf) {
                 if let Err(err) = load_config_path::<CMD>(true, path, ctx) {
-                    if ctx.log.has_any() {
-                        let _ = ctx.log.print(Output::error_writer());
+                    // SAFETY: process-global Log; see `load_bunfig` note.
+                    let log = unsafe { &mut *ctx.log };
+                    if log.has_any() {
+                        let _ = log.print(Output::error_writer());
                     }
-                    if ctx.log.has_any() {
-                        Output::print_error("\n", format_args!(""));
+                    if log.has_any() {
+                        Output::print_error("\n");
                     }
                     Output::err(err, "failed to load bunfig", format_args!(""));
                     Global::crash();
@@ -1067,14 +1077,14 @@ pub fn load_config<const CMD: Command::Tag>(
     let mut auto_loaded: bool = false;
     if config_path_.is_empty()
         && (user_config_path_.is_some()
-            || Command::Tag::ALWAYS_LOADS_CONFIG.get(CMD)
+            || command::ALWAYS_LOADS_CONFIG[CMD]
             || (CMD == Command::Tag::AutoCommand
                 && (
                     // "bun"
                     ctx.positionals.is_empty()
                         // "bun file.js"
                         || (!ctx.positionals.is_empty()
-                            && options::DEFAULT_LOADERS.has(bun_paths::extension(ctx.positionals[0])))
+                            && options::DEFAULT_LOADERS.contains_key(bun_paths::extension(&ctx.positionals[0])))
                 )))
     {
         config_path_ = b"bunfig.toml";
@@ -1097,13 +1107,13 @@ pub fn load_config<const CMD: Command::Tag>(
                 return Ok(());
             };
 
-            ctx.args.absolute_working_dir = Some(bun_str::ZStr::from_bytes(cwd)?);
+            ctx.args.absolute_working_dir = Some(Box::<[u8]>::from(&secondbuf[..cwd]));
         }
 
-        let awd = ctx.args.absolute_working_dir.as_ref().unwrap();
-        let parts: [&[u8]; 2] = [awd.as_bytes(), config_path_];
+        let awd: &[u8] = ctx.args.absolute_working_dir.as_deref().unwrap();
+        let parts: [&[u8]; 2] = [awd, config_path_];
         let joined = resolve_path::join_abs_string_buf::<platform::Auto>(
-            awd.as_bytes(),
+            awd,
             &mut config_buf,
             &parts,
         );
@@ -1114,11 +1124,13 @@ pub fn load_config<const CMD: Command::Tag>(
     }
 
     if let Err(err) = load_config_path::<CMD>(auto_loaded, config_path, ctx) {
-        if ctx.log.has_any() {
-            let _ = ctx.log.print(Output::error_writer());
+        // SAFETY: process-global Log; see `load_bunfig` note.
+        let log = unsafe { &mut *ctx.log };
+        if log.has_any() {
+            let _ = log.print(Output::error_writer());
         }
-        if ctx.log.has_any() {
-            Output::print_error("\n", format_args!(""));
+        if log.has_any() {
+            Output::print_error("\n");
         }
         Output::err(err, "failed to load bunfig", format_args!(""));
         Global::crash();
@@ -1136,7 +1148,7 @@ pub fn load_config_with_cmd_args<const CMD: Command::Tag>(
 // TODO(port): narrow error set
 pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api::TransformOptions, bun_core::Error> {
     let mut diag = clap::Diagnostic::default();
-    let params_to_parse = const { CMD.params() };
+    let params_to_parse = command::tag_params(CMD);
 
     let args = match clap::parse::<clap::Help>(
         params_to_parse,
@@ -1153,14 +1165,14 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
         Err(err) => {
             // Report useful error and exit
             let _ = diag.report(Output::error_writer(), err);
-            CMD.print_help(false);
+            command::tag_print_help(CMD, false);
             Global::exit(1);
         }
     };
 
     let print_help = args.flag(b"--help");
     if print_help {
-        CMD.print_help(true);
+        command::tag_print_help(CMD, true);
         Output::flush();
         Global::exit(0);
     }
@@ -1182,24 +1194,26 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
         }
     }
 
-    let cwd: Box<ZStr>;
+    let cwd: Box<[u8]>;
     if let Some(cwd_arg) = args.option(b"--cwd") {
         cwd = 'brk: {
             let mut outbuf = PathBuffer::uninit();
-            let out = resolve_path::join_abs::<platform::Loose>(bun_sys::getcwd(&mut outbuf)?, cwd_arg);
-            match bun_sys::chdir(b"", out) {
+            let n = bun_sys::getcwd(&mut *outbuf)?;
+            let out = resolve_path::join_abs::<platform::Loose>(&outbuf[..n], cwd_arg);
+            let out_z = bun_core::ZBox::from_bytes(out);
+            match bun_sys::chdir(&out_z) {
                 bun_sys::Result::Ok(()) => {}
                 bun_sys::Result::Err(err) => {
                     Output::err(err, "Could not change directory to \"{}\"\n", format_args!("{}", BStr::new(cwd_arg)));
                     Global::exit(1);
                 }
             }
-            break 'brk bun_str::ZStr::from_bytes(out)?;
+            break 'brk Box::<[u8]>::from(out_z.as_bytes());
         };
     } else {
         let mut temp = PathBuffer::uninit();
-        let temp_slice = bun_sys::getcwd(&mut temp)?;
-        cwd = bun_str::ZStr::from_bytes(temp_slice);
+        let n = bun_sys::getcwd(&mut *temp)?;
+        cwd = Box::<[u8]>::from(&temp[..n]);
     }
 
     // Not gated on .BunxCommand: bunx skips Arguments.parse entirely
@@ -1207,12 +1221,12 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
     // BUN_FEATURE_FLAG_NO_ORPHANS env var in main()→install() instead.
     if matches!(CMD, Command::Tag::RunCommand | Command::Tag::AutoCommand | Command::Tag::TestCommand) {
         if args.flag(b"--no-orphans") {
-            bun_aio::parent_death_watchdog::ParentDeathWatchdog::enable();
+            bun_aio::parent_death_watchdog::enable();
         }
     }
 
     if matches!(CMD, Command::Tag::RunCommand | Command::Tag::AutoCommand) {
-        ctx.filters = args.options(b"--filter");
+        ctx.filters = slice_to_owned(args.options(b"--filter"));
         ctx.workspaces = args.flag(b"--workspaces");
         ctx.if_present = args.flag(b"--if-present");
         ctx.parallel = args.flag(b"--parallel");
@@ -1222,7 +1236,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
         if let Some(elide_lines) = args.option(b"--elide-lines") {
             if !elide_lines.is_empty() {
                 ctx.bundler_options.elide_lines = match strings::parse_int::<usize>(elide_lines, 10) {
-                    Ok(v) => v,
+                    Ok(v) => Some(v),
                     Err(_) => {
                         Output::pretty_errorln(format_args!("<r><red>error<r>: Invalid elide-lines: \"{}\"", BStr::new(elide_lines)));
                         Global::exit(1);
@@ -1263,7 +1277,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
         }
 
         if !args.options(b"--coverage-reporter").is_empty() {
-            ctx.test_options.coverage.reporters = Default::default(); // { text: false, lcov: false }
+            ctx.test_options.coverage.reporters = CoverageReporters { text: false, lcov: false };
             ctx.test_options.coverage.reporters.text = false;
             ctx.test_options.coverage.reporters.lcov = false;
             for reporter in args.options(b"--coverage-reporter") {
@@ -1279,7 +1293,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
         }
 
         if let Some(reporter_outfile) = args.option(b"--reporter-outfile") {
-            ctx.test_options.reporter_outfile = Some(reporter_outfile);
+            ctx.test_options.reporter_outfile = Some(reporter_outfile.into());
         }
 
         if let Some(reporter) = args.option(b"--reporter") {
@@ -1308,11 +1322,11 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
         }
 
         if let Some(dir) = args.option(b"--coverage-dir") {
-            ctx.test_options.coverage.reports_directory = dir;
+            ctx.test_options.coverage.reports_directory = Box::leak(Box::<[u8]>::from(dir));
         }
 
         if !args.options(b"--path-ignore-patterns").is_empty() {
-            ctx.test_options.path_ignore_patterns = args.options(b"--path-ignore-patterns");
+            ctx.test_options.path_ignore_patterns = slice_to_owned(args.options(b"--path-ignore-patterns"));
             ctx.test_options.path_ignore_patterns_from_cli = true;
         }
 
@@ -1321,7 +1335,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                 ctx.test_options.bail = match strings::parse_int::<u32>(bail, 10) {
                     Ok(v) => v,
                     Err(e) => {
-                        Output::pretty_errorln(format_args!("<r><red>error<r>: --bail expects a number: {}", e.name()));
+                        Output::pretty_errorln(format_args!("<r><red>error<r>: --bail expects a number: {}", e));
                         Output::flush();
                         Global::exit(1);
                     }
@@ -1341,7 +1355,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                 ctx.test_options.repeat_count = match strings::parse_int::<u32>(repeat_count, 10) {
                     Ok(v) => v,
                     Err(e) => {
-                        Output::pretty_errorln(format_args!("<r><red>error<r>: --rerun-each expects a number: {}", e.name()));
+                        Output::pretty_errorln(format_args!("<r><red>error<r>: --rerun-each expects a number: {}", e));
                         Global::exit(1);
                     }
                 };
@@ -1352,7 +1366,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                 ctx.test_options.retry = match strings::parse_int::<u32>(retry_count, 10) {
                     Ok(v) => v,
                     Err(e) => {
-                        Output::pretty_errorln(format_args!("<r><red>error<r>: --retry expects a number: {}", e.name()));
+                        Output::pretty_errorln(format_args!("<r><red>error<r>: --retry expects a number: {}", e));
                         Global::exit(1);
                     }
                 };
@@ -1363,8 +1377,8 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             Global::exit(1);
         }
         if let Some(name_pattern) = args.option(b"--test-name-pattern") {
-            ctx.test_options.test_filter_pattern = Some(name_pattern);
-            let regex = match RegularExpression::init(bun_str::String::from_bytes(name_pattern), RegularExpression::Flags::NONE) {
+            ctx.test_options.test_filter_pattern = Some(name_pattern.into());
+            let regex = match RegularExpression::init(bun_str::String::from_bytes(name_pattern), RegexFlags::None) {
                 Ok(r) => r,
                 Err(_) => {
                     Output::pretty_errorln(format_args!(
@@ -1375,10 +1389,10 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                 }
             };
             // TODO(port): @ptrCast — verify regex pointer type
-            ctx.test_options.test_filter_regex = Some(regex);
+            ctx.test_options.test_filter_regex = core::ptr::NonNull::new(regex.cast::<()>());
         }
         if let Some(since) = args.option(b"--changed") {
-            ctx.test_options.changed = Some(since);
+            ctx.test_options.changed = Some(since.into());
         }
         if let Some(shard) = args.option(b"--shard") {
             let Some(sep) = strings::index_of_char(shard, b'/') else {
@@ -1431,7 +1445,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                     }
                 }
             } else {
-                bun_core::get_thread_count().max(1)
+                u32::from(bun_core::get_thread_count().max(1))
             };
             if parsed == 0 {
                 Output::pretty_errorln(format_args!("<red>error<r>: --parallel expects a positive integer, received \"0\""));
@@ -1444,7 +1458,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
 
         if let Some(delay_str) = args.option(b"--parallel-delay") {
             ctx.test_options.parallel_delay_ms = match strings::parse_int::<u32>(delay_str, 10) {
-                Ok(v) => v,
+                Ok(v) => Some(v),
                 Err(_) => {
                     Output::pretty_errorln(format_args!("<red>error<r>: --parallel-delay expects a non-negative integer (milliseconds), received \"{}\"", BStr::new(delay_str)));
                     Global::exit(1);
@@ -1455,7 +1469,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
         if let Some(seed_str) = args.option(b"--seed") {
             ctx.test_options.randomize = true;
             ctx.test_options.seed = match strings::parse_int::<u32>(seed_str, 10) {
-                Ok(v) => v,
+                Ok(v) => Some(v),
                 Err(_) => {
                     Output::pretty_errorln(format_args!("<red>error<r>: Invalid seed value: {}", BStr::new(seed_str)));
                     Global::exit(1);
@@ -1465,9 +1479,9 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
     }
 
     ctx.args.absolute_working_dir = Some(cwd);
-    ctx.positionals = args.positionals();
+    ctx.positionals = slice_to_owned(args.positionals());
 
-    if const { Command::Tag::LOADS_CONFIG.get(CMD) } {
+    if command::LOADS_CONFIG[CMD] {
         load_config_with_cmd_args::<CMD>(&args, ctx)?;
     }
 
@@ -1477,20 +1491,20 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
 
     if !defines_tuple.keys.is_empty() {
         opts.define = Some(api::StringMap {
-            keys: defines_tuple.keys,
-            values: defines_tuple.values,
+            keys: defines_tuple.keys.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
+            values: defines_tuple.values.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
         });
     }
 
-    opts.drop = args.options(b"--drop");
-    opts.feature_flags = args.options(b"--feature");
+    opts.drop = slice_to_owned(args.options(b"--drop"));
+    opts.feature_flags = slice_to_owned(args.options(b"--feature"));
 
     // Node added a `--loader` flag (that's kinda like `--register`). It's
     // completely different from ours.
     let loader_tuple = if CMD != Command::Tag::RunAsNodeCommand {
         LoaderColonList::resolve(args.options(b"--loader"))?
     } else {
-        LoaderColonList::Result { keys: Vec::new(), values: Vec::new() }
+        ColonListType { keys: Vec::new(), values: Vec::new() }
     };
 
     if !loader_tuple.keys.is_empty() {
@@ -1501,33 +1515,33 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
     }
 
     opts.tsconfig_override = if let Some(ts) = args.option(b"--tsconfig-override") {
-        Some(resolve_path::join_abs_string::<platform::Auto>(ctx.args.absolute_working_dir.as_ref().unwrap().as_bytes(), &[ts]))
+        Some(resolve_path::join_abs_string::<platform::Auto>(ctx.args.absolute_working_dir.as_deref().unwrap(), &[ts]).into())
     } else {
         None
     };
 
-    opts.main_fields = args.options(b"--main-fields");
+    opts.main_fields = slice_to_owned(args.options(b"--main-fields"));
     // we never actually supported inject.
     // opts.inject = args.options(b"--inject");
-    opts.env_files = args.options(b"--env-file");
-    opts.extension_order = args.options(b"--extension-order");
+    opts.env_files = slice_to_owned(args.options(b"--env-file"));
+    opts.extension_order = slice_to_owned(args.options(b"--extension-order"));
 
     if args.flag(b"--no-env-file") {
         opts.disable_default_env_files = true;
     }
 
     if args.flag(b"--preserve-symlinks") {
-        opts.preserve_symlinks = true;
+        opts.preserve_symlinks = Some(true);
     }
     if args.flag(b"--preserve-symlinks-main") {
         ctx.runtime_options.preserve_symlinks_main = true;
     }
 
-    ctx.passthrough = args.remaining();
+    ctx.passthrough = slice_to_owned(args.remaining());
 
     if matches!(CMD, Command::Tag::AutoCommand | Command::Tag::RunCommand | Command::Tag::BuildCommand | Command::Tag::TestCommand) {
         if !args.options(b"--conditions").is_empty() {
-            opts.conditions = args.options(b"--conditions");
+            opts.conditions = slice_to_owned(args.options(b"--conditions"));
         }
     }
 
@@ -1541,13 +1555,13 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
 
             let total_preloads = ctx.preloads.len() + preloads.len() + preloads2.len() + preloads3.len() + (if preload4.is_some() { 1usize } else { 0usize });
             if total_preloads > 0 {
-                let mut all: Vec<&[u8]> = Vec::with_capacity(total_preloads);
-                if !ctx.preloads.is_empty() { all.extend_from_slice(&ctx.preloads); }
+                let mut all: Vec<Box<[u8]>> = Vec::with_capacity(total_preloads);
+                if !ctx.preloads.is_empty() { all.append(&mut ctx.preloads); }
                 // PERF(port): was appendSliceAssumeCapacity
-                if !preloads.is_empty() { all.extend_from_slice(preloads); }
-                if !preloads2.is_empty() { all.extend_from_slice(preloads2); }
-                if !preloads3.is_empty() { all.extend_from_slice(preloads3); }
-                if let Some(p) = preload4 { all.push(p); }
+                for p in preloads { all.push(Box::<[u8]>::from(*p)); }
+                for p in preloads2 { all.push(Box::<[u8]>::from(*p)); }
+                for p in preloads3 { all.push(Box::<[u8]>::from(*p)); }
+                if let Some(p) = preload4 { all.push(Box::<[u8]>::from(p)); }
                 ctx.preloads = all;
             }
         }
@@ -1555,7 +1569,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
         if args.flag(b"--hot") {
             ctx.debug.hot_reload = HotReload::Hot;
             if args.flag(b"--no-clear-screen") {
-                bun_dotenv::Loader::set_has_no_clear_screen_cli_flag(true);
+                let _ = bun_dotenv::HAS_NO_CLEAR_SCREEN_CLI_FLAG.set(true);
             }
         } else if args.flag(b"--watch") {
             ctx.debug.hot_reload = HotReload::Watch;
@@ -1568,12 +1582,12 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
             }
 
             if args.flag(b"--no-clear-screen") {
-                bun_dotenv::Loader::set_has_no_clear_screen_cli_flag(true);
+                let _ = bun_dotenv::HAS_NO_CLEAR_SCREEN_CLI_FLAG.set(true);
             }
         }
 
         if let Some(origin) = args.option(b"--origin") {
-            opts.origin = Some(origin);
+            opts.origin = Some(origin.into());
         }
 
         if args.flag(b"--redis-preconnect") {
@@ -1587,7 +1601,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
         if args.flag(b"--no-addons") {
             // used for disabling process.dlopen and
             // for disabling export condition "node-addons"
-            opts.allow_addons = false;
+            opts.allow_addons = Some(false);
         }
 
         if let Some(unhandled_rejections) = args.option(b"--unhandled-rejections") {
@@ -1603,18 +1617,19 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
         if let Some(port_str) = args.option(b"--port") {
             if CMD == Command::Tag::RunAsNodeCommand {
                 // TODO: prevent `node --port <script>` from working
-                ctx.runtime_options.eval.script = port_str;
+                ctx.runtime_options.eval.script = port_str.into();
                 ctx.runtime_options.eval.eval_and_print = true;
             } else {
                 opts.port = match strings::parse_int::<u16>(port_str, 10) {
                     Ok(v) => Some(v),
                     Err(_) => {
                         Output::err_fmt(bun_core::fmt::out_of_range(port_str, bun_core::fmt::OutOfRangeOptions {
-                            field_name: "--port",
+                            field_name: b"--port",
                             min: 0,
                             max: u16::MAX as i64,
+                            msg: b"",
                         }));
-                        Output::note("To evaluate TypeScript here, use 'bun --print'", format_args!(""));
+                        Output::note("To evaluate TypeScript here, use 'bun --print'");
                         Global::exit(1);
                     }
                 };

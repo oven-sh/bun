@@ -1411,7 +1411,7 @@ impl CommandLineReporter {
             0
         };
 
-        let console = err_w();
+        let mut console = CoreIoWriteAdapter(err_w());
         let base_fraction = opts.fractions;
         let mut failing = false;
 
@@ -1446,7 +1446,7 @@ impl CommandLineReporter {
         // TODO(port): the Zig code uses tuple destructuring with comptime branching to make
         // lcov_file/lcov_name/lcov_buffered_writer be `void` when !REPORTERS_LCOV. We use
         // Option here.
-        let mut lcov_state: Option<(File, &bun_str::ZStr, /*buffered*/ bun_io::BufferedWriter)> = if REPORTERS_LCOV {
+        let mut lcov_state: Option<(File, &bun_str::ZStr, /*buffered*/ Vec<u8>)> = if REPORTERS_LCOV {
             'brk: {
                 // Ensure the directory exists
                 let mut fs = crate::node::fs::NodeFS::default();
@@ -1465,7 +1465,7 @@ impl CommandLineReporter {
                 bun::csprng(&mut base64_bytes);
                 // TODO(port): std.fmt.bufPrintZ with hex bytes
                 let tmpname = {
-                    // PORT NOTE: std::io::Write removed; bun_io::Write (top-level) provides write_fmt.
+                    use std::io::Write as _;
                     let mut cursor = &mut shortname_buf[..];
                     let _ = write!(cursor, ".lcov.info.{:x?}.tmp\0", &base64_bytes);
                     let len = shortname_buf.iter().position(|&b| b == 0).unwrap();
@@ -1487,13 +1487,11 @@ impl CommandLineReporter {
                         Global::exit(1);
                     }
                     bun_sys::Result::Ok(f) => {
-                        let buffered = 'buffered_writer: {
-                            let writer = f.writer();
-                            // Heap-allocate the buffered writer because we want a stable memory address + 64 KB is kind of a lot.
-                            let buffer = vec![0u8; 64 * 1024].into_boxed_slice();
-                            break 'buffered_writer writer.adapt_to_new_api(buffer);
-                        };
-
+                        // TODO(port): Zig used `f.writer().adaptToNewApi(buf)` (64 KB
+                        // buffered file writer). `bun_sys::File` has no `writer()` yet;
+                        // accumulate in a `Vec<u8>` (impl `bun_io::Write`) and flush to
+                        // the fd via `write_all` on success below.
+                        let buffered: Vec<u8> = Vec::with_capacity(64 * 1024);
                         break 'brk Some((f, path, buffered));
                     }
                 }
@@ -1502,7 +1500,7 @@ impl CommandLineReporter {
             None
         };
         // TODO(port): errdefer lcov cleanup — using scopeguard with disarm on success
-        let lcov_guard = scopeguard::guard(&mut lcov_state, |s| {
+        let lcov_guard = scopeguard::guard(&mut lcov_state, |s: &mut Option<(File, &bun_str::ZStr, Vec<u8>)>| {
             if REPORTERS_LCOV {
                 if let Some((file, name, _)) = s.take() {
                     file.close();
@@ -1551,8 +1549,7 @@ impl CommandLineReporter {
 
             if REPORTERS_LCOV {
                 if let Some((_, _, ref mut buffered)) = lcov_guard.as_mut() {
-                    let lcov_writer = &mut buffered.new_interface;
-                    if coverage::Lcov::write_format(&report, relative_dir, lcov_writer).is_err() {
+                    if coverage::Lcov::write_format(&report, relative_dir, buffered).is_err() {
                         continue;
                     }
                 }
@@ -1604,10 +1601,11 @@ impl CommandLineReporter {
         }
 
         if REPORTERS_LCOV {
-            let mut state = scopeguard::ScopeGuard::into_inner(lcov_guard);
+            let state = scopeguard::ScopeGuard::into_inner(lcov_guard);
             if let Some((lcov_file, lcov_name, ref mut buffered)) = state.as_mut() {
-                let lcov_writer = &mut buffered.new_interface;
-                lcov_writer.flush()?;
+                if let bun_sys::Result::Err(e) = lcov_file.write_all(buffered) {
+                    return Err(bun_core::Error::from(e));
+                }
                 lcov_file.close();
                 let cwd = Fd::cwd();
                 if let Err(err) = bun_sys::move_file_z(

@@ -421,9 +421,9 @@ fn source_from_js(global: &JSGlobalObject, value: JSValue, this_value: JSValue) 
         // *borrows* the slice (see `pin_for_task`), so this rejection is
         // load-bearing — `buf.slice()` is the obvious workaround.
         if ab.resizable || ab.shared {
-            return global.throw_invalid_arguments(
+            return Err(global.throw_invalid_arguments(
                 "Image(): resizable / shared ArrayBuffer is not supported; pass a fixed-length view (e.g. buf.slice())",
-            );
+            ));
         }
         // Just remember the JS object — see Source::JsBuffer for why we don't
         // cache the pointer or pin here.
@@ -431,6 +431,8 @@ fn source_from_js(global: &JSGlobalObject, value: JSValue, this_value: JSValue) 
         return Ok(Source::JsBuffer);
     }
     if let Some(blob) = value.as_::<Blob>() {
+        // SAFETY: `as_` returned a non-null `*mut Blob` rooted by `value`.
+        let blob = unsafe { &*blob };
         // In-memory blob: dupe its bytes (the store may be sliced/replaced
         // independently).
         let view = blob.shared_view();
@@ -446,9 +448,9 @@ fn source_from_js(global: &JSGlobalObject, value: JSValue, this_value: JSValue) 
             return Ok(Source::Blob(Strong::create(value, global)));
         }
     }
-    global.throw_invalid_arguments(
+    Err(global.throw_invalid_arguments(
         "Image() input must be a path string, data: URL, ArrayBuffer, TypedArray or Blob",
-    )
+    ))
 }
 
 // ───────────────────────────── chainable ops ────────────────────────────────

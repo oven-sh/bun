@@ -843,7 +843,8 @@ impl Scrypt {
             }
         });
 
-        let keylen = validators::validate_int32(global, keylen_value, "keylen", (), Some(0), None)?;
+        let keylen =
+            validators::validate_int32(global, keylen_value, format_args!("keylen"), Some(0), None)?;
 
         let mut n: Option<u32> = None;
         let mut r: Option<u32> = None;
@@ -852,19 +853,24 @@ impl Scrypt {
 
         if let Some(options_value) = maybe_options_value {
             if let Some(options) = options_value.get_object() {
+                // SAFETY: `get_object` returned non-null; the JSObject is rooted by
+                // `options_value` (kept alive on the stack for this scope).
+                let options = unsafe { &*options };
                 if let Some(n_value) = options.get(global, "N")? {
-                    n = Some(validators::validate_uint32(global, n_value, "N", (), false)?);
+                    n = Some(validators::validate_uint32(global, n_value, format_args!("N"), false)?);
                 }
 
                 if let Some(cost_value) = options.get(global, "cost")? {
                     if n.is_some() {
                         return global.throw_incompatible_option_pair("N", "cost");
                     }
-                    n = Some(validators::validate_uint32(global, cost_value, "cost", (), false)?);
+                    n = Some(validators::validate_uint32(
+                        global, cost_value, format_args!("cost"), false,
+                    )?);
                 }
 
                 if let Some(r_value) = options.get(global, "r")? {
-                    r = Some(validators::validate_uint32(global, r_value, "r", (), false)?);
+                    r = Some(validators::validate_uint32(global, r_value, format_args!("r"), false)?);
                 }
 
                 if let Some(blocksize_value) = options.get(global, "blockSize")? {
@@ -874,14 +880,13 @@ impl Scrypt {
                     r = Some(validators::validate_uint32(
                         global,
                         blocksize_value,
-                        "blockSize",
-                        (),
+                        format_args!("blockSize"),
                         false,
                     )?);
                 }
 
                 if let Some(p_value) = options.get(global, "p")? {
-                    p = Some(validators::validate_uint32(global, p_value, "p", (), false)?);
+                    p = Some(validators::validate_uint32(global, p_value, format_args!("p"), false)?);
                 }
 
                 if let Some(parallelization_value) = options.get(global, "parallelization")? {
@@ -891,8 +896,7 @@ impl Scrypt {
                     p = Some(validators::validate_uint32(
                         global,
                         parallelization_value,
-                        "parallelization",
-                        (),
+                        format_args!("parallelization"),
                         false,
                     )?);
                 }
@@ -901,7 +905,7 @@ impl Scrypt {
                     maxmem = Some(validators::validate_integer(
                         global,
                         maxmem_value,
-                        "maxmem",
+                        b"maxmem",
                         Some(0),
                         None,
                     )?);

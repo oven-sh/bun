@@ -29,8 +29,11 @@ pub struct FallbackModule {
 // this is expressed as a macro that expands to a local `fn get()` and yields its pointer.
 macro_rules! create_source_code_getter {
     ($code_path:literal) => {{
+        // TODO(port): `bun.Environment.codegen_embed` — wire the Cargo feature in Phase B.
+        // The feature is not yet declared in Cargo.toml, so the cfg is gated behind
+        // `allow(unexpected_cfgs)` to keep the per-macro-expansion warnings (23×2) quiet.
+        #[allow(unexpected_cfgs)]
         fn get() -> &'static str {
-            // TODO(port): `bun.Environment.codegen_embed` — verify the Rust cfg name in Phase B.
             #[cfg(feature = "codegen_embed")]
             {
                 include_str!($code_path)

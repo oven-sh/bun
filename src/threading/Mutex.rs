@@ -225,6 +225,10 @@ pub struct FutexImpl {
 }
 
 impl FutexImpl {
+    pub const fn new() -> Self {
+        Self { state: AtomicU32::new(0) }
+    }
+
     const UNLOCKED: u32 = 0b00;
     const LOCKED: u32 = 0b01;
     /// must contain the `LOCKED` bit for x86 optimization below

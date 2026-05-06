@@ -522,14 +522,15 @@ impl TestAnalyzer {
         parser: &mut js_parser::TSXParser,
         parts: &[js_ast::Part],
     ) -> Result<(), bun_core::Error> {
-        let jest = &mut parser.jest;
-        if parser.symbols.as_slice()[jest.it.inner_index() as usize].use_count_estimate == 0 {
-            if parser.symbols.as_slice()[jest.it.inner_index() as usize].use_count_estimate > 0 {
-                jest.test = jest.it;
+        let it = parser.jest.it;
+        let test = parser.jest.test;
+        if parser.symbols.as_slice()[it.inner_index() as usize].use_count_estimate == 0 {
+            if parser.symbols.as_slice()[it.inner_index() as usize].use_count_estimate > 0 {
+                parser.jest.test = it;
             }
-        } else if parser.symbols.as_slice()[jest.test.inner_index() as usize].use_count_estimate == 0 {
-            if parser.symbols.as_slice()[jest.it.inner_index() as usize].use_count_estimate > 0 {
-                jest.test = jest.it;
+        } else if parser.symbols.as_slice()[test.inner_index() as usize].use_count_estimate == 0 {
+            if parser.symbols.as_slice()[it.inner_index() as usize].use_count_estimate > 0 {
+                parser.jest.test = it;
             }
         }
 

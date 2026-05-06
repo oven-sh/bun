@@ -915,11 +915,11 @@ pub fn get_loader_and_virtual_source<'a>(
     if let Some(eval_source) = unsafe { (vt.eval_source)(jsc_vm.vm) } {
         // SAFETY: eval_source outlives jsc_vm
         let eval_source: &'a logger::Source = unsafe { &*eval_source };
-        if strings::ends_with(specifier, bun_paths::path_literal!("/[eval]")) {
+        if strings::ends_with(specifier, bun_core::path_literal!(b"/[eval]")) {
             virtual_source = Some(eval_source);
             loader = Some(Loader::Tsx);
         }
-        if strings::ends_with(specifier, bun_paths::path_literal!("/[stdin]")) {
+        if strings::ends_with(specifier, bun_core::path_literal!(b"/[stdin]")) {
             virtual_source = Some(eval_source);
             loader = Some(Loader::Tsx);
         }

@@ -147,6 +147,11 @@ pub struct Zone {
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
+// SAFETY: `malloc_zone_t` is internally synchronized by libmalloc; sharing
+// `&Zone` across threads is the documented usage (matches Zig `*Zone` via `std.once`).
+unsafe impl Sync for Zone {}
+unsafe impl Send for Zone {}
+
 impl Zone {
     /// Recover the raw `*mut Zone` from a shared reference.
     ///

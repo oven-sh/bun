@@ -6,6 +6,7 @@
 // All it does is resolve URL paths to the appropriate entry point and parse URL params/query.
 
 use core::cmp::Ordering;
+use core::ptr::NonNull;
 use std::cell::RefCell;
 
 use bun_collections::{ArrayHashMap, MultiArrayList, StringHashMap};
@@ -61,28 +62,14 @@ mod b1_stubs {
     pub use bun_sys::fs as Fs;
     pub use bun_sys::fs::FileSystem;
 
-    // TODO(b2-blocked): bun_options_types::schema::{RouteConfig, LoadedRouteConfig, StringPointer}
-    // — schema.rs port hasn't reached these types yet. Shapes below mirror
-    // src/options_types/schema.zig:1528 / :1559 exactly.
+    // peechy batch 2 landed: re-export the real schema types so
+    // `RouteConfig::{to_api, from_loaded_routes, from_api}` and
+    // `TinyPtr::to_string_pointer` name lower-tier surface instead of local
+    // shims. `StringPointer` lives in `bun_core::schema::api` (T0); the route
+    // config pair lives in `bun_options_types::schema::api`.
     pub mod api {
-        #[derive(Default, Clone)]
-        pub struct LoadedRouteConfig {
-            pub asset_prefix: Box<[u8]>,
-            pub dir: Box<[u8]>,
-            pub extensions: Box<[Box<[u8]>]>,
-            pub static_dir: Box<[u8]>,
-        }
-        #[derive(Default, Clone)]
-        pub struct RouteConfig {
-            pub dir: Box<[Box<[u8]>]>,
-            pub extensions: Box<[Box<[u8]>]>,
-            pub static_dir: Option<Box<[u8]>>,
-            pub asset_prefix: Option<Box<[u8]>>,
-        }
-        pub struct StringPointer {
-            pub offset: u32,
-            pub length: u32,
-        }
+        pub use bun_options_types::schema::api::{LoadedRouteConfig, RouteConfig};
+        pub use bun_core::schema::api::StringPointer;
     }
 
     // bun_core::Error landed in T0; alias kept for churn-free callers.
@@ -265,7 +252,8 @@ impl RouteConfig {
     }
 
     pub fn from_api(router_: &api::RouteConfig) -> Result<RouteConfig, CoreError> {
-        // TODO(b2-blocked): bun_string::strings::trim_left / trim_right — local shim.
+        // TODO(b1): bun_string::strings::{trim_left, trim_right} — local shim
+        // until bun_string grows the byte-set trim helpers.
         use b1_stubs::strings_ext::{trim_left, trim_right};
 
         let mut router = Self::zero();
@@ -380,7 +368,7 @@ pub use route_param::Param;
 
 pub struct Router<'a> {
     pub dir: Fd,
-    pub routes: Routes<'a>,
+    pub routes: Routes,
     pub loaded_routes: bool,
     // allocator: dropped — global mimalloc
     pub fs: &'a FileSystem,
@@ -559,7 +547,7 @@ impl RouteIndexList {
     #[inline] pub fn items_hash(&self) -> &[u32] { &self.hash }
 }
 
-pub struct Routes<'a> {
+pub struct Routes {
     pub list: RouteIndexList,
     /// Index into `list`'s columns where dynamic routes begin (sorted after
     /// static). Stored as an offset+len instead of materialized slices to avoid
@@ -575,8 +563,12 @@ pub struct Routes<'a> {
     /// this is a fast path?
     pub static_: StringHashMap<*const Route>,
 
-    /// Corresponds to "index.js" on the filesystem
-    pub index: Option<&'a Route>,
+    /// Corresponds to "index.js" on the filesystem.
+    /// Spec (router.zig:386-396) stores `index: ?*Route` — a raw pointer
+    /// co-owned with `list` (points into a `Box<Route>` owned by
+    /// `list.route`). Stored as `NonNull` (not `&'a Route`) so `Routes` claims
+    /// no borrow it doesn't actually take; matches `static_` above.
+    pub index: Option<NonNull<Route>>,
     pub index_id: Option<usize>,
 
     // allocator: dropped — global mimalloc
@@ -587,7 +579,7 @@ pub struct Routes<'a> {
     pub client_framework_enabled: bool,
 }
 
-impl<'a> Default for Routes<'a> {
+impl Default for Routes {
     fn default() -> Self {
         Self {
             list: RouteIndexList::default(),
@@ -602,7 +594,7 @@ impl<'a> Default for Routes<'a> {
     }
 }
 
-impl<'a> Routes<'a> {
+impl Routes {
     pub fn match_page_with_allocator<'p>(
         &mut self,
         _: &[u8],
@@ -646,7 +638,9 @@ impl<'a> Routes<'a> {
         let _ = redirect;
 
         if path.is_empty() {
-            if let Some(index) = self.index {
+            if let Some(index_ptr) = self.index {
+                // SAFETY: points into a Box<Route> owned by self.list; valid for &self.
+                let index = unsafe { index_ptr.as_ref() };
                 return Some(Match {
                     params,
                     name: index.name,
@@ -729,7 +723,7 @@ impl<'a> Routes<'a> {
         let pathname = b1_stubs::strings_ext::trim_left(pathname_, b"/");
 
         if pathname.is_empty() {
-            return self.index.map(|r| r as *const Route);
+            return self.index.map(|p| p.as_ptr() as *const Route);
         }
 
         self.static_
@@ -747,9 +741,9 @@ struct RouteLoader<'a> {
 
     dedupe_dynamic: ArrayHashMap<u32, &'static [u8]>,
     log: &'a mut logger::Log,
-    // PORT NOTE: raw ptr (not &'a Route) because it points into self.all_routes
-    // (self-referential); decouples log's lifetime from the returned Routes<'_>.
-    index: Option<*const Route>,
+    // PORT NOTE: raw NonNull (not &'a Route) because it points into self.all_routes
+    // (self-referential); `Routes` co-owns it with `list`.
+    index: Option<NonNull<Route>>,
     static_list: StringHashMap<*const Route>,
     all_routes: Vec<Box<Route>>,
 }
@@ -762,7 +756,7 @@ impl<'a> RouteLoader<'a> {
         if route.full_hash == index_route_hash() {
             let new_route = Box::new(route);
             // SAFETY: Box contents have stable address; never removed from all_routes until consumed by load_all
-            self.index = Some(&*new_route as *const Route);
+            self.index = Some(NonNull::from(&*new_route));
             self.all_routes.push(new_route);
             return;
         }
@@ -856,13 +850,13 @@ impl<'a> RouteLoader<'a> {
         }
     }
 
-    pub fn load_all<'r, R: ResolverLike>(
+    pub fn load_all<R: ResolverLike>(
         config: RouteConfig,
         log: &'a mut logger::Log,
         resolver: &mut R,
         root_dir_info: DirInfoRef,
         base_dir: &[u8],
-    ) -> Routes<'r> {
+    ) -> Routes {
         let mut route_dirname_len: u16 = 0;
 
         // Zig: `FileSystem.instance().relative(base_dir, config.dir)` — thin wrapper
@@ -945,9 +939,9 @@ impl<'a> RouteLoader<'a> {
             dynamic_start,
             dynamic_len,
             static_: this.static_list,
-            // SAFETY: points into a Box<Route> now owned by `route_list`;
-            // Routes<'r> is the owner so the borrow is valid for its lifetime.
-            index: this.index.map(|p| unsafe { &*p }),
+            // Points into a Box<Route> now owned by `route_list`; co-owned raw
+            // pointer (router.zig:386-396 stores `?*Route`).
+            index: this.index,
             config,
             index_id,
             client_framework_enabled: false,
@@ -2160,7 +2154,7 @@ mod tests {
         pub fn make_routes(
             test_name: &'static str,
             data: &[(&str, &str)],
-        ) -> Result<Routes<'static>, bun_core::Error> {
+        ) -> Result<Routes, bun_core::Error> {
             // TODO(port): heavy comptime + Resolver/Options wiring; stubbed for Phase A.
             let _ = (test_name, data);
             unimplemented!("Test::make_routes pending bun_resolver/bun_bundler port");

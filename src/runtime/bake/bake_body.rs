@@ -10,6 +10,10 @@ use bun_collections::ArrayHashMap;
 use bun_core::Output;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, ZigString, ZigStringSlice};
 use bun_logger as logger;
+// peechy batch 2 landed: `bun_options_types::schema::api` now provides
+// {StringMap, LoaderMap, DotEnvBehavior, SourceMapMode, TransformOptions}.
+// Alias as `bun_schema` so existing field paths resolve unchanged.
+use bun_options_types::schema as bun_schema;
 use bun_paths::{self as paths, PathBuffer};
 use bun_str::{strings, ZStr};
 
@@ -172,13 +176,16 @@ pub struct StringRefList {
 impl StringRefList {
     pub const EMPTY: StringRefList = StringRefList { strings: Vec::new() };
 
-    pub fn track(&mut self, str: ZigStringSlice) -> &'static [u8] {
-        // TODO(port): lifetime — returned slice lives as long as `self`
-        let slice = str.slice();
+    // PORT NOTE: returned slice borrows JSC-owned storage kept alive by the
+    // `ZigStringSlice` now stored in `self.strings`; it is valid only for as
+    // long as `self` is. Callers that store the result in `Framework` /
+    // `FileSystemRouterType` / `ServerComponents` fields must thread a `'bump`
+    // lifetime (or switch those fields to `Box<[u8]>` / `ArenaStr`) — see the
+    // file-level TODO(port) above. Do NOT paper over this with a `'static`
+    // transmute (forbidden per PORTING.md §Forbidden — lifetime extension).
+    pub fn track(&mut self, str: ZigStringSlice) -> &[u8] {
         self.strings.push(str);
-        // SAFETY: slice points into ZigStringSlice storage now owned by self.strings;
-        // valid until StringRefList is dropped. Phase B should return `&'a [u8]`.
-        unsafe { core::mem::transmute::<&[u8], &'static [u8]>(slice) }
+        self.strings.last().unwrap().slice()
     }
 }
 
@@ -282,7 +289,7 @@ impl BuildConfigSubset {
         ignore_dce_annotations: None,
         conditions: ArrayHashMap::new(),
         drop: ArrayHashMap::new(),
-        env: bun_schema::api::DotEnvBehavior::None,
+        env: bun_schema::api::DotEnvBehavior::_none,
         env_prefix: None,
         define: bun_schema::api::StringMap::EMPTY,
         source_map: bun_schema::api::SourceMapMode::External,
@@ -354,7 +361,11 @@ impl Default for BuildConfigSubset {
 #[derive(Clone)]
 pub struct Framework {
     pub is_built_in_react: bool,
-    pub file_system_router_types: &'static [FileSystemRouterType], // TODO(port): arena-owned
+    /// Spec (bake.zig:248) is `[]FileSystemRouterType` — a *mutable*
+    /// arena-owned slice that `resolve()` rewrites in place. Stored as an
+    /// owned `Vec` so `#[derive(Clone)]` deep-copies (a shared `&[T]` would
+    /// alias and make `resolve()`'s mutation UB).
+    pub file_system_router_types: Vec<FileSystemRouterType>,
     // static_routers: &'static [&'static [u8]],
     pub server_components: Option<ServerComponents>,
     pub react_fast_refresh: Option<ReactFastRefresh>,
@@ -401,7 +412,7 @@ impl Framework {
                 ..ServerComponents::default()
             }),
             react_fast_refresh: Some(ReactFastRefresh::default()),
-            file_system_router_types: arena.alloc_slice_copy(&[FileSystemRouterType {
+            file_system_router_types: vec![FileSystemRouterType {
                 root: b"pages",
                 prefix: b"/",
                 entry_client: Some(b"bun-framework-react/client.tsx"),
@@ -411,7 +422,7 @@ impl Framework {
                 extensions: &[b".tsx", b".jsx"],
                 style: framework_router::Style::NextjsPages,
                 allow_layouts: true,
-            }]),
+            }],
             // .static_routers = arena.alloc_slice_copy(&[b"public"]),
             built_in_modules: ArrayHashMap::from_entries(
                 arena,
@@ -436,13 +447,12 @@ impl Framework {
     pub fn auto(
         arena: &Arena,
         resolver: &mut bun_resolver::Resolver,
-        file_system_router_types: &'static [FileSystemRouterType],
+        file_system_router_types: Vec<FileSystemRouterType>,
     ) -> Result<Framework, bun_core::Error> {
         let mut fw: Framework = Framework::NONE;
 
         if !file_system_router_types.is_empty() {
             fw = Self::react(arena)?;
-            // PERF(port): was arena bulk-free — arena.free is no-op on bumpalo
             fw.file_system_router_types = file_system_router_types;
         }
 
@@ -473,7 +483,7 @@ impl Framework {
     /// Unopiniated default.
     pub const NONE: Framework = Framework {
         is_built_in_react: false,
-        file_system_router_types: &[],
+        file_system_router_types: Vec::new(),
         server_components: None,
         react_fast_refresh: None,
         built_in_modules: ArrayHashMap::new(),
@@ -532,8 +542,7 @@ impl Framework {
             // self.resolve_helper(client, &mut sc.client_runtime_import, &mut had_errors);
         }
 
-        // TODO(port): mutating through &'static [T] — Phase B needs &'bump mut [T]
-        for fsr in clone.file_system_router_types_mut() {
+        for fsr in clone.file_system_router_types.iter_mut() {
             fsr.root = arena.alloc_slice_copy(paths::join_abs(
                 server.fs.top_level_dir,
                 paths::Style::Auto,
@@ -589,17 +598,6 @@ impl Framework {
             }
         };
         *path = result.path().unwrap().text;
-    }
-
-    // TODO(port): helper to get &mut [FileSystemRouterType] from arena-backed slice
-    fn file_system_router_types_mut(&mut self) -> &mut [FileSystemRouterType] {
-        // SAFETY: Phase B must make this field properly mutable / arena-backed
-        unsafe {
-            core::slice::from_raw_parts_mut(
-                self.file_system_router_types.as_ptr() as *mut FileSystemRouterType,
-                self.file_system_router_types.len(),
-            )
-        }
     }
 
     fn from_js(
@@ -776,7 +774,7 @@ impl Framework {
 
             files
         };
-        let file_system_router_types: &'static [FileSystemRouterType] = 'brk: {
+        let file_system_router_types: Vec<FileSystemRouterType> = 'brk: {
             let array: JSValue = match opts.get_array(global, "fileSystemRouterTypes")? {
                 Some(a) => a,
                 None => {
@@ -791,9 +789,8 @@ impl Framework {
                     "Framework can only define up to 256 file-system router types"
                 )));
             }
-            // PORT NOTE: reshaped alloc+index → bumpalo Vec::push
-            let mut file_system_router_types =
-                bumpalo::collections::Vec::with_capacity_in(len, arena);
+            // PORT NOTE: reshaped alloc+index → Vec::push (owned; deep-cloned with Framework)
+            let mut file_system_router_types = Vec::with_capacity(len);
 
             let mut it = array.array_iterator(global)?;
             let mut i: usize = 0;
@@ -933,10 +930,10 @@ impl Framework {
                 i += 1;
             }
 
-            break 'brk file_system_router_types.into_bump_slice();
+            break 'brk file_system_router_types;
         };
-        // TODO(port): errdefer for (file_system_router_types) |*fsr| fsr.style.deinit();
-        // — handled by Style's Drop if it impls Drop; bump slices don't drop contents.
+        // errdefer for (file_system_router_types) |*fsr| fsr.style.deinit();
+        // — Vec<FileSystemRouterType> drops contents on early return.
 
         let framework = Framework {
             is_built_in_react: false,
@@ -1078,7 +1075,7 @@ impl Framework {
         }
 
         out.options.source_map = source_map;
-        if bundler_options.env != bun_schema::api::DotEnvBehavior::None {
+        if bundler_options.env != bun_schema::api::DotEnvBehavior::_none {
             out.options.env.behavior = bundler_options.env;
             out.options.env.prefix = bundler_options.env_prefix.unwrap_or(b"");
         }

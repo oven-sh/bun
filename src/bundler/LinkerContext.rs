@@ -329,19 +329,34 @@ impl<'a> LinkerContext<'a> {
         true
     }
 
-    pub fn load(
+    /// `bundle` is taken as a raw `*mut` because the caller invokes this as
+    /// `self.linker.load(self, …)` (Zig spec bundle_v2.zig:2574) — `self` *is*
+    /// `(*bundle).linker`, so a `&mut BundleV2` here would alias the receiver
+    /// under Stacked Borrows. This body only reaches into fields of `*bundle`
+    /// that are disjoint from `linker` (`graph`, `transpiler`,
+    /// `dynamic_import_entry_points`) via `addr_of_mut!`, never materializing a
+    /// full `&mut BundleV2`.
+    ///
+    /// # Safety
+    /// `bundle` must be valid for the call and `self` must be `(*bundle).linker`
+    /// (or otherwise not overlap the fields named above).
+    pub unsafe fn load(
         &mut self,
-        bundle: &mut BundleV2,
+        bundle: *mut BundleV2,
         entry_points: &[Index],
         server_component_boundaries: js_ast::ast::server_component_boundary::List,
         reachable: &[Index],
     ) -> Result<(), BunError> {
         let _trace = bun::perf::trace("Bundler.CloneLinkerGraph");
-        self.parse_graph = &mut bundle.graph;
+        // SAFETY: field-disjoint with `self` (= `(*bundle).linker`); `parse_graph`
+        // is a `*mut Graph` backref so no `&mut` is materialized.
+        self.parse_graph = unsafe { core::ptr::addr_of_mut!((*bundle).graph) };
+        // SAFETY: field-disjoint scalar read; `transpiler` is itself a `*mut`.
+        let dyn_entry_points = unsafe { &mut *core::ptr::addr_of_mut!((*bundle).dynamic_import_entry_points) };
 
         // SAFETY: `bundle.transpiler` is a `*mut Transpiler` backref valid for
         // the bundle's lifetime; `resolver`/`log`/`options` are stable fields.
-        let transpiler = unsafe { &mut *bundle.transpiler };
+        let transpiler = unsafe { &mut *(*bundle).transpiler };
         self.graph.code_splitting = transpiler.options.code_splitting;
         // TODO(port): lifetime — log is &'a mut Log; reassigning here mirrors Zig's pointer assignment
         // SAFETY: `transpiler.log` is a `*mut Log` backref valid for the bundle's lifetime.

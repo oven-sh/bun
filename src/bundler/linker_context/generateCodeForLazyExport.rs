@@ -54,7 +54,7 @@ pub fn generate_code_for_lazy_export(
     let parts: *mut [Part] = this.graph.ast.items_parts_mut()[source_index as usize].slice_mut();
 
     // SAFETY: `parts` is a stable SoA column slice valid for the link pass.
-    if unsafe { (*parts).len() } < 1 {
+    if unsafe { (&*parts).len() } < 1 {
         panic!("Internal error: expected at least one part for lazy export");
     }
 

@@ -2858,10 +2858,11 @@ impl<'a> BundleV2<'a> {
 
         this.clone_ast()?;
 
-        // SAFETY: `Graph::entry_points` is `Vec<js_ast::Index>` and
-        // `LinkerContext::link` takes `&[js_ast::Index]`; the raw-ptr dance
-        // sidesteps the `&mut self.linker` / `&mut *this` / `&this.graph`
-        // borrow overlap (Zig stored all as raw ptrs).
+        // SAFETY: `LinkerContext::link` takes `bundle` as a raw `*mut BundleV2` and only
+        // touches fields disjoint from `this.linker` (`graph`, `transpiler`,
+        // `dynamic_import_entry_points`, scalar reads) via `addr_of_mut!`/place
+        // projection, so the `&mut this.linker` receiver and `*bundle_ptr` never produce
+        // overlapping `&mut`. (Zig stored all as raw ptrs — bundle_v2.zig:1939.)
         let mut chunks = unsafe {
             let bundle_ptr: *mut BundleV2 = &mut *this;
             let ep_len = (*bundle_ptr).graph.entry_points.len();
@@ -2872,7 +2873,7 @@ impl<'a> BundleV2<'a> {
             let ep = (*bundle_ptr).graph.entry_points.as_ptr().cast::<Index>();
             let scbs = core::mem::take(&mut (*bundle_ptr).graph.server_component_boundaries);
             this.linker.link(
-                &mut *bundle_ptr,
+                bundle_ptr,
                 core::slice::from_raw_parts(ep, ep_len),
                 scbs,
                 &mut reachable_files,
@@ -3788,12 +3789,13 @@ impl<'a> BundleV2<'a> {
     // bun_runtime::bake (which can name DevServer concretely) and call back into BundleV2
     // helpers. Until then the entry-point fields are reached through the vtable.
     pub fn finish_from_bake_dev_server(&mut self, dev_server: &dispatch::DevServerHandle) -> Result<(), AllocError> {
-        // SAFETY: DevServer guarantees current_bundle is Some during finish (DevServer.zig:2237).
-        // Vtable returns `*const ()` (opaque); the underlying `start_data` is mutated in
-        // place (Zig spec mutates `css_entry_points`), so cast through `*mut` here.
+        // SAFETY: DevServer guarantees `current_bundle` is Some during finish (DevServer.zig:2237).
+        // The vtable slot returns `*mut ()` derived from `&mut dev.current_bundle.?.start_data`;
+        // DevServer holds it exclusively for the duration of finalize, so the `&mut DevServerInput`
+        // here is mut-valid and unaliased until this fn returns.
         let start = unsafe {
-            &mut *((dev_server.vtable.current_bundle_start_data)(dev_server.owner)
-                as *mut DevServerInput)
+            &mut *(dev_server.vtable.current_bundle_start_data)(dev_server.owner)
+                .cast::<DevServerInput>()
         };
 
         /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
@@ -3956,8 +3958,11 @@ impl<'a> BundleV2<'a> {
 
         // The linker still has to be initialized as code generation expects
         // much of its state to be valid memory, even if empty.
-        // SAFETY: see `generate_from_cli` — repr(transparent) Index slice cast +
-        // raw-ptr borrow sidestep for `&mut self.linker` / `&mut *self`.
+        // SAFETY: `LinkerContext::load` takes `bundle` as a raw `*mut BundleV2` and only
+        // touches fields disjoint from `self.linker` (`graph`, `transpiler`,
+        // `dynamic_import_entry_points`) via `addr_of_mut!`, so the `&mut self.linker`
+        // receiver and `*bundle_ptr` never produce overlapping `&mut`. Both Index newtypes
+        // are `#[repr(transparent)]` u32 — see `generate_from_cli` for the slice cast.
         unsafe {
             let bundle_ptr: *mut BundleV2 = self;
             let ep_len = (*bundle_ptr).graph.entry_points.len();
@@ -3965,7 +3970,7 @@ impl<'a> BundleV2<'a> {
             let ep = (*bundle_ptr).graph.entry_points.as_ptr().cast::<Index>();
             let scbs = core::mem::take(&mut (*bundle_ptr).graph.server_component_boundaries);
             self.linker.load(
-                &mut *bundle_ptr,
+                bundle_ptr,
                 core::slice::from_raw_parts(ep, ep_len),
                 scbs,
                 js_reachable_files,

@@ -438,7 +438,17 @@ impl InitCommand {
 
         let fs = Fs::FileSystem::init(None)?;
         // SAFETY: FileSystem::init returns the process-global singleton; valid for 'static.
-        let pathname = Fs::PathName::init(unsafe { (*fs).top_level_dir_without_trailing_slash() });
+        // PORT NOTE: `fs.topLevelDirWithoutTrailingSlash()` — the inline `bun_resolver::fs::FileSystem`
+        // surface doesn't expose this method yet (it lives in the gated `fs.rs` draft), so inline the
+        // trivial trim here per `src/resolver/fs.zig:27`.
+        let pathname = Fs::PathName::init({
+            let tld = unsafe { (*fs).top_level_dir };
+            if tld.len() > 1 && tld[tld.len() - 1] == bun_paths::SEP {
+                &tld[..tld.len() - 1]
+            } else {
+                tld
+            }
+        });
         // TODO(port): std.fs.cwd() → bun_sys::Fd::cwd(); the Zig kept a std.fs.Dir handle
         let destination_dir = Fd::cwd();
 

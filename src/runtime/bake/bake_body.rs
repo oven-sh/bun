@@ -758,22 +758,22 @@ impl Framework {
             return;
         }
 
-        let mut result = match r.resolve(r.fs.top_level_dir, *path, bun_options_types::ImportKind::Stmt) {
+        // SAFETY: `Resolver.fs` is a `*mut FileSystem` singleton live for the
+        // resolver's lifetime (LIFETIMES.tsv JSC_BORROW).
+        let top_level_dir = unsafe { &(*r.fs).top_level_dir };
+        let mut result = match r.resolve(top_level_dir, *path, bun_options_types::ImportKind::Stmt) {
             Ok(res) => res,
             Err(err) => {
                 Output::err(
                     err,
-                    format_args!(
-                        "Failed to resolve '{}' for framework ({})",
-                        bstr::BStr::new(path),
-                        bstr::BStr::new(desc)
-                    ),
+                    "Failed to resolve '{}' for framework ({})",
+                    (bstr::BStr::new(path), bstr::BStr::new(desc)),
                 );
                 *had_errors = true;
                 return;
             }
         };
-        *path = result.path().unwrap().text;
+        *path = arena_erase(result.path().unwrap().text);
     }
 
     fn from_js(
@@ -864,7 +864,7 @@ impl Framework {
             Some(ServerComponents {
                 separate_ssr_graph: 'brk: {
                     // Intentionally not using a truthiness check
-                    let prop = match sc.get_optional::<JSValue>(global, "separateSSRGraph")? {
+                    let prop = match get_optional_value(sc, global, b"separateSSRGraph")? {
                         Some(p) => p,
                         None => {
                             return Err(global.throw_invalid_arguments(format_args!(
@@ -883,7 +883,7 @@ impl Framework {
                     )));
                 },
                 server_runtime_import: refs.track(
-                    match sc.get_optional::<ZigStringSlice>(global, "serverRuntimeImportSource")? {
+                    match get_optional_slice(sc, global, b"serverRuntimeImportSource")? {
                         Some(s) => s,
                         None => {
                             return Err(global.throw_invalid_arguments(format_args!(

@@ -1532,7 +1532,7 @@ mod phase_a_draft {
 
         pub(super) fn phase_a_serve_static(&mut self, serve_obj: &Expr) -> Result<(), bun_core::Error> {
             if let Some(config_plugins) = expr_get(serve_obj, b"plugins") {
-                let plugins: Option<Box<[Box<[u8]>]>> = 'plugins: {
+                let plugins: Option<Vec<Box<[u8]>>> = 'plugins: {
                     if let ExprData::EArray(arr) = &config_plugins.data {
                         let raw = arr.items.slice();
                         if raw.is_empty() { break 'plugins None; }
@@ -1541,10 +1541,10 @@ mod phase_a_draft {
                             self.expect_string(p)?;
                             plugins.push(estring_to_owned(p.data.e_string().unwrap().get(), self.bump));
                         }
-                        break 'plugins Some(plugins.into());
+                        break 'plugins Some(plugins);
                     } else {
                         let s = config_plugins.data.e_string().unwrap();
-                        break 'plugins Some(Box::new([estring_to_owned(s.get(), self.bump)]));
+                        break 'plugins Some(vec![estring_to_owned(s.get(), self.bump)]);
                     }
                 };
                 // TODO: accept entire config object.

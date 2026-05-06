@@ -130,7 +130,14 @@ pub fn nanoseconds(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSVa
 
 #[bun_jsc::host_fn(export = "BunObject_callback_shrink")]
 pub fn shrink(global_object: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-    global_object.vm().shrink_footprint();
+    // PORT NOTE: `bun_jsc::VM` (the lib.rs stub) lacks `shrink_footprint`; the
+    // real method lives on `bun_jsc::vm::VM`. Call the C++ symbol directly to
+    // avoid touching the upstream crate.
+    unsafe extern "C" {
+        fn JSC__VM__shrinkFootprint(vm: *mut core::ffi::c_void);
+    }
+    // SAFETY: `vm_ptr()` returns the live JSC::VM*; FFI mutates it in place.
+    unsafe { JSC__VM__shrinkFootprint(global_object.vm_ptr().cast()) };
     Ok(JSValue::UNDEFINED)
 }
 

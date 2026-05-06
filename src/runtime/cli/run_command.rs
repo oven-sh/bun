@@ -2005,7 +2005,7 @@ impl RunCommand {
         // We return Option<&'static ZStr> here; the cached path is copied into SHELL_BUF in find_shell.
         #[cfg(windows)]
         {
-            return Some(ZStr::from_static(b"C:\\Windows\\System32\\cmd.exe\0"));
+            return Some(bun_core::zstr!("C:\\Windows\\System32\\cmd.exe"));
         }
 
         #[cfg(not(windows))]

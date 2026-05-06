@@ -261,8 +261,8 @@ pub fn load_config(
     // unless an explicit config path was provided via --config
     if user_config_path_.is_none() {
         if let Some(graph) = bun_standalone_graph::StandaloneModuleGraph::StandaloneModuleGraph::get() {
-            if graph
-                .flags
+            // SAFETY: `get()` returns a non-null process-global pointer when Some.
+            if unsafe { (*graph).flags }
                 .contains(bun_standalone_graph::StandaloneModuleGraph::Flags::DISABLE_AUTOLOAD_BUNFIG)
             {
                 return Ok(());
@@ -283,10 +283,10 @@ pub fn load_config(
                     // SAFETY: process-global Log; see `load_bunfig` note.
                     let log = unsafe { &mut *ctx.log };
                     if log.has_any() {
-                        let _ = log.print(Output::error_writer());
+                        let _ = log.print(Output::error_writer() as *mut _);
                     }
                     if log.has_any() {
-                        Output::print_error("\n", ());
+                        Output::print_error("\n");
                     }
                     Output::err(err, "failed to load bunfig", ());
                     Global::crash();

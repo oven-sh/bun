@@ -658,35 +658,26 @@ impl InstallCompletionsCommand {
                     ),
                 );
 
-                if dot_zshrc.pwrite_all(extra, u64::try_from(read).unwrap()).is_err() {
+                if dot_zshrc.pwrite_all(extra, i64::try_from(read).unwrap()).is_err() {
                     break 'brk true;
                 }
 
-                Output::pretty_errorln(
-                    "<r><d>Enabled loading bun's completions in .zshrc<r>",
-                    format_args!(""),
-                );
+                pretty_errorln!("<r><d>Enabled loading bun's completions in .zshrc<r>");
                 break 'brk false;
             };
 
             if needs_to_tell_them_to_add_completions_file {
-                Output::pretty_errorln(
-                    "<r>To enable completions, add this to your .zshrc:\n      <b>[ -s \"{s}\" ] && source \"{s}\"",
-                    format_args!(
-                        "{0} {0}",
-                        bstr::BStr::new(completions_path)
-                    ),
+                pretty_errorln!(
+                    "<r>To enable completions, add this to your .zshrc:\n      <b>[ -s \"{0}\" ] && source \"{0}\"",
+                    bstr::BStr::new(completions_path),
                 );
             }
         }
 
-        Output::pretty_errorln(
-            "<r><d>Installed completions to {s}/{s}<r>\n",
-            format_args!(
-                "{} {}",
-                bstr::BStr::new(completions_dir),
-                bstr::BStr::new(filename)
-            ),
+        pretty_errorln!(
+            "<r><d>Installed completions to {}/{}<r>\n",
+            bstr::BStr::new(completions_dir),
+            bstr::BStr::new(filename),
         );
         Output::flush();
         Ok(())

@@ -313,7 +313,7 @@ impl InitCommand {
             Err(e) if e == bun_core::err!("EndOfStream") => {
                 Output::flush();
                 // Add an "x" cancelled
-                Output::prettyln("\n<r><red>x<r> Cancelled", format_args!(""));
+                Output::prettyln(format_args!("\n<r><red>x<r> Cancelled"));
                 Global::exit(0);
             }
             Err(e) => return Err(e),
@@ -365,7 +365,7 @@ impl InitCommand {
             let arg = arg_.as_bytes();
             if parse_flags && !arg.is_empty() && arg[0] == b'-' {
                 if arg == b"--help" || arg == b"-h" {
-                    CLI::Command::Tag::print_help(CLI::Command::Tag::InitCommand, true);
+                    CLI::command::tag_print_help(CLI::Command::Tag::InitCommand, true);
                     Global::exit(0);
                 } else if arg == b"-m" || arg == b"--minimal" {
                     minimal = true;

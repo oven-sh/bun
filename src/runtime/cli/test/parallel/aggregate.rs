@@ -6,12 +6,12 @@ use std::io::Write as _;
 
 use bstr::BStr;
 
-use bun_collections::ArrayHashMap;
-use bun_core::{self, err, Output};
+use bun_collections::{ArrayHashMap, StringArrayHashMap};
+use bun_core::{self, err, Output, ZBox};
 use bun_paths::{self, PathBuffer};
 use bun_sourcemap_jsc::code_coverage::text as CoverageReportText;
 use bun_options_types::CodeCoverageOptions::{CodeCoverageOptions, Fraction as CoverageFraction};
-use bun_str::{strings, ZStr};
+use bun_str::strings;
 use bun_sys::{self, Fd, File, O};
 
 use crate::cli::test::parallel::coordinator::Coordinator;
@@ -26,7 +26,7 @@ fn attr_value(head: &[u8], name: &'static [u8]) -> u32 {
     let Some(idx) = strings::index_of(head, &needle) else { return 0 };
     let start = idx + needle.len();
     let Some(q) = strings::index_of_char(&head[start..], b'"') else { return 0 };
-    let end = start + q;
+    let end = start + q as usize;
     // TODO(port): narrow error set
     strings::parse_int::<u32>(&head[start..end], 10).unwrap_or(0)
 }
@@ -50,7 +50,7 @@ pub fn merge_junit_fragments(coord: &mut Coordinator, outfile: &[u8], summary: &
         // attributes for the merged totals and its body for the inner suites.
         let Some(open_start) = strings::index_of(&file, b"<testsuites") else { continue };
         let Some(gt) = strings::index_of_char(&file[open_start..], b'>') else { continue };
-        let head_end = open_start + gt;
+        let head_end = open_start + gt as usize;
         let head = &file[open_start..head_end];
         totals.tests += attr_value(head, b"tests");
         totals.failures += attr_value(head, b"failures");

@@ -1514,7 +1514,7 @@ impl JSTranspiler {
 
         // PERF(port): was MimallocArena bulk-free — profile in Phase B
         let arena = Arena::new();
-        let prev_allocator = self.transpiler.allocator();
+        let prev_allocator = self.transpiler.allocator;
         let ast_memory_allocator = JSAst::ASTMemoryAllocator::new(&arena);
         let _ast_scope = ast_memory_allocator.enter();
 
@@ -1544,7 +1544,7 @@ impl JSTranspiler {
         opts.macro_context = transpiler.macro_context.as_mut();
 
         if let Err(err) = transpiler.resolver.caches.js.scan(
-            transpiler.allocator(),
+            transpiler.allocator,
             &mut self.scan_pass_result,
             opts,
             transpiler.options.define.clone(),

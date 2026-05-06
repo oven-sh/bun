@@ -70,12 +70,12 @@ pub fn open_url(url: &ZStr) {
 
         match spawn_result {
             // don't fallback:
-            bun_sys::Maybe::Result(result) => {
+            Ok(result) => {
                 if result.is_ok() {
                     return;
                 }
             }
-            bun_sys::Maybe::Err(_) => {}
+            Err(_) => {}
         }
     }
 
@@ -151,9 +151,15 @@ impl Editor {
     ) -> Option<Editor> {
         let path_env = env.get(b"PATH")?;
 
+        // PORT NOTE: borrowck — `which` ties its return to `&'a mut *buf`; on a
+        // miss we need `buf` again next iteration but NLL conservatively keeps
+        // the borrow live (Polonius case). Re-borrow through a raw pointer; on
+        // a hit we return immediately so only one `&mut` is ever live.
+        let buf_ptr: *mut PathBuffer = buf;
         for &editor in &DEFAULT_PREFERENCE_LIST {
             if let Some(path) = BIN_NAME[editor] {
-                if let Some(bin) = which(buf, path_env, cwd, path) {
+                // SAFETY: see PORT NOTE above — exclusive per-iteration reborrow.
+                if let Some(bin) = which(unsafe { &mut *buf_ptr }, path_env, cwd, path) {
                     *out = bin.as_bytes();
                     return Some(editor);
                 }

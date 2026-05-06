@@ -143,7 +143,7 @@ impl ScanOpts {
 
         if let Some(cwd_val) = opts_obj.get_truthy(global_this, "cwd")? {
             if !cwd_val.is_string() {
-                return global_this.throw(format_args!("{}: invalid `cwd`, not a string", fn_name));
+                return Err(global_this.throw(format_args!("{}: invalid `cwd`, not a string", fn_name)));
             }
 
             {

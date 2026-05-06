@@ -60,22 +60,22 @@ pub fn create(global_this: &JSGlobalObject) -> JSValue {
     let object = JSValue::create_empty_object(global_this, 4);
     object.put(
         global_this,
-        ZigString::static_(b"html"),
+        b"html",
         bun_jsc::JSFunction::create(global_this, "html", render_to_html, 1, Default::default()),
     );
     object.put(
         global_this,
-        ZigString::static_(b"ansi"),
+        b"ansi",
         bun_jsc::JSFunction::create(global_this, "ansi", render_to_ansi, 2, Default::default()),
     );
     object.put(
         global_this,
-        ZigString::static_(b"render"),
+        b"render",
         bun_jsc::JSFunction::create(global_this, "render", render, 3, Default::default()),
     );
     object.put(
         global_this,
-        ZigString::static_(b"react"),
+        b"react",
         bun_jsc::JSFunction::create(global_this, "react", render_react, 3, Default::default()),
     );
     object
@@ -138,7 +138,7 @@ pub fn render_to_ansi(
         Err(_) => return global_this.throw_out_of_memory(),
     };
 
-    BunString::create_utf8_for_js(global_this, &result)
+    create_utf8_for_js(global_this, &result)
 }
 
 #[bun_jsc::host_fn]
@@ -166,7 +166,7 @@ pub fn render_to_html(
         Err(_) => return global_this.throw_out_of_memory(),
     };
 
-    BunString::create_utf8_for_js(global_this, &result)
+    create_utf8_for_js(global_this, &result)
 }
 
 fn parse_options(global_this: &JSGlobalObject, opts_value: JSValue) -> JsResult<md::Options> {
@@ -282,7 +282,7 @@ pub fn render(
 
     // Return accumulated result
     let result = js_renderer.get_result();
-    BunString::create_utf8_for_js(global_this, result)
+    create_utf8_for_js(global_this, result)
 }
 
 /// `Bun.markdown.react(text, components?, options?)` — returns a React Fragment element
@@ -613,8 +613,8 @@ impl<'a> ParseRenderer<'a> {
         } else {
             let obj = JSValue::create_empty_object(self.global_object, 2);
             self.marked_args.append(obj);
-            obj.put(self.global_object, ZigString::static_(b"type"), type_val);
-            obj.put(self.global_object, ZigString::static_(b"props"), props);
+            obj.put(self.global_object, b"type", type_val);
+            obj.put(self.global_object, b"props", props);
             obj
         }
     }
@@ -718,30 +718,30 @@ impl<'a> ParseRenderer<'a> {
         match block_type {
             md::BlockType::H => {
                 if let Some(s) = slug {
-                    props.put(g, ZigString::static_(b"id"), BunString::create_utf8_for_js(g, s)?);
+                    props.put(g, b"id", create_utf8_for_js(g, s)?);
                 }
             }
             md::BlockType::Ol => {
-                props.put(g, ZigString::static_(b"start"), JSValue::js_number(entry.data));
+                props.put(g, b"start", JSValue::js_number(entry.data));
             }
             md::BlockType::Li => {
                 let task_mark = md::types::task_mark_from_data(entry.data);
                 if task_mark != 0 {
-                    props.put(g, ZigString::static_(b"checked"), JSValue::from(md::types::is_task_checked(task_mark)));
+                    props.put(g, b"checked", JSValue::from(md::types::is_task_checked(task_mark)));
                 }
             }
             md::BlockType::Code => {
                 if entry.flags & md::BLOCK_FENCED_CODE != 0 {
                     let lang = extract_language(self_.src_text, entry.data);
                     if !lang.is_empty() {
-                        props.put(g, ZigString::static_(b"language"), BunString::create_utf8_for_js(g, lang)?);
+                        props.put(g, b"language", create_utf8_for_js(g, lang)?);
                     }
                 }
             }
             md::BlockType::Th | md::BlockType::Td => {
                 let alignment = md::types::alignment_from_data(entry.data);
                 if let Some(align_str) = md::types::alignment_name(alignment) {
-                    props.put(g, ZigString::static_(b"align"), BunString::create_utf8_for_js(g, align_str)?);
+                    props.put(g, b"align", create_utf8_for_js(g, align_str)?);
                 }
             }
             _ => {}
@@ -749,14 +749,14 @@ impl<'a> ParseRenderer<'a> {
 
         // Set children (skip for void elements)
         if block_type != md::BlockType::Hr {
-            props.put(g, ZigString::static_(b"children"), entry.children);
+            props.put(g, b"children", entry.children);
         }
 
         let obj = self_.create_element(type_val, props);
 
         // Push to parent's children array
         if let Some(parent) = self_.stack.last() {
-            parent.children.push(g, obj)?;
+            js_array_push(parent.children, g, obj)?;
         }
 
         if block_type == md::BlockType::H {
@@ -838,22 +838,22 @@ impl<'a> ParseRenderer<'a> {
         // Set metadata props
         match span_type {
             md::SpanType::A => {
-                props.put(g, ZigString::static_(b"href"), BunString::create_utf8_for_js(g, &entry.detail.href)?);
+                props.put(g, b"href", create_utf8_for_js(g, &entry.detail.href)?);
                 if !entry.detail.title.is_empty() {
-                    props.put(g, ZigString::static_(b"title"), BunString::create_utf8_for_js(g, &entry.detail.title)?);
+                    props.put(g, b"title", create_utf8_for_js(g, &entry.detail.title)?);
                 }
             }
             md::SpanType::Img => {
-                props.put(g, ZigString::static_(b"src"), BunString::create_utf8_for_js(g, &entry.detail.href)?);
+                props.put(g, b"src", create_utf8_for_js(g, &entry.detail.href)?);
                 if !entry.detail.title.is_empty() {
-                    props.put(g, ZigString::static_(b"title"), BunString::create_utf8_for_js(g, &entry.detail.title)?);
+                    props.put(g, b"title", create_utf8_for_js(g, &entry.detail.title)?);
                 }
             }
             md::SpanType::Wikilink => {
-                props.put(g, ZigString::static_(b"target"), BunString::create_utf8_for_js(g, &entry.detail.href)?);
+                props.put(g, b"target", create_utf8_for_js(g, &entry.detail.href)?);
             }
             md::SpanType::LatexmathDisplay => {
-                props.put(g, ZigString::static_(b"display"), JSValue::TRUE);
+                props.put(g, b"display", JSValue::TRUE);
             }
             _ => {}
         }
@@ -864,7 +864,7 @@ impl<'a> ParseRenderer<'a> {
             if len == 1 {
                 let child = entry.children.get_index(g, 0)?;
                 if child.is_string() {
-                    props.put(g, ZigString::static_(b"alt"), child);
+                    props.put(g, b"alt", child);
                 }
             } else if len > 1 {
                 // Multiple children — concatenate string parts
@@ -877,18 +877,18 @@ impl<'a> ParseRenderer<'a> {
                     }
                 }
                 if !alt_buf.is_empty() {
-                    props.put(g, ZigString::static_(b"alt"), BunString::create_utf8_for_js(g, &alt_buf)?);
+                    props.put(g, b"alt", create_utf8_for_js(g, &alt_buf)?);
                 }
             }
         } else {
-            props.put(g, ZigString::static_(b"children"), entry.children);
+            props.put(g, b"children", entry.children);
         }
 
         let obj = self_.create_element(type_val, props);
 
         // Push to parent's children array
         if let Some(parent) = self_.stack.last() {
-            parent.children.push(g, obj)?;
+            js_array_push(parent.children, g, obj)?;
         }
         Ok(())
     }
@@ -922,29 +922,29 @@ impl<'a> ParseRenderer<'a> {
                 let empty_props = JSValue::create_empty_object(g, 0);
                 self_.marked_args.append(empty_props);
                 let obj = self_.create_element(br_type, empty_props);
-                parent_children.push(g, obj)?;
+                js_array_push(parent_children, g, obj)?;
             }
             md::TextType::Softbr => {
-                let str = BunString::create_utf8_for_js(g, b"\n")?;
+                let str = create_utf8_for_js(g, b"\n")?;
                 self_.marked_args.append(str);
-                parent_children.push(g, str)?;
+                js_array_push(parent_children, g, str)?;
             }
             md::TextType::NullChar => {
-                let str = BunString::create_utf8_for_js(g, b"\xEF\xBF\xBD")?;
+                let str = create_utf8_for_js(g, b"\xEF\xBF\xBD")?;
                 self_.marked_args.append(str);
-                parent_children.push(g, str)?;
+                js_array_push(parent_children, g, str)?;
             }
             md::TextType::Entity => {
                 let mut buf = [0u8; 8];
                 let decoded = md::helpers::decode_entity_to_utf8(content, &mut buf).unwrap_or(content);
-                let str = BunString::create_utf8_for_js(g, decoded)?;
+                let str = create_utf8_for_js(g, decoded)?;
                 self_.marked_args.append(str);
-                parent_children.push(g, str)?;
+                js_array_push(parent_children, g, str)?;
             }
             _ => {
-                let str = BunString::create_utf8_for_js(g, content)?;
+                let str = create_utf8_for_js(g, content)?;
                 self_.marked_args.append(str);
-                parent_children.push(g, str)?;
+                js_array_push(parent_children, g, str)?;
             }
         }
         Ok(())
@@ -1127,7 +1127,7 @@ impl<'a> JsCallbackRenderer<'a> {
         }
 
         // Convert children to JS string
-        let children_js = BunString::create_utf8_for_js(self.global_object, children)?;
+        let children_js = create_utf8_for_js(self.global_object, children)?;
 
         // Call the JS callback
         let result = if let Some(m) = meta {
@@ -1292,7 +1292,7 @@ impl<'a> JsCallbackRenderer<'a> {
         if !self.stack_check.is_safe_to_recurse() {
             return self.global_object.throw_stack_overflow();
         }
-        let text_js = BunString::create_utf8_for_js(self.global_object, content)?;
+        let text_js = create_utf8_for_js(self.global_object, content)?;
         let result = self.callbacks.text.call(self.global_object, JSValue::UNDEFINED, &[text_js])?;
         if !result.is_undefined_or_null() {
             let slice = result.to_slice(self.global_object)?;
@@ -1399,9 +1399,9 @@ impl<'a> JsCallbackRenderer<'a> {
                 let slug = self.heading_tracker.leave_heading();
                 let field_count: usize = if slug.is_some() { 2 } else { 1 };
                 let obj = JSValue::create_empty_object(g, field_count);
-                obj.put(g, ZigString::static_(b"level"), JSValue::js_number(data));
+                obj.put(g, b"level", JSValue::js_number(data));
                 if let Some(s) = slug {
-                    obj.put(g, ZigString::static_(b"id"), BunString::create_utf8_for_js(g, s)?);
+                    obj.put(g, b"id", create_utf8_for_js(g, s)?);
                 }
                 Ok(Some(obj))
             }
@@ -1418,7 +1418,7 @@ impl<'a> JsCallbackRenderer<'a> {
                     let lang = extract_language(self.src_text, data);
                     if !lang.is_empty() {
                         let obj = JSValue::create_empty_object(g, 1);
-                        obj.put(g, ZigString::static_(b"language"), BunString::create_utf8_for_js(g, lang)?);
+                        obj.put(g, b"language", create_utf8_for_js(g, lang)?);
                         return Ok(Some(obj));
                     }
                 }
@@ -1427,7 +1427,7 @@ impl<'a> JsCallbackRenderer<'a> {
             md::BlockType::Th | md::BlockType::Td => {
                 let alignment = md::types::alignment_from_data(data);
                 let align_js = if let Some(align_str) = md::types::alignment_name(alignment) {
-                    BunString::create_utf8_for_js(g, align_str)?
+                    create_utf8_for_js(g, align_str)?
                 } else {
                     JSValue::UNDEFINED
                 };
@@ -1464,9 +1464,9 @@ impl<'a> JsCallbackRenderer<'a> {
         let g = self.global_object;
         match span_type {
             md::SpanType::A => {
-                let href = BunString::create_utf8_for_js(g, &detail.href)?;
+                let href = create_utf8_for_js(g, &detail.href)?;
                 let title = if !detail.title.is_empty() {
-                    BunString::create_utf8_for_js(g, &detail.title)?
+                    create_utf8_for_js(g, &detail.title)?
                 } else {
                     JSValue::UNDEFINED
                 };
@@ -1479,9 +1479,9 @@ impl<'a> JsCallbackRenderer<'a> {
                 // second slot, so just fall back to the generic path here —
                 // images are rare enough that it doesn't matter.
                 let obj = JSValue::create_empty_object(g, 2);
-                obj.put(g, ZigString::static_(b"src"), BunString::create_utf8_for_js(g, &detail.href)?);
+                obj.put(g, b"src", create_utf8_for_js(g, &detail.href)?);
                 if !detail.title.is_empty() {
-                    obj.put(g, ZigString::static_(b"title"), BunString::create_utf8_for_js(g, &detail.title)?);
+                    obj.put(g, b"title", create_utf8_for_js(g, &detail.title)?);
                 }
                 Ok(Some(obj))
             }

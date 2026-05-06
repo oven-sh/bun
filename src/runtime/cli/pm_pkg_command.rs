@@ -357,9 +357,7 @@ impl PmPkgCommand {
         cwd: &[u8],
     ) -> Result<(), Error> {
         if args.is_empty() {
-            Output::err_generic(format_args!(
-                "<blue>bun pm pkg <b>delete<r> expects key args"
-            ));
+            Output::err_generic("<blue>bun pm pkg <b>delete<r> expects key args", ());
             Global::exit(1);
         }
 
@@ -369,7 +367,7 @@ impl PmPkgCommand {
 
         let mut root = pkg.root;
         if !matches!(root.data, ExprData::EObject(_)) {
-            Output::err_generic(format_args!("package.json root must be an object"));
+            Output::err_generic("package.json root must be an object", ());
             Global::exit(1);
         }
 
@@ -402,7 +400,7 @@ impl PmPkgCommand {
 
         let mut root = pkg.root;
         if !matches!(root.data, ExprData::EObject(_)) {
-            Output::err_generic(format_args!("package.json root must be an object"));
+            Output::err_generic("package.json root must be an object", ());
             Global::exit(1);
         }
 
@@ -410,7 +408,7 @@ impl PmPkgCommand {
 
         if let Some(name_prop) = root.get(b"name") {
             if let ExprData::EString(str) = &name_prop.data {
-                let name_str = str.slice();
+                let name_str = str.slice8();
                 let lowercase: Vec<u8> =
                     name_str.iter().map(|b| b.to_ascii_lowercase()).collect();
 

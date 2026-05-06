@@ -65,7 +65,7 @@ pub fn get_candidate_package_patterns<'a>(
             let mut name_buf = PathBuffer::uninit();
             let json_path: &ZStr = resolve_path::join_abs_string_buf_z::<platform::Auto>(
                 workdir,
-                name_buf.as_mut_slice(),
+                &mut name_buf[..],
                 &[b"package.json".as_slice()],
             );
 
@@ -73,9 +73,11 @@ pub fn get_candidate_package_patterns<'a>(
             log.errors = 0;
             log.warnings = 0;
 
-            let json_source = match bun_sys::File::to_source(json_path, Default::default()) {
+            // PORT NOTE: `bun.sys.File.toSource` was MOVE_DOWN'd to `bun_logger::to_source`
+            // (T1 cannot name T2 — see src/sys/File.rs:446).
+            let json_source = match bun_logger::to_source(json_path, Default::default()) {
                 Err(err) => match err.get_errno() {
-                    bun_sys::Errno::NOENT | bun_sys::Errno::ACCES | bun_sys::Errno::PERM => {
+                    bun_sys::Errno::ENOENT | bun_sys::Errno::EACCES | bun_sys::Errno::EPERM => {
                         break 'body;
                     }
                     _ => return Err(err.into()),
@@ -85,18 +87,23 @@ pub fn get_candidate_package_patterns<'a>(
             // `defer allocator.free(json_source.contents)` — deleted; `json_source` owns its
             // contents and drops at end of scope.
 
-            let json = json::parse_package_json_utf8(&json_source, log)?;
+            // PERF(port): Zig threaded `ctx.allocator` through `parsePackageJSONUTF8`; the Rust
+            // signature takes a `&Bump` arena explicitly. Nodes go through the global Store, so
+            // this only buffers transient parser scratch — fresh per-iteration is fine.
+            let bump = bumpalo::Bump::new();
+            let json = json::parse_package_json_utf8(&json_source, log, &bump)?;
 
             let Some(prop) = json.as_property(b"workspaces") else {
                 break 'body;
             };
 
-            use bun_js_parser::ExprData;
-            let json_array = match &prop.expr.data {
+            let json_array = match prop.expr.data {
                 ExprData::EArray(arr) => arr,
                 ExprData::EObject(obj) => {
-                    if let Some(packages) = obj.get(b"packages") {
-                        match &packages.data {
+                    // `StoreRef::get` (0-arg) shadows `E::Object::get` under autoderef; force
+                    // `Deref` to reach the keyed lookup.
+                    if let Some(packages) = (*obj).get(b"packages") {
+                        match packages.data {
                             ExprData::EArray(arr) => arr,
                             _ => break 'walk,
                         }
@@ -108,11 +115,11 @@ pub fn get_candidate_package_patterns<'a>(
             };
 
             for expr in json_array.slice() {
-                match &expr.data {
+                match expr.data {
                     ExprData::EString(pattern_expr) => {
                         let size = pattern_expr.data.len() + b"/package.json".len();
                         let mut pattern = vec![0u8; size].into_boxed_slice();
-                        pattern[0..pattern_expr.data.len()].copy_from_slice(&pattern_expr.data);
+                        pattern[0..pattern_expr.data.len()].copy_from_slice(pattern_expr.data);
                         pattern[pattern_expr.data.len()..size].copy_from_slice(b"/package.json");
 
                         out_patterns.push(pattern);

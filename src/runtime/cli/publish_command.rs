@@ -1691,7 +1691,7 @@ impl PublishCommand {
             headers.append(b"Host", &registry.url.host);
 
             if let Some(json_len) = maybe_json_len {
-                write!(print_buf, "{}", json_len)?;
+                write!(print_buf, "{}", json_len).ok();
                 headers.append(b"Content-Length", print_buf);
                 print_buf.clear();
             }

@@ -33,7 +33,7 @@ fn big_int_sum(global: &JSGlobalObject, a: JSValue, b: JSValue) -> JSValue {
 // repr(C) struct on freebsd, WinRusage on windows) with divergent field
 // names. Normalize via a private extension trait so the getters below stay
 // cfg-free, matching the Zig source which sees uniform names.
-// ──────────────────────S────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────────────────
 trait RusageFields {
     fn utime_sec(&self) -> i64;
     fn utime_usec(&self) -> i64;

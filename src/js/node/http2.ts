@@ -2180,9 +2180,8 @@ class Http2Stream extends Duplex {
     }
   }
   _destroy(err, callback) {
-    // Clear the per-stream idle timer if still armed. If a 'close' listener
-    // was attached via setTimeout(ms, cb), remove it too so the callback
-    // does not fire after the stream is gone.
+    // Clear the per-stream idle timer so the timeout callback does not
+    // fire after the stream is gone.
     clearTimeout(this[kTimeout]);
     this[kTimeout] = null;
 

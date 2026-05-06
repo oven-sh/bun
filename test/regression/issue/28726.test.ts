@@ -69,6 +69,40 @@ describe("system-wide bunfig.toml", () => {
     expect(exitCode).not.toBe(0);
   });
 
+  test("malformed BUN_SYSTEM_CONFIG prints path without use-after-return", async () => {
+    // Regression: loadBunfig used to stash the caller's PathBuffer slice in
+    // ctx.log (via Source.path.text), and bun's later dumpBuildError printed
+    // that slice after the frame was gone — stack-use-after-return on ASAN.
+    // The fix dupes the config path onto the allocator so the log-borrowed
+    // pointer stays valid for any later print. Under ASAN (bun bd) the bad
+    // path was visible as \xaa\xaa\xaa bytes where the filename should be.
+    using dir = tempDir("system-bunfig-malformed", {
+      // Unclosed TOML section header makes TOML.parse log a caret-style
+      // error referencing source.path.text — the exact UAF trigger.
+      "system-bunfig.toml": `[install\n`,
+      "index.ts": `console.log("ran");`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.ts"],
+      env: { ...bunEnv, BUN_SYSTEM_CONFIG: `${dir}/system-bunfig.toml` },
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [_stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // The readable path must appear in stderr after the caret diagnostic —
+    // before the fix this was `at \xaa\xaa\xaa…` (ASAN poison bytes).
+    // Assert a tight shape so we don't accept any substring containing the
+    // basename on a garbled line.
+    expect(stderr).toMatch(/at [^\n]*system-bunfig\.toml:1:\d+/);
+    // And the stderr must not contain any of the ASAN poison bytes that
+    // would have appeared when reading freed stack memory.
+    expect(stderr).not.toContain("\xaa");
+    expect(exitCode).toBe(0);
+  });
+
   test("system config define is applied", async () => {
     using dir = tempDir("system-bunfig-define", {
       "system-bunfig.toml": `

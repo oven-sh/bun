@@ -268,6 +268,8 @@ pub fn loadSystemBunfig(allocator: std.mem.Allocator, ctx: Command.Context, comp
     if (result.path) |path| {
         // Explicit BUN_SYSTEM_CONFIG should fail loudly; auto-discovered default is optional.
         // System config is not project-level, so don't set ctx.debug.loaded_bunfig.
+        // loadBunfig dupes `path` onto the allocator, so it's safe for `config_buf`
+        // to go out of scope after loadBunfig returns.
         try loadBunfig(allocator, !result.is_explicit, false, path, ctx, comptime cmd);
     }
 }
@@ -306,13 +308,19 @@ pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_pa
 }
 
 fn loadBunfig(allocator: std.mem.Allocator, auto_loaded: bool, is_project: bool, config_path: [:0]const u8, ctx: Command.Context, comptime cmd: Command.Tag) !void {
-    const source = switch (bun.sys.File.toSource(config_path, allocator, .{ .convert_bom = true })) {
+    // Dupe config_path onto the allocator so ctx.log can safely borrow it after
+    // the caller's PathBuffer goes out of scope. Errors logged by Bunfig.parse
+    // store Location.file = source.path.text as a borrowed slice, and those
+    // messages are often printed later (e.g. via dumpBuildError on entry-point
+    // load). Without duping, the later print reads freed stack memory.
+    const owned_path = try allocator.dupeZ(u8, config_path);
+    const source = switch (bun.sys.File.toSource(owned_path, allocator, .{ .convert_bom = true })) {
         .result => |s| s,
         .err => |err| {
             if (auto_loaded) return;
             Output.prettyErrorln("{f}\nwhile reading config \"{s}\"", .{
                 err,
-                config_path,
+                owned_path,
             });
             Global.exit(1);
         },

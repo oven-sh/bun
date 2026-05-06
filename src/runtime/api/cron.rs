@@ -2532,13 +2532,6 @@ fn compute_step_interval<T: StepBits>(bits: T, _min: u8, max: u8) -> Option<u32>
     Some(step)
 }
 
- // moved into _jsc_gated above (bun_str::ZString surface)
-fn alloc_print_z(args: core::fmt::Arguments<'_>) -> Result<ZString, bun_alloc::AllocError> {
-    let mut v = Vec::new();
-    v.write_fmt(args).map_err(|_| bun_alloc::AllocError)?;
-    Ok(ZString::from_vec(v))
-}
-
 /// `std.fmt.bufPrint` equivalent: write into `buf`, return the written slice.
 fn buf_print<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> Result<&'a [u8], core::fmt::Error> {
     let mut cursor: &mut [u8] = buf;

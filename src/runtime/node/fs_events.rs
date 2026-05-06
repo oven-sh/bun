@@ -781,9 +781,9 @@ impl FSEventsLoop {
     fn register_watcher(&mut self, watcher: *mut FSEventsWatcher) {
         {
             let _guard = self.mutex.lock();
-            if self.watcher_count == self.watchers.len() {
+            if self.watcher_count == self.watchers.len {
                 self.watcher_count += 1;
-                self.watchers.push(NonNull::new(watcher));
+                bun_core::handle_oom(self.watchers.append(NonNull::new(watcher)));
             } else {
                 let watchers = self.watchers.slice_mut();
                 for (i, w) in watchers.iter_mut().enumerate() {

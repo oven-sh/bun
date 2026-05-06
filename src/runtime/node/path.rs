@@ -2795,7 +2795,7 @@ pub fn relative_windows_js_t<T: PathChar>(
     buf3: &mut [T],
 ) -> JsResult<JSValue> {
     match relative_windows_t(from, to, buf, buf2, buf3) {
-        Ok(r) => BunString::create_utf8_for_js(global_object, r),
+        Ok(r) => crate::jsc::bun_string_jsc::create_utf8_for_js(global_object, r),
         Err(e) => Ok(e.to_js(global_object)),
     }
 }

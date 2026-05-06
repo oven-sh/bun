@@ -50,17 +50,16 @@ impl Collection {
             bun_test::Only::No
         };
 
-        let mut root_scope = DescribeScope::create(bun_test::DescribeScopeInit {
-            parent: bun_test_root.hook_scope,
+        let mut root_scope = DescribeScope::create(bun_test::BaseScope {
+            parent: Some(&mut *bun_test_root.hook_scope as *mut DescribeScope),
             name: None,
             concurrent: false,
-            mode: bun_test::Mode::Normal,
+            mode: bun_test::ScopeMode::Normal,
             only,
             has_callback: false,
             test_id_for_debugger: 0,
             line_no: 0,
         });
-        // TODO(port): DescribeScope::create signature — Zig took a struct-literal of options; field names preserved.
 
         let active_scope = NonNull::from(&mut *root_scope);
 

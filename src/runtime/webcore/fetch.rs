@@ -450,6 +450,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let mut headers: Option<Headers> = None;
     let mut method = Method::GET;
 
+    // PORT NOTE: hoist the one `&mut vm` accessor before `args` takes an
+    // immutable borrow of `vm` for the rest of the function.
+    let vm_verbose_fetch = vm.get_verbose_fetch();
+
     let mut args = jsc::ArgumentsSlice::init(vm, arguments.slice());
 
     let mut url = ZigURL::default();
@@ -478,7 +482,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         http::HTTPVerboseLevel::None
     };
     if verbose == http::HTTPVerboseLevel::None {
-        verbose = vm.get_verbose_fetch();
+        verbose = vm_verbose_fetch;
     }
 
     let mut proxy: Option<ZigURL> = None;
@@ -494,6 +498,20 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // TODO(port): lifetime — `url` and `proxy` borrow into this buffer. Kept as
     // Vec<u8> (owned) here; ZigURL fields are raw slices in Phase A.
     let mut url_proxy_buffer: Vec<u8> = Vec::new();
+    // PORT NOTE: Zig freely reassigns `url_proxy_buffer` while `url`/`proxy`
+    // still point into it (or into the buffer about to replace it). Detach the
+    // borrow-checker by parsing through a raw-pointer slice; the caller is
+    // responsible for keeping the backing allocation alive (it always becomes
+    // the new `url_proxy_buffer` before the old one is dropped).
+    macro_rules! parse_url_detached {
+        ($slice:expr) => {{
+            let s: &[u8] = $slice;
+            let (ptr, len) = (s.as_ptr(), s.len());
+            // SAFETY: `s` points into a Vec that is immediately adopted as
+            // `url_proxy_buffer` (or already is it); see PORT NOTE above.
+            ZigURL::parse(unsafe { core::slice::from_raw_parts(ptr, len) })
+        }};
+    }
     let mut url_type = URLType::Remote;
 
     let mut ssl_config: Option<http::ssl_config::SharedPtr> = None;
@@ -640,7 +658,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
     };
     url_proxy_buffer = owned_url.into_href().into_vec();
-    url = ZigURL::parse(&url_proxy_buffer);
+    url = parse_url_detached!(&url_proxy_buffer[..]);
     if url.is_file() {
         url_type = URLType::File;
     } else if url.is_blob() {
@@ -1008,14 +1026,14 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         buffer.extend_from_slice(&url_proxy_buffer);
                         write!(&mut buffer, "{}", href).expect("write to Vec cannot fail");
                         let url_len = url.href.len();
-                        url = ZigURL::parse(&buffer[0..url_len]);
+                        url = parse_url_detached!(&buffer[0..url_len]);
                         if url.is_file() {
                             url_type = URLType::File;
                         } else if url.is_blob() {
                             url_type = URLType::Blob;
                         }
 
-                        proxy = Some(ZigURL::parse(&buffer[url_len..]));
+                        proxy = Some(parse_url_detached!(&buffer[url_len..]));
                         // PORT NOTE: allocator.free(url_proxy_buffer) — old Vec dropped on reassign.
                         break 'extract_proxy buffer;
                     }
@@ -1050,14 +1068,14 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                                     write!(&mut buffer, "{}", href)
                                         .expect("write to Vec cannot fail");
                                     let url_len = url.href.len();
-                                    url = ZigURL::parse(&buffer[0..url_len]);
+                                    url = parse_url_detached!(&buffer[0..url_len]);
                                     if url.is_file() {
                                         url_type = URLType::File;
                                     } else if url.is_blob() {
                                         url_type = URLType::Blob;
                                     }
 
-                                    proxy = Some(ZigURL::parse(&buffer[url_len..]));
+                                    proxy = Some(parse_url_detached!(&buffer[url_len..]));
                                     // PORT NOTE: allocator.free(url_proxy_buffer) — old Vec dropped on reassign.
                                     url_proxy_buffer = buffer;
 
@@ -1534,7 +1552,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             break 'blob Blob::find_or_create_file_from_path(&mut pathlike, global_this, true);
         };
 
-        let response = Box::new(Response::init(
+        let mut response = Box::new(Response::init(
             response::Init {
                 status_code: 200,
                 ..Default::default()

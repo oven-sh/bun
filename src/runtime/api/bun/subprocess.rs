@@ -60,11 +60,22 @@ pub use js_bun_spawn_bindings::{spawn, spawn_sync};
 bun_output::declare_scope!(Subprocess, visible);
 bun_output::declare_scope!(IPC, visible);
 
-// `toJS`/`fromJS`/`fromJSDirect` are wired by `#[bun_jsc::JsClass]`; do not re-export here.
-// TODO(port): codegen — cached-property accessors (exitedPromiseGetCached, stdinGetCached, etc.)
-// from `jsc.Codegen.JSSubprocess` are still needed; the derive emits this `js` module.
+// `toJS`/`fromJS`/`fromJSDirect` are wired manually below (the `#[bun_jsc::JsClass]`
+// proc-macro doesn't support generic structs); cached-property accessors
+// (exitedPromiseGetCached, stdinGetCached, …) from `jsc.Codegen.JSSubprocess` are
+// emitted here via `codegen_cached_accessors!`.
 pub mod js {
-    pub use bun_jsc::codegen::JSSubprocess::*;
+    bun_jsc::codegen_cached_accessors!(
+        "Subprocess";
+        stdin,
+        stdout,
+        stderr,
+        terminal,
+        exitedPromise,
+        onExitCallback,
+        onDisconnectCallback,
+        ipcCallback
+    );
 }
 
 /// Platform-dependent stdio result type.

@@ -128,6 +128,7 @@ crossbeam = "0.8"
 smallvec = "1"
 bumpalo = { version = "3", features = ["collections", "boxed"] }
 typed-arena = "2"
+itoa = "1"
 bun_analytics = { path = "src/analytics" }
 bun_api = { path = "src/api" }
 bun_base64 = { path = "src/base64" }

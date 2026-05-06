@@ -467,14 +467,11 @@ impl<T> ThrowFmtArgs for &[T] {}
 impl<T, const N: usize> ThrowFmtArgs for &[T; N] {}
 impl ThrowFmtArgs for core::fmt::Arguments<'_> {}
 
-/// Debug-only binding-presence marker. In Zig this is `jsc.markBinding(@src())`;
-/// here it's a no-op (track_caller gives us the location if we ever wire it up).
-#[macro_export]
-macro_rules! mark_binding {
-    () => {{
-        // TODO(port): bun_output::scoped_log!(.bind, "{}", core::panic::Location::caller())
-    }};
-}
+/// Debug-only binding-presence marker. In Zig this is `jsc.markBinding(@src())`.
+/// MOVE_DOWN: the macro lives in `bun_core` (no jsc dep) so `bun_aio` /
+/// `bun_http_jsc` / `bun_event_loop` can call it without a `bun_jsc` cycle.
+/// Re-exported here so existing `crate::mark_binding!()` call sites resolve.
+pub use bun_core::mark_binding;
 
 pub use self::host_fn::{
     from_js_host_call, from_js_host_call_generic, host_construct_result, host_fn_result,
@@ -2429,16 +2426,36 @@ pub mod Node {
 }
 pub use self::Node as node;
 
-// TODO(b1): bun_output crate not available; scoped logging stubbed.
+/// `jsc.zig:170 markBinding(@src())` — opt-in `BUN_DEBUG_JSC=1` trace of every
+/// FFI binding entry. Zig: `log("{s} ({s}:{d})", .{src.fn_name, src.file, src.line})`
+/// where `log = Output.scoped(.JSC, .hidden)`.
+///
+/// LAYERING: the `JSC` scoped logger lives in `bun_core::Global::JSC_SCOPE` (it
+/// has no jsc dep) so lower-tier crates can mark bindings without depending on
+/// `bun_jsc`. This fn is the thin wrapper `jsc.zig` exposes for in-crate use.
+///
+/// PORT NOTE: `std.builtin.SourceLocation.fn_name` has no Rust equivalent;
+/// `#[track_caller]` only surfaces file/line, so the leading `{fn_name}` is
+/// dropped. Prefer the `mark_binding!()` macro form (re-exported above) which
+/// captures `module_path!()` at the call site.
 #[track_caller]
 #[inline]
 pub fn mark_binding() {
-    // gated: bun_output::scoped_log!(.bind, "{}", core::panic::Location::caller())
+    if cfg!(debug_assertions) && bun_core::Global::JSC_SCOPE.is_visible() {
+        let loc = core::panic::Location::caller();
+        bun_core::Global::JSC_SCOPE
+            .log(format_args!("[jsc] ({}:{})\n", loc.file(), loc.line()));
+    }
 }
 
+/// `jsc.zig:173 markMemberBinding(class, @src())` —
+/// `log("{s}.{s} ({s}:{d})", .{class, src.fn_name, src.file, src.line})`.
 #[inline]
-pub fn mark_member_binding(_class: &'static str, _src: &core::panic::Location<'static>) {
-    // gated: bun_output::scoped_log!
+pub fn mark_member_binding(class: &'static str, src: &core::panic::Location<'static>) {
+    if cfg!(debug_assertions) && bun_core::Global::JSC_SCOPE.is_visible() {
+        bun_core::Global::JSC_SCOPE
+            .log(format_args!("[jsc] {} ({}:{})\n", class, src.file(), src.line()));
+    }
 }
 
 // LAYERING: `jsc.zig:183` aliases `Subprocess = bun.api.Subprocess`, but that

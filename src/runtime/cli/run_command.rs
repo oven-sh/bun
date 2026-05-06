@@ -2317,8 +2317,6 @@ impl RunCommand {
         // Zig: run_command.zig:1890-1912 — search the prepended `.bin` dirs
         // (PATH minus ORIGINAL_PATH) unless `--bun` was passed, in which case
         // search the whole stitched PATH.
-        // TODO(b2-blocked): Windows `BunXFastPath::try_launch` precedes this
-        // in the .zig spec; preserved in phase_a_draft.
         {
             // SAFETY: `Transpiler::init` always sets `fs`; resolver-cache lifetime.
             let fs = unsafe { &mut *this_transpiler.fs };
@@ -2339,17 +2337,20 @@ impl RunCommand {
                     which(&mut path_buf, path_for_which, top_level_dir, target_name)
                 {
                     let out = destination.as_bytes();
-                    let _stored = fs.dirname_store.append_slice(out)?;
-                    let _ = (top_level_dir, target_name);
-                    // TODO(b2-blocked): `run_binary_without_bunx_path` lives in
-                    // `phase_a_draft` only (needs `bun_core::spawn_sync` wiring).
-                    // Once ported to the active `impl RunCommand`:
-                    //   Self::run_binary_without_bunx_path(
-                    //       ctx, stored, destination.as_ptr() as *const c_char,
-                    //       top_level_dir, env_loader, &passthrough,
-                    //       Some(target_name),
-                    //   )?;
-                    todo!("blocked_on: RunCommand::run_binary_without_bunx_path");
+                    let stored = fs.dirname_store.append_slice(out)?;
+                    let dest_z = destination.as_ptr() as *const c_char;
+                    // PORT NOTE: borrowck reshape — `ctx.passthrough` is a
+                    // `Vec<Box<[u8]>>`; clone it so `&mut ctx` is unburdened.
+                    let passthrough: Vec<Box<[u8]>> = ctx.passthrough.clone();
+                    Self::run_binary_without_bunx_path(
+                        ctx,
+                        stored,
+                        dest_z,
+                        top_level_dir,
+                        env_loader,
+                        &passthrough,
+                        Some(target_name),
+                    )?;
                 }
             }
         }
@@ -2359,11 +2360,17 @@ impl RunCommand {
             return Ok(true);
         }
 
-        // TODO(b2-blocked): `bun feedback` — when `ctx.filters.is_empty() &&
-        // !ctx.workspaces && Cli::cmd() == AutoCommand && target_name ==
-        // b"feedback"`, dispatch to `Self::bun_feedback(ctx)` (run_command.zig
-        // :1921-1925). Blocked on `cli::Cli::cmd()` being available in this
-        // tier; the impl is preserved in `phase_a_draft::bun_feedback`.
+        // `bun feedback` — when no filters/workspaces, the `auto` command, and
+        // the literal target `feedback`, drop into the embedded feedback
+        // script (run_command.zig:1921-1925).
+        if ctx.filters.is_empty()
+            && !ctx.workspaces
+            // SAFETY: `CMD` is set once during single-threaded CLI startup.
+            && unsafe { cli::CMD } == Some(CommandTag::AutoCommand)
+            && target_name == b"feedback"
+        {
+            Self::bun_feedback(ctx)?;
+        }
 
         if log_errors {
             let default_loader = Self::default_loader_for(target_name);

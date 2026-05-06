@@ -908,11 +908,12 @@ impl EventLoop {
 
         if !loop_.is_active() {
             if self.forever_timer.is_none() {
-                let mut t = uws::Timer::create(loop_, self as *mut _ as *mut c_void);
+                let mut t =
+                    uws::Timer::create(loop_, (self as *mut EventLoop).cast::<core::ffi::c_void>());
                 // SAFETY: t is a fresh non-null timer handle
                 unsafe {
                     t.as_mut().set(
-                        self as *mut _ as *mut c_void,
+                        (self as *mut EventLoop).cast::<core::ffi::c_void>(),
                         Some(noop_forever_timer),
                         1000 * 60 * 4,
                         1000 * 60 * 4,

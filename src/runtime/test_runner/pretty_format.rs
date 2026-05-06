@@ -1803,7 +1803,7 @@ impl<'a> Formatter<'a> {
                         // `value` is on the stack (conservative scan). `write_format` does not
                         // re-enter `as_` for the same cell, so the `&mut` is unique here.
                         let response = unsafe { &mut *response };
-                        let mut bridge = IoFmt(writer.ctx);
+                        let mut bridge = IoFmt(&mut *writer.ctx);
                         if response
                             .write_format::<_, _, ENABLE_ANSI_COLORS>(self, &mut bridge)
                             .is_err()
@@ -1821,7 +1821,7 @@ impl<'a> Formatter<'a> {
                     } else if let Some(request) = value.as_::<crate::webcore::Request>() {
                         // SAFETY: see Response branch above.
                         let request = unsafe { &mut *request };
-                        let mut bridge = IoFmt(writer.ctx);
+                        let mut bridge = IoFmt(&mut *writer.ctx);
                         if request
                             .write_format::<_, _, ENABLE_ANSI_COLORS>(value, self, &mut bridge)
                             .is_err()
@@ -1840,7 +1840,7 @@ impl<'a> Formatter<'a> {
                     } else if let Some(build) = value.as_::<crate::api::BuildArtifact>() {
                         // SAFETY: see Response branch above.
                         let build = unsafe { &mut *build };
-                        let mut bridge = IoFmt(writer.ctx);
+                        let mut bridge = IoFmt(&mut *writer.ctx);
                         if build
                             .write_format::<_, _, ENABLE_ANSI_COLORS>(self, &mut bridge)
                             .is_err()
@@ -1858,7 +1858,7 @@ impl<'a> Formatter<'a> {
                     } else if let Some(blob) = value.as_::<crate::webcore::Blob>() {
                         // SAFETY: see Response branch above.
                         let blob = unsafe { &mut *blob };
-                        let mut bridge = IoFmt(writer.ctx);
+                        let mut bridge = IoFmt(&mut *writer.ctx);
                         if blob
                             .write_format::<_, _, ENABLE_ANSI_COLORS>(self, &mut bridge)
                             .is_err()
@@ -1959,14 +1959,14 @@ impl<'a> Formatter<'a> {
                         return Ok(());
                     } else if let Some(build_log) = value.as_::<crate::api::BuildMessage>() {
                         // SAFETY: non-null JsClass cell, GC-rooted via `value`.
-                        let mut bridge = IoFmt(writer.ctx);
+                        let mut bridge = IoFmt(&mut *writer.ctx);
                         let _ = unsafe { &*build_log }
                             .msg
                             .write_format::<ENABLE_ANSI_COLORS>(&mut bridge);
                         return Ok(());
                     } else if let Some(resolve_log) = value.as_::<crate::api::ResolveMessage>() {
                         // SAFETY: non-null JsClass cell, GC-rooted via `value`.
-                        let mut bridge = IoFmt(writer.ctx);
+                        let mut bridge = IoFmt(&mut *writer.ctx);
                         let _ = unsafe { &*resolve_log }
                             .msg
                             .write_format::<ENABLE_ANSI_COLORS>(&mut bridge);

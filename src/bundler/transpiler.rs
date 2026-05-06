@@ -26,13 +26,17 @@ pub type ResolveResults = HashMap<u64, ()>;
 // is structurally equivalent (growable ring buffer); swap once the re-export lands.
 pub type ResolveQueue = std::collections::VecDeque<resolver::Result>;
 
-/// CYCLEBREAK FORWARD_DECL: bundler_jsc::plugin_runner::PluginRunner.
-/// SAFETY: erased — bundler stores/passes through but never dereferences; the
-/// JSC side casts back. Lives here so `crate::transpiler::PluginRunner` resolves
-/// for downstream callers that referenced the B-1 stub.
+/// Spec PluginRunner.zig — the resolver-side hook record. Lives at this tier
+/// (not `bundler_jsc`) so both `bun_jsc::VirtualMachine.plugin_runner` and
+/// `Linker.plugin_runner` can name it without a crate cycle. `global_object`
+/// is type-erased (`*mut JSGlobalObject` lives in `bun_jsc`, which depends on
+/// this crate); `bundler_jsc` casts it back when dispatching `on_resolve`.
 #[repr(C)]
 pub struct PluginRunner {
-    _opaque: [u8; 0],
+    /// `*mut bun_jsc::JSGlobalObject` — erased to break the dep cycle.
+    pub global_object: *mut core::ffi::c_void,
+    // PORT NOTE: Zig stored `allocator: std.mem.Allocator`; dropped per
+    // PORTING.md (global mimalloc).
 }
 
 /// CYCLEBREAK FORWARD_DECL: `bundler_jsc::plugin_runner::MacroJSCtx`.

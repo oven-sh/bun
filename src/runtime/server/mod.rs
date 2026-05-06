@@ -1416,6 +1416,54 @@ impl AnyServer {
     pub fn web_socket_handler(&mut self) -> Option<&mut WebSocketServerHandler> {
         any_server_dispatch_mut!(self, |s| s.config.websocket.as_mut().map(|ws| &mut ws.handler))
     }
+
+    /// Mutable handle to the DevServer (when configured). HTMLBundle's request
+    /// path mutates DevServer state (`respond_for_html_bundle`).
+    pub fn dev_server_mut(&self) -> Option<&mut crate::bake::DevServer::DevServer> {
+        any_server_dispatch_mut!(self, |s| s.dev_server.as_deref_mut())
+    }
+
+    /// Returns:
+    /// - `Ready(None)` if no plugin has to be loaded
+    /// - `Err` if there is a cached failure. Currently, this requires restarting the entire server.
+    /// - `Pending` if `callback` was stored. It will call `on_plugins_resolved` or `on_plugins_rejected` later.
+    pub fn get_or_load_plugins(
+        &self,
+        callback: ServePluginsCallback<'_>,
+    ) -> GetOrStartLoadResult<'_> {
+        any_server_dispatch_mut!(self, |s| {
+            if let Some(p) = &mut s.plugins {
+                // SAFETY: global_this outlives the server.
+                let global = unsafe { &*s.global_this };
+                // PORT NOTE: `Rc::get_mut` mirrors the Zig single-owner invariant
+                // (ServePlugins is uniquely owned by its server until reload).
+                return match Rc::get_mut(p)
+                    .expect("ServePlugins uniquely owned by server")
+                    .get_or_start_load(global, callback)
+                {
+                    Ok(r) => r,
+                    Err(_) => panic!("unhandled exception from ServePlugins.getOrStartLoad"),
+                };
+            }
+            // no plugins
+            GetOrStartLoadResult::Ready(None)
+        })
+    }
+
+    pub fn append_static_route(
+        &self,
+        path: &[u8],
+        route: AnyRoute,
+        method: server_config::MethodOptional,
+    ) -> Result<(), bun_core::Error> {
+        // TODO(port): narrow error set
+        any_server_dispatch_mut!(self, |s| s.config.append_static_route(path, route, method))
+    }
+
+    pub fn reload_static_routes(&self) -> Result<bool, bun_core::Error> {
+        // TODO(port): narrow error set
+        any_server_dispatch_mut!(self, |s| s.reload_static_routes())
+    }
 }
 
 // ─── SavedRequest ────────────────────────────────────────────────────────────

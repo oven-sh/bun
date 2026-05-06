@@ -241,6 +241,9 @@ impl<const SSL: bool, const HTTP3: bool> HasAutoFlusher
     }
 }
 
+#[path = "webcore/headers_ref.rs"]
+pub mod headers_ref;
+
 // ─── un-gated core types (cycle-5: Body/Blob/Response/Request real) ──────────
 #[path = "webcore/Blob.rs"]
 pub mod blob;

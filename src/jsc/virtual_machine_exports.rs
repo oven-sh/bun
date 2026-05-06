@@ -203,14 +203,22 @@ pub extern "C" fn Bun__handleHandledPromise(global: &JSGlobalObject, promise: &J
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__onDidAppendPlugin(jsc_vm: &mut VirtualMachine, _global: &JSGlobalObject) {
+pub extern "C" fn Bun__onDidAppendPlugin(jsc_vm: &mut VirtualMachine, global: &JSGlobalObject) {
     if jsc_vm.plugin_runner.is_some() {
         return;
     }
-    // TODO(b2-cycle): `plugin_runner` is `Option<()>` (PluginRunner gated in
-    // bun_bundler). Set the discriminant so `is_some()` flips; the linker hook
-    // (`transpiler.linker.plugin_runner = &mut ...`) lands when the field is typed.
-    jsc_vm.plugin_runner = Some(());
+
+    jsc_vm.plugin_runner = Some(bun_bundler::transpiler::PluginRunner {
+        // PORT NOTE: `PluginRunner.global_object` is `*mut c_void` at the
+        // `bun_bundler` tier (cycle-break — `JSGlobalObject` lives here);
+        // `bundler_jsc` casts back when dispatching `on_resolve`.
+        global_object: global.as_ptr().cast(),
+    });
+    // SAFETY: `plugin_runner` was just set to `Some` above; the `Option` slot
+    // is embedded in `*jsc_vm` and stable for the VM's lifetime, so taking a
+    // raw pointer into it for the linker BACKREF is sound.
+    jsc_vm.transpiler.linker.plugin_runner =
+        Some(unsafe { jsc_vm.plugin_runner.as_mut().unwrap_unchecked() } as *mut _);
 }
 
 #[cfg(windows)]
@@ -228,9 +236,7 @@ pub extern "C" fn Bun__setTLSRejectUnauthorizedValue(value: i32) {
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__getTLSRejectUnauthorizedValue() -> i32 {
     // SAFETY: VM singleton is process-lifetime.
-    let vm = unsafe { &*VirtualMachine::get() };
-    // Spec: defaults to true when unset (NODE_TLS_REJECT_UNAUTHORIZED env consulted lazily).
-    if vm.default_tls_reject_unauthorized.unwrap_or(true) { 1 } else { 0 }
+    if unsafe { (*VirtualMachine::get()).get_tls_reject_unauthorized() } { 1 } else { 0 }
 }
 
 #[unsafe(no_mangle)]
@@ -276,10 +282,10 @@ pub extern "C" fn Bun__setVerboseFetchValue(value: i32) {
 pub extern "C" fn Bun__getVerboseFetchValue() -> i32 {
     use bun_http::HTTPVerboseLevel;
     // SAFETY: VM singleton is process-lifetime.
-    match unsafe { (*VirtualMachine::get()).default_verbose_fetch } {
-        Some(v) if v == HTTPVerboseLevel::Headers as u8 => 1,
-        Some(v) if v == HTTPVerboseLevel::Curl as u8 => 2,
-        _ => 0,
+    match unsafe { (*VirtualMachine::get()).get_verbose_fetch() } {
+        HTTPVerboseLevel::None => 0,
+        HTTPVerboseLevel::Headers => 1,
+        HTTPVerboseLevel::Curl => 2,
     }
 }
 

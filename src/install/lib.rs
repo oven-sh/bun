@@ -1792,6 +1792,26 @@ impl PackageManifestMap {
     ) -> Option<&mut npm::PackageManifest> {
         None
     }
+
+    /// Stub: `PackageManifestMap.byNameAllowExpired`
+    /// (src/install/PackageManifestMap.zig). Real body lives in
+    /// `package_manifest_map::PackageManifestMap::by_name_allow_expired`; the
+    /// stub always cache-misses. `pm` is a raw pointer so callers can pass the
+    /// aliased `*mut PackageManager` while holding field-disjoint borrows on
+    /// `manager.lockfile` / `manager.options` (Zig passes `*PackageManager`
+    /// freely without aliasing rules).
+    // TODO(port): blocked_on package_manifest_map / PackageManager type unification (reconciler-6)
+    pub fn by_name_allow_expired<PM>(
+        &mut self,
+        _pm: *mut PM,
+        _scope: &npm::registry::Scope,
+        _name: &[u8],
+        _is_expired: Option<&mut bool>,
+        _cache_behavior: package_manager::ManifestLoad,
+        _needs_extended_manifest: bool,
+    ) -> Option<&npm::PackageManifest> {
+        None
+    }
 }
 #[derive(Default)] pub struct PostinstallOptimizer;
 pub type Task = ();
@@ -2647,6 +2667,11 @@ pub struct CommandLineArguments {
     pub positionals: Vec<Box<[u8]>>,
     pub top_only: bool,
     pub depth: Option<usize>,
+    /// Zig: `CommandLineArguments.silent` — `--silent`; surfaced on the stub so
+    /// `bun_runtime::cli::{outdated,update_interactive}_command` can gate
+    /// `init()` failure diagnostics until the stub/real types unify
+    /// (reconciler-6).
+    pub silent: bool,
 }
 impl CommandLineArguments {
     /// Port of `CommandLineArguments.parse`

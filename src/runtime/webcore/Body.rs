@@ -39,10 +39,10 @@ fn as_url_search_params(value: JSValue) -> Option<*mut URLSearchParams> {
     URLSearchParams::from_js(value).map(|p| p.as_ptr())
 }
 #[inline]
-fn as_image(_value: JSValue) -> Option<*mut crate::image::Image> {
-    // TODO(port): blocked_on: bun_jsc::JsClass for crate::image::Image
-    // (`#[bun_jsc::JsClass]` not yet derived on Image).
-    None
+fn as_image(value: JSValue) -> Option<*mut crate::image::Image> {
+    // `Image` is `#[bun_jsc::JsClass]`, so `JSValue::as_<T>()` resolves via the
+    // generated `Image__fromJS` extern.
+    value.as_::<crate::image::Image>()
 }
 
 /// Local extension over `bun_jsc::AnyPromise` adding `wrap`/`resolve`/`reject`
@@ -624,7 +624,7 @@ impl ValueError {
             // with their Drop deref). Zig did `var v = this.*; v.ref();` (bitwise copy
             // + one bump) — `.clone()` alone is the Rust equivalent. An extra `.ref_()`
             // here would leak +1 per dupe.
-            ValueError::SystemError(e) => ValueError::SystemError(e.dupe()),
+            ValueError::SystemError(e) => ValueError::SystemError(e.clone()),
             ValueError::Message(m) => ValueError::Message(m.clone()),
             ValueError::TypeError(m) => ValueError::TypeError(m.clone()),
             ValueError::JSValue(js_ref) => {

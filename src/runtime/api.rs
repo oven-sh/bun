@@ -157,6 +157,8 @@ pub mod html_rewriter;
 pub mod js_transpiler;
 #[path = "api/JSBundler.rs"]
 pub mod js_bundler;
+#[path = "api/js_bundle_completion_task.rs"]
+pub mod js_bundle_completion_task;
 #[path = "api/BunObject.rs"]
 pub mod bun_object;
 #[path = "api/HashObject.rs"]

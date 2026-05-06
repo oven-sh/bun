@@ -513,54 +513,68 @@ use bun_bundler::options_impl::LoaderExt as _;
 #[allow(unused_imports)]
 use bun_jsc::zig_string::ZigString as JscZigString;
 
-/// Local shim for `bun_jsc::dom_form_data::FormDataEntry` — that module is
-/// `stub_ty!` opaque struct, so the associated-type path
-/// `jsc::DOMFormData::FormDataEntry` cannot resolve. Mirrors Zig
-/// `jsc.DOMFormData.FormDataEntry` (`union(enum) { string, file }`).
-pub enum FormDataEntry<'a> {
-    String(ZigString),
-    File { blob: &'a mut Blob, filename: ZigString },
-}
+/// Re-export of `bun_jsc::dom_form_data::FormDataEntry` with the `blob`
+/// payload reinterpreted as the runtime `Blob` (the bun_jsc copy is the
+/// layout-identical lower-tier forward-decl). `FormDataContext::on_entry`
+/// pointer-casts at the boundary; see `from_dom_form_data` below.
+pub use bun_jsc::dom_form_data::FormDataEntry;
 
 impl Blob {
-    pub fn do_read_from_s3<F>(&mut self, global: &JSGlobalObject) -> JsTerminatedResult<JSValue>
-    where
-        F: Fn(&mut Blob, &JSGlobalObject, &mut [u8], Lifetime) -> JSValue + 'static,
-    {
+    /// `comptime Function` (Zig) → `F: ReadFileToJs` trait dispatch (Rust).
+    /// The wrapper adapts the trait fn to the `S3ReadHandler` ABI and uses
+    /// `to_js_host_call` to map `JsResult` → `JSValue|.zero` exactly as
+    /// Zig's `jsc.toJSHostCall` does.
+    pub fn do_read_from_s3<F: read_file::ReadFileToJs>(
+        &mut self,
+        global: &JSGlobalObject,
+    ) -> JsTerminatedResult<JSValue> {
         debug!("doReadFromS3");
-        // TODO(port): WrappedFn struct that calls jsc::to_js_host_call(g, F, (b, g, by, Lifetime::Clone)).
-        fn wrapped<F>(_b: &mut Blob, _g: *const JSGlobalObject, _by: &mut [u8]) -> JSValue
-        where
-            F: Fn(&mut Blob, &JSGlobalObject, &mut [u8], Lifetime) -> JSValue + 'static,
-        {
-            // Zig passed a `comptime Function` value; Rust has no value of `F`
-            // here (only the type), so the original `F::call(...)` requires
-            // `fn_traits`. Re-shape `do_read_from_s3` to take a fn pointer
-            // when `S3BlobDownloadTask::init` un-gates.
-            todo!("blocked_on: Blob::do_read_from_s3 wrapped fn — comptime Function value")
+        fn wrapped<F: read_file::ReadFileToJs>(
+            b: &mut Blob,
+            g: *const JSGlobalObject,
+            by: &mut [u8],
+        ) -> JSValue {
+            // SAFETY: `g` is the live `&JSGlobalObject` stashed in the
+            // S3BlobDownloadTask at `init` time; the VM outlives the task.
+            let g = unsafe { &*g };
+            // PORT NOTE: reshaped for borrowck — Zig captured `by` once and
+            // passed it through `toJSHostCall(..., .{b, g, by, .clone})`.
+            // The Rust `to_js_host_call` takes a `FnOnce` closure, which
+            // would require moving `b`/`by` (`&mut` reborrows don't escape
+            // a closure cleanly here). Round-trip through raw pointers to
+            // satisfy the closure-capture rules; same observable effect.
+            let b_ptr = b as *mut Blob;
+            let by_ptr = by as *mut [u8];
+            jsc::host_fn::to_js_host_call(g, core::panic::Location::caller(), move || {
+                // SAFETY: `b_ptr`/`by_ptr` are live unique borrows for the
+                // duration of this synchronous callback.
+                F::call(unsafe { &mut *b_ptr }, g, unsafe { &mut *by_ptr }, Lifetime::Clone)
+            })
         }
         S3BlobDownloadTask::init(global, self, wrapped::<F>)
     }
 
-    pub fn do_read_file<F>(&mut self, global: &JSGlobalObject) -> JSValue
-    where
-        F: Fn(&mut Blob, &JSGlobalObject, &mut [u8], Lifetime) -> jsc::JsResult<JSValue> + 'static,
-    {
+    pub fn do_read_file<F: read_file::ReadFileToJs + 'static>(
+        &mut self,
+        global: &JSGlobalObject,
+    ) -> JSValue {
         debug!("doReadFile");
 
-        let _ = global;
-        todo!("blocked_on: read_file::NewReadFileHandler / read_file::ReadFile (gated in blob/read_file.rs)");
-        {
-        // TODO(port): NewReadFileHandler<F> is a generic struct from read_file.rs.
-        type Handler<F> = NewReadFileHandler<F>;
+        type Handler<'a, F> = read_file::NewReadFileHandler<'a, F>;
 
         // The callback may read context.content_type (e.g. to_form_data_with_bytes),
         // which is heap-owned by the source JS Blob and freed on finalize(). Take
         // an owning dupe so the handler outliving the source can't dangle.
-        let handler = Box::into_raw(Box::new(Handler::<F> {
+        // PORT NOTE: `global_this: &'a JSGlobalObject` on the handler is stored
+        // across an async hop; the pointer is stable (JSC heap), so erase the
+        // borrow to `'static` here. Mirrors Zig `*JSGlobalObject` raw-ptr field.
+        // SAFETY: the `JSGlobalObject` outlives every task scheduled on it.
+        let global_static: &'static JSGlobalObject = unsafe { &*(global as *const _) };
+        let handler: *mut Handler<'static, F> = Box::into_raw(Box::new(Handler::<'static, F> {
             context: self.dupe(),
-            global_this: global,
-            ..Default::default()
+            promise: jsc::JSPromiseStrong::default(),
+            global_this: global_static,
+            _f: core::marker::PhantomData,
         }));
 
         #[cfg(windows)]
@@ -569,10 +583,13 @@ impl Blob {
             let promise_value = promise.to_js();
             promise_value.ensure_still_alive();
             // SAFETY: handler was just boxed
-            unsafe { (*handler).promise.strong.set(global, promise_value) };
+            unsafe { (*handler).promise = jsc::JSPromiseStrong::init(global) };
+            // SAFETY: handler is live until ReadFileUV consumes it.
+            let promise_value = unsafe { (*handler).promise.value() };
 
             read_file::ReadFileUV::start(
-                global.bun_vm().event_loop(),
+                // SAFETY: `bun_vm()` returns the live per-global VM pointer.
+                unsafe { &*global.bun_vm() }.event_loop(),
                 self.store.as_ref().unwrap().clone(),
                 self.offset,
                 self.size,
@@ -584,31 +601,32 @@ impl Blob {
 
         #[cfg(not(windows))]
         {
-            let file_read = read_file::ReadFile::create(
+            let file_read = bun_core::handle_oom(read_file::ReadFile::create(
                 self.store.as_ref().unwrap().clone(),
                 self.offset,
                 self.size,
                 handler,
-                Handler::<F>::run,
-            );
-            let read_file_task = read_file::ReadFileTask::create_on_js_thread(global, file_read);
+                Handler::<'static, F>::run,
+            ));
+            let read_file_task =
+                read_file::ReadFileTask::create_on_js_thread(global, Box::into_raw(file_read));
 
             // Create the Promise only after the store has been ref()'d.
             // The garbage collector runs on memory allocations
             // The JSPromise is the next GC'd memory allocation.
             // This shouldn't really fix anything, but it's a little safer.
-            let promise = JSPromise::create(global);
-            let promise_value = promise.to_js();
-            promise_value.ensure_still_alive();
             // SAFETY: handler was just boxed
-            unsafe { (*handler).promise.strong.set(global, promise_value) };
+            unsafe { (*handler).promise = jsc::JSPromiseStrong::init(global) };
+            // SAFETY: handler is live until ReadFile::then consumes it.
+            let promise_value = unsafe { (*handler).promise.value() };
+            promise_value.ensure_still_alive();
 
-            read_file_task.schedule();
+            // SAFETY: `read_file_task` was Box::into_raw'd by `create_on_js_thread`.
+            unsafe { read_file::ReadFileTask::schedule(read_file_task) };
 
             debug!("doReadFile: read_file_task scheduled");
             promise_value
         }
-        } // end cfg(any())
     }
 }
 

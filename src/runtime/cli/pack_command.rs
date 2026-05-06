@@ -1840,8 +1840,10 @@ pub fn pack<const FOR_PUBLISH: bool>(
     );
     // SAFETY: `configure_env_for_run` fully initialized `this_transpiler`.
     let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
-    // SAFETY: `Transpiler::init` always sets `env` (singleton or leaked).
-    let transpiler_env: &bun_dotenv::Loader<'_> = unsafe { &*this_transpiler.env };
+    // `Transpiler::env` is a process-singleton `*mut` (set by `init`); pass as
+    // raw pointer so `run_package_script_foreground` can `&mut` it without
+    // conflicting with our `&Transpiler` borrow.
+    let transpiler_env: *mut bun_dotenv::Loader<'static> = this_transpiler.env;
     manager.env_mut().map.put(b"npm_command", b"pack")?;
 
     let (postpack_script, publish_script, postpublish_script, ran_scripts): (
@@ -2137,7 +2139,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
                 postpack_script_str,
                 b"postpack",
                 abs_workspace_path,
-                manager_env(manager),
+                pm_env(manager),
                 manager.options.log_level == LogLevel::Silent,
             )?;
         }
@@ -2525,7 +2527,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
             postpack_script_str,
             b"postpack",
             abs_workspace_path,
-            manager_env(manager),
+            pm_env(manager),
             manager.options.log_level == LogLevel::Silent,
         )?;
     }
@@ -2563,15 +2565,29 @@ fn run_lifecycle_script<const FOR_PUBLISH: bool>(
     script: &[u8],
     name: &[u8],
     abs_workspace_path: &[u8],
-    env: &bun_dotenv::Loader,
+    env: *mut bun_dotenv::Loader<'static>,
     silent: bool,
 ) -> Result<(), PackError<FOR_PUBLISH>> {
-    let _ = (ctx, script, abs_workspace_path, env, silent);
-    match {
-        todo!("blocked_on: RunCommand::run_package_script_foreground (&mut ctx/env)");
-        #[allow(unreachable_code)]
-        Result::<(), bun_core::Error>::Ok(())
-    } {
+    // PORT NOTE: `ctx.command_ctx` and `env` are reborrowed via raw pointer
+    // because Zig passed `*ContextData` / `*DotEnv.Loader` (freely aliased
+    // process singletons) and `run_package_script_foreground` needs `&mut`
+    // for `env.map.put()` while `ctx` only holds `&Context`.
+    // SAFETY: both are process-lifetime singletons; no concurrent `&mut` exists
+    // while a lifecycle script runs (single-threaded CLI dispatch).
+    let command_ctx = unsafe { &mut *(ctx.command_ctx as *const _ as *mut Command::ContextData) };
+    let use_system_shell = command_ctx.debug.use_system_shell;
+    match RunCommand::run_package_script_foreground(
+        command_ctx,
+        script,
+        name,
+        abs_workspace_path,
+        // SAFETY: `env` is non-null (set by `PackageManager::init` /
+        // `configure_env_for_run`).
+        unsafe { &mut *env },
+        &[],
+        silent,
+        use_system_shell,
+    ) {
         Ok(_) => Ok(()),
         Err(err) => {
             if err == bun_core::err!("MissingShell") {

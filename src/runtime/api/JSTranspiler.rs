@@ -716,7 +716,11 @@ impl Config {
 pub struct TransformTask<'a> {
     pub input_code: StringOrBuffer,
     pub output_code: BunString,
-    pub transpiler: Transpiler::Transpiler<'static>,
+    /// Bitwise copy of `js_instance.transpiler` (Zig: `= transpiler.transpiler`).
+    /// Heap-owned fields (`Box<Define>`, resolver caches, …) are *shared* with
+    /// `js_instance`, which is kept alive by the `IntrusiveRc` below for the
+    /// task's lifetime. `ManuallyDrop` prevents double-free; the original owns.
+    pub transpiler: core::mem::ManuallyDrop<Transpiler::Transpiler<'static>>,
     // TODO(port): LIFETIMES.tsv says Arc<JSTranspiler> — reconcile. JSTranspiler uses
     // single-thread intrusive `bun.ptr.RefCount` and crosses FFI as `m_ctx`, so per
     // PORTING.md §Pointers this must be IntrusiveRc, not Arc.
@@ -730,11 +734,19 @@ pub struct TransformTask<'a> {
     pub replace_exports: Runtime::ReplaceableExportMap,
 }
 
-// TODO(port): `jsc::ConcurrentPromiseTask` is currently a non-generic stub_ty in
-// src/jsc/event_loop.rs. When the real generic lands, restore
-// `ConcurrentPromiseTask<TransformTask<'a>>` and its `EventLoopTask` assoc type.
-pub type AsyncTransformTask = jsc::ConcurrentPromiseTask;
-pub type AsyncTransformEventLoopTask = jsc::ConcurrentPromiseTask;
+pub type AsyncTransformTask<'a> =
+    jsc::concurrent_promise_task::ConcurrentPromiseTask<'a, TransformTask<'a>>;
+// Zig: `AsyncTransformTask.EventLoopTask` — same wrapper type at this tier.
+pub type AsyncTransformEventLoopTask<'a> = AsyncTransformTask<'a>;
+
+impl<'a> jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for TransformTask<'a> {
+    fn run(&mut self) {
+        TransformTask::run(self)
+    }
+    fn then(&mut self, promise: &mut JSPromise) -> Result<(), bun_jsc::JsTerminated> {
+        TransformTask::then(self, promise)
+    }
+}
 
 impl<'a> TransformTask<'a> {
     // `pub const new = bun.TrivialNew(@This())` → Box::new
@@ -744,12 +756,54 @@ impl<'a> TransformTask<'a> {
         input_code: StringOrBuffer,
         global: &'a JSGlobalObject,
         loader: Loader,
-    ) -> Box<AsyncTransformTask> {
-        // TODO(port): `Transpiler` is not `Clone`; Zig copied the struct by-value.
-        // Restore once `bun_bundler::Transpiler` derives Clone (or expose a
-        // `dup()` helper). Same for `MacroMap` / `ReplaceableExportMap`.
-        let _ = (transpiler, input_code, global, loader);
-        todo!("blocked_on: bun_bundler::Transpiler::clone")
+    ) -> Box<AsyncTransformTask<'a>> {
+        let mut log = logger::Log::init();
+        log.level = transpiler.config.log.level;
+
+        // SAFETY: bitwise struct copy mirroring Zig's by-value
+        // `transform_task.transpiler = transpiler.transpiler`. Heap-owned fields
+        // are shared with `js_instance` (kept alive via IntrusiveRc); the copy is
+        // wrapped in `ManuallyDrop` so only the original frees them.
+        let mut transpiler_copy = core::mem::ManuallyDrop::new(unsafe {
+            core::ptr::read(&transpiler.transpiler)
+        });
+        // Zig: `transform_task.transpiler.linker.resolver = &transform_task.transpiler.resolver`
+        // — re-point the linker's resolver backref into the copy. The Rust
+        // `Linker` stores raw pointers (see transpiler.rs:467 PORT NOTE), so a
+        // post-move fixup is required just like Zig.
+        let resolver_ptr: *mut _ = &mut transpiler_copy.resolver;
+        transpiler_copy.linker.resolver = resolver_ptr;
+
+        let mut transform_task = Box::new(TransformTask {
+            input_code,
+            output_code: BunString::empty(),
+            transpiler: transpiler_copy,
+            global,
+            macro_map: clone_macro_map(&transpiler.config.macro_map),
+            tsconfig: transpiler.config.tsconfig.as_deref(),
+            log,
+            err: None,
+            loader,
+            replace_exports: Runtime::ReplaceableExportMap {
+                entries: transpiler
+                    .config
+                    .runtime
+                    .replace_exports
+                    .entries
+                    .clone()
+                    .expect("OOM"),
+            },
+            // SAFETY: `transpiler` is the live `m_ctx` payload; `from_raw_ref` bumps the count.
+            js_instance: unsafe { bun_ptr::IntrusiveRc::from_raw_ref(transpiler) },
+        });
+
+        transform_task.transpiler.set_log(&mut transform_task.log);
+        // `set_allocator(bun.default_allocator)` — Rust `Transpiler` carries an
+        // `&Arena`, not a generic allocator. The work-thread `run()` immediately
+        // overwrites it with the local arena, so leave the copied pointer as-is
+        // here (it still points at `js_instance.arena`, which is kept alive).
+
+        AsyncTransformTask::create_on_js_thread(global, transform_task)
     }
 
     pub fn run(&mut self) {

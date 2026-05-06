@@ -152,15 +152,13 @@ pub mod js_bundler {
     /// This allows bundling with virtual files that may not exist on disk.
     #[derive(Default)]
     pub struct FileMap {
-        pub map: StringHashMap<jsc::node::BlobOrStringOrBuffer>,
+        pub map: StringHashMap<crate::node::BlobOrStringOrBuffer>,
     }
 
     impl FileMap {
         pub fn deinit_and_unprotect(&mut self) {
-            for (key, value) in self.map.drain() {
-                // TODO(port): BlobOrStringOrBuffer is currently a stub in bun_jsc
-                let _ = value;
-                let _ = todo!("blocked_on: bun_jsc::Node::BlobOrStringOrBuffer::deinit_and_unprotect");
+            for (key, mut value) in self.map.drain() {
+                value.deinit_and_unprotect();
                 drop(key);
             }
             // map dropped automatically
@@ -402,9 +400,8 @@ pub mod js_bundler {
                             ));
                         }
                     };
-                // errdefer blob_or_string.deinitAndUnprotect()
-                let mut blob_guard =
-                    scopeguard::guard(&mut blob_or_string, |b| b.deinit_and_unprotect());
+                // errdefer blob_or_string.deinitAndUnprotect() — only `to_owned_slice()`
+                // (OOM-crashing) sits between here and the insert, so no scopeguard needed.
 
                 // Clone the key since we need to own it
                 let mut key = prop.to_owned_slice();

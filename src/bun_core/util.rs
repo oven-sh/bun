@@ -327,6 +327,13 @@ impl ZBox {
     }
     #[inline] pub fn into_vec_with_nul(self) -> Vec<u8> { self.0.into_vec() }
 }
+impl Default for ZBox {
+    /// Empty NUL-terminated string (`""` in Zig `[:0]const u8` terms). Lets
+    /// `#[derive(Default)]` structs hold owned `ZBox` fields without a manual
+    /// `Default` impl.
+    #[inline]
+    fn default() -> Self { ZBox(Box::new([0u8])) }
+}
 impl core::ops::Deref for ZBox {
     type Target = ZStr;
     #[inline] fn deref(&self) -> &ZStr { self.as_zstr() }

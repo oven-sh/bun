@@ -349,6 +349,60 @@ impl Clone for SSLConfig {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// into_http — bridge to lower-tier `bun_http::ssl_config::SSLConfig`
+// ──────────────────────────────────────────────────────────────────────────
+
+impl SSLConfig {
+    /// Deep-copy into the lower-tier `bun_http::ssl_config::SSLConfig` shape.
+    /// `bun_http` cannot name this T6 type (cycle), and `from_js` lives here
+    /// (it walks a `JSValue`), so callers that need an interned `bun_http`
+    /// `SharedPtr` (e.g. `fetch()` → `AsyncHTTP`) convert at the boundary.
+    pub fn into_http(self) -> bun_http::ssl_config::SSLConfig {
+        // Disarm Drop: `self`'s fields are deep-copied via `dupe_z`, so the
+        // originals must still drop normally — but we want a single
+        // `GlobalRegistry::remove` call (on the source), not on a half-built
+        // http config. The http config gets fresh allocations.
+        fn dz(s: &Option<CString>) -> *const c_char {
+            s.as_ref()
+                .map(|c| bun_core::dupe_z(c.as_bytes()))
+                .unwrap_or(core::ptr::null())
+        }
+        fn dzs(l: &Option<CStringList>) -> Option<Box<[*const c_char]>> {
+            l.as_ref().map(|list| {
+                list.iter()
+                    .map(|c| bun_core::dupe_z(c.as_bytes()))
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice()
+            })
+        }
+        bun_http::ssl_config::SSLConfig {
+            server_name: dz(&self.server_name),
+            key_file_name: dz(&self.key_file_name),
+            cert_file_name: dz(&self.cert_file_name),
+            ca_file_name: dz(&self.ca_file_name),
+            dh_params_file_name: dz(&self.dh_params_file_name),
+            passphrase: dz(&self.passphrase),
+            key: dzs(&self.key),
+            cert: dzs(&self.cert),
+            ca: dzs(&self.ca),
+            secure_options: self.secure_options,
+            request_cert: self.request_cert,
+            reject_unauthorized: self.reject_unauthorized,
+            ssl_ciphers: dz(&self.ssl_ciphers),
+            protos: dz(&self.protos),
+            client_renegotiation_limit: self.client_renegotiation_limit,
+            client_renegotiation_window: self.client_renegotiation_window,
+            requires_custom_request_ctx: self.requires_custom_request_ctx,
+            is_using_default_ciphers: self.is_using_default_ciphers,
+            low_memory_mode: self.low_memory_mode,
+            cached_hash: 0,
+        }
+        // `self` drops here, freeing the original `CString`s and removing from
+        // the runtime-tier `GlobalRegistry`.
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // contentHash
 // ──────────────────────────────────────────────────────────────────────────
 

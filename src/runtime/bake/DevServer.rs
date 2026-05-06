@@ -3581,12 +3581,7 @@ pub fn finalize_bundle(
             .unwrap()
             .call(
                 global,
-                {
-                    // `bun_jsc::JSGlobalObject::to_js_value` lives in the
-                    // not-yet-re-exported `JSGlobalObject.rs` impl block.
-                    let _ = global;
-                    todo!("blocked_on: bun_jsc::JSGlobalObject::to_js_value")
-                },
+                global.to_js_value(),
                 &[
                     server_modules,
                     dev.make_array_for_server_components_patch(
@@ -3811,11 +3806,9 @@ pub fn finalize_bundle(
                     let values = dev.client_graph.bundled_files.values();
                     for part in &dev.client_graph.current_chunk_parts {
                         source_map_hash.update(&keys[part.get() as usize]);
-                        let _val = &values[part.get() as usize];
-                        // TODO(port): `val.source_map.get().vlq()` once
-                        // `packed_map::Shared::get()` is un-gated; until then
-                        // the key hash omits the VLQ contribution.
-                        let _: () = todo!("blocked_on: packed_map::Shared::get / PackedMap::vlq");
+                        if let Some(map) = values[part.get() as usize].source_map.get() {
+                            source_map_hash.update(map.vlq());
+                        }
                     }
                     // Set the bottom bit.
                     break 'h source_map_store::Key::init(source_map_hash.digest() | 1);
@@ -4890,9 +4883,17 @@ impl DevServer<'_> {
         debug_assert!(dev.magic == Magic::Valid);
         dev.emit_memory_visualizer_message();
         timer.state = bun_event_loop::EventLoopTimer::State::FIRED;
-        // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
-        let _ = (timer, dev.vm);
-        todo!("blocked_on: bun_jsc::VirtualMachine::timer (field is `()` placeholder)");
+        // LAYERING: `VirtualMachine.timer` is a `()` cycle-break placeholder
+        // (T4 `bun_jsc` cannot name T6 `bun_runtime::timer::All`). Recover the
+        // real heap via `RuntimeState`, same as the other intrusive-timer
+        // callers in this crate (see `timer::EventLoopDelayMonitor`).
+        let timer_all = {
+            let state = crate::jsc_hooks::runtime_state();
+            // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
+            // `timer` is an embedded `timer::All` at a stable address.
+            unsafe { &mut *core::ptr::addr_of_mut!((*state).timer) }
+        };
+        timer_all.insert(timer);
     }
 
     pub fn emit_memory_visualizer_message_if_needed(&mut self) {

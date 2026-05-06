@@ -301,8 +301,7 @@ use bun_jsc::generated::SocketConfigHandlersBinaryType as GeneratedBinaryType;
 
 /// `handlers` is always `protect`ed in this struct.
 pub struct SocketConfig {
-    pub hostname_or_unix: ZigString::Slice,
-    // TODO(port): ZigString.Slice owned-or-borrowed UTF-8 — confirm bun_str type
+    pub hostname_or_unix: ZigStringSlice,
     pub port: Option<u16>,
     pub fd: Option<Fd>,
     pub ssl: Option<SSLConfig>,
@@ -324,7 +323,7 @@ impl SocketConfig {
         // TODO(port): in Zig this writes `undefined` to all non-handlers fields after
         // freeing them, then restores `handlers`. In Rust we drop the owned non-handlers
         // fields in place; `handlers` is left untouched so pointers into it remain valid.
-        self.hostname_or_unix = ZigString::Slice::empty();
+        self.hostname_or_unix = ZigStringSlice::empty();
         self.ssl = None;
         // other scalar fields need no cleanup
     }

@@ -1973,6 +1973,11 @@ pub type SpawnOptions = PosixSpawnOptions;
 pub type SpawnOptions = WindowsSpawnOptions;
 
 #[cfg(unix)]
+pub type Stdio = PosixStdio;
+#[cfg(not(unix))]
+pub type Stdio = WindowsStdio;
+
+#[cfg(unix)]
 pub type SpawnProcessResult = PosixSpawnResult;
 #[cfg(not(unix))]
 pub type SpawnProcessResult = WindowsSpawnResult;

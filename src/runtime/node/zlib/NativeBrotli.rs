@@ -121,7 +121,10 @@ impl NativeBrotli {
 
         let mut ptr = Box::new(Self {
             ref_count: Cell::new(1),
-            global_this,
+            // SAFETY: JSGlobalObject is an opaque FFI handle; `as_ptr()` derives `*mut`
+            // via UnsafeCell so the stored pointer carries write provenance. The global
+            // outlives this m_ctx payload (JSC_BORROW backref).
+            global_this: global_this.as_ptr(),
             stream: Context::default(),
             write_result: None,
             poll_ref: CountedKeepAlive::default(),

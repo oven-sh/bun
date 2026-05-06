@@ -1,17 +1,30 @@
 //! `from_js`/`to_js` for `GetAddrInfo` and its nested option types, plus
 //! `address_to_js`/`addr_info_to_js_array`. The pure types stay in `src/dns/`.
 
-use bun_jsc::{JSGlobalObject, JSValue, JsResult, ZigString};
+use bun_jsc::{ComptimeStringMapExt as _, JSGlobalObject, JSValue, JsError, JsResult};
+use bun_string::ZigString;
 
 use bun_dns::{addr_info_count, address_to_string};
-use bun_dns::get_addr_info::{
-    Backend, Family, GetAddrInfo, Options, Protocol, Result as GaiResult, SocketType,
+use bun_dns::{
+    Backend, Family, GetAddrInfo, GetAddrInfoResult as GaiResult, Options, Protocol, ResultAny,
+    SocketType, BACKEND_LABEL, FAMILY_MAP, PROTOCOL_MAP, SOCKET_TYPE_MAP,
 };
-// TODO(port): FromJSError is an error set defined on Options in src/dns/; it must
-// include the JSC `JsError` variants (via `From<bun_jsc::JsError>`) plus the
-// Invalid* variants below. Backend has its own narrower FromJSError.
-use bun_dns::get_addr_info::options::FromJSError;
-use bun_dns::get_addr_info::backend::FromJSError as BackendFromJSError;
+// PORT NOTE: Zig's `Options.FromJSError` / `Backend.FromJSError` are error sets
+// that union `JSError` with the `Invalid*` variants. The Rust enums live in
+// `bun_dns` (which has no `bun_jsc` dep), so the `JsError → JSError` mapping is
+// done locally via the `js()` / `jsb()` helpers below.
+use bun_dns::BackendFromJsError as BackendFromJSError;
+use bun_dns::OptionsFromJsError as FromJSError;
+
+#[inline]
+fn js<T>(r: JsResult<T>) -> Result<T, FromJSError> {
+    r.map_err(|_: JsError| FromJSError::JSError)
+}
+
+#[inline]
+fn jsb<T>(r: JsResult<T>) -> Result<T, BackendFromJSError> {
+    r.map_err(|_: JsError| BackendFromJSError::JSError)
+}
 
 pub fn options_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Options, FromJSError> {
     if value.is_empty_or_undefined_or_null() {
@@ -21,26 +34,29 @@ pub fn options_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Option
     if value.is_object() {
         let mut options = Options::default();
 
-        if let Some(family) = value.get(global, "family")? {
+        if let Some(family) = js(value.get(global, "family"))? {
             options.family = family_from_js(family, global)?;
         }
 
-        if let Some(socktype) = match value.get(global, "socketType")? {
+        if let Some(socktype) = match js(value.get(global, "socketType"))? {
             some @ Some(_) => some,
-            None => value.get(global, "socktype")?,
+            None => js(value.get(global, "socktype"))?,
         } {
             options.socktype = socket_type_from_js(socktype, global)?;
         }
 
-        if let Some(protocol) = value.get(global, "protocol")? {
+        if let Some(protocol) = js(value.get(global, "protocol"))? {
             options.protocol = protocol_from_js(protocol, global)?;
         }
 
-        if let Some(backend) = value.get(global, "backend")? {
-            options.backend = backend_from_js(backend, global)?;
+        if let Some(backend) = js(value.get(global, "backend"))? {
+            options.backend = backend_from_js(backend, global).map_err(|e| match e {
+                BackendFromJSError::InvalidBackend => FromJSError::InvalidBackend,
+                BackendFromJSError::JSError => FromJSError::JSError,
+            })?;
         }
 
-        if let Some(flags) = value.get(global, "flags")? {
+        if let Some(flags) = js(value.get(global, "flags"))? {
             if !flags.is_number() {
                 return Err(FromJSError::InvalidFlags);
             }
@@ -48,11 +64,11 @@ pub fn options_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Option
             // TODO(port): Zig coerces to `std.c.AI` (packed struct of bools backed
             // by c_int). Options.flags in Rust should be an `AIFlags` bitflags
             // newtype; here we coerce to i32 and store/bit-test as u32.
-            let flags_int: i32 = flags.coerce::<i32>(global)?;
+            let flags_int: i32 = js(flags.coerce::<i32>(global))?;
             options.flags = flags_int;
 
             // hints & ~(AI_ADDRCONFIG | AI_ALL | AI_V4MAPPED)) !== 0
-            let filter: u32 = !((libc::AI_ALL | libc::AI_ADDRCONFIG | libc::AI_V4MAPPED) as u32);
+            let filter: u32 = !((bun_dns::AI_ALL | bun_dns::AI_ADDRCONFIG | bun_dns::AI_V4MAPPED) as u32);
             let int: u32 = flags_int as u32;
             if int & filter != 0 {
                 return Err(FromJSError::InvalidFlags);
@@ -71,7 +87,7 @@ pub fn family_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Family,
     }
 
     if value.is_number() {
-        return match value.coerce::<i32>(global)? {
+        return match js(value.coerce::<i32>(global))? {
             0 => Ok(Family::Unspecified),
             4 => Ok(Family::Inet),
             6 => Ok(Family::Inet6),
@@ -80,12 +96,14 @@ pub fn family_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Family,
     }
 
     if value.is_string() {
-        // TODO(port): Family::MAP is a ComptimeStringMap (phf::Map) with a
-        // `.from_js(global, value) -> JsResult<Option<Family>>` helper.
-        return match Family::MAP.from_js(global, value)? {
+        // PORT NOTE: `Family.map` is a `ComptimeStringMap` ported as
+        // `bun_dns::FAMILY_MAP: phf::Map`; `.from_js` comes from
+        // `bun_jsc::ComptimeStringMapExt`.
+        return match js(FAMILY_MAP.from_js(global, value))? {
             Some(f) => Ok(f),
             None => {
-                if value.to_js_string(global)?.length() == 0 {
+                // SAFETY: `to_js_string` returns a non-null `*mut JSString` on Ok.
+                if unsafe { (*js(value.to_js_string(global))?).length() } == 0 {
                     return Ok(Family::Unspecified);
                 }
                 Err(FromJSError::InvalidFamily)
@@ -112,10 +130,11 @@ pub fn socket_type_from_js(value: JSValue, global: &JSGlobalObject) -> Result<So
     }
 
     if value.is_string() {
-        return match SocketType::MAP.from_js(global, value)? {
+        return match js(SOCKET_TYPE_MAP.from_js(global, value))? {
             Some(s) => Ok(s),
             None => {
-                if value.to_js_string(global)?.length() == 0 {
+                // SAFETY: `to_js_string` returns a non-null `*mut JSString` on Ok.
+                if unsafe { (*js(value.to_js_string(global))?).length() } == 0 {
                     return Ok(SocketType::Unspecified);
                 }
                 Err(FromJSError::InvalidSocketType)
@@ -141,10 +160,11 @@ pub fn protocol_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Proto
     }
 
     if value.is_string() {
-        return match Protocol::MAP.from_js(global, value)? {
+        return match js(PROTOCOL_MAP.from_js(global, value))? {
             Some(p) => Ok(p),
             None => {
-                let str = value.to_js_string(global)?;
+                // SAFETY: `to_js_string` returns a non-null `*mut JSString` on Ok.
+                let str = unsafe { &*js(value.to_js_string(global))? };
                 if str.length() == 0 {
                     return Ok(Protocol::Unspecified);
                 }
@@ -158,15 +178,16 @@ pub fn protocol_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Proto
 
 pub fn backend_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Backend, BackendFromJSError> {
     if value.is_empty_or_undefined_or_null() {
-        return Ok(Backend::DEFAULT);
+        return Ok(Backend::default());
     }
 
     if value.is_string() {
-        return match Backend::LABEL.from_js(global, value)? {
+        return match jsb(BACKEND_LABEL.from_js(global, value))? {
             Some(b) => Ok(b),
             None => {
-                if value.to_js_string(global)?.length() == 0 {
-                    return Ok(Backend::DEFAULT);
+                // SAFETY: `to_js_string` returns a non-null `*mut JSString` on Ok.
+                if unsafe { (*jsb(value.to_js_string(global))?).length() } == 0 {
+                    return Ok(Backend::default());
                 }
                 Err(BackendFromJSError::InvalidBackend)
             }
@@ -176,13 +197,9 @@ pub fn backend_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Backen
     Err(BackendFromJSError::InvalidBackend)
 }
 
-pub fn result_any_to_js(
-    this: &bun_dns::get_addr_info::result::Any,
-    global: &JSGlobalObject,
-) -> JsResult<Option<JSValue>> {
-    use bun_dns::get_addr_info::result::Any;
+pub fn result_any_to_js(this: &ResultAny, global: &JSGlobalObject) -> JsResult<Option<JSValue>> {
     Ok(match this {
-        Any::Addrinfo(addrinfo) => {
+        ResultAny::Addrinfo(addrinfo) => {
             // LIFETIMES.tsv: GetAddrInfo.Result.Any.addrinfo is FFI → *mut libc::addrinfo
             // (nullable raw pointer, no Option wrapper).
             let addrinfo: *mut libc::addrinfo = *addrinfo;
@@ -193,7 +210,7 @@ pub fn result_any_to_js(
             // resolver; valid for the duration of this call.
             Some(addr_info_to_js_array(unsafe { &*addrinfo }, global)?)
         }
-        Any::List(list) => 'brk: {
+        ResultAny::List(list) => 'brk: {
             let array = JSValue::create_empty_array(global, list.len() as u32)?;
             let mut i: u32 = 0;
             let items: &[GaiResult] = list.as_slice();
@@ -212,10 +229,10 @@ pub fn result_to_js(this: &GaiResult, global: &JSGlobalObject) -> JsResult<JSVal
     obj.put(
         global,
         ZigString::static_("family"),
-        // TODO(port): `this.address.any.family` — Zig's std.net.Address stores a
+        // PORT NOTE: `this.address.any.family` — Zig's std.net.Address stores a
         // sockaddr union under `.any` with a `.family` field. The Rust
-        // `bun_dns::Address` type should expose an equivalent accessor.
-        match this.address.any.family {
+        // `bun_sys::net::Address` exposes `.family() -> i32`.
+        match this.address.family() {
             f if f == libc::AF_INET as _ => JSValue::js_number(4),
             f if f == libc::AF_INET6 as _ => JSValue::js_number(6),
             _ => JSValue::js_number(0),
@@ -226,8 +243,8 @@ pub fn result_to_js(this: &GaiResult, global: &JSGlobalObject) -> JsResult<JSVal
 }
 
 pub fn address_to_js(
-    // TODO(port): `*const std.net.Address` — the Rust port of bun_dns defines the
-    // concrete Address type (sockaddr wrapper); using that here.
+    // PORT NOTE: `*const std.net.Address` — `bun_dns::Address` is the
+    // `bun_sys::net::Address` sockaddr wrapper.
     address: &bun_dns::Address,
     global: &JSGlobalObject,
 ) -> JsResult<JSValue> {
@@ -262,12 +279,12 @@ pub fn addr_info_to_js_array(addr_info: &libc::addrinfo, global: &JSGlobalObject
 
 // (unused import in Zig: `JSError = bun.JSError` — dropped)
 #[allow(unused_imports)]
-use bun_dns::get_addr_info as _GetAddrInfo;
+use bun_dns::GetAddrInfo as _GetAddrInfo;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/dns_jsc/options_jsc.zig (209 lines)
 //   confidence: medium
-//   todos:      4
-//   notes:      ComptimeStringMap `.from_js` helpers + std.c.AI bitflags + std.net.Address shape need Phase-B wiring in bun_dns
+//   todos:      1
+//   notes:      bun_dns flattened (no get_addr_info submodule); ComptimeStringMap → phf::Map statics via ComptimeStringMapExt; JsError→FromJSError mapped locally (orphan-rule)
 // ──────────────────────────────────────────────────────────────────────────

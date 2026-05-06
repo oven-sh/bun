@@ -98,10 +98,11 @@ use super::util::validators;
 
 pub use super::node_fs_constant as constants;
 // node_fs_watcher / node_fs_stat_watcher are JSC-bound and not yet declared in
-// `node.rs`; their re-exports stay gated.
-
+// `node.rs`; their re-exports stay gated until the parent `node.rs` wires the
+// `#[path = "node/node_fs_watcher.rs"]` / `node_fs_stat_watcher.rs` modules.
+#[cfg(any())]
 pub use super::node_fs_watcher::FSWatcher as Watcher;
-
+#[cfg(any())]
 pub use super::node_fs_stat_watcher::StatWatcher;
 
 // PORT NOTE: `Binding` is `super::node_fs_binding::Binding` in Zig, but that

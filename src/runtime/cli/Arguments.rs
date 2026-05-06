@@ -2471,21 +2471,21 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
                 api::MessageLevel::Warn => logger::Level::Warn,
                 _ => logger::Level::Err,
             };
-            ctx.log.level = logger::DEFAULT_LOG_LEVEL;
+            (*ctx.log).level = logger::DEFAULT_LOG_LEVEL;
         }
     }
 
-    if args.flag("--no-macros") {
+    if args.flag(b"--no-macros") {
         ctx.debug.macros = MacroOptions::Disable;
     }
 
-    opts.output_dir = output_dir;
+    opts.output_dir = output_dir.map(Box::<[u8]>::from);
     if let Some(of) = output_file {
-        ctx.debug.output_file = of;
+        ctx.debug.output_file = of.into();
     }
 
     if matches!(CMD, Command::Tag::RunCommand | Command::Tag::AutoCommand) {
-        if let Some(shell) = args.option("--shell") {
+        if let Some(shell) = args.option(b"--shell") {
             if shell == b"bun" {
                 ctx.debug.use_system_shell = false;
             } else if shell == b"system" {

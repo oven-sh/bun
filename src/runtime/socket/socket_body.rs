@@ -408,16 +408,53 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     // ── codegen accessors (Zig: `pub const js = if (!ssl) jsc.Codegen.JSTCPSocket else jsc.Codegen.JSTLSSocket`) ──
     // `#[bun_jsc::JsClass]` can't express the per-monomorphisation symbol
-    // dispatch, so these are hand-rolled stubs until the codegen externs land.
-    // TODO(port): wire `TCPSocket__create`/`TLSSocket__create` + `dataSetCached`/`dataGetCached`.
-    pub fn to_js(&mut self, _global: &JSGlobalObject) -> JSValue {
-        todo!("blocked_on: jsc.Codegen.JS{{TCP,TLS}}Socket.toJS")
+    // dispatch, so these hand-roll the `if (ssl) TLSSocket__* else TCPSocket__*`
+    // split and call the C++ externs directly.
+    pub fn to_js(&mut self, global: &JSGlobalObject) -> JSValue {
+        jsc::mark_binding!();
+        let ptr = self as *mut Self as *mut c_void;
+        // SAFETY: `self` is a heap-allocated `NewSocket` (every caller goes
+        // through `NewSocket::new` → `Box::into_raw`); ownership of `ptr` is
+        // adopted by the C++ JSCell wrapper, which calls `finalize` on GC.
+        // `global.as_ptr()` yields the opaque FFI handle (never written
+        // through on the Rust side).
+        let value = unsafe {
+            if SSL {
+                socket_js::TLSSocket__create(global.as_ptr(), ptr)
+            } else {
+                socket_js::TCPSocket__create(global.as_ptr(), ptr)
+            }
+        };
+        debug_assert!(
+            <Self as JsClass>::from_js(value) == Some(self as *mut Self),
+            "JS{{TCP,TLS}}Socket.toJS: C ABI round-trip mismatch",
+        );
+        value
     }
-    pub fn data_set_cached(_this: JSValue, _global: &JSGlobalObject, _value: JSValue) {
-        todo!("blocked_on: jsc.Codegen.JS{{TCP,TLS}}Socket.dataSetCached")
+    pub fn data_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
+        jsc::mark_binding!();
+        // SAFETY: `this` is the codegen'd `JS{TCP,TLS}Socket` JSCell; the C++
+        // side performs `m_data.set(vm, this, value)` (a `WriteBarrier` write).
+        unsafe {
+            if SSL {
+                socket_js::TLSSocketPrototype__dataSetCachedValue(this, global.as_ptr(), value);
+            } else {
+                socket_js::TCPSocketPrototype__dataSetCachedValue(this, global.as_ptr(), value);
+            }
+        }
     }
-    pub fn data_get_cached(_this: JSValue) -> Option<JSValue> {
-        todo!("blocked_on: jsc.Codegen.JS{{TCP,TLS}}Socket.dataGetCached")
+    pub fn data_get_cached(this: JSValue) -> Option<JSValue> {
+        jsc::mark_binding!();
+        // SAFETY: pure FFI read of the `WriteBarrier<Unknown>` slot on the
+        // C++ wrapper; `this` must be the codegen'd JSCell (caller invariant).
+        let result = unsafe {
+            if SSL {
+                socket_js::TLSSocketPrototype__dataGetCachedValue(this)
+            } else {
+                socket_js::TCPSocketPrototype__dataGetCachedValue(this)
+            }
+        };
+        if result == JSValue::ZERO { None } else { Some(result) }
     }
 
     pub fn new(init: Self) -> *mut Self {

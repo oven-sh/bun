@@ -9,6 +9,7 @@ use bun_install::{
     PackageNameHash, Resolution, INVALID_PACKAGE_ID,
 };
 use bun_install::lockfile::{package::Meta as PackageMeta, Printer};
+use crate::lockfile_real::package::{PackageListExt as _, PackageSliceExt as _};
 use crate::package_manager_real::TrackInstalledBin;
 
 type Bitset = DynamicBitSet;

@@ -1292,6 +1292,12 @@ pub struct MatchedParams {
     pub params: BoundedArray<MatchedParamEntry, { MatchedParams::MAX_COUNT }>,
 }
 
+impl Default for MatchedParams {
+    fn default() -> Self {
+        Self { params: BoundedArray::default() }
+    }
+}
+
 #[derive(Copy, Clone)]
 pub struct MatchedParamEntry {
     // TODO(port): lifetime — these borrow from the input path/pattern; Zig used []const u8.

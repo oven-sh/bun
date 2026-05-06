@@ -138,14 +138,8 @@ pub(super) fn init_impl(options: Options<'_>) -> jsc::JsResult<Box<DevServer>> {
         configuration_hash_key: [0; 16],
         vm: options.vm as *const _,
         server: None,
-        router: FrameworkRouter {
-            root: Box::from(root_static),
-            types: Box::new([]),
-            routes: Vec::new(),
-            static_routes: Default::default(),
-            dynamic_routes: Default::default(),
-            pattern_arena: bun_alloc::Arena::new(),
-        },
+        router: FrameworkRouter::init_empty(root_static, Box::new([]))
+            .expect("init_empty(len=0) cannot OOM"),
         route_bundles: Vec::new(),
         graph_safety_lock: ThreadLock::init_unlocked(),
         client_graph: IncrementalGraph::default(),

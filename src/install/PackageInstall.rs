@@ -804,13 +804,12 @@ impl<'a> PackageInstall<'a> {
         root_node_modules_dir: Dir,
         resolution_tag: resolution::Tag,
     ) -> bool {
+        // Zig: `var body_pool = BodyPool.get(); var mutable = body_pool.data;
+        //        defer { body_pool.data = mutable; BodyPool.release(body_pool); }`
+        // PoolGuard derefs straight to the pooled MutableString and releases on Drop,
+        // so the take/put-back dance is unnecessary here.
         let mut body_pool = Npm::Registry::BodyPool::get();
-        let mut mutable: MutableString = core::mem::take(&mut body_pool.data);
-        let _release = scopeguard::guard((), |_| {
-            // TODO(port): errdefer — captures &mut body_pool and mutable; Phase B may need ManuallyDrop.
-            body_pool.data = mutable;
-            Npm::Registry::BodyPool::release(body_pool);
-        });
+        let mutable: &mut MutableString = &mut body_pool;
 
         // Read the file
         // Return false on any error.
@@ -818,7 +817,7 @@ impl<'a> PackageInstall<'a> {
         // The longer the file stays open, the more likely it causes issues for
         // other processes on Windows.
         let Some(source) =
-            self.get_installed_package_json_source(root_node_modules_dir, &mut mutable, resolution_tag)
+            self.get_installed_package_json_source(root_node_modules_dir, mutable, resolution_tag)
         else {
             return false;
         };
@@ -1364,7 +1363,7 @@ impl<'a> PackageInstall<'a> {
                     {
                         let Ok(stat) = sys::fstat(in_file) else { continue };
                         // SAFETY: fchmod with valid fd and mode.
-                        unsafe { bun_sys::c::fchmod(outfile.cast(), stat.st_mode as libc::mode_t) };
+                        unsafe { bun_sys::c::fchmod(outfile.native(), stat.st_mode as libc::mode_t) };
                     }
 
                     if let Err(err) =
@@ -1955,13 +1954,19 @@ impl<'a> PackageInstall<'a> {
         let mut to_buf = PathBuffer::uninit();
         // Zig: `this.cache_dir.realpath(symlinked_path, &to_buf)` — open the target relative
         // to cache_dir, then resolve its canonical path.
-        let to_path = match (|| -> Result<&[u8], bun_core::Error> {
-            let fd = sys::openat(self.cache_dir.fd(), symlinked_path, sys::O::RDONLY, 0)?;
-            let _close = scopeguard::guard(fd, |f| f.close());
-            sys::get_fd_path(fd, &mut to_buf).map(|s| &*s).map_err(Into::into)
-        })() {
-            Ok(p) => p,
-            Err(err) => return InstallResult::fail(err, Step::LinkingDependency, None),
+        // PORT NOTE: reshaped from an IIFE — returning a borrow of `to_buf` from an
+        // `FnMut` closure is rejected by borrowck, so inline the open/getFdPath/close.
+        let to_path: &[u8] = {
+            let fd = match sys::openat(self.cache_dir.fd(), symlinked_path, sys::O::RDONLY, 0) {
+                Ok(fd) => fd,
+                Err(err) => return InstallResult::fail(err.into(), Step::LinkingDependency, None),
+            };
+            let res = sys::get_fd_path(fd, &mut to_buf);
+            fd.close();
+            match res {
+                Ok(s) => &*s,
+                Err(err) => return InstallResult::fail(err.into(), Step::LinkingDependency, None),
+            }
         };
         let to_path_len = to_path.len();
 

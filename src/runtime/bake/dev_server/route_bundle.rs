@@ -94,12 +94,38 @@ impl Data {
 }
 
 impl RouteBundle {
-    /// `RouteBundle.invalidateClientBundle` — full body in gated
-    /// `../DevServer/RouteBundle.rs` draft.
-    // PORT NOTE: `_dev` erased to `*mut ()` because `dev_server::DevServer` and
-    // `dev_server_body::DevServer` are distinct keystone types pending unification.
-    pub fn invalidate_client_bundle(&mut self, _dev: *mut ()) {
-        todo!("blocked_on: dev_server::RouteBundle::invalidate_client_bundle body un-gate")
+    /// `RouteBundle.invalidateClientBundle` (RouteBundle.zig:122).
+    ///
+    /// PORT NOTE: takes `&mut SourceMapStore` rather than `&mut DevServer` —
+    /// the Zig body only touches `dev.source_maps`, and the two keystone
+    /// `DevServer` structs (`dev_server::DevServer` / `dev_server_body::DevServer`)
+    /// both expose that field but cannot be named here without a cycle.
+    pub fn invalidate_client_bundle(
+        &mut self,
+        source_maps: &mut source_map_store::SourceMapStore,
+    ) {
+        if let Some(bundle) = self.client_bundle.take() {
+            source_maps.unref(self.source_map_id());
+            // SAFETY: `client_bundle` was produced by `StaticRoute::init_*`
+            // (Box::into_raw) and has its own ref held by this struct; no
+            // outstanding `&`/`&mut` borrow exists across this call.
+            unsafe { StaticRoute::deref_(bundle.as_ptr()) };
+        }
+        // Zig: `std.crypto.random.int(u32)` — OS CSPRNG.
+        self.client_script_generation = {
+            let mut buf = [0u8; 4];
+            bun_core::csprng(&mut buf);
+            u32::from_ne_bytes(buf)
+        };
+        match &mut self.data {
+            Data::Framework(fw) => fw.cached_client_bundle_url.clear_without_deallocation(),
+            Data::Html(html) => {
+                if let Some(cached) = html.cached_response.take() {
+                    // SAFETY: see `client_bundle` note above.
+                    unsafe { StaticRoute::deref_(cached.as_ptr()) };
+                }
+            }
+        }
     }
 }
 

@@ -717,12 +717,22 @@ impl S3 {
         options: Option<JSValue>,
         global_object: &JSGlobalObject,
     ) -> JsResult<S3CredentialsWithOptions> {
-        let _ = (options, global_object, &self.options, self.acl, self.storage_class, self.request_payer);
-        // The trait shim in `webcore/S3Client.rs` (`S3CredentialsExt`) is itself
-        // `todo!()` until `s3/credentials_jsc.rs` is mounted; inlining the same
-        // marker here avoids the `S3Credentials: !Clone` move-out and keeps the
-        // stub→real type migration compiling.
-        todo!("blocked_on: crate::webcore::s3::credentials_jsc::get_credentials_with_options")
+        // Zig: `S3Credentials.getCredentialsWithOptions(this.getCredentials().*, this.options,
+        // options, this.acl, this.storage_class, this.request_payer, globalObject)`.
+        // The Rust associated fn (surfaced via `S3CredentialsExt` in `webcore/S3Client.rs`)
+        // takes `&S3Credentials` instead of by-value because `S3Credentials` carries a
+        // private intrusive ref-count and cannot be struct-copied; the impl deep-copies
+        // internally, matching the Zig `.*` value-copy semantics.
+        use crate::webcore::s3_client::S3CredentialsExt as _;
+        S3Credentials::get_credentials_with_options(
+            self.get_credentials(),
+            self.options,
+            options,
+            self.acl,
+            self.storage_class,
+            self.request_payer,
+            global_object,
+        )
     }
 
     pub fn unlink(

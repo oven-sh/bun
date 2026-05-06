@@ -174,7 +174,7 @@ impl UpdateRequest {
                 value,
                 None,
                 &mut SlicedString::init(input, value),
-                Some(log),
+                Some(&mut *log),
                 pm.as_deref_mut(),
             ) else {
                 if fatal {
@@ -183,14 +183,14 @@ impl UpdateRequest {
                         format_args!("{}", bstr::BStr::new(positional)),
                     );
                 } else {
-                    log.add_error_fmt(
+                    bun_core::handle_oom(log.add_error_fmt(
                         None,
                         Loc::EMPTY,
                         format_args!(
                             "unrecognised dependency format: {}",
                             bstr::BStr::new(positional)
                         ),
-                    );
+                    ));
                 }
 
                 return Err(bun_core::err!("UnrecognizedDependencyFormat"));
@@ -203,7 +203,7 @@ impl UpdateRequest {
                     input,
                     None,
                     &mut SlicedString::init(input, input),
-                    Some(log),
+                    Some(&mut *log),
                     pm.as_deref_mut(),
                 ) {
                     alias = None;
@@ -226,14 +226,14 @@ impl UpdateRequest {
                         format_args!("{}", bstr::BStr::new(positional)),
                     );
                 } else {
-                    log.add_error_fmt(
+                    bun_core::handle_oom(log.add_error_fmt(
                         None,
                         Loc::EMPTY,
                         format_args!(
                             "unrecognised dependency format: {}",
                             bstr::BStr::new(positional)
                         ),
-                    );
+                    ));
                 }
 
                 return Err(bun_core::err!("UnrecognizedDependencyFormat"));

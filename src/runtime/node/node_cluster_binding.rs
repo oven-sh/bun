@@ -199,16 +199,19 @@ pub fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
         return Err(global.throw_invalid_argument_type_value("message", "object", message));
     }
     if callback.is_function() {
-        // TODO(port): blocked — `SendQueue.internal_msg_queue` is an opaque
-        // `[usize; 6]` placeholder in `bun_jsc::ipc`; field access (callbacks/seq)
-        // requires the real struct to land upstream.
-        let _ = callback;
-        todo!("blocked_on: bun_jsc::ipc::InternalMsgHolder fields");
+        let _ = ipc_data.internal_msg_queue.callbacks.put(
+            ipc_data.internal_msg_queue.seq,
+            StrongOptional::create(callback, global),
+        );
     }
 
     // sequence number for InternalMsgHolder
-    // TODO(port): blocked — see above (`internal_msg_queue.seq`).
-    message.put(global, b"seq", JSValue::js_number(0.0));
+    message.put(
+        global,
+        b"seq",
+        JSValue::js_number(ipc_data.internal_msg_queue.seq as f64),
+    );
+    ipc_data.internal_msg_queue.seq = ipc_data.internal_msg_queue.seq.wrapping_add(1);
 
     // similar code as bun.jsc.Subprocess.doSend
     #[cfg(debug_assertions)]
@@ -236,13 +239,13 @@ pub fn on_internal_message_primary(global: &JSGlobalObject, frame: &CallFrame) -
     let subprocess = arguments[0].as_::<Subprocess<'_>>().unwrap();
     // SAFETY: `as_` returns a live wrapped pointer; sole &mut on JS thread.
     let subprocess = unsafe { &mut *subprocess };
-    let Some(_ipc_data) = subprocess.ipc() else {
+    let Some(ipc_data) = subprocess.ipc() else {
         return Ok(JSValue::UNDEFINED);
     };
     // TODO: remove these strongs.
-    // TODO(port): blocked — `SendQueue.internal_msg_queue` is opaque in bun_jsc::ipc.
-    let _ = (arguments[1], arguments[2], global);
-    todo!("blocked_on: bun_jsc::ipc::InternalMsgHolder fields");
+    ipc_data.internal_msg_queue.worker = StrongOptional::create(arguments[1], global);
+    ipc_data.internal_msg_queue.cb = StrongOptional::create(arguments[2], global);
+    Ok(JSValue::UNDEFINED)
 }
 
 pub fn handle_internal_message_primary(
@@ -250,18 +253,53 @@ pub fn handle_internal_message_primary(
     subprocess: &mut Subprocess<'_>,
     message: JSValue,
 ) -> JsResult<()> {
-    let Some(_ipc_data) = subprocess.ipc() else {
+    let Some(ipc_data) = subprocess.ipc() else {
         return Ok(());
     };
 
     // SAFETY: `bun_vm()` never returns null; sole &mut on JS thread.
-    let _event_loop = unsafe { &mut *(*global.bun_vm()).event_loop() };
+    let event_loop = unsafe { &mut *(*global.bun_vm()).event_loop() };
 
     // TODO: investigate if "ack" and "seq" are observable and if they're not, remove them entirely.
-    // TODO(port): blocked — `SendQueue.internal_msg_queue` is opaque in bun_jsc::ipc;
-    // callbacks/worker/cb field access requires the real struct upstream.
-    let _ = message;
-    todo!("blocked_on: bun_jsc::ipc::InternalMsgHolder fields");
+    if let Some(p) = message.get(global, "ack")? {
+        if !p.is_undefined() {
+            let ack = p.to_int32();
+            // PORT NOTE: reshaped for borrowck — Zig copied the Strong out of the
+            // entry, then `defer deinit()` + swapRemove. Here we peek the JSValue
+            // first (ending the immutable borrow), then swap_remove (which drops the
+            // Strong == `defer cbstrong.deinit()`).
+            let entry = ipc_data
+                .internal_msg_queue
+                .callbacks
+                .get(&ack)
+                .map(|s| s.get());
+            if let Some(callback_opt) = entry {
+                ipc_data.internal_msg_queue.callbacks.swap_remove(&ack);
+                let cb = callback_opt.unwrap();
+                event_loop.run_callback(
+                    cb,
+                    global,
+                    ipc_data.internal_msg_queue.worker.get().unwrap(),
+                    &[
+                        message,
+                        JSValue::NULL, // handle
+                    ],
+                );
+                return Ok(());
+            }
+        }
+    }
+    let cb = ipc_data.internal_msg_queue.cb.get().unwrap();
+    event_loop.run_callback(
+        cb,
+        global,
+        ipc_data.internal_msg_queue.worker.get().unwrap(),
+        &[
+            message,
+            JSValue::NULL, // handle
+        ],
+    );
+    Ok(())
 }
 
 //

@@ -2145,7 +2145,7 @@ impl Package<u64> {
                             total_dependencies_count += workspace_names.process_names_array(
                                 &mut pm.workspace_package_json_cache,
                                 log,
-                                arr,
+                                &**arr,
                                 source,
                                 dependencies_q.loc,
                                 Some(&mut string_builder),
@@ -2186,7 +2186,7 @@ impl Package<u64> {
                                         .process_names_array(
                                             &mut pm.workspace_package_json_cache,
                                             log,
-                                            packages_arr,
+                                            &**packages_arr,
                                             source,
                                             packages_expr.loc,
                                             Some(&mut string_builder),

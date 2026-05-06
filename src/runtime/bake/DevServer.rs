@@ -987,7 +987,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
             )?;
         }
 
-        break 'router FrameworkRouter::init_empty(&dev.root, types)?;
+        break 'router FrameworkRouter::init_empty(&dev.root, types.into_boxed_slice())?;
     };
 
     // TODO: move scanning to be one tick after server startup. this way the

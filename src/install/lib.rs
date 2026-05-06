@@ -2229,6 +2229,17 @@ impl RootPackageId {
     /// sentinel) until `package_manager_real` un-gates and the real
     /// `Box<Lockfile>` shape lands.
     pub lockfile: Lockfile,
+    /// Zig: `root_dir: *FileSystem.DirEntry` (src/install/PackageManager.zig)
+    /// — directory listing for the package.json root, set once by `init()`.
+    /// `Option` is only the `Default`-derive sentinel; callers deref via
+    /// `self.root_dir.unwrap().as_ref()` mirroring Zig's non-optional `*DirEntry`.
+    /// BACKREF: owned by the resolver's directory cache, never freed here.
+    pub root_dir: Option<core::ptr::NonNull<bun_sys::fs::DirEntry>>,
+    /// Zig: `root_package_json_name_at_time_of_init: string = ""`
+    /// (src/install/PackageManager.zig) — captured during `init()` from the
+    /// root `package.json` `"name"` field; used by `pm view .` to resolve the
+    /// implicit current-package spec.
+    pub root_package_json_name_at_time_of_init: Box<[u8]>,
     /// Zig: `root_package_id: RootPackageId = .{}`.
     pub root_package_id: RootPackageId,
     /// Zig: `workspace_name_hash: ?PackageNameHash = null`.

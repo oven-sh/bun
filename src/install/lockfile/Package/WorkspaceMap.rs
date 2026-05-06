@@ -137,7 +137,7 @@ impl WorkspaceMap {
         &mut self,
         json_cache: &mut WorkspacePackageJSONCache,
         log: &mut logger::Log,
-        arr: &mut js_ast::E::Array,
+        arr: &js_ast::E::Array,
         source: &logger::Source,
         loc: logger::Loc,
         mut string_builder: Option<&mut StringBuilder<'_>>,

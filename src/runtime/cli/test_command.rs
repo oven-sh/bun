@@ -1902,8 +1902,7 @@ impl TestCommand {
 
         vm.load_extra_env_and_source_code_printer();
         vm.is_main_thread = true;
-        // TODO(port): `VirtualMachine::set_is_main_thread_vm(true)` — upstream missing.
-        let _ = || -> () { todo!("blocked_on: bun_jsc::VirtualMachine::set_is_main_thread_vm") };
+        VirtualMachine::set_is_main_thread_vm(true);
 
         if ctx.test_options.isolate {
             vm.test_isolation_enabled = true;

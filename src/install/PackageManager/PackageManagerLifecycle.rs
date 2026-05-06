@@ -32,8 +32,11 @@ pub struct LifecycleScriptTimeLog {
 }
 
 pub struct LifecycleScriptTimeLogEntry {
-    // TODO(port): lifetime — borrows lockfile string buffer; using 'static as Phase-A placeholder
-    pub package_name: &'static [u8],
+    // PORT NOTE: Zig borrowed the lockfile string buffer (`string`). The Rust
+    // `LifecycleScriptSubprocess.package_name` is owned (`Box<[u8]>`) and freed
+    // on `destroy`, so the log entry must own its copy to avoid a dangling
+    // borrow. The list is at most a few dozen entries per install.
+    pub package_name: Box<[u8]>,
     pub script_id: u8,
     /// nanosecond duration
     pub duration: u64,
@@ -81,7 +84,7 @@ impl LifecycleScriptTimeLog {
             // extra \n will print a blank line after this one
             Output::warn(format_args!(
                 "{}'s {} script took {}\n\n",
-                BStr::new(longest.package_name),
+                BStr::new(&longest.package_name),
                 lockfile::Scripts::NAMES[longest.script_id as usize],
                 bun_fmt::fmt_duration_one_decimal(longest.duration),
             ));

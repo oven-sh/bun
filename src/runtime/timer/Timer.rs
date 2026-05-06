@@ -281,14 +281,14 @@ impl All {
         let countdown_int =
             all.js_value_to_countdown(global, countdown, CountdownOverflowBehavior::Clamp, true)?;
         let wrapped_promise = with_async_context_if_needed(promise, global);
-        TimeoutObject::init(
+        Ok(TimeoutObject::init(
             global,
             id,
             Kind::SetTimeout,
             countdown_int,
             wrapped_promise,
             JSValue::UNDEFINED,
-        )
+        ))
     }
 
     pub fn set_immediate(
@@ -304,7 +304,7 @@ impl All {
         all.last_id = all.last_id.wrapping_add(1);
 
         let wrapped_callback = with_async_context_if_needed(callback, global);
-        ImmediateObject::init(global, id, wrapped_callback, arguments)
+        Ok(ImmediateObject::init(global, id, wrapped_callback, arguments))
     }
 
     pub fn set_timeout(
@@ -505,50 +505,149 @@ impl All {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// Missing-method stubs on canonical sibling types (defined in `mod.rs` /
-// `timer_object_internals.rs`). The real bodies live in the per-type
-// `*_draft` modules which carry their own struct definitions; until those are
-// unified with the canonical types, these forward to `todo!` so call-sites
-// type-check.
+// Method bodies on canonical sibling types (`mod.rs` definitions).
+// Ported from TimeoutObject.zig / ImmediateObject.zig / DateHeaderTimer.zig.
 // ════════════════════════════════════════════════════════════════════════════
 
 impl TimeoutObject {
     pub fn init(
-        _global: &JSGlobalObject,
-        _id: i32,
-        _kind: Kind,
-        _interval: u32,
-        _callback: JSValue,
-        _arguments: JSValue,
-    ) -> JsResult<JSValue> {
-        todo!("blocked_on: timer::TimeoutObject::init (unify with timeout_object_draft)")
+        global_this: &JSGlobalObject,
+        id: i32,
+        kind: Kind,
+        interval: u32, // Zig: u31
+        callback: JSValue,
+        arguments: JSValue,
+    ) -> JSValue {
+        // internals are initialized by init()
+        // `bun.new(Self, .{...})` ⇒ heap-allocate; ownership transfers to the JS
+        // wrapper (`m_ctx`) below and is released by `deref → deinit → Box::from_raw`.
+        let timeout: *mut Self = Box::into_raw(Box::new(Self {
+            ref_count: core::cell::Cell::new(1),
+            event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::TimeoutObject),
+            // Zig wrote `.internals = undefined`; every field is overwritten by
+            // `internals.init()` below before any read.
+            internals: TimerObjectInternals::default(),
+        }));
+        let js_value = JSTimeout::to_js(timeout.cast(), global_this);
+        let _keep = EnsureStillAlive(js_value);
+        // SAFETY: `timeout` was just allocated above and is exclusively owned here;
+        // `internals.init()` writes every field via `*self = Self { … }`.
+        unsafe {
+            (*timeout)
+                .internals
+                .init(js_value, global_this, id, kind, interval, callback, arguments);
+        }
+
+        // SAFETY: `bun_vm()` returns the live per-thread VM pointer (non-null on the JS thread).
+        if unsafe { (*global_this.bun_vm()).is_inspector_enabled() } {
+            Debugger::did_schedule_async_call(
+                global_this,
+                Debugger::AsyncCallType::DOMTimer,
+                ID { id, kind: kind.big() }.async_id(),
+                kind != Kind::SetInterval,
+            );
+        }
+
+        js_value
     }
 
+    /// `jsc.Codegen.JSTimeout.fromJS` — unwrap the `m_ctx` payload pointer if
+    /// `value` is (a subclass of) the JS `Timeout` wrapper.
     #[inline]
-    pub fn from_js(_value: JSValue) -> Option<*mut Self> {
-        todo!("blocked_on: timer::TimeoutObject::from_js (unify with timeout_object_draft::js)")
+    pub fn from_js(value: JSValue) -> Option<*mut Self> {
+        JSTimeout::from_js(value).map(|p| p.cast::<Self>())
     }
 }
 
 impl ImmediateObject {
     pub fn init(
-        _global: &JSGlobalObject,
-        _id: i32,
-        _callback: JSValue,
-        _arguments: JSValue,
-    ) -> JsResult<JSValue> {
-        todo!("blocked_on: timer::ImmediateObject::init (unify with immediate_object_draft)")
+        global_this: &JSGlobalObject,
+        id: i32,
+        callback: JSValue,
+        arguments: JSValue,
+    ) -> JSValue {
+        // internals are initialized by init()
+        let immediate: *mut Self = Box::into_raw(Box::new(Self {
+            ref_count: core::cell::Cell::new(1),
+            event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::ImmediateObject),
+            // Zig wrote `.internals = undefined`; every field is overwritten by
+            // `internals.init()` below before any read.
+            internals: TimerObjectInternals::default(),
+        }));
+        let js_value = JSImmediate::to_js(immediate.cast(), global_this);
+        let _keep = EnsureStillAlive(js_value);
+        // SAFETY: `immediate` was just allocated above and is exclusively owned here;
+        // `internals.init()` writes every field via `*self = Self { … }`.
+        unsafe {
+            (*immediate).internals.init(
+                js_value,
+                global_this,
+                id,
+                Kind::SetImmediate,
+                0,
+                callback,
+                arguments,
+            );
+        }
+
+        // SAFETY: `bun_vm()` returns the live per-thread VM pointer (non-null on the JS thread).
+        if unsafe { (*global_this.bun_vm()).is_inspector_enabled() } {
+            Debugger::did_schedule_async_call(
+                global_this,
+                Debugger::AsyncCallType::DOMTimer,
+                ID { id, kind: KindBig::SetImmediate }.async_id(),
+                true,
+            );
+        }
+
+        js_value
     }
 
+    /// `jsc.Codegen.JSImmediate.fromJS` — unwrap the `m_ctx` payload pointer if
+    /// `value` is (a subclass of) the JS `Immediate` wrapper.
     #[inline]
-    pub fn from_js(_value: JSValue) -> Option<*mut Self> {
-        todo!("blocked_on: timer::ImmediateObject::from_js (unify with immediate_object_draft)")
+    pub fn from_js(value: JSValue) -> Option<*mut Self> {
+        JSImmediate::from_js(value).map(|p| p.cast::<Self>())
     }
 }
 
 impl DateHeaderTimer {
-    pub fn enable(&mut self, _vm: *mut VirtualMachine, _now: &Timespec) {
-        todo!("blocked_on: timer::DateHeaderTimer::enable (unify with date_header_timer_draft)")
+    /// Schedule the "Date" header timer.
+    ///
+    /// The logic handles two scenarios:
+    /// 1. If the timer was recently updated (< 1 second ago), just reschedule it
+    /// 2. If the timer is stale (> 1 second since last update), update the date
+    ///    immediately and reschedule
+    pub fn enable(&mut self, vm: *mut VirtualMachine, now: &Timespec) {
+        debug_assert!(self.event_loop_timer.state != EventLoopTimerState::ACTIVE);
+
+        // PORT NOTE: `EventLoopTimer.next` is the lower-tier `ElTimespec` stub
+        // (same `{sec,nsec}` layout) until bun_event_loop switches to bun_core::Timespec.
+        let last_update = Timespec {
+            sec: self.event_loop_timer.next.sec,
+            nsec: self.event_loop_timer.next.nsec,
+        };
+        let elapsed = now.duration(&last_update).ms();
+
+        // If the last update was more than 1 second ago, the date is stale
+        if elapsed >= 1000 {
+            // Update the date immediately since it's stale
+            // updateDate() is an expensive function.
+            // SAFETY: `vm` is the live per-thread VM; `uws_loop()` returns its
+            // owned uws loop, which outlives this call.
+            unsafe { (*(*vm).uws_loop()).update_date() };
+
+            let elt: *mut EventLoopTimer = &mut self.event_loop_timer;
+            // SAFETY: single JS thread; `All::update` only touches `lock`/`timers`/
+            // `fake_timers`/`epoch`, disjoint from `date_header_timer` which `self`
+            // aliases (raw-ptr-per-field re-entry pattern, see jsc_hooks.rs).
+            unsafe { (*Self::timer_all()).update(elt, &now.add_ms(1000)) };
+        } else {
+            // The date was updated recently, just reschedule for the next second
+            let elt: *mut EventLoopTimer = &mut self.event_loop_timer;
+            // SAFETY: see above — disjoint-field access on `All`.
+            unsafe { (*Self::timer_all()).insert(elt) };
+        }
     }
 }
 

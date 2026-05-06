@@ -49,7 +49,7 @@ pub fn hostent_to_js_response(
         }
         // SAFETY: h_name is non-null NUL-terminated C string from c-ares.
         let name = unsafe { CStr::from_ptr(this.h_name) }.to_bytes();
-        return bun_string_jsc::to_js_array(
+        return bun_string_to_js_array(
             global_this,
             &[bstr::String::borrow_utf8(name)],
         );

@@ -96,7 +96,13 @@ impl Start {
             Start::ChunkSize(chunk) => Ok(JSValue::js_number(chunk as f64)),
             Start::Err(err) => Err(err.throw(global_this)),
             Start::OwnedAndDone(mut list) => {
-                ArrayBuffer::from_bytes(list.slice_mut(), JSType::Uint8Array).to_js(global_this)
+                // PORT NOTE: Zig captures `|list|` by bitwise copy with no destructor and
+                // hands the allocation to JSC (no-copy + MarkedArrayBuffer_deallocator). In
+                // Rust `list` is an owned BabyList whose Drop would free the same buffer →
+                // double-free. Build the ArrayBuffer, then forget `list` so JSC is sole owner.
+                let ab = ArrayBuffer::from_bytes(list.slice_mut(), JSType::Uint8Array);
+                core::mem::forget(list);
+                ab.to_js(global_this)
             }
             Start::Done(list) => {
                 ArrayBuffer::create(global_this, JSType::Uint8Array, list.slice())
@@ -793,10 +799,22 @@ impl StreamResult {
 
         match self {
             StreamResult::Owned(list) => {
-                ArrayBuffer::from_bytes(list.slice_mut(), JSType::Uint8Array).to_js(global_this)
+                // PORT NOTE: Zig overwrites `result.* = .{ .temporary = .{} }` with no
+                // destructor after handing the buffer to JSC. In Rust the later
+                // `*result = Temporary(...)` in fulfill_promise drops the old BabyList,
+                // double-freeing the allocation now owned by JSC. Move it out and forget
+                // so JSC's MarkedArrayBuffer_deallocator is the sole owner.
+                let mut taken = core::mem::take(list);
+                let ab = ArrayBuffer::from_bytes(taken.slice_mut(), JSType::Uint8Array);
+                core::mem::forget(taken);
+                ab.to_js(global_this)
             }
             StreamResult::OwnedAndDone(list) => {
-                ArrayBuffer::from_bytes(list.slice_mut(), JSType::Uint8Array).to_js(global_this)
+                // PORT NOTE: see Owned arm above — same ownership transfer to JSC.
+                let mut taken = core::mem::take(list);
+                let ab = ArrayBuffer::from_bytes(taken.slice_mut(), JSType::Uint8Array);
+                core::mem::forget(taken);
+                ab.to_js(global_this)
             }
             StreamResult::Temporary(temp) | StreamResult::TemporaryAndDone(temp) => {
                 let array =

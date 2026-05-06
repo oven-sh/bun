@@ -1162,7 +1162,7 @@ where
                 self.any_rule_so_far = true;
 
                 if first_stylesheet_rule
-                    && strings::eql_case_insensitive_ascii(name, b"charset", true)
+                    && strings::eql_case_insensitive_ascii::<true>(name, b"charset")
                 {
                     let delimiters = Delimiters::SEMICOLON | Delimiters::CLOSE_CURLY_BRACKET;
                     let _ = self.input.parse_until_after(delimiters, |p| Parser::parse_empty(p));

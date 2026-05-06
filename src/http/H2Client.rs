@@ -48,14 +48,17 @@ pub static live_streams: AtomicI32 = AtomicI32::new(0);
 pub use live_sessions as LIVE_SESSIONS;
 pub use live_streams as LIVE_STREAMS;
 
-#[path = "h2_client/Stream.rs"]         pub mod stream;
-#[path = "h2_client/ClientSession.rs"]  pub mod client_session;
-#[path = "h2_client/PendingConnect.rs"] pub mod pending_connect;
-#[path = "h2_client/dispatch.rs"]       pub mod dispatch;
-#[path = "h2_client/encode.rs"]         pub mod encode;
+// reconciler-3: Stream/ClientSession/dispatch/encode reference `bun_str`/
+// `bun_output`/`crate::state`/`crate::Signal`/`http_thread::InitOpts` that are
+// still gated; re-gate until those crate roots land. PendingConnect is real.
+#[cfg(any())] #[path = "h2_client/Stream.rs"]         pub mod stream;
+#[cfg(any())] #[path = "h2_client/ClientSession.rs"]  pub mod client_session;
+#[path = "h2_client/PendingConnect.rs"]               pub mod pending_connect;
+#[cfg(any())] #[path = "h2_client/dispatch.rs"]       pub mod dispatch;
+#[cfg(any())] #[path = "h2_client/encode.rs"]         pub mod encode;
 
-pub use stream::Stream;
-pub use client_session::ClientSession;
+#[cfg(any())] pub use stream::Stream;
+#[cfg(any())] pub use client_session::ClientSession;
 pub use pending_connect::PendingConnect;
 
 // PORT NOTE: Zig had `pub const TestingAPIs = @import("../http_jsc/headers_jsc.zig").H2TestingAPIs;`

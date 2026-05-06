@@ -258,8 +258,67 @@ impl SideEffects {
     }
 }
 
+// ── Local extension shims so `parse` can call shapes that live in higher-tier
+//    crates (bun_bundler::cache::Json, full FileSystem). Only this file is
+//    editable in this round; bodies forward to bun_paths / mark TODO. ────────
+
+/// CYCLEBREAK: `bun_bundler::cache::Json::parse_package_json` — the resolver's
+/// `JsonCache` vtable (tsconfig_json.rs) only carries `parse_tsconfig`. Expose
+/// the package.json entry point as an extension trait so `parse` type-checks;
+/// the body is wired by bun_bundler when its vtable lands.
+pub trait JsonCachePackageJsonExt {
+    fn parse_package_json(
+        &mut self,
+        log: &mut logger::Log,
+        source: &logger::Source,
+        force_utf8: bool,
+    ) -> Result<Option<js_ast::Expr>, bun_core::Error>;
+}
+impl JsonCachePackageJsonExt for crate::tsconfig_json::JsonCache {
+    fn parse_package_json(
+        &mut self,
+        _log: &mut logger::Log,
+        _source: &logger::Source,
+        _force_utf8: bool,
+    ) -> Result<Option<js_ast::Expr>, bun_core::Error> {
+        // TODO(b2-blocked): bun_bundler::cache::Json::parse_package_json — extend
+        // `JsonCacheVTable` with a `parse_package_json` slot and forward through
+        // `self.ptr` (mirrors `parse_tsconfig`).
+        unimplemented!("JsonCache::parse_package_json (Phase B — bun_bundler vtable)")
+    }
+}
+
+/// `crate::fs::FileSystem` (the lib.rs forward-decl) only exposes `*_buf`
+/// variants; the Zig body calls the threadlocal-buffer `abs`/`join`/`normalize`.
+/// Thin extension trait that delegates to `bun_paths::resolve_path` so the
+/// call shapes match without touching lib.rs.
+pub trait FileSystemPackageJsonExt {
+    fn abs(&self, parts: &[&[u8]]) -> &'static [u8];
+    fn join(&self, parts: &[&[u8]]) -> &'static [u8];
+    fn normalize(&self, str: &[u8]) -> &'static [u8];
+}
+impl FileSystemPackageJsonExt for crate::fs::FileSystem {
+    fn abs(&self, parts: &[&[u8]]) -> &'static [u8] {
+        // PORT NOTE: Zig `FileSystem.abs` joins against `top_level_dir` into a
+        // threadlocal buffer. `join_abs_string` writes into its own threadlocal;
+        // SAFETY: re-erase to 'static (caller immediately interns via dirname_store).
+        let out = resolve_path::resolve_path::join_abs_string::<resolve_path::resolve_path::platform::Auto>(
+            self.top_level_dir,
+            parts,
+        );
+        unsafe { core::slice::from_raw_parts(out.as_ptr(), out.len()) }
+    }
+    fn join(&self, parts: &[&[u8]]) -> &'static [u8] {
+        resolve_path::resolve_path::join::<resolve_path::resolve_path::platform::Auto>(parts)
+    }
+    fn normalize(&self, str: &[u8]) -> &'static [u8] {
+        // PORT NOTE: Zig `FileSystem.normalize` is `joinAbsStringBuf(cwd, &.{str})`.
+        self.abs(&[str])
+    }
+}
+
 // TODO(b2-blocked): bun_bundler::options + bun_js_parser::Expr full API + bun_install + bun_schema
-// — the heavy parse/load impl block. Gated whole until lower-tier crates land.
+// — framework/define loaders stay gated until bun_bundler::options lands.
 #[cfg(any())]
 impl PackageJSON {
     fn load_define_defaults(
@@ -612,7 +671,9 @@ impl PackageJSON {
             pair.framework.development = false;
         }
     }
+} // end #[cfg(any())] impl PackageJSON (framework loaders)
 
+impl PackageJSON {
     pub fn parse_macros_json(
         macros: js_ast::Expr,
         log: &mut logger::Log,
@@ -626,28 +687,29 @@ impl PackageJSON {
         let properties = obj.properties.slice();
 
         for property in properties {
-            let Some(key) = property.key.as_ref().unwrap().as_string() else { continue };
-            if !resolver::is_package_path(&key) {
+            let Some(key_expr) = property.key.as_ref() else { continue };
+            let Some(key) = key_expr.as_utf8_string_literal() else { continue };
+            if !resolver::is_package_path(key) {
                 log.add_range_warning_fmt(
                     Some(json_source),
-                    json_source.range_of_string(property.key.as_ref().unwrap().loc),
+                    json_source.range_of_string(key_expr.loc),
                     format_args!(
                         "\"{}\" is not a package path. \"macros\" remaps package paths to macros. Skipping.",
-                        bstr::BStr::new(&key)
+                        bstr::BStr::new(key)
                     ),
                 )
                 .expect("unreachable");
                 continue;
             }
 
-            let value = property.value.as_ref().unwrap();
+            let Some(value) = property.value.as_ref() else { continue };
             let js_ast::ExprData::EObject(value_obj) = &value.data else {
                 log.add_warning_fmt(
                     Some(json_source),
                     value.loc,
                     format_args!(
                         "Invalid macro remapping in \"{}\": expected object where the keys are import names and the value is a string path to replace",
-                        bstr::BStr::new(&key)
+                        bstr::BStr::new(key)
                     ),
                 )
                 .expect("unreachable");

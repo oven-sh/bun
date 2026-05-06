@@ -1,21 +1,22 @@
 use core::cell::{Cell, RefCell};
-use core::ffi::{c_int, c_void, CStr};
+use core::ffi::{c_void, CStr};
 use core::sync::atomic::{AtomicU32, Ordering};
 use std::io::Write as _;
 
 use bstr::BStr;
 
 use bun_alloc::{allocators, AllocError};
-use bun_core::{env_var, fmt as bun_fmt, FeatureFlags, Generation, MutableString, Output, PathString};
-use bun_paths::{self as path_handler, PathBuffer, WPathBuffer, MAX_PATH_BYTES, SEP, SEP_STR};
-use bun_str::{strings, ZStr};
+use bun_core::{env_var, fmt as bun_fmt, FeatureFlags, Generation, Output, ZStr};
+use bun_paths::{resolve_path as path_handler, PathBuffer, WPathBuffer, MAX_PATH_BYTES, SEP, SEP_STR};
+use bun_paths::resolve_path::{is_sep_any, last_index_of_sep, platform};
+use bun_string::{strings, MutableString, PathString};
 use bun_sys::{self, Fd};
 use bun_threading::Mutex;
 
-bun_output::declare_scope!(fs, hidden);
+bun_core::declare_scope!(fs, hidden);
 
 macro_rules! debug {
-    ($($arg:tt)*) => { bun_output::scoped_log!(fs, $($arg)*) };
+    ($($arg:tt)*) => { bun_core::scoped_log!(fs, $($arg)*) };
 }
 
 // pub const FilesystemImplementation = @import("./fs_impl.zig");
@@ -27,11 +28,70 @@ pub mod preallocate {
     }
 }
 
-pub type DirnameStore = allocators::BSSStringList<{ preallocate::counts::DIR_ENTRY }, 128>;
-pub type FilenameStore = allocators::BSSStringList<{ preallocate::counts::FILES }, 64>;
+// PORT NOTE: Zig `BSSStringList(_COUNT, _ITEM_LENGTH)` internally remaps to
+// `<_COUNT * 2, _ITEM_LENGTH + 1>`; the Rust port took the post-transform
+// const params, so apply the arithmetic at the type-alias / declare site.
+pub type DirnameStoreBacking =
+    allocators::BSSStringList<{ preallocate::counts::DIR_ENTRY * 2 }, { 128 + 1 }>;
+pub type FilenameStoreBacking =
+    allocators::BSSStringList<{ preallocate::counts::FILES * 2 }, { 64 + 1 }>;
+// PORT NOTE: Zig `BSSList(_COUNT)` → Rust `BSSList<{_COUNT * 2}>`.
+pub type EntryStoreBacking =
+    allocators::BSSList<Entry, { preallocate::counts::FILES * 2 }>;
+
+// Per-monomorphization singleton storage — Zig kept `var instance` inside the
+// generic; Rust emits it at the declare site via `bss_*!` macros (returns `*mut`).
+bun_alloc::bss_string_list! { pub dirname_store_backing : { preallocate::counts::DIR_ENTRY * 2 }, { 128 + 1 } }
+bun_alloc::bss_string_list! { pub filename_store_backing : { preallocate::counts::FILES * 2 }, { 64 + 1 } }
+bun_alloc::bss_list! { pub entry_store_backing : Entry, { preallocate::counts::FILES * 2 } }
+
+/// Port of `FileSystem.DirnameStore` — ZST handle resolving to the
+/// `dirname_store_backing()` singleton on every call.
+pub struct DirnameStore(());
+/// Port of `FileSystem.FilenameStore` — ZST handle.
+pub struct FilenameStore(());
+
+static DIRNAME_STORE_ZST: DirnameStore = DirnameStore(());
+static FILENAME_STORE_ZST: FilenameStore = FilenameStore(());
+
+macro_rules! string_store_impl {
+    ($t:ty, $zst:ident, $backing:ident, $bty:ty) => {
+        impl $t {
+            #[inline]
+            pub fn instance() -> &'static Self { &$zst }
+            #[inline]
+            fn backing() -> &'static mut $bty {
+                // SAFETY: `$backing()` returns the raw `*mut` singleton (Zig `*Self`);
+                // the singleton serializes all mutation through its internal `mutex`.
+                unsafe { &mut *$backing() }
+            }
+            pub fn append(&self, value: &[u8]) -> core::result::Result<&'static [u8], AllocError> {
+                let s = Self::backing().append(value)?;
+                // SAFETY: `append` returns a slice into the singleton's backing storage
+                // (heap-owned by a `'static` `BSSStringList` or a leaked mi_malloc); the
+                // borrow tied to `&mut self` is artificially short — re-erase to `'static`.
+                Ok(unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) })
+            }
+            #[inline]
+            pub fn exists(&self, value: &[u8]) -> bool {
+                Self::backing().exists(value)
+            }
+        }
+        impl strings::Appender for &'static $t {
+            fn append(&mut self, s: &[u8]) -> core::result::Result<&[u8], AllocError> {
+                <$t>::backing().append(s)
+            }
+            fn append_lower_case(&mut self, s: &[u8]) -> core::result::Result<&[u8], AllocError> {
+                <$t>::backing().append_lower_case(s)
+            }
+        }
+    };
+}
+string_store_impl!(DirnameStore, DIRNAME_STORE_ZST, dirname_store_backing, DirnameStoreBacking);
+string_store_impl!(FilenameStore, FILENAME_STORE_ZST, filename_store_backing, FilenameStoreBacking);
 
 pub struct FileSystem {
-    pub top_level_dir: &'static ZStr,
+    pub top_level_dir: &'static [u8],
 
     // used on subsequent updates
     pub top_level_dir_buf: PathBuffer,
@@ -47,7 +107,7 @@ thread_local! {
     static TMPDIR_HANDLE: Cell<Option<bun_sys::Dir>> = const { Cell::new(None) };
 }
 
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
+#[derive(strum::IntoStaticStr, Debug)]
 pub enum FileSystemError {
     ENOENT,
     EACCESS,

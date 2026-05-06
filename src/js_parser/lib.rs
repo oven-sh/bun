@@ -1333,11 +1333,12 @@ pub mod defines_full_draft {
         /// have any observable side effects.
         #[inline]
         pub fn call_can_be_unwrapped_if_unused(&self) -> E::CallUnwrap {
-            // SAFETY: 2-bit field, all 3 used values (<4) are valid discriminants.
-            unsafe {
-                core::mem::transmute::<u8, E::CallUnwrap>(
-                    (self.flags.bits() & CALL_UNWRAP_MASK) >> CALL_UNWRAP_SHIFT,
-                )
+            // 2-bit field; explicit match avoids transmute-to-enum UB if both bits are ever set.
+            match (self.flags.bits() & CALL_UNWRAP_MASK) >> CALL_UNWRAP_SHIFT {
+                0 => E::CallUnwrap::Never,
+                1 => E::CallUnwrap::IfUnused,
+                2 => E::CallUnwrap::IfUnusedAndToStringSafe,
+                _ => E::CallUnwrap::Never,
             }
         }
 

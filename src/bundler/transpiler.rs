@@ -170,13 +170,25 @@ impl ParseResult {
     }
 
     pub fn is_pending_import(&self, id: u32) -> bool {
-        // TODO(b2-blocked): MultiArrayList::items(.import_record_id) field
-        // projection — `bun_collections::MultiArrayList` doesn't yet expose a
-        // by-field accessor for `PendingResolution.import_record_id`. Iterate
-        // the dense slice once it lands; until then this is only ever called
-        // from `print_with_source_map` (gated).
+        // Spec transpiler.zig:43-47: scan `pending_imports.items(.import_record_id)`
+        // for `id`. `bun_collections::MultiArrayList` does not yet expose a
+        // by-field column accessor for `PendingResolution` (no
+        // `MultiArrayElement` derive on it yet), so we cannot iterate the SoA
+        // column here. The empty case is trivially `false`; for the non-empty
+        // case fail loudly rather than silently returning `false`, which would
+        // make `linker.rs` skip *every* deferred import record (PORTING.md
+        // §Forbidden patterns: silent no-op).
+        // TODO(b2-blocked): replace with
+        //   self.pending_imports.slice().import_record_id().iter().any(|&x| x == id)
+        // once the `MultiArrayElement` derive lands on `resolver::PendingResolution`.
+        if self.pending_imports.len() == 0 {
+            return false;
+        }
         let _ = id;
-        false
+        todo!(
+            "ParseResult::is_pending_import: pending_imports is non-empty but \
+             PendingResolution has no MultiArrayElement column accessor yet"
+        );
     }
 }
 
@@ -546,10 +558,34 @@ impl<'a> Transpiler<'a> {
                 }
             }
             options::Loader::Css => {}
-            _ => {
-                // .toml/.yaml/.json/.jsonc/.json5/.text/.md and the long-tail
-                // loaders fall through here until their AST-building branches
-                // un-gate (see __phase_a_draft).
+            options::Loader::Toml
+            | options::Loader::Yaml
+            | options::Loader::Json
+            | options::Loader::Jsonc
+            | options::Loader::Json5
+            | options::Loader::Text
+            | options::Loader::Md => {
+                // TODO(b2-blocked): data-format loaders build `js_ast::Stmt`/
+                // `Part` slabs via `Arena::alloc_slice_*` and
+                // `Stmt::alloc(S::ExportDefault { .. })` — those constructors
+                // are shaped differently in the live `bun_js_parser::ast`
+                // surface. Full body preserved in `__phase_a_draft` below.
+            }
+            options::Loader::File
+            | options::Loader::Napi
+            | options::Loader::Base64
+            | options::Loader::Dataurl
+            | options::Loader::Bunsh
+            | options::Loader::Sqlite
+            | options::Loader::SqliteEmbedded
+            | options::Loader::Html => {
+                // Spec transpiler.zig:1216 — programmer-error hard crash, NOT a
+                // silent `None` (PORTING.md §Forbidden: silent no-op).
+                bun_core::Output::panic(format_args!(
+                    "Unsupported loader {:?} for path: {}",
+                    loader,
+                    bstr::BStr::new(path.text),
+                ));
             }
         }
 

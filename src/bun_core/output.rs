@@ -2423,6 +2423,15 @@ pub fn err(error_name: impl ErrName, fmt: &str, args: impl FmtTuple) {
     pretty_errorln!("<red>{}<r><d>:<r> {}", bstr::BStr::new(display_name), body);
 }
 
+/// `Output.err(.TAG, fmt, args)` with a bare string tag — e.g.
+/// `Output::err_tag("EACCES", format_args!(...))`. Thin sugar over `err` for
+/// call sites that already hold a fully-formatted body (not a positional
+/// `{}` template).
+#[inline]
+pub fn err_tag(tag: &str, body: core::fmt::Arguments<'_>) {
+    pretty_errorln!("<red>{}<r><d>:<r> {}", tag, body);
+}
+
 /// `Output.errGeneric` — function form. `<red>error<r>:` prefix to stderr with
 /// a `<tag>`-rewritten template + positional args.
 #[inline]

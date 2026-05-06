@@ -198,7 +198,7 @@ pub mod features {
         TEXT_LOCKFILE, ISOLATED_BUN_INSTALL, HOISTED_BUN_INSTALL, MACROS, NO_AVX2, NO_AVX,
         SHELL, SPAWN, STANDALONE_EXECUTABLE, STANDALONE_SHELL, TODO_PANIC, TRANSPILER_CACHE,
         TSCONFIG, TSCONFIG_PATHS, VIRTUAL_MODULES, WORKERS_SPAWNED, WORKERS_TERMINATED,
-        NAPI_MODULE_REGISTER, EXITED, YAML_PARSE,
+        NAPI_MODULE_REGISTER, EXITED, YAML_PARSE, YARN_MIGRATION, PNPM_MIGRATION,
     }
     /// dotenv crate calls `bun_core::analytics::Features::dotenv_inc()`.
     #[inline] pub fn dotenv_inc() { DOTENV.fetch_add(1, core::sync::atomic::Ordering::Relaxed); }
@@ -206,6 +206,10 @@ pub mod features {
     #[inline] pub fn extracted_packages_inc() { EXTRACTED_PACKAGES.fetch_add(1, core::sync::atomic::Ordering::Relaxed); }
     /// yaml crate calls `bun_core::analytics::Features::yaml_parse_inc()`.
     #[inline] pub fn yaml_parse_inc() { YAML_PARSE.fetch_add(1, core::sync::atomic::Ordering::Relaxed); }
+    /// install/yarn crate calls `bun_core::analytics::Features::yarn_migration_inc(1)`.
+    #[inline] pub fn yarn_migration_inc(n: usize) { YARN_MIGRATION.fetch_add(n, core::sync::atomic::Ordering::Relaxed); }
+    /// install/pnpm crate calls `bun_core::analytics::Features::pnpm_migration_inc(1)`.
+    #[inline] pub fn pnpm_migration_inc(n: usize) { PNPM_MIGRATION.fetch_add(n, core::sync::atomic::Ordering::Relaxed); }
 }
 /// Re-export under the `analytics` name so `bun_core::analytics::Features::*` resolves
 /// (per movein-skipped [dotenv] entry).

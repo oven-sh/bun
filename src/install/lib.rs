@@ -618,6 +618,10 @@ pub mod lockfile {
 
     pub type DependencyIDSlice = ExternalSlice<DependencyID>;
     pub type DependencyIDList = Vec<DependencyID>;
+    pub type DependencySlice = ExternalSlice<Dependency>;
+    pub type PackageIDList = Vec<PackageID>;
+
+    pub use crate::Origin;
 
     /// Port of `Lockfile.DepSorter` (src/install/lockfile.zig) — comparator over
     /// `buffers.dependencies` by `(behavior, name)`. Kept in the stub module so it

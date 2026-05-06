@@ -286,7 +286,7 @@ impl<'a> PatchTask<'a> {
                             pkg,
                             calc_hash.name_and_version_hash,
                             match pkg.resolution.tag {
-                                Resolution::Tag::Npm => Authorization::AllowAuthorization,
+                                crate::resolution::Tag::Npm => Authorization::AllowAuthorization,
                                 _ => Authorization::NoAuthorization,
                             },
                         )?
@@ -386,7 +386,7 @@ impl<'a> PatchTask<'a> {
 
         let pkg_name = patch.pkgname;
 
-        let dummy_node_modules = PackageManager::PackageInstaller::NodeModulesFolder {
+        let dummy_node_modules = crate::package_installer::NodeModulesFolder {
             path: Vec::<u8>::new(),
             tree_id: 0,
         };

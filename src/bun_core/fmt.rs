@@ -926,6 +926,37 @@ pub fn fmt_path_u8(path: &[u8], options: PathFormatOptions) -> FormatUTF8<'_> {
 pub fn fmt_path_u16(path: &[u16], options: PathFormatOptions) -> FormatUTF16<'_> {
     FormatUTF16 { buf: path, path_fmt_opts: Some(options) }
 }
+/// `bun.fmt.fmtPath` — `u8` is the overwhelmingly common instantiation; route it
+/// here so callers can write `bun_core::fmt::fmt_path(..)` without naming the
+/// element type. Use `fmt_path_u16` for the wide variant.
+#[inline]
+pub fn fmt_path(path: &[u8], options: PathFormatOptions) -> FormatUTF8<'_> {
+    fmt_path_u8(path, options)
+}
+
+/// Port of `std.fmt.bufPrint` — render into `buf`, return the written sub-slice.
+/// Fails (`fmt::Error`) when `buf` is too short.
+pub fn buf_print<'a>(
+    buf: &'a mut [u8],
+    args: core::fmt::Arguments<'_>,
+) -> core::result::Result<&'a [u8], core::fmt::Error> {
+    use core::fmt::Write as _;
+    struct Cursor<'b> { buf: &'b mut [u8], at: usize }
+    impl core::fmt::Write for Cursor<'_> {
+        fn write_str(&mut self, s: &str) -> core::fmt::Result {
+            let bytes = s.as_bytes();
+            let end = self.at + bytes.len();
+            if end > self.buf.len() { return Err(core::fmt::Error); }
+            self.buf[self.at..end].copy_from_slice(bytes);
+            self.at = end;
+            Ok(())
+        }
+    }
+    let mut c = Cursor { buf, at: 0 };
+    c.write_fmt(args)?;
+    let len = c.at;
+    Ok(&c.buf[..len])
+}
 
 // ───────────────────────────────────────────────────────────────────────────
 // Latin-1 formatting

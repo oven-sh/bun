@@ -1,29 +1,54 @@
 use core::sync::atomic::{AtomicU8, Ordering};
 use std::io::Write as _;
 
-use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap, UnboundedQueue};
+use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
 use bun_core::{Environment, Global, Output};
 use bun_logger::Log;
-use bun_paths::{self as paths, AbsPath, AutoRelPath, Path, PathBuffer, RelPath};
+use bun_paths::{self as paths, AbsPath, AutoAbsPath, AutoRelPath, Path, PathBuffer, RelPath};
 use bun_str::{strings, ZStr};
 use bun_sys::{self as sys, Fd};
-use bun_threading::{Mutex, ThreadPool};
+use bun_threading::{thread_pool, Mutex, ThreadPool, UnboundedQueue};
 
 
 use bun_semver::String as SemverString;
 
 use crate::{
     self as install, invalid_dependency_id, Bin, DependencyID, FileCopier, Lockfile, PackageID,
-    PackageInstall, PackageManager, PackageNameHash, PostinstallOptimizer, Resolution, Store,
+    PackageManager, PackageNameHash, PostinstallOptimizer, Resolution,
     TruncatedPackageNameHash,
 };
+use crate::package_install::{self, Method as InstallMethod, Summary as InstallSummary};
+use crate::package_manager_real::Command;
+use crate::lockfile_real::PackageIDSlice;
+use crate::lockfile::package;
+use crate::bun_fs;
 use super::file_cloner::FileCloner;
 use super::hardlinker::Hardlinker;
-use super::symlinker::Symlinker;
-use crate::lockfile::Package;
+use super::symlinker::{self, Symlinker};
+use super::store::{self, Store};
 
 type Bitset = DynamicBitSet;
 type Progress = crate::bun_progress::Progress;
+type ProgressNode = crate::bun_progress::Node;
+
+// ── Store id aliases (Zig: `Store.Entry.Id` / `Store.Node.Id`) ────────────
+type StoreEntryId = store::entry::Id;
+type StoreNodeId = store::node::Id;
+
+// ── Path option presets ───────────────────────────────────────────────────
+use paths::path_options::{Kind as PathKind, PathSeparators};
+/// `bun.Path(.{ .sep = .auto })`
+type AutoPath = paths::Path<u8, { PathKind::ANY }, { PathSeparators::AUTO }>;
+/// `bun.AbsPath(.{ .unit = .os, .sep = .auto })`
+type OsAutoAbsPath = AbsPath<paths::OSPathChar, { PathSeparators::AUTO }>;
+/// `bun.Path(.{ .unit = .os, .sep = .auto })`
+type OsAutoPath = paths::Path<paths::OSPathChar, { PathKind::ANY }, { PathSeparators::AUTO }>;
+/// `bun.AbsPath(.{})` — all-default options.
+type DefaultAbsPath = AbsPath<u8>;
+/// `node_modules/.bun` — Zig used `Store.modules_dir_name` in compile-time
+/// concat; the Rust `MODULES_DIR_NAME` const is `&[u8]` and not usable in
+/// `const_format::concatcp!`, so spell the literal.
+const NODE_MODULES_BUN: &str = "node_modules/.bun";
 
 bun_output::declare_scope!(IsolatedInstaller, hidden);
 macro_rules! debug {
@@ -35,10 +60,10 @@ pub struct Installer<'a> {
     // this is not const for `lockfile.trusted_dependencies`
     pub lockfile: &'a mut Lockfile,
 
-    pub summary: PackageInstall::Summary, // = .{ .successfully_installed = .empty }
+    pub summary: InstallSummary, // = .{ .successfully_installed = .empty }
     pub installed: Bitset,
-    pub install_node: Option<&'a mut Progress::Node>,
-    pub scripts_node: Option<&'a mut Progress::Node>,
+    pub install_node: Option<&'a mut ProgressNode>,
+    pub scripts_node: Option<&'a mut ProgressNode>,
     pub is_new_bun_modules: bool,
 
     pub manager: &'a mut PackageManager,
@@ -49,7 +74,7 @@ pub struct Installer<'a> {
     pub task_queue: UnboundedQueue<Task>, // intrusive via .next
     pub tasks: Box<[Task]>,
 
-    pub supported_backend: bun_core::Atomic<PackageInstall::Method>,
+    pub supported_backend: bun_core::Atomic<InstallMethod>,
 
     pub trusted_dependencies_from_update_requests: ArrayHashMap<TruncatedPackageNameHash, ()>,
 
@@ -71,7 +96,7 @@ pub struct Installer<'a> {
 
 impl<'a> Installer<'a> {
     /// Called from main thread
-    pub fn start_task(&mut self, entry_id: Store::Entry::Id) {
+    pub fn start_task(&mut self, entry_id: StoreEntryId) {
         let task = &mut self.tasks[entry_id.get()];
         debug_assert!(matches!(
             task.result,
@@ -84,10 +109,10 @@ impl<'a> Installer<'a> {
         ));
 
         task.result = Result::None;
-        self.manager.thread_pool.schedule(ThreadPool::Batch::from(&mut task.task));
+        self.manager.thread_pool.schedule(thread_pool::Batch::from(&mut task.task));
     }
 
-    pub fn on_package_extracted(&mut self, task_id: install::Task::Id) {
+    pub fn on_package_extracted(&mut self, task_id: crate::package_manager_task::Id) {
         if let Some(removed) = self.manager.task_queue.fetch_remove(task_id) {
             let store = self.store;
 
@@ -138,7 +163,7 @@ impl<'a> Installer<'a> {
     /// `pendingTaskCount() == 0`.
     pub fn on_package_download_error(
         &mut self,
-        task_id: install::Task::Id,
+        task_id: crate::package_manager_task::Id,
         name: &[u8],
         resolution: &Resolution,
         err: bun_core::Error,
@@ -173,7 +198,7 @@ impl<'a> Installer<'a> {
 
     pub fn apply_package_patch(
         &mut self,
-        entry_id: Store::Entry::Id,
+        entry_id: StoreEntryId,
         patch: &PatchInfoPatch,
         log: &mut Log,
     ) {
@@ -202,7 +227,7 @@ impl<'a> Installer<'a> {
     }
 
     /// Called from main thread
-    pub fn on_task_fail(&mut self, entry_id: Store::Entry::Id, err: TaskError) {
+    pub fn on_task_fail(&mut self, entry_id: StoreEntryId, err: TaskError) {
         let string_buf = self.lockfile.buffers.string_bytes.as_slice();
 
         let entries = self.store.entries.slice();
@@ -277,7 +302,7 @@ impl<'a> Installer<'a> {
         // doesn't leak in the cache (it would never be reused — the suffix is
         // random — but it's wasted disk).
         if self.entry_uses_global_store(entry_id) {
-            let mut staging = AbsPath::<{ paths::sep::AUTO }>::init();
+            let mut staging = AutoAbsPath::init();
             self.append_global_store_entry_path(&mut staging, entry_id, Which::Staging);
             let _ = Fd::cwd().delete_tree(staging.slice());
         }
@@ -297,11 +322,11 @@ impl<'a> Installer<'a> {
             | Resolution::Tag::LocalTarball
             | Resolution::Tag::RemoteTarball
             | Resolution::Tag::Folder => {
-                let mut store_path = RelPath::<{ paths::sep::AUTO }>::init();
+                let mut store_path = AutoRelPath::init();
 
                 store_path.append_fmt(format_args!(
                     "node_modules/{}",
-                    Store::Entry::fmt_store_path(entry_id, self.store, self.lockfile),
+                    store::entry::fmt_store_path(entry_id, self.store, self.lockfile),
                 ));
 
                 let _ = sys::unlink(store_path.slice_z());
@@ -325,7 +350,7 @@ impl<'a> Installer<'a> {
     }
 
     /// Called from main thread
-    pub fn on_task_blocked(&mut self, entry_id: Store::Entry::Id) {
+    pub fn on_task_blocked(&mut self, entry_id: StoreEntryId) {
         // race condition (fixed now): task decides it is blocked because one of its dependencies
         // has not finished. before the task can mark itself as blocked, the dependency finishes its
         // install, causing the task to never finish because resumeUnblockedTasks is called before
@@ -334,7 +359,7 @@ impl<'a> Installer<'a> {
         // fix: check if the task is unblocked after the task returns blocked, and only set/unset
         // blocked from the main thread.
 
-        let mut parent_dedupe: ArrayHashMap<Store::Entry::Id, ()> = ArrayHashMap::default();
+        let mut parent_dedupe: ArrayHashMap<StoreEntryId, ()> = ArrayHashMap::default();
 
         if !self.is_task_blocked(entry_id, &mut parent_dedupe) {
             // .monotonic is okay because the task isn't running right now.
@@ -352,8 +377,8 @@ impl<'a> Installer<'a> {
     /// task thread (via `run`). `parent_dedupe` should not be shared between threads.
     fn is_task_blocked(
         &self,
-        entry_id: Store::Entry::Id,
-        parent_dedupe: &mut ArrayHashMap<Store::Entry::Id, ()>,
+        entry_id: StoreEntryId,
+        parent_dedupe: &mut ArrayHashMap<StoreEntryId, ()>,
     ) -> bool {
         let entries = self.store.entries.slice();
         let entry_deps = entries.items().dependencies;
@@ -373,7 +398,7 @@ impl<'a> Installer<'a> {
     }
 
     /// Called from main thread
-    pub fn on_task_complete(&mut self, entry_id: Store::Entry::Id, state: CompleteState) {
+    pub fn on_task_complete(&mut self, entry_id: StoreEntryId, state: CompleteState) {
         if Environment::CI_ASSERT {
             // .monotonic is okay because we should have already synchronized with the completed
             // task thread by virtue of popping from the `UnboundedQueue`.
@@ -394,8 +419,8 @@ impl<'a> Installer<'a> {
         let nodes = self.store.nodes.slice();
 
         let (node_id, real_state) = 'state: {
-            if entry_id == Store::Entry::Id::ROOT {
-                break 'state (Store::Node::Id::ROOT, CompleteState::Skipped);
+            if entry_id == StoreEntryId::ROOT {
+                break 'state (StoreNodeId::ROOT, CompleteState::Skipped);
             }
 
             let node_id = self.store.entries.items().node_id[entry_id.get()];
@@ -404,7 +429,7 @@ impl<'a> Installer<'a> {
             if dep_id == invalid_dependency_id {
                 // should be coverd by `entry_id == .root` above, but
                 // just in case
-                break 'state (Store::Node::Id::ROOT, CompleteState::Skipped);
+                break 'state (StoreNodeId::ROOT, CompleteState::Skipped);
             }
 
             let dep = self.lockfile.buffers.dependencies[dep_id];
@@ -447,10 +472,10 @@ impl<'a> Installer<'a> {
         let entries = self.store.entries.slice();
         let entry_steps = entries.items().step;
 
-        let mut parent_dedupe: ArrayHashMap<Store::Entry::Id, ()> = ArrayHashMap::default();
+        let mut parent_dedupe: ArrayHashMap<StoreEntryId, ()> = ArrayHashMap::default();
 
         for id_int in 0..self.store.entries.len() {
-            let entry_id = Store::Entry::Id::from(u32::try_from(id_int).unwrap());
+            let entry_id = StoreEntryId::from(u32::try_from(id_int).unwrap());
 
             // .monotonic is okay because only the main thread sets this to `.blocked`.
             let entry_step = entry_steps[entry_id.get()].load(Ordering::Relaxed);
@@ -496,10 +521,10 @@ fn download_error_reason(e: bun_core::Error) -> &'static [u8] {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct Task {
-    pub entry_id: Store::Entry::Id,
+    pub entry_id: StoreEntryId,
     pub installer: *mut Installer<'static>, // BACKREF: Installer owns tasks[]
 
-    pub task: ThreadPool::Task,
+    pub task: thread_pool::Task,
     pub next: *mut Task, // INTRUSIVE: bun.UnboundedQueue(Task, .next) link
 
     pub result: Result,
@@ -509,7 +534,7 @@ pub enum Result {
     None,
     Err(TaskError),
     Blocked,
-    RunScripts(*mut Package::Scripts::List), // TODO(port): LIFETIMES.tsv=BORROW_FIELD &'a mut Package::Scripts::List — kept raw for borrowck (owned by store.entries.items(.scripts)[entry_id])
+    RunScripts(*mut package::scripts::List), // TODO(port): LIFETIMES.tsv=BORROW_FIELD &'a mut package::scripts::List — kept raw for borrowck (owned by store.entries.items(.scripts)[entry_id])
     Done,
 }
 
@@ -572,7 +597,7 @@ pub enum Step {
 
 pub enum Yield {
     Yield,
-    RunScripts(*mut Package::Scripts::List), // TODO(port): LIFETIMES.tsv=BORROW_PARAM &'a mut Package::Scripts::List — kept raw for borrowck (borrow of entry_scripts)
+    RunScripts(*mut package::scripts::List), // TODO(port): LIFETIMES.tsv=BORROW_PARAM &'a mut package::scripts::List — kept raw for borrowck (borrow of entry_scripts)
     Done,
     Blocked,
     Fail(TaskError),
@@ -645,7 +670,7 @@ impl Task {
         let pkg_name_hashes = pkgs.items().name_hash;
         let pkg_resolutions = pkgs.items().resolution;
         let pkg_resolutions_lists = pkgs.items().resolutions;
-        let pkg_metas: &[Lockfile::Package::Meta] = pkgs.items().meta;
+        let pkg_metas: &[package::Meta] = pkgs.items().meta;
         let pkg_bins = pkgs.items().bin;
         let pkg_script_lists = pkgs.items().scripts;
 
@@ -695,29 +720,29 @@ impl Task {
                             let _folder_dir_guard = scopeguard::guard((), |_| folder_dir.close());
 
                             // TODO(port): Zig labeled-switch `backend:` modeled as loop+match
-                            let mut backend = PackageInstall::Method::Hardlink;
+                            let mut backend = InstallMethod::Hardlink;
                             'backend: loop {
                                 match backend {
-                                    PackageInstall::Method::Hardlink => {
+                                    InstallMethod::Hardlink => {
                                         let mut src =
-                                            AbsPath::<{ paths::os_unit::AUTO }>::init_top_level_dir_long_path();
+                                            OsAutoAbsPath::init_top_level_dir_long_path();
                                         src.append_join(pkg_res.value.folder.slice(string_buf));
 
-                                        let mut dest = Path::<{ paths::os_unit::AUTO }>::init();
+                                        let mut dest = OsAutoPath::init();
                                         installer.append_store_path(&mut dest, self.entry_id);
 
                                         let mut hardlinker = Hardlinker::init(
                                             folder_dir,
                                             src,
                                             dest,
-                                            &[paths::os_path_literal!("node_modules")],
+                                            &[bun_paths::os_path_literal!("node_modules")],
                                         )?;
 
                                         match hardlinker.link()? {
                                             sys::Result::Ok(()) => {}
                                             sys::Result::Err(err) => {
                                                 if err.get_errno() == sys::Errno::XDEV {
-                                                    backend = PackageInstall::Method::Copyfile;
+                                                    backend = InstallMethod::Copyfile;
                                                     continue 'backend;
                                                 }
 
@@ -725,8 +750,8 @@ impl Task {
                                                     Output::pretty_errorln(format_args!(
                                                         "<red><b>error<r><d>:<r>Failed to hardlink package folder\n{}\n<d>From: {}<r>\n<d>  To: {}<r>\n<r>",
                                                         err,
-                                                        bun_core::fmt::fmt_os_path(src.slice(), paths::PathSep::Auto),
-                                                        bun_core::fmt::fmt_os_path(dest.slice(), paths::PathSep::Auto),
+                                                        bun_core::fmt::fmt_os_path(src.slice(), bun_core::fmt::PathSep::Auto),
+                                                        bun_core::fmt::fmt_os_path(dest.slice(), bun_core::fmt::PathSep::Auto),
                                                     ));
                                                     Output::flush();
                                                 }
@@ -736,9 +761,9 @@ impl Task {
                                         break 'backend;
                                     }
 
-                                    PackageInstall::Method::Copyfile => {
+                                    InstallMethod::Copyfile => {
                                         let mut src_path =
-                                            AbsPath::<{ paths::os_unit::AUTO }>::init();
+                                            OsAutoAbsPath::init();
 
                                         #[cfg(windows)]
                                         {
@@ -772,14 +797,14 @@ impl Task {
                                             src_path.set_length(src_path_len);
                                         }
 
-                                        let mut dest = Path::<{ paths::os_unit::AUTO }>::init();
+                                        let mut dest = OsAutoPath::init();
                                         installer.append_store_path(&mut dest, self.entry_id);
 
                                         let mut file_copier = FileCopier::init(
                                             folder_dir,
                                             src_path,
                                             dest,
-                                            &[paths::os_path_literal!("node_modules")],
+                                            &[bun_paths::os_path_literal!("node_modules")],
                                         )?;
 
                                         match file_copier.copy() {
@@ -789,8 +814,8 @@ impl Task {
                                                     Output::pretty_errorln(format_args!(
                                                         "<red><b>error<r><d>:<r>Failed to copy package\n{}\n<d>From: {}<r>\n<d>  To: {}<r>\n<r>",
                                                         err,
-                                                        bun_core::fmt::fmt_os_path(src_path.slice(), paths::PathSep::Auto),
-                                                        bun_core::fmt::fmt_os_path(dest.slice(), paths::PathSep::Auto),
+                                                        bun_core::fmt::fmt_os_path(src_path.slice(), bun_core::fmt::PathSep::Auto),
+                                                        bun_core::fmt::fmt_os_path(dest.slice(), bun_core::fmt::PathSep::Auto),
                                                     ));
                                                     Output::flush();
                                                 }
@@ -863,7 +888,7 @@ impl Task {
                     let (cache_dir, cache_dir_path) =
                         unsafe { &mut *manager_ptr }.get_cache_directory_and_abs_path();
 
-                    let mut dest_subpath = Path::<{ paths::os_unit::AUTO }>::init();
+                    let mut dest_subpath = OsAutoPath::init();
                     installer.append_real_store_path(&mut dest_subpath, self.entry_id, Which::Staging);
 
                     let uses_global_store = installer.entry_uses_global_store(self.entry_id);
@@ -882,7 +907,7 @@ impl Task {
                         // directory, which dangles after the next
                         // `rm -rf node_modules`. Detach first so the build
                         // lands in a real project-local directory.
-                        let mut local = Path::<{ paths::sep::AUTO }>::init_top_level_dir();
+                        let mut local = AutoPath::init_top_level_dir();
                         installer.append_local_store_entry_path(&mut local, self.entry_id);
                         let is_stale_link: bool = {
                             #[cfg(windows)]
@@ -935,7 +960,7 @@ impl Task {
                         // Clear any leftover staging directory from a crashed
                         // earlier run with the same suffix (vanishingly
                         // unlikely with a 64-bit random suffix, but cheap).
-                        let mut staging = AbsPath::<{ paths::sep::AUTO }>::init();
+                        let mut staging = AutoAbsPath::init();
                         installer.append_global_store_entry_path(&mut staging, self.entry_id, Which::Staging);
                         let _ = Fd::cwd().delete_tree(staging.slice());
                     }
@@ -955,13 +980,13 @@ impl Task {
                     let mut backend = installer.supported_backend.load(Ordering::Relaxed);
                     'backend: loop {
                         match backend {
-                            PackageInstall::Method::Clonefile => {
+                            InstallMethod::Clonefile => {
                                 #[cfg(not(target_os = "macos"))]
                                 {
                                     installer
                                         .supported_backend
-                                        .store(PackageInstall::Method::Hardlink, Ordering::Relaxed);
-                                    backend = PackageInstall::Method::Hardlink;
+                                        .store(InstallMethod::Hardlink, Ordering::Relaxed);
+                                    backend = InstallMethod::Hardlink;
                                     continue 'backend;
                                 }
                                 #[cfg(target_os = "macos")]
@@ -972,11 +997,11 @@ impl Task {
                                             "Cloning {} to {}",
                                             bun_core::fmt::fmt_os_path(
                                                 pkg_cache_dir_subpath.slice_z(),
-                                                paths::PathSep::Auto
+                                                bun_core::fmt::PathSep::Auto
                                             ),
                                             bun_core::fmt::fmt_os_path(
                                                 dest_subpath.slice_z(),
-                                                paths::PathSep::Auto
+                                                bun_core::fmt::PathSep::Auto
                                             ),
                                         ));
                                         Output::flush();
@@ -993,18 +1018,18 @@ impl Task {
                                         sys::Result::Err(err) => match err.get_errno() {
                                             sys::Errno::XDEV => {
                                                 installer.supported_backend.store(
-                                                    PackageInstall::Method::Copyfile,
+                                                    InstallMethod::Copyfile,
                                                     Ordering::Relaxed,
                                                 );
-                                                backend = PackageInstall::Method::Copyfile;
+                                                backend = InstallMethod::Copyfile;
                                                 continue 'backend;
                                             }
                                             sys::Errno::OPNOTSUPP => {
                                                 installer.supported_backend.store(
-                                                    PackageInstall::Method::Hardlink,
+                                                    InstallMethod::Hardlink,
                                                     Ordering::Relaxed,
                                                 );
-                                                backend = PackageInstall::Method::Hardlink;
+                                                backend = InstallMethod::Hardlink;
                                                 continue 'backend;
                                             }
                                             _ => {
@@ -1020,7 +1045,7 @@ impl Task {
                                 }
                             }
 
-                            PackageInstall::Method::Hardlink => {
+                            InstallMethod::Hardlink => {
                                 cached_package_dir = match bun_sys::open_dir_for_iteration(
                                     cache_dir,
                                     pkg_cache_dir_subpath.slice(),
@@ -1038,7 +1063,7 @@ impl Task {
                                     }
                                 };
 
-                                let mut src = AbsPath::<{ paths::os_unit::AUTO }>::from_long_path(
+                                let mut src = OsAutoAbsPath::from_long_path(
                                     cache_dir_path.slice(),
                                 );
                                 src.append_join(pkg_cache_dir_subpath.slice());
@@ -1055,10 +1080,10 @@ impl Task {
                                     sys::Result::Err(err) => {
                                         if err.get_errno() == sys::Errno::XDEV {
                                             installer.supported_backend.store(
-                                                PackageInstall::Method::Copyfile,
+                                                InstallMethod::Copyfile,
                                                 Ordering::Relaxed,
                                             );
-                                            backend = PackageInstall::Method::Copyfile;
+                                            backend = InstallMethod::Copyfile;
                                             continue 'backend;
                                         }
                                         if PackageManager::verbose_install() {
@@ -1066,7 +1091,7 @@ impl Task {
                                                 "<red><b>error<r><d>:<r>Failed to hardlink package\n{}\n<d>From: {}<r>\n<d>  To: {}<r>\n<r>",
                                                 err,
                                                 bstr::BStr::new(pkg_cache_dir_subpath.slice()),
-                                                bun_core::fmt::fmt_os_path(dest_subpath.slice(), paths::PathSep::Auto),
+                                                bun_core::fmt::fmt_os_path(dest_subpath.slice(), bun_core::fmt::PathSep::Auto),
                                             ));
                                             Output::flush();
                                         }
@@ -1091,7 +1116,7 @@ impl Task {
                                                 "<red><b>error<r><d>:<r>Failed to open cache directory for copyfile\n{}\n<d>From: {}<r>\n<d>  To: {}<r>\n<r>",
                                                 err,
                                                 bstr::BStr::new(pkg_cache_dir_subpath.slice()),
-                                                bun_core::fmt::fmt_os_path(dest_subpath.slice(), paths::PathSep::Auto),
+                                                bun_core::fmt::fmt_os_path(dest_subpath.slice(), bun_core::fmt::PathSep::Auto),
                                             ));
                                             Output::flush();
                                         }
@@ -1100,7 +1125,7 @@ impl Task {
                                 };
 
                                 let mut src_path =
-                                    AbsPath::<{ paths::os_unit::AUTO }>::from(cache_dir_path.slice());
+                                    OsAutoAbsPath::from(cache_dir_path.slice());
                                 src_path.append(pkg_cache_dir_subpath.slice());
 
                                 let mut file_copier = FileCopier::init(
@@ -1118,7 +1143,7 @@ impl Task {
                                                 "<red><b>error<r><d>:<r>Failed to copy package\n{}\n<d>From: {}<r>\n<d>  To: {}<r>\n<r>",
                                                 err,
                                                 bstr::BStr::new(pkg_cache_dir_subpath.slice()),
-                                                bun_core::fmt::fmt_os_path(dest_subpath.slice(), paths::PathSep::Auto),
+                                                bun_core::fmt::fmt_os_path(dest_subpath.slice(), bun_core::fmt::PathSep::Auto),
                                             ));
                                             Output::flush();
                                         }
@@ -1142,7 +1167,7 @@ impl Task {
                     for dep in entry_dependencies[self.entry_id.get()].slice() {
                         let dep_name = dependencies[dep.dep_id].name.slice(string_buf);
 
-                        let mut dest = Path::<{ paths::sep::AUTO }>::init_top_level_dir();
+                        let mut dest = AutoPath::init_top_level_dir();
 
                         installer.append_real_store_node_modules_path(
                             &mut dest,
@@ -1163,7 +1188,7 @@ impl Task {
                             }
                         }
 
-                        let mut dep_store_path = AbsPath::<{ paths::sep::AUTO }>::init_top_level_dir();
+                        let mut dep_store_path = AutoAbsPath::init_top_level_dir();
 
                         // When this entry lives in the global virtual store, its
                         // dep symlinks must point at sibling *global* entries
@@ -1207,19 +1232,19 @@ impl Task {
                             fallback_junction_target: dep_store_path,
                         };
 
-                        let link_strategy: Symlinker::Strategy = if matches!(
+                        let link_strategy: symlinker::Strategy = if matches!(
                             pkg_res.tag,
                             Resolution::Tag::Root | Resolution::Tag::Workspace
                         ) {
                             // root and workspace packages ensure their dependency symlinks
                             // exist unconditionally. To make sure it's fast, first readlink
                             // then create the symlink if necessary
-                            Symlinker::Strategy::ExpectExisting
+                            symlinker::Strategy::ExpectExisting
                         } else {
                             // Global-store entries are built under a private
                             // per-process staging directory, so nothing else
                             // is touching this path.
-                            Symlinker::Strategy::ExpectMissing
+                            symlinker::Strategy::ExpectMissing
                         };
 
                         match symlinker.ensure_symlink(link_strategy) {
@@ -1253,7 +1278,7 @@ impl Task {
                     // preinstall scripts need to run before binaries can be linked. Block here if any dependencies
                     // of this entry are not finished. Do not count cycles towards blocking.
 
-                    let mut parent_dedupe: ArrayHashMap<Store::Entry::Id, ()> =
+                    let mut parent_dedupe: ArrayHashMap<StoreEntryId, ()> =
                         ArrayHashMap::default();
 
                     if installer.is_task_blocked(self.entry_id, &mut parent_dedupe) {
@@ -1301,7 +1326,7 @@ impl Task {
                     let current_step = Step::RunPreinstall;
                     // SAFETY: read-only `PackageManager` access; see top-of-fn note.
                     if !unsafe { &*manager_ptr }.options.do_.run_scripts
-                        || self.entry_id == Store::Entry::Id::ROOT
+                        || self.entry_id == StoreEntryId::ROOT
                     {
                         step = self.next_step(current_step);
                         continue;
@@ -1342,7 +1367,7 @@ impl Task {
                         break 'brk (false, false);
                     };
 
-                    let mut pkg_cwd = AbsPath::<{ paths::sep::AUTO }>::init_top_level_dir();
+                    let mut pkg_cwd = AutoAbsPath::init_top_level_dir();
                     installer.append_store_path(&mut pkg_cwd, self.entry_id);
 
                     'enqueue_lifecycle_scripts: {
@@ -1351,7 +1376,7 @@ impl Task {
                         {
                             break 'enqueue_lifecycle_scripts;
                         }
-                        let mut pkg_scripts: Package::Scripts = pkg_script_lists[pkg_id];
+                        let mut pkg_scripts: package::scripts::Scripts = pkg_script_lists[pkg_id];
                         // SAFETY: read-only `PackageManager` access; see top-of-fn note.
                         let manager = unsafe { &*manager_ptr };
                         if is_trusted
@@ -1391,7 +1416,7 @@ impl Task {
                         };
 
                         if let Some(list) = scripts_list {
-                            let clone: *mut Package::Scripts::List =
+                            let clone: *mut package::scripts::List =
                                 Box::into_raw(Box::new(list));
                             // SAFETY: each Task is the sole writer for its own
                             // `entry_id`'s `scripts` slot; no other thread reads
@@ -1461,7 +1486,7 @@ impl Task {
 
                 Step::Binaries => {
                     let current_step = Step::Binaries;
-                    if self.entry_id == Store::Entry::Id::ROOT {
+                    if self.entry_id == StoreEntryId::ROOT {
                         step = self.next_step(current_step);
                         continue;
                     }
@@ -1483,20 +1508,20 @@ impl Task {
 
                     let dep_name = dependencies[dep_id].name.slice(string_buf);
 
-                    let abs_target_buf = paths::path_buffer_pool().get();
-                    let abs_dest_buf = paths::path_buffer_pool().get();
-                    let rel_buf = paths::path_buffer_pool().get();
+                    let abs_target_buf = paths::path_buffer_pool::get();
+                    let abs_dest_buf = paths::path_buffer_pool::get();
+                    let rel_buf = paths::path_buffer_pool::get();
 
                     let mut seen: StringHashMap<()> = StringHashMap::default();
 
-                    let mut node_modules_path = AbsPath::<{ paths::opts::DEFAULT }>::init_top_level_dir();
+                    let mut node_modules_path = DefaultAbsPath::init_top_level_dir();
                     installer.append_real_store_node_modules_path(
                         &mut node_modules_path,
                         self.entry_id,
                         Which::Staging,
                     );
 
-                    let mut target_node_modules_path: Option<AbsPath<{ paths::opts::DEFAULT }>> = None;
+                    let mut target_node_modules_path: Option<DefaultAbsPath> = None;
 
                     let mut target_package_name = strings::StringOrTinyString::init(dep_name);
 
@@ -1509,7 +1534,7 @@ impl Task {
                         installer.lockfile.packages.items().meta,
                         pkg_id,
                     ) {
-                        let mut p = AbsPath::<{ paths::opts::DEFAULT }>::init_top_level_dir();
+                        let mut p = DefaultAbsPath::init_top_level_dir();
                         installer.append_real_store_node_modules_path(
                             &mut p,
                             replacement_entry_id,
@@ -1585,7 +1610,7 @@ impl Task {
                     let current_step = Step::RunPostInstallAndPrePostPrepare;
                     // SAFETY: read-only `PackageManager` access; see top-of-fn note.
                     if !unsafe { &*manager_ptr }.options.do_.run_scripts
-                        || self.entry_id == Store::Entry::Id::ROOT
+                        || self.entry_id == StoreEntryId::ROOT
                     {
                         step = self.next_step(current_step);
                         continue;
@@ -1639,7 +1664,7 @@ impl Task {
     }
 
     /// Called from task thread
-    pub fn callback(task: *mut ThreadPool::Task) {
+    pub fn callback(task: *mut thread_pool::Task) {
         // SAFETY: task points to Task.task field
         let this: &mut Task = unsafe {
             &mut *(task as *mut u8)
@@ -1823,14 +1848,14 @@ impl<'a> Installer<'a> {
         Ok(PatchInfo::None)
     }
 
-    pub fn link_to_hidden_node_modules(&self, entry_id: Store::Entry::Id) {
+    pub fn link_to_hidden_node_modules(&self, entry_id: StoreEntryId) {
         let string_buf = self.lockfile.buffers.string_bytes.as_slice();
 
         let node_id = self.store.entries.items().node_id[entry_id.get()];
         let pkg_id = self.store.nodes.items().pkg_id[node_id.get()];
         let pkg_name = self.lockfile.packages.items().name[pkg_id];
 
-        let mut hidden_hoisted_node_modules = Path::<{ paths::sep::AUTO }>::init();
+        let mut hidden_hoisted_node_modules = AutoPath::init();
 
         hidden_hoisted_node_modules.append(
             // "node_modules" + sep + ".bun" + sep + "node_modules"
@@ -1839,7 +1864,7 @@ impl<'a> Installer<'a> {
         );
         hidden_hoisted_node_modules.append(pkg_name.slice(string_buf));
 
-        let mut target = RelPath::<{ paths::sep::AUTO }>::init();
+        let mut target = AutoRelPath::init();
 
         target.append(b"..");
         if strings::index_of_char(pkg_name.slice(string_buf), b'/').is_some() {
@@ -1848,11 +1873,11 @@ impl<'a> Installer<'a> {
 
         target.append_fmt(format_args!(
             "{}/node_modules/{}",
-            Store::Entry::fmt_store_path(entry_id, self.store, self.lockfile),
+            store::entry::fmt_store_path(entry_id, self.store, self.lockfile),
             bstr::BStr::new(pkg_name.slice(string_buf)),
         ));
 
-        let mut full_target = AbsPath::<{ paths::sep::AUTO }>::init_top_level_dir();
+        let mut full_target = AutoAbsPath::init_top_level_dir();
         self.append_store_path(&mut full_target, entry_id);
 
         let symlinker = Symlinker {
@@ -1862,10 +1887,10 @@ impl<'a> Installer<'a> {
         };
 
         // symlinks won't exist if node_modules/.bun is new
-        let link_strategy: Symlinker::Strategy = if self.is_new_bun_modules {
-            Symlinker::Strategy::ExpectMissing
+        let link_strategy: symlinker::Strategy = if self.is_new_bun_modules {
+            symlinker::Strategy::ExpectMissing
         } else {
-            Symlinker::Strategy::ExpectExisting
+            symlinker::Strategy::ExpectExisting
         };
 
         let _ = symlinker.ensure_symlink(link_strategy);
@@ -1873,14 +1898,14 @@ impl<'a> Installer<'a> {
 
     fn maybe_replace_node_modules_path(
         &self,
-        entry_node_ids: &[Store::Node::Id],
+        entry_node_ids: &[StoreNodeId],
         node_pkg_ids: &[PackageID],
         name_hashes: &[PackageNameHash],
-        pkg_resolutions_lists: &[Lockfile::PackageIDSlice],
+        pkg_resolutions_lists: &[PackageIDSlice],
         pkg_resolutions_buffer: &[PackageID],
-        pkg_metas: &[Package::Meta],
+        pkg_metas: &[package::Meta],
         pkg_id: PackageID,
-    ) -> Option<Store::Entry::Id> {
+    ) -> Option<StoreEntryId> {
         let postinstall_optimizer = &self.manager.postinstall_optimizer;
         if !postinstall_optimizer.is_native_binlink_enabled() {
             return None;
@@ -1910,7 +1935,7 @@ impl<'a> Installer<'a> {
                                     "native bin link {} -> {}",
                                     pkg_id, replacement_pkg_id
                                 );
-                                return Some(Store::Entry::Id::from(
+                                return Some(StoreEntryId::from(
                                     u32::try_from(new_entry_id).unwrap(),
                                 ));
                             }
@@ -1926,7 +1951,7 @@ impl<'a> Installer<'a> {
 
     pub fn link_dependency_bins(
         &self,
-        parent_entry_id: Store::Entry::Id,
+        parent_entry_id: StoreEntryId,
     ) -> core::result::Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         let lockfile = &*self.lockfile;
@@ -1936,7 +1961,7 @@ impl<'a> Installer<'a> {
         let extern_string_buf = lockfile.buffers.extern_strings.as_slice();
 
         let entries = store.entries.slice();
-        let entry_node_ids: &[Store::Node::Id] = entries.items().node_id;
+        let entry_node_ids: &[StoreNodeId] = entries.items().node_id;
         let entry_deps = entries.items().dependencies;
 
         let nodes = store.nodes.slice();
@@ -1950,13 +1975,13 @@ impl<'a> Installer<'a> {
         let pkg_resolutions_buffer = lockfile.buffers.resolutions.as_slice();
         let pkg_bins = pkgs.items().bin;
 
-        let link_target_buf = paths::path_buffer_pool().get();
-        let link_dest_buf = paths::path_buffer_pool().get();
-        let link_rel_buf = paths::path_buffer_pool().get();
+        let link_target_buf = paths::path_buffer_pool::get();
+        let link_dest_buf = paths::path_buffer_pool::get();
+        let link_rel_buf = paths::path_buffer_pool::get();
 
         let mut seen: StringHashMap<()> = StringHashMap::default();
 
-        let mut node_modules_path = AbsPath::<{ paths::opts::DEFAULT }>::init_top_level_dir();
+        let mut node_modules_path = DefaultAbsPath::init_top_level_dir();
         self.append_real_store_node_modules_path(&mut node_modules_path, parent_entry_id, Which::Staging);
 
         for dep in entry_deps[parent_entry_id.get()].slice() {
@@ -1969,7 +1994,7 @@ impl<'a> Installer<'a> {
             }
             let alias = lockfile.buffers.dependencies[dep_id].name;
 
-            let mut target_node_modules_path: Option<AbsPath<{ paths::opts::DEFAULT }>> = None;
+            let mut target_node_modules_path: Option<DefaultAbsPath> = None;
             let package_name = strings::StringOrTinyString::init(alias.slice(string_buf));
 
             let mut target_package_name = package_name;
@@ -1983,7 +2008,7 @@ impl<'a> Installer<'a> {
                 pkg_metas,
                 pkg_id,
             ) {
-                let mut p = AbsPath::<{ paths::opts::DEFAULT }>::init_top_level_dir();
+                let mut p = DefaultAbsPath::init_top_level_dir();
                 self.append_real_store_node_modules_path(&mut p, replacement_entry_id, Which::Final);
                 target_node_modules_path = Some(p);
 
@@ -2051,7 +2076,7 @@ impl<'a> Installer<'a> {
     /// instead of being materialized under the project's `node_modules/.bun/`.
     /// Root, workspace, folder, symlink, and patched packages always stay
     /// project-local because their contents are mutable / project-specific.
-    pub fn entry_uses_global_store(&self, entry_id: Store::Entry::Id) -> bool {
+    pub fn entry_uses_global_store(&self, entry_id: StoreEntryId) -> bool {
         if self.global_store_path.is_none() {
             return false;
         }
@@ -2066,7 +2091,7 @@ impl<'a> Installer<'a> {
     pub fn append_global_store_entry_path(
         &self,
         buf: &mut impl paths::PathBuf,
-        entry_id: Store::Entry::Id,
+        entry_id: StoreEntryId,
         which: Which,
     ) {
         debug_assert!(self.entry_uses_global_store(entry_id));
@@ -2075,11 +2100,11 @@ impl<'a> Installer<'a> {
         match which {
             Which::Final => buf.append_fmt(format_args!(
                 "{}",
-                Store::Entry::fmt_global_store_path(entry_id, self.store, self.lockfile),
+                store::entry::fmt_global_store_path(entry_id, self.store, self.lockfile),
             )),
             Which::Staging => buf.append_fmt(format_args!(
                 "{}.tmp-{:x}",
-                Store::Entry::fmt_global_store_path(entry_id, self.store, self.lockfile),
+                store::entry::fmt_global_store_path(entry_id, self.store, self.lockfile),
                 self.global_store_tmp_suffix,
             )),
         }
@@ -2091,13 +2116,13 @@ impl<'a> Installer<'a> {
     /// staging path; every link inside is relative to the entry directory, so
     /// they resolve identically after the rename. The final directory
     /// existing is the only completeness signal — no separate stamp file.
-    pub fn commit_global_store_entry(&self, entry_id: Store::Entry::Id) -> sys::Result<()> {
+    pub fn commit_global_store_entry(&self, entry_id: StoreEntryId) -> sys::Result<()> {
         if !self.entry_uses_global_store(entry_id) {
             return sys::Result::Ok(());
         }
-        let mut staging = AbsPath::<{ paths::sep::AUTO }>::init();
+        let mut staging = AutoAbsPath::init();
         self.append_global_store_entry_path(&mut staging, entry_id, Which::Staging);
-        let mut final_ = AbsPath::<{ paths::sep::AUTO }>::init();
+        let mut final_ = AutoAbsPath::init();
         self.append_global_store_entry_path(&mut final_, entry_id, Which::Final);
 
         match sys::renameat(Fd::cwd(), staging.slice_z(), Fd::cwd(), final_.slice_z()) {
@@ -2115,11 +2140,11 @@ impl<'a> Installer<'a> {
                 // concurrent install and is content-identical — keep it and
                 // discard ours.
                 if self.manager.options.enable.force_install {
-                    let mut old = AbsPath::<{ paths::sep::AUTO }>::init();
+                    let mut old = AutoAbsPath::init();
                     old.append(self.global_store_path.as_ref().unwrap().as_bytes());
                     old.append_fmt(format_args!(
                         "{}.old-{:x}",
-                        Store::Entry::fmt_global_store_path(entry_id, self.store, self.lockfile),
+                        store::entry::fmt_global_store_path(entry_id, self.store, self.lockfile),
                         bun_core::fast_random(),
                     ));
                     if let Some(swap_err) =
@@ -2161,12 +2186,12 @@ impl<'a> Installer<'a> {
     pub fn append_local_store_entry_path(
         &self,
         buf: &mut impl paths::PathBuf,
-        entry_id: Store::Entry::Id,
+        entry_id: StoreEntryId,
     ) {
         buf.append_fmt(format_args!(
             concat!("node_modules/", "{}", "/{}"),
-            Store::MODULES_DIR_NAME,
-            Store::Entry::fmt_store_path(entry_id, self.store, self.lockfile),
+            store::MODULES_DIR_NAME,
+            store::entry::fmt_store_path(entry_id, self.store, self.lockfile),
         ));
         // TODO(port): Zig used compile-time string concat with Store.modules_dir_name
     }
@@ -2174,11 +2199,11 @@ impl<'a> Installer<'a> {
     /// Create the project-level symlink `node_modules/.bun/<storepath>` →
     /// `<cache>/links/<storepath>-<hash>`. This is the only per-install
     /// filesystem write for a warm global-store hit.
-    pub fn link_project_to_global_store(&self, entry_id: Store::Entry::Id) -> sys::Result<()> {
-        let mut dest = Path::<{ paths::sep::AUTO }>::init_top_level_dir();
+    pub fn link_project_to_global_store(&self, entry_id: StoreEntryId) -> sys::Result<()> {
+        let mut dest = AutoPath::init_top_level_dir();
         self.append_local_store_entry_path(&mut dest, entry_id);
 
-        let mut target_abs = AbsPath::<{ paths::sep::AUTO }>::init();
+        let mut target_abs = AutoAbsPath::init();
         self.append_global_store_entry_path(&mut target_abs, entry_id, Which::Final);
 
         // Absolute target so the link is independent of where node_modules
@@ -2253,7 +2278,7 @@ impl<'a> Installer<'a> {
     pub fn append_store_node_modules_path(
         &self,
         buf: &mut impl paths::PathBuf,
-        entry_id: Store::Entry::Id,
+        entry_id: StoreEntryId,
     ) {
         let string_buf = self.lockfile.buffers.string_bytes.as_slice();
 
@@ -2281,8 +2306,8 @@ impl<'a> Installer<'a> {
             _ => {
                 buf.append_fmt(format_args!(
                     "node_modules/{}/{}/node_modules",
-                    Store::MODULES_DIR_NAME,
-                    Store::Entry::fmt_store_path(entry_id, self.store, self.lockfile),
+                    store::MODULES_DIR_NAME,
+                    store::entry::fmt_store_path(entry_id, self.store, self.lockfile),
                 ));
                 // TODO(port): Zig used compile-time concat with Store.modules_dir_name
             }
@@ -2296,7 +2321,7 @@ impl<'a> Installer<'a> {
     pub fn append_real_store_node_modules_path(
         &self,
         buf: &mut impl paths::PathBuf,
-        entry_id: Store::Entry::Id,
+        entry_id: StoreEntryId,
         which: Which,
     ) {
         if self.entry_uses_global_store(entry_id) {
@@ -2312,7 +2337,7 @@ impl<'a> Installer<'a> {
     pub fn append_real_store_path(
         &self,
         buf: &mut impl paths::PathBuf,
-        entry_id: Store::Entry::Id,
+        entry_id: StoreEntryId,
         which: Which,
     ) {
         if self.entry_uses_global_store(entry_id) {
@@ -2328,7 +2353,7 @@ impl<'a> Installer<'a> {
         self.append_store_path(buf, entry_id);
     }
 
-    pub fn append_store_path(&self, buf: &mut impl paths::PathBuf, entry_id: Store::Entry::Id) {
+    pub fn append_store_path(&self, buf: &mut impl paths::PathBuf, entry_id: StoreEntryId) {
         let string_buf = self.lockfile.buffers.string_bytes.as_slice();
 
         let entries = self.store.entries.slice();
@@ -2354,16 +2379,16 @@ impl<'a> Installer<'a> {
                 if dep_id != invalid_dependency_id {
                     let pkg_name = pkg_names[pkg_id];
                     buf.append(
-                        const_format::concatcp!("node_modules/", Store::MODULES_DIR_NAME).as_bytes(),
+                        NODE_MODULES_BUN.as_bytes(),
                     );
                     buf.append_fmt(format_args!(
                         "{}",
-                        Store::Entry::fmt_store_path(entry_id, self.store, self.lockfile),
+                        store::entry::fmt_store_path(entry_id, self.store, self.lockfile),
                     ));
                     buf.append(b"node_modules");
                     if pkg_name.is_empty() {
                         buf.append(paths::basename(
-                            bun_fs::FileSystem::instance().top_level_dir,
+                            bun_fs::FileSystem::instance().top_level_dir(),
                         ));
                     } else {
                         buf.append(pkg_name.slice(string_buf));
@@ -2385,11 +2410,11 @@ impl<'a> Installer<'a> {
             _ => {
                 let pkg_name = pkg_names[pkg_id];
                 buf.append(
-                    const_format::concatcp!("node_modules/", Store::MODULES_DIR_NAME).as_bytes(),
+                    NODE_MODULES_BUN.as_bytes(),
                 );
                 buf.append_fmt(format_args!(
                     "{}",
-                    Store::Entry::fmt_store_path(entry_id, self.store, self.lockfile),
+                    store::entry::fmt_store_path(entry_id, self.store, self.lockfile),
                 ));
                 buf.append(b"node_modules");
                 buf.append(pkg_name.slice(string_buf));
@@ -2418,7 +2443,7 @@ impl<'a> Installer<'a> {
                     let pkg_name = pkg_names[pkg_id];
                     if pkg_name.is_empty() {
                         return Some(paths::basename(
-                            bun_fs::FileSystem::instance().top_level_dir,
+                            bun_fs::FileSystem::instance().top_level_dir(),
                         ));
                     }
                     return Some(pkg_name.slice(string_buf));

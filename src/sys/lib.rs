@@ -819,7 +819,26 @@ impl File {
     #[inline] pub fn stderr() -> Self { Self { handle: Fd::stderr() } }
 }
 /// `bun.sys.File` is also reachable as `bun_sys::file::File` (Zig: `sys.File`).
-pub mod file { pub use super::File; }
+pub mod file {
+    pub use super::File;
+    /// Port of `bun.sys.File.ReadToEndResult` — `{ bytes, err? }` pair so
+    /// callers can recover the partially-read buffer even on error (Zig
+    /// returns the buffer regardless and tags `.err`).
+    #[derive(Default)]
+    pub struct ReadToEndResult {
+        pub bytes: Vec<u8>,
+        pub err: Option<super::Error>,
+    }
+    impl ReadToEndResult {
+        #[inline]
+        pub fn unwrap(self) -> core::result::Result<Vec<u8>, super::Error> {
+            match self.err { Some(e) => Err(e), None => Ok(self.bytes) }
+        }
+    }
+}
+
+/// `std.fs.cwd()` — Zig callers do `bun_sys::cwd()` for the process cwd `Dir`.
+#[inline] pub fn cwd() -> Dir { Dir::cwd() }
 
 pub type Stat = libc::stat;
 
@@ -2881,6 +2900,7 @@ pub mod c {
     use core::ffi::{c_char, c_int, c_void};
     pub use libc::stat as Stat;
     pub use libc::{fchmod, memcmp};
+    #[cfg(unix)] pub use libc::{getuid, getgid, geteuid, getegid};
     /// `std.c.fd_t` / `std.posix.fd_t` — native fd backing int (c_int on POSIX,
     /// HANDLE on Windows). Use `bun_sys::Fd` everywhere else; this raw alias
     /// exists only for direct libc FFI (e.g. `socketpair`).

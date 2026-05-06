@@ -2139,7 +2139,7 @@ fn get_or_put_resolved_package(
                 return Ok(None); // manifest might still be downloading. This feels unreliable.
             };
 
-            let version_result: Npm::PackageManifest::FindVersionResult = match version.tag {
+            let version_result: Npm::FindVersionResult = match version.tag {
                 dependency::version::Tag::DistTag => manifest.find_by_dist_tag_with_filter(
                     this.lockfile.str(&version.value.dist_tag.tag),
                     this.options.minimum_release_age_ms,
@@ -2154,9 +2154,9 @@ fn get_or_put_resolved_package(
                 _ => unreachable!(),
             };
 
-            let find_result_opt: Option<Npm::PackageManifest::FindResult> = match version_result {
-                Npm::PackageManifest::FindVersionResult::Found(result) => Some(result),
-                Npm::PackageManifest::FindVersionResult::FoundWithFilter(filtered) => 'blk: {
+            let find_result_opt: Option<Npm::FindResult> = match version_result {
+                Npm::FindVersionResult::Found(result) => Some(result),
+                Npm::FindVersionResult::FoundWithFilter(filtered) => 'blk: {
                     let package_name = this.lockfile.str(&name);
                     if this.options.log_level.is_verbose() {
                         if let Some(newest) = &filtered.newest_filtered {
@@ -2193,12 +2193,12 @@ fn get_or_put_resolved_package(
 
                     break 'blk Some(filtered.result);
                 }
-                Npm::PackageManifest::FindVersionResult::Err(err_type) => match err_type {
-                    Npm::PackageManifest::FindVersionError::TooRecent
-                    | Npm::PackageManifest::FindVersionError::AllVersionsTooRecent => {
+                Npm::FindVersionResult::Err(err_type) => match err_type {
+                    Npm::FindVersionError::TooRecent
+                    | Npm::FindVersionError::AllVersionsTooRecent => {
                         return Err(bun_core::err!("TooRecentVersion"));
                     }
-                    Npm::PackageManifest::FindVersionError::NotFound => None, // Handle below with existing logic
+                    Npm::FindVersionError::NotFound => None, // Handle below with existing logic
                 },
             };
 

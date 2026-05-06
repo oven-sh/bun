@@ -1279,19 +1279,19 @@ impl<'a> Linker<'a> {
     fn resolve_bin_target(&self, package_dir: &[u8], target: &[u8], bin_name: &[u8]) -> &ZStr {
         // TODO(port): path.joinAbsStringZ uses a threadlocal buffer; the returned &ZStr
         // borrows that. Phase B must ensure no re-entry between calls below.
-        let primary = path::join_abs_string_z(package_dir, &[target], path::Style::Auto);
+        let primary = resolve_path::join_abs_string_z::<PlatformAuto>(package_dir, &[target]);
 
         if !self.is_native_binlink_redirect() {
             return primary;
         }
 
-        if sys::exists(primary) {
+        if sys::exists(primary.as_bytes()) {
             return primary;
         }
 
         if !bin_name.is_empty() {
-            let at_root = path::join_abs_string_z(package_dir, &[bin_name], path::Style::Auto);
-            if sys::exists(at_root) {
+            let at_root = resolve_path::join_abs_string_z::<PlatformAuto>(package_dir, &[bin_name]);
+            if sys::exists(at_root.as_bytes()) {
                 return at_root;
             }
         }
@@ -1299,7 +1299,7 @@ impl<'a> Linker<'a> {
         // Nothing found; return the primary so `linkBinOrCreateShim` sets
         // `skipped_due_to_missing_bin` and the caller retries without the
         // redirect.
-        path::join_abs_string_z(package_dir, &[target], path::Style::Auto)
+        resolve_path::join_abs_string_z::<PlatformAuto>(package_dir, &[target])
     }
 
     /// uses `self.abs_target_buf`
@@ -1462,9 +1462,9 @@ impl<'a> Linker<'a> {
                     let package_dir = &self.abs_target_buf[0..package_dir_len];
                     // for normalizing `target`
                     let abs_target_dir =
-                        path::join_abs_string_z(package_dir, &[target], path::Style::Auto);
+                        resolve_path::join_abs_string_z::<PlatformAuto>(package_dir, &[target]);
 
-                    let mut target_dir = match sys::open_dir_absolute(abs_target_dir) {
+                    let target_dir = match sys::open_dir_absolute(abs_target_dir.as_bytes()) {
                         Ok(d) => d,
                         Err(err) => {
                             if err == bun_core::err!("ENOENT") {
@@ -1472,7 +1472,7 @@ impl<'a> Linker<'a> {
                                 // avoid erroring when the directory does not exist
                                 return;
                             }
-                            self.err = Some(err);
+                            self.err = Some(err.into());
                             return;
                         }
                     };
@@ -1480,22 +1480,22 @@ impl<'a> Linker<'a> {
 
                     let abs_dest_dir_end = dest_off;
 
-                    let mut iter = target_dir.iterate();
+                    let mut iter = sys::iterate_dir(target_dir);
                     while let Some(entry) = iter.next().unwrap_or(None) {
                         match entry.kind {
-                            sys::DirEntryKind::SymLink | sys::DirEntryKind::File => {
+                            sys::EntryKind::SymLink | sys::EntryKind::File => {
+                                let entry_name = entry.name.slice_u8();
                                 // `self.abs_target_buf` is available now because `path::join_abs_string_z` copied everything into `parse_join_input_buffer`
-                                let abs_target = path::join_abs_string_buf_z(
+                                let abs_target = resolve_path::join_abs_string_buf_z::<PlatformAuto>(
                                     abs_target_dir.as_bytes(),
                                     self.abs_target_buf,
-                                    &[entry.name],
-                                    path::Style::Auto,
+                                    &[entry_name],
                                 );
 
                                 dest_off = abs_dest_dir_end;
-                                self.abs_dest_buf[dest_off..dest_off + entry.name.len()]
-                                    .copy_from_slice(entry.name);
-                                dest_off += entry.name.len();
+                                self.abs_dest_buf[dest_off..dest_off + entry_name.len()]
+                                    .copy_from_slice(entry_name);
+                                dest_off += entry_name.len();
                                 self.abs_dest_buf[dest_off] = 0;
                                 let abs_dest_len = dest_off;
                                 // SAFETY: abs_dest_buf[abs_dest_len] == 0 written above

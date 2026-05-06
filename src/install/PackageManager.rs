@@ -327,15 +327,15 @@ pub use self::populate_manifest_cache::populate_manifest_cache;
 pub type TaskCallbackList = Vec<TaskCallbackContext>;
 type TaskDependencyQueue = HashMap<Task::Id, TaskCallbackList /* , IdentityContext<Task::Id>, 80 */>;
 
-type PreallocatedTaskStore = HiveArray<Task, 64 /* .Fallback */>;
+type PreallocatedTaskStore = HiveArray<Task::Task<'static>, 64 /* .Fallback */>;
 type PreallocatedNetworkTasks = HiveArray<NetworkTask, 128 /* .Fallback */>;
-type ResolveTaskQueue = UnboundedQueue<Task /* , .next */>;
+type ResolveTaskQueue = UnboundedQueue<Task::Task<'static> /* , .next */>;
 
 type RepositoryMap = HashMap<Task::Id, Fd /* , IdentityContext<Task::Id>, 80 */>;
-type NpmAliasMap = HashMap<PackageNameHash, Dependency::Version /* , IdentityContext<u64>, 80 */>;
+type NpmAliasMap = HashMap<PackageNameHash, crate::dependency::Version /* , IdentityContext<u64>, 80 */>;
 
-type NetworkQueue = LinearFifo<*mut NetworkTask, 32 /* .Static */>;
-type PatchTaskFifo = LinearFifo<*mut PatchTask, 32 /* .Static */>;
+type NetworkQueue = LinearFifo<*mut NetworkTask, StaticBuffer<*mut NetworkTask, 32>>;
+type PatchTaskFifo = LinearFifo<*mut PatchTask, StaticBuffer<*mut PatchTask, 32>>;
 
 pub type PatchTaskQueue = UnboundedQueue<PatchTask /* , .next */>;
 pub type AsyncNetworkTaskQueue = UnboundedQueue<NetworkTask /* , .next */>;
@@ -370,11 +370,11 @@ pub struct PackageManager {
     pub timestamp_for_manifest_cache_control: u32,
     pub extracted_count: u32,
     pub default_features: Features,
-    pub summary: lockfile::package::diff::Summary,
-    pub env: Option<NonNull<dot_env::Loader>>, // UNKNOWN — mixed ownership, no deinit // TODO(port): lifetime
+    pub summary: Package::DiffSummary,
+    pub env: Option<NonNull<dot_env::Loader<'static>>>, // UNKNOWN — mixed ownership, no deinit // TODO(port): lifetime
     pub progress: Progress,
-    pub downloads_node: Option<*mut Progress::Node>, // BORROW_FIELD — points into self.progress
-    pub scripts_node: Option<NonNull<Progress::Node>>, // UNKNOWN — points to caller stack-local // TODO(port): lifetime
+    pub downloads_node: Option<*mut ProgressNode>, // BORROW_FIELD — points into self.progress
+    pub scripts_node: Option<NonNull<ProgressNode>>, // UNKNOWN — points to caller stack-local // TODO(port): lifetime
     pub progress_name_buf: [u8; 768],
     pub progress_name_buf_dynamic: Vec<u8>,
     pub cpu_count: u32,
@@ -382,7 +382,7 @@ pub struct PackageManager {
     pub track_installed_bin: TrackInstalledBin,
 
     // progress bar stuff when not stack allocated
-    pub root_progress_node: *mut Progress::Node, // BORROW_FIELD — self.progress.start() returns &self.progress.root
+    pub root_progress_node: *mut ProgressNode, // BORROW_FIELD — self.progress.start() returns &self.progress.root
 
     pub to_update: bool,
 
@@ -399,20 +399,20 @@ pub struct PackageManager {
     pub root_package_id: RootPackageId,
 
     pub thread_pool: ThreadPool,
-    pub task_batch: ThreadPool::Batch,
+    pub task_batch: thread_pool::Batch,
     pub task_queue: TaskDependencyQueue,
 
     pub manifests: PackageManifestMap,
-    pub folders: FolderResolution::Map,
+    pub folders: crate::resolvers::folder_resolver::Map,
     pub git_repositories: RepositoryMap,
 
-    pub network_dedupe_map: NetworkTask::DedupeMap,
+    pub network_dedupe_map: crate::network_task::DedupeMap,
     pub async_network_task_queue: AsyncNetworkTaskQueue,
-    pub network_tarball_batch: ThreadPool::Batch,
-    pub network_resolve_batch: ThreadPool::Batch,
+    pub network_tarball_batch: thread_pool::Batch,
+    pub network_resolve_batch: thread_pool::Batch,
     pub network_task_fifo: NetworkQueue,
-    pub patch_apply_batch: ThreadPool::Batch,
-    pub patch_calc_hash_batch: ThreadPool::Batch,
+    pub patch_apply_batch: thread_pool::Batch,
+    pub patch_calc_hash_batch: thread_pool::Batch,
     pub patch_task_fifo: PatchTaskFifo,
     pub patch_task_queue: PatchTaskQueue,
     /// We actually need to calculate the patch file hashes

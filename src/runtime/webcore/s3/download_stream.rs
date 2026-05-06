@@ -16,7 +16,9 @@ use bun_threading::Mutex;
 bun_core::declare_scope!(S3, hidden);
 
 pub struct S3HttpDownloadStreamingTask {
-    pub http: AsyncHTTP,
+    // PORT NOTE: `MaybeUninit` because `AsyncHTTP` contains non-null references, so the Zig
+    // `= undefined`-then-init pattern can't use `mem::zeroed()` here (mirrors `S3HttpSimpleTask`).
+    pub http: core::mem::MaybeUninit<AsyncHTTP>,
     // PORT NOTE: `*mut` (not `&'static`) to match `VirtualMachine::get()`'s return type and to
     // permit a null-but-never-read placeholder in `Default` (Zig has no field default for `vm`).
     pub vm: *mut VirtualMachine,

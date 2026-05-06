@@ -288,6 +288,7 @@ pub mod lib_c {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// The windows implementation borrows the struct used for libc getaddrinfo
+#[cfg(windows)]
 pub mod lib_uv_backend {
     use super::*;
 
@@ -1239,6 +1240,7 @@ impl GetAddrInfoRequest {
         }
     }
 
+    #[cfg(windows)]
     pub fn on_libuv_complete(uv_info: *mut libuv::uv_getaddrinfo_t) {
         unsafe {
             let retcode = (*uv_info).retcode.int();

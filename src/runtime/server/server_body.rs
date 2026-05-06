@@ -854,7 +854,7 @@ bitflags::bitflags! {
 /// HAS_H3 = SSL.
 pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     pub app: Option<*mut uws::NewApp<SSL>>,
-    pub listener: Option<*mut uws::NewApp<SSL>::ListenSocket>,
+    pub listener: Option<*mut uws::ListenSocket>,
     // TODO(port): conditional field — `if (has_h3) ?*H3.App else void`. Kept as Option; never set when !SSL.
     pub h3_app: Option<*mut uws::H3::App>,
     pub h3_listener: Option<*mut uws::H3::ListenSocket>,
@@ -2443,7 +2443,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let _ = global.throw_value(error_instance);
     }
 
-    pub fn on_listen(&mut self, socket: Option<*mut uws::NewApp<SSL>::ListenSocket>) {
+    pub fn on_listen(&mut self, socket: Option<*mut uws::ListenSocket>) {
         let Some(socket) = socket else {
             return self.on_listen_failed();
         };
@@ -2527,7 +2527,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         Ok(this_value)
     }
 
-    pub fn on_bun_info_request(&mut self, req: &mut uws::Request, resp: &mut <Self::App as uws::AppTrait>::Response) {
+    pub fn on_bun_info_request(&mut self, req: &mut uws::Request, resp: &mut uws_sys::NewAppResponse<SSL>) {
         jsc::mark_binding!();
         self.pending_requests += 1;
         let _guard = scopeguard::guard((), |_| self.pending_requests -= 1);
@@ -2559,7 +2559,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub fn on_node_http_request_with_upgrade_ctx(
         &mut self,
         req: &mut uws::Request,
-        resp: &mut <Self::App as uws::AppTrait>::Response,
+        resp: &mut uws_sys::NewAppResponse<SSL>,
         upgrade_ctx: Option<&mut WebSocketUpgradeContext>,
     ) {
         self.on_pending_request();
@@ -2729,7 +2729,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
     }
 
-    pub fn on_node_http_request(&mut self, req: &mut uws::Request, resp: &mut <Self::App as uws::AppTrait>::Response) {
+    pub fn on_node_http_request(&mut self, req: &mut uws::Request, resp: &mut uws_sys::NewAppResponse<SSL>) {
         jsc::mark_binding!();
         self.on_node_http_request_with_upgrade_ctx(req, resp, None);
     }
@@ -2773,7 +2773,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub fn on_user_route_request(
         user_route: &mut UserRoute<SSL, DEBUG>,
         req: &mut uws::Request,
-        resp: &mut <Self::App as uws::AppTrait>::Response,
+        resp: &mut uws_sys::NewAppResponse<SSL>,
     ) {
         Self::on_user_route_request_for::<Self::RequestContext>(user_route, req, resp);
     }
@@ -2866,7 +2866,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         ctx.to_async(req, prepared.request_object);
     }
 
-    pub fn on_request(&mut self, req: &mut uws::Request, resp: &mut <Self::App as uws::AppTrait>::Response) {
+    pub fn on_request(&mut self, req: &mut uws::Request, resp: &mut uws_sys::NewAppResponse<SSL>) {
         self.on_request_for::<Self::RequestContext>(req, resp);
     }
 
@@ -2904,7 +2904,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub fn on_saved_request<const ARG_COUNT: usize>(
         &mut self,
         req: SavedRequestUnion,
-        resp: &mut <Self::App as uws::AppTrait>::Response,
+        resp: &mut uws_sys::NewAppResponse<SSL>,
         callback: JSValue,
         extra_args: [JSValue; ARG_COUNT],
     ) {
@@ -2978,7 +2978,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub fn prepare_js_request_context(
         &mut self,
         req: &mut uws::Request,
-        resp: &mut <Self::App as uws::AppTrait>::Response,
+        resp: &mut uws_sys::NewAppResponse<SSL>,
         should_deinit_context: Option<&mut bool>,
         create_js_request: CreateJsRequest,
         method: Option<http::Method>,
@@ -3158,7 +3158,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     fn upgrade_web_socket_user_route(
         this: &mut UserRoute<SSL, DEBUG>,
-        resp: &mut <Self::App as uws::AppTrait>::Response,
+        resp: &mut uws_sys::NewAppResponse<SSL>,
         req: &mut uws::Request,
         upgrade_ctx: &mut WebSocketUpgradeContext,
         method: Option<http::Method>,
@@ -3192,7 +3192,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     pub fn on_web_socket_upgrade(
         &mut self,
-        resp: &mut <Self::App as uws::AppTrait>::Response,
+        resp: &mut uws_sys::NewAppResponse<SSL>,
         req: &mut uws::Request,
         upgrade_ctx: &mut WebSocketUpgradeContext,
         id: usize,
@@ -3277,7 +3277,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     fn on_chrome_dev_tools_json_request(
         &mut self,
         req: &mut uws::Request,
-        resp: &mut <Self::App as uws::AppTrait>::Response,
+        resp: &mut uws_sys::NewAppResponse<SSL>,
     ) {
         if cfg!(feature = "debug_logs") {
             httplog!("{} - {}", BStr::new(req.method()), BStr::new(req.url()));
@@ -3686,7 +3686,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         route_list_value
     }
 
-    pub fn on404(_this: &mut Self, req: &mut uws::Request, resp: &mut <Self::App as uws::AppTrait>::Response) {
+    pub fn on404(_this: &mut Self, req: &mut uws::Request, resp: &mut uws_sys::NewAppResponse<SSL>) {
         if cfg!(feature = "debug_logs") {
             httplog!("{} - {} 404", BStr::new(req.method()), BStr::new(req.url()));
         }

@@ -109,11 +109,14 @@ use crate::socket::windows_named_pipe::WindowsNamedPipe;
 
 use crate::valkey_jsc::js_valkey::JSValkeyClient as Valkey;
 use bun_sql_jsc::postgres::PostgresSQLConnection;
-use bun_sql_jsc::mysql::JSMySQLConnection as MySQLConnection;
+use bun_sql_jsc::mysql::js_my_sql_connection::JSMySQLConnection as MySQLConnection;
 
 use crate::test_runner::bun_test::{BunTest, BunTestPtr};
 use crate::timer::{DateHeaderTimer, EventLoopDelayMonitor};
-use bun_jsc::abort_signal::Timeout as AbortSignalTimeout;
+// `bun_jsc::abort_signal::Timeout` lives in the gated `_gated` block of
+// `bun_jsc/lib.rs`; use the layout-compatible stub from `crate::timer` so
+// `container_of!` over `event_loop_timer` resolves. The `run` body is stubbed.
+use crate::timer::AbortSignalTimeout;
 
 // ════════════════════════════════════════════════════════════════════════════
 // Task dispatch (src/jsc/Task.zig `tickQueueWithCount` switch)

@@ -179,6 +179,20 @@ pub struct NewSocket<const SSL: bool> {
 /// Associated `Socket` handler type (Zig: `pub const Socket = uws.NewSocketHandler(ssl)`).
 pub type SocketHandler<const SSL: bool> = uws::NewSocketHandler<SSL>;
 
+// Intrusive refcount mixin (Zig: `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`).
+impl<const SSL: bool> bun_ptr::RefCounted for NewSocket<SSL> {
+    type DestructorCtx = ();
+    unsafe fn get_ref_count(this: *mut Self) -> *mut bun_ptr::RefCount<Self> {
+        // SAFETY: caller contract — `this` points to a live Self.
+        unsafe { &raw mut (*this).ref_count }
+    }
+    unsafe fn destructor(this: *mut Self, _ctx: ()) {
+        // SAFETY: refcount reached zero; we are the unique owner of the
+        // `Box::into_raw` allocation and `this` is not used after.
+        unsafe { Self::deinit_and_destroy(this) };
+    }
+}
+
 impl<const SSL: bool> NewSocket<SSL> {
     // TODO(port): `pub const js = if (!ssl) jsc.Codegen.JSTCPSocket else jsc.Codegen.JSTLSSocket`
     // — codegen module accessor. `#[bun_jsc::JsClass]` derive provides

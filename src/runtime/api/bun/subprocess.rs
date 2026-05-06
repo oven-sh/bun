@@ -177,7 +177,75 @@ impl<'a> RefCounted for Subprocess<'a> {
 }
 pub type SubprocessRc<'a> = RefPtr<Subprocess<'a>>;
 
+// ── manual `#[bun_jsc::JsClass]` expansion (generic struct) ──────────────────
+const _: () = {
+    unsafe extern "C" {
+        #[link_name = "Subprocess__fromJS"]
+        fn __from_js(value: JSValue) -> *mut c_void;
+        #[link_name = "Subprocess__fromJSDirect"]
+        fn __from_js_direct(value: JSValue) -> *mut c_void;
+        #[link_name = "Subprocess__create"]
+        fn __create(global: *mut JSGlobalObject, ptr: *mut c_void) -> JSValue;
+        #[link_name = "Subprocess__getConstructor"]
+        fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
+    }
+
+    impl<'a> bun_jsc::JsClass for Subprocess<'a> {
+        fn to_js(self, global: &JSGlobalObject) -> JSValue {
+            let ptr = Box::into_raw(Box::new(self));
+            // SAFETY: `global` is live; ownership of `ptr` transfers to the C++ wrapper
+            // (freed via `SubprocessClass__finalize`).
+            unsafe { __create(global.as_mut_ptr(), ptr.cast()) }
+        }
+        fn from_js(value: JSValue) -> Option<*mut Self> {
+            // SAFETY: pure FFI downcast; null on type mismatch.
+            let p = unsafe { __from_js(value) };
+            if p.is_null() { None } else { Some(p.cast()) }
+        }
+        fn from_js_direct(value: JSValue) -> Option<*mut Self> {
+            // SAFETY: pure FFI downcast; null on type mismatch.
+            let p = unsafe { __from_js_direct(value) };
+            if p.is_null() { None } else { Some(p.cast()) }
+        }
+        fn get_constructor(global: &JSGlobalObject) -> JSValue {
+            // SAFETY: `global` is live; lazy ctor cache may mutate global.
+            unsafe { __get_constructor(global.as_mut_ptr()) }
+        }
+    }
+
+    #[unsafe(export_name = "SubprocessClass__finalize")]
+    extern "C" fn __subprocess_finalize(ptr: *mut c_void) {
+        // SAFETY: `ptr` was produced by `Box::into_raw` in `to_js`; the C++ wrapper
+        // guarantees exactly-once finalization on the mutator thread. Lifetime is
+        // erased across the C ABI; pick `'static` for the drop type.
+        let _ = unsafe { Box::<Subprocess<'static>>::from_raw(ptr.cast()) };
+    }
+
+    #[unsafe(export_name = "SubprocessClass__construct")]
+    extern "C" fn __subprocess_construct(
+        global: *mut JSGlobalObject,
+        frame: *mut CallFrame,
+    ) -> *mut c_void {
+        // SAFETY: JSC guarantees both pointers are live for the call.
+        let g = unsafe { &*global };
+        let f = unsafe { &*frame };
+        bun_jsc::__macro_support::host_fn_construct_result(
+            g,
+            <Subprocess<'static>>::constructor(g, f),
+        )
+    }
+};
+
 impl<'a> Subprocess<'a> {
+    /// Borrow the stored JSC global. Zig stores `*jsc.JSGlobalObject` raw; the
+    /// global is guaranteed to outlive every Subprocess it created.
+    #[inline]
+    pub fn global_this(&self) -> &'a JSGlobalObject {
+        // SAFETY: `global_this` is set at construction from a live `&JSGlobalObject`
+        // and the JSC global outlives this Subprocess (it owns the heap that owns us).
+        unsafe { &*self.global_this }
+    }
+
     /// Intrusive `ref()` — Zig's `pub const ref = ref_count.ref`.
     #[inline]
     pub fn ref_(&mut self) {

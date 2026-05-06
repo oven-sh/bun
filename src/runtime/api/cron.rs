@@ -1949,26 +1949,6 @@ pub fn filter_crontab(
     Ok(())
 }
 
- // moved into _jsc_gated above (uses JSGlobalObject/CallFrame)
-fn resolve_path(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-    path_: &[u8],
-) -> Result<ZString, bun_core::Error> {
-    let vm = global.bun_vm();
-    let srcloc = frame.get_caller_src_loc(global);
-    let caller_utf8 = srcloc.str.to_utf8();
-    let raw_dir = path::dirname(caller_utf8.slice(), path::Platform::Auto);
-    let source_dir: &[u8] = if raw_dir.is_empty() { b"." } else { raw_dir };
-    let mut resolved = vm
-        .transpiler
-        .resolver
-        .resolve(source_dir, path_, bun_options_types::ImportKind::EntryPointRun)
-        .map_err(|_| bun_core::err!("ModuleNotFound"))?;
-    let entry_path = resolved.path().ok_or(bun_core::err!("ModuleNotFound"))?;
-    Ok(ZString::from_bytes(entry_path.text))
-}
-
 /// XML-escape a string for safe embedding in plist XML.
 pub fn xml_escape(input: &[u8]) -> Result<Vec<u8>, bun_alloc::AllocError> {
     let mut needs_escape = false;

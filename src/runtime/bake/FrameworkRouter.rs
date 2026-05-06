@@ -1918,7 +1918,6 @@ impl JSFrameworkRouter {
         // files, router, stored_parse_errors freed by Drop.
     }
 
-    #[bun_jsc::host_fn]
     pub fn parse_route_pattern(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         // PERF(port): was arena bulk-free
         let arena = Arena::new();

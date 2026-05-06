@@ -545,7 +545,7 @@ impl PublishCommand {
 
         if manager.options.do_.run_scripts {
             let abs_workspace_path: &[u8] = strings::without_trailing_slash(
-                strings::without_suffix(&manager.original_package_json_path, b"package.json"),
+                strings::without_suffix_comptime(&manager.original_package_json_path, b"package.json"),
             );
             context.script_env.as_ref().unwrap().map.put(b"npm_command", b"publish")?;
 

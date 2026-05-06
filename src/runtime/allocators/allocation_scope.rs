@@ -8,16 +8,45 @@ use core::ffi::c_void;
 
 // TODO(b0-genuine): bun_collections (T1) — History needs ArrayHashMap; either hoist
 // AllocationScope's History to T≥1 or move ArrayHashMap into bun_core.
-use bun_collections::{ArrayHashMap};
+use bun_collections::{ArrayHashMap, HashMap};
 use bun_core::Output;
 // Zig: `bun.crash_handler.WriteStackTraceLimits` — bun_core renamed it `DumpStackTraceOptions`.
 use bun_core::{dump_stack_trace, StoredTrace, DumpStackTraceOptions as WriteStackTraceLimits};
+use bun_threading::Guarded;
 use parking_lot::Mutex;
 
 // `std.mem.Allocator` is Zig's fat-pointer (ptr + vtable) dynamic allocator handle. This module
 // was hoisted out of `bun_alloc` (CYCLEBREAK), so the parent-allocator plumbing now resolves
 // `StdAllocator` from the `bun_alloc` crate rather than `crate::`.
-use bun_alloc::StdAllocator;
+use bun_alloc::{Alignment, AllocError, AllocatorVTable, StdAllocator};
+
+// ── Generic-allocator shims (Zig: bun_alloc.zig `asStd`/`borrow`/`Borrowed`) ──
+// `bun_alloc` dropped these per PORTING.md §Allocators ("GenericAllocator /
+// Borrowed<A> / Nullable<A> are dropped"). AllocationScope still needs the
+// duck-typed `allocator()` accessor to thread `A` → `StdAllocator`, so define
+// the minimal surface locally rather than re-introducing it in bun_alloc.
+
+/// Zig `Borrowed(A)` resolved to `A.Borrowed` if defined, else `A`. Rust has no
+/// associated-type-or-self fallback; collapse to `A` (allocators needing a
+/// distinct borrowed form specialize in Phase B).
+type BorrowedAlloc<A> = A;
+
+/// Zig `GenericAllocator` duck-type: anything with an `allocator()` accessor.
+pub trait GenericAllocator: Clone {
+    fn allocator(&self) -> StdAllocator;
+}
+impl GenericAllocator for StdAllocator {
+    #[inline]
+    fn allocator(&self) -> StdAllocator { *self }
+}
+
+/// Zig: `bun.allocators.asStd` — get the `std.mem.Allocator` for a generic allocator.
+#[inline]
+fn as_std<A: GenericAllocator>(a: &A) -> StdAllocator { a.allocator() }
+
+/// Zig: `bun.allocators.borrow` — collapses to clone since `Borrowed<A> == A`.
+#[inline]
+fn borrow_alloc<A: Clone>(a: &A) -> BorrowedAlloc<A> { a.clone() }
 
 /// An allocation scope with a dynamically typed parent allocator. Prefer using a concrete type,
 /// like `AllocationScopeIn<bun_alloc::DefaultAllocator>`.

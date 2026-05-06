@@ -110,10 +110,28 @@ pub fn intern(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValu
 #[bun_jsc::host_fn]
 pub fn js_live_count(_global: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
     // SAFETY: FFI; reads a global atomic counter, no preconditions.
-    Ok(JSValue::js_number(unsafe { c::us_ssl_ctx_live_count() }))
+    Ok(JSValue::js_number(unsafe { c::us_ssl_ctx_live_count() } as f64))
 }
 
 impl SecureContext {
+    // PORT NOTE: no `#[bun_jsc::host_fn]` here — the `Free` shim it emits calls
+    // a bare `constructor(...)` which cannot resolve inside an `impl`. The
+    // `#[bun_jsc::JsClass]` macro already emits the `<Self>::constructor` shim.
+    pub fn constructor(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<Box<SecureContext>> {
+        let args = callframe.arguments();
+        let opts = if args.len() > 0 { args[0] } else { JSValue::UNDEFINED };
+
+        // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
+        let vm = unsafe { &mut *global.bun_vm() };
+        let config = SSLConfig::from_js(vm, global, opts)?.unwrap_or_else(SSLConfig::zero);
+        // `defer config.deinit()` — handled by Drop.
+
+        SecureContext::create(global, &config)
+    }
+
     /// Mode-neutral: Node lets one `SecureContext` back both `tls.connect()` and
     /// `tls.createServer({secureContext})`, so we cannot bake client-vs-server
     /// into the `SSL_CTX`. CTX-level verify mode is whatever `config` asked for

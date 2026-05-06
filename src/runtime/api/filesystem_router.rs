@@ -152,7 +152,9 @@ impl FileSystemRouter {
         }
         // PERF(port): was arena bulk-free — extensions/asset_prefix/log all allocated from this.
         let mut arena = Box::new(ArenaAllocator::new());
-        let allocator = arena.allocator();
+        // Zig `arena.allocator()` → `std.mem.Allocator`; with `bumpalo::Bump` the arena
+        // *is* the allocator handle, so borrow it directly.
+        let allocator = &*arena;
         let mut extensions: Vec<&[u8]> = Vec::new();
         if let Some(file_extensions) = argument.get(global_this, "fileExtensions")? {
             if !file_extensions.js_type().is_array() {

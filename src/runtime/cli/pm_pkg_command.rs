@@ -158,9 +158,12 @@ impl PmPkgCommand {
 
     fn load_package_json(ctx: &Context, path: &[u8]) -> Result<PackageJson, Error> {
         let contents: Box<[u8]> = match bun_sys::File::read_from(bun_sys::Fd::cwd(), path) {
-            Ok(b) => b,
+            Ok(b) => b.into(),
             Err(e) => {
-                Output::err_generic(format_args!("Failed to read package.json: {}", e.name()));
+                Output::err_generic(
+                    "Failed to read package.json: {s}",
+                    (bstr::BStr::new(e.name()),),
+                );
                 Global::exit(1);
             }
         };

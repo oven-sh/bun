@@ -293,12 +293,12 @@ impl InstallCompletionsCommand {
         }
 
         let mut completions_dir: &[u8] = b"";
-        let output_dir: Dir = 'found: {
+        let output_dir: bun_sys::Fd = 'found: {
             let argv = bun_core::argv();
             for (i, arg) in argv.iter().enumerate() {
                 if arg == b"completions" {
                     if argv.len() > i + 1 {
-                        let input: &[u8] = &argv[i + 1];
+                        let input: &[u8] = argv.get(i + 1).expect("len checked").as_bytes();
 
                         if !bun_paths::is_absolute(input) {
                             completions_dir = resolve_path::join_abs::<platform::Auto>(cwd, input);
@@ -307,9 +307,9 @@ impl InstallCompletionsCommand {
                         }
 
                         if !bun_paths::is_absolute(completions_dir) {
-                            Output::pretty_errorln(
-                                "<r><red>error:<r> Please pass an absolute path. {s} is invalid",
-                                format_args!("{}", bstr::BStr::new(completions_dir)),
+                            pretty_errorln!(
+                                "<r><red>error:<r> Please pass an absolute path. {} is invalid",
+                                bstr::BStr::new(completions_dir),
                             );
                             Global::exit(fail_exit_code);
                         }
@@ -317,13 +317,10 @@ impl InstallCompletionsCommand {
                         match bun_sys::open_dir_absolute(completions_dir) {
                             Ok(d) => break 'found d,
                             Err(err) => {
-                                Output::pretty_errorln(
-                                    "<r><red>error:<r> accessing {s} errored {s}",
-                                    format_args!(
-                                        "{} {}",
-                                        bstr::BStr::new(completions_dir),
-                                        err.name()
-                                    ),
+                                pretty_errorln!(
+                                    "<r><red>error:<r> accessing {} errored {}",
+                                    bstr::BStr::new(completions_dir),
+                                    bstr::BStr::new(err.name()),
                                 );
                                 Global::exit(fail_exit_code);
                             }

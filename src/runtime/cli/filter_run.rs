@@ -782,7 +782,8 @@ pub fn run_scripts_with_filter(ctx: Command::Context) -> Result<core::convert::I
             let Some(original_content) = pkgscripts.get(*name) else {
                 if i == 1 && ctx.workspaces && !ctx.if_present {
                     Output::err_generic(
-                        format_args!("Missing '{}' script at '{}'", bstr::BStr::new(script_name), bstr::BStr::new(path)),
+                        "Missing '{s}' script at '{s}'",
+                        (bstr::BStr::new(script_name), bstr::BStr::new(path)),
                     );
                     Global::exit(1);
                 }

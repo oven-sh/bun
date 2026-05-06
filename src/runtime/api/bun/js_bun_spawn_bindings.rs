@@ -1557,8 +1557,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     subprocess.update_has_pending_activity();
 
-    let signal_code = subprocess.get_signal_code(global_this);
-    let exit_code = subprocess.get_exit_code(global_this);
+    let signal_code = SubprocessT::get_signal_code(subprocess, global_this);
+    let exit_code = SubprocessT::get_exit_code(subprocess, global_this);
     let stdout = subprocess.stdout.to_buffered_value(global_this)?;
     let stderr = subprocess.stderr.to_buffered_value(global_this)?;
     let resource_usage: JSValue = if !global_this.has_exception() {

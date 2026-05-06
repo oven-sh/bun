@@ -12,7 +12,8 @@
 //! and integrates with Bun's event loop for timeouts and async operations. It maintains
 //! JavaScript callbacks for handling connection events and errors.
 
-use core::ffi::{c_char, c_uint, c_void, CStr};
+use core::ffi::{c_uint, c_void, CStr};
+use core::ptr::NonNull;
 
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{host_fn, CallFrame, JSGlobalObject, JSValue, JsResult, StrongOptional};

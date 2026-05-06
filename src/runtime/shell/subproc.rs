@@ -269,12 +269,11 @@ impl ShellSubprocess {
     // }
 
     fn close_process(&mut self) {
-        // TODO(port): Arc<Process> requires interior mutability for exit_handler/close.
-        self.process.set_exit_handler_default();
-        self.process.close();
-        // Drop our strong ref. Replace with a sentinel so we don't double-drop.
-        // TODO(port): in Zig this was an explicit deref(); with Arc the field
-        // drop in deinit handles it. Left as-is to mirror call ordering.
+        self.proc().set_exit_handler_default();
+        self.proc().close();
+        // TODO(port): in Zig this was an explicit deref(); with intrusive
+        // ref-count the field drop in deinit handles it. Left as-is to mirror
+        // call ordering.
     }
 
     pub fn disconnect(&mut self) {

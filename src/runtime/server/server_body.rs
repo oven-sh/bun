@@ -1442,27 +1442,38 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         object: JSValue,
         optional: Option<JSValue>,
     ) -> JsResult<JSValue> {
+        use super::node_http_response::Flags as NodeHTTPResponseFlags;
+        use bun_jsc::HTTPHeaderName;
+        use bun_str::ZigStringSlice;
+
         if self.config.websocket.is_none() {
-            return global.throw_invalid_arguments(format_args!(
+            return Err(global.throw_invalid_arguments(format_args!(
                 "To enable websocket support, set the \"websocket\" object in Bun.serve({{}})"
-            ));
+            )));
         }
 
         if self.flags.contains(ServerFlags::TERMINATED) {
             return Ok(JSValue::FALSE);
         }
 
-        if let Some(node_http_response) = object.as_::<NodeHTTPResponse>() {
-            if node_http_response.flags.ended || node_http_response.flags.socket_closed {
+        if let Some(node_http_response) = node_http_response_from_js(object, global) {
+            // SAFETY: from_js returns a live *mut NodeHTTPResponse
+            let node_http_response = unsafe { &mut *node_http_response };
+            if node_http_response.flags.contains(NodeHTTPResponseFlags::ENDED)
+                || node_http_response.flags.contains(NodeHTTPResponseFlags::SOCKET_CLOSED)
+            {
                 return Ok(JSValue::FALSE);
             }
 
             let mut data_value = JSValue::ZERO;
 
             // if we converted a HeadersInit to a Headers object, we need to free it
-            let mut fetch_headers_to_deref: Option<&FetchHeaders> = None;
+            let mut fetch_headers_to_deref: Option<*mut FetchHeaders> = None;
             let _fh_guard = scopeguard::guard((), |_| {
-                if let Some(fh) = fetch_headers_to_deref { fh.deref(); }
+                if let Some(fh) = fetch_headers_to_deref {
+                    // SAFETY: created via FetchHeaders::create_from_js below
+                    unsafe { &mut *fh }.deref();
+                }
             });
 
             let mut sec_websocket_protocol = ZigString::EMPTY;
@@ -1472,8 +1483,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // fastGet returns a ZigString that borrows from the header map entry's
             // StringImpl, which fastRemove then frees — so we must copy the bytes
             // before removing the entry.
-            let mut sec_websocket_protocol_owned = ZigString::Slice::empty();
-            let mut sec_websocket_extensions_owned = ZigString::Slice::empty();
+            let mut sec_websocket_protocol_owned = ZigStringSlice::EMPTY;
+            let mut sec_websocket_extensions_owned = ZigStringSlice::EMPTY;
 
             if let Some(opts) = optional {
                 'getter: {
@@ -1482,7 +1493,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     }
 
                     if !opts.is_object() {
-                        return global.throw_invalid_arguments(format_args!("upgrade options must be an object"));
+                        return Err(global.throw_invalid_arguments(format_args!("upgrade options must be an object")));
                     }
 
                     if let Some(headers_value) = opts.fast_get(global, jsc::BuiltinName::data)? {
@@ -1498,47 +1509,49 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             break 'getter;
                         }
 
-                        let fetch_headers_to_use: &FetchHeaders = match headers_value.as_::<FetchHeaders>() {
+                        let fetch_headers_to_use: *mut FetchHeaders = match fetch_headers_from_js(headers_value, global) {
                             Some(h) => h,
                             None => 'brk: {
                                 if headers_value.is_object() {
                                     if let Some(fetch_headers) = FetchHeaders::create_from_js(global, headers_value)? {
-                                        fetch_headers_to_deref = Some(fetch_headers);
-                                        break 'brk fetch_headers;
+                                        fetch_headers_to_deref = Some(fetch_headers.as_ptr());
+                                        break 'brk fetch_headers.as_ptr();
                                     }
                                 }
                                 if !global.has_exception() {
-                                    return global.throw_invalid_arguments(format_args!(
+                                    return Err(global.throw_invalid_arguments(format_args!(
                                         "upgrade options.headers must be a Headers or an object"
-                                    ));
+                                    )));
                                 }
                                 return Err(JsError::Thrown);
                             }
                         };
+                        // SAFETY: fetch_headers_to_use is non-null from either branch above
+                        let fetch_headers_to_use = unsafe { &mut *fetch_headers_to_use };
 
                         if global.has_exception() {
                             return Err(JsError::Thrown);
                         }
 
-                        if let Some(protocol) = fetch_headers_to_use.fast_get(FetchHeaders::Key::SecWebSocketProtocol) {
+                        if let Some(protocol) = fetch_headers_to_use.fast_get(HTTPHeaderName::SecWebSocketProtocol) {
                             // Clone before fastRemove frees the backing StringImpl.
                             sec_websocket_protocol_owned = protocol.to_slice_clone();
-                            sec_websocket_protocol = sec_websocket_protocol_owned.to_zig_string();
+                            sec_websocket_protocol = ZigString::init(sec_websocket_protocol_owned.slice());
                             // Remove from headers so it's not written twice (once here and once by upgrade())
-                            fetch_headers_to_use.fast_remove(FetchHeaders::Key::SecWebSocketProtocol);
+                            fetch_headers_to_use.fast_remove(HTTPHeaderName::SecWebSocketProtocol);
                         }
 
-                        if let Some(extensions) = fetch_headers_to_use.fast_get(FetchHeaders::Key::SecWebSocketExtensions) {
+                        if let Some(extensions) = fetch_headers_to_use.fast_get(HTTPHeaderName::SecWebSocketExtensions) {
                             // Clone before fastRemove frees the backing StringImpl.
                             sec_websocket_extensions_owned = extensions.to_slice_clone();
-                            sec_websocket_extensions = sec_websocket_extensions_owned.to_zig_string();
+                            sec_websocket_extensions = ZigString::init(sec_websocket_extensions_owned.slice());
                             // Remove from headers so it's not written twice (once here and once by upgrade())
-                            fetch_headers_to_use.fast_remove(FetchHeaders::Key::SecWebSocketExtensions);
+                            fetch_headers_to_use.fast_remove(HTTPHeaderName::SecWebSocketExtensions);
                         }
                         if let Some(raw_response) = node_http_response.raw_response {
                             // we must write the status first so that 200 OK isn't written
                             raw_response.write_status(b"101 Switching Protocols");
-                            fetch_headers_to_use.to_uws_response(ResponseKind::from(SSL, false), raw_response.socket());
+                            fetch_headers_to_use.to_uws_response(ResponseKind::from(SSL, false), raw_response.socket() as *mut c_void);
                         }
                     }
 
@@ -1547,18 +1560,18 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     }
                 }
             }
-            // SAFETY: `JSValue::as_` returns `Option<*mut T>`; the `if let Some` arm
-            // guarantees a live `*mut NodeHTTPResponse` for the call.
-            return Ok(JSValue::from(unsafe { (*node_http_response).upgrade(
+            return Ok(JSValue::from(node_http_response.upgrade(
                 data_value,
                 sec_websocket_protocol,
                 sec_websocket_extensions,
-            ) }));
+            )));
         }
 
-        let Some(request) = object.as_::<Request>() else {
-            return global.throw_invalid_arguments(format_args!("upgrade requires a Request object"));
+        let Some(request) = request_from_js(object, global) else {
+            return Err(global.throw_invalid_arguments(format_args!("upgrade requires a Request object")));
         };
+        // SAFETY: from_js returns a live *mut Request
+        let request = unsafe { &mut *request };
 
         let Some(upgrader) = request.request_context.get::<ServerRequestContext<SSL, DEBUG>>() else {
             return Ok(JSValue::FALSE);
@@ -2953,10 +2966,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         let result: JSValue = match jsc::from_js_host_call(global, || unsafe {
             on_node_http_request_fn(
-                AnyServer::from(self).ptr.ptr() as usize,
+                self as *mut Self as usize,
                 global,
                 this_object,
-                self.config.on_node_http_request,
+                self.config.on_node_http_request.as_ref().map(|s| s.get()).unwrap_or(JSValue::UNDEFINED),
                 if let Some(method) = http::Method::find(req.method()) {
                     method.to_js(global)
                 } else {
@@ -2978,7 +2991,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             Success,
             Pending(JSValue),
         }
-        let mut strong_promise = Strong::empty();
+        let mut strong_promise = StrongOptional::empty();
         let mut needs_to_drain = true;
 
         let _drain_guard = scopeguard::guard((), |_| {
@@ -3012,9 +3025,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         global.handle_rejected_promises();
                         if let Some(node_response) = node_http_response {
                             let node_response = unsafe { &mut *node_response };
-                            if node_response.flags.request_has_completed
-                                || node_response.flags.socket_closed
-                                || node_response.flags.upgraded
+                            if node_response.flags.contains(super::node_http_response::Flags::REQUEST_HAS_COMPLETED)
+                                || node_response.flags.contains(super::node_http_response::Flags::SOCKET_CLOSED)
+                                || node_response.flags.contains(super::node_http_response::Flags::UPGRADED)
                             {
                                 strong_promise.deinit();
                                 break 'brk HTTPResult::Success;
@@ -3027,13 +3040,17 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 break 'brk HTTPResult::Success;
                             }
 
-                            node_response.promise = mem::replace(&mut strong_promise, Strong::empty());
-                            let _ = result.then2(
-                                global,
-                                strong_self,
-                                NodeHTTPResponse::Bun__NodeHTTPRequest__onResolve,
-                                NodeHTTPResponse::Bun__NodeHTTPRequest__onReject,
-                            ); // TODO: properly propagate exception upwards
+                            node_response.promise = mem::replace(&mut strong_promise, StrongOptional::empty());
+                            // TODO: properly propagate exception upwards
+                            let _ = (result, strong_self);
+                            todo!("blocked_on: bun_jsc::JSValue::then2 (JSValue-ctx variant)");
+                            #[allow(unreachable_code)]
+                            {
+                                let _ = (
+                                    super::node_http_response::Bun__NodeHTTPRequest__onResolve,
+                                    super::node_http_response::Bun__NodeHTTPRequest__onReject,
+                                );
+                            }
                             is_async = true;
                         }
 
@@ -3051,9 +3068,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
                 if let Some(node_response) = node_http_response {
                     let node_response = unsafe { &mut *node_response };
-                    if !node_response.flags.upgraded && node_response.raw_response.is_some() {
+                    if !node_response.flags.contains(super::node_http_response::Flags::UPGRADED) && node_response.raw_response.is_some() {
                         let raw_response = node_response.raw_response.unwrap();
-                        if !node_response.flags.request_has_completed && raw_response.state().is_response_pending() {
+                        if !node_response.flags.contains(super::node_http_response::Flags::REQUEST_HAS_COMPLETED) && raw_response.state().is_response_pending() {
                             if raw_response.state().is_http_status_called() {
                                 raw_response.write_status(b"500 Internal Server Error");
                                 raw_response.end_without_body(true);
@@ -3072,9 +3089,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if let Some(node_response) = node_http_response {
             // SAFETY: node_response is a live NodeHTTPResponse held by the ref taken above
             let node_response = unsafe { &mut *node_response };
-            if !node_response.flags.upgraded && node_response.raw_response.is_some() {
+            if !node_response.flags.contains(super::node_http_response::Flags::UPGRADED) && node_response.raw_response.is_some() {
                 let raw_response = node_response.raw_response.unwrap();
-                if !node_response.flags.request_has_completed && raw_response.state().is_response_pending() {
+                if !node_response.flags.contains(super::node_http_response::Flags::REQUEST_HAS_COMPLETED) && raw_response.state().is_response_pending() {
                     node_response.set_on_aborted_handler();
                 }
                 // If we ended the response without attaching an ondata handler, we discard the body read stream
@@ -3240,12 +3257,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             None,
         ) else { return };
 
-        debug_assert!(!self.config.on_request.is_empty());
+        debug_assert!(self.config.on_request.is_some());
 
         // SAFETY: global_this set in init() and outlives ThisServer (JSC_BORROW)
         let global = unsafe { &*self.global_this };
         let js_value = self.js_value_assert_alive();
-        let response_value = match self.config.on_request.call(
+        let on_request_fn = self.config.on_request.as_ref().map(|s| s.get()).unwrap_or(JSValue::UNDEFINED);
+        let response_value = match on_request_fn.call(
             global,
             js_value,
             &[prepared.js_request, js_value],
@@ -3279,9 +3297,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
             }
             SavedRequestUnion::Saved(data) => PreparedRequestFor {
-                js_request: data.js_request.get().expect("Request was unexpectedly freed"),
-                request_object: data.request,
-                ctx: data.ctx.tagged_pointer.as_::<ServerRequestContext<SSL, DEBUG>>(),
+                js_request: {
+                    let v = data.js_request.get();
+                    bun_core::assert(!v.is_empty(), "Request was unexpectedly freed");
+                    v
+                },
+                request_object: todo!("blocked_on: SavedRequest::request mutability"),
+                ctx: todo!("blocked_on: AnyRequestContext::as_<ServerRequestContext>"),
             },
         };
         let ctx = prepared.ctx;
@@ -3379,7 +3401,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     if let Some(content_length) = req.header(b"content-length") {
                         // Parse ASCII decimal directly off the byte slice — header bytes are not
                         // guaranteed UTF-8, and PORTING.md forbids from_utf8 on network bytes.
-                        break 'brk bun_str::strings::parse_int::<usize>(content_length).unwrap_or(0);
+                        break 'brk bun_str::strings::parse_int::<usize>(content_length, 10).unwrap_or(0);
                     }
                     0
                 };
@@ -3427,8 +3449,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // SAFETY: the user-data pointer is an opaque sentinel — `on_timeout_for_idle_warn`
             // ignores it and reads the static directly. `AtomicBool::as_ptr` yields a `*mut`
             // with interior-mutability provenance, so no `&T as *const _ as *mut _` cast is needed.
-            resp.on_timeout::<c_void>(
-                |p, _resp| Self::on_timeout_for_idle_warn(p, None),
+            RespLike::on_timeout_warn(
+                resp,
                 Self::did_send_idletimeout_warning_once().as_ptr() as *mut c_void,
             );
         }
@@ -3446,33 +3468,27 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             &mut *raw
         }; // bun.handleOom — aborts on OOM
         ctx.create(self, req, resp, should_deinit_context, method);
-        self.vm.jsc_vm.deprecated_report_extra_memory(mem::size_of::<Ctx>());
-        let body = self.vm.init_request_body_value(Body::Value::Null).expect("unreachable");
-
-        ctx.request_body = Some(body);
-        let signal = AbortSignal::new(unsafe { &*self.global_this });
-        ctx.signal = Some(signal);
-        signal.pending_activity_ref();
-
-        let request_object = Request::new_(Request::init(
-            ctx.method,
-            AnyRequestContext::init(ctx),
-            SSL,
-            signal.ref_(),
-            body.ref_(),
-        ));
-        ctx.request_weakref = crate::webcore::request::WeakRef::init_ref(request_object);
+        // SAFETY: jsc_vm is a live *mut VM while the JS thread is running
+        unsafe { (*self.vm.jsc_vm).deprecated_report_extra_memory(mem::size_of::<Ctx>()) };
+        let _ = (should_deinit_context, method);
+        todo!("blocked_on: VirtualMachine::init_request_body_value + RequestContext field access via RequestCtx trait");
+        #[allow(unreachable_code)]
+        let body: *mut c_void = core::ptr::null_mut();
+        #[allow(unreachable_code)]
+        let signal: *mut AbortSignal = core::ptr::null_mut();
+        #[allow(unreachable_code)]
+        let request_object: &mut Request = todo!();
 
         // The lazy `getRequest()` path that backs Request.url / .headers
         // is `*uws.Request`-typed; for HTTP/3 we populate both eagerly so
         // the rest of the pipeline never needs to know which transport
         // delivered the bytes.
         if Ctx::IS_H3 {
-            request_object.set_fetch_headers(FetchHeaders::create_from_h3(req));
-            let path = req.url();
+            request_object.set_fetch_headers(FetchHeaders::create_from_h3(req as *mut _ as *mut c_void));
+            let path = ReqLike::url(req);
             if !path.is_empty() && path[0] == b'/' {
-                if let Some(host) = req.header(b"host") {
-                    let fmt = bun_fmt::HostFormatter { is_https: true, host };
+                if let Some(host) = ReqLike::header(req, b"host") {
+                    let fmt = bun_fmt::HostFormatter { is_https: true, host, port: None };
                     let mut s = Vec::new();
                     write!(&mut s, "https://{}{}", fmt, BStr::new(path)).ok();
                     request_object.url = BunString::clone_utf8(&s);
@@ -3482,7 +3498,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             } else {
                 request_object.url = BunString::clone_utf8(path);
             }
-            ctx.req = None;
+            // TODO(port): ctx.req = None; — RequestCtx trait lacks field accessor
         }
 
         if DEBUG {

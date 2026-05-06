@@ -162,7 +162,9 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             ..Default::default()
         });
         let ref_ = Ref::new(inner_index, self.source_index, RefTag::Symbol);
-        // SAFETY: current_scope is always a live arena allocation
+        // SAFETY: `current_scope` is a live bump-arena allocation (set in `init`/`push_scope`)
+        // and uniquely accessed here — `self.symbols` / `self.declared_symbols` are
+        // disjoint from the arena `Scope`, and no other `&`/`&mut` to this `Scope` is live.
         unsafe { &mut *self.current_scope }
             .generated
             .append(ref_)?;

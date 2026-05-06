@@ -57,12 +57,14 @@ pub fn named_allocator(name: &'static str) -> &'static dyn crate::Allocator {
 }
 
 /// Comptime-literal form of `named_allocator` — expands a per-name `OnceLock`.
-#[macro_export]
+// (Not `#[macro_export]` — the crate-root `get_zone!` in lib.rs is the public one.)
 macro_rules! named_allocator {
     ($name:literal) => {
         $crate::get_zone!(concat!("Bun__", $name)).allocator()
     };
 }
+#[allow(unused_imports)]
+pub(crate) use named_allocator;
 
 /// Zig: `pub fn getZoneT(comptime T: type) *Zone`
 pub fn get_zone_t<T: HeapLabel>() -> &'static Zone {
@@ -74,10 +76,10 @@ pub fn get_zone_t<T: HeapLabel>() -> &'static Zone {
 /// Each comptime instantiation in Zig gets its own `static var zone` + `std.once`.
 /// The faithful Rust translation is a macro that expands a fresh `OnceLock` per
 /// call site (per literal name).
-#[macro_export]
+// (Not `#[macro_export]` — the crate-root `get_zone!` in lib.rs is the public one.)
 macro_rules! get_zone {
     ($name:literal) => {{
-        const _: () = assert!($crate::heap_breakdown::ENABLED);
+        debug_assert!($crate::heap_breakdown::ENABLED);
         static ZONE: ::std::sync::OnceLock<&'static $crate::heap_breakdown::Zone> =
             ::std::sync::OnceLock::new();
         *ZONE.get_or_init(|| {

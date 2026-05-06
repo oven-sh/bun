@@ -255,6 +255,64 @@ pub mod repository {
     }
 
     impl Repository {
+        /// Zig: `Repository.tryHTTPS(url)` (src/install/repository.zig).
+        /// Returns the URL rewritten for an HTTPS clone if the input looks
+        /// like a git URL with a host component, else `None`. Full rewrite
+        /// table lives in the gated `repository_real`; this preserves the
+        /// `git+https://`/`https://` passthrough so callers can attempt the
+        /// HTTPS path first.
+        pub fn try_https(url: &[u8]) -> Option<&[u8]> {
+            if strings::has_prefix_comptime(url, b"git+https://") {
+                return Some(&url[b"git+".len()..]);
+            }
+            if strings::has_prefix_comptime(url, b"https://") {
+                return Some(url);
+            }
+            None
+        }
+
+        /// Zig: `Repository.trySSH(url)` (src/install/repository.zig).
+        pub fn try_ssh(url: &[u8]) -> Option<&[u8]> {
+            if strings::has_prefix_comptime(url, b"git+ssh://")
+                || strings::has_prefix_comptime(url, b"ssh://")
+            {
+                return Some(url);
+            }
+            if strings::index_of_char(url, b'@').is_some() && !strings::contains(url, b"://") {
+                // scp-style `user@host:path` — git accepts as-is
+                return Some(url);
+            }
+            None
+        }
+
+        /// Zig: `Repository.download(...)` — spawns `git clone`. Real body in
+        /// gated `repository_real`; stub returns a typed error so the caller's
+        /// fallback chain (`try_https` → `try_ssh`) is exercised.
+        pub fn download(
+            _env: &bun_dotenv::Map,
+            _log: &mut bun_logger::Log,
+            _cache_dir: bun_sys::Fd,
+            _task_id: crate::package_manager_task::Id,
+            _name: &[u8],
+            _url: &[u8],
+            _attempt: u8,
+        ) -> Result<bun_sys::Dir, bun_core::Error> {
+            Err(bun_core::err!("RepositoryNotPorted"))
+        }
+
+        /// Zig: `Repository.checkout(...)`. Real body in gated `repository_real`.
+        pub fn checkout(
+            _env: &bun_dotenv::Map,
+            _log: &mut bun_logger::Log,
+            _cache_dir: bun_sys::Fd,
+            _repo_dir: bun_sys::Dir,
+            _name: &[u8],
+            _url: &[u8],
+            _resolved: &[u8],
+        ) -> Result<crate::ExtractData, bun_core::Error> {
+            Err(bun_core::err!("RepositoryNotPorted"))
+        }
+
         /// Zig: `Repository.parseAppendGit(input, *String.Buf) OOM!Repository`
         /// (src/install/repository.zig). Strips a leading `git+`, then splits
         /// on the **last** `#` into `repo` / `committish`.

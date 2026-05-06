@@ -168,8 +168,12 @@ impl WTFStringImplStruct {
         let s = self.latin1_slice();
         // ZigStringSlice::WTF derefs `self` on Drop — replaces the Zig
         // StringImplAllocator vtable trick with explicit ownership.
+        // SAFETY: `self` is a live WTF::StringImpl with refcount just bumped above;
+        // we store only a `*const` (never materialize `&mut`) and the matching
+        // deref happens via FFI on Drop. Mutation of m_ref_count is C++-side
+        // interior mutability, same as `r#ref`/`deref` already rely on.
         ZigStringSlice::WTF {
-            string_impl: self as *const _ as *mut _,
+            string_impl: self as *const Self,
             ptr: s.as_ptr(),
             len: s.len(),
         }

@@ -865,11 +865,13 @@ impl FSEventsWatcher {
 impl Drop for FSEventsWatcher {
     fn drop(&mut self) {
         if let Some(loop_) = self.loop_ {
-            // SAFETY: loop_ is the global default loop; cast away & to &mut for unregister
-            // TODO(port): FSEventsLoop methods should take *mut Self to avoid this cast
+            // SAFETY: `loop_` is the heap-allocated global default loop (see
+            // FSEventsLoop::init); it outlives every watcher, and is only set to
+            // None here by FSEventsLoop::drop *after* draining watchers. Mutable
+            // access to the watcher list is serialized by `self.mutex` inside
+            // unregister_watcher.
             unsafe {
-                let loop_mut = &mut *(loop_ as *const FSEventsLoop as *mut FSEventsLoop);
-                loop_mut.unregister_watcher(self as *mut _);
+                (*loop_.as_ptr()).unregister_watcher(self as *mut _);
             }
         }
     }
@@ -887,7 +889,7 @@ pub fn watch(
     unsafe {
         if let Some(loop_) = FSEVENTS_DEFAULT_LOOP {
             return Ok(FSEventsWatcher::init(
-                &mut *loop_.as_ptr(),
+                loop_.as_ptr(),
                 path,
                 recursive,
                 callback,
@@ -900,7 +902,7 @@ pub fn watch(
             FSEVENTS_DEFAULT_LOOP = NonNull::new(FSEventsLoop::init()?);
         }
         Ok(FSEventsWatcher::init(
-            &mut *FSEVENTS_DEFAULT_LOOP.unwrap().as_ptr(),
+            FSEVENTS_DEFAULT_LOOP.unwrap().as_ptr(),
             path,
             recursive,
             callback,

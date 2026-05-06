@@ -13,7 +13,7 @@ bun_output::declare_scope!(IPC, visible);
 // TODO(port): move to runtime_sys
 unsafe extern "C" {
     pub fn Bun__Process__queueNextTick1(global: *mut JSGlobalObject, f: JSValue, arg: JSValue);
-    pub fn Process__emitErrorEvent(global: *mut JSGlobalObject, value: JSValue);
+    pub fn Process__emitErrorEvent(global: *const JSGlobalObject, value: JSValue);
 }
 
 // TODO(port): `pub var` mutable global with !Sync fields (Strong). Only ever accessed on the

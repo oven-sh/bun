@@ -197,7 +197,10 @@ impl PipeReader {
             // SAFETY: `process` backref is valid while set; cleared before deref.
             let kind = self.kind(unsafe { process.as_ref() });
             unsafe { process.as_ref().on_close_io(kind) };
-            self.deref();
+            // SAFETY: last use of `self`; raw ptr derived from `&mut self` carries
+            // write provenance, and the caller (BufferedReader vtable) holds only a
+            // raw parent pointer, so freeing here does not invalidate any live `&mut`.
+            unsafe { PipeReader::deref(self) };
         }
     }
 
@@ -249,7 +252,7 @@ impl PipeReader {
         let _guard = scopeguard::guard((), move |_| {
             // SAFETY: `self` is valid for the duration of this call; detach() may free it,
             // but only after the guard fires at scope exit when no other borrow remains.
-            unsafe { (*this_ptr).detach() };
+            unsafe { PipeReader::detach(this_ptr) };
         });
 
         match &self.state {
@@ -298,7 +301,8 @@ impl PipeReader {
             // SAFETY: `process` backref is valid while set; cleared before deref.
             let kind = self.kind(unsafe { process.as_ref() });
             unsafe { process.as_ref().on_close_io(kind) };
-            self.deref();
+            // SAFETY: last use of `self`; see `on_reader_done` for rationale.
+            unsafe { PipeReader::deref(self) };
         }
     }
 

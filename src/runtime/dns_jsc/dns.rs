@@ -3289,12 +3289,16 @@ impl Resolver {
 
     // ───────────── timer / pending bookkeeping ─────────────
 
-    pub fn check_timeouts(&mut self, now: &bun::timespec, vm: &VirtualMachine) {
+    pub fn check_timeouts(&mut self, now: &ElTimespec, vm: &VirtualMachine) {
         // Drop to a raw pointer immediately: `ares_process_fd` below synchronously
         // fires c-ares completion callbacks which re-enter this Resolver via fresh
         // `&mut` (e.g. `request_completed`, `drain_pending_*`). Holding `&mut self`
         // across that call would create aliased `&mut Resolver` (UB).
         let this: *mut Self = self;
+        // PORT NOTE: caller (`dispatch.rs::fire_timer`) hands us the event-loop's
+        // local `ElTimespec`; `add_timer` works in `bun_core::timespec`. Same
+        // `{ sec: i64, nsec: i64 }` layout — convert by field, not transmute.
+        let now = bun::timespec { sec: now.sec, nsec: now.nsec };
         let uws_loop = vm.uws_loop();
         let _g = scopeguard::guard((), move |_| {
             // PORT NOTE (b2-cycle): low-tier `VirtualMachine.timer` is `()`;

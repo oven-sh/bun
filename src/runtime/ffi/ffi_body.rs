@@ -3089,15 +3089,36 @@ static CREATE_COMPILER_RT_DIR_ONCE: Once = Once::new();
 
 impl CompilerRT {
     fn create_compiler_rt_dir() {
-        // TODO(port): `bun_resolver::fs::FileSystem::tmpdir()` exists in the
-        // full resolver crate but not the bundler-re-exported facade currently
-        // surfaced as `Fs::FileSystem`. Wire once that surface lands.
-        let _ = (PathBuffer::uninit(),);
-        todo!("blocked_on: bun_bundler::bun_fs::FileSystem::tmpdir");
-        #[allow(unreachable_code)]
-        {
-            let _ = COMPILER_RT_DIR.set(bun_core::ZBox::from_vec_with_nul(Vec::new()));
+        // Spec ffi.zig:2340 — `Fs.FileSystem.instance.tmpdir() catch return`.
+        // `bun_resolver::fs::FileSystem` (the inline canonical surface) doesn't
+        // yet expose an inherent `tmpdir()`; reuse the crate-local
+        // `FileSystemTmpdirExt` shim already in service for `jsc_hooks`.
+        use crate::cli::upgrade_command::FileSystemTmpdirExt as _;
+        let Ok(tmpdir) = Fs::FileSystem::instance().tmpdir() else {
+            return;
+        };
+
+        // Spec ffi.zig:2341 — `tmpdir.makeOpenPath("bun-cc", .{}) catch return`.
+        let Ok(bun_cc) = tmpdir.make_open_path(b"bun-cc", bun_sys::OpenDirOptions::default())
+        else {
+            return;
+        };
+        // `defer bunCC.close()`.
+        let bun_cc = scopeguard::guard(bun_cc, |d| d.close());
+
+        // Spec ffi.zig:2344-2350 — `inline for (decls) |d| bunCC.writeFile(d) catch {}`.
+        for (name, source) in CompilerRtSources::SOURCES {
+            let name_z = ZBox::from_bytes(name.as_bytes());
+            let _ = bun_sys::File::write_file(bun_cc.fd(), name_z.as_zstr(), source);
         }
+
+        // Spec ffi.zig:2351-2352 — `getFdPath(bunCC) catch return`, then `dupeZ`.
+        let mut path_buf = PathBuffer::uninit();
+        let Ok(path) = bun_sys::get_fd_path(bun_cc.fd(), &mut path_buf) else {
+            return;
+        };
+        // `bun.handleOom(allocator.dupeZ(u8, path))` — `ZBox::from_bytes` panics on OOM.
+        let _ = COMPILER_RT_DIR.set(ZBox::from_bytes(&*path));
     }
 
     pub fn dir() -> Option<&'static ZStr> {

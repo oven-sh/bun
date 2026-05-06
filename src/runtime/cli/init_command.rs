@@ -529,9 +529,14 @@ impl InitCommand {
                     package_json_contents.list.as_slice(),
                 );
                 let mut log = logger::Log::init();
-                let mut package_json_expr =
+                // PORT NOTE: bun_interchange::json builds the T2
+                // (bun_logger::js_ast) value tree to avoid a T2->T4 dep
+                // cycle; lift to the full T4 (bun_js_parser) tree here so
+                // the rest of exec can use E::Object::{put,put_string,
+                // get_or_put_object,...} which only exist at T4.
+                let package_json_expr: js_ast::Expr =
                     match json::parse_package_json_utf8(&source, &mut log, &bump) {
-                        Ok(e) => e,
+                        Ok(e) => js_ast::Expr::from(e),
                         Err(_) => {
                             package_json_file = None;
                             break 'process_package_json;
@@ -543,10 +548,7 @@ impl InitCommand {
                     break 'process_package_json;
                 }
 
-                fields.object = {
-                    let _ = package_json_expr.data.e_object();
-                    todo!("blocked_on: bun_logger::js_ast::E::Object vs bun_js_parser::E::Object type unification")
-                };
+                fields.object = package_json_expr.data.e_object();
 
                 if let Some(name) = package_json_expr.get(b"name") {
                     if let Some(str) = name.as_utf8_string_literal() {

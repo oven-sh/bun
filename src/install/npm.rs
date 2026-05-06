@@ -1849,7 +1849,7 @@ impl PackageManifest {
         package_version: &PackageVersion,
         minimum_release_age_ms: f64,
     ) -> bool {
-        let current_timestamp_ms: f64 = (bun_core::start_time() / bun_core::time::NS_PER_MS) as f64;
+        let current_timestamp_ms: f64 = (bun_core::start_time() / bun_core::time::NS_PER_MS as i128) as f64;
         package_version.publish_timestamp_ms > current_timestamp_ms - minimum_release_age_ms
     }
 
@@ -1865,7 +1865,7 @@ impl PackageManifest {
         let mut prev_package_blocked_from_age: Option<&PackageVersion> = None;
         let mut best_version: Option<FindResult<'a>> = None;
 
-        let current_timestamp_ms: f64 = (bun_core::start_time() / bun_core::time::NS_PER_MS) as f64;
+        let current_timestamp_ms: f64 = (bun_core::start_time() / bun_core::time::NS_PER_MS as i128) as f64;
         let seven_days_ms: f64 = 7.0 * bun_core::time::MS_PER_DAY as f64;
         let stability_window_ms: f64 = minimum_release_age_ms.min(seven_days_ms);
 
@@ -1975,7 +1975,7 @@ impl PackageManifest {
         let Some(min_age_ms) = min_age_gate_ms else {
             return FindVersionResult::Found(dist_result);
         };
-        let current_timestamp_ms: f64 = (bun_core::start_time() / bun_core::time::NS_PER_MS) as f64;
+        let current_timestamp_ms: f64 = (bun_core::start_time() / bun_core::time::NS_PER_MS as i128) as f64;
         let seven_days_ms: f64 = 7.0 * bun_core::time::MS_PER_DAY as f64;
         let stability_window_ms = min_age_ms.min(seven_days_ms);
 

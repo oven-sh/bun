@@ -2956,7 +2956,7 @@ unsafe fn resolve_embedded_node_file_hook(
     
     {
         extern crate bun_standalone_graph;
-        use bun_standalone_graph::StandaloneModuleGraph;
+        use bun_standalone_graph::Graph as StandaloneModuleGraph;
 
         // SAFETY: per fn contract — caller checked `is_some()`.
         let graph = unsafe { (*vm).standalone_module_graph }

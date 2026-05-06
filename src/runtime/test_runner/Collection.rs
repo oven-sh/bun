@@ -216,11 +216,8 @@ impl Collection {
                 global_this,
                 callback.get(),
                 false,
-                bun_test::bun_test_ref_data_value::RefDataValue::Collection(
-                    bun_test::bun_test_ref_data_value::CollectionData { active_scope: previous_scope },
-                ),
-                &bun_test::Epoch::EPOCH,
-                // TODO(port): `&.epoch` — Zig decl-literal; verify constant name/path.
+                RefDataValue::Collection { active_scope: NonNull::from(previous_scope) },
+                &Timespec::EPOCH,
             ) {
                 // the result is available immediately; queue
                 buntest.add_result(cfg_data);

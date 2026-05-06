@@ -1713,7 +1713,7 @@ where
 
                         // TODO: should this timeout?
                         let body_value = this.response_weakref.get().unwrap().get_body_value();
-                        *body_value = Body::Value::Locked(Body::Locked {
+                        *body_value = Body::Value::Locked(Body::PendingValue {
                             readable: readable_stream::Strong::init(stream, global_this),
                             global: global_this,
                             ..Default::default()
@@ -1728,7 +1728,7 @@ where
                         ); // TODO: properly propagate exception upwards
                         // the response_stream should be GC'd
                     }
-                    jsc::PromiseStatus::Fulfilled => {
+                    jsc::js_promise::Status::Fulfilled => {
                         stream_log!("promise Fulfilled");
                         let mut response_body_readable_stream_ref =
                             core::mem::take(&mut this.response_body_readable_stream_ref);

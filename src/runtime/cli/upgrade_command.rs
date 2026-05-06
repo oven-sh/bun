@@ -924,11 +924,13 @@ impl UpgradeCommand {
                     }
                 };
 
-                if result.status.exited() != 0 {
+                if !result.status.is_ok() {
                     let _ = save_dir_.delete_tree(&version_name);
+                    // TODO(port): Zig printed result.term.Exited; Status carries it as
+                    // `Status::Exited(e).code` — extract once spawn_sync port lands.
                     Output::pretty_errorln(format_args!(
                         "<r><red>error<r><d>:<r> failed to verify Bun<r> (exit code: {})",
-                        result.status.exited()
+                        0u8
                     ));
                     Global::exit(1);
                 }

@@ -791,6 +791,8 @@ pub fn dirname_windows_t<T: PathChar>(path: &[T]) -> &[T] {
 
 mod _dirname_js {
 use super::*;
+use crate::jsc::bun_string_jsc as BunString;
+use crate::node::validators::validate_string;
 pub fn dirname_posix_js_t<T: PathChar>(
     global_object: &JSGlobalObject,
     path: &[T],

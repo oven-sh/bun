@@ -3,9 +3,11 @@ use std::io::Write as _;
 
 use bun_collections::BabyList;
 use bun_core::{fmt as bun_fmt, Output, SignalCode, StackCheck};
-use bun_io::MaxBuf;
+use bun_errno::uv_e as UV_E;
+use bun_event_loop::SpawnSyncEventLoop::TickState;
+use bun_io::max_buf::MaxBuf;
 use bun_jsc::{
-    self as jsc, CallFrame, EventLoop, EventLoopHandle, JSGlobalObject, JSObject,
+    self as jsc, CallFrame, EventLoopHandle, JSGlobalObject, JSObject,
     JSPropertyIterator, JSValue, JsError, JsResult, SystemError,
 };
 use bun_jsc::ipc as IPC;

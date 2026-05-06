@@ -1987,16 +1987,20 @@ impl<'a> BundleV2<'a> {
             // For example, it is silly to bundle index.css depended on by client+server twice.
             // It makes sense to separate these for JS because the target affects DCE
             if self.transpiler.options.server_components && !loader.is_javascript_like() {
-                let (a, b) = match target {
-                    Target::Browser => (self.path_to_source_index_map(self.transpiler.options.target), self.path_to_source_index_map(Target::BakeServerComponentsSsr)),
-                    Target::BakeServerComponentsSsr => (self.path_to_source_index_map(self.transpiler.options.target), self.path_to_source_index_map(Target::Browser)),
-                    _ => (self.path_to_source_index_map(Target::Browser), self.path_to_source_index_map(Target::BakeServerComponentsSsr)),
+                // PORT NOTE: reshaped for borrowck — cannot hold two `&mut` into
+                // `self.graph` simultaneously, so re-derive the map per insert.
+                let key_text: Box<[u8]> = path.text.to_vec().into_boxed_slice();
+                let val = *entry.value_ptr;
+                let main_target = self.transpiler.options.target;
+                let separate_ssr = self.framework.as_ref().unwrap().server_components.as_ref().unwrap().separate_ssr_graph;
+                let (ta, tb) = match target {
+                    Target::Browser => (main_target, Target::BakeServerComponentsSsr),
+                    Target::BakeServerComponentsSsr => (main_target, Target::Browser),
+                    _ => (Target::Browser, Target::BakeServerComponentsSsr),
                 };
-                // PORT NOTE: reshaped for borrowck — cannot hold two &mut to self simultaneously
-                // TODO(port): split-borrow path_to_source_index_map
-                a.put(entry.key_ptr.clone(), *entry.value_ptr);
-                if self.framework.as_ref().unwrap().server_components.as_ref().unwrap().separate_ssr_graph {
-                    b.put(entry.key_ptr.clone(), *entry.value_ptr);
+                self.path_to_source_index_map(ta).put(&key_text, val).expect("oom");
+                if separate_ssr {
+                    self.path_to_source_index_map(tb).put(&key_text, val).expect("oom");
                 }
             }
         } else {

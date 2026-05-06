@@ -465,16 +465,7 @@ impl MutableString {
 }
 
 // Zig: `MutableString.init2048` is the default `Init` fn passed to
-// `ObjectPool(MutableString, ...)` (e.g. `Npm.Registry.BodyPool`); `reset()`
-// is detected via `std.meta.hasFn`. Port both as `ObjectPoolType` hooks.
-impl bun_collections::pool::ObjectPoolType for MutableString {
-    const INIT: Option<fn() -> Result<Self, bun_core::Error>> =
-        Some(|| Ok(MutableString::init_empty()));
-    #[inline]
-    fn reset(&mut self) {
-        MutableString::reset(self)
-    }
-}
+// (ObjectPoolType impl at L25 — uses init2048() per npm.zig spec.)
 
 impl std::io::Write for MutableString {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {

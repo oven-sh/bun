@@ -735,7 +735,7 @@ impl CreateCommand {
 
                 // SAFETY: ctx.log is a process-global Log pointer (Zig: `Context = *ContextData`).
                 let log: &mut logger::Log = unsafe { &mut *ctx.log };
-                let bump = bumpalo::Bump::new();
+                let bump = bun_alloc::Arena::new();
                 let mut package_json_expr = match JSON::parse_utf8(&source, log, &bump) {
                     Ok(e) => e,
                     Err(_) => {
@@ -2278,7 +2278,7 @@ impl Example {
         let source = logger::Source::init_path_string(b"package.json", mutable.list.as_slice());
         // SAFETY: ctx.log is set in single-threaded CLI startup; non-null for process lifetime.
         let log = unsafe { &mut *ctx.log };
-        let bump = Box::leak(Box::new(bumpalo::Bump::new()));
+        let bump = Box::leak(Box::new(bun_alloc::Arena::new()));
         let expr = match JSON::parse_utf8(&source, log, bump) {
             Ok(e) => e,
             Err(err) => {
@@ -2306,11 +2306,14 @@ impl Example {
             Global::exit(1);
         }
 
-        use bun_install::bun_json::ExprAccessors as _;
+        // PORT NOTE: `bun_install::bun_json::ExprAccessors` is `pub(crate)`; the
+        // inherent `Expr::{as_property, as_utf8_string_literal}` on
+        // `bun_logger::js_ast::Expr` cover the same surface (Zig: `asProperty`/
+        // `asString` for parse_utf8-produced UTF-8 literals).
         let tarball_url: &[u8] = 'brk: {
             if let Some(q) = expr.as_property(b"dist") {
                 if let Some(p) = q.expr.as_property(b"tarball") {
-                    if let Some(s) = p.expr.as_string() {
+                    if let Some(s) = p.expr.as_utf8_string_literal() {
                         if !s.is_empty()
                             && (strings::starts_with(s, b"https://") || strings::starts_with(s, b"http://"))
                         {
@@ -2442,7 +2445,7 @@ impl Example {
         // PORT NOTE: Zig passed `ctx.allocator`; ContextData dropped the allocator field
         // (global mimalloc), so allocate a leaked Bump arena — examples slices borrow from it
         // and the CLI exits shortly after.
-        let bump: &'static bumpalo::Bump = Box::leak(Box::new(bumpalo::Bump::new()));
+        let bump: &'static bun_alloc::Arena = Box::leak(Box::new(bun_alloc::Arena::new()));
         // SAFETY: ctx.log is set by Command::create() before any subcommand runs.
         let log = unsafe { &mut *ctx.log };
         let examples_object = match JSON::parse_utf8(&source, log, bump) {

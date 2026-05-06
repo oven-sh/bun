@@ -3288,8 +3288,8 @@ impl Blob {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let mut arguments_ = callframe.arguments_old::<3>();
-        let len = arguments_.len;
-        let args = &mut arguments_.ptr[..len];
+        // PORT NOTE: index the full fixed-3 array (Zig writes args[2] regardless of len).
+        let args = &mut arguments_.ptr[..];
 
         if self.size == 0 {
             let empty = Blob::init_empty(global_this);

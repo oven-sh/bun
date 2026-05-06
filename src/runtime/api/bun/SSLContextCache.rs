@@ -31,6 +31,27 @@ use bun_uws::create_bun_socket_error_t;
 // `jsc.API.ServerConfig.SSLConfig` — re-exported from src/runtime/socket/SSLConfig.rs
 use crate::api::server::server_config::SSLConfig;
 
+/// Local shim: `bun_uws::SocketContext::BunSocketContextOptions` is a `#[repr(C)]`
+/// duplicate of `bun_uws_sys::BunSocketContextOptions` (same fields, same order)
+/// but only the `_sys` copy has `.digest()`. Bridge by value-transmute until the
+/// upstream crates are unified.
+trait BunSocketContextOptionsDigest {
+    fn digest(&self) -> Digest;
+}
+impl BunSocketContextOptionsDigest for uws::SocketContext::BunSocketContextOptions {
+    fn digest(&self) -> Digest {
+        const _: () = assert!(
+            core::mem::size_of::<uws::SocketContext::BunSocketContextOptions>()
+                == core::mem::size_of::<bun_uws_sys::BunSocketContextOptions>()
+        );
+        // SAFETY: both are `#[repr(C)]` with identical field list/order (see
+        // src/uws/lib.rs SocketContext::BunSocketContextOptions and
+        // src/uws_sys/SocketContext.rs); Copy + POD, value transmute is sound.
+        let sys: bun_uws_sys::BunSocketContextOptions = unsafe { core::mem::transmute_copy(self) };
+        sys.digest()
+    }
+}
+
 pub struct SSLContextCache {
     // TODO(port): ArrayHashMap needs custom context = DigestContext, store_hash = false
     map: ArrayHashMap<Digest, *mut Entry>,

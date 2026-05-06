@@ -217,7 +217,7 @@ impl InstallCompletionsCommand {
     pub fn exec() -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         // Fail silently on auto-update.
-        let fail_exit_code: u8 = if !env_var::IS_BUN_AUTO_UPDATE.get() { 1 } else { 0 };
+        let fail_exit_code: u8 = if !env_var::IS_BUN_AUTO_UPDATE.get().unwrap_or(false) { 1 } else { 0 };
 
         let mut cwd_buf = PathBuffer::uninit();
 

@@ -64,19 +64,6 @@ pub struct SecureContext {
 
 // `#[bun_jsc::host_fn]` (Free, no receiver) emits a shim that calls the wrapped
 // fn by bare name, so these must live at module scope — not inside `impl`.
-#[bun_jsc::host_fn]
-pub fn constructor(
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<Box<SecureContext>> {
-    let args = callframe.arguments();
-    let opts = if args.len() > 0 { args[0] } else { JSValue::UNDEFINED };
-
-    let config = SSLConfig::from_js(global.bun_vm(), global, opts)?.unwrap_or_else(SSLConfig::zero);
-    // `defer config.deinit()` — handled by Drop.
-
-    SecureContext::create(global, &config)
-}
 
 /// `tls.createSecureContext(opts)` entry point. WeakGCMap-memoised by config
 /// digest so identical configs return the same `JSSecureContext` cell while

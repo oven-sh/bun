@@ -461,6 +461,17 @@ pub struct Entry {
     pub watch_index: u16,
 }
 
+impl Default for Entry {
+    fn default() -> Self {
+        Self {
+            dir: Fd::INVALID,
+            dir_fd_owned: false,
+            first_dep: DepIndex::init(0),
+            watch_index: 0,
+        }
+    }
+}
+
 pub struct Dep {
     pub next: Option<DepIndex>,
     /// The file used

@@ -738,8 +738,8 @@ impl JSPasswordObject {
             global: global_object as *const _,
             r#ref: KeepAlive::default(),
             task: WorkPoolTask {
+                node: ThreadPoolNode::default(),
                 callback: HashJob::run,
-                ..Default::default()
             },
         });
         // SAFETY: `job` was just returned from Box::into_raw in `HashJob::new`; not yet

@@ -252,7 +252,7 @@ pub fn encode_indexed(
     level: i8,
     colors: u16,
     dither: bool,
-    icc_profile: Option<NonNull<[u8]>>,
+    icc_profile: Option<&[u8]>,
 ) -> Result<codecs::Encoded, codecs::Error> {
     let q = quantize::quantize(rgba, w, h, quantize::Options { max_colors: colors, dither })
         .map_err(|_| codecs::Error::OutOfMemory)?;

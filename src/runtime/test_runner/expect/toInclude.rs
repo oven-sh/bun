@@ -53,9 +53,12 @@ pub fn to_include(
         return Ok(JSValue::UNDEFINED);
     }
 
+    // PORT NOTE: two live `to_fmt(&mut Formatter)` wrappers alias the same formatter under
+    // borrowck — use a second Formatter for the second value (matches toBe.rs / toBeOneOf.rs).
     let mut formatter = super::make_formatter(global);
+    let mut formatter2 = super::make_formatter(global);
     let value_fmt = value.to_fmt(&mut formatter);
-    let expected_fmt = expected.to_fmt(&mut formatter);
+    let expected_fmt = expected.to_fmt(&mut formatter2);
 
     if not {
         const EXPECTED_LINE: &str = "Expected to not include: <green>{}<r>\n";

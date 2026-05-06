@@ -446,6 +446,23 @@ impl<K, V, C> ArrayHashMap<K, V, C> {
         self.hashes.clear();
     }
 
+    /// std-HashMap-compat alias for `clear_retaining_capacity`. Zig callers
+    /// frequently spell this `clearRetainingCapacity()`; ported call sites that
+    /// went through the std-alias path expect bare `clear()`.
+    #[inline]
+    pub fn clear(&mut self) {
+        self.clear_retaining_capacity();
+    }
+
+    /// std-HashMap-compat: shared iteration over `(key, value)` pairs in
+    /// insertion order. Distinct from [`iterator`](Self::iterator) which yields
+    /// mutable `Entry { key_ptr, value_ptr }` (Zig shape) and requires
+    /// `&mut self`.
+    #[inline]
+    pub fn iter(&self) -> core::iter::Zip<core::slice::Iter<'_, K>, core::slice::Iter<'_, V>> {
+        self.keys.iter().zip(self.values.iter())
+    }
+
     // ── internal lookup ───────────────────────────────────────────────────
 
     #[inline]
@@ -659,6 +676,13 @@ impl<K, V, C: ArrayHashContext<K>> ArrayHashMap<K, V, C> {
         let i = self.get_index(key)?;
         self.hashes.swap_remove(i);
         Some((self.keys.swap_remove(i), self.values.swap_remove(i)))
+    }
+
+    /// Zig: `orderedRemove` — preserves insertion order of remaining entries.
+    /// Returns `true` if the key was present (matching Zig's `bool` return).
+    #[inline]
+    pub fn ordered_remove(&mut self, key: &K) -> bool {
+        self.remove(key).is_some()
     }
 
     /// std-HashMap-compat: ordered remove returning the value. Preserves the

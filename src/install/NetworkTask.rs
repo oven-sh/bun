@@ -435,7 +435,13 @@ impl NetworkTask {
             header_builder.append("Accept", accept_header);
 
             if !last_modified.is_empty() && !etag.is_empty() {
-                last_modified = header_builder.content.append(last_modified);
+                // SAFETY (lifetime extension): the appended slice points into
+                // `header_builder.content`'s heap buffer, which is moved into
+                // `self.unsafe_http_client.request_header_buf` below and
+                // outlives the request (Zig leaks it). Detach the borrow so
+                // `header_builder.content` can be read again for `headers_buf`.
+                let appended = header_builder.content.append(last_modified);
+                last_modified = unsafe { &*(appended as *const [u8]) };
             }
         } else {
             let header_buf: &'static str = if needs_extended {
@@ -465,25 +471,39 @@ impl NetworkTask {
 
         self.response_buffer = MutableString::init(0)?;
 
-        let url = URL::parse(&self.url_buf);
+        // SAFETY (lifetime extension): `url_buf` and the header content buffer
+        // are heap allocations owned by / leaked into `*self`, which outlives
+        // the HTTP request. `AsyncHTTP::init` demands `'static` borrows
+        // because the HTTP thread reads them concurrently; the Zig source
+        // passes raw slices under the same ownership contract. See the
+        // identical pattern in `s3/simple_request.rs`.
+        let url = URL::parse(unsafe { &*(&*self.url_buf as *const [u8]) });
+        let http_proxy = pm.http_proxy(&url);
+        // SAFETY: ptr is non-null on both branches above (allocate() or static buf).
+        let headers_buf: &'static [u8] = unsafe {
+            core::slice::from_raw_parts(
+                header_builder.content.ptr.unwrap().as_ptr(),
+                header_builder.content.len,
+            )
+        };
+        // PORT NOTE: Zig has no destructors — `header_builder.content` is
+        // intentionally leaked (ownership transfers to the HTTP client).
+        // Forget it so `StringBuilder::drop` doesn't free the buffer that
+        // `headers_buf` / `last_modified` now alias.
+        core::mem::forget(core::mem::take(&mut header_builder.content));
+        let completion_callback = self.get_completion_callback();
         // TODO(port): narrow error set
         self.unsafe_http_client = AsyncHTTP::init(
             http::Method::GET,
             url,
             header_builder.entries,
-            // SAFETY: ptr is non-null on both branches above (allocate() or static buf).
-            unsafe {
-                core::slice::from_raw_parts(
-                    header_builder.content.ptr.unwrap().as_ptr(),
-                    header_builder.content.len,
-                )
-            },
-            &mut self.response_buffer,
+            headers_buf,
+            ptr::addr_of_mut!(self.response_buffer),
             b"",
-            self.get_completion_callback(),
+            completion_callback,
             http::FetchRedirect::Follow,
             AsyncHTTPOptions {
-                http_proxy: pm.http_proxy(&url),
+                http_proxy,
                 ..Default::default()
             },
         );

@@ -8,7 +8,7 @@ use bun_paths::resolve_path::{dirname, join_abs_string_z, join_z_buf};
 use bun_paths::{self as Path, platform, AbsPath, PathBuffer, MAX_PATH_BYTES, SEP};
 use bun_semver::String;
 use bun_str::{strings, ZStr};
-use bun_sys::{self as Syscall, Dir, Fd};
+use bun_sys::{self as Syscall, Dir, Fd, FdDirExt};
 
 use crate::bin_real as bin;
 use crate::bin_real::Bin;
@@ -17,15 +17,18 @@ use crate::bun_fs::FileSystem;
 use crate::bun_progress::{Node as ProgressNode, Progress};
 use crate::lifecycle_script_runner::LifecycleScriptSubprocess;
 use crate::lockfile_real::{self as lockfile, DependencySlice, Lockfile, Tree};
-use crate::lockfile_real::package::{self as Package, scripts::Scripts as PackageScripts};
+use crate::lockfile_real::package::{
+    self as Package, scripts::Scripts as PackageScripts, PackageListExt, PackageSliceExt,
+};
 use crate::package_install::{self, PackageInstall};
 use crate::package_manager::{self, Options, PackageManager};
 // PORT NOTE: `Options` above is the namespace module (`Options::LogLevel`); the
 // concrete `PackageManager.Options` struct lives in `package_manager_real`.
 use crate::package_manager_real::Options as PackageManagerOptions;
+use crate::package_manager_real::progress_strings::ProgressStrings;
 use crate::package_manager_task as task;
 use crate::patch_install::PatchTask;
-use crate::postinstall_optimizer::PostinstallOptimizer;
+use crate::postinstall_optimizer::{self, PostinstallOptimizer};
 use crate::resolution::{self, Resolution};
 use crate::{
     invalid_package_id, DependencyID, DependencyInstallContext, ExtractData, PackageID,
@@ -88,6 +91,21 @@ pub struct PackageInstaller<'a> {
     pub seen_bin_links: StringHashMap<()>,
 }
 
+/// Port of `bun.handleOom` for `Result<T, AllocError>`-shaped fallible
+/// container ops used throughout this file (Zig: `catch bun.outOfMemory()`).
+trait UnwrapOrOom<T> {
+    fn unwrap_or_oom(self) -> T;
+}
+impl<T, E> UnwrapOrOom<T> for core::result::Result<T, E> {
+    #[inline]
+    fn unwrap_or_oom(self) -> T {
+        match self {
+            Ok(v) => v,
+            Err(_) => bun_core::out_of_memory(),
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct NodeModulesFolder {
     pub tree_id: lockfile::tree::Id,
@@ -105,7 +123,7 @@ impl NodeModulesFolder {
         let mut path_buf = PathBuffer::uninit();
         let parts: [&[u8]; 2] = [self.path.as_slice(), file_path.as_bytes()];
         bun_sys::directory_exists_at(
-            Fd::from_std_dir(root_node_modules_dir),
+            Fd::from_std_dir(&root_node_modules_dir),
             join_z_buf::<platform::Auto>(path_buf.as_mut_slice(), &parts),
         )
         .unwrap_or(false)
@@ -118,7 +136,7 @@ impl NodeModulesFolder {
         }
 
         let dir = match self.open_dir(root_node_modules_dir) {
-            Ok(d) => Fd::from_std_dir(d),
+            Ok(d) => Fd::from_std_dir(&d),
             Err(_) => return false,
         };
         let res = dir.directory_exists_at(file_path).unwrap_or(false);
@@ -136,7 +154,7 @@ impl NodeModulesFolder {
         let mut path_buf = PathBuffer::uninit();
         let parts: [&[u8]; 2] = [self.path.as_slice(), file_path.as_bytes()];
         bun_sys::File::openat(
-            Fd::from_std_dir(root_node_modules_dir),
+            Fd::from_std_dir(&root_node_modules_dir),
             join_z_buf::<platform::Auto>(path_buf.as_mut_slice(), &parts),
             bun_sys::O::RDONLY,
             0,
@@ -152,7 +170,10 @@ impl NodeModulesFolder {
         let file = self.open_file(root_node_modules_dir, file_path)?;
         let res = file.read_to_end();
         file.close();
-        Ok(res)
+        Ok(match res {
+            Ok(bytes) => bun_sys::file::ReadToEndResult { bytes, err: None },
+            Err(e) => bun_sys::file::ReadToEndResult { bytes: Vec::new(), err: Some(e) },
+        })
     }
 
     pub fn read_small_file(
@@ -162,9 +183,15 @@ impl NodeModulesFolder {
     ) -> Result<bun_sys::file::ReadToEndResult, bun_core::Error> {
         // TODO(port): narrow error set
         let file = self.open_file(root_node_modules_dir, file_path)?;
-        let res = file.read_to_end_small();
+        // PORT NOTE: Zig `read_to_end_small` only differs by initial capacity
+        // (4KiB vs stat-sized). The lib.rs `bun_sys::File::read_to_end` shim
+        // does not surface that variant; reuse the regular path.
+        let res = file.read_to_end();
         file.close();
-        Ok(res)
+        Ok(match res {
+            Ok(bytes) => bun_sys::file::ReadToEndResult { bytes, err: None },
+            Err(e) => bun_sys::file::ReadToEndResult { bytes: Vec::new(), err: Some(e) },
+        })
     }
 
     pub fn open_file(
@@ -178,10 +205,10 @@ impl NodeModulesFolder {
             match self.open_file_without_opening_directories(root_node_modules_dir, file_path) {
                 Err(e) => match e.get_errno() {
                     // Just incase we're wrong, let's try the fallback
-                    bun_sys::Errno::PERM
-                    | bun_sys::Errno::ACCES
-                    | bun_sys::Errno::INVAL
-                    | bun_sys::Errno::NAMETOOLONG => {
+                    bun_sys::Errno::EPERM
+                    | bun_sys::Errno::EACCES
+                    | bun_sys::Errno::EINVAL
+                    | bun_sys::Errno::ENAMETOOLONG => {
                         // Use fallback
                     }
                     _ => return Err(e.to_zig_err()),
@@ -190,10 +217,10 @@ impl NodeModulesFolder {
             }
         }
 
-        let dir = Fd::from_std_dir(self.open_dir(root_node_modules_dir)?);
+        let dir = Fd::from_std_dir(&self.open_dir(root_node_modules_dir)?);
         let res = bun_sys::File::openat(dir, file_path, bun_sys::O::RDONLY, 0).unwrap();
         dir.close();
-        res.map_err(Into::into)
+        res.map_err(|e| e.to_zig_err())
     }
 
     pub fn open_dir(&self, root: Dir) -> Result<Dir, bun_core::Error> {
@@ -201,14 +228,16 @@ impl NodeModulesFolder {
         #[cfg(unix)]
         {
             // TODO(port): std.posix.toPosixPath — copies into a NUL-terminated PathBuffer
-            let path_z = bun_sys::to_posix_path(self.path.as_slice())?;
+            let mut path_buf = PathBuffer::uninit();
+            let path_z = Path::z(self.path.as_slice(), &mut path_buf);
             return Ok(bun_sys::openat(
-                Fd::from_std_dir(root),
-                &path_z,
+                Fd::from_std_dir(&root),
+                path_z,
                 bun_sys::O::DIRECTORY,
                 0,
             )
-            .unwrap()?
+            .unwrap()
+            .map_err(|e| e.to_zig_err())?
             .std_dir());
         }
 
@@ -338,7 +367,7 @@ impl<'a> PackageInstaller<'a> {
 
         let tree = &mut self.trees[tree_id as usize];
         let current_count = tree.install_count;
-        let max = self.lockfile.buffers.trees.as_slice()[tree_id as usize].dependencies.len();
+        let max = self.lockfile.buffers.trees.as_slice()[tree_id as usize].dependencies.len as usize;
 
         if current_count == usize::MAX {
             if cfg!(debug_assertions) {
@@ -398,15 +427,16 @@ impl<'a> PackageInstaller<'a> {
         let lockfile = &*self.lockfile;
         let manager = &mut *self.manager;
         let string_buf = lockfile.buffers.string_bytes.as_slice();
-        let mut node_modules_path: AbsPath = AbsPath::from(self.node_modules.path.as_slice());
+        let mut node_modules_path: AbsPath =
+            AbsPath::from(self.node_modules.path.as_slice()).unwrap_or_oom();
         // PORT NOTE: `defer node_modules_path.deinit()` — AbsPath impls Drop.
 
         let pkgs = lockfile.packages.slice();
-        let pkg_name_hashes = pkgs.items_name_hash();
-        let pkg_metas = pkgs.items_meta();
-        let pkg_resolutions_lists = pkgs.items_resolutions();
+        let pkg_name_hashes = pkgs.name_hash();
+        let pkg_metas = pkgs.meta();
+        let pkg_resolutions_lists = pkgs.resolutions();
         let pkg_resolutions_buffer = lockfile.buffers.resolutions.as_slice();
-        let pkg_names = pkgs.items_name();
+        let pkg_names = pkgs.name();
 
         let tree = &mut self.trees[tree_id as usize];
 
@@ -434,10 +464,10 @@ impl<'a> PackageInstaller<'a> {
                 let name_hash = pkg_name_hashes[package_id as usize];
                 if let Some(optimizer) = manager
                     .postinstall_optimizer
-                    .get(PostinstallOptimizer::Key { name_hash })
+                    .get(postinstall_optimizer::PkgInfo { name_hash, ..Default::default() })
                 {
                     match optimizer {
-                        PostinstallOptimizer::Entry::NativeBinlink => {
+                        PostinstallOptimizer::NativeBinlink => {
                             let target_cpu = manager.options.cpu;
                             let target_os = manager.options.os;
                             if let Some(replacement_pkg_id) =
@@ -463,7 +493,7 @@ impl<'a> PackageInstaller<'a> {
                                 can_retry_without_native_binlink_optimization = true;
                             }
                         }
-                        PostinstallOptimizer::Entry::Ignore => {}
+                        PostinstallOptimizer::Ignore => {}
                     }
                 }
             }
@@ -524,20 +554,24 @@ impl<'a> PackageInstaller<'a> {
 
                 if let Some(err) = bin_linker.err {
                     if log_level != Options::LogLevel::Silent {
-                        manager
-                            .log
-                            .add_error_fmt_opts(
-                                format_args!(
-                                    "Failed to link <b>{}<r>: {}",
-                                    bstr::BStr::new(alias),
-                                    err.name(),
-                                ),
-                                Default::default(),
-                            )
-                            .unwrap_or_oom();
+                        if let Some(log) = manager.log {
+                            // SAFETY: NonNull from a long-lived owning allocation.
+                            unsafe {
+                                (*log.as_ptr())
+                                    .add_error_fmt_opts(
+                                        format_args!(
+                                            "Failed to link <b>{}<r>: {}",
+                                            bstr::BStr::new(alias),
+                                            err.name(),
+                                        ),
+                                        Default::default(),
+                                    )
+                                    .unwrap_or_oom()
+                            };
+                        }
                     }
 
-                    if self.options.enable.fail_early {
+                    if self.options.enable.fail_early() {
                         manager.crash();
                     }
                 }
@@ -548,7 +582,8 @@ impl<'a> PackageInstaller<'a> {
     }
 
     pub fn link_remaining_bins(&mut self, log_level: Options::LogLevel) {
-        let mut depth_buf: lockfile::tree::DepthBuf = Default::default();
+        let mut depth_buf: lockfile::tree::DepthBuf =
+            [0u32; lockfile::tree::MAX_DEPTH as usize + 1];
         let mut node_modules_rel_path_buf = PathBuffer::uninit();
         node_modules_rel_path_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
 
@@ -563,7 +598,7 @@ impl<'a> PackageInstaller<'a> {
             if self.trees[tree_id].binaries.count() > 0 {
                 self.seen_bin_links.clear();
                 self.node_modules.path.truncate(
-                    strings::without_trailing_slash(FileSystem::instance().top_level_dir).len() + 1,
+                    strings::without_trailing_slash(FileSystem::instance().top_level_dir()).len() + 1,
                 );
                 let (rel_path, _) = lockfile::tree::relative_path_and_depth::<
                     { lockfile::tree::IteratorPathStyle::NodeModules },
@@ -1414,7 +1449,10 @@ impl<'a> PackageInstaller<'a> {
                         tree_id: self.current_tree_id,
                         path: self.node_modules.path.clone(),
                     });
-                    self.manager.enqueue_patch_task(task);
+                    // PORT NOTE: stub `enqueue_patch_task` is typed against the
+                    // crate-level `PatchTask` carrier; cast through it until the
+                    // real and stub PatchTask unify (`patch_install` ↔ lib.rs).
+                    self.manager.enqueue_patch_task(task.cast());
                     return;
                 }
             }

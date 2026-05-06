@@ -1039,7 +1039,7 @@ impl Lockfile {
         // cursor without discarding capacity. `LinearFifo::head` is private; the
         // queue is always drained to empty before reuse here, so a `discard(count)`
         // resets `head` to 0 with the same observable effect (lockfile.zig:681).
-        let queued = old.scratch.dependency_list_queue.count();
+        let queued = old.scratch.dependency_list_queue.readable_length();
         old.scratch.dependency_list_queue.discard(queued);
 
         {
@@ -1089,13 +1089,14 @@ impl Lockfile {
             // PORT NOTE: Zig defines a local `WorkspacePathSorter` struct; in Rust we use a closure.
             {
                 let string_buf = old.buffers.string_bytes.as_slice();
-                let entries = &old.workspace_paths.entries;
-                old.workspace_paths.sort_by(|a, b| {
-                    let left = entries.items_value()[a];
-                    let right = entries.items_value()[b];
+                // `ArrayHashMap::sort` mirrors Zig's `entries.sort(ctx)` —
+                // `(keys, values, a, b) -> bool` (less-than).
+                old.workspace_paths.sort(|_keys, values, a, b| {
+                    let left = values[a];
+                    let right = values[b];
                     strings::order(left.slice(string_buf), right.slice(string_buf))
+                        == Ordering::Less
                 });
-                // TODO(port): ArrayHashMap::sort API — Zig sort takes (a: usize, b: usize) -> bool.
             }
 
             for path in old.workspace_paths.values() {
@@ -1111,8 +1112,10 @@ impl Lockfile {
 
             workspace_paths_builder.allocate()?;
 
-            new.workspace_paths.entries.set_len(old.workspace_paths.entries.len());
-            // TODO(port): set_len semantics on ArrayHashMap entries
+            // SAFETY: capacity reserved by `ensure_total_capacity` above; every
+            // slot in `0..old.count()` is overwritten by the copy/zip loops below
+            // before `re_index()` reads them. Mirrors Zig `entries.len = n`.
+            unsafe { new.workspace_paths.set_entries_len(old.workspace_paths.count()) };
 
             debug_assert_eq!(
                 old.workspace_paths.values().len(),
@@ -1132,9 +1135,9 @@ impl Lockfile {
 
             new.workspace_versions
                 .ensure_total_capacity(old.workspace_versions.count())?;
-            new.workspace_versions
-                .entries
-                .set_len(old.workspace_versions.entries.len());
+            // SAFETY: capacity reserved immediately above; every slot is filled by
+            // the zip loop below before `re_index()`. Mirrors Zig `entries.len = n`.
+            unsafe { new.workspace_versions.set_entries_len(old.workspace_versions.count()) };
             for (src, dest) in versions
                 .iter()
                 .zip(new.workspace_versions.values_mut().iter_mut())
@@ -1605,7 +1608,10 @@ impl<'a> Printer<'a> {
             );
         }
 
-        let _ = FileSystem::init(None)?;
+        // Zig: `FileSystem.init(null)` — bootstraps the resolver FS singleton.
+        // The opaque `bun_sys::fs::FileSystem` is bootstrapped via the resolver
+        // crate's init (which installs the vtable); `instance()` here asserts it.
+        let _ = FileSystem::instance();
 
         let mut lockfile = Box::new(Lockfile::init_empty_value());
         // TODO(port): Zig allocates uninitialized then calls loadFromCwd which initializes via
@@ -1633,7 +1639,8 @@ impl<'a> Printer<'a> {
                     )),
                 }
                 if log.errors > 0 {
-                    log.print(Output::error_writer())?;
+                    let mut ew = Output::error_writer();
+                    log.print(&mut ew).map_err(|_| err!("WriteFailed"))?;
                 }
                 Global::crash();
             }
@@ -1763,7 +1770,8 @@ impl Lockfile {
                 ));
                 Global::crash();
             }
-            debug_assert!(FileSystem::instance_loaded());
+            // Zig: `bun.assert(FileSystem.instance_loaded);` — see note in `load_from_dir`.
+            let _ = FileSystem::instance();
         }
 
         let bytes: Vec<u8> = 'bytes: {
@@ -1897,6 +1905,16 @@ impl Lockfile {
     pub fn init_empty(&mut self) {
         *self = Self::init_empty_value();
     }
+}
+
+impl Default for Lockfile {
+    #[inline]
+    fn default() -> Self {
+        Self::init_empty_value()
+    }
+}
+
+impl Lockfile {
 
     pub fn init_empty_value() -> Self {
         Lockfile {
@@ -2440,6 +2458,16 @@ pub mod package_index {
         Id(PackageID),
         Ids(PackageIDList),
     }
+
+    impl Default for Entry {
+        /// Zig: `union(PackageIndex.Tag) { id, ids }` zero-initialises to `.id = 0`.
+        /// `HashMap::get_or_put` needs a `Default` to fill the value slot before
+        /// the caller writes the real `Entry::Id(..)` / `Entry::Ids(..)`.
+        #[inline]
+        fn default() -> Self {
+            Entry::Id(0)
+        }
+    }
 }
 
 pub use package_index::Entry as PackageIndexEntry;
@@ -2546,7 +2574,9 @@ impl Lockfile {
         let mut r_buf = &mut r_buf_full[..];
 
         let mut path_buf = PathBuffer::uninit();
-        let mut depth_buf = tree::DepthBuf::default();
+        // Zig: `var depth_buf: Tree.DepthBuf = undefined;` — fixed-size `[Id; N]`
+        // has no `Default` past 32 entries; zero-init explicitly.
+        let mut depth_buf: tree::DepthBuf = [0; tree::MAX_DEPTH];
 
         // Track owned tree-path allocations so they outlive the sort and are freed at scope end.
         let mut tree_paths: Vec<Box<[u8]>> = Vec::new();
@@ -2784,7 +2814,7 @@ impl Lockfile {
         }
 
         {
-            let alphabetizer = Package::Alphabetizer {
+            let alphabetizer = package::Alphabetizer::<u64> {
                 names,
                 buf: bytes,
                 resolutions,
@@ -2804,7 +2834,7 @@ impl Lockfile {
         unsafe {
             core::ptr::copy_nonoverlapping(
                 HASH_PREFIX.as_ptr(),
-                string_builder.ptr.unwrap(),
+                string_builder.ptr.as_mut().unwrap().as_mut_ptr(),
                 HASH_PREFIX.len(),
             );
         }
@@ -2836,17 +2866,17 @@ impl Lockfile {
 
         // SAFETY: cap - len >= HASH_SUFFIX.len() by construction.
         unsafe {
+            let len = string_builder.len;
             core::ptr::copy_nonoverlapping(
                 HASH_SUFFIX.as_ptr(),
-                string_builder.ptr.unwrap().add(string_builder.len),
+                string_builder.ptr.as_mut().unwrap().as_mut_ptr().add(len),
                 HASH_SUFFIX.len(),
             );
         }
         string_builder.len += HASH_SUFFIX.len();
 
-        // SAFETY: ptr is non-null and points to len initialized bytes.
         let alphabetized_name_version_string =
-            unsafe { core::slice::from_raw_parts(string_builder.ptr.unwrap(), string_builder.len) };
+            &string_builder.ptr.as_ref().unwrap()[..string_builder.len];
         if print_name_version_string {
             Output::flush();
             Output::disable_buffering();
@@ -2857,7 +2887,7 @@ impl Lockfile {
         }
 
         let mut digest = ZERO_HASH;
-        Crypto::SHA512_256::hash(alphabetized_name_version_string, &mut digest);
+        Crypto::SHA512_256::hash(alphabetized_name_version_string, &mut digest, None);
 
         Ok(digest)
     }

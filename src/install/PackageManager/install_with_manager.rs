@@ -117,7 +117,7 @@ pub fn install_with_manager(
                 }
 
                 if unsafe { (*ctx.log).errors } > 0 {
-                    let _ = manager.log_mut().print(Output::error_writer());
+                    let _ = manager.log_mut().print(Output::error_writer() as *mut _);
                     manager.log_mut().reset();
                 }
                 Output::flush();
@@ -211,14 +211,14 @@ pub fn install_with_manager(
                     WorkspacePackageJsonCacheResult::Entry(entry) => entry,
                     WorkspacePackageJsonCacheResult::ReadErr(err) => {
                         if unsafe { (*ctx.log).errors } > 0 {
-                            let _ = manager.log_mut().print(Output::error_writer());
+                            let _ = manager.log_mut().print(Output::error_writer() as *mut _);
                         }
                         Output::err(err, "failed to read '{}'", format_args!("{}", bstr::BStr::new(root_package_json_path.as_bytes())));
                         Global::exit(1);
                     }
                     WorkspacePackageJsonCacheResult::ParseErr(err) => {
                         if unsafe { (*ctx.log).errors } > 0 {
-                            let _ = manager.log_mut().print(Output::error_writer());
+                            let _ = manager.log_mut().print(Output::error_writer() as *mut _);
                         }
                         Output::err(err, "failed to parse '{}'", format_args!("{}", bstr::BStr::new(root_package_json_path.as_bytes())));
                         Global::exit(1);
@@ -228,16 +228,13 @@ pub fn install_with_manager(
                 let source_copy = root_package_json_entry.source;
 
                 let mut resolver: () = ();
-                // TODO(port): Package::parse takes (&mut Lockfile, &mut PackageManager, *mut Log,
-                // &Source, resolver, Features) — full signature in lockfile_real::package.
-                maybe_root.parse(
-                    &mut lockfile,
-                    manager,
-                    manager.log.unwrap().as_ptr(),
-                    &source_copy,
-                    &mut resolver,
-                    Features::main(),
-                )?;
+                // TODO(port): `Package::parse` is typed against `lockfile_real::Lockfile`;
+                // the local `lockfile` (and `manager.lockfile`) are the stub type until
+                // the stub/real Lockfile unification lands (reconciler-6).
+                let _ = (&mut lockfile, &mut maybe_root, &source_copy, &mut resolver);
+                let _: Result<(), bun_core::Error> = Ok(todo!(
+                    "blocked_on: lockfile::Lockfile / lockfile_real::Lockfile unification (reconciler-6) — Package::parse(&mut lockfile, manager, log, &source_copy, &mut resolver, Features::main())"
+                ));
                 let mut mapping = vec![invalid_package_id; maybe_root.dependencies.len as usize].into_boxed_slice();
                 // @memset already done via vec! init
 
@@ -249,17 +246,11 @@ pub fn install_with_manager(
                     let mgr: *mut PackageManager = manager;
                     let from_lockfile: *mut Lockfile = &mut manager.lockfile;
                     let update_requests = if manager.to_update { Some(&manager.update_requests[..]) } else { None };
-                    // SAFETY: see PORT NOTE — disjoint storage, Zig aliasing semantics.
-                    Diff::generate(
-                        unsafe { &mut *mgr },
-                        log,
-                        unsafe { &mut *from_lockfile },
-                        &mut lockfile,
-                        &mut root,
-                        &mut maybe_root,
-                        update_requests,
-                        Some(&mut mapping[..]),
-                    )?
+                    // TODO(port): `Diff::generate` is typed against `lockfile_real::Lockfile`;
+                    // both `from_lockfile` (= &mut manager.lockfile) and the local `lockfile`
+                    // are the stub type until reconciler-6 unifies them.
+                    let _ = (mgr, log, from_lockfile, &mut lockfile, &mut root, &mut maybe_root, update_requests, &mut mapping[..]);
+                    todo!("blocked_on: lockfile::Lockfile / lockfile_real::Lockfile unification (reconciler-6) — Diff::generate(manager, log, &mut manager.lockfile, &mut lockfile, &mut root, &mut maybe_root, update_requests, Some(&mut mapping))")
                 };
 
                 had_any_diffs = manager.summary.has_diffs();
@@ -272,7 +263,7 @@ pub fn install_with_manager(
                     maybe_root.scripts.count(&lockfile.buffers.string_bytes, builder);
                     builder.allocate()?;
                     manager.lockfile.packages.items_scripts_mut()[0] =
-                        maybe_root.scripts.clone_into_builder(&lockfile.buffers.string_bytes, builder);
+                        maybe_root.scripts.clone_into(&lockfile.buffers.string_bytes, builder);
                     builder.clamp();
                 } else {
                     let mut builder_ = manager.lockfile.string_builder();
@@ -342,7 +333,7 @@ pub fn install_with_manager(
                     let _ = builder;
 
                     manager.lockfile.trusted_dependencies = if let Some(trusted_dependencies) = &lockfile.trusted_dependencies {
-                        Some(trusted_dependencies.clone())
+                        Some(bun_core::handle_oom(trusted_dependencies.clone()))
                     } else {
                         None
                     };
@@ -380,14 +371,14 @@ pub fn install_with_manager(
                     let resolutions = &mut manager.lockfile.buffers.resolutions[off as usize..(off + len) as usize];
 
                     for (i, new_dep) in new_dependencies.iter().enumerate() {
-                        dependencies[i] = new_dep.clone_into_builder(manager, &lockfile.buffers.string_bytes, builder)?;
+                        dependencies[i] = new_dep.clone_in(manager, &lockfile.buffers.string_bytes, builder)?;
                         if mapping[i] != invalid_package_id {
                             resolutions[i] = old_resolutions[mapping[i] as usize];
                         }
                     }
 
                     manager.lockfile.packages.items_scripts_mut()[0] =
-                        maybe_root.scripts.clone_into_builder(&lockfile.buffers.string_bytes, builder);
+                        maybe_root.scripts.clone_into(&lockfile.buffers.string_bytes, builder);
 
                     // Update workspace paths
                     manager.lockfile.workspace_paths.reserve(lockfile.workspace_paths.len());
@@ -575,14 +566,14 @@ pub fn install_with_manager(
             WorkspacePackageJsonCacheResult::Entry(entry) => entry,
             WorkspacePackageJsonCacheResult::ReadErr(err) => {
                 if unsafe { (*ctx.log).errors } > 0 {
-                    let _ = manager.log_mut().print(Output::error_writer());
+                    let _ = manager.log_mut().print(Output::error_writer() as *mut _);
                 }
                 Output::err(err, "failed to read '{}'", format_args!("{}", bstr::BStr::new(root_package_json_path.as_bytes())));
                 Global::exit(1);
             }
             WorkspacePackageJsonCacheResult::ParseErr(err) => {
                 if unsafe { (*ctx.log).errors } > 0 {
-                    let _ = manager.log_mut().print(Output::error_writer());
+                    let _ = manager.log_mut().print(Output::error_writer() as *mut _);
                 }
                 Output::err(err, "failed to parse '{}'", format_args!("{}", bstr::BStr::new(root_package_json_path.as_bytes())));
                 Global::exit(1);
@@ -680,7 +671,7 @@ pub fn install_with_manager(
     }
 
     let had_errors_before_cleaning_lockfile = manager.log_mut().has_errors();
-    let _ = manager.log_mut().print(Output::error_writer());
+    let _ = manager.log_mut().print(Output::error_writer() as *mut _);
     manager.log_mut().reset();
 
     // This operation doesn't perform any I/O, so it should be relatively cheap.
@@ -932,7 +923,7 @@ pub fn install_with_manager(
     };
 
     if log_level != Options::LogLevel::Silent {
-        let _ = manager.log_mut().print(Output::error_writer());
+        let _ = manager.log_mut().print(Output::error_writer() as *mut _);
     }
     if had_errors_before_cleaning_lockfile || manager.log_mut().has_errors() {
         Global::crash();

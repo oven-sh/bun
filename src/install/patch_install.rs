@@ -313,7 +313,7 @@ impl<'a> PatchTask<'a> {
                             &pkg_again,
                             Some(name_and_version_hash),
                             match pkg_resolution_tag {
-                                crate::resolution::Tag::Npm => Authorization::AllowAuthorization,
+                                crate::resolution_real::Tag::Npm => Authorization::AllowAuthorization,
                                 _ => Authorization::NoAuthorization,
                             },
                         )?

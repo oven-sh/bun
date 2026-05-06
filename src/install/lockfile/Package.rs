@@ -429,7 +429,16 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
     pub fn is_disabled(&self, cpu: Npm::Architecture, os: Npm::OperatingSystem) -> bool {
         self.meta.is_disabled(cpu, os)
     }
+}
 
+// PORT NOTE: `clone` / `from_package_json` / `from_npm` / `parse*` all interact
+// with `Lockfile`, whose package list is concretely `MultiArrayList<Package<u64>>`.
+// Zig's `Package(SemverIntType)` is only ever instantiated at `u64` for these
+// paths (the `u32` instantiation is migration-only and routed through
+// `Serializer::load`). Binding the impl to `u64` avoids spurious
+// `Package<SemverIntType>` ≠ `Package<u64>` mismatches at every Lockfile call
+// site.
+impl Package<u64> {
     pub fn clone(
         &self,
         pm: &mut PackageManager,
@@ -510,13 +519,12 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
 
         let id = new.packages.len() as PackageID;
         let new_package = new.append_package_with_id(
-            Package::<SemverIntType> {
+            Package {
                 name: builder.append_with_hash::<String>(
                     self.name.slice(old_string_buf),
                     self.name_hash,
                 ),
-                bin: Bin::clone(
-                    &self.bin,
+                bin: self.bin.clone_with_buffers(
                     old_string_buf,
                     old_extern_string_buf,
                     new.buffers.extern_strings.as_slice(),
@@ -525,12 +533,12 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
                 ),
                 name_hash: self.name_hash,
                 meta: Meta::clone_into(&self.meta, id, old_string_buf, &mut *builder),
-                resolution: ResolutionType::<SemverIntType>::clone(
+                resolution: ResolutionType::<u64>::clone(
                     &self.resolution,
                     old_string_buf,
                     &mut *builder,
                 ),
-                scripts: Scripts::clone(&self.scripts, old_string_buf, &mut *builder),
+                scripts: self.scripts.clone_into(old_string_buf, &mut *builder),
                 dependencies: DependencySlice::new(prev_len, end - prev_len),
                 resolutions: PackageIDSlice::new(prev_len, end - prev_len),
             },
@@ -546,7 +554,7 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
 
         debug_assert_eq!(old_dependencies.len(), dependencies.len());
         for (old_dep, new_dep) in old_dependencies.iter().zip(dependencies.iter_mut()) {
-            *new_dep = Dependency::clone(old_dep, pm, old_string_buf, &mut *builder)?;
+            *new_dep = old_dep.clone_in(pm, old_string_buf, &mut *builder)?;
         }
 
         builder.clamp();
@@ -628,7 +636,7 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
             package.name_hash = package_name.hash;
             package.name = package_name.value;
 
-            package.resolution = Resolution::<SemverIntType>::init(TaggedValue::Root);
+            package.resolution = Resolution::<u64>::init(TaggedValue::Root);
 
             let total_len = dependencies_list.len() + total_dependencies_count as usize;
             if cfg!(debug_assertions) {
@@ -651,7 +659,7 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
                     continue;
                 }
 
-                dependencies[0] = Dependency::clone(dep, pm, source_buf, &mut string_builder)?;
+                dependencies[0] = dep.clone_in(pm, source_buf, &mut string_builder)?;
                 dependencies = &mut dependencies[1..];
                 if dependencies.is_empty() {
                     break;
@@ -730,15 +738,15 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
         // --- Counting
         {
             string_builder.count(manifest.name());
-            version.count(manifest.string_buf, &mut string_builder);
+            version.count(&manifest.string_buf, &mut string_builder);
 
             // PERF(port): was `inline for` — profile in Phase B
             for group in dependency_groups {
                 // Zig uses `@field(package_version, group.field)` reflection;
                 // ported as `PackageVersion::dep_group(field) -> ExternalStringMap`.
                 let map: ExternalStringMap = package_version.dep_group(group.field);
-                let keys = map.name.get(manifest.external_strings);
-                let version_strings = map.value.get(manifest.external_strings_for_versions);
+                let keys = map.name.get(&manifest.external_strings);
+                let version_strings = map.value.get(&manifest.external_strings_for_versions);
                 total_dependencies_count += map.value.len;
 
                 if cfg!(debug_assertions) {
@@ -747,14 +755,14 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
 
                 debug_assert_eq!(keys.len(), version_strings.len());
                 for (key, ver) in keys.iter().zip(version_strings.iter()) {
-                    string_builder.count(key.slice(manifest.string_buf));
-                    string_builder.count(ver.slice(manifest.string_buf));
+                    string_builder.count(key.slice(&manifest.string_buf));
+                    string_builder.count(ver.slice(&manifest.string_buf));
                 }
             }
 
-            bin_extern_strings_count = package_version.bin.count(
-                manifest.string_buf,
-                manifest.extern_strings_bin_entries,
+            bin_extern_strings_count = package_version.bin.count_strings(
+                &manifest.string_buf,
+                &manifest.extern_strings_bin_entries,
                 &mut string_builder,
             );
         }
@@ -784,8 +792,8 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
             package.name_hash = package_name.hash;
             package.name = package_name.value;
             package.resolution =
-                Resolution::<SemverIntType>::init(TaggedValue::Npm(VersionedURLType::<SemverIntType> {
-                    version: version.append(manifest.string_buf, &mut string_builder).into(),
+                Resolution::<u64>::init(TaggedValue::Npm(VersionedURLType::<u64> {
+                    version: version.append(&manifest.string_buf, &mut string_builder),
                     url: string_builder
                         .append::<String>(manifest.str(&package_version_ptr.tarball_url)),
                 }));
@@ -808,8 +816,8 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
             for group in dependency_groups {
                 // TODO(port): @field reflection — see note above
                 let map: ExternalStringMap = package_version.dep_group(group.field);
-                let keys = map.name.get(manifest.external_strings);
-                let version_strings = map.value.get(manifest.external_strings_for_versions);
+                let keys = map.name.get(&manifest.external_strings);
+                let version_strings = map.value.get(&manifest.external_strings_for_versions);
 
                 if cfg!(debug_assertions) {
                     debug_assert!(keys.len() == version_strings.len());
@@ -843,11 +851,11 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
 
                     let name: ExternalString = string_builder
                         .append_with_hash::<ExternalString>(
-                            key.slice(manifest.string_buf),
+                            key.slice(&manifest.string_buf),
                             key.hash,
                         );
                     let dep_version = string_builder.append_with_hash::<String>(
-                        version_string_.slice(manifest.string_buf),
+                        version_string_.slice(&manifest.string_buf),
                         version_string_.hash,
                     );
                     let sliced = dep_version.sliced(lockfile.buffers.string_bytes.as_slice());
@@ -864,7 +872,7 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
                     } else {
                         for bundled_dep_name_hash in package_version
                             .bundled_dependencies
-                            .get(manifest.bundled_deps_buf)
+                            .get(&manifest.bundled_deps_buf)
                         {
                             if *bundled_dep_name_hash == name.hash {
                                 behavior.insert(Behavior::BUNDLED);
@@ -908,10 +916,9 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
                 }
             }
 
-            package.bin = Bin::clone(
-                &package_version.bin,
-                manifest.string_buf,
-                manifest.extern_strings_bin_entries,
+            package.bin = package_version.bin.clone_with_buffers(
+                &manifest.string_buf,
+                &manifest.extern_strings_bin_entries,
                 extern_strings_list.as_slice(),
                 extern_strings_slice,
                 &mut string_builder,
@@ -945,7 +952,7 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
                     Output::panic(format_args!(
                         "tarball_url is empty for package {}@{}",
                         bstr::BStr::new(manifest.name()),
-                        version.fmt(manifest.string_buf),
+                        version.fmt(&manifest.string_buf),
                     ));
                 }
             }
@@ -1008,13 +1015,17 @@ impl DiffSummary {
 }
 
 impl Diff {
-    pub fn generate<SemverIntType: VersionInt>(
+    // PORT NOTE: Zig's `Package` here is the canonical `Package(u64)` (the only
+    // instantiation `Lockfile` ever holds). Dropping the generic avoids a
+    // spurious `Package<I>` ≠ `Package<u64>` mismatch on the recursive call
+    // through `from_lockfile.packages.get(...)`.
+    pub fn generate(
         pm: &mut PackageManager,
         log: &mut logger::Log,
         from_lockfile: &mut Lockfile,
         to_lockfile: &mut Lockfile,
-        from: &mut Package<SemverIntType>,
-        to: &mut Package<SemverIntType>,
+        from: &mut Package,
+        to: &mut Package,
         update_requests: Option<&[UpdateRequest]>,
         id_mapping: Option<&mut [PackageID]>,
     ) -> Result<DiffSummary, bun_core::Error> {
@@ -1033,8 +1044,12 @@ impl Diff {
                 Output::pretty_errorln(format_args!("Overrides changed since last install"));
             }
         } else {
-            from_lockfile.overrides.sort(from_lockfile);
-            to_lockfile.overrides.sort(to_lockfile);
+            // PORT NOTE: reshaped for borrowck — Zig passed `from_lockfile`
+            // twice (once as `&mut self` via `.overrides`, once as `lockfile`).
+            // `OverrideMap::sort` only reads `lockfile.buffers.string_bytes`,
+            // so split the borrow at the field.
+            lockfile::OverrideMap::sort(&mut from_lockfile.overrides, &from_lockfile.buffers);
+            lockfile::OverrideMap::sort(&mut to_lockfile.overrides, &to_lockfile.buffers);
             debug_assert_eq!(
                 from_lockfile.overrides.map.keys().len(),
                 to_lockfile.overrides.map.keys().len()
@@ -1080,8 +1095,9 @@ impl Diff {
                     break 'catalogs;
                 }
 
-                from_lockfile.catalogs.sort(from_lockfile);
-                to_lockfile.catalogs.sort(to_lockfile);
+                // PORT NOTE: reshaped for borrowck — see `overrides.sort` note above.
+                lockfile::CatalogMap::sort(&mut from_lockfile.catalogs, &from_lockfile.buffers);
+                lockfile::CatalogMap::sort(&mut to_lockfile.catalogs, &to_lockfile.buffers);
 
                 for (((from_dep_name, from_dep), to_dep_name), to_dep) in from_lockfile
                     .catalogs
@@ -1093,8 +1109,8 @@ impl Diff {
                     .zip(to_lockfile.catalogs.default.values())
                 {
                     if !String::eql(
-                        from_dep_name,
-                        to_dep_name,
+                        *from_dep_name,
+                        *to_dep_name,
                         from_lockfile.buffers.string_bytes.as_slice(),
                         to_lockfile.buffers.string_bytes.as_slice(),
                     ) {
@@ -1124,8 +1140,8 @@ impl Diff {
                         .zip(to_lockfile.catalogs.groups.values())
                 {
                     if !String::eql(
-                        from_catalog_name,
-                        to_catalog_name,
+                        *from_catalog_name,
+                        *to_catalog_name,
                         from_lockfile.buffers.string_bytes.as_slice(),
                         to_lockfile.buffers.string_bytes.as_slice(),
                     ) {
@@ -1146,8 +1162,8 @@ impl Diff {
                         .zip(to_catalog_deps.values())
                     {
                         if !String::eql(
-                            from_dep_name,
-                            to_dep_name,
+                            *from_dep_name,
+                            *to_dep_name,
                             from_lockfile.buffers.string_bytes.as_slice(),
                             to_lockfile.buffers.string_bytes.as_slice(),
                         ) {
@@ -1420,7 +1436,7 @@ impl Diff {
                         // T1 (`bun_sys`) because `logger::Source` lives in T2.
                         // Route through the workspace cache's path-based getter
                         // instead, which both reads and parses.
-                        let mut workspace_pkg = Package::<SemverIntType>::default();
+                        let mut workspace_pkg = Package::default();
 
                         let json_entry = match pm
                             .workspace_package_json_cache
@@ -1499,8 +1515,8 @@ impl Diff {
             // PERF(port): was `inline for` over Lockfile.Scripts.names — profile in Phase B
             for (to_hook, from_hook) in to.scripts.hooks().iter().zip(from.scripts.hooks().iter()) {
                 if !String::eql(
-                    to_hook,
-                    from_hook,
+                    **to_hook,
+                    **from_hook,
                     to_lockfile.buffers.string_bytes.as_slice(),
                     from_lockfile.buffers.string_bytes.as_slice(),
                 ) {
@@ -1514,7 +1530,7 @@ impl Diff {
     }
 }
 
-impl<SemverIntType: VersionInt> Package<SemverIntType> {
+impl Package<u64> {
     pub fn hash(name: &[u8], version: SemverVersion) -> u64 {
         let mut hasher = bun_wyhash::Wyhash::init(0);
         hasher.update(name);
@@ -1539,10 +1555,15 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         initialize_store();
-        let json = match crate::bun_json::parse_package_json_utf8(source, log, Default::default()) {
+        // Zig threaded `lockfile.allocator`; the JSON parser keeps its arena
+        // alive for the lifetime of the returned `Expr` tree, so leak a `Bump`
+        // here (matching Zig's allocator semantics until reconciler-6 threads
+        // the lockfile arena through).
+        let bump: &'static bumpalo::Bump = Box::leak(Box::new(bumpalo::Bump::new()));
+        let json = match crate::bun_json::parse_package_json_utf8(source, log, bump) {
             Ok(j) => j,
             Err(err) => {
-                let _ = log.print(&mut Output::error_writer());
+                let _ = log.print(Output::error_writer());
                 Output::pretty_errorln(format_args!(
                     "<r><red>{}<r> parsing package.json in <b>\"{}\"<r>",
                     err.name(),
@@ -1630,7 +1651,7 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
                 if strings::has_prefix(sliced.slice, b"workspace:") {
                     'brk: {
                         let input = &sliced.slice[b"workspace:".len()..];
-                        let trimmed = strings::trim(input, strings::WHITESPACE_CHARS);
+                        let trimmed = strings::trim(input, &strings::WHITESPACE_CHARS);
                         if trimmed.len() != 1
                             || (trimmed[0] != b'*' && trimmed[0] != b'^' && trimmed[0] != b'~')
                         {
@@ -1734,8 +1755,10 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
                         }
 
                         // important to trim before len == 0 check. `workspace:foo@      ` should install successfully
+                        // SAFETY: `range.input` borrows `lockfile.buffers.string_bytes`
+                        // (set by `semver::query::parse` above), which is live here.
                         let version_literal =
-                            strings::trim(range.input.as_ref(), strings::WHITESPACE_CHARS);
+                            strings::trim(unsafe { &*range.input }, &strings::WHITESPACE_CHARS);
                         if version_literal.is_empty()
                             || range.is_star()
                             || SemverVersion::is_tagged_version_only(version_literal)

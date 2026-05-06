@@ -18,18 +18,40 @@ use crate::_folder_resolver::{
     self as FolderResolution, FolderResolution as FolderResolutionValue, GlobalOrRelative,
     PackageWorkspaceSearchPathFormatter,
 };
+use crate::lockfile::PackageIndexEntry;
 use crate::network_task::Authorization;
-use crate::patch_install::Callback as PatchTaskCallback;
-use crate::resolution::{Tag as ResolutionTag, TaggedValue as ResolutionTagged, Value as ResolutionValue};
+use crate::resolution::{
+    NpmVersionInfo as ResolutionNpmValue, Tag as ResolutionTag, TaggedValue as ResolutionTagged,
+    Value as ResolutionValue,
+};
 use crate::{dependency, ManifestLoad};
 use crate::lockfile_real as Lockfile;
-use crate::lockfile_real::PackageIndexEntry;
 use crate::lockfile::package::Package;
 use bun_install::NetworkTask;
 use crate::package_manager_real::{
-    self, directories, lifecycle, run_tasks, FailFn, PackageManager, SuccessFn, TaskCallbackList,
+    self, determine_preinstall_state, generate_network_task_for_tarball, get_cache_directory,
+    get_preinstall_state, get_temporary_directory, run_tasks, set_preinstall_state, FailFn,
+    PackageManager, SuccessFn, TaskCallbackList,
 };
 use crate::package_manager_task as Task;
+
+// PORT NOTE: Zig accesses `PackageManager.verbose_install` (a `pub var`); the
+// Rust port stores it as a process-global. The associated fn lives on the real
+// `PackageManager` impl; pull it into scope as a free name so the comptime-ish
+// `verbose_install()` call sites read the same.
+#[inline]
+fn verbose_install() -> bool {
+    // SAFETY: set once during single-threaded CLI startup; only read here.
+    unsafe { crate::package_manager_real::VERBOSE_INSTALL }
+}
+
+// PORT NOTE: `PatchTask.callback` discriminant — the stub `PatchTask` carries a
+// flat `PatchTaskCallbackStub` (no Rust enum yet), so the `matches!` checks
+// below compile against these unit markers. Real shape lives in
+// `patch_install::Callback`; routed there once the stub/real types unify.
+// TODO(port): blocked_on patch_install::PatchTask stub-unification (reconciler-6)
+#[allow(dead_code)]
+enum PatchTaskCallback { CalcHash, Apply }
 
 // `SuccessFn` / `FailFn` are bare `fn(&mut PackageManager, ...)` pointers; the
 // real bodies are inherent methods, so reference them via the type path.
@@ -48,7 +70,7 @@ const fail_root_resolution: FailFn = PackageManager::fail_root_resolution;
 pub type EnqueuePackageForDownloadError = crate::network_task::ForTarballError;
 pub type EnqueueTarballForDownloadError = crate::network_task::ForTarballError;
 
-const MS_PER_S: u64 = 1000;
+const MS_PER_S: f64 = 1000.0;
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -131,14 +153,16 @@ pub fn enqueue_dependency_list(
                 )
             );
             // TODO(port): logger note API — Zig passes (fmt, args) tuple separately
-
+            let _ = note_fmt;
+            // SAFETY: `this.log` is non-null after `PackageManager::init()`.
+            let log = unsafe { &mut *this.log };
             if dependency.behavior.is_optional() || dependency.behavior.is_peer() {
-                this.log
-                    .add_warning_with_note(None, logger::Loc::default(), err.name(), note_fmt, note_args)
+                log
+                    .add_warning_with_note(None, logger::Loc::default(), err.name().into(), note_args)
                     .expect("unreachable");
             } else {
-                this.log
-                    .add_zig_error_with_note(err, note_fmt, note_args)
+                log
+                    .add_zig_error_with_note(err, note_args)
                     .expect("unreachable");
             }
 
@@ -172,7 +196,7 @@ pub fn enqueue_tarball_for_download(
         return Ok(());
     }
 
-    if let Some(task) = this.generate_network_task_for_tarball(
+    if let Some(task) = run_tasks::generate_network_task_for_tarball(this,
         task_id,
         url,
         this.lockfile.buffers.dependencies[dependency_id as usize]
@@ -181,7 +205,7 @@ pub fn enqueue_tarball_for_download(
         dependency_id,
         this.lockfile.packages.get(package_id),
         patch_name_and_version_hash,
-        NetworkTask::Authorization::NoAuthorization,
+        crate::network_task::Authorization::NoAuthorization,
     )? {
         task.schedule(&mut this.network_tarball_batch);
         if this.network_tarball_batch.len > 0 {
@@ -302,8 +326,8 @@ pub fn enqueue_parse_npm_package(
         *task = Task::Task {
             package_manager: this,
             log: logger::Log::init(),
-            tag: Task::Tag::PackageManifest,
-            request: Task::Request::PackageManifest {
+            tag: crate::package_manager_task::Tag::PackageManifest,
+            request: crate::package_manager_task::Request::PackageManifest {
                 network: network_task,
                 name,
             },
@@ -341,14 +365,14 @@ pub fn enqueue_package_for_download(
         .behavior
         .is_required();
 
-    if let Some(task) = this.generate_network_task_for_tarball(
+    if let Some(task) = run_tasks::generate_network_task_for_tarball(this,
         task_id,
         url,
         is_required,
         dependency_id,
         this.lockfile.packages.get(package_id),
         patch_name_and_version_hash,
-        NetworkTask::Authorization::AllowAuthorization,
+        crate::network_task::Authorization::AllowAuthorization,
     )? {
         task.schedule(&mut this.network_tarball_batch);
         if this.network_tarball_batch.len > 0 {
@@ -390,7 +414,7 @@ pub fn enqueue_dependency_to_root(
         let mut builder = this.lockfile.string_builder();
         let dummy = Dependency {
             name: SemverString::init(name, name),
-            name_hash: SemverString::Builder::string_hash(name),
+            name_hash: Semver::string::Builder::string_hash(name),
             version: *version,
             behavior,
         };
@@ -452,7 +476,7 @@ pub fn enqueue_dependency_to_root(
                     // this callback, so this is the unique live borrow.
                     let manager = unsafe { &mut *self.manager };
                     if manager.pending_task_count() > 0 {
-                        if let Err(err) = manager.run_tasks(
+                        if let Err(err) = run_tasks(manager,
                             (),
                             (),
                             PackageManager::RunTasksCallbacks {
@@ -468,7 +492,7 @@ pub fn enqueue_dependency_to_root(
                             return true;
                         }
 
-                        if PackageManager::verbose_install() && manager.pending_task_count() > 0 {
+                        if verbose_install() && manager.pending_task_count() > 0 {
                             if PackageManager::has_enough_time_passed_between_waiting_messages() {
                                 Output::pretty_errorln(format_args!(
                                     "<d>[PackageManager]<r> waiting for {} tasks\n",
@@ -587,7 +611,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         | dependency::version::Tag::Npm
         | dependency::version::Tag::Tarball
         | dependency::version::Tag::Workspace => {
-            SemverString::Builder::string_hash(this.lockfile.str(&name))
+            Semver::string::Builder::string_hash(this.lockfile.str(&name))
         }
         _ => dependency.name_hash,
     };
@@ -597,7 +621,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             if let Some(aliased) = this.known_npm_aliases.get(&name_hash) {
                 let group = &dependency.version.value.npm.version;
                 let buf = this.lockfile.buffers.string_bytes.as_slice();
-                let mut curr_list: Option<&Semver::Query::List> =
+                let mut curr_list: Option<&Semver::semver_query::List> =
                     Some(&aliased.value.npm.version.head);
                 while let Some(queries) = curr_list {
                     let mut curr: Option<&Semver::Query> = Some(&queries.head);
@@ -606,7 +630,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             || group.satisfies(query.range.right.version, buf, buf)
                         {
                             name = aliased.value.npm.name;
-                            name_hash = SemverString::Builder::string_hash(this.lockfile.str(&name));
+                            name_hash = Semver::string::Builder::string_hash(this.lockfile.str(&name));
                             break 'version *aliased;
                         }
                         curr = query.next.as_deref();
@@ -709,8 +733,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     if let Some(fail) = fail_fn {
                                         fail(this, dependency, id, err);
                                     } else {
-                                        this.log
-                                            .add_error_fmt(
+                                        unsafe { &mut *this.log }
+                    .add_error_fmt(
                                                 None,
                                                 logger::Loc::EMPTY,
                                                 format_args!(
@@ -730,8 +754,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     if let Some(fail) = fail_fn {
                                         fail(this, dependency, id, err);
                                     } else {
-                                        this.log
-                                            .add_error_fmt(
+                                        unsafe { &mut *this.log }
+                    .add_error_fmt(
                                                 None,
                                                 logger::Loc::EMPTY,
                                                 format_args!(
@@ -750,10 +774,10 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                         fail(this, dependency, id, err);
                                     } else {
                                         let age_gate_ms =
-                                            this.options.minimum_release_age_ms.unwrap_or(0);
+                                            this.options.minimum_release_age_ms.unwrap_or(0.0);
                                         if version.tag == dependency::version::Tag::DistTag {
-                                            this.log
-                                                .add_error_fmt(
+                                            unsafe { &mut *this.log }
+                    .add_error_fmt(
                                                     None,
                                                     logger::Loc::EMPTY,
                                                     format_args!(
@@ -765,8 +789,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                 )
                                                 .expect("unreachable");
                                         } else {
-                                            this.log
-                                                .add_error_fmt(
+                                            unsafe { &mut *this.log }
+                    .add_error_fmt(
                                                     None,
                                                     logger::Loc::EMPTY,
                                                     format_args!(
@@ -786,8 +810,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     if let Some(fail) = fail_fn {
                                         fail(this, dependency, id, err);
                                     } else if version.tag == dependency::version::Tag::Folder {
-                                        this.log
-                                            .add_error_fmt(
+                                        unsafe { &mut *this.log }
+                    .add_error_fmt(
                                                 None,
                                                 logger::Loc::EMPTY,
                                                 format_args!(
@@ -798,8 +822,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                             )
                                             .expect("unreachable");
                                     } else {
-                                        this.log
-                                            .add_error_fmt(
+                                        unsafe { &mut *this.log }
+                    .add_error_fmt(
                                                 None,
                                                 logger::Loc::EMPTY,
                                                 format_args!(
@@ -824,7 +848,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     if let Some(result) = resolve_result {
                         // First time?
                         if result.is_first_time {
-                            if PackageManager::verbose_install() {
+                            if verbose_install() {
                                 let label = this.lockfile.str(&version.literal);
 
                                 Output::pretty_errorln(format_args!(
@@ -834,7 +858,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     bstr::BStr::new(this.lockfile.str(&result.package.name)),
                                     result.package.resolution.fmt(
                                         this.lockfile.buffers.string_bytes.as_slice(),
-                                        Resolution::FmtMode::Auto
+                                        bun_fmt::PathSep::Auto
                                     ),
                                 ));
                             }
@@ -850,10 +874,10 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                         if let Some(task) = result.task {
                             match task {
                                 ResolvedPackageTask::NetworkTask(network_task) => {
-                                    if this.get_preinstall_state(result.package.meta.id)
+                                    if get_preinstall_state(this, result.package.meta.id)
                                         == install::PreinstallState::Extract
                                     {
-                                        this.set_preinstall_state(
+                                        set_preinstall_state(this, 
                                             result.package.meta.id,
                                             install::PreinstallState::Extracting,
                                         );
@@ -861,20 +885,20 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     }
                                 }
                                 ResolvedPackageTask::PatchTask(patch_task) => {
-                                    if matches!(patch_task.callback, PatchTask::Callback::CalcHash(..))
-                                        && this.get_preinstall_state(result.package.meta.id)
+                                    if matches!(patch_task.callback, PatchTaskCallback::CalcHash(..))
+                                        && get_preinstall_state(this, result.package.meta.id)
                                             == install::PreinstallState::CalcPatchHash
                                     {
-                                        this.set_preinstall_state(
+                                        set_preinstall_state(this, 
                                             result.package.meta.id,
                                             install::PreinstallState::CalcingPatchHash,
                                         );
                                         enqueue_patch_task(this, patch_task);
-                                    } else if matches!(patch_task.callback, PatchTask::Callback::Apply(..))
-                                        && this.get_preinstall_state(result.package.meta.id)
+                                    } else if matches!(patch_task.callback, PatchTaskCallback::Apply(..))
+                                        && get_preinstall_state(this, result.package.meta.id)
                                             == install::PreinstallState::ApplyPatch
                                     {
-                                        this.set_preinstall_state(
+                                        set_preinstall_state(this, 
                                             result.package.meta.id,
                                             install::PreinstallState::ApplyingPatch,
                                         );
@@ -920,7 +944,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             {
                                 let needs_extended_manifest =
                                     this.options.minimum_release_age_ms.is_some();
-                                if this.options.enable.manifest_cache {
+                                if this.options.enable.manifest_cache() {
                                     let mut expired = false;
                                     if let Some(manifest) = this.manifests.by_name_hash_allow_expired(
                                         this,
@@ -959,7 +983,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                     {
                                                         let package_name = this.lockfile.str(&name);
                                                         let min_age_seconds = min_age_ms / MS_PER_S;
-                                                        let _ = this.log.add_error_fmt(
+                                                        let _ = unsafe { &mut *this.log }.add_error_fmt(
                                                             None,
                                                             logger::Loc::EMPTY,
                                                             format_args!(
@@ -997,14 +1021,14 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                         }
 
                                         // Was it recent enough to just load it without the network call?
-                                        if this.options.enable.manifest_cache_control && !expired {
+                                        if this.options.enable.manifest_cache_control() && !expired {
                                             let _ = this.network_dedupe_map.remove(&task_id);
                                             continue 'retry_from_manifests_ptr;
                                         }
                                     }
                                 }
 
-                                if PackageManager::verbose_install() {
+                                if verbose_install() {
                                     Output::pretty_errorln(format_args!(
                                         "Enqueue package manifest for download: {}",
                                         bstr::BStr::new(name_str)
@@ -1063,8 +1087,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         dependency::version::Tag::Git => {
             let dep = &version.value.git;
             let res = Resolution {
-                tag: Resolution::Tag::Git,
-                value: Resolution::Value { git: *dep },
+                tag: ResolutionTag::Git,
+                value: ResolutionValue { git: *dep },
             };
 
             // First: see if we already loaded the git package in-memory
@@ -1167,8 +1191,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         dependency::version::Tag::Github => {
             let dep = &version.value.github;
             let res = Resolution {
-                tag: Resolution::Tag::Github,
-                value: Resolution::Value { github: *dep },
+                tag: ResolutionTag::Github,
+                value: ResolutionValue { github: *dep },
             };
 
             // First: see if we already loaded the github package in-memory
@@ -1214,7 +1238,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 }
             }
 
-            if let Some(network_task) = this.generate_network_task_for_tarball(
+            if let Some(network_task) = run_tasks::generate_network_task_for_tarball(this,
                 task_id,
                 &url,
                 dependency.behavior.is_required(),
@@ -1226,7 +1250,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     ..Package::default()
                 },
                 None,
-                NetworkTask::Authorization::NoAuthorization,
+                crate::network_task::Authorization::NoAuthorization,
             )? {
                 enqueue_network_task(this, network_task);
             }
@@ -1277,7 +1301,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             if let Some(result) = _result {
                 // First time?
                 if result.is_first_time {
-                    if PackageManager::verbose_install() {
+                    if verbose_install() {
                         let label = this.lockfile.str(&version.literal);
 
                         Output::pretty_errorln(format_args!(
@@ -1287,7 +1311,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             bstr::BStr::new(this.lockfile.str(&result.package.name)),
                             result.package.resolution.fmt(
                                 this.lockfile.buffers.string_bytes.as_slice(),
-                                Resolution::FmtMode::Auto
+                                bun_fmt::PathSep::Auto
                             ),
                         ));
                     }
@@ -1318,21 +1342,21 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 }
             } else if dependency.behavior.is_required() {
                 if dependency_tag == dependency::version::Tag::Workspace {
-                    this.log
-                        .add_error_fmt(
+                    unsafe { &mut *this.log }
+                    .add_error_fmt(
                             None,
                             logger::Loc::EMPTY,
                             format_args!(
                                 // TODO(port): WORKSPACE_NOT_FOUND_FMT with named args
                                 "Workspace dependency \"{}\" not found\n\nSearched in <b>{}<r>\n\nWorkspace documentation: https://bun.com/docs/install/workspaces\n\n",
                                 bstr::BStr::new(this.lockfile.str(&name)),
-                                FolderResolution::PackageWorkspaceSearchPathFormatter { manager: this, version },
+                                PackageWorkspaceSearchPathFormatter { manager: this, version },
                             ),
                         )
                         .expect("unreachable");
                 } else {
-                    this.log
-                        .add_error_fmt(
+                    unsafe { &mut *this.log }
+                    .add_error_fmt(
                             None,
                             logger::Loc::EMPTY,
                             format_args!(
@@ -1345,20 +1369,20 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 }
             } else if this.options.log_level.is_verbose() {
                 if dependency_tag == dependency::version::Tag::Workspace {
-                    this.log
-                        .add_warning_fmt(
+                    unsafe { &mut *this.log }
+                    .add_warning_fmt(
                             None,
                             logger::Loc::EMPTY,
                             format_args!(
                                 "Workspace dependency \"{}\" not found\n\nSearched in <b>{}<r>\n\nWorkspace documentation: https://bun.com/docs/install/workspaces\n\n",
                                 bstr::BStr::new(this.lockfile.str(&name)),
-                                FolderResolution::PackageWorkspaceSearchPathFormatter { manager: this, version },
+                                PackageWorkspaceSearchPathFormatter { manager: this, version },
                             ),
                         )
                         .expect("unreachable");
                 } else {
-                    this.log
-                        .add_warning_fmt(
+                    unsafe { &mut *this.log }
+                    .add_warning_fmt(
                             None,
                             logger::Loc::EMPTY,
                             format_args!(
@@ -1374,13 +1398,13 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         }
         dependency::version::Tag::Tarball => {
             let res: Resolution = match &version.value.tarball.uri {
-                Dependency::TarballUri::Local(path) => Resolution {
-                    tag: Resolution::Tag::LocalTarball,
-                    value: Resolution::Value { local_tarball: *path },
+                dependency::tarball::Uri::Local(path) => Resolution {
+                    tag: ResolutionTag::LocalTarball,
+                    value: ResolutionValue { local_tarball: *path },
                 },
-                Dependency::TarballUri::Remote(url) => Resolution {
-                    tag: Resolution::Tag::RemoteTarball,
-                    value: Resolution::Value { remote_tarball: *url },
+                dependency::tarball::Uri::Remote(url) => Resolution {
+                    tag: ResolutionTag::RemoteTarball,
+                    value: ResolutionValue { remote_tarball: *url },
                 },
             };
 
@@ -1391,8 +1415,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             }
 
             let url = match &version.value.tarball.uri {
-                Dependency::TarballUri::Local(path) => this.lockfile.str(path),
-                Dependency::TarballUri::Remote(url) => this.lockfile.str(url),
+                dependency::tarball::Uri::Local(path) => this.lockfile.str(path),
+                dependency::tarball::Uri::Remote(url) => this.lockfile.str(url),
             };
             let task_id = Task::Id::for_tarball(url);
             let entry = this
@@ -1430,7 +1454,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             }
 
             match &version.value.tarball.uri {
-                Dependency::TarballUri::Local(_) => {
+                dependency::tarball::Uri::Local(_) => {
                     if this.has_created_network_task(task_id, dependency.behavior.is_required()) {
                         return Ok(());
                     }
@@ -1445,8 +1469,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                         Integrity::default(),
                     )));
                 }
-                Dependency::TarballUri::Remote(_) => {
-                    if let Some(network_task) = this.generate_network_task_for_tarball(
+                dependency::tarball::Uri::Remote(_) => {
+                    if let Some(network_task) = run_tasks::generate_network_task_for_tarball(this,
                         task_id,
                         url,
                         dependency.behavior.is_required(),
@@ -1458,7 +1482,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             ..Package::default()
                         },
                         None,
-                        NetworkTask::Authorization::NoAuthorization,
+                        crate::network_task::Authorization::NoAuthorization,
                     )? {
                         enqueue_network_task(this, network_task);
                     }
@@ -1489,8 +1513,8 @@ fn init_extract_task(
         *task = Task::Task {
             package_manager: this,
             log: logger::Log::init(),
-            tag: Task::Tag::Extract,
-            request: Task::Request::Extract {
+            tag: crate::package_manager_task::Tag::Extract,
+            request: crate::package_manager_task::Request::Extract {
                 network: network_task,
                 tarball: *tarball,
             },
@@ -1498,8 +1522,8 @@ fn init_extract_task(
             // TODO(port): `data: undefined`
             ..Task::uninit()
         };
-        if let Task::Request::Extract { tarball, .. } = &mut (*task).request {
-            tarball.skip_verify = !this.options.do_.verify_integrity;
+        if let crate::package_manager_task::Request::Extract { tarball, .. } = &mut (*task).request {
+            tarball.skip_verify = !this.options.do_.contains(crate::package_manager_real::options::Do::VERIFY_INTEGRITY);
         }
         task
     }
@@ -1544,19 +1568,19 @@ fn enqueue_git_clone(
         *task = Task::Task {
             package_manager: this,
             log: logger::Log::init(),
-            tag: Task::Tag::GitClone,
-            request: Task::Request::GitClone {
+            tag: crate::package_manager_task::Tag::GitClone,
+            request: crate::package_manager_task::Request::GitClone {
                 name: StringOrTinyString::init_append_if_needed(
                     name,
-                    &mut FileSystem::FilenameStore::instance(),
+                    &mut crate::network_task::filename_store_appender(),
                 )
                 .expect("unreachable"),
                 url: StringOrTinyString::init_append_if_needed(
                     this.lockfile.str(&repository.repo),
-                    &mut FileSystem::FilenameStore::instance(),
+                    &mut crate::network_task::filename_store_appender(),
                 )
                 .expect("unreachable"),
-                env: Repository::shared_env().get(&this.env),
+                env: unsafe { &mut crate::repository::SHARED_ENV }.get(&this.env),
                 dep_id,
                 res: *res,
             },
@@ -1609,27 +1633,27 @@ pub fn enqueue_git_checkout(
         *task = Task::Task {
             package_manager: this,
             log: logger::Log::init(),
-            tag: Task::Tag::GitCheckout,
-            request: Task::Request::GitCheckout {
+            tag: crate::package_manager_task::Tag::GitCheckout,
+            request: crate::package_manager_task::Request::GitCheckout {
                 repo_dir: dir,
                 resolution,
                 dependency_id,
                 name: StringOrTinyString::init_append_if_needed(
                     name,
-                    &mut FileSystem::FilenameStore::instance(),
+                    &mut crate::network_task::filename_store_appender(),
                 )
                 .expect("unreachable"),
                 url: StringOrTinyString::init_append_if_needed(
                     this.lockfile.str(&resolution.value.git.repo),
-                    &mut FileSystem::FilenameStore::instance(),
+                    &mut crate::network_task::filename_store_appender(),
                 )
                 .expect("unreachable"),
                 resolved: StringOrTinyString::init_append_if_needed(
                     resolved,
-                    &mut FileSystem::FilenameStore::instance(),
+                    &mut crate::network_task::filename_store_appender(),
                 )
                 .expect("unreachable"),
-                env: Repository::shared_env().get(&this.env),
+                env: unsafe { &mut crate::repository::SHARED_ENV }.get(&this.env),
             },
             apply_patch_task: if let Some(h) = patch_name_and_version_hash {
                 let dep = this.lockfile.buffers.dependencies[dependency_id as usize];
@@ -1686,7 +1710,7 @@ fn enqueue_local_tarball(
         }
 
         let workspace_res = this.lockfile.packages.items_resolution()[workspace_pkg_id as usize];
-        if workspace_res.tag != Resolution::Tag::Workspace {
+        if workspace_res.tag != ResolutionTag::Workspace {
             break 'tarball_path (path, true);
         }
 
@@ -1699,7 +1723,7 @@ fn enqueue_local_tarball(
             .slice(this.lockfile.buffers.string_bytes.as_slice());
         break 'tarball_path (
             Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
-                FileSystem::instance().top_level_dir,
+                FileSystem::instance().top_level_dir(),
                 &mut abs_buf,
                 &[workspace_path, path],
             ),
@@ -1713,30 +1737,30 @@ fn enqueue_local_tarball(
         *task = Task::Task {
             package_manager: this,
             log: logger::Log::init(),
-            tag: Task::Tag::LocalTarball,
-            request: Task::Request::LocalTarball {
+            tag: crate::package_manager_task::Tag::LocalTarball,
+            request: crate::package_manager_task::Request::LocalTarball {
                 tarball: ExtractTarball {
                     package_manager: this,
                     name: StringOrTinyString::init_append_if_needed(
                         name,
-                        &mut FileSystem::FilenameStore::instance(),
+                        &mut crate::network_task::filename_store_appender(),
                     )
                     .expect("unreachable"),
                     resolution,
-                    cache_dir: this.get_cache_directory(),
-                    temp_dir: this.get_temporary_directory().handle,
+                    cache_dir: get_cache_directory(this),
+                    temp_dir: get_temporary_directory(this).handle,
                     dependency_id,
                     integrity,
                     url: StringOrTinyString::init_append_if_needed(
                         path,
-                        &mut FileSystem::FilenameStore::instance(),
+                        &mut crate::network_task::filename_store_appender(),
                     )
                     .expect("unreachable"),
                     ..ExtractTarball::default()
                 },
                 tarball_path: StringOrTinyString::init_append_if_needed(
                     tarball_path,
-                    &mut FileSystem::FilenameStore::instance(),
+                    &mut crate::network_task::filename_store_appender(),
                 )
                 .expect("unreachable"),
                 normalize,
@@ -1759,11 +1783,11 @@ fn update_name_and_name_hash_from_version_replacement(
         // only get name hash for npm and dist_tag. git, github, tarball don't have names until after extracting tarball
         dependency::version::Tag::DistTag => (
             new_version.value.dist_tag.name,
-            SemverString::Builder::string_hash(lockfile.str(&new_version.value.dist_tag.name)),
+            Semver::string::Builder::string_hash(lockfile.str(&new_version.value.dist_tag.name)),
         ),
         dependency::version::Tag::Npm => (
             new_version.value.npm.name,
-            SemverString::Builder::string_hash(lockfile.str(&new_version.value.npm.name)),
+            Semver::string::Builder::string_hash(lockfile.str(&new_version.value.npm.name)),
         ),
         dependency::version::Tag::Git => (new_version.value.git.package_name, original_name_hash),
         dependency::version::Tag::Github => {
@@ -1832,9 +1856,9 @@ fn get_or_put_resolved_package_with_find_result(
         name_hash,
         if should_update { None } else { Some(version) },
         &Resolution {
-            tag: Resolution::Tag::Npm,
-            value: Resolution::Value {
-                npm: Resolution::NpmValue {
+            tag: ResolutionTag::Npm,
+            value: ResolutionValue {
+                npm: ResolutionNpmValue {
                     version: find_result.version,
                     url: find_result.package.tarball_url.value,
                 },
@@ -1859,7 +1883,7 @@ fn get_or_put_resolved_package_with_find_result(
         manifest,
         find_result.version,
         find_result.package,
-        Features::npm(),
+        Features::NPM,
     )?)?;
 
     if cfg!(debug_assertions) {
@@ -1877,7 +1901,7 @@ fn get_or_put_resolved_package_with_find_result(
     let mut name_and_version_hash: Option<u64> = None;
     let mut patchfile_hash: Option<u64> = None;
 
-    let result = match this.determine_preinstall_state(
+    let result = match determine_preinstall_state(this, 
         &package,
         &mut name_and_version_hash,
         &mut patchfile_hash,
@@ -1892,7 +1916,7 @@ fn get_or_put_resolved_package_with_find_result(
         // Do we need to download the tarball?
         install::PreinstallState::Extract => 'extract: {
             // Skip tarball download when prefetch_resolved_tarballs is disabled (e.g., --lockfile-only)
-            if !this.options.do_.prefetch_resolved_tarballs {
+            if !this.options.do_.contains(crate::package_manager_real::options::Do::PREFETCH_RESOLVED_TARBALLS) {
                 break 'extract Some(ResolvedPackageResult {
                     package,
                     is_first_time: true,
@@ -1910,7 +1934,7 @@ fn get_or_put_resolved_package_with_find_result(
                 package,
                 is_first_time: true,
                 task: Some(ResolvedPackageTask::NetworkTask(
-                    this.generate_network_task_for_tarball(
+                    run_tasks::generate_network_task_for_tarball(this,
                         task_id,
                         manifest.str(&find_result.package.tarball_url),
                         behavior.is_required(),
@@ -1918,7 +1942,7 @@ fn get_or_put_resolved_package_with_find_result(
                         package,
                         name_and_version_hash,
                         // its npm.
-                        NetworkTask::Authorization::AllowAuthorization,
+                        crate::network_task::Authorization::AllowAuthorization,
                     )?
                     .expect("unreachable"),
                 )),
@@ -1987,15 +2011,15 @@ fn get_or_put_resolved_package(
 
                         let res_tag = resolutions[existing_id as usize].tag;
                         let ver_tag = version.tag;
-                        if (res_tag == Resolution::Tag::Npm && ver_tag == dependency::version::Tag::Npm)
-                            || (res_tag == Resolution::Tag::Git
+                        if (res_tag == ResolutionTag::Npm && ver_tag == dependency::version::Tag::Npm)
+                            || (res_tag == ResolutionTag::Git
                                 && ver_tag == dependency::version::Tag::Git)
-                            || (res_tag == Resolution::Tag::Github
+                            || (res_tag == ResolutionTag::Github
                                 && ver_tag == dependency::version::Tag::Github)
                         {
                             let existing_package = this.lockfile.packages.get(existing_id);
-                            this.log
-                                .add_warning_fmt(
+                            unsafe { &mut *this.log }
+                    .add_warning_fmt(
                                     None,
                                     logger::Loc::EMPTY,
                                     format_args!(
@@ -2005,7 +2029,7 @@ fn get_or_put_resolved_package(
                                             .fmt(this.lockfile.buffers.string_bytes.as_slice()),
                                         existing_package.resolution.fmt(
                                             this.lockfile.buffers.string_bytes.as_slice(),
-                                            Resolution::FmtMode::Auto
+                                            bun_fmt::PathSep::Auto
                                         ),
                                     ),
                                 )
@@ -2036,17 +2060,17 @@ fn get_or_put_resolved_package(
                     if (list[0] as usize) < resolutions.len() {
                         let res_tag = resolutions[list[0] as usize].tag;
                         let ver_tag = version.tag;
-                        if (res_tag == Resolution::Tag::Npm
+                        if (res_tag == ResolutionTag::Npm
                             && ver_tag == dependency::version::Tag::Npm)
-                            || (res_tag == Resolution::Tag::Git
+                            || (res_tag == ResolutionTag::Git
                                 && ver_tag == dependency::version::Tag::Git)
-                            || (res_tag == Resolution::Tag::Github
+                            || (res_tag == ResolutionTag::Github
                                 && ver_tag == dependency::version::Tag::Github)
                         {
                             let existing_package_id = list[0];
                             let existing_package = this.lockfile.packages.get(existing_package_id);
-                            this.log
-                                .add_warning_fmt(
+                            unsafe { &mut *this.log }
+                    .add_warning_fmt(
                                     None,
                                     logger::Loc::EMPTY,
                                     format_args!(
@@ -2056,7 +2080,7 @@ fn get_or_put_resolved_package(
                                             .fmt(this.lockfile.buffers.string_bytes.as_slice()),
                                         existing_package.resolution.fmt(
                                             this.lockfile.buffers.string_bytes.as_slice(),
-                                            Resolution::FmtMode::Auto
+                                            bun_fmt::PathSep::Auto
                                         ),
                                     ),
                                 )
@@ -2170,7 +2194,7 @@ fn get_or_put_resolved_package(
                     if this.options.log_level.is_verbose() {
                         if let Some(newest) = &filtered.newest_filtered {
                             let min_age_seconds =
-                                this.options.minimum_release_age_ms.unwrap_or(0) / MS_PER_S;
+                                this.options.minimum_release_age_ms.unwrap_or(0.0) / MS_PER_S;
                             match version.tag {
                                 dependency::version::Tag::DistTag => {
                                     let tag_str = this.lockfile.str(&version.value.dist_tag.tag);
@@ -2292,7 +2316,7 @@ fn get_or_put_resolved_package(
                         folder_path
                     } else {
                         Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
-                            FileSystem::instance().top_level_dir,
+                            FileSystem::instance().top_level_dir(),
                             &mut buf2,
                             &[folder_path],
                         )
@@ -2310,7 +2334,7 @@ fn get_or_put_resolved_package(
                     // }
 
                     break 'res FolderResolution::get_or_put(
-                        FolderResolution::Kind::Relative(FolderResolution::RelativeKind::Folder),
+                        GlobalOrRelative::Relative(dependency::version::Tag::Folder),
                         version,
                         folder_path_abs,
                         this,
@@ -2337,7 +2361,7 @@ fn get_or_put_resolved_package(
                     package.name = builder.append::<SemverString>(name_slice);
                     package.name_hash = name_hash;
 
-                    package.resolution = Resolution::init(Resolution::Value {
+                    package.resolution = Resolution::init(ResolutionValue {
                         folder: builder.append::<SemverString>(folder_path),
                     });
 
@@ -2350,19 +2374,19 @@ fn get_or_put_resolved_package(
                 // these are always new
                 package = this.lockfile.append_package(package).expect("OOM");
 
-                break 'res FolderResolution::NewPackageId(package.meta.id);
+                break 'res FolderResolutionValue::NewPackageId(package.meta.id);
             };
 
             match res {
-                FolderResolution::Err(err) => Err(err),
-                FolderResolution::PackageId(package_id) => {
+                FolderResolutionValue::Err(err) => Err(err),
+                FolderResolutionValue::PackageId(package_id) => {
                     success_fn(this, dependency_id, package_id);
                     Ok(Some(ResolvedPackageResult {
                         package: this.lockfile.packages.get(package_id),
                         ..Default::default()
                     }))
                 }
-                FolderResolution::NewPackageId(package_id) => {
+                FolderResolutionValue::NewPackageId(package_id) => {
                     success_fn(this, dependency_id, package_id);
                     Ok(Some(ResolvedPackageResult {
                         package: this.lockfile.packages.get(package_id),
@@ -2377,7 +2401,7 @@ fn get_or_put_resolved_package(
             let workspace_path_raw: &SemverString = this
                 .lockfile
                 .workspace_paths
-                .get_ptr(&name_hash)
+                .get(&name_hash)
                 .unwrap_or(&version.value.workspace);
             let workspace_path = this.lockfile.str(workspace_path_raw);
             let mut buf2 = PathBuffer::uninit();
@@ -2385,29 +2409,29 @@ fn get_or_put_resolved_package(
                 workspace_path
             } else {
                 Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
-                    FileSystem::instance().top_level_dir,
+                    FileSystem::instance().top_level_dir(),
                     &mut buf2,
                     &[workspace_path],
                 )
             };
 
             let res = FolderResolution::get_or_put(
-                FolderResolution::Kind::Relative(FolderResolution::RelativeKind::Workspace),
+                GlobalOrRelative::Relative(dependency::version::Tag::Workspace),
                 version,
                 workspace_path_u8,
                 this,
             );
 
             match res {
-                FolderResolution::Err(err) => Err(err),
-                FolderResolution::PackageId(package_id) => {
+                FolderResolutionValue::Err(err) => Err(err),
+                FolderResolutionValue::PackageId(package_id) => {
                     success_fn(this, dependency_id, package_id);
                     Ok(Some(ResolvedPackageResult {
                         package: this.lockfile.packages.get(package_id),
                         ..Default::default()
                     }))
                 }
-                FolderResolution::NewPackageId(package_id) => {
+                FolderResolutionValue::NewPackageId(package_id) => {
                     success_fn(this, dependency_id, package_id);
                     Ok(Some(ResolvedPackageResult {
                         package: this.lockfile.packages.get(package_id),
@@ -2419,22 +2443,22 @@ fn get_or_put_resolved_package(
         }
         dependency::version::Tag::Symlink => {
             let res = FolderResolution::get_or_put(
-                FolderResolution::Kind::Global(this.global_link_dir_path()),
+                GlobalOrRelative::Global(&this.global_link_dir_path),
                 version,
                 this.lockfile.str(&version.value.symlink),
                 this,
             );
 
             match res {
-                FolderResolution::Err(err) => Err(err),
-                FolderResolution::PackageId(package_id) => {
+                FolderResolutionValue::Err(err) => Err(err),
+                FolderResolutionValue::PackageId(package_id) => {
                     success_fn(this, dependency_id, package_id);
                     Ok(Some(ResolvedPackageResult {
                         package: this.lockfile.packages.get(package_id),
                         ..Default::default()
                     }))
                 }
-                FolderResolution::NewPackageId(package_id) => {
+                FolderResolutionValue::NewPackageId(package_id) => {
                     success_fn(this, dependency_id, package_id);
                     Ok(Some(ResolvedPackageResult {
                         package: this.lockfile.packages.get(package_id),
@@ -2455,7 +2479,7 @@ fn resolution_satisfies_dependency(
     dependency: dependency::Version,
 ) -> bool {
     let buf = this.lockfile.buffers.string_bytes.as_slice();
-    if resolution.tag == Resolution::Tag::Npm && dependency.tag == dependency::version::Tag::Npm {
+    if resolution.tag == ResolutionTag::Npm && dependency.tag == dependency::version::Tag::Npm {
         return dependency
             .value
             .npm
@@ -2463,11 +2487,11 @@ fn resolution_satisfies_dependency(
             .satisfies(resolution.value.npm.version, buf, buf);
     }
 
-    if resolution.tag == Resolution::Tag::Git && dependency.tag == dependency::version::Tag::Git {
+    if resolution.tag == ResolutionTag::Git && dependency.tag == dependency::version::Tag::Git {
         return resolution.value.git.eql(&dependency.value.git, buf, buf);
     }
 
-    if resolution.tag == Resolution::Tag::Github
+    if resolution.tag == ResolutionTag::Github
         && dependency.tag == dependency::version::Tag::Github
     {
         return resolution.value.github.eql(&dependency.value.github, buf, buf);

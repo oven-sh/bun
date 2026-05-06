@@ -611,12 +611,12 @@ pub fn install_isolated_packages(
                 nodes: if skip_dependencies {
                     Vec::new()
                 } else {
-                    Vec::with_capacity(pkg_deps.len() as usize)
+                    Vec::with_capacity(pkg_deps.len as usize)
                 },
                 dependencies: if skip_dependencies {
                     Vec::new()
                 } else {
-                    Vec::with_capacity(pkg_deps.len() as usize)
+                    Vec::with_capacity(pkg_deps.len as usize)
                 },
                 ..Default::default()
             })?;
@@ -656,7 +656,7 @@ pub fn install_isolated_packages(
             let queue_mark = node_queue.len();
 
             dep_ids_sort_buf.clear();
-            dep_ids_sort_buf.reserve(pkg_deps.len() as usize);
+            dep_ids_sort_buf.reserve(pkg_deps.len as usize);
             for _dep_id in pkg_deps.begin()..pkg_deps.end() {
                 let dep_id: DependencyID = u32::try_from(_dep_id).unwrap();
                 dep_ids_sort_buf.push(dep_id);
@@ -781,7 +781,7 @@ pub fn install_isolated_packages(
                             let peer_dep_version = &peer_dep.version.value.npm.version;
                             let res_version = &res.value.npm.version;
 
-                            if !peer_dep_version.satisfies(res_version, string_buf, string_buf) {
+                            if !peer_dep_version.satisfies(*res_version, string_buf, string_buf) {
                                 // TODO: add warning!
                             }
 
@@ -904,7 +904,8 @@ pub fn install_isolated_packages(
 
         let mut store_entries: store::entry::List = store::entry::List::default();
 
-        let mut entry_queue: LinearFifo<QueuedEntry, DynamicBuffer<QueuedEntry>> = LinearFifo::init();
+        let mut entry_queue: LinearFifo<QueuedEntry, DynamicBuffer<QueuedEntry>> =
+            LinearFifo::<QueuedEntry, DynamicBuffer<QueuedEntry>>::init();
 
         entry_queue.write_item(QueuedEntry {
             node_id: store::node::Id::from(0),
@@ -1245,7 +1246,7 @@ pub fn install_isolated_packages(
                                     };
                                     if lockfile
                                         .patched_dependencies
-                                        .contains(semver::semver_string::Builder::string_hash(name_version))
+                                        .contains(&semver::semver_string::Builder::string_hash(name_version))
                                     {
                                         break 'eligible false;
                                     }
@@ -1757,7 +1758,7 @@ pub fn install_isolated_packages(
                     .expect("unreachable");
 
                     // 1
-                    if sys::renameat(Fd::cwd(), bun_str::zstr!(b"node_modules"), Fd::cwd(), temp_node_modules).is_err() {
+                    if sys::renameat(Fd::cwd(), bun_core::zstr!("node_modules"), Fd::cwd(), temp_node_modules).is_err() {
                         break 'is_new_bun_modules true;
                     }
 
@@ -1966,7 +1967,7 @@ pub fn install_isolated_packages(
                     if dep_id == invalid_dependency_id {
                         // .monotonic is okay in this block because the task isn't running on another
                         // thread.
-                        entry_steps[entry_id.get() as usize].store(installer::Step::SymlinkDependencies, Ordering::Relaxed);
+                        entry_steps[entry_id.get() as usize].store(installer::Step::SymlinkDependencies as u32, Ordering::Relaxed);
                     } else {
                         // dep_id is valid meaning this was a dependency that resolved to the root
                         // package. it gets an entry in the store.
@@ -1980,11 +1981,11 @@ pub fn install_isolated_packages(
 
                     // if injected=true this might be false
                     if !seen_workspace_ids.get_or_put(pkg_id)?.found_existing {
-                        entry_steps[entry_id.get() as usize].store(installer::Step::SymlinkDependencies, Ordering::Relaxed);
+                        entry_steps[entry_id.get() as usize].store(installer::Step::SymlinkDependencies as u32, Ordering::Relaxed);
                         installer.start_task(entry_id);
                         continue;
                     }
-                    entry_steps[entry_id.get() as usize].store(installer::Step::Done, Ordering::Relaxed);
+                    entry_steps[entry_id.get() as usize].store(installer::Step::Done as u32, Ordering::Relaxed);
                     installer.on_task_complete(entry_id, installer::CompleteState::Skipped);
                     continue;
                 }
@@ -1992,7 +1993,7 @@ pub fn install_isolated_packages(
                     // no installation required, will only need to be linked to packages that depend on it.
                     debug_assert!(entry_dependencies[entry_id.get() as usize].list.is_empty());
                     // .monotonic is okay because the task isn't running on another thread.
-                    entry_steps[entry_id.get() as usize].store(installer::Step::Done, Ordering::Relaxed);
+                    entry_steps[entry_id.get() as usize].store(installer::Step::Done as u32, Ordering::Relaxed);
                     installer.on_task_complete(entry_id, installer::CompleteState::Skipped);
                     continue;
                 }
@@ -2044,7 +2045,7 @@ pub fn install_isolated_packages(
                         #[cfg(not(windows))]
                         {
                             break 'stale if let Ok(st) = sys::lstat(local.slice_z()) {
-                                sys::posix::s_islnk(u32::try_from(st.mode).unwrap())
+                                sys::posix::s_islnk(u32::try_from(st.st_mode).unwrap())
                             } else {
                                 false
                             };
@@ -2067,7 +2068,7 @@ pub fn install_isolated_packages(
                                 // final step, so the directory existing at its
                                 // final path is the completeness signal.
                                 installer.append_global_store_entry_path(&mut store_path, entry_id, installer::Which::Final);
-                                break 'needs_install !sys::directory_exists_at(Fd::cwd(), store_path.slice_z().as_bytes())
+                                break 'needs_install !sys::directory_exists_at(Fd::cwd(), store_path.slice_z())
                                     .ok()
                                     .unwrap_or(false);
                             }
@@ -2103,7 +2104,7 @@ pub fn install_isolated_packages(
                             match installer.link_project_to_global_store(entry_id) {
                                 bun_sys::Result::Ok(()) => {}
                                 bun_sys::Result::Err(err) => {
-                                    entry_steps[entry_id.get() as usize].store(installer::Step::Done, Ordering::Relaxed);
+                                    entry_steps[entry_id.get() as usize].store(installer::Step::Done as u32, Ordering::Relaxed);
                                     installer.on_task_fail(entry_id, installer::TaskError::SymlinkDependencies(err));
                                     continue;
                                 }
@@ -2113,7 +2114,7 @@ pub fn install_isolated_packages(
                             installer.link_to_hidden_node_modules(entry_id);
                         }
                         // .monotonic is okay because the task isn't running on another thread.
-                        entry_steps[entry_id.get() as usize].store(installer::Step::Done, Ordering::Relaxed);
+                        entry_steps[entry_id.get() as usize].store(installer::Step::Done as u32, Ordering::Relaxed);
                         installer.on_task_complete(entry_id, installer::CompleteState::Skipped);
                         continue;
                     }
@@ -2121,7 +2122,7 @@ pub fn install_isolated_packages(
                     let cache_subpath_z: &bun_str::ZStr = match pkg_res_tag {
                         ResolutionTag::Npm => manager.cached_npm_package_folder_name(
                             pkg_name.slice(string_buf),
-                            &pkg_res.value.npm.version,
+                            pkg_res.value.npm.version,
                             patch_info.contents_hash(),
                         ),
                         ResolutionTag::Git => {
@@ -2154,11 +2155,11 @@ pub fn install_isolated_packages(
                                         bun_core::handle_oom(pkg_cache_dir_subpath.append(b"package.json"));
                                         break 'exists sys::exists_at(cache_dir, pkg_cache_dir_subpath.slice_z());
                                     }
-                                    _ => sys::directory_exists_at(cache_dir, pkg_cache_dir_subpath.slice_z().as_bytes())
+                                    _ => sys::directory_exists_at(cache_dir, pkg_cache_dir_subpath.slice_z())
                                         .unwrap_or(false),
                                 };
                                 if exists {
-                                    manager.set_preinstall_state(pkg_id, installer.lockfile, install::PreinstallState::Done);
+                                    manager.set_preinstall_state(pkg_id, install::PreinstallState::Done);
                                 }
                                 break 'missing_from_cache !exists;
                             }
@@ -2175,7 +2176,7 @@ pub fn install_isolated_packages(
                             if patch_log.has_errors() {
                                 // monotonic is okay because we haven't started the task yet (it isn't running
                                 // on another thread)
-                                entry_steps[entry_id.get() as usize].store(installer::Step::Done, Ordering::Relaxed);
+                                entry_steps[entry_id.get() as usize].store(installer::Step::Done as u32, Ordering::Relaxed);
                                 installer.on_task_fail(entry_id, installer::TaskError::Patching(patch_log));
                                 continue;
                             }
@@ -2218,7 +2219,7 @@ pub fn install_isolated_packages(
                                     }
                                     // .monotonic is okay because an error means the task isn't
                                     // running on another thread.
-                                    entry_steps[entry_id.get() as usize].store(installer::Step::Done, Ordering::Relaxed);
+                                    entry_steps[entry_id.get() as usize].store(installer::Step::Done as u32, Ordering::Relaxed);
                                     installer.on_task_complete(entry_id, installer::CompleteState::Fail);
                                     continue;
                                 }
@@ -2261,7 +2262,7 @@ pub fn install_isolated_packages(
                                     }
                                     // .monotonic is okay because an error means the task isn't
                                     // running on another thread.
-                                    entry_steps[entry_id.get() as usize].store(installer::Step::Done, Ordering::Relaxed);
+                                    entry_steps[entry_id.get() as usize].store(installer::Step::Done as u32, Ordering::Relaxed);
                                     installer.on_task_complete(entry_id, installer::CompleteState::Fail);
                                     continue;
                                 }
@@ -2302,7 +2303,7 @@ pub fn install_isolated_packages(
                                     }
                                     // .monotonic is okay because an error means the task isn't
                                     // running on another thread.
-                                    entry_steps[entry_id.get() as usize].store(installer::Step::Done, Ordering::Relaxed);
+                                    entry_steps[entry_id.get() as usize].store(installer::Step::Done as u32, Ordering::Relaxed);
                                     installer.on_task_complete(entry_id, installer::CompleteState::Fail);
                                     continue;
                                 }
@@ -2316,7 +2317,7 @@ pub fn install_isolated_packages(
                     // this is `uninitialized` or `single_file_module`.
                     debug_assert!(false);
                     // .monotonic is okay because the task isn't running on another thread.
-                    entry_steps[entry_id.get() as usize].store(installer::Step::Done, Ordering::Relaxed);
+                    entry_steps[entry_id.get() as usize].store(installer::Step::Done as u32, Ordering::Relaxed);
                     installer.on_task_complete(entry_id, installer::CompleteState::Skipped);
                     continue;
                 }
@@ -2351,19 +2352,23 @@ pub fn install_isolated_packages(
                 // and the .acquire load `pendingTaskCount`.
                 let step = entry_step.load(Ordering::Relaxed);
 
-                if step == installer::Step::Done {
+                if step == installer::Step::Done as u32 {
                     continue;
                 }
 
                 done = false;
 
-                log!("entry not done: {}, {}\n", entry_id.get(), <&'static str>::from(step));
+                log!(
+                    "entry not done: {}, {}\n",
+                    entry_id.get(),
+                    <&'static str>::from(installer::Step::from_u32(step))
+                );
 
                 let deps = &store.entries.items_dependencies()[entry_id.get() as usize];
                 for dep in deps.slice() {
                     // .monotonic is okay because `Wait.isDone` already synchronized with the tasks.
                     let dep_step = entry_steps[dep.entry_id.get() as usize].load(Ordering::Relaxed);
-                    if dep_step != installer::Step::Done {
+                    if dep_step != installer::Step::Done as u32 {
                         log!(", parents:\n - ");
                         let parent_ids = store::entry::debug_gather_all_parents(entry_id, installer.store);
                         for &parent_id in &parent_ids {
@@ -2386,7 +2391,7 @@ pub fn install_isolated_packages(
         }
 
         let mut summary = core::mem::take(&mut installer.summary);
-        summary.successfully_installed = core::mem::take(&mut installer.installed);
+        summary.successfully_installed = Some(core::mem::take(&mut installer.installed));
 
         return Ok(summary);
     }
@@ -2414,12 +2419,8 @@ fn hex_lower(bytes: &[u8]) -> impl core::fmt::Display + '_ {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
             const ALPHABET: &[u8; 16] = b"0123456789abcdef";
             for &b in self.0 {
-                f.write_str(unsafe {
-                    core::str::from_utf8_unchecked(&[
-                        ALPHABET[(b >> 4) as usize],
-                        ALPHABET[(b & 0x0f) as usize],
-                    ])
-                })?;
+                let pair = [ALPHABET[(b >> 4) as usize], ALPHABET[(b & 0x0f) as usize]];
+                f.write_str(unsafe { core::str::from_utf8_unchecked(&pair) })?;
             }
             Ok(())
         }

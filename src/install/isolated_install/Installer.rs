@@ -655,6 +655,23 @@ pub enum Step {
     Blocked,
 }
 
+impl From<Step> for &'static str {
+    /// Zig `@tagName(step)`.
+    fn from(s: Step) -> &'static str {
+        match s {
+            Step::LinkPackage => "link_package",
+            Step::SymlinkDependencies => "symlink_dependencies",
+            Step::CheckIfBlocked => "check_if_blocked",
+            Step::SymlinkDependencyBinaries => "symlink_dependency_binaries",
+            Step::RunPreinstall => "run_preinstall",
+            Step::Binaries => "binaries",
+            Step::RunPostInstallAndPrePostPrepare => "run_postinstall_and_pre_post_prepare",
+            Step::Done => "done",
+            Step::Blocked => "blocked",
+        }
+    }
+}
+
 impl Step {
     /// Decode the `AtomicU32` column repr back into a `Step`. The column is
     /// only ever stored via `Step::* as u32` (this file) so the value is

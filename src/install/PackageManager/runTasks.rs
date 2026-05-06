@@ -197,7 +197,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         let _ptask_guard = scopeguard::guard((), move |()| {
             // SAFETY: `ptask_ptr` was produced by `Box::into_raw` in
             // `PatchTask::new_*`; ownership returned exactly once here.
-            unsafe { PatchTask::destroy(ptask_ptr) };
+            // PORT NOTE: queue node is typed as the `crate::PatchTask` stub
+            // (intrusive `next` carrier); cast back to the real
+            // `patch_install::PatchTask` it was pushed as.
+            unsafe { PatchTask::destroy(ptask_ptr.cast()) };
         });
         ptask.run_from_main_thread(manager, log_level)?;
         if let PatchTaskCallback::Apply(apply) = &mut ptask.callback {
@@ -1601,7 +1604,16 @@ pub fn generate_network_task_for_tarball<'a>(
             .unwrap()
             .patchfile_hash()
             .unwrap();
-        let task = PatchTask::new_apply_patch_hash(this, package.meta.id, patch_hash, h);
+        // PORT NOTE: `patch_install::PatchTask` is still typed against the
+        // crate-level stub `PackageManager`; until the two structs unify, route
+        // through the stub singleton (`crate::PackageManager::get()`). Both
+        // refer to the same install-phase global state in Zig.
+        let task = PatchTask::new_apply_patch_hash(
+            crate::PackageManager::get(),
+            package.meta.id,
+            patch_hash,
+            h,
+        );
         // SAFETY: `task` is a fresh non-null `Box::into_raw` from
         // `new_apply_patch_hash`; we hold the only reference.
         if let PatchTaskCallback::Apply(apply) = unsafe { &mut (*task).callback } {

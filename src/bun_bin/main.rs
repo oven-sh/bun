@@ -29,6 +29,23 @@ use bun_core::StackCheck;
 #[global_allocator]
 static ALLOC: bun_alloc::Mimalloc = bun_alloc::Mimalloc;
 
+/// ASAN runtime options override. Lives in the binary crate so it is a direct
+/// link input — the ASAN runtime weak-defines this symbol, and an rlib/archive
+/// member that only provides it would never be extracted, so the override in
+/// `bun_safety::asan` silently didn't apply (manifesting as a
+/// `Thread::currentSingleton().stack().contains(this)` assert in
+/// `JSGlobalObject::GlobalPropertyInfo` because `detect_stack_use_after_return`
+/// puts C++ stack locals on a heap-backed fake stack JSC's conservative GC
+/// can't see). Unconditional: harmless dead symbol when ASAN isn't linked.
+#[unsafe(no_mangle)]
+pub extern "C" fn __asan_default_options() -> *const core::ffi::c_char {
+    // detect_stack_use_after_return=0: keep stack locals on the real stack so
+    //   JSC's conservative GC scan and `StackBounds::contains` see them.
+    // detect_leaks=0: off by default (Linux defaults it on); CI opts in via
+    //   ASAN_OPTIONS with a suppressions file.
+    c"detect_stack_use_after_return=0:detect_leaks=0".as_ptr()
+}
+
 fn main() {
     // 1. Crash handler first so anything below gets a usable trace.
     bun_crash_handler::init();

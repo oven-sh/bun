@@ -2286,6 +2286,11 @@ impl PackageManager {
     /// Zig: `Options.public_hoist_pattern: ?PnpmMatcher = null` — isolated
     /// installer public-hoist matcher.
     pub public_hoist_pattern: Option<crate::pnpm_matcher::PnpmMatcher>,
+    /// Zig: `Options.minimum_release_age_ms: ?f64 = null` — `--minimum-release-age`.
+    pub minimum_release_age_ms: Option<f64>,
+    /// Zig: `Options.minimum_release_age_excludes: ?[]const []const u8 = null`.
+    /// `&'static` slices because they alias process-lifetime CLI argv.
+    pub minimum_release_age_excludes: Option<Vec<&'static [u8]>>,
 }
 /// Port of `Options.Do` (src/install/PackageManager/PackageManagerOptions.zig).
 /// Field-access shape (Zig packed-struct of bools) so Phase-A drafts written

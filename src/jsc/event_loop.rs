@@ -38,6 +38,7 @@ pub use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 pub use crate::concurrent_promise_task::ConcurrentPromiseTask;
 pub use crate::cpp_task::{ConcurrentCppTask, CppTask};
 pub use crate::garbage_collection_controller::GarbageCollectionController;
+pub use crate::jsc_scheduler as JSCScheduler;
 pub use crate::posix_signal_handle::{PosixSignalHandle, PosixSignalTask};
 pub use crate::work_task::{WorkTask, WorkTaskContext};
 

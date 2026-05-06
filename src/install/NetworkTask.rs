@@ -485,7 +485,7 @@ impl NetworkTask {
             // trait in Phase B.
             name: strings::StringOrTinyString::init_append_if_needed(
                 name,
-                FileSystem::filename_store_instance(),
+                &mut DirnameStoreAppender(FileSystem::instance().dirname_store()),
             )?,
             loaded_manifest: loaded_manifest.cloned(),
             is_extended_manifest: needs_extended,

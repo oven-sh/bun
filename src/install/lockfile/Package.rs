@@ -366,14 +366,14 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
             builder.count(patched_dep.path.slice(old.buffers.string_bytes.as_slice()));
         }
         let new_extern_string_count =
-            self.bin.count(old_string_buf, old_extern_string_buf, builder);
+            self.bin.count(old_string_buf, old_extern_string_buf, &mut *builder) as usize;
         let old_dependencies: &[Dependency] =
             self.dependencies.get(old.buffers.dependencies.as_slice());
         let old_resolutions: &[PackageID] =
             self.resolutions.get(old.buffers.resolutions.as_slice());
 
         for dependency in old_dependencies {
-            dependency.count(old_string_buf, builder);
+            dependency.count(old_string_buf, &mut *builder);
         }
 
         builder.allocate()?;

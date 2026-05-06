@@ -587,7 +587,7 @@ impl JSValkeyClient {
                 break 'get_url_slice &fallback_url_buf[..written];
             };
 
-            match URL::from_utf8(corrected_url) {
+            match <URL as UrlShim>::from_utf8(corrected_url) {
                 Some(u) => u,
                 None => return Err(global_object.throw_invalid_arguments("Invalid URL format")),
             }

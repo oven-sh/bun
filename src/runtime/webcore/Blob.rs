@@ -4103,7 +4103,7 @@ impl Blob {
     }
 }
 
-pub use Lifetime as BlobLifetime;
+pub use crate::webcore::Lifetime as BlobLifetime;
 
 // ──────────────────────────────────────────────────────────────────────────
 // toStringWithBytes / toString / toJSON / toFormData / toArrayBuffer{View}

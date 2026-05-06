@@ -976,7 +976,12 @@ pub trait StaticHasher: Default + 'static {
     fn hash(input: &[u8], out: &mut Self::Digest, engine: Option<*mut boring_ssl::ENGINE>);
 }
 
-#[bun_jsc::JsClass]
+// PORT NOTE: `#[bun_jsc::JsClass]` cannot expand over a generic struct (it emits
+// `*mut StaticCryptoHasher` without `<H>`). In Zig each `StaticCryptoHasher(Hasher, name)`
+// instantiation gets its own `.classes.ts` codegen; the Rust equivalent must apply
+// `JsClass` to each concrete monomorphization (MD4/MD5/SHA1/…) once the macro grows
+// generic/alias support.
+// TODO(port): blocked_on: bun_jsc::JsClass generic-type support (or per-alias derive)
 pub struct StaticCryptoHasher<H: StaticHasher> {
     pub hashing: H,
     pub digested: bool,

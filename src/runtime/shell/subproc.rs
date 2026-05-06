@@ -1209,7 +1209,7 @@ impl<'a> SpawnArgs<'a> {
     /// - `next() bool`
     pub fn fill_env<const DISABLE_PATH_LOOKUP_FOR_ARV0: bool>(
         &mut self,
-        env_iter: &mut EnvMap::Iterator,
+        env_iter: &mut crate::shell::env_map::Iterator<'_>,
     ) {
         self.override_env = true;
         self.env_array

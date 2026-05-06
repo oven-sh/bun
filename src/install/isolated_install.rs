@@ -318,7 +318,7 @@ pub fn install_isolated_packages(
                 }
             }
 
-            let mut scratch = bun_core::handle_oom(DynamicBitSet::init_empty(peer_name_count as usize));
+            let mut scratch = DynamicBitSetUnmanaged::init_empty(peer_name_count as usize)?;
 
             let mut changed = true;
             while changed {
@@ -361,7 +361,7 @@ pub fn install_isolated_packages(
         // ctx_hash is 0 when the package has no leaking peers (or is a workspace).
         let mut early_dedupe: HashMap<EarlyDedupeKey, store::node::Id> = HashMap::default();
 
-        let mut root_declares_workspace = DynamicBitSet::init_empty(lockfile.packages.len());
+        let mut root_declares_workspace = DynamicBitSet::init_empty(lockfile.packages.len())?;
         for _dep_idx in pkg_dependency_slices[0].begin()..pkg_dependency_slices[0].end() {
             let dep_idx: DependencyID = u32::try_from(_dep_idx).unwrap();
             if !dependencies[dep_idx as usize].behavior.is_workspace() {

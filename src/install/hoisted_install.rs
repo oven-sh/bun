@@ -522,7 +522,18 @@ pub fn install_hoisted_packages(
             return Err(bun_core::err!("InstallFailed"));
         }
 
-        summary.successfully_installed = Some(installer.successfully_installed);
+        // PORT NOTE: Zig copies the bitset header (`summary.* = installer.*`);
+        // Rust moves. `replace` with a fresh empty so `installer` stays whole
+        // for the `link_remaining_bins` / `complete_remaining_scripts` calls
+        // below. Route through `installer.summary` because `summary` itself is
+        // exclusively borrowed by `installer` for this scope.
+        {
+            let taken = core::mem::replace(
+                &mut installer.successfully_installed,
+                Bitset::init_empty(0)?,
+            );
+            installer.summary.successfully_installed = Some(taken);
+        }
 
         // need to make sure bins are linked before completing any remaining scripts.
         // this can happen if a package fails to download

@@ -1744,10 +1744,10 @@ pub fn init(
 
     // SAFETY: main-thread init
     if unsafe { VERBOSE_INSTALL } {
-        Output::pretty_errorln(
-            "Cache Dir: {s}",
-            &[&bstr::BStr::new(&options.cache_directory)],
-        );
+        Output::pretty_errorln(format_args!(
+            "Cache Dir: {}",
+            bstr::BStr::new(&options.cache_directory),
+        ));
         Output::flush();
     }
 

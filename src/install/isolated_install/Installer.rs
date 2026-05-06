@@ -30,6 +30,7 @@ use super::file_copier::FileCopier;
 use super::hardlinker::Hardlinker;
 use super::symlinker::{self, Symlinker};
 use super::store::{self, Store};
+use super::store::{EntryListExt as _, NodeListExt as _};
 
 /// Zig: `Resolution.Tag` — Rust can't nest a type inside a struct, so the
 /// enum lives at module level in `crate::resolution`.

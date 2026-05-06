@@ -1751,8 +1751,9 @@ pub extern "C" fn Bun__FetchResponse_finalize(this: *mut FetchTasklet) {
     bun_output::scoped_log!(FetchTasklet, "onResponseFinalize");
     // SAFETY: called from JSC finalizer with valid FetchTasklet ctx
     let this = unsafe { &mut *this };
-    if let Some(response) = this.native_response.as_ref() {
-        let body = response.get_body_value();
+    if let Some(response) = this.native_response {
+        // SAFETY: native_response is intrusively-ref'd by FetchTasklet; alive until unref.
+        let body = unsafe { (*response).get_body_value() };
         // Three scenarios:
         //
         // 1. We are streaming, in which case we should not ignore the body.

@@ -5,13 +5,14 @@ use bun_core::Output;
 use bun_logger as logger;
 use bun_str::strings;
 
-use bun_install::lockfile::{
+use super::{
     self as lockfile, assert_no_uninitialized_padding, DependencyIDList, DependencyList,
     ExternalStringBuffer, Lockfile, PackageIDList, Stream, StringBuffer, Tree,
 };
-use bun_install::{
+use crate::{
     invalid_package_id, Aligner, Dependency, DependencyID, PackageID, PackageManager,
 };
+use crate::package_manager_real::package_manager_options::Options as PackageManagerOptions;
 
 #[derive(Default)]
 pub struct Buffers {
@@ -214,7 +215,7 @@ where
 
 pub fn save<S, W>(
     lockfile: &Lockfile,
-    options: &PackageManager::Options,
+    options: &PackageManagerOptions,
     stream: &mut S,
     writer: &mut W,
 ) -> Result<(), bun_core::Error>
@@ -299,7 +300,7 @@ where
                         }
                     }
                     Tag::Tarball => {
-                        if let bun_install::dependency::TarballUri::Local(local) =
+                        if let crate::dependency::URI::Local(local) =
                             &dep.version.value.tarball.uri
                         {
                             let tarball = lockfile.str(local);

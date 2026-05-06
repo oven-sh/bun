@@ -393,3 +393,43 @@ pub mod sync {
     }
     // `deinit` → `Drop` (Vec<u8> auto-frees).
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// `std.process.Child.run` shim — port of the blocking `run` helper used by
+// `bun_install::repository::exec` (src/install/repository.zig:360). The
+// actual subprocess execution lives in `bun_runtime::api::bun::process::sync`
+// at a higher tier; this crate only owns the data shapes so `bun_install`
+// can name them without a dep cycle (runtime → install → spawn).
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Port of `std.process.Child.Term`.
+#[derive(Clone, Copy, Debug)]
+pub enum Term {
+    Exited(u32),
+    Signal(u32),
+    Stopped(u32),
+    Unknown(u32),
+}
+
+/// Options for [`run`] — port of `std.process.Child.RunOptions` (subset used
+/// by `repository.zig`).
+pub struct RunOptions<'a> {
+    pub argv: &'a [&'a [u8]],
+    pub env_map: &'a bun_sys::EnvMap,
+}
+
+/// Result of [`run`] — port of `std.process.Child.RunResult`.
+pub struct RunResult {
+    pub term: Term,
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+}
+
+/// Port of `std.process.Child.run`. Blocking spawn that captures stdout/stderr.
+///
+/// TODO(port): wire to `bun_runtime::api::bun::process::sync::spawn` once the
+/// runtime crate is reachable here without a cycle. Typed stub for now so
+/// `bun_install::repository` type-checks.
+pub fn run(_opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Error> {
+    todo!("blocked_on: bun_runtime::api::bun::process::sync::spawn (dep cycle)")
+}

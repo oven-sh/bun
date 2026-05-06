@@ -719,7 +719,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/publish<r>.
 ";
 
                 Output::pretty(intro_text);
-                clap::simple_help(PUBLISH_PARAMS);
+                clap::simple_help(&PUBLISH_PARAMS);
                 Output::pretty(outro_text);
                 Output::flush();
             }
@@ -772,7 +772,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/info<r>.
 ";
 
                 Output::pretty(intro_text);
-                clap::simple_help(INFO_PARAMS);
+                clap::simple_help(&INFO_PARAMS);
                 Output::pretty(outro_text);
                 Output::flush();
             }
@@ -795,7 +795,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>.
 "#;
 
                 Output::pretty(intro_text);
-                clap::simple_help(WHY_PARAMS);
+                clap::simple_help(&WHY_PARAMS);
                 Output::pretty(outro_text);
                 Output::flush();
             }
@@ -820,7 +820,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
 ";
 
                 Output::pretty(intro_text);
-                clap::simple_help(PM_PARAMS);
+                clap::simple_help(&PM_PARAMS);
                 Output::pretty(outro_text);
                 Output::flush();
             }

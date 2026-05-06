@@ -777,14 +777,14 @@ fn update_package_json_and_install_and_cli(
 
     if manager.options.should_print_command_name() {
         // Zig: `"..." ++ Global.package_json_version_with_sha ++ "..."` (comptime concat).
-        // `concat!` only takes literals; `concatcp!` accepts `const &str` items and yields `&'static str`.
+        // `concatcp!` yields `&'static str`, but `format_args!` requires a string *literal*
+        // for its template. Splice the version as a runtime arg instead — this matches the
+        // approach taken by every other CLI subcommand banner (see e.g. `outdated_command.rs`,
+        // `update_interactive_command.rs`).
         Output::prettyln(format_args!(
-            const_format::concatcp!(
-                "<r><b>bun {} <r><d>v",
-                bun_core::Global::PACKAGE_JSON_VERSION_WITH_SHA,
-                "<r>\n"
-            ),
+            "<r><b>bun {} <r><d>v{}<r>\n",
             <&'static str>::from(subcommand),
+            bun_core::Global::package_json_version_with_sha,
         ));
         Output::flush();
     }
@@ -886,16 +886,15 @@ impl fmt::Display for ShellPathFormatter<'_> {
             write!(
                 writer,
                 "{}",
-                bun_core::fmt::fmt_path(
+                bun_core::fmt::fmt_path_u8(
                     &remaining[..space as usize],
-                    bun_core::fmt::PathOptions {
+                    bun_core::fmt::PathFormatOptions {
                         escape_backslashes: true,
                         path_sep: if cfg!(windows) {
                             bun_core::fmt::PathSep::Windows
                         } else {
                             bun_core::fmt::PathSep::Posix
                         },
-                        ..Default::default()
                     },
                 ),
             )?;
@@ -906,16 +905,15 @@ impl fmt::Display for ShellPathFormatter<'_> {
         write!(
             writer,
             "{}",
-            bun_core::fmt::fmt_path(
+            bun_core::fmt::fmt_path_u8(
                 remaining,
-                bun_core::fmt::PathOptions {
+                bun_core::fmt::PathFormatOptions {
                     escape_backslashes: true,
                     path_sep: if cfg!(windows) {
                         bun_core::fmt::PathSep::Windows
                     } else {
                         bun_core::fmt::PathSep::Posix
                     },
-                    ..Default::default()
                 },
             ),
         )
@@ -989,8 +987,8 @@ pub fn update_package_json_and_install(
             cli: cli_ptr,
             subcommand,
         };
-        let mut fetcher = bun_bundler::bundle_v2::BundleV2::DependenciesScanner {
-            ctx: core::ptr::addr_of_mut!(analyzer) as *mut core::ffi::c_void,
+        let mut fetcher = DependenciesScanner {
+            ctx: core::ptr::addr_of_mut!(analyzer) as *mut (),
             entry_points: &cli.positionals[1..],
             // TODO(port): Zig used `@ptrCast(&Analyzer.onAnalyze)` to erase the `*@This()` param to
             // `*anyopaque`. Provide an `extern "C"` thunk or match `DependenciesScanner.onFetch`'s

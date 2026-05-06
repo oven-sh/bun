@@ -4864,6 +4864,119 @@ pub fn renameat_z(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr) -> Maybe<()>
     renameat(from_dir, from, to_dir, to)
 }
 
+/// sys.zig:2461 — option struct for [`renameat_concurrently`]. Zig used a
+/// `comptime` anonymous struct param `{ move_fallback: bool = false }`; Rust
+/// surfaces it as a runtime options struct so callers can build it inline.
+#[derive(Default, Clone, Copy)]
+pub struct RenameatConcurrentlyOptions {
+    pub move_fallback: bool,
+}
+/// Alias: `bun_install` Phase-A drafts spelled this `RenameOptions`.
+pub type RenameOptions = RenameatConcurrentlyOptions;
+
+/// sys.zig:4296 — `moveFileZSlowMaybe`. Thin wrapper kept for source parity
+/// with Zig callers (`renameatConcurrently` falls back through here).
+#[inline]
+pub fn move_file_z_slow_maybe(from_dir: Fd, filename: &ZStr, to_dir: Fd, destination: &ZStr) -> Maybe<()> {
+    move_file_z_slow(from_dir, filename, to_dir, destination)
+}
+
+/// sys.zig:2461 — `renameatConcurrently`. Tries an atomic NOREPLACE rename,
+/// then EXCHANGE, then a racy delete-tree + rename. With `move_fallback` set,
+/// an EXDEV result falls through to a slow open/copy.
+pub fn renameat_concurrently(
+    from_dir_fd: Fd,
+    from: &ZStr,
+    to_dir_fd: Fd,
+    to: &ZStr,
+    opts: RenameatConcurrentlyOptions,
+) -> Maybe<()> {
+    match renameat_concurrently_without_fallback(from_dir_fd, from, to_dir_fd, to) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            if opts.move_fallback && e.get_errno() == E::EXDEV {
+                bun_core::output::debug_warn(
+                    "renameatConcurrently() failed with E.XDEV, falling back to moveFileZSlowMaybe()",
+                );
+                return move_file_z_slow_maybe(from_dir_fd, from, to_dir_fd, to);
+            }
+            Err(e)
+        }
+    }
+}
+
+/// sys.zig:2480 — `renameatConcurrentlyWithoutFallback`.
+pub fn renameat_concurrently_without_fallback(
+    from_dir_fd: Fd,
+    from: &ZStr,
+    to_dir_fd: Fd,
+    to: &ZStr,
+) -> Maybe<()> {
+    let mut did_atomically_replace = false;
+    let _ = did_atomically_replace; // tracked for parity with Zig
+
+    'attempt: {
+        {
+            // Happy path: the folder doesn't exist in the cache dir, so we can
+            // just rename it. We don't need to delete anything.
+            let err = match renameat2(
+                from_dir_fd,
+                from,
+                to_dir_fd,
+                to,
+                Renameat2Flags { exclude: true, ..Default::default() },
+            ) {
+                // if ENOENT don't retry
+                Err(err) => {
+                    if err.get_errno() == E::NOENT {
+                        return Err(err);
+                    }
+                    err
+                }
+                Ok(()) => break 'attempt,
+            };
+
+            // Windows doesn't have any equivalent of renameat with swap
+            #[cfg(not(windows))]
+            {
+                // Fallback path: the folder exists in the cache dir, it might be in a strange state
+                // let's attempt to atomically replace it with the temporary folder's version
+                if matches!(err.get_errno(), E::EXIST | E::NOTEMPTY | E::OPNOTSUPP) {
+                    did_atomically_replace = true;
+                    match renameat2(
+                        from_dir_fd,
+                        from,
+                        to_dir_fd,
+                        to,
+                        Renameat2Flags { exchange: true, ..Default::default() },
+                    ) {
+                        Err(_) => {}
+                        Ok(()) => break 'attempt,
+                    }
+                    did_atomically_replace = false;
+                }
+            }
+            #[cfg(windows)]
+            { let _ = err; }
+        }
+
+        //  sad path: let's try to delete the folder and then rename it
+        if to_dir_fd.is_valid() {
+            let _ = Dir::from_fd(to_dir_fd).delete_tree(to.as_bytes());
+        } else {
+            // TODO(port): `std.fs.deleteTreeAbsolute(to)` — full recursive
+            // walk pending alongside `Dir::delete_tree` (B-2).
+            let _ = Dir::cwd().delete_tree(to.as_bytes());
+        }
+        match renameat(from_dir_fd, from, to_dir_fd, to) {
+            Err(err) => return Err(err),
+            Ok(()) => {}
+        }
+    }
+
+    Ok(())
+}
+
 /// Linux `eventfd(initval, flags)` — kernel notification fd.
 #[cfg(target_os = "linux")]
 pub fn eventfd(initval: u32, flags: i32) -> Maybe<Fd> {

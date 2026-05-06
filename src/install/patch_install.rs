@@ -91,7 +91,7 @@ pub struct ApplyPatch {
     pub cache_dir_subpath_without_patch_hash: Box<[u8]>,
 
     /// this is non-null if this was called before a Task, for example extracting
-    pub task_id: Option<Task::Id>,
+    pub task_id: Option<TaskId>,
     pub install_context: Option<InstallContext>,
     // dependency_id: ?struct = null,
     pub logger: Log,

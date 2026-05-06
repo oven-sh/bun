@@ -176,18 +176,18 @@ fn fmt_status_text_line(status: bun_test::Execution::Result, emoji_or_color: boo
     // For now, they are the same.
     match emoji_or_color {
         true => match status.basic_result() {
-            bun_test::BasicResult::Pending => Output::pretty_fmt("<r><d>…<r>", emoji_or_color),
-            bun_test::BasicResult::Pass => Output::pretty_fmt("<r><green>✓<r>", emoji_or_color),
-            bun_test::BasicResult::Fail => Output::pretty_fmt("<r><red>✗<r>", emoji_or_color),
-            bun_test::BasicResult::Skip => Output::pretty_fmt("<r><yellow>»<d>", emoji_or_color),
-            bun_test::BasicResult::Todo => Output::pretty_fmt("<r><magenta>✎<r>", emoji_or_color),
+            bun_test::BasicResult::Pending => Output::pretty_fmt::<true>("<r><d>…<r>"),
+            bun_test::BasicResult::Pass => Output::pretty_fmt::<true>("<r><green>✓<r>"),
+            bun_test::BasicResult::Fail => Output::pretty_fmt::<true>("<r><red>✗<r>"),
+            bun_test::BasicResult::Skip => Output::pretty_fmt::<true>("<r><yellow>»<d>"),
+            bun_test::BasicResult::Todo => Output::pretty_fmt::<true>("<r><magenta>✎<r>"),
         },
         false => match status.basic_result() {
-            bun_test::BasicResult::Pending => Output::pretty_fmt("<r><d>(pending)<r>", emoji_or_color),
-            bun_test::BasicResult::Pass => Output::pretty_fmt("<r><green>(pass)<r>", emoji_or_color),
-            bun_test::BasicResult::Fail => Output::pretty_fmt("<r><red>(fail)<r>", emoji_or_color),
-            bun_test::BasicResult::Skip => Output::pretty_fmt("<r><yellow>(skip)<d>", emoji_or_color),
-            bun_test::BasicResult::Todo => Output::pretty_fmt("<r><magenta>(todo)<r>", emoji_or_color),
+            bun_test::BasicResult::Pending => Output::pretty_fmt::<false>("<r><d>(pending)<r>"),
+            bun_test::BasicResult::Pass => Output::pretty_fmt::<false>("<r><green>(pass)<r>"),
+            bun_test::BasicResult::Fail => Output::pretty_fmt::<false>("<r><red>(fail)<r>"),
+            bun_test::BasicResult::Skip => Output::pretty_fmt::<false>("<r><yellow>(skip)<d>"),
+            bun_test::BasicResult::Todo => Output::pretty_fmt::<false>("<r><magenta>(todo)<r>"),
         },
     }
 }

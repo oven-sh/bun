@@ -195,8 +195,13 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
     }
 
     /// Zig: `pub fn create(event_loop: anytype, subprocess: *ProcessType, result: StdioResult, source: Source) *This`
-    pub fn create<E>(
-        event_loop: E,
+    ///
+    /// PORT NOTE: Zig's `anytype` dispatched on type (`EventLoopHandle`,
+    /// `*VirtualMachine`, `*MiniEventLoop`) inside `EventLoopHandle.init`. The
+    /// Rust port splits that into separate overloads, so callers resolve to an
+    /// `EventLoopHandle` before calling and we accept it directly.
+    pub fn create(
+        event_loop: EventLoopHandle,
         subprocess: *mut P,
         result: StdioResult,
         source: Source,
@@ -207,7 +212,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             stdio_result: result,
             source,
             process: subprocess,
-            event_loop: EventLoopHandle::init(event_loop),
+            event_loop,
             buffer: b"" as *const [u8],
         }));
         // SAFETY: `this` was just allocated above and is non-null.

@@ -6,23 +6,37 @@ use bun_sql::shared::Data;
 pub const TO: i32 = 114;
 pub const FROM: [Short; 2] = [114, 3802];
 
+// Zig `toJS(value: *Data)` only ever takes `*Data`, but the caller
+// (`tag_jsc::to_js_with_type<T>`) is generic. Model the single concrete arm as a
+// trait impl so the generic dispatcher can name a bound; mirrors date.rs /
+// bytea.rs.
+pub trait JsonToJs {
+    fn json_to_js(self, global: &JSGlobalObject) -> Result<JSValue, AnyPostgresError>;
+}
+
 // PORT NOTE: reshaped `value: *Data` + `defer value.deinit()` → owned `Data`;
 // Drop at scope exit replaces the explicit deinit.
-pub fn to_js(
-    global: &JSGlobalObject,
-    value: Data,
-) -> Result<JSValue, AnyPostgresError> {
-    let str = bun_string::String::borrow_utf8(value.slice());
-    // `defer str.deref()` — handled by Drop on bun_string::String.
-    let parse_result = JSValue::parse_json(str.to_js(global)?, global);
-    // PORT NOTE: Zig `parse_result.AnyPostgresError()` is a typo for
-    // `.isAnyError()` (verified against bun_jsc surface — no `AnyPostgresError`
-    // method exists on JSValue).
-    if parse_result.is_any_error() {
-        return Err(global.throw_value(parse_result).into());
-    }
+impl JsonToJs for Data {
+    fn json_to_js(self, global: &JSGlobalObject) -> Result<JSValue, AnyPostgresError> {
+        let str = bun_string::String::borrow_utf8(self.slice());
+        // `defer str.deref()` — handled by Drop on bun_string::String.
+        let parse_result = JSValue::parse_json(str.to_js(global)?, global);
+        // PORT NOTE: Zig `parse_result.AnyPostgresError()` is a typo for
+        // `.isAnyError()` (verified against bun_jsc surface — no `AnyPostgresError`
+        // method exists on JSValue).
+        if parse_result.is_any_error() {
+            return Err(global.throw_value(parse_result).into());
+        }
 
-    Ok(parse_result)
+        Ok(parse_result)
+    }
+}
+
+pub fn to_js<T: JsonToJs>(
+    global: &JSGlobalObject,
+    value: T,
+) -> Result<JSValue, AnyPostgresError> {
+    value.json_to_js(global)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

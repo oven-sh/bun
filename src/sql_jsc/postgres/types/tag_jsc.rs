@@ -5,6 +5,7 @@
 use crate::jsc::{JSGlobalObject, JSType, JSValue, JsResult};
 use bun_sql::postgres::types::tag::Tag;
 use bun_sql::postgres::AnyPostgresError;
+use bun_sql::shared::Data;
 
 // `comptime T: Tag` → const generic per PORTING.md. `Tag` in the Rust port is a
 // `#[repr(transparent)] struct Tag(Short)` with associated consts (non-exhaustive
@@ -22,32 +23,50 @@ pub fn to_js_typed_array_type(t: Tag) -> Result<JSType, bun_core::Error> {
     }
 }
 
-// TODO(port): Zig used `(comptime Type: type, value: Type)` so each call site
-// monomorphizes and the per-arm callees (`jsNumber`, `json::to_js`, ...) all
-// accept `anytype`. In Rust this needs a trait that every arm's callee accepts,
-// or per-type overloads. The body is gated until that trait lands; only the
-// signature is exposed for callers to type-check against.
-pub fn to_js_with_type<T>(
+/// Zig's `toJSWithType(comptime Type: type, value: Type)` monomorphizes per call
+/// site so each `switch` arm only needs to typecheck for the concrete `Type`
+/// actually passed. Rust generics don't admit that — every arm must typecheck
+/// for every `T`. Following the pattern established in `date.rs` (`DateToJs`)
+/// and `PostgresString.rs` (`ToJsWithType`), this trait supplies one conversion
+/// per arm-target so the original match body is preserved verbatim. Concrete
+/// value types implement only the conversions that make sense for them; the
+/// rest may `unreachable!()` (mirroring Zig's per-monomorphization compile
+/// error becoming a runtime impossibility once the `tag` is fixed).
+pub trait TagToJs: Sized {
+    /// `.numeric | .float4 | .float8 | .int4` arms → `JSValue.jsNumber(value)`.
+    fn as_js_number(self) -> f64;
+    /// `.int8` arm → `JSValue.fromInt64NoTruncate(global, value)`.
+    fn as_i64(self) -> i64;
+    /// `.bool` arm → `bool.toJS(global, value)`.
+    fn as_bool(self) -> bool;
+    /// `.json | .jsonb | .bytea` arms → `json.toJS` / `bytea.toJS`, both of
+    /// which take owned `Data` in the Rust port.
+    fn into_data(self) -> Data;
+    /// `.timestamp | .timestamptz` arm → `date.toJS(global, value)`.
+    fn date_to_js(self, global: &JSGlobalObject) -> JSValue;
+    /// `else` arm → `string.toJS(global, value)`.
+    fn string_to_js(self, global: &JSGlobalObject) -> Result<JSValue, AnyPostgresError>;
+}
+
+pub fn to_js_with_type<T: TagToJs>(
     tag: Tag,
     global: &JSGlobalObject,
     value: T,
 ) -> Result<JSValue, AnyPostgresError> {
-    // TODO(port): per-arm dispatch trait (DataCell is the only caller and it
-    // always passes `*Data`, so a single concrete impl may suffice).
     match tag {
-        Tag::numeric => Ok(JSValue::js_number(value)),
-        Tag::float4 | Tag::float8 => Ok(JSValue::js_number(value)),
-        Tag::json | Tag::jsonb => super::json::to_js(global, value),
-        Tag::bool => super::r#bool::to_js(global, value),
-        Tag::timestamp | Tag::timestamptz => super::date::to_js(global, value),
-        Tag::bytea => super::bytea::to_js(global, value),
-        Tag::int8 => Ok(JSValue::from_int64_no_truncate(global, value)),
-        Tag::int4 => Ok(JSValue::js_number(value)),
-        _ => super::postgres_string::to_js(global, value),
+        Tag::numeric => Ok(JSValue::js_number(value.as_js_number())),
+        Tag::float4 | Tag::float8 => Ok(JSValue::js_number(value.as_js_number())),
+        Tag::json | Tag::jsonb => super::json::to_js(global, value.into_data()),
+        Tag::bool => super::r#bool::to_js(global, value.as_bool()),
+        Tag::timestamp | Tag::timestamptz => Ok(value.date_to_js(global)),
+        Tag::bytea => super::bytea::to_js(global, value.into_data()),
+        Tag::int8 => Ok(JSValue::from_int64_no_truncate(global, value.as_i64())),
+        Tag::int4 => Ok(JSValue::js_number(value.as_js_number())),
+        _ => value.string_to_js(global),
     }
 }
 
-pub fn to_js<T>(
+pub fn to_js<T: TagToJs>(
     tag: Tag,
     global: &JSGlobalObject,
     value: T,
@@ -144,5 +163,5 @@ pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Tag> {
 //   source:     src/sql_jsc/postgres/types/tag_jsc.zig (155 lines)
 //   confidence: medium
 //   todos:      2
-//   notes:      to_js_with_type's anytype-per-arm dispatch needs a trait in Phase B; ERR(...).throw() lowered to throw_value(ERR_INVALID_ARG_TYPE(..)); Tag consts are lowercase in the Rust port.
+//   notes:      to_js_with_type's anytype-per-arm dispatch ported as TagToJs trait (no impls yet — no callers in tree); ERR(...).throw() lowered to throw_value(ERR_INVALID_ARG_TYPE(..)); Tag consts are lowercase in the Rust port.
 // ──────────────────────────────────────────────────────────────────────────

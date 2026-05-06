@@ -211,7 +211,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
         | FieldType::MYSQL_TYPE_BLOB => {
             if raw {
                 let data = reader.encode_len_string()?;
-                return Ok(SQLDataCell::raw(&data));
+                return Ok(SQLDataCell::raw(Some(&data)));
             }
             let string_data = reader.encode_len_string()?;
             // Only treat as binary if character_set indicates the binary pseudo-charset.
@@ -219,7 +219,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
             // with _bin collations (e.g., utf8mb4_bin) also have the BINARY flag set,
             // but should return strings, not buffers.
             if binary && character_set == BINARY_CHARSET {
-                return Ok(SQLDataCell::raw(&string_data));
+                return Ok(SQLDataCell::raw(Some(&string_data)));
             }
             let slice = string_data.slice();
             Ok(SQLDataCell {
@@ -233,7 +233,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
         FieldType::MYSQL_TYPE_JSON => {
             if raw {
                 let data = reader.encode_len_string()?;
-                return Ok(SQLDataCell::raw(&data));
+                return Ok(SQLDataCell::raw(Some(&data)));
             }
             let string_data = reader.encode_len_string()?;
             let slice = string_data.slice();
@@ -252,12 +252,12 @@ pub fn decode_binary_value<Context: ReaderContext>(
                 Ok(SQLDataCell { tag: CellTag::Bool, value: CellValue { bool_: if !slice.is_empty() && slice[0] == 1 { 1 } else { 0 } }, ..Default::default() })
             } else {
                 let data = reader.encode_len_string()?;
-                Ok(SQLDataCell::raw(&data))
+                Ok(SQLDataCell::raw(Some(&data)))
             }
         }
         _ => {
-            let data = reader.read(column_length)?;
-            Ok(SQLDataCell::raw(&data))
+            let data = reader.read(column_length as usize)?;
+            Ok(SQLDataCell::raw(Some(&data)))
         }
     }
 }

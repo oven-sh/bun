@@ -189,7 +189,7 @@ pub fn get_peer_x509_certificate(this: &mut This, global: &JSGlobalObject, _fram
 pub fn get_x509_certificate(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::UNDEFINED) };
     // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
-    let cert = unsafe { boringssl::SSL_get_certificate(ssl_ptr) };
+    let cert = unsafe { ffi::SSL_get_certificate(ssl_ptr) };
     if let Some(x509) = cert {
         return X509::to_js_object(x509.ref_(), global);
     }
@@ -313,7 +313,7 @@ pub fn get_peer_certificate(this: &mut This, global: &JSGlobalObject, frame: &Ca
 pub fn get_certificate(this: &mut This, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let Some(ssl_ptr) = this.socket.ssl() else { return Ok(JSValue::UNDEFINED) };
     // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
-    let cert = unsafe { boringssl::SSL_get_certificate(ssl_ptr) };
+    let cert = unsafe { ffi::SSL_get_certificate(ssl_ptr) };
 
     if let Some(x509) = cert {
         return X509::to_js(x509, global);

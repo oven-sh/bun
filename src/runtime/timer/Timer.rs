@@ -335,7 +335,9 @@ impl All {
 
     #[unsafe(no_mangle)]
     pub extern "C" fn Bun__Timer__getNextID() -> i32 {
-        let vm = VirtualMachine::get();
+        // SAFETY: `VirtualMachine::get()` returns the singleton VM pointer which
+        // is valid for the lifetime of the process once initialized.
+        let vm = unsafe { &mut *VirtualMachine::get() };
         vm.timer.last_id = vm.timer.last_id.wrapping_add(1);
         vm.timer.last_id
     }
@@ -723,9 +725,9 @@ impl All {
                         }};
                     }
                     match string.encoding() {
-                        bun_str::Encoding::Latin1 => parse_slice!(string.latin1()),
-                        bun_str::Encoding::Utf8 => parse_slice!(string.utf8()),
-                        bun_str::Encoding::Utf16 => parse_slice!(string.utf16()),
+                        bun_str::strings::EncodingNonAscii::Latin1 => parse_slice!(string.latin1()),
+                        bun_str::strings::EncodingNonAscii::Utf8 => parse_slice!(string.utf8()),
+                        bun_str::strings::EncodingNonAscii::Utf16 => parse_slice!(string.utf16()),
                     }
                     break 'parsed accumulator;
                 };

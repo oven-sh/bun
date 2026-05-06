@@ -529,6 +529,14 @@ pub mod command {
         unsafe { GLOBAL_CLI_CTX }
     }
 
+    /// Zig: `pub fn get() Context` — process-global CLI context handle.
+    #[inline]
+    pub fn get() -> Context<'static> {
+        // SAFETY: only called after `create_context_data` initialized GLOBAL_CLI_CTX
+        // during single-threaded startup; callers treat the result as read-mostly.
+        unsafe { &mut *GLOBAL_CLI_CTX }
+    }
+
     pub fn is_bun_x(argv0: &[u8]) -> bool {
         #[cfg(windows)]
         { return strings::ends_with(argv0, b"bunx.exe") || strings::ends_with(argv0, b"bunx"); }

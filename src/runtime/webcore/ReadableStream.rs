@@ -371,17 +371,17 @@ impl ReadableStream {
                 store.r#ref();
                 reader.to_readable_stream(global_this)
             }
-            webcore::blob::StoreData::S3(s3) => {
+            webcore::blob::store::Data::S3(s3) => {
                 let credentials = s3.get_credentials();
                 let path = s3.path();
                 let proxy = global_this.bun_vm().transpiler.env.get_http_proxy(true, None, None);
                 let proxy_url = proxy.as_ref().map(|p| p.href.as_slice());
 
-                bun_s3::readable_stream(
+                webcore::s3::client::readable_stream(
                     credentials,
                     path,
-                    blob.offset,
-                    if blob.size != Blob::MAX_SIZE { Some(blob.size) } else { None },
+                    blob.offset as usize,
+                    if blob.size != Blob::MAX_SIZE { Some(blob.size as usize) } else { None },
                     proxy_url,
                     s3.request_payer,
                     global_this,
@@ -400,7 +400,7 @@ impl ReadableStream {
             return ReadableStream::empty(global_this);
         };
         match &store.data {
-            webcore::blob::StoreData::File(_) => {
+            webcore::blob::store::Data::File(_) => {
                 let reader = NewSource::<FileReader>::new(NewSource {
                     global_this,
                     context: FileReader {

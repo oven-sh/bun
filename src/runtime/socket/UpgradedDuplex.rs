@@ -275,12 +275,12 @@ impl<'a> UpgradedDuplex<'a> {
                         global,
                         None,
                         0,
-                        on_writable,
-                        self as *mut _ as *mut (),
+                        __jsc_host_on_writable,
+                        self as *mut Self as *mut c_void,
                     );
                     writable_callback.ensure_still_alive();
 
-                    host_fn::set_function_data(writable_callback, self as *mut _ as *mut ());
+                    host_fn::set_function_data(writable_callback, self as *mut Self as *mut c_void);
                     self.on_writable_callback = Strong::create(writable_callback, global);
                     writable_callback
                 }
@@ -296,12 +296,12 @@ impl<'a> UpgradedDuplex<'a> {
                         global,
                         None,
                         0,
-                        on_close_js,
-                        self as *mut _ as *mut (),
+                        __jsc_host_on_close_js,
+                        self as *mut Self as *mut c_void,
                     );
                     close_callback.ensure_still_alive();
 
-                    host_fn::set_function_data(close_callback, self as *mut _ as *mut ());
+                    host_fn::set_function_data(close_callback, self as *mut Self as *mut c_void);
                     self.on_close_callback = Strong::create(close_callback, global);
                     close_callback
                 }

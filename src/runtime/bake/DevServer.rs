@@ -5311,11 +5311,21 @@ impl UnrefSourceMapRequest {
     }
 }
 
-pub fn read_string32<R: bun_io::Read>(reader: &mut R) -> Result<Box<[u8]>, bun_core::Error> {
-    let len = reader.read_u32_le()?;
-    let mut memory = vec![0u8; len as usize].into_boxed_slice();
-    reader.read_no_eof(&mut memory)?;
-    Ok(memory)
+// PORT NOTE: Zig used `anytype` reader (`.readInt(u32, .little)`, `.readNoEof`).
+// The only caller (`ErrorReportRequest`) reads from a `&[u8]` body slice, so this
+// is specialized to a slice cursor — matching the local zero-copy variant there.
+pub fn read_string32(reader: &mut &[u8]) -> Result<Box<[u8]>, bun_core::Error> {
+    if reader.len() < 4 {
+        return Err(bun_core::err!("EndOfStream"));
+    }
+    let (len_bytes, rest) = reader.split_at(4);
+    let len = u32::from_le_bytes([len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]]) as usize;
+    if rest.len() < len {
+        return Err(bun_core::err!("EndOfStream"));
+    }
+    let (data, tail) = rest.split_at(len);
+    *reader = tail;
+    Ok(data.to_vec().into_boxed_slice())
 }
 
 pub struct TestingBatch {

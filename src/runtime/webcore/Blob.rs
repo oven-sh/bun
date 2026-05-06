@@ -5971,14 +5971,14 @@ pub trait FileCloser: Sized {
         }
 
         if is_allowed_to_close_fd
-            && self.opened_fd() != bun_sys::INVALID_FD
+            && self.opened_fd() != Fd::INVALID
             && self.opened_fd().stdio_tag().is_none()
         {
             #[cfg(windows)]
             bun_aio::Closer::close(self.opened_fd(), self.loop_());
             #[cfg(not(windows))]
             let _ = self.opened_fd().close_allowing_bad_file_descriptor(None);
-            self.set_opened_fd(bun_sys::INVALID_FD);
+            self.set_opened_fd(Fd::INVALID);
         }
 
         false

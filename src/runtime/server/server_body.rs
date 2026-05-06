@@ -1762,8 +1762,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // TODO(port): Request::cloneInto out-param pattern — reshape to return value
             request_.clone_into(&mut existing_request, ctx, false)?;
         } else {
-            let fetch_error = Fetch::fetch_type_error_strings_get(jsc::C::js_value_get_type(ctx, first_arg.as_ref()));
-            let err = ctx.to_type_error(jsc::ErrorCode::INVALID_ARG_TYPE, format_args!("{}", BStr::new(fetch_error)));
+            // SAFETY: FFI call into JSC C API; ctx is a live JSGlobalObject and first_arg is a valid JSValueRef
+            let js_type = unsafe { jsc::C::JSValueGetType(ctx as *const _ as *mut _, first_arg.as_ref()) } as usize;
+            let fetch_error = Fetch::FETCH_TYPE_ERROR_STRINGS
+                .get(js_type)
+                .copied()
+                .unwrap_or(Fetch::FETCH_TYPE_ERROR_STRINGS[0]);
+            let err = ctx.to_type_error(jsc::ErrorCode::INVALID_ARG_TYPE, format_args!("{}", fetch_error));
             return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(ctx, err));
         }
 

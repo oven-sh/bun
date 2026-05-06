@@ -617,6 +617,7 @@ impl Repository {
         let folder_name_buf = unsafe { &mut (*tl_bufs()).folder_name_buf };
         let folder_name = {
             use std::io::Write;
+            let total = folder_name_buf.len();
             let mut cursor = &mut folder_name_buf[..];
             write!(
                 &mut cursor,
@@ -625,7 +626,7 @@ impl Repository {
             )
             .map_err(|_| err!("NoSpaceLeft"))?;
             // TODO(port): narrow error set
-            let written = folder_name_buf.len() - cursor.len() - 1;
+            let written = total - cursor.len() - 1;
             // SAFETY: NUL written at folder_name_buf[written] above.
             unsafe { bun_str::ZStr::from_raw(folder_name_buf.as_ptr(), written) }
         };

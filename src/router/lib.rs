@@ -180,6 +180,11 @@ mod b1_stubs {
 }
 use b1_stubs::{api, logger, wyhash, CoreError, FileSystem, Fs, HashedString, PathString};
 
+// PORT NOTE: `load_routes` takes the crate-private stub `b1_stubs::logger::Log`
+// (until bun_logger is wired). Re-export it so out-of-crate callers
+// (`bun_runtime::api::filesystem_router`) can construct one.
+pub use b1_stubs::logger::Log as RouteLoaderLog;
+
 // ──────────────────────────────────────────────────────────────────────────
 // CYCLEBREAK Phase B-0 — cross-tier decoupling
 // ──────────────────────────────────────────────────────────────────────────

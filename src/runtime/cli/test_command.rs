@@ -1404,7 +1404,7 @@ impl CommandLineReporter {
                     // Check if this file should be ignored based on coveragePathIgnorePatterns
                     if !opts.ignore_patterns.is_empty() {
                         let mut should_ignore = false;
-                        for pattern in opts.ignore_patterns {
+                        for pattern in &opts.ignore_patterns {
                             if bun_glob::r#match(pattern, relative_path).matches() {
                                 should_ignore = true;
                                 break;
@@ -1531,7 +1531,7 @@ impl CommandLineReporter {
                 let relative_path = resolve_path::relative(relative_dir, utf8);
 
                 let mut should_ignore = false;
-                for pattern in opts.ignore_patterns {
+                for pattern in &opts.ignore_patterns {
                     if bun_glob::r#match(pattern, relative_path).matches() {
                         should_ignore = true;
                         break;

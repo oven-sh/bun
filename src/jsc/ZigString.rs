@@ -977,8 +977,11 @@ impl Slice {
     }
 
     pub fn init_dupe(input: &[u8]) -> Result<Slice, AllocError> {
-        let duped: &'static [u8] = Box::leak(Box::<[u8]>::from(input));
-        Ok(Self::init(duped))
+        let len = input.len();
+        let ptr = Box::into_raw(Box::<[u8]>::from(input)).cast::<u8>();
+        // SAFETY: ptr/len describe a freshly-allocated default-allocator block;
+        // ownership moves into `Slice` (freed by its `Drop`).
+        Ok(Self::init(unsafe { slice::from_raw_parts(ptr, len) }))
     }
 
     pub fn byte_length(&self) -> usize {
@@ -1016,10 +1019,10 @@ impl Slice {
     }
 
     pub fn to_owned(&self) -> Result<Slice, AllocError> {
-        let duped: &'static [u8] = Box::leak(Box::<[u8]>::from(self.slice()));
+        let ptr = Box::into_raw(Box::<[u8]>::from(self.slice())).cast::<u8>();
         Ok(Slice {
             allocator: NullableAllocator::default_alloc(),
-            ptr: duped.as_ptr(),
+            ptr,
             len: self.len,
         })
     }

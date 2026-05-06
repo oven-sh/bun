@@ -6868,7 +6868,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         let mut minifier = tree.char_freq.as_ref().unwrap().compile();
         minify_renamer.assign_names_by_frequency(&mut minifier)?;
 
-        renamer = rename::Renamer::MinifyRenamer(minify_renamer);
+        renamer = rename::Renamer::MinifyRenamer(&mut *minify_renamer);
     } else {
         no_op_renamer = rename::NoOpRenamer::init(symbols, source);
         renamer = no_op_renamer.to_renamer();

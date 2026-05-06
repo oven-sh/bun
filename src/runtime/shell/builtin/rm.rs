@@ -127,7 +127,7 @@ impl Rm {
                         if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
                             Self::state_mut(interp, cmd).state =
                                 RmState::ParseOpts { idx, wait_write_err: true };
-                            let child = ChildPtr { node: cmd, tag: WriterTag::Builtin };
+                            let child = ChildPtr::new(cmd, WriterTag::Builtin);
                             return Builtin::of_mut(interp, cmd)
                                 .stderr
                                 .enqueue(child, usage, safeguard);
@@ -167,7 +167,7 @@ impl Rm {
                                     Self::state_mut(interp, cmd).state =
                                         RmState::ParseOpts { idx, wait_write_err: true };
                                     let child =
-                                        ChildPtr { node: cmd, tag: WriterTag::Builtin };
+                                        ChildPtr::new(cmd, WriterTag::Builtin);
                                     return Builtin::of_mut(interp, cmd)
                                         .stderr
                                         .enqueue(child, buf, safeguard);
@@ -262,7 +262,7 @@ impl Rm {
         if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
             Self::state_mut(interp, cmd).state =
                 RmState::ParseOpts { idx, wait_write_err: true };
-            let child = ChildPtr { node: cmd, tag: WriterTag::Builtin };
+            let child = ChildPtr::new(cmd, WriterTag::Builtin);
             return Builtin::of_mut(interp, cmd)
                 .stderr
                 .enqueue(child, buf, safeguard);
@@ -337,7 +337,7 @@ impl Rm {
                 if let RmState::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                     exec.output_count.fetch_add(1, Ordering::SeqCst);
                 }
-                let child = ChildPtr { node: cmd, tag: WriterTag::Builtin };
+                let child = ChildPtr::new(cmd, WriterTag::Builtin);
                 Builtin::of_mut(interp, cmd)
                     .stderr
                     .enqueue(child, &s, safeguard)

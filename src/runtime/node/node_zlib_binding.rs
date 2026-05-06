@@ -101,11 +101,22 @@ fn flush_value_is_valid(n: u32) -> bool {
     n <= 6
 }
 
-/// Local `JSValue::withAsyncContextIfNeeded` shim.
-// TODO(port): blocked_on: bun_jsc::JSValue::with_async_context_if_needed
+/// Local `JSValue::withAsyncContextIfNeeded` shim — wraps a callback so it
+/// restores the current AsyncLocalStorage context when later invoked.
+// TODO(port): hoist to `bun_jsc::JSValue::with_async_context_if_needed` once
+// the method lands on the upstream surface; the C++ symbol is stable.
 #[inline]
-fn with_async_context_if_needed(v: JSValue, _global: &JSGlobalObject) -> JSValue {
-    v
+fn with_async_context_if_needed(v: JSValue, global: &JSGlobalObject) -> JSValue {
+    unsafe extern "C" {
+        fn AsyncContextFrame__withAsyncContextIfNeeded(
+            global: *const JSGlobalObject,
+            callback: JSValue,
+        ) -> JSValue;
+    }
+    // SAFETY: FFI into JSC; `global` is live for the call. `as_ptr()` derives
+    // a `*mut` via the `UnsafeCell` interior; coerced to `*const` for the
+    // read-only C++ side.
+    unsafe { AsyncContextFrame__withAsyncContextIfNeeded(global.as_ptr(), v) }
 }
 
 impl CountedKeepAlive {

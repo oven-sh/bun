@@ -729,21 +729,55 @@ where
             unreachable!();
         }
 
-        // TODO(b2-blocked): EventLoopType::enqueue_task_concurrent — needs a trait
-        // bound on `EventLoopType` (only concrete instantiation is `EventLoop`).
-        let _ = task;
-        todo!("blocked_on: EventLoopType::enqueue_task_concurrent trait bound");
+        // SAFETY: `event_loop()` returns the live event-loop pointer owned by
+        // `Ctx`, which outlives the reloader.
+        unsafe { EventLoopType::enqueue_task_concurrent(self.event_loop(), task) };
     }
 
     pub fn enable_hot_module_reloading(this: *mut Ctx, entry_path: Option<&'static [u8]>) {
-        // TODO(b2-blocked): Zig's `enableHotModuleReloading` reaches into
-        // `ctx.bun_watcher` and `ctx.transpiler.{fs, env, resolver.watcher}`
-        // by structural duck-typing — Rust needs `HotReloaderCtx` to expose
-        // those as trait accessors before this body can compile generically.
-        // The transcribed body is preserved in git history; restore once the
-        // trait surface lands.
-        let _ = (this, entry_path);
-        todo!("blocked_on: HotReloaderCtx::{{bun_watcher, transpiler}} accessors");
+        // SAFETY: caller passes the live `Ctx` (VirtualMachine / DevServer)
+        // pointer; it outlives the reloader allocated below.
+        let ctx = unsafe { &mut *this };
+
+        // Zig: `if (@TypeOf(this.bun_watcher) == ImportWatcher) { if (!= .none) return; }
+        //        else { if (!= null) return; }`
+        if ctx.is_watcher_enabled() {
+            return;
+        }
+
+        let reloader = Box::into_raw(Box::new(Self {
+            ctx: this,
+            verbose: cfg!(feature = "debug_logs") || ctx.log_level_at_least_info(),
+            pending_count: AtomicU32::new(0),
+            main: MainFile::init(entry_path.unwrap_or(b"")),
+            tombstones: StringHashMap::default(),
+            _event_loop: PhantomData,
+        }));
+
+        let watcher_fs = ctx.watcher_fs();
+        let watcher = match Watcher::init(reloader, watcher_fs) {
+            Ok(w) => w,
+            Err(err) => {
+                // TODO(port): bun.handleErrorReturnTrace — debug-only diagnostics; no Rust equivalent yet
+                Output::panic(format_args!(
+                    "Failed to enable File Watcher: {}",
+                    err.name()
+                ));
+            }
+        };
+
+        // Zig: assigns `this.bun_watcher = .{.hot/.watch = w}` (or bare) and
+        // `this.transpiler.resolver.watcher = ResolveWatcher(...).init(w)` in one
+        // comptime-reflected block. Folded into the trait method.
+        let watcher_ptr = ctx.install_bun_watcher(watcher, RELOAD_IMMEDIATELY);
+
+        // SAFETY: single-threaded init; watcher thread not yet started.
+        unsafe { CLEAR_SCREEN = ctx.compute_clear_screen() };
+
+        // SAFETY: `watcher_ptr` was just installed into `ctx` and is live.
+        if let Err(_) = unsafe { (*watcher_ptr).start() } {
+            panic!("Failed to start File Watcher");
+        }
     }
 
     fn put_tombstone(

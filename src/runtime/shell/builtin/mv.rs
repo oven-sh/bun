@@ -60,7 +60,7 @@ impl Mv {
     ) -> Yield {
         if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
             Self::state_mut(interp, cmd).state = MvState::WaitingWriteErr { exit_code };
-            let child = ChildPtr { node: cmd, tag: WriterTag::Builtin };
+            let child = ChildPtr::new(cmd, WriterTag::Builtin);
             return Builtin::of_mut(interp, cmd)
                 .stderr
                 .enqueue(child, buf, safeguard);

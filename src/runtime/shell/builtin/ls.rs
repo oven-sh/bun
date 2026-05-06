@@ -290,7 +290,7 @@ impl OutputTaskVTable for Ls {
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                 exec.output_queue.push_back(child);
             }
-            let childptr = ChildPtr { node: cmd, tag: WriterTag::Builtin };
+            let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
             return Some(
                 Builtin::of_mut(interp, cmd)
                     .stderr
@@ -318,7 +318,7 @@ impl OutputTaskVTable for Ls {
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                 exec.output_queue.push_back(child);
             }
-            let childptr = ChildPtr { node: cmd, tag: WriterTag::Builtin };
+            let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
             let buf = output.slice().to_vec();
             return Some(
                 Builtin::of_mut(interp, cmd)

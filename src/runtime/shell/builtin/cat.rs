@@ -123,7 +123,7 @@ impl Cat {
     ) -> Yield {
         if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
             Self::state_mut(interp, cmd).state = CatState::WaitingWriteErr;
-            let child = ChildPtr { node: cmd, tag: WriterTag::Builtin };
+            let child = ChildPtr::new(cmd, WriterTag::Builtin);
             return Builtin::of_mut(interp, cmd)
                 .stderr
                 .enqueue(child, buf, safeguard);
@@ -168,7 +168,7 @@ impl Cat {
                     // blob stdin sources. For now there's nothing to read.
                     let buf: &[u8] = b"";
                     if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
-                        let child = ChildPtr { node: cmd, tag: WriterTag::Builtin };
+                        let child = ChildPtr::new(cmd, WriterTag::Builtin);
                         return Builtin::of_mut(interp, cmd)
                             .stdout
                             .enqueue(child, buf, safeguard);
@@ -299,7 +299,7 @@ impl Cat {
             | CatState::ExecFilepathArgs { chunks_queued, .. } => {
                 if let Some(safeguard) = stdout_needs_io {
                     *chunks_queued += 1;
-                    let child = ChildPtr { node: cmd, tag: WriterTag::Builtin };
+                    let child = ChildPtr::new(cmd, WriterTag::Builtin);
                     return Builtin::of_mut(interp, cmd)
                         .stdout
                         .enqueue(child, chunk, safeguard);

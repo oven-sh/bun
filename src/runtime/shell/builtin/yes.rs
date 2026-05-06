@@ -107,7 +107,7 @@ impl Yes {
             let me = Self::state_mut(interp, cmd);
             me.buffer[..me.buffer_used].to_vec()
         };
-        let child = ChildPtr { node: cmd, tag: WriterTag::Builtin };
+        let child = ChildPtr::new(cmd, WriterTag::Builtin);
         Builtin::of_mut(interp, cmd)
             .stdout
             .enqueue(child, &chunk, safeguard)

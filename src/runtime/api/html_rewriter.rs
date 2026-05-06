@@ -375,13 +375,23 @@ impl HTMLRewriter {
             // on the stack via ensure_still_alive above).
             let mut blob = unsafe { (*out_response).get_body_value().use_as_any_blob_allow_non_utf8_string() };
 
-            let _out_guard = scopeguard::guard((out_response_value, out_response), |(_v, r)| {
-                // SAFETY: r is the m_ctx pointer detached from v here, then
-                // finalized exactly once (Zig: dangerouslySetPtr + finalize).
+            let _out_guard = scopeguard::guard((out_response_value, out_response), |(v, r)| {
+                // `Response.js.dangerouslySetPtr(v, null)` — null out the JS
+                // wrapper's `m_ctx` so its GC finalize is a no-op, then finalize
+                // the native side ourselves (Zig: html_rewriter.zig:223-226).
+                #[cfg(all(windows, target_arch = "x86_64"))]
+                unsafe extern "sysv64" {
+                    fn Response__dangerouslySetPtr(value: JSValue, ptr: *mut core::ffi::c_void) -> bool;
+                }
+                #[cfg(not(all(windows, target_arch = "x86_64")))]
+                unsafe extern "C" {
+                    fn Response__dangerouslySetPtr(value: JSValue, ptr: *mut core::ffi::c_void) -> bool;
+                }
+                // SAFETY: `v` is the live JS wrapper (kept on stack via
+                // ensure_still_alive); `r` is its `m_ctx` pointer, detached here
+                // and finalized exactly once.
                 unsafe {
-                    // TODO(b2-blocked): `Response::js::dangerously_set_ptr` not
-                    // yet exported from the JSResponse codegen module.
-                    let _ = todo!("blocked_on: webcore::response::js::dangerously_set_ptr");
+                    let _ = Response__dangerouslySetPtr(v, core::ptr::null_mut());
                     // Manually invoke the finalizer to ensure it does what we want
                     Response::finalize(r);
                 }

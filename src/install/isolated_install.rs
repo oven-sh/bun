@@ -2168,11 +2168,14 @@ pub fn install_isolated_packages(
                         _ => 'missing_from_cache: {
                             if matches!(patch_info, installer::PatchInfo::None) {
                                 let exists = match pkg_res_tag {
-                                    ResolutionTag::Npm => 'exists: {
-                                        let cache_dir_path_save = pkg_cache_dir_subpath.save();
-                                        let _r = scopeguard::guard(cache_dir_path_save, |s| s.restore());
+                                    ResolutionTag::Npm => {
+                                        // PORT NOTE: reshaped for borrowck — capture length
+                                        // instead of `save()` so the path stays unborrowed.
+                                        let cache_dir_path_save = pkg_cache_dir_subpath.len();
                                         bun_core::handle_oom(pkg_cache_dir_subpath.append(b"package.json"));
-                                        break 'exists sys::exists_at(cache_dir, pkg_cache_dir_subpath.slice_z());
+                                        let exists = sys::exists_at(cache_dir, pkg_cache_dir_subpath.slice_z());
+                                        pkg_cache_dir_subpath.set_length(cache_dir_path_save);
+                                        exists
                                     }
                                     _ => sys::directory_exists_at(cache_dir, pkg_cache_dir_subpath.slice_z())
                                         .unwrap_or(false),

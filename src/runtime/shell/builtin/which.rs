@@ -37,7 +37,7 @@ impl Which {
         if argc == 0 {
             if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
                 Self::state_mut(interp, cmd).state = State::OneArg;
-                let child = ChildPtr { node: cmd, tag: WriterTag::Builtin };
+                let child = ChildPtr::new(cmd, WriterTag::Builtin);
                 return Builtin::of_mut(interp, cmd)
                     .stdout
                     .enqueue(child, b"\n", safeguard);
@@ -102,7 +102,7 @@ impl Which {
         let (path_env, cwd) = Self::path_and_cwd(interp, cmd);
         let resolved = Self::resolve(&path_env, &cwd, &arg);
 
-        let child = ChildPtr { node: cmd, tag: WriterTag::Builtin };
+        let child = ChildPtr::new(cmd, WriterTag::Builtin);
         match resolved {
             None => {
                 if let State::MultiArgs { had_not_found, waiting_write, .. } =

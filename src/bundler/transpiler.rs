@@ -310,6 +310,16 @@ impl<'a> Transpiler<'a> {
         Ok(())
     }
 
+    /// Port of the spec idiom `out.resolver.opts = out.options` (transpiler.zig
+    /// passes the same `BundleOptions` value to both struct fields; bake.zig:788
+    /// re-assigns after mutating `out.options`). In the Rust port the resolver
+    /// crate carries a FORWARD_DECL subset of `BundleOptions`, so re-project
+    /// rather than `Clone`. Called after `init_transpiler_with_options` mutates
+    /// `self.options` so the resolver sees the same conditions/target/public_path.
+    pub fn sync_resolver_opts(&mut self) {
+        self.resolver.opts = resolver_bundle_options_subset(&self.options);
+    }
+
     /// Port of `transpiler.zig:363 dumpEnvironmentVariables`.
     #[cold]
     #[inline(never)]

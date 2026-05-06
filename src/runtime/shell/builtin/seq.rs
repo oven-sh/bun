@@ -160,7 +160,7 @@ impl Seq {
     fn fail(interp: &mut Interpreter, cmd: NodeId, msg: &[u8]) -> Yield {
         if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
             Self::state_mut(interp, cmd).state = State::Err;
-            let child = ChildPtr { node: cmd, tag: WriterTag::Builtin };
+            let child = ChildPtr::new(cmd, WriterTag::Builtin);
             return Builtin::of_mut(interp, cmd)
                 .stderr
                 .enqueue(child, msg, safeguard);
@@ -196,7 +196,7 @@ impl Seq {
         if needs_io {
             Self::state_mut(interp, cmd).buf = out;
             let safeguard = Builtin::of(interp, cmd).stdout.needs_io().unwrap();
-            let child = ChildPtr { node: cmd, tag: WriterTag::Builtin };
+            let child = ChildPtr::new(cmd, WriterTag::Builtin);
             // PORT NOTE: reshaped for borrowck — clone the slice so the &mut
             // on stdout doesn't alias `buf`.
             let buf = Self::state_mut(interp, cmd).buf.clone();

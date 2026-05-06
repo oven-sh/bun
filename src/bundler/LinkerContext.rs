@@ -2929,7 +2929,11 @@ impl<'a> LinkerContext<'a> {
                 }
                 ImportTrackerStatus::NoMatch => {
                     // Report mismatched imports and exports
-                    // SAFETY: get() returns a stable *mut Symbol; ref is valid.
+                    // SAFETY: get() yields a stable *mut into the symbols NestedList
+                    // (NonNull-backed heap, never reallocated during linking). Sole live
+                    // &mut into that allocation for this scope — subsequent borrows
+                    // (`named_import` from graph.ast, `get_source` from parse_graph,
+                    // `self.log`) touch disjoint allocations and never reach symbols.
                     let symbol = unsafe { &mut *self.graph.symbols.get(tracker.import_ref).unwrap() };
                     let named_import: &NamedImport = self.graph.ast.items_named_imports()[prev_source_index as usize]
                         .get(&tracker.import_ref).unwrap();

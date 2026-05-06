@@ -1197,7 +1197,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         let open_flags = sys::O::DIRECTORY | sys::O::RDONLY;
         let fd = match openat_os_path(FD::cwd(), src, open_flags, 0) {
             Maybe::Err(err) => {
-                this.finish_concurrently(Maybe::Err(err.with_path(nodefs.os_path_into_sync_error_buf(src))));
+                this_ref.finish_concurrently(Maybe::Err(err.with_path(nodefs.os_path_into_sync_error_buf(src))));
                 return false;
             }
             Maybe::Ok(fd_) => fd_,
@@ -1207,7 +1207,7 @@ impl<const IS_SHELL: bool> NewAsyncCpTask<IS_SHELL> {
         let mut buf = OSPathBuffer::uninit();
         #[cfg(windows)]
         let normdest: OSPathSliceZ = match sys::normalize_path_windows::<u16>(FD::INVALID, dest, &mut buf, sys::NormalizeOpts { add_nt_prefix: false }) {
-            Maybe::Err(err) => { this.finish_concurrently(Maybe::Err(err)); return false; }
+            Maybe::Err(err) => { this_ref.finish_concurrently(Maybe::Err(err)); return false; }
             Maybe::Ok(n) => n,
         };
         #[cfg(not(windows))]

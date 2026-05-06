@@ -964,10 +964,12 @@ impl JSGlobalObject {
         // SAFETY: bunVMUnsafe returns a valid *VirtualMachine for this global.
         let vm_ptr = unsafe { &*(self.bun_vm_unsafe() as *mut VirtualMachine) };
 
-        if let Some(vm_) = VirtualMachine::vm_holder_vm() {
+        if let Some(vm_) = VirtualMachine::get_or_null() {
             #[cfg(debug_assertions)]
             {
-                debug_assert!(self.bun_vm_unsafe() == vm_ as *const _ as *mut c_void);
+                // SAFETY: address-equality only — neither pointer is dereferenced.
+                // `vm_` is already `*mut VirtualMachine`; cast is mut→mut.
+                debug_assert!(self.bun_vm_unsafe() == vm_ as *mut c_void);
             }
             let _ = vm_;
         } else {

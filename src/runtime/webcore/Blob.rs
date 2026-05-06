@@ -4148,9 +4148,10 @@ impl Blob {
             Lifetime::Temporary => {
                 // if there was a UTF-8 BOM, we need to clone the buffer because
                 // external doesn't support this case here yet.
-                if buf.len() != raw_bytes.len() {
+                if buf.len() != raw_slice.len() {
                     let out = BunString::clone_latin1(buf);
-                    unsafe { drop(Box::from_raw(raw_bytes as *const [u8] as *mut [u8])) };
+                    // SAFETY: `Temporary` ⇒ caller passed a leaked `Box<[u8]>`.
+                    unsafe { drop(Box::from_raw(raw_bytes)) };
                     return Ok(out.to_js(global));
                 }
                 Ok(ZigString::init(buf).to_external_value(global))
@@ -4199,12 +4200,16 @@ impl Blob {
         self.to_json_with_bytes::<{ Lifetime::Share }>(global, view_)
     }
 
+    /// See [`to_string_with_bytes`] for why `raw_bytes` is `*mut [u8]`.
     pub fn to_json_with_bytes<const LIFETIME: Lifetime>(
         &mut self,
         global: &JSGlobalObject,
-        raw_bytes: &[u8],
+        raw_bytes: *mut [u8],
     ) -> JsResult<JSValue> {
-        let (bom, buf) = strings::BOM::detect_and_split(raw_bytes);
+        // SAFETY: `raw_bytes` is valid for reads for the duration of this call.
+        let raw_slice: &[u8] = unsafe { &*raw_bytes };
+        let _ = raw_slice; // body reads via `buf`; binding kept for parity with to_string_with_bytes
+        let (bom, buf) = strings::BOM::detect_and_split(unsafe { &*raw_bytes });
         if buf.is_empty() {
             if LIFETIME == Lifetime::Temporary {
                 unsafe { drop(Box::from_raw(raw_bytes as *const [u8] as *mut [u8])) };

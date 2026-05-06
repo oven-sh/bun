@@ -845,10 +845,11 @@ pub type BundlerAtRule = DefaultAtRule;
 pub struct BundlerAtRuleParser<'a> {
     pub allocator: &'a Bump,
     /// Raw pointer aliasing the same `BabyList` that `Parser.import_records`
-    /// holds the unique `&mut` to (Zig passes one pointer to both — see
-    /// `parseBundler`, css_parser.zig:3245). Stored raw so the unique borrow
-    /// can flow into `parse_with`/`Parser::new`; only dereferenced in
-    /// `on_import_rule`, never concurrently with the parser's own use.
+    /// points to (Zig passes one `*BabyList` to both — see `parseBundler`,
+    /// css_parser.zig:3245). Both views are raw pointers sharing a single
+    /// SharedRW provenance (see `parse_bundler`); each materialises a
+    /// short-lived `&mut` only at the point of use, so accesses interleave
+    /// soundly under Stacked Borrows.
     pub import_records: *mut BabyList<ImportRecord>,
     pub layer_names: BabyList<LayerName>,
     pub options: &'a ParserOptions<'a>,

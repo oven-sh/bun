@@ -566,8 +566,12 @@ impl ServePlugins {
                 ServePluginsState::Pending { html_bundle_routes, dev_server, .. } => {
                     match cb {
                         ServePluginsCallback::HtmlBundleRoute(route) => {
-                            route.ref_();
-                            html_bundle_routes.push(route as *const _ as *mut _);
+                            // SAFETY: caller passed a live `&mut Route` coerced to `*mut`; we
+                            // bump its intrusive refcount before storing so it outlives the
+                            // pending state. Write provenance is preserved for the later
+                            // `&mut *route` in handle_on_resolve/handle_on_reject.
+                            unsafe { (*route).ref_() };
+                            html_bundle_routes.push(route);
                         }
                         ServePluginsCallback::DevServer(server) => {
                             debug_assert!(
@@ -598,7 +602,10 @@ impl ServePlugins {
         );
 
         self.ref_();
-        let _deref_guard = scopeguard::guard((), |_| self.deref_());
+        let this_ptr: *const Self = self;
+        // SAFETY: `self` originates from a `*mut ServePlugins` (Box::into_raw in init()); the
+        // raw pointer preserves that provenance for the paired deref_ on scope exit.
+        let _deref_guard = scopeguard::guard((), move |_| unsafe { Self::deref_(this_ptr) });
 
         let plugin = JSBundler::Plugin::create(global, bun_bundler::options::Target::Browser);
         // PERF(port): was stack-fallback alloc

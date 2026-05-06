@@ -236,8 +236,11 @@ static LOADER_HOOKS: core::sync::atomic::AtomicPtr<LoaderHooks> =
 
 /// Called by `bun_runtime` at startup. `hooks` must be `'static`.
 pub fn set_loader_hooks(hooks: &'static LoaderHooks) {
+    // SAFETY: `AtomicPtr` requires `*mut T` for storage, but the pointer is
+    // only ever loaded back as `&'static LoaderHooks` (see `loader_hooks()`)
+    // and never written through — provenance from `&'static` is preserved.
     LOADER_HOOKS.store(
-        hooks as *const LoaderHooks as *mut LoaderHooks,
+        (hooks as *const LoaderHooks).cast_mut(),
         core::sync::atomic::Ordering::Release,
     );
 }

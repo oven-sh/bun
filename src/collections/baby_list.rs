@@ -273,7 +273,9 @@ impl<T> BabyList<T> {
     #[inline]
     pub fn first(&mut self) -> Option<&mut T> {
         if self.len > 0 {
-            // SAFETY: len > 0.
+            // SAFETY: len > 0 so ptr[0] is initialized; `&mut self` gives exclusive access to the
+            // buffer (no other `&mut` to this allocation can be live), and the returned borrow is
+            // tied to `'_` of `self`.
             Some(unsafe { &mut *self.ptr.as_ptr() })
         } else {
             None
@@ -283,7 +285,9 @@ impl<T> BabyList<T> {
     #[inline]
     pub fn last(&mut self) -> Option<&mut T> {
         if self.len > 0 {
-            // SAFETY: len > 0.
+            // SAFETY: len > 0 so ptr[len-1] is initialized; `&mut self` gives exclusive access to
+            // the buffer (no other `&mut` to this allocation can be live), and the returned borrow
+            // is tied to `'_` of `self`.
             Some(unsafe { &mut *self.ptr.as_ptr().add(self.len as usize - 1) })
         } else {
             None

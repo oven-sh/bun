@@ -2067,6 +2067,26 @@ impl PackageManifestMap {
     ) -> Option<&mut npm::PackageManifest> {
         None
     }
+
+    /// Stub: `PackageManifestMap.byNameAllowExpired`
+    /// (src/install/PackageManifestMap.zig). Real body lives in
+    /// `package_manifest_map::PackageManifestMap::by_name_allow_expired`; the
+    /// stub always cache-misses. `pm` is a raw pointer so callers can pass the
+    /// aliased `*mut PackageManager` while holding field-disjoint borrows on
+    /// `manager.lockfile` / `manager.options` (Zig passes `*PackageManager`
+    /// freely without aliasing rules).
+    // TODO(port): blocked_on package_manifest_map / PackageManager type unification (reconciler-6)
+    pub fn by_name_allow_expired<PM>(
+        &mut self,
+        _pm: *mut PM,
+        _scope: &npm::registry::Scope,
+        _name: &[u8],
+        _is_expired: Option<&mut bool>,
+        _cache_behavior: package_manager::ManifestLoad,
+        _needs_extended_manifest: bool,
+    ) -> Option<&npm::PackageManifest> {
+        None
+    }
 }
 #[derive(Default)] pub struct PostinstallOptimizer;
 pub type Task = ();
@@ -2419,6 +2439,9 @@ impl RootPackageId {
     pub trusted_deps_to_add_to_package_json: Vec<Box<[u8]>>,
     /// Zig: `global_link_dir_path: stringZ = ""` (src/install/PackageManager.zig).
     pub global_link_dir_path: Box<[u8]>,
+    /// Zig: `manifests: PackageManifestMap = .{}` — cached npm registry
+    /// manifests keyed by package-name hash.
+    pub manifests: PackageManifestMap,
     /// Zig: `async_network_task_queue: AsyncNetworkTaskQueue` -- see stub type below.
     pub async_network_task_queue: AsyncNetworkTaskQueueStub,
     /// Zig: `preallocated_resolve_tasks: PreallocatedTaskStore` (HiveArray.Fallback) -- see stub.
@@ -3058,6 +3081,11 @@ pub struct CommandLineArguments {
     pub positionals: Vec<Box<[u8]>>,
     pub top_only: bool,
     pub depth: Option<usize>,
+    /// Zig: `CommandLineArguments.silent` — `--silent`; surfaced on the stub so
+    /// `bun_runtime::cli::{outdated,update_interactive}_command` can gate
+    /// `init()` failure diagnostics until the stub/real types unify
+    /// (reconciler-6).
+    pub silent: bool,
 }
 impl CommandLineArguments {
     /// Port of `CommandLineArguments.parse`
@@ -3076,12 +3104,28 @@ impl CommandLineArguments {
             positionals: real.positionals.iter().map(|p| Box::<[u8]>::from(&**p)).collect(),
             top_only: real.top_only,
             depth: real.depth,
+            silent: real.silent,
         })
     }
 }
 
 impl PackageManager {
     pub fn verbose_install() -> bool { false }
+
+    /// Port of `PackageManager.populateManifestCache`
+    /// (src/install/PackageManager/PopulateManifestCache.zig). Real body lives
+    /// in `package_manager_real::populate_manifest_cache`; the stub
+    /// `PackageManager` lacks the network/task plumbing so this defers until
+    /// the stub/real types unify (reconciler-6). Surfaced so
+    /// `bun_runtime::cli::outdated_command` can drive the manifest pre-fetch
+    /// path against the stub.
+    pub fn populate_manifest_cache(
+        &mut self,
+        _opts: package_manager::ManifestCacheOptions<'_>,
+    ) -> Result<(), bun_core::Error> {
+        // TODO(port): blocked_on package_manager_real::populate_manifest_cache un-gate (reconciler-6)
+        Ok(())
+    }
 
     /// Port of `PackageManager.init` (src/install/PackageManager.zig:568).
     /// Real body in `package_manager_real::init`; that impl returns

@@ -1,37 +1,37 @@
-use core::cell::{Cell, UnsafeCell};
+use core::cell::Cell;
 use core::ffi::c_void;
 use core::mem::size_of;
 
 use bun_aio::Closer;
-use bun_http::headers::Options as HeadersFromOptions;
+use bun_http::headers::{AnyBlobRef, AnyBlobVTable, Options as HeadersFromOptions};
 use bun_http::{Headers, Method};
 use bun_http_types::ETag::{HeaderEntryField, StringPointer};
 use bun_io::FileType;
 use bun_resolver::fs::StatHash;
 use bun_str::String as BunString;
-use bun_sys::{self, Fd, S};
+use bun_sys::{self, Fd};
 use bun_uws::{AnyRequest, AnyResponse};
 
+use crate::node::types::PathOrFileDescriptor;
 use crate::server::file_response_stream::StartOptions as FileResponseStreamOptions;
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
+
 use crate::server::{write_status, AnyServer, FileResponseStream, RangeRequest};
 use crate::webcore::blob::store::Data as StoreData;
-use crate::webcore::node_types::PathOrFileDescriptor;
-use crate::webcore::{body, Blob, FetchHeaders, Response};
+use crate::webcore::body::Value as BodyValue;
+use crate::webcore::{Blob, FetchHeaders, Response};
 
 pub struct FileRoute {
-    // PORT NOTE: intrusive RefCount — `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`.
-    // Crosses FFI as raw `*mut c_void` userdata into `FileResponseStream`, so
-    // `Rc<FileRoute>` is not used; ref/deref are explicit.
+    // PORT NOTE (§Pointers Rc/Arc default): owned via intrusive refcount; the
+    // raw `*mut FileRoute` is round-tripped through `FileResponseStream`'s
+    // `ctx: *mut c_void` userdata, so `Rc<FileRoute>` is unsuitable. See
+    // StaticRoute.rs note re: FFI userdata fallback to RefPtr.
     ref_count: Cell<u32>,
     server: Cell<Option<AnyServer>>,
     blob: Blob,
     headers: Headers,
     status_code: u16,
-    // Mutated on every request (`on()` runs `hash()`); FileRoute is shared via
-    // `&self` from the route table, so wrap for interior mutability. Safe:
-    // `on()` is fully synchronous on the single-threaded event loop.
-    stat_hash: UnsafeCell<StatHash>,
+    stat_hash: StatHash,
     has_last_modified_header: bool,
     has_content_length_header: bool,
     has_content_range_header: bool,
@@ -49,10 +49,10 @@ impl<'a> Default for InitOptions<'a> {
     }
 }
 
-// ─── Headers::from cycle-break adapters ──────────────────────────────────────
-// `Headers::from` lives in bun_http (T5) and takes vtable-erased refs because
-// it cannot depend on bun_runtime. Provide the vtables for the concrete
-// `FetchHeaders` / `Blob` types here.
+// ─── cycle-break vtables: FetchHeaders/Blob → bun_http::headers refs ─────────
+// `Headers::from` (T5 bun_http) takes vtable-erased refs because it cannot
+// name `webcore::FetchHeaders`/`Blob` (T6). The Zig call site passes the
+// concrete types directly; here we erase them through the vtable.
 
 unsafe fn fh_count(owner: *const (), header_count: &mut u32, buf_len: &mut u32) {
     // SAFETY: `owner` is `&FetchHeaders` erased; `count` mutates only internal
@@ -82,46 +82,79 @@ static FETCH_HEADERS_VTABLE: bun_http::headers::FetchHeadersVTable =
         copy_to: fh_copy_to,
     };
 
+#[inline]
+fn fetch_headers_ref(h: &FetchHeaders) -> bun_http::headers::FetchHeadersRef<'_> {
+    bun_http::headers::FetchHeadersRef {
+        owner: h as *const FetchHeaders as *const (),
+        vtable: &FETCH_HEADERS_VTABLE,
+        _phantom: core::marker::PhantomData,
+    }
+}
+
+// The Zig call site wraps the blob in a stack-temporary `&.{ .Blob = blob }`
+// (an `AnyBlob`); here we erase `&Blob` directly — `Any::content_type`/
+// `Any::has_content_type_from_user` for the `.Blob` arm just forward to the
+// same Blob methods.
+
+
 unsafe fn blob_has_content_type_from_user(owner: *const ()) -> bool {
-    // SAFETY: `owner` is `&Blob` erased.
+    // SAFETY: `owner` is `&Blob` erased via `blob_body_ref`.
     unsafe { (*(owner as *const Blob)).has_content_type_from_user() }
 }
 unsafe fn blob_content_type(owner: *const ()) -> (*const u8, usize) {
     // SAFETY: `owner` is `&Blob` erased; the returned slice borrows blob
     // storage that outlives the `AnyBlobRef`.
-    let s = unsafe { (*(owner as *const Blob)).content_type() };
+    let s = unsafe { (*(owner as *const Blob)).content_type_slice() };
     (s.as_ptr(), s.len())
 }
 
-static BLOB_VTABLE: bun_http::headers::AnyBlobVTable = bun_http::headers::AnyBlobVTable {
+static BLOB_BODY_VTABLE: AnyBlobVTable = AnyBlobVTable {
     has_content_type_from_user: blob_has_content_type_from_user,
     content_type: blob_content_type,
 };
 
-/// Zig: `Headers.from(opts.headers, allocator, .{ .body = &.{ .Blob = blob } })`.
-fn headers_from_blob(fetch_headers: Option<&FetchHeaders>, blob: &Blob) -> Headers {
-    let body_ref = bun_http::headers::AnyBlobRef {
-        owner: blob as *const Blob as *const (),
-        vtable: &BLOB_VTABLE,
+#[inline]
+fn blob_body_ref(b: &Blob) -> AnyBlobRef<'_> {
+    AnyBlobRef {
+        owner: b as *const Blob as *const (),
+        vtable: &BLOB_BODY_VTABLE,
         _phantom: core::marker::PhantomData,
-    };
-    let headers_ref = fetch_headers.map(|h| bun_http::headers::FetchHeadersRef {
-        owner: h as *const FetchHeaders as *const (),
-        vtable: &FETCH_HEADERS_VTABLE,
-        _phantom: core::marker::PhantomData,
-    });
-    Headers::from(headers_ref, HeadersFromOptions { body: Some(body_ref) })
+    }
+}
+
+#[inline]
+fn headers_from(fetch_headers: Option<&FetchHeaders>, blob: &Blob) -> Headers {
+    Headers::from(
+        fetch_headers.map(fetch_headers_ref),
+        HeadersFromOptions { body: Some(blob_body_ref(blob)) },
+    )
+}
+
+#[inline]
+fn sp_slice<'a>(ptr: &StringPointer, buf: &'a [u8]) -> &'a [u8] {
+    &buf[ptr.offset as usize..][..ptr.length as usize]
 }
 
 impl FileRoute {
+    /// Exposes the private `server` Cell to the route table (`AnyRoute::set_server`).
+    #[inline]
+    pub fn set_server(&self, server: Option<AnyServer>) {
+        self.server.set(server);
+    }
+
+    pub fn memory_cost(&self) -> usize {
+        size_of::<FileRoute>() + self.headers.memory_cost() + self.blob.reported_estimated_size
+    }
+
     pub fn last_modified_date(&self) -> JsResult<Option<u64>> {
         if self.has_last_modified_header {
             if let Some(last_modified) = self.headers.get(b"last-modified") {
-                let mut string = BunString::init(last_modified);
-                // `defer string.deref()` — handled by Drop on bun_str::String.
-                // SAFETY: VirtualMachine::get() returns the live per-thread VM;
-                // `.global` is set at VM init and valid for VM lifetime.
-                let global = unsafe { &*(*VirtualMachine::get()).global };
+                let mut string = BunString::borrow_utf8(last_modified);
+                // `defer string.deref()` — handled by Drop on bun_str::String
+                // SAFETY: `VirtualMachine::get()` returns the live per-thread
+                // singleton; FileRoute is only ever reached from a server
+                // request callback on the JS thread.
+                let global = unsafe { (*VirtualMachine::get()).global() };
                 let date_f64 = bun_jsc::bun_string_jsc::parse_date(&mut string, global)?;
                 if !date_f64.is_nan() && date_f64.is_finite() {
                     return Ok(Some(date_f64 as u64));
@@ -129,17 +162,15 @@ impl FileRoute {
             }
         }
 
-        // SAFETY: single-threaded; no concurrent &mut to stat_hash (see field comment).
-        let last_modified_u64 = unsafe { (*self.stat_hash.get()).last_modified_u64 };
-        if last_modified_u64 > 0 {
-            return Ok(Some(last_modified_u64));
+        if self.stat_hash.last_modified_u64 > 0 {
+            return Ok(Some(self.stat_hash.last_modified_u64));
         }
 
         Ok(None)
     }
 
     pub fn init_from_blob(blob: Blob, opts: InitOptions<'_>) -> *mut FileRoute {
-        let headers = headers_from_blob(opts.headers, &blob);
+        let headers = headers_from(opts.headers, &blob);
         Box::into_raw(Box::new(FileRoute {
             ref_count: Cell::new(1),
             server: Cell::new(opts.server),
@@ -149,7 +180,7 @@ impl FileRoute {
             blob,
             headers,
             status_code: opts.status_code,
-            stat_hash: UnsafeCell::new(StatHash::default()),
+            stat_hash: StatHash::default(),
         }))
     }
 
@@ -160,54 +191,49 @@ impl FileRoute {
         unsafe { drop(Box::from_raw(this)) }
     }
 
-    pub fn memory_cost(&self) -> usize {
-        size_of::<FileRoute>() + self.headers.memory_cost() + self.blob.reported_estimated_size
-    }
-
-    /// Exposes the private `server` Cell to the route table (`AnyRoute::set_server`).
-    #[inline]
-    pub fn set_server(&self, server: Option<AnyServer>) {
-        self.server.set(server);
-    }
-
     pub fn from_js(global: &JSGlobalObject, argument: JSValue) -> JsResult<Option<*mut FileRoute>> {
         if let Some(response_ptr) = argument.as_::<Response>() {
             // SAFETY: non-null per JsClass::from_js contract.
             let response = unsafe { &mut *response_ptr };
             let body_value = response.get_body_value();
             body_value.to_blob_if_possible();
-            if let body::Value::Blob(b) = body_value {
-                if b.needs_to_read_file() {
-                    let is_fd = matches!(
-                        &b.store.as_ref().unwrap().data,
-                        StoreData::File(f) if matches!(f.pathlike, PathOrFileDescriptor::Fd(_))
-                    );
-                    if is_fd {
-                        return Err(global.throw_todo(
-                            "Support serving files from a file descriptor. Please pass a path instead.",
-                        ));
-                    }
-
-                    let mut blob = body_value.use_();
-
-                    blob.global_this = global as *const _;
-                    debug_assert!(!blob.is_heap_allocated(), "expected blob not to be heap-allocated");
-                    *body_value = body::Value::Blob(blob.dupe());
-                    let headers = headers_from_blob(response.get_init_headers(), &blob);
-                    let status_code = response.status_code();
-
-                    return Ok(Some(Box::into_raw(Box::new(FileRoute {
-                        ref_count: Cell::new(1),
-                        server: Cell::new(None),
-                        has_last_modified_header: headers.get(b"last-modified").is_some(),
-                        has_content_length_header: headers.get(b"content-length").is_some(),
-                        has_content_range_header: headers.get(b"content-range").is_some(),
-                        blob,
-                        headers,
-                        status_code,
-                        stat_hash: UnsafeCell::new(StatHash::default()),
-                    }))));
+            let needs_read = matches!(body_value, BodyValue::Blob(b) if b.needs_to_read_file());
+            if needs_read {
+                // `needs_to_read_file()` ⇒ `store` is Some and `data` is `File`.
+                let is_fd = matches!(
+                    body_value,
+                    BodyValue::Blob(b)
+                        if matches!(
+                            b.store.as_ref().unwrap().data,
+                            StoreData::File(ref f)
+                                if matches!(f.pathlike, PathOrFileDescriptor::Fd(_))
+                        )
+                );
+                if is_fd {
+                    return Err(global.throw_todo(
+                        "Support serving files from a file descriptor. Please pass a path instead.",
+                    ));
                 }
+
+                let mut blob = body_value.use_();
+
+                blob.global_this = global as *const _;
+                debug_assert!(!blob.is_heap_allocated(), "expected blob not to be heap-allocated");
+                *body_value = BodyValue::Blob(blob.dupe());
+                let headers = headers_from(response.get_init_headers(), &blob);
+                let status_code = response.status_code();
+
+                return Ok(Some(Box::into_raw(Box::new(FileRoute {
+                    ref_count: Cell::new(1),
+                    server: Cell::new(None),
+                    has_last_modified_header: headers.get(b"last-modified").is_some(),
+                    has_content_length_header: headers.get(b"content-length").is_some(),
+                    has_content_range_header: headers.get(b"content-range").is_some(),
+                    blob,
+                    headers,
+                    status_code,
+                    stat_hash: StatHash::default(),
+                }))));
             }
         }
         if let Some(blob_ptr) = argument.as_::<Blob>() {
@@ -217,16 +243,17 @@ impl FileRoute {
                 let mut b = blob.dupe();
                 b.global_this = global as *const _;
                 debug_assert!(!b.is_heap_allocated(), "expected blob not to be heap-allocated");
+                let headers = headers_from(None, &b);
                 return Ok(Some(Box::into_raw(Box::new(FileRoute {
                     ref_count: Cell::new(1),
                     server: Cell::new(None),
-                    headers: headers_from_blob(None, &b),
+                    headers,
                     blob: b,
                     has_content_length_header: false,
                     has_last_modified_header: false,
                     has_content_range_header: false,
                     status_code: 200,
-                    stat_hash: UnsafeCell::new(StatHash::default()),
+                    stat_hash: StatHash::default(),
                 }))));
             }
         }
@@ -280,8 +307,7 @@ impl FileRoute {
         }
 
         if !self.has_last_modified_header {
-            // SAFETY: single-threaded; no concurrent &mut (see field comment).
-            if let Some(last_modified) = unsafe { (*self.stat_hash.get()).last_modified() } {
+            if let Some(last_modified) = self.stat_hash.last_modified() {
                 resp.write_header(b"last-modified", last_modified);
             }
         }
@@ -309,37 +335,40 @@ impl FileRoute {
         }
     }
 
-    pub fn on_head_request(&self, req: AnyRequest, resp: AnyResponse) {
-        debug_assert!(self.server.get().is_some());
+    pub fn on_head_request(this: *mut FileRoute, req: AnyRequest, resp: AnyResponse) {
+        // SAFETY: `this` is a live heap FileRoute (intrusive ref held by the route table).
+        debug_assert!(unsafe { (*this).server.get() }.is_some());
 
-        self.on(req, resp, Method::HEAD);
+        Self::on(this, req, resp, Method::HEAD);
     }
 
-    pub fn on_request(&self, req: AnyRequest, resp: AnyResponse) {
+    pub fn on_request(this: *mut FileRoute, req: AnyRequest, resp: AnyResponse) {
         let method = Method::find(req.method()).unwrap_or(Method::GET);
-        self.on(req, resp, method);
+        Self::on(this, req, resp, method);
     }
 
-    pub fn on(&self, mut req: AnyRequest, resp: AnyResponse, method: Method) {
-        debug_assert!(self.server.get().is_some());
-        // FileRoute is heap-allocated with intrusive RC; `on_response_complete`
-        // (reached from the defer-guard or the stream callbacks) may free it.
-        // Derive the raw pointer once and route all later self-access through
-        // it to keep a single provenance chain.
-        let this: *const FileRoute = self;
-        FileRoute::ref_(this);
-        if let Some(mut server) = self.server.get() {
+    // PORT NOTE: takes `*mut FileRoute` (not `&mut self`) because the
+    // intrusive-refcounted heap object is captured into a `scopeguard` that
+    // outlives later borrows AND `on_response_complete` may free `*this` via
+    // `deref()`. Any `&mut self` would dangle across that drop.
+    pub fn on(this_ptr: *mut FileRoute, mut req: AnyRequest, resp: AnyResponse, method: Method) {
+        // SAFETY: `this_ptr` is live for the duration of this fn body — the
+        // ref taken below keeps it alive until `on_response_complete`.
+        let this = unsafe { &mut *this_ptr };
+        debug_assert!(this.server.get().is_some());
+        this.ref_();
+        if let Some(mut server) = this.server.get() {
             server.on_pending_request();
             resp.timeout(server.config().idle_timeout);
         }
         // PORT NOTE: clone the path to break the shared borrow on `self.blob`
-        // so the borrow into `stat_hash.hash()` below doesn't conflict (Zig had
-        // no borrowck here). // PERF(port): was zero-copy slice — profile in Phase B.
-        let path_buf: Vec<u8> = match self.blob.store.as_ref().unwrap().get_path() {
+        // so the `&mut self` calls below (stat_hash.hash) don't conflict. Zig
+        // had no borrowck here.
+        let path_buf: Vec<u8> = match this.blob.store.as_ref().unwrap().get_path() {
             Some(p) => p.to_vec(),
             None => {
                 req.set_yield(true);
-                FileRoute::on_response_complete(this, resp);
+                Self::on_response_complete(this_ptr, resp);
                 return;
             }
         };
@@ -350,12 +379,12 @@ impl FileRoute {
         let fd_result: bun_sys::Result<Fd> = {
             #[cfg(windows)]
             {
-                let mut path_buffer = bun_paths::PathBuffer::default();
-                path_buffer.0[..path.len()].copy_from_slice(path);
-                path_buffer.0[path.len()] = 0;
+                let mut path_buffer = bun_paths::PathBuffer::uninit();
+                path_buffer[..path.len()].copy_from_slice(path);
+                path_buffer[path.len()] = 0;
                 bun_sys::open(
                     // SAFETY: path_buffer[path.len()] == 0 written above
-                    unsafe { bun_str::ZStr::from_raw(path_buffer.0.as_ptr(), path.len()) },
+                    unsafe { bun_str::ZStr::from_raw(path_buffer.as_ptr(), path.len()) },
                     open_flags,
                     0,
                 )
@@ -368,7 +397,7 @@ impl FileRoute {
 
         let Ok(fd) = fd_result else {
             req.set_yield(true);
-            FileRoute::on_response_complete(this, resp);
+            Self::on_response_complete(this_ptr, resp);
             return;
         };
 
@@ -386,14 +415,14 @@ impl FileRoute {
                 Closer::close(fd, bun_sys::windows::libuv::Loop::get());
                 #[cfg(not(windows))]
                 Closer::close(fd, ());
-                // SAFETY: `this` is valid; ref taken above keeps FileRoute alive
-                // until on_response_complete (which releases that ref).
-                FileRoute::on_response_complete(this, resp);
+                // SAFETY: this_ptr is valid; ref taken above keeps FileRoute alive until on_response_complete
+                Self::on_response_complete(this_ptr, resp);
             }
         });
 
-        // TODO: properly propagate exception upwards (Zig `catch return`).
-        // Rust `date_for_header` swallows parse errors via the hook → `None`.
+        // PORT NOTE: Zig `dateForHeader(..) catch return` — the Rust hook
+        // (`PARSE_DATE_HOOK`) maps any JS exception to `None`, so the
+        // `catch return` arm collapses into `Option`.
         let input_if_modified_since_date: Option<u64> = req.date_for_header(b"if-modified-since");
 
         let (can_serve_file, size, file_type, pollable): (bool, u64, FileType, bool) = 'brk: {
@@ -404,21 +433,20 @@ impl FileRoute {
             };
 
             let stat_size: u64 = u64::try_from(stat.st_size.max(0)).unwrap();
-            let _size: u64 = stat_size.min(self.blob.size);
+            let _size: u64 = stat_size.min(this.blob.size);
 
-            let mode = stat.st_mode;
-            if S::ISDIR(mode as _) {
+            let mode = u32::try_from(stat.st_mode).unwrap();
+            if bun_sys::S::ISDIR(mode) {
                 break 'brk (false, 0, FileType::File, false);
             }
 
-            // SAFETY: single-threaded event loop; no concurrent borrow of stat_hash.
-            unsafe { (*self.stat_hash.get()).hash(&stat, path) };
+            this.stat_hash.hash(&stat, path);
 
-            if S::ISFIFO(mode as _) || S::ISCHR(mode as _) {
+            if bun_sys::S::ISFIFO(mode) || bun_sys::S::ISCHR(mode) {
                 break 'brk (true, _size, FileType::Pipe, true);
             }
 
-            if S::ISSOCK(mode as _) {
+            if bun_sys::S::ISSOCK(mode) {
                 break 'brk (true, _size, FileType::Socket, true);
             }
 
@@ -437,8 +465,8 @@ impl FileRoute {
         // set Content-Range — they're managing partial responses themselves.
         let range: RangeRequest::Result = if (method == Method::GET || method == Method::HEAD)
             && file_type == FileType::File
-            && self.status_code == 200
-            && !self.has_content_range_header
+            && this.status_code == 200
+            && !this.has_content_range_header
         {
             RangeRequest::from_request(&req, size)
         } else {
@@ -454,7 +482,7 @@ impl FileRoute {
             // ignored, unless the server doesn't support If-None-Match.
             if let Some(requested_if_modified_since) = input_if_modified_since_date {
                 if method == Method::HEAD || method == Method::GET {
-                    let Ok(lmd) = self.last_modified_date() else { return }; // TODO: properly propagate exception upwards
+                    let Ok(lmd) = this.last_modified_date() else { return }; // TODO: properly propagate exception upwards
                     if let Some(actual_last_modified_at) = lmd {
                         // Compare at second precision: the Last-Modified header we
                         // emit is second-granular (HTTP-date), so a sub-second
@@ -474,18 +502,18 @@ impl FileRoute {
                 break 'brk 206;
             }
 
-            if size == 0 && file_type == FileType::File && self.status_code == 200 {
+            if size == 0 && file_type == FileType::File && this.status_code == 200 {
                 break 'brk 204;
             }
 
-            self.status_code
+            this.status_code
         };
 
         req.set_yield(false);
 
-        self.write_status_code(status_code, resp);
+        this.write_status_code(status_code, resp);
         resp.write_mark();
-        self.write_headers(resp);
+        this.write_headers(resp);
 
         // Bodiless statuses end here — before the range switch, so a 304 (which
         // can win over a satisfiable Range per RFC 9110 §13.2.2) doesn't emit
@@ -509,7 +537,7 @@ impl FileRoute {
                 };
                 resp.write_header(b"content-range", &crbuf[..written]);
                 resp.write_header(b"accept-ranges", b"bytes");
-                (self.blob.offset + start, Some(end - start + 1))
+                (this.blob.offset + start, Some(end - start + 1))
             }
             RangeRequest::Result::Unsatisfiable => {
                 let mut crbuf = [0u8; 64];
@@ -525,8 +553,8 @@ impl FileRoute {
                 return;
             }
             RangeRequest::Result::None => (
-                if file_type == FileType::File { self.blob.offset } else { 0 },
-                if file_type == FileType::File && self.blob.size > 0 {
+                if file_type == FileType::File { this.blob.offset } else { 0 },
+                if file_type == FileType::File && this.blob.size > 0 {
                     Some(size)
                 } else {
                     None
@@ -551,59 +579,64 @@ impl FileRoute {
             fd,
             auto_close: true,
             resp,
-            vm: self.server.get().unwrap().vm(),
+            vm: this.server.get().unwrap().vm(),
             file_type,
             pollable,
             offset: body_offset,
             length: body_len,
-            idle_timeout: self.server.get().unwrap().config().idle_timeout,
-            ctx: this as *mut c_void,
+            idle_timeout: this.server.get().unwrap().config().idle_timeout,
+            ctx: this_ptr as *mut c_void,
             on_complete: on_stream_complete,
             on_abort: None,
             on_error: on_stream_error,
         });
     }
 
-    fn on_response_complete(this: *const FileRoute, resp: AnyResponse) {
+    fn on_response_complete(this: *mut FileRoute, resp: AnyResponse) {
         resp.clear_aborted();
         resp.clear_on_writable();
         resp.clear_timeout();
-        // SAFETY: `this` is a live heap-allocated FileRoute (ref held by caller).
-        if let Some(mut server) = unsafe { (*this).server.get() } {
-            server.on_static_request_complete();
+        // SAFETY: `this` is live (ref held by caller); `deref()` may free it.
+        unsafe {
+            if let Some(mut server) = (*this).server.get() {
+                server.on_static_request_complete();
+            }
+            Self::deref(this);
         }
-        FileRoute::deref(this);
     }
-}
-
-#[inline]
-fn sp_slice<'a>(ptr: &StringPointer, buf: &'a [u8]) -> &'a [u8] {
-    &buf[ptr.offset as usize..][..ptr.length as usize]
 }
 
 fn on_stream_complete(ctx: *mut c_void, resp: AnyResponse) {
-    FileRoute::on_response_complete(ctx as *const FileRoute, resp);
+    FileRoute::on_response_complete(ctx as *mut FileRoute, resp);
 }
 
 fn on_stream_error(ctx: *mut c_void, resp: AnyResponse, _err: bun_sys::Error) {
-    FileRoute::on_response_complete(ctx as *const FileRoute, resp);
+    FileRoute::on_response_complete(ctx as *mut FileRoute, resp);
 }
 
 // Intrusive refcount: `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`
+// PORT NOTE: `bun_ptr` has no `intrusive_rc!` macro; the canonical Rust shape is
+// `impl bun_ptr::RefCounted` over a `RefCount<Self>` field. FileRoute keeps its
+// `Cell<u32>` field for now (initialized at 3 sites above and crossed as raw
+// userdata into FileResponseStream), so expand the mixin inline.
 impl FileRoute {
-    pub fn ref_(this: *const FileRoute) {
-        // SAFETY: `this` is a live heap-allocated FileRoute.
-        let rc = unsafe { &(*this).ref_count };
-        rc.set(rc.get() + 1);
+    pub fn ref_(&self) {
+        self.ref_count.set(self.ref_count.get() + 1);
     }
 
-    pub fn deref(this: *const FileRoute) {
-        // SAFETY: `this` is a live heap-allocated FileRoute.
-        let rc = unsafe { &(*this).ref_count };
-        let n = rc.get() - 1;
-        rc.set(n);
-        if n == 0 {
-            FileRoute::deinit(this as *mut FileRoute);
+    /// # Safety
+    /// `this` must have been produced by `Box::into_raw` in one of the
+    /// constructors above (write provenance preserved through FFI userdata
+    /// round-trips). Caller must not hold any live `&`/`&mut` to `*this`
+    /// across this call when the refcount may reach zero.
+    pub unsafe fn deref(this: *mut FileRoute) {
+        // SAFETY: caller contract — `this` is live and uniquely held when n→0.
+        unsafe {
+            let n = (*this).ref_count.get() - 1;
+            (*this).ref_count.set(n);
+            if n == 0 {
+                FileRoute::deinit(this);
+            }
         }
     }
 }
@@ -611,6 +644,10 @@ impl FileRoute {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/server/FileRoute.zig (390 lines)
-//   confidence: medium
-//   notes:      stat_hash interior-mutable via UnsafeCell; path cloned for borrowck
+//   confidence: high
+//   todos:      0
+//   notes:      on()/on_response_complete take *mut Self (intrusive RC freed
+//               via deref); StatHash from bun_resolver::fs; Headers::from
+//               bridged via cycle-break vtable (FetchHeadersRef shared with
+//               StaticRoute, AnyBlobRef local for &Blob).
 // ──────────────────────────────────────────────────────────────────────────

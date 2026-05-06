@@ -1457,11 +1457,13 @@ impl<'a> RequestEnsureRouteBundledCtx<'a> {
             deferred_request::HandlerKind::ServerHandler => {
                 let route_bundle_index = self.route_bundle_index;
                 let resp = self.resp;
-                let req = match &self.req {
-                    ReqOrSaved::Req(r) => SavedRequestUnion::Stack(unsafe { &mut **r }),
-                    // TODO(port): SavedRequest is not Clone; move semantics needed here.
-                    ReqOrSaved::Saved(_s) => todo!("blocked_on: SavedRequestUnion::Saved (SavedRequest not Clone)"),
-                    _ => unreachable!(),
+                // PORT NOTE: Zig copied `SavedRequest` by value (POD); Rust's
+                // `Strong` field is move-only. Take ownership out of `self.req`
+                // (it is consumed by `on_framework_request_with_bundle`).
+                let req = match ::core::mem::replace(&mut self.req, ReqOrSaved::Aborted) {
+                    ReqOrSaved::Req(r) => SavedRequestUnion::Stack(unsafe { &mut *r }),
+                    ReqOrSaved::Saved(s) => SavedRequestUnion::Saved(s),
+                    ReqOrSaved::Aborted => unreachable!(),
                 };
                 self.dev_mut().on_framework_request_with_bundle(route_bundle_index, req, resp)
             }
@@ -4674,13 +4676,36 @@ impl DevServer<'_> {
                 headers.append(b"Content-Type", &MimeType::HTML.value);
                 if headers.get(b"etag").is_none() {
                     if !any_blob.slice().is_empty() {
-                        let _ = (&any_blob, &mut headers);
-                        todo!("blocked_on: bun_http::ETag::append_to_headers (bun_http::Headers vs bun_http_types::ETag::Headers)");
+                        // LAYERING: `bun_http_types::ETag::append_to_headers` is
+                        // typed against the duplicate `http_types::ETag::Headers`
+                        // (`bun_http::Headers` is a structural twin). Inline the
+                        // 4-line body here so the call site stays on the
+                        // `bun_http` type until the two `Headers` collapse.
+                        let h: u64 = bun_core::hash::xxhash64(0, any_blob.slice());
+                        let mut etag_buf = [0u8; 40];
+                        let len = {
+                            use std::io::Write;
+                            let mut cursor = &mut etag_buf[..];
+                            write!(cursor, "\"{:016x}\"", h).expect("unreachable");
+                            40 - cursor.len()
+                        };
+                        headers.append(b"etag", &etag_buf[..len]);
                     }
                 }
-                let _ = (&mut headers, global);
-                let mut response: Response =
-                    todo!("blocked_on: bun_http::Headers::to_fetch_headers / webcore::response construction");
+                let fetch_headers = bun_http_jsc::headers_jsc::to_fetch_headers(&headers, global)?;
+                let mut response: Response = Response::init(
+                    crate::webcore::response::Init {
+                        status_code: 500,
+                        headers: Some(crate::webcore::response::HeadersRef::new(fetch_headers)),
+                        ..Default::default()
+                    },
+                    crate::webcore::Body {
+                        value: crate::webcore::body::Value::Blob(any_blob.to_blob(global)),
+                        ..Default::default()
+                    },
+                    BunString::empty(),
+                    false,
+                );
                 // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
                 let vm = unsafe { &*self.vm };
                 // SAFETY: event_loop() returns *mut EventLoop owned by vm; valid for vm lifetime

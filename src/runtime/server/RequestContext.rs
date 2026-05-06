@@ -1739,7 +1739,7 @@ where
             );
             this.sink = None;
             Self::destroy_sink(response_stream_ptr);
-            return this.handle_reject(err_value);
+            return Self::handle_reject(this, err_value);
         }
 
         if resp.has_responded() {
@@ -1811,7 +1811,7 @@ where
                         // PORT NOTE: reshaped for borrowck — Zig `defer` runs
                         // after handle_resolve_stream; emulate by running the
                         // body first then the deferred cleanup.
-                        this.handle_resolve_stream();
+                        Self::handle_resolve_stream(this);
                         stream.done(global_this);
                         readable_ref.deinit();
                     }
@@ -1819,7 +1819,7 @@ where
                         stream_log!("promise Rejected");
                         let mut readable_ref =
                             core::mem::take(&mut this.response_body_readable_stream_ref);
-                        this.handle_reject_stream(global_this, promise.result(global_this.vm()));
+                        Self::handle_reject_stream(this, global_this, promise.result(global_this.vm()));
                         stream.cancel(global_this);
                         readable_ref.deinit();
                     }
@@ -1834,7 +1834,7 @@ where
                 );
                 this.sink = None;
                 Self::destroy_sink(response_stream_ptr);
-                return this.handle_reject(effective_result);
+                return Self::handle_reject(this, effective_result);
             }
         }
 

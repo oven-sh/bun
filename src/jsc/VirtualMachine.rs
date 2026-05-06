@@ -178,8 +178,7 @@ pub struct VirtualMachine {
     pub is_in_preload: bool,
     pub has_patched_run_main: bool,
 
-    // TODO(b2): `transpiler_store` is `RuntimeTranspilerStore` (gated sibling).
-    pub transpiler_store: (),
+    pub transpiler_store: crate::runtime_transpiler_store::RuntimeTranspilerStore,
 
     pub after_event_loop_callback_ctx: Option<*mut c_void>,
     pub after_event_loop_callback: Option<OpaqueCallback>,
@@ -2144,7 +2143,7 @@ fn normalize_source(source: &[u8]) -> &[u8] {
 /// byte-equal to `s`, in which case bump `s`'s refcount instead.
 // PERF(port): hoist into `bun_string` once `lib_draft_b1.rs` un-gates.
 #[inline]
-fn create_if_different(s: &bun_string::String, other: &[u8]) -> bun_string::String {
+pub fn create_if_different(s: &bun_string::String, other: &[u8]) -> bun_string::String {
     if s.eql_utf8(other) {
         return s.dupe_ref();
     }

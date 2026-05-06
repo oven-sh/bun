@@ -1835,7 +1835,7 @@ impl RunCommand {
             // SAFETY: `DIRECT_LAUNCH_BUFFER` is a process-lifetime static used
             // single-threaded from CLI dispatch. The returned slice points into
             // it; we keep the borrow scoped until `try_launch` consumes it.
-            let buf = unsafe { &mut *::core::ptr::addr_of_mut!(BunXFastPath::DIRECT_LAUNCH_BUFFER) };
+            let buf = unsafe { &mut *::core::ptr::addr_of_mut!(bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER) };
             let w = strings::to_nt_path(buf, executable);
             let w_len = w.len();
             debug_assert!(w_len > sys::windows::NT_OBJECT_PREFIX.len() + b".exe".len());
@@ -2310,7 +2310,7 @@ impl RunCommand {
         if bun_core::FeatureFlags::WINDOWS_BUNX_FAST_PATH {
             // SAFETY: process-lifetime static, single-threaded CLI dispatch.
             let buf =
-                unsafe { &mut *::core::ptr::addr_of_mut!(BunXFastPath::DIRECT_LAUNCH_BUFFER) };
+                unsafe { &mut *::core::ptr::addr_of_mut!(bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER) };
             let root = bun_string::w!("\\\\?\\");
             buf[..root.len()].copy_from_slice(root);
             let cwd_len = unsafe {
@@ -3469,12 +3469,14 @@ bun_core::declare_scope!(BUNX_FAST_PATH_LOG, visible);
 /// Uninhabited namespace holder; all members are associated items.
 pub enum BunXFastPath {}
 
-impl BunXFastPath {
-    #[cfg(windows)]
+#[cfg(windows)]
+mod bunx_fast_path_buffers {
+    use super::*;
     pub static mut DIRECT_LAUNCH_BUFFER: WPathBuffer = [0; bun_paths::MAX_WPATH];
-    #[cfg(windows)]
-    static mut ENVIRONMENT_BUFFER: [u16; 32768] = [0; 32768];
+    pub static mut ENVIRONMENT_BUFFER: [u16; 32768] = [0; 32768];
+}
 
+impl BunXFastPath {
     /// Port of `appendWindowsArgument` (run_command.zig:2049-2091): convert a
     /// UTF-8 argument to UTF-16, applying Windows command-line quoting/escaping
     /// per the canonical "Everyone quotes command line arguments the wrong way"
@@ -3542,7 +3544,7 @@ impl BunXFastPath {
 
         // SAFETY: process-lifetime static, single-threaded CLI dispatch.
         let direct_launch_buffer =
-            unsafe { &mut *::core::ptr::addr_of_mut!(Self::DIRECT_LAUNCH_BUFFER) };
+            unsafe { &mut *::core::ptr::addr_of_mut!(bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER) };
         let (path_to_use, command_line) = direct_launch_buffer.split_at_mut(path_len);
 
         bun_core::scoped_log!(
@@ -3579,7 +3581,7 @@ impl BunXFastPath {
         }
 
         // SAFETY: process-lifetime static, single-threaded CLI dispatch.
-        let env_buf = unsafe { &mut *::core::ptr::addr_of_mut!(Self::ENVIRONMENT_BUFFER) };
+        let env_buf = unsafe { &mut *::core::ptr::addr_of_mut!(bunx_fast_path_buffers::ENVIRONMENT_BUFFER) };
         let environment = match env.map.write_windows_env_block(env_buf) {
             Ok(env) => Some(env.as_ptr()),
             Err(_) => return,
@@ -3611,7 +3613,7 @@ impl BunXFastPath {
     ) {
         // SAFETY: process-lifetime static, single-threaded CLI dispatch.
         let direct_launch_buffer =
-            unsafe { &mut *::core::ptr::addr_of_mut!(Self::DIRECT_LAUNCH_BUFFER) };
+            unsafe { &mut *::core::ptr::addr_of_mut!(bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER) };
         // SAFETY: WPathBuffer is `[u16; N]` — reinterpret as `[u8; 2N]`
         // for the UTF-16→UTF-8 transcoder's output buffer.
         let out_buf = unsafe {

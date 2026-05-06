@@ -566,13 +566,20 @@ impl Route {
                     if output_files[i].loader != Loader::Html
                         && matches!(output_files[i].value, OutputFileValue::Buffer { .. })
                     {
-                        let mut hashbuf = bun_string::StackString::<64>::new();
-                        let _ = write!(
-                            hashbuf,
-                            "{}",
-                            bun_core::fmt::hex_int_lower::<16>(output_files[i].hash)
-                        );
-                        headers.append(b"ETag", hashbuf.as_bytes());
+                        let mut hashbuf = [0u8; 64];
+                        let n = {
+                            use std::io::Write as _;
+                            let mut cursor = std::io::Cursor::new(&mut hashbuf[..]);
+                            // `bufPrint(&buf, "{f}", .{hexIntLower(hash)}) catch unreachable`
+                            write!(
+                                cursor,
+                                "{}",
+                                bun_core::fmt::hex_int_lower::<16>(output_files[i].hash)
+                            )
+                            .expect("64 bytes fits 16 hex digits");
+                            cursor.position() as usize
+                        };
+                        headers.append(b"ETag", &hashbuf[..n]);
                         if !server.config().is_development()
                             && output_files[i].output_kind == bundler_options::OutputKind::Chunk
                         {

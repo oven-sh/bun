@@ -895,7 +895,7 @@ impl TranspilerJob {
             is_commonjs_module,
             module_info: module_info
                 .map(|mi| {
-                    use analyze_transpiled_module::ModuleInfoAsDeserialized;
+                    use analyze_transpiled_module::ModuleInfoExt;
                     Box::into_raw(mi.into_deserialized()).cast()
                 })
                 .unwrap_or(ptr::null_mut()),

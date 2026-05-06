@@ -19,20 +19,20 @@ pub trait HasAutoFlusher: Sized {
     fn on_auto_flush(this: *mut Self) -> bool;
 }
 
-/// Erase a typed `fn(*mut T) -> bool` flush callback to the
-/// `DeferredRepeatingTask` ABI (`fn(*mut c_void) -> bool`). Mirrors Zig's
-/// `@ptrCast(&Type.onAutoFlush)` at the `postTask` call site — single pointer
-/// arg, `bool` return, identical layout.
+/// Erase a typed `T::on_auto_flush` to the `DeferredRepeatingTask` ABI
+/// (`unsafe extern "C" fn(*mut c_void) -> bool`). Mirrors Zig's
+/// `@ptrCast(&Type.onAutoFlush)` at the `postTask` call site, but via a
+/// monomorphic `extern "C"` trampoline rather than a fn-ptr transmute so the
+/// calling convention is honest.
 #[inline]
 pub fn erase_flush_callback<T: HasAutoFlusher>() -> DeferredRepeatingTask {
-    // SAFETY: `fn(*mut T) -> bool` and `fn(*mut c_void) -> bool` have identical
-    // ABI (one pointer-sized arg, bool return). The ctx pointer fed back by
-    // `DeferredTaskQueue::run` is exactly the `*mut T` we registered below.
-    unsafe {
-        core::mem::transmute::<fn(*mut T) -> bool, DeferredRepeatingTask>(
-            T::on_auto_flush as fn(*mut T) -> bool,
-        )
+    unsafe extern "C" fn trampoline<T: HasAutoFlusher>(ctx: *mut c_void) -> bool {
+        // SAFETY: `ctx` is exactly the `*mut T` registered by
+        // `register_deferred_microtask_with_type_unchecked` below;
+        // `DeferredTaskQueue::run` feeds it back unchanged.
+        T::on_auto_flush(ctx as *mut T)
     }
+    trampoline::<T>
 }
 
 // PORT NOTE (b0): Zig passed `*jsc.VirtualMachine` and reached

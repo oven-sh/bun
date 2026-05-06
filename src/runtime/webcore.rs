@@ -144,15 +144,15 @@ impl AutoFlusher {
 
     #[inline]
     fn erased_cb<T: HasAutoFlusher>() -> DeferredRepeatingTask {
-        // SAFETY: Zig `@ptrCast(&Type.onAutoFlush)` — `fn(*mut T) -> bool` and
-        // `fn(*mut c_void) -> bool` have identical ABI (one pointer arg, bool
-        // return). `DeferredTaskQueue::run` feeds back exactly the `*mut T` we
-        // registered.
-        unsafe {
-            core::mem::transmute::<fn(*mut T) -> bool, DeferredRepeatingTask>(
-                <T as HasAutoFlusher>::on_auto_flush as fn(*mut T) -> bool,
-            )
+        // Zig `@ptrCast(&Type.onAutoFlush)` — modeled as a monomorphic
+        // `extern "C"` trampoline (no fn-ptr transmute across ABIs).
+        unsafe extern "C" fn trampoline<T: HasAutoFlusher>(ctx: *mut core::ffi::c_void) -> bool {
+            // SAFETY: `ctx` is exactly the `*mut T` registered via
+            // `erased_ctx` below; `DeferredTaskQueue::run` feeds it back
+            // unchanged.
+            <T as HasAutoFlusher>::on_auto_flush(ctx as *mut T)
         }
+        trampoline::<T>
     }
 
     #[inline]

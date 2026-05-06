@@ -3790,13 +3790,25 @@ pub mod mmap_free_interface {
     use super::*;
     // Stateless allocator vtable whose free() munmap's. Same pattern as
     // LinuxMemFdAllocator but without the stateful fd.
-    // TODO(port): expose as a `&'static dyn bun_alloc::Allocator` so Store can
-    // own a slice with a custom-free path. See Zig lines 3316-3339.
-    pub fn free(buf: &mut [u8]) {
+    unsafe fn free(_: *mut c_void, buf: &mut [u8], _: bun_alloc::Alignment, _: usize) {
         if let bun_sys::Result::Err(err) = bun_sys::munmap(buf.as_mut_ptr(), buf.len()) {
             bun_core::Output::debug_warn(format_args!("Blob mmap-store munmap failed: {:?}", err));
         }
     }
+    unsafe fn alloc(_: *mut c_void, _: usize, _: bun_alloc::Alignment, _: usize) -> *mut u8 {
+        // Unreachable: mmap-backed `Bytes` is fixed-size and never grows.
+        core::ptr::null_mut()
+    }
+    static VTABLE: bun_alloc::AllocatorVTable = bun_alloc::AllocatorVTable {
+        alloc,
+        resize: bun_alloc::AllocatorVTable::NO_RESIZE,
+        remap: bun_alloc::AllocatorVTable::NO_REMAP,
+        free,
+    };
+    pub static ALLOCATOR: bun_alloc::StdAllocator = bun_alloc::StdAllocator {
+        ptr: core::ptr::null_mut(),
+        vtable: &VTABLE,
+    };
 }
 
 /// Adopts an mmap'd region — no copy. The Blob's store holds the mapping;

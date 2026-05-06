@@ -1684,7 +1684,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 }
                 if !options.react_refresh_entry_point.is_empty() {
                     end_list.extend_from_slice(b",\n  refresh: ");
-                    let buf = bun_paths::path_buffer_pool::get();
+                    let mut buf = bun_paths::path_buffer_pool::get();
                     let rel = unsafe {
                         (*dev).relative_path(&mut *buf, options.react_refresh_entry_point)
                     };

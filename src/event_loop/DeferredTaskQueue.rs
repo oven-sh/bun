@@ -31,7 +31,12 @@ use core::ptr::NonNull;
 
 use bun_collections::ArrayHashMap;
 
-pub type DeferredRepeatingTask = fn(*mut c_void) -> bool;
+// PORT NOTE: Zig `*const fn(*anyopaque) bool`. Declared `extern "C"` so the
+// same fn-pointer type can flow across the FFI boundary (e.g.
+// `Bun__VM__postDeferredTask`) without an ABI-crossing transmute. All in-tree
+// producers go through monomorphic `extern "C"` trampolines (see
+// `AutoFlusher::erase_flush_callback`).
+pub type DeferredRepeatingTask = unsafe extern "C" fn(*mut c_void) -> bool;
 
 #[derive(Default)]
 pub struct DeferredTaskQueue {
@@ -79,7 +84,11 @@ impl DeferredTaskQueue {
 
             // PORT NOTE: reshaped for borrowck — copy fn ptr out before calling
             let task = self.map.values()[i];
-            if !task(nn.as_ptr()) {
+            // SAFETY: `nn` is the live `*mut T` registered by the caller; the
+            // callback contract (Zig `Type.onAutoFlush`) is that `task` may be
+            // invoked with exactly that pointer until it returns `false` or is
+            // explicitly unregistered.
+            if !unsafe { task(nn.as_ptr()) } {
                 self.map.swap_remove(&key);
                 last = self.map.len();
             } else {

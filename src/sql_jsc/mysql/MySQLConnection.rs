@@ -1137,14 +1137,23 @@ impl MySQLConnection {
 
                 // Read parameter definitions if any
                 if ok.num_params > 0 {
-                    statement.params = vec![Param::default(); ok.num_params as usize];
+                    // Zig: bun.default_allocator.alloc(Param, n) — slots are
+                    // overwritten as param-definition packets arrive, so the
+                    // initial value is a placeholder.
+                    statement.params = (0..ok.num_params as usize)
+                        .map(|_| Param {
+                            r#type: FieldType::MYSQL_TYPE_NULL,
+                            flags: ColumnFlags::default(),
+                        })
+                        .collect();
                     statement.params_received = 0;
                 }
 
                 // Read column definitions if any
                 if ok.num_columns > 0 {
-                    statement.columns =
-                        vec![ColumnDefinition41::default(); ok.num_columns as usize];
+                    statement.columns = (0..ok.num_columns as usize)
+                        .map(|_| ColumnDefinition41::default())
+                        .collect();
                     statement.columns_received = 0;
                 }
 
@@ -1154,7 +1163,7 @@ impl MySQLConnection {
             PacketType::ERROR => {
                 debug!("handlePreparedStatement ERROR");
                 let mut err = ErrorPacket::default();
-                err.decode(reader)?;
+                err.decode_internal(reader)?;
                 // PORT NOTE: reshaped for borrowck — Zig `defer this.queue.advance(connection)`
                 // moved to explicit call after `on_error_packet` below.
                 self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
@@ -1204,7 +1213,7 @@ impl MySQLConnection {
         affected_rows: u64,
     ) {
         self.status_flags = status_flags;
-        let is_last_result = !status_flags.has(StatusFlags::SERVER_MORE_RESULTS_EXISTS);
+        let is_last_result = !status_flags.has(StatusFlag::SERVER_MORE_RESULTS_EXISTS);
         debug!("handleResultSetOK: {} {}", status_flags.to_int(), is_last_result);
         // PORT NOTE: Zig `defer this.flushQueue()` moved to explicit tail call.
         self.flags.set(ConnectionFlags::IS_READY_FOR_QUERY, is_last_result);
@@ -1221,7 +1230,7 @@ impl MySQLConnection {
         unsafe {
             (*connection).on_query_result(
                 &mut *request,
-                QueryResult { result_count, last_insert_id, affected_rows, is_last_result },
+                MySQLQueryResult { result_count, last_insert_id, affected_rows, is_last_result },
             )
         };
 
@@ -1252,7 +1261,7 @@ impl MySQLConnection {
     
     fn handle_result_set<C: ReaderContext>(
         &mut self,
-        reader: NewReader<C>,
+        mut reader: NewReader<C>,
         header_length: u32, // u24 in Zig
     ) -> Result<(), AnyMySQLError> {
         let first_byte = reader.int::<u8>()?;
@@ -1268,13 +1277,19 @@ impl MySQLConnection {
         unsafe { (*request).ref_() };
         let _request_guard = scopeguard::guard(request, |r| unsafe { (*r).deref_() });
         let mut ok = OKPacket {
+            header: 0,
+            affected_rows: 0,
+            last_insert_id: 0,
+            status_flags: StatusFlags::default(),
+            warnings: 0,
+            info: Data::Empty,
+            session_state_changes: Data::Empty,
             packet_size: header_length,
-            ..Default::default()
         };
-        match PacketType::from_raw(first_byte) {
+        match PacketType(first_byte) {
             PacketType::ERROR => {
                 let mut err = ErrorPacket::default();
-                err.decode(reader)?;
+                err.decode_internal(reader)?;
                 // PORT NOTE: reshaped for borrowck — Zig `defer this.flushQueue()`
                 // moved to explicit tail call.
                 // SAFETY: request is live (ref'd above).
@@ -1311,7 +1326,7 @@ impl MySQLConnection {
                 {
                     if packet_type == PacketType::OK {
                         // if packet type is OK it means the query is done and no results are returned
-                        ok.decode(reader)?;
+                        ok.decode_internal(reader)?;
                         self.handle_result_set_ok(
                             request,
                             statement,
@@ -1323,7 +1338,7 @@ impl MySQLConnection {
                     }
 
                     let mut header = ResultSetHeader::default();
-                    header.decode(reader)?;
+                    header.decode_internal(reader)?;
                     if header.field_count == 0 {
                         // Can't be 0
                         return Err(AnyMySQLError::UnexpectedPacket);
@@ -1342,8 +1357,9 @@ impl MySQLConnection {
                             // the already-freed columns again (use-after-free / double-free).
                             statement.columns = Vec::new();
                         }
-                        statement.columns =
-                            vec![ColumnDefinition41::default(); header.field_count as usize];
+                        statement.columns = (0..header.field_count as usize)
+                            .map(|_| ColumnDefinition41::default())
+                            .collect();
                         statement.columns_received = 0;
                     }
                     statement
@@ -1354,7 +1370,7 @@ impl MySQLConnection {
                         .insert(mysql_statement::ExecutionFlags::HEADER_RECEIVED);
                     return Ok(());
                 } else if (statement.columns_received as usize) < statement.columns.len() {
-                    statement.columns[statement.columns_received as usize].decode(reader)?;
+                    statement.columns[statement.columns_received as usize].decode(&mut reader)?;
                     statement.columns_received += 1;
                 } else {
                     // A 0xFE-prefixed packet at this point is either the end-of-result

@@ -84,6 +84,26 @@ impl crate::jsc::JsClass for JSMySQLConnection {
     }
 }
 
+/// Local FFI shim for `JSGlobalObject.queueMicrotask` — `bun_jsc` only exposes
+/// the C-style `queue_microtask_callback`; the JS-function form lives in the
+/// gated `JSGlobalObject.rs` module. Forward to the C++ symbol directly.
+// TODO(port): once `bun_jsc::JSGlobalObject::queue_microtask` is un-gated,
+// drop this and call it directly.
+fn queue_microtask(global: &JSGlobalObject, function: JSValue, args: &[JSValue]) {
+    extern "C" {
+        fn JSC__JSGlobalObject__queueMicrotaskJob(
+            global: *const JSGlobalObject,
+            function: JSValue,
+            first: JSValue,
+            second: JSValue,
+        );
+    }
+    let first = args.first().copied().unwrap_or(JSValue::ZERO);
+    let second = args.get(1).copied().unwrap_or(JSValue::ZERO);
+    // SAFETY: `global` is live; JSValues are stack-rooted for the call.
+    unsafe { JSC__JSGlobalObject__queueMicrotaskJob(global, function, first, second) }
+}
+
 // pub const ref = RefCount.ref; pub const deref = RefCount.deref;
 // → intrusive Cell<u32> refcount; destroy callback = `deinit`.
 // TODO(port): switch to `bun_ptr::RefCounted`/`RefCount<Self>` once the
@@ -873,8 +893,7 @@ impl JSMySQLConnection {
         on_connect.ensure_still_alive();
         let js_value = self.js_value.try_get().unwrap_or(JSValue::UNDEFINED);
         js_value.ensure_still_alive();
-        self.global_object
-            .queue_microtask_callback(on_connect, &[JSValue::NULL, js_value]);
+        queue_microtask(self.global_object, on_connect, &[JSValue::NULL, js_value]);
     }
 
     pub fn on_query_result(&mut self, request: &mut JSMySQLQuery, result: MySQLQueryResult) {

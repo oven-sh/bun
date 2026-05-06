@@ -1951,7 +1951,7 @@ impl PostgresSQLConnection {
                                             } else {
                                                 statement.status = StatementStatus::Failed;
                                                 statement.error_response = Some(StatementError::PostgresError(err));
-                                                req.on_write_fail(err, self.global(), self.get_queries_array());
+                                                req.on_write_fail(err.into(), self.global(), self.get_queries_array());
                                             }
                                             debug_assert!(offset == 0);
                                             unsafe { PostgresSQLQuery::deref_(req_ptr) };
@@ -1987,7 +1987,7 @@ impl PostgresSQLConnection {
                                         } else {
                                             statement.error_response = Some(StatementError::PostgresError(err));
                                             statement.status = StatementStatus::Failed;
-                                            req.on_write_fail(err, self.global(), self.get_queries_array());
+                                            req.on_write_fail(err.into(), self.global(), self.get_queries_array());
                                         }
                                         debug_assert!(offset == 0);
                                         unsafe { PostgresSQLQuery::deref_(req_ptr) };
@@ -2001,7 +2001,7 @@ impl PostgresSQLConnection {
                                         } else {
                                             statement.error_response = Some(StatementError::PostgresError(err));
                                             statement.status = StatementStatus::Failed;
-                                            req.on_write_fail(err, self.global(), self.get_queries_array());
+                                            req.on_write_fail(err.into(), self.global(), self.get_queries_array());
                                         }
                                         debug_assert!(offset == 0);
                                         unsafe { PostgresSQLQuery::deref_(req_ptr) };
@@ -2071,26 +2071,29 @@ impl PostgresSQLConnection {
     }
 
     pub fn get_queries_array(&self) -> JSValue {
-        let js_value = self.js_value.get();
-        if js_value.is_empty_or_undefined_or_null() {
+        let Some(js_value) = self.js_value.try_get() else {
             return JSValue::UNDEFINED;
-        }
+        };
         js::queries_get_cached(js_value).unwrap_or(JSValue::UNDEFINED)
     }
 
     // TODO(port): Zig signature is `on(comptime MessageType: @Type(.enum_literal), comptime Context: type, reader)`.
     // Const-generic enum params are unstable, so `message_type` is a runtime arg; the match
     // below still monomorphizes per-Context and the branch is trivially predictable.
+    // PORT NOTE: reshaped for borrowck — `reader` is taken by `&mut` so the
+    // dispatch loop in `PostgresRequest::on_data` can call `on` per-message
+    // without moving the wrapper. Per-arm `decode_internal` calls reborrow via
+    // `reader.reborrow()` (see protocol::NewReaderWrap::reborrow).
     pub fn on<Context: protocol::ReaderContext>(
         &mut self,
         message_type: MessageType,
-        mut reader: protocol::NewReader<Context>,
+        reader: &mut protocol::NewReader<Context>,
     ) -> Result<(), AnyPostgresError> {
-        // TODO(port): protocol decode_internal returns bun_core::Error; map back. Phase B
-        // should add `From<bun_core::Error> for AnyPostgresError` so `?` works directly.
+        // PORT NOTE: protocol `decode_internal` returns `bun_core::Error`;
+        // round-trip through the name-based `From` impl.
         #[inline(always)]
-        fn pg_err(_e: bun_core::Error) -> AnyPostgresError {
-            AnyPostgresError::UnexpectedMessage
+        fn pg_err(e: bun_core::Error) -> AnyPostgresError {
+            AnyPostgresError::from(e)
         }
         debug!("on({})", <&'static str>::from(message_type));
 
@@ -2104,12 +2107,18 @@ impl PostgresSQLConnection {
                 // SAFETY: statement is valid for the duration of the request.
                 let statement = unsafe { &mut *statement_ptr };
                 let mut structure: JSValue = JSValue::UNDEFINED;
-                let mut cached_structure: Option<PostgresCachedStructure> = None;
+                // PORT NOTE: reshaped for borrowck — `statement.structure()` borrows
+                // `&mut *statement` and returns `&CachedStructure`; capture it as a raw
+                // pointer so `&statement.fields` below does not conflict, and re-derive
+                // `Option<&_>` for `to_js` at the call site.
+                let mut cached_structure_ptr: *const PostgresCachedStructure = core::ptr::null();
                 // explicit use switch without else so if new modes are added, we don't forget to check for duplicate fields
                 match request.flags.result_mode {
                     SQLQueryResultMode::Objects => {
-                        cached_structure = Some(statement.structure(self.js_value.get(), self.global()));
-                        structure = cached_structure.as_ref().unwrap().js_value().unwrap_or(JSValue::UNDEFINED);
+                        let owner = self.js_value.try_get().unwrap_or(JSValue::ZERO);
+                        let cs = statement.structure(owner, self.global());
+                        structure = cs.js_value().unwrap_or(JSValue::UNDEFINED);
+                        cached_structure_ptr = cs as *const PostgresCachedStructure;
                     }
                     SQLQueryResultMode::Raw | SQLQueryResultMode::Values => {
                         // no need to check for duplicate fields or structure
@@ -2130,7 +2139,7 @@ impl PostgresSQLConnection {
                     // SAFETY: SQLDataCell is POD; immediately overwritten by memset below.
                     unsafe { core::mem::zeroed() };
                 // PERF(port): was stack-fallback alloc — profile in Phase B
-                let max_inline = jsc::JSObject::max_inline_capacity();
+                let max_inline = jsc::JSObject::max_inline_capacity() as usize;
                 let mut heap_cells: Vec<DataCell::SQLDataCell>;
                 let mut free_cells = false;
                 let cells: &mut [DataCell::SQLDataCell] = if statement.fields.len() >= max_inline {
@@ -2187,8 +2196,10 @@ impl PostgresSQLConnection {
                     structure,
                     statement.fields_flags,
                     request.flags.result_mode,
-                    cached_structure.as_ref(),
-                ).map_err(pg_err)?;
+                    // SAFETY: points into `statement.cached_structure`; statement
+                    // outlives this call (held via `request.statement` ref).
+                    unsafe { cached_structure_ptr.as_ref() },
+                )?;
 
                 if pending_value.is_empty() {
                     postgres_sql_query::js::pending_value_set_cached(this_value, self.global(), result);
@@ -2197,7 +2208,7 @@ impl PostgresSQLConnection {
                 let _ = free_cells; // heap_cells dropped at scope end; _cells_guard runs cell.deinit()
             }
             MessageType::CopyData => {
-                let copy_data = protocol::CopyData::decode_internal(reader).map_err(pg_err)?;
+                let copy_data = protocol::CopyData::decode_internal(reader.reborrow()).map_err(pg_err)?;
                 drop(copy_data);
             }
             MessageType::ParameterStatus => {

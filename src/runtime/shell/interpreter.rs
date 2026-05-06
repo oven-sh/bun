@@ -2069,13 +2069,14 @@ pub fn unreachable_state(context: &str, state: &str) -> ! {
 // `setup_io_before_run`, `run_from_js`, `finalize`, `OutputTask`,
 // `ShellAsyncSubprocessDone`, `WriteFailingErrorFmt`, `ShellExecEnv::dupe_for_subshell`,
 // the legacy `StatePtrUnion` machinery, etc.) depend on `bun_jsc` method
-// surface, `IOWriter::init`, `bun_aio::FilePoll`, and `bun_glob`. Preserved
-// here verbatim until those crates are green; the NodeId-arena dispatch above
-// supersedes `StatePtrUnion`.
-
-mod interpreter_body {
-    include!("interpreter_body_gated.rs"); // TODO(port): preserved Phase-A draft
-}
+// surface, `IOWriter::init`, `bun_aio::FilePoll`, and `bun_glob`. The gated
+// include was removed (file never materialised); port the remainder inline as
+// the upstream pieces land. The NodeId-arena dispatch above supersedes
+// `StatePtrUnion`.
+//
+// TODO(blocked_on: bun_jsc::EventLoopHandle, IOWriter::init, bun_aio::FilePoll,
+// bun_glob::GlobWalker): port init/create/setup_io_before_run/run_from_js/
+// finalize/OutputTask/ShellAsyncSubprocessDone once those crates are green.
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

@@ -2838,15 +2838,17 @@ unsafe fn qw_set_fd(qw: *mut bun_core::output::QuietWriter, fd: Fd) {
     unsafe { *(qw as *mut *mut ()) = fd.native() as usize as *mut (); }
 }
 
-/// Best-effort write-all loop (Zig `QuietWriter.writeAll`: errors swallowed).
-fn fd_write_all_quiet(fd: Fd, mut bytes: &[u8]) {
+/// Best-effort write-all loop. Returns `false` on I/O error / zero-write so
+/// `ScopedLogger::log` can disable the scope; "quiet" callers discard the bool.
+fn fd_write_all_quiet(fd: Fd, mut bytes: &[u8]) -> bool {
     while !bytes.is_empty() {
         match write(fd, bytes) {
-            Ok(0) => return, // short write → give up (matches Zig quiet semantics)
+            Ok(0) => return false, // short write → give up (matches Zig quiet semantics)
             Ok(n) => bytes = &bytes[n..],
-            Err(_) => return,
+            Err(_) => return false,
         }
     }
+    true
 }
 
 /// Concrete repr behind the opaque `bun_core::output::QuietWriterAdapter`
@@ -2869,7 +2871,7 @@ unsafe fn adapter_write_all(w: *mut bun_core::io::Writer, bytes: &[u8])
 {
     // SAFETY: `w` points at the first field of a SysQuietWriterAdapter (repr(C)).
     let this = unsafe { &*(w as *const SysQuietWriterAdapter) };
-    fd_write_all_quiet(this.fd, bytes);
+    let _ = fd_write_all_quiet(this.fd, bytes);
     Ok(())
 }
 unsafe fn adapter_flush(_w: *mut bun_core::io::Writer)
@@ -2942,7 +2944,7 @@ pub static OUTPUT_SINK_VTABLE_IMPL: bun_core::output::OutputSinkVTable =
         quiet_writer_write_all: |qw, bytes| {
             // SAFETY: qw came from quiet_writer_from_fd above.
             let fd = unsafe { qw_fd(qw) };
-            fd_write_all_quiet(fd, bytes);
+            fd_write_all_quiet(fd, bytes)
         },
         quiet_writer_fd: |qw| {
             // SAFETY: qw came from quiet_writer_from_fd above.

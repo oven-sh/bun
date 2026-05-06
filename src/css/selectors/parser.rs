@@ -2191,11 +2191,62 @@ impl<Impl: BunSelectorImpl> GenericComponent<Impl> {
     }
 
     pub fn deep_clone(&self) -> Self {
-        // PORT NOTE: `#[derive(Clone)]` is structurally identical to Zig's
-        // `implementDeepClone` here — every owning container (`Vec`/`Box`/
-        // `SmallList`) deep-clones via `Clone`, and every borrowed payload
-        // (`Str`, `Ident.v`, `IdentOrRef`) is an arena-static identity copy.
-        self.clone()
+        // PORT NOTE: hand-written variant-walk (Zig `implementDeepClone`).
+        // Every borrowed payload (`Str`, `Ident.v`, `IdentOrRef`) is an
+        // arena-static identity copy; owning containers (`Vec`/`Box`) recurse.
+        use GenericComponent as C;
+        match self {
+            C::Combinator(c) => C::Combinator(*c),
+            C::ExplicitAnyNamespace => C::ExplicitAnyNamespace,
+            C::ExplicitNoNamespace => C::ExplicitNoNamespace,
+            C::DefaultNamespace(u) => C::DefaultNamespace(u.clone()),
+            C::Namespace { prefix, url } => {
+                C::Namespace { prefix: prefix.clone(), url: url.clone() }
+            }
+            C::ExplicitUniversalType => C::ExplicitUniversalType,
+            C::LocalName(ln) => C::LocalName(ln.deep_clone()),
+            C::Id(i) => C::Id(i.clone()),
+            C::Class(i) => C::Class(i.clone()),
+            C::AttributeInNoNamespaceExists { local_name, local_name_lower } => {
+                C::AttributeInNoNamespaceExists {
+                    local_name: local_name.clone(),
+                    local_name_lower: local_name_lower.clone(),
+                }
+            }
+            C::AttributeInNoNamespace {
+                local_name,
+                operator,
+                value,
+                case_sensitivity,
+                never_matches,
+            } => C::AttributeInNoNamespace {
+                local_name: local_name.clone(),
+                operator: *operator,
+                value: value.clone(),
+                case_sensitivity: *case_sensitivity,
+                never_matches: *never_matches,
+            },
+            C::AttributeOther(a) => C::AttributeOther(Box::new(a.deep_clone())),
+            C::Negation(s) => C::Negation(deep_clone_selector_slice(s)),
+            C::Root => C::Root,
+            C::Empty => C::Empty,
+            C::Scope => C::Scope,
+            C::Nth(n) => C::Nth(*n),
+            C::NthOf(n) => C::NthOf(n.deep_clone()),
+            C::NonTsPseudoClass(p) => C::NonTsPseudoClass(p.deep_clone()),
+            C::Slotted(s) => C::Slotted(s.deep_clone()),
+            C::Part(p) => C::Part(p.iter().cloned().collect()),
+            C::Host(h) => C::Host(h.as_ref().map(|s| s.deep_clone())),
+            C::Where(s) => C::Where(deep_clone_selector_slice(s)),
+            C::Is(s) => C::Is(deep_clone_selector_slice(s)),
+            C::Any { vendor_prefix, selectors } => C::Any {
+                vendor_prefix: vendor_prefix.clone(),
+                selectors: deep_clone_selector_slice(selectors),
+            },
+            C::Has(s) => C::Has(deep_clone_selector_slice(s)),
+            C::PseudoElement(pe) => C::PseudoElement(pe.deep_clone()),
+            C::Nesting => C::Nesting,
+        }
     }
 
     pub fn eql(&self, rhs: &Self) -> bool {
@@ -3852,7 +3903,7 @@ impl<Impl: BunSelectorImpl> LocalName<Impl> {
         self.lower_name.hash(hasher);
     }
     pub fn deep_clone(&self) -> Self {
-        self.clone()
+        Self { name: self.name.clone(), lower_name: self.lower_name.clone() }
     }
 }
 

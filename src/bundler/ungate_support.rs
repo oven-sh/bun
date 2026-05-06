@@ -102,9 +102,16 @@ pub mod bun_css {
     /// Lifetime-erased `LayerName` for `Chunk::Layers`. The real
     /// `bun_css::rules::layer::LayerName<'bump>` borrows the arena; until
     /// `Chunk` threads `'bump`, this owns its parts.
-    #[derive(Clone)]
     pub struct LayerName {
         pub v: BabyList<Box<[u8]>>,
+    }
+    // PORT NOTE: `BabyList<T>` has no blanket `Clone`; manual deep-clone via
+    // `BabyList::from_slice` (matches Zig `deepCloneInfallible`). OOM on a
+    // tiny layer-name list is unrecoverable — `handle_oom`.
+    impl Clone for LayerName {
+        fn clone(&self) -> Self {
+            Self { v: bun_core::handle_oom(BabyList::from_slice(self.v.slice())) }
+        }
     }
     impl core::fmt::Display for LayerName {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -403,7 +410,15 @@ pub type MangledProps = bun_collections::ArrayHashMap<Ref, Box<[u8]>>;
 pub use bun_logger as Logger;
 
 /// `js_ast.BundledAst` (the bundler-facing AST view).
-pub use bun_js_parser::BundledAst as JSAst;
+///
+/// PORT NOTE: lifetime-erased to `'static`. `BundledAst<'arena>` borrows the
+/// per-file parse arena (`hashbang`/`url_for_css`/`export_star_import_records`
+/// slices). The bundler owns those arenas for the entire link (see
+/// `LinkerGraph.bump: *const Arena` "stays `'static`-ish" note); `JSAst` is
+/// stored in a `MultiArrayList` SoA inside `LinkerGraph`/`Graph`, neither of
+/// which carries a lifetime parameter yet. Pin to `'static` until Phase B
+/// threads `'bump` through `Chunk`/`LinkerGraph`/`LinkerContext`.
+pub type JSAst = bun_js_parser::BundledAst<'static>;
 pub use bun_js_parser::{Part, Ref, Symbol};
 
 /// Lowercase-module aliases mirroring Zig's `Index.Int` / `Part.List` /
@@ -447,12 +462,16 @@ pub mod entry_point {
     }
 
     pub type List = MultiArrayList<EntryPoint>;
-    pub use super::EntryPoint::Kind;
-}
-/// Module-namespace twin of the `EntryPoint` struct so `EntryPoint::Kind`
-/// resolves. Mirrors `bundle_v2.zig:EntryPoint.Kind`.
-#[allow(non_snake_case)]
-pub mod EntryPoint {
+
+    /// `bundle_v2.zig:EntryPoint.Kind` — inherent associated type so
+    /// `EntryPoint::Kind` resolves at every use-site (the explicit struct
+    /// re-export at the crate root shadows any glob-imported module of the
+    /// same name, so a sibling `mod EntryPoint { … }` is unreachable there).
+    /// Requires `#![feature(inherent_associated_types)]` (enabled in lib.rs).
+    impl EntryPoint {
+        pub type Kind = Kind;
+    }
+
     #[repr(u8)]
     #[derive(Clone, Copy, PartialEq, Eq, Default)]
     pub enum Kind {
@@ -544,17 +563,19 @@ pub mod js_meta {
         pub entry_point_part_index: Index,
         pub flags: Flags,
     }
+
+    /// Inherent associated types so `JSMeta::Flags` / `JSMeta::Wrap` resolve
+    /// (Zig nests them under the struct). A sibling `pub mod JSMeta` would
+    /// collide with the struct re-export (E0255).
+    impl JSMeta {
+        pub type Flags = Flags;
+        pub type Wrap = crate::WrapKind;
+    }
 }
 pub use js_meta::{
     ExportData, ImportData, JSMeta, JSMetaField, JSMetaListExt, JSMetaSliceExt, RefImportData,
     ResolvedExports, TopLevelSymbolToParts,
 };
-/// Module-namespace twin of the `JSMeta` struct so `JSMeta::Flags` /
-/// `JSMeta::Wrap` resolve.
-#[allow(non_snake_case)]
-pub mod JSMeta {
-    pub use super::js_meta::{Flags, Wrap};
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // B-2 un-gate surface for `bundle_v2.rs::on_parse_task_complete`.

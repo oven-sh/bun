@@ -2975,7 +2975,7 @@ impl<'a> Resolver<'a> {
         }
         bun_http::HTTPThread::init(&Default::default());
         let pm = PackageManager::init_with_runtime(
-            self.log,
+            self.log(),
             self.opts.install,
             // This cannot be the threadlocal allocator. It goes to the HTTP thread.
             // (allocator param dropped)
@@ -3017,8 +3017,8 @@ impl<'a> Resolver<'a> {
     // bun_options_types completes.
     #[cfg(any())]
     pub fn init1(
-        log: &'a mut logger::Log,
-        _fs: &'a mut Fs::FileSystem,
+        log: *mut logger::Log,
+        _fs: *mut Fs::FileSystem,
         opts: options::BundleOptions,
     ) -> Self {
         // resolver_Mutex_loaded check elided; static is const-inited in Rust.
@@ -4819,7 +4819,7 @@ impl<'a> Resolver<'a> {
                                 None,
                                 esm.version,
                                 &sliced_string,
-                                self.log,
+                                self.log(),
                                 manager,
                             ) {
                                 Some(v) => v,
@@ -5483,7 +5483,7 @@ impl<'a> Resolver<'a> {
         // Since tsconfig.json is cached permanently, in our DirEntries cache
         // we must use the global allocator
         let mut entry = self.caches.fs.read_file_with_allocator(
-            self.fs,
+            self.fs(),
             file,
             dirname_fd,
             false,
@@ -5501,7 +5501,7 @@ impl<'a> Resolver<'a> {
         let source = logger::Source::init_path_string(key_path.text(), entry.contents);
         let file_dir = source.path.source_dir();
 
-        let result = match TSConfigJSON::parse(self.log, &source, &mut self.caches.json)? {
+        let result = match TSConfigJSON::parse(self.log(), &source, &mut self.caches.json)? {
             Some(r) => r,
             None => return Ok(None),
         };

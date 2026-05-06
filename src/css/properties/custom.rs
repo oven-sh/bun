@@ -10,12 +10,13 @@
 // `media_query.rs`, `rules/{unknown,font_face,font_palette_values}.rs`,
 // `selectors/parser.rs`, and `context.rs`.
 //
-// Most `parse` / `to_css` / `deep_clone` / `eql` / `hash` *bodies* remain
-// `#[cfg(any())]`-gated below because they bottom out on still-gated leaf
-// surface (DashedIdent{,Reference}::to_css/parse_with_options, Url::parse,
-// ComponentParser, ColorFallbackKind::supports_condition, generics::CssEql/
-// CssHash/DeepClone blanket impls, AnimationName::to_css). Each gate carries
-// a `blocked_on:` note so the next round can lift bodies as their deps land.
+// `eql` / `hash` / `deep_clone` are now real via `#[derive(CssEql, CssHash,
+// DeepClone)]` (the `Token` arm is hand-impl'd below since `Token` lives at
+// crate root). `parse` / `to_css` / `get_fallback` *bodies* remain
+// `#[cfg(any())]`-gated because they bottom out on still-gated leaf surface
+// (DashedIdent{,Reference}::to_css/parse_with_options, Url::parse,
+// ComponentParser, ColorFallbackKind::supports_condition, AnimationName::
+// to_css). Each gate carries a `blocked_on:` note.
 
 use crate as css;
 use crate::css_parser::{
@@ -1482,12 +1483,13 @@ pub fn try_parse_color_token(
 //   source:     src/css/properties/custom.zig (1554 lines)
 //   confidence: medium
 //   todos:      3
-//   notes:      module un-gated; all data types real; parse/to_css/deep_clone/
-//               eql/hash/get_fallback bodies internally gated on values::ident
-//               (DashedIdent{,Reference}::to_css/parse_with_options),
-//               values::url (Url::parse), values::color (ComponentParser /
-//               supports_condition), generics::CssEql/CssHash/DeepClone blanket
-//               impls, AnimationName::to_css. Allocator params dropped (Vec/
-//               global mimalloc per LIFETIMES.tsv — Phase B revisit for arena);
+//   notes:      module un-gated; all data types real; eql/hash/deep_clone
+//               provided by #[derive(CssEql/CssHash/DeepClone)] (Token impls
+//               hand-written here). parse/to_css/get_fallback bodies remain
+//               internally gated on values::ident (DashedIdent{,Reference}::
+//               to_css/parse_with_options), values::url (Url::parse),
+//               values::color (ComponentParser / supports_condition),
+//               AnimationName::to_css. Allocator params dropped (Vec/global
+//               mimalloc per LIFETIMES.tsv — Phase B revisit for arena);
 //               Zig closure structs collapsed to Rust closures.
 // ──────────────────────────────────────────────────────────────────────────

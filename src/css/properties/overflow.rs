@@ -20,7 +20,7 @@ impl Overflow {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         self.x.to_css(dest)?;
         if self.y != self.x {
-            dest.write_char(' ')?;
+            dest.write_char(b' ')?;
             self.y.to_css(dest)?;
         }
         Ok(())

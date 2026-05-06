@@ -33,7 +33,7 @@ pub enum BoxSizing {
 #[cfg(any())]
 const _: () = { impl css::EnumProperty for BoxSizing {} };
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub enum Size {
     /// The `auto` keyworda
     Auto,
@@ -128,7 +128,7 @@ impl Size {
             Size::FitContentFunction(l) => {
                 dest.write_str("fit-content(")?;
                 l.to_css(dest)?;
-                dest.write_char(')')
+                dest.write_char(b')')
             }
             Size::LengthPercentage(l) => l.to_css(dest),
         }
@@ -175,7 +175,7 @@ impl Size {
 /// A value for the [minimum](https://drafts.csswg.org/css-sizing-3/#min-size-properties)
 /// and [maximum](https://drafts.csswg.org/css-sizing-3/#max-size-properties) size properties,
 /// e.g. `min-width` and `max-height`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub enum MaxSize {
     /// The `none` keyword.
     None,
@@ -268,7 +268,7 @@ impl MaxSize {
             MaxSize::FitContentFunction(l) => {
                 dest.write_str("fit-content(")?;
                 l.to_css(dest)?;
-                dest.write_char(')')
+                dest.write_char(b')')
             }
             MaxSize::LengthPercentage(l) => l.to_css(dest),
         }
@@ -312,7 +312,7 @@ impl MaxSize {
 }
 
 /// A value for the [aspect-ratio](https://drafts.csswg.org/css-sizing-4/#aspect-ratio) property.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct AspectRatio {
     /// The `auto` keyword.
     pub auto: bool,
@@ -347,7 +347,7 @@ impl AspectRatio {
 
         if let Some(ratio) = &self.ratio {
             if self.auto {
-                dest.write_char(' ')?;
+                dest.write_char(b' ')?;
             }
             ratio.to_css(dest)?;
         }

@@ -33,6 +33,13 @@ impl Time {
 
     // css.implementDeepClone / css.implementEql / css.implementHash — provided
     // by `#[derive(DeepClone, CssEql, CssHash)]` above (POD f32 payload).
+    // Kept as an inherent assoc fn for `protocol::CalcValue` callers that
+    // forward via UFCS (`Time::eql(a, b)`) — does not conflict with the
+    // derived trait method (that one has a `&self` receiver).
+    #[inline]
+    pub fn eql(lhs: &Self, rhs: &Self) -> bool {
+        lhs == rhs
+    }
 
     pub fn parse(input: &mut css::Parser) -> Result<Time> {
         match input.try_parse(Calc::<Time>::parse) {

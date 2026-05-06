@@ -333,22 +333,22 @@ impl Transform {
                         y.to_css(dest)?;
                     }
                 }
-                dest.write_char(')')?;
+                dest.write_char(b')')?;
             }
             Transform::TranslateX(x) => {
                 dest.write_str(if dest.minify { "translate(" } else { "translateX(" })?;
                 x.to_css(dest)?;
-                dest.write_char(')')?;
+                dest.write_char(b')')?;
             }
             Transform::TranslateY(y) => {
                 dest.write_str("translateY(")?;
                 y.to_css(dest)?;
-                dest.write_char(')')?;
+                dest.write_char(b')')?;
             }
             Transform::TranslateZ(z) => {
                 dest.write_str("translateZ(")?;
                 z.to_css(dest)?;
-                dest.write_char(')')?;
+                dest.write_char(b')')?;
             }
             Transform::Translate3d { x, y, z } => {
                 if dest.minify && !x.is_zero() && y.is_zero() && z.is_zero() {
@@ -373,7 +373,7 @@ impl Transform {
                     dest.delim(',', false)?;
                     z.to_css(dest)?;
                 }
-                dest.write_char(')')?;
+                dest.write_char(b')')?;
             }
             Transform::Scale { x: sx, y: sy } => {
                 let x: f32 = sx.into_f32();
@@ -392,22 +392,22 @@ impl Transform {
                         CSSNumberFns::to_css(&y, dest)?;
                     }
                 }
-                dest.write_char(')')?;
+                dest.write_char(b')')?;
             }
             Transform::ScaleX(x) => {
                 dest.write_str("scaleX(")?;
                 CSSNumberFns::to_css(&x.into_f32(), dest)?;
-                dest.write_char(')')?;
+                dest.write_char(b')')?;
             }
             Transform::ScaleY(y) => {
                 dest.write_str("scaleY(")?;
                 CSSNumberFns::to_css(&y.into_f32(), dest)?;
-                dest.write_char(')')?;
+                dest.write_char(b')')?;
             }
             Transform::ScaleZ(z) => {
                 dest.write_str("scaleZ(")?;
                 CSSNumberFns::to_css(&z.into_f32(), dest)?;
-                dest.write_char(')')?;
+                dest.write_char(b')')?;
             }
             Transform::Scale3d { x: sx, y: sy, z: sz } => {
                 let x: f32 = sx.into_f32();
@@ -438,27 +438,27 @@ impl Transform {
                     dest.delim(',', false)?;
                     CSSNumberFns::to_css(&z, dest)?;
                 }
-                dest.write_char(')')?;
+                dest.write_char(b')')?;
             }
             Transform::Rotate(angle) => {
                 dest.write_str("rotate(")?;
                 angle.to_css_with_unitless_zero(dest)?;
-                dest.write_char(')')?;
+                dest.write_char(b')')?;
             }
             Transform::RotateX(angle) => {
                 dest.write_str("rotateX(")?;
                 angle.to_css_with_unitless_zero(dest)?;
-                dest.write_char(')')?;
+                dest.write_char(b')')?;
             }
             Transform::RotateY(angle) => {
                 dest.write_str("rotateY(")?;
                 angle.to_css_with_unitless_zero(dest)?;
-                dest.write_char(')')?;
+                dest.write_char(b')')?;
             }
             Transform::RotateZ(angle) => {
                 dest.write_str(if dest.minify { "rotate(" } else { "rotateZ(" })?;
                 angle.to_css_with_unitless_zero(dest)?;
-                dest.write_char(')')?;
+                dest.write_char(b')')?;
             }
             Transform::Rotate3d { x, y, z, angle } => {
                 if dest.minify && *x == 1.0 && *y == 0.0 && *z == 0.0 {
@@ -480,7 +480,7 @@ impl Transform {
                     dest.delim(',', false)?;
                     angle.to_css_with_unitless_zero(dest)?;
                 }
-                dest.write_char(')')?;
+                dest.write_char(b')')?;
             }
             Transform::Skew { x, y } => {
                 if dest.minify && x.is_zero() && !y.is_zero() {
@@ -494,22 +494,22 @@ impl Transform {
                         y.to_css_with_unitless_zero(dest)?;
                     }
                 }
-                dest.write_char(')')?;
+                dest.write_char(b')')?;
             }
             Transform::SkewX(angle) => {
                 dest.write_str(if dest.minify { "skew(" } else { "skewX(" })?;
                 angle.to_css_with_unitless_zero(dest)?;
-                dest.write_char(')')?;
+                dest.write_char(b')')?;
             }
             Transform::SkewY(angle) => {
                 dest.write_str("skewY(")?;
                 angle.to_css_with_unitless_zero(dest)?;
-                dest.write_char(')')?;
+                dest.write_char(b')')?;
             }
             Transform::Perspective(len) => {
                 dest.write_str("perspective(")?;
                 len.to_css(dest)?;
-                dest.write_char(')')?;
+                dest.write_char(b')')?;
             }
             Transform::Matrix(m) => {
                 dest.write_str("matrix(")?;
@@ -524,7 +524,7 @@ impl Transform {
                 CSSNumberFns::to_css(&m.e, dest)?;
                 dest.delim(',', false)?;
                 CSSNumberFns::to_css(&m.f, dest)?;
-                dest.write_char(')')?;
+                dest.write_char(b')')?;
             }
             Transform::Matrix3d(m) => {
                 dest.write_str("matrix3d(")?;
@@ -559,7 +559,7 @@ impl Transform {
                 CSSNumberFns::to_css(&m.m43, dest)?;
                 dest.delim(',', false)?;
                 CSSNumberFns::to_css(&m.m44, dest)?;
-                dest.write_char(')')?;
+                dest.write_char(b')')?;
             }
         }
         Ok(())
@@ -735,10 +735,10 @@ impl Translate {
             Translate::Xyz { x, y, z } => {
                 x.to_css(dest)?;
                 if !y.is_zero() || !z.is_zero() {
-                    dest.write_char(' ')?;
+                    dest.write_char(b' ')?;
                     y.to_css(dest)?;
                     if !z.is_zero() {
-                        dest.write_char(' ')?;
+                        dest.write_char(b' ')?;
                         z.to_css(dest)?;
                     }
                 }
@@ -856,11 +856,11 @@ impl Rotate {
             dest.write_str("y ")?;
         } else if !(self.x == 0.0 && self.y == 0.0 && self.z == 1.0) {
             CSSNumberFns::to_css(&self.x, dest)?;
-            dest.write_char(' ')?;
+            dest.write_char(b' ')?;
             CSSNumberFns::to_css(&self.y, dest)?;
-            dest.write_char(' ')?;
+            dest.write_char(b' ')?;
             CSSNumberFns::to_css(&self.z, dest)?;
-            dest.write_char(' ')?;
+            dest.write_char(b' ')?;
         }
 
         self.angle.to_css(dest)
@@ -935,10 +935,10 @@ impl Scale {
                 x.to_css(dest)?;
                 let z_val = z.into_f32();
                 if y != x || z_val != 1.0 {
-                    dest.write_char(' ')?;
+                    dest.write_char(b' ')?;
                     y.to_css(dest)?;
                     if z_val != 1.0 {
-                        dest.write_char(' ')?;
+                        dest.write_char(b' ')?;
                         z.to_css(dest)?;
                     }
                 }

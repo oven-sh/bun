@@ -55,8 +55,10 @@ pub struct OutputSinkVTable {
     pub quiet_writer_adapt: unsafe fn(qw: QuietWriter, buf: *mut u8, len: usize) -> QuietWriterAdapter,
     /// Flush a QuietWriter. (`QuietWriter.flush`.)
     pub quiet_writer_flush: unsafe fn(qw: &mut QuietWriter),
-    /// Write bytes via a QuietWriter (best-effort, errors swallowed by definition).
-    pub quiet_writer_write_all: unsafe fn(qw: &mut QuietWriter, bytes: &[u8]),
+    /// Write bytes via a QuietWriter. Returns `false` on I/O error so
+    /// `ScopedLogger::log` can disable the scope (Zig: `print() catch { really_disable = true }`).
+    /// Callers that want Zig "quiet" semantics simply discard the bool.
+    pub quiet_writer_write_all: unsafe fn(qw: &mut QuietWriter, bytes: &[u8]) -> bool,
     /// Read back the underlying fd from a QuietWriter (`.context.handle.handle`).
     pub quiet_writer_fd: unsafe fn(qw: &QuietWriter) -> Fd,
     /// Query the terminal's row/col size on `fd` (TIOCGWINSZ ioctl on unix,
@@ -126,8 +128,11 @@ impl QuietWriter {
 }
 impl core::fmt::Write for QuietWriter {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        unsafe { (output_sink().quiet_writer_write_all)(self, s.as_bytes()) };
-        Ok(())
+        if unsafe { (output_sink().quiet_writer_write_all)(self, s.as_bytes()) } {
+            Ok(())
+        } else {
+            Err(core::fmt::Error)
+        }
     }
 }
 // `qw.write_fmt(args)` resolves through `fmt::Write`.
@@ -177,7 +182,7 @@ impl File {
     #[inline]
     pub fn write_all(&self, bytes: &[u8]) -> Result<(), crate::Error> {
         let mut qw = self.quiet_writer();
-        unsafe { (output_sink().quiet_writer_write_all)(&mut qw, bytes) };
+        let _ = unsafe { (output_sink().quiet_writer_write_all)(&mut qw, bytes) };
         Ok(())
     }
     #[inline]
@@ -1148,15 +1153,10 @@ impl fmt::Display for ElapsedFormatter {
 // intermediate helper had no way to defer the color/no-color choice without
 // leaking raw `\x1b[` escapes when colors are disabled, so it was removed.
 
-#[inline]
-pub fn print_elapsed_to<C>(elapsed: f64, printer: impl Fn(&C, fmt::Arguments<'_>), ctx: &C) {
-    match elapsed.round() as i64 {
-        0..=1500 => printer(ctx, format_args!("[{:>.2}ms]", elapsed)),
-        _ => printer(ctx, format_args!("[{:>.2}s]", elapsed / 1000.0)),
-    }
-    // TODO(port): pretty_fmt! color tags — callers that want color should use
-    // `print_elapsed`/`print_elapsed_stdout` (which route through `pretty_to`).
-}
+// `print_elapsed_to` intentionally removed — see PORT NOTE above. The colored
+// template can't be deferred through an `fmt::Arguments`-taking printer without
+// either leaking raw escapes or stripping color, so callers must use
+// `print_elapsed` / `print_elapsed_stdout` (or `ElapsedFormatter` directly).
 
 pub fn print_elapsed(elapsed: f64) {
     match elapsed.round() as i64 {
@@ -1421,14 +1421,14 @@ impl ScopedLogger {
     }
 
     fn evaluate_is_visible(&self) {
-        // BUN_DEBUG_<tagname>
-        let mut env_key = [0u8; 64];
-        let prefix = b"BUN_DEBUG_";
-        env_key[..prefix.len()].copy_from_slice(prefix);
+        // BUN_DEBUG_<tagname> — Zig builds this with comptime `++` (no length cap),
+        // so size the buffer from the tag instead of a fixed `[u8; 64]`.
         let tag = self.tagname.as_bytes();
-        env_key[prefix.len()..prefix.len() + tag.len()].copy_from_slice(tag);
+        let prefix = b"BUN_DEBUG_";
         let key_len = prefix.len() + tag.len();
-        env_key[key_len] = 0;
+        let mut env_key = vec![0u8; key_len + 1]; // +1 NUL
+        env_key[..prefix.len()].copy_from_slice(prefix);
+        env_key[prefix.len()..key_len].copy_from_slice(tag);
         // SAFETY: NUL written at key_len; bytes ..key_len are initialized ASCII.
         let key = unsafe { crate::ZStr::from_raw(env_key.as_ptr(), key_len) };
 
@@ -1441,11 +1441,11 @@ impl ScopedLogger {
                 .store(self.really_disable.load(Ordering::Relaxed) || val, Ordering::Relaxed);
         } else {
             // --debug-<tagname> / --debug-all
-            let mut flag = [0u8; 64];
             let pfx = b"--debug-";
+            let mut flag = vec![0u8; pfx.len() + tag.len()];
             flag[..pfx.len()].copy_from_slice(pfx);
-            flag[pfx.len()..pfx.len() + tag.len()].copy_from_slice(tag);
-            let flag_slice = &flag[..pfx.len() + tag.len()];
+            flag[pfx.len()..].copy_from_slice(tag);
+            let flag_slice = flag.as_slice();
             for arg in argv() {
                 if strings::eql_case_insensitive_ascii(arg, flag_slice, true)
                     || strings::eql_case_insensitive_ascii(arg, b"--debug-all", true)

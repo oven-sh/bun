@@ -1186,13 +1186,18 @@ impl ShellTask {
     /// `ShellTask` at `C::TASK_OFFSET` and outlives the worker-thread call.
     pub unsafe fn schedule<C: ShellTaskCtx>(ctx: *mut C) {
         use bun_threading::work_pool::WorkPool;
-        // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
-        let this = unsafe { &mut *((ctx as *mut u8).add(C::TASK_OFFSET) as *mut ShellTask) };
         log!("ShellTask schedule");
-        this.task.callback = shell_task_trampoline::<C>;
-        // TODO(b2-blocked): this.keep_alive.ref_(this.event_loop) — needs the
-        // real `bun_jsc::EventLoopHandle`, not the local `usize` shim.
-        WorkPool::schedule(&raw mut this.task);
+        // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
+        // Stay on raw pointers: once `WorkPool::schedule` returns the worker
+        // thread may already be touching `*this`, so we must not hold a live
+        // `&mut ShellTask` across that call.
+        unsafe {
+            let this = (ctx as *mut u8).add(C::TASK_OFFSET) as *mut ShellTask;
+            (*this).task.callback = shell_task_trampoline::<C>;
+            // TODO(b2-blocked): (*this).keep_alive.ref_((*this).event_loop) —
+            // needs the real `bun_jsc::EventLoopHandle`, not the `usize` shim.
+            WorkPool::schedule(&raw mut (*this).task);
+        }
     }
 
     pub fn on_finish(&mut self) {

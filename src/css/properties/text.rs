@@ -223,21 +223,21 @@ impl TextShadow {
     #[cfg(any())] // blocked_on: LengthValue::{to_css,zero} / CssColor::to_css surface
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         self.x_offset.to_css(dest)?;
-        dest.write_char(' ')?;
+        dest.write_char(b' ')?;
         self.y_offset.to_css(dest)?;
 
         if self.blur != Length::zero() || self.spread != Length::zero() {
-            dest.write_char(' ')?;
+            dest.write_char(b' ')?;
             self.blur.to_css(dest)?;
 
             if self.spread != Length::zero() {
-                dest.write_char(' ')?;
+                dest.write_char(b' ')?;
                 self.spread.to_css(dest)?;
             }
         }
 
         if self.color != CssColor::CurrentColor {
-            dest.write_char(' ')?;
+            dest.write_char(b' ')?;
             self.color.to_css(dest)?;
         }
 

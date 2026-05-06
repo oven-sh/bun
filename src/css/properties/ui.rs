@@ -78,7 +78,7 @@ impl ColorScheme {
         if self.contains(ColorScheme::LIGHT) {
             dest.write_str("light")?;
             if self.contains(ColorScheme::DARK) {
-                dest.write_char(' ')?;
+                dest.write_char(b' ')?;
             }
         }
 

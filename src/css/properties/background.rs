@@ -12,7 +12,8 @@ use bun_alloc::Arena as Bump;
 use bun_string::strings;
 
 /// A value for the [background](https://www.w3.org/TR/css-backgrounds-3/#background) shorthand property.
-#[derive(Clone)]
+// PORT NOTE: Clone derive gated on `Image` gaining `Clone` upstream.
+#[cfg_attr(any(), derive(Clone))]
 pub struct Background {
     /// The background image.
     pub image: Image,
@@ -601,10 +602,6 @@ impl BackgroundProperty {
             | Self::ORIGIN.bits()
             | Self::CLIP.bits(),
     );
-
-    pub fn is_empty(self) -> bool {
-        self.bits() == 0
-    }
 
     #[cfg(any())] // blocked_on: PropertyId variant arity (BackgroundClip carries VendorPrefix payload)
     pub fn try_from_property_id(property_id: PropertyId) -> Option<BackgroundProperty> {

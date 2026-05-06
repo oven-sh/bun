@@ -107,17 +107,17 @@ impl Transition {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         self.property.to_css(dest)?;
         if !self.duration.is_zero() || !self.delay.is_zero() {
-            dest.write_char(' ')?;
+            dest.write_char(b' ')?;
             self.duration.to_css(dest)?;
         }
 
         if !self.timing_function.is_ease() {
-            dest.write_char(' ')?;
+            dest.write_char(b' ')?;
             self.timing_function.to_css(dest)?;
         }
 
         if !self.delay.is_zero() {
-            dest.write_char(' ')?;
+            dest.write_char(b' ')?;
             self.delay.to_css(dest)?;
         }
         Ok(())

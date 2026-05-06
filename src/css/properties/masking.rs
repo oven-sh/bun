@@ -128,7 +128,12 @@ pub struct Ellipse {
 /// A [`polygon()`](https://www.w3.org/TR/css-shapes-1/#funcdef-polygon) shape.
 pub struct Polygon {
     /// The fill rule used to determine the interior of the polygon.
+    // blocked_on: properties::shape::FillRule (shape module gated). Field kept
+    // private + typed `()` so the struct shape is preserved without the dep.
+    #[cfg(any())]
     pub fill_rule: FillRule,
+    #[cfg(not(any()))]
+    fill_rule: (),
     /// The points of each vertex of the polygon.
     // TODO(port): css is an AST crate (§Allocators) — if Polygon is arena-fed this must become
     // `bumpalo::collections::Vec<'bump, Point>` and Polygon/BasicShape/ClipPath gain `<'bump>`.
@@ -228,7 +233,9 @@ pub enum MaskType {
 }
 
 /// A value for the [mask](https://www.w3.org/TR/css-masking-1/#the-mask) shorthand property.
-#[derive(Debug, Clone, PartialEq)]
+// PORT NOTE: Debug/Clone/PartialEq derives gated on `Image`/`Position`/
+// `BackgroundSize`/`BackgroundRepeat` gaining those derives upstream.
+#[cfg_attr(any(), derive(Debug, Clone, PartialEq))]
 pub struct Mask {
     /// The mask image.
     pub image: Image,
@@ -248,6 +255,7 @@ pub struct Mask {
     pub mode: MaskMode,
 }
 
+#[cfg(any())] // blocked_on: Image/Position/BackgroundSize/BackgroundRepeat::{parse,to_css,default} + .as_value() Result helper
 impl Mask {
     // TODO(port): PropertyFieldMap was a Zig anon-struct const consumed by comptime
     // reflection in shorthand handlers. Represent as assoc const slice; Phase B may
@@ -367,7 +375,7 @@ impl Mask {
         self.image.to_css(dest)?;
 
         if self.position != Position::default() || self.size != BackgroundSize::default() {
-            dest.write_char(' ')?;
+            dest.write_char(b' ')?;
             self.position.to_css(dest)?;
 
             if self.size != BackgroundSize::default() {
@@ -377,29 +385,29 @@ impl Mask {
         }
 
         if self.repeat != BackgroundRepeat::default() {
-            dest.write_char(' ')?;
+            dest.write_char(b' ')?;
             self.repeat.to_css(dest)?;
         }
 
         if self.origin != GeometryBox::BorderBox
             || self.clip != GeometryBox::BorderBox.into_mask_clip()
         {
-            dest.write_char(' ')?;
+            dest.write_char(b' ')?;
             self.origin.to_css(dest)?;
 
             if self.clip != self.origin.into_mask_clip() {
-                dest.write_char(' ')?;
+                dest.write_char(b' ')?;
                 self.clip.to_css(dest)?;
             }
         }
 
         if self.composite != MaskComposite::default() {
-            dest.write_char(' ')?;
+            dest.write_char(b' ')?;
             self.composite.to_css(dest)?;
         }
 
         if self.mode != MaskMode::default() {
-            dest.write_char(' ')?;
+            dest.write_char(b' ')?;
             self.mode.to_css(dest)?;
         }
 
@@ -429,8 +437,9 @@ impl Default for MaskBorderMode {
 }
 
 /// A value for the [mask-border](https://www.w3.org/TR/css-masking-1/#the-mask-border) shorthand property.
-/// A value for the [mask-border](https://www.w3.org/TR/css-masking-1/#the-mask-border) shorthand property.
-#[derive(Debug, Clone, PartialEq)]
+// PORT NOTE: Debug/Clone/PartialEq derives gated on `Image`/`Rect<_>` gaining
+// those derives upstream.
+#[cfg_attr(any(), derive(Debug, Clone, PartialEq))]
 pub struct MaskBorder {
     /// The mask image.
     pub source: Image,
@@ -446,6 +455,7 @@ pub struct MaskBorder {
     pub mode: MaskBorderMode,
 }
 
+#[cfg(any())] // blocked_on: BorderImage::{parse_with_callback,to_css_internal} + .as_value() helper + ParserError::InvalidDeclaration
 impl MaskBorder {
     // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"mask-border", PropertyFieldMap);
 
@@ -497,7 +507,7 @@ impl MaskBorder {
             dest,
         )?;
         if self.mode != MaskBorderMode::default() {
-            dest.write_char(' ')?;
+            dest.write_char(b' ')?;
             self.mode.to_css(dest)?;
         }
         Ok(())
@@ -568,6 +578,7 @@ pub enum WebKitMaskSourceType {
     Alpha,
 }
 
+#[cfg(any())] // blocked_on: PropertyId::WebkitMaskComposite variant name (codegen spelling is `WebKitMaskComposite`)
 pub fn get_webkit_mask_property(property_id: &PropertyId) -> Option<PropertyId> {
     // TODO(port): PropertyId variant naming — Zig uses kebab-case @"mask-border-source" etc.
     // Mapping to PascalCase variants here; Phase B should verify exact PropertyId enum shape.

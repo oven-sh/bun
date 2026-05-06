@@ -181,7 +181,7 @@ impl DisplayPair {
 
                 if self.inside != DisplayInside::Flow {
                     if needs_space {
-                        dest.write_char(' ')?;
+                        dest.write_char(b' ')?;
                     }
                     self.inside.to_css(dest)?;
                     needs_space = true;
@@ -189,7 +189,7 @@ impl DisplayPair {
 
                 if self.is_list_item {
                     if needs_space {
-                        dest.write_char(' ')?;
+                        dest.write_char(b' ')?;
                     }
                     dest.write_str("list-item")?;
                 }

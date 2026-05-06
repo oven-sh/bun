@@ -1,27 +1,26 @@
-// ─── B-2 round 7: colorspace conversion graph un-gated ────────────────────
-// Data-only colorspace structs + `CssColor` + `ColorFallbackKind` are real
-// so `gradient.rs`/`image.rs` (and the crate-root `pub use values::color::
-// {CssColor, RGBA, ...}`) compile against concrete types with the derives
-// they need (`Clone`/`PartialEq`).
+// ─── B-2 round 8: parse / to_css / ComponentParser / Interpolate un-gated ──
+// Full `CssColor::parse` / `to_css` surface, `ComponentParser` /
+// `RelativeComponentParser`, the `Colorspace` / `Interpolate` traits,
+// `color-mix()`, and the 47-variant `SystemColor` are now real. The
+// `From<Src> for Dst` lattice + `ColorGamut`/`map_gamut` were un-gated in
+// round 7 and remain at the bottom of the file.
 //
-// The full `From<Src> for Dst` colorspace-conversion lattice (handwritten
-// matrix conversions + the 163 generated transitive hops in
-// `color_generated.rs`) plus `ColorGamut`/`map_gamut`/`resolve_missing` is
-// now un-gated below the `gated_full_impl` block.
-//
-// Remaining gated in `gated_full_impl` (parse / to_css / ComponentParser /
-// RelativeComponentParser / Interpolate / `color-mix()` / SystemColor):
-//
-// blocked_on:
-//   - css_parser::color::{parse_hash_color, parse_named_color} hookup
-//   - Printer::write_ident path for SystemColor::to_css
-//   - de-dup inner `gated_full_impl` type defs against outer scope
+// `gated_full_impl` is preserved verbatim under `#[cfg(any())]` as the
+// reference port; everything callable from the rest of the crate now lives
+// in the outer scope.
 
 use crate::css_parser as css;
+use crate::css_parser::CssResult;
 use crate::printer::Printer;
 use crate::PrintErr;
 use crate::targets;
+use crate::compat::Feature;
+use crate::values::angle::Angle;
+use crate::values::calc::Calc;
+use crate::values::number::CSSNumberFns;
+use crate::values::percentage::Percentage;
 use bun_alloc::Arena;
+use bun_string::strings;
 
 // ───────────────────────── colorspace structs ────────────────────────────
 // Field layout matches `color.zig`; every space is 3 channels + alpha.
@@ -56,6 +55,14 @@ pub struct RGBA {
 }
 
 impl RGBA {
+    #[inline]
+    pub fn new(red: u8, green: u8, blue: u8, alpha: f32) -> RGBA {
+        RGBA { red, green, blue, alpha: clamp_unit_f32(alpha) }
+    }
+
+    #[inline]
+    pub fn transparent() -> RGBA { RGBA { red: 0, green: 0, blue: 0, alpha: 0 } }
+
     #[inline] pub fn red_f32(&self)   -> f32 { self.red   as f32 / 255.0 }
     #[inline] pub fn green_f32(&self) -> f32 { self.green as f32 / 255.0 }
     #[inline] pub fn blue_f32(&self)  -> f32 { self.blue  as f32 / 255.0 }
@@ -79,6 +86,32 @@ impl RGBA {
     pub fn into_srgb(&self) -> SRGB {
         SRGB { r: self.red_f32(), g: self.green_f32(), b: self.blue_f32(), alpha: self.alpha_f32() }
     }
+
+    /// Convert any `CssColor` into `RGBA` by routing through `SRGB`.
+    /// Zig: `ColorspaceConversions(@This()).tryFromCssColor`.
+    #[inline]
+    pub fn try_from_css_color(color: &CssColor) -> Option<RGBA> {
+        Some(SRGB::try_from_css_color(color)?.into_rgba())
+    }
+}
+
+#[inline]
+fn clamp_unit_f32(val: f32) -> u8 {
+    // Whilst scaling by 256 and flooring would provide
+    // an equal distribution of integers to percentage inputs,
+    // this is not what Gecko does so we instead multiply by 255
+    // and round (adding 0.5 and flooring is equivalent to rounding)
+    //
+    // Chrome does something similar for the alpha value, but not
+    // the rgb values.
+    //
+    // See https://bugzilla.mozilla.org/show_bug.cgi?id=1340484
+    //
+    // Clamping to 256 and rounding after would let 1.0 map to 256, and
+    // `256.0_f32 as u8` is undefined behavior:
+    //
+    // https://github.com/rust-lang/rust/issues/10184
+    (val * 255.0).round().clamp(0.0, 255.0) as u8
 }
 
 /// A color in a LAB color space (`lab()`/`lch()`/`oklab()`/`oklch()`).
@@ -113,12 +146,108 @@ pub enum FloatColor {
     Hwb(HWB),
 }
 
-/// CSS system-color keyword. Full 47-variant set lives in `gated_full_impl`;
-/// the un-gated stub is empty (uninhabited) so `CssColor::System` arms are
-/// dead until the parser actually constructs one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum SystemColor {}
+/// A CSS [system color](https://drafts.csswg.org/css-color/#css-system-colors) keyword.
+/// *NOTE* these are intentionally in flat case
+#[derive(Debug, Clone, Copy, PartialEq, Eq, crate::DefineEnumProperty)]
+pub enum SystemColor {
+    /// Background of accented user interface controls.
+    Accentcolor,
+    /// Text of accented user interface controls.
+    Accentcolortext,
+    /// Text in active links. For light backgrounds, traditionally red.
+    Activetext,
+    /// The base border color for push buttons.
+    Buttonborder,
+    /// The face background color for push buttons.
+    Buttonface,
+    /// Text on push buttons.
+    Buttontext,
+    /// Background of application content or documents.
+    Canvas,
+    /// Text in application content or documents.
+    Canvastext,
+    /// Background of input fields.
+    Field,
+    /// Text in input fields.
+    Fieldtext,
+    /// Disabled text. (Often, but not necessarily, gray.)
+    Graytext,
+    /// Background of selected text, for example from ::selection.
+    Highlight,
+    /// Text of selected text.
+    Highlighttext,
+    /// Text in non-active, non-visited links. For light backgrounds, traditionally blue.
+    Linktext,
+    /// Background of text that has been specially marked (such as by the HTML mark element).
+    Mark,
+    /// Text that has been specially marked (such as by the HTML mark element).
+    Marktext,
+    /// Background of selected items, for example a selected checkbox.
+    Selecteditem,
+    /// Text of selected items.
+    Selecteditemtext,
+    /// Text in visited links. For light backgrounds, traditionally purple.
+    Visitedtext,
+
+    // Deprecated colors: https://drafts.csswg.org/css-color/#deprecated-system-colors
+    /// Active window border. Same as ButtonBorder.
+    Activeborder,
+    /// Active window caption. Same as Canvas.
+    Activecaption,
+    /// Background color of multiple document interface. Same as Canvas.
+    Appworkspace,
+    /// Desktop background. Same as Canvas.
+    Background,
+    /// The color of the border facing the light source for 3-D elements that appear 3-D due to one layer of surrounding border. Same as ButtonFace.
+    Buttonhighlight,
+    /// The color of the border away from the light source for 3-D elements that appear 3-D due to one layer of surrounding border. Same as ButtonFace.
+    Buttonshadow,
+    /// Text in caption, size box, and scrollbar arrow box. Same as CanvasText.
+    Captiontext,
+    /// Inactive window border. Same as ButtonBorder.
+    Inactiveborder,
+    /// Inactive window caption. Same as Canvas.
+    Inactivecaption,
+    /// Color of text in an inactive caption. Same as GrayText.
+    Inactivecaptiontext,
+    /// Background color for tooltip controls. Same as Canvas.
+    Infobackground,
+    /// Text color for tooltip controls. Same as CanvasText.
+    Infotext,
+    /// Menu background. Same as Canvas.
+    Menu,
+    /// Text in menus. Same as CanvasText.
+    Menutext,
+    /// Scroll bar gray area. Same as Canvas.
+    Scrollbar,
+    /// The color of the darker (generally outer) of the two borders away from the light source for 3-D elements that appear 3-D due to two concentric layers of surrounding border. Same as ButtonBorder.
+    Threeddarkshadow,
+    /// The face background color for 3-D elements that appear 3-D due to two concentric layers of surrounding border. Same as ButtonFace.
+    Threedface,
+    /// The color of the lighter (generally outer) of the two borders facing the light source for 3-D elements that appear 3-D due to two concentric layers of surrounding border. Same as ButtonBorder.
+    Threedhighlight,
+    /// The color of the darker (generally inner) of the two borders facing the light source for 3-D elements that appear 3-D due to two concentric layers of surrounding border. Same as ButtonBorder.
+    Threedlightshadow,
+    /// The color of the lighter (generally inner) of the two borders away from the light source for 3-D elements that appear 3-D due to two concentric layers of surrounding border. Same as ButtonBorder.
+    Threedshadow,
+    /// Window background. Same as Canvas.
+    Window,
+    /// Window frame. Same as ButtonBorder.
+    Windowframe,
+    /// Text in windows. Same as CanvasText.
+    Windowtext,
+}
+
+impl SystemColor {
+    pub fn is_compatible(self, browsers: targets::Browsers) -> bool {
+        match self {
+            SystemColor::Accentcolor | SystemColor::Accentcolortext => {
+                Feature::AccentSystemColor.is_compatible(browsers)
+            }
+            _ => true,
+        }
+    }
+}
 
 /// A CSS `<color>` value.
 #[derive(Debug, Clone, PartialEq)]
@@ -148,24 +277,151 @@ impl Default for CssColor {
 }
 
 impl CssColor {
+    // TODO(port): move to *_jsc — `pub const jsFunctionColor = @import("../../css_jsc/color_js.zig").jsFunctionColor;`
+
     /// Parse a CSS `<color>` from the parser cursor.
-    // blocked_on: gated_full_impl (parse_hash_color / parse_named_color /
-    // parse_color_function / ComponentParser).
-    pub fn parse(input: &mut css::Parser) -> css::CssResult<CssColor> {
-        let _ = input;
-        todo!("bun_css::values::color::CssColor::parse — gated_full_impl")
+    pub fn parse(input: &mut css::Parser) -> CssResult<CssColor> {
+        let location = input.current_source_location();
+        let token = input.next()?.clone();
+
+        match token {
+            css::Token::UnrestrictedHash(v) | css::Token::IdHash(v) => {
+                let Some((r, g, b, a)) = css::color::parse_hash_color(v) else {
+                    return Err(location.new_unexpected_token_error(token));
+                };
+                Ok(CssColor::Rgba(RGBA::new(r, g, b, a)))
+            }
+            css::Token::Ident(value) => {
+                if strings::eql_case_insensitive_ascii_check_length(value, b"currentcolor") {
+                    Ok(CssColor::CurrentColor)
+                } else if strings::eql_case_insensitive_ascii_check_length(value, b"transparent") {
+                    Ok(CssColor::Rgba(RGBA::transparent()))
+                } else if let Some((r, g, b)) = css::color::parse_named_color(value) {
+                    Ok(CssColor::Rgba(RGBA::new(r, g, b, 255.0)))
+                } else if let Some(system_color) =
+                    <SystemColor as css::EnumProperty>::from_ascii_case_insensitive(value)
+                {
+                    Ok(CssColor::System(system_color))
+                } else {
+                    Err(location.new_unexpected_token_error(token))
+                }
+            }
+            css::Token::Function(name) => parse_color_function(location, name, input),
+            _ => Err(location.new_unexpected_token_error(token)),
+        }
     }
 
     /// Serialize this color to CSS text via `dest`.
-    // blocked_on: gated_full_impl (write_components / short_color_name /
-    // compact_hex).
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        let _ = dest;
-        todo!("bun_css::values::color::CssColor::to_css — gated_full_impl")
+        match self {
+            CssColor::CurrentColor => dest.write_str("currentColor"),
+            CssColor::Rgba(color) => {
+                if color.alpha == 255 {
+                    let hex: u32 =
+                        ((color.red as u32) << 16) | ((color.green as u32) << 8) | (color.blue as u32);
+                    if let Some(name) = short_color_name(hex) {
+                        return dest.write_str(name);
+                    }
+
+                    let compact = compact_hex(hex);
+                    if hex == expand_hex(compact) {
+                        dest.write_fmt(format_args!("#{:03x}", compact))?;
+                    } else {
+                        dest.write_fmt(format_args!("#{:06x}", hex))?;
+                    }
+                } else {
+                    // If the #rrggbbaa syntax is not supported by the browser targets, output rgba()
+                    if dest.targets.should_compile_same(Feature::HexAlphaColors) {
+                        // If the browser doesn't support `#rrggbbaa` color syntax, it is converted to `transparent` when compressed(minify = true).
+                        // https://www.w3.org/TR/css-color-4/#transparent-black
+                        if dest.minify
+                            && color.red == 0
+                            && color.green == 0
+                            && color.blue == 0
+                            && color.alpha == 0
+                        {
+                            return dest.write_str("transparent");
+                        } else {
+                            dest.write_fmt(format_args!("rgba({}", color.red))?;
+                            dest.delim(b',', false)?;
+                            dest.write_fmt(format_args!("{}", color.green))?;
+                            dest.delim(b',', false)?;
+                            dest.write_fmt(format_args!("{}", color.blue))?;
+                            dest.delim(b',', false)?;
+
+                            // Try first with two decimal places, then with three.
+                            let mut rounded_alpha = (color.alpha_f32() * 100.0).round() / 100.0;
+                            let clamped: u8 =
+                                (rounded_alpha * 255.0).round().clamp(0.0, 255.0) as u8;
+                            if clamped != color.alpha {
+                                rounded_alpha = (color.alpha_f32() * 1000.0).round() / 1000.0;
+                            }
+
+                            CSSNumberFns::to_css(&rounded_alpha, dest)?;
+                            dest.write_char(b')')?;
+                            return Ok(());
+                        }
+                    }
+
+                    let hex: u32 = ((color.red as u32) << 24)
+                        | ((color.green as u32) << 16)
+                        | ((color.blue as u32) << 8)
+                        | (color.alpha as u32);
+                    let compact = compact_hex(hex);
+                    if hex == expand_hex(compact) {
+                        dest.write_fmt(format_args!("#{:04x}", compact))?;
+                    } else {
+                        dest.write_fmt(format_args!("#{:08x}", hex))?;
+                    }
+                }
+                Ok(())
+            }
+            CssColor::Lab(lab) => match **lab {
+                LABColor::Lab(ref lab) => {
+                    write_components("lab", lab.l, lab.a, lab.b, lab.alpha, dest)
+                }
+                LABColor::Lch(ref lch) => {
+                    write_components("lch", lch.l, lch.c, lch.h, lch.alpha, dest)
+                }
+                LABColor::Oklab(ref oklab) => {
+                    write_components("oklab", oklab.l, oklab.a, oklab.b, oklab.alpha, dest)
+                }
+                LABColor::Oklch(ref oklch) => {
+                    write_components("oklch", oklch.l, oklch.c, oklch.h, oklch.alpha, dest)
+                }
+            },
+            CssColor::Predefined(predefined) => write_predefined(predefined, dest),
+            CssColor::Float(float) => {
+                // Serialize as hex.
+                let srgb = SRGB::from_float_color(float);
+                let as_css_color = srgb.into_css_color();
+                as_css_color.to_css(dest)
+                // `as_css_color` drops here.
+            }
+            CssColor::LightDark { light, dark } => {
+                if !dest.targets.is_compatible(Feature::LightDark) {
+                    dest.write_str("var(--buncss-light")?;
+                    dest.delim(b',', false)?;
+                    light.to_css(dest)?;
+                    dest.write_char(b')')?;
+                    dest.whitespace()?;
+                    dest.write_str("var(--buncss-dark")?;
+                    dest.delim(b',', false)?;
+                    dark.to_css(dest)?;
+                    return dest.write_char(b')');
+                }
+
+                dest.write_str("light-dark(")?;
+                light.to_css(dest)?;
+                dest.delim(b',', false)?;
+                dark.to_css(dest)?;
+                dest.write_char(b')')
+            }
+            CssColor::System(system) => system.to_css(dest),
+        }
     }
 
     pub fn is_compatible(&self, browsers: targets::Browsers) -> bool {
-        use crate::compat::Feature;
         match self {
             CssColor::CurrentColor | CssColor::Rgba(_) | CssColor::Float(_) => true,
             CssColor::Lab(lab) => match **lab {
@@ -181,7 +437,7 @@ impl CssColor {
                     && light.is_compatible(browsers)
                     && dark.is_compatible(browsers)
             }
-            CssColor::System(_) => true,
+            CssColor::System(system) => system.is_compatible(browsers),
         }
     }
 
@@ -190,14 +446,38 @@ impl CssColor {
         if matches!(self, CssColor::Rgba(_)) {
             return self.clone();
         }
-        let _ = kind;
-        // blocked_on: gated_full_impl::CssColor::{to_rgb,to_p3,to_lab} — the
-        // `try_from_css_color` bridge from `CssColor` into the un-gated
-        // `From<…>` colorspace lattice still lives inside `gated_full_impl`.
-        // Per PORTING.md §Forbidden (silent-no-op), fail loudly instead of
-        // returning `self.clone()` (which would emit the original unsupported
-        // colorspace as if it were a fallback).
-        todo!("CssColor::get_fallback — blocked on gated_full_impl to_rgb/to_p3/to_lab un-gate")
+        match kind.bits() {
+            x if x == ColorFallbackKind::RGB.bits() => self.to_rgb().unwrap(),
+            x if x == ColorFallbackKind::P3.bits() => self.to_p3().unwrap(),
+            x if x == ColorFallbackKind::LAB.bits() => self.to_lab().unwrap(),
+            _ => unreachable!("Expected RGBA, P3, LAB fallback. This is a bug in Bun."),
+        }
+    }
+
+    pub fn get_fallbacks(
+        &mut self,
+        _allocator: &Arena,
+        targets: targets::Targets,
+    ) -> crate::SmallList<CssColor, 2> {
+        let fallbacks = self.get_necessary_fallbacks(targets);
+
+        let mut res = crate::SmallList::<CssColor, 2>::default();
+
+        if fallbacks.contains(ColorFallbackKind::RGB) {
+            // PERF(port): was assume_capacity
+            res.append(self.to_rgb().unwrap());
+        }
+
+        if fallbacks.contains(ColorFallbackKind::P3) {
+            // PERF(port): was assume_capacity
+            res.append(self.to_p3().unwrap());
+        }
+
+        if fallbacks.contains(ColorFallbackKind::LAB) {
+            *self = self.to_lab().unwrap();
+        }
+
+        res
     }
 
     /// Returns the color fallback types needed for the given browser targets.
@@ -209,7 +489,6 @@ impl CssColor {
     }
 
     pub fn get_possible_fallbacks(&self, targets: targets::Targets) -> ColorFallbackKind {
-        use crate::compat::Feature;
         // Fallbacks occur in levels: Oklab -> Lab -> P3 -> RGB. We start with all levels
         // below and including the authored color space, and remove the ones that aren't
         // compatible with our browser targets.
@@ -291,6 +570,180 @@ impl CssColor {
 
     #[inline]
     pub fn eql(&self, other: &CssColor) -> bool { self == other }
+
+    pub fn to_light_dark(&self) -> CssColor {
+        match self {
+            CssColor::LightDark { .. } => self.clone(),
+            _ => CssColor::LightDark {
+                light: Box::new(self.clone()),
+                dark: Box::new(self.clone()),
+            },
+        }
+    }
+
+    #[inline]
+    pub fn light_dark_owned(light: CssColor, dark: CssColor) -> CssColor {
+        CssColor::LightDark { light: Box::new(light), dark: Box::new(dark) }
+    }
+
+    pub fn to_rgb(&self) -> Option<CssColor> {
+        if let CssColor::LightDark { light, dark } = self {
+            return Some(CssColor::LightDark {
+                light: Box::new(light.to_rgb()?),
+                dark: Box::new(dark.to_rgb()?),
+            });
+        }
+        Some(CssColor::Rgba(RGBA::try_from_css_color(self)?))
+    }
+
+    pub fn to_p3(&self) -> Option<CssColor> {
+        match self {
+            CssColor::LightDark { light: ld_light, dark: ld_dark } => {
+                let light = ld_light.to_p3()?;
+                let dark = ld_dark.to_p3()?;
+                Some(CssColor::LightDark { light: Box::new(light), dark: Box::new(dark) })
+            }
+            _ => Some(CssColor::Predefined(Box::new(PredefinedColor::DisplayP3(
+                P3::try_from_css_color(self)?,
+            )))),
+        }
+    }
+
+    pub fn to_lab(&self) -> Option<CssColor> {
+        match self {
+            CssColor::LightDark { light: ld_light, dark: ld_dark } => {
+                let light = ld_light.to_lab()?;
+                let dark = ld_dark.to_lab()?;
+                Some(CssColor::LightDark { light: Box::new(light), dark: Box::new(dark) })
+            }
+            _ => Some(CssColor::Lab(Box::new(LABColor::Lab(
+                LAB::try_from_css_color(self)?,
+            )))),
+        }
+    }
+
+    /// Mixes this color with another color, including the specified amount of each.
+    /// Implemented according to the [`color-mix()`](https://www.w3.org/TR/css-color-5/#color-mix) function.
+    // PERF: these little allocations feel bad
+    pub fn interpolate<T>(
+        &self,
+        mut p1: f32,
+        other: &CssColor,
+        mut p2: f32,
+        method: HueInterpolationMethod,
+    ) -> Option<CssColor>
+    where
+        T: Colorspace + ColorGamut + Interpolate + Into<OKLCH> + From<OKLCH> + Into<OKLAB> + 'static,
+    {
+        if matches!(self, CssColor::CurrentColor) || matches!(other, CssColor::CurrentColor) {
+            return None;
+        }
+
+        if matches!(self, CssColor::LightDark { .. }) || matches!(other, CssColor::LightDark { .. })
+        {
+            let this_light_dark = self.to_light_dark();
+            let other_light_dark = other.to_light_dark();
+
+            let CssColor::LightDark { light: al, dark: ad } = this_light_dark else {
+                unreachable!()
+            };
+            let CssColor::LightDark { light: bl, dark: bd } = other_light_dark else {
+                unreachable!()
+            };
+
+            return Some(CssColor::LightDark {
+                light: Box::new(al.interpolate::<T>(p1, &bl, p2, method)?),
+                dark: Box::new(ad.interpolate::<T>(p1, &bd, p2, method)?),
+            });
+        }
+
+        fn check_converted<T: 'static>(color: &CssColor) -> Option<bool> {
+            use core::any::TypeId;
+            debug_assert!(!matches!(
+                color,
+                CssColor::LightDark { .. } | CssColor::CurrentColor
+            ));
+            match color {
+                CssColor::Rgba(_) => Some(TypeId::of::<T>() == TypeId::of::<RGBA>()),
+                CssColor::Lab(lab) => Some(match **lab {
+                    LABColor::Lab(_) => TypeId::of::<T>() == TypeId::of::<LAB>(),
+                    LABColor::Lch(_) => TypeId::of::<T>() == TypeId::of::<LCH>(),
+                    LABColor::Oklab(_) => TypeId::of::<T>() == TypeId::of::<OKLAB>(),
+                    LABColor::Oklch(_) => TypeId::of::<T>() == TypeId::of::<OKLCH>(),
+                }),
+                CssColor::Predefined(pre) => Some(match **pre {
+                    PredefinedColor::Srgb(_) => TypeId::of::<T>() == TypeId::of::<SRGB>(),
+                    PredefinedColor::SrgbLinear(_) => TypeId::of::<T>() == TypeId::of::<SRGBLinear>(),
+                    PredefinedColor::DisplayP3(_) => TypeId::of::<T>() == TypeId::of::<P3>(),
+                    PredefinedColor::A98(_) => TypeId::of::<T>() == TypeId::of::<A98>(),
+                    PredefinedColor::Prophoto(_) => TypeId::of::<T>() == TypeId::of::<ProPhoto>(),
+                    PredefinedColor::Rec2020(_) => TypeId::of::<T>() == TypeId::of::<Rec2020>(),
+                    PredefinedColor::XyzD50(_) => TypeId::of::<T>() == TypeId::of::<XYZd50>(),
+                    PredefinedColor::XyzD65(_) => TypeId::of::<T>() == TypeId::of::<XYZd65>(),
+                }),
+                CssColor::Float(f) => Some(match **f {
+                    FloatColor::Rgb(_) => TypeId::of::<T>() == TypeId::of::<SRGB>(),
+                    FloatColor::Hsl(_) => TypeId::of::<T>() == TypeId::of::<HSL>(),
+                    FloatColor::Hwb(_) => TypeId::of::<T>() == TypeId::of::<HWB>(),
+                }),
+                // System colors cannot be converted to specific color spaces at parse time
+                CssColor::System(_) => None,
+                // We checked these above
+                CssColor::LightDark { .. } | CssColor::CurrentColor => unreachable!(),
+            }
+        }
+
+        let converted_first = check_converted::<T>(self)?;
+        let converted_second = check_converted::<T>(other)?;
+
+        // https://drafts.csswg.org/css-color-5/#color-mix-result
+        let mut first_color = T::try_from_css_color(self)?;
+        let mut second_color = T::try_from_css_color(other)?;
+
+        if converted_first && !first_color.in_gamut() {
+            first_color = map_gamut(first_color);
+        }
+
+        if converted_second && !second_color.in_gamut() {
+            second_color = map_gamut(second_color);
+        }
+
+        // https://www.w3.org/TR/css-color-4/#powerless
+        if converted_first {
+            first_color.adjust_powerless_components();
+        }
+
+        if converted_second {
+            second_color.adjust_powerless_components();
+        }
+
+        // https://drafts.csswg.org/css-color-4/#interpolation-missing
+        first_color.fill_missing_components(&second_color);
+        second_color.fill_missing_components(&first_color);
+
+        // https://www.w3.org/TR/css-color-4/#hue-interpolation
+        first_color.adjust_hue(&mut second_color, method);
+
+        // https://www.w3.org/TR/css-color-4/#interpolation-alpha
+        first_color.premultiply();
+        second_color.premultiply();
+
+        // https://drafts.csswg.org/css-color-5/#color-mix-percent-norm
+        let mut alpha_multiplier = p1 + p2;
+        if alpha_multiplier != 1.0 {
+            p1 = p1 / alpha_multiplier;
+            p2 = p2 / alpha_multiplier;
+            if alpha_multiplier > 1.0 {
+                alpha_multiplier = 1.0;
+            }
+        }
+
+        let mut result_color = first_color.interpolate(p1, &second_color, p2);
+
+        result_color.unpremultiply(alpha_multiplier);
+
+        Some(result_color.into_css_color())
+    }
 
     pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash11) {
         // PORT NOTE: Zig `css.implementHash` — variant-tag prefix + payload bytes.

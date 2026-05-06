@@ -17,7 +17,7 @@ use crate::css_properties::flex::{FlexLinePack, BoxPack, FlexPack, BoxAlign, Fle
 #[derive(Clone, PartialEq)]
 // TODO(port): css.DeriveParse / css.DeriveToCss were comptime-reflection generators.
 // Model as proc-macro derives in Phase B.
-#[derive(css::Parse, css::ToCss)]
+#[cfg_attr(any(), derive(css::Parse, css::ToCss))] // blocked_on: payload struct parse/to_css + Parser borrow lifetimes
 pub enum AlignContent {
     /// Default alignment.
     Normal,
@@ -38,6 +38,12 @@ pub struct AlignContentContentPosition {
 }
 
 impl AlignContentContentPosition {
+    #[cfg(any())] // blocked_on: ContentPosition::parse + OverflowPosition::parse derive
+    pub fn parse(input: &mut Parser) -> CssResult<Self> {
+        let overflow = input.try_parse(OverflowPosition::parse).ok();
+        let value = ContentPosition::parse(input)?;
+        Ok(Self { overflow, value })
+    }
     pub fn to_inner(&self) -> ContentPositionInner {
         ContentPositionInner {
             overflow: self.overflow,
@@ -48,12 +54,6 @@ impl AlignContentContentPosition {
     // Zig: pub fn __generateToCss() void {}
     // Marker telling DeriveToCss to auto-generate the field-sequence printer for this payload.
     // TODO(port): encode as #[css(generate_to_css)] attr on the variant in Phase B.
-
-    pub fn parse(input: &mut Parser) -> CssResult<Self> {
-        let overflow = input.try_parse(OverflowPosition::parse).ok();
-        let value = ContentPosition::parse(input)?;
-        Ok(Self { overflow, value })
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -70,6 +70,7 @@ pub enum BaselinePosition {
     Last,
 }
 
+#[cfg(any())] // blocked_on: Parser::expect_ident borrow lifetime (ident borrows *input across subsequent expect_ident_matching call)
 impl BaselinePosition {
     pub fn parse(input: &mut Parser) -> CssResult<Self> {
         let location = input.current_source_location();
@@ -140,6 +141,7 @@ impl JustifyContentContentPosition {
     }
 }
 
+#[cfg(any())] // blocked_on: Token::Ident(&[u8]) lifetime (new_unexpected_token_error needs owned/static ident)
 impl JustifyContent {
     pub fn parse(input: &mut Parser) -> CssResult<Self> {
         if input.try_parse(|i| i.expect_ident_matching(b"normal")).is_ok() {
@@ -207,7 +209,7 @@ impl JustifyContent {
 /// A value for the [align-self](https://www.w3.org/TR/css-align-3/#align-self-property) property.
 #[derive(Clone, PartialEq)]
 // TODO(port): css.DeriveParse / css.DeriveToCss
-#[derive(css::Parse, css::ToCss)]
+#[cfg_attr(any(), derive(css::Parse, css::ToCss))] // blocked_on: payload struct parse/to_css + Parser borrow lifetimes
 pub enum AlignSelf {
     /// Automatic alignment.
     Auto,
@@ -229,6 +231,7 @@ pub struct AlignSelfSelfPosition {
     pub value: SelfPosition,
 }
 
+#[cfg(any())] // blocked_on: SelfPosition::parse derive
 impl AlignSelfSelfPosition {
     pub fn to_inner(&self) -> SelfPositionInner {
         SelfPositionInner {
@@ -295,6 +298,7 @@ impl JustifySelfSelfPosition {
     }
 }
 
+#[cfg(any())] // blocked_on: Token::Ident lifetime (see JustifyContent note)
 impl JustifySelf {
     pub fn parse(input: &mut Parser) -> CssResult<Self> {
         if input.try_parse(|i| i.expect_ident_matching(b"auto")).is_ok() {
@@ -371,7 +375,7 @@ impl JustifySelf {
 /// A value for the [align-items](https://www.w3.org/TR/css-align-3/#align-items-property) property.
 #[derive(Clone, PartialEq)]
 // TODO(port): css.DeriveParse / css.DeriveToCss
-#[derive(css::Parse, css::ToCss)]
+#[cfg_attr(any(), derive(css::Parse, css::ToCss))] // blocked_on: payload struct parse/to_css + Parser borrow lifetimes
 pub enum AlignItems {
     /// Default alignment.
     Normal,
@@ -391,6 +395,7 @@ pub struct AlignItemsSelfPosition {
     pub value: SelfPosition,
 }
 
+#[cfg(any())] // blocked_on: SelfPosition::parse derive
 impl AlignItemsSelfPosition {
     pub fn to_inner(&self) -> SelfPositionInner {
         SelfPositionInner {
@@ -457,6 +462,7 @@ impl JustifyItemsSelfPosition {
     }
 }
 
+#[cfg(any())] // blocked_on: Token::Ident lifetime (see JustifyContent note)
 impl JustifyItems {
     pub fn parse(input: &mut Parser) -> CssResult<Self> {
         if input.try_parse(|i| i.expect_ident_matching(b"normal")).is_ok() {
@@ -542,6 +548,7 @@ pub enum LegacyJustify {
     Center,
 }
 
+#[cfg(any())] // blocked_on: Parser::expect_ident borrow lifetime (nested ident lookups)
 impl LegacyJustify {
     pub fn parse(input: &mut Parser) -> CssResult<Self> {
         let location = input.current_source_location();
@@ -591,7 +598,7 @@ impl LegacyJustify {
 /// `column-gap` and `row-gap` properties.
 #[derive(Clone, PartialEq)]
 // TODO(port): css.DeriveParse / css.DeriveToCss
-#[derive(css::Parse, css::ToCss)]
+#[cfg_attr(any(), derive(css::Parse, css::ToCss))] // blocked_on: payload struct parse/to_css + Parser borrow lifetimes
 pub enum GapValue {
     /// Equal to `1em` for multi-column containers, and zero otherwise.
     Normal,
@@ -608,6 +615,7 @@ pub struct Gap {
     pub column: GapValue,
 }
 
+#[cfg(any())] // blocked_on: GapValue::{parse,to_css} (gated derive above)
 impl Gap {
     // TODO(port): PropertyFieldMap was a comptime struct mapping fields → CSS property names
     // (.row = "row-gap", .column = "column-gap"). Encode as derive attrs in Phase B.
@@ -641,6 +649,7 @@ pub struct PlaceItems {
     pub justify: JustifyItems,
 }
 
+#[cfg(any())] // blocked_on: AlignItems/JustifyItems::{parse,to_css}
 impl PlaceItems {
     // TODO(port): PropertyFieldMap (.align = "align-items", .justify = "justify-items")
     // TODO(port): VendorPrefixMap (.align = true)
@@ -704,6 +713,7 @@ pub struct PlaceSelf {
     pub justify: JustifySelf,
 }
 
+#[cfg(any())] // blocked_on: AlignSelf/JustifySelf::{parse,to_css}
 impl PlaceSelf {
     // TODO(port): PropertyFieldMap (.align = "align-self", .justify = "justify-self")
     // TODO(port): VendorPrefixMap (.align = true)
@@ -799,6 +809,7 @@ pub struct PlaceContent {
     pub justify: JustifyContent,
 }
 
+#[cfg(any())] // blocked_on: AlignContent/JustifyContent::{parse,to_css}
 impl PlaceContent {
     // TODO(port): PropertyFieldMap (.align = PropertyIdTag::AlignContent, .justify = PropertyIdTag::JustifyContent)
     // TODO(port): VendorPrefixMap (.align = true, .justify = true)

@@ -976,7 +976,7 @@ fn transpile_source_code_inner(
                     allocator: &arena_guard.1,
                     path: path.clone(),
                     loader,
-                    dirname_fd: bun_sys::Fd::invalid(),
+                    dirname_fd: bun_sys::Fd::INVALID,
                     file_descriptor: fd,
                     file_fd_ptr: Some(&mut input_file_fd),
                     file_hash: Some(hash),

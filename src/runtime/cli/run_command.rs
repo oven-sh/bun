@@ -777,10 +777,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.with(|c| c.set(true));
         // TODO(port): `VirtualMachine::main` is still `&'static [u8]`; it should
         // be `Box<[u8]>` so ownership transfers (PORTING.md §Forbidden patterns).
-        // Until that field is retyped (out of this file's scope), leak the owned
-        // copy here — process exits via `globalExit`/`exit(1)` so the bytes are
-        // never freed anyway (matches Zig's `allocator.dupe` + no-free).
-        let entry_path: &'static [u8] = Box::leak(entry_path);
+        // Until that field is retyped (out of this file's scope), park the bytes
+        // in the process-lifetime `runner_arena()` instead of `Box::leak`
+        // (PORTING.md §Forbidden bars per-call `Box::leak`). The arena is never
+        // reset and the process exits via `globalExit`/`exit(1)`, matching Zig's
+        // `allocator.dupe` + no-free.
+        let entry_path: &'static [u8] = runner_arena().alloc_slice_copy(&entry_path);
         vm.main = entry_path;
 
         // TODO(b2-blocked): full transpiler/resolver option mapping
@@ -2700,7 +2702,7 @@ impl RunCommand {
 
     pub fn configure_env_for_run(
         ctx: &Command::Context,
-        this_transpiler: &mut Transpiler,
+        this_transpiler: &mut ::core::mem::MaybeUninit<Transpiler>,
         env: Option<&mut DotEnv::Loader>,
         log_errors: bool,
         store_root_fd: bool,
@@ -2708,7 +2710,11 @@ impl RunCommand {
         // TODO(port): return type lifetime — Zig returns *DirInfo owned by resolver cache
         let args = ctx.args.clone();
         let env_is_none = env.is_none();
-        *this_transpiler = Transpiler::init(ctx.log, args, env)?;
+        // PORT NOTE: out-param constructor — `MaybeUninit::write` avoids dropping
+        // an uninitialized `Transpiler` (the old `*this_transpiler = …` would).
+        this_transpiler.write(Transpiler::init(ctx.log, args, env)?);
+        // SAFETY: just initialized via `write` on the line above.
+        let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
         this_transpiler.options.env.behavior = api::DotEnvBehavior::LoadAll;
         this_transpiler.env.quiet = true;
         this_transpiler.options.env.prefix = b"";
@@ -3841,17 +3847,20 @@ impl RunCommand {
         // setup
         let force_using_bun = ctx.debug.run_in_bun;
         let mut original_path: &[u8] = b"";
-        // SAFETY: Phase-A placeholder — configure_env_for_run treats this as an out-param and
-        // fully initializes it before any field is read. Zig had `var this_transpiler: Transpiler
-        // = undefined;`.
-        // TODO(port): use MaybeUninit<Transpiler> + configure_env_for_run as out-param init
-        let mut this_transpiler: Transpiler = unsafe { core::mem::zeroed() };
+        // PORT NOTE: out-param init — Zig had `var this_transpiler: Transpiler = undefined;`.
+        // `Transpiler` is NOT all-zero-valid POD (holds `&Arena`/`Box`/enum fields), so
+        // `mem::zeroed()` is UB; use `MaybeUninit` and let `configure_env_for_run` `.write()`
+        // the whole struct (PORTING.md §std.mem.zeroes).
+        let mut this_transpiler = ::core::mem::MaybeUninit::<Transpiler>::uninit();
         let root_dir_info =
             Self::configure_env_for_run(ctx, &mut this_transpiler, None, log_errors, false)?;
+        // SAFETY: `configure_env_for_run` returned `Ok`, so the slot is fully
+        // initialized via `MaybeUninit::write`.
+        let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
         Self::configure_path_for_run(
             ctx,
             root_dir_info,
-            &mut this_transpiler,
+            this_transpiler,
             Some(&mut original_path),
             root_dir_info.abs_path,
             force_using_bun,

@@ -1019,6 +1019,44 @@ impl JSXImportSymbols {
     }
 }
 
+// ─── GenerateImportSymbols impls (for `P::generate_import_stmt`) ───
+// Zig: `generateImportStmt` took `symbols: anytype` and special-cased
+// `if (@TypeOf(symbols) == RuntimeImports) RuntimeImports.all[alias] else alias`
+// to map an integer key → its string name. Rust models that comptime branch via
+// this trait, with `Key = u8` (index into `ALL`) for `RuntimeImports` and
+// `Key = &'static [u8]` (the alias string itself) for `JSXImportSymbols`.
+
+impl crate::ast::p::GenerateImportSymbols for RuntimeImports {
+    /// Index into [`RuntimeImports::ALL`].
+    type Key = u8;
+
+    #[inline]
+    fn get(&self, key: &u8) -> Option<Ref> {
+        // Disambiguate from the trait method: call the inherent `get(usize)`.
+        RuntimeImports::get(self, *key as usize)
+    }
+
+    #[inline]
+    fn alias_name(&self, key: &u8) -> &'static [u8] {
+        RuntimeImports::ALL[*key as usize]
+    }
+}
+
+impl crate::ast::p::GenerateImportSymbols for JSXImportSymbols {
+    type Key = &'static [u8];
+
+    #[inline]
+    fn get(&self, key: &&'static [u8]) -> Option<Ref> {
+        // Disambiguate from the trait method: call the inherent `get(&[u8])`.
+        JSXImportSymbols::get(self, *key)
+    }
+
+    #[inline]
+    fn alias_name(&self, key: &&'static [u8]) -> &'static [u8] {
+        *key
+    }
+}
+
 pub const ARGUMENTS_STR: &[u8] = b"arguments";
 
 // Dear reader,

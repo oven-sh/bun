@@ -3474,6 +3474,11 @@ impl Property {
     }
 
     /// Serializes the value (right-hand side) of this declaration.
+    #[cfg(not(any()))] // stub while css::generic::{to_css,parse_with_options} are gated (see generics.rs:730)
+    pub fn value_to_css(&self, _dest: &mut css::Printer) -> Result<(), css::PrintErr> {
+        todo!("blocked_on: generics::parse_tocss_numeric_gated — Property::value_to_css")
+    }
+    #[cfg(any())] // blocked_on: generics::parse_tocss_numeric_gated (css::generic::{to_css,ToCss})
     pub fn value_to_css(&self, dest: &mut css::Printer) -> Result<(), css::PrintErr> {
         match self {
             Property::BackgroundColor(v) => css::generic::to_css(v, dest),
@@ -3729,6 +3734,17 @@ impl Property {
     }
 
     /// Parses a CSS property by name.
+    #[cfg(not(any()))] // stub while css::generic::parse_with_options is gated (see generics.rs:730)
+    pub fn parse(
+        property_id: PropertyId,
+        input: &mut css::Parser,
+        options: &css::ParserOptions,
+    ) -> css::Result<Property> {
+        // Fallthrough straight to `Unparsed` so the declaration parser still
+        // round-trips (matches the Zig tail of the real `parse`).
+        UnparsedProperty::parse(property_id, input, options).map(Property::Unparsed)
+    }
+    #[cfg(any())] // blocked_on: generics::parse_tocss_numeric_gated (css::generic::{parse_with_options,Parse,ParseWithOptions})
     pub fn parse(
         property_id: PropertyId,
         input: &mut css::Parser,

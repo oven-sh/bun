@@ -87,18 +87,29 @@ impl JSString {
         str.to_slice()
     }
 
+    // Spec (JSString.zig:44-52): `str.toSliceClone(allocator)` always allocates
+    // an owned UTF-8 copy so the result outlives the GC'd JSString. Returning
+    // `to_slice()` here (a borrow that may alias JSC-owned memory) would hand
+    // callers a use-after-free once the cell is collected.
+    // TODO(b2-blocked): un-gate once `bun_string::ZigString::to_slice_clone` is
+    // ported; gated so wrong-semantics fallback cannot be called.
+    #[cfg(any())]
     pub fn to_slice_clone(&self, global: &JSGlobalObject) -> JsResult<ZigStringSlice> {
         let mut str = ZigString::init(b"");
         self.to_zig_string(global, &mut str);
-        // TODO(b2-blocked): bun_string::ZigString::to_slice_clone — falls back to to_slice() until ported.
-        Ok(str.to_slice())
+        Ok(str.to_slice_clone()?)
     }
 
+    // Spec (JSString.zig:54-62): `str.toSliceZ(allocator)` guarantees a `[:0]`
+    // sentinel. `to_slice()` is not NUL-terminated; passing it to a C API that
+    // expects one reads past the buffer end.
+    // TODO(b2-blocked): un-gate once `bun_string::ZigString::to_slice_z` is
+    // ported; gated so wrong-semantics fallback cannot be called.
+    #[cfg(any())]
     pub fn to_slice_z(&self, global: &JSGlobalObject) -> ZigStringSlice {
         let mut str = ZigString::init(b"");
         self.to_zig_string(global, &mut str);
-        // TODO(b2-blocked): bun_string::ZigString::to_slice_z — falls back to to_slice() until ported.
-        str.to_slice()
+        str.to_slice_z()
     }
 
     pub fn eql(&self, global: &JSGlobalObject, other: &JSString) -> bool {
@@ -158,5 +169,5 @@ pub struct Iterator {
 //   source:     src/jsc/JSString.zig (103 lines)
 //   confidence: medium
 //   todos:      2
-//   notes:      allocator params dropped from to_slice*; ZigString::Slice path is provisional
+//   notes:      allocator params dropped from to_slice*; to_slice_clone/to_slice_z cfg-gated until bun_string ports the owning/NUL-terminated variants
 // ──────────────────────────────────────────────────────────────────────────

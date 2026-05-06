@@ -3,10 +3,26 @@
 
 use core::slice;
 
-use bun_jsc::node::Encoding;
-use bun_jsc::{JSGlobalObject, JSValue, JsResult};
+use bun_str::encoding::Encoding;
+use crate::webcore::jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _};
 use bun_str::strings;
 use bun_str::String as BunString;
+
+// ────────────────────────────────────────────────────────────────────────────
+// TODO(b2-blocked): `const ENCODING: Encoding` const-generic params require
+// `#![feature(adt_const_params)]` (Encoding is an enum, not an integral type).
+// The Zig used `comptime encoding: Encoding` which Rust cannot express on
+// stable without that feature. Phase B options:
+//   (a) enable `adt_const_params` + derive `ConstParamTy` on `Encoding`, or
+//   (b) reshape to `const ENCODING: u8` and `match Encoding::from_raw(ENCODING)`.
+// In addition the bodies depend on `bun_simdutf` (not a dep of bun_runtime)
+// and a number of `strings::` helpers that are still TODO in bun_string
+// (`copy_latin1_into_utf16_unaligned`, `to_utf16_alloc`,
+// `decode_hex_to_bytes_truncate<u16>`). Gate the entire impl until those land.
+// ────────────────────────────────────────────────────────────────────────────
+#[cfg(any())]
+mod _gated {
+use super::*;
 
 // ────────────────────────────────────────────────────────────────────────────
 // Exported C ABI entry points
@@ -730,6 +746,8 @@ pub fn construct_from_u16<const ENCODING: Encoding>(input: *const u16, len: usiz
         }
     }
 }
+
+} // mod _gated
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

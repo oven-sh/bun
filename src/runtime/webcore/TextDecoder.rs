@@ -1,8 +1,17 @@
-use bun_jsc::{CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsResult, ZigString};
-use bun_jsc::webcore::EncodingLabel;
-use bun_jsc::text_codec::TextCodec;
+use crate::webcore::jsc::{self as jsc, CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsResult};
+use crate::webcore::EncodingLabel;
 use bun_str::strings;
-use bun_alloc::AllocError;
+use bun_core::AllocError;
+
+// `strings::u16_is_lead`/`u16_is_trail` are not yet in `bun_str::immutable`.
+// Trivial UTF-16 surrogate predicates (mirror of Zig `strings.u16IsLead` /
+// `strings.u16IsTrail`); inlined here to keep `decode_utf16` un-gated.
+// TODO(port): move into `bun_str::strings` and delete these.
+#[inline]
+const fn u16_is_lead(c: u16) -> bool { (c & 0xFC00) == 0xD800 }
+#[inline]
+const fn u16_is_trail(c: u16) -> bool { (c & 0xFC00) == 0xDC00 }
+const UNICODE_REPLACEMENT_U16: u16 = strings::UNICODE_REPLACEMENT as u16;
 
 #[derive(Default)]
 pub struct Buffered {
@@ -16,7 +25,12 @@ impl Buffered {
     }
 }
 
-#[bun_jsc::JsClass]
+// TODO(b2-blocked): #[bun_jsc::JsClass] — the proc-macro emits a
+// `${T}Class__construct` shim that calls `<T>::constructor(g, f) -> JsResult<*mut T>`.
+// The constructor body below depends on `JSGlobalObject::throw_invalid_arguments` /
+// `ErrorCode::ERR_ENCODING_*` surface that is still TODO(b2). Keep the struct
+// real (downstream `crate::webcore::TextDecoder` re-exports name it) and gate
+// the JsClass derive + JS-facing impl block below.
 pub struct TextDecoder {
     // used for utf8 decoding
     pub buffered: Buffered,
@@ -57,21 +71,6 @@ impl TextDecoder {
         unsafe { drop(Box::from_raw(this)) };
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_ignore_bom(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::from(this.ignore_bom)
-    }
-
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_fatal(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::from(this.fatal)
-    }
-
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_encoding(this: &Self, global_this: &JSGlobalObject) -> JSValue {
-        ZigString::init(EncodingLabel::get_label(this.encoding)).to_js(global_this)
-    }
-
     // const Vector16 = std.meta.Vector(16, u16);
     // const max_16_ascii: Vector16 = @splat(@as(u16, 127));
     // TODO(port): SIMD vector constants — unused in this file's hot paths in current Zig; revisit in Phase B.
@@ -85,23 +84,23 @@ impl TextDecoder {
         if let Some(lead_surrogate) = self.lead_surrogate {
             self.lead_surrogate = None;
 
-            if strings::u16_is_trail(code_unit) {
+            if u16_is_trail(code_unit) {
                 // TODO: why is this here?
                 // const code_point = strings.u16GetSupplementary(lead_surrogate, code_unit);
                 output.extend_from_slice(&[lead_surrogate, code_unit]);
                 return Ok(());
             }
-            output.push(strings::UNICODE_REPLACEMENT);
+            output.push(UNICODE_REPLACEMENT_U16);
             *saw_error = true;
         }
 
-        if strings::u16_is_lead(code_unit) {
+        if u16_is_lead(code_unit) {
             self.lead_surrogate = Some(code_unit);
             return Ok(());
         }
 
-        if strings::u16_is_trail(code_unit) {
-            output.push(strings::UNICODE_REPLACEMENT);
+        if u16_is_trail(code_unit) {
+            output.push(UNICODE_REPLACEMENT_U16);
             *saw_error = true;
             return Ok(());
         }
@@ -169,7 +168,7 @@ impl TextDecoder {
             if self.lead_byte.is_some() || self.lead_surrogate.is_some() {
                 self.lead_byte = None;
                 self.lead_surrogate = None;
-                output.push(strings::UNICODE_REPLACEMENT);
+                output.push(UNICODE_REPLACEMENT_U16);
                 saw_error = true;
                 return Ok((output, saw_error));
             }
@@ -177,14 +176,46 @@ impl TextDecoder {
 
         Ok((output, saw_error))
     }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// JS-facing surface (getters / decode / constructor) — gated until the
+// `bun_jsc` ErrorCode + ZigStringJsc + TextCodec RAII helpers are wired.
+// ──────────────────────────────────────────────────────────────────────────
+// TODO(b2-blocked): bun_jsc::ErrorCode::ERR_ENCODING_INVALID_ENCODED_DATA /
+// ERR_ENCODING_NOT_SUPPORTED, JSGlobalObject::err(ErrorCode, fmt),
+// strings::to_utf16_alloc_maybe_buffered<const FAIL_IF_INVALID: bool>,
+// jsc::ZigString::to_external_u16, TextCodec::create() returning a Drop-guard.
+#[cfg(any())]
+mod _gated {
+use super::*;
+use jsc::text_codec::TextCodec;
+use jsc::zig_string::ZigString;
+
+impl TextDecoder {
+    #[bun_jsc::host_fn(getter)]
+    pub fn get_ignore_bom(&self, _global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(JSValue::js_boolean(self.ignore_bom))
+    }
+
+    #[bun_jsc::host_fn(getter)]
+    pub fn get_fatal(&self, _global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(JSValue::js_boolean(self.fatal))
+    }
+
+    #[bun_jsc::host_fn(getter)]
+    pub fn get_encoding(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(ZigString::init(EncodingLabel::get_label(self.encoding)).to_js(global_this))
+    }
 
     #[bun_jsc::host_fn(method)]
     pub fn decode(
-        this: &mut Self,
+        &mut self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old(2).slice();
+        let arguments_buf = callframe.arguments_old::<2>();
+        let arguments = arguments_buf.slice();
 
         // Evaluate options.stream before reading the input bytes. Reading `stream`
         // can invoke a user-defined getter that detaches/transfers the input's
@@ -193,7 +224,7 @@ impl TextDecoder {
         // been freed or reused. Node.js reads options first as well.
         let stream = 'stream: {
             if arguments.len() > 1 && arguments[1].is_object() {
-                if let Some(stream_value) = arguments[1].fast_get(global_this, bun_jsc::BuiltinName::Stream)? {
+                if let Some(stream_value) = arguments[1].fast_get(global_this, jsc::BuiltinName::Stream)? {
                     break 'stream stream_value.to_boolean();
                 }
             }
@@ -210,26 +241,25 @@ impl TextDecoder {
                 break 'input_slice array_buffer.slice();
             }
 
-            return global_this.throw_invalid_arguments(
+            return Err(global_this.throw_invalid_arguments(format_args!(
                 "TextDecoder.decode expects an ArrayBuffer or TypedArray",
-                format_args!(""),
-            );
+            )));
         };
 
         // switch (!stream) { inline else => |flush| ... } — runtime bool → comptime dispatch
         if !stream {
-            this.decode_slice::<true>(global_this, input_slice)
+            self.decode_slice::<true>(global_this, input_slice)
         } else {
-            this.decode_slice::<false>(global_this, input_slice)
+            self.decode_slice::<false>(global_this, input_slice)
         }
     }
 
     pub fn decode_without_type_checks(
-        this: &mut Self,
+        &mut self,
         global_this: &JSGlobalObject,
         uint8array: &JSUint8Array,
     ) -> JsResult<JSValue> {
-        this.decode_slice::<false>(global_this, uint8array.slice())
+        self.decode_slice::<false>(global_this, uint8array.slice())
     }
 
     fn decode_slice<const FLUSH: bool>(
@@ -238,7 +268,7 @@ impl TextDecoder {
         buffer_slice: &[u8],
     ) -> JsResult<JSValue> {
         match self.encoding {
-            EncodingLabel::Latin1 => {
+            EncodingLabel::Windows1252 => {
                 if strings::is_all_ascii(buffer_slice) {
                     return Ok(ZigString::init(buffer_slice).to_js(global_this));
                 }
@@ -300,13 +330,13 @@ impl TextDecoder {
                         if self.fatal {
                             if err == bun_core::err!("InvalidByteSequence") {
                                 return global_this
-                                    .err(bun_jsc::ErrorCode::ENCODING_INVALID_ENCODED_DATA, format_args!("Invalid byte sequence"))
+                                    .err(jsc::ErrorCode::ERR_ENCODING_INVALID_ENCODED_DATA, format_args!("Invalid byte sequence"))
                                     .throw();
                             }
                         }
 
                         debug_assert!(err == bun_core::err!("OutOfMemory"));
-                        return global_this.throw_out_of_memory();
+                        return Err(global_this.throw_out_of_memory());
                     }
                 };
 
@@ -354,10 +384,10 @@ impl TextDecoder {
                     drop(decoded);
                     return global_this
                         .err(
-                            bun_jsc::ErrorCode::ENCODING_INVALID_ENCODED_DATA,
+                            jsc::ErrorCode::ERR_ENCODING_INVALID_ENCODED_DATA,
                             format_args!(
                                 "The encoded data was not valid {} data",
-                                <&'static str>::from(enc)
+                                bstr::BStr::new(enc.get_label())
                             ),
                         )
                         .throw();
@@ -401,7 +431,7 @@ impl TextDecoder {
                 if result.saw_error && self.fatal {
                     return global_this
                         .err(
-                            bun_jsc::ErrorCode::ENCODING_INVALID_ENCODED_DATA,
+                            jsc::ErrorCode::ERR_ENCODING_INVALID_ENCODED_DATA,
                             format_args!(
                                 "The encoded data was not valid {} data",
                                 bstr::BStr::new(encoding_name)
@@ -411,7 +441,7 @@ impl TextDecoder {
                 }
 
                 // Return the decoded string
-                Ok(result.result.to_js(global_this))
+                result.result.to_js(global_this)
             }
         }
     }
@@ -420,7 +450,7 @@ impl TextDecoder {
     pub fn constructor(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
-    ) -> JsResult<Box<TextDecoder>> {
+    ) -> JsResult<*mut TextDecoder> {
         let [encoding_value, options_value] = callframe.arguments_as_array::<2>();
 
         let mut decoder = TextDecoder::default();
@@ -434,7 +464,7 @@ impl TextDecoder {
             } else {
                 return global_this
                     .err(
-                        bun_jsc::ErrorCode::ENCODING_NOT_SUPPORTED,
+                        jsc::ErrorCode::ERR_ENCODING_NOT_SUPPORTED,
                         format_args!(
                             "Unsupported encoding label \"{}\"",
                             bstr::BStr::new(str.slice())
@@ -446,44 +476,43 @@ impl TextDecoder {
             // default to utf-8
             decoder.encoding = EncodingLabel::Utf8;
         } else {
-            return global_this.throw_invalid_arguments(
+            return Err(global_this.throw_invalid_arguments(format_args!(
                 "TextDecoder(encoding) label is invalid",
-                format_args!(""),
-            );
+            )));
         }
 
         if !options_value.is_undefined() {
             if !options_value.is_object() {
-                return global_this.throw_invalid_arguments(
+                return Err(global_this.throw_invalid_arguments(format_args!(
                     "TextDecoder(options) is invalid",
-                    format_args!(""),
-                );
+                )));
             }
 
-            if let Some(fatal) = options_value.get(global_this, "fatal")? {
+            if let Some(fatal) = options_value.get(global_this, b"fatal")? {
                 decoder.fatal = fatal.to_boolean();
             }
 
-            if let Some(ignore_bom) = options_value.get(global_this, "ignoreBOM")? {
+            if let Some(ignore_bom) = options_value.get(global_this, b"ignoreBOM")? {
                 if ignore_bom.is_boolean() {
                     decoder.ignore_bom = ignore_bom.as_boolean();
                 } else {
-                    return global_this.throw_invalid_arguments(
+                    return Err(global_this.throw_invalid_arguments(format_args!(
                         "TextDecoder(options) ignoreBOM is invalid. Expected boolean value",
-                        format_args!(""),
-                    );
+                    )));
                 }
             }
         }
 
-        Ok(TextDecoder::new(decoder))
+        Ok(Box::into_raw(TextDecoder::new(decoder)))
     }
 }
+
+} // mod _gated
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/webcore/TextDecoder.zig (376 lines)
 //   confidence: medium
 //   todos:      3
-//   notes:      ZigString::to_external_u16 ownership-transfer + to_utf16_alloc_maybe_buffered error type need Phase B verification; UTF-8 joined-buffer path reshaped for borrowck.
+//   notes:      ZigString::to_external_u16 ownership-transfer + to_utf16_alloc_maybe_buffered error type need Phase B verification; UTF-8 joined-buffer path reshaped for borrowck. JS-facing impl gated under #[cfg(any())] until ErrorCode/ZigStringJsc surface lands.
 // ──────────────────────────────────────────────────────────────────────────

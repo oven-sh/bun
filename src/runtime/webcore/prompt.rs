@@ -1,8 +1,19 @@
 //! Implements prompt, alert, and confirm Web API
 
 use bun_core::Output;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use crate::webcore::jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_str::ZigString;
+
+// TODO(b2-blocked): bun_core::Output::stdin_reader / buffered_stdin_reader —
+// the Zig used `std.fs.File.stdin().readerStreaming(..)` and
+// `bun.Output.buffered_stdin.reader()`. bun_core::output exposes neither yet,
+// so the host-fn bodies are gated until that surface lands. The
+// `#[bun_jsc::host_fn(export = "...")]` shim is verified working (see
+// bun_jsc::__macro_smoke), so once the reader API exists this block can be
+// un-gated by deleting the `#[cfg(any())]`.
+#[cfg(any())]
+mod _gated {
+use super::*;
 
 // TODO(port): verify #[bun_jsc::host_fn] supports `export = "..."` to emit the
 // `#[unsafe(no_mangle)] extern "C"` shim under the given symbol name. The Zig
@@ -11,7 +22,7 @@ use bun_str::ZigString;
 /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-alert
 #[bun_jsc::host_fn(export = "WebCore__alert")]
 fn alert(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let arguments = frame.arguments_old(1);
+    let arguments = frame.arguments_old::<1>();
     let arguments = arguments.slice();
     let mut output = Output::writer();
     let has_message = !arguments.is_empty();
@@ -67,7 +78,7 @@ fn alert(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 
 #[bun_jsc::host_fn(export = "WebCore__confirm")]
 fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let arguments = frame.arguments_old(1);
+    let arguments = frame.arguments_old::<1>();
     let arguments = arguments.slice();
     let mut output = Output::writer();
     let has_message = !arguments.is_empty();
@@ -161,6 +172,8 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     Ok(JSValue::FALSE)
 }
 
+} // mod _gated
+
 pub mod prompt {
     use super::*;
 
@@ -223,10 +236,13 @@ pub mod prompt {
         }
     }
 
+    // TODO(b2-blocked): `Output::buffered_stdin_reader()` + `output.print()` not
+    // yet on the bun_core::output surface. Gate the body; logic is 1:1 with Zig.
+    #[cfg(any())]
     /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-prompt
     #[bun_jsc::host_fn(export = "WebCore__prompt")]
     pub fn call(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let arguments = frame.arguments_old(3);
+        let arguments = frame.arguments_old::<3>();
         let arguments = arguments.slice();
         // PERF(port): was stack-fallback (2048 bytes) — profile in Phase B
         let mut output = Output::writer();
@@ -399,5 +415,5 @@ pub mod prompt {
 //   source:     src/runtime/webcore/prompt.zig (353 lines)
 //   confidence: medium
 //   todos:      4
-//   notes:      stdin reader API (Output::stdin_reader/buffered_stdin_reader) and host_fn export-name attr need Phase B wiring; logic 1:1.
+//   notes:      stdin reader API (Output::stdin_reader/buffered_stdin_reader) and host_fn export-name attr need Phase B wiring; logic 1:1. Host-fn bodies gated under #[cfg(any())] until bun_core stdin surface lands.
 // ──────────────────────────────────────────────────────────────────────────

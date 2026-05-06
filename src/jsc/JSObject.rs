@@ -203,9 +203,13 @@ impl JSObject {
     }
 
     pub fn put_record(&mut self, global: &JSGlobalObject, key: &mut ZigString, values: &mut [ZigString]) -> JsResult<()> {
-        // TODO(port): Zig called `bun.cpp.JSC__JSObject__putRecord` which goes
-        // through `fromJSHostCall` (exception-scope wrapper). Exact JsResult
-        // plumbing + raw C++ return type TBD in Phase B (see extern decl above).
+        // Zig calls `bun.cpp.JSC__JSObject__putRecord`, whose generated wrapper
+        // (build/debug/codegen/cpp.zig) does `Bun__RETURN_IF_EXCEPTION(global)`
+        // after the raw call and yields `error.JSError` if a JS exception is
+        // pending (a setter / defineOwnProperty inside putRecord can throw).
+        // Mirror that here so callers don't observe a silent success.
+        // TODO(port): replace with the host-call wrapper once `fromJSHostCall`
+        // is ported; raw C++ return type still unverified (see extern decl above).
         // SAFETY: pointers are valid for the duration of the call; C++ does not retain them.
         unsafe {
             JSC__JSObject__putRecord(
@@ -215,6 +219,9 @@ impl JSObject {
                 values.as_mut_ptr(),
                 values.len(),
             );
+        }
+        if global.has_exception() {
+            return Err(JsError::Thrown);
         }
         Ok(())
     }
@@ -345,5 +352,5 @@ pub trait JSValueFields {
 //   source:     src/jsc/JSObject.zig (172 lines)
 //   confidence: medium
 //   todos:      5
-//   notes:      @typeInfo field reflection replaced by PojoFields/JSValueFields callback traits (need derive macros); putRecord extern signature + exception plumbing unverified
+//   notes:      @typeInfo field reflection replaced by PojoFields/JSValueFields callback traits (need derive macros); putRecord checks has_exception() post-call (mirrors codegen wrapper); raw extern return type still unverified
 // ──────────────────────────────────────────────────────────────────────────

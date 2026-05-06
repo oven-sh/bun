@@ -1,3 +1,4 @@
+use alloc::borrow::Cow;
 use core::ffi::{c_char, c_uint, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 
@@ -293,7 +294,16 @@ impl<'a> Iterator<'a> {
 ///
 /// Prefer `Iterator` for a simpler iterator.
 pub struct ArgumentsSlice<'a> {
-    pub remaining: &'a [JSValue],
+    /// Backing storage for the remaining-args view. Borrowed (`init`) or
+    /// heap-owned dupe (`init_async`) — Zig's `initAsync` does
+    /// `bun.default_allocator.dupe(jsc.JSValue, slice)` so the remaining slice
+    /// survives the original CallFrame stack slot being reused before async
+    /// work consumes the arguments. A borrowed `&'a [JSValue]` here would
+    /// dangle in that case.
+    remaining_buf: Cow<'a, [JSValue]>,
+    /// Cursor into `remaining_buf`; advances on `eat()`. Replaces Zig's
+    /// `remaining.ptr += 1` reslice (which a `Cow` can't express in-place).
+    remaining_start: usize,
     pub vm: &'a VirtualMachine,
     // TODO(port): non-AST arena field — Node.fs callers allocate temp strings here; revisit ownership in Phase B
     pub arena: bun_alloc::Arena,
@@ -304,6 +314,12 @@ pub struct ArgumentsSlice<'a> {
 }
 
 impl<'a> ArgumentsSlice<'a> {
+    /// View of arguments not yet consumed by `eat()`.
+    #[inline]
+    pub fn remaining(&self) -> &[JSValue] {
+        &self.remaining_buf[self.remaining_start..]
+    }
+
     pub fn unprotect(&mut self) {
         let mut iter = self.protected.iterator::<true, true>();
         while let Some(i) = iter.next() {
@@ -313,17 +329,20 @@ impl<'a> ArgumentsSlice<'a> {
     }
 
     pub fn protect_eat(&mut self) {
-        if self.remaining.is_empty() {
+        if self.remaining().is_empty() {
             return;
         }
-        let index = self.all.len() - self.remaining.len();
+        // `remaining_buf.len() == all.len()` for both init variants, so
+        // `all.len() - remaining().len()` reduces to `remaining_start` —
+        // matching Zig's `self.all.len - self.remaining.len`.
+        let index = self.all.len() - self.remaining().len();
         self.protected.set(index);
         self.all[index].protect();
         self.eat();
     }
 
     pub fn protect_eat_next(&mut self) -> Option<JSValue> {
-        if self.remaining.is_empty() {
+        if self.remaining().is_empty() {
             return None;
         }
         self.next_eat()
@@ -339,7 +358,8 @@ impl<'a> ArgumentsSlice<'a> {
 
     pub fn init(vm: &'a VirtualMachine, slice: &'a [JSValue]) -> ArgumentsSlice<'a> {
         ArgumentsSlice {
-            remaining: slice,
+            remaining_buf: Cow::Borrowed(slice),
+            remaining_start: 0,
             vm,
             all: slice,
             arena: bun_alloc::Arena::new(),
@@ -350,11 +370,11 @@ impl<'a> ArgumentsSlice<'a> {
     }
 
     pub fn init_async(vm: &'a VirtualMachine, slice: &'a [JSValue]) -> ArgumentsSlice<'a> {
-        // TODO(port): Zig duped `slice` into a heap allocation for `remaining` here
-        // (bun.default_allocator.dupe) but never freed it in deinit; preserving
-        // borrowed-slice semantics for now — revisit if async callers need owned copy.
+        // Spec (CallFrame.zig:258-265): `.remaining = bun.default_allocator.dupe(jsc.JSValue, slice)`.
+        // `all` stays borrowed (matches Zig) so `protect_eat` index math holds.
         ArgumentsSlice {
-            remaining: slice,
+            remaining_buf: Cow::Owned(slice.to_vec()),
+            remaining_start: 0,
             vm,
             all: slice,
             arena: bun_alloc::Arena::new(),
@@ -366,29 +386,23 @@ impl<'a> ArgumentsSlice<'a> {
 
     #[inline]
     pub fn len(&self) -> u16 {
-        self.remaining.len() as u16
+        self.remaining().len() as u16
     }
 
     pub fn eat(&mut self) {
-        if self.remaining.is_empty() {
+        if self.remaining().is_empty() {
             return;
         }
-        self.remaining = &self.remaining[1..];
+        self.remaining_start += 1;
     }
 
     /// Peek the next argument without eating it
     pub fn next(&mut self) -> Option<JSValue> {
-        if self.remaining.is_empty() {
-            return None;
-        }
-        Some(self.remaining[0])
+        self.remaining().first().copied()
     }
 
     pub fn next_eat(&mut self) -> Option<JSValue> {
-        if self.remaining.is_empty() {
-            return None;
-        }
-        let v = self.remaining[0];
+        let v = self.remaining().first().copied()?;
         self.eat();
         Some(v)
     }
@@ -419,5 +433,5 @@ unsafe extern "C" {
 //   source:     src/jsc/CallFrame.zig (304 lines)
 //   confidence: medium
 //   todos:      3
-//   notes:      ArgumentsSlice gets <'a> per LIFETIMES.tsv; arena kept as bun_alloc::Arena (non-AST crate, flagged inline for Phase-B ownership review); init_async dupe semantics flagged; Arguments<MAX> init demoted from comptime i to runtime
+//   notes:      ArgumentsSlice gets <'a> per LIFETIMES.tsv; arena kept as bun_alloc::Arena (non-AST crate, flagged inline for Phase-B ownership review); remaining_buf is Cow<'a, [JSValue]> + cursor so init_async owns its dupe (matches Zig); Arguments<MAX> init demoted from comptime i to runtime
 // ──────────────────────────────────────────────────────────────────────────

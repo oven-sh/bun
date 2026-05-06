@@ -1,26 +1,3 @@
-use core::ffi::c_int;
-use core::ptr::NonNull;
-use std::io::Write as _;
-
-use enum_map::EnumMap;
-
-use bun_core::Output;
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine};
-use bun_jsc::c::JSType;
-use bun_str::{self as strings, String as BunString, ZigString};
-use bun_paths::{self, PathBuffer};
-use bun_http::{self as http, FetchRedirect, Headers, MimeType};
-use bun_http_types::Method;
-use bun_url::URL as ZigURL;
-use bun_url::PercentEncoding;
-use bun_resolver::data_url::DataURL;
-use bun_runtime::api::server::ServerConfig::SSLConfig;
-use bun_runtime::webcore::{AbortSignal, Blob, Body, FetchHeaders, ObjectURLRegistry, ReadableStream, Request, Response};
-use bun_runtime::node as node;
-use bun_paths::PosixToWinNormalizer;
-use bun_picohttp as picohttp;
-use bun_s3 as s3;
-
 // ──────────────────────────────────────────────────────────────────────────
 // Error message constants
 // ──────────────────────────────────────────────────────────────────────────
@@ -31,11 +8,12 @@ pub const FETCH_ERROR_UNEXPECTED_BODY: &str =
     "fetch() request with GET/HEAD/OPTIONS method cannot have body.";
 pub const FETCH_ERROR_PROXY_UNIX: &str = "fetch() cannot use a proxy with a unix socket.";
 
-type JSTypeErrorEnum = EnumMap<JSType, &'static str>;
-
-// TODO(port): EnumMap::from_array const-init requires #[derive(enum_map::Enum)] on JSType
-// with variants in this exact order; verify in Phase B.
-pub const FETCH_TYPE_ERROR_NAMES: JSTypeErrorEnum = EnumMap::from_array([
+// TODO(port): Zig used `std.EnumMap(jsc.c.JSType, []const u8)` for the
+// type-name → message tables. `bun_jsc::c` (the deprecated JSC C-API module)
+// does not expose `JSType` (it's an opaque-value enum), and `EnumMap` requires
+// `#[derive(enum_map::Enum)]` on the key. Surface as plain `[&str; 8]` indexed
+// by the C `kJSType*` ordinal until a typed key is available.
+pub const FETCH_TYPE_ERROR_NAMES: [&str; 8] = [
     /* kJSTypeUndefined */ "Undefined",
     /* kJSTypeNull      */ "Null",
     /* kJSTypeBoolean   */ "Boolean",
@@ -44,7 +22,7 @@ pub const FETCH_TYPE_ERROR_NAMES: JSTypeErrorEnum = EnumMap::from_array([
     /* kJSTypeObject    */ "Object",
     /* kJSTypeSymbol    */ "Symbol",
     /* kJSTypeBigInt    */ "BigInt",
-]);
+];
 
 pub const FETCH_TYPE_ERROR_STRING_VALUES: [&str; 8] = [
     concat!("fetch() expects a string, but received ", "Undefined"),
@@ -57,25 +35,59 @@ pub const FETCH_TYPE_ERROR_STRING_VALUES: [&str; 8] = [
     concat!("fetch() expects a string, but received ", "BigInt"),
 ];
 
-pub const FETCH_TYPE_ERROR_STRINGS: JSTypeErrorEnum = EnumMap::from_array([
-    FETCH_TYPE_ERROR_STRING_VALUES[0],
-    FETCH_TYPE_ERROR_STRING_VALUES[1],
-    FETCH_TYPE_ERROR_STRING_VALUES[2],
-    FETCH_TYPE_ERROR_STRING_VALUES[3],
-    FETCH_TYPE_ERROR_STRING_VALUES[4],
-    FETCH_TYPE_ERROR_STRING_VALUES[5],
-    FETCH_TYPE_ERROR_STRING_VALUES[6],
-    FETCH_TYPE_ERROR_STRING_VALUES[7],
-]);
+pub const FETCH_TYPE_ERROR_STRINGS: [&str; 8] = FETCH_TYPE_ERROR_STRING_VALUES;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Re-export: FetchTasklet lives in ./fetch/FetchTasklet.zig
 // ──────────────────────────────────────────────────────────────────────────
 
-// TODO(port): module wiring — fetch.rs + fetch/ subdir (Rust 2018 path). Phase B.
+// TODO(b2-blocked): module wiring — fetch.rs + fetch/ subdir (Rust 2018 path).
+// `fetch/FetchTasklet.rs` is itself a heavy gated draft.
+#[cfg(any())]
+#[path = "fetch/FetchTasklet.rs"]
 pub mod fetch_tasklet;
-pub use fetch_tasklet::FetchTasklet;
-use fetch_tasklet::HTTPRequestBody;
+
+// ──────────────────────────────────────────────────────────────────────────
+// fetch() implementation — gated.
+//
+// TODO(b2-blocked): the ~1.5kL `fetch_impl` body depends on a large surface
+// that is not yet wired:
+//   - `bun_http::{Headers, FetchRedirect}` (only `bun_http_types` is a dep)
+//   - `bun_s3` (no such workspace crate; only `bun_s3_signing`)
+//   - `crate::api::server::ServerConfig::SSLConfig` (server.rs gated)
+//   - `crate::webcore::ObjectURLRegistry` (object_url_registry gated)
+//   - `bun_resolver::data_url::DataURL::decode_data` (Phase-A draft)
+//   - `jsc::URL::href_from_js`, `JSPromise::Strong`, `jsc::mark_binding`
+//   - `fetch_tasklet::{FetchTasklet, HTTPRequestBody}`
+//   - `bun_paths::PosixToWinNormalizer` (gated on Windows-only build)
+// Un-gate by deleting `#[cfg(any())]` once the above type-check.
+// ──────────────────────────────────────────────────────────────────────────
+#[cfg(any())]
+mod _gated {
+use super::*;
+
+use core::ffi::c_int;
+use core::ptr::NonNull;
+use std::io::Write as _;
+
+use bun_core::Output;
+use crate::webcore::jsc::{self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine};
+use bun_str::{strings, String as BunString, ZigString};
+use bun_paths::{self, PathBuffer};
+use bun_http::{self as http, FetchRedirect, Headers, MimeType};
+use bun_http_types::Method::Method;
+use bun_url::URL as ZigURL;
+use bun_url::PercentEncoding;
+use bun_resolver::data_url::DataURL;
+use crate::api::server::ServerConfig::SSLConfig;
+use crate::webcore::{AbortSignal, Blob, Body, FetchHeaders, ObjectURLRegistry, ReadableStream, Request, Response};
+use crate::node;
+use bun_paths::PosixToWinNormalizer;
+use bun_picohttp as picohttp;
+use crate::webcore::s3_stub as s3;
+
+pub use super::fetch_tasklet::FetchTasklet;
+use super::fetch_tasklet::HTTPRequestBody;
 
 // ──────────────────────────────────────────────────────────────────────────
 // dataURLResponse
@@ -1852,6 +1864,8 @@ fn set_headers(headers: &mut Option<Headers>, new_headers: &[picohttp::Header]) 
     // PORT NOTE: `if (old) |*h| h.deinit()` → Drop on `old`.
     drop(old);
 }
+
+} // mod _gated
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

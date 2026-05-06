@@ -3782,7 +3782,14 @@ impl NodeFS {
 
     pub fn uv_close(&mut self, args: &args::Close, rc: i64) -> Maybe<ret::Close> {
         if rc < 0 {
-            return Maybe::Err(sys::Error { errno: (-rc) as _, syscall: sys::Tag::close, fd: args.fd, from_libuv: true, ..Default::default() });
+            // `from_libuv` is `#[cfg(windows)]`-only on `bun_sys::Error`; build the
+            // base value first and set it conditionally so this body compiles on all
+            // targets (`uv_close` is reached via the cross-platform UVFSRequest path).
+            #[allow(unused_mut)]
+            let mut e = sys::Error { errno: (-rc) as _, syscall: sys::Tag::close, fd: args.fd, ..Default::default() };
+            #[cfg(windows)]
+            { e.from_libuv = true; }
+            return Maybe::Err(e);
         }
         Maybe::Ok(())
     }
@@ -4121,7 +4128,7 @@ impl NodeFS {
 
             let _close_dest = scopeguard::guard((dest_fd, stat_.st_mode, &wrote), |(fd, m, wrote)| {
                 // SAFETY: fd is a valid open dest_fd; ftruncate/fchmod are libc FFI
-                let _ = unsafe { libc::ftruncate(fd.cast(), (wrote.get() & ((1u64 << 63) - 1)) as i64) };
+                let _ = unsafe { libc::ftruncate(fd.native(), (wrote.get() & ((1u64 << 63) - 1)) as i64) };
                 // SAFETY: same fd as above
                 let _ = unsafe { libc::fchmod(fd.cast(), m) };
                 fd.close();

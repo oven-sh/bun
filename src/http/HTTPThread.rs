@@ -974,24 +974,8 @@ mod _event_loop_draft {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Dispatch dependencies — bridge stubs for h3::ClientContext methods that
-// live in gated H3Client modules. Delete once H3Client.rs un-gates.
-// ═══════════════════════════════════════════════════════════════════════════
-#[allow(unused_variables)]
-mod dispatch_deps {
-    use super::*;
-
-    impl h3::ClientContext {
-        pub fn abort_by_http_id(async_http_id: u32) -> bool {
-            // TODO(b2-blocked): h3_client/ClientContext.rs is gated.
-            false
-        }
-        pub fn stream_body_by_http_id(async_http_id: u32, ended: bool) {
-            // TODO(b2-blocked): h3_client/ClientContext.rs is gated.
-        }
-    }
-}
+// dispatch_deps bridge removed — real impls now live in
+// h3_client/ClientContext.rs (abort_by_http_id / stream_body_by_http_id).
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

@@ -74,6 +74,20 @@ pub struct JsonCache {
 }
 
 impl JsonCache {
+    /// No-op vtable for `cache::Set::init()` — the resolver constructs a
+    /// `Resolver` before the bundler swaps in its real `cache::Json`
+    /// implementation. Calling `parse_tsconfig` on this returns `Ok(None)`,
+    /// matching Zig's `Json{}` empty-struct semantics for the never-reached
+    /// pre-init path.
+    pub const fn noop() -> JsonCache {
+        // SAFETY: `parse_tsconfig` body never dereferences `cache` for the
+        // no-op vtable, so a null `ptr` is fine.
+        static NOOP_VTABLE: JsonCacheVTable = JsonCacheVTable {
+            parse_tsconfig: |_cache, _log, _source| Ok(None),
+        };
+        JsonCache { ptr: core::ptr::null_mut(), vtable: &NOOP_VTABLE }
+    }
+
     #[inline]
     pub fn parse_tsconfig(
         &mut self,

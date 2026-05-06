@@ -151,11 +151,7 @@ impl ClientSession {
         unsafe { &mut *self.hpack }
     }
 
-    // PORT NOTE: named `create_session` (not `create`) to avoid colliding with
-    // the `todo!()` bridge `impl h2::ClientSession { create/attach/enqueue }`
-    // in lib.rs while that file is outside this task's edit scope.
-    // TODO(b2-bridge): rename back to `create` once lib.rs stubs are removed.
-    pub fn create_session(
+    pub fn create(
         ctx: *mut NewHTTPContext<true>,
         socket: Socket,
         client: &HTTPClient,

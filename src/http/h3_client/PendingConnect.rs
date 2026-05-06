@@ -53,6 +53,31 @@ impl PendingConnect {
     pub fn r#loop(&self) -> *mut uws::Loop {
         self.loop_ptr
     }
+
+    /// Tear down a session that never reached `on_conn_close` (DNS failure or
+    /// every waiter aborted while DNS was in flight).
+    pub fn fail_session(session: *mut ClientSession, err: bun_core::Error) {
+        // SAFETY: caller guarantees `session` is live (held by an intrusive ref).
+        let s = unsafe { &mut *session };
+        s.closed = true;
+        if let Some(ctx) = super::client_context::ClientContext::get() {
+            ctx.unregister(s);
+        }
+        while !s.pending.is_empty() {
+            let stream = s.pending[0];
+            // SAFETY: stream is live while attached to session.pending.
+            let cl = unsafe { (*stream).client };
+            s.detach(stream);
+            if let Some(cl) = cl {
+                // SAFETY: HTTPClient outlives its h3 Stream; detach() nulled cl.h3 but cl is alive.
+                unsafe { (*cl.as_ptr()).fail_from_h2(err) };
+            }
+        }
+        // Zig .monotonic == LLVM monotonic == Rust Relaxed
+        let _ = super::LIVE_SESSIONS.fetch_sub(1, Ordering::Relaxed);
+        // SAFETY: session is intrusive-refcounted; this drops the connection-alive ref.
+        unsafe { (*session).deref() };
+    }
 }
 
 // TODO(b2-blocked): on_dns_resolved/fail_session reach into ClientSession

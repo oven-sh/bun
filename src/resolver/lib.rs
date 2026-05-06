@@ -1659,32 +1659,12 @@ mod __forward_decls {
     impl StandaloneFile { pub fn name(&self) -> &'static [u8] { b"" } }
 
     // ── bun_bundler::cache::Set ─────────────────────────────────────────
-    // CYCLEBREAK: bun_bundler::cache::Set — FORWARD_DECL. The resolver only
-    // needs `caches.json` (TSConfig parse) + `caches.fs` (read_file). Both are
-    // routed through local vtables here so the bundler can pass its real
-    // `cache::Set` without resolver naming the type.
-    pub struct CacheSet {
-        pub fs: FsCache,
-        pub json: crate::tsconfig_json::JsonCache,
-    }
-    pub struct FsCache;
-    impl FsCache {
-        pub fn read_file_with_allocator(
-            &mut self,
-            _fs: &mut crate::fs::FileSystem,
-            _file: &[u8],
-            _dirname_fd: bun_sys::Fd,
-            _use_shared_buffer: bool,
-            _file_handle: Option<bun_sys::Fd>,
-        ) -> core::result::Result<FsCacheEntry, bun_core::Error> {
-            // TODO(b2-blocked): bun_bundler::cache::Fs::read_file
-            unimplemented!("cache::Fs::read_file (Phase B)")
-        }
-    }
-    pub struct FsCacheEntry { pub contents: &'static [u8] }
-    impl FsCacheEntry {
-        pub fn close_fd(&mut self) -> core::result::Result<(), bun_core::Error> { Ok(()) }
-    }
+    // CYCLEBREAK resolved: the canonical `Set`/`Fs`/`Entry`/`JavaScript`/`Json`
+    // types now live at `crate::cache` (MOVE_DOWN from bun_bundler so
+    // `Resolver.caches` can be typed concretely without an upward edge).
+    // Re-exported here so existing `__forward_decls::CacheSet` paths keep
+    // resolving while callers migrate to `bun_resolver::cache::*`.
+    pub use crate::cache::{Set as CacheSet, Fs as FsCache, Entry as FsCacheEntry};
 
     // ── bun_crash_handler shim ──────────────────────────────────────────
     pub mod bun_crash_handler {

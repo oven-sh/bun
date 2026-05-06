@@ -1239,8 +1239,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
     // SCAN_ONLY require("...") sniff branch is restored there once
     // IntoExprData::as_e_call() lands.
 
-    // TODO(b2-blocked): BindingAlloc trait gated in Binding.rs (round-A _draft).
-    #[cfg(any())]
+    /// Zig: `p.b(t, loc)` — bump-allocate a binding payload and wrap it in `Binding`.
+    /// `BindingAlloc` (Binding.rs round-G2) replaces the Zig `@TypeOf(t)` switch.
+    #[inline]
     pub fn b<T>(&mut self, t: T, loc: logger::Loc) -> Binding
     where
         T: js_ast::binding::BindingAlloc,

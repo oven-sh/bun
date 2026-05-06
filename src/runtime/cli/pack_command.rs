@@ -66,10 +66,10 @@ fn dir_open_dir_z(dir: &Dir, path: &ZStr, _opts: bun_sys::OpenDirOptions) -> Res
 
 /// Process-lifetime bump arena for `Expr::as_string*` calls (CLI is one-shot;
 /// see `pm_pkg_command::dummy_bump`).
-fn pack_bump() -> &'static bumpalo::Bump {
+fn pack_bump() -> &'static bun_alloc::Arena {
     use std::sync::OnceLock;
-    static BUMP: OnceLock<bumpalo::Bump> = OnceLock::new();
-    BUMP.get_or_init(bumpalo::Bump::new)
+    static BUMP: OnceLock<bun_alloc::Arena> = OnceLock::new();
+    BUMP.get_or_init(bun_alloc::Arena::new)
 }
 
 /// Shim for the removed `bun_sys::File::to_source_at` (T1->T2 layering split).

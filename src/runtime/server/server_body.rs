@@ -1803,16 +1803,20 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
 
                 if let Some(headers_) = opts.fast_get(ctx, jsc::BuiltinName::Headers)? {
-                    if let Some(headers__) = headers_.as_::<FetchHeaders>() {
-                        headers = Some(headers__);
+                    if let Some(headers__) = FetchHeaders::cast_(headers_, ctx.vm()) {
+                        // SAFETY: cast_ returns a live FetchHeaders*; adopt holds one ref.
+                        // TODO(port): cast_ does not bump the refcount; this matches Zig's
+                        // borrow-then-pass-to-init2 which transfers ownership.
+                        headers = Some(unsafe { HeadersRef::adopt(headers__) });
                     } else if let Some(headers__) = FetchHeaders::create_from_js(ctx, headers_)? {
-                        headers = Some(headers__);
+                        // SAFETY: create_from_js returns a +1 ref.
+                        headers = Some(unsafe { HeadersRef::adopt(headers__) });
                     }
                 }
 
                 if let Some(body__) = opts.fast_get(ctx, jsc::BuiltinName::Body)? {
-                    match Blob::get(ctx, body__, true, false) {
-                        Ok(new_blob) => body = Body::Value::Blob(new_blob),
+                    match Blob::get::<true, false>(ctx, body__) {
+                        Ok(new_blob) => body = BodyValue::Blob(new_blob),
                         Err(_) => {
                             return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                                 ctx,
@@ -1826,13 +1830,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             existing_request = Request::init2(
                 BunString::clone_utf8(url.href),
                 headers,
-                self.vm.init_request_body_value(body),
+                // TODO(port): blocked_on: bun_jsc::VirtualMachine::init_request_body_value
+                // Upstream returns *mut c_void; Request::init2 expects Arc<BodyValue>. Wrap directly here.
+                std::sync::Arc::new(body),
                 method,
             );
         } else if let Some(request_) = first_arg.as_::<Request>() {
-            existing_request = Default::default();
             // TODO(port): Request::cloneInto out-param pattern — reshape to return value
-            request_.clone_into(&mut existing_request, ctx, false)?;
+            // SAFETY: request_ is a live *mut Request from JS heap.
+            existing_request = unsafe { &mut *request_ }.clone(ctx)?;
         } else {
             // Local shim — `JSValueGetType` lives in the gated `jsc::_gated::c_api` and is
             // not re-exported through `jsc::C`. Declare the FFI here so we don't depend on
@@ -1846,16 +1852,17 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 .get(js_type)
                 .copied()
                 .unwrap_or(Fetch::FETCH_TYPE_ERROR_STRINGS[0]);
-            let err = ctx.to_type_error(jsc::ErrorCode::INVALID_ARG_TYPE, format_args!("{}", fetch_error));
+            let err = jsc::ErrorCode::INVALID_ARG_TYPE.fmt(ctx, format_args!("{}", fetch_error));
             return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(ctx, err));
         }
 
-        let request = Request::new_(existing_request);
+        let request = Box::new(existing_request);
 
-        debug_assert!(!self.config.on_request.is_empty()); // confirmed above
+        debug_assert!(self.config.on_request.is_some()); // confirmed above
         // SAFETY: global_this set in init() and outlives ThisServer (JSC_BORROW)
         let global_this = unsafe { &*self.global_this };
-        let response_value = match self.config.on_request.call(
+        let on_request = self.config.on_request.as_ref().unwrap().get();
+        let response_value = match on_request.call(
             global_this,
             self.js_value_assert_alive(),
             &[request.to_js(global_this)],
@@ -1879,9 +1886,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return Ok(response_value);
         }
 
-        if let Some(resp) = response_value.as_::<Response>() {
-            resp.set_url(existing_request.url.clone());
-        }
+        // TODO(port): blocked_on: webcore::response::Response: JsClass
+        // Response does not yet implement JsClass; skip URL propagation for now.
+        let _ = response_value;
         Ok(JSPromise::resolved_promise_value(ctx, response_value))
     }
 
@@ -1891,7 +1898,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return Ok(JSValue::UNDEFINED);
         }
         // SAFETY: self.app checked Some above; FFI handle alive until App::destroy in deinit()
-        unsafe { &*self.app.unwrap() }.close_idle_connections();
+        unsafe { &mut *self.app.unwrap() }.close_idle_connections();
         Ok(JSValue::UNDEFINED)
     }
 

@@ -54,6 +54,7 @@ bun_libarchive.workspace = true
 bun_libdeflate_sys.workspace = true
 bun_logger.workspace = true
 bun_lolhtml_sys.workspace = true
+bun_md.workspace = true
 bun_options_types.workspace = true
 bun_output.workspace = true
 bun_spawn.workspace = true

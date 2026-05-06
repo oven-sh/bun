@@ -9,6 +9,10 @@
 //! in the gated Phase-A draft `../DevServer.rs` (blocked on
 //! `bun_bundler::Chunk` field access + jsc method surface).
 
+// `feature = "bake_debugging_features"` is not yet a declared cargo feature; the
+// struct field gate must mirror `mod.rs` so the initializer below stays in sync.
+#![allow(unexpected_cfgs)]
+
 use core::mem::MaybeUninit;
 use core::sync::atomic::Ordering;
 use std::sync::OnceLock;

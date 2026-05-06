@@ -3,6 +3,7 @@
 /// `.classes.ts` payload (Arena + Transpiler + Config) — re-export from the
 /// un-gated body so callers see `crate::api::js_transpiler::JSTranspiler`.
 pub use _jsc_gated::JSTranspiler;
+pub use _jsc_gated::{AsyncTransformTask, AsyncTransformEventLoopTask, Config, TransformTask};
 
 /// Heuristic used by the REPL: returns true if `code` starts with `{` (after
 /// whitespace) and doesn't end with `;` — i.e. should be wrapped in `()` to
@@ -35,7 +36,7 @@ use bun_bundler::transpiler::{MacroJSCtx, ParseResult};
 use bun_core::Error;
 use bun_jsc::{
     self as jsc, CallFrame, JSArrayIterator, JSGlobalObject, JSPromise, JSPropertyIterator,
-    JSPropertyIteratorOptions, JSValue, JsResult, ZigString,
+    JSPropertyIteratorOptions, JSValue, JsResult,
 };
 use bun_jsc::virtual_machine::VirtualMachine;
 use crate::node::{Encoding, StringOrBuffer};

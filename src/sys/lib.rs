@@ -132,12 +132,12 @@ pub mod dir_iterator {
         #[cfg(not(windows))]
         #[inline] pub fn as_zstr(&self) -> &bun_core::ZStr {
             // SAFETY: trailing NUL pushed in `from_slice`.
-            unsafe { bun_core::ZStr::from_raw(self.0.as_ptr(), self.0.len() - 1) }
+            unsafe { bun_core::ZStr::from_raw(self.native.as_ptr(), self.native.len() - 1) }
         }
         #[cfg(windows)]
         #[inline] pub fn as_zstr(&self) -> &bun_core::WStr {
             // SAFETY: trailing NUL pushed in `from_slice`.
-            unsafe { bun_core::WStr::from_raw(self.0.as_ptr(), self.0.len() - 1) }
+            unsafe { bun_core::WStr::from_raw(self.native.as_ptr(), self.native.len() - 1) }
         }
     }
 

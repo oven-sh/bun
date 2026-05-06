@@ -1,19 +1,21 @@
-// ─── B-2 round 6: color types un-gated ───────────────────────────────────
-// Data-only colorspace structs + `CssColor` + `ColorFallbackKind` are now
-// real so `gradient.rs`/`image.rs` (and the crate-root `pub use values::
-// color::{CssColor, RGBA, ...}`) compile against concrete types with the
-// derives they need (`Clone`/`PartialEq`). The full 3.5k-line behavior body
-// (parse / to_css / colorspace conversion matrices / ComponentParser /
-// RelativeComponentParser / interpolate / map_gamut) stays gated below in
-// `gated_full_impl` until `color_generated::generated_color_conversions`
-// (codegen — `color_via.ts` needs Rust output) lands; the parse/to_css
-// surface is kept callable via `todo!()` stubs so cross-module callers
-// type-check.
+// ─── B-2 round 7: colorspace conversion graph un-gated ────────────────────
+// Data-only colorspace structs + `CssColor` + `ColorFallbackKind` are real
+// so `gradient.rs`/`image.rs` (and the crate-root `pub use values::color::
+// {CssColor, RGBA, ...}`) compile against concrete types with the derives
+// they need (`Clone`/`PartialEq`).
+//
+// The full `From<Src> for Dst` colorspace-conversion lattice (handwritten
+// matrix conversions + the 163 generated transitive hops in
+// `color_generated.rs`) plus `ColorGamut`/`map_gamut`/`resolve_missing` is
+// now un-gated below the `gated_full_impl` block.
+//
+// Remaining gated in `gated_full_impl` (parse / to_css / ComponentParser /
+// RelativeComponentParser / Interpolate / `color-mix()` / SystemColor):
 //
 // blocked_on:
-//   - color_generated.rs (color_via.ts → Rust `impl From<X> for Y` chains)
 //   - css_parser::color::{parse_hash_color, parse_named_color} hookup
 //   - Printer::write_ident path for SystemColor::to_css
+//   - de-dup inner `gated_full_impl` type defs against outer scope
 
 use crate::css_parser as css;
 use crate::printer::Printer;

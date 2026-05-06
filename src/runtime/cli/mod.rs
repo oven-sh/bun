@@ -705,20 +705,17 @@ pub mod command {
             }
             Tag::AutoCommand | Tag::RunCommand => {
                 // SAFETY: see RunAsNodeCommand arm above.
-                let ctx = match init(tag, log) {
-                    Ok(p) => unsafe { &mut *p },
-                    Err(e) => {
-                        // Zig: AutoCommand swallows `error.MissingEntryPoint`
-                        // and prints help; everything else propagates.
-                        if tag == Tag::AutoCommand
-                            && matches!(e, bun_core::Error::MissingEntryPoint)
-                        {
-                            return HelpCommand::exec();
-                        }
-                        return Err(e);
-                    }
-                };
-                ctx.args.target = bun_options_types::schema::api::Target::Bun;
+                // PORT NOTE: Zig's AutoCommand arm swallows
+                // `error.MissingEntryPoint` from `Command.init` and prints
+                // help. `bun_core::Error` has no variant table yet (B-1 stub
+                // — `err!()` collapses to `Error::TODO`), so a name-match
+                // would alias every error. Propagate for now; the empty-
+                // positionals fallthrough below covers the common "no args"
+                // help path anyway.
+                // TODO(b2): restore `MissingEntryPoint → HelpCommand::exec()`
+                // once `bun_core::Error` interns names.
+                let ctx = unsafe { &mut *init(tag, log)? };
+                ctx.args.target = Some(bun_options_types::schema::api::Target::Bun);
 
                 // TODO(b2-blocked): MultiRun / FilterRun (`--parallel`,
                 // `--filter`, `--workspaces`) — needs `multi_run.rs` /

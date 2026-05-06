@@ -329,7 +329,7 @@ impl HttpThread {
 
         if IS_SSL {
             'custom_ctx: {
-                let Some(tls) = client.tls_props.as_ref() else {
+                let Some(tls) = client.tls_props.clone() else {
                     break 'custom_ctx;
                 };
                 if !tls.get().requires_custom_request_ctx {
@@ -391,8 +391,8 @@ impl HttpThread {
                     SslContextCacheEntry {
                         ctx: ctx_nn,
                         last_used_ns: now,
-                        // Clone a strong ref for the cache entry; client.tls_props keeps its own.
-                        config_ref: tls.clone(),
+                        // Strong ref for the cache entry; client.tls_props keeps its own.
+                        config_ref: tls,
                     },
                 );
 

@@ -525,21 +525,18 @@ impl JavaScript {
     }
 }
 
-#[cfg(any())]
-// TODO(b2-blocked): bun_js_parser::Parser::init / parse / scan_imports /
-// ScanPassResult / lexer.range() — parser surface not yet exported from T3.
 impl JavaScript {
     // For now, we're not going to cache JavaScript ASTs.
     // It's probably only relevant when bundling for production.
-    pub fn parse(
+    pub fn parse<'a>(
         &self,
-        bump: &Bump,
-        opts: js_parser::parser::Options,
-        defines: &mut Define,
+        bump: &'a Bump,
+        opts: js_parser::ParserOptions<'a>,
+        defines: &'a Define,
         log: &mut logger::Log,
-        source: &logger::Source,
+        source: &'a logger::Source,
     ) -> Result<Option<js_ast::Result>, bun_core::Error> {
-        let mut temp_log = logger::Log::init(bump);
+        let mut temp_log = logger::Log::init();
         temp_log.level = log.level;
         let mut parser = match js_parser::Parser::init(opts, &mut temp_log, source, defines, bump) {
             Ok(p) => p,
@@ -552,33 +549,38 @@ impl JavaScript {
         let result = match parser.parse() {
             Ok(r) => r,
             Err(err) => {
-                if temp_log.errors == 0 {
-                    log.add_range_error(source, parser.lexer.range(), err.name())
+                // PORT NOTE: reshaped for borrowck — `parser` holds `&'a mut temp_log`
+                // (inside the lexer); reading `temp_log.errors` while that borrow is
+                // live is rejected. Read through the parser's own handle instead.
+                if parser.log_mut().errors == 0 {
+                    log.add_range_error(Some(source), parser.lexer.range(), err.name())
                         .expect("unreachable");
                 }
+                drop(parser);
                 let _ = temp_log.append_to_maybe_recycled(log, source);
                 return Ok(None);
             }
         };
 
+        drop(parser);
         let _ = temp_log.append_to_maybe_recycled(log, source);
         Ok(Some(result))
     }
 
-    pub fn scan(
+    pub fn scan<'a>(
         &mut self,
-        bump: &Bump,
+        bump: &'a Bump,
         scan_pass_result: &mut js_parser::ScanPassResult,
-        opts: js_parser::parser::Options,
-        defines: &mut Define,
+        opts: js_parser::ParserOptions<'a>,
+        defines: &'a Define,
         log: &mut logger::Log,
-        source: &logger::Source,
+        source: &'a logger::Source,
     ) -> Result<(), bun_core::Error> {
         if strings::trim(source.contents(), b"\n\t\r ").is_empty() {
             return Ok(());
         }
 
-        let mut temp_log = logger::Log::init(bump);
+        let mut temp_log = logger::Log::init();
         // PORT NOTE: reshaped for borrowck — Zig `defer temp_log.appendToMaybeRecycled(log, source)`;
         // scopeguard cannot capture &mut temp_log while it's used below. Explicit calls at each exit.
 
@@ -591,6 +593,7 @@ impl JavaScript {
         };
 
         let res = parser.scan_imports(scan_pass_result);
+        drop(parser);
         let _ = temp_log.append_to_maybe_recycled(log, source);
         res
     }
@@ -675,6 +678,8 @@ impl Json {
 // PORT STATUS
 //   source:     src/bundler/cache.zig (334 lines)
 //   confidence: medium
-//   todos:      11
-//   notes:      Entry.contents has dual ownership (allocator vs plugin); Fs.deinit was dead Zig; std.fs.File mapped to bun_sys::File with stub method names
+//   todos:      3
+//   notes:      Entry.contents is lifetime-erased &'static [u8] (manual deinit) to flow into Source.contents;
+//               Fs::read_handle_into inlines RealFS.readFileWithHandle until bun_resolver::fs_full un-gates;
+//               Fs.deinit (Zig) was dead code (referenced nonexistent `c.entries`).
 // ──────────────────────────────────────────────────────────────────────────

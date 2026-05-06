@@ -28,16 +28,7 @@ pub mod css_modules {
 // round (rewrite calc's `.as_value()/.result()` callsites first); for this
 // round the value modules stay gated and re-export the crate-root data-only
 // stubs so `crate::values::{color,ident,url}::*` resolve for printer/parser.
-macro_rules! gated_value {
-    ($name:ident) => {
-        #[cfg(any())] pub mod $name;
-        #[cfg(not(any()))] pub mod $name {}
-    };
-    ($name:ident, { $($body:tt)* }) => {
-        #[cfg(any())] pub mod $name;
-        #[cfg(not(any()))] pub mod $name { $($body)* }
-    };
-}
+// (round 6: all callers removed — every `values/*.rs` is now `pub mod`.)
 // ─── B-2 round 3: calc lattice leaves un-gated ───────────────────────────
 // number/angle/time/percentage/css_string + calc are now real. calc.rs
 // internally `#[cfg(any())]`-gates its Length/DimensionPercentage<LengthValue>
@@ -67,21 +58,6 @@ pub mod percentage;
 // are real. The `protocol` submodule below supplies the numeric protocol
 // traits (`Zero`/`MulF32`/`TryAdd`/`Parse`) that `crate::generics` only
 // defines inside its still-gated `parse_tocss_numeric_gated` block.
-//
-// gradient/image/color stay gated_value! — they are NOT calc-lattice leaves
-// but cross-module hubs:
-//   gradient.rs  blocked_on: `Parser<'bump,'_>` two-lifetime arity (current
-//                Parser<'a> has one), `values::color::CssColor` real impl,
-//                BumpVec<'bump,_> arena threading, AnglePercentage to_css.
-//   image.rs     blocked_on: `#[derive(css::Parse, css::ToCss)]` proc-macro
-//                (does not exist yet), gradient un-gate, `ColorFallbackKind`,
-//                `prefixes::Feature::is_webkit_gradient`, `add_import_record`.
-//   color.rs     blocked_on: `color_generated::generated_color_conversions`
-//                (codegen stub is empty — color_via.ts needs Rust output),
-//                `generics::CssHash for <colorspace>`, `bun_wyhash::Wyhash`
-//                concrete type. The `values_stub::color` set is kept as the
-//                public surface so `crate::CssColor` / `RGBA` / colorspace
-//                structs resolve unchanged for printer/parser callers.
 pub mod length;
 pub mod position;
 pub mod size;
@@ -104,9 +80,6 @@ pub mod syntax;
 pub mod color;
 pub mod gradient;
 pub mod image;
-// `gated_value!` retained for any future leaf that re-gates during a bisect.
-#[allow(unused_macros)]
-macro_rules! _gated_value_retired { () => {}; }
 // `color_generated.rs` is the codegen'd named-color tables (47KB). Its parent
 // in Zig was `color.zig`'s `pub usingnamespace`; here it's a sibling module
 // re-exported through `color::*` so the stub-set re-export at crate root

@@ -477,8 +477,11 @@ impl IOWriter {
     /// return the `Yield` for the child's `on_io_writer_chunk` callback.
     /// Spec: IOWriter.zig `bump`.
     fn bump(&self, current_idx: usize) -> Yield {
-        let s = self.state();
+        // PORT NOTE: reshaped for borrowck — `skip_dead()` re-derives `state()`,
+        // so we must drop `s` before calling it and re-derive after, otherwise
+        // two `&mut State` are live simultaneously (UB under Stacked Borrows).
         let (is_dead, written, child_ptr) = {
+            let s = self.state();
             let w = &s.writers[current_idx];
             (w.is_dead(), w.written, w.ptr)
         };
@@ -486,10 +489,12 @@ impl IOWriter {
         if is_dead {
             self.skip_dead();
         } else {
+            let s = self.state();
             debug_assert!(s.writers[current_idx].written == s.writers[current_idx].len);
             s.writer_idx += 1;
         }
 
+        let s = self.state();
         if s.writer_idx >= s.writers.len() {
             s.buf.clear();
             s.writer_idx = 0;
@@ -608,7 +613,11 @@ impl IOWriter {
             s.total_bytes_written += amount;
             s.writers[idx].written += amount;
             if status == bun_io::WriteStatus::EndOfFile {
-                let not_fully_written = if self.is_last_idx(idx) {
+                // PORT NOTE: inline `is_last_idx` instead of calling
+                // `self.is_last_idx(idx)` — that re-derives `state()` while `s`
+                // is still live, which is two simultaneous `&mut State` (UB).
+                let last = idx == s.writers.len().saturating_sub(1);
+                let not_fully_written = if last {
                     true
                 } else {
                     s.writers[idx].written < s.writers[idx].len
@@ -1010,12 +1019,19 @@ pub fn on_io_writer_chunk(
         // TODO(port): per-state on_io_writer_chunk (Cmd writes "command not
         // found", Pipeline/Subshell/CondExpr/If write error msgs, Subproc
         // captured-writer). Gated on those state nodes growing the method.
+        // Spec IOWriter.zig:760-762 dispatches to every registered child type;
+        // returning `Yield::suspended()` here would be a silent no-op (the
+        // producer stalls forever waiting for chunk-complete), so panic loudly
+        // until each tag is wired up. PORTING.md §Forbidden: silent-no-op.
         WriterTag::Cmd
         | WriterTag::Pipeline
         | WriterTag::Subshell
         | WriterTag::CondExpr
         | WriterTag::If
-        | WriterTag::Subproc => Yield::suspended(),
+        | WriterTag::Subproc => {
+            let _ = (interp, written, err);
+            todo!("port: on_io_writer_chunk for WriterTag::{:?}", child.tag)
+        }
     }
 }
 

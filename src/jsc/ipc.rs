@@ -401,13 +401,15 @@ mod json {
         let idx: u32 = match known_newline {
             Some(i) => i,
             None => {
-                let found = strings::index_of_char(data, b'\n')
-                    .ok_or(IPCDecodeError::NotEnoughBytes)?;
+                // `strings::index_of_char` returns `Option<u32>`; the caller's
+                // 4-GB-message guard is implicit in that return type.
+                let found =
+                    strings::index_of_char(data, b'\n').ok_or(IPCDecodeError::NotEnoughBytes)?;
                 // Individual IPC messages should not exceed 4GB, and idx+1 must not overflow
-                if found >= u32::MAX as usize {
+                if found == u32::MAX {
                     return Err(IPCDecodeError::InvalidFormat);
                 }
-                u32::try_from(found).unwrap()
+                found
             }
         };
 
@@ -2038,11 +2040,8 @@ fn on_data2(send_queue: &mut SendQueue, all_data: &[u8]) {
                             // copy the remaining bytes to the start of the buffer
                             // SAFETY: src/dst may overlap; use ptr::copy (memmove).
                             unsafe {
-                                core::ptr::copy(
-                                    adv_buf.ptr.add(slice_start),
-                                    adv_buf.ptr,
-                                    slice_len,
-                                );
+                                let base = adv_buf.ptr.as_ptr();
+                                core::ptr::copy(base.add(slice_start), base, slice_len);
                             }
                             debug_assert!(slice_len <= u32::MAX as usize);
                             adv_buf.len = u32::try_from(slice_len).unwrap();
@@ -2178,29 +2177,38 @@ pub mod IPCHandlers {
         use super::*;
 
         pub fn on_read_alloc(send_queue: &mut SendQueue, suggested_size: usize) -> &mut [u8] {
+            // PORT NOTE: ByteList::unused_capacity_slice() yields
+            // `&mut [MaybeUninit<u8>]`; libuv only needs the (ptr,len) — it
+            // never reads the uninit bytes, only writes them. Cast through raw
+            // parts to hand back `&mut [u8]` (matches Zig allocatedSlice()).
             match &mut send_queue.incoming {
                 IncomingBuffer::Json(json_buf) => {
-                    let mut available = json_buf.unused_capacity_slice();
-                    if available.len() < suggested_size {
+                    if json_buf.unused_capacity_slice().len() < suggested_size {
                         json_buf.ensure_unused_capacity(suggested_size);
-                        available = json_buf.unused_capacity_slice();
                     }
+                    let available = json_buf.unused_capacity_slice();
                     log!("NewNamedPipeIPCHandler#onReadAlloc {}", suggested_size);
-                    // SAFETY: returning a sub-slice of the unused-capacity region; libuv writes into it.
+                    // SAFETY: returning a sub-slice of the unused-capacity
+                    // region; libuv writes into it before notify_written reads.
                     unsafe {
-                        core::slice::from_raw_parts_mut(available.as_mut_ptr(), suggested_size)
+                        core::slice::from_raw_parts_mut(
+                            available.as_mut_ptr().cast::<u8>(),
+                            suggested_size,
+                        )
                     }
                 }
                 IncomingBuffer::Advanced(adv_buf) => {
-                    let mut available = adv_buf.unused_capacity_slice();
-                    if available.len() < suggested_size {
-                        adv_buf.ensure_unused_capacity(suggested_size);
-                        available = adv_buf.unused_capacity_slice();
+                    if adv_buf.unused_capacity_slice().len() < suggested_size {
+                        let _ = adv_buf.ensure_unused_capacity(suggested_size);
                     }
+                    let available = adv_buf.unused_capacity_slice();
                     log!("NewNamedPipeIPCHandler#onReadAlloc {}", suggested_size);
                     // SAFETY: same as above.
                     unsafe {
-                        core::slice::from_raw_parts_mut(available.as_mut_ptr(), suggested_size)
+                        core::slice::from_raw_parts_mut(
+                            available.as_mut_ptr().cast::<u8>(),
+                            suggested_size,
+                        )
                     }
                 }
             }

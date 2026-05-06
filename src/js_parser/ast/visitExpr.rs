@@ -1438,12 +1438,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 match &first.data {
                     Data::EString(..) => {
                         // require(FOO) => require(FOO)
-                        return p.transpose_require(first, &state);
+                        // blocked_on: P::transpose_require gated (P.rs:871 `#[cfg(any())]`).
+                        let _ = (first, &state);
+                        todo!("e_call: P::transpose_require (gated)");
                     }
                     Data::EIf(..) => {
                         // require(FOO  ? '123' : '456') => FOO ? require('123') : require('456')
                         // This makes static analysis later easier
-                        return p.require_transposer.transpose_known_to_be_if(first, &state);
+                        return p.require_transposer.transpose_known_to_be_if(first, state);
                     }
                     _ => {}
                 }
@@ -1490,7 +1492,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     Data::EString(..) => {
                         // require.resolve(FOO) => require.resolve(FOO)
                         // (this will register dependencies)
-                        return p.transpose_require_resolve_known_string(first);
+                        // blocked_on: P::transpose_require_resolve_known_string gated (P.rs:840).
+                        let _ = first;
+                        todo!("e_call: P::transpose_require_resolve_known_string (gated)");
                     }
                     Data::EIf(..) => {
                         // require.resolve(FOO  ? '123' : '456')
@@ -1506,14 +1510,19 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             }
 
             if e_.args.len >= 1 {
-                p.check_dynamic_specifier(e_.args.slice()[0], e_.target.loc, b"require.resolve()");
+                // blocked_on: P::check_dynamic_specifier gated (P.rs:690).
+                let _ = (e_.args.slice()[0], e_.target.loc);
+                todo!("e_call: P::check_dynamic_specifier (gated)");
             }
 
             return expr;
         } else if let Some(special) = e_.target.data.e_special() {
             match special {
                 E::Special::HotAccept => {
-                    p.handle_import_meta_hot_accept_call(&mut *e_);
+                    // blocked_on: P::handle_import_meta_hot_accept_call lives in the gated
+                    // round-D impl block.
+                    let _ = &mut *e_;
+                    todo!("e_call: P::handle_import_meta_hot_accept_call (gated)");
                     // After validating that the import.meta.hot
                     // code is correct, discard the entire
                     // expression in production.
@@ -1595,7 +1604,9 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                     break 'try_record_hook;
                 }
                 if p.options.features.react_fast_refresh {
-                    p.handle_react_refresh_hook_call(&mut *e_, original_name);
+                    // blocked_on: P::handle_react_refresh_hook_call gated (round-D impl).
+                    let _ = (&mut *e_, original_name);
+                    todo!("e_call: P::handle_react_refresh_hook_call (gated)");
                 } else if
                 // If we're here it means we're in server component.
                 // Error if the user is using the `useState` hook as it
@@ -1674,6 +1685,10 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
 
         if p.options.features.minify_syntax {
+            // blocked_on: KnownGlobal::minify_global_constructor body gated
+            // (KnownGlobal.rs `#[cfg(any())]` impl). Signature matches; un-gate
+            // there to light this up.
+            #[cfg(any())]
             if let Some(minified) = js_ast::known_global::KnownGlobal::minify_global_constructor(
                 p.allocator,
                 &mut *e_,
@@ -1763,14 +1778,14 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             return Some(p.new_expr(E::Boolean { value: false }, loc));
         }
 
-        let is_enabled = p
-            .options
-            .features
-            .bundler_feature_flags
-            .map
-            .contains_key(flag_string.data);
+        // blocked_on: Runtime::Features.bundler_feature_flags map (round-C Features stub
+        // omits it). Loud at the lookup.
+        let is_enabled: bool = {
+            let _ = flag_string.data;
+            todo!("maybe_replace_bundler_feature_call: features.bundler_feature_flags (stub)")
+        };
         Some(Expr {
-            data: Data::EBranchBoolean(E::BranchBoolean { value: is_enabled }),
+            data: Data::EBranchBoolean(E::Boolean { value: is_enabled }),
             loc,
         })
     }

@@ -531,8 +531,8 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    // TODO(port): `P` needs a trait bound; see _scan_imports note.
-    fn _parse<P>(&mut self) -> Result<js_ast::Result, Error> {
+    #[cfg(any())] // blocked_on: P::{init, prepare_for_visit_pass, append_part, to_ast, add_import_record, generate_import_stmt, should_unwrap_commonjs_to_esm, deoptimize_commonjs_named_exports, is_deoptimized_commonjs} (P.rs round-D gate); RuntimeFeatures::runtime_transpiler_cache type
+    fn _parse<const TS: bool, JX: JsxT>(&mut self) -> Result<js_ast::Result, Error> {
         // TODO(port): narrow error set
         let prev_action = (); // TODO(b2-blocked): bun_crash_handler::current_action
         let _restore = scopeguard::guard((), |_| {
@@ -542,14 +542,21 @@ impl<'a> Parser<'a> {
             self.source.path.text,
         ));
 
-        let orig_error_count = self.log.errors;
-        let mut p = P::init(
+        // SAFETY: see `log_mut` — `self.log` aliases the `&'a mut Log` handed
+        // to the lexer at `Parser::init`; reading the error count is sound.
+        let orig_error_count = unsafe { self.log.as_ref() }.errors;
+        let mut p = P::<TS, JX, false>::init(
             self.bump,
-            self.log,
+            // SAFETY: handing the unique `&'a mut Log` to the inner parser;
+            // matches Zig's two-`*Log` aliasing model (P also receives the
+            // lexer which holds the same Log).
+            unsafe { &mut *self.log.as_ptr() },
             self.source,
             self.define,
-            self.lexer,
-            self.options,
+            // SAFETY: Zig moves lexer/options by value into `P`; `Parser` is
+            // not reused after `_parse` returns.
+            unsafe { core::ptr::read(&self.lexer) },
+            unsafe { core::ptr::read(&self.options) },
         )?;
 
         if p.options.features.hot_module_reloading {

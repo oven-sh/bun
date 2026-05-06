@@ -154,13 +154,8 @@ impl HmrSocket {
                                             dev.memory_visualizer_timer.state
                                                 != EventLoopTimerState::ACTIVE
                                         );
-                                        dev.vm.timer.update(
-                                            &mut dev.memory_visualizer_timer,
-                                            &bun_core::Timespec::ms_from_now(
-                                                bun_core::TimespecMockMode::AllowMockedTime,
-                                                1000,
-                                            ),
-                                        );
+                                        let _ = &mut dev.memory_visualizer_timer;
+                                        todo!("blocked_on: bun_jsc::VirtualMachine::timer");
                                     }
                                 }
                                 _ => {}

@@ -64,19 +64,22 @@ pub fn to_contain_keys(
     }
 
     // handle failure
+    // PORT NOTE: reshaped for borrowck — `ZigFormatter` holds `&mut Formatter`, so two live
+    // adapters cannot alias one backing formatter. Use a second formatter for the received
+    // value (`make_formatter` is a trivial struct init with no shared state between values).
     let mut formatter = super::make_formatter(global);
+    let mut formatter2 = super::make_formatter(global);
     // defer formatter.deinit(); — handled by Drop
-    let value_fmt = value.to_fmt(&mut formatter);
     let expected_fmt = expected.to_fmt(&mut formatter);
+    let value_fmt = value.to_fmt(&mut formatter2);
     if not {
-        let received_fmt = value.to_fmt(&mut formatter);
         const EXPECTED_LINE: &str = "Expected to not contain: <green>{}<r>\nReceived: <red>{}<r>\n";
         // TODO(port): get_signature must be const fn / macro for comptime eval
         let signature = get_signature("toContainKeys", "<green>expected<r>", true);
         return this.throw(
             global,
             signature,
-            format_args!(concat!("\n\n", "Expected to not contain: <green>{}<r>\nReceived: <red>{}<r>\n"), expected_fmt, received_fmt),
+            format_args!(concat!("\n\n", "Expected to not contain: <green>{}<r>\nReceived: <red>{}<r>\n"), expected_fmt, value_fmt),
         );
     }
 

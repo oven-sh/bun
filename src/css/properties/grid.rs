@@ -280,7 +280,7 @@ impl TrackBreadth {
             TrackBreadth::MaxContent => dest.write_str("max-content"),
             TrackBreadth::Length(len) => len.to_css(dest),
             // .flex => |flex| try css.CSSNumberFns.serializeDimension(&flex, "fr", dest),
-            TrackBreadth::Flex(flex) => css::serializer::serialize_dimension(*flex, "fr", dest),
+            TrackBreadth::Flex(flex) => css::serializer::serialize_dimension(*flex, b"fr", dest),
         }
     }
 }
@@ -316,12 +316,12 @@ impl TrackRepeat {
                 let line_name = i
                     .try_parse(parse_line_names)
                     .unwrap_or_else(|_| CustomIdentList::default());
-                line_names.push(i.allocator(), line_name);
+                line_names.append(line_name).unwrap();
 
                 // TODO(port): Zig original references outer `input` here (likely a bug); mirroring with `i`
                 if let Some(track_size) = i.try_parse(TrackSize::parse).ok() {
                     // TODO: error handling
-                    track_sizes.push(i.allocator(), track_size);
+                    track_sizes.append(track_size).unwrap();
                 } else {
                     break;
                 }
@@ -347,7 +347,7 @@ impl TrackRepeat {
                 serialize_line_names(names.slice(), dest)?;
             }
 
-            if track_sizes_index < self.track_sizes.len() {
+            if track_sizes_index < self.track_sizes.len {
                 let size = self.track_sizes.at(track_sizes_index);
                 track_sizes_index += 1;
 
@@ -375,7 +375,8 @@ fn serialize_line_names(names: &[CustomIdent], dest: &mut Printer) -> Result<(),
         } else {
             dest.write_char(b' ')?;
         }
-        write_ident(&name.value, dest)?;
+        // SAFETY: arena-owned slice valid for 'bump.
+        write_ident(unsafe { &*name.v }, dest)?;
     }
     dest.write_char(b']')
 }
@@ -407,7 +408,7 @@ fn parse_line_names(input: &mut Parser) -> css::Result<CustomIdentList> {
 
         // TODO(port): Zig original references outer `input` here (likely a bug); mirroring with `i`
         while let Some(ident) = i.try_parse(CustomIdent::parse).ok() {
-            values.push(i.allocator(), ident);
+            values.append(ident);
         }
 
         Ok(values)
@@ -546,7 +547,8 @@ impl GridTemplateAreas {
             };
             let token = &rest[..token_len];
             // TODO(port): arena-owned slice — Zig stores borrowed slice into SmallList; using raw ptr here
-            tokens.push(bump, Some(token as *const [u8]));
+            let _ = bump;
+            tokens.append(Some(token as *const [u8]));
             string = &rest[token_len..];
         }
 

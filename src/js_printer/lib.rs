@@ -3639,16 +3639,26 @@ where
                 self.print_string_literal_e_string(&e, true);
             }
             ExprData::ETemplate(e) => {
-                // TODO(b2-blocked): bun_js_parser::ast::e::Template::fold — the
-                // `impl Template { fn fold(&mut self, &Bump, Loc) -> Expr }` block
-                // is itself ``-gated in E.rs (and `TemplatePart` is
-                // not `Copy`/`Clone`). Re-gate the inlining-rewrite path until
-                // those land.
-                
                 if e.tag.is_none() && (self.options.minify_syntax || self.was_lazy_export) {
+                    // Zig: `var part = part.*` — `TemplatePart` is structurally
+                    // `Copy` but `EString` doesn't derive it; field-wise copy.
+                    #[inline]
+                    fn part_clone(p: &E::TemplatePart) -> E::TemplatePart {
+                        E::TemplatePart {
+                            value: p.value,
+                            tail_loc: p.tail_loc,
+                            tail: match &p.tail {
+                                E::TemplateContents::Cooked(c) => {
+                                    E::TemplateContents::Cooked(c.shallow_clone())
+                                }
+                                E::TemplateContents::Raw(r) => E::TemplateContents::Raw(r),
+                            },
+                        }
+                    }
+
                     let mut replaced: Vec<E::TemplatePart> = Vec::new();
                     for (i, _part) in e.parts.iter().enumerate() {
-                        let mut part = *_part;
+                        let mut part = part_clone(_part);
                         let inlined_value: Option<Expr> = match &part.value.data {
                             ExprData::ENameOfSymbol(e2) => Some(Expr::init(
                                 E::String::init(self.mangled_prop_name(e2.ref_)),
@@ -3663,7 +3673,7 @@ where
 
                         if let Some(value) = inlined_value {
                             if replaced.is_empty() {
-                                replaced.extend_from_slice(&e.parts[..i]);
+                                replaced.extend(e.parts[..i].iter().map(part_clone));
                             }
                             part.value = value;
                             replaced.push(part);
@@ -3673,9 +3683,25 @@ where
                     }
 
                     if !replaced.is_empty() {
-                        let mut copy = e.clone();
-                        copy.parts = &replaced[..]; // TODO(port): lifetime — `replaced` is local
-                        let e2 = copy.fold(/* allocator dropped */ expr.loc);
+                        // Zig: `var copy = e.*; copy.parts = &replaced;` — build a
+                        // local `Template` (not a StoreRef alias) so `fold`'s
+                        // `mem::take(self.head)` doesn't clobber the AST node.
+                        // SAFETY: `replaced` outlives `copy`/`fold()`; lifetime
+                        // erased to match `Template.parts: &'static [_]` (Phase B
+                        // threads `'bump` through).
+                        let parts_slice: &'static [E::TemplatePart] =
+                            unsafe { core::mem::transmute::<&[E::TemplatePart], _>(&replaced[..]) };
+                        let mut copy = E::Template {
+                            tag: e.tag,
+                            parts: parts_slice,
+                            head: match &e.head {
+                                E::TemplateContents::Cooked(c) => {
+                                    E::TemplateContents::Cooked(c.shallow_clone())
+                                }
+                                E::TemplateContents::Raw(r) => E::TemplateContents::Raw(r),
+                            },
+                        };
+                        let e2 = copy.fold(self.bump, expr.loc);
                         match &e2.data {
                             ExprData::EString(s) => {
                                 self.print(b'"');
@@ -6180,21 +6206,22 @@ where
         self.print_string_literal_utf8(source.path.pretty, false);
 
         let stmts = slice_of(part.stmts);
-        let func = &stmts[0].data.as_s_expr().unwrap().value.data.as_e_function().unwrap().func;
+        let func = &stmts[0].data.s_expr().unwrap().value.data.e_function().unwrap().func;
 
         // Special-case lazy-export AST
         if ast.has_lazy_export {
             // @branchHint(.unlikely)
-            self.print_fn_args(func.open_parens_loc, &func.args, func.flags.contains(G::FnFlags::HasRestArg), false);
+            self.print_fn_args(Some(func.open_parens_loc), slice_of(func.args), func.flags.contains(G::FnFlags::HasRestArg), false);
             self.print_space();
             self.print(b"{\n");
-            let lazy = func.body.stmts[0].data.as_s_lazy_export().unwrap();
+            let body_stmts = slice_of(func.body.stmts);
+            let lazy = body_stmts[0].data.s_lazy_export().unwrap();
             if !matches!(*lazy, ExprData::EUndefined(_)) {
                 self.indent();
                 self.print_indent();
                 self.print_symbol(self.options.hmr_ref);
                 self.print(b".cjs.exports = ");
-                self.print_expr(Expr { data: lazy.clone(), loc: func.body.stmts[0].loc }, Level::Comma, ExprFlagSet::empty());
+                self.print_expr(Expr { data: *lazy, loc: body_stmts[0].loc }, Level::Comma, ExprFlagSet::empty());
                 self.print(b"; // bun .s_lazy_export\n");
                 self.unindent();
             }
@@ -6211,7 +6238,7 @@ where
                 self.print(b"\n");
                 for stmt in &stmts[1..] {
                     self.print_indent();
-                    let import = stmt.data.as_s_import().unwrap();
+                    let import = stmt.data.s_import().unwrap();
                     let record = self.import_record(import.import_record_index as usize);
                     self.print_string_literal_utf8(&record.path.pretty, false);
 
@@ -6280,7 +6307,7 @@ where
 
             // Print the code
             if !ast.top_level_await_keyword.is_empty() { self.print(b"async"); }
-            self.print_fn_args(func.open_parens_loc, &func.args, func.flags.contains(G::FnFlags::HasRestArg), false);
+            self.print_fn_args(Some(func.open_parens_loc), slice_of(func.args), func.flags.contains(G::FnFlags::HasRestArg), false);
             self.print(b" => {\n");
             self.indent();
             self.print_block_body(slice_of(func.body.stmts), TopLevel::init(IsTopLevel::No));
@@ -6293,7 +6320,7 @@ where
             self.print(b"],\n");
         } else {
             debug_assert!(ast.exports_kind == js_ast::ExportsKind::Cjs);
-            self.print_func(*func);
+            self.print_func(func);
             self.print(b",\n");
         }
 
@@ -6742,7 +6769,7 @@ pub fn get_source_map_builder<const IS_BUN_PLATFORM: bool>(
             if generate_source_map == GenerateSourceMap::Lazy {
                 break 'brk bun_crash_handler::handle_oom::handle_oom(SourceMap::LineOffsetTable::generate(
                     // allocator dropped
-                    source.contents,
+                    &source.contents,
                     i32::try_from(tree.approximate_newline_count).unwrap(),
                 ));
             }

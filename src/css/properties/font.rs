@@ -993,13 +993,16 @@ impl FontHandler {
         context: &mut crate::PropertyHandlerContext<'_>,
     ) -> bool {
         use crate::properties::Property;
+        // PORT NOTE: `allocator` field dropped from PropertyHandlerContext; the
+        // arena is recovered via `dest.bump()` (DeclarationList = bumpalo::Vec).
+        let allocator = dest.bump();
 
         // TODO(port): Zig used `comptime prop: []const u8` + @field for property_helper / flush_helper / push.
         // No Rust equivalent for field-name reflection — expanded as macro_rules! over (handler_field, Property variant, FontProperty flag).
         macro_rules! flush_helper {
             ($this:expr, $field:ident, $val:expr) => {{
                 if $this.$field.is_some()
-                    && $this.$field.as_ref().unwrap() != $val
+                    && !crate::generic::eql($this.$field.as_ref().unwrap(), $val)
                     && context.targets.browsers.is_some()
                     && !crate::generic::is_compatible($val, context.targets.browsers.unwrap())
                 {
@@ -1011,8 +1014,7 @@ impl FontHandler {
         macro_rules! property_helper {
             ($this:expr, $field:ident, $val:expr) => {{
                 flush_helper!($this, $field, $val);
-                // TODO(port): css.generic.deepClone(.., context.allocator) — arena-aware clone in Phase B
-                $this.$field = Some($val.clone());
+                $this.$field = Some(crate::generic::deep_clone($val, allocator));
                 $this.has_any = true;
             }};
         }
@@ -1034,8 +1036,7 @@ impl FontHandler {
                 flush_helper!(self, line_height, &val.line_height);
                 flush_helper!(self, variant_caps, &val.variant_caps);
 
-                // TODO(port): css.generic.deepClone with context.allocator — arena-aware clone in Phase B
-                self.family = Some(val.family.clone());
+                self.family = Some(crate::generic::deep_clone(&val.family, allocator));
                 self.size = Some(val.size.clone());
                 self.style = Some(val.style);
                 self.weight = Some(val.weight.clone());
@@ -1052,7 +1053,7 @@ impl FontHandler {
                         FontProperty::try_from_property_id(val.property_id.tag()).unwrap(),
                     );
                     // PERF(port): was dest.append(context.allocator, property.*) on arena
-                    dest.push(property.clone());
+                    dest.push(property.deep_clone(allocator));
                 } else {
                     return false;
                 }

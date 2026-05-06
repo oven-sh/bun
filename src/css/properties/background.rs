@@ -962,8 +962,14 @@ impl BackgroundHandler {
                 // PERF(port): was arena bulk-free / move-then-clear — profile in Phase B
 
                 if self.flushed_properties.is_empty() {
-                    let fallbacks = backgrounds.get_fallbacks(allocator, context.targets);
-                    for fallback in fallbacks.into_iter() {
+                    let mut fallbacks = backgrounds.get_fallbacks(allocator, context.targets);
+                    // PORT NOTE: BabyList has no owning iterator; pop in reverse then
+                    // re-reverse via a temp Vec to preserve order.
+                    let mut tmp: Vec<SmallList<Background, 1>> = Vec::with_capacity(fallbacks.len as usize);
+                    while let Some(fb) = fallbacks.pop() {
+                        tmp.push(fb);
+                    }
+                    for fallback in tmp.into_iter().rev() {
                         push_property!(self, dest, Background, BackgroundProperty::BACKGROUND, fallback);
                     }
                 }

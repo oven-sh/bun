@@ -226,6 +226,7 @@ impl Animation {
 // PORT NOTE: no `#[derive(PartialEq, Eq, Hash)]` — `CustomIdent`/`CSSString`
 // carry raw `*const [u8]` arena pointers; derived eq/hash would compare by
 // pointer. Hand-written `eql`/`hash` below compare by content.
+#[derive(Clone, Copy)]
 pub enum AnimationName {
     /// The `none` keyword.
     None,

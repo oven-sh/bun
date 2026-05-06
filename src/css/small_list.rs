@@ -831,6 +831,49 @@ impl<T, const N: usize> Drop for SmallList<T, N> {
     }
 }
 
+// Owning iterator — moves elements out one by one. Elements not yet yielded
+// when the iterator is dropped are leaked (matches `Drop for SmallList` above:
+// Zig deinit never dropped elements, caller responsible).
+pub struct SmallListIntoIter<T, const N: usize> {
+    list: SmallList<T, N>,
+    pos: u32,
+}
+
+impl<T, const N: usize> Iterator for SmallListIntoIter<T, N> {
+    type Item = T;
+    fn next(&mut self) -> Option<T> {
+        if self.pos >= self.list.len() {
+            return None;
+        }
+        // SAFETY: pos < len, slot is initialized, and we never read this slot again
+        // (pos is monotonic). The backing buffer is freed by `Drop for SmallList`
+        // without dropping remaining elements, matching Zig semantics.
+        let item = unsafe { core::ptr::read(self.list.slice().as_ptr().add(self.pos as usize)) };
+        self.pos += 1;
+        Some(item)
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = (self.list.len() - self.pos) as usize;
+        (remaining, Some(remaining))
+    }
+}
+
+impl<T, const N: usize> IntoIterator for SmallList<T, N> {
+    type Item = T;
+    type IntoIter = SmallListIntoIter<T, N>;
+    fn into_iter(self) -> Self::IntoIter {
+        SmallListIntoIter { list: self, pos: 0 }
+    }
+}
+
+impl<'a, T, const N: usize> IntoIterator for &'a SmallList<T, N> {
+    type Item = &'a T;
+    type IntoIter = core::slice::Iter<'a, T>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.slice().iter()
+    }
+}
+
 // ─── getFallbacks ──────────────────────────────────────────────────────────
 // The Zig version uses `@hasDecl(T, "getImage")` and `T == TextShadow` comptime
 // dispatch with a comptime-computed return type. In Rust this becomes a trait

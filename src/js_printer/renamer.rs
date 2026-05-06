@@ -1002,7 +1002,7 @@ impl NumberScope {
 
         // Each name starts off with a count of 1 so that the first collision with
         // "name" is called "name2"
-        if strings::eql_long::<true>(name, input_name) {
+        if strings::eql_long(name, input_name, true) {
             self.name_counts
                 .put_no_clobber(input_name, 1)
                 .expect("unreachable");

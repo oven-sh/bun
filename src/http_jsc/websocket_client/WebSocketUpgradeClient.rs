@@ -741,7 +741,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // Handle proxy handshake response
         if self.state == State::ProxyHandshake {
             self.handle_proxy_response(socket, data);
-            self.deref();
+            // SAFETY: `self: &mut Self`; balances the r#ref() above; last use.
+            unsafe { Self::deref(self) };
             return;
         }
 
@@ -749,7 +750,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
         if let Some(p) = &mut self.proxy {
             if let Some(tunnel) = p.get_tunnel() {
                 tunnel.receive(data);
-                self.deref();
+                // SAFETY: `self: &mut Self`; balances the r#ref() above; last use.
+                unsafe { Self::deref(self) };
                 return;
             }
         }
@@ -766,7 +768,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
             // fail early if we receive a non-101 status code
             if !body.starts_with(HTTP_101) {
                 self.terminate(ErrorCode::Expected101StatusCode);
-                self.deref();
+                // SAFETY: `self: &mut Self`; balances the r#ref() above; last use.
+                unsafe { Self::deref(self) };
                 return;
             }
         }
@@ -775,14 +778,16 @@ impl<const SSL: bool> HTTPClient<SSL> {
             Ok(r) => r,
             Err(picohttp::ParseError::MalformedHttpResponse) => {
                 self.terminate(ErrorCode::InvalidResponse);
-                self.deref();
+                // SAFETY: `self: &mut Self`; balances the r#ref() above; last use.
+                unsafe { Self::deref(self) };
                 return;
             }
             Err(picohttp::ParseError::ShortRead) => {
                 if self.body.is_empty() {
                     self.body.extend_from_slice(data);
                 }
-                self.deref();
+                // SAFETY: `self: &mut Self`; balances the r#ref() above; last use.
+                unsafe { Self::deref(self) };
                 return;
             }
         };
@@ -792,7 +797,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
         let remain_buf: Vec<u8> = body[bytes_read..].to_vec();
         // PERF(port): was zero-copy slice into self.body — profile in Phase B.
         self.process_response(response, &remain_buf);
-        self.deref();
+        // SAFETY: `self: &mut Self`; balances the r#ref() above; last use.
+        unsafe { Self::deref(self) };
     }
 
     fn handle_proxy_response(&mut self, socket: Socket<SSL>, data: &[u8]) {
@@ -1308,7 +1314,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
                     // Switch state to connected - handle_data will forward to tunnel
                     self.state = State::Done;
-                    self.deref();
+                    // SAFETY: `self: &mut Self`; drops the outgoing_websocket ref.
+                    unsafe { Self::deref(self) };
                 } else if self.tcp.is_closed() {
                     self.terminate(ErrorCode::Cancel);
                 } else if self.outgoing_websocket.is_none() {
@@ -1354,10 +1361,13 @@ impl<const SSL: bool> HTTPClient<SSL> {
             } else {
                 self.terminate(ErrorCode::FailedToConnect);
             }
+            // SAFETY: `self: &mut Self`; two refs are released here (the
+            // outgoing_websocket ref then the TCP socket ref). The first call
+            // cannot reach zero because the second ref is still held.
             // Once for the outgoing_websocket.
-            self.deref();
+            unsafe { Self::deref(self) };
             // Once again for the TCP socket.
-            self.deref();
+            unsafe { Self::deref(self) };
         } else if self.tcp.is_closed() {
             self.terminate(ErrorCode::Cancel);
         } else if self.outgoing_websocket.is_none() {
@@ -1395,12 +1405,14 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     Ok(n) => n,
                     Err(_) => {
                         self.terminate(ErrorCode::FailedToWrite);
-                        self.deref();
+                        // SAFETY: `self: &mut Self`; balances r#ref() above; last use.
+                        unsafe { Self::deref(self) };
                         return;
                     }
                 };
                 self.to_send_len -= wrote.min(self.to_send_len);
-                self.deref();
+                // SAFETY: `self: &mut Self`; balances r#ref() above; last use.
+                unsafe { Self::deref(self) };
                 return;
             }
         }
@@ -1415,12 +1427,14 @@ impl<const SSL: bool> HTTPClient<SSL> {
         let wrote = socket.write(self.to_send());
         if wrote < 0 {
             self.terminate(ErrorCode::FailedToWrite);
-            self.deref();
+            // SAFETY: `self: &mut Self`; balances r#ref() above; last use.
+            unsafe { Self::deref(self) };
             return;
         }
         let wrote = usize::try_from(wrote).unwrap();
         self.to_send_len -= wrote.min(self.to_send_len);
-        self.deref();
+        // SAFETY: `self: &mut Self`; balances r#ref() above; last use.
+        unsafe { Self::deref(self) };
     }
 
     pub fn handle_timeout(&mut self, _: Socket<SSL>) {
@@ -1441,7 +1455,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
             self.state = State::Failed;
         }
 
-        self.deref();
+        // SAFETY: `self: &mut Self`; last use of `self`.
+        unsafe { Self::deref(self) };
     }
 }
 

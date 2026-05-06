@@ -1447,50 +1447,44 @@ pub fn generic_path_with_pretty_initialized(
     // the "node" namespace is also put through this code path so that the
     // "node:" prefix is not emitted.
     if path.is_file() || is_node {
-        let buf2 = if target == Target::BakeServerComponentsSsr {
-            bun_paths::path_buffer_pool::get().get()
-        } else {
-            // TODO(port): in Zig buf2 aliases buf when target != ssr; here we need a separate guard or branch
-            bun_paths::path_buffer_pool::get().get()
-        };
-        let rel = bun_paths::relative_platform_buf(&mut *buf2, top_level_dir, &path.text, bun_paths::Platform::Loose, false);
+        let mut buf2 = bun_paths::path_buffer_pool::get();
+        // TODO(port): in Zig buf2 aliases buf when target != ssr.
+        let rel = bun_paths::resolve_path::relative_platform_buf::<bun_paths::platform::Loose, false>(
+            &mut **buf2, top_level_dir, &path.text,
+        );
         let mut path_clone = path;
         // stack-allocated temporary is not leaked because dupeAlloc on the path will
         // move .pretty into the heap. that function also fixes some slash issues.
         if target == Target::BakeServerComponentsSsr {
             // the SSR graph needs different pretty names or else HMR mode will
             // confuse the two modules.
-            let mut cursor = &mut buf[..];
-            path_clone.pretty = match write!(cursor, "ssr:{}", bstr::BStr::new(rel)) {
-                Ok(()) => {
-                    let written = buf.len() - cursor.len();
-                    &buf[..written]
-                }
-                Err(_) => &buf[..],
-            };
+            let buf_slice = &mut buf.0[..];
+            let mut cursor = &mut buf_slice[..];
+            let buf_len = cursor.len();
+            let _ = write!(cursor, "ssr:{}", bstr::BStr::new(rel));
+            let written = buf_len - cursor.len();
+            path_clone.pretty = &buf.0[..written];
         } else {
             path_clone.pretty = rel;
         }
-        path_clone.dupe_alloc_fix_pretty(bump)
+        Ok(path_clone.dupe_alloc_fix_pretty(bump))
     } else {
         // in non-file namespaces, standard filesystem rules do not apply.
         let mut path_clone = path;
-        let mut cursor = &mut buf[..];
-        path_clone.pretty = match write!(
+        let buf_slice = &mut buf.0[..];
+        let mut cursor = &mut buf_slice[..];
+        let buf_len = cursor.len();
+        let _ = write!(
             cursor,
             "{}{}:{}",
             if target == Target::BakeServerComponentsSsr { "ssr:" } else { "" },
             // make sure that a namespace including a colon wont collide with anything
             EscapedNamespace(&path.namespace),
             bstr::BStr::new(&path.text),
-        ) {
-            Ok(()) => {
-                let written = buf.len() - cursor.len();
-                &buf[..written]
-            }
-            Err(_) => &buf[..],
-        };
-        path_clone.dupe_alloc_fix_pretty(bump)
+        );
+        let written = buf_len - cursor.len();
+        path_clone.pretty = &buf.0[..written];
+        Ok(path_clone.dupe_alloc_fix_pretty(bump))
     }
 }
 

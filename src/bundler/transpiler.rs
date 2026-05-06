@@ -111,6 +111,216 @@ impl<'a> Transpiler<'a> {
         // resolver/lib.rs `// allocator: dropped`), so nothing left to thread.
     }
 
+    /// Port of `transpiler.zig:91 getPackageManager`.
+    #[inline]
+    pub fn get_package_manager(
+        &mut self,
+    ) -> &mut bun_resolver::package_json::PackageManager {
+        self.resolver.get_package_manager()
+    }
+
+    /// Port of `transpiler.zig:358 resetStore`.
+    pub fn reset_store(&self) {
+        js_ast::Expr::data_store_reset();
+        js_ast::Stmt::data_store_reset();
+    }
+
+    /// Port of `transpiler.zig:108 _resolveEntryPoint`.
+    fn _resolve_entry_point(
+        &mut self,
+        entry_point: &[u8],
+    ) -> Result<resolver::Result, bun_core::Error> {
+        // SAFETY: `self.fs` points at the global `Fs::FileSystem` singleton
+        // (see field comment); never null after `Transpiler::init`.
+        let top_level_dir = unsafe { (*self.fs).top_level_dir };
+        match self.resolver.resolve_with_framework(
+            top_level_dir,
+            entry_point,
+            bun_options_types::ImportKind::EntryPointBuild,
+        ) {
+            Ok(r) => Ok(r),
+            Err(err) => {
+                // Relative entry points that were not resolved to a node_modules package are
+                // interpreted as relative to the current working directory.
+                if !bun_paths::is_absolute(entry_point)
+                    && !(entry_point.starts_with(b"./")
+                        || entry_point.starts_with(b".\\"))
+                {
+                    // Spec: `strings.append(allocator, "./", entry_point)`.
+                    let mut prefixed = Vec::with_capacity(2 + entry_point.len());
+                    prefixed.extend_from_slice(b"./");
+                    prefixed.extend_from_slice(entry_point);
+                    // PORT NOTE: spec leaks the prefixed slice (arena-freed in
+                    // Zig). `Resolver::resolve` interns the path internally,
+                    // so the heap buffer can drop after the call.
+                    if let Ok(r) = self.resolver.resolve(
+                        top_level_dir,
+                        &prefixed,
+                        bun_options_types::ImportKind::EntryPointBuild,
+                    ) {
+                        return Ok(r);
+                    }
+                    // return the original error
+                }
+                Err(err)
+            }
+        }
+    }
+
+    /// Port of `transpiler.zig:130 resolveEntryPoint`.
+    pub fn resolve_entry_point(
+        &mut self,
+        entry_point: &[u8],
+    ) -> Result<resolver::Result, bun_core::Error> {
+        match self._resolve_entry_point(entry_point) {
+            Ok(r) => Ok(r),
+            Err(err) => {
+                let mut cache_bust_buf = bun_paths::PathBuffer::uninit();
+
+                // Bust directory cache and try again
+                let buster_name: &[u8] = 'name: {
+                    if bun_paths::is_absolute(entry_point) {
+                        let dir = bun_paths::resolve_path::dirname::<
+                            bun_paths::resolve_path::AutoPlatform,
+                        >(entry_point);
+                        if !dir.is_empty() {
+                            // Normalized with trailing slash
+                            break 'name bun_string::strings::paths::normalize_slashes_only(
+                                &mut cache_bust_buf[..],
+                                dir,
+                                bun_paths::SEP,
+                            );
+                        }
+                    }
+
+                    // Spec: `bun.pathLiteral("..")` — `".."` is sep-agnostic.
+                    let parts: [&[u8]; 2] = [entry_point, b".."];
+                    let top_level_dir = unsafe { (*self.fs).top_level_dir };
+
+                    bun_paths::resolve_path::join_abs_string_buf_z::<
+                        bun_paths::resolve_path::AutoPlatform,
+                    >(top_level_dir, &mut cache_bust_buf, &parts)
+                };
+
+                // Only re-query if we previously had something cached.
+                if self.resolver.bust_dir_cache(
+                    bun_string::strings::paths::without_trailing_slash_windows_path(
+                        buster_name,
+                    ),
+                ) {
+                    if let Ok(result) = self._resolve_entry_point(entry_point) {
+                        return Ok(result);
+                    }
+                    // ignore this error, we will print the original error
+                }
+
+                // SAFETY: `self.log` is never null after `init` (see field comment).
+                let log = unsafe { &mut *self.log };
+                bun_core::handle_oom(log.add_error_fmt(
+                    None,
+                    logger::Loc::EMPTY,
+                    format_args!(
+                        "{} resolving \"{}\" (entry point)",
+                        err.name(),
+                        bstr::BStr::new(entry_point)
+                    ),
+                ));
+                Err(err)
+            }
+        }
+    }
+
+    /// Port of `transpiler.zig:314 configureDefines`.
+    pub fn configure_defines(&mut self) -> Result<(), bun_core::Error> {
+        if self.options.defines_loaded {
+            return Ok(());
+        }
+
+        if self.options.target == options::Target::BunMacro {
+            self.options.env.behavior =
+                bun_options_types::schema::api::DotEnvBehavior::Prefix;
+            self.options.env.prefix = Box::from(b"BUN_".as_slice());
+        }
+
+        self.run_env_loader(self.options.env.disable_default_env_files)?;
+
+        // SAFETY: `self.env` points at the long-lived `DotEnv::Loader`
+        // (`init` always assigns it); never null here.
+        let env_loader = unsafe { &mut *self.env };
+        let mut is_production = env_loader.is_production();
+
+        js_ast::Expr::data_store_create();
+        js_ast::Stmt::data_store_create();
+
+        // Spec `defer Store.reset()` — scopeguard so the reset runs on every
+        // exit path (including `?` early-return below).
+        let _reset = scopeguard::guard((), |_| {
+            js_ast::Expr::data_store_reset();
+            js_ast::Stmt::data_store_reset();
+        });
+
+        // PORT NOTE: reshaped for borrowck — Zig passed `&this.options.env`
+        // into `this.options.loadDefines(...)`. Rust forbids `&self.options.env`
+        // while `&mut self.options` is live, so clone the POD `Env` value.
+        let env_snapshot = self.options.env.clone();
+        self.options
+            .load_defines(Some(env_loader), Some(&env_snapshot))?;
+
+        let mut is_development = false;
+        if let Some(node_env) = self.options.define.dots.get(b"NODE_ENV".as_slice()) {
+            if !node_env.is_empty() {
+                if let Some(s) = node_env[0].data.value.e_string() {
+                    if s.eql_comptime(b"production") {
+                        is_production = true;
+                    } else if s.eql_comptime(b"development") {
+                        is_development = true;
+                    }
+                }
+            }
+        }
+
+        if is_development {
+            self.options.set_production(false);
+            self.resolver.opts.set_production(false);
+            self.options.force_node_env = options::ForceNodeEnv::Development;
+            self.resolver.opts.force_node_env = options::ForceNodeEnv::Development;
+        } else if is_production {
+            self.options.set_production(true);
+            self.resolver.opts.set_production(true);
+        }
+        Ok(())
+    }
+
+    /// Port of `transpiler.zig:363 dumpEnvironmentVariables`.
+    #[cold]
+    #[inline(never)]
+    pub fn dump_environment_variables(&self) {
+        // PORT NOTE: spec uses `std.json.Stringify` to dump `env.map.*`. The
+        // Rust `bun_dotenv::Map` doesn't impl `serde::Serialize`, so iterate
+        // and write a JSON object by hand. Output formatting matches the
+        // `.indent_2` whitespace option.
+        bun_core::Output::flush();
+        // SAFETY: `self.env` is non-null after `init`.
+        let env = unsafe { &*self.env };
+        let mut w = bun_core::Output::writer();
+        let _ = w.write_all(b"{\n");
+        let mut first = true;
+        for (k, v) in env.map.iter() {
+            if !first {
+                let _ = w.write_all(b",\n");
+            }
+            first = false;
+            let _ = write!(
+                w,
+                "  \"{}\": \"{}\"",
+                bstr::BStr::new(k),
+                bstr::BStr::new(v)
+            );
+        }
+        let _ = w.write_all(b"\n}\n");
+        bun_core::Output::flush();
+    }
+
     /// Port of Zig `transpiler.* = from.*` (ThreadPool.zig:308) — bitwise
     /// struct copy for per-worker `Transpiler` initialization.
     ///

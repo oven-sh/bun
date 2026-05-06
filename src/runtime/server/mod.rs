@@ -1427,9 +1427,11 @@ pub struct SavedRequest {
 }
 
 impl SavedRequest {
-    /// `SavedRequest.deinit` — full body in gated `server_body.rs` draft.
+    /// Spec server.zig `SavedRequest.deinit` — release the JS strong ref and
+    /// drop the request-context refcount. `request`/`response` are non-owning.
     pub fn deinit(&mut self) {
-        todo!("blocked_on: server::SavedRequest::deinit body un-gate")
+        self.js_request.deinit();
+        self.ctx.deref();
     }
 }
 
@@ -1440,14 +1442,47 @@ pub struct ServerAllConnectionsClosedTask {
     pub tracker: jsc::AsyncTaskTracker,
 }
 
+impl bun_event_loop::Taskable for ServerAllConnectionsClosedTask {
+    const TAG: bun_event_loop::TaskTag =
+        bun_event_loop::task_tag::ServerAllConnectionsClosedTask;
+}
+
 impl ServerAllConnectionsClosedTask {
+    /// Spec server.zig `schedule` — `bun.TrivialNew` heap-allocates `this`,
+    /// then `vm.eventLoop().enqueueTask(jsc.Task.init(ptr))`.
+    pub fn schedule(this: Self, vm: &mut jsc::VirtualMachine) {
+        let ptr = Box::into_raw(Box::new(this));
+        vm.enqueue_task(bun_event_loop::Task::init(ptr));
+    }
+
     /// Spec server.zig `runFromJSThread` — resolve the `server.stop()` promise
     /// once uws reports all sockets closed, then `bun.destroy(self)`.
     pub fn run_from_js_thread(
-        _this: *mut Self,
-        _vm: &mut jsc::VirtualMachine,
+        this: *mut Self,
+        vm: &mut jsc::VirtualMachine,
     ) -> Result<(), jsc::JsTerminated> {
-        todo!("blocked_on: ServerAllConnectionsClosedTask::run_from_js_thread body")
+        httplog!("ServerAllConnectionsClosedTask runFromJSThread");
+
+        // SAFETY: `this` was `Box::into_raw`'d in `schedule()`; reclaim
+        // ownership and move out of the Box (Zig: `bun.destroy(this)` after
+        // copying the fields it still needs onto the stack).
+        let this = *unsafe { Box::from_raw(this) };
+        // SAFETY: `global_object` is the per-VM JSGlobalObject, kept alive for
+        // the VM's lifetime; the task is only dispatched on that VM's JS thread.
+        let global_object: &jsc::JSGlobalObject = unsafe { &*this.global_object };
+        let tracker = this.tracker;
+        tracker.will_dispatch(global_object);
+        let _guard =
+            scopeguard::guard((), move |_| tracker.did_dispatch(global_object));
+
+        // Zig: `var promise = this.promise; defer promise.deinit();` —
+        // `JSPromiseStrong`'s Drop releases the strong handle on scope exit.
+        let mut promise = this.promise;
+
+        if !vm.is_shutting_down() {
+            promise.resolve(global_object, JSValue::UNDEFINED)?;
+        }
+        Ok(())
     }
 }
 

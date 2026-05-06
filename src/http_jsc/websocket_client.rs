@@ -258,7 +258,9 @@ impl<const SSL: bool> WebSocket<SSL> {
             // tunnel mode never adopts a socket so that callback never runs.
             // Callers that touch `self` after clear_data() must hold a local
             // ref guard (see cancel/finalize).
-            self.deref();
+            // SAFETY: `self: &mut Self` coerces to `*mut Self` with write
+            // provenance; allocation is live (guarded by callers' ref).
+            unsafe { Self::deref(self) };
         }
     }
 
@@ -306,7 +308,9 @@ impl<const SSL: bool> WebSocket<SSL> {
             log!("fail ({})", <&'static str>::from(code));
             // SAFETY: ws is a valid CppWebSocket* held by us
             unsafe { (*ws.as_ptr()).did_abrupt_close(code) };
-            self.deref();
+            // SAFETY: `self: &mut Self` → `*mut Self`; allocation kept live by
+            // the socket/tunnel I/O ref (or by caller's guard).
+            unsafe { Self::deref(self) };
         }
 
         Self::cancel(self);

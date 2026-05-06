@@ -1,38 +1,50 @@
 use std::io::Write as _;
+use std::borrow::Cow;
 
 use bun_core::Output;
 use bun_core::Environment;
 use bun_collections::AutoBitSet;
 use bun_collections::StringHashMap;
 use bun_collections::StringArrayHashMap;
-use bun_threading::ThreadPool as ThreadPoolLib;
+// PORT NOTE: Zig `bun.threading.ThreadPool` is the *module*; `Batch`/`Task`
+// are free types in that module, not associated types on the struct.
+use bun_threading::thread_pool as ThreadPoolLib;
 use bun_logger as Logger;
-use bun_str::strings;
+use bun_string::strings;
+use bun_string::String as BunString;
 use bun_paths as path;
 
-use bun_bundler::options;
-use bun_bundler::options::OutputFile;
-use bun_bundler::options::Loader;
-use bun_bundler::Chunk;
-use bun_bundler::ContentHasher;
-use bun_bundler::Index;
-use bun_bundler::cheap_prefix_normalizer;
-use bun_bundler::BundleV2;
-use bun_bundler::analyze_transpiled_module;
+use crate::options;
+use crate::options::OutputFile;
+use crate::options::Loader;
+use crate::Chunk;
+use crate::ContentHasher;
+use crate::Index;
+use crate::cheap_prefix_normalizer;
+use crate::BundleV2;
+use crate::analyze_transpiled_module;
 
-use bun_bundler::LinkerContext;
-use bun_bundler::linker_context::CompileResult;
-use bun_bundler::linker_context::GenerateChunkCtx;
-use bun_bundler::linker_context::OutputFileListBuilder;
-use bun_bundler::linker_context::PendingPartRange;
-use bun_bundler::linker_context::StaticRouteVisitor;
-use bun_bundler::linker_context::debug;
-use bun_bundler::linker_context::generate_chunk;
-use bun_bundler::linker_context::generate_compile_result_for_css_chunk;
-use bun_bundler::linker_context::generate_compile_result_for_html_chunk;
-use bun_bundler::linker_context::generate_compile_result_for_js_chunk;
+use crate::LinkerContext;
+use crate::CompileResult;
+use crate::linker_context_mod::{GenerateChunkCtx, PendingPartRange};
+use crate::linker_context::output_file_list_builder::OutputFileList as OutputFileListBuilder;
+use crate::linker_context::static_route_visitor::StaticRouteVisitor;
+use crate::linker_context::metafile_builder;
+use crate::linker_context::prepare_css_asts_for_chunk::{prepare_css_asts_for_chunk, PrepareCssAstTask};
+use crate::linker_context::generate_compile_result_for_css_chunk::generate_compile_result_for_css_chunk;
+use crate::linker_context::generate_compile_result_for_html_chunk::generate_compile_result_for_html_chunk;
+use crate::linker_context::generate_compile_result_for_js_chunk::generate_compile_result_for_js_chunk;
+use crate::dispatch::BYTECODE_HOOK;
 
-bun_output::declare_scope!(PartRanges, hidden);
+/// `bun.BYTECODE_EXTENSION` (bun.zig). Local because `bun_core` doesn't
+/// re-export it; matches `bun.rs::bytecode_extension`.
+const BYTECODE_EXTENSION: &str = ".jsc";
+
+bun_core::declare_scope!(PartRanges, hidden);
+bun_core::declare_scope!(LinkerCtx, hidden);
+macro_rules! debug {
+    ($($arg:tt)*) => { bun_core::scoped_log!(LinkerCtx, $($arg)*) };
+}
 
 // TODO(port): Zig's return type is `!if (is_dev_server) void else ArrayList(OutputFile)`.
 // Rust const generics cannot vary the return type, so we always return

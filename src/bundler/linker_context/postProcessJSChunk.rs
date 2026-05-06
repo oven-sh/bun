@@ -207,9 +207,9 @@ pub fn post_process_js_chunk(
         // printer when it prints cross_chunk_prefix_stmts above. Only truly-external
         // imports (node built-ins, etc.) survive as s_import in per-file parts and
         // need recording here.
-        let all_parts = c.graph.ast.items(.parts);
-        let all_flags = c.graph.meta.items(.flags);
-        let all_import_records = c.graph.ast.items(.import_records);
+        let all_parts = c.graph.ast.items_parts();
+        let all_flags = c.graph.meta.items_flags();
+        let all_import_records = c.graph.ast.items_import_records();
         for part_range in chunk.content.javascript().parts_in_chunk_in_order.iter() {
             if all_flags[part_range.source_index.get()].wrap == JSMeta::Wrap::Cjs {
                 continue;
@@ -295,7 +295,7 @@ pub fn post_process_js_chunk(
 
         // 3. Add wrapper-generated declarations (init_xxx, require_xxx) that are
         // not in any part statement.
-        let all_wrapper_refs = c.graph.ast.items(.wrapper_ref);
+        let all_wrapper_refs = c.graph.ast.items_wrapper_ref();
         for part_range in chunk.content.javascript().parts_in_chunk_in_order.iter() {
             let source_index = part_range.source_index.get();
             if all_flags[source_index].wrap != JSMeta::Wrap::None {
@@ -367,7 +367,7 @@ pub fn post_process_js_chunk(
     // Extract hashbang and banner for entry points
     let (hashbang, banner): (&[u8], &[u8]) = if chunk.is_entry_point() {
         'brk: {
-            let source_hashbang = c.graph.ast.items(.hashbang)[chunk.entry_point.source_index as usize];
+            let source_hashbang = c.graph.ast.items_hashbang()[chunk.entry_point.source_index as usize];
 
             // If source file has a hashbang, use it
             if !source_hashbang.is_empty() {
@@ -405,7 +405,7 @@ pub fn post_process_js_chunk(
     }
 
     // Add @bun comments and CJS wrapper start for each chunk when targeting Bun.
-    let is_bun = c.graph.ast.items(.target)[chunk.entry_point.source_index as usize].is_bun();
+    let is_bun = c.graph.ast.items_target()[chunk.entry_point.source_index as usize].is_bun();
     if is_bun {
         if ctx.c.options.generate_bytecode_cache && output_format == options::OutputFormat::Cjs {
             // Zig `++` literal concat → single byte literal (concat! yields &str, not &[u8])
@@ -441,7 +441,7 @@ pub fn post_process_js_chunk(
     // Add the top-level directive if present (but omit "use strict" in ES
     // modules because all ES modules are automatically in strict mode)
     if chunk.is_entry_point() && !output_format.is_always_strict_mode() {
-        let flags: JSAst::Flags = c.graph.ast.items(.flags)[chunk.entry_point.source_index as usize];
+        let flags: JSAst::Flags = c.graph.ast.items_flags()[chunk.entry_point.source_index as usize];
 
         if flags.has_explicit_use_strict_directive {
             j.push_static(b"\"use strict\";\n");

@@ -26,16 +26,20 @@ unsafe extern "C" {
 /// Opaque FFI handle; the C++ side owns the storage.
 #[repr(C)]
 pub struct BakeSourceProvider {
-    _p: [u8; 0],
+    _p: UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
 impl BakeSourceProvider {
     #[inline]
     fn as_ffi_ptr(&self) -> *mut Self {
-        // Opaque ZST handle: Rust holds no state, so the `*mut` is purely for
-        // C++'s benefit. Casting through `*const` avoids `&mut` aliasing rules.
-        self as *const Self as *mut Self
+        // SAFETY: opaque ZST handle — C++ owns the real storage and may mutate
+        // through this pointer (Zig spec passes `*BakeSourceProvider` everywhere).
+        // `UnsafeCell` at offset 0 grants interior-mutability provenance, so
+        // deriving `*mut Self` from `&self` is sound without a const→mut cast.
+        // Rust itself holds zero bytes here; the `*mut` exists solely to match
+        // C++'s non-const `BakeSourceProvider*` signatures.
+        self._p.get() as *mut Self
     }
 
     #[inline]

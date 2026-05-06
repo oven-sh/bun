@@ -922,7 +922,7 @@ pub mod bake_types {
     }
 }
 // TODO(b0): jsc::api arrives from move-in (TYPE_ONLY → bundler)
-use crate::api as jsc_api;
+use self::api as jsc_api;
 
 /// CYCLEBREAK(b0) TYPE_ONLY: data-only halves of `jsc::api::JSBundler` and
 /// `jsc::api::BuildArtifact` that the bundler reads/constructs without touching

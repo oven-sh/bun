@@ -418,21 +418,20 @@ pub mod command {
     /// `options_types/Context.zig`.
     pub fn create_context_data<const COMMAND: Tag>(
         log: &mut logger::Log,
-    ) -> Result<Context, bun_core::Error> {
+    ) -> Result<Context<'_>, bun_core::Error> {
         // SAFETY: single-threaded CLI startup
         unsafe { cli::CMD = Some(COMMAND) };
         // SAFETY: single-threaded CLI startup
         unsafe {
-            CONTEXT_DATA.write(ContextData {
-                // SAFETY: all-zero is a valid api::TransformOptions (#[repr(C)] POD,
-                // no NonNull/NonZero/enum fields)
-                args: core::mem::zeroed::<api::TransformOptions>(),
+            (*(&raw mut CONTEXT_DATA)).write(ContextData {
                 log,
                 start_time: START_TIME,
                 // allocator dropped — global mimalloc
+                // args left to Default — TransformOptions contains NonNull-backed
+                // collections, so the Zig zero-init does not translate.
                 ..Default::default()
             });
-            GLOBAL_CLI_CTX = CONTEXT_DATA.assume_init_mut();
+            GLOBAL_CLI_CTX = (*(&raw mut CONTEXT_DATA)).assume_init_mut();
         }
 
         if bun_options_types::CommandTag::USES_GLOBAL_OPTIONS[COMMAND] {

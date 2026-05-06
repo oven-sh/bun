@@ -5799,8 +5799,7 @@ impl H2FrameParser {
                 }
                 if let Some(max_send_header_block_length) = settings_js.get(global_object, "maxSendHeaderBlockLength")? {
                     if max_send_header_block_length.is_number() {
-                        // SAFETY: i32→u32 bitcast
-                        this_ref.max_send_header_block_length = unsafe { core::mem::transmute::<i32, u32>(max_send_header_block_length.to_int32()) };
+                        this_ref.max_send_header_block_length = max_send_header_block_length.to_int32() as u32;
                     }
                 }
                 if let Some(padding_strategy) = settings_js.get(global_object, "paddingStrategy")? {

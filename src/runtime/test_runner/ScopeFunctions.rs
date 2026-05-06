@@ -442,6 +442,7 @@ impl ScopeFunctions {
                         // currently exposes it as `&RegularExpression`; `matches` only writes
                         // its internal cursor and is single-threaded here, so cast away const.
                         // TODO(port): change `TestRunner::filter_regex` to a mutable handle.
+                        #[allow(invalid_reference_casting)]
                         let filter_regex_mut = unsafe {
                             &mut *(filter_regex as *const bun_jsc::RegularExpression as *mut bun_jsc::RegularExpression)
                         };
@@ -873,17 +874,12 @@ fn set_prototype_direct(value: JSValue, prototype: JSValue, global: &JSGlobalObj
 fn with_async_context_if_needed(callback: JSValue, global: &JSGlobalObject) -> JSValue {
     unsafe extern "C" {
         fn AsyncContextFrame__withAsyncContextIfNeeded(
-            global: *mut JSGlobalObject,
+            global: *const JSGlobalObject,
             callback: JSValue,
         ) -> JSValue;
     }
     // SAFETY: FFI into JSC; `global` is live for the call.
-    unsafe {
-        AsyncContextFrame__withAsyncContextIfNeeded(
-            global as *const JSGlobalObject as *mut JSGlobalObject,
-            callback,
-        )
-    }
+    unsafe { AsyncContextFrame__withAsyncContextIfNeeded(global, callback) }
 }
 
 pub fn create_bound(

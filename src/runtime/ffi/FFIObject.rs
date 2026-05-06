@@ -50,7 +50,7 @@ impl JSValueFFIExt for JSValue {
 #[inline]
 fn from_uint64_no_truncate(global: &JSGlobalObject, i: u64) -> JSValue {
     // SAFETY: FFI — `global` is live for the call.
-    unsafe { JSC__JSValue__fromUInt64NoTruncate(global, i) }
+    unsafe { JSC__JSValue__fromUInt64NoTruncate(global as *const _ as *mut _, i) }
 }
 
 /// Local port of Zig `JSValue.createBuffer(global, slice, ctx, callback)` —
@@ -480,7 +480,7 @@ enum ValueOrError {
     Slice(*mut u8, usize),
 }
 
-pub fn get_ptr_slice(
+fn get_ptr_slice(
     global_this: &JSGlobalObject,
     value: JSValue,
     byte_offset: Option<JSValue>,

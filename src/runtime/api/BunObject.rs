@@ -1520,12 +1520,13 @@ pub extern "C" fn Bun__gc(vm: *mut VirtualMachine, sync: bool) -> usize {
 pub fn shrink(global_object: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
     // PORT NOTE: `bun_jsc::VM` (the lib.rs opaque stub) lacks `shrink_footprint`;
     // the real impl lives in the gated `bun_jsc::vm` module. Call the C++ symbol
-    // directly (matches src/jsc/VM.rs:125).
+    // directly (matches src/jsc/VM.rs:125). Signature matches the other extern
+    // decl in this file to satisfy `clashing_extern_declarations`.
     unsafe extern "C" {
-        fn JSC__VM__shrinkFootprint(vm: *mut jsc::VM);
+        fn JSC__VM__shrinkFootprint(vm: *mut core::ffi::c_void);
     }
     // SAFETY: `global_object.vm()` returns a live JSC VM; FFI has no extra preconditions.
-    unsafe { JSC__VM__shrinkFootprint(global_object.vm() as *const _ as *mut _) };
+    unsafe { JSC__VM__shrinkFootprint((global_object.vm() as *const jsc::VM as *mut jsc::VM).cast()) };
     Ok(JSValue::UNDEFINED)
 }
 

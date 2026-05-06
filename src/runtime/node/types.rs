@@ -1983,7 +1983,7 @@ unsafe extern "C" {
         kind: i32,
         name: *mut bun_str::String,
         path: *mut bun_str::String,
-        cached_previous_path_jsvalue: *mut Option<*mut jsc::JSString>,
+        cached_previous_path_jsvalue: *mut *mut jsc::JSString,
     ) -> JSValue;
 }
 
@@ -1999,7 +1999,7 @@ impl Dirent {
     pub fn to_js(
         &mut self,
         global_object: &JSGlobalObject,
-        cached_previous_path_jsvalue: Option<&mut Option<*mut jsc::JSString>>,
+        cached_previous_path_jsvalue: Option<&mut *mut jsc::JSString>,
     ) -> JsResult<JSValue> {
         // libuv UV_DIRENT_* — `bun_libuv_sys` is not a dep of this crate, so the
         // ABI constants (uv.h `uv_dirent_type_t`) are inlined verbatim.
@@ -2023,7 +2023,7 @@ impl Dirent {
             DirentKind::Whiteout | DirentKind::Door | DirentKind::Unknown => UV_DIRENT_UNKNOWN,
         };
         let cached_ptr = match cached_previous_path_jsvalue {
-            Some(p) => p as *mut Option<*mut jsc::JSString>,
+            Some(p) => p as *mut *mut jsc::JSString,
             None => core::ptr::null_mut(),
         };
         // SAFETY: FFI call wrapped via from_js_host_call.
@@ -2041,7 +2041,7 @@ impl Dirent {
     pub fn to_js_newly_created(
         &mut self,
         global_object: &JSGlobalObject,
-        previous_jsstring: Option<&mut Option<*mut jsc::JSString>>,
+        previous_jsstring: Option<&mut *mut jsc::JSString>,
     ) -> JsResult<JSValue> {
         // Shouldn't techcnically be necessary.
         let result = self.to_js(global_object, previous_jsstring);

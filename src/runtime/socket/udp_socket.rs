@@ -536,10 +536,11 @@ impl UDPSocket {
         // export directly — same call the Zig `toJS(*Self)` makes.
         unsafe extern "C" {
             #[link_name = "UDPSocket__create"]
-            fn udp_socket_create(global: *mut JSGlobalObject, ptr: *mut UDPSocket) -> JSValue;
+            fn udp_socket_create(global: *mut JSGlobalObject, ptr: *mut c_void) -> JSValue;
         }
         // SAFETY: `global_this` is live; `this_ptr` ownership transfers to the C++ wrapper.
-        let this_value = unsafe { udp_socket_create(global_this.as_mut_ptr(), this_ptr) };
+        let this_value =
+            unsafe { udp_socket_create(global_this.as_mut_ptr(), this_ptr as *mut c_void) };
         this_value.ensure_still_alive();
         this.this_value.set_strong(this_value, global_this);
 

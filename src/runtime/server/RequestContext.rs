@@ -2873,14 +2873,13 @@ where
         };
         // SAFETY: BACKREF
         let server = unsafe { &*server };
-        let vm: &VirtualMachine = server.vm();
         let global_this = server.global_this();
         // TODO(b2-blocked): DEBUG_MODE branch renders the HTML fallback page via
         // `Api::JsException` + `render_default_error`; gated until bun_schema/
         // bun_js_parser surfaces are in. Falls through to the production path.
-        
+
         // SAFETY: see drain_microtasks() re: const→mut cast.
-        let vm = unsafe { &mut *(vm as *const VirtualMachine as *mut VirtualMachine) };
+        let vm = unsafe { &mut *(server.vm() as *const VirtualMachine as *mut VirtualMachine) };
         if DEBUG_MODE {
             // PERF(port): was arena bulk-free — profile in Phase B
             // Upstream `ExceptionList = Vec<()>`; once it carries

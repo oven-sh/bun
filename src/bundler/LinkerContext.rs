@@ -618,7 +618,7 @@ impl<'a> LinkerContext<'a> {
             let flags: *mut [crate::ungate_support::js_meta::Flags] = self.graph.meta.items_flags_mut();
             let css_asts: *const [Option<*mut core::ffi::c_void>] = self.graph.ast.items_css();
             let files_len = self.graph.files.len();
-            let import_records_len = unsafe { (*import_records_list).len() };
+            let import_records_len = unsafe { (&*import_records_list).len() };
 
             // Process all files in source index order, like esbuild does
             let mut source_index: u32 = 0;
@@ -717,7 +717,7 @@ impl<'a> LinkerContext<'a> {
         let entry_point_kinds: *const [EntryPoint::Kind] = self.graph.files.items_entry_point_kind() as *const _;
         let entry_points: *const [crate::IndexInt] = self.graph.entry_points.items_source_index();
         let distances: *mut [u32] = self.graph.files.items_distance_from_entry_point_mut();
-        let entry_points_len = unsafe { (*entry_points).len() };
+        let entry_points_len = unsafe { (&*entry_points).len() };
 
         {
             let _trace2 = bun::perf::trace("Bundler.markFileLiveForTreeShaking");
@@ -748,7 +748,7 @@ impl<'a> LinkerContext<'a> {
                 for bits in unsafe { (&mut *file_entry_bits).iter_mut() } {
                     *bits = AutoBitSet::init_empty(entry_points_len)?;
                 }
-            } else if unsafe { !(*file_entry_bits).is_empty() } {
+            } else if unsafe { !(&*file_entry_bits).is_empty() } {
                 // assert that the tag is correct
                 debug_assert!(matches!(unsafe { &(*file_entry_bits)[0] }, AutoBitSet::Static(_)));
             }
@@ -3426,7 +3426,7 @@ impl<'a> LinkerContext<'a> {
         let parts: *mut [Part] = self.graph.ast.items_parts_mut()[source_index as usize].slice_mut();
 
         // SAFETY: `parts` is a stable SoA column slice.
-        if unsafe { (*parts).len() } < 1 {
+        if unsafe { (&*parts).len() } < 1 {
             panic!("Internal error: expected at least one part for lazy export");
         }
 
@@ -3434,7 +3434,7 @@ impl<'a> LinkerContext<'a> {
         let part: &mut Part = unsafe { &mut (*parts)[1] };
 
         // SAFETY: `stmts: *mut [Stmt]` is an arena slice valid for the link pass.
-        if unsafe { (*part.stmts).is_empty() } {
+        if unsafe { (&*part.stmts).is_empty() } {
             panic!("Internal error: expected at least one statement in the lazy export");
         }
 

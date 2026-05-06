@@ -1562,7 +1562,7 @@ impl DescribeScope {
             }
             // note that we overwrite '.yes' with '.contains' to support only-inside-only
             scope.base.only = Only::Contains;
-            target = scope.base.parent.map(|p| p as *mut DescribeScope);
+            target = scope.base.parent;
         }
     }
 
@@ -1575,7 +1575,7 @@ impl DescribeScope {
                 return; // already marked
             }
             scope.base.has_callback = true;
-            target = scope.base.parent.map(|p| p as *mut DescribeScope);
+            target = scope.base.parent;
         }
     }
 
@@ -1584,7 +1584,7 @@ impl DescribeScope {
         name_not_owned: Option<&[u8]>,
         base: BaseScopeCfg,
     ) -> JsResult<&mut DescribeScope> {
-        let mut child = Self::create(BaseScope::init(base, name_not_owned, Some(self as *const _), false));
+        let mut child = Self::create(BaseScope::init(base, name_not_owned, Some(self as *mut _), false));
         child.base.propagate(false);
         self.entries.push(TestScheduleEntry::Describe(child));
         // TODO(port): narrow error set

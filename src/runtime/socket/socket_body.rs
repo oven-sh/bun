@@ -2333,12 +2333,16 @@ impl<const SSL: bool> NewSocket<SSL> {
         // one `SSL_CTX_new`; otherwise build an owned one from inline
         // `tls:` options. Either way `owned_ctx` holds one ref we drop in
         // deinit; SSL_new() takes its own.
-        let mut owned_ctx: Option<*mut SSL_CTX> = None;
-        // Dropped once `tls.owned_ssl_ctx` takes ownership; covers throws
-        // between sc.borrow()/createSSLContext() and `bun.new(TLSSocket, …)`.
-        let owned_ctx_guard = scopeguard::guard(&mut owned_ctx as *mut _, |p| {
-            // SAFETY: p points to local owned_ctx.
-            if let Some(c) = unsafe { (*p).take() } {
+        //
+        // Zig: `errdefer if (owned_ctx) |c| SSL_CTX_free(c)` — by-name
+        // capture. The local lives INSIDE the guard so all reads/writes go
+        // through `*owned_ctx` (DerefMut); capturing `&mut owned_ctx as *mut _`
+        // and then writing the local by name would pop the guard's pointer
+        // tag under Stacked Borrows and make the closure deref UB on a
+        // `?`-error path.
+        let mut owned_ctx = scopeguard::guard(None::<*mut SSL_CTX>, |c| {
+            if let Some(c) = c {
+                // SAFETY: BoringSSL FFI; `c` is the +1 ref taken below.
                 unsafe { boringssl::SSL_CTX_free(c) };
             }
         });
@@ -2369,7 +2373,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     sc_js,
                 );
             };
-            owned_ctx = Some(sc.borrow());
+            *owned_ctx = Some(sc.borrow());
             // servername / ALPN still come from the surrounding tls config.
             if let Some(t) = opts.get_truthy(global, "tls")? {
                 if !t.is_boolean() {

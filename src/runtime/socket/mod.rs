@@ -307,6 +307,7 @@ impl SocketAddress {
 // + connect/upgrade transitions) lives in `socket_body.rs`; the struct shape
 // is real so `Handlers::mark_inactive` / `Listener` can `@fieldParentPtr`.
 pub struct NewSocket<const SSL: bool> {
+    pub ref_count: bun_ptr::RefCount<NewSocket<SSL>>,
     pub socket: uws::NewSocketHandler<SSL>,
     pub handlers: *mut Handlers,
     pub this_value: JSValue,
@@ -317,6 +318,24 @@ pub struct NewSocket<const SSL: bool> {
 }
 pub type TCPSocket = NewSocket<false>;
 pub type TLSSocket = NewSocket<true>;
+
+// Zig: `const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`.
+impl<const SSL: bool> bun_ptr::RefCounted for NewSocket<SSL> {
+    type DestructorCtx = ();
+    unsafe fn get_ref_count(this: *mut Self) -> *mut bun_ptr::RefCount<Self> {
+        // SAFETY: caller contract — `this` points to a live Self.
+        unsafe { &raw mut (*this).ref_count }
+    }
+    unsafe fn destructor(this: *mut Self, _ctx: ()) {
+        // Zig `deinit`: frees buffered_data_for_node_net / protos / server_name /
+        // connection / owned_ssl_ctx, then `bun.destroy(this)`. Those fields live
+        // in the gated `socket_body.rs` draft; the un-gated struct shape only
+        // owns `server_name` (dropped by Box) so the minimal port is just the
+        // final `bun.destroy`.
+        // SAFETY: last ref dropped; allocated via `bun.new` (Box) in connect/accept.
+        drop(unsafe { Box::from_raw(this) });
+    }
+}
 
 impl<const SSL: bool> NewSocket<SSL> {
     /// True for sockets accepted by a `Listener` or duplex-upgraded to TLS server role.

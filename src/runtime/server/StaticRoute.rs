@@ -168,6 +168,7 @@ impl StaticRoute {
                     BodyValue::Null | BodyValue::Empty => {
                         break 'brk AnyBlob::InternalBlob(InternalBlob {
                             bytes: Vec::<u8>::new(),
+                            was_string: false,
                         });
                     }
 

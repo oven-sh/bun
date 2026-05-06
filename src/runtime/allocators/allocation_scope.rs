@@ -167,9 +167,9 @@ impl<'a> LockedState<'a> {
 
             if let Some(free_entry) = self.history.frees.get(&buf.as_ptr()) {
                 Output::print_errorln(format_args!("Pointer allocated here:"));
-                dump_stack_trace(free_entry.allocated_at.trace(), TRACE_LIMITS);
+                dump_stack_trace(&free_entry.allocated_at.trace(), TRACE_LIMITS.clone());
                 Output::print_errorln(format_args!("Pointer first freed here:"));
-                dump_stack_trace(free_entry.freed_at.trace(), FREE_TRACE_LIMITS);
+                dump_stack_trace(&free_entry.freed_at.trace(), FREE_TRACE_LIMITS.clone());
             }
 
             // do not panic because address sanitizer will catch this case better.

@@ -204,11 +204,30 @@ impl<'a> BundleV2<'a> {
         // SAFETY: all three pointers are live for `'a` (set in `init`); the
         // `client_transpiler` arm is only reached when bake populated it.
         unsafe {
+            // bundle_v2.zig:247-263 — outside of server-components / dev-server,
+            // the only case that doesn't return the main transpiler is a
+            // browser-target request from a server-side build, which lazily
+            // spins up a client transpiler.
+            if !(*self.transpiler).options.server_components && self.linker.dev_server.is_none() {
+                if target == Target::Browser && (*self.transpiler).options.target.is_server_side() {
+                    if let Some(mut p) = self.client_transpiler {
+                        return p.as_mut();
+                    }
+                    #[cfg(any())]
+                    {
+                        // TODO(b2-blocked): `initialize_client_transpiler` body
+                        // is gated below; until it un-gates, fall through to
+                        // the main transpiler so callers stay live.
+                        return self.initialize_client_transpiler().unwrap_or_else(|e| {
+                            bun_core::output::err(e);
+                            crate::Global::crash();
+                        });
+                    }
+                }
+                return &mut *self.transpiler;
+            }
             match target {
-                Target::Browser => match self.client_transpiler {
-                    Some(mut p) => p.as_mut(),
-                    None => &mut *self.transpiler,
-                },
+                Target::Browser => self.client_transpiler.unwrap().as_mut(),
                 Target::BakeServerComponentsSsr => &mut *self.ssr_transpiler,
                 _ => &mut *self.transpiler,
             }
@@ -216,17 +235,9 @@ impl<'a> BundleV2<'a> {
     }
 
     pub fn is_barrel_optimization_enabled(&self) -> bool {
-        // Barrel optimization is on when either an explicit `optimize_imports`
-        // list is set or tree-shaking is enabled (mirrors gated body).
-        #[cfg(any())]
-        {
-            return self.transpiler().options.optimize_imports.is_some()
-                || self.transpiler().options.tree_shaking;
-        }
-        // TODO(b2-blocked): `BundleOptions.optimize_imports` field — not yet on
-        // the un-gated `options_impl::BundleOptions`. Conservative `false` keeps
-        // `on_parse_task_complete` from entering the gated barrel path.
-        false
+        // bundle_v2.zig:2833-2836 — `_ = this; return true;` (always on).
+        let _ = self;
+        true
     }
 
     // ── scan-counter machinery (`bundle_v2.zig:{increment,decrement}ScanCounter`) ──
@@ -613,9 +624,9 @@ impl<'a> BundleV2<'a> {
 fn parse_task_step_name(step: parse_task::Step) -> &'static str {
     match step {
         parse_task::Step::Pending => "pending",
-        parse_task::Step::ReadFile => "reading file",
-        parse_task::Step::Parse => "parsing",
-        parse_task::Step::Resolve => "resolving",
+        parse_task::Step::ReadFile => "read_file",
+        parse_task::Step::Parse => "parse",
+        parse_task::Step::Resolve => "resolve",
     }
 }
 // ══════════════════════════════════════════════════════════════════════════

@@ -646,5 +646,5 @@ pub fn load(
 //   source:     src/install/lockfile/bun.lockb.zig (640 lines)
 //   confidence: medium
 //   todos:      4
-//   notes:      save() borrowck reshape (StreamType+Writer share &mut Vec<u8>); z_allocator zeroing semantics deferred; Buffers::write_array/read_array signatures assumed; Dependency::Context.allocator field dropped
+//   notes:      save() borrowck reshape (StreamType absorbs Writer — single &mut Vec<u8>); z_allocator zeroing semantics deferred; Buffers::write_array/read_array signatures assumed; Dependency::Context.allocator field dropped
 // ──────────────────────────────────────────────────────────────────────────

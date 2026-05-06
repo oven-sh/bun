@@ -1265,23 +1265,16 @@ fn get_hardcoded_module(
             if !ep.generated {
                 return None;
             }
-            #[cfg(any())]
-            // TODO(b2-cycle): real `ResolvedSource` ctor — gated alongside the
-            // `#[repr(C)]` struct in `bun_jsc`.
-            {
-                use bun_jsc::resolved_source::Tag;
-                return Some(ResolvedSource {
-                    allocator: core::ptr::null_mut(),
-                    source_code: bun_string::String::clone_utf8(&ep.contents),
-                    specifier: *specifier,
-                    source_url: *specifier,
-                    tag: Tag::Esm,
-                    source_code_needs_deref: true,
-                    ..ResolvedSource::default()
-                });
-            }
-            let _ = ep;
-            Some(ResolvedSource::default())
+            use bun_jsc::resolved_source::Tag;
+            Some(ResolvedSource {
+                allocator: core::ptr::null_mut(),
+                source_code: bun_string::String::clone_utf8(&ep.contents),
+                specifier: *specifier,
+                source_url: *specifier,
+                tag: Tag::Esm,
+                source_code_needs_deref: true,
+                ..ResolvedSource::default()
+            })
         }
         HardcodedModule::BunInternalForTesting => {
             // Gated behind `--expose-internals` (release) / always-on (debug).
@@ -1302,8 +1295,8 @@ fn get_hardcoded_module(
             // `Runtime.Runtime.sourceCode()` — the bundler's CJS-interop
             // shim, embedded as a static string in `bun_js_parser::runtime`.
             #[cfg(any())]
-            // TODO(b2-cycle): `Runtime::source_code()` + real `ResolvedSource`
-            // ctor — both gated.
+            // TODO(b2-cycle): `Runtime::source_code()` — `bun_js_parser::runtime`
+            // is a stub re-export until `runtime.rs` un-gates there.
             {
                 return Some(ResolvedSource {
                     allocator: core::ptr::null_mut(),
@@ -1476,11 +1469,12 @@ pub fn install_jsc_hooks() {
 //               fetch_builtin_module HardcodedModule lookup real;
 //               transpile_source_code body ported (arena mgmt / loader
 //               dispatch / log-swap real, parse→print arm gated on
-//               bun_bundler::transpiler::__phase_a_draft + ResolvedSource.rs).
+//               bun_bundler::transpiler::__phase_a_draft).
+//               js_synthetic_module / get_hardcoded_module real.
 //   todos:      see TODO(b2-cycle) markers — uws::Loop surface,
 //               HiveAllocator, Debugger, RuntimeTranspilerStore,
-//               ResolvedSource #[repr(C)] ctor + resolved_source_tag::Tag,
-//               StandaloneModuleGraph, MacroEntryPoint.
+//               StandaloneModuleGraph, MacroEntryPoint,
+//               Runtime::source_code().
 //   notes:      §Dispatch cold-path — fn-ptr indirection acceptable, each
 //               hook does real work (alloc/syscall/parse).
 // ──────────────────────────────────────────────────────────────────────────

@@ -218,6 +218,33 @@ impl CompileResult {
             | CompileResult::Html { source_index, .. } => *source_index,
         }
     }
+
+    /// bundle_v2.zig:4215-4230.
+    pub fn code(&self) -> &[u8] {
+        match self {
+            CompileResult::Javascript { result, .. } => match result {
+                bun_js_printer::PrintResult::Result(r) => &r.code,
+                bun_js_printer::PrintResult::Err(_) => b"",
+            },
+            CompileResult::Css { result, .. } => match result {
+                Ok(v) => v,
+                Err(_) => b"",
+            },
+            CompileResult::Html { code, .. } => code,
+        }
+    }
+
+    /// bundle_v2.zig:4232-4241.
+    pub fn source_map_chunk(&self) -> Option<&bun_sourcemap::Chunk> {
+        match self {
+            CompileResult::Javascript { result, .. } => match result {
+                bun_js_printer::PrintResult::Result(r) => r.source_map.as_ref(),
+                bun_js_printer::PrintResult::Err(_) => None,
+            },
+            CompileResult::Css { source_map, .. } => source_map.as_ref(),
+            CompileResult::Html { .. } => None,
+        }
+    }
 }
 
 /// `bundle_v2.zig:CompileResultForSourceMap`.
@@ -447,6 +474,14 @@ pub mod EntryPoint {
         #[inline]
         pub fn is_server_entry_point(self) -> bool {
             self == Self::UserSpecified
+        }
+        /// bundle_v2.zig:4021-4026.
+        #[inline]
+        pub fn output_kind(self) -> crate::options::OutputKind {
+            match self {
+                Self::UserSpecified => crate::options::OutputKind::EntryPoint,
+                _ => crate::options::OutputKind::Chunk,
+            }
         }
     }
 }

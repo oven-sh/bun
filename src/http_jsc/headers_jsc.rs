@@ -39,7 +39,10 @@ pub fn to_fetch_headers(
         global,
         names.as_mut_ptr().cast::<StringPointer>(),
         values.as_mut_ptr().cast::<StringPointer>(),
-        &ZigString::init(this.buf.as_slice()),
+        // Spec headers_jsc.zig:12 uses `ZigString.fromBytes` (scans for
+        // non-ASCII and tags UTF-8); `init` would leave the buffer Latin-1
+        // and mojibake any UTF-8 header value bytes ≥0x80.
+        &ZigString::from_bytes(this.buf.as_slice()),
         this.entries.len() as u32,
     )
     .ok_or(JsError::Thrown)

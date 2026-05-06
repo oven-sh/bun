@@ -96,7 +96,7 @@ pub struct HeapRequestBodyBuffer {
 /// the real `init`/`InitOpts` live inside the gated `_phase_a_draft` block below.
 /// `Default::default()` at the callsite infers `T = ()` here until un-gated.
 #[doc(hidden)]
-pub fn init<T>(_opts: &T) {
+pub fn init(_opts: &()) {
     todo!("http_thread::init — gated; un-gate with HTTPThread.rs _phase_a_draft")
 }
 

@@ -243,12 +243,12 @@ impl Headers {
         // disjoint allocations so simultaneous access is sound, but borrowck can't see
         // that. Take raw column pointers up front and slice in scoped blocks.
         let sliced = headers.entries.slice();
-        // SAFETY: `Name`/`Value` columns are both `StringPointer`; `Slice::items`
+        // SAFETY: `Name`/`Value` columns are both `StringPointer`; `Slice::items_raw`
         // contract is satisfied. Disjoint backing memory ⇒ no aliasing.
         let names_ptr: *mut api::StringPointer =
-            unsafe { sliced.items::<api::StringPointer>(HeaderEntryField::Name) }.as_mut_ptr();
+            unsafe { sliced.items_raw::<api::StringPointer>(HeaderEntryField::Name) };
         let values_ptr: *mut api::StringPointer =
-            unsafe { sliced.items::<api::StringPointer>(HeaderEntryField::Value) }.as_mut_ptr();
+            unsafe { sliced.items_raw::<api::StringPointer>(HeaderEntryField::Value) };
         if let Some(headers_ref) = fetch_headers_ref {
             headers_ref.copy_to(names_ptr, values_ptr, headers.buf.as_mut_ptr());
         }

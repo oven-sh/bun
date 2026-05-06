@@ -61,17 +61,27 @@ pub mod time;
 pub mod calc;
 pub mod percentage;
 // ─── B-2 round 5: remaining lattice leaves un-gated ──────────────────────
-// length/position/rect now compile for real. The `protocol` submodule below
-// supplies the handful of numeric protocol traits (`Zero`/`MulF32`/`TryAdd`/
-// `Parse`) that `DimensionPercentage<D>` and the calc-lattice CalcValue impls
-// bound on but which `crate::generics` only defines inside its still-gated
-// `parse_tocss_numeric_gated` block. Defining them here keeps the edit
-// surface inside `values/` (generics.rs is owned by another track).
+// length/position/size/rect/easing/syntax now compile for real (parse + to_css
+// + protocol-trait impls). `DimensionPercentage<D>` method block is real;
+// `Calc<V>` CalcValue impls for Length / DimensionPercentage<LengthValue|Angle>
+// are real. The `protocol` submodule below supplies the numeric protocol
+// traits (`Zero`/`MulF32`/`TryAdd`/`Parse`) that `crate::generics` only
+// defines inside its still-gated `parse_tocss_numeric_gated` block.
 //
-// reconciler-3: size/easing/syntax/gradient/image/color re-gated — they
-// reference `bun_str`, `css::ParseErrorKind`, `css_properties::transform::*`,
-// and a `'bump`-threaded `DeepClone` that don't yet exist on this track.
-// Un-gate alongside the css_parser/generics surface they depend on.
+// gradient/image/color stay gated_value! — they are NOT calc-lattice leaves
+// but cross-module hubs:
+//   gradient.rs  blocked_on: `Parser<'bump,'_>` two-lifetime arity (current
+//                Parser<'a> has one), `values::color::CssColor` real impl,
+//                BumpVec<'bump,_> arena threading, AnglePercentage to_css.
+//   image.rs     blocked_on: `#[derive(css::Parse, css::ToCss)]` proc-macro
+//                (does not exist yet), gradient un-gate, `ColorFallbackKind`,
+//                `prefixes::Feature::is_webkit_gradient`, `add_import_record`.
+//   color.rs     blocked_on: `color_generated::generated_color_conversions`
+//                (codegen stub is empty — color_via.ts needs Rust output),
+//                `generics::CssHash for <colorspace>`, `bun_wyhash::Wyhash`
+//                concrete type. The `values_stub::color` set is kept as the
+//                public surface so `crate::CssColor` / `RGBA` / colorspace
+//                structs resolve unchanged for printer/parser callers.
 pub mod length;
 pub mod position;
 pub mod size;

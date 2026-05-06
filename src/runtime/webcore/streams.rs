@@ -73,7 +73,7 @@ pub enum Start {
 }
 
 #[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Copy, Clone, Eq, PartialEq, core::marker::ConstParamTy)]
 pub enum StartTag {
     Empty,
     Err,

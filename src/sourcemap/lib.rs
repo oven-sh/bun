@@ -1044,11 +1044,16 @@ pub fn parse_json(
     _source: &[u8],
     _hint: ParseUrlResultHint,
 ) -> Result<ParseUrl, bun_core::Error> {
-    // TODO(b2-blocked): bun_js_parser::Expr::data_store_reset / Stmt::data_store_reset /
-    // Expr::Data::{is_e_number,as_e_number,is_e_string,as_e_string,as_e_array} and
-    // bun_interchange::json::parse — neither dep is wired into this crate yet.
-    // Full body preserved in `_phase_a_draft::parse_json` below.
-    todo!("B-2: parse_json — see _phase_a_draft")
+    // TODO(b2-blocked): bun_logger::Source — `Source.contents` (and `fs::Path.text`)
+    // are typed `&'static [u8]` in Phase A, so `init_path_string(b"sourcemap.json",
+    // source)` rejects the non-`'static` `source` slice without a forbidden
+    // lifetime-extend. Un-gate once bun_logger threads a `'source` lifetime (or
+    // moves `contents` to `Cow<'static, [u8]>`).
+    //
+    // The previously-listed blockers (bun_interchange::json::parse signature,
+    // bun_logger::js_ast::Expr accessors / data_store_reset) are now available;
+    // full body preserved in `_phase_a_draft::parse_json` below.
+    todo!("B-2: parse_json — see _phase_a_draft (blocked on bun_logger::Source lifetime)")
 }
 
 // -- comment from esbuild --

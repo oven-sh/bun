@@ -8,7 +8,11 @@ use crate::JSValue;
 // lock-step with the C `uint32_t tag` field in src/jsc/bindings/headers-handwritten.h.
 pub use crate::resolved_source_tag::ResolvedSourceTag as Tag;
 
+// PORT NOTE: `Copy` is required by `Errorable<T: Copy>` (the `#[repr(C)]`
+// tagged-union it travels through to C++). All fields are POD; `bun.String` is
+// a tagged pointer pair and is `Copy` in the Rust port too.
 #[repr(C)]
+#[derive(Copy, Clone)]
 pub struct ResolvedSource {
     /// Specifier's lifetime is the caller from C++
     /// https://github.com/oven-sh/bun/issues/9521

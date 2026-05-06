@@ -2818,6 +2818,9 @@ impl<'a> Resolver<'a> {
                         });
                     }
                     bun_options_types::BuiltInModule::Import(path) => {
+                        // PORT NOTE: copy out `path` so the `&self.opts.framework` borrow
+                        // ends before `self.resolve(&mut self, ...)`.
+                        let path: &'static [u8] = unsafe { &*(path.as_ref() as *const [u8]) };
                         let top = self.fs.top_level_dir;
                         return self.resolve(top, path, ast::ImportKind::EntryPointBuild);
                     }
@@ -5647,7 +5650,11 @@ impl<'a> Resolver<'a> {
                 return Some(result);
             }
         }
-        for ext in self.opts.extra_cjs_extensions.iter() {
+        // PORT NOTE: snapshot the slice ptr so the `&self.opts` borrow doesn't
+        // overlap `&mut self` in `load_index_with_extension`.
+        let extra_cjs: &'static [&'static [u8]] =
+            unsafe { &*(self.opts.extra_cjs_extensions.as_ref() as *const [&'static [u8]]) };
+        for ext in extra_cjs.iter() {
             if let Some(result) = self.load_index_with_extension(dir_info, ext) {
                 return Some(result);
             }
@@ -6067,7 +6074,11 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        for ext in self.opts.extra_cjs_extensions.iter() {
+        // PORT NOTE: snapshot the slice ptr so the `&self.opts` borrow doesn't
+        // overlap `&mut self` in `load_extension`.
+        let extra_cjs: &'static [&'static [u8]] =
+            unsafe { &*(self.opts.extra_cjs_extensions.as_ref() as *const [&'static [u8]]) };
+        for ext in extra_cjs.iter() {
             if let Some(result) = self.load_extension(base, path, ext, entries!()) {
                 dec_ret!(Some(result));
             }
@@ -6211,7 +6222,7 @@ impl<'a> Resolver<'a> {
         &mut self,
         info: *mut DirInfo::DirInfo,
         path: &'static [u8],
-        _entries: &mut Fs::file_system::real_fs::EntriesOption,
+        _entries: *mut Fs::file_system::real_fs::EntriesOption,
         _result: allocators::Result,
         dir_entry_index: allocators::IndexType,
         parent: Option<*mut DirInfo::DirInfo>,
@@ -6221,8 +6232,19 @@ impl<'a> Resolver<'a> {
     ) -> core::result::Result<(), bun_core::Error> {
         let result = _result;
 
-        let rfs: &mut Fs::file_system::RealFS = &mut self.fs.fs;
-        let entries = _entries.entries_mut();
+        // SAFETY: PORT — RealFS / DirEntry are global ARENA singletons (BSSMap-backed);
+        // Zig held raw pointers here. Re-borrow at each use so `&mut self` calls
+        // (debug_logs / dirname_store / parse_*) don't trip borrowck.
+        // TODO(port): split RealFS borrow once entries iteration is interior-mutability-backed.
+        let rfs: *mut Fs::file_system::RealFS = &mut self.fs.fs;
+        let entries: *mut Fs::file_system::DirEntry = unsafe { &mut *_entries }.entries_mut();
+        macro_rules! rfs { () => { unsafe { &mut *rfs } } }
+        macro_rules! entries { () => { unsafe { &mut *entries } } }
+        let rfs = rfs!();
+        let entries = entries!();
+        let _ = (rfs, entries); // re-bound below per use site
+        let rfs: *mut Fs::file_system::RealFS = &mut self.fs.fs;
+        let entries: *mut Fs::file_system::DirEntry = unsafe { &mut *_entries }.entries_mut();
 
         if cfg!(debug_assertions) {
             // `path` is stored in the permanent `dir_cache` as `DirInfo.abs_path`. It must not

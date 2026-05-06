@@ -232,6 +232,13 @@ impl<const SSL: bool> App<SSL> {
         }
     }
 
+    /// Alias matching uWS C++ `del()` naming (Rust `delete` is not reserved, but callers
+    /// porting from uWS expect `del`).
+    #[inline]
+    pub fn del(&mut self, pattern: &[u8], handler: c::uws_method_handler, user_data: *mut c_void) {
+        self.delete(pattern, handler, user_data)
+    }
+
     pub fn patch(
         &mut self,
         pattern: &[u8],

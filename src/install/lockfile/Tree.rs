@@ -1007,5 +1007,5 @@ pub type TreeFiller = bun_collections::LinearFifo<FillItem>;
 //   source:     src/install/lockfile/Tree.zig (813 lines)
 //   confidence: medium
 //   todos:      12
-//   notes:      Builder/hoist_dependency need borrowck restructuring (overlapping &mut on trees/dependency_lists/builder); MultiArrayList column accessors + LinearFifo + AbsPath APIs are speculative; conditional void fields collapsed to Option.
+//   notes:      hoist_dependency reshaped to take self_id and re-derive read-only views from builder.list (no overlapping &mut); MultiArrayList column accessors + LinearFifo + AbsPath APIs are speculative; conditional void fields collapsed to Option.
 // ──────────────────────────────────────────────────────────────────────────

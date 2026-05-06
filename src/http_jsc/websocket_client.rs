@@ -977,11 +977,15 @@ impl<const SSL: bool> WebSocket<SSL> {
                         break;
                     }
 
-                    // PORT NOTE: reshaped for borrowck — copy ping data range before dispatch
-                    let ping_data_ptr = self.ping_frame_bytes[6..][..ping_len].as_ptr();
-                    // SAFETY: ping_frame_bytes lives in self; valid for this call
-                    let ping_data = unsafe { core::slice::from_raw_parts(ping_data_ptr, ping_len) };
-                    self.dispatch_data(ping_data, Opcode::Ping);
+                    // PORT NOTE: copy the ≤125-byte payload to a stack array so
+                    // the slice does not alias `&mut self` across `dispatch_data`
+                    // (PORTING.md §Forbidden: aliased-&mut). `dispatch_data` may
+                    // call `terminate → clear_data` which mutates `ping_frame_bytes`'
+                    // bookkeeping while the laundered `&[u8]` would still be live.
+                    let mut ping_data_buf = [0u8; 125];
+                    ping_data_buf[..ping_len]
+                        .copy_from_slice(&self.ping_frame_bytes[6..][..ping_len]);
+                    self.dispatch_data(&ping_data_buf[..ping_len], Opcode::Ping);
 
                     receive_state = ReceiveState::NeedHeader;
                     receive_body_remain = 0;
@@ -1022,10 +1026,13 @@ impl<const SSL: bool> WebSocket<SSL> {
                         break;
                     }
 
-                    let pong_data_ptr = self.ping_frame_bytes[6..][..pong_len].as_ptr();
-                    // SAFETY: ping_frame_bytes lives in self; valid for this call
-                    let pong_data = unsafe { core::slice::from_raw_parts(pong_data_ptr, pong_len) };
-                    self.dispatch_data(pong_data, Opcode::Pong);
+                    // PORT NOTE: copy the ≤125-byte payload to a stack array so
+                    // the slice does not alias `&mut self` across `dispatch_data`
+                    // (PORTING.md §Forbidden: aliased-&mut).
+                    let mut pong_data_buf = [0u8; 125];
+                    pong_data_buf[..pong_len]
+                        .copy_from_slice(&self.ping_frame_bytes[6..][..pong_len]);
+                    self.dispatch_data(&pong_data_buf[..pong_len], Opcode::Pong);
 
                     receive_state = ReceiveState::NeedHeader;
                     receive_body_remain = 0;
@@ -1618,9 +1625,13 @@ impl<const SSL: bool> WebSocket<SSL> {
             // Invalid blob, close connection
             this.dispatch_abrupt_close(ErrorCode::Ended);
         }
-        // TODO(b2-blocked): bun_jsc::webcore::Blob — see above.
+        // TODO(b2-blocked): bun_jsc::webcore::Blob — see above. Until the
+        // `Blob` shim lands, this body is unimplementable. Do NOT silently
+        // discard the payload and close the socket (PORTING.md §Forbidden
+        // patterns: silent-no-op). `todo!()` is permitted here because a
+        // higher-tier dep blocks the real logic.
         let _ = (blob_value, opcode);
-        this.dispatch_abrupt_close(ErrorCode::Ended);
+        todo!("WebSocket::write_blob: blocked on bun_jsc::webcore::Blob shim");
     }
 
     pub extern "C" fn write_string(this: *mut Self, str_: *const ZigString, op: u8) {
@@ -1760,8 +1771,25 @@ impl<const SSL: bool> WebSocket<SSL> {
                         }
                         Err(_) => break 'inner,
                     }
-                } else if cursor.write_all(str.slice()).is_err() {
-                    break 'inner;
+                } else if str.is_utf8() {
+                    // Already UTF-8-tagged: bytes are valid UTF-8 verbatim.
+                    if cursor.write_all(str.slice()).is_err() {
+                        break 'inner;
+                    }
+                } else {
+                    // 8-bit Latin-1. Spec websocket_client.zig:1224 routes
+                    // through `ZigString.format` → `bun.fmt.formatLatin1`,
+                    // transcoding Latin-1 → UTF-8. Writing raw Latin-1 bytes
+                    // here would fail the UTF-8 check in `send_close_with_body`
+                    // and terminate(InvalidUtf8) instead of sending the frame.
+                    let pos = cursor.position() as usize;
+                    let dst = &mut cursor.get_mut()[pos..];
+                    let result = strings::copy_latin1_into_utf8(dst, str.slice());
+                    if (result.read as usize) < str.slice().len() {
+                        // Mirrors Zig `error.NoSpaceLeft` from FixedBufferAllocator.
+                        break 'inner;
+                    }
+                    cursor.set_position((pos + result.written as usize) as u64);
                 }
                 let wrote_len = cursor.position() as usize;
                 // SAFETY: close_reason_buf has 128 bytes; reinterpret first 125 as fixed array

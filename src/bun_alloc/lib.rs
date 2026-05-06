@@ -960,7 +960,9 @@ impl Result {
 /// Required interface for the `Block` parameter of `OverflowGroup`/`OverflowList`.
 /// TODO(port): Zig used structural duck-typing; this trait names the methods the body calls.
 pub trait OverflowBlock {
-    fn zero(&mut self);
+    /// In-place initialize the `used` counter on possibly-uninitialized storage.
+    /// SAFETY: `this` must point to writable, properly-aligned storage of `Self`.
+    unsafe fn zero(this: *mut Self);
     fn is_full(&self) -> bool;
     fn used_mut(&mut self) -> &mut u32;
 }
@@ -997,10 +999,11 @@ impl<Block: OverflowBlock> OverflowGroup<Block> {
         if self.allocated <= self.used {
             // Zig: default_allocator.create(Block) catch unreachable
             // SAFETY: Box<MaybeUninit> → zero() initializes the `used` counter; payload array
-            // is left uninit exactly as Zig does (only `used` is read before write).
+            // is `[MaybeUninit<T>; N]` and stays uninit exactly as Zig does.
             let mut b: Box<core::mem::MaybeUninit<Block>> = Box::new_uninit();
-            // TODO(port): `Block::zero` writes only `used`; rest stays uninit by design.
-            unsafe { (*b.as_mut_ptr()).zero() };
+            // SAFETY: `b.as_mut_ptr()` is a valid, exclusive, aligned `*mut Block`.
+            unsafe { Block::zero(b.as_mut_ptr()) };
+            // SAFETY: after `zero`, all non-`MaybeUninit` fields of `Block` are initialized.
             self.ptrs[self.allocated as usize] = Some(unsafe { b.assume_init() });
             self.allocated = self.allocated.wrapping_add(1);
         }
@@ -1025,15 +1028,11 @@ impl<Block: OverflowBlock> OverflowGroup<Block> {
 pub struct OverflowListBlock<ValueType, const COUNT: usize> {
     // Zig: `SizeType = std.math.IntFittingRange(0, count)`; use u32 here.
     pub used: u32,
-    pub items: [ValueType; COUNT],
+    // Zig leaves `items` undefined and overwrites by raw memcpy (no drop).
+    pub items: [MaybeUninit<ValueType>; COUNT],
 }
 
 impl<ValueType, const COUNT: usize> OverflowListBlock<ValueType, COUNT> {
-    #[inline]
-    pub fn zero(&mut self) {
-        self.used = 0;
-    }
-
     #[inline]
     pub fn is_full(&self) -> bool {
         self.used as usize >= COUNT
@@ -1042,14 +1041,19 @@ impl<ValueType, const COUNT: usize> OverflowListBlock<ValueType, COUNT> {
     pub fn append(&mut self, value: ValueType) -> &mut ValueType {
         debug_assert!((self.used as usize) < COUNT);
         let index = self.used as usize;
-        self.items[index] = value;
+        // Raw write — slot may be uninit; Zig assignment has no drop glue.
+        self.items[index].write(value);
         self.used = self.used.wrapping_add(1);
-        &mut self.items[index]
+        // SAFETY: just initialized on the line above.
+        unsafe { self.items[index].assume_init_mut() }
     }
 }
 
 impl<ValueType, const COUNT: usize> OverflowBlock for OverflowListBlock<ValueType, COUNT> {
-    fn zero(&mut self) { self.used = 0; }
+    unsafe fn zero(this: *mut Self) {
+        // SAFETY: caller contract — `this` is a valid, aligned `*mut Self`.
+        unsafe { addr_of_mut!((*this).used).write(0) };
+    }
     fn is_full(&self) -> bool { (self.used as usize) >= COUNT }
     fn used_mut(&mut self) -> &mut u32 { &mut self.used }
 }
@@ -1095,7 +1099,8 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
             self.list.ptrs[block_id].as_ref().expect("alloc").used as usize > (idx % COUNT)
         );
 
-        &self.list.ptrs[block_id].as_ref().expect("alloc").items[idx % COUNT]
+        // SAFETY: `idx % COUNT < used` (asserted above) ⇒ slot was initialized by `append`.
+        unsafe { self.list.ptrs[block_id].as_ref().expect("alloc").items[idx % COUNT].assume_init_ref() }
     }
 
     #[inline]
@@ -1109,7 +1114,8 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
             self.list.ptrs[block_id].as_ref().expect("alloc").used as usize > (idx % COUNT)
         );
 
-        &mut self.list.ptrs[block_id].as_mut().expect("alloc").items[idx % COUNT]
+        // SAFETY: `idx % COUNT < used` (asserted above) ⇒ slot was initialized by `append`.
+        unsafe { self.list.ptrs[block_id].as_mut().expect("alloc").items[idx % COUNT].assume_init_mut() }
     }
 }
 
@@ -1132,7 +1138,8 @@ pub struct BSSList<ValueType, const COUNT: usize /* = _COUNT * 2 */> {
     // TODO(port): lifetime — keep raw NonNull; self-referential when `head == &self.tail`.
     pub head: Option<NonNull<BSSListOverflowBlock<ValueType>>>,
     pub tail: BSSListOverflowBlock<ValueType>,
-    pub backing_buf: [ValueType; COUNT],
+    // Zig leaves `backing_buf` undefined; only `[0..used]` is initialized.
+    pub backing_buf: [MaybeUninit<ValueType>; COUNT],
     pub used: u32,
 }
 
@@ -1153,18 +1160,25 @@ pub const BSS_OVERFLOW_BLOCK_SIZE: usize = 64;
 
 pub struct BSSListOverflowBlock<ValueType> {
     pub used: AtomicU16,
-    pub data: [ValueType; BSS_LIST_CHUNK_SIZE],
+    // Zig leaves `data` undefined; only `[0..used]` is initialized.
+    pub data: [MaybeUninit<ValueType>; BSS_LIST_CHUNK_SIZE],
     pub prev: Option<Box<BSSListOverflowBlock<ValueType>>>,
 }
 
 impl<ValueType> BSSListOverflowBlock<ValueType> {
+    /// In-place initialize `used` and `prev` on possibly-uninitialized storage.
+    /// SAFETY: `this` must point to writable, properly-aligned storage of `Self`.
     #[inline]
-    pub fn zero(&mut self) {
+    pub unsafe fn zero(this: *mut Self) {
         // Avoid struct initialization syntax.
         // This makes Bun start about 1ms faster.
         // https://github.com/ziglang/zig/issues/24313
-        self.used = AtomicU16::new(0);
-        self.prev = None;
+        // Raw `ptr::write` — `*this` may be uninit; assignment would run drop glue
+        // on garbage (UAF for `prev: Option<Box<..>>`).
+        unsafe {
+            addr_of_mut!((*this).used).write(AtomicU16::new(0));
+            addr_of_mut!((*this).prev).write(None);
+        }
     }
 
     pub fn append(&mut self, item: ValueType) -> core::result::Result<&mut ValueType, AllocError> {
@@ -1172,8 +1186,10 @@ impl<ValueType> BSSListOverflowBlock<ValueType> {
         if index as usize >= BSS_LIST_CHUNK_SIZE {
             return Err(AllocError);
         }
-        self.data[index as usize] = item;
-        Ok(&mut self.data[index as usize])
+        // Raw write — slot may be uninit; Zig assignment has no drop glue.
+        self.data[index as usize].write(item);
+        // SAFETY: just initialized on the line above.
+        Ok(unsafe { self.data[index as usize].assume_init_mut() })
     }
 }
 
@@ -1237,14 +1253,18 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
         instance.used as usize >= COUNT
     }
 
-    pub fn exists(&self, value: &[u8]) -> bool
-    where
-        ValueType: AsRef<[u8]>, // TODO(port): Zig passes ValueType directly to isSliceInBuffer
-    {
-        // TODO(port): Zig compares against `instance.backing_buf` as a byte buffer; only sound
-        // when ValueType is a slice type. Re-examine call sites in Phase B.
-        let _ = value;
-        unimplemented!()
+    pub fn exists(&self, value: &[u8]) -> bool {
+        // Zig: `isSliceInBuffer(value, &instance.backing_buf)` — pointer-range check
+        // against the backing storage as raw bytes.
+        // SAFETY: reading the byte range of `backing_buf` for a pointer-containment check
+        // (no dereference of element data). `MaybeUninit<T>` storage is always validly addressable.
+        let buf = unsafe {
+            core::slice::from_raw_parts(
+                self.backing_buf.as_ptr().cast::<u8>(),
+                core::mem::size_of_val(&self.backing_buf),
+            )
+        };
+        is_slice_in_buffer(value, buf)
     }
 
     fn append_overflow(
@@ -1262,8 +1282,10 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
             Err(_) => {
                 let mut new_block: Box<core::mem::MaybeUninit<BSSListOverflowBlock<ValueType>>> =
                     Box::new_uninit();
-                // SAFETY: zero() initializes `used` and `prev`; `data` stays uninit by design.
-                unsafe { (*new_block.as_mut_ptr()).zero() };
+                // SAFETY: `as_mut_ptr()` is a valid, exclusive, aligned `*mut`; zero() initializes
+                // `used` and `prev` via raw writes; `data` is `[MaybeUninit; N]` (always valid).
+                unsafe { BSSListOverflowBlock::zero(new_block.as_mut_ptr()) };
+                // SAFETY: all non-`MaybeUninit` fields are now initialized.
                 let mut new_block = unsafe { new_block.assume_init() };
                 // Preserve the chain (Zig: `new_block.prev = self.head`). The inline `self.tail`
                 // is not Boxed, so represent it as `prev = None`; heap heads were
@@ -1303,9 +1325,11 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
             self.append_overflow(value)
         } else {
             let index = self.used as usize;
-            self.backing_buf[index] = value;
+            // Raw write — slot is uninit; Zig assignment has no drop glue.
+            self.backing_buf[index].write(value);
             self.used += 1;
-            Ok(&mut self.backing_buf[index])
+            // SAFETY: just initialized on the line above.
+            Ok(unsafe { self.backing_buf[index].assume_init_mut() })
         }
     }
 
@@ -1595,7 +1619,8 @@ pub struct BSSMapInner<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLAS
     // Fixed nonzero block size until generic_const_exprs lands; 0 would div-by-zero in at_index.
     pub overflow_list: OverflowList<ValueType, BSS_OVERFLOW_BLOCK_SIZE>,
     pub mutex: Mutex,
-    pub backing_buf: [ValueType; COUNT],
+    // Zig leaves `backing_buf` undefined; only `[0..backing_buf_used]` is initialized.
+    pub backing_buf: [MaybeUninit<ValueType>; COUNT],
     pub backing_buf_used: u16,
 }
 
@@ -1711,7 +1736,9 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         if index.is_overflow() {
             Some(self.overflow_list.at_index_mut(index))
         } else {
-            Some(&mut self.backing_buf[index.index() as usize])
+            // SAFETY: a non-sentinel, non-overflow index was assigned by `put`, which
+            // initialized this slot via `.write()`.
+            Some(unsafe { self.backing_buf[index.index() as usize].assume_init_mut() })
         }
     }
 
@@ -1749,8 +1776,10 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
             }
         } else {
             let idx = result.index.index() as usize;
-            self.backing_buf[idx] = value;
-            &mut self.backing_buf[idx]
+            // Raw write — fresh slots are uninit; Zig assignment has no drop glue.
+            self.backing_buf[idx].write(value);
+            // SAFETY: just initialized on the line above.
+            unsafe { self.backing_buf[idx].assume_init_mut() }
         };
         Ok(ret)
     }
@@ -1771,7 +1800,14 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
     }
 
     pub fn values(&mut self) -> &mut [ValueType] {
-        &mut self.backing_buf[..self.backing_buf_used as usize]
+        // SAFETY: `backing_buf[0..backing_buf_used]` was initialized by `put`;
+        // `MaybeUninit<T>` is `#[repr(transparent)]` so the slice cast is layout-sound.
+        unsafe {
+            core::slice::from_raw_parts_mut(
+                self.backing_buf.as_mut_ptr().cast::<ValueType>(),
+                self.backing_buf_used as usize,
+            )
+        }
     }
 }
 

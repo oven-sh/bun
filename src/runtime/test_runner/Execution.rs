@@ -409,44 +409,47 @@ impl Execution {
         Some(&mut self.groups[self.group_index])
     }
 
+    /// Returns `NonNull` pointers (not `&mut`) into `self.sequences` / `self.groups` so the
+    /// caller can hold both alongside other borrows of `self` without aliased-`&mut` UB.
+    /// Dereference at point-of-use only.
     pub fn get_current_and_valid_execution_sequence(
         &mut self,
         data: &RefDataValue,
-    ) -> Option<(&mut ExecutionSequence, &mut ConcurrentGroup)> {
-        // TODO(port): borrowck — returns two &mut into disjoint self.groups / self.sequences
-        // while also calling self.bun_test(); Phase B may need raw NonNull or split-borrow helper.
+    ) -> Option<(NonNull<ExecutionSequence>, NonNull<ConcurrentGroup>)> {
         let _scope = group_log::begin();
 
         group_log::log(format_args!("runOneCompleted: data: {}", data));
 
-        let RefDataValue::Execution { entry_data, .. } = data else {
+        let RefDataValue::Execution { group_index, entry_data } = data else {
             group_log::log("runOneCompleted: the data is not execution");
             return None;
         };
-        if entry_data.is_none() {
+        let Some(entry_data) = entry_data.as_ref() else {
             group_log::log(
                 "runOneCompleted: the data did not know which entry was active in the group",
             );
             return None;
-        }
-        let buntest: *mut BunTest = self.bun_test();
-        // SAFETY: buntest derived from self via @fieldParentPtr; BunTest outlives Execution and is
-        // uniquely accessed here (Phase B: revisit split-borrow once borrowck shape is settled).
-        let buntest_ref = unsafe { &mut *buntest };
-        if self.active_group().map(|g| g as *mut _) != data.group(buntest_ref).map(|g| g as *mut _) {
+        };
+        // Spec compares `this.activeGroup() != data.group(buntest)` by pointer; both index into
+        // `self.groups`, so equality is exactly `group_index == self.group_index`. Comparing the
+        // index avoids materializing a `&mut BunTest` that would alias `&mut self`.
+        if self.group_index >= self.groups.len() || *group_index != self.group_index {
             group_log::log("runOneCompleted: the data is for a different group");
             return None;
         }
-        let Some(group) = data.group(buntest_ref) else {
+        if *group_index >= self.groups.len() {
             group_log::log("runOneCompleted: the data did not know the group");
             return None;
-        };
-        let Some(sequence) = data.sequence(buntest_ref) else {
+        }
+        // Disjoint split-borrow of `self.groups` and `self.sequences`.
+        let group = &mut self.groups[*group_index];
+        let seq_abs = group.sequence_start + entry_data.sequence_index;
+        if seq_abs >= group.sequence_end {
             group_log::log("runOneCompleted: the data did not know the sequence");
             return None;
-        };
-        let entry_data = entry_data.as_ref().unwrap();
-        if sequence.remaining_repeat_count != entry_data.remaining_repeat_count {
+        }
+        let sequence = &mut self.sequences[seq_abs];
+        if i64::from(sequence.remaining_repeat_count) != entry_data.remaining_repeat_count {
             group_log::log(
                 "runOneCompleted: the data is for a previous repeat count (outdated)",
             );
@@ -463,17 +466,28 @@ impl Execution {
             return None;
         }
         group_log::log("runOneCompleted: the data is valid and current");
-        Some((sequence, group))
+        Some((NonNull::from(sequence), NonNull::from(group)))
     }
 
-    fn advance_sequence(&mut self, sequence: &mut ExecutionSequence, group: &mut ConcurrentGroup) {
+    /// `sequence` / `group` are carried as `NonNull` (raw-pointer semantics, matching the Zig
+    /// spec's `*ExecutionSequence` / `*ConcurrentGroup`) because they point into
+    /// `buntest.execution.{sequences,groups}` and would otherwise alias any live `&mut Execution`.
+    fn advance_sequence(
+        buntest: NonNull<BunTest>,
+        sequence_ptr: NonNull<ExecutionSequence>,
+        group_ptr: NonNull<ConcurrentGroup>,
+    ) {
         let _scope = group_log::begin();
+
+        // SAFETY: sequence_ptr / group_ptr point into disjoint fields of `buntest.execution`
+        // (`sequences` vs `groups`); no `&mut Execution` is live in this scope.
+        let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
 
         debug_assert!(sequence.executing);
         if let Some(entry_ptr) = sequence.active_entry {
             // SAFETY: arena-owned entry, alive for lifetime of BunTest
             let entry = unsafe { entry_ptr.as_ref() };
-            self.on_entry_completed(entry_ptr);
+            Execution::on_entry_completed(entry_ptr);
 
             sequence.executing = false;
             if sequence.maybe_skip {
@@ -511,21 +525,23 @@ impl Execution {
                     sequence.flaky_attempt_count += 1;
                 }
                 sequence.remaining_retry_count -= 1;
-                self.reset_sequence(sequence);
+                Execution::reset_sequence(sequence);
                 return;
             }
 
             // Handle repeat logic: if test passed and we have repeats remaining, repeat it
             if test_passed && sequence.remaining_repeat_count > 0 {
                 sequence.remaining_repeat_count -= 1;
-                self.reset_sequence(sequence);
+                Execution::reset_sequence(sequence);
                 return;
             }
 
             // Only report the final result after all retries/repeats are done
-            self.on_sequence_completed(sequence);
+            Execution::on_sequence_completed(buntest, sequence);
 
             // No more retries or repeats; mark sequence as complete
+            // SAFETY: group_ptr points into `buntest.execution.groups`, disjoint from `sequence`.
+            let group = unsafe { &mut *group_ptr.as_ptr() };
             if group.remaining_incomplete_entries == 0 {
                 debug_assert!(false); // remaining_incomplete_entries should never go below 0
                 return;
@@ -534,17 +550,17 @@ impl Execution {
         }
     }
 
-    fn on_group_started(&mut self, _group: &mut ConcurrentGroup, global_this: &JSGlobalObject) {
+    fn on_group_started(global_this: &JSGlobalObject) {
         let vm = global_this.bun_vm();
         vm.auto_killer.enable();
     }
 
-    fn on_group_completed(&mut self, _group: &mut ConcurrentGroup, global_this: &JSGlobalObject) {
+    fn on_group_completed(global_this: &JSGlobalObject) {
         let vm = global_this.bun_vm();
         vm.auto_killer.disable();
     }
 
-    fn on_sequence_started(&mut self, sequence: &mut ExecutionSequence) {
+    fn on_sequence_started(sequence: &mut ExecutionSequence) {
         if let Some(entry) = sequence.test_entry {
             // SAFETY: arena-owned entry
             if unsafe { entry.as_ref() }.callback.is_none() {
@@ -576,7 +592,7 @@ impl Execution {
         }
     }
 
-    fn on_entry_started(&mut self, entry: &mut ExecutionEntry) {
+    fn on_entry_started(entry: &mut ExecutionEntry) {
         if entry.callback.is_none() {
             return;
         }
@@ -591,9 +607,9 @@ impl Execution {
         }
     }
 
-    fn on_entry_completed(&mut self, _entry: NonNull<ExecutionEntry>) {}
+    fn on_entry_completed(_entry: NonNull<ExecutionEntry>) {}
 
-    fn on_sequence_completed(&mut self, sequence: &mut ExecutionSequence) {
+    fn on_sequence_completed(buntest: NonNull<BunTest>, sequence: &mut ExecutionSequence) {
         let elapsed_ns: u64 = if sequence.started_at.eql(&Timespec::EPOCH) {
             0
         } else {
@@ -625,8 +641,11 @@ impl Execution {
         }
         if let Some(first_entry) = sequence.first_entry {
             if sequence.test_entry.is_some() || sequence.result != Result::Pass {
+                // SAFETY: deref parent BunTest at point-of-use. `sequence` aliases
+                // `buntest.execution.sequences[i]`; `handle_test_completed`'s signature still takes
+                // both `&mut BunTest` and `&mut ExecutionSequence` (Phase B: reshape callee).
                 test_command::CommandLineReporter::handle_test_completed(
-                    self.bun_test(),
+                    unsafe { &mut *buntest.as_ptr() },
                     sequence,
                     sequence.test_entry.unwrap_or(first_entry),
                     elapsed_ns,
@@ -667,7 +686,7 @@ impl Execution {
         }
     }
 
-    pub fn reset_sequence(&mut self, sequence: &mut ExecutionSequence) {
+    pub fn reset_sequence(sequence: &mut ExecutionSequence) {
         debug_assert!(!sequence.executing);
         {
             // reset the entries
@@ -712,7 +731,6 @@ impl Execution {
         if let Some(runner) = super::jest::Jest::runner() {
             runner.snapshots.reset_counts();
         }
-        let _ = self;
     }
 
     pub fn handle_uncaught_exception(
@@ -721,11 +739,14 @@ impl Execution {
     ) -> HandleUncaughtExceptionResult {
         let _scope = group_log::begin();
 
-        let Some((sequence, group)) = self.get_current_and_valid_execution_sequence(&user_data)
+        let Some((sequence_ptr, _group_ptr)) =
+            self.get_current_and_valid_execution_sequence(&user_data)
         else {
             return HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests;
         };
-        let _ = group;
+        // SAFETY: sequence_ptr points into self.sequences; `self` is not accessed for the
+        // remainder of this function, so this is the unique live `&mut` to that element.
+        let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
 
         sequence.maybe_skip = true;
         if sequence.active_entry != sequence.test_entry {

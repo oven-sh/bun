@@ -123,13 +123,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         }
     }
 
-    /// Minimal port of `bun_js.Run.boot` — wire the now-real
-    /// `VirtualMachine::init` + `load_entry_point` so `bun run ./file.ts`
-    /// reaches the module loader. The full `Run::boot` (transpiler option
-    /// mapping, `--preload`, `hold_api_lock`, `Run::start` run-loop,
-    /// `globalExit`) lives in `src/bun.js.rs` (a higher-tier crate that
-    /// depends on `bun_runtime`); until the CLI dispatch path is inverted to
-    /// call into that crate, this inlines the load-bearing steps.
+    /// Port of `bun_js.Run.boot` — `VirtualMachine::init`, hand off CLI
+    /// state, then enter `Run::start` under the JSC API lock. The full
+    /// transpiler option mapping (`install`/`global_cache`/`minify`/macros/
+    /// `serve_plugins` — `Run.boot` in src/bun.js.rs lines 110-170) stays
+    /// gated on `vm.transpiler` being populated by `init_runtime_state`.
     fn boot(
         ctx: &mut ContextData,
         entry_path: Box<[u8]>,
@@ -160,6 +158,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         vm.preload = std::mem::take(&mut ctx.preloads);
         vm.argv = std::mem::take(&mut ctx.passthrough);
         vm.is_main_thread = true;
+        bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.with(|c| c.set(true));
         // TODO(port): `VirtualMachine::main` is still `&'static [u8]`; it should
         // be `Box<[u8]>` so ownership transfers (PORTING.md §Forbidden patterns).
         // Until that field is retyped (out of this file's scope), leak the owned
@@ -180,21 +179,328 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             // … see phase_a_draft / src/bun.js.rs for the full list.
         }
 
-        // `loadEntryPoint` runs preloads, generates `bun:main`, kicks off
-        // module evaluation, and spins until the top-level promise settles.
-        let promise = vm.load_entry_point(entry_path)?;
+        // ── enter `Run::start` under the JSC API lock ──────────────────────
+        // Zig: `vm.global.vm().holdAPILock(&run, OpaqueWrap(Run, Run.start))`.
+        // SAFETY: `RUN` is the process-global singleton (Zig: `var run: Run`);
+        // written exactly once here on the main thread before the API-lock
+        // trampoline reads it, never freed (`global_exit` ends the process).
+        unsafe {
+            RUN = Run {
+                vm,
+                entry_path,
+                any_unhandled: false,
+                eval_and_print: ctx.runtime_options.eval.eval_and_print,
+            };
+        }
+        // PORT NOTE: `ctx.debug.hot_reload` → `vm.hot_reload` (a `u8` until the
+        // b2-cycle widens it to `cli::HotReload`); the watcher run-loop arm in
+        // `Run::start` keys off `vm.is_watcher_enabled()` instead.
+        vm.hot_reload = ctx.debug.hot_reload as u8;
 
-        // TODO(b2-blocked): `Run::start` run-loop — `hold_api_lock` wrapper,
-        // `eventLoop().tick()` until `vm.isEventLoopAlive()` is false, then
-        // `vm.onExit()` + `vm.globalExit()`. Those are in the gated
-        // `VirtualMachine` impl block; until they un-gate, drain once and let
-        // the caller fall through to `Global::exit`.
-        vm.drain_queues_if_needed();
-        let _ = promise;
+        extern "C" fn trampoline(ctx: *mut c_void) {
+            // SAFETY: `ctx` is `&mut RUN` passed through `holdAPILock`'s
+            // opaque slot; the API lock is held for the full call so no
+            // other thread touches the VM.
+            let this = unsafe { &mut *(ctx as *mut Run) };
+            this.start();
+        }
+        // SAFETY: `vm.global` set in `init`; `vm()` borrows the JSC VM for
+        // the API-lock FFI call. `addr_of_mut!(RUN)` yields a stable raw
+        // pointer to the static.
+        #[allow(deprecated)]
+        vm.global().vm().hold_api_lock(
+            core::ptr::addr_of_mut!(RUN) as *mut c_void,
+            trampoline,
+        );
 
+        // `Run::start` never returns (ends in `global_exit`); this is dead
+        // code kept so the type unifies with the `?`-early-return above.
         Ok(())
     }
+}
 
+// ──────────────────────────────────────────────────────────────────────────
+// `Run` — port of `src/bun.js.zig` `Run::start`. Lives here (not the
+// higher-tier `bun.js.rs`) so the CLI dispatch path can drive the event
+// loop without a crate-cycle.
+// ──────────────────────────────────────────────────────────────────────────
+
+struct Run {
+    vm: *mut VirtualMachine,
+    entry_path: &'static [u8],
+    any_unhandled: bool,
+    /// Snapshot of `ctx.runtime_options.eval.eval_and_print` (the full
+    /// `Command::Context` is not stored — its only consumers in `start()`
+    /// beyond this flag are gated b2 features).
+    eval_and_print: bool,
+}
+
+// Zig: `var run: Run = undefined;` — process-global, written once in `boot`.
+static mut RUN: Run = Run {
+    vm: core::ptr::null_mut(),
+    entry_path: b"",
+    any_unhandled: false,
+    eval_and_print: false,
+};
+
+impl Run {
+    #[inline]
+    fn vm(&mut self) -> &mut VirtualMachine {
+        // SAFETY: `vm` is the boxed-and-leaked main-thread VM; valid for
+        // process lifetime once `boot` writes it.
+        unsafe { &mut *self.vm }
+    }
+
+    /// `onUnhandledRejectionBeforeClose` — record that *something* rejected so
+    /// `start()` sets a non-zero exit code, then route through the VM's
+    /// default error printer.
+    fn on_unhandled_rejection_before_close(
+        this: &mut VirtualMachine,
+        _global: &JSGlobalObject,
+        value: JSValue,
+    ) {
+        // SAFETY: BORROW_PARAM ptr set by caller, outlives this call.
+        let list = this
+            .on_unhandled_rejection_exception_list
+            .map(|p| unsafe { &mut *p.as_ptr() });
+        this.run_error_handler(value, list);
+        // SAFETY: single-threaded JS; `RUN` is the static that owns `this.vm`.
+        unsafe { RUN.any_unhandled = true };
+    }
+
+    /// Inlined `VirtualMachine.onBeforeExit` (gated upstream): dispatch
+    /// `process.on('beforeExit')`, then re-run the loop if the listener
+    /// scheduled new work, re-dispatching until quiescent.
+    fn on_before_exit(vm: &mut VirtualMachine) {
+        vm.exit_handler.dispatch_on_before_exit();
+        let mut dispatch = false;
+        loop {
+            while vm.is_event_loop_alive() {
+                vm.tick();
+                vm.event_loop().auto_tick_active();
+                dispatch = true;
+            }
+            if dispatch {
+                vm.exit_handler.dispatch_on_before_exit();
+                dispatch = false;
+                if vm.is_event_loop_alive() {
+                    continue;
+                }
+            }
+            break;
+        }
+    }
+
+    /// Inlined `VirtualMachine.onExit` (gated upstream): dispatch
+    /// `process.on('exit')`, mark shutting-down, then run NAPI cleanup hooks.
+    fn on_exit(vm: &mut VirtualMachine) {
+        // TODO(b2-blocked): `cpu_profiler_config` / `heap_profiler_config`
+        // stop-and-write — `CPUProfiler`/`HeapProfiler` are gated siblings.
+        vm.exit_handler.dispatch_on_exit();
+        vm.is_shutting_down = true;
+
+        if let Some(rare) = vm.rare_data.as_mut() {
+            // Make sure we run new cleanup hooks introduced by running cleanup hooks
+            while !rare.cleanup_hooks.is_empty() {
+                let hooks = std::mem::take(&mut rare.cleanup_hooks);
+                for hook in hooks {
+                    hook.execute();
+                }
+            }
+        }
+    }
+
+    /// Inlined `VirtualMachine.globalExit` (gated upstream).
+    fn global_exit(vm: &mut VirtualMachine) -> ! {
+        debug_assert!(vm.is_shutting_down);
+        // TODO(b2-blocked): `shouldDestructMainThreadOnExit()` teardown path
+        // (worker drain, socket-group close, `Zig__GlobalObject__destructOnExit`,
+        // transpiler/gc_controller deinit) — every callee is gated. The
+        // non-destructing fast path is just `exit(code)`.
+        Global::exit(vm.exit_handler.exit_code as u32);
+    }
+
+    /// `Run.start` — load the entry point, run the event loop until idle,
+    /// fire `beforeExit`/`exit`, then `globalExit`. Called under the JSC API
+    /// lock via `hold_api_lock`.
+    fn start(&mut self) -> ! {
+        let vm = self.vm();
+        vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
+
+        // TODO(b2-blocked): CPU/heap profiler start, `addConditionalGlobals`,
+        // redis/sql preconnect, hot-reloader enable — see `src/bun.js.rs`
+        // `Run::start` lines 414-535. All depend on gated `bun_runtime`
+        // siblings (`CPUProfiler`, `valkey`, `hot_reloader::enable_*`).
+
+        // Zig: `if entry_path == "." { entry_path = fs.top_level_dir }` —
+        // `vm.transpiler.fs` is a b2-cycle placeholder; skip the rewrite.
+
+        let mut printed_sourcemap_warning_and_version = false;
+
+        match vm.load_entry_point(self.entry_path) {
+            Ok(promise) => {
+                // SAFETY: `promise` is a live GC cell returned by the module loader.
+                let promise = unsafe { &mut *promise };
+                if promise.status() == PromiseStatus::Rejected {
+                    // SAFETY: `vm.jsc_vm` set in `init`; FFI takes `*mut`.
+                    let result = promise.result(unsafe { &mut *vm.jsc_vm });
+                    // TODO(b2-blocked): `vm.uncaught_exception(global, result, true)`
+                    // — gated. Route through the unhandled-rejection printer
+                    // instead so the error still surfaces.
+                    let global = vm.global;
+                    // SAFETY: `global` valid for VM lifetime.
+                    (vm.on_unhandled_rejection)(vm, unsafe { &*global }, result);
+                    promise.set_handled();
+                    vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
+
+                    if vm.is_watcher_enabled() {
+                        // TODO(b2-blocked): `add_main_to_watcher_if_needed()` — gated.
+                        vm.event_loop().tick();
+                        vm.event_loop().tick_possibly_forever();
+                    } else {
+                        vm.exit_handler.exit_code = 1;
+                        Run::on_exit(vm);
+                        if self.any_unhandled {
+                            printed_sourcemap_warning_and_version = true;
+                            // TODO(b2-blocked): `SavedSourceMap::MissingSourceMapNoteInfo::print()`
+                            // — real impl lives in the gated `SavedSourceMap.rs`.
+                            pretty_errorln!(
+                                "<r>\n<d>{}<r>",
+                                Global::unhandled_error_bun_version_string,
+                            );
+                        }
+                        Run::global_exit(vm);
+                    }
+                }
+
+                // SAFETY: `vm.jsc_vm` set in `init`.
+                let _ = promise.result(unsafe { &mut *vm.jsc_vm });
+
+                // SAFETY: `vm.log` set in `init`.
+                if let Some(log) = vm.log {
+                    let log = unsafe { &mut *log.as_ptr() };
+                    if !log.msgs.is_empty() {
+                        dump_build_error(vm);
+                        // SAFETY: re-borrow after `dump_build_error` (which only reads).
+                        unsafe { (*vm.log.unwrap().as_ptr()).msgs.clear() };
+                    }
+                }
+            }
+            Err(err) => {
+                let mut printed = false;
+                if let Some(log) = vm.log {
+                    // SAFETY: `vm.log` set in `init`.
+                    if unsafe { !(*log.as_ptr()).msgs.is_empty() } {
+                        dump_build_error(vm);
+                        // SAFETY: re-borrow; `dump_build_error` only reads.
+                        unsafe { (*vm.log.unwrap().as_ptr()).msgs.clear() };
+                        printed = true;
+                    }
+                }
+                if !printed {
+                    pretty_errorln!(
+                        "Error occurred loading entry point: {}",
+                        bstr::BStr::new(err.name()),
+                    );
+                    Output::flush();
+                }
+                vm.exit_handler.exit_code = 1;
+                Run::on_exit(vm);
+                if self.any_unhandled {
+                    printed_sourcemap_warning_and_version = true;
+                    pretty_errorln!(
+                        "<r>\n<d>{}<r>",
+                        Global::unhandled_error_bun_version_string,
+                    );
+                }
+                Run::global_exit(vm);
+            }
+        }
+
+        // don't run the GC if we don't actually need to
+        if vm.is_event_loop_alive() || vm.event_loop().tick_concurrent_with_count() > 0 {
+            vm.global().vm().release_weak_refs();
+            // TODO(b2-blocked): `vm.arena.gc()` — `bun_alloc::Arena::gc` not yet
+            // wired through the `Option<NonNull<Arena>>` field.
+            let _ = vm.global().vm().run_gc(false);
+            vm.tick();
+        }
+
+        // TODO(b2-blocked): `StandaloneModuleGraph::hint_source_pages_dont_need()`
+        // — `bun_standalone_module_graph` not in this crate's dep set.
+
+        // ── core run-loop ──────────────────────────────────────────────────
+        if vm.is_watcher_enabled() {
+            // TODO(b2-blocked): `report_exception_in_hot_reloaded_module_if_needed`
+            // — gated upstream. The watcher arm otherwise matches the
+            // non-watcher arm with `tick_possibly_forever` keeping the
+            // process alive across reloads.
+            loop {
+                while vm.is_event_loop_alive() {
+                    vm.tick();
+                    vm.event_loop().auto_tick_active();
+                }
+                Run::on_before_exit(vm);
+                vm.event_loop().tick_possibly_forever();
+            }
+        } else {
+            while vm.is_event_loop_alive() {
+                vm.tick();
+                vm.event_loop().auto_tick_active();
+            }
+
+            if self.eval_and_print {
+                // TODO(b2-blocked): `bun -p` result printing —
+                // `JSValue::then2`/`print` + `Bun__on{Resolve,Reject}EntryPointResult`
+                // are not yet at this tier. See `src/bun.js.rs` lines 652-685.
+            }
+
+            Run::on_before_exit(vm);
+        }
+
+        if let Some(log) = vm.log {
+            // SAFETY: `vm.log` set in `init`.
+            if unsafe { !(*log.as_ptr()).msgs.is_empty() } {
+                dump_build_error(vm);
+                Output::flush();
+            }
+        }
+
+        vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
+        vm.global().handle_rejected_promises();
+        Run::on_exit(vm);
+
+        if self.any_unhandled && !printed_sourcemap_warning_and_version {
+            vm.exit_handler.exit_code = 1;
+            // TODO(b2-blocked): `SavedSourceMap::MissingSourceMapNoteInfo::print()`.
+            pretty_errorln!(
+                "<r>\n<d>{}<r>",
+                Global::unhandled_error_bun_version_string,
+            );
+        }
+
+        // PORT NOTE: `fixDeadCodeElimination()` calls dropped — Rust does not
+        // DCE `#[no_mangle] extern "C"` symbols the way Zig does, so the
+        // anti-DCE shims are unnecessary here.
+        Run::global_exit(vm);
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn dump_build_error(vm: &mut VirtualMachine) {
+    Output::flush();
+    if let Some(log) = vm.log {
+        // SAFETY: `vm.log` set in `init`; single-threaded CLI.
+        let log = unsafe { &mut *log.as_ptr() };
+        // TODO(b2): `Log::print` wants `&mut impl fmt::Write`; route through a
+        // shim once `Output::error_writer()` implements `fmt::Write`.
+        let _ = log.print(&mut bun_core::output::FmtWriteAdapter::stderr());
+    }
+    Output::flush();
+}
+
+impl RunCommand {
     /// `_bootAndHandleError` — duplicate `path` to a process-lifetime buffer,
     /// boot the VM, and on failure print the formatted error + `exit(1)`.
     fn _boot_and_handle_error(

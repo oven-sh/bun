@@ -188,6 +188,10 @@ impl Write for Vec<u8> {
         self.extend_from_slice(buf);
         Ok(())
     }
+    #[inline]
+    fn written_len(&self) -> usize {
+        self.len()
+    }
 }
 
 /// Growable string sink. Zig: `MutableString.writer()`.
@@ -196,6 +200,10 @@ impl Write for bun_string::MutableString {
     fn write_all(&mut self, buf: &[u8]) -> Result<()> {
         self.append(buf)?;
         Ok(())
+    }
+    #[inline]
+    fn written_len(&self) -> usize {
+        self.len()
     }
 }
 

@@ -2067,14 +2067,26 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         extern "system" {
             fn TerminateProcess(h: *mut core::ffi::c_void, code: u32) -> i32;
             fn GetCurrentProcess() -> *mut core::ffi::c_void;
+            fn GetLastError() -> u32;
         }
-        const WATCHER_RELOAD_EXIT: u32 = 0xC037_0332; // bun.windows.watcher_reload_exit
+        // = 3224497970, bun.windows.watcher_reload_exit (windows.zig). Parent
+        // watcher-manager compares the child's exit code against exactly this.
+        const WATCHER_RELOAD_EXIT: u32 = 0xC031_EF32;
         let rc = unsafe { TerminateProcess(GetCurrentProcess(), WATCHER_RELOAD_EXIT) };
-        if may_return {
-            crate::output::pretty_errorln("error: Failed to reload process", ());
-            return;
+        if rc == 0 {
+            let err = unsafe { GetLastError() };
+            if may_return {
+                crate::output::err_generic("Failed to reload process: {}", (err,));
+                return;
+            }
+            panic!("Error while reloading process: {}", err);
+        } else {
+            if may_return {
+                crate::output::err_generic("Failed to reload process", ());
+                return;
+            }
+            panic!("Unexpected error while reloading process\n");
         }
-        panic!("Unexpected error while reloading process");
     }
 
     #[cfg(unix)]
@@ -2082,23 +2094,33 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         { unsafe extern "C" { fn on_before_reload_process_linux(); } on_before_reload_process_linux(); }
 
-        // Clone argv as a NULL-terminated array of C strings.
+        // We clone argv so that the memory address isn't the same as the libc one
+        // (mirrors Zig `allocator.dupeZ` per entry).
         let args = argv_storage();
+        let dupe_argv: Vec<ZBox> =
+            args.iter().map(|z| ZBox::from_vec_with_nul(z.as_bytes().to_vec())).collect();
         let mut newargv: Vec<*const core::ffi::c_char> =
-            args.iter().map(|z| z.as_ptr()).collect();
+            dupe_argv.iter().map(|z| z.as_ptr()).collect();
         newargv.push(core::ptr::null());
 
-        // Clone environ.
+        // We clone envp so that the memory address of environment variables isn't
+        // the same as the libc one (mirrors Zig `allocSentinel` + `dupeZ` loop).
         unsafe extern "C" { static environ: *const *const core::ffi::c_char; }
-        let envp = environ;
+        let mut dupe_env: Vec<ZBox> = Vec::new();
+        let mut p = environ;
+        while !p.is_null() && !(*p).is_null() {
+            let s = core::ffi::CStr::from_ptr(*p);
+            dupe_env.push(ZBox::from_vec_with_nul(s.to_bytes().to_vec()));
+            p = p.add(1);
+        }
+        let mut envp: Vec<*const core::ffi::c_char> =
+            dupe_env.iter().map(|z| z.as_ptr()).collect();
+        envp.push(core::ptr::null());
 
-        // selfExePath
-        let exec_path = match self_exe_path() {
-            Ok(p) => p.as_ptr(),
-            Err(_) => newargv[0],
-        };
+        // we must clone selfExePath in case argv[0] was not an absolute path
+        let exec_path = self_exe_path().expect("unreachable").as_ptr();
 
-        libc::execve(exec_path, newargv.as_ptr().cast(), envp.cast());
+        libc::execve(exec_path, newargv.as_ptr().cast(), envp.as_ptr().cast());
         // execve only returns on error.
         let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(-1);
         if may_return {

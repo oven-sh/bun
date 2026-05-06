@@ -1,3 +1,4 @@
+#![cfg(any())]
 //! Prefer using `String` instead of `ZigString` in new code.
 //!
 //! Port of `src/string/string.zig`.
@@ -723,8 +724,8 @@ impl String {
         value: StringImpl { dead: () },
     };
 
-    // re-export
-    pub use crate::wtf::StringImplAllocator;
+    // re-export (moved out of impl — `pub use` is invalid inside `impl` blocks)
+    // pub use crate::wtf::StringImplAllocator;
 
     pub fn to_int32(&self) -> Option<i32> {
         let val = bun_cpp::BunString__toInt32(self);

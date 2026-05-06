@@ -1362,7 +1362,7 @@ pub fn eql_comptime(self_: &[u8], alt: &'static [u8]) -> bool {
     eql_comptime_check_len_with_type::<u8, true>(self_, alt)
 }
 
-pub fn eql_comptime_utf16(self_: &[u16], alt: &'static [u8]) -> bool {
+pub fn eql_comptime_utf16(self_: &[u16], alt: &[u8]) -> bool {
     // Compare bytewise, widening each ASCII byte of `alt` on the fly — avoids
     // materializing (and leaking) a `&'static [u16]`. All call sites pass
     // ASCII literals (Zig was `comptime`).
@@ -1371,7 +1371,7 @@ pub fn eql_comptime_utf16(self_: &[u16], alt: &'static [u8]) -> bool {
         && self_.iter().zip(alt.iter()).all(|(&u, &b)| u == b as u16)
 }
 
-pub fn eql_comptime_ignore_len(self_: &[u8], alt: &'static [u8]) -> bool {
+pub fn eql_comptime_ignore_len(self_: &[u8], alt: &[u8]) -> bool {
     eql_comptime_check_len_with_type::<u8, false>(self_, alt)
 }
 
@@ -1425,7 +1425,7 @@ fn eql_comptime_check_len_u8_impl(a: &[u8], b: &'static [u8], check_len: bool) -
 
 fn eql_comptime_check_len_with_known_type<T: Copy + Eq, const CHECK_LEN: bool>(
     a: &[T],
-    b: &'static [T],
+    b: &[T],
 ) -> bool {
     if core::mem::size_of::<T>() != 1 {
         return eql_comptime_check_len_u8(
@@ -1446,10 +1446,11 @@ fn eql_comptime_check_len_with_known_type<T: Copy + Eq, const CHECK_LEN: bool>(
 ///   strings.eql_comptime(input, b"hai");
 pub fn eql_comptime_check_len_with_type<T: Copy + Eq, const CHECK_LEN: bool>(
     a: &[T],
-    b: &'static [T],
+    b: &[T],
 ) -> bool {
-    // PORT NOTE: Zig coerced array-by-value `b` to a pointer here. Rust callers
-    // already pass `&'static [T]`.
+    // PORT NOTE: Zig coerced array-by-value `b` to a pointer here. The Zig
+    // version's `comptime` literal is unenforceable in Rust, so accept any
+    // slice; callers are still expected to pass literals.
     eql_comptime_check_len_with_known_type::<T, CHECK_LEN>(a, b)
 }
 

@@ -1560,5 +1560,5 @@ impl SizeHandlerSpec for InsetSpec {
 //   source:     src/css/properties/margin_padding.zig (852 lines)
 //   confidence: medium
 //   todos:      6
-//   notes:      NewSizeHandler's @field/@unionInit reflection lifted into a SizeHandlerSpec trait; per-spec extract/make projections are todo!() stubs (mechanical match arms) — generate via macro in Phase B. RectShorthand/SizeShorthand assumed as traits providing parse/to_css.
+//   notes:      NewSizeHandler's @field/@unionInit reflection lifted into a SizeHandlerSpec trait; per-spec extract/make projections are mechanical match arms expanded inline. RectShorthand/SizeShorthand assumed as traits providing parse/to_css.
 // ──────────────────────────────────────────────────────────────────────────

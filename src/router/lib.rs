@@ -32,7 +32,7 @@ mod b1_stubs {
 
     // TODO(b2-blocked): bun_logger crate not yet in [dependencies]. Spec uses
     // these on *recoverable* paths (log-and-continue / log-and-return-None) so
-    // the stub MUST be a no-op, never `todo!()` — PORTING.md §Forbidden.
+    // the stub MUST be a no-op, never panic — PORTING.md §Forbidden.
     pub mod logger {
         pub struct Log;
         impl Log {

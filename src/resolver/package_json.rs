@@ -683,11 +683,10 @@ impl SideEffects {
 // ── Local extension shims so `parse` can call shapes that live in higher-tier
 //    crates (full FileSystem). Bodies forward to bun_paths. ────────────────
 //
-// PORT NOTE: the former `JsonCachePackageJsonExt` shim trait (which carried an
-// `unimplemented!()` body) is removed — `JsonCacheVTable` now has a real
-// `parse_package_json` slot and `JsonCache` exposes the inherent forwarder
-// (tsconfig_json.rs). `bun_bundler::cache::JSON_CACHE_VTABLE` wires it to
-// `bun_interchange::json`.
+// PORT NOTE: the former `JsonCachePackageJsonExt` shim trait is removed —
+// `JsonCacheVTable` now has a real `parse_package_json` slot and `JsonCache`
+// exposes the inherent forwarder (tsconfig_json.rs).
+// `bun_bundler::cache::JSON_CACHE_VTABLE` wires it to `bun_interchange::json`.
 
 /// The Zig body calls the threadlocal-buffer `abs`/`join`/`normalize` and
 /// immediately dupes the result. Thin extension trait that delegates to

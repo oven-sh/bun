@@ -84,8 +84,8 @@ pub fn handle_oom<T, E>(r: core::result::Result<T, E>) -> T {
 
 /// Zig: `bun.todoPanic(@src(), fmt, args)`. Intentional *runtime* "feature not
 /// yet implemented" path that the Zig source ships with — distinct from a
-/// Phase-A `todo!()` porting placeholder. Captures file/line via `file!()`/
-/// `line!()` (the `@src()` equivalent) and routes through `Output::panic`.
+/// porting placeholder. Captures file/line via `file!()`/`line!()` (the
+/// `@src()` equivalent) and routes through `Output::panic`.
 // TODO(port): wire `bun_analytics::Features::todo_panic` once the analytics
 // crate is reachable from bun_core without a dep cycle.
 #[macro_export] macro_rules! todo_panic {

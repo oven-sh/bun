@@ -761,8 +761,8 @@ impl<'a> Loader<'a> {
     ) -> Result<(), bun_core::Error> {
         let dir_handle = bun_sys::Fd::cwd();
 
-        // PORT NOTE: bun_sys::fs::DirEntry::has_comptime_query is a `todo!()` stub until the
-        // resolver→sys MOVE_DOWN lands; the body compiles and is exercised once that fills in.
+        // PORT NOTE: bun_sys::fs::DirEntry::has_comptime_query forwards through the
+        // resolver→sys vtable seam (`dir_entry_has_comptime_query`) — see sys/lib.rs.
         {
             match suffix {
                 DotEnvFileSuffix::Development => {

@@ -28,7 +28,7 @@ pub use bun_js_parser::Index;
 // without naming the concrete struct. PERF(port): was direct field access in
 // Zig (`completion.result == .err`, `completion.jsc_event_loop`).
 // ──────────────────────────────────────────────────────────────────────────
-extern "C" {
+unsafe extern "C" {
     // src/jsc/bindings/JSBundlerPlugin.cpp: `JSBundlerPlugin__drainDeferred`.
     // Zig wraps this in `fromJSHostCallGeneric` for exception-scope tracking;
     // the only caller (`runOnJSThread` below) is `catch return`, so the void

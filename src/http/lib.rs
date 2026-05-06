@@ -545,9 +545,9 @@ pub static mut SOCKET_ASYNC_HTTP_ABORT_TRACKER:
 
 
 // ═══════════════════════════════════════════════════════════════════════
-// B-2 un-gate prelude: imports, constants, helper fns, and `todo!()` bridge
-// impls the `impl HTTPClient` state machine needs. Kept separate from the
-// gated `_phase_a_draft` head/tail blocks so the state machine compiles.
+// Prelude: imports, constants, helper fns, and bridge impls the
+// `impl HTTPClient` state machine needs. Kept separate from the head/tail
+// blocks so the state machine compiles standalone.
 // ═══════════════════════════════════════════════════════════════════════
 
 use core::ffi::{c_int, c_uint, c_void};

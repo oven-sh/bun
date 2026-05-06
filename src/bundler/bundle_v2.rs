@@ -3300,7 +3300,7 @@ impl<'a> BundleV2<'a> {
         let _dec_guard = scopeguard::guard((), |_| this.decrement_scan_counter());
         bun_core::scoped_log!(Bundle, "onResolve: ({}:{}, {})",
             bstr::BStr::new(&resolve.import_record.namespace),
-            bstr::BStr::new(&resolve.&import_record.specifier),
+            bstr::BStr::new(&resolve.import_record.specifier),
             <&'static str>::from(&resolve.value));
 
         let _mem_guard = scopeguard::guard((), |_| {
@@ -3317,7 +3317,7 @@ impl<'a> BundleV2<'a> {
                 if resolve.import_record.namespace == b"file" {
                     if resolve.import_record.kind == ImportKind::EntryPointBuild {
                         let target = resolve.import_record.original_target;
-                        let Ok(resolved) = this.transpiler_for_target(target).resolve_entry_point(&resolve.&import_record.specifier) else {
+                        let Ok(resolved) = this.transpiler_for_target(target).resolve_entry_point(&resolve.import_record.specifier) else {
                             return;
                         };
                         let Ok(source_index) = this.enqueue_entry_item(resolved, true, target) else {
@@ -3326,7 +3326,7 @@ impl<'a> BundleV2<'a> {
 
                         // Store the original entry point name for virtual entries that fall back to file resolution
                         if let Some(idx) = source_index {
-                            this.graph.entry_point_original_names.put(idx, resolve.&import_record.specifier.clone());
+                            this.graph.entry_point_original_names.put(idx, resolve.import_record.specifier.clone());
                         }
                         return;
                     }
@@ -3335,7 +3335,7 @@ impl<'a> BundleV2<'a> {
                     return;
                 }
 
-                let log = this.log_for_resolution_failures(&resolve.&import_record.source_file, resolve.import_record.original_target.bake_graph());
+                let log = this.log_for_resolution_failures(&resolve.import_record.source_file, resolve.import_record.original_target.bake_graph());
 
                 // When it's not a file, this is an error and we should report it.
                 //
@@ -3343,7 +3343,7 @@ impl<'a> BundleV2<'a> {
                 if resolve.import_record.kind == ImportKind::EntryPointBuild {
                     let _ = log.add_error_fmt(None, Logger::Loc::EMPTY, format_args!(
                         "Module not found {} in namespace {}",
-                        bun_core::fmt::quote(&resolve.&import_record.specifier),
+                        bun_core::fmt::quote(&resolve.import_record.specifier),
                         bun_core::fmt::quote(&resolve.import_record.namespace),
                     ));
                 } else {
@@ -3353,7 +3353,7 @@ impl<'a> BundleV2<'a> {
                         resolve.import_record.range,
                         format_args!(
                             "Module not found {} in namespace {}",
-                            bun_core::fmt::quote(&resolve.&import_record.specifier),
+                            bun_core::fmt::quote(&resolve.import_record.specifier),
                             bun_core::fmt::quote(&resolve.import_record.namespace),
                         ),
                     );
@@ -3442,7 +3442,7 @@ impl<'a> BundleV2<'a> {
 
                         // Store the original entry point name for virtual entries
                         // This preserves the original name for output file naming
-                        this.graph.entry_point_original_names.put(source_index.get(), resolve.&import_record.specifier.clone());
+                        this.graph.entry_point_original_names.put(source_index.get(), resolve.import_record.specifier.clone());
                     } else {
                         let source_import_records = &mut this.graph.ast.items_import_records_mut()[resolve.import_record.importer_source_index as usize];
                         if (source_import_records.len() as u32) <= resolve.import_record.import_record_index {
@@ -3463,7 +3463,7 @@ impl<'a> BundleV2<'a> {
                 }
             }
             jsc_api::JSBundler::ResolveValue::Err(err) => {
-                let log = this.log_for_resolution_failures(&resolve.&import_record.source_file, resolve.import_record.original_target.bake_graph());
+                let log = this.log_for_resolution_failures(&resolve.import_record.source_file, resolve.import_record.original_target.bake_graph());
                 log.msgs.push(err.clone());
                 log.errors += (err.kind == Logger::Kind::Err) as u32;
                 log.warnings += (err.kind == Logger::Kind::Warn) as u32;
@@ -4492,7 +4492,10 @@ impl<'a> BundleV2<'a> {
                 {
                     import_record.path = resolve_result.path_pair.primary.clone();
                 }
-                import_record.flags.is_external_without_side_effects = resolve_result.primary_side_effects_data != _resolver::SideEffects::HasSideEffects;
+                import_record.flags.set(
+                    bun_options_types::import_record::Flags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS,
+                    resolve_result.primary_side_effects_data != _resolver::SideEffects::HasSideEffects,
+                );
                 continue;
             }
 

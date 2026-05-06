@@ -26,8 +26,8 @@ pub mod json_lexer;
 
 // ───── json ───────────────────────────────────────────────────────────────
 // Real port — wired against `crate::json_lexer` (the cycle-break above) and
-// `bun_logger::js_ast`. The earlier inline `todo!()` stub module has been
-// replaced now that `json.rs` resolves against the local lexer.
+// `bun_logger::js_ast`; resolves against the local lexer so `bun_js_parser`
+// is not an upward dep.
 #[path = "json.rs"]
 pub mod json;
 

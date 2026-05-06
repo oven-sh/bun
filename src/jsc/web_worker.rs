@@ -67,10 +67,9 @@
 //! `apply_standalone_runtime_flags`, `bun_webcore::ObjectURLRegistry`,
 //! `bun_standalone::StandaloneModuleGraph`, `bun_clap` parse-ex, the
 //! `RareData::ProxyEnvStorage` clone path) and into `VirtualMachine` fields
-//! that are still `todo!()` stubs (`init_worker`, `load_entry_point_for_web_worker`,
-//! `arena`, `proxy_env_storage`). Per VirtualMachine.rs §Dispatch those paths
-//! belong to the high tier; here they are preserved under `` and
-//! the FFI exports route through `RuntimeHooks` / `todo!()`.
+//! (`init_worker`, `load_entry_point_for_web_worker`, `arena`,
+//! `proxy_env_storage`). Per VirtualMachine.rs §Dispatch those paths belong to
+//! the high tier; the FFI exports here route through `RuntimeHooks`.
 //! ──────────────────────────────────────────────────────────────────────────
 
 use core::cell::{Cell, UnsafeCell};

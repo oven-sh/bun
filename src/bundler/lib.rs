@@ -155,9 +155,8 @@ pub mod linker_context {
 }
 
 // ---------------------------------------------------------------------------
-// Minimal stub surface for downstream crates (B-1). Opaque newtypes + todo!()
-// bodies; real impls live in the gated modules above and will be un-gated in
-// B-2.
+// Public surface for downstream crates. Re-exports the real types from the
+// modules above (formerly opaque newtypes during the B-1 staging phase).
 // ---------------------------------------------------------------------------
 
 /// Real `BundleV2` (un-gated B-2). See `bundle_v2`.

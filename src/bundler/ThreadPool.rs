@@ -622,10 +622,10 @@ impl Worker {
         // `crate::Linker` is still the unit stub `Linker(())` (lib.rs:158); the
         // self-referential resolver backref is wired by `configure_linker` once
         // the real `linker::Linker` lands in the `Transpiler` struct.
-        // PORT NOTE: `js_ast::Macro::MacroContext::init` is a `todo!()` stub
-        // (js_parser/lib.rs:108) over a unit `#[derive(Default)]` struct;
-        // `Default` is structurally identical and avoids panicking every worker
-        // create. Swap to `init(t)` once `bun_js_parser_jsc` owns the real type.
+        // PORT NOTE: `js_ast::Macro::MacroContext::init` at this tier only
+        // carries `javascript_object` (the resolver/env/remap backrefs live in
+        // `bun_js_parser_jsc`); `Default` is structurally identical to `init(t)`
+        // here. Swap to `init(t)` once `bun_js_parser_jsc` owns the full type.
         t.macro_context = Some(js_ast::Macro::MacroContext::default());
         // PORT NOTE: `Resolver.caches` is `bun_resolver::cache::Set` (the
         // MOVE_DOWN copy that broke the bundler→resolver cycle), not this

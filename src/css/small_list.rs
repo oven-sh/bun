@@ -48,6 +48,13 @@ struct HeapData<T> {
 impl<T> Clone for HeapData<T> { fn clone(&self) -> Self { *self } }
 impl<T> Copy for HeapData<T> {}
 
+// SAFETY: SmallList<T, N> owns its elements (inline or via a heap buffer it
+// uniquely owns and frees in Drop), exactly like Vec<T>. The raw `*mut T` in
+// HeapData is an owning unique pointer, not a shared alias, so thread-safety
+// follows T's auto traits.
+unsafe impl<T: Send, const N: usize> Send for SmallList<T, N> {}
+unsafe impl<T: Sync, const N: usize> Sync for SmallList<T, N> {}
+
 impl<T> HeapData<T> {
     pub fn init_capacity(capacity: u32) -> HeapData<T> {
         // PERF(port): was arena allocator.alloc — now global mimalloc

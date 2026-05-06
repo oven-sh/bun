@@ -1461,11 +1461,10 @@ impl<'a> Transpiler<'a> {
                 };
 
                 if self.macro_context.is_none() {
-                    // PORT NOTE: `MacroContext::init(transpiler)` is a
-                    // `todo!()` stub (the real body lives in
-                    // `bun_js_parser_jsc`). The parser-side `MacroContext` is
-                    // currently a fieldless unit struct, so `Default` is
-                    // semantically equivalent to Zig's `init` for now.
+                    // PORT NOTE: at this tier `MacroContext` only carries
+                    // `javascript_object` (the JSC-backed resolver/env/remap
+                    // fields live in `bun_js_parser_jsc`), so `Default` is
+                    // semantically equivalent to Zig's `init(transpiler)` here.
                     self.macro_context =
                         Some(js_ast::Macro::MacroContext::default());
                 }

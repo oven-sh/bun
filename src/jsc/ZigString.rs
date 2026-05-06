@@ -47,6 +47,19 @@ unsafe extern "C" {
     fn ZigString__toRangeErrorInstance(this: *const ZigString, global: *const JSGlobalObject) -> JSValue;
 }
 
+// TODO(port): hoist into `c_api` (javascript_core_c_api.rs) once that module is
+// fleshed out. Declared locally so `to_js_string_ref` compiles standalone.
+#[repr(C)]
+pub struct OpaqueJSString {
+    _p: [u8; 0],
+    _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
+}
+pub type JSStringRef = *mut OpaqueJSString;
+unsafe extern "C" {
+    fn JSStringCreateWithCharactersNoCopy(string: *const u16, num_chars: usize) -> JSStringRef;
+    fn JSStringCreateStatic(string: *const u8, length: usize) -> JSStringRef;
+}
+
 /// Prefer using `bun_string::String` instead of `ZigString` in new code.
 #[repr(C)]
 #[derive(Copy, Clone)]

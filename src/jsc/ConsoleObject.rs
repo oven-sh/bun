@@ -2899,12 +2899,12 @@ pub mod formatter {
     }
 
     fn get_object_name(
-        _global_this: &JSGlobalObject,
-        _value: JSValue,
+        global_this: &JSGlobalObject,
+        value: JSValue,
     ) -> JsResult<Option<ZigString>> {
         // TODO(phase-c): body re-gated — `JSValue::get_class_name` /
         // `get_prototype` not yet ported.
-        
+
         {
             let mut name_str = ZigString::init(b"");
             value.get_class_name(global_this, &mut name_str)?;
@@ -3130,7 +3130,7 @@ pub mod formatter {
                         writer.write_all(slice);
                     } else if !str.is_empty() {
                         // slow path
-                        let buf = strings::allocate_latin1_into_utf8(str.latin1())
+                        let buf = strings::immutable::allocate_latin1_into_utf8(str.latin1())
                             .unwrap_or_default();
                         if !buf.is_empty() {
                             writer.write_all(&buf);

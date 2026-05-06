@@ -490,12 +490,12 @@ impl MacroEntryPoint {
                  }}\n\
                  \n\
                  Bun.registerMacro({}, Macros['{}']);",
-                bun_fmt::fmt_path(dir_to_use, bun_fmt::PathFmtOptions { escape_backslashes: true }),
-                bun_fmt::fmt_path(import_path.filename, bun_fmt::PathFmtOptions { escape_backslashes: true }),
+                bun_fmt::fmt_path_u8(dir_to_use, bun_fmt::PathFormatOptions { escape_backslashes: true, ..Default::default() }),
+                bun_fmt::fmt_path_u8(import_path.filename, bun_fmt::PathFormatOptions { escape_backslashes: true, ..Default::default() }),
                 BStr::new(function_name),
                 BStr::new(function_name),
-                bun_fmt::fmt_path(dir_to_use, bun_fmt::PathFmtOptions { escape_backslashes: true }),
-                bun_fmt::fmt_path(import_path.filename, bun_fmt::PathFmtOptions { escape_backslashes: true }),
+                bun_fmt::fmt_path_u8(dir_to_use, bun_fmt::PathFormatOptions { escape_backslashes: true, ..Default::default() }),
+                bun_fmt::fmt_path_u8(import_path.filename, bun_fmt::PathFormatOptions { escape_backslashes: true, ..Default::default() }),
                 macro_id,
                 BStr::new(function_name),
             )

@@ -3794,15 +3794,16 @@ impl InsideWrapperPrefix {
             return Ok(());
         }
 
-        // TODO(port): deep AST mutation chain — these accessors assume payload-variant getters on Stmt/Expr data
+        // PORT NOTE: deep AST mutation chain — `s_expr_mut`/`e_await_mut`/
+        // `e_call_mut`/`e_array_mut` return `Option`; `.unwrap()` mirrors Zig's
+        // untagged-union field reads (panic on shape mismatch).
         let first_dep_call_expr = self.stmts[self.sync_dependencies_end]
-            .data.s_expr_mut().value.data.e_await_mut().value;
-        let call = first_dep_call_expr.data.e_call_mut();
+            .data.s_expr_mut().unwrap().value.data.e_await_mut().unwrap().value;
+        let call = first_dep_call_expr.data.e_call_mut().unwrap();
 
-        if call.target.data.e_identifier().r#ref.eql(promise_all_ref) {
+        if call.target.data.e_identifier().unwrap().ref_.eql(promise_all_ref) {
             // `await __promiseAll` already in place, append to the array argument
-            call.args.at_mut(0).data.e_array_mut().items.push(call_expr);
-            // TODO(port): BabyList::append(allocator, ..) — using push; verify allocator threading in Phase B
+            call.args.mut_(0).data.e_array_mut().unwrap().items.append(call_expr)?;
         } else {
             // convert single `await init_` to `await __promiseAll([init_1(), init_2()])`
 

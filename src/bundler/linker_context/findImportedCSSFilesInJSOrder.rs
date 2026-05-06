@@ -25,17 +25,17 @@ use crate::{Index, LinkerContext, Part};
 /// In this case we just pick an arbitrary but consistent order.
 pub fn find_imported_css_files_in_js_order(
     this: &LinkerContext,
-    temp: &Arena,
+    _temp: &Arena,
     entry_point: Index,
 ) -> BabyList<Index> {
     // PERF(port): was arena bulk-free (DynamicBitSet now Box<[usize]>-backed) — profile in Phase B
-    let mut visited = BitSet::new_empty(this.graph.files.len());
+    let mut visited = BitSet::init_empty(this.graph.files.len()).expect("oom");
     let mut order: BabyList<Index> = BabyList::default();
 
-    // TODO(port): MultiArrayList field-slice accessor shape (`.items(.field)` in Zig)
-    let all_import_records = this.graph.ast.import_records();
-    let all_loaders = this.parse_graph.input_files.loader();
-    let all_parts = this.graph.ast.parts();
+    let all_import_records = this.graph.ast.items_import_records();
+    // SAFETY: `parse_graph` is a backref into `BundleV2.graph`, valid for the bundle lifetime.
+    let all_loaders = unsafe { &*this.parse_graph }.input_files.items_loader();
+    let all_parts = this.graph.ast.items_parts();
 
     // Zig uses a local `struct { fn visit }.visit` to get a recursive local fn.
     // Rust nested `fn` items can recurse directly.
@@ -45,7 +45,6 @@ pub fn find_imported_css_files_in_js_order(
         import_records: &[BabyList<ImportRecord>],
         parts: &[PartList],
         loaders: &[Loader],
-        temp: &Arena,
         visits: &mut BitSet,
         o: &mut BabyList<Index>,
         source_index: Index,
@@ -56,11 +55,11 @@ pub fn find_imported_css_files_in_js_order(
         }
         visits.set(source_index.get() as usize);
 
-        let records: &[ImportRecord] = import_records[source_index.get() as usize].as_slice();
+        let records: &[ImportRecord] = import_records[source_index.get() as usize].slice();
         let p = &parts[source_index.get() as usize];
 
         // Iterate over each part in the file in order
-        for part in p.as_slice() {
+        for part in p.slice() {
             // Traverse any files imported by this part. Note that CommonJS calls
             // to "require()" count as imports too, sort of as if the part has an
             // ESM "import" statement in it. This may seem weird because ESM imports

@@ -7,6 +7,7 @@ use crate::{
     LineOffsetTable, SourceMapState,
 };
 
+#[derive(Clone)]
 pub struct Chunk {
     pub buffer: MutableString,
 

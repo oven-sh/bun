@@ -5122,7 +5122,7 @@ impl<'a> BundleV2<'a> {
                             err.target.bake_graph(),
                             &graph.input_files.items_source()[err.source_index.get() as usize].path.text,
                             &err.log,
-                            this,
+                            this as *mut _ as *mut (),
                         ).expect("oom");
                     } else if !err.log.msgs.is_empty() {
                         err.log.clone_to_with_recycled(this.transpiler.log, true).expect("unreachable");
@@ -5130,7 +5130,7 @@ impl<'a> BundleV2<'a> {
                         this.transpiler.log.add_error_fmt(
                             None,
                             Logger::Loc::EMPTY,
-                            format_args!("{} while {}", err.err.name(), <&'static str>::from(err.step)),
+                            format_args!("{} while {}", bstr::BStr::new(err.err.name()), super::parse_task_step_name(err.step)),
                         ).expect("unreachable");
                     }
                 }
@@ -5139,6 +5139,14 @@ impl<'a> BundleV2<'a> {
                     debug_assert!(graph.ast.items_parts()[err.source_index.get() as usize].len() == 0);
                 }
             }
+        }
+
+        // `defer { graph.pending_items += diff; if diff < 0 on_after_decrement }`
+        bun_core::scoped_log!(scan_counter, "in parse task .pending_items += {} = {}\n",
+            diff, i32::try_from(this.graph.pending_items).unwrap() + diff);
+        this.graph.pending_items = u32::try_from(i32::try_from(this.graph.pending_items).unwrap() + diff).unwrap();
+        if diff < 0 {
+            this.on_after_decrement_scan_counter();
         }
     }
 
@@ -5153,13 +5161,10 @@ impl<'a> BundleV2<'a> {
     }
 }
 
-pub use js_ast::UseDirective;
-// `ServerComponentBoundary` already imported at module head.
+// `UseDirective`/`ServerComponentBoundary` already imported at module head.
 
 type RefVoidMap = ArrayHashMap<Ref, ()>; // TODO(port): Ref.ArrayHashCtx
-pub type RefImportData = ArrayHashMap<Ref, ImportData>;
-pub type ResolvedExports = StringArrayHashMap<ExportData>;
-pub use crate::ungate_support::TopLevelSymbolToParts;
+pub use crate::ungate_support::{ResolvedExports, TopLevelSymbolToParts};
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]

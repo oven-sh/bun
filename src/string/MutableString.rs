@@ -14,7 +14,7 @@ pub trait EStringRef {
 /// A growable byte buffer. In Zig this paired an `Allocator` with an
 /// `ArrayListUnmanaged(u8)`; in Rust the global mimalloc allocator is implicit,
 /// so this is a thin wrapper over `Vec<u8>`.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct MutableString {
     // Zig field `allocator: Allocator` — deleted (global mimalloc).
     pub list: Vec<u8>,

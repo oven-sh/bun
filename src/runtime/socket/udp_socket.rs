@@ -534,13 +534,14 @@ impl UDPSocket {
         // the heap allocation in `this_ptr` and need to keep that exact pointer
         // (it is stashed as the uws user_data). Bind the codegen `__create`
         // export directly — same call the Zig `toJS(*Self)` makes.
+        // Signature must match the one `#[bun_jsc::JsClass]` emits for the same
+        // link_name to avoid a clashing_extern_declarations diagnostic.
         unsafe extern "C" {
             #[link_name = "UDPSocket__create"]
-            fn udp_socket_create(global: *mut JSGlobalObject, ptr: *mut c_void) -> JSValue;
+            fn udp_socket_create(global: *mut JSGlobalObject, ptr: *mut UDPSocket) -> JSValue;
         }
         // SAFETY: `global_this` is live; `this_ptr` ownership transfers to the C++ wrapper.
-        let this_value =
-            unsafe { udp_socket_create(global_this.as_mut_ptr(), this_ptr as *mut c_void) };
+        let this_value = unsafe { udp_socket_create(global_this.as_mut_ptr(), this_ptr) };
         this_value.ensure_still_alive();
         this.this_value.set_strong(this_value, global_this);
 

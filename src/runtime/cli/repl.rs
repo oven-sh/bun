@@ -90,8 +90,13 @@ fn vm_set_execution_forbidden(vm: *mut jsc::VM, forbidden: bool) {
 /// is the sole driver of `tick()` / `wait_for_promise()` here. Phase-B port
 /// stores `&VirtualMachine` for borrowck simplicity and casts at the call site.
 #[inline]
+#[allow(invalid_reference_casting)]
 fn vm_mut<'a>(vm: &'a VirtualMachine) -> &'a mut VirtualMachine {
-    unsafe { &mut *(vm as *const VirtualMachine as *mut VirtualMachine) }
+    // Launder through a raw pointer; rustc's `invalid_reference_casting` lint is
+    // silenced above because the Zig spec's `*JSC.VirtualMachine` is a freely-
+    // aliasing mutable pointer and `VirtualMachine` is `!Sync` single-thread state.
+    let ptr: *mut VirtualMachine = core::ptr::from_ref(vm).cast_mut();
+    unsafe { &mut *ptr }
 }
 
 // ============================================================================
@@ -867,7 +872,7 @@ impl<'a> Repl<'a> {
             // sa_sigaction/sa_flags below. `act` is valid for the duration of the call.
             unsafe {
                 let mut act: bun_sys::posix::Sigaction = core::mem::zeroed();
-                act.sa_sigaction = sigint_handler as usize;
+                act.sa_sigaction = sigint_handler as *const () as usize;
                 act.sa_flags = 0;
                 bun_sys::posix::sigaction(libc::SIGINT, &act, core::ptr::null_mut());
             }

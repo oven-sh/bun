@@ -740,7 +740,7 @@ impl Compression {
 // Generic Async Task Infrastructure
 // ============================================================================
 
-enum PromiseResult {
+pub enum PromiseResult {
     Resolve(JSValue),
     Reject(JSValue),
 }

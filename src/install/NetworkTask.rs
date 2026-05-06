@@ -4,8 +4,8 @@ use core::sync::atomic::Ordering;
 use bstr::{BStr, ByteSlice};
 
 use bun_collections::HashMap;
-use bun_core::{self, fmt::QuotedFormatter, StringBuilder as GlobalStringBuilder};
-use bun_http::{self as http, AsyncHTTP, HeaderBuilder, HTTPClientResult};
+use bun_core::{self, fmt::quote, StringBuilder as GlobalStringBuilder};
+use bun_http::{self as http, AsyncHTTP, HeaderBuilder, HTTPClientResult, HTTPVerboseLevel};
 use bun_logger as logger;
 use bun_str::{self, strings, MutableString};
 use bun_threading::ThreadPool;

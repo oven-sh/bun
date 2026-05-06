@@ -151,7 +151,7 @@ impl Hardlinker {
                                 }
                                 sys::E::UV_ENOENT | sys::E::NOENT => {
                                     if crate::PackageManager::verbose_install() {
-                                        bun_core::output::pretty_errorln!(
+                                        bun_core::pretty_errorln!(
                                             "Hardlinking {} to a path that doesn't exist: {}",
                                             bun_core::fmt::fmt_os_path(
                                                 self.src.slice(),
@@ -208,7 +208,7 @@ impl Hardlinker {
                         let _ = Fd::cwd().make_path::<u8>(self.dest.slice_z());
                     }
                     EntryKind::File => {
-                        match sys::linkat_z(
+                        match sys::linkat(
                             entry.dir,
                             entry.basename,
                             Fd::cwd(),
@@ -218,7 +218,7 @@ impl Hardlinker {
                             sys::Result::Err(link_err1) => match link_err1.get_errno() {
                                 sys::E::EXIST => {
                                     let _ = Fd::cwd().delete_tree(self.dest.slice());
-                                    match sys::linkat_z(
+                                    match sys::linkat(
                                         entry.dir,
                                         entry.basename,
                                         Fd::cwd(),
@@ -236,7 +236,7 @@ impl Hardlinker {
                                     };
 
                                     let _ = Fd::cwd().make_path::<u8>(dest_parent);
-                                    match sys::linkat_z(
+                                    match sys::linkat(
                                         entry.dir,
                                         entry.basename,
                                         Fd::cwd(),

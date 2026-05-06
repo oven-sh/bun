@@ -147,7 +147,7 @@ impl SpawnSyncEventLoop {
             original_event_loop_handle: None, // = undefined in Zig; overwritten in `prepare`
             #[cfg(windows)]
             uv_timer: None,
-            did_timeout: false,
+            did_timeout: Cell::new(false),
             event_loop,
             vm,
         });

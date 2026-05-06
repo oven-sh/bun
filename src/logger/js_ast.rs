@@ -82,8 +82,16 @@ impl<T> StoreRef<T> {
     /// constants). Mutation through the resulting `StoreRef` is UB.
     #[inline]
     pub const fn from_static(r: &'static T) -> Self {
-        // SAFETY: `r` is a non-null aligned `'static` reference.
-        StoreRef(unsafe { NonNull::new_unchecked(r as *const T as *mut T) })
+        // SAFETY: `r` is a non-null, aligned, dereferenceable `'static`
+        // reference, so `new_unchecked` is sound. Provenance is shared/read-
+        // only: this mirrors Zig `@constCast` on the `Expr.Data.e_string`
+        // prefill tables (see `src/js_parser/ast/E.zig`), where a `*const
+        // E.String` is widened to `*E.String` solely to fit the payload slot
+        // type. The pointee is *never* written through — `DerefMut` /
+        // `as_ptr().write()` on a `StoreRef` produced here is UB and callers
+        // must not do so (audited: only `Deref`/`get()` reads occur on
+        // prefill-backed refs).
+        StoreRef(unsafe { NonNull::new_unchecked(core::ptr::from_ref(r).cast_mut()) })
     }
     /// Borrow the pointee (explicit form of `Deref`).
     #[inline]

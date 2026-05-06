@@ -679,22 +679,27 @@ use core::ptr::NonNull;
 use std::io::Write as _;
 
 use bun_core::{self as bun, Environment, FeatureFlags, Output, Error};
-use bun_core::Transpiler;
-use bun_str::strings;
+use crate::transpiler::Transpiler;
+use crate::ungate_support::bun_str::strings;
 use bun_alloc::{Arena as ThreadLocalArena, AllocError};
 use bun_collections::{BabyList, MultiArrayList, ArrayHashMap, StringHashMap, StringArrayHashMap, DynamicBitSet, DynamicBitSetUnmanaged};
 use bun_logger as Logger;
-use bun_js_parser::{self as js_ast, Ref, Index, Symbol, Stmt, Expr, E, S, G, B, Binding, Scope, Part, Dependency};
-use bun_js_parser::ast::BundledAst as JSAst;
-use bun_js_parser::ast::{UseDirective, ServerComponentBoundary};
+use bun_js_parser::{self as js_ast, Ref, Symbol, Stmt, Expr, E, S, G, B, Binding, Scope, Part, Dependency};
+use crate::Index;
+use crate::ungate_support::JSAst;
+use bun_js_parser::{UseDirective, ServerComponentBoundary};
+use bun_js_parser::ast::server_component_boundary;
 use bun_options_types::{ImportRecord, ImportKind};
-use bun_fs as Fs;
-use bun_data_url::DataURL;
-use bun_node_fallbacks as NodeFallbackModules;
+use crate::ungate_support::bun_fs as Fs;
+use crate::ungate_support::{bun_fs, bun_css, import_record};
+use bun_resolver::DataURL;
+use crate::ungate_support::bun_node_fallbacks as NodeFallbackModules;
 use bun_resolver::{self as _resolver, Resolver, is_package_path};
 use bun_threading::ThreadPool as ThreadPoolLib;
+use crate::options_impl::{TargetExt, LoaderExt};
+use crate::Graph::InputFileListExt;
 // TODO(b0): bake_types arrives from move-in (TYPE_ONLY Side/Graph/BuiltInModule/Framework → bundler)
-use crate::bake_types as bake;
+use self::bake_types as bake;
 
 /// CYCLEBREAK(b0) TYPE_ONLY: pure value types from bake that bundler needs without
 /// depending on the full DevServer. Move-in pass keeps these as the canonical defs;

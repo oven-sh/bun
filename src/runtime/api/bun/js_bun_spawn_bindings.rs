@@ -1189,26 +1189,26 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         debug_assert!(out != JSValue::ZERO);
 
         if on_exit_callback.is_cell() {
-            jsc::Codegen::JSSubprocess::on_exit_callback_set_cached(out, global_this, on_exit_callback);
+            Subprocess::js::on_exit_callback_set_cached(out, global_this, on_exit_callback);
         }
         if on_disconnect_callback.is_cell() {
-            jsc::Codegen::JSSubprocess::on_disconnect_callback_set_cached(
+            Subprocess::js::on_disconnect_callback_set_cached(
                 out,
                 global_this,
                 on_disconnect_callback,
             );
         }
         if ipc_callback.is_cell() {
-            jsc::Codegen::JSSubprocess::ipc_callback_set_cached(out, global_this, ipc_callback);
+            Subprocess::js::ipc_callback_set_cached(out, global_this, ipc_callback);
         }
 
         if let Stdio::ReadableStream(rs) = &stdio[0] {
-            jsc::Codegen::JSSubprocess::stdin_set_cached(out, global_this, rs.value);
+            Subprocess::js::stdin_set_cached(out, global_this, rs.value);
         }
 
         // Cache the terminal JS value if a terminal was created
         if terminal_js_value != JSValue::ZERO {
-            jsc::Codegen::JSSubprocess::terminal_set_cached(out, global_this, terminal_js_value);
+            Subprocess::js::terminal_set_cached(out, global_this, terminal_js_value);
         }
 
         match subprocess.process.watch() {
@@ -1351,7 +1351,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         if let Some(signal) = subprocess.abort_signal {
             // SAFETY: subprocess.abort_signal was ref'd via pending_activity_ref above and is live until unref.
             if let Some(abort_signal_timeout) = unsafe { (*signal).get_timeout() } {
-                if abort_signal_timeout.event_loop_timer.state == jsc::TimerState::ACTIVE {
+                if abort_signal_timeout.event_loop_timer.state == crate::timer::EventLoopTimerState::ACTIVE {
                     if user_timespec.eql(&bun_core::timespec::EPOCH)
                         || abort_signal_timeout.event_loop_timer.next.order(&user_timespec)
                             == core::cmp::Ordering::Less

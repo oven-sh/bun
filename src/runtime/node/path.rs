@@ -3341,6 +3341,20 @@ pub fn resolve_windows_t<'a, T: PathChar>(
     Ok(l::<T>(CHAR_STR_DOT))
 }
 
+// PORT NOTE: `bun.String.createUTF8ForJS` is tier-6 jsc — lives as a free fn in
+// `bun_jsc::bun_string_jsc`, not a method on `bun_string::String`. Alias the
+// module so the Zig-mirrored `BunString::create_utf8_for_js(...)` call shape
+// resolves throughout `mod _rest`.
+#[allow(unused_imports)]
+use crate::jsc::bun_string_jsc as BunString;
+#[allow(unused_imports)]
+use crate::node::validators_impl::validate_string;
+
+// path.zig:2749 — `extern "c" fn Process__getCachedCwd(*jsc.JSGlobalObject) jsc.JSValue;`
+extern "C" {
+    fn Process__getCachedCwd(global: *const JSGlobalObject) -> JSValue;
+}
+
 pub fn resolve_posix_js_t<T: PathChar>(
     global_object: &JSGlobalObject,
     paths: &[&[T]],

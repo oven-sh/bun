@@ -10,7 +10,8 @@ use bun_sys::{self, Fd, Mode, O};
 use bun_core::{self, fmt as bun_fmt};
 use bun_wyhash::hash;
 
-use crate::webcore::Blob;
+use crate::webcore::{Blob, Request, Response};
+use crate::node::util::validators;
 
 // ─── b2-blocked stubs ─────────────────────────────────────────────────────
 // `SliceWithUnderlyingString` lives in `bun_str::lib_draft_b1.rs`, not yet
@@ -100,7 +101,7 @@ impl Buffer {
 pub struct ArgumentsSlice {
     pub remaining: &'static [JSValue],
     pub will_be_async: bool,
-    pub vm: *mut jsc::VirtualMachine,
+    pub vm: *mut jsc::VirtualMachineRef,
 }
 impl Default for ArgumentsSlice {
     fn default() -> Self {

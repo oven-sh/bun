@@ -215,8 +215,8 @@ pub extern "C" fn us_dispatch_ssl_raw_tap(
         let slice = unsafe {
             core::slice::from_raw_parts(data, usize::try_from(len).expect("len >= 0"))
         };
-        raw.on_data(<TLSSocket as uws::SocketWrapper>::Socket::from(s), slice);
-        // TODO(port): verify `TLSSocket::Socket::from(s)` path — Zig: `TLSSocket.Socket.from(s)`
+        // Zig: `TLSSocket.Socket.from(s)` where `Socket = uws.NewSocketHandler(ssl)`.
+        raw.on_data(uws::NewSocketHandler::<true>::from(s), slice);
     }
     s
 }

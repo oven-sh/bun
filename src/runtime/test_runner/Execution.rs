@@ -584,7 +584,8 @@ impl Execution {
             );
 
             if entry.base.test_id_for_debugger != 0 {
-                if let Some(debugger) = VirtualMachine::get().debugger.as_mut() {
+                // SAFETY: VirtualMachine::get() returns the live singleton.
+                if let Some(debugger) = unsafe { (*VirtualMachine::get()).debugger.as_mut() } {
                     if debugger.test_reporter_agent.is_enabled() {
                         debugger
                             .test_reporter_agent
@@ -660,7 +661,8 @@ impl Execution {
             // SAFETY: arena-owned entry
             let entry = unsafe { entry_ptr.as_ref() };
             if entry.base.test_id_for_debugger != 0 {
-                if let Some(debugger) = VirtualMachine::get().debugger.as_mut() {
+                // SAFETY: VirtualMachine::get() returns the live singleton.
+                if let Some(debugger) = unsafe { (*VirtualMachine::get()).debugger.as_mut() } {
                     if debugger.test_reporter_agent.is_enabled() {
                         use bun_jsc::Debugger::TestStatus as S;
                         debugger.test_reporter_agent.report_test_end(

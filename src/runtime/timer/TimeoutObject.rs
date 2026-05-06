@@ -160,7 +160,10 @@ impl TimeoutObject {
         }
     }
 
-    #[bun_jsc::host_fn]
+    // C-ABI shim (`TimeoutClass__construct`) is emitted by `#[bun_jsc::JsClass]`
+    // on the struct via `host_fn_construct_result`; do not also annotate with
+    // `#[host_fn]` here — its `Free`-kind expansion calls `constructor(..)` as
+    // a bare path, which fails to resolve inside an `impl` block.
     pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Self> {
         // TODO(port): narrow error set
         Err(global.throw("Timeout is not constructible", format_args!("")))

@@ -349,6 +349,20 @@ pub mod framework_router {
     /// `FrameworkRouter.TinyLog` — small fixed-buffer log for parse errors.
     #[derive(Default)]
     pub struct TinyLog(());
+
+    // ── re-exports from the full FrameworkRouter.rs draft ───────────────
+    // production.rs needs `Part`, `init_empty`, `scan_all`, `route_ptr`,
+    // `InsertionHandler`; surface them here so callers go through the
+    // canonical `crate::bake::framework_router` path.
+    pub use super::framework_router_body::{InsertionHandler, Part};
+
+    impl InsertionContext {
+        /// Zig: `InsertionContext.wrap(T, ptr)` — comptime vtable generation.
+        /// Port: thin shim over the trait-object form (`&mut dyn InsertionHandler`).
+        pub fn wrap<T: InsertionHandler>(ctx: &mut T) -> &mut dyn InsertionHandler {
+            ctx
+        }
+    }
 }
 pub use framework_router as FrameworkRouter;
 

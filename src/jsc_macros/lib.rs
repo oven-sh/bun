@@ -490,6 +490,7 @@ fn js_class_hooks(args: &JsClassArgs, strukt: &ItemStruct) -> TokenStream2 {
     let from_js_sym = format!("{ty_name}__fromJS");
     let from_js_direct_sym = format!("{ty_name}__fromJSDirect");
     let create_sym = format!("{ty_name}__create");
+    let get_ctor_sym = format!("{ty_name}__getConstructor");
 
     let finalize_hook = if args.no_finalize {
         quote! {}

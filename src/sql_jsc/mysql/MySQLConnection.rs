@@ -315,12 +315,55 @@ impl MySQLConnection {
     }
 
     pub fn upgrade_to_tls(&mut self) -> Result<(), FlushQueueError> {
-        // TODO(b2-blocked): bun_uws::NewSocketHandler::adopt_tls + ext<T> +
-        // start_tls_handshake. Body gated until uws TLS-adopt surface lands.
-        // The Zig body adopts the TCP socket into the mysql TLS group, repoints
-        // ext storage to the JSMySQLConnection*, and kicks the handshake.
-        let _ = (uws::SocketKind::MysqlTls, &self.secure, &self.tls_config);
-        unimplemented!("b2-blocked: bun_uws::adopt_tls")
+        // Only adopt if we're currently a plain TCP socket.
+        let Socket::SocketTcp(tcp) = &self.socket else { return Ok(()) };
+        let uws::InternalSocket::Connected(raw) = tcp.socket else { return Ok(()) };
+
+        let vm = crate::jsc::VirtualMachine::get();
+        // PORT NOTE: reshaped for borrowck — `rare_data()` borrows `vm` mutably
+        // while `mysql_group` also wants `&VirtualMachine`; route through a raw
+        // pointer (Zig passed the same `vm` twice with no aliasing rules).
+        let vm_ptr: *mut crate::jsc::VirtualMachine = vm;
+        // SAFETY: `vm_ptr` is the live VM singleton; the two derefs do not
+        // produce overlapping `&mut` (rare_data accesses a disjoint field).
+        let tls_group = unsafe { (*vm_ptr).rare_data().mysql_group(&*vm_ptr, true) };
+
+        // SAFETY: `secure` is set to a live `SSL_CTX*` before TLS upgrade is
+        // requested (Zig: `this.#secure.?`).
+        let ssl_ctx = unsafe { &mut *self.secure.expect("secure SSL_CTX must be set before upgradeToTLS") };
+        let sni = if self.tls_config.server_name.is_null() {
+            None
+        } else {
+            // SAFETY: `server_name` is a NUL-terminated C string owned by
+            // `tls_config` for the connection lifetime.
+            Some(unsafe { core::ffi::CStr::from_ptr(self.tls_config.server_name) })
+        };
+        let ext_size = core::mem::size_of::<Option<*mut JSMySQLConnection>>() as i32;
+
+        // SAFETY: `raw` is a live connected `us_socket_t*`; `tls_group` is a
+        // live SocketGroup; adopt_tls may realloc and return a different ptr.
+        let Some(new_socket) = (unsafe { &mut *raw }).adopt_tls(
+            // SAFETY: `tls_group` is non-null (lazy-init in `mysql_group`).
+            unsafe { &mut *tls_group },
+            uws::SocketKind::MysqlTls,
+            ssl_ctx,
+            sni,
+            ext_size,
+            ext_size,
+        ) else {
+            return Err(FlushQueueError::AuthenticationFailed);
+        };
+
+        let js_connection = self.get_js_connection();
+        // SAFETY: ext storage was sized for `Option<*mut JSMySQLConnection>` above.
+        unsafe { *new_socket.as_ptr().ext::<Option<*mut JSMySQLConnection>>() = Some(js_connection) };
+        self.socket = Socket::SocketTls(uws::SocketTLS {
+            socket: uws::InternalSocket::Connected(new_socket.as_ptr()),
+        });
+        // ext is now repointed; safe to kick the handshake (any dispatch lands here).
+        // SAFETY: `new_socket` is a live us_socket_t with an attached SSL*.
+        unsafe { (*new_socket.as_ptr()).start_tls_handshake() };
+        Ok(())
     }
 
     pub fn set_socket(&mut self, socket: Socket) {

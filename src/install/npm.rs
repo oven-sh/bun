@@ -1281,7 +1281,7 @@ pub mod package_manifest {
         }
 
         pub fn read_array<'a, T: Copy>(
-            stream: &mut bun_io::FixedBufferStream<'a>,
+            stream: &mut bun_io::FixedBufferStream<&'a [u8]>,
         ) -> Result<&'a [T], Error> {
             let byte_len = stream.read_int_le::<u64>()?;
             if byte_len == 0 {

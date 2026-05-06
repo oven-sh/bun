@@ -296,9 +296,9 @@ impl Context {
                 if unsafe { c::BrotliEncoderSetParameter(self.state_ptr().cast(), key, value) } == 0
                 {
                     return Error::init(
-                        "Setting parameter failed",
+                        c"Setting parameter failed".as_ptr(),
                         -1,
-                        "ERR_BROTLI_PARAM_SET_FAILED",
+                        c"ERR_BROTLI_PARAM_SET_FAILED".as_ptr(),
                     );
                 }
                 Error::ok()
@@ -308,9 +308,9 @@ impl Context {
                 if unsafe { c::BrotliDecoderSetParameter(self.state_ptr().cast(), key, value) } == 0
                 {
                     return Error::init(
-                        "Setting parameter failed",
+                        c"Setting parameter failed".as_ptr(),
                         -1,
-                        "ERR_BROTLI_PARAM_SET_FAILED",
+                        c"ERR_BROTLI_PARAM_SET_FAILED".as_ptr(),
                     );
                 }
                 Error::ok()
@@ -428,9 +428,9 @@ impl Context {
                 // SAFETY: e is the active field after an encode do_work().
                 if unsafe { self.last_result.e } == 0 {
                     return Error::init(
-                        "Compression failed",
+                        c"Compression failed".as_ptr(),
                         -1,
-                        "ERR_BROTLI_COMPRESSION_FAILED",
+                        c"ERR_BROTLI_COMPRESSION_FAILED".as_ptr(),
                     );
                 }
                 Error::ok()
@@ -438,7 +438,7 @@ impl Context {
             bun_zlib::NodeMode::BROTLI_DECODE => {
                 if self.error_ != c::BrotliDecoderErrorCode2::NO_ERROR {
                     return Error::init(
-                        "Decompression failed",
+                        c"Decompression failed".as_ptr(),
                         self.error_ as i32,
                         code_for_error(self.error_),
                     );
@@ -447,9 +447,9 @@ impl Context {
                     && unsafe { self.last_result.d } == c::BrotliDecoderResult::needs_more_input
                 {
                     return Error::init(
-                        "unexpected end of file",
+                        c"unexpected end of file".as_ptr(),
                         bun_zlib::ReturnCode::BufError as i32,
-                        "Z_BUF_ERROR",
+                        c"Z_BUF_ERROR".as_ptr(),
                     );
                 }
                 Error::ok()
@@ -493,7 +493,7 @@ impl CompressionContext for Context {
         Context::close(self)
     }
     #[inline]
-    fn get_error_info(&self) -> Error {
+    fn get_error_info(&mut self) -> Error {
         Context::get_error_info(self)
     }
     #[inline]
@@ -585,12 +585,12 @@ impl CompressionStreamImpl for NativeBrotli {
     }
 }
 
-fn code_for_error(err: c::BrotliDecoderErrorCode2) -> &'static str {
+fn code_for_error(err: c::BrotliDecoderErrorCode2) -> *const core::ffi::c_char {
     // Zig: `inline for (std.meta.fieldNames(E), std.enums.values(E)) |n, v|
     //          if (err == v) return "ERR_BROTLI_DECODER_" ++ n;`
     // TODO(port): comptime reflection over enum variants. Generate a static
     // match (or phf table) in bun_brotli mapping each BrotliDecoderErrorCode2
-    // variant to concat!("ERR_BROTLI_DECODER_", name).
+    // variant to a `c"ERR_BROTLI_DECODER_<name>"` literal.
     let _ = err;
     unreachable!("ERR_BROTLI_DECODER_* table not yet generated")
 }

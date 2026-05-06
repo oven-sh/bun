@@ -199,12 +199,12 @@ impl NativeZstd {
             let err_ = this.stream.set_params(c_uint::try_from(i).unwrap(), x);
             if err_.is_error() {
                 this.stream.close();
-                // is_error() ⇔ msg.is_some()
-                let msg = err_.msg.unwrap_or("");
+                // SAFETY: is_error() ⇔ msg is non-null; it points at a NUL-terminated C string.
+                let msg = unsafe { CStr::from_ptr(err_.msg) }.to_bytes();
                 return Err(global
                     .err(
                         jsc::ErrorCode::ZLIB_INITIALIZATION_FAILED,
-                        format_args!("{msg}"),
+                        format_args!("{}", bstr::BStr::new(msg)),
                     )
                     .throw());
             }
@@ -270,9 +270,9 @@ impl Context {
                 let state = unsafe { c::ZSTD_createCCtx() };
                 if state.is_null() {
                     return Error::init(
-                        "Could not initialize zstd instance",
+                        c"Could not initialize zstd instance".as_ptr(),
                         -1,
-                        "ERR_ZLIB_INITIALIZATION_FAILED",
+                        c"ERR_ZLIB_INITIALIZATION_FAILED".as_ptr(),
                     );
                 }
                 self.state = Some(state.cast());
@@ -284,9 +284,9 @@ impl Context {
                     let _ = unsafe { c::ZSTD_freeCCtx(state) };
                     self.state = None;
                     return Error::init(
-                        "Could not set pledged src size",
+                        c"Could not set pledged src size".as_ptr(),
                         -1,
-                        "ERR_ZLIB_INITIALIZATION_FAILED",
+                        c"ERR_ZLIB_INITIALIZATION_FAILED".as_ptr(),
                     );
                 }
                 Error::OK
@@ -296,9 +296,9 @@ impl Context {
                 let state = unsafe { c::ZSTD_createDCtx() };
                 if state.is_null() {
                     return Error::init(
-                        "Could not initialize zstd instance",
+                        c"Could not initialize zstd instance".as_ptr(),
                         -1,
-                        "ERR_ZLIB_INITIALIZATION_FAILED",
+                        c"ERR_ZLIB_INITIALIZATION_FAILED".as_ptr(),
                     );
                 }
                 self.state = Some(state.cast());
@@ -317,7 +317,7 @@ impl Context {
                 };
                 // SAFETY: ZSTD_isError is a pure fn on usize.
                 if unsafe { c::ZSTD_isError(result) } > 0 {
-                    return Error::init("Setting parameter failed", -1, "ERR_ZSTD_PARAM_SET_FAILED");
+                    return Error::init(c"Setting parameter failed".as_ptr(), -1, c"ERR_ZSTD_PARAM_SET_FAILED".as_ptr());
                 }
                 Error::OK
             }
@@ -328,7 +328,7 @@ impl Context {
                 };
                 // SAFETY: ZSTD_isError is a pure fn on usize.
                 if unsafe { c::ZSTD_isError(result) } > 0 {
-                    return Error::init("Setting parameter failed", -1, "ERR_ZSTD_PARAM_SET_FAILED");
+                    return Error::init(c"Setting parameter failed".as_ptr(), -1, c"ERR_ZSTD_PARAM_SET_FAILED".as_ptr());
                 }
                 Error::OK
             }

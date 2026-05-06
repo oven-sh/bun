@@ -4762,16 +4762,17 @@ impl Blob {
                                     break;
                                 }
                                 jsc::JSType::DOMWrapper => {
-                                    if let Some(blob) = item.as_::<Blob>() {
+                                    if let Some(blob_ptr) = item.as_::<Blob>() {
+                                        // SAFETY: JS-heap pointer; single-threaded JS execution.
+                                        let blob = unsafe { &*blob_ptr };
                                         could_have_non_ascii = could_have_non_ascii
                                             || blob.charset != strings::AsciiStatus::AllAscii;
                                         joiner.push_static(blob.shared_view());
                                         continue;
                                     } else {
                                         let sliced = current.to_slice_clone(global)?;
-                                        let allocator = sliced.allocator_get();
-                                        could_have_non_ascii = could_have_non_ascii || allocator.is_some();
-                                        joiner.push(sliced.slice(), allocator);
+                                        could_have_non_ascii = could_have_non_ascii || sliced.is_allocated();
+                                        joiner.push_cloned(sliced.slice());
                                     }
                                 }
                                 _ => {}
@@ -4783,15 +4784,16 @@ impl Blob {
                 }
 
                 jsc::JSType::DOMWrapper => {
-                    if let Some(blob) = current.as_::<Blob>() {
+                    if let Some(blob_ptr) = current.as_::<Blob>() {
+                        // SAFETY: JS-heap pointer; single-threaded JS execution.
+                        let blob = unsafe { &*blob_ptr };
                         could_have_non_ascii =
                             could_have_non_ascii || blob.charset != strings::AsciiStatus::AllAscii;
                         joiner.push_static(blob.shared_view());
                     } else {
                         let sliced = current.to_slice_clone(global)?;
-                        let allocator = sliced.allocator_get();
-                        could_have_non_ascii = could_have_non_ascii || allocator.is_some();
-                        joiner.push(sliced.slice(), allocator);
+                        could_have_non_ascii = could_have_non_ascii || sliced.is_allocated();
+                        joiner.push_cloned(sliced.slice());
                     }
                 }
 
@@ -4820,8 +4822,8 @@ impl Blob {
                         let _end_result = joiner.done();
                         return Err(jsc::JsError::Thrown);
                     }
-                    could_have_non_ascii = could_have_non_ascii || !sliced.allocator_is_wtf();
-                    joiner.push(sliced.slice(), sliced.allocator_get());
+                    could_have_non_ascii = could_have_non_ascii || !sliced.is_wtf_backed();
+                    joiner.push_cloned(sliced.slice());
                 }
             }
             current = match stack.pop() {
@@ -4988,18 +4990,27 @@ impl Blob {
         // yet on the VM surface. Re-gated until both land; this only short-
         // circuits the `s3://` prefix, the file path below is unaffected.
         
+        // TODO(b2-blocked): the s3:// branch is gated until
+        // `bun_dotenv::Loader::get_s3_credentials` returns an owned/cloneable
+        // value (`Store::init_s3` consumes `S3Credentials` by value, env loader
+        // hands back `&S3Credentials`). Falls through to the file path below.
+        #[cfg(any())]
         if check_s3 {
             if let PathOrFileDescriptor::Path(ref p) = path_or_fd {
                 if p.slice().starts_with(b"s3://") {
-                    let credentials = global_this.bun_vm().transpiler.env.get_s3_credentials();
+                    // SAFETY: bun_vm() is live for the duration of a host call.
+                    let vm = unsafe { &mut *global_this.bun_vm() };
+                    // SAFETY: transpiler.env is set during VM init and outlives the VM.
+                    let credentials = unsafe { &mut *vm.transpiler.env }.get_s3_credentials();
                     let copy = core::mem::replace(
                         path_or_fd,
                         PathOrFileDescriptor::Path(crate::webcore::node_types::PathLike::String(
                             bun_str::PathString::default(),
                         )),
                     );
+                    let PathOrFileDescriptor::Path(path) = copy else { unreachable!() };
                     return Blob::init_with_store(
-                        Store::init_s3(copy.into_path(), None, credentials).expect("oom"),
+                        Store::init_s3(path, None, credentials).expect("oom"),
                         global_this,
                     );
                 }
@@ -5026,9 +5037,14 @@ impl Blob {
                 // opaque `Option<NonNull<c_void>>` until the graph type is
                 // ported; cannot `.find(slice)` on it yet. Re-gated.
                 
-                if let Some(graph) = global_this.bun_vm().standalone_module_graph {
-                    if let Some(file) = graph.find(slice) {
-                        return file.blob(global_this).dupe();
+                #[cfg(any())]
+                {
+                    // blocked_on: bun_jsc::VirtualMachine::standalone_module_graph
+                    // (typed as `Option<NonNull<c_void>>` until the graph type is ported)
+                    if let Some(graph) = unsafe { &*global_this.bun_vm() }.standalone_module_graph {
+                        if let Some(file) = graph.find(slice) {
+                            return file.blob(global_this).dupe();
+                        }
                     }
                 }
                 let _ = slice;
@@ -5050,8 +5066,11 @@ impl Blob {
                 // plain fd-backed `Store::File` below, which is behaviourally
                 // correct (just misses the cached-store fast path).
                 
+                #[cfg(any())]
                 if let Some(tag) = fd.stdio_tag() {
-                    let vm = global_this.bun_vm();
+                    // blocked_on: bun_jsc::rare_data::BlobStore ↔ webcore::blob::Store unification
+                    // (rare_data().stdin/out/err() return `&Arc<high_tier::BlobStore>`, not StoreRef)
+                    let vm = unsafe { &mut *global_this.bun_vm() };
                     let store = match tag {
                         bun_sys::Stdio::StdIn => vm.rare_data().stdin(),
                         bun_sys::Stdio::StdErr => vm.rare_data().stderr(),

@@ -932,19 +932,17 @@ impl ServerConfig {
         if let Some(value) = arg.get(global, "idleTimeout")? {
             if !value.is_undefined_or_null() {
                 if !value.is_any_int() {
-                    return global.throw_invalid_arguments(
+                    return Err(global.throw_invalid_arguments(
                         "Bun.serve expects idleTimeout to be an integer",
-                        &[],
-                    );
+                    ));
                 }
                 args.has_idle_timeout = true;
 
                 let idle_timeout: u64 = u64::try_from(value.to_int64().max(0)).unwrap();
                 if idle_timeout > 255 {
-                    return global.throw_invalid_arguments(
+                    return Err(global.throw_invalid_arguments(
                         "Bun.serve expects idleTimeout to be 255 or less",
-                        &[],
-                    );
+                    ));
                 }
 
                 args.idle_timeout = idle_timeout as u8;
@@ -959,12 +957,12 @@ impl ServerConfig {
         if let Some(websocket_object) = websocket_object {
             if !websocket_object.is_object() {
                 // ssl_config drops with args
-                return global
-                    .throw_invalid_arguments("Expected websocket to be an object", &[]);
+                return Err(global
+                    .throw_invalid_arguments("Expected websocket to be an object"));
             }
 
             // errdefer ssl_config.deinit() — drops with args on error
-            args.websocket = Some(WebSocketServerContext::on_create(global, websocket_object)?);
+            args.websocket = Some(super::super::web_socket_server_context::on_create(global, websocket_object)?);
         }
         if global.has_exception() {
             return Err(JsError::Thrown);
@@ -987,7 +985,7 @@ impl ServerConfig {
         if let Some(base_uri) = arg.get_truthy(global, "baseURI")? {
             let sliced = base_uri.to_slice(global)?;
 
-            if sliced.len() > 0 {
+            if !sliced.slice().is_empty() {
                 // sliced drops at scope end
                 args.base_uri = Box::<[u8]>::from(sliced.slice());
             }
@@ -1005,7 +1003,7 @@ impl ServerConfig {
             // host derefs on drop
             let host_str = host.to_utf8();
 
-            if host_str.len() > 0 {
+            if !host_str.slice().is_empty() {
                 let hostname =
                     CString::new(host_str.slice()).expect("hostname has no interior NUL");
                 if let Address::Tcp { hostname: h, .. } = &mut args.address {
@@ -1020,10 +1018,10 @@ impl ServerConfig {
 
         if let Some(unix) = arg.get_stringish(global, "unix")? {
             let unix_str = unix.to_utf8();
-            if unix_str.len() > 0 {
+            if !unix_str.slice().is_empty() {
                 if has_hostname {
-                    return global
-                        .throw_invalid_arguments("Cannot specify both hostname and unix", &[]);
+                    return Err(global
+                        .throw_invalid_arguments("Cannot specify both hostname and unix"));
                 }
 
                 args.address = Address::Unix(
@@ -1039,9 +1037,9 @@ impl ServerConfig {
             if id.is_undefined_or_null() {
                 args.allow_hot = false;
             } else {
-                let id_str = id.to_utf8_bytes(global)?;
-                if !id_str.is_empty() {
-                    args.id = id_str;
+                let id_str = id.to_slice(global)?;
+                if !id_str.slice().is_empty() {
+                    args.id = Box::<[u8]>::from(id_str.slice());
                 } else {
                     args.allow_hot = false;
                 }
@@ -1059,15 +1057,14 @@ impl ServerConfig {
                     }
                     if args.bake.is_some() {
                         // "app" is likely to be removed in favor of the HTML loader.
-                        return global
-                            .throw_invalid_arguments("'app' + HTML loader not supported.", &[]);
+                        return Err(global
+                            .throw_invalid_arguments("'app' + HTML loader not supported."));
                     }
 
                     if args.development == DevelopmentOption::Production {
-                        return global.throw_invalid_arguments(
+                        return Err(global.throw_invalid_arguments(
                             "TODO: 'development: false' in serve options with 'app'. For now, use `bun build --app` or set 'development: true'",
-                            &[],
-                        );
+                        ));
                     }
 
                     args.bake = Some(crate::bake::UserOptions::from_js(bake_args_js, global)?);
@@ -1113,9 +1110,9 @@ impl ServerConfig {
             return Err(JsError::Thrown);
         }
 
-        if let Some(on_error) = arg.get_truthy_comptime(global, "error")? {
+        if let Some(on_error) = arg.get_truthy(global, "error")? {
             if !on_error.is_callable() {
-                return global.throw_invalid_arguments("Expected error to be a function", &[]);
+                return Err(global.throw_invalid_arguments("Expected error to be a function"));
             }
             let on_error_snapshot = on_error.with_async_context_if_needed(global);
             args.on_error = Some(Strong::create(on_error_snapshot, global));
@@ -1126,10 +1123,9 @@ impl ServerConfig {
 
         if let Some(on_request_) = arg.get_truthy(global, "onNodeHTTPRequest")? {
             if !on_request_.is_callable() {
-                return global.throw_invalid_arguments(
+                return Err(global.throw_invalid_arguments(
                     "Expected onNodeHTTPRequest to be a function",
-                    &[],
-                );
+                ));
             }
             let on_request = on_request_.with_async_context_if_needed(global);
             args.on_node_http_request = Some(Strong::create(on_request, global));

@@ -281,7 +281,7 @@ pub mod js_fns {
 
                     // SAFETY: `get_current_and_valid_execution_sequence` returns a NonNull
                     // into `execution.sequences`; deref at point-of-use only.
-                    let sequence_ref = unsafe { sequence.as_mut() };
+                    let sequence_ref = unsafe { sequence.as_ref() };
                     let append_point: *mut ExecutionEntry = match tag {
                         GenericHookTag::AfterAll | GenericHookTag::AfterEach => 'blk: {
                             let mut iter = sequence_ref.active_entry;
@@ -978,9 +978,10 @@ impl<'a> BunTest<'a> {
         // only set the timer if the new timeout is sooner than the current timeout. this unfortunately means that we can't unset an unnecessary timer.
         bun_core::scoped_log!(
             bun_test_group,
-            "-> timeout: {:?} {:?}, {:?}",
+            "-> timeout: {:?} {}.{}, {:?}",
             min_timeout,
-            self.timer.next,
+            self.timer.next.sec,
+            self.timer.next.nsec,
             order_ignore_epoch(min_timeout, &self.timer.next)
         );
         if order_ignore_epoch(min_timeout, &self.timer.next) == core::cmp::Ordering::Less {
@@ -1355,12 +1356,15 @@ impl RefDataValue {
     }
 
     pub fn sequence<'a>(&self, buntest: &'a mut BunTest) -> Option<&'a mut Execution::ExecutionSequence> {
-        let RefDataValue::Execution { entry_data, .. } = self else { return None };
+        let RefDataValue::Execution { group_index, entry_data } = self else { return None };
         let entry_data = (*entry_data)?;
-        // PORT NOTE: reshaped for borrowck — split group lookup from sequences indexing
-        let group_item = self.group(buntest)?;
-        Some(&mut group_item.sequences_mut(&mut buntest.execution)[entry_data.sequence_index])
-        // TODO(port): overlapping &mut buntest.execution borrows; reshape in Phase B
+        // PORT NOTE: reshaped for borrowck — `ConcurrentGroup::sequences_mut`
+        // borrows `&mut Execution` while `group()` already holds a borrow into
+        // `execution.groups`. Read `(sequence_start, sequence_end)` first, then
+        // index `execution.sequences` directly.
+        let group = buntest.execution.groups.get(*group_index)?;
+        let (start, end) = (group.sequence_start, group.sequence_end);
+        Some(&mut buntest.execution.sequences[start..end][entry_data.sequence_index])
     }
 
     pub fn entry<'a>(&self, buntest: &'a mut BunTest) -> Option<&'a mut ExecutionEntry> {
@@ -1827,9 +1831,9 @@ impl ExecutionEntry {
                 ScopeMode::Skip => None,
                 ScopeMode::Todo => {
                     let run_todo = Jest::runner().map_or(false, |runner| runner.run_todo);
-                    if run_todo { Some(Strong::init(c)) } else { None }
+                    if run_todo { Some(strong_create(c)) } else { None }
                 }
-                _ => Some(Strong::init(c)),
+                _ => Some(strong_create(c)),
             };
         }
         entry

@@ -4,16 +4,17 @@ use bun_bundler::bundle_v2::{self, BundleV2};
 use bun_bundler::linker_context::metafile_builder as MetafileBuilder;
 use bun_bundler::options;
 use bun_bundler::transpiler;
-use crate::cli::Command;
+use crate::cli::command::{Context, HotReload};
 use bun_core::{fmt as bun_fmt, Global, Output};
 use bun_js_parser::runtime::Runtime;
+#[allow(unused_imports)]
 use bun_options_types::CompileTarget;
 use bun_core::env::OperatingSystem;
 use bun_options_types::Context::MacroOptions;
 use bun_options_types::schema::api;
 use bun_paths::{resolve_path, PathBuffer};
 use bun_str::strings;
-use bun_sys::{self, Fd};
+use bun_sys::{self, Fd, FdExt as _};
 
 // TODO(b2-blocked): `bun_standalone_graph` is not yet a `bun_runtime` dep —
 // add `bun_standalone_graph.workspace = true` when un-gating Cargo.toml.
@@ -38,21 +39,42 @@ fn target_base_public_path_root(os: OperatingSystem) -> &'static [u8] {
     }
 }
 
+/// Local shim for `writer.splatByteAll(b, n)` — `bun_core::io::Writer` has no
+/// such method yet; loop on `write_all`.
+#[inline]
+fn splat_byte_all(
+    writer: &mut bun_core::io::Writer,
+    byte: u8,
+    count: usize,
+) -> Result<(), bun_core::Error> {
+    let buf = [byte; 64];
+    let mut remaining = count;
+    while remaining > 0 {
+        let n = remaining.min(buf.len());
+        writer.write_all(&buf[..n])?;
+        remaining -= n;
+    }
+    Ok(())
+}
+
 pub struct BuildCommand;
 
 impl BuildCommand {
     pub fn exec(
-        ctx: Command::Context,
-        fetcher: Option<&mut bundle_v2::__phase_a_draft::DependenciesScanner>,
+        ctx: Context,
+        fetcher: Option<&mut bundle_v2::DependenciesScanner>,
     ) -> Result<(), bun_core::Error> {
         Global::configure_allocator(Global::AllocatorConfiguration { long_running: true, ..Default::default() });
         // PERF(port): allocator param dropped — global mimalloc
         let log = ctx.log;
+        // SAFETY: `ctx.log` is a long-lived `*mut Log` set up during CLI init
+        // and never freed for the duration of the command body.
+        let log_ref: &mut bun_logger::Log = unsafe { &mut *log };
         let user_requested_browser_target =
-            ctx.args.target.is_some() && ctx.args.target.unwrap() == options::Target::Browser;
+            ctx.args.target.is_some() && ctx.args.target.unwrap() == api::Target::Browser;
         if ctx.bundler_options.compile || ctx.bundler_options.bytecode {
             // set this early so that externals are set up correctly and define is right
-            ctx.args.target = Some(options::Target::Bun);
+            ctx.args.target = Some(api::Target::Bun);
         }
 
         if ctx.bundler_options.bake {
@@ -71,18 +93,18 @@ impl BuildCommand {
             let compile_define_values = compile_target.define_values();
 
             if let Some(define) = ctx.args.define.as_mut() {
-                let mut keys: Vec<&[u8]> =
+                let mut keys: Vec<Box<[u8]>> =
                     Vec::with_capacity(compile_define_keys.len() + define.keys.len());
-                keys.extend_from_slice(compile_define_keys);
-                keys.extend_from_slice(&define.keys);
+                keys.extend(compile_define_keys.iter().map(|s| Box::<[u8]>::from(*s)));
+                keys.extend(define.keys.drain(..));
                 // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
-                let mut values: Vec<&[u8]> =
+                let mut values: Vec<Box<[u8]>> =
                     Vec::with_capacity(compile_define_values.len() + define.values.len());
-                values.extend_from_slice(compile_define_values);
-                values.extend_from_slice(&define.values);
+                values.extend(compile_define_values.iter().map(|s| Box::<[u8]>::from(*s)));
+                values.extend(define.values.drain(..));
 
-                define.keys = keys.into_boxed_slice();
-                define.values = values.into_boxed_slice();
+                define.keys = keys;
+                define.values = values;
             } else {
                 ctx.args.define = Some(api::StringMap {
                     keys: compile_define_keys
@@ -97,12 +119,17 @@ impl BuildCommand {
             }
         }
 
-        let mut this_transpiler = transpiler::Transpiler::init(log, ctx.args.clone(), None)?;
+        // PORT NOTE: `Transpiler::init` now takes an arena. Process-lifetime;
+        // owned by a `Box` and leaked into `'static` because the transpiler
+        // borrows it for `'a` and `exec` never returns until process exit
+        // (`exit_or_watch` diverges).
+        let arena: &'static bun_alloc::Arena = Box::leak(Box::new(bun_alloc::Arena::new()));
+        let mut this_transpiler = transpiler::Transpiler::init(arena, log, ctx.args.clone(), None)?;
         if let Some(fetch) = fetcher.as_deref() {
             this_transpiler.options.entry_points = fetch.entry_points.clone();
-            this_transpiler.resolver.opts.entry_points = fetch.entry_points.clone();
+            // resolver.opts is a distinct subset type; entry_points / IMRE live
+            // only on the bundler-side options struct (resolver never reads them).
             this_transpiler.options.ignore_module_resolution_errors = true;
-            this_transpiler.resolver.opts.ignore_module_resolution_errors = true;
         }
 
         this_transpiler.options.source_map =
@@ -116,7 +143,6 @@ impl BuildCommand {
         {
             Output::pretty_errorln(
                 "<r><red>error<r><d>:<r> cannot use an external source map without --outdir",
-                format_args!(""),
             );
             Global::exit(1);
         }
@@ -145,15 +171,20 @@ impl BuildCommand {
         this_transpiler.options.emit_dce_annotations = ctx.bundler_options.emit_dce_annotations;
         this_transpiler.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
 
-        this_transpiler.options.banner = ctx.bundler_options.banner.clone();
-        this_transpiler.options.footer = ctx.bundler_options.footer.clone();
-        this_transpiler.options.drop = ctx.args.drop.clone();
-        this_transpiler.options.bundler_feature_flags =
-            Runtime::Features::init_bundler_feature_flags(&ctx.args.feature_flags);
+        this_transpiler.options.banner =
+            std::borrow::Cow::Owned(ctx.bundler_options.banner.clone().into_vec());
+        this_transpiler.options.footer =
+            std::borrow::Cow::Owned(ctx.bundler_options.footer.clone().into_vec());
+        this_transpiler.options.drop = ctx.args.drop.clone().into();
+        {
+            let flags: Vec<&[u8]> = ctx.args.feature_flags.iter().map(|s| &**s).collect();
+            this_transpiler.options.bundler_feature_flags =
+                Runtime::Features::init_bundler_feature_flags(&flags);
+        }
 
         this_transpiler.options.allow_unresolved =
             if let Some(a) = ctx.bundler_options.allow_unresolved.as_ref() {
-                options::AllowUnresolved::from_strings(a)
+                options::AllowUnresolved::from_strings(a.clone().into_boxed_slice())
             } else {
                 options::AllowUnresolved::All
             };
@@ -175,7 +206,6 @@ impl BuildCommand {
             if ctx.bundler_options.transform_only {
                 Output::pretty_errorln(
                     "<r><red>error<r><d>:<r> --compile does not support --no-bundle",
-                    format_args!(""),
                 );
                 Global::exit(1);
             }
@@ -195,11 +225,10 @@ impl BuildCommand {
 
             if user_requested_browser_target && has_all_html_entrypoints {
                 // --compile --target=browser with all HTML entrypoints: produce self-contained HTML
-                ctx.args.target = Some(options::Target::Browser);
+                ctx.args.target = Some(api::Target::Browser);
                 if ctx.bundler_options.code_splitting {
                     Output::pretty_errorln(
                         "<r><red>error<r><d>:<r> cannot use --compile --target browser with --splitting",
-                        format_args!(""),
                     );
                     Global::exit(1);
                 }
@@ -220,7 +249,6 @@ impl BuildCommand {
                 if !ctx.bundler_options.outdir.is_empty() {
                     Output::pretty_errorln(
                         "<r><red>error<r><d>:<r> cannot use --compile with --outdir",
-                        format_args!(""),
                     );
                     Global::exit(1);
                 }
@@ -256,7 +284,6 @@ impl BuildCommand {
                 if outfile == b"bun" || outfile == b"bunx" {
                     Output::pretty_errorln(
                         "<r><red>error<r><d>:<r> cannot use --compile with an output file named 'bun' because bun won't realize it's a standalone executable. Please choose a different name for --outfile",
-                        format_args!(""),
                     );
                     Global::exit(1);
                 }
@@ -269,7 +296,6 @@ impl BuildCommand {
                 if strings::has_suffix_comptime(entry_point, b".html") {
                     Output::pretty_errorln(
                         "<r><red>error<r><d>:<r> HTML imports are only supported when bundling",
-                        format_args!(""),
                     );
                     Global::exit(1);
                 }
@@ -283,14 +309,12 @@ impl BuildCommand {
             if this_transpiler.options.entry_points.len() > 1 {
                 Output::pretty_errorln(
                     "<r><red>error<r><d>:<r> Must use <b>--outdir<r> when specifying more than one entry point.",
-                    format_args!(""),
                 );
                 Global::exit(1);
             }
             if this_transpiler.options.code_splitting {
                 Output::pretty_errorln(
                     "<r><red>error<r><d>:<r> Must use <b>--outdir<r> when code splitting is enabled",
-                    format_args!(""),
                 );
                 Global::exit(1);
             }
@@ -308,37 +332,38 @@ impl BuildCommand {
                         .unwrap_or(b".");
                 }
 
-                resolve_path::get_if_exists_longest_common_path(
-                    &this_transpiler.options.entry_points,
-                )
-                .unwrap_or(b".")
+                let entries: Vec<&[u8]> =
+                    this_transpiler.options.entry_points.iter().map(|s| &**s).collect();
+                resolve_path::get_if_exists_longest_common_path(&entries).unwrap_or(b".")
             };
 
             // TODO(port): std.posix.toPosixPath — NUL-terminate path into a stack buffer
             let dir = match bun_sys::open_dir_at(Fd::cwd(), path) {
                 Ok(d) => d,
                 Err(err) => {
-                    Output::pretty_errorln(
+                    Output::pretty_errorln(format_args!(
                         "<r><red>{}<r> opening root directory {}",
-                        format_args!("{} {}", err.name(), bun_fmt::quote(path)),
-                    );
+                        bstr::BStr::new(err.name()),
+                        bun_fmt::quote(path),
+                    ));
                     Global::exit(1);
                 }
             };
             // TODO(port): defer dir.close() — using explicit close after use; consider RAII guard in Phase B
 
-            let result = match dir.get_fd_path(&mut src_root_dir_buf) {
+            let result = match bun_sys::get_fd_path(dir, &mut src_root_dir_buf) {
                 Ok(p) => p,
                 Err(err) => {
-                    Output::pretty_errorln(
+                    Output::pretty_errorln(format_args!(
                         "<r><red>{}<r> resolving root directory {}",
-                        format_args!("{} {}", err.name(), bun_fmt::quote(path)),
-                    );
+                        bstr::BStr::new(err.name()),
+                        bun_fmt::quote(path),
+                    ));
                     Global::exit(1);
                 }
             };
             dir.close();
-            break 'brk1 result;
+            break 'brk1 &*result;
         };
 
         this_transpiler.options.root_dir = src_root_dir.into();
@@ -349,7 +374,8 @@ impl BuildCommand {
         this_transpiler.options.env.prefix = ctx.bundler_options.env_prefix.clone();
 
         if ctx.bundler_options.production {
-            this_transpiler.env.map.put(b"NODE_ENV", b"production")?;
+            // SAFETY: `env` is a process-lifetime singleton set in `Transpiler::init`.
+            unsafe { (*this_transpiler.env).map.put(b"NODE_ENV", b"production")? };
         }
 
         this_transpiler.configure_defines()?;
@@ -362,8 +388,13 @@ impl BuildCommand {
                 .append_slice(&[b"development" as &[u8]])?;
         }
 
-        this_transpiler.resolver.opts = this_transpiler.options.clone();
-        this_transpiler.resolver.env_loader = this_transpiler.env.clone();
+        // PORT NOTE: `resolver.opts` is the canonical
+        // `bun_resolver::options::BundleOptions` subset, distinct from the
+        // bundler-side `BundleOptions<'a>`; the subset is built once inside
+        // `Transpiler::init` via `resolver_bundle_options_subset`. Re-syncing
+        // the full struct here is blocked on that helper becoming `pub`.
+        // todo!("blocked_on: bun_bundler::transpiler::resolver_bundle_options_subset");
+        this_transpiler.resolver.env_loader = core::ptr::NonNull::new(this_transpiler.env);
 
         // Allow tsconfig.json overriding, but always set it to false if --production is passed.
         if ctx.bundler_options.production {
@@ -375,8 +406,8 @@ impl BuildCommand {
             MacroOptions::Disable => {
                 this_transpiler.options.no_macros = true;
             }
-            MacroOptions::Map(macros) => {
-                this_transpiler.options.macro_remap = macros.clone();
+            MacroOptions::Map(_macros) => {
+                todo!("blocked_on: bun_bundler::options::macro_remap (StringArrayHashMap conversion)");
             }
             MacroOptions::Unspecified => {}
         }
@@ -384,8 +415,10 @@ impl BuildCommand {
         // TODO(port): client_transpiler is left uninitialized in Zig until needed; using Option here
         let mut client_transpiler: Option<transpiler::Transpiler> = None;
         if this_transpiler.options.server_components {
-            let mut ct = transpiler::Transpiler::init(log, ctx.args.clone(), None)?;
-            ct.options = this_transpiler.options.clone();
+            let mut ct = transpiler::Transpiler::init(arena, log, ctx.args.clone(), None)?;
+            // PORT NOTE: `BundleOptions<'a>` is non-`Clone`; Zig copied the
+            // struct by value. Field-wise re-init is deferred.
+            // todo!("blocked_on: bun_bundler::BundleOptions::clone");
             ct.options.target = options::Target::Browser;
             ct.options.server_components = true;
             ct.options.conditions = this_transpiler.options.conditions.clone()?;
@@ -397,25 +430,16 @@ impl BuildCommand {
             this_transpiler.options.react_fast_refresh = false;
             this_transpiler.options.minify_syntax = true;
             ct.options.minify_syntax = true;
-            ct.options.define = options::Define::init(
-                if let Some(user_defines) = ctx.args.define.as_ref() {
-                    Some(options::Define::Data::from_input(
-                        options::string_hash_map_from_arrays::<options::defines::RawDefines>(
-                            user_defines.keys.len() + 4,
-                            &user_defines.keys,
-                            &user_defines.values,
-                        )?,
-                        &ctx.args.drop,
-                        log,
-                    )?)
-                } else {
-                    None
-                },
-                None,
-                this_transpiler.options.define.drop_debugger,
-                this_transpiler.options.dead_code_elimination
-                    && this_transpiler.options.minify_syntax,
-            )?;
+            {
+                use bun_bundler::DefineExt as _;
+                ct.options.define = options::Define::init(
+                    None, // TODO(port): user_defines from ctx.args.define — RawDefines builder pending
+                    None,
+                    this_transpiler.options.define.drop_debugger,
+                    this_transpiler.options.dead_code_elimination
+                        && this_transpiler.options.minify_syntax,
+                )?;
+            }
 
             crate::bake::bake_body::add_import_meta_defines(
                 &mut this_transpiler.options.define,
@@ -428,10 +452,9 @@ impl BuildCommand {
                 crate::bake::Side::Client,
             )?;
 
-            this_transpiler.resolver.opts = this_transpiler.options.clone();
-            this_transpiler.resolver.env_loader = this_transpiler.env.clone();
-            ct.resolver.opts = ct.options.clone();
-            ct.resolver.env_loader = ct.env.clone();
+            // resolver.opts re-sync deferred — see note above.
+            this_transpiler.resolver.env_loader = core::ptr::NonNull::new(this_transpiler.env);
+            ct.resolver.env_loader = core::ptr::NonNull::new(ct.env);
             client_transpiler = Some(ct);
         }
         let _ = client_transpiler;
@@ -447,26 +470,15 @@ impl BuildCommand {
         let mut minify_duration: u64 = 0;
         let mut input_code_length: u64 = 0;
 
-        let output_files: &mut [options::OutputFile] = 'brk: {
+        let mut output_files: Vec<options::OutputFile> = 'brk: {
             if ctx.bundler_options.transform_only {
                 this_transpiler.options.import_path_format =
                     options::ImportPathFormat::Relative;
                 this_transpiler.options.allow_runtime = false;
-                this_transpiler.resolver.opts.allow_runtime = false;
 
                 // TODO: refactor this .transform function
-                let result = this_transpiler.transform(ctx.log, ctx.args.clone())?;
-
-                if log.has_errors() {
-                    log.print(Output::error_writer())?;
-
-                    if !result.errors.is_empty() || result.output_files.is_empty() {
-                        Output::flush();
-                        exit_or_watch(1, ctx.debug.hot_reload == Command::HotReload::Watch);
-                    }
-                }
-
-                break 'brk result.output_files;
+                let _ = (&ctx.args,);
+                todo!("blocked_on: bun_bundler::Transpiler::transform");
             }
 
             if ctx.bundler_options.outdir.is_empty()
@@ -484,29 +496,30 @@ impl BuildCommand {
                 if let Some(dir) = bun_core::dirname(outfile) {
                     ctx.bundler_options.outdir = dir.into();
                 }
-                this_transpiler.resolver.opts.entry_naming =
-                    this_transpiler.options.entry_naming.clone();
+                // resolver.opts.entry_naming — field does not exist on the
+                // resolver subset; bundler-side `entry_naming` is sufficient.
             }
 
             let build_result = match BundleV2::generate_from_cli(
                 &mut this_transpiler,
-                bun_event_loop::AnyEventLoop::init(),
-                ctx.debug.hot_reload == Command::HotReload::Watch,
+                arena,
+                None, // EventLoop = Option<NonNull<()>>; CLI uses no JS loop
+                ctx.debug.hot_reload == HotReload::Watch,
                 &mut reachable_file_count,
                 &mut minify_duration,
                 &mut input_code_length,
-                fetcher,
+                fetcher.as_deref(),
             ) {
                 Ok(r) => r,
                 Err(err) => {
-                    if !log.msgs.is_empty() {
-                        log.print(Output::error_writer())?;
+                    if !log_ref.msgs.is_empty() {
+                        let _ = log_ref.print(Output::error_writer());
                     } else {
-                        write!(Output::error_writer(), "error: {}", err.name())?;
+                        let _ = write!(Output::error_writer(), "error: {}", err.name());
                     }
 
                     Output::flush();
-                    exit_or_watch(1, ctx.debug.hot_reload == Command::HotReload::Watch);
+                    exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
                 }
             };
 
@@ -514,31 +527,32 @@ impl BuildCommand {
             if let Some(metafile_json) = build_result.metafile.as_deref() {
                 if !ctx.bundler_options.metafile.is_empty() {
                     // Use makeOpen which auto-creates parent directories on failure
-                    let file = match bun_sys::File::make_open(
+                    let file = match bun_sys::File::openat(
+                        Fd::cwd(),
                         &ctx.bundler_options.metafile,
                         bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
                         0o664,
                     ) {
-                        bun_sys::Result::Ok(f) => f,
-                        bun_sys::Result::Err(err) => {
+                        Ok(f) => f,
+                        Err(err) => {
                             Output::err(
                                 err,
                                 "could not open metafile {}",
-                                format_args!("{}", bun_fmt::quote(&ctx.bundler_options.metafile)),
+                                (bun_fmt::quote(&ctx.bundler_options.metafile),),
                             );
-                            exit_or_watch(1, ctx.debug.hot_reload == Command::HotReload::Watch);
+                            exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
                         }
                     };
 
                     match file.write_all(metafile_json) {
-                        bun_sys::Result::Ok(()) => {}
-                        bun_sys::Result::Err(err) => {
+                        Ok(()) => {}
+                        Err(err) => {
                             Output::err(
                                 err,
                                 "could not write metafile {}",
-                                format_args!("{}", bun_fmt::quote(&ctx.bundler_options.metafile)),
+                                (bun_fmt::quote(&ctx.bundler_options.metafile),),
                             );
-                            exit_or_watch(1, ctx.debug.hot_reload == Command::HotReload::Watch);
+                            exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
                         }
                     }
                     drop(file);
@@ -549,50 +563,45 @@ impl BuildCommand {
                     let metafile_md = match MetafileBuilder::generate_markdown(metafile_json) {
                         Ok(md) => Some(md),
                         Err(err) => {
-                            Output::warn(
+                            Output::warn(format_args!(
                                 "Failed to generate markdown metafile: {}",
-                                format_args!("{}", err.name()),
-                            );
+                                err.name(),
+                            ));
                             None
                         }
                     };
                     if let Some(md_content) = metafile_md {
-                        let file = match bun_sys::File::make_open(
+                        let file = match bun_sys::File::openat(
+                            Fd::cwd(),
                             &ctx.bundler_options.metafile_md,
                             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
                             0o664,
                         ) {
-                            bun_sys::Result::Ok(f) => f,
-                            bun_sys::Result::Err(err) => {
+                            Ok(f) => f,
+                            Err(err) => {
                                 Output::err(
                                     err,
                                     "could not open metafile-md {}",
-                                    format_args!(
-                                        "{}",
-                                        bun_fmt::quote(&ctx.bundler_options.metafile_md)
-                                    ),
+                                    (bun_fmt::quote(&ctx.bundler_options.metafile_md),),
                                 );
                                 exit_or_watch(
                                     1,
-                                    ctx.debug.hot_reload == Command::HotReload::Watch,
+                                    ctx.debug.hot_reload == HotReload::Watch,
                                 );
                             }
                         };
 
                         match file.write_all(&md_content) {
-                            bun_sys::Result::Ok(()) => {}
-                            bun_sys::Result::Err(err) => {
+                            Ok(()) => {}
+                            Err(err) => {
                                 Output::err(
                                     err,
                                     "could not write metafile-md {}",
-                                    format_args!(
-                                        "{}",
-                                        bun_fmt::quote(&ctx.bundler_options.metafile_md)
-                                    ),
+                                    (bun_fmt::quote(&ctx.bundler_options.metafile_md),),
                                 );
                                 exit_or_watch(
                                     1,
-                                    ctx.debug.hot_reload == Command::HotReload::Watch,
+                                    ctx.debug.hot_reload == HotReload::Watch,
                                 );
                             }
                         }
@@ -602,15 +611,15 @@ impl BuildCommand {
                 }
             }
 
-            break 'brk build_result.output_files.as_mut_slice();
-            // TODO(port): lifetime — build_result must outlive this borrow; Phase B may need to restructure ownership
+            break 'brk build_result.output_files;
         };
+        let output_files: &mut [options::OutputFile] = &mut output_files;
         let bundled_end = bun_core::time::nano_timestamp();
 
         let mut had_err = false;
         'dump: {
             // Output::flush() runs at end of this block (defer in Zig); see explicit calls below
-            let mut writer = Output::writer_buffered();
+            let writer = Output::writer_buffered();
             let mut output_dir: &[u8] = &this_transpiler.options.output_dir;
 
             let will_be_one_file =
@@ -648,8 +657,8 @@ impl BuildCommand {
                     && ctx.bundler_options.outdir.is_empty()
                 {
                     // if --no-bundle is passed, it won't have an output dir
-                    if let options::OutputFileValue::Buffer(buffer) = &output_files[0].value {
-                        writer.write_all(&buffer.bytes)?;
+                    if let options::OutputFileValue::Buffer { bytes } = &output_files[0].value {
+                        writer.write_all(bytes)?;
                     }
                     Output::flush();
                     break 'dump;
@@ -670,9 +679,9 @@ impl BuildCommand {
                         Output::err(
                             err,
                             "could not open output directory {}",
-                            format_args!("{}", bun_fmt::quote(root_path)),
+                            (bun_fmt::quote(root_path),),
                         );
-                        exit_or_watch(1, ctx.debug.hot_reload == Command::HotReload::Watch);
+                        exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
                     }
                 }
             };
@@ -723,6 +732,7 @@ impl BuildCommand {
                 }
 
                 // TODO(port): outfile may need owned storage when reassigned to allocated buffer below
+                #[allow(unused_assignments)]
                 let mut outfile_owned: Vec<u8>;
                 if compile_target.os == OperatingSystem::Windows
                     && !strings::has_suffix_comptime(outfile, b".exe")
@@ -733,10 +743,13 @@ impl BuildCommand {
                     outfile = &outfile_owned;
                 } else if was_renamed_from_index && outfile != b"index" {
                     // If we're going to fail due to EISDIR, we should instead pick a different name.
-                    if bun_sys::directory_exists_at(Fd::from_std_dir(root_dir), outfile)
-                        .as_value()
-                        .unwrap_or(false)
-                    {
+                    let mut zbuf = PathBuffer::uninit();
+                    let n = outfile.len().min(zbuf.0.len() - 1);
+                    zbuf.0[..n].copy_from_slice(&outfile[..n]);
+                    zbuf.0[n] = 0;
+                    // SAFETY: NUL-terminated above.
+                    let z = unsafe { bun_str::ZStr::from_raw(zbuf.0.as_ptr(), n) };
+                    if bun_sys::directory_exists_at(root_dir.fd, z).unwrap_or(false) {
                         outfile = b"index";
                     }
                 }
@@ -748,7 +761,8 @@ impl BuildCommand {
                         root_dir.fd,
                         &this_transpiler.options.public_path,
                         outfile,
-                        &mut this_transpiler.env,
+                        // SAFETY: `env` is a process-lifetime singleton.
+                        unsafe { &mut *this_transpiler.env },
                         this_transpiler.options.output_format,
                         ctx.bundler_options.windows,
                         ctx.bundler_options.compile_exec_argv.as_deref().unwrap_or(b""),
@@ -799,16 +813,17 @@ impl BuildCommand {
                         if f.output_kind == options::OutputKind::Sourcemap
                             && matches!(f.value, options::OutputFileValue::Buffer { .. })
                         {
-                            let options::OutputFileValue::Buffer(buffer) = &f.value else {
+                            let options::OutputFileValue::Buffer { bytes } = &f.value else {
                                 continue;
                             };
-                            let sourcemap_bytes = &buffer.bytes;
+                            let sourcemap_bytes: &[u8] = bytes;
                             if sourcemap_bytes.is_empty() {
                                 continue;
                             }
 
                             // Use the sourcemap's own dest_path basename if available,
                             // otherwise fall back to {outfile}.map
+                            #[allow(unused_assignments)]
                             let mut map_basename_owned: Vec<u8>;
                             let map_basename: &[u8] = if !f.dest_path.is_empty() {
                                 bun_paths::basename(&f.dest_path)
@@ -853,15 +868,15 @@ impl BuildCommand {
                                     ..Default::default()
                                 },
                             ) {
-                                bun_sys::Result::Err(err) => {
+                                Err(err) => {
                                     Output::err(
                                         err,
                                         "failed to write sourcemap file '{}'",
-                                        format_args!("{}", bstr::BStr::new(map_basename)),
+                                        (bstr::BStr::new(map_basename),),
                                     );
                                     had_err = true;
                                 }
-                                bun_sys::Result::Ok(_) => {}
+                                Ok(_) => {}
                             }
                         }
                     }
@@ -879,58 +894,49 @@ impl BuildCommand {
                 let padding_buf = [b' '; 16];
                 let padding_ =
                     &padding_buf[0..usize::try_from(compiled_elapsed_digit_count).unwrap()];
-                Output::pretty("{}", format_args!("{}", bstr::BStr::new(padding_)));
+                Output::pretty(format_args!("{}", bstr::BStr::new(padding_)));
 
                 Output::print_elapsed_stdout_trim(compiled_elapsed as f64);
 
-                Output::pretty(
+                Output::pretty(format_args!(
                     " <green>compile<r>  <b><blue>{}{}<r>",
-                    format_args!(
-                        "{}{}",
-                        bstr::BStr::new(outfile),
-                        if compile_target.os == OperatingSystem::Windows
-                            && !strings::has_suffix_comptime(outfile, b".exe")
-                        {
-                            ".exe"
-                        } else {
-                            ""
-                        }
-                    ),
-                );
+                    bstr::BStr::new(outfile),
+                    if compile_target.os == OperatingSystem::Windows
+                        && !strings::has_suffix_comptime(outfile, b".exe")
+                    {
+                        ".exe"
+                    } else {
+                        ""
+                    }
+                ));
 
                 if is_cross_compile {
-                    Output::pretty(" <r><d>{}<r>\n", format_args!("{}", compile_target));
+                    Output::pretty(format_args!(" <r><d>{}<r>\n", compile_target));
                 } else {
-                    Output::pretty("\n", format_args!(""));
+                    Output::pretty(format_args!("\n"));
                 }
 
                 Output::flush();
                 break 'dump;
             }
 
-            if log.errors == 0 {
+            if log_ref.errors == 0 {
                 if this_transpiler.options.transform_only {
-                    Output::prettyln(
+                    Output::prettyln(format_args!(
                         "<green>Transpiled file in {}ms<r>",
-                        format_args!(
-                            "{}",
-                            (bun_core::time::nano_timestamp() - cli_start_time())
-                                / (bun_core::time::NS_PER_MS as i128)
-                        ),
-                    );
+                        (bun_core::time::nano_timestamp() - cli_start_time())
+                            / (bun_core::time::NS_PER_MS as i128)
+                    ));
                 } else {
-                    Output::prettyln(
+                    Output::prettyln(format_args!(
                         "<green>Bundled {} module{} in {}ms<r>",
-                        format_args!(
-                            "{} {} {}",
-                            reachable_file_count,
-                            if reachable_file_count == 1 { "" } else { "s" },
-                            (bun_core::time::nano_timestamp() - cli_start_time())
-                                / (bun_core::time::NS_PER_MS as i128)
-                        ),
-                    );
+                        reachable_file_count,
+                        if reachable_file_count == 1 { "" } else { "s" },
+                        (bun_core::time::nano_timestamp() - cli_start_time())
+                            / (bun_core::time::NS_PER_MS as i128)
+                    ));
                 }
-                Output::prettyln("\n", format_args!(""));
+                Output::prettyln(format_args!("\n"));
                 Output::flush();
             }
 
@@ -942,11 +948,11 @@ impl BuildCommand {
             }
 
             for f in output_files.iter() {
-                if let Err(err) = f.write_to_disk(root_dir, from_path) {
+                if let Err(err) = f.write_to_disk(root_dir.fd, from_path) {
                     Output::err(
                         err,
                         "failed to write file '{}'",
-                        format_args!("{}", bun_fmt::quote(&f.dest_path)),
+                        (bun_fmt::quote(&f.dest_path),),
                     );
                     had_err = true;
                     continue;
@@ -958,21 +964,19 @@ impl BuildCommand {
 
                 // Print summary
                 let padding_count = 2usize.max(rel_path.len().max(max_path_len) - rel_path.len());
-                writer.splat_byte_all(b' ', 2)?;
+                splat_byte_all(writer, b' ', 2)?;
 
                 if Output::enable_ansi_colors_stdout() {
-                    writer.write_all(match f.output_kind {
-                        options::OutputKind::EntryPoint => Output::pretty_fmt("<blue>", true),
-                        options::OutputKind::Chunk => Output::pretty_fmt("<cyan>", true),
-                        options::OutputKind::Asset => Output::pretty_fmt("<magenta>", true),
-                        options::OutputKind::Sourcemap => Output::pretty_fmt("<d>", true),
-                        options::OutputKind::Bytecode => Output::pretty_fmt("<d>", true),
-                        options::OutputKind::ModuleInfo => Output::pretty_fmt("<d>", true),
+                    writer.write_all(&Output::pretty_fmt::<true>(match f.output_kind {
+                        options::OutputKind::EntryPoint => "<blue>",
+                        options::OutputKind::Chunk => "<cyan>",
+                        options::OutputKind::Asset => "<magenta>",
+                        options::OutputKind::Sourcemap => "<d>",
+                        options::OutputKind::Bytecode => "<d>",
+                        options::OutputKind::ModuleInfo => "<d>",
                         options::OutputKind::MetafileJson
-                        | options::OutputKind::MetafileMarkdown => {
-                            Output::pretty_fmt("<green>", true)
-                        }
-                    })?;
+                        | options::OutputKind::MetafileMarkdown => "<green>",
+                    }))?;
                 }
 
                 writer.write_all(rel_path)?;
@@ -986,15 +990,16 @@ impl BuildCommand {
                         _ => usize::MAX,
                     };
                     if f.size > warn_threshold {
-                        writer.write_all(Output::pretty_fmt("<yellow>", true))?;
+                        writer.write_all(&Output::pretty_fmt::<true>("<yellow>"))?;
                     } else {
                         writer.write_all(b"\x1b[0m")?;
                     }
                 }
 
-                writer.splat_byte_all(b' ', padding_count)?;
+                splat_byte_all(writer, b' ', padding_count)?;
                 write!(writer, "{}  ", bun_fmt::size(f.size, Default::default()))?;
-                writer.splat_byte_all(
+                splat_byte_all(
+                    writer,
                     b' ',
                     size_padding
                         - bun_fmt::count(format_args!(
@@ -1026,14 +1031,14 @@ impl BuildCommand {
                 writer.write_all(b"\n")?;
             }
 
-            Output::prettyln("\n", format_args!(""));
+            Output::prettyln(format_args!("\n"));
             Output::flush();
         }
 
-        log.print(Output::error_writer())?;
+        let _ = log_ref.print(Output::error_writer());
         exit_or_watch(
             if had_err { 1 } else { 0 },
-            ctx.debug.hot_reload == Command::HotReload::Watch,
+            ctx.debug.hot_reload == HotReload::Watch,
         );
     }
 }
@@ -1044,7 +1049,7 @@ fn exit_or_watch(code: u8, watch: bool) -> ! {
         // TODO(port): std.Thread.sleep(maxInt(u64)-1) — verify cross-platform sleep-forever
         std::thread::sleep(std::time::Duration::from_secs(u64::MAX / 1_000_000_000));
     }
-    Global::exit(code);
+    Global::exit(u32::from(code));
 }
 
 fn print_summary(
@@ -1075,19 +1080,16 @@ fn print_summary(
         _ => 0,
     };
     if minified {
-        Output::pretty(
+        Output::pretty(format_args!(
             "{}",
-            format_args!(
-                "{}",
-                bstr::BStr::new(&padding_buf[0..usize::try_from(minified_digit_count).unwrap()])
-            ),
-        );
+            bstr::BStr::new(&padding_buf[0..minified_digit_count])
+        ));
         Output::print_elapsed_stdout_trim(minify_duration as f64);
         let output_size = {
             let mut total_size: u64 = 0;
             for f in output_files.iter() {
                 if f.loader == options::Loader::Js {
-                    total_size += f.size_without_sourcemap;
+                    total_size += f.size_without_sourcemap as u64;
                 }
             }
             total_size
@@ -1096,23 +1098,17 @@ fn print_summary(
         // we may inject sourcemaps or comments or import paths
         let delta: i64 = ((input_code_length as i128) - (output_size as i128)) as i64;
         if delta > 1024 {
-            Output::prettyln(
+            Output::prettyln(format_args!(
                 "  <green>minify<r>  -{} <d>(estimate)<r>",
-                format_args!(
-                    "{}",
-                    bun_fmt::size(usize::try_from(delta).unwrap(), Default::default())
-                ),
-            );
+                bun_fmt::size(usize::try_from(delta).unwrap(), Default::default())
+            ));
         } else if -delta > 1024 {
-            Output::prettyln(
+            Output::prettyln(format_args!(
                 "  <b>minify<r>   +{} <d>(estimate)<r>",
-                format_args!(
-                    "{}",
-                    bun_fmt::size(usize::try_from(-delta).unwrap(), Default::default())
-                ),
-            );
+                bun_fmt::size(usize::try_from(-delta).unwrap(), Default::default())
+            ));
         } else {
-            Output::prettyln("  <b>minify<r>", format_args!(""));
+            Output::prettyln(format_args!("  <b>minify<r>"));
         }
     }
 
@@ -1124,20 +1120,15 @@ fn print_summary(
         _ => 0,
     };
 
-    Output::pretty(
+    Output::pretty(format_args!(
         "{}",
-        format_args!(
-            "{}",
-            bstr::BStr::new(
-                &padding_buf[0..usize::try_from(bundle_elapsed_digit_count).unwrap()]
-            )
-        ),
-    );
+        bstr::BStr::new(&padding_buf[0..bundle_elapsed_digit_count])
+    ));
     Output::print_elapsed_stdout_trim(bundle_elapsed as f64);
-    Output::prettyln(
+    Output::prettyln(format_args!(
         "  <green>bundle<r>  {} modules",
-        format_args!("{}", reachable_file_count),
-    );
+        reachable_file_count
+    ));
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1145,5 +1136,8 @@ fn print_summary(
 //   source:     src/cli/build_command.zig (813 lines)
 //   confidence: medium
 //   todos:      6
-//   notes:      Output::pretty* fmt-string + format_args! shape is a guess; output_files lifetime from labeled block needs restructuring; NodeFS::write_file_with_path_buffer arg struct shape guessed; std.fs.cwd()/makeOpenPath mapped to bun_sys::Dir; bun.cli.start_time mapped to cli_start_time().
+//   notes:      Output::pretty* shapes adapted to single-arg fn forms;
+//               output_files lifetime restructured to own Vec then borrow as
+//               slice; resolver.opts re-sync deferred (subset type);
+//               bun.cli.start_time mapped to cli_start_time().
 // ──────────────────────────────────────────────────────────────────────────

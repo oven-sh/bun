@@ -423,8 +423,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         if !use_system_shell {
             // SAFETY: `MiniEventLoop` stores `env` as a raw `*mut`; the loader
             // outlives the call (process-lifetime in `configure_env_for_run`).
+            // Erase the loader's borrowed lifetime to `'static` for the
+            // singleton handoff (Zig passed a raw `*DotEnv.Loader`).
             let mini = bun_event_loop::MiniEventLoop::init_global(
-                Some(unsafe { &mut *(env as *mut _) }),
+                Some(unsafe {
+                    &mut *(env as *mut DotEnv::Loader<'_> as *mut DotEnv::Loader<'static>)
+                }),
                 Some(cwd),
             );
             // SAFETY: `init_global` returns the thread-local singleton as a raw
@@ -3154,7 +3158,7 @@ impl RunCommand {
                     return Err(bun_core::err!("CouldntReadCurrentDirectory"));
                 }
                 // SAFETY: `ctx.log` is the process-lifetime CLI log.
-                let _ = unsafe { &*ctx.log }.print(Output::error_writer());
+                let _ = unsafe { &*ctx.log }.print(Output::error_writer() as *mut _);
                 pretty_errorln!(
                     "<r><red>error<r><d>:<r> <b>{}<r> loading directory {}",
                     err.name(),
@@ -3165,7 +3169,7 @@ impl RunCommand {
             }
             Ok(None) => {
                 // SAFETY: `ctx.log` is the process-lifetime CLI log.
-                let _ = unsafe { &*ctx.log }.print(Output::error_writer());
+                let _ = unsafe { &*ctx.log }.print(Output::error_writer() as *mut _);
                 pretty_errorln!("error loading current directory");
                 Output::flush();
                 return Err(bun_core::err!("CouldntReadCurrentDirectory"));
@@ -3310,9 +3314,12 @@ impl RunCommand {
         let bun_node_exe = Self::bun_node_file_utf8()?;
         let bun_node_dir_win = bun_core::util::dirname(bun_node_exe.as_bytes())
             .ok_or(bun_core::err!("FailedToGetTempPath"))?;
+        let _ = fs_ref;
+        // PORT NOTE: `load_node_js_config` takes the `bun_paths::fs::FileSystem`
+        // singleton (cwd-only view), not the resolver `FileSystem`.
         let found_node = env_loader
             .load_node_js_config(
-                fs_ref,
+                bun_paths::fs::FileSystem::instance(),
                 if force_using_bun { bun_node_exe.as_bytes() } else { b"" },
             )
             .unwrap_or(false);
@@ -3356,14 +3363,14 @@ impl RunCommand {
             }
 
             if !force_using_bun {
-                this_transpiler.env.map.put(b"NODE", bun_node_exe.as_bytes()).unwrap_or_oom();
-                this_transpiler
-                    .env
+                // SAFETY: `Transpiler::env` is a non-null process-lifetime `*mut Loader`.
+                let env_mut = unsafe { &mut *this_transpiler.env };
+                env_mut.map.put(b"NODE", bun_node_exe.as_bytes()).unwrap_or_oom();
+                env_mut
                     .map
                     .put(b"npm_node_execpath", bun_node_exe.as_bytes())
                     .unwrap_or_oom();
-                this_transpiler
-                    .env
+                env_mut
                     .map
                     .put(b"npm_execpath", optional_bun_self_path)
                     .unwrap_or_oom();
@@ -3424,7 +3431,8 @@ impl RunCommand {
             force_using_bun,
         )?;
         // TODO(port): new_path is now owned Vec<u8>; map.put may need to take ownership or borrow
-        this_transpiler.env.map.put(b"PATH", &new_path).unwrap_or_oom();
+        // SAFETY: `Transpiler::env` is a non-null process-lifetime `*mut Loader`.
+        unsafe { &mut *this_transpiler.env }.map.put(b"PATH", &new_path).unwrap_or_oom();
         Ok(())
     }
 
@@ -3436,19 +3444,23 @@ impl RunCommand {
         let mut shell_out = ShellCompletions::default();
         if FILTER != Filter::ScriptExclude {
             if let Some(defaults) = default_completions {
-                shell_out.commands = defaults.to_vec().into_boxed_slice();
-                // TODO(port): Zig stored the borrowed slice; we copy here
+                // SAFETY: callers pass `&'static` const tables; erase the elided
+                // lifetime back to `'static` (Zig stored the borrowed slice).
+                shell_out.commands = unsafe {
+                    ::core::mem::transmute::<&[&[u8]], &'static [&'static [u8]]>(defaults)
+                };
             }
         }
 
         let args = ctx.args.clone();
 
-        let Ok(mut this_transpiler) = Transpiler::init(ctx.log, args, None) else {
+        let Ok(mut this_transpiler) = Transpiler::init(runner_arena(), ctx.log, args, None) else {
             return Ok(shell_out);
         };
         this_transpiler.options.env.behavior = api::DotEnvBehavior::LoadAll;
-        this_transpiler.options.env.prefix = b"";
-        this_transpiler.env.quiet = true;
+        this_transpiler.options.env.prefix = Box::default();
+        // SAFETY: `Transpiler::env` is a non-null process-lifetime `*mut Loader`.
+        unsafe { (*this_transpiler.env).quiet = true };
 
         this_transpiler.resolver.care_about_bin_folder = true;
         this_transpiler.resolver.care_about_scripts = true;
@@ -3465,19 +3477,24 @@ impl RunCommand {
         });
         this_transpiler.configure_linker();
 
+        // SAFETY: `Transpiler::fs` is the non-null process-static singleton.
+        let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
         let Some(root_dir_info) = this_transpiler
             .resolver
-            .read_dir_info(this_transpiler.fs.top_level_dir)
+            .read_dir_info(top_level_dir)
             .ok()
             .flatten()
         else {
             return Ok(shell_out);
         };
+        // SAFETY: resolver cache owns the DirInfo for the process lifetime.
+        let root_dir_info = unsafe { &*root_dir_info };
 
         {
-            this_transpiler.env.load_process()?;
+            // SAFETY: `Transpiler::env` is a non-null process-lifetime `*mut Loader`.
+            unsafe { &mut *this_transpiler.env }.load_process()?;
 
-            if let Some(node_env) = this_transpiler.env.get(b"NODE_ENV") {
+            if let Some(node_env) = unsafe { &*this_transpiler.env }.get(b"NODE_ENV") {
                 if node_env == b"production" {
                     this_transpiler.options.production = true;
                 }
@@ -4360,7 +4377,7 @@ impl RunCommand {
             let dup: Box<[u8]> = entry_path.to_vec().into_boxed_slice();
             if let Err(err) = bun_bun_js::Run::boot(ctx, dup, None) {
                 // SAFETY: `ctx.log` is a non-null `*mut Log` after `create_context_data`.
-                let _ = unsafe { &*ctx.log }.print(Output::error_writer());
+                let _ = unsafe { &*ctx.log }.print(Output::error_writer() as *mut _);
 
                 Output::pretty_errorln(format_args!(
                     "<r><red>error<r>: Failed to run <b>{}<r> due to error <b>{}<r>",
@@ -4741,7 +4758,7 @@ impl RunCommand {
             bun_bun_js::Run::boot(ctx, normalized_filename.to_vec().into_boxed_slice(), None)
         {
             // SAFETY: `ctx.log` is a non-null `*mut Log` after `create_context_data`.
-            let _ = unsafe { &*ctx.log }.print(Output::error_writer());
+            let _ = unsafe { &*ctx.log }.print(Output::error_writer() as *mut _);
 
             Output::err(
                 err,

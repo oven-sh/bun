@@ -520,7 +520,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         return Ok(data_url_response(data_url, global_this));
     }
 
-    url = match ZigURL::from_string(&url_str) {
+    // PORT NOTE: `ZigURL::from_string` returns `OwnedURL` (owns href buffer); we
+    // immediately move that buffer into `url_proxy_buffer` and re-parse `url` to
+    // borrow it, mirroring Zig's `url.href` ownership transfer.
+    let owned_url = match ZigURL::from_string(&url_str) {
         Ok(u) => u,
         Err(_) => {
             let err = ctx.to_type_error(jsc::ErrorCode::INVALID_URL, "fetch() URL is invalid");
@@ -533,22 +536,21 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             );
         }
     };
+    url_proxy_buffer = owned_url.into_href().into_vec();
+    url = ZigURL::parse(&url_proxy_buffer);
     if url.is_file() {
         url_type = URLType::File;
     } else if url.is_blob() {
         url_type = URLType::Blob;
     }
-    // TODO(port): lifetime — url.href is owned by ZigURL::from_string; we move
-    // ownership into url_proxy_buffer here while url's slices still point into it.
-    url_proxy_buffer = url.href.to_vec();
 
     // **Start with the harmless ones.**
 
     // "method"
     method = 'extract_method: {
         if let Some(options) = options_object {
-            if let Some(method_) = options.get_truthy_comptime(global_this, "method")? {
-                break 'extract_method Some(Method::from_js(global_this, method_)?);
+            if let Some(method_) = options.get_truthy(global_this, "method")? {
+                break 'extract_method method_from_js(global_this, method_)?;
             }
         }
 
@@ -557,8 +559,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
 
         if let Some(req) = request_init_object {
-            if let Some(method_) = req.get_truthy_comptime(global_this, "method")? {
-                break 'extract_method Some(Method::from_js(global_this, method_)?);
+            if let Some(method_) = req.get_truthy(global_this, "method")? {
+                break 'extract_method method_from_js(global_this, method_)?;
             }
         }
 
@@ -580,7 +582,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     if decompression_value.is_boolean() {
                         break 'extract_disable_decompression !decompression_value.as_boolean();
                     } else if decompression_value.is_number() {
-                        break 'extract_disable_decompression decompression_value.to::<i32>() == 0;
+                        break 'extract_disable_decompression decompression_value.to_int32() == 0;
                     }
                 }
 
@@ -615,7 +617,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                             if reject.is_boolean() {
                                 reject_unauthorized = reject.as_boolean();
                             } else if reject.is_number() {
-                                reject_unauthorized = reject.to::<i32>() != 0;
+                                reject_unauthorized = reject.to_int32() != 0;
                             }
                         }
 
@@ -639,8 +641,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                             return Ok(JSValue::ZERO);
                         }
 
-                        // SAFETY: `vm` is the live thread-local VM pointer from `VirtualMachine::get()`.
-                        match SSLConfig::from_js(unsafe { &*vm }, global_this, tls) {
+                        match SSLConfig::from_js(vm, global_this, tls) {
                             Err(_) => {
                                 is_error = true;
                                 return Ok(JSValue::ZERO);
@@ -648,7 +649,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                             Ok(Some(config)) => {
                                 // Intern via GlobalRegistry for deduplication and pointer equality
                                 break 'extract_ssl_config Some(
-                                    SSLConfig::GlobalRegistry::intern(config),
+                                    ssl_config::GlobalRegistry::intern(config),
                                 );
                             }
                             Ok(None) => {}
@@ -718,9 +719,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                             force_http1 = true;
                         } else {
                             is_error = true;
-                            return global_this.throw_invalid_arguments(
-                                "fetch: 'protocol' must be \"http2\", \"h2\", \"http3\", \"h3\", \"http1.1\", or \"h1\"",
-                            );
+                            return Err(global_this.throw_invalid_arguments(
+                                format_args!("fetch: 'protocol' must be \"http2\", \"h2\", \"http3\", \"h3\", \"http1.1\", or \"h1\""),
+                            ));
                         }
                         break 'extract_protocol;
                     }
@@ -743,7 +744,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     if timeout_value.is_boolean() {
                         break 'extract_disable_timeout !timeout_value.as_boolean();
                     } else if timeout_value.is_number() {
-                        break 'extract_disable_timeout timeout_value.to::<i32>() == 0;
+                        break 'extract_disable_timeout timeout_value.to_int32() == 0;
                     }
                 }
 
@@ -778,7 +779,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         // PERF(port): was `inline for` — plain loop, profile in Phase B
         for obj in objects_to_try {
             if !obj.is_empty() {
-                match obj.get_optional_enum::<FetchRedirect>(global_this, "redirect") {
+                match obj.get_optional_enum_fetch_redirect(global_this, "redirect") {
                     Err(_) => {
                         is_error = true;
                         return Ok(JSValue::ZERO);
@@ -813,7 +814,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     if keepalive_value.is_boolean() {
                         break 'extract_disable_keepalive !keepalive_value.as_boolean();
                     } else if keepalive_value.is_number() {
-                        break 'extract_disable_keepalive keepalive_value.to::<i32>() == 0;
+                        break 'extract_disable_keepalive keepalive_value.to_int32() == 0;
                     }
                 }
 
@@ -880,7 +881,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     // Handle string format: proxy: "http://proxy.example.com:8080"
                     if proxy_arg.is_string() && proxy_arg.get_length(ctx)? > 0 {
                         let href = jsc::URL::href_from_js(proxy_arg, global_this)?;
-                        if href.tag() == BunString::Tag::Dead {
+                        if href.tag() == BunStringTag::Dead {
                             let err = ctx.to_type_error(
                                 jsc::ErrorCode::INVALID_ARG_VALUE,
                                 "fetch() proxy URL is invalid",
@@ -921,7 +922,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                                 {
                                     let href =
                                         jsc::URL::href_from_js(proxy_url_arg, global_this)?;
-                                    if href.tag() == BunString::Tag::Dead {
+                                    if href.tag() == BunStringTag::Dead {
                                         let err = ctx.to_type_error(
                                             jsc::ErrorCode::INVALID_ARG_VALUE,
                                             "fetch() proxy URL is invalid",

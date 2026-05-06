@@ -775,8 +775,13 @@ impl Expect {
         global_this: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        let _post = scopeguard::guard((), |_| this.post_match(global_this));
-        // TODO(port): defer this.postMatch — borrowck reshape
+        // PORT NOTE: `defer this.postMatch(globalThis)` — capture as raw ptr so the
+        // guard does not hold a `&Self` borrow across the `&mut self` calls below.
+        let this_ptr: *mut Self = this;
+        let _post = scopeguard::guard((), move |_| {
+            // SAFETY: `this` is the wrapper's m_ctx; alive for the duration of the host call.
+            unsafe { (*this_ptr).post_match(global_this) }
+        });
 
         let arguments_ = call_frame.arguments_old::<1>();
         let arguments = arguments_.slice();
@@ -1315,7 +1320,8 @@ impl Expect {
     /// Implements `expect.extend({ ... })`
     // PORT NOTE: extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn extend(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let args = call_frame.arguments_old::<1>().slice();
+        let args_ = call_frame.arguments_old::<1>();
+        let args = args_.slice();
 
         if args.is_empty() || !args[0].is_object() {
             return Err(global_this.throw_pretty(
@@ -1479,8 +1485,8 @@ impl Expect {
             }
         }
 
-        let mut pass: bool;
-        let message: JSValue;
+        let mut pass: bool = false;
+        let mut message: JSValue = JSValue::UNDEFINED;
 
         // Parse and validate the custom matcher result, which should conform to: { pass: boolean, message?: () => string }
         let is_valid = 'valid: {
@@ -1493,16 +1499,11 @@ impl Expect {
                             break 'valid false;
                         }
                         message = message_value;
-                    } else {
-                        message = JSValue::UNDEFINED;
                     }
 
                     break 'valid true;
                 }
             }
-            // initialize to keep Rust happy on the !is_valid path
-            pass = false;
-            message = JSValue::UNDEFINED;
             false
         };
         if !is_valid {
@@ -1721,13 +1722,13 @@ impl Expect {
 
         if arg.is_empty_or_undefined_or_null() {
             let error_value = bun_str::String::init("reached unreachable code").to_error_instance(global_this);
-            error_value.put(global_this, ZigString::static_("name"), bun_str::String::init("UnreachableError").to_js(global_this)?);
+            error_value.put(global_this, b"name", bun_str::String::init("UnreachableError").to_js(global_this)?);
             return Err(global_this.throw_value(error_value));
         }
 
         if arg.is_string() {
             let error_value = arg.to_bun_string(global_this)?.to_error_instance(global_this);
-            error_value.put(global_this, ZigString::static_("name"), bun_str::String::init("UnreachableError").to_js(global_this)?);
+            error_value.put(global_this, b"name", bun_str::String::init("UnreachableError").to_js(global_this)?);
             return Err(global_this.throw_value(error_value));
         }
 
@@ -2637,7 +2638,7 @@ fn print_string_pretty(
     // TODO(port): Output.prettyFmt comptime color rewriting on `signature ++ "\n\n{f}\n"`.
     // PERF(port): Zig used a stack-fallback MutableString; profile in Phase B.
     let buf = format!("{signature}{args}");
-    bun_str::String::create_utf8_for_js(global_this, buf.as_bytes())
+    bun_jsc::bun_string_jsc::create_utf8_for_js(global_this, buf.as_bytes())
 }
 
 #[bun_jsc::JsClass]
@@ -2650,9 +2651,8 @@ impl ExpectTypeOf {
     }
 
     pub fn create(global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        let expect = Box::into_raw(Box::new(ExpectTypeOf {}));
-        // SAFETY: freshly leaked Box; wrapper takes ownership, freed in finalize
-        let value = unsafe { (*expect).to_js(global_this) };
+        // `JsClass::to_js` takes `self` by value; the codegen-side boxes it.
+        let value = ExpectTypeOf {}.to_js(global_this);
         value.ensure_still_alive();
         Ok(value)
     }

@@ -928,19 +928,26 @@ impl PublishCommand {
 
     fn normalize_bin(
         json: &mut Expr,
+        bump: &bun_alloc::Arena,
         package_name: &[u8],
         workspace_root: Fd,
     ) -> Result<(), AllocError> {
+        // PORT NOTE: see `normalized_package` — `E::String` stores `&'static [u8]`
+        // (Phase-A erasure); leak owned buffers that flow into AST nodes.
+        macro_rules! leak {
+            ($v:expr) => {
+                Box::leak(Box::<[u8]>::from($v)) as &'static [u8]
+            };
+        }
         let mut path_buf = PathBuffer::uninit();
         if let Some(bin_query) = json.as_property(b"bin") {
             match &bin_query.expr.data {
-                Expr::Data::EString(bin_str) => {
+                ExprData::EString(bin_str) => {
                     let mut bin_props: Vec<G::Property> = Vec::new();
                     let normalized = strings::without_prefix_comptime_z(
-                        normalize_buf_z(
-                            &bin_str.string()?,
-                            &mut path_buf,
-                            path::Platform::Posix,
+                        normalize_buf_z::<path::platform::Posix>(
+                            bin_str.string(bump)?,
+                            &mut *path_buf,
                         ),
                         b"./",
                     );
@@ -952,42 +959,37 @@ impl PublishCommand {
                     }
 
                     bin_props.push(G::Property {
-                        key: Some(Expr::init(
-                            E::String { data: package_name.into() },
-                            logger::Loc::EMPTY,
-                        )),
-                        value: Some(Expr::init(
-                            E::String { data: Box::<[u8]>::from(normalized.as_bytes()) },
-                            logger::Loc::EMPTY,
-                        )),
+                        key: Some(Expr::init(E::String::init(leak!(package_name)), logger::Loc::EMPTY)),
+                        value: Some(Expr::init(E::String::init(leak!(normalized.as_bytes())), logger::Loc::EMPTY)),
                         ..Default::default()
                     });
 
-                    // TODO(port): direct mutation of e_object.properties.ptr[i] — borrowck reshape may be needed
-                    json.data.as_e_object_mut().properties.ptr[bin_query.i].value = Some(Expr::init(
+                    // TODO(port): direct mutation of e_object.properties[i] — borrowck reshape may be needed
+                    json.data.e_object_mut().unwrap().properties.slice_mut()[bin_query.i].value = Some(Expr::init(
                         E::Object {
-                            properties: G::Property::List::move_from_list(&mut bin_props),
+                            properties: G::PropertyList::move_from_list(bin_props),
                             ..Default::default()
                         },
                         logger::Loc::EMPTY,
                     ));
                 }
-                Expr::Data::EObject(bin_obj) => {
+                ExprData::EObject(bin_obj) => {
                     let mut bin_props: Vec<G::Property> = Vec::new();
                     for bin_prop in bin_obj.properties.slice() {
-                        let key = 'key: {
+                        let key: Option<Box<[u8]>> = 'key: {
                             if let Some(key) = &bin_prop.key {
-                                if key.is_string() && key.data.as_e_string().len() != 0 {
-                                    break 'key Some(ZStr::from_bytes(
-                                        strings::without_prefix(
-                                            normalize_buf(
-                                                &key.data.as_e_string().string()?,
-                                                &mut path_buf,
-                                                path::Platform::Posix,
+                                if let Some(ks) = key.data.as_e_string() {
+                                    if ks.len() != 0 {
+                                        break 'key Some(Box::<[u8]>::from(
+                                            strings::without_prefix(
+                                                normalize_buf::<path::platform::Posix>(
+                                                    ks.string(bump)?,
+                                                    &mut *path_buf,
+                                                ),
+                                                b"./",
                                             ),
-                                            b"./",
-                                        ),
-                                    ));
+                                        ));
+                                    }
                                 }
                             }
                             None
@@ -998,21 +1000,22 @@ impl PublishCommand {
                             continue;
                         }
 
-                        let value = 'value: {
+                        let value: Option<bun_str::ZBox> = 'value: {
                             if let Some(value) = &bin_prop.value {
-                                if value.is_string() && value.data.as_e_string().len() != 0 {
-                                    break 'value Some(ZStr::from_bytes(
-                                        strings::without_prefix_comptime_z(
-                                            // replace separators
-                                            normalize_buf_z(
-                                                &value.data.as_e_string().string()?,
-                                                &mut path_buf,
-                                                path::Platform::Posix,
-                                            ),
-                                            b"./",
-                                        )
-                                        .as_bytes(),
-                                    ));
+                                if let Some(vs) = value.data.as_e_string() {
+                                    if vs.len() != 0 {
+                                        break 'value Some(bun_str::ZBox::from_bytes(
+                                            strings::without_prefix_comptime_z(
+                                                // replace separators
+                                                normalize_buf_z::<path::platform::Posix>(
+                                                    vs.string(bump)?,
+                                                    &mut *path_buf,
+                                                ),
+                                                b"./",
+                                            )
+                                            .as_bytes(),
+                                        ));
+                                    }
                                 }
                             }
                             None
@@ -1030,22 +1033,16 @@ impl PublishCommand {
                         }
 
                         bin_props.push(G::Property {
-                            key: Some(Expr::init(
-                                E::String { data: key.into_bytes() },
-                                logger::Loc::EMPTY,
-                            )),
-                            value: Some(Expr::init(
-                                E::String { data: value.into_bytes() },
-                                logger::Loc::EMPTY,
-                            )),
+                            key: Some(Expr::init(E::String::init(Box::leak(key)), logger::Loc::EMPTY)),
+                            value: Some(Expr::init(E::String::init(leak!(value.as_bytes())), logger::Loc::EMPTY)),
                             ..Default::default()
                         });
                     }
 
-                    // TODO(port): direct mutation of e_object.properties.ptr[i] — borrowck reshape may be needed
-                    json.data.as_e_object_mut().properties.ptr[bin_query.i].value = Some(Expr::init(
+                    // TODO(port): direct mutation of e_object.properties[i] — borrowck reshape may be needed
+                    json.data.e_object_mut().unwrap().properties.slice_mut()[bin_query.i].value = Some(Expr::init(
                         E::Object {
-                            properties: G::Property::List::move_from_list(&mut bin_props),
+                            properties: G::PropertyList::move_from_list(bin_props),
                             ..Default::default()
                         },
                         logger::Loc::EMPTY,
@@ -1055,17 +1052,16 @@ impl PublishCommand {
             }
         } else if let Some(directories_query) = json.as_property(b"directories") {
             if let Some(bin_query) = directories_query.expr.as_property(b"bin") {
-                let Some(bin_dir_str) = bin_query.expr.as_string() else {
+                let Some(bin_dir_str) = bin_query.expr.as_string(bump) else {
                     return Ok(());
                 };
                 let mut bin_props: Vec<G::Property> = Vec::new();
-                let normalized_bin_dir = ZStr::from_bytes(
+                let normalized_bin_dir = bun_str::ZBox::from_bytes(
                     strings::without_trailing_slash(
                         strings::without_prefix(
-                            normalize_buf(
-                                &bin_dir_str,
-                                &mut path_buf,
-                                path::Platform::Posix,
+                            normalize_buf::<path::platform::Posix>(
+                                bin_dir_str,
+                                &mut *path_buf,
                             ),
                             b"./",
                         ),
@@ -1076,7 +1072,7 @@ impl PublishCommand {
                     return Ok(());
                 }
 
-                let bin_dir = match bun_sys::openat(workspace_root, &normalized_bin_dir, bun_sys::O::DIRECTORY, 0).unwrap() {
+                let bin_dir = match bun_sys::openat(workspace_root, &normalized_bin_dir, bun_sys::O::DIRECTORY, 0) {
                     Ok(fd) => fd,
                     Err(e) => {
                         if e == err!(ENOENT) {
@@ -1086,10 +1082,11 @@ impl PublishCommand {
                             ));
                             return Ok(());
                         } else {
-                            Output::err(e, format_args!(
+                            Output::err(
+                                e,
                                 "failed to open bin directory: '{}'",
-                                bstr::BStr::new(normalized_bin_dir.as_bytes()),
-                            ));
+                                (bstr::BStr::new(normalized_bin_dir.as_bytes()),),
+                            );
                             Global::crash();
                         }
                     }
@@ -1098,19 +1095,19 @@ impl PublishCommand {
                 // TODO(port): Zig used std.fs.Dir here for openDirZ — using bun_sys::Fd instead
                 let mut dirs: Vec<(Fd, Box<[u8]>, bool)> = Vec::new();
 
-                dirs.push((bin_dir, normalized_bin_dir.into_bytes(), false));
+                dirs.push((bin_dir, normalized_bin_dir.as_bytes().into(), false));
 
                 while let Some(dir_info) = dirs.pop() {
                     let (dir, dir_subpath, close_dir) = dir_info;
                     let _close = scopeguard::guard(dir, move |d| {
                         if close_dir {
-                            d.close();
+                            let _ = d.close();
                         }
                     });
 
                     let mut iter = DirIterator::iterate(dir);
-                    while let Some(entry) = iter.next().unwrap().ok().flatten() {
-                        let (name, subpath) = 'name_and_subpath: {
+                    while let Some(entry) = iter.next().ok().flatten() {
+                        let (name, subpath): (&'static ZStr, &'static ZStr) = {
                             let name = entry.name.slice();
                             let mut join: Vec<u8> = Vec::new();
                             write!(
@@ -1120,18 +1117,18 @@ impl PublishCommand {
                                 // only using posix separators
                                 if dir_subpath.is_empty() { "" } else { "/" },
                                 bstr::BStr::new(strings::without_trailing_slash(name)),
-                            )?;
+                            ).map_err(|_| AllocError)?;
                             join.push(0);
                             let join_len = join.len() - 1;
-                            // SAFETY: NUL terminator written at join[join_len]
-                            let join_z = unsafe { ZStr::from_raw(join.as_ptr(), join_len) };
-                            // PORT NOTE: reshaped for borrowck — Zig sliced into the same allocation for both name and subpath
+                            // PORT NOTE: reshaped for borrowck — Zig sliced into the same allocation for both name and subpath.
+                            // The buffer is leaked (its bytes flow into long-lived `E::String` nodes).
+                            let leaked = Box::leak(join.into_boxed_slice());
+                            // SAFETY: NUL terminator written at leaked[join_len]
+                            let join_z = unsafe { ZStr::from_raw(leaked.as_ptr(), join_len) };
                             let name_slice_start = join_len - name.len();
-                            // SAFETY: name is the trailing segment of join, NUL-terminated
-                            let name_z = unsafe { ZStr::from_raw(join.as_ptr().add(name_slice_start), name.len()) };
-                            // TODO(port): lifetime — `join` backing storage must outlive both name_z and subpath usage
-                            core::mem::forget(join);
-                            break 'name_and_subpath (name_z, join_z);
+                            // SAFETY: name is the trailing segment of `leaked`, NUL-terminated
+                            let name_z = unsafe { ZStr::from_raw(leaked.as_ptr().add(name_slice_start), name.len()) };
+                            (name_z, join_z)
                         };
 
                         if name.is_empty()
@@ -1143,19 +1140,16 @@ impl PublishCommand {
 
                         bin_props.push(G::Property {
                             key: Some(Expr::init(
-                                E::String { data: bun_paths::basename_posix(subpath.as_bytes()).into() },
+                                E::String::init(leak!(bun_paths::basename_posix(subpath.as_bytes()))),
                                 logger::Loc::EMPTY,
                             )),
-                            value: Some(Expr::init(
-                                E::String { data: subpath.as_bytes().into() },
-                                logger::Loc::EMPTY,
-                            )),
+                            value: Some(Expr::init(E::String::init(subpath.as_bytes()), logger::Loc::EMPTY)),
                             ..Default::default()
                         });
 
                         if entry.kind == bun_sys::EntryKind::Directory {
                             // TODO(port): Zig used dir.openDirZ — substituting bun_sys::openat
-                            let Ok(subdir) = bun_sys::openat(dir, &name, bun_sys::O::DIRECTORY, 0).unwrap() else {
+                            let Ok(subdir) = bun_sys::openat(dir, name, bun_sys::O::DIRECTORY, 0) else {
                                 continue;
                             };
                             dirs.push((subdir, subpath.as_bytes().into(), true));
@@ -1163,9 +1157,9 @@ impl PublishCommand {
                     }
                 }
 
-                json.set(b"bin", Expr::init(
+                Expr::set(json, bump, b"bin", Expr::init(
                     E::Object {
-                        properties: G::Property::List::move_from_list(&mut bin_props),
+                        properties: G::PropertyList::move_from_list(bin_props),
                         ..Default::default()
                     },
                     logger::Loc::EMPTY,

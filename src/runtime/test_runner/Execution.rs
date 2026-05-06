@@ -99,9 +99,11 @@ bun_core::declare_scope!(jest, visible);
 
 pub struct Execution {
     pub groups: Box<[ConcurrentGroup]>,
+    // PORT NOTE: was `pub(self)`; widened so `RefDataValue::sequence` can
+    // split-borrow `groups`/`sequences` without re-entering `sequences_mut`.
     /// the entries themselves are owned by BunTest, which owns Execution.
     // Zig: `#sequences` (private field)
-    sequences: Box<[ExecutionSequence]>,
+    pub sequences: Box<[ExecutionSequence]>,
     pub group_index: usize,
 }
 

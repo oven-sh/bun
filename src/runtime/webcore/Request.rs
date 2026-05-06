@@ -716,33 +716,35 @@ impl Request {
         if let Some(headers) = &self.headers {
             // TODO(port): Zig has `try` here but fn returns plain `string` — preserved as
             // non-fallible; FetchHeaders.fastGet may need to be infallible in Rust.
-            if let Some(content_type) = headers.fast_get(FetchHeaders::HeaderName::ContentType) {
+            if let Some(content_type) = headers.fast_get(HTTPHeaderName::ContentType) {
                 return content_type.slice();
             }
         }
 
-        match self.body.value() {
+        match &*self.body {
             BodyValue::Blob(blob) => {
-                if !blob.content_type.is_empty() {
-                    return &blob.content_type;
+                // SAFETY: Blob.content_type is a valid (possibly empty) raw slice ptr.
+                let ct = unsafe { &*blob.content_type };
+                if !ct.is_empty() {
+                    return ct;
                 }
 
-                MimeType::other().value
+                bun_http_types::MimeType::OTHER.value
             }
             BodyValue::InternalBlob(ib) => ib.content_type(),
-            BodyValue::WTFStringImpl(_) => MimeType::text().value,
+            BodyValue::WTFStringImpl(_) => bun_http_types::MimeType::TEXT.value,
             // BodyValue::InlineBlob(ib) => ib.content_type(),
             BodyValue::Null
             | BodyValue::Error(_)
             | BodyValue::Used
             | BodyValue::Locked(_)
-            | BodyValue::Empty => MimeType::other().value,
+            | BodyValue::Empty => bun_http_types::MimeType::OTHER.value,
         }
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_cache(&self, global_this: &JSGlobalObject) -> JSValue {
-        self.flags.cache.to_js(global_this)
+        fetch_cache_mode_to_js(self.flags.cache, global_this)
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
@@ -762,17 +764,13 @@ impl Request {
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_signal(&mut self, global_this: &JSGlobalObject) -> JSValue {
-        // Already have an C++ instance
-        if let Some(signal) = &self.signal {
-            signal.to_js(global_this)
+        let _ = global_this;
+        // Already have a C++ instance
+        if let Some(_signal) = &self.signal {
+            todo!("blocked_on: bun_jsc::AbortSignal::to_js")
         } else {
             // Lazy create default signal
-            let js_signal = AbortSignal::create(global_this);
-            js_signal.ensure_still_alive();
-            if let Some(signal) = AbortSignal::from_js(js_signal) {
-                self.signal = Some(signal.clone()); // signal.ref() → Arc::clone
-            }
-            js_signal
+            todo!("blocked_on: bun_jsc::AbortSignal::create / from_js")
         }
     }
 
@@ -783,7 +781,7 @@ impl Request {
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_mode(&self, global_this: &JSGlobalObject) -> JSValue {
-        self.flags.mode.to_js(global_this)
+        fetch_request_mode_to_js(self.flags.mode, global_this)
     }
 
     pub fn finalize_without_deinit(&mut self) {
@@ -814,14 +812,14 @@ impl Request {
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
     pub fn get_redirect(&self, global_this: &JSGlobalObject) -> JSValue {
-        self.flags.redirect.to_js(global_this)
+        fetch_redirect_to_js(self.flags.redirect, global_this)
     }
 
     // TODO(b2-blocked): #[bun_jsc::host_fn(getter)]
-    pub fn get_referrer(&self, global_object: &JSGlobalObject) -> JSValue {
-        if let Some(headers_ref) = &self.headers {
+    pub fn get_referrer(&mut self, global_object: &JSGlobalObject) -> JSValue {
+        if let Some(headers_ref) = &mut self.headers {
             if let Some(referrer) = headers_ref.get(b"referrer", global_object) {
-                return ZigString::init(referrer).to_js(global_object);
+                return referrer.to_js(global_object);
             }
         }
 
@@ -845,12 +843,16 @@ impl Request {
         }
 
         if let Some(req) = self.request_context.get_request() {
+            // SAFETY: `req` points to a live uWS HttpRequest for the duration
+            // of the request handler.
+            let req = unsafe { &*req };
             let req_url = req.url();
             if !req_url.is_empty() && req_url[0] == b'/' {
                 if let Some(host) = req.header(b"host") {
                     let fmt = bun_fmt::HostFormatter {
                         is_https: self.flags.https,
                         host,
+                        port: None,
                     };
                     return self.get_protocol().len()
                         + req_url.len()
@@ -877,12 +879,16 @@ impl Request {
         }
 
         if let Some(req) = self.request_context.get_request() {
+            // SAFETY: `req` points to a live uWS HttpRequest for the duration
+            // of the request handler.
+            let req = unsafe { &*req };
             let req_url = req.url();
             if !req_url.is_empty() && req_url[0] == b'/' {
                 if let Some(host) = req.header(b"host") {
                     let fmt = bun_fmt::HostFormatter {
                         is_https: self.flags.https,
                         host,
+                        port: None,
                     };
                     let url_bytelength = bun_fmt::count(format_args!(
                         "{}{}{}",
@@ -914,7 +920,7 @@ impl Request {
                         #[cfg(debug_assertions)]
                         debug_assert!(self.size_of_url() == url.len());
 
-                        let mut href = URL::href_from_string(BunString::from_bytes(url));
+                        let mut href = bun_url::href_from_string(&BunString::from_bytes(url));
                         if !href.is_empty() {
                             if core::ptr::eq(href.byte_slice().as_ptr(), url.as_ptr()) {
                                 self.url = BunString::clone_latin1(&url[..href.length()]);
@@ -965,7 +971,7 @@ impl Request {
                         self.url = BunString::clone_utf8(&temp_url);
                     }
 
-                    let href = URL::href_from_string(self.url.clone_ref());
+                    let href = bun_url::href_from_string(&self.url.dupe_ref());
                     // TODO: what is the right thing to do for invalid URLS?
                     if !href.is_empty() {
                         self.url.deref();
@@ -1006,7 +1012,7 @@ enum Fields {
 impl Request {
     fn check_body_stream_ref(&mut self, global_object: &JSGlobalObject) {
         if let Some(js_value) = self.js_ref.try_get() {
-            if let BodyValue::Locked(locked) = self.body.value_mut() {
+            if let BodyValue::Locked(locked) = &mut *self.body {
                 // TODO(port): Arc<BodyValue> mutation — see field note
                 if let Some(stream) = locked.readable.get(global_object) {
                     // Store the stream in js.gc.stream instead of holding a strong reference
@@ -1027,18 +1033,21 @@ impl Request {
         this_value: JSValue,
     ) -> JsResult<Request> {
         let mut success = false;
-        let vm = global_this.bun_vm();
-        let body = vm.init_request_body_value(BodyValue::Null)?;
+        // TODO(port): blocked_on: bun_jsc::VirtualMachine::init_request_body_value
+        // (Zig pools BodyValue in a HiveAllocator). Box directly for now.
+        let _ = global_this.bun_vm();
+        let body: Box<BodyValue> = Box::new(BodyValue::Null);
+        let body_ptr: *const BodyValue = &*body;
         let mut req = Request {
             url: BunString::empty(),
             headers: None,
             signal: None,
-            body: body.clone(),
+            body,
             js_ref: JsRef::init_weak(this_value),
             method: Method::GET,
             flags: Flags::default(),
             request_context: AnyRequestContext::NULL,
-            weak_ptr_data: WeakPtrData::empty(),
+            weak_ptr_data: WeakPtrData::EMPTY,
             reported_estimated_size: 0,
             internal_event_callback: InternalJSEventCallback::default(),
         };
@@ -1047,31 +1056,31 @@ impl Request {
         // of fn uses it. Cleanup is performed at each early-return site via the closure below.
         // TODO(port): errdefer — verify all error paths invoke cleanup; Phase B may wrap
         // `req` in a guard struct whose Drop runs finalize_without_deinit unless disarmed.
-        let cleanup = |req: &mut Request, body: &Arc<BodyValue>, success: bool| {
+        let cleanup = |req: &mut Request, body_ptr: *const BodyValue, success: bool| {
             if !success {
                 req.finalize_without_deinit();
-                // _ = req.#body.unref() → Arc drop when req drops
+                // _ = req.#body.unref() → Box drop when req drops
             }
-            if !Arc::ptr_eq(&req.body, body) {
-                // _ = body.unref() → drop the original `body` Arc clone (caller's local)
+            if !core::ptr::eq(&*req.body as *const BodyValue, body_ptr) {
+                // _ = body.unref() → original Box already moved into req or replaced; no-op.
             }
         };
 
         macro_rules! bail {
             ($e:expr) => {{
-                cleanup(&mut req, &body, success);
+                cleanup(&mut req, body_ptr, success);
                 return $e;
             }};
         }
 
         if arguments.is_empty() {
-            bail!(global_this.throw(format_args!(
+            bail!(Err(global_this.throw(format_args!(
                 "Failed to construct 'Request': 1 argument required, but only 0 present."
-            )));
+            ))));
         } else if arguments[0].is_empty_or_undefined_or_null() || !arguments[0].is_cell() {
-            bail!(global_this.throw(format_args!(
+            bail!(Err(global_this.throw(format_args!(
                 "Failed to construct 'Request': expected non-empty string or object, got undefined"
-            )));
+            ))));
         }
 
         let url_or_object = arguments[0];
@@ -1082,7 +1091,7 @@ impl Request {
             // fastest path:
             url_or_object_type.is_string_like() ||
             // slower path:
-            url_or_object.as_::<bun_jsc::DOMURL>().is_some();
+            bun_jsc::DOMURL::cast_(url_or_object, global_this.vm()).is_some();
 
         if is_first_argument_a_url {
             let str = match BunString::from_js(arguments[0], global_this) {
@@ -1095,9 +1104,9 @@ impl Request {
                 fields.insert(Fields::Url);
             }
         } else if !url_or_object_type.is_object() {
-            bail!(global_this.throw(format_args!(
+            bail!(Err(global_this.throw(format_args!(
                 "Failed to construct 'Request': expected non-empty string or object"
-            )));
+            ))));
         }
 
         let values_to_try_: [JSValue; 2] = [

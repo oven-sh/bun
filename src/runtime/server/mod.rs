@@ -1184,6 +1184,11 @@ pub trait ServerLike {
     const DEBUG_MODE: bool;
     fn global_this(&self) -> &jsc::JSGlobalObject;
     fn vm(&self) -> &jsc::VirtualMachine;
+    /// Raw mutable pointer to the VM. Exists so callers that genuinely need
+    /// `&mut VirtualMachine` (e.g. `drain_microtasks`, unhandled-rejection
+    /// hooks) can go raw→raw instead of `&T as *const T as *mut T`, which
+    /// trips `invalid_reference_casting`.
+    fn vm_mut(&self) -> *mut jsc::VirtualMachine;
     fn config(&self) -> &ServerConfig;
     fn on_request_complete(&mut self);
     fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer>;
@@ -1204,6 +1209,7 @@ impl<const SSL: bool, const DEBUG: bool> ServerLike for NewServer<SSL, DEBUG> {
     // server's entire lifetime once `init()` runs.
     fn global_this(&self) -> &jsc::JSGlobalObject { unsafe { &*self.global_this } }
     fn vm(&self) -> &jsc::VirtualMachine { unsafe { &*self.vm } }
+    fn vm_mut(&self) -> *mut jsc::VirtualMachine { self.vm as *mut jsc::VirtualMachine }
     fn config(&self) -> &ServerConfig { &self.config }
     fn on_request_complete(&mut self) { Self::on_request_complete(self) }
     fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer> { self.dev_server.as_deref() }

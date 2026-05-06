@@ -2878,8 +2878,9 @@ where
         // `Api::JsException` + `render_default_error`; gated until bun_schema/
         // bun_js_parser surfaces are in. Falls through to the production path.
 
-        // SAFETY: see drain_microtasks() re: const→mut cast.
-        let vm = unsafe { &mut *(server.vm() as *const VirtualMachine as *mut VirtualMachine) };
+        // SAFETY: see drain_microtasks() re: const→mut cast. Goes through
+        // `vm_mut()` (raw→raw) to avoid `invalid_reference_casting` on `&T`.
+        let vm = unsafe { &mut *server.vm_mut() };
         if DEBUG_MODE {
             // PERF(port): was arena bulk-free — profile in Phase B
             // Upstream `ExceptionList = Vec<()>`; once it carries

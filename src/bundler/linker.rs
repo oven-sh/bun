@@ -286,27 +286,30 @@ impl Linker {
                 // PORT NOTE: reshaped for borrowck — Zig iterated
                 // `result.ast.import_records.slice()` while also reading other
                 // `result.*` fields and (in the not-found branch) borrowing
-                // `&result.source`. Hoist the slice borrow per-iteration via
-                // index so `result` stays available.
+                // `&result.source`. Iterate by index, take field-disjoint
+                // borrows (`&result.source` + `&mut result.ast.*`) where
+                // needed, and hoist `is_pending_import` (which borrows the
+                // whole `result`) before any `ast` mut borrow.
                 let len = result.ast.import_records.slice().len();
                 for record_i in 0..len {
+                    let record_index = u32::try_from(record_i).unwrap();
+
+                    let skip_deferred = IS_BUN
+                        && is_deferred
+                        && !result.is_pending_import(record_index);
+
+                    // Field-split borrow: `source` ⟂ `ast`.
+                    let source = &result.source;
+                    let ast = &mut result.ast;
+                    let import_record = &mut ast.import_records.slice_mut()[record_i];
+
+                    if import_record.flags.contains(ImportRecordFlags::IS_UNUSED)
+                        || skip_deferred
                     {
-                        let import_record =
-                            &mut result.ast.import_records.slice_mut()[record_i];
-                        if import_record.flags.contains(ImportRecordFlags::IS_UNUSED)
-                            || (IS_BUN
-                                && is_deferred
-                                && !result
-                                    .is_pending_import(u32::try_from(record_i).unwrap()))
-                        {
-                            continue;
-                        }
+                        continue;
                     }
 
-                    let record_index = record_i;
                     if !IGNORE_RUNTIME {
-                        let import_record =
-                            &mut result.ast.import_records.slice_mut()[record_i];
                         if import_record.path.namespace == b"runtime" {
                             if import_path_format == ImportPathFormat::AbsoluteUrl {
                                 import_record.path = Fs::Path::init_with_namespace(
@@ -326,16 +329,13 @@ impl Linker {
                                 )?;
                             }
 
-                            result.ast.runtime_import_record_id =
-                                Some(u32::try_from(record_index).unwrap());
-                            result.ast.needs_runtime = true;
+                            ast.runtime_import_record_id = Some(record_index);
+                            ast.needs_runtime = true;
                             continue;
                         }
                     }
 
                     if IS_BUN {
-                        let import_record =
-                            &mut result.ast.import_records.slice_mut()[record_i];
                         if let Some(replacement) = hardcoded_module::get(
                             import_record.path.text,
                             opts.target,
@@ -361,8 +361,8 @@ impl Linker {
                             had_resolve_errors = Self::when_module_not_found::<IS_BUN>(
                                 log,
                                 opts,
-                                &mut result.ast.import_records.slice_mut()[record_i],
-                                &result.source,
+                                import_record,
+                                source,
                             )?;
 
                             if had_resolve_errors {

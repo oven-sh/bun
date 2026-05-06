@@ -59,7 +59,7 @@ pub fn derive_deep_clone(input: TokenStream) -> TokenStream {
 // The derive feeds the variant index as a `u32` (CSS hashing is in-process
 // dedup only — self-consistency, not Zig-byte-identity, is the contract).
 
-#[proc_macro_derive(CssEql)]
+#[proc_macro_derive(CssEql, attributes(css))]
 pub fn derive_css_eql(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     expand_css_eql(input)
@@ -67,12 +67,35 @@ pub fn derive_css_eql(input: TokenStream) -> TokenStream {
         .into()
 }
 
-#[proc_macro_derive(CssHash)]
+#[proc_macro_derive(CssHash, attributes(css))]
 pub fn derive_css_hash(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     expand_css_hash(input)
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
+}
+
+/// `#[css(skip)]` on a field (or variant) excludes it from the derived
+/// `eql` / `hash` / `is_compatible` body. Mirrors the Zig pattern where some
+/// struct fields (e.g. `loc: bun.logger.Loc`, `vendor_prefix: VendorPrefix`)
+/// are not part of value identity / browser-compat.
+fn has_css_skip(attrs: &[Attribute]) -> bool {
+    for attr in attrs {
+        if !attr.path().is_ident("css") {
+            continue;
+        }
+        let mut skip = false;
+        let _ = attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("skip") {
+                skip = true;
+            }
+            Ok(())
+        });
+        if skip {
+            return true;
+        }
+    }
+    false
 }
 
 /// Clone the input generics and append `where T: $trait_path` for every type

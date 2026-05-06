@@ -16,8 +16,6 @@ use bun_jsc::{
     VirtualMachine,
 };
 use bun_jsc::{JsClass, SysErrorJsc};
-#[allow(deprecated)]
-use bun_jsc::ZigString;
 use bun_sys::{self, Fd, FdExt, SignalCode};
 use enumset::{EnumSet, EnumSetType};
 

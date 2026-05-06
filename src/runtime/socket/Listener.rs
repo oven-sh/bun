@@ -454,8 +454,38 @@ impl Listener {
 
     pub fn on_name_pipe_created<const SSL: bool>(listener: &mut Listener) -> *mut NewSocket<SSL> {
         debug_assert!(SSL == listener.ssl);
-        let _ = listener;
-        todo!("blocked_on: NewSocket<SSL> construction without Default — Windows named-pipe path")
+
+        let this_socket = NewSocket::<SSL>::new(NewSocket::<SSL> {
+            ref_count: bun_ptr::RefCount::init(),
+            handlers: NonNull::new(&mut listener.handlers as *mut Handlers),
+            socket: uws::NewSocketHandler::<SSL>::DETACHED,
+            protos: listener.protos.clone(),
+            // PORT NOTE: Zig shared the listener's slice (`owned_protos = false`);
+            // here `protos` is `Option<Box<[u8]>>` so we clone instead of borrow.
+            flags: SocketFlags::empty(),
+            owned_ssl_ctx: None,
+            this_value: jsc::JsRef::empty(),
+            poll_ref: KeepAlive::init(),
+            ref_pollref_on_connect: true,
+            connection: None,
+            server_name: None,
+            buffered_data_for_node_net: Default::default(),
+            bytes_written: 0,
+            native_callback: crate::socket::NativeCallbacks::None,
+            twin: None,
+        });
+        // SAFETY: NewSocket::new returns a valid heap pointer.
+        unsafe { (*this_socket).ref_() };
+        if let Some(default_data) = listener.strong_data.get() {
+            let global = listener.handlers.global_object;
+            NewSocket::<SSL>::data_set_cached(
+                // SAFETY: this_socket just allocated above.
+                unsafe { (*this_socket).get_this_value(global) },
+                global,
+                default_data,
+            );
+        }
+        this_socket
     }
 
     /// Called from `dispatch.zig` `BunListener.onOpen` for every accepted socket.

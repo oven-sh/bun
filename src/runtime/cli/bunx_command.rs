@@ -621,17 +621,14 @@ impl BunxCommand {
         // resolver's process-lifetime directory cache.
         let root_dir_info_ref = unsafe { &*root_dir_info };
         let force_using_bun = ctx.debug.run_in_bun;
-        {
-            let _ = (&ctx, root_dir_info_ref, &mut original_path, force_using_bun);
-            // TODO(port): `configure_path_for_run` lives only in run_command's
-            // `phase_a_draft` impl. Once promoted to the active impl:
-            //   Run::configure_path_for_run(
-            //       ctx, root_dir_info_ref, this_transpiler,
-            //       Some(&mut original_path), root_dir_info_ref.abs_path,
-            //       force_using_bun,
-            //   )?;
-            todo!("blocked_on: RunCommand::configure_path_for_run");
-        }
+        Run::configure_path_for_run(
+            ctx,
+            root_dir_info,
+            this_transpiler,
+            Some(&mut original_path),
+            root_dir_info_ref.abs_path,
+            force_using_bun,
+        )?;
         // SAFETY: `Transpiler::init` always sets `env` (singleton or leaked).
         let env_loader = unsafe { &mut *this_transpiler.env };
         env_loader.map.put(b"npm_command", b"exec").expect("unreachable");

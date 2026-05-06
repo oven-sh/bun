@@ -18,7 +18,7 @@
 //! the markdown renderer, and the full `Run::start` run-loop (`hold_api_lock` +
 //! `globalExit`); their bodies are preserved verbatim in `phase_a_draft` below.
 
-use ::core::ffi::c_void;
+use ::core::ffi::{c_char, c_void, CStr};
 use ::core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_bundler::Transpiler;

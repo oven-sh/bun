@@ -33,13 +33,16 @@ fn vm_ctx() -> bun_aio::EventLoopCtx {
 
 /// Local shim for Zig `bun.sys.Maybe(void).errnoSys(rc, tag)` — `bun_sys::Result`
 /// is a plain `core::result::Result` alias in Rust and has no associated
-/// `errno_sys` constructor.
+/// `errno_sys` constructor. Reads the thread-local errno when `rc` indicates
+/// failure (non-zero); falls back to `rc` itself if errno is 0.
 #[inline]
 fn errno_sys(rc: c_int, tag: bun_sys::Tag) -> Option<bun_sys::Error> {
     if rc == 0 {
         return None;
     }
-    Some(bun_sys::Error::from_code_int(rc, tag))
+    let errno = bun_sys::last_errno();
+    let code = if errno != 0 { errno } else { rc };
+    Some(bun_sys::Error::from_code_int(code, tag))
 }
 
 /// Local extension: `JSValue::withAsyncContextIfNeeded` (JSValue.zig:2267).

@@ -2052,13 +2052,14 @@ pub fn write_file_internal(
 
         break 'brk Blob::get::<false, false>(global_this, data)?;
     };
-    let _source_detach = scopeguard::guard((), |_| source_blob.detach());
+    // Zig: `defer source_blob.detach();`
+    let mut source_blob = scopeguard::guard(source_blob, |mut b| b.detach());
 
     let destination_store = destination_blob.store.clone();
     // PORT NOTE: Zig manually ref/deref's; StoreRef clone+drop covers this.
     let _dest_hold = destination_store;
 
-    write_file_with_source_destination(global_this, &mut source_blob, &mut destination_blob, &options)
+    write_file_with_source_destination(global_this, &mut *source_blob, &mut destination_blob, &options)
 }
 
 fn validate_writable_blob(global_this: &JSGlobalObject, blob: &Blob) -> JsResult<()> {

@@ -337,7 +337,7 @@ impl<'a> CopyFile<'a> {
                 bun_sys::Result::Ok(()) => {
                     // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
                     let _ = unsafe {
-                        libc::ftruncate(dest_fd.cast(), i64::try_from(total_written).unwrap())
+                        libc::ftruncate(dest_fd.native(), i64::try_from(total_written).unwrap())
                     };
                     return Ok(());
                 }
@@ -351,9 +351,9 @@ impl<'a> CopyFile<'a> {
                     // SAFETY: raw copy_file_range(2); both fds owned by caller, null offsets.
                     unsafe {
                         linux::copy_file_range(
-                            src_fd.cast(),
+                            src_fd.native(),
                             core::ptr::null_mut(),
-                            dest_fd.cast(),
+                            dest_fd.native(),
                             core::ptr::null_mut(),
                             remain,
                             0,
@@ -362,15 +362,15 @@ impl<'a> CopyFile<'a> {
                 }
                 TryWith::Sendfile => {
                     // SAFETY: raw sendfile(2); both fds owned by caller, null offset.
-                    unsafe { linux::sendfile(dest_fd.cast(), src_fd.cast(), core::ptr::null_mut(), remain) }
+                    unsafe { linux::sendfile(dest_fd.native(), src_fd.native(), core::ptr::null_mut(), remain) }
                 }
                 TryWith::Splice => {
                     // SAFETY: raw splice(2); both fds owned by caller, null offsets.
                     unsafe {
                         libc::splice(
-                            src_fd.cast(),
+                            src_fd.native(),
                             core::ptr::null_mut(),
-                            dest_fd.cast(),
+                            dest_fd.native(),
                             core::ptr::null_mut(),
                             remain,
                             0,
@@ -402,7 +402,7 @@ impl<'a> CopyFile<'a> {
                         bun_sys::Result::Ok(()) => {
                             // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
                             let _ = unsafe {
-                                libc::ftruncate(dest_fd.cast(), i64::try_from(total_written).unwrap())
+                                libc::ftruncate(dest_fd.native(), i64::try_from(total_written).unwrap())
                             };
                             return Ok(());
                         }
@@ -419,12 +419,12 @@ impl<'a> CopyFile<'a> {
                             // this messes up sendfile()
                             has_unset_append = true;
                             // SAFETY: dest_fd is a valid open fd; raw fcntl(2).
-                            let flags = unsafe { libc::fcntl(dest_fd.cast(), libc::F_GETFL, 0 as c_int) };
+                            let flags = unsafe { libc::fcntl(dest_fd.native(), libc::F_GETFL, 0 as c_int) };
                             if (flags & bun_sys::O::APPEND) != 0 {
                                 // SAFETY: dest_fd is a valid open fd; raw fcntl(2).
                                 let _ = unsafe {
                                     libc::fcntl(
-                                        dest_fd.cast(),
+                                        dest_fd.native(),
                                         libc::F_SETFL,
                                         flags ^ bun_sys::O::APPEND,
                                     )
@@ -455,7 +455,7 @@ impl<'a> CopyFile<'a> {
                             bun_sys::Result::Ok(()) => {
                                 // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
                                 let _ = unsafe {
-                                    libc::ftruncate(dest_fd.cast(), i64::try_from(total_written).unwrap())
+                                    libc::ftruncate(dest_fd.native(), i64::try_from(total_written).unwrap())
                                 };
                                 return Ok(());
                             }
@@ -753,7 +753,7 @@ impl<'a> CopyFile<'a> {
                     && self.max_length != MAX_SIZE
                 {
                     let _ = bun_sys::preallocate_file(
-                        self.destination_fd.cast(),
+                        self.destination_fd.native(),
                         0,
                         self.max_length as i64,
                     );
@@ -820,7 +820,7 @@ impl<'a> CopyFile<'a> {
                     && SizeType::try_from(stat.size).unwrap() > self.max_length
                 {
                     let _ = bun_sys::darwin::ftruncate(
-                        self.destination_fd.cast(),
+                        self.destination_fd.native(),
                         i64::try_from(self.max_length).unwrap(),
                     );
                 }
@@ -1215,7 +1215,7 @@ impl<'a> CopyFileWindows<'a> {
     }
 
     fn prepare_pathlike(
-        pathlike: &mut jsc::node::PathOrFileDescriptor,
+        pathlike: &mut PathOrFileDescriptor,
         must_close: &mut bool,
         is_reading: bool,
     ) -> bun_sys::Result<Fd> {

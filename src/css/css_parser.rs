@@ -1791,11 +1791,8 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                 }
             }
             AtRulePrelude::FontPaletteValues(name) => {
-                let rule = gated_parse!(
-                    "FontPaletteValuesRule::parse",
-                    css_rules::font_palette_values::FontPaletteValuesRule::parse(name, input, loc)?
-                );
-                let _ = (name, input, loc);
+                let rule =
+                    css_rules::font_palette_values::FontPaletteValuesRule::parse(name, input, loc)?;
                 this.rules.v.push(CssRule::FontPaletteValues(rule));
                 Ok(())
             }
@@ -1883,11 +1880,8 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                 }
             }
             AtRulePrelude::Page(selectors) => {
-                let rule = gated_parse!(
-                    "PageRule::parse",
-                    css_rules::page::PageRule::parse(selectors, input, loc, this.options)?
-                );
-                let _ = (selectors, input, loc);
+                let rule =
+                    css_rules::page::PageRule::parse(selectors, input, loc, this.options)?;
                 this.rules.v.push(CssRule::Page(rule));
                 Ok(())
             }
@@ -1938,11 +1932,7 @@ impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
                 Ok(())
             }
             AtRulePrelude::Property { name } => {
-                let rule = gated_parse!(
-                    "PropertyRule::parse",
-                    css_rules::property::PropertyRule::parse(name, input, loc)?
-                );
-                let _ = (name, input, loc);
+                let rule = css_rules::property::PropertyRule::parse(name, input, loc)?;
                 this.rules.v.push(CssRule::Property(rule));
                 Ok(())
             }

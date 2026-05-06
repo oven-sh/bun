@@ -37,6 +37,7 @@ bun_crash_handler.workspace = true
 # concurrent agent has src/css/ mid-edit; enabled by default via the `css`
 # feature below.
 bun_css = { workspace = true, optional = true }
+# phase-c: bun_jsc decoupled from css (not on -e path)
 bun_dotenv.workspace = true
 bun_event_loop.workspace = true
 bun_glob.workspace = true

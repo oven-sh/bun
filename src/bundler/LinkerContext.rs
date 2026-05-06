@@ -2247,19 +2247,36 @@ impl<'a> LinkerContext<'a> {
 } // end un-gated tree-shaking impl (B-2 second pass)
 
 // ══════════════════════════════════════════════════════════════════════════
-// Forward-decl shims for `scanImportsAndExports.rs` callees.
+// `scanImportsAndExports.rs` callees — un-gated (B-2 third pass).
 //
-// `linker_context/scanImportsAndExports.rs` is un-gated (B-2) and calls these
-// `LinkerContext` methods inherently. The real bodies live either in the
-// `#[cfg(any())]` impl block immediately below (match_imports_with_exports_for_file,
-// create_wrapper_for_file) or in the still-gated `linker_context/` submodules
-// (do_step5, generate_code_for_lazy_export). The trivial delegations
-// (runtime_function, top_level_symbols_to_parts) are real here — `LinkerGraph`
-// already exposes the underlying accessors un-gated.
-//
-// As each gated body lands, replace the corresponding `todo!()` shim with the
-// real port and drop the duplicate from the `#[cfg(any())]` block.
+// `linker_context/scanImportsAndExports.rs` calls these `LinkerContext`
+// methods inherently. Real ports of the `LinkerContext.zig` /
+// `linker_context/doStep5.zig` / `linker_context/generateCodeForLazyExport.zig`
+// bodies. The `#[cfg(any())]` impl block immediately below retains the
+// Phase-A drafts (now duplicated) until the next sweep removes them.
 // ══════════════════════════════════════════════════════════════════════════
+
+// Local imports for the un-gated bodies. Kept here (not at the top of the
+// file) so the still-gated impl block above keeps compiling against its own
+// import set until it's removed.
+use crate::bundle_v2::{ImportTrackerIterator, ImportTrackerStatus};
+use bun_js_parser::ast::bundled_ast::Flags as AstFlags;
+use bun_js_parser::{
+    DeclaredSymbolList, DependencyList, ImportItemStatus, PartSymbolUseMap,
+};
+use bun_js_parser::ast::symbol::Use as SymbolUse;
+
+/// Field-wise eq for `ImportTracker` — `crate::ImportTracker` (the
+/// `ungate_support` flavour) intentionally does not derive `PartialEq` so the
+/// cycle-detector loop spells the comparison explicitly (matches Zig's
+/// `eql(ImportTracker)` shape).
+#[inline]
+fn import_tracker_eq(a: &ImportTracker, b: &ImportTracker) -> bool {
+    a.source_index.get() == b.source_index.get()
+        && a.import_ref == b.import_ref
+        && a.name_loc.start == b.name_loc.start
+}
+
 impl<'a> LinkerContext<'a> {
     /// Spec: `LinkerContext.zig:1298 runtimeFunction`.
     #[inline]
@@ -2279,6 +2296,21 @@ impl<'a> LinkerContext<'a> {
         self.top_level_symbols_to_parts(Index::RUNTIME.get(), r#ref)
     }
 
+    /// `LinkerContext.allocator` — delegates to the `LinkerGraph` arena.
+    /// Mirrors the gated copy above; duplicated here so the un-gated callees
+    /// resolve until the gated impl block is removed.
+    #[inline]
+    pub fn allocator(&self) -> &Bump {
+        self.graph.allocator()
+    }
+
+    /// Spec: `LinkerContext.zig:489 source_`.
+    #[inline]
+    pub fn get_source(&self, index: usize) -> &Source {
+        // SAFETY: parse_graph backref into BundleV2.graph; valid for self's lifetime.
+        unsafe { &(*self.parse_graph).input_files.items_source()[index] }
+    }
+
     /// Spec: `LinkerContext.zig:496 scanCSSImports`.
     ///
     /// PORT NOTE: signature reshaped vs. the gated draft above — the un-gated
@@ -2286,7 +2318,6 @@ impl<'a> LinkerContext<'a> {
     /// passes the `css_asts` column as an opaque `*mut [Option<&c_void>]`
     /// (the `bun_css::BundlerStyleSheet` element type is still gated). `log`
     /// is borrowed through `&mut self` instead of as a separate parameter.
-    #[allow(unused_variables)]
     pub fn scan_css_imports(
         &mut self,
         file_source_index: u32,
@@ -2295,14 +2326,39 @@ impl<'a> LinkerContext<'a> {
         sources: &[Source],
         loaders: &[Loader],
     ) -> ScanCssImportsResult {
-        // TODO(b2-blocked): real body gated above — depends on `self.allocator()`
-        // (gated) and the full `Loader` variant set. Un-gates with the impl
-        // block at the top of this file.
-        todo!("LinkerContext::scan_css_imports — body gated on bun_css + allocator()")
+        // SAFETY: `css_asts` points at the `graph.ast.items_css()` column for
+        // the duration of `scanImportsAndExports`; we only test `is_none()`.
+        let css_asts: &[Option<&'static core::ffi::c_void>] = unsafe { &*css_asts };
+        for record in file_import_records.iter_mut() {
+            if record.source_index.is_valid() {
+                // Other file is not CSS
+                if css_asts[record.source_index.get() as usize].is_none() {
+                    let source = &sources[file_source_index as usize];
+                    let loader = loaders[record.source_index.get() as usize];
+
+                    match loader {
+                        Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx | Loader::Napi
+                        | Loader::Sqlite | Loader::Json | Loader::Jsonc | Loader::Json5
+                        | Loader::Yaml | Loader::Html | Loader::SqliteEmbedded | Loader::Md => {
+                            self.log.add_error_fmt(
+                                Some(source),
+                                record.range.loc,
+                                format_args!(
+                                    "Cannot import a \".{}\" file into a CSS file",
+                                    <&'static str>::from(loader),
+                                ),
+                            ).expect("OOM");
+                        }
+                        Loader::Css | Loader::File | Loader::Toml | Loader::Wasm
+                        | Loader::Base64 | Loader::Dataurl | Loader::Text | Loader::Bunsh => {}
+                    }
+                }
+            }
+        }
+        if self.log.errors > 0 { ScanCssImportsResult::Errors } else { ScanCssImportsResult::Ok }
     }
 
     /// Spec: `LinkerContext.zig:2158 createWrapperForFile`.
-    #[allow(unused_variables)]
     pub fn create_wrapper_for_file(
         &mut self,
         wrap: WrapKind,
@@ -2313,45 +2369,1560 @@ impl<'a> LinkerContext<'a> {
         wrapper_part_index: &mut crate::Index,
         source_index: crate::IndexInt,
     ) {
-        // TODO(b2-blocked): real body in the `#[cfg(any())]` impl block below
-        // — depends on `LinkerGraph::add_part_to_file` and runtime-part
-        // dependency wiring that reaches into gated SoA mutators.
-        todo!("LinkerContext::create_wrapper_for_file — body gated below")
+        match wrap {
+            // If this is a CommonJS file, we're going to need to generate a wrapper
+            // for the CommonJS closure. That will end up looking something like this:
+            //
+            //   var require_foo = __commonJS((exports, module) => {
+            //     ...
+            //   });
+            //
+            // However, that generation is special-cased for various reasons and is
+            // done later on. Still, we're going to need to ensure that this file
+            // both depends on the "__commonJS" symbol and declares the "require_foo"
+            // symbol. Instead of special-casing this during the reachability analysis
+            // below, we just append a dummy part to the end of the file with these
+            // dependencies and let the general-purpose reachability analysis take care
+            // of it.
+            WrapKind::Cjs => {
+                let common_js_parts = self.top_level_symbols_to_parts_for_runtime(self.cjs_runtime_ref);
+
+                // PORT NOTE: reshaped for borrowck — Zig held `runtime_parts`
+                // simultaneously with the mutable graph borrows below; the inner
+                // loop is empty (`if r#ref.eql(...) continue;` only) so it's a
+                // no-op kept for parity with the original.
+                for &part_id in common_js_parts {
+                    let runtime_parts = self.graph.ast.items_parts()[Index::RUNTIME.get() as usize].slice();
+                    let part: &Part = &runtime_parts[part_id as usize];
+                    let symbol_refs = part.symbol_uses.keys();
+                    for r#ref in symbol_refs {
+                        if *r#ref == self.cjs_runtime_ref {
+                            continue;
+                        }
+                    }
+                }
+
+                // generate a dummy part that depends on the "__commonJS" symbol.
+                let dependencies: DependencyList = if self.options.output_format != Format::InternalBakeDev {
+                    let mut deps = BabyList::<Dependency>::init_capacity(common_js_parts.len()).expect("OOM");
+                    for &part in common_js_parts {
+                        deps.append_assume_capacity(Dependency {
+                            part_index: part,
+                            source_index: Index::RUNTIME,
+                        });
+                    }
+                    deps
+                } else {
+                    DependencyList::default()
+                };
+                let mut symbol_uses = PartSymbolUseMap::default();
+                symbol_uses.put(wrapper_ref, SymbolUse { count_estimate: 1 }).expect("OOM");
+                let exports_ref = self.graph.ast.items_exports_ref()[source_index as usize];
+                let module_ref = self.graph.ast.items_module_ref()[source_index as usize];
+                let wrap_ref = self.graph.ast.items_wrapper_ref()[source_index as usize];
+                let part_index = self.graph.add_part_to_file(
+                    source_index,
+                    Part {
+                        symbol_uses,
+                        declared_symbols: DeclaredSymbolList::from_slice(&[
+                            DeclaredSymbol { r#ref: exports_ref, is_top_level: true },
+                            DeclaredSymbol { r#ref: module_ref, is_top_level: true },
+                            DeclaredSymbol { r#ref: wrap_ref, is_top_level: true },
+                        ]).expect("unreachable"),
+                        dependencies,
+                        ..Default::default()
+                    },
+                ).expect("unreachable");
+                debug_assert!(part_index != js_ast::NAMESPACE_EXPORT_PART_INDEX);
+                *wrapper_part_index = crate::Index::part(part_index);
+
+                // Bake uses a wrapping approach that does not use __commonJS
+                if self.options.output_format != Format::InternalBakeDev {
+                    self.graph.generate_symbol_import_and_use(
+                        source_index,
+                        part_index,
+                        self.cjs_runtime_ref,
+                        1,
+                        Index::RUNTIME,
+                    ).expect("unreachable");
+                }
+            }
+
+            WrapKind::Esm => {
+                // If this is a lazily-initialized ESM file, we're going to need to
+                // generate a wrapper for the ESM closure. That will end up looking
+                // something like this:
+                //
+                //   var init_foo = __esm(() => {
+                //     ...
+                //   });
+                //
+                // This depends on the "__esm" symbol and declares the "init_foo" symbol
+                // for similar reasons to the CommonJS closure above.
+
+                // Count async dependencies to determine if we need __promiseAll
+                let mut async_import_count: usize = 0;
+                {
+                    let import_records = self.graph.ast.items_import_records()[source_index as usize].slice();
+                    let meta_flags = self.graph.meta.items_flags();
+
+                    for record in import_records {
+                        if !record.source_index.is_valid() {
+                            continue;
+                        }
+                        let other_flags = meta_flags[record.source_index.get() as usize];
+                        if other_flags.is_async_or_has_async_dependency {
+                            async_import_count += 1;
+                            if async_import_count >= 2 {
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                let needs_promise_all = async_import_count >= 2;
+
+                let esm_parts: &[u32] = if wrapper_ref.is_valid() && self.options.output_format != Format::InternalBakeDev {
+                    self.top_level_symbols_to_parts_for_runtime(self.esm_runtime_ref)
+                } else {
+                    &[]
+                };
+
+                let promise_all_parts: &[u32] = if needs_promise_all && wrapper_ref.is_valid() && self.options.output_format != Format::InternalBakeDev {
+                    self.top_level_symbols_to_parts_for_runtime(self.promise_all_runtime_ref)
+                } else {
+                    &[]
+                };
+
+                // generate a dummy part that depends on the "__esm" and optionally "__promiseAll" symbols
+                let mut dependencies =
+                    BabyList::<Dependency>::init_capacity(esm_parts.len() + promise_all_parts.len()).expect("OOM");
+                for &part in esm_parts {
+                    dependencies.append_assume_capacity(Dependency { part_index: part, source_index: Index::RUNTIME });
+                }
+                for &part in promise_all_parts {
+                    dependencies.append_assume_capacity(Dependency { part_index: part, source_index: Index::RUNTIME });
+                }
+
+                let mut symbol_uses = PartSymbolUseMap::default();
+                symbol_uses.put(wrapper_ref, SymbolUse { count_estimate: 1 }).expect("OOM");
+                let part_index = self.graph.add_part_to_file(
+                    source_index,
+                    Part {
+                        symbol_uses,
+                        declared_symbols: DeclaredSymbolList::from_slice(&[
+                            DeclaredSymbol { r#ref: wrapper_ref, is_top_level: true },
+                        ]).expect("unreachable"),
+                        dependencies,
+                        ..Default::default()
+                    },
+                ).expect("unreachable");
+                debug_assert!(part_index != js_ast::NAMESPACE_EXPORT_PART_INDEX);
+                *wrapper_part_index = crate::Index::part(part_index);
+                if wrapper_ref.is_valid() && self.options.output_format != Format::InternalBakeDev {
+                    self.graph.generate_symbol_import_and_use(
+                        source_index,
+                        part_index,
+                        self.esm_runtime_ref,
+                        1,
+                        Index::RUNTIME,
+                    ).expect("OOM");
+
+                    // Only mark __promiseAll as used if we have multiple async dependencies
+                    if needs_promise_all {
+                        self.graph.generate_symbol_import_and_use(
+                            source_index,
+                            part_index,
+                            self.promise_all_runtime_ref,
+                            1,
+                            Index::RUNTIME,
+                        ).expect("OOM");
+                    }
+                }
+            }
+            WrapKind::None => {}
+        }
+    }
+
+    /// Spec: `LinkerContext.zig:1710 advanceImportTracker`.
+    pub fn advance_import_tracker(&mut self, tracker: &ImportTracker) -> ImportTrackerIterator {
+        let id = tracker.source_index.get();
+        // PORT NOTE: reshaped for borrowck — Zig held `&mut named_imports[id]`
+        // and `&import_records[id]` simultaneously; here we read `named_import`
+        // out first, then borrow the rest.
+        let named_import: NamedImport = match self.graph.ast.items_named_imports()[id as usize].get(&tracker.import_ref) {
+            Some(ni) => ni.clone(),
+            None => {
+                // TODO: investigate if this is a bug
+                // It implies there are imports being added without being resolved
+                return ImportTrackerIterator {
+                    value: Default::default(),
+                    status: ImportTrackerStatus::External,
+                    ..Default::default()
+                };
+            }
+        };
+        let import_records = &self.graph.ast.items_import_records()[id as usize];
+        let exports_kind: &[ExportsKind] = self.graph.ast.items_exports_kind();
+        let ast_flags = self.graph.ast.items_flags();
+
+        // Is this an external file?
+        let record: &ImportRecord = import_records.at(named_import.import_record_index as usize);
+        if !record.source_index.is_valid() {
+            return ImportTrackerIterator {
+                value: Default::default(),
+                status: ImportTrackerStatus::External,
+                ..Default::default()
+            };
+        }
+
+        // Barrel optimization: deferred import records point to empty ASTs
+        if record.flags.contains(bun_options_types::import_record::Flags::IS_UNUSED) {
+            return ImportTrackerIterator {
+                value: Default::default(),
+                status: ImportTrackerStatus::External,
+                ..Default::default()
+            };
+        }
+
+        // Is this a disabled file?
+        let other_source_index = record.source_index.get();
+        let other_id = other_source_index;
+
+        // SAFETY: parse_graph backref
+        if other_id as usize > self.graph.ast.len()
+            || unsafe { (*self.parse_graph).input_files.items_source()[other_source_index as usize].path.is_disabled }
+        {
+            return ImportTrackerIterator {
+                value: ImportTracker { source_index: record.source_index, ..Default::default() },
+                status: ImportTrackerStatus::Disabled,
+                ..Default::default()
+            };
+        }
+
+        let flags = ast_flags[other_id as usize];
+
+        // Is this a named import of a file without any exports?
+        if !named_import.alias_is_star
+            && flags.contains(AstFlags::HAS_LAZY_EXPORT)
+            // ESM exports
+            && !flags.contains(AstFlags::USES_EXPORT_KEYWORD)
+            // SAFETY: `alias` is an arena `*const [u8]` valid for the link pass.
+            && named_import.alias.map(|a| unsafe { &*a } != b"default").unwrap_or(true)
+            // CommonJS exports
+            && !flags.contains(AstFlags::USES_EXPORTS_REF)
+            && !flags.contains(AstFlags::USES_MODULE_REF)
+        {
+            // Just warn about it and replace the import with "undefined"
+            return ImportTrackerIterator {
+                value: ImportTracker {
+                    source_index: Index::source(other_source_index),
+                    import_ref: Ref::NONE,
+                    ..Default::default()
+                },
+                status: ImportTrackerStatus::CjsWithoutExports,
+                ..Default::default()
+            };
+        }
+        let other_kind = exports_kind[other_id as usize];
+        // Is this a CommonJS file?
+        if other_kind == ExportsKind::Cjs {
+            return ImportTrackerIterator {
+                value: ImportTracker {
+                    source_index: Index::source(other_source_index),
+                    import_ref: Ref::NONE,
+                    ..Default::default()
+                },
+                status: ImportTrackerStatus::Cjs,
+                ..Default::default()
+            };
+        }
+
+        // Match this import star with an export star from the imported file
+        if named_import.alias_is_star {
+            let matching_export = &self.graph.meta.items_resolved_export_star()[other_id as usize];
+            if matching_export.data.import_ref.is_valid() {
+                // Check to see if this is a re-export of another import
+                return ImportTrackerIterator {
+                    value: matching_export.data,
+                    status: ImportTrackerStatus::Found,
+                    import_data: matching_export
+                        .potentially_ambiguous_export_star_refs
+                        .slice()
+                        .iter()
+                        .map(|d| crate::ImportData { data: d.data, ..Default::default() })
+                        .collect(),
+                };
+            }
+        }
+
+        // Match this import up with an export from the imported file
+        // SAFETY: `alias` is an arena `*const [u8]` valid for the link pass.
+        if let Some(matching_export) = self.graph.meta.items_resolved_exports()[other_id as usize]
+            .get(unsafe { &*named_import.alias.unwrap() })
+        {
+            // Check to see if this is a re-export of another import
+            return ImportTrackerIterator {
+                value: ImportTracker {
+                    source_index: matching_export.data.source_index,
+                    import_ref: matching_export.data.import_ref,
+                    name_loc: matching_export.data.name_loc,
+                },
+                status: ImportTrackerStatus::Found,
+                import_data: matching_export
+                    .potentially_ambiguous_export_star_refs
+                    .slice()
+                    .iter()
+                    .map(|d| crate::ImportData { data: d.data, ..Default::default() })
+                    .collect(),
+            };
+        }
+
+        // Is this a file with dynamic exports?
+        let is_commonjs_to_esm = flags.contains(AstFlags::FORCE_CJS_TO_ESM);
+        if other_kind.is_esm_with_dynamic_fallback() || is_commonjs_to_esm {
+            return ImportTrackerIterator {
+                value: ImportTracker {
+                    source_index: Index::source(other_source_index),
+                    import_ref: self.graph.ast.items_exports_ref()[other_id as usize],
+                    ..Default::default()
+                },
+                status: if is_commonjs_to_esm {
+                    ImportTrackerStatus::DynamicFallbackInteropDefault
+                } else {
+                    ImportTrackerStatus::DynamicFallback
+                },
+                ..Default::default()
+            };
+        }
+
+        // Missing re-exports in TypeScript files are indistinguishable from types
+        // SAFETY: parse_graph backref
+        let other_loader = unsafe { (*self.parse_graph).input_files.items_loader()[other_id as usize] };
+        if named_import.is_exported && other_loader.is_typescript() {
+            return ImportTrackerIterator {
+                value: Default::default(),
+                status: ImportTrackerStatus::ProbablyTypescriptType,
+                ..Default::default()
+            };
+        }
+
+        ImportTrackerIterator {
+            value: ImportTracker {
+                source_index: Index::source(other_source_index),
+                ..Default::default()
+            },
+            status: ImportTrackerStatus::NoMatch,
+            ..Default::default()
+        }
+    }
+
+    /// Spec: `LinkerContext.zig:1443 matchImportWithExport`.
+    pub fn match_import_with_export(
+        &mut self,
+        init_tracker: ImportTracker,
+        re_exports: &mut Vec<Dependency>,
+    ) -> MatchImport {
+        let cycle_detector_top = self.cycle_detector.len();
+        // PORT NOTE: scopeguard captures `&mut self.cycle_detector` via raw ptr
+        // to avoid borrowck conflict with the `&mut self` calls below.
+        let _guard = scopeguard::guard(&mut self.cycle_detector as *mut Vec<ImportTracker>, move |cd| {
+            // SAFETY: cd points to self.cycle_detector which outlives this scope
+            unsafe { (*cd).truncate(cycle_detector_top) };
+        });
+
+        let mut tracker = init_tracker;
+        let mut ambiguous_results: Vec<MatchImport> = Vec::new();
+        let mut result: MatchImport = MatchImport::default();
+
+        'loop_: loop {
+            // Make sure we avoid infinite loops trying to resolve cycles:
+            //
+            //   // foo.js
+            //   export {a as b} from './foo.js'
+            //   export {b as c} from './foo.js'
+            //   export {c as a} from './foo.js'
+            //
+            // This uses a O(n^2) array scan instead of a O(n) map because the vast
+            // majority of cases have one or two elements
+            for prev_tracker in &self.cycle_detector[cycle_detector_top..] {
+                if import_tracker_eq(&tracker, prev_tracker) {
+                    result = MatchImport { kind: MatchImportKind::Cycle, ..Default::default() };
+                    break 'loop_;
+                }
+            }
+
+            if tracker.source_index.is_invalid() {
+                // External
+                break;
+            }
+
+            let prev_source_index = tracker.source_index.get();
+            self.cycle_detector.push(tracker);
+
+            // Resolve the import by one step
+            let advanced = self.advance_import_tracker(&tracker);
+            let next_tracker = advanced.value;
+            let status = advanced.status;
+            let potentially_ambiguous_export_star_refs = advanced.import_data;
+
+            match status {
+                ImportTrackerStatus::Cjs
+                | ImportTrackerStatus::CjsWithoutExports
+                | ImportTrackerStatus::Disabled
+                | ImportTrackerStatus::External => {
+                    if status == ImportTrackerStatus::External
+                        && self.options.output_format.keep_es6_import_export_syntax()
+                    {
+                        // Imports from external modules should not be converted to CommonJS
+                        // if the output format preserves the original ES6 import statements
+                        break;
+                    }
+
+                    // If it's a CommonJS or external file, rewrite the import to a
+                    // property access. Don't do this if the namespace reference is invalid
+                    // though. This is the case for star imports, where the import is the
+                    // namespace.
+                    let named_import: NamedImport = self.graph.ast.items_named_imports()[prev_source_index as usize]
+                        .get(&tracker.import_ref).unwrap().clone();
+
+                    if named_import.namespace_ref.is_some() && named_import.namespace_ref.unwrap().is_valid() {
+                        if result.kind == MatchImportKind::Normal {
+                            result.kind = MatchImportKind::NormalAndNamespace;
+                            result.namespace_ref = named_import.namespace_ref.unwrap();
+                            result.alias = named_import.alias.unwrap();
+                        } else {
+                            result = MatchImport {
+                                kind: MatchImportKind::Namespace,
+                                namespace_ref: named_import.namespace_ref.unwrap(),
+                                alias: named_import.alias.unwrap(),
+                                ..Default::default()
+                            };
+                        }
+                    }
+
+                    // Warn about importing from a file that is known to not have any exports
+                    if status == ImportTrackerStatus::CjsWithoutExports {
+                        let source = self.get_source(tracker.source_index.get() as usize);
+                        // SAFETY: `alias` is an arena `*const [u8]` valid for the link pass.
+                        let alias = unsafe { &*named_import.alias.unwrap() };
+                        self.log.add_range_warning_fmt(
+                            Some(source),
+                            source.range_of_identifier(named_import.alias_loc.unwrap()),
+                            format_args!(
+                                "Import \"{}\" will always be undefined because the file \"{}\" has no exports",
+                                bstr::BStr::new(alias),
+                                bstr::BStr::new(&self.get_source(next_tracker.source_index.get() as usize).path.pretty),
+                            ),
+                        ).expect("unreachable");
+                    }
+                }
+
+                ImportTrackerStatus::DynamicFallbackInteropDefault => {
+                    // if the file was rewritten from CommonJS into ESM
+                    // and the developer imported an export that doesn't exist
+                    // We don't do a runtime error since that CJS would have returned undefined.
+                    let named_import: NamedImport = self.graph.ast.items_named_imports()[prev_source_index as usize]
+                        .get(&tracker.import_ref).unwrap().clone();
+
+                    if named_import.namespace_ref.is_some() && named_import.namespace_ref.unwrap().is_valid() {
+                        // SAFETY: get() returns a stable *mut Symbol; ref is valid.
+                        let symbol = unsafe { &mut *self.graph.symbols.get(tracker.import_ref).unwrap() };
+                        symbol.import_item_status = ImportItemStatus::Missing;
+                        result.kind = MatchImportKind::NormalAndNamespace;
+                        result.alias = named_import.alias.unwrap();
+                        result.name_loc = named_import.alias_loc.unwrap_or(Loc::EMPTY);
+                        result.source_index = next_tracker.source_index.get();
+                        result.namespace_ref = next_tracker.import_ref;
+                        result.r#ref = next_tracker.import_ref;
+                    }
+                }
+
+                ImportTrackerStatus::DynamicFallback => {
+                    // If it's a file with dynamic export fallback, rewrite the import to a property access
+                    let named_import: NamedImport = self.graph.ast.items_named_imports()[prev_source_index as usize]
+                        .get(&tracker.import_ref).unwrap().clone();
+                    if named_import.namespace_ref.is_some() && named_import.namespace_ref.unwrap().is_valid() {
+                        if result.kind == MatchImportKind::Normal {
+                            result.kind = MatchImportKind::NormalAndNamespace;
+                            result.namespace_ref = next_tracker.import_ref;
+                            result.alias = named_import.alias.unwrap();
+                        } else {
+                            result = MatchImport {
+                                kind: MatchImportKind::Namespace,
+                                namespace_ref: next_tracker.import_ref,
+                                alias: named_import.alias.unwrap(),
+                                ..Default::default()
+                            };
+                        }
+                    }
+                }
+                ImportTrackerStatus::NoMatch => {
+                    // Report mismatched imports and exports
+                    // SAFETY: get() returns a stable *mut Symbol; ref is valid.
+                    let symbol = unsafe { &mut *self.graph.symbols.get(tracker.import_ref).unwrap() };
+                    let named_import: NamedImport = self.graph.ast.items_named_imports()[prev_source_index as usize]
+                        .get(&tracker.import_ref).unwrap().clone();
+                    let source = self.get_source(prev_source_index as usize);
+
+                    let next_source = self.get_source(next_tracker.source_index.get() as usize);
+                    let r = source.range_of_identifier(named_import.alias_loc.unwrap());
+                    // SAFETY: arena `*const [u8]` valid for the link pass.
+                    let alias = unsafe { &*named_import.alias.unwrap() };
+
+                    // Report mismatched imports and exports
+                    if symbol.import_item_status == ImportItemStatus::Generated {
+                        // This is a debug message instead of an error because although it
+                        // appears to be a named import, it's actually an automatically-
+                        // generated named import that was originally a property access on an
+                        // import star namespace object. Normally this property access would
+                        // just resolve to undefined at run-time instead of failing at binding-
+                        // time, so we emit a debug message and rewrite the value to the literal
+                        // "undefined" instead of emitting an error.
+                        symbol.import_item_status = ImportItemStatus::Missing;
+
+                        // SAFETY: resolver backref into BundleV2.transpiler.resolver (LIFETIMES.tsv)
+                        if unsafe { (*self.resolver).opts.target } == Target::Browser
+                            && bun_resolve_builtins::HardcodedModule::Alias::has(
+                                &next_source.path.pretty,
+                                bun_resolve_builtins::RuntimeTarget::Bun,
+                                Default::default(),
+                            )
+                        {
+                            self.log.add_range_warning_fmt_with_note(
+                                Some(source), r,
+                                format_args!(
+                                    "Browser polyfill for module \"{}\" doesn't have a matching export named \"{}\"",
+                                    bstr::BStr::new(&next_source.path.pretty),
+                                    bstr::BStr::new(alias),
+                                ),
+                                format_args!("Bun's bundler defaults to browser builds instead of node or bun builds. If you want to use node or bun builds, you can set the target to \"node\" or \"bun\" in the transpiler options."),
+                                r,
+                            ).expect("unreachable");
+                        } else {
+                            self.log.add_range_warning_fmt(
+                                Some(source), r,
+                                format_args!(
+                                    "Import \"{}\" will always be undefined because there is no matching export in \"{}\"",
+                                    bstr::BStr::new(alias),
+                                    bstr::BStr::new(&next_source.path.pretty),
+                                ),
+                            ).expect("unreachable");
+                        }
+                    } else if unsafe {
+                        // SAFETY: resolver is a BACKREF into BundleV2.transpiler.resolver (LIFETIMES.tsv)
+                        (*self.resolver).opts.target
+                    } == Target::Browser
+                        && next_source.path.text.starts_with(NodeFallbackModules::IMPORT_PATH)
+                    {
+                        self.log.add_range_error_fmt_with_note(
+                            Some(source), r,
+                            format_args!(
+                                "Browser polyfill for module \"{}\" doesn't have a matching export named \"{}\"",
+                                bstr::BStr::new(&next_source.path.pretty),
+                                bstr::BStr::new(alias),
+                            ),
+                            format_args!("Bun's bundler defaults to browser builds instead of node or bun builds. If you want to use node or bun builds, you can set the target to \"node\" or \"bun\" in the transpiler options."),
+                            r,
+                        ).expect("unreachable");
+                    } else {
+                        self.log.add_range_error_fmt(
+                            Some(source), r,
+                            format_args!(
+                                "No matching export in \"{}\" for import \"{}\"",
+                                bstr::BStr::new(&next_source.path.pretty),
+                                bstr::BStr::new(alias),
+                            ),
+                        ).expect("unreachable");
+                    }
+                }
+                ImportTrackerStatus::ProbablyTypescriptType => {
+                    // Omit this import from any namespace export code we generate for
+                    // import star statements (i.e. "import * as ns from 'path'")
+                    result = MatchImport { kind: MatchImportKind::ProbablyTypescriptType, ..Default::default() };
+                }
+                ImportTrackerStatus::Found => {
+                    // If there are multiple ambiguous results due to use of "export * from"
+                    // statements, trace them all to see if they point to different things.
+                    for ambiguous_tracker in potentially_ambiguous_export_star_refs.iter() {
+                        // If this is a re-export of another import, follow the import
+                        if self.graph.ast.items_named_imports()[ambiguous_tracker.data.source_index.get() as usize]
+                            .contains(&ambiguous_tracker.data.import_ref)
+                        {
+                            let ambig = self.match_import_with_export(ambiguous_tracker.data, re_exports);
+                            ambiguous_results.push(ambig);
+                        } else {
+                            ambiguous_results.push(MatchImport {
+                                kind: MatchImportKind::Normal,
+                                source_index: ambiguous_tracker.data.source_index.get(),
+                                r#ref: ambiguous_tracker.data.import_ref,
+                                name_loc: ambiguous_tracker.data.name_loc,
+                                ..Default::default()
+                            });
+                        }
+                    }
+
+                    // Defer the actual binding of this import until after we generate
+                    // namespace export code for all files. This has to be done for all
+                    // import-to-export matches, not just the initial import to the final
+                    // export, since all imports and re-exports must be merged together
+                    // for correctness.
+                    result = MatchImport {
+                        kind: MatchImportKind::Normal,
+                        source_index: next_tracker.source_index.get(),
+                        r#ref: next_tracker.import_ref,
+                        name_loc: next_tracker.name_loc,
+                        ..Default::default()
+                    };
+
+                    // Depend on the statement(s) that declared this import symbol in the
+                    // original file
+                    {
+                        let deps = self.top_level_symbols_to_parts(prev_source_index, tracker.import_ref);
+                        re_exports.reserve(deps.len());
+                        for &dep in deps {
+                            re_exports.push(Dependency {
+                                part_index: dep,
+                                source_index: tracker.source_index,
+                            });
+                            // PERF(port): was assume_capacity
+                        }
+                    }
+
+                    // If this is a re-export of another import, continue for another
+                    // iteration of the loop to resolve that import as well
+                    let next_id = next_tracker.source_index.get();
+                    if self.graph.ast.items_named_imports()[next_id as usize].contains(&next_tracker.import_ref) {
+                        tracker = next_tracker;
+                        continue 'loop_;
+                    }
+                }
+            }
+
+            break 'loop_;
+        }
+
+        // If there is a potential ambiguity, all results must be the same
+        for ambig in &ambiguous_results {
+            if *ambig != result {
+                if result.kind == ambig.kind
+                    && ambig.kind == MatchImportKind::Normal
+                    && ambig.name_loc.start != 0
+                    && result.name_loc.start != 0
+                {
+                    return MatchImport {
+                        kind: MatchImportKind::Ambiguous,
+                        source_index: result.source_index,
+                        name_loc: result.name_loc,
+                        other_source_index: ambig.source_index,
+                        other_name_loc: ambig.name_loc,
+                        ..Default::default()
+                    };
+                }
+
+                return MatchImport { kind: MatchImportKind::Ambiguous, ..Default::default() };
+            }
+        }
+
+        result
     }
 
     /// Spec: `LinkerContext.zig:2471 matchImportsWithExportsForFile`.
-    #[allow(unused_variables)]
     pub fn match_imports_with_exports_for_file(
         &mut self,
-        named_imports: &mut bun_js_parser::ast::bundled_ast::NamedImports,
+        named_imports_ptr: &mut bun_js_parser::ast::bundled_ast::NamedImports,
         imports_to_bind: &mut crate::RefImportData,
         source_index: crate::IndexInt,
     ) {
-        // TODO(b2-blocked): real body in the `#[cfg(any())]` impl block below
-        // — depends on `match_import_with_export` / `advance_import_tracker`.
-        todo!("LinkerContext::match_imports_with_exports_for_file — body gated below")
+        // PORT NOTE: Zig clones into a local, sorts, iterates, then writes back.
+        // `ArrayHashMap` has no in-place key sort, so we sort an index vector
+        // over the cloned keys/values instead — same observable iteration order
+        // (ascending `inner_index`). Write-back is a `*ptr = clone` at the end.
+        let named_imports = named_imports_ptr.clone().expect("OOM");
+
+        let keys: &[Ref] = named_imports.keys();
+        let values: &[NamedImport] = named_imports.values();
+        let mut order: Vec<usize> = (0..keys.len()).collect();
+        order.sort_by(|&a, &b| keys[a].inner_index().cmp(&keys[b].inner_index()));
+
+        for &i in &order {
+            let import_ref = keys[i];
+            let named_import = &values[i];
+
+            // Re-use memory for the cycle detector
+            self.cycle_detector.clear();
+
+            let mut re_exports: Vec<Dependency> = Vec::new();
+            let result = self.match_import_with_export(
+                ImportTracker {
+                    source_index: Index::source(source_index),
+                    import_ref,
+                    ..Default::default()
+                },
+                &mut re_exports,
+            );
+
+            match result.kind {
+                MatchImportKind::Normal => {
+                    imports_to_bind.put(
+                        import_ref,
+                        crate::ImportData {
+                            re_exports: BabyList::<Dependency>::move_from_list(re_exports),
+                            data: ImportTracker {
+                                source_index: Index::source(result.source_index),
+                                import_ref: result.r#ref,
+                                ..Default::default()
+                            },
+                        },
+                    ).expect("unreachable");
+                }
+                MatchImportKind::Namespace => {
+                    // SAFETY: get() returns a stable *mut Symbol; ref is valid.
+                    unsafe { &mut *self.graph.symbols.get(import_ref).unwrap() }.namespace_alias =
+                        Some(G::NamespaceAlias {
+                            namespace_ref: result.namespace_ref,
+                            alias: result.alias,
+                        });
+                }
+                MatchImportKind::NormalAndNamespace => {
+                    imports_to_bind.put(
+                        import_ref,
+                        crate::ImportData {
+                            re_exports: BabyList::<Dependency>::move_from_list(re_exports),
+                            data: ImportTracker {
+                                source_index: Index::source(result.source_index),
+                                import_ref: result.r#ref,
+                                ..Default::default()
+                            },
+                        },
+                    ).expect("unreachable");
+
+                    // SAFETY: get() returns a stable *mut Symbol; ref is valid.
+                    unsafe { &mut *self.graph.symbols.get(import_ref).unwrap() }.namespace_alias =
+                        Some(G::NamespaceAlias {
+                            namespace_ref: result.namespace_ref,
+                            alias: result.alias,
+                        });
+                }
+                MatchImportKind::Cycle => {
+                    let source = self.get_source(source_index as usize);
+                    let r = lex::range_of_identifier(source, named_import.alias_loc.unwrap_or(Loc::default()));
+                    // SAFETY: arena `*const [u8]` valid for the link pass.
+                    let alias = unsafe { &*named_import.alias.unwrap() };
+                    self.log.add_range_error_fmt(
+                        Some(source), r,
+                        format_args!(
+                            "Detected cycle while resolving import \"{}\"",
+                            bstr::BStr::new(alias),
+                        ),
+                    ).expect("unreachable");
+                }
+                MatchImportKind::ProbablyTypescriptType => {
+                    self.graph.meta.items_probably_typescript_type_mut()[source_index as usize]
+                        .put(import_ref, ())
+                        .expect("unreachable");
+                }
+                MatchImportKind::Ambiguous => {
+                    let source = self.get_source(source_index as usize);
+                    let r = lex::range_of_identifier(source, named_import.alias_loc.unwrap_or(Loc::default()));
+
+                    // TODO: log locations of the ambiguous exports
+
+                    // SAFETY: get() returns a stable *mut Symbol; ref is valid.
+                    let symbol = unsafe { &mut *self.graph.symbols.get(import_ref).unwrap() };
+                    // SAFETY: arena `*const [u8]` valid for the link pass.
+                    let alias = unsafe { &*named_import.alias.unwrap() };
+                    if symbol.import_item_status == ImportItemStatus::Generated {
+                        symbol.import_item_status = ImportItemStatus::Missing;
+                        self.log.add_range_warning_fmt(
+                            Some(source), r,
+                            format_args!(
+                                "Import \"{}\" will always be undefined because there are multiple matching exports",
+                                bstr::BStr::new(alias),
+                            ),
+                        ).expect("unreachable");
+                    } else {
+                        self.log.add_range_error_fmt(
+                            Some(source), r,
+                            format_args!(
+                                "Ambiguous import \"{}\" has multiple matching exports",
+                                bstr::BStr::new(alias),
+                            ),
+                        ).expect("unreachable");
+                    }
+                }
+                MatchImportKind::Ignore => {}
+            }
+        }
+
+        // PORT NOTE: Zig `defer named_imports_ptr.* = named_imports;` — write-back at end.
+        *named_imports_ptr = named_imports;
     }
 
     /// Spec: `linker_context/doStep5.zig`.
-    /// Forward decl for `worker_pool.each(this, LinkerContext::do_step5, &reachable)`.
-    #[allow(unused_variables)]
-    pub fn do_step5(&mut self, source_index: crate::Index, _i: usize) {
-        // TODO(b2-blocked): real body lives in `linker_context/doStep5.rs`
-        // (module gated in `lib.rs::linker_context`). Un-gates with that
-        // submodule; this shim keeps `scanImportsAndExports` resolvable.
-        todo!("LinkerContext::do_step5 — gated in linker_context/doStep5.rs")
+    ///
+    /// Step 5: Create namespace exports for every file. This is always necessary
+    /// for CommonJS files, and is also necessary for other files if they are
+    /// imported using an import star statement.
+    pub fn do_step5(&mut self, source_index_: crate::Index, _: usize) {
+        let source_index = source_index_.get();
+        let _trace = perf::trace("Bundler.CreateNamespaceExports");
+
+        let id = source_index;
+        if id as usize >= self.graph.meta.len() {
+            return;
+        }
+
+        // SAFETY: self points to BundleV2.linker (caller is the worker-pool
+        // dispatch from `scanImportsAndExports`).
+        let bundle_v2 = unsafe {
+            &mut *((self as *mut LinkerContext as *mut u8)
+                .sub(core::mem::offset_of!(BundleV2, linker))
+                .cast::<BundleV2>())
+        };
+        let worker = ThreadPool::Worker::get(bundle_v2);
+        // PORT NOTE: `defer worker.unget()` — Worker::get returns an RAII guard
+        // that ungets on Drop.
+
+        // we must use this allocator here
+        let allocator: &Bump = worker.allocator();
+
+        // PORT NOTE: reshaped for borrowck — Zig held overlapping
+        // `&mut graph.meta` / `&graph.meta` borrows; we go through raw column
+        // pointers (`*mut`/`*const`) so the multiple SoA columns can be live
+        // simultaneously without rustc tripping on aliasing.
+        let resolved_exports: *mut crate::ResolvedExports =
+            &mut self.graph.meta.items_resolved_exports_mut()[id as usize];
+        let imports_to_bind: *const [crate::RefImportData] = self.graph.meta.items_imports_to_bind();
+        let probably_typescript_type: *const [ArrayHashMap<Ref, ()>] =
+            self.graph.meta.items_probably_typescript_type();
+
+        // Now that all exports have been resolved, sort and filter them to create
+        // something we can iterate over later.
+        // SAFETY: SoA column pointers stay valid for the worker step (no realloc).
+        let mut aliases =
+            bumpalo::collections::Vec::<&[u8]>::with_capacity_in(unsafe { (*resolved_exports).count() }, allocator);
+
+        // counting in here saves us an extra pass through the array
+        let mut re_exports_count: usize = 0;
+
+        {
+            // SAFETY: see above.
+            let mut alias_iter = unsafe { (*resolved_exports).iterator() };
+            'next_alias: while let Some(entry) = alias_iter.next() {
+                let export_ = entry.value_ptr;
+                let alias: &[u8] = entry.key_ptr;
+                let this_id = export_.data.source_index.get();
+                let mut inner_count: usize = 0;
+                // Re-exporting multiple symbols with the same name causes an ambiguous
+                // export. These names cannot be used and should not end up in generated code.
+                if export_.potentially_ambiguous_export_star_refs.len > 0 {
+                    // SAFETY: see above.
+                    let main_data = match unsafe { &(*imports_to_bind)[this_id as usize] }.get(&export_.data.import_ref) {
+                        Some(b) => b.data,
+                        None => export_.data,
+                    };
+                    for ambig in export_.potentially_ambiguous_export_star_refs.slice() {
+                        let _id = ambig.data.source_index.get();
+                        // SAFETY: see above.
+                        let ambig_ref =
+                            if let Some(bound) = unsafe { &(*imports_to_bind)[_id as usize] }.get(&ambig.data.import_ref) {
+                                bound.data.import_ref
+                            } else {
+                                ambig.data.import_ref
+                            };
+                        if main_data.import_ref != ambig_ref {
+                            continue 'next_alias;
+                        }
+                        inner_count += ambig.re_exports.len as usize;
+                    }
+                }
+
+                // Ignore re-exported imports in TypeScript files that failed to be
+                // resolved. These are probably just type-only imports so the best thing to
+                // do is to silently omit them from the export list.
+                // SAFETY: see above.
+                if unsafe { &(*probably_typescript_type)[this_id as usize] }.contains(&export_.data.import_ref) {
+                    continue;
+                }
+                re_exports_count += inner_count;
+
+                aliases.push(alias);
+                // PERF(port): was appendAssumeCapacity
+            }
+        }
+        // TODO: can this be u32 instead of a string?
+        // if yes, we could just move all the hidden exports to the end of the array
+        // and only store a count instead of an array
+        strings::sort_desc(aliases.as_mut_slice());
+        let export_aliases = aliases.into_bump_slice();
+        self.graph.meta.items_sorted_and_filtered_export_aliases_mut()[id as usize] =
+            // PORT NOTE: SoA column is `Box<[Box<[u8]>]>`; the worker arena slices
+            // are `&'bump [u8]`. Re-own into `Box` for now — once `JSMeta` grows
+            // an `'arena` lifetime this collapses to a borrowing slice. PERF(port).
+            export_aliases.iter().map(|s| (*s).to_vec().into_boxed_slice()).collect();
+
+        // Export creation uses "sortedAndFilteredExportAliases" so this must
+        // come second after we fill in that array
+        self.create_exports_for_file(
+            allocator,
+            id,
+            // SAFETY: see above.
+            unsafe { &mut *resolved_exports },
+            unsafe { &*imports_to_bind },
+            export_aliases,
+            re_exports_count,
+        );
+
+        // Each part tracks the other parts it depends on within this file
+        let mut local_dependencies: HashMap<u32, u32> = HashMap::default();
+
+        // PORT NOTE: reshaped for borrowck — multiple `&mut` into self.graph;
+        // raw-ptr indexing per-iteration.
+        let parts_slice: *mut [Part] = self.graph.ast.items_parts_mut()[id as usize].slice_mut();
+        let named_imports: *mut bun_js_parser::ast::bundled_ast::NamedImports =
+            &mut self.graph.ast.items_named_imports_mut()[id as usize];
+
+        // SAFETY: SoA column pointers stay valid for the worker step.
+        let our_imports_to_bind: &crate::RefImportData = unsafe { &(*imports_to_bind)[id as usize] };
+        // SAFETY: see above.
+        'outer: for (part_index, part) in unsafe { (*parts_slice).iter_mut().enumerate() } {
+            // Now that all files have been parsed, determine which property
+            // accesses off of imported symbols are inlined enum values and
+            // which ones aren't
+            // PORT NOTE: reshaped for borrowck — Zig iterates keys()/values() while holding
+            // a mutable getPtr into part.symbol_uses; collect refs first.
+            let prop_use_refs: Vec<Ref> = part.import_symbol_property_uses.keys().to_vec();
+            for ref_ in &prop_use_refs {
+                // PORT NOTE: re-fetch each iteration to avoid overlapping &mut.
+                let properties: *const _ = part.import_symbol_property_uses.get(ref_).unwrap();
+                let use_: &mut SymbolUse = part.symbol_uses.get_ptr_mut(ref_).unwrap();
+
+                // Rare path: this import is a TypeScript enum
+                if let Some(import_data) = our_imports_to_bind.get(ref_) {
+                    let import_ref = import_data.data.import_ref;
+                    if let Some(symbol) = self.graph.symbols.get_const(import_ref) {
+                        if symbol.kind == bun_js_parser::ast::symbol::Kind::TsEnum {
+                            if let Some(enum_data) = self.graph.ts_enums.get(&import_ref) {
+                                let mut found_non_inlined_enum = false;
+
+                                // SAFETY: `properties` points into `part.import_symbol_property_uses`
+                                // which is not mutated for the lifetime of this borrow.
+                                let mut it = unsafe { (*properties).iterator() };
+                                while let Some(next) = it.next() {
+                                    let name = next.key_ptr;
+                                    let prop_use = next.value_ptr;
+
+                                    if enum_data.get(name).is_none() {
+                                        found_non_inlined_enum = true;
+                                        use_.count_estimate += prop_use.count_estimate;
+                                    }
+                                }
+
+                                if !found_non_inlined_enum {
+                                    if use_.count_estimate == 0 {
+                                        let _ = part.symbol_uses.swap_remove(ref_);
+                                    }
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Common path: this import isn't a TypeScript enum
+                // SAFETY: see above.
+                for prop_use in unsafe { (*properties).values() } {
+                    use_.count_estimate += prop_use.count_estimate;
+                }
+            }
+
+            // TODO: inline function calls here
+
+            // TODO: Inline cross-module constants
+            // (see doStep5.zig:130-170 — gated until `graph.const_values` lands)
+            if false {
+                break 'outer;
+            } // this `if` is here to preserve the unused
+              //                          block label from the above commented code.
+
+            // Now that we know this, we can determine cross-part dependencies
+            for j in 0..part.symbol_uses.keys().len() {
+                let ref_ = part.symbol_uses.keys()[j];
+                if cfg!(debug_assertions) {
+                    debug_assert!(part.symbol_uses.values()[j].count_estimate > 0);
+                }
+
+                let other_parts = self.top_level_symbols_to_parts(id, ref_);
+
+                for &other_part_index in other_parts {
+                    let local = local_dependencies.get_or_put(other_part_index).expect("unreachable");
+                    if !local.found_existing || (*local.value_ptr) as usize != part_index {
+                        *local.value_ptr = u32::try_from(part_index).unwrap();
+                        // note: if we crash on append, it is due to threadlocal heaps in mimalloc
+                        part.dependencies
+                            .append(Dependency {
+                                source_index: Index::source(source_index),
+                                part_index: other_part_index,
+                            })
+                            .expect("unreachable");
+                    }
+                }
+
+                // Also map from imports to parts that use them
+                // SAFETY: `named_imports` is a stable column pointer.
+                if let Some(existing) = unsafe { (*named_imports).get_ptr_mut(&ref_) } {
+                    existing
+                        .local_parts_with_uses
+                        .append(u32::try_from(part_index).unwrap())
+                        .expect("OOM");
+                }
+            }
+        }
+    }
+
+    /// Spec: `linker_context/doStep5.zig:createExportsForFile`.
+    ///
+    /// WARNING: This method is run in parallel over all files. Do not mutate data
+    /// for other files within this method or you will create a data race.
+    pub fn create_exports_for_file(
+        &mut self,
+        allocator: &Bump,
+        id: u32,
+        resolved_exports: &mut crate::ResolvedExports,
+        imports_to_bind: &[crate::RefImportData],
+        export_aliases: &[&[u8]],
+        re_exports_count: usize,
+    ) {
+        Stmt::Disabler::disable();
+        let _stmt_guard = scopeguard::guard((), |_| Stmt::Disabler::enable());
+        Expr::Disabler::disable();
+        let _expr_guard = scopeguard::guard((), |_| Expr::Disabler::enable());
+
+        // 1 property per export
+        let mut properties =
+            bumpalo::collections::Vec::<G::Property>::with_capacity_in(export_aliases.len(), allocator);
+
+        let mut ns_export_symbol_uses = PartSymbolUseMap::default();
+        ns_export_symbol_uses
+            .ensure_total_capacity(export_aliases.len())
+            .expect("OOM");
+
+        let initial_flags = self.graph.meta.items_flags()[id as usize];
+        let needs_exports_variable = initial_flags.needs_exports_variable;
+        let force_include_exports_for_entry_point =
+            self.options.output_format == Format::Cjs && initial_flags.force_include_exports_for_entry_point;
+
+        let stmts_count =
+            // 1 statement for every export
+            export_aliases.len() +
+            // + 1 if there are non-zero exports
+            (!export_aliases.is_empty()) as usize +
+            // + 1 if we need to inject the exports variable
+            needs_exports_variable as usize +
+            // + 1 if we need to do module.exports = __toCommonJS(exports)
+            force_include_exports_for_entry_point as usize;
+
+        let mut stmts = js_ast::Batcher::<Stmt>::init(allocator, stmts_count).expect("OOM");
+        // PORT NOTE: `defer stmts.done()` — Batcher asserts head.is_empty() on
+        // Drop in debug builds.
+        let loc = Loc::EMPTY;
+        // todo: investigate if preallocating this array is faster
+        let mut ns_export_dependencies =
+            BabyList::<Dependency>::init_capacity(re_exports_count).expect("OOM");
+        for &alias in export_aliases {
+            // SAFETY: alias is in `sorted_and_filtered_export_aliases` which we just filled.
+            let exp = resolved_exports.get_mut(alias).unwrap();
+            let mut exp_data = exp.data;
+
+            // If this is an export of an import, reference the symbol that the import
+            // was eventually resolved to. We need to do this because imports have
+            // already been resolved by this point, so we can't generate a new import
+            // and have that be resolved later.
+            if let Some(import_data) =
+                imports_to_bind[exp_data.source_index.get() as usize].get(&exp_data.import_ref)
+            {
+                exp_data.import_ref = import_data.data.import_ref;
+                exp_data.source_index = import_data.data.source_index;
+                ns_export_dependencies
+                    .append_slice(import_data.re_exports.slice())
+                    .expect("OOM");
+            }
+
+            // Exports of imports need EImportIdentifier in case they need to be re-
+            // written to a property access later on
+            // note: this is stack allocated
+            let value: Expr = 'brk: {
+                if let Some(symbol) = self.graph.symbols.get_const(exp_data.import_ref) {
+                    if symbol.namespace_alias.is_some() {
+                        break 'brk Expr::init(
+                            E::ImportIdentifier {
+                                r#ref: exp_data.import_ref,
+                                ..Default::default()
+                            },
+                            loc,
+                        );
+                    }
+                }
+
+                Expr::init(
+                    E::Identifier {
+                        r#ref: exp_data.import_ref,
+                        ..Default::default()
+                    },
+                    loc,
+                )
+            };
+
+            let fn_body = G::FnBody {
+                stmts: stmts.eat1(Stmt::allocate(
+                    allocator,
+                    S::Return { value: Some(value) },
+                    loc,
+                )),
+                loc,
+            };
+            properties.push(G::Property {
+                key: Some(Expr::allocate(
+                    allocator,
+                    E::String {
+                        // TODO: test emoji work as expected
+                        // relevant for WASM exports
+                        data: alias as *const [u8],
+                        ..Default::default()
+                    },
+                    loc,
+                )),
+                value: Some(Expr::allocate(
+                    allocator,
+                    E::Arrow {
+                        prefer_expr: true,
+                        body: fn_body,
+                        ..Default::default()
+                    },
+                    loc,
+                )),
+                ..Default::default()
+            });
+            // PERF(port): was appendAssumeCapacity
+            ns_export_symbol_uses.put_assume_capacity(
+                exp_data.import_ref,
+                SymbolUse { count_estimate: 1 },
+            );
+
+            // Make sure the part that declares the export is included
+            let parts = self.top_level_symbols_to_parts(exp_data.source_index.get(), exp_data.import_ref);
+            ns_export_dependencies
+                .ensure_unused_capacity(parts.len())
+                .expect("OOM");
+            for &part_id in parts {
+                // Use a non-local dependency since this is likely from a different
+                // file if it came in through an export star
+                ns_export_dependencies.append_assume_capacity(Dependency {
+                    source_index: exp_data.source_index,
+                    part_index: part_id,
+                });
+            }
+        }
+
+        let mut declared_symbols = DeclaredSymbolList::default();
+        let exports_ref = self.graph.ast.items_exports_ref()[id as usize];
+        let all_export_stmts_len = needs_exports_variable as usize
+            + (!properties.is_empty()) as usize
+            + force_include_exports_for_entry_point as usize;
+        // PORT NOTE: borrowck — slicing `stmts.head` while holding
+        // `all_export_stmts`; we go through raw pointers and re-seat
+        // `stmts.head` first so the two `&mut [Stmt]` don't overlap.
+        let head_ptr: *mut [Stmt] = stmts.head;
+        // SAFETY: `head_ptr` is the freshly-allocated batch buffer of length
+        // `stmts_count` (>= `all_export_stmts_len`); the two slices are disjoint.
+        let all_export_stmts: &mut [Stmt] = unsafe { &mut (*head_ptr)[..all_export_stmts_len] };
+        stmts.head = unsafe { &mut (*head_ptr)[all_export_stmts_len..] };
+        let mut remaining_stmts: &mut [Stmt] = all_export_stmts;
+
+        // Prefix this part with "var exports = {}" if this isn't a CommonJS entry point
+        if needs_exports_variable {
+            let decls = allocator.alloc_slice_fill_iter(core::iter::once(G::Decl {
+                binding: Binding::alloc(allocator, B::Identifier { r#ref: exports_ref }, loc),
+                value: Some(Expr::allocate(allocator, E::Object::default(), loc)),
+            }));
+            remaining_stmts[0] = Stmt::allocate(
+                allocator,
+                S::Local {
+                    decls: G::Decl::List::from_owned_slice(decls),
+                    ..Default::default()
+                },
+                loc,
+            );
+            remaining_stmts = &mut remaining_stmts[1..];
+            declared_symbols
+                .append(DeclaredSymbol { r#ref: exports_ref, is_top_level: true })
+                .expect("unreachable");
+        }
+
+        // "__export(exports, { foo: () => foo })"
+        let mut export_ref = Ref::NONE;
+        if !properties.is_empty() {
+            export_ref = self.runtime_function(b"__export");
+            let args = allocator.alloc_slice_fill_iter([
+                Expr::init_identifier(exports_ref, loc),
+                Expr::allocate(
+                    allocator,
+                    E::Object {
+                        properties: G::Property::List::move_from_list(&mut properties),
+                        ..Default::default()
+                    },
+                    loc,
+                ),
+            ].into_iter());
+            remaining_stmts[0] = Stmt::allocate(
+                allocator,
+                S::SExpr {
+                    value: Expr::allocate(
+                        allocator,
+                        E::Call {
+                            target: Expr::init_identifier(export_ref, loc),
+                            args: bun_js_parser::ExprNodeList::from_slice(args).expect("OOM"),
+                            ..Default::default()
+                        },
+                        loc,
+                    ),
+                    ..Default::default()
+                },
+                loc,
+            );
+            remaining_stmts = &mut remaining_stmts[1..];
+            // Make sure this file depends on the "__export" symbol
+            let parts = self.top_level_symbols_to_parts_for_runtime(export_ref);
+            ns_export_dependencies
+                .ensure_unused_capacity(parts.len())
+                .expect("OOM");
+            for &part_index in parts {
+                ns_export_dependencies.append_assume_capacity(Dependency {
+                    source_index: Index::RUNTIME,
+                    part_index,
+                });
+            }
+
+            // Make sure the CommonJS closure, if there is one, includes "exports"
+            self.graph.ast.items_flags_mut()[id as usize].insert(AstFlags::USES_EXPORTS_REF);
+        }
+
+        // Decorate "module.exports" with the "__esModule" flag to indicate that
+        // we used to be an ES module. This is done by wrapping the exports object
+        // instead of by mutating the exports object because other modules in the
+        // bundle (including the entry point module) may do "import * as" to get
+        // access to the exports object and should NOT see the "__esModule" flag.
+        if force_include_exports_for_entry_point {
+            let to_common_js_ref = self.runtime_function(b"__toCommonJS");
+
+            let call_args = allocator.alloc_slice_fill_iter(
+                core::iter::once(Expr::init_identifier(exports_ref, Loc::EMPTY)),
+            );
+            remaining_stmts[0] = Stmt::assign(
+                Expr::allocate(
+                    allocator,
+                    E::Dot {
+                        name: b"exports" as *const [u8],
+                        name_loc: Loc::EMPTY,
+                        target: Expr::init_identifier(self.unbound_module_ref, Loc::EMPTY),
+                        ..Default::default()
+                    },
+                    Loc::EMPTY,
+                ),
+                Expr::allocate(
+                    allocator,
+                    E::Call {
+                        target: Expr::init_identifier(to_common_js_ref, Loc::EMPTY),
+                        args: bun_js_parser::ExprNodeList::from_slice(call_args).expect("OOM"),
+                        ..Default::default()
+                    },
+                    Loc::EMPTY,
+                ),
+            );
+            remaining_stmts = &mut remaining_stmts[1..];
+        }
+
+        debug_assert!(remaining_stmts.is_empty()); // all must be used
+        let _ = remaining_stmts;
+
+        // No need to generate a part if it'll be empty
+        if all_export_stmts_len > 0 {
+            // - we must already have preallocated the parts array
+            // - if the parts list is completely empty, we shouldn't have gotten here in the first place
+
+            // Initialize the part that was allocated for us earlier. The information
+            // here will be used after this during tree shaking.
+            self.graph.ast.items_parts_mut()[id as usize].slice_mut()
+                [js_ast::NAMESPACE_EXPORT_PART_INDEX as usize] = Part {
+                stmts: if self.options.output_format != Format::InternalBakeDev {
+                    // SAFETY: `head_ptr` borrows the worker arena which outlives
+                    // the link pass; the prefix slice is disjoint from `stmts.head`.
+                    unsafe { &mut (*head_ptr)[..all_export_stmts_len] as *mut [Stmt] }
+                } else {
+                    &mut [] as *mut [Stmt]
+                },
+                symbol_uses: ns_export_symbol_uses,
+                dependencies: ns_export_dependencies,
+                declared_symbols,
+
+                // This can be removed if nothing uses it
+                can_be_removed_if_unused: true,
+
+                // Make sure this is trimmed if unused even if tree shaking is disabled
+                force_tree_shaking: true,
+
+                ..Default::default()
+            };
+
+            // Pull in the "__export" symbol if it was used
+            if export_ref.is_valid() {
+                self.graph.meta.items_flags_mut()[id as usize].needs_export_symbol_from_runtime = true;
+            }
+        }
     }
 
     /// Spec: `linker_context/generateCodeForLazyExport.zig`.
-    #[allow(unused_variables)]
     pub fn generate_code_for_lazy_export(
         &mut self,
         source_index: crate::IndexInt,
     ) -> Result<(), AllocError> {
-        // TODO(b2-blocked): real body lives in
-        // `linker_context/generateCodeForLazyExport.rs` (module gated in
-        // `lib.rs::linker_context`); depends on `bun_css::BundlerStyleSheet`.
-        todo!("LinkerContext::generate_code_for_lazy_export — gated in linker_context/generateCodeForLazyExport.rs")
+        let exports_kind = self.graph.ast.items_exports_kind()[source_index as usize];
+        let module_ref = self.graph.ast.items_module_ref()[source_index as usize];
+        // PORT NOTE: reshaped for borrowck — `parts` re-borrowed below after
+        // other graph borrows drop.
+        let parts: *mut [Part] = self.graph.ast.items_parts_mut()[source_index as usize].slice_mut();
+
+        // SAFETY: `parts` is a stable SoA column slice.
+        if unsafe { (*parts).len() } < 1 {
+            panic!("Internal error: expected at least one part for lazy export");
+        }
+
+        // SAFETY: `parts.ptr[1]` — BabyList raw indexing.
+        let part: &mut Part = unsafe { &mut (*parts)[1] };
+
+        // SAFETY: `stmts: *mut [Stmt]` is an arena slice valid for the link pass.
+        if unsafe { (*part.stmts).is_empty() } {
+            panic!("Internal error: expected at least one statement in the lazy export");
+        }
+
+        // Handle css modules
+        //
+        // --- original comment from esbuild ---
+        // If this JavaScript file is a stub from a CSS file, populate the exports of
+        // this JavaScript stub with the local names from that CSS file. This is done
+        // now instead of earlier because we need the whole bundle to be present.
+        //
+        // PORT NOTE: the CSS-module path (`BundlerStyleSheet.{local_scope,composes}`)
+        // is gated upstream — `crate::bun_css::BundlerStyleSheet` is a unit stub
+        // until `bun_css` un-gates the real type. The full Visitor port lives in
+        // `linker_context/generateCodeForLazyExport.rs` (still module-gated in
+        // `lib.rs::linker_context`); when `bun_css::BundlerStyleSheet` lands the
+        // module un-gates and this branch becomes
+        //   `crate::linker_context::generate_code_for_lazy_export::populate_css_stub_exports(self, css_ast, part, source_index)?;`
+        if let Some(_css_ast) = self.graph.ast.items_css()[source_index as usize] {
+            #[cfg(any())]
+            {
+                crate::linker_context::generate_code_for_lazy_export::populate_css_stub_exports(
+                    self, _css_ast, part, source_index,
+                )?;
+            }
+        }
+
+        // SAFETY: `part.stmts` is a non-empty arena slice (checked above).
+        let stmt: &Stmt = unsafe { &(*part.stmts)[0] };
+        let stmt_loc = stmt.loc;
+        let js_ast::Stmt::Data::SLazyExport(lazy) = &stmt.data else {
+            panic!("Internal error: expected top-level lazy export statement");
+        };
+        let expr = Expr { data: (**lazy).clone(), loc: stmt_loc };
+
+        match exports_kind {
+            ExportsKind::Cjs => {
+                // SAFETY: `part.stmts` non-empty arena slice.
+                unsafe {
+                    (*part.stmts)[0] = Stmt::assign(
+                        Expr::init(
+                            E::Dot {
+                                target: Expr::init_identifier(module_ref, stmt_loc),
+                                name: b"exports" as *const [u8],
+                                name_loc: stmt_loc,
+                                ..Default::default()
+                            },
+                            stmt_loc,
+                        ),
+                        expr.clone(),
+                    );
+                }
+                self.graph.generate_symbol_import_and_use(
+                    source_index,
+                    0,
+                    module_ref,
+                    1,
+                    Index::init(source_index),
+                )?;
+
+                // If this is a .napi addon and it's not node, we need to generate a require() call to the runtime
+                if matches!(expr.data, js_ast::Expr::Data::ECall(ref c)
+                    if matches!(c.target.data, js_ast::Expr::Data::ERequireCallTarget(_)))
+                    // if it's commonjs, use require()
+                    && self.options.output_format != Format::Cjs
+                {
+                    self.graph.generate_runtime_symbol_import_and_use(
+                        source_index,
+                        Index::part(1u32),
+                        b"__require",
+                        1,
+                    )?;
+                }
+            }
+            _ => {
+                // Otherwise, generate ES6 export statements. These are added as additional
+                // parts so they can be tree shaken individually.
+                // SAFETY: `part.stmts` is an arena slice; setting len to 0 leaks
+                // the unused tail back to the arena (matches Zig `.len = 0`).
+                part.stmts = &mut [] as *mut [Stmt];
+
+                if let js_ast::Expr::Data::EObject(e_object) = &expr.data {
+                    for property_ in e_object.properties.slice() {
+                        let property: &G::Property = property_;
+                        let Some(key) = property.key.as_ref() else { continue };
+                        let js_ast::Expr::Data::EString(key_str) = &key.data else { continue };
+                        if property.value.is_none()
+                            || key_str.eql_comptime(b"default")
+                            || key_str.eql_comptime(b"__esModule")
+                        {
+                            continue;
+                        }
+
+                        let name = key_str.slice(self.allocator());
+
+                        // TODO: support non-identifier names
+                        if !lex::is_identifier(name) {
+                            continue;
+                        }
+
+                        // This initializes the generated variable with a copy of the property
+                        // value, which is INCORRECT for values that are objects/arrays because
+                        // they will have separate object identity. This is fixed up later in
+                        // "generateCodeForFileInChunkJS" by changing the object literal to
+                        // reference this generated variable instead.
+                        //
+                        // Changing the object literal is deferred until that point instead of
+                        // doing it now because we only want to do this for top-level variables
+                        // that actually end up being used, and we don't know which ones will
+                        // end up actually being used at this point (since import binding hasn't
+                        // happened yet). So we need to wait until after tree shaking happens.
+                        let generated =
+                            self.generate_named_export_in_file(source_index, module_ref, name, name)?;
+                        let alloc = self.allocator();
+                        let new_stmts = alloc.alloc_slice_fill_iter(core::iter::once(
+                            Stmt::alloc(
+                                S::Local {
+                                    is_export: true,
+                                    decls: G::Decl::List::from_slice(&[G::Decl {
+                                        binding: Binding::alloc(
+                                            alloc,
+                                            B::Identifier { r#ref: generated.0 },
+                                            expr.loc,
+                                        ),
+                                        value: property.value.clone(),
+                                    }])?,
+                                    ..Default::default()
+                                },
+                                key.loc,
+                            ),
+                        ));
+                        // PORT NOTE: `parts.ptr[generated[1]]` — re-borrow `parts`
+                        // here for borrowck.
+                        let parts = self.graph.ast.items_parts_mut()[source_index as usize].slice_mut();
+                        parts[generated.1 as usize].stmts = new_stmts as *mut [Stmt];
+                    }
+                }
+
+                {
+                    // PERF(port): was `std.fmt.allocPrint` into arena.
+                    use std::io::Write as _;
+                    let mut name_buf: Vec<u8> = Vec::new();
+                    write!(
+                        &mut name_buf,
+                        "{}_default",
+                        self.get_source(source_index as usize).fmt_identifier()
+                    )
+                    .expect("write to Vec<u8> cannot fail");
+                    let name: &[u8] = self.allocator().alloc_slice_copy(&name_buf);
+
+                    let generated = self.generate_named_export_in_file(
+                        source_index,
+                        module_ref,
+                        name,
+                        b"default",
+                    )?;
+                    let alloc = self.allocator();
+                    let new_stmts = alloc.alloc_slice_fill_iter(core::iter::once(Stmt::alloc(
+                        S::ExportDefault {
+                            default_name: js_ast::LocRef { r#ref: generated.0, loc: stmt_loc },
+                            value: js_ast::StmtOrExpr::Expr(expr),
+                        },
+                        stmt_loc,
+                    )));
+                    let parts = self.graph.ast.items_parts_mut()[source_index as usize].slice_mut();
+                    parts[generated.1 as usize].stmts = new_stmts as *mut [Stmt];
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Spec: `LinkerContext.zig:503 generateNamedExportInFile`.
+    pub fn generate_named_export_in_file(
+        &mut self,
+        source_index: crate::IndexInt,
+        module_ref: Ref,
+        name: &[u8],
+        alias: &[u8],
+    ) -> Result<(Ref, u32), AllocError> {
+        let r#ref = self.graph.generate_new_symbol(source_index, bun_js_parser::ast::symbol::Kind::Other, name);
+        let part_index = self.graph.add_part_to_file(source_index, Part {
+            declared_symbols: DeclaredSymbolList::from_slice(
+                &[DeclaredSymbol { r#ref, is_top_level: true }],
+            )?,
+            can_be_removed_if_unused: true,
+            ..Default::default()
+        })?;
+
+        self.graph.generate_symbol_import_and_use(source_index, part_index, module_ref, 1, Index::init(source_index))?;
+        let top_level = &mut self.graph.meta.items_top_level_symbol_to_parts_overlay_mut()[source_index as usize];
+        top_level.put(r#ref, BabyList::<u32>::from_slice(&[part_index])?)?;
+
+        let resolved_exports = &mut self.graph.meta.items_resolved_exports_mut()[source_index as usize];
+        resolved_exports.put(alias, crate::ExportData {
+            data: ImportTracker {
+                source_index: Index::init(source_index),
+                import_ref: r#ref,
+                ..Default::default()
+            },
+            ..Default::default()
+        })?;
+        Ok((r#ref, part_index))
+    }
+}
+
+// `MatchImport` field-wise eq — `alias: *const [u8]` cannot derive `PartialEq`
+// (raw fat pointer eq is identity-only and we want value-eq on the matched
+// fields, matching Zig's struct compare which ignores `alias`/`namespace_ref`
+// for the ambiguity check anyway).
+impl PartialEq for MatchImport {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind == other.kind
+            && self.source_index == other.source_index
+            && self.name_loc.start == other.name_loc.start
+            && self.other_source_index == other.other_source_index
+            && self.other_name_loc.start == other.other_name_loc.start
+            && self.r#ref == other.r#ref
+            && self.namespace_ref == other.namespace_ref
+            && core::ptr::eq(self.alias, other.alias)
     }
 }
 
@@ -2359,6 +3930,9 @@ impl<'a> LinkerContext<'a> {
 // advance_import_tracker, create_wrapper_for_file, …) — these reach into
 // `LinkerGraph` SoA fields plus `bun_resolve_builtins` / `css::css_modules`
 // surfaces that have not stabilized. Re-gated until those land.
+//
+// PORT NOTE: the bodies above (un-gated) supersede these; this block is kept
+// gated as the Phase-A reference until the next sweep removes it.
 #[cfg(any())]
 impl<'a> LinkerContext<'a> {
     pub fn match_import_with_export(

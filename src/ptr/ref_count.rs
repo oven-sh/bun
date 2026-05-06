@@ -528,7 +528,8 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
 
     /// The count is 0 after the destructor is called.
     pub fn assert_no_refs(&self) {
-        if cfg!(feature = "ci_assert") {
+        // PORT NOTE: `bun.Environment.ci_assert` → `cfg!(debug_assertions)`.
+        if cfg!(debug_assertions) {
             debug_assert!(self.raw_count.load(Ordering::SeqCst) == 0);
         }
     }
@@ -1102,7 +1103,12 @@ fn offset_of_ref_count_ts<T: ThreadSafeRefCounted, Rc>() -> usize {
 // PORT NOTE: `const unique_symbol = opaque {};` — type-identity marker for
 // comptime assertion in `RefPtr`. Replaced by `AnyRefCounted` trait bound.
 
-bun_core::declare_scope!(ref_count, hidden);
+#[allow(non_upper_case_globals)]
+mod scope {
+    bun_core::declare_scope!(ref_count, hidden);
+}
+#[allow(unused_imports)]
+use scope::ref_count;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

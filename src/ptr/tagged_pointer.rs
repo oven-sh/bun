@@ -77,8 +77,8 @@ impl From<u64> for TaggedPtr {
 impl From<i64> for TaggedPtr {
     #[inline]
     fn from(val: i64) -> Self {
-        // SAFETY: same-size POD bitcast
-        TaggedPtr(unsafe { core::mem::transmute::<i64, u64>(val) })
+        // Same-width `as` cast is a bitwise reinterpretation (== transmute).
+        TaggedPtr(val as u64)
     }
 }
 impl From<f64> for TaggedPtr {

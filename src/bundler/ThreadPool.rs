@@ -344,12 +344,17 @@ impl ThreadPool {
         }
     }
 
-    pub fn schedule(&self, parse_task: &mut ParseTask) {
-        self.schedule_with_options(parse_task, false);
+    // PORT NOTE: takes `*mut` (Zig: `*ParseTask`) so callers can pass either a
+    // raw heap pointer (e.g. `load.parse_task`) or a `&mut` (auto-coerces).
+    pub fn schedule(&self, parse_task: *mut ParseTask) {
+        // SAFETY: caller passes a live, exclusively-owned ParseTask (Box::leak'd
+        // or arena-allocated); see call sites in bundle_v2.rs.
+        self.schedule_with_options(unsafe { &mut *parse_task }, false);
     }
 
-    pub fn schedule_inside_thread_pool(&self, parse_task: &mut ParseTask) {
-        self.schedule_with_options(parse_task, true);
+    pub fn schedule_inside_thread_pool(&self, parse_task: *mut ParseTask) {
+        // SAFETY: see `schedule` above.
+        self.schedule_with_options(unsafe { &mut *parse_task }, true);
     }
 
     // PORT NOTE: returns `&'static mut` — the `Worker` is `Box::into_raw`'d

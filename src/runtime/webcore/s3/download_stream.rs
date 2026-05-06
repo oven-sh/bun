@@ -328,7 +328,7 @@ impl S3HttpDownloadStreamingTask {
                 .from(this, AutoDeinit::ManualDeinit) as *mut ConcurrentTask;
             // SAFETY: `vm` is the live per-thread VM pointer captured at task creation; event_loop
             // is initialized for the request's lifetime and enqueue is thread-safe.
-            unsafe { (*self_.vm.event_loop()).enqueue_task_concurrent(task) };
+            unsafe { (*(*self_.vm).event_loop()).enqueue_task_concurrent(task) };
         }
     }
 }

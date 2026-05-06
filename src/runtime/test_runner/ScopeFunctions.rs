@@ -684,10 +684,10 @@ pub fn parse_arguments(
     let result_callback: Option<JSValue> = if cfg.callback != CallbackMode::Require && callback.is_undefined_or_null() {
         None
     } else if callback.is_function() {
-        Some(callback.with_async_context_if_needed(global))
+        Some(with_async_context_if_needed(callback, global))
     } else {
         let ordinal = if cfg.kind == FunctionKind::Hook { "first" } else { "second" };
-        return global.throw(format_args!("{} expects a function as the {} argument", signature, ordinal));
+        return Err(global.throw(format_args!("{} expects a function as the {} argument", signature, ordinal)));
     };
 
     let mut result = ParseArgumentsResult {

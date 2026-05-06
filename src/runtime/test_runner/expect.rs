@@ -2188,7 +2188,7 @@ impl ExpectCustomAsymmetricMatcher {
         received: JSValue,
     ) -> JsResult<bool> {
         // retrieve the user-provided matcher implementation function (the function passed to expect.extend({ ... }))
-        let Some(matcher_fn) = Self::js::matcher_fn_get_cached(this_value) else {
+        let Some(matcher_fn) = expect_custom_asymmetric_matcher_js::matcher_fn_get_cached(this_value) else {
             return Err(global_this.throw2(
                 "Internal consistency error: the ExpectCustomAsymmetricMatcher(matcherFn) was garbage collected but it should not have been!",
                 format_args!(""),
@@ -2207,7 +2207,7 @@ impl ExpectCustomAsymmetricMatcher {
 
         // retrieve the asymmetric matcher args
         // if null, it means the function has not yet been called to capture the args, which is a misuse of the matcher
-        let Some(captured_args) = Self::js::captured_args_get_cached(this_value) else {
+        let Some(captured_args) = expect_custom_asymmetric_matcher_js::captured_args_get_cached(this_value) else {
             return Err(global_this.throw2(
                 "expect.{f} misused, it needs to be instantiated by calling it with 0 or more arguments",
                 format_args!("{}", matcher_name),
@@ -2218,14 +2218,14 @@ impl ExpectCustomAsymmetricMatcher {
         // prepare the args array as `[received, ...captured_args]`
         let args_count = captured_args.get_length(global_this)?;
         // PERF(port): was stack-fallback allocator — profile in Phase B
-        let mut matcher_args = bun_jsc::MarkedArgumentBuffer::new();
-        matcher_args.append(received);
+        let mut matcher_args: Vec<JSValue> = Vec::with_capacity((args_count as usize).saturating_add(1));
+        matcher_args.push(received);
         // PERF(port): was assume_capacity
         for i in 0..args_count {
-            matcher_args.append(captured_args.get_index(global_this, i as u32)?);
+            matcher_args.push(captured_args.get_index(global_this, i as u32)?);
         }
 
-        Expect::execute_custom_matcher(global_this, matcher_name, matcher_fn, matcher_args.slice(), this.flags, true)
+        Expect::execute_custom_matcher(global_this, matcher_name, matcher_fn, &matcher_args, this.flags, true)
     }
 
     /// Function called by c++ function "matchAsymmetricMatcher" to execute the custom matcher against the provided leftValue

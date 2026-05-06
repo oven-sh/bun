@@ -3347,7 +3347,9 @@ where
         }
 
         // This is the start of a task, so it's a good time to drain
-        if let Some(body) = this.request_body.clone() {
+        if let Some(mut body_ptr) = this.request_body {
+            // SAFETY: pooled HiveRef slot is live while held.
+            let body = unsafe { body_ptr.as_mut() };
             // The up-front maxRequestBodySize check in server.zig only
             // sees Content-Length. HTTP/3 (and H1 chunked) bodies may
             // omit it, so cap accumulated bytes here too — otherwise a

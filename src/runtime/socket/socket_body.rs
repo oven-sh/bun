@@ -2759,12 +2759,13 @@ impl<const SSL: bool> NewSocket<SSL> {
         // Store the allocation-root `tls_ptr` (from `Box::into_raw`), NOT a
         // reborrow-derived pointer, so dispatch's `&mut *ext` shares
         // provenance with our per-use reborrows below.
-        // SAFETY: ext slot is sized for `*mut TLSSocket`.
-        unsafe { *new_raw.ext::<*mut TLSSocket>() = tls_ptr };
+        // SAFETY: ext slot is sized for `*mut TLSSocket`; `new_raw` is the live
+        // adopted `us_socket_t`.
+        unsafe { *(*new_raw.as_ptr()).ext::<*mut TLSSocket>() = tls_ptr };
         // SAFETY: short-lived reborrows; no `&mut TLSSocket` is held across
         // any dispatch boundary (`on_open`/`start_tls_handshake` below).
         unsafe {
-            (*tls_ptr).socket = SocketHandler::<true>::from(new_raw);
+            (*tls_ptr).socket = SocketHandler::<true>::from(new_raw.as_ptr());
             (*tls_ptr).ref_();
         }
 
@@ -2774,7 +2775,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let raw = TLSSocket::new(TLSSocket {
             ref_count: bun_ptr::RefCount::init(),
             handlers: raw_handlers,
-            socket: SocketHandler::<true>::from(new_raw),
+            socket: SocketHandler::<true>::from(new_raw.as_ptr()),
             owned_ssl_ctx: None,
             connection: None,
             protos: None,

@@ -4713,7 +4713,7 @@ impl NodeFS {
             // fall back to lstat to determine the real file kind.
             let kind = if T::IS_DIRENT && current.kind == sys::FileKind::Unknown {
                 match sys::lstatat(fd, current.name.slice_assume_z()) {
-                    Ok(st) => sys::kind_from_mode(st.mode as Mode),
+                    Ok(st) => sys::kind_from_mode(st.st_mode as Mode),
                     Err(_) => current.kind,
                 }
             } else {
@@ -4832,7 +4832,7 @@ impl NodeFS {
                         // Lazy stat to determine the actual kind (lstatat to not follow symlinks)
                         match sys::lstatat(fd, current.name.slice_assume_z()) {
                             Ok(st) => {
-                                let real_kind = sys::kind_from_mode(st.mode as Mode);
+                                let real_kind = sys::kind_from_mode(st.st_mode as Mode);
                                 effective_kind = real_kind;
                                 if matches!(real_kind, sys::FileKind::Directory | sys::FileKind::SymLink) {
                                     async_task.enqueue(name_to_copy_z);
@@ -4986,7 +4986,7 @@ impl NodeFS {
                             if utf8_name.len() + 1 + name_to_copy.len() > paths::MAX_PATH_BYTES { break 'enqueue; }
                             match sys::lstatat(fd, current.name.slice_assume_z()) {
                                 Ok(st) => {
-                                    let real_kind = sys::kind_from_mode(st.mode as Mode);
+                                    let real_kind = sys::kind_from_mode(st.st_mode as Mode);
                                     effective_kind = real_kind;
                                     if matches!(real_kind, sys::FileKind::Directory | sys::FileKind::SymLink) {
                                         let mut owned = Vec::with_capacity(name_to_copy.len() + 1);

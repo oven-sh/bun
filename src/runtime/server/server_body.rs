@@ -1476,9 +1476,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             let mut data_value = JSValue::ZERO;
 
             // if we converted a HeadersInit to a Headers object, we need to free it
-            let mut fetch_headers_to_deref: Option<*mut FetchHeaders> = None;
-            let _fh_guard = scopeguard::guard((), |_| {
-                if let Some(fh) = fetch_headers_to_deref {
+            let fetch_headers_to_deref: core::cell::Cell<Option<*mut FetchHeaders>> = core::cell::Cell::new(None);
+            let _fh_guard = scopeguard::guard(&fetch_headers_to_deref, |cell| {
+                if let Some(fh) = cell.get() {
                     // SAFETY: created via FetchHeaders::create_from_js below
                     unsafe { &mut *fh }.deref();
                 }
@@ -1522,7 +1522,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             None => 'brk: {
                                 if headers_value.is_object() {
                                     if let Some(fetch_headers) = FetchHeaders::create_from_js(global, headers_value)? {
-                                        fetch_headers_to_deref = Some(fetch_headers.as_ptr());
+                                        fetch_headers_to_deref.set(Some(fetch_headers.as_ptr()));
                                         break 'brk fetch_headers.as_ptr();
                                     }
                                 }

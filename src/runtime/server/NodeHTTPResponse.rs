@@ -1514,7 +1514,7 @@ impl NodeHTTPResponse {
             } else {
                 self.get_this_value()
             };
-            let raw_response = self.raw_response.as_ref().unwrap();
+            let raw_response = *self.raw_response.as_ref().unwrap();
             match raw_response.write(bytes) {
                 uws::WriteResult::WantMore(written) => {
                     raw_response.clear_on_writable();
@@ -1528,8 +1528,7 @@ impl NodeHTTPResponse {
                             global_object,
                             callback_value.with_async_context_if_needed(global_object),
                         );
-                        let raw = *raw_response;
-                        raw.on_writable(on_drain_shim, self as *mut Self);
+                        raw_response.on_writable(on_drain_shim, self as *mut Self);
                     }
 
                     // PERF(port): @intCast — bounded by min().

@@ -236,6 +236,11 @@ impl ColorFallbackKind {
 // The original 3.5k-line port lives below, gated until its hub deps un-gate.
 // Nothing is lost — the wrapper module preserves the source verbatim so the
 // next round can lift method bodies out of here into the real impls above.
+//
+// NOTE: keep `#[cfg(any())]` until `color_generated::generated_color_conversions`
+// (the `From<X> for Y` matrix chains) lands — without it this body has ~80
+// unsatisfied-trait-bound errors that cannot be locally resolved.
+#[cfg(any())]
 #[allow(dead_code, unused_imports, unused_variables, unused_mut, unreachable_code)]
 mod gated_full_impl {
 use crate as css;

@@ -1211,14 +1211,521 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         #[allow(unreachable_code)] expr
     }
     fn e_call(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
-        let _ = (p, in_);
-        todo!("G-round-4: e_call body — see _draft");
-        #[allow(unreachable_code)] expr
+        let mut e_ = expr.data.e_call().unwrap();
+        p.call_target = e_.target.data;
+
+        p.then_catch_chain = ThenCatchChain {
+            next_target: e_.target.data,
+            has_multiple_args: e_.args.len >= 2,
+            has_catch: matches!(
+                p.then_catch_chain.next_target,
+                Data::ECall(nt) if core::ptr::eq(&*e_ as *const _, &*nt as *const _)
+            ) && p.then_catch_chain.has_catch,
+        };
+
+        let target_was_identifier_before_visit = matches!(e_.target.data, Data::EIdentifier(..));
+        e_.target = p.visit_expr_in_out(
+            e_.target,
+            ExprIn {
+                has_chain_parent: e_.optional_chain == Some(js_ast::OptionalChain::Continuation),
+                property_access_for_method_call_maybe_should_replace_with_undefined: true,
+                ..Default::default()
+            },
+        );
+
+        // Copy the call side effect flag over if this is a known target
+        match &e_.target.data {
+            Data::EIdentifier(ident) => {
+                if ident.call_can_be_unwrapped_if_unused
+                    && e_.can_be_unwrapped_if_unused == E::CallUnwrap::Never
+                {
+                    e_.can_be_unwrapped_if_unused = E::CallUnwrap::IfUnused;
+                }
+
+                // Detect if this is a direct eval. Note that "(1 ? eval : 0)(x)" will
+                // become "eval(x)" after we visit the target due to dead code elimination,
+                // but that doesn't mean it should become a direct eval.
+                //
+                // Note that "eval?.(x)" is considered an indirect eval. There was debate
+                // about this after everyone implemented it as a direct eval, but the
+                // language committee said it was indirect and everyone had to change it:
+                // https://github.com/tc39/ecma262/issues/2062.
+                if e_.optional_chain.is_none()
+                    && target_was_identifier_before_visit
+                    && unsafe { &*p.symbols[ident.ref_.inner_index() as usize].original_name }
+                        == b"eval"
+                {
+                    e_.is_direct_eval = true;
+
+                    // Pessimistically assume that if this looks like a CommonJS module
+                    // (e.g. no "export" keywords), a direct call to "eval" means that
+                    // code could potentially access "module" or "exports".
+                    if p.options.bundle && !p.is_file_considered_to_have_esm_exports {
+                        p.record_usage(p.module_ref);
+                        p.record_usage(p.exports_ref);
+                    }
+
+                    // PORT NOTE: `Scope.parent: ?*Scope` in Zig is `Option<NonNull<Scope>>` here;
+                    // walk via raw pointer like the Zig.
+                    let mut scope_iter: Option<NonNull<js_ast::Scope>> =
+                        NonNull::new(p.current_scope);
+                    while let Some(mut scope) = scope_iter {
+                        unsafe {
+                            scope.as_mut().contains_direct_eval = true;
+                            scope_iter = scope.as_ref().parent;
+                        }
+                    }
+
+                    // TODO: Log a build note for this like esbuild does
+                }
+            }
+            Data::EDot(dot) => {
+                if dot.call_can_be_unwrapped_if_unused != E::CallUnwrap::Never
+                    && e_.can_be_unwrapped_if_unused == E::CallUnwrap::Never
+                {
+                    e_.can_be_unwrapped_if_unused = dot.call_can_be_unwrapped_if_unused;
+                }
+            }
+            _ => {}
+        }
+
+        let is_macro_ref: bool = if Self::ALLOW_MACROS {
+            let possible_macro_ref = match &e_.target.data {
+                Data::EImportIdentifier(ident) => Some(ident.ref_),
+                Data::EDot(dot) => {
+                    if let Data::EIdentifier(id) = &dot.target.data {
+                        Some(id.ref_)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+
+            possible_macro_ref.is_some()
+                && p.macro_.refs.contains_key(&possible_macro_ref.unwrap())
+        } else {
+            false
+        };
+
+        {
+            let old_ce = p.options.ignore_dce_annotations;
+            // PORT NOTE: Zig `defer` restores at scope exit; do it manually below.
+            let old_should_fold_typescript_constant_expressions =
+                p.should_fold_typescript_constant_expressions;
+            let old_is_control_flow_dead = p.is_control_flow_dead;
+
+            // We want to forcefully fold constants inside of
+            // certain calls even when minification is disabled, so
+            // that if we have an import based on a string template,
+            // it does not cause a bundle error. This is relevant for
+            // macros, as they require constant known values, but also
+            // for `require` and `require.resolve`, as they go through
+            // the module resolver.
+            if is_macro_ref
+                || matches!(e_.target.data, Data::ERequireCallTarget)
+                || matches!(e_.target.data, Data::ERequireResolveCallTarget)
+            {
+                p.options.ignore_dce_annotations = true;
+                p.should_fold_typescript_constant_expressions = true;
+            }
+
+            // When a value is targeted by `--drop`, it will be removed.
+            // The HMR APIs in `import.meta.hot` are implicitly dropped when HMR is disabled.
+            let mut method_call_should_be_replaced_with_undefined =
+                p.method_call_must_be_replaced_with_undefined;
+            if method_call_should_be_replaced_with_undefined {
+                p.method_call_must_be_replaced_with_undefined = false;
+                match &e_.target.data {
+                    // If we're removing this call, don't count any arguments as symbol uses
+                    Data::EIndex(..) | Data::EDot(..) | Data::EIdentifier(..) => {
+                        p.is_control_flow_dead = true;
+                    }
+                    // Special case from `import.meta.hot.*` functions.
+                    Data::EUndefined(..) => {
+                        p.is_control_flow_dead = true;
+                    }
+                    _ => {
+                        method_call_should_be_replaced_with_undefined = false;
+                    }
+                }
+            }
+
+            for arg in e_.args.slice_mut() {
+                *arg = p.visit_expr(*arg);
+            }
+
+            // Restore deferred state (Zig `defer`).
+            p.options.ignore_dce_annotations = old_ce;
+            p.should_fold_typescript_constant_expressions =
+                old_should_fold_typescript_constant_expressions;
+
+            if method_call_should_be_replaced_with_undefined {
+                p.is_control_flow_dead = old_is_control_flow_dead;
+                return Expr { data: Data::EUndefined(E::Undefined {}), loc: expr.loc };
+            }
+        }
+
+        // Handle `feature("FLAG_NAME")` calls from `import { feature } from "bun:bundle"`
+        // Check if the bundler_feature_flag_ref is set before calling the function
+        // to avoid stack memory usage from copying values back and forth.
+        if p.bundler_feature_flag_ref.is_valid() {
+            if let Some(result) = Self::maybe_replace_bundler_feature_call(p, &mut *e_, expr.loc) {
+                return result;
+            }
+        }
+
+        if matches!(e_.target.data, Data::ERequireCallTarget) {
+            e_.can_be_unwrapped_if_unused = E::CallUnwrap::Never;
+
+            // Heuristic: omit warnings inside try/catch blocks because presumably
+            // the try/catch statement is there to handle the potential run-time
+            // error from the unbundled require() call failing.
+            if e_.args.len == 1 {
+                let first = e_.args.slice()[0];
+                let state = TransposeState {
+                    is_require_immediately_assigned_to_decl: in_.is_immediately_assigned_to_decl
+                        && matches!(first.data, Data::EString(..)),
+                    ..Default::default()
+                };
+                match &first.data {
+                    Data::EString(..) => {
+                        // require(FOO) => require(FOO)
+                        return p.transpose_require(first, &state);
+                    }
+                    Data::EIf(..) => {
+                        // require(FOO  ? '123' : '456') => FOO ? require('123') : require('456')
+                        // This makes static analysis later easier
+                        return p.require_transposer.transpose_known_to_be_if(first, &state);
+                    }
+                    _ => {}
+                }
+            }
+
+            // Ignore calls to require() if the control flow is provably
+            // dead here. We don't want to spend time scanning the required files
+            // if they will never be used.
+            if p.is_control_flow_dead {
+                return p.new_expr(E::Null {}, expr.loc);
+            }
+
+            if p.options.warn_about_unbundled_modules {
+                let r = js_lexer::range_of_identifier(p.source, e_.target.loc);
+                p.log
+                    .add_range_debug(
+                        Some(p.source),
+                        r,
+                        b"This call to \"require\" will not be bundled because it has multiple arguments",
+                    )
+                    .expect("unreachable");
+            }
+
+            if e_.args.len >= 1 {
+                p.check_dynamic_specifier(e_.args.slice()[0], e_.target.loc, b"require()");
+            }
+
+            if p.options.features.allow_runtime {
+                p.record_usage_of_runtime_require();
+            }
+
+            return expr;
+        } else if matches!(e_.target.data, Data::ERequireResolveCallTarget) {
+            // Ignore calls to require.resolve() if the control flow is provably
+            // dead here. We don't want to spend time scanning the required files
+            // if they will never be used.
+            if p.is_control_flow_dead {
+                return p.new_expr(E::Null {}, expr.loc);
+            }
+
+            if e_.args.len == 1 {
+                let first = e_.args.slice()[0];
+                match &first.data {
+                    Data::EString(..) => {
+                        // require.resolve(FOO) => require.resolve(FOO)
+                        // (this will register dependencies)
+                        return p.transpose_require_resolve_known_string(first);
+                    }
+                    Data::EIf(..) => {
+                        // require.resolve(FOO  ? '123' : '456')
+                        //  =>
+                        // FOO ? require.resolve('123') : require.resolve('456')
+                        // This makes static analysis later easier
+                        return p
+                            .require_resolve_transposer
+                            .transpose_known_to_be_if(first, e_.target);
+                    }
+                    _ => {}
+                }
+            }
+
+            if e_.args.len >= 1 {
+                p.check_dynamic_specifier(e_.args.slice()[0], e_.target.loc, b"require.resolve()");
+            }
+
+            return expr;
+        } else if let Some(special) = e_.target.data.e_special() {
+            match special {
+                E::Special::HotAccept => {
+                    p.handle_import_meta_hot_accept_call(&mut *e_);
+                    // After validating that the import.meta.hot
+                    // code is correct, discard the entire
+                    // expression in production.
+                    if !p.options.features.hot_module_reloading {
+                        return Expr { data: Data::EUndefined(E::Undefined {}), loc: expr.loc };
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if Self::ALLOW_MACROS {
+            if is_macro_ref && !p.options.features.is_macro_runtime {
+                let ref_ = match &e_.target.data {
+                    Data::EImportIdentifier(ident) => ident.ref_,
+                    Data::EDot(dot) => dot.target.data.e_identifier().unwrap().ref_,
+                    _ => unreachable!(),
+                };
+
+                let macro_ref_data = *p.macro_.refs.get(&ref_).unwrap();
+                p.ignore_usage(ref_);
+                if p.is_control_flow_dead {
+                    return p.new_expr(E::Undefined {}, e_.target.loc);
+                }
+
+                if p.options.features.no_macros {
+                    p.log
+                        .add_error(Some(p.source), expr.loc, b"Macros are disabled")
+                        .expect("unreachable");
+                    return p.new_expr(E::Undefined {}, expr.loc);
+                }
+
+                if p.source.path.is_node_module() {
+                    p.log
+                        .add_error(
+                            Some(p.source),
+                            expr.loc,
+                            b"For security reasons, macros cannot be run from node_modules.",
+                        )
+                        .expect("unreachable");
+                    return p.new_expr(E::Undefined {}, expr.loc);
+                }
+
+                // blocked_on: MacroContext::call surface — `p.options.macro_context` is a
+                // *mut MacroContext placeholder; the cross-FFI call shape (record.path,
+                // source_dir, log, source, range, expr, name) → !Result<Expr> isn't ported.
+                // Body preserved verbatim in `_draft::e_call`. Loud at the precise spot
+                // rather than gating the whole visitor.
+                let _ = macro_ref_data;
+                todo!("e_call: MacroContext::call dispatch — see _draft");
+            }
+        }
+
+        // In fast refresh, any function call that looks like a hook (/^use[A-Z]/) is a
+        // hook, even if it is not the value of `SExpr` or `SLocal`. It can be anywhere
+        // in the function call. This makes sense for some weird situations with `useCallback`,
+        // where it is not assigned to a variable.
+        //
+        // When we see a hook call, we need to hash it, and then mark a flag so that if
+        // it is assigned to a variable, that variable also get's hashed.
+        if p.options.features.react_fast_refresh
+            || p.options.features.server_components.is_server_side()
+        {
+            'try_record_hook: {
+                let original_name: &[u8] = match &e_.target.data {
+                    Data::EIdentifier(id) => unsafe {
+                        &*p.symbols[id.ref_.inner_index() as usize].original_name
+                    },
+                    Data::EImportIdentifier(id) => unsafe {
+                        &*p.symbols[id.ref_.inner_index() as usize].original_name
+                    },
+                    Data::ECommonjsExportIdentifier(id) => unsafe {
+                        &*p.symbols[id.ref_.inner_index() as usize].original_name
+                    },
+                    Data::EDot(dot) => dot.name,
+                    _ => break 'try_record_hook,
+                };
+                if !ReactRefresh::is_hook_name(original_name) {
+                    break 'try_record_hook;
+                }
+                if p.options.features.react_fast_refresh {
+                    p.handle_react_refresh_hook_call(&mut *e_, original_name);
+                } else if
+                // If we're here it means we're in server component.
+                // Error if the user is using the `useState` hook as it
+                // is disallowed in server components.
+                //
+                // We're also specifically checking that the target is
+                // `.e_import_identifier`.
+                //
+                // Why? Because we *don't* want to check for uses of
+                // `useState` _inside_ React, and we know React uses
+                // commonjs so it will never be `.e_import_identifier`.
+                'check_for_usestate: {
+                    if matches!(e_.target.data, Data::EImportIdentifier(..)) {
+                        break 'check_for_usestate true;
+                    }
+                    // Also check for `React.useState(...)`
+                    if let Data::EDot(dot) = &e_.target.data {
+                        if let Data::EImportIdentifier(id) = &dot.target.data {
+                            let name = unsafe {
+                                &*p.symbols[id.ref_.inner_index() as usize].original_name
+                            };
+                            break 'check_for_usestate name == b"React";
+                        }
+                    }
+                    break 'check_for_usestate false;
+                } {
+                    debug_assert!(p.options.features.server_components.is_server_side());
+                    if !strings::starts_with(p.source.path.pretty, b"node_modules")
+                        && original_name == b"useState"
+                    {
+                        p.log
+                            .add_error(
+                                Some(p.source),
+                                expr.loc,
+                                b"\"useState\" is not available in a server component. If you need interactivity, consider converting part of this to a Client Component (by adding `\"use client\";` to the top of the file).",
+                            )
+                            .expect("unreachable");
+                    }
+                }
+            }
+        }
+
+        // Implement constant folding for 'string'.charCodeAt(n)
+        if e_.args.len == 1 {
+            if let Some(dot) = e_.target.data.e_dot() {
+                if let Some(target_str) = dot.target.data.e_string() {
+                    if target_str.is_utf8() && dot.name == b"charCodeAt" {
+                        let str_ = target_str.data;
+                        let arg1 = e_.args.at(0).unwrap_inlined();
+                        if let Data::ENumber(n) = &arg1.data {
+                            let float = n.value;
+                            if float % 1.0 == 0.0 && float < (str_.len() as f64) && float >= 0.0 {
+                                let char_ = str_[float as usize];
+                                if char_ < 0x80 {
+                                    return p.new_expr(
+                                        E::Number { value: f64::from(char_) },
+                                        expr.loc,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        expr
     }
-    fn e_new(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
-        let _ = (p, in_);
-        todo!("G-round-4: e_new body — see _draft");
-        #[allow(unreachable_code)] expr
+
+    fn e_new(p: &mut Self, expr: Expr, _: ExprIn) -> Expr {
+        let mut e_ = expr.data.e_new().unwrap();
+        e_.target = p.visit_expr(e_.target);
+
+        for arg in e_.args.slice_mut() {
+            *arg = p.visit_expr(*arg);
+        }
+
+        if p.options.features.minify_syntax {
+            if let Some(minified) = js_ast::known_global::KnownGlobal::minify_global_constructor(
+                p.allocator,
+                &mut *e_,
+                &p.symbols,
+                expr.loc,
+                p.options.features.minify_whitespace,
+            ) {
+                return minified;
+            }
+        }
+        expr
+    }
+
+    /// Note: Caller must check `p.bundler_feature_flag_ref.is_valid()` before calling.
+    fn maybe_replace_bundler_feature_call(
+        p: &mut Self,
+        e_: &mut E::Call,
+        loc: logger::Loc,
+    ) -> Option<Expr> {
+        // Check if the target is the `feature` function from "bun:bundle"
+        // It could be e_identifier (for unbound) or e_import_identifier (for imports)
+        let target_ref: Option<Ref> = match &e_.target.data {
+            Data::EIdentifier(ident) => Some(ident.ref_),
+            Data::EImportIdentifier(ident) => Some(ident.ref_),
+            _ => None,
+        };
+
+        if target_ref.is_none() || !target_ref.unwrap().eql(p.bundler_feature_flag_ref) {
+            return None;
+        }
+
+        // If control flow is dead, just return false without validation errors
+        if p.is_control_flow_dead {
+            return Some(p.new_expr(E::Boolean { value: false }, loc));
+        }
+
+        // Validate: exactly one argument required
+        if e_.args.len != 1 {
+            p.log
+                .add_error(
+                    Some(p.source),
+                    loc,
+                    b"feature() requires exactly one string argument",
+                )
+                .expect("unreachable");
+            return Some(p.new_expr(E::Boolean { value: false }, loc));
+        }
+
+        let arg = e_.args.slice()[0];
+
+        // Validate: argument must be a string literal
+        if !matches!(arg.data, Data::EString(..)) {
+            p.log
+                .add_error(
+                    Some(p.source),
+                    arg.loc,
+                    b"feature() argument must be a string literal",
+                )
+                .expect("unreachable");
+            return Some(p.new_expr(E::Boolean { value: false }, loc));
+        }
+
+        // Check if the feature flag is enabled
+        // Use the underlying string data directly without allocation.
+        // Feature flag names should be ASCII identifiers, so UTF-16 is unexpected.
+        let flag_string = arg.data.e_string().unwrap();
+        if flag_string.is_utf16 {
+            p.log
+                .add_error(
+                    Some(p.source),
+                    arg.loc,
+                    b"feature() flag name must be an ASCII string",
+                )
+                .expect("unreachable");
+            return Some(p.new_expr(E::Boolean { value: false }, loc));
+        }
+
+        // feature() can only be used directly in an if statement or ternary condition
+        if !p.in_branch_condition {
+            p.log
+                .add_error(
+                    Some(p.source),
+                    loc,
+                    b"feature() from \"bun:bundle\" can only be used directly in an if statement or ternary condition",
+                )
+                .expect("unreachable");
+            return Some(p.new_expr(E::Boolean { value: false }, loc));
+        }
+
+        let is_enabled = p
+            .options
+            .features
+            .bundler_feature_flags
+            .map
+            .contains_key(flag_string.data);
+        Some(Expr {
+            data: Data::EBranchBoolean(E::BranchBoolean { value: is_enabled }),
+            loc,
+        })
     }
     fn e_arrow(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
         let _ = (p, in_);

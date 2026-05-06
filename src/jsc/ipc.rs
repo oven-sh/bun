@@ -1753,20 +1753,17 @@ pub fn emit_handle_ipc_message(
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
     let [target, message, handle] = callframe.arguments_as_array::<3>();
-    if target.is_null() {
-        let Some(ipc) = global_this.bun_vm().get_ipc_instance() else {
-            return Ok(JSValue::UNDEFINED);
-        };
-        ipc.handle_ipc_message(DecodedIPCMessage::Data(message), handle);
-    } else {
-        if !target.is_cell() {
-            return Ok(JSValue::UNDEFINED);
-        }
-        let Some(subprocess) = Subprocess::from_js_direct(target) else {
-            return Ok(JSValue::UNDEFINED);
-        };
-        subprocess.handle_ipc_message(DecodedIPCMessage::Data(message), handle);
+    if !target.is_null() && !target.is_cell() {
+        return Ok(JSValue::UNDEFINED);
     }
+    // Dispatch to `Subprocess` / `IPCInstance` lives in `bun_runtime`; route
+    // through the registered hook (cycle-break).
+    (ipc_hooks().emit_handle_ipc_message)(
+        global_this,
+        target,
+        DecodedIPCMessage::Data(message),
+        handle,
+    );
     Ok(JSValue::UNDEFINED)
 }
 
@@ -1783,25 +1780,20 @@ fn handle_ipc_message(
 ) {
     #[cfg(debug_assertions)]
     {
-        let mut formatter = jsc::ConsoleObject::Formatter {
-            global_this,
-            ..Default::default()
-        };
+        // PORT NOTE: Zig formats the JSValue via ConsoleObject.Formatter for
+        // the scoped log; the Rust `Formatter` has no `Default` and threading
+        // it through here pulls in the full table-printer machinery for a
+        // debug-only log line. Log the variant tag instead.
+        // TODO(port): wire `console_object::Formatter::new(global_this)` once
+        // its construction stabilises.
+        let _ = global_this;
         match &message {
             DecodedIPCMessage::Version(version) => {
                 log!("received ipc message: version: {}", version)
             }
-            DecodedIPCMessage::Data(jsvalue) => {
-                log!("received ipc message: {}", jsvalue.to_fmt(&mut formatter))
-            }
-            DecodedIPCMessage::Internal(jsvalue) => {
-                log!(
-                    "received ipc message: internal: {}",
-                    jsvalue.to_fmt(&mut formatter)
-                )
-            }
+            DecodedIPCMessage::Data(_) => log!("received ipc message: <data>"),
+            DecodedIPCMessage::Internal(_) => log!("received ipc message: internal"),
         }
-        // formatter Drops here.
     }
     let mut internal_command: Option<IPCCommand> = None;
     'handle_message: {

@@ -788,8 +788,13 @@ impl<C: SourceContext> NewSource<C> {
 
 // Aliases wired to .classes.ts codegen entries (Zig: `pub const drainFromJS = JSReadableStreamSource.drain;` etc.)
 // In Rust the codegen references the fns in `js_readable_stream_source` directly by mangled name.
-// TODO(port): proc-macro — codegen binds these via // TODO(b2-blocked): #[bun_jsc::JsClass] on NewSource<C>.
-
+// TODO(port): proc-macro — codegen binds these via #[bun_jsc::JsClass] on NewSource<C>.
+//
+// Gated: host-fn glue needs `JSValue::{with_async_context_if_needed, as_object_ref}` and
+// `ArrayBuffer::slice_mut` on the inline `bun_jsc` shim (not yet re-exported there).
+// Nothing in Rust calls into this mod directly — it's the codegen entry point — so
+// gating it doesn't block the `NewSource<C>`/`SourceContext` consumers.
+#[cfg(any())]
 pub mod js_readable_stream_source {
     use super::*;
 
@@ -986,14 +991,10 @@ pub mod js_readable_stream_source {
         Ok(JSValue::UNDEFINED)
     }
 
-    pub(super) fn on_close<C: SourceContext>(ptr: Option<*mut c_void>) {
-        // SAFETY: ptr was set to `self as *mut NewSource<C>` in on_close()/set_on_close_from_js.
-        let this = unsafe { &mut *(ptr.unwrap().cast::<NewSource<C>>()) };
-        if let Some(cb) = this.close_jsvalue.try_swap() {
-            // SAFETY: global_this stored from a live `&JSGlobalObject`; outlives the close.
-            unsafe { (*this.global_this).queue_microtask(cb, &[]) };
-        }
-        this.close_jsvalue.deinit();
+    pub(super) use super::NewSource as _; // on_close moved to NewSource::on_js_close
+
+    pub fn on_close<C: SourceContext>(ptr: Option<*mut c_void>) {
+        NewSource::<C>::on_js_close(ptr)
     }
 
     pub fn finalize<C: SourceContext>(this: *mut NewSource<C>) {

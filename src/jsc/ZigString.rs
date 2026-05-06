@@ -4,15 +4,18 @@ use core::ffi::c_void;
 use core::fmt;
 use core::slice;
 
-use bun_alloc::{AllocError, NullableAllocator};
+use bun_alloc::AllocError;
 use bun_core::fmt as bun_fmt;
 use crate::DOMExceptionCode;
 use crate::{c_api, JSGlobalObject, JSValue, VM};
-// TODO(port): `crate::node::Encoding` / `crate::webcore::encoding` are stubs
-// at this tier; gate the methods that use them below.
-#[cfg(any())] use crate::node::Encoding;
+// `node::Encoding` is the Node.js Buffer encoding tag; canonical home is
+// `bun_string::encoding::Encoding` (re-exported there as `NodeEncoding`).
+use bun_string::encoding::Encoding;
+// `webcore::encoding::{construct_from_u8,u16, byte_length_u8}` live in
+// `src/runtime/webcore/encoding.rs` (forward-dep on bun_jsc) — gate callers.
 #[cfg(any())] use crate::webcore::encoding;
 use bun_paths::PathBuffer;
+use bun_simdutf_sys::simdutf;
 use bun_string::{strings, String as BunString, ZStr};
 
 // TODO(port): move to jsc_sys

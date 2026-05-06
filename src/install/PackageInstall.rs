@@ -492,9 +492,7 @@ impl HardLinkWindowsInstallTask {
         dest_bytes[dirpath_len] = 0;
         // SAFETY: NUL written at [dirpath_len].
         let dirpath = unsafe { bun_str::WStr::from_raw(dest_bytes.as_ptr(), dirpath_len) };
-        let _ = node_fs_for_package_installer(|nfs| {
-            nfs.mkdir_recursive_os_path_impl((), dirpath, 0, false).unwrap()
-        });
+        let _ = mkdir_recursive_os_path(dirpath);
         dest_bytes[dirpath_len] = bun_paths::SEP_WINDOWS as u16;
 
         // SAFETY: FFI — src/dest are valid NUL-terminated WStr buffers.
@@ -505,14 +503,11 @@ impl HardLinkWindowsInstallTask {
         if PackageManager::verbose_install() {
             static ONCE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
             if !ONCE.swap(true, Ordering::Relaxed) {
-                Output::warn(
+                Output::warn(format_args!(
                     "CreateHardLinkW failed, falling back to CopyFileW: {} -> {}\n",
-                    format_args!(
-                        "{} -> {}",
-                        bun_core::fmt::fmt_os_path(src.as_slice()),
-                        bun_core::fmt::fmt_os_path(dest.as_slice())
-                    ),
-                );
+                    bun_core::fmt::fmt_os_path(src.as_slice(), Default::default()),
+                    bun_core::fmt::fmt_os_path(dest.as_slice(), Default::default()),
+                ));
             }
         }
 
@@ -560,20 +555,20 @@ impl UninstallTask {
         };
         let basename = bun_paths::basename(&uninstall_task.absolute_path);
 
-        let dir = match bun_sys::open_dir_a(Dir::cwd(), dirname) {
+        let dir = match open_dir_a(Dir::cwd(), dirname) {
             Ok(d) => d,
             Err(err) => {
                 if cfg!(debug_assertions) || cfg!(feature = "asan") {
                     Output::debug_warn(format_args!(
                         "Failed to delete {}: {}",
                         bstr::BStr::new(&uninstall_task.absolute_path),
-                        err.name()
+                        bstr::BStr::new(err.name())
                     ));
                 }
                 return;
             }
         };
-        let _close = scopeguard::guard(dir, |d| Fd::from_std_dir(d).close());
+        let _close = scopeguard::guard(dir, |d| d.close());
 
         if let Err(err) = dir.delete_tree(basename) {
             if cfg!(debug_assertions) || cfg!(feature = "asan") {

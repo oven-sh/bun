@@ -219,17 +219,11 @@ fn downlevel_dir<'bump>(bump: &'bump Bump, dir: parser::Direction, targets: Targ
     // otherwise, use :is/:not, which may be further downleveled to e.g. :-webkit-any.
     if !targets.should_compile_same(Feature::LangSelectorList) {
         let c = Component::NonTsPseudoClass(PseudoClass::Lang {
-            languages: {
-                let mut list = bumpalo::collections::Vec::with_capacity_in(RTL_LANGS.len(), bump);
-                list.extend_from_slice(RTL_LANGS);
-                // PERF(port): was appendSliceAssumeCapacity
-                list
-            },
+            // PERF(port): was appendSliceAssumeCapacity (arena) — Phase B re-threads bump.
+            languages: RTL_LANGS.to_vec(),
         });
         if dir == parser::Direction::Ltr {
-            return Component::Negation(
-                bumpalo::vec![in bump; Selector::from_component(bump, c)].into_bump_slice_mut(),
-            );
+            return Component::Negation(vec![Selector::from_component(c)].into_boxed_slice());
         }
         return c;
     } else {
@@ -240,23 +234,20 @@ fn downlevel_dir<'bump>(bump: &'bump Bump, dir: parser::Direction, targets: Targ
     }
 }
 
-fn lang_list_to_selectors<'bump>(bump: &'bump Bump, langs: &[&[u8]]) -> &'bump mut [Selector] {
-    // TODO(port): return type — Zig returned `[]Selector` (mutable arena slice).
-    let mut selectors = bumpalo::collections::Vec::with_capacity_in(langs.len(), bump);
+fn lang_list_to_selectors<'bump>(_bump: &'bump Bump, langs: &[&'static [u8]]) -> Box<[Selector]> {
+    // PORT NOTE: Zig returned `[]Selector` (mutable arena slice). Phase A:
+    // `Component::Is`/`Negation` carry `Box<[Selector]>`; Phase B re-threads
+    // `&'bump [Selector]` once the arena lifetime is plumbed.
+    let mut selectors: Vec<Selector> = Vec::with_capacity(langs.len());
     for lang in langs {
-        selectors.push(Selector::from_component(
-            bump,
-            Component::NonTsPseudoClass(PseudoClass::Lang {
-                languages: {
-                    let mut list = bumpalo::collections::Vec::with_capacity_in(1, bump);
-                    list.push(*lang);
-                    // PERF(port): was appendAssumeCapacity
-                    list
-                },
-            }),
-        ));
+        selectors.push(Selector::from_component(Component::NonTsPseudoClass(
+            PseudoClass::Lang {
+                // PERF(port): was appendAssumeCapacity (arena)
+                languages: vec![*lang],
+            },
+        )));
     }
-    selectors.into_bump_slice_mut()
+    selectors.into_boxed_slice()
 }
 
 /// Returns the vendor prefix (if any) used in the given selector list.

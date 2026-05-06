@@ -5341,6 +5341,18 @@ pub mod fs {
             // `FileSystem::init()` ran.
             unsafe { &*(vtable().instance)() }
         }
+        /// Zig: `FileSystem.tmpname` (fs.zig). Static — does not touch the
+        /// vtable; delegates to the move-down impl in `bun_paths::fs` so
+        /// callers can use either `bun_paths::fs::FileSystem::tmpname` or
+        /// this opaque handle interchangeably.
+        #[inline]
+        pub fn tmpname<'b>(
+            extname: &[u8],
+            buf: &'b mut [u8],
+            hash: u64,
+        ) -> core::result::Result<&'b mut bun_core::ZStr, bun_core::Error> {
+            bun_paths::fs::FileSystem::tmpname(extname, buf, hash)
+        }
         /// Zig: `f.top_level_dir` — cached cwd captured at `FileSystem::init`.
         #[inline] pub fn top_level_dir(&self) -> &'static [u8] {
             // SAFETY: `self` is the resolver's process-static singleton.

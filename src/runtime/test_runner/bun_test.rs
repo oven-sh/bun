@@ -974,26 +974,29 @@ impl<'a> BunTest<'a> {
     fn update_min_timeout(&mut self, global_this: &JSGlobalObject, min_timeout: &Timespec) {
         group_begin!();
         let _g = scopeguard::guard((), |_| debug::group::end());
+        let _ = global_this;
         // only set the timer if the new timeout is sooner than the current timeout. this unfortunately means that we can't unset an unnecessary timer.
         bun_core::scoped_log!(
             bun_test_group,
-            "-> timeout: {} {}, {}",
+            "-> timeout: {:?} {:?}, {:?}",
             min_timeout,
             self.timer.next,
-            <&'static str>::from(min_timeout.order_ignore_epoch(&self.timer.next))
+            order_ignore_epoch(min_timeout, &self.timer.next)
         );
-        if min_timeout.order_ignore_epoch(&self.timer.next) == core::cmp::Ordering::Less {
-            bun_core::scoped_log!(bun_test_group, "-> setting timer to {}", min_timeout);
-            if !self.timer.next.eql(&Timespec::EPOCH) {
+        if order_ignore_epoch(min_timeout, &self.timer.next) == core::cmp::Ordering::Less {
+            bun_core::scoped_log!(bun_test_group, "-> setting timer to {:?}", min_timeout);
+            if self.timer.next != ElTimespec::EPOCH {
                 bun_core::scoped_log!(bun_test_group, "-> removing existing timer");
-                global_this.bun_vm().timer.remove(&mut self.timer);
+                vm_timer().remove(&mut self.timer);
             }
-            self.timer.next = *min_timeout;
-            if !self.timer.next.eql(&Timespec::EPOCH) {
+            // PORT NOTE: `EventLoopTimer.next` uses the event-loop crate's local
+            // `Timespec` (distinct from `bun_core::Timespec`); convert by field.
+            self.timer.next = ElTimespec { sec: min_timeout.sec, nsec: min_timeout.nsec };
+            if self.timer.next != ElTimespec::EPOCH {
                 bun_core::scoped_log!(bun_test_group, "-> inserting timer");
-                global_this.bun_vm().timer.insert(&mut self.timer);
+                vm_timer().insert(&mut self.timer);
                 if debug::group::get_log_enabled() {
-                    let duration = self.timer.next.duration(&Timespec::now_force_real_time());
+                    let duration = min_timeout.since_now_force_real_time();
                     bun_core::scoped_log!(bun_test_group, "-> timer duration: {}", duration);
                 }
             }
@@ -1032,14 +1035,16 @@ impl<'a> BunTest<'a> {
                         // Basename only so the hash is platform-independent (path
                         // separators and absolute prefixes differ on Windows).
                         Some(bun_core::rand::DefaultPrng::init(
-                            bun_wyhash::hash(bun_paths::basename(path)).wrapping_add(seed),
+                            bun_wyhash::hash(bun_paths::basename(path)).wrapping_add(seed as u64),
                         ))
                     }
                 } else {
                     None
                 };
-                let should_randomize = per_file_prng.as_mut().map(|p| p.random());
-                // TODO(port): std.Random / DefaultPrng mapping — confirm bun_core::random API
+                // PORT NOTE: Zig `prng.random()` yields a `std.Random` interface
+                // wrapper; the Rust `Order::Config.randomize` takes the PRNG
+                // itself (`Option<DefaultPrng>`), so pass it through directly.
+                let should_randomize = per_file_prng.take();
 
                 let mut order = Order::Order::init(Order::Config {
                     always_use_hooks: self.collection.root_scope.base.only == Only::No && !has_filter,

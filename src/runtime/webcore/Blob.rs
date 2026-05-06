@@ -4077,8 +4077,33 @@ mod zigstring_blob_ext {
             if self.is_cell() { self.js_type() } else { jsc::JSType::Cell }
         }
     }
+
+    /// Local shim for `ZigString.Slice` allocator-identity queries that the
+    /// `bun_str::ZigStringSlice` enum collapsed away. Used by
+    /// `from_js_without_defer_gc` to decide whether a converted slice was
+    /// freshly heap-allocated (=> may contain non-ASCII UTF-8) or is a
+    /// borrowed WTF Latin-1 view (=> already known ASCII-safe).
+    pub(super) trait ZigStringSliceBlobExt {
+        /// Zig `slice.isWTFAllocator()` — true iff the bytes are backed by a
+        /// `WTF::StringImpl` ref (i.e. no UTF-8 transcoding happened).
+        fn is_wtf_backed(&self) -> bool;
+        /// Zig `slice.allocator.get().is_some()` — true iff the slice owns a
+        /// heap allocation (either default-allocator or WTF-refcounted).
+        fn is_allocated(&self) -> bool;
+    }
+    impl ZigStringSliceBlobExt for bun_str::ZigStringSlice {
+        #[inline] fn is_wtf_backed(&self) -> bool {
+            matches!(self, bun_str::ZigStringSlice::WTF { .. })
+        }
+        #[inline] fn is_allocated(&self) -> bool {
+            !matches!(self, bun_str::ZigStringSlice::Static(..))
+        }
+    }
 }
-use zigstring_blob_ext::{ZigStringBlobExt as _, JSValueBlobExt as _, zig_string_to_external_u16};
+use zigstring_blob_ext::{
+    ZigStringExternalExt as _, JSValueBlobExt as _, ZigStringSliceBlobExt as _,
+    zig_string_to_external_u16, zig_string_to_json_object,
+};
 use bun_jsc::{StringJsc as _, ZigStringJsc as _};
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -4494,7 +4519,14 @@ impl Blob {
         // `@constCast(this.sharedView())`.
         let view_ptr = self.shared_view_raw();
         if view_ptr.len() == 0 {
-            return Ok(jsc::DOMFormData::create(global));
+            // PORT NOTE: `bun_jsc::DOMFormData` is currently the `stub_ty!`
+            // opaque (real module gated under `#![cfg(any())]`); call the FFI
+            // symbol directly until it un-gates.
+            unsafe extern "C" {
+                fn WebCore__DOMFormData__create(global: *mut JSGlobalObject) -> JSValue;
+            }
+            // SAFETY: `global` is live; FFI does not retain the pointer.
+            return Ok(unsafe { WebCore__DOMFormData__create(global.as_ptr()) });
         }
         Ok(self.to_form_data_with_bytes::<{ Lifetime::Temporary }>(global, view_ptr))
     }

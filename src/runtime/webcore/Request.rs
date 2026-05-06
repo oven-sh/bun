@@ -419,33 +419,11 @@ pub extern "C" fn Request__clone(
 // removed to resolve E0034 ambiguity.
 
 impl Request {
-    pub fn init(
-        method: Method,
-        request_context: AnyRequestContext,
-        https: bool,
-        signal: Option<Arc<AbortSignal>>,
-        body: Arc<BodyValue>,
-    ) -> Request {
-        Request {
-            url: BunString::empty(),
-            headers: None,
-            signal,
-            body,
-            js_ref: JsRef::empty(),
-            method,
-            flags: Flags { https, ..Flags::default() },
-            request_context,
-            weak_ptr_data: WeakPtrData::empty(),
-            reported_estimated_size: 0,
-            internal_event_callback: InternalJSEventCallback::default(),
-        }
-    }
-
     /// TODO: do we need this?
     pub fn init2(
         url: BunString,
         headers: Option<HeadersRef>,
-        body: Arc<BodyValue>,
+        body: Box<BodyValue>,
         method: Method,
     ) -> Request {
         Request {
@@ -457,7 +435,7 @@ impl Request {
             method,
             flags: Flags::default(),
             request_context: AnyRequestContext::NULL,
-            weak_ptr_data: WeakPtrData::empty(),
+            weak_ptr_data: WeakPtrData::EMPTY,
             reported_estimated_size: 0,
             internal_event_callback: InternalJSEventCallback::default(),
         }
@@ -502,7 +480,7 @@ impl Request {
     }
 
     pub fn calculate_estimated_byte_size(&mut self) {
-        self.reported_estimated_size = self.body.value().estimated_size()
+        self.reported_estimated_size = self.body.estimated_size()
             + self.size_of_url()
             + core::mem::size_of::<Request>();
     }
@@ -532,7 +510,7 @@ impl Request {
                 };
             }
         }
-        if let BodyValue::Locked(locked) = self.body.value() {
+        if let BodyValue::Locked(locked) = &*self.body {
             return locked.readable.get(global_object);
         }
         None
@@ -544,7 +522,7 @@ impl Request {
             // Zig `js.gc.stream.clear(...)` → `set(.zero)`.
             js_gen::stream_set_cached(js_ref, global_object, JSValue::ZERO);
         }
-        if let BodyValue::Locked(locked) = self.body.value_mut() {
+        if let BodyValue::Locked(locked) = &mut *self.body {
             // TODO(port): Arc<BodyValue> mutation — see field note
             let mut old = core::mem::take(&mut locked.readable);
             drop(old);
@@ -554,7 +532,7 @@ impl Request {
 
     pub fn to_js(&mut self, global_object: &JSGlobalObject) -> JSValue {
         self.calculate_estimated_byte_size();
-        let js_value = js::to_js_unchecked(global_object, self);
+        let js_value = js::to_js_unchecked(global_object, self as *mut Request as *mut ());
         self.js_ref = JsRef::init_weak(js_value);
 
         self.check_body_stream_ref(global_object);

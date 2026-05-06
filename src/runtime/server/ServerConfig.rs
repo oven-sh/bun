@@ -758,17 +758,17 @@ impl ServerConfig {
                 }
 
                 if path.is_empty() || path[0] != b'/' {
-                    return global.throw_invalid_arguments(
+                    return Err(global.throw_invalid_arguments(format_args!(
                         "Invalid route {}. Path must start with '/'",
-                        &[bun_fmt::quote(&path)],
-                    );
+                        bun_fmt::quote(&path),
+                    )));
                 }
 
                 if !is_ascii {
-                    return global.throw_invalid_arguments(
+                    return Err(global.throw_invalid_arguments(format_args!(
                         "Invalid route {}. Please encode all non-ASCII characters in the path.",
-                        &[bun_fmt::quote(&path)],
-                    );
+                        bun_fmt::quote(&path),
+                    )));
                 }
 
                 if value == JSValue::FALSE {
@@ -804,8 +804,9 @@ impl ServerConfig {
                     ];
                     let mut found = false;
                     for method in METHODS {
+                        let method_name = bun_str::String::static_(method_as_str(method));
                         if let Some(function) =
-                            value.get_own(global, <&'static str>::from(method))?
+                            value.get_own(global, &method_name)?
                         {
                             if !found {
                                 validate_route_name(global, &path)?;

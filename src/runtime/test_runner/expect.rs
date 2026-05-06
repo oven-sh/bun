@@ -368,7 +368,7 @@ impl Expect {
         matcher_name: &str,
         matcher_params_fmt: &'static str,
     ) -> JsResult<JSValue> {
-        let Some(value) = Self::js::captured_value_get_cached(this_value) else {
+        let Some(value) = super::expect::js::captured_value_get_cached(this_value) else {
             return Err(global_this.throw2(
                 "Internal error: the expect(value) was garbage collected but it should not have been!",
                 format_args!(""),
@@ -377,7 +377,7 @@ impl Expect {
         value.ensure_still_alive();
 
         // PERF(port): was comptime bool dispatch — profile in Phase B
-        let matcher_params = Output::pretty_fmt(matcher_params_fmt, Output::enable_ansi_colors_stderr());
+        let matcher_params = Output::pretty_fmt_rt(matcher_params_fmt, Output::enable_ansi_colors_stderr());
         Self::process_promise(
             self.custom_label.clone(),
             self.flags,

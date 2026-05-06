@@ -2504,7 +2504,7 @@ impl Example {
                     let name = property.key.unwrap().data.e_string().unwrap().data;
                     list[i] = Example {
                         name: if let Some(slash) = bun_str::strings::index_of_char(name, b'/') {
-                            &name[slash + 1..]
+                            &name[slash as usize + 1..]
                         } else {
                             name
                         },

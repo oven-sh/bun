@@ -2808,14 +2808,17 @@ where
         if self.is_aborted_or_ended() {
             return;
         }
-        let response = self.response_weakref.get().unwrap();
+        // PORT NOTE: WeakPtr::get borrows `&mut self`, and `do_render_with_body`
+        // also needs `&mut self` plus a `&mut BodyValue` from the response. The
+        // response lives in a separate allocation (held by the WeakRef) so the
+        // borrows are disjoint at runtime; route through a raw ptr to express that.
+        let response: *mut Response = self.response_weakref.get().unwrap();
         // SAFETY: BACKREF
         let global_this = unsafe { (*self.server.unwrap()).global_this() };
-        Self::do_render_with_body(
-            self,
-            response.get_body_value(),
-            response.get_body_readable_stream(global_this),
-        );
+        // SAFETY: response_weakref keeps the Response alive for this frame.
+        let owned_readable = unsafe { (*response).get_body_readable_stream(global_this) };
+        // SAFETY: as above; body_value borrows the Response, disjoint from `self`.
+        Self::do_render_with_body(self, unsafe { (*response).get_body_value() }, owned_readable);
     }
 
     pub fn render_production_error(&mut self, status: u16) {
@@ -2887,15 +2890,18 @@ where
             let exception_list: Vec<Api::JsException> = Vec::new();
             // SAFETY: vm.log is set during VM init and live for the VM lifetime.
             let log = unsafe { vm.log.unwrap().as_mut() };
+            // PORT NOTE: format eagerly so `format_args!` doesn't hold an
+            // immutable borrow of `self` across the `&mut self` call.
+            let msg = format!(
+                "<r><red>{:?}<r> - <b>{}<r> failed",
+                self.method,
+                self.ensure_pathname()
+            );
             self.render_default_error(
                 log,
                 bun_core::err!("ExceptionOcurred"),
                 &exception_list,
-                format_args!(
-                    "<r><red>{:?}<r> - <b>{}<r> failed",
-                    self.method,
-                    self.ensure_pathname()
-                ),
+                format_args!("{}", msg),
             );
             log.reset();
             return;

@@ -248,23 +248,28 @@ pub fn bun_fetch_preconnect(
     let url = ZigURL::parse(&href);
     if !url.is_http() && !url.is_https() && !url.is_s3() {
         drop(href);
-        return global_object.throw_invalid_arguments("URL must be HTTP or HTTPS");
+        return Err(global_object.throw_invalid_arguments(format_args!("URL must be HTTP or HTTPS")));
     }
 
     if url.hostname.is_empty() {
         drop(href);
         return global_object
-            .err(jsc::ErrorCode::INVALID_ARG_TYPE, FETCH_ERROR_BLANK_URL)
+            .err(jsc::ErrorCode::INVALID_ARG_TYPE, format_args!("{}", FETCH_ERROR_BLANK_URL))
             .throw();
     }
 
     if !url.has_valid_port() {
         drop(href);
-        return global_object.throw_invalid_arguments("Invalid port");
+        return Err(global_object.throw_invalid_arguments(format_args!("Invalid port")));
     }
 
     // TODO(port): lifetime — `url` borrows `href`; preconnect(url, true) takes ownership of href.
-    http::AsyncHTTP::preconnect(url, true);
+    // PORT NOTE: `preconnect` is a free fn in `bun_http::async_http`, not an `AsyncHTTP` method.
+    {
+        let _ = (url, href);
+        todo!("blocked_on: bun_http::async_http::preconnect (URL<'static> lifetime)")
+    };
+    #[allow(unreachable_code)]
     Ok(JSValue::UNDEFINED)
 }
 
@@ -281,7 +286,7 @@ impl StringOrURL {
         }
 
         let out = jsc::URL::href_from_js(value, global_this)?;
-        if out.tag() == BunString::Tag::Dead {
+        if out.tag() == BunStringTag::Dead {
             return Ok(None);
         }
         Ok(Some(out))
@@ -325,11 +330,13 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     ctx: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    jsc::mark_binding(core::panic::Location::caller());
+    jsc::mark_binding();
     let global_this = ctx;
-    let arguments = callframe.arguments_old(2);
+    let arguments = callframe.arguments_old::<2>();
     bun_core::analytics::Features::FETCH.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-    let vm = VirtualMachine::get();
+    // SAFETY: `VirtualMachine::get()` returns the live thread-local VM pointer; it
+    // outlives this call frame.
+    let vm = unsafe { &mut *VirtualMachine::get() };
 
     // used to clean up dynamically allocated memory on error (a poor man's errdefer)
     // PORT NOTE: in Rust, owned locals (Box/Vec/BunString/etc.) Drop on early return,

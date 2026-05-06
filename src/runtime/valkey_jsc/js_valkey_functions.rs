@@ -631,7 +631,7 @@ impl JSValkeyClient {
         require_not_subscriber(this, b"incr")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return global.throw_invalid_argument_type("incr", "key", "string or buffer");
+            return Err(global.throw_invalid_argument_type("incr", "key", "string or buffer"));
         };
 
         // Send INCR command
@@ -657,7 +657,7 @@ impl JSValkeyClient {
         require_not_subscriber(this, b"decr")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return global.throw_invalid_argument_type("decr", "key", "string or buffer");
+            return Err(global.throw_invalid_argument_type("decr", "key", "string or buffer"));
         };
 
         // Send DECR command
@@ -687,7 +687,7 @@ impl JSValkeyClient {
         require_not_subscriber(this, b"exists")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return global.throw_invalid_argument_type("exists", "key", "string or buffer");
+            return Err(global.throw_invalid_argument_type("exists", "key", "string or buffer"));
         };
 
         // Send EXISTS command with special Exists type for boolean conversion
@@ -697,10 +697,7 @@ impl JSValkeyClient {
             &Command {
                 command: b"EXISTS",
                 args: CommandArgs::Args(&[key]),
-                meta: CommandMeta {
-                    return_as_bool: true,
-                    ..Default::default()
-                },
+                meta: CommandMeta::RETURN_AS_BOOL | CommandMeta::SUPPORTS_AUTO_PIPELINING,
             },
         ) {
             Ok(p) => p,
@@ -720,7 +717,7 @@ impl JSValkeyClient {
         require_not_subscriber(this, b"expire")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return global.throw_invalid_argument_type("expire", "key", "string or buffer");
+            return Err(global.throw_invalid_argument_type("expire", "key", "string or buffer"));
         };
 
         let seconds = global.validate_integer_range::<i32>(
@@ -763,7 +760,7 @@ impl JSValkeyClient {
         require_not_subscriber(this, b"ttl")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return global.throw_invalid_argument_type("ttl", "key", "string or buffer");
+            return Err(global.throw_invalid_argument_type("ttl", "key", "string or buffer"));
         };
 
         // Send TTL command
@@ -791,14 +788,14 @@ impl JSValkeyClient {
 
         let args_view = frame.arguments();
         if args_view.len() < 2 {
-            return global.throw(format_args!("SREM requires at least a key and one member"));
+            return Err(global.throw(format_args!("SREM requires at least a key and one member")));
         }
 
         // PERF(port): was stack-fallback
         let mut args: Vec<JSArgument> = Vec::with_capacity(args_view.len());
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return global.throw_invalid_argument_type("srem", "key", "string or buffer");
+            return Err(global.throw_invalid_argument_type("srem", "key", "string or buffer"));
         };
         // PERF(port): was assume_capacity
         args.push(key);
@@ -808,7 +805,7 @@ impl JSValkeyClient {
                 break;
             }
             let Some(value) = from_js(global, *arg)? else {
-                return global.throw_invalid_argument_type("srem", "member", "string or buffer");
+                return Err(global.throw_invalid_argument_type("srem", "member", "string or buffer"));
             };
             // PERF(port): was assume_capacity
             args.push(value);

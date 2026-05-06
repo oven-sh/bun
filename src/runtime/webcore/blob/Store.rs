@@ -738,7 +738,7 @@ impl S3 {
         s3_client::delete(
             &aws_options.credentials,
             self.path(),
-            Wrapper::resolve as *const _,
+            Wrapper::resolve,
             Box::into_raw(Wrapper::new(Wrapper {
                 promise,
                 // SAFETY: `store` is a live heap `Store`; `retained` bumps the
@@ -836,7 +836,7 @@ impl S3 {
         s3_client::list_objects(
             &aws_options.credentials,
             options.clone(),
-            Wrapper::resolve as *const _,
+            Wrapper::resolve,
             Box::into_raw(Box::new(Wrapper {
                 promise,
                 // SAFETY: `store` is a live heap `Store`; `retained` bumps the

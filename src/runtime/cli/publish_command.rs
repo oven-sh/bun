@@ -757,16 +757,14 @@ impl PublishCommand {
                                 Output::flush();
                             }
 
-                            return Ok(token);
+                            return Ok(token.into());
                         }
                         _ => {
-                            let otp_response = false;
-                            Npm::response_error(
+                            Npm::response_error::<false>(
                                 &req,
                                 &res,
-                                (&ctx.package_name, &ctx.package_version),
+                                Some((&ctx.package_name, &ctx.package_version)),
                                 response_buf,
-                                otp_response,
                             )?;
                         }
                     }
@@ -776,12 +774,12 @@ impl PublishCommand {
 
         // classic
         match InitCommand::prompt("\nThis operation requires a one-time password.\nEnter OTP: ", b"") {
-            Ok(v) => Ok(v),
+            Ok(v) => Ok(v.into()),
             Err(e) => {
                 if e == err!(OutOfMemory) {
                     return Err(GetOTPError::OutOfMemory);
                 }
-                Output::err(e, format_args!("failed to read OTP input"));
+                Output::err(e, "failed to read OTP input", ());
                 Global::crash();
             }
         }

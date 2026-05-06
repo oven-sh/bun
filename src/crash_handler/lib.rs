@@ -580,25 +580,25 @@ pub fn crash_handler(
                     }
                 } else {
                     if enable_ansi_colors_stderr() {
-                        if writer.write_all(&Output::pretty_fmt("<red>", true)).is_err() { abort(); }
+                        if writer.write_all(&Output::pretty_fmt::<true>("<red>")).is_err() { abort(); }
                     }
                     if writer.write_all(b"oh no").is_err() { abort(); }
                     if enable_ansi_colors_stderr() {
-                        if writer.write_all(&Output::pretty_fmt("<r><d>: multiple threads are crashing<r>\n", true)).is_err() { abort(); }
+                        if writer.write_all(&Output::pretty_fmt::<true>("<r><d>: multiple threads are crashing<r>\n")).is_err() { abort(); }
                     } else {
-                        if writer.write_all(&Output::pretty_fmt(": multiple threads are crashing\n", true)).is_err() { abort(); }
+                        if writer.write_all(&Output::pretty_fmt::<true>(": multiple threads are crashing\n")).is_err() { abort(); }
                     }
                 }
 
                 if !matches!(reason, CrashReason::OutOfMemory) || debug_trace {
                     if enable_ansi_colors_stderr() {
-                        if writer.write_all(&Output::pretty_fmt("<red>", true)).is_err() { abort(); }
+                        if writer.write_all(&Output::pretty_fmt::<true>("<red>")).is_err() { abort(); }
                     }
 
                     if writer.write_all(b"panic").is_err() { abort(); }
 
                     if enable_ansi_colors_stderr() {
-                        if writer.write_all(&Output::pretty_fmt("<r><d>", true)).is_err() { abort(); }
+                        if writer.write_all(&Output::pretty_fmt::<true>("<r><d>")).is_err() { abort(); }
                     }
 
                     if cli_state::is_main_thread() {
@@ -628,7 +628,7 @@ pub fn crash_handler(
 
                     if writer.write_all(b": ").is_err() { abort(); }
                     if enable_ansi_colors_stderr() {
-                        if writer.write_all(&Output::pretty_fmt("<r>", true)).is_err() { abort(); }
+                        if writer.write_all(&Output::pretty_fmt::<true>("<r>")).is_err() { abort(); }
                     }
                     if write!(writer, "{}\n", reason).is_err() { abort(); }
                 }
@@ -685,9 +685,9 @@ pub fn crash_handler(
                         unsafe { HAS_PRINTED_MESSAGE = true; }
                         if writer.write_all(b"oh no").is_err() { abort(); }
                         if enable_ansi_colors_stderr() {
-                            if writer.write_all(&Output::pretty_fmt("<r><d>:<r> ", true)).is_err() { abort(); }
+                            if writer.write_all(&Output::pretty_fmt::<true>("<r><d>:<r> ")).is_err() { abort(); }
                         } else {
-                            if writer.write_all(&Output::pretty_fmt(": ", true)).is_err() { abort(); }
+                            if writer.write_all(&Output::pretty_fmt::<true>(": ")).is_err() { abort(); }
                         }
                         if let Some(name) = INSIDE_NATIVE_PLUGIN.with(|c| c.get()) {
                             // SAFETY: name was set from a valid NUL-terminated C string
@@ -719,7 +719,7 @@ pub fn crash_handler(
                     }
 
                     if enable_ansi_colors_stderr() {
-                        if writer.write_all(&Output::pretty_fmt("<cyan>", true)).is_err() { abort(); }
+                        if writer.write_all(&Output::pretty_fmt::<true>("<cyan>")).is_err() { abort(); }
                     }
 
                     if writer.write_all(b" ").is_err() { abort(); }
@@ -736,7 +736,7 @@ pub fn crash_handler(
                 }
 
                 if enable_ansi_colors_stderr() {
-                    if writer.write_all(&Output::pretty_fmt("<r>\n", true)).is_err() { abort(); }
+                    if writer.write_all(&Output::pretty_fmt::<true>("<r>\n")).is_err() { abort(); }
                 } else {
                     if writer.write_all(b"\n").is_err() { abort(); }
                 }
@@ -765,14 +765,10 @@ pub fn crash_handler(
                 bun_core::set_auto_reload_on_crash(false);
 
                 // TODO(port): pretty_fmt! color tags — runtime rewrite via pretty_fmt_args
-                Output::pretty_errorln(format_args!(
-                    "{}",
-                    Output::pretty_fmt_args(
-                        "<d>--- Bun is auto-restarting due to crash <d>[time: <b>{s}<r><d>] ---<r>",
-                        enable_ansi_colors_stderr(),
-                        format_args!("{}", bun_core::time::milli_timestamp().max(0)),
-                    ),
-                ));
+                Output::pretty_errorln(
+                    "<d>--- Bun is auto-restarting due to crash <d>[time: <b>{s}<r><d>] ---<r>",
+                    (bun_core::time::milli_timestamp().max(0),),
+                );
                 Output::flush();
 
                 // TODO(port): comptime assert void == @TypeOf(bun.reloadProcess(...))
@@ -836,7 +832,7 @@ pub fn handle_root_error(err: bun_core::Error, error_return_trace: Option<&Stack
             Global::exit(1);
         }
     } else if err == bun_core::err!("SyntaxError") {
-        Output::err("SyntaxError", format_args!("An error occurred while parsing code"));
+        Output::err("SyntaxError", "An error occurred while parsing code", ());
     } else if err == bun_core::err!("CurrentWorkingDirectoryUnlinked") {
         err_generic!(
             "The current working directory was deleted, so that command didn't work. Please cd into a different directory and try again.",
@@ -1239,7 +1235,7 @@ pub fn print_metadata(writer: &mut impl Write) -> Result<(), bun_core::Error> {
     }
 
     if enable_ansi_colors_stderr() {
-        writer.write_all(&Output::pretty_fmt("<r><d>", true))?;
+        writer.write_all(&Output::pretty_fmt::<true>("<r><d>"))?;
     }
 
     let mut is_ancient_cpu = false;
@@ -1363,7 +1359,7 @@ pub fn print_metadata(writer: &mut impl Write) -> Result<(), bun_core::Error> {
     }
 
     if enable_ansi_colors_stderr() {
-        writer.write_all(&Output::pretty_fmt("<r>", true))?;
+        writer.write_all(&Output::pretty_fmt::<true>("<r>"))?;
     }
     writer.write_all(b"\n")?;
 

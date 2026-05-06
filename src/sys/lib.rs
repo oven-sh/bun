@@ -1820,17 +1820,44 @@ pub enum SizeHint {
 pub type EnvMap = std::collections::HashMap<String, String>;
 
 /// `bun.sys.syslog` — debug-scoped log under `SYS` (Zig: `Output.scoped(.SYS)`).
-/// PORT NOTE: `bun_core::scoped_log!` only accepts a bare ident for the scope,
-/// so we re-expand its body here with the qualified `$crate::fd::SYS` path.
+/// PORT NOTE: `bun_core::scoped_log!` only accepts a bare `$scope:ident`, so we
+/// re-expand its body verbatim here with the qualified `$crate::fd::SYS` path
+/// and `::bun_core::` helpers — keeping the `[sys] ` tag prefix, trailing-`\n`
+/// append, and `pretty_fmt!` ANSI rewrite (output.zig:893-933) that
+/// `ScopedLogger::log()` does *not* add on its own.
 #[macro_export]
 macro_rules! syslog {
     ($fmt:literal $(, $arg:expr)* $(,)?) => {
         // Gate on `debug_assertions` (== `Environment::ENABLE_LOGS`) — matches
         // bun_core::scoped_log!; there is no `debug_logs` Cargo feature.
         if cfg!(debug_assertions) && $crate::fd::SYS.is_visible() {
-            $crate::fd::SYS.log(
-                ::core::format_args!($fmt $(, $arg)*),
-            );
+            const __NL: &str =
+                ::bun_core::output::_needs_nl(::bun_core::pretty_fmt!($fmt, false));
+            // Branch on ANSI *before* `format_args!` so each `$arg` evaluates
+            // exactly once (Zig builds the args tuple once — output.zig:922-933).
+            if ::bun_core::output::_scoped_use_ansi() {
+                $crate::fd::SYS.log(::core::format_args!(
+                    concat!(
+                        "\x1b[0m\x1b[2m[{}]\x1b[0m ",
+                        ::bun_core::pretty_fmt!($fmt, true),
+                        "{}",
+                    ),
+                    ::bun_core::output::_LowerTag($crate::fd::SYS.tagname),
+                    $($arg,)*
+                    __NL
+                ));
+            } else {
+                $crate::fd::SYS.log(::core::format_args!(
+                    concat!(
+                        "[{}] ",
+                        ::bun_core::pretty_fmt!($fmt, false),
+                        "{}",
+                    ),
+                    ::bun_core::output::_LowerTag($crate::fd::SYS.tagname),
+                    $($arg,)*
+                    __NL
+                ));
+            }
         }
     };
 }

@@ -5,9 +5,9 @@ use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
 use core::marker::PhantomData;
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, Strong};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, Strong, StrongOptional};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::AbortSignal;
+use bun_jsc::abort_signal::{AbortSignal, AbortListener};
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::ErrorCode as JscErrorCode;
 use bun_jsc::StringJsc as _;
@@ -743,18 +743,18 @@ pub fn js_get_packed_settings(global_object: &JSGlobalObject, callframe: &CallFr
         let options = args_list.ptr[0];
 
         if !options.is_object() {
-            return global_object.throw("Expected settings to be a object");
+            return Err(global_object.throw("Expected settings to be a object"));
         }
 
         if let Some(header_table_size) = options.get(global_object, "headerTableSize")? {
             if header_table_size.is_number() {
                 let v = header_table_size.to_int32();
                 if v as u32 > MAX_HEADER_TABLE_SIZE || v < 0 {
-                    return global_object.throw("Expected headerTableSize to be a number between 0 and 2^32-1");
+                    return Err(global_object.throw("Expected headerTableSize to be a number between 0 and 2^32-1"));
                 }
                 settings.header_table_size = u32::try_from(v).unwrap();
             } else if !header_table_size.is_empty_or_undefined_or_null() {
-                return global_object.throw("Expected headerTableSize to be a number");
+                return Err(global_object.throw("Expected headerTableSize to be a number"));
             }
         }
 
@@ -762,7 +762,7 @@ pub fn js_get_packed_settings(global_object: &JSGlobalObject, callframe: &CallFr
             if enable_push.is_boolean() {
                 settings.enable_push = if enable_push.as_boolean() { 1 } else { 0 };
             } else if !enable_push.is_empty_or_undefined_or_null() {
-                return global_object.throw("Expected enablePush to be a boolean");
+                return Err(global_object.throw("Expected enablePush to be a boolean"));
             }
         }
 
@@ -770,11 +770,11 @@ pub fn js_get_packed_settings(global_object: &JSGlobalObject, callframe: &CallFr
             if initial_window_size.is_number() {
                 let v = initial_window_size.to_int32();
                 if v as u32 > MAX_HEADER_TABLE_SIZE || v < 0 {
-                    return global_object.throw("Expected initialWindowSize to be a number between 0 and 2^32-1");
+                    return Err(global_object.throw("Expected initialWindowSize to be a number between 0 and 2^32-1"));
                 }
                 settings.initial_window_size = u32::try_from(v).unwrap();
             } else if !initial_window_size.is_empty_or_undefined_or_null() {
-                return global_object.throw("Expected initialWindowSize to be a number");
+                return Err(global_object.throw("Expected initialWindowSize to be a number"));
             }
         }
 
@@ -782,11 +782,11 @@ pub fn js_get_packed_settings(global_object: &JSGlobalObject, callframe: &CallFr
             if max_frame_size.is_number() {
                 let v = max_frame_size.to_int32();
                 if v as u32 > MAX_FRAME_SIZE || v < 16384 {
-                    return global_object.throw("Expected maxFrameSize to be a number between 16,384 and 2^24-1");
+                    return Err(global_object.throw("Expected maxFrameSize to be a number between 16,384 and 2^24-1"));
                 }
                 settings.max_frame_size = u32::try_from(v).unwrap();
             } else if !max_frame_size.is_empty_or_undefined_or_null() {
-                return global_object.throw("Expected maxFrameSize to be a number");
+                return Err(global_object.throw("Expected maxFrameSize to be a number"));
             }
         }
 
@@ -794,11 +794,11 @@ pub fn js_get_packed_settings(global_object: &JSGlobalObject, callframe: &CallFr
             if max_concurrent_streams.is_number() {
                 let v = max_concurrent_streams.to_int32();
                 if v as u32 > MAX_HEADER_TABLE_SIZE || v < 0 {
-                    return global_object.throw("Expected maxConcurrentStreams to be a number between 0 and 2^32-1");
+                    return Err(global_object.throw("Expected maxConcurrentStreams to be a number between 0 and 2^32-1"));
                 }
                 settings.max_concurrent_streams = u32::try_from(v).unwrap();
             } else if !max_concurrent_streams.is_empty_or_undefined_or_null() {
-                return global_object.throw("Expected maxConcurrentStreams to be a number");
+                return Err(global_object.throw("Expected maxConcurrentStreams to be a number"));
             }
         }
 
@@ -806,11 +806,11 @@ pub fn js_get_packed_settings(global_object: &JSGlobalObject, callframe: &CallFr
             if max_header_list_size.is_number() {
                 let v = max_header_list_size.to_int32();
                 if v as u32 > MAX_HEADER_TABLE_SIZE || v < 0 {
-                    return global_object.throw("Expected maxHeaderListSize to be a number between 0 and 2^32-1");
+                    return Err(global_object.throw("Expected maxHeaderListSize to be a number between 0 and 2^32-1"));
                 }
                 settings.max_header_list_size = u32::try_from(v).unwrap();
             } else if !max_header_list_size.is_empty_or_undefined_or_null() {
-                return global_object.throw("Expected maxHeaderListSize to be a number");
+                return Err(global_object.throw("Expected maxHeaderListSize to be a number"));
             }
         }
 
@@ -818,11 +818,11 @@ pub fn js_get_packed_settings(global_object: &JSGlobalObject, callframe: &CallFr
             if max_header_size.is_number() {
                 let v = max_header_size.to_int32();
                 if v as u32 > MAX_HEADER_TABLE_SIZE || v < 0 {
-                    return global_object.throw("Expected maxHeaderSize to be a number between 0 and 2^32-1");
+                    return Err(global_object.throw("Expected maxHeaderSize to be a number between 0 and 2^32-1"));
                 }
                 settings.max_header_list_size = u32::try_from(v).unwrap();
             } else if !max_header_size.is_empty_or_undefined_or_null() {
-                return global_object.throw("Expected maxHeaderSize to be a number");
+                return Err(global_object.throw("Expected maxHeaderSize to be a number"));
             }
         }
     }
@@ -2773,7 +2773,7 @@ impl H2FrameParser {
             }
         }
 
-        self.dispatch_with_3_extra(JSH2FrameParser::Gc::onStreamHeaders, stream.get_identifier(), headers, sensitive_headers, JSValue::js_number(flags));
+        self.dispatch_with_3_extra(JSH2FrameParser::Gc::onStreamHeaders, stream.get_identifier(), headers, sensitive_headers, JSValue::js_number(flags as f64));
         Ok(self.streams.get(&stream_id).copied())
     }
 

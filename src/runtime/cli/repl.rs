@@ -53,6 +53,47 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// Local FFI / pointer shims — the canonical impls live in cfg-gated
+// JSGlobalObject.rs / VM.rs (see src/jsc/lib.rs `_gated`). Until those are
+// un-gated, mirror the wrappers here so repl.rs compiles standalone.
+// ──────────────────────────────────────────────────────────────────────────
+
+#[inline]
+fn global_clear_exception(global: &JSGlobalObject) {
+    unsafe extern "C" {
+        fn JSGlobalObject__clearException(this: *const JSGlobalObject);
+    }
+    // SAFETY: `global` is a live opaque JSGlobalObject handle.
+    unsafe { JSGlobalObject__clearException(global) }
+}
+
+#[inline]
+fn global_to_js_value(global: &JSGlobalObject) -> JSValue {
+    // Spec JSGlobalObject.zig `toJSValue` — `@enumFromInt(@intFromPtr(globalThis))`.
+    JSValue::from_cell(global as *const JSGlobalObject)
+}
+
+#[inline]
+fn vm_set_execution_forbidden(vm: *mut jsc::VM, forbidden: bool) {
+    unsafe extern "C" {
+        fn JSC__VM__setExecutionForbidden(vm: *mut jsc::VM, forbidden: bool);
+    }
+    // SAFETY: `vm` is a live opaque JSC VM handle.
+    unsafe { JSC__VM__setExecutionForbidden(vm, forbidden) }
+}
+
+/// Reborrow `&VirtualMachine` as `&mut VirtualMachine`.
+///
+/// SAFETY: The Zig spec passes `*JSC.VirtualMachine` (mutable, freely-aliasing)
+/// everywhere; `VirtualMachine` is single-threaded per JS thread and the REPL
+/// is the sole driver of `tick()` / `wait_for_promise()` here. Phase-B port
+/// stores `&VirtualMachine` for borrowck simplicity and casts at the call site.
+#[inline]
+fn vm_mut<'a>(vm: &'a VirtualMachine) -> &'a mut VirtualMachine {
+    unsafe { &mut *(vm as *const VirtualMachine as *mut VirtualMachine) }
+}
+
 // ============================================================================
 // Constants
 // ============================================================================
@@ -210,11 +251,11 @@ impl History {
         self.file_path = Some(Box::<[u8]>::from(path.as_bytes()));
 
         let content: Box<[u8]> = match sys::File::read_from(Fd::cwd(), path) {
-            sys::Result::Ok(bytes) => bytes,
+            sys::Result::Ok(bytes) => bytes.into(),
             sys::Result::Err(_) => return Ok(()),
         };
 
-        for line in content.split(|&b| b == b'\n') {
+        for line in content.split(|b: &u8| *b == b'\n') {
             if !line.is_empty() {
                 self.entries.push(Box::<[u8]>::from(line));
             }
@@ -252,7 +293,7 @@ impl History {
             sys::Result::Ok(fd) => sys::File { handle: fd },
             sys::Result::Err(_) => return,
         };
-        let _close = scopeguard::guard((), |_| file.close());
+        let _close = scopeguard::guard((), |_| { let _ = file.close(); });
         match file.write_all(&content) {
             sys::Result::Ok(()) => {}
             sys::Result::Err(_) => return,

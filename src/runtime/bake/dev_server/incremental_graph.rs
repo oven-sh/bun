@@ -137,6 +137,17 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         self.bundled_files.values()[index].kind
     }
 
+    /// `IncrementalGraph(side).invalidate` — DevServer.zig. Full per-side body in
+    /// gated `../DevServer/IncrementalGraph.rs` draft (depends on `Content`/edge
+    /// walk that isn't un-gated yet).
+    pub fn invalidate(
+        &mut self,
+        _paths: &[Box<[u8]>],
+        _entry_points: &mut super::EntryPointList,
+    ) -> Result<(), bun_core::Error> {
+        todo!("blocked_on: dev_server::IncrementalGraph::invalidate body un-gate")
+    }
+
     /// `IncrementalGraph(side).reset()` — DevServer.zig:IncrementalGraph.reset.
     /// Clears the per-bundle mutation tracking (`current_chunk_*`) without
     /// touching the persisted file/edge storage. Full body (which also resets

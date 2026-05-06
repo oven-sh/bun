@@ -69,8 +69,11 @@ pub fn parse(
     };
 
     // `ExprJsc::to_js` (bun_js_parser_jsc) drops the allocator param — Rust port
-    // threads the arena via the AST nodes themselves.
+    // threads the arena via the AST nodes themselves. `parse_ts_config` returns
+    // the cycle-broken `bun_logger::js_ast::Expr`; lift it into the full
+    // `bun_js_parser::Expr` (From impl in ast/Expr.rs) so `ExprJsc` applies.
     let _ = &arena;
+    let parse_result: bun_js_parser::Expr = parse_result.into();
     match parse_result.to_js(global) {
         Ok(v) => Ok(v),
         Err(ToJSError::OutOfMemory) => Err(JsError::OutOfMemory),
@@ -81,6 +84,8 @@ pub fn parse(
     }
 }
 } // mod _jsc_gated
+
+pub use _jsc_gated::create;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

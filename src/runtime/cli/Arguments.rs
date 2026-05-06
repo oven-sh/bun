@@ -1780,13 +1780,13 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
         } else {
             // Warn if --cpu-prof-name or --cpu-prof-dir is used without a profiler flag
             if args.option(b"--cpu-prof-name").is_some() {
-                Output::warn("--cpu-prof-name requires --cpu-prof or --cpu-prof-md to be enabled", format_args!(""));
+                Output::warn("--cpu-prof-name requires --cpu-prof or --cpu-prof-md to be enabled");
             }
             if args.option(b"--cpu-prof-dir").is_some() {
-                Output::warn("--cpu-prof-dir requires --cpu-prof or --cpu-prof-md to be enabled", format_args!(""));
+                Output::warn("--cpu-prof-dir requires --cpu-prof or --cpu-prof-md to be enabled");
             }
             if args.option(b"--cpu-prof-interval").is_some() {
-                Output::warn("--cpu-prof-interval requires --cpu-prof or --cpu-prof-md to be enabled", format_args!(""));
+                Output::warn("--cpu-prof-interval requires --cpu-prof or --cpu-prof-md to be enabled");
             }
         }
 
@@ -1795,7 +1795,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
 
         if heap_prof_v8 && heap_prof_md {
             // Both flags specified - warn and use markdown format
-            Output::warn("Both --heap-prof and --heap-prof-md specified; using --heap-prof-md (markdown format)", format_args!(""));
+            Output::warn("Both --heap-prof and --heap-prof-md specified; using --heap-prof-md (markdown format)");
             ctx.runtime_options.heap_prof.enabled = true;
             ctx.runtime_options.heap_prof.text_format = true;
             if let Some(name) = args.option(b"--heap-prof-name") {
@@ -1816,10 +1816,10 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
         } else {
             // Warn if --heap-prof-name or --heap-prof-dir is used without --heap-prof or --heap-prof-md
             if args.option(b"--heap-prof-name").is_some() {
-                Output::warn("--heap-prof-name requires --heap-prof or --heap-prof-md to be enabled", format_args!(""));
+                Output::warn("--heap-prof-name requires --heap-prof or --heap-prof-md to be enabled");
             }
             if args.option(b"--heap-prof-dir").is_some() {
-                Output::warn("--heap-prof-dir requires --heap-prof or --heap-prof-md to be enabled", format_args!(""));
+                Output::warn("--heap-prof-dir requires --heap-prof or --heap-prof-md to be enabled");
             }
         }
 
@@ -2277,7 +2277,7 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
 
             match format {
                 options::Format::InternalBakeDev => {
-                    Output::warn("--format={} is for debugging only, and may experience breaking changes at any moment", format_args!("{}", BStr::new(format_str)));
+                    Output::warn(format_args!("--format={} is for debugging only, and may experience breaking changes at any moment", BStr::new(format_str)));
                     Output::flush();
                 }
                 options::Format::Cjs => {

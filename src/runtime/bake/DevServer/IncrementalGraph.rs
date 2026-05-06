@@ -1059,7 +1059,7 @@ impl IncrementalGraph<Client> {
                     // Must precompute this. Otherwise, source maps won't have
                     // the info needed to concatenate VLQ mappings.
                     let _ = code;
-                    PackedMapShared::LineCount(LineCount::init(code_line_count))
+                    PackedMapShared::LineCount(LineCount(code_line_count))
                 },
             },
             html_route_bundle_index,

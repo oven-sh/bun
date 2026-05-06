@@ -492,11 +492,14 @@ pub fn build_with_vm(
             transpiler.options.minify_syntax = false;
             transpiler.options.minify_identifiers = false;
             transpiler.options.minify_whitespace = false;
-            transpiler.resolver.opts.entry_naming =
+            // PORT NOTE: `bun_resolver::options::BundleOptions` carries no naming
+            // templates; the canonical fields live on `transpiler.options`
+            // (bun_bundler::options::BundleOptions).
+            transpiler.options.entry_naming =
                 Box::from(b"_bun/[dir]/[name].[hash].[ext]".as_slice());
-            transpiler.resolver.opts.chunk_naming =
+            transpiler.options.chunk_naming =
                 Box::from(b"_bun/[dir]/[name].[hash].chunk.[ext]".as_slice());
-            transpiler.resolver.opts.asset_naming =
+            transpiler.options.asset_naming =
                 Box::from(b"_bun/[dir]/[name].[hash].asset.[ext]".as_slice());
         }
     }
@@ -512,11 +515,15 @@ pub fn build_with_vm(
         Ok(f) => f,
         Err(_) => {
             if framework.is_built_in_react {
-                bake_body::Framework::add_react_install_command_note(server_transpiler.log)?;
+                // SAFETY: `server_transpiler.log` is the process-lifetime ctx.log.
+                bake_body::Framework::add_react_install_command_note(unsafe {
+                    &mut *server_transpiler.log
+                })?;
             }
             bun_core::err_generic!("Failed to resolve all imports required by the framework");
             Output::flush();
-            let _ = server_transpiler.log.print(Output::error_writer());
+            // SAFETY: `server_transpiler.log` is the process-lifetime ctx.log.
+            let _ = unsafe { &*server_transpiler.log }.print(Output::error_writer() as *mut _);
             Global::crash();
         }
     };

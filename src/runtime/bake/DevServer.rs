@@ -19,8 +19,11 @@ use bun_alloc::{AllocError, Arena};
 use bun_collections::{ArrayHashMap, AutoBitSet, DynamicBitSet, HashMap, HiveArray, StringHashMap};
 use bun_core::{self as core, Environment, Output};
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, Strong,
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, Strong, StringJsc as _,
 };
+use bun_bundler::Graph::InputFileListExt as _;
+use bun_bundler::linker_graph::FileListExt as _;
+use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_logger::Log;
 use bun_paths::{self as paths, PathBuffer, MAX_PATH_BYTES};
@@ -2360,7 +2363,7 @@ impl DevServer<'_> {
         entry_points: EntryPointList,
         had_reload_event: bool,
         timer: Instant,
-    ) -> Result<(), AllocError> {
+    ) -> Result<(), bun_core::Error> {
         debug_assert!(self.current_bundle.is_none());
         debug_assert!(!entry_points.set.is_empty());
         self.log.clear_and_free();

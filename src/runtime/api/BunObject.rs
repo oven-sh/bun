@@ -1636,8 +1636,7 @@ pub extern "C" fn Bun__resolveSync(
 
     jsc::to_js_host_call(
         global,
-        do_resolve_with_args::<true>,
-        (global, specifier_str, source_str, is_esm, is_user_require_resolve),
+        do_resolve_with_args::<true>(global, specifier_str, source_str, is_esm, is_user_require_resolve),
     )
 }
 
@@ -1674,17 +1673,21 @@ pub extern "C" fn Bun__resolveSyncWithPaths(
         return JSValue::ZERO;
     };
 
-    let bun_vm = global.bun_vm();
+    // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
+    let bun_vm = unsafe { &mut *global.bun_vm() };
     debug_assert!(bun_vm.transpiler.resolver.custom_dir_paths.is_none());
-    bun_vm.transpiler.resolver.custom_dir_paths = Some(paths);
+    // SAFETY: `paths` borrows C++-owned BunStrings valid for the duration of
+    // this synchronous resolve call; lifetime is erased for the resolver slot.
+    bun_vm.transpiler.resolver.custom_dir_paths =
+        Some(unsafe { core::mem::transmute::<&[BunString], &'static [BunString]>(paths) });
     let _reset = scopeguard::guard((), |_| {
-        bun_vm.transpiler.resolver.custom_dir_paths = None;
+        // SAFETY: same VM pointer; called before returning to C++.
+        unsafe { (*global.bun_vm()).transpiler.resolver.custom_dir_paths = None };
     });
 
     jsc::to_js_host_call(
         global,
-        do_resolve_with_args::<true>,
-        (global, specifier_str, source_str, is_esm, is_user_require_resolve),
+        do_resolve_with_args::<true>(global, specifier_str, source_str, is_esm, is_user_require_resolve),
     )
 }
 
@@ -1704,8 +1707,7 @@ pub extern "C" fn Bun__resolveSyncWithStrings(
     bun_output::scoped_log!(importMetaResolve, "source: {}, specifier: {}", source, specifier);
     jsc::to_js_host_call(
         global,
-        do_resolve_with_args::<true>,
-        (global, *specifier, *source, is_esm, false),
+        do_resolve_with_args::<true>(global, *specifier, *source, is_esm, false),
     )
 }
 
@@ -1731,8 +1733,7 @@ pub extern "C" fn Bun__resolveSyncWithSource(
     }
     jsc::to_js_host_call(
         global,
-        do_resolve_with_args::<true>,
-        (global, specifier_str, *source, is_esm, is_user_require_resolve),
+        do_resolve_with_args::<true>(global, specifier_str, *source, is_esm, is_user_require_resolve),
     )
 }
 

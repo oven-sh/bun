@@ -586,7 +586,11 @@ fn add_entire_tree(
 }
 
 fn open_subdir(dir: &Dir, entry_name: &[u8], entry_subpath: &ZStr) -> Dir {
-    match dir.open_dir_z(entry_name_z(entry_name, entry_subpath), bun_sys::OpenDirOptions { iterate: true }) {
+    match dir_open_dir_z(
+        dir,
+        entry_name_z(entry_name, entry_subpath),
+        bun_sys::OpenDirOptions { iterate: true, ..Default::default() },
+    ) {
         Ok(d) => d,
         Err(err) => {
             Output::err(
@@ -599,7 +603,7 @@ fn open_subdir(dir: &Dir, entry_name: &[u8], entry_subpath: &ZStr) -> Dir {
     }
 }
 
-fn entry_subpath(dir_subpath: &[u8], entry_name: &[u8]) -> Result<Box<ZStr>, AllocError> {
+fn entry_subpath(dir_subpath: &[u8], entry_name: &[u8]) -> Result<ZBox, AllocError> {
     // std.fmt.allocPrintSentinel(allocator, "{s}{s}{s}", ..., 0)
     let sep: &[u8] = if dir_subpath.is_empty() { b"" } else { b"/" };
     let mut buf = Vec::with_capacity(dir_subpath.len() + sep.len() + entry_name.len() + 1);
@@ -607,10 +611,7 @@ fn entry_subpath(dir_subpath: &[u8], entry_name: &[u8]) -> Result<Box<ZStr>, All
     buf.extend_from_slice(sep);
     buf.extend_from_slice(entry_name);
     buf.push(0);
-    let len = buf.len() - 1;
-    // SAFETY: buf[len] == 0 written above
-    Ok(unsafe { ZStr::from_boxed_with_nul(buf.into_boxed_slice(), len) })
-    // TODO(port): exact ZStr boxed-construction API
+    Ok(ZBox::from_vec_with_nul(buf))
 }
 
 fn entry_name_z<'a>(entry_name: &[u8], entry_subpath: &'a ZStr) -> &'a ZStr {
@@ -636,14 +637,19 @@ fn iterate_bundled_deps(
         return Ok(bundled_pack_queue);
     }
 
-    let mut dir = match root_dir.open_dir_z(ZStr::from_lit(b"node_modules\0"), bun_sys::OpenDirOptions { iterate: true }) {
+    let mut dir: Dir = match dir_open_dir_z(
+        root_dir,
+        // SAFETY: literal is NUL-terminated, len excludes the NUL.
+        unsafe { ZStr::from_raw(b"node_modules\0".as_ptr(), b"node_modules".len()) },
+        bun_sys::OpenDirOptions { iterate: true, ..Default::default() },
+    ) {
         Ok(d) => d,
         Err(err) => {
             // ignore node_modules if it isn't a directory, or doesn't exist
             if err == bun_core::err!("NotDir") || err == bun_core::err!("FileNotFound") {
                 return Ok(bundled_pack_queue);
             }
-            Output::err(err, "failed to open \"node_modules\" to pack bundled dependencies", format_args!(""));
+            Output::err(err, "failed to open \"node_modules\" to pack bundled dependencies", ());
             Global::crash();
         }
     };

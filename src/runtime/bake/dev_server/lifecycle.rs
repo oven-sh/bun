@@ -51,6 +51,23 @@ impl bun_watcher::WatcherContext for DevServer {
     }
 }
 
+// The gated `dev_server_body::DevServer<'_>` draft (../DevServer.rs) calls
+// `Watcher::init::<DevServer>` against its own struct shape; provide the same
+// vtable so both bodies type-check while the two structs converge.
+impl bun_watcher::WatcherContext for crate::bake::dev_server_body::DevServer<'_> {
+    fn on_file_update(
+        &mut self,
+        _events: &mut [bun_watcher::WatchEvent],
+        _changed_files: &[bun_watcher::ChangedFilePath],
+        _watchlist: &bun_watcher::WatchList,
+    ) {
+        // TODO(b2): port `HotReloadEvent::on_file_update`.
+    }
+    fn on_error(&mut self, err: bun_sys::Error) {
+        bun_core::Output::warn(format_args!("DevServer watcher error: {err}"));
+    }
+}
+
 impl WatcherAtomics {
     /// DevServer.zig `WatcherAtomics.init`.
     pub(super) fn init(owner: *const DevServer) -> Self {

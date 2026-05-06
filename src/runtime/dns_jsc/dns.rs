@@ -1603,8 +1603,12 @@ impl DNSLookup {
     /// exact pointer returned by `Box::into_raw` in `init()`. Head nodes (`!allocated`)
     /// are dropped by their owner; this is a no-op for them.
     pub unsafe fn destroy(this: *mut Self) {
-        if (*this).allocated {
-            drop(Box::from_raw(this));
+        // SAFETY: caller contract — `this` is live; if `allocated`, it is the exact
+        // pointer from `Box::into_raw` in `init()`.
+        unsafe {
+            if (*this).allocated {
+                drop(Box::from_raw(this));
+            }
         }
     }
 }
@@ -1613,7 +1617,10 @@ impl Drop for DNSLookup {
     fn drop(&mut self) {
         bun_output::scoped_log!(DNSLookup, "deinit");
         // SAFETY: JSGlobalObject outlives the request.
-        self.poll_ref.unref(unsafe { &*self.global_this }.bun_vm());
+        let _ = unsafe { &*self.global_this };
+        // DNSLookup is always created on the JS event loop (it holds a JSGlobalObject),
+        // so the Js-arm vtable is the correct EventLoopCtx for KeepAlive::unref.
+        self.poll_ref.unref(Async::posix_event_loop::get_vm_ctx(Async::AllocatorType::Js));
         // self.resolver freed by IntrusiveRc Drop → deref
     }
 }
@@ -1647,7 +1654,8 @@ pub mod internal {
         unsafe {
             MAX_DNS_TIME_TO_LIVE_SECONDS.unwrap_or_else(|| {
                 let value = env_var::BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS.get();
-                let v = value as u32;
+                // Zig default for BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS is 30.
+                let v = value.unwrap_or(30) as u32;
                 MAX_DNS_TIME_TO_LIVE_SECONDS = Some(v);
                 v
             })
@@ -1670,7 +1678,7 @@ pub mod internal {
 
     /// Heap-stored key on `Request` — owns its host buffer.
     pub struct RequestKeyOwned {
-        pub host: Option<Box<ZStr>>,
+        pub host: Option<bun::ZBox>,
         pub port: u16,
         pub hash: u64,
     }
@@ -1697,7 +1705,7 @@ pub mod internal {
             if let Some(host) = self.host {
                 // SAFETY: host borrows the caller's NUL-terminated slice for the stack key's lifetime.
                 let bytes = unsafe { (*host).as_bytes() };
-                let host_copy = ZStr::from_bytes(bytes);
+                let host_copy = bun::ZBox::from_bytes(bytes);
                 RequestKeyOwned { host: Some(host_copy), hash: self.hash, port: self.port }
             } else {
                 RequestKeyOwned { host: None, hash: self.hash, port: self.port }

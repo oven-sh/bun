@@ -183,12 +183,10 @@ pub struct BuildConfigSubset {
 }
 
 /// `bake.HmrRuntime` — embedded HMR runtime code + precomputed line count.
-pub struct HmrRuntime {
-    /// Spec bake.zig:841 is `[:0]const u8` — NUL-terminated; the sentinel is
-    /// load-bearing where this buffer is handed to JSC/C++ as a C string.
-    pub code: &'static bun_str::ZStr,
-    pub line_count: u32,
-}
+// PORT NOTE: keystone stub removed — `bake_body::get_hmr_runtime` returns the
+// body `HmrRuntime`, so the duplicate here caused E0308 in IncrementalGraph.
+// Re-export so `bake::HmrRuntime` ≡ `bake_body::HmrRuntime`.
+pub use bake_body::{get_hmr_runtime, HmrRuntime};
 
 // `bake.UserOptions` — top-level JS-facing options struct. Full body (with
 // `from_js`) lives in the un-gated `bake_body.rs` draft and is re-exported

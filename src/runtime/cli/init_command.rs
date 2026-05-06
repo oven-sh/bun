@@ -1375,21 +1375,22 @@ impl Template {
     pub fn write_to_package_json(
         self,
         fields: &mut PackageJSONFields,
+        bump: &bumpalo::Bump,
     ) -> Result<(), Error> {
         type Rope = js_ast::E::object::Rope;
         fields.name = self.name().to_vec();
         let key = Box::new(Rope {
             head: js_ast::Expr::init(
-                js_ast::E::String { data: b"scripts".to_vec() },
+                js_ast::E::String::init(b"scripts"),
                 logger::Loc::EMPTY,
             ),
-            next: None,
+            next: core::ptr::null_mut(),
         });
         // TODO(port): Zig leaked `key` (alloc.create) — Box::leak matches that.
         let key = Box::leak(key);
         // SAFETY: object is arena-allocated and live for the command duration.
         let object = unsafe { &mut *fields.object };
-        let mut scripts_json = object.get_or_put_object(key)?;
+        let mut scripts_json = object.get_or_put_object(key, bump)?;
         let the_scripts = self.scripts();
         let mut i: usize = 0;
         while i < the_scripts.len() {
@@ -1399,7 +1400,8 @@ impl Template {
             scripts_json
                 .data
                 .e_object_mut()
-                .put_string(script_name, script_command)?;
+                .unwrap()
+                .put_string(bump, script_name, script_command)?;
             i += 2;
         }
         Ok(())
@@ -1459,7 +1461,8 @@ impl Template {
         }
 
         // Give some way to opt out.
-        if env_var::BUN_AGENT_RULE_DISABLED.get() || env_var::CLAUDE_CODE_AGENT_RULE_DISABLED.get()
+        if env_var::BUN_AGENT_RULE_DISABLED.get().unwrap_or(false)
+            || env_var::CLAUDE_CODE_AGENT_RULE_DISABLED.get().unwrap_or(false)
         {
             return false;
         }
@@ -1469,13 +1472,13 @@ impl Template {
         let Some(path) = env_var::PATH.get() else {
             return false;
         };
-        bun_core::which(
-            &mut *pathbuffer,
-            path,
-            Fs::FileSystem::instance().top_level_dir(),
-            b"claude",
-        )
-        .is_some()
+        // SAFETY: FileSystem::instance() returns the process-global singleton.
+        let top_level_dir = unsafe { (*Fs::FileSystem::instance()).top_level_dir };
+        // SAFETY: bun_paths::PathBuffer and bun_core::PathBuffer are both
+        // `#[repr(transparent)]`-ish wrappers around `[u8; MAX_PATH_BYTES]`.
+        let pathbuf: &mut bun_core::PathBuffer =
+            unsafe { &mut *((&mut *pathbuffer) as *mut PathBuffer as *mut bun_core::PathBuffer) };
+        bun_core::which(pathbuf, path, top_level_dir, b"claude").is_some()
     }
 
     pub fn create_agent_rule() {

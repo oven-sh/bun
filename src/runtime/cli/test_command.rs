@@ -892,9 +892,9 @@ impl CommandLineReporter {
                     }
                     let _ = writer.write_all(b" ");
 
-                    let _ = writer.write_all(if DIM { &*Output::pretty_fmt("<r><d>", true) } else { &*Output::pretty_fmt("<r>", true) });
+                    let _ = writer.write_all(if DIM { &*Output::pretty_fmt::<true>("<r><d>") } else { &*Output::pretty_fmt::<true>("<r>") });
                     let _ = writer.write_all(name);
-                    let _ = writer.write_all(&Output::pretty_fmt("<d>", true));
+                    let _ = writer.write_all(&Output::pretty_fmt::<true>("<d>"));
                     let _ = writer.write_all(b" >");
                 }
             } else {
@@ -913,9 +913,9 @@ impl CommandLineReporter {
             }
 
             if Output::enable_ansi_colors_stderr() {
-                let _ = writer.write_all(if DIM { &*Output::pretty_fmt("<r><d> ", true) } else { &*Output::pretty_fmt("<r><b> ", true) });
+                let _ = writer.write_all(if DIM { &*Output::pretty_fmt::<true>("<r><d> ") } else { &*Output::pretty_fmt::<true>("<r><b> ") });
                 let _ = writer.write_all(display_label);
-                let _ = writer.write_all(&Output::pretty_fmt("<r>", true));
+                let _ = writer.write_all(&Output::pretty_fmt::<true>("<r>"));
             } else {
                 let _ = writer.write_all(b" ");
                 let _ = writer.write_all(display_label);
@@ -924,7 +924,7 @@ impl CommandLineReporter {
             // Print attempt count if test was retried (attempts > 1)
             if attempts > 1 {
                 if Output::enable_ansi_colors_stderr() {
-                    let _ = writer.write_all(&Output::pretty_fmt(" <d>(attempt {})<r>", true));
+                    let _ = writer.write_all(&Output::pretty_fmt::<true>(" <d>(attempt {})<r>"));
                     // TODO(port): comptime prettyFmt with arg
                 } else {
                     let _ = write!(writer, " (attempt {})", attempts);
@@ -934,7 +934,7 @@ impl CommandLineReporter {
             // Print repeat count if test failed on a repeat (repeats > 1)
             if repeats > 1 {
                 if Output::enable_ansi_colors_stderr() {
-                    let _ = writer.write_all(&Output::pretty_fmt(" <d>(run {})<r>", true));
+                    let _ = writer.write_all(&Output::pretty_fmt::<true>(" <d>(run {})<r>"));
                     // TODO(port): comptime prettyFmt with arg
                 } else {
                     let _ = write!(writer, " (run {})", repeats);

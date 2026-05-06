@@ -121,18 +121,27 @@ pub fn filter<'a>(
     // transpiler because BundleV2.init takes ownership of the allocator and
     // log, and we want the runtime transpiler left untouched for actually
     // executing tests afterward.
-    let mut log = logger::Log::new();
+    //
+    // PORT NOTE: `BundleV2::scan_module_graph_from_cli` takes
+    // `&'a mut Transpiler<'a>` (invariant), so the arena, log, and transpiler
+    // are leaked for process lifetime. The Zig original does the same — see
+    // the comment after the call about intentionally leaving the
+    // ThreadLocalArena and worker pool alive.
+    let arena: &'static Arena = Box::leak(Box::new(Arena::new()));
+    let log: &'static mut logger::Log = Box::leak(Box::new(logger::Log::new()));
 
-    let mut scan_transpiler = match Transpiler::init(&mut log, &ctx.args, vm.transpiler.env) {
-        Ok(t) => t,
-        Err(err) => {
-            Output::err_generic(format_args!(
-                "Failed to initialize module graph scanner for --changed: {}",
-                err.name()
-            ));
-            Global::exit(1);
-        }
-    };
+    let scan_transpiler: &'static mut Transpiler<'static> = Box::leak(Box::new(
+        match Transpiler::init(arena, log, ctx.args.clone(), Some(vm.transpiler.env)) {
+            Ok(t) => t,
+            Err(err) => {
+                Output::err_generic(
+                    "Failed to initialize module graph scanner for --changed: {s}",
+                    (err.name(),),
+                );
+                Global::exit(1);
+            }
+        },
+    ));
     scan_transpiler.options.target = bun_bundler::options::Target::Bun;
     // Do not follow bare specifiers into node_modules; changes there are not
     // considered local edits.
@@ -144,13 +153,22 @@ pub fn filter<'a>(
     scan_transpiler.options.tree_shaking = false;
     scan_transpiler.configure_linker();
     let _ = scan_transpiler.configure_defines();
-    scan_transpiler.resolver.opts = scan_transpiler.options.clone();
-    // TODO(port): Zig assigns `resolver.opts = options` by value; verify clone vs share semantics
-    scan_transpiler.resolver.env_loader = scan_transpiler.env;
+    // TODO(port): Zig assigns `resolver.opts = options` by value;
+    // `bun_bundler::resolver_bundle_options_subset` is private. `Transpiler::init`
+    // already projected resolver.opts; sync only the fields we changed above.
+    scan_transpiler.resolver.opts.target = scan_transpiler.options.target;
+    scan_transpiler.resolver.opts.output_dir = Box::default();
+    // TODO(port): blocked_on bun_bundler::resolver_bundle_options_subset (private) —
+    // packages enum mapping (PackagesOption -> resolver::Packages) needs the projector.
+    scan_transpiler.resolver.env_loader = core::ptr::NonNull::new(scan_transpiler.env);
 
     let bundle = match BundleV2::scan_module_graph_from_cli(
-        &mut scan_transpiler,
-        AnyEventLoop::init(),
+        scan_transpiler,
+        arena,
+        // TODO(port): bundler `EventLoop` is an opaque `Option<NonNull<()>>`
+        // (CYCLEBREAK). Zig passed `jsc.AnyEventLoop.init(allocator)`; the
+        // bundler currently treats `None` as "spin a mini loop".
+        None,
         &entry_points,
     ) {
         Ok(b) => b,
@@ -242,7 +260,7 @@ pub fn filter<'a>(
     }
 
     // BFS backward from every changed file that participates in the graph.
-    let mut affected = DynamicBitSet::empty(sources.len());
+    let mut affected = bun_core::handle_oom(DynamicBitSet::init_empty(sources.len()));
     let mut queue: Vec<u32> = Vec::new();
 
     {

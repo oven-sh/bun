@@ -261,7 +261,7 @@ impl Entry {
         j.push_static(source_map_strings.as_slice());
         j.push_static(br#"],"sourcesContent":["// (Bun's internal HMR runtime is minified)""#);
         for i in 0..map_files.len() {
-            let chunk = map_files.get(i);
+            let chunk = &map_files[i];
             let Some(source_map) = chunk.get() else {
                 // For empty chunks, put a blank entry. This allows HTML files to get their stack
                 // remapped, despite having no actual mappings.

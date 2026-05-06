@@ -234,6 +234,7 @@ impl HmrSocket {
                         ) else {
                             unreachable!()
                         };
+                        let _ = &mut event;
 
                         if event.entry_points.set.count() == 0 {
                             dev.publish(
@@ -384,13 +385,13 @@ impl HmrSocket {
             let dev = unsafe { self.dev() };
             // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
             if let Some(agent) = unsafe { dev.inspector() } {
-                let pattern_str = bun_str::String::init(pattern);
+                let mut pattern_str = bun_str::String::init(pattern);
                 // `defer pattern_str.deref()` → Drop on bun_str::String
                 agent.notify_client_navigated(
                     dev.inspector_server_id,
                     self.inspector_connection_id,
-                    &pattern_str,
-                    rbi.unwrap(),
+                    &mut pattern_str,
+                    rbi,
                 );
             }
         }

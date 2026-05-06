@@ -355,9 +355,9 @@ impl CreateCommand {
 
         if example_tag != ExampleTag::LocalFolder {
             if create_options.verbose {
-                Output::pretty_errorln(
+                pretty_errorln!(
                     "Downloading as {}\n",
-                    format_args!("{}", <&'static str>::from(example_tag)),
+                    <&'static str>::from(example_tag),
                 );
             }
         }
@@ -375,9 +375,9 @@ impl CreateCommand {
                                 node.end();
                                 progress.refresh();
 
-                                Output::pretty_error(
+                                pretty_error!(
                                     "\n<r><red>error:<r> <b>\"{}\"<r> was not found. Here are templates you can use:\n\n",
-                                    format_args!("{}", bstr::BStr::new(template)),
+                                    bstr::BStr::new(template),
                                 );
                                 Output::flush();
 
@@ -388,7 +388,7 @@ impl CreateCommand {
                                 node.end();
                                 progress.refresh();
 
-                                Output::pretty_errorln("\n\n", format_args!(""));
+                                pretty_errorln!("\n\n");
 
                                 return Err(err);
                             }

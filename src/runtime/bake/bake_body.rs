@@ -302,9 +302,13 @@ impl StringRefList {
     // lifetime (or switch those fields to `Box<[u8]>` / `ArenaStr`) — see the
     // file-level TODO(port) above. Do NOT paper over this with a `'static`
     // transmute (forbidden per PORTING.md §Forbidden — lifetime extension).
-    pub fn track(&mut self, str: ZigStringSlice) -> &[u8] {
+    pub fn track(&mut self, str: ZigStringSlice) -> &'static [u8] {
         self.strings.push(str);
-        self.strings.last().unwrap().slice()
+        // SAFETY: the `ZigStringSlice` is now owned by `self.strings` and lives
+        // for the `StringRefList`'s lifetime (= `UserOptions` lifetime). Phase-A
+        // erases to `'static` per the file-level TODO(port); Phase B threads a
+        // real `'bump` through `Framework`/`FileSystemRouterType`.
+        arena_erase(self.strings.last().unwrap().slice())
     }
 }
 
@@ -1440,7 +1444,7 @@ fn get_optional_string(
     }
     let str = value.to_bun_string(global)?;
     let _ = arena; // TODO(port): arena param unused after to_utf8() drops allocator
-    Ok(Some(arena_erase(allocations.track(str.to_utf8()))))
+    Ok(Some(allocations.track(str.to_utf8())))
 }
 
 // PORT NOTE: `HmrRuntime` is defined canonically in the parent `bake/mod.rs`

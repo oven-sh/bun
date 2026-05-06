@@ -1039,12 +1039,12 @@ impl DevServer<'_> {
             app.get(
                 const_format::concatcp!(INTERNAL_PREFIX, "/iv"),
                 self as *mut _,
-                redirect_handler::<{ is_ssl }>(const_format::concatcp!(INTERNAL_PREFIX, "/incremental_visualizer").as_bytes()),
+                redirect_handler::<SSL>(const_format::concatcp!(INTERNAL_PREFIX, "/incremental_visualizer").as_bytes()),
             );
             app.get(
                 const_format::concatcp!(INTERNAL_PREFIX, "/mv"),
                 self as *mut _,
-                redirect_handler::<{ is_ssl }>(const_format::concatcp!(INTERNAL_PREFIX, "/memory_visualizer").as_bytes()),
+                redirect_handler::<SSL>(const_format::concatcp!(INTERNAL_PREFIX, "/memory_visualizer").as_bytes()),
             );
         }
 

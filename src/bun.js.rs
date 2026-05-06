@@ -106,7 +106,8 @@ impl Run {
     fn global() -> &'static mut Run {
         // SAFETY: RUN is initialized exactly once in boot()/boot_standalone()
         // before any access, and is only ever touched from the main JS thread.
-        unsafe { RUN.assume_init_mut() }
+        // `&raw mut` avoids the static_mut_refs lint (no intermediate &mut to the static).
+        unsafe { (*(&raw mut RUN)).assume_init_mut() }
     }
 
     pub fn boot_standalone(
@@ -137,7 +138,7 @@ impl Run {
 
         // SAFETY: single-threaded init; first and only write to RUN.
         unsafe {
-            RUN.write(Run {
+            (*(&raw mut RUN)).write(Run {
                 vm: VirtualMachine::init_with_module_graph(jsc::virtual_machine::Options {
                     // PERF(port): was arena.allocator() — global mimalloc in Rust
                     log: NonNull::new(ctx.log),
@@ -300,7 +301,7 @@ impl Run {
 
         // SAFETY: single-threaded init; first and only write to RUN.
         unsafe {
-            RUN.write(Run {
+            (*(&raw mut RUN)).write(Run {
                 vm: VirtualMachine::init(jsc::VirtualMachineInitOptions {
                     // TODO(b2-cycle): `InitOptions` is the minimal stub surface; the
                     // full `Options` struct (log/store_fd/eval/debugger/dns) is wired

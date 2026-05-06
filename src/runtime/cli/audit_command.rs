@@ -61,9 +61,8 @@ impl AuditResult {
 pub struct AuditCommand;
 
 impl AuditCommand {
-    // TODO(port): `!noreturn` → `Result<!, _>`; `!` is unstable in this position on stable Rust,
-    // Phase B may swap to `Result<core::convert::Infallible, _>`.
-    pub fn exec(ctx: Command::Context) -> Result<!, bun_core::Error> {
+    // TODO(port): `!noreturn` → `Result<Infallible, _>` so callers can `?`; all Ok paths Global::exit.
+    pub fn exec(ctx: Command::Context) -> Result<core::convert::Infallible, bun_core::Error> {
         let cli = PackageManager::CommandLineArguments::parse(PackageManager::Subcommand::Audit)?;
         let (manager, _) = match PackageManager::init(ctx, cli, PackageManager::Subcommand::Audit) {
             Ok(v) => v,

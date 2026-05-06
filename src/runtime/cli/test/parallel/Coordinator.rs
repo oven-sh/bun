@@ -625,8 +625,17 @@ fn is_panic_status(status: SpawnStatus) -> bool {
     let Some(sig) = status.signal_code() else {
         return false;
     };
-    use bun_spawn::SignalCode::*;
-    matches!(sig, SIGILL | SIGTRAP | SIGABRT | SIGBUS | SIGFPE | SIGSEGV | SIGSYS)
+    use bun_sys::SignalCode;
+    matches!(
+        sig,
+        SignalCode::SIGILL
+            | SignalCode::SIGTRAP
+            | SignalCode::SIGABRT
+            | SignalCode::SIGBUS
+            | SignalCode::SIGFPE
+            | SignalCode::SIGSEGV
+            | SignalCode::SIGSYS
+    )
 }
 
 fn describe_status(buf: &mut [u8; 32], status: SpawnStatus) -> &[u8] {

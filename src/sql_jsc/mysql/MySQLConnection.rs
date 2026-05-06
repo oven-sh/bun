@@ -732,12 +732,18 @@ impl MySQLConnection {
         bun_core::scoped_log!(MySQLConnection, "Auth packet: 0x{:02x}", first_byte);
 
         match first_byte {
-            x if x == PacketType::OK as u8 => {
+            x if x == PacketType::OK.0 => {
                 let mut ok = OKPacket {
+                    header: 0,
+                    affected_rows: 0,
+                    last_insert_id: 0,
+                    status_flags: StatusFlags::default(),
+                    warnings: 0,
+                    info: Data::Empty,
+                    session_state_changes: Data::Empty,
                     packet_size: header_length,
-                    ..Default::default()
                 };
-                ok.decode(reader)?;
+                ok.decode_internal(reader)?;
 
                 self.set_status(ConnectionState::Connected);
 
@@ -747,16 +753,16 @@ impl MySQLConnection {
                 self.advance();
             }
 
-            x if x == PacketType::ERROR as u8 => {
+            x if x == PacketType::ERROR.0 => {
                 let mut err = ErrorPacket::default();
-                err.decode(reader)?;
+                err.decode_internal(reader)?;
 
                 // SAFETY: get_js_connection returns the parent struct embedding self.
                 unsafe { (*self.get_js_connection()).on_error_packet(None, err) };
                 return Err(AnyMySQLError::AuthenticationFailed);
             }
 
-            x if x == PacketType::MORE_DATA as u8 => {
+            x if x == PacketType::MORE_DATA.0 => {
                 // Handle various MORE_DATA cases
                 if let Some(plugin) = self.auth_plugin {
                     match plugin {
@@ -788,8 +794,8 @@ impl MySQLConnection {
                                         bun_core::scoped_log!(MySQLConnection, "awaiting public key");
                                         let mut packet = self.writer().start(self.sequence_id)?;
 
-                                        let mut request =
-                                            Auth::caching_sha2_password::PublicKeyRequest::default();
+                                        let request =
+                                            Auth::caching_sha2_password::PublicKeyRequest;
                                         request.write(self.writer())?;
                                         packet.end()?;
                                         self.flush_data();

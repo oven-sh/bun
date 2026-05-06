@@ -49,6 +49,7 @@ impl Signature {
         array_value: JSValue,
         columns: JSValue,
     ) -> Result<Signature, bun_core::Error> {
+        use crate::jsc::js_error_to_mysql;
         use crate::shared::query_binding_iterator::QueryBindingIterator;
 
         let mut fields: Vec<Param> = Vec::new();
@@ -59,9 +60,10 @@ impl Signature {
 
         // errdefer { fields.deinit(); name.deinit(); } — deleted: `Vec` drops on `?`.
 
-        let mut iter = QueryBindingIterator::init(array_value, columns, global_object)?;
+        let mut iter = QueryBindingIterator::init(array_value, columns, global_object)
+            .map_err(js_error_to_mysql)?;
 
-        while let Some(value) = iter.next()? {
+        while let Some(value) = iter.next().map_err(js_error_to_mysql)? {
             if value.is_empty_or_undefined_or_null() {
                 // Allow MySQL to decide the type
                 fields.push(Param {
@@ -76,7 +78,8 @@ impl Signature {
                 global_object,
                 value,
                 &mut unsigned,
-            )?;
+            )
+            .map_err(js_error_to_mysql)?;
             if unsigned {
                 // 128 is more than enought right now
                 // PORT NOTE: reshaped — Zig used `std.fmt.bufPrint` into a 128-byte

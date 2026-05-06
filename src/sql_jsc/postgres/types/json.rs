@@ -1,4 +1,4 @@
-use crate::jsc::{JSGlobalObject, JSValue, StringJsc as _};
+use crate::jsc::{js_error_to_postgres, JSGlobalObject, JSValue, StringJsc as _};
 use bun_sql::postgres::types::int_types::Short;
 use bun_sql::postgres::AnyPostgresError;
 use bun_sql::shared::Data;
@@ -20,12 +20,13 @@ impl JsonToJs for Data {
     fn json_to_js(self, global: &JSGlobalObject) -> Result<JSValue, AnyPostgresError> {
         let str = bun_string::String::borrow_utf8(self.slice());
         // `defer str.deref()` — handled by Drop on bun_string::String.
-        let parse_result = JSValue::parse_json(str.to_js(global)?, global);
+        let js_str = str.to_js(global).map_err(js_error_to_postgres)?;
+        let parse_result = js_str.parse_json(global).map_err(js_error_to_postgres)?;
         // PORT NOTE: Zig `parse_result.AnyPostgresError()` is a typo for
         // `.isAnyError()` (verified against bun_jsc surface — no `AnyPostgresError`
         // method exists on JSValue).
         if parse_result.is_any_error() {
-            return Err(global.throw_value(parse_result).into());
+            return Err(js_error_to_postgres(global.throw_value(parse_result)));
         }
 
         Ok(parse_result)

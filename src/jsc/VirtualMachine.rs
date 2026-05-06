@@ -889,7 +889,7 @@ impl VirtualMachine {
         // see `vm.global`/`vm.jsc_vm` populated. PERF(port): was inline switch.
         if let Some(hooks) = runtime_hooks() {
             // SAFETY: hook contract — `vm` is the unique live VM on this thread.
-            unsafe { (hooks.init_runtime_state)(vm, &opts) };
+            vm_ref.runtime_state = unsafe { (hooks.init_runtime_state)(vm, &opts) };
         }
 
         if opts.smol {
@@ -1171,7 +1171,26 @@ impl VirtualMachine {
     pub fn resolve() { todo!() }
     pub fn resolve_maybe_needs_trailing_slash<const IS_A_FILE_PATH: bool>() { todo!() }
     pub fn process_fetch_log() { todo!() }
-    pub fn destroy(&mut self) { todo!() }
+    /// `VirtualMachine.deinit` — worker-thread teardown. Spec
+    /// VirtualMachine.zig:2109. Only the `RuntimeHooks` dispatch is real; the
+    /// remaining field deinits are gated on their `()` placeholders widening.
+    pub fn destroy(&mut self) {
+        // PORT NOTE: Zig frees `timer`/`entry_point` as value fields of `self`;
+        // here they live in the high-tier `RuntimeState` box, so dispatch the
+        // reclaim through the hook. PERF(port): was inline switch.
+        if let Some(hooks) = runtime_hooks() {
+            let state = core::mem::replace(&mut self.runtime_state, core::ptr::null_mut());
+            // SAFETY: hook contract — `state` is exactly the pointer
+            // `init_runtime_state` returned for this VM (or null), handed back
+            // once on the same thread; `self` is the live per-thread VM.
+            unsafe { (hooks.deinit_runtime_state)(self as *mut _, state) };
+        }
+        // TODO(port): rest of spec VirtualMachine.zig:2109 `deinit` —
+        // `auto_killer.deinit()`, `source_mappings.deinit()`,
+        // `rare_data.deinit()`, `proxy_env_storage.deinit()`,
+        // `overridden_main.deinit()`. Gated on those fields' real types.
+        self.has_terminated = true;
+    }
     pub fn print_exception() { todo!() }
     pub fn clear_entry_point(&mut self) -> JsResult<()> { todo!() }
     pub fn use_isolation_source_provider_cache(&self) -> bool { todo!() }

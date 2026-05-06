@@ -75,8 +75,14 @@ static EASING_MAP: phf::Map<&'static [u8], EasingKeyword> = phf::phf_map! {
 
 impl EasingFunction {
     pub fn parse(input: &mut css::Parser) -> Result<EasingFunction> {
+        // PORT NOTE: reshaped for borrowck — `try_parse(|i| i.expect_ident())`
+        // ties the returned slice to the closure's `&mut Parser` borrow, so the
+        // ident can't escape. Read the next token by value (Token slices are
+        // `'static` placeholders for the not-yet-threaded `'bump`) and dispatch
+        // on Ident vs Function in one go; on any other token, error.
         let location = input.current_source_location();
-        if let Some(ident) = input.try_parse(|i| i.expect_ident()).ok() {
+        let tok = input.next()?.clone();
+        if let Token::Ident(ident) = tok {
             // TODO(port): case-insensitive lookup (Zig: Map.getASCIIICaseInsensitive)
             let keyword = if let Some(e) = EASING_MAP.get(ident) {
                 match e {
@@ -101,8 +107,10 @@ impl EasingFunction {
             return Ok(keyword);
         }
 
-        let function = input.expect_function()?;
-        input.parse_nested_block(|i| {
+        let Token::Function(function) = tok else {
+            return Err(location.new_unexpected_token_error(tok));
+        };
+        input.parse_nested_block(move |i| {
             if strings::eql_case_insensitive_ascii_check_length(function, b"cubic-bezier") {
                 let x1 = CSSNumberFns::parse(i)?;
                 i.expect_comma()?;
@@ -164,13 +172,13 @@ impl EasingFunction {
                     EasingFunction::CubicBezier(cb) => {
                         dest.write_str("cubic-bezier(")?;
                         CSSNumberFns::to_css(&cb.x1, dest)?;
-                        dest.write_char(',')?;
+                        dest.write_char(b',')?;
                         CSSNumberFns::to_css(&cb.y1, dest)?;
-                        dest.write_char(',')?;
+                        dest.write_char(b',')?;
                         CSSNumberFns::to_css(&cb.x2, dest)?;
-                        dest.write_char(',')?;
+                        dest.write_char(b',')?;
                         CSSNumberFns::to_css(&cb.y2, dest)?;
-                        dest.write_char(')')
+                        dest.write_char(b')')
                     }
                     EasingFunction::Steps(steps) => {
                         if steps.count == 1 && steps.position == StepPosition::Start {
@@ -180,9 +188,9 @@ impl EasingFunction {
                             return dest.write_str("step-end");
                         }
                         dest.write_fmt(format_args!("steps({}", steps.count))?;
-                        dest.delim(',', false)?;
+                        dest.delim(b',', false)?;
                         steps.position.to_css(dest)?;
-                        dest.write_char(')')
+                        dest.write_char(b')')
                     }
                     EasingFunction::Linear
                     | EasingFunction::Ease
@@ -258,7 +266,10 @@ impl StepPosition {
 
     pub fn parse(input: &mut css::Parser) -> Result<StepPosition> {
         let location = input.current_source_location();
-        let ident = input.expect_ident()?;
+        let tok = input.next()?.clone();
+        let Token::Ident(ident) = tok else {
+            return Err(location.new_unexpected_token_error(tok));
+        };
         // TODO(port): case-insensitive lookup (Zig: Map.getASCIIICaseInsensitive)
         let keyword = if let Some(e) = STEP_POSITION_MAP.get(ident) {
             match e {

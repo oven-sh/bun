@@ -114,10 +114,10 @@ pub mod parser {
 
         #[derive(Clone, Copy, PartialEq, Eq, Hash)]
         pub enum ParsedCaseSensitivity {
+            ExplicitCaseSensitive,
+            AsciiCaseInsensitive,
             CaseSensitive,
             AsciiCaseInsensitiveIfInHtmlElementInHtmlDocument,
-            AsciiCaseInsensitive,
-            ExplicitCaseSensitive,
         }
     }
 

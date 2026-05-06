@@ -90,10 +90,10 @@ impl Tree {
             id: u32::from_ne_bytes(out[0..4].try_into().unwrap()),
             dependency_id: u32::from_ne_bytes(out[4..8].try_into().unwrap()),
             parent: u32::from_ne_bytes(out[8..12].try_into().unwrap()),
-            dependencies: DependencyIDSlice {
-                off: u32::from_ne_bytes(out[12..16].try_into().unwrap()),
-                len: u32::from_ne_bytes(out[16..20].try_into().unwrap()),
-            },
+            dependencies: DependencyIDSlice::new(
+                u32::from_ne_bytes(out[12..16].try_into().unwrap()),
+                u32::from_ne_bytes(out[16..20].try_into().unwrap()),
+            ),
         }
     }
 }
@@ -632,8 +632,10 @@ impl Tree {
                 .sort_unstable_by(|a, b| {
                     if DepSorter::is_less_than(&sorter, *a, *b) {
                         core::cmp::Ordering::Less
-                    } else {
+                    } else if DepSorter::is_less_than(&sorter, *b, *a) {
                         core::cmp::Ordering::Greater
+                    } else {
+                        core::cmp::Ordering::Equal
                     }
                 });
         }

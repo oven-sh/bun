@@ -18,7 +18,7 @@ use bun_core::err;
 use bun_interchange::json as json_parser;
 use bun_interchange::toml::TOML;
 use bun_logger as logger;
-use bun_logger::js_ast::{self, expr::Data as ExprData, E, Expr, ExprTag, G};
+use bun_logger::js_ast::{expr::Data as ExprData, E, Expr, ExprTag};
 
 use bun_options_types::schema::api;
 use bun_options_types::CodeCoverageOptions::Reporters as CoverageReporters;

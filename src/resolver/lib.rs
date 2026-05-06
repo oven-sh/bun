@@ -2392,6 +2392,10 @@ impl<'a> Resolver<'a> {
         import_path: &[u8],
         kind: ast::ImportKind,
     ) -> Option<MatchResult> {
+        // SAFETY: PORT — `import_path` is caller-interned (DirnameStore/source text)
+        // and outlives the returned MatchResult. Zig used raw `[]const u8` here.
+        // TODO(port): thread an explicit `'a` through MatchResult instead.
+        let import_path: &'static [u8] = unsafe { &*(import_path as *const [u8]) };
         if source_dir.is_empty() {
             return None;
         }
@@ -2438,6 +2442,10 @@ impl<'a> Resolver<'a> {
         kind: ast::ImportKind,
         global_cache: GlobalCache,
     ) -> ResultUnion {
+        // SAFETY: PORT — `import_path` is caller-interned (source text / DirnameStore)
+        // and outlives the returned Result. Zig used raw `[]const u8` here.
+        // TODO(port): thread an explicit lifetime through Result instead.
+        let import_path: &'static [u8] = unsafe { &*(import_path as *const [u8]) };
         let _tracer = bun_core::perf::trace("ModuleResolver.resolve");
 
         // Only setting 'current_action' in debug mode because module resolution
@@ -2791,6 +2799,9 @@ impl<'a> Resolver<'a> {
         import_path: &[u8],
         kind: ast::ImportKind,
     ) -> core::result::Result<Result, bun_core::Error> {
+        // SAFETY: PORT — `import_path` is caller-interned (source text / DirnameStore)
+        // and outlives the returned Result. TODO(port): thread explicit lifetime.
+        let import_path: &'static [u8] = unsafe { &*(import_path as *const [u8]) };
         // TODO(port): narrow error set
         if let Some(f) = self.opts.framework.as_ref() {
             if let Some(mod_) = f.built_in_modules.get(import_path) {
@@ -2998,7 +3009,7 @@ impl<'a> Resolver<'a> {
     pub fn resolve_without_symlinks(
         &mut self,
         source_dir: &[u8],
-        input_import_path: &[u8],
+        input_import_path: &'static [u8],
         kind: ast::ImportKind,
         global_cache: GlobalCache,
     ) -> ResultUnion {
@@ -3344,7 +3355,7 @@ impl<'a> Resolver<'a> {
     pub fn check_package_path(
         &mut self,
         source_dir: &[u8],
-        unremapped_import_path: &[u8],
+        unremapped_import_path: &'static [u8],
         kind: ast::ImportKind,
         global_cache: GlobalCache,
     ) -> ResultUnion {
@@ -5959,7 +5970,13 @@ impl<'a> Resolver<'a> {
     }
 
     pub fn load_as_file(&mut self, path: &[u8], extension_order: &[&'static [u8]]) -> Option<LoadResult> {
-        let rfs: &mut Fs::file_system::RealFS = &mut self.fs.fs;
+        // SAFETY: PORT — RealFS is the global singleton (fs.zig); Zig held a raw
+        // pointer here. We re-borrow `&mut *rfs` at each use site so `&mut self`
+        // calls (debug_logs, load_extension) don't conflict. TODO(port): split
+        // RealFS borrow once entries iteration is interior-mutability-backed.
+        let rfs: *mut Fs::file_system::RealFS = &mut self.fs.fs;
+        #[allow(unused_macros)]
+        macro_rules! rfs { () => { unsafe { &mut *rfs } } }
 
         if let Some(debug) = self.debug_logs.as_mut() {
             debug.add_note_fmt(format_args!("Attempting to load \"{}\" as a file", bstr::BStr::new(path)));

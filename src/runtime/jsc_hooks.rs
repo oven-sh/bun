@@ -66,7 +66,8 @@ pub struct RuntimeState {
 
 thread_local! {
     /// One `RuntimeState` per JS thread (`VirtualMachine` is per-thread).
-    /// Cleared by `VirtualMachine::deinit` once that path is wired.
+    /// Cleared by [`deinit_runtime_state`] (dispatched from
+    /// `VirtualMachine::destroy` via `RuntimeHooks`).
     static RUNTIME_STATE: Cell<*mut RuntimeState> = const { Cell::new(ptr::null_mut()) };
 }
 

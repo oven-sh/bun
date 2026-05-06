@@ -94,17 +94,21 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
     }
 
     fn e_this(p: &mut Self, expr: Expr, _: ExprIn) -> Expr {
-        // TODO(G-round-4): P::value_for_this is still individually gated
+        // Spec visitExpr.zig:53-56: `if (p.valueForThis(expr.loc)) |exp| return exp;`
+        // P::value_for_this is still individually gated
         // (`#[cfg(any())] // blocked_on: fn_only_data_visit.class_name_ref deref`).
-        // Re-enable once that helper compiles:
+        // PORTING.md §Forbidden bans a live silent no-op when the spec has real logic, so this
+        // body must be loud until the helper is un-gated. Once it compiles, replace with:
         //   if let Some(exp) = p.value_for_this(expr.loc) { return exp; }
-        let _ = p;
-
+        //
         //                 // Capture "this" inside arrow functions that will be lowered into normal
         // // function expressions for older language environments
         // if p.fnOrArrowDataVisit.isArrow && p.options.unsupportedJSFeatures.Has(compat.Arrow) && p.fnOnlyDataVisit.isThisNested {
         //     return js_ast.Expr{Loc: expr.Loc, Data: &js_ast.EIdentifier{Ref: p.captureThis()}}, exprOut{}
         // }
+        let _ = p;
+        todo!("G-round-4: e_this — blocked on P::value_for_this");
+        #[allow(unreachable_code)]
         expr
     }
 

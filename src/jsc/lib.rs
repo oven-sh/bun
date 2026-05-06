@@ -226,7 +226,6 @@ mod _gated {
     #[path = "SystemError.rs"] pub mod system_error;
     #[path = "URL.rs"] pub mod url;
     #[path = "VM.rs"] pub mod vm;
-    #[path = "ResolvedSource.rs"] pub mod resolved_source;
     #[path = "Debugger.rs"] pub mod debugger;
     #[path = "SavedSourceMap.rs"] pub mod saved_source_map;
     #[path = "ZigStackTrace.rs"] pub mod zig_stack_trace;

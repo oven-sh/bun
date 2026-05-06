@@ -42,6 +42,11 @@ impl<T> ExternalSlice<T> {
     // Zig: `pub const Child: type = Type;`
     // TODO(port): inherent associated types are unstable; callers should use the generic param directly.
 
+    #[inline]
+    pub const fn new(off: u32, len: u32) -> Self {
+        Self { off, len, _marker: PhantomData }
+    }
+
     pub const INVALID: Self = Self {
         off: u32::MAX,
         len: u32::MAX,

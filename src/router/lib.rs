@@ -880,9 +880,7 @@ impl<'a> RouteLoader<'a> {
             route_dirname_len,
         };
         // dedupe_dynamic dropped at end of scope (was `defer this.dedupe_dynamic.deinit()`)
-        #[cfg(any())] // TODO(b2-blocked): bun_sys::fs::DirEntry (load() body gated; MOVE_DOWN bun_resolver::fs→sys pending)
         this.load(resolver, root_dir_info, base_dir);
-        let _ = root_dir_info;
         if this.all_routes.is_empty() {
             return Routes {
                 static_: this.static_list,
@@ -948,19 +946,20 @@ impl<'a> RouteLoader<'a> {
         }
     }
 
-    #[cfg(any())]
-    // TODO(b2-blocked): bun_sys::fs::DirEntry::iter — opaque stub exposes no
-    //   way to iterate `data` (Zig: `entries.data.iterator()`); MOVE_DOWN
-    //   bun_resolver::fs→sys still pending the EntryMap surface. Once that
-    //   lands, the body below already uses the accessor API (entry.dir()/base()/
-    //   kind()) and Route::parse is un-gated, so this should compile with only
-    //   the iterator-loop reshape.
     pub fn load<R: ResolverLike>(
         &mut self,
         resolver: &mut R,
         root_dir_info: DirInfoRef,
         base_dir: &[u8],
     ) {
+        #[cfg(any())]
+        // TODO(b2-blocked): bun_sys::fs::DirEntry::iter — opaque stub exposes no
+        //   way to iterate `data` (Zig: `entries.data.iterator()`); MOVE_DOWN
+        //   bun_resolver::fs→sys still pending the EntryMap surface. Once that
+        //   lands, the body below already uses the accessor API (entry.dir()/base()/
+        //   kind()) and Route::parse is un-gated, so this should compile with only
+        //   the iterator-loop reshape.
+        {
         let fs = self.fs;
 
         if let Some(entries) = root_dir_info.get_entries_const() {
@@ -1031,6 +1030,7 @@ impl<'a> RouteLoader<'a> {
                 }
             }
         }
+        } // end #[cfg(any())] gated body
     }
 }
 

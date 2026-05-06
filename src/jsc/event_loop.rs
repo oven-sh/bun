@@ -236,6 +236,24 @@ fn tick_queue_with_count(el: &mut EventLoop, vm: *mut VirtualMachine, counter: &
     f(vm, counter)
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// `ImmediateObject::runImmediateTask` dispatch — `ImmediateObject` is opaque
+// at this tier (real type lives in `bun_runtime::api::Timer`). The high tier
+// installs the per-task body at startup; `tick_immediate_tasks` below performs
+// the swap + drain regardless so `auto_tick` reads `has_pending_immediate`
+// correctly even when no hook is installed (unit tests).
+// ──────────────────────────────────────────────────────────────────────────
+/// `fn(*mut ImmediateObject, *mut VirtualMachine) -> bool` — returns whether
+/// the callback threw (mirrors `runImmediateTask`'s return).
+pub type RunImmediateFn = unsafe fn(*mut ImmediateObject, *mut VirtualMachine) -> bool;
+
+static RUN_IMMEDIATE_HOOK: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+
+/// Called by `bun_runtime` at startup to install the real `runImmediateTask` body.
+pub fn set_run_immediate_hook(f: RunImmediateFn) {
+    RUN_IMMEDIATE_HOOK.store(f as *mut (), Ordering::Release);
+}
+
 impl EventLoop {
     /// Before your code enters JavaScript at the top of the event loop, call
     /// `loop.enter()`. If running a single callback, prefer `runCallback` instead.
@@ -601,6 +619,63 @@ impl EventLoop {
 
     pub fn enqueue_immediate_task(&mut self, task: *mut ImmediateObject) {
         self.immediate_tasks.push(task);
+    }
+
+    /// `tickImmediateTasks` — spec event_loop.zig:239-270. Swaps the two
+    /// immediate queues, drains the now-current batch, then recycles the
+    /// drained Vec as the next-tick buffer.
+    ///
+    /// PORT NOTE: `ImmediateObject` is opaque at this tier; the per-task body
+    /// dispatches through [`RUN_IMMEDIATE_HOOK`] (installed by `bun_runtime`).
+    /// When no hook is installed (unit tests) the swap still happens — this is
+    /// load-bearing for `auto_tick`'s `has_pending_immediate` read, which must
+    /// observe the post-swap `immediate_tasks` (next-tick immediates), not the
+    /// un-drained current batch (busy-spin hazard, spec Timer.zig:251-256).
+    pub fn tick_immediate_tasks(&mut self, virtual_machine: *mut VirtualMachine) {
+        let mut to_run_now = core::mem::take(&mut self.immediate_tasks);
+
+        self.immediate_tasks = core::mem::take(&mut self.next_immediate_tasks);
+
+        let hook = RUN_IMMEDIATE_HOOK.load(Ordering::Acquire);
+        let mut exception_thrown = false;
+        if !hook.is_null() {
+            // SAFETY: `hook` was stored from a `RunImmediateFn` (same layout).
+            let f: RunImmediateFn =
+                unsafe { core::mem::transmute::<*mut (), RunImmediateFn>(hook) };
+            for task in to_run_now.iter() {
+                // SAFETY: ImmediateObject pointers are kept alive by the JS heap
+                // until `runImmediateTask` consumes them; `virtual_machine` is the
+                // live owning VM per caller contract.
+                exception_thrown = unsafe { f(*task, virtual_machine) };
+            }
+        }
+        // No high-tier hook → tasks are dropped without running. Matches the
+        // pre-un-gate behaviour (gated body never ran them either); the swap
+        // above is the correctness-critical part for `has_pending_immediate`.
+
+        // make sure microtasks are drained if the last task had an exception
+        if exception_thrown {
+            self.maybe_drain_microtasks();
+        }
+
+        if self.next_immediate_tasks.capacity() > 0 {
+            // this would only occur if we were recursively running tickImmediateTasks.
+            #[cold]
+            fn cold_merge(this: &mut EventLoop) {
+                let next = core::mem::take(&mut this.next_immediate_tasks);
+                this.immediate_tasks.extend_from_slice(&next);
+            }
+            cold_merge(self);
+        }
+
+        if to_run_now.capacity() > 1024 * 128 {
+            // once in a while, deinit the array to free up memory
+            to_run_now = Vec::new();
+        } else {
+            to_run_now.clear();
+        }
+
+        self.next_immediate_tasks = to_run_now;
     }
 
     pub fn ensure_waker(&mut self) {

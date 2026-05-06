@@ -68,12 +68,13 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
             //   "@decorator export declare class Foo {}"
             //   "@decorator export declare abstract class Foo {}"
             //
-            // PORT NOTE: ExprNodeList = BabyList<Expr> wraps arena-owned data; leak the slice
-            // into the &'a [Expr] DeferredTsDecorators expects. Arena outlives `opts`.
-            let ts_decorators_slice: &'a [Expr] = unsafe {
-                core::slice::from_raw_parts(ts_decorators.ptr.as_ptr(), ts_decorators.len as usize)
-            };
-            core::mem::forget(ts_decorators);
+            // PORT NOTE: spec stores the BabyList<Expr> directly into `opts.ts_decorators.values`.
+            // `DeferredTsDecorators::values` is currently typed `&'a [Expr]` (parser.rs), so until
+            // that field is widened to `ExprNodeList` we copy into the arena (Expr is `Copy`) and
+            // let `ts_decorators` drop normally — no `mem::forget` / `from_raw_parts` lifetime
+            // laundering (forbidden per PORTING.md §Forbidden patterns).
+            let ts_decorators_slice: &'a [Expr] =
+                p.allocator.alloc_slice_copy(ts_decorators.slice());
             opts.ts_decorators = Some(DeferredTsDecorators {
                 values: ts_decorators_slice,
                 scope_index,
@@ -324,70 +325,71 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
         let body_loc = p.lexer.loc();
         let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::Block, body_loc)?;
-        // TODO(port): was `defer p.popScope()` — manual pop_scope before each return until a
-        // borrowck-safe scopeguard pattern is settled.
+        // Zig: `defer p.popScope()`. Wrap the body in an inner closure so `pop_scope` runs once on
+        // its `Result`, covering every `?` early-exit as well as explicit returns.
+        let result: Result<Stmt> = (|| {
+            p.lexer.expect(T::TOpenBrace)?;
+            let mut cases = bumpalo::collections::Vec::<js_ast::Case>::new_in(p.allocator);
+            let mut found_default = false;
+            let mut stmt_opts = ParseStatementOptions {
+                lexical_decl: LexicalDecl::AllowAll,
+                ..Default::default()
+            };
+            let mut value: Option<js_ast::Expr> = None;
+            while p.lexer.token != T::TCloseBrace {
+                let mut body = StmtList::new_in(p.allocator);
+                value = None;
+                if p.lexer.token == T::TDefault {
+                    if found_default {
+                        p.log.add_range_error(
+                            Some(p.source),
+                            p.lexer.range(),
+                            b"Multiple default clauses are not allowed",
+                        )?;
+                        return Err(err!("SyntaxError"));
+                    }
 
-        p.lexer.expect(T::TOpenBrace)?;
-        let mut cases = bumpalo::collections::Vec::<js_ast::Case>::new_in(p.allocator);
-        let mut found_default = false;
-        let mut stmt_opts = ParseStatementOptions {
-            lexical_decl: LexicalDecl::AllowAll,
-            ..Default::default()
-        };
-        let mut value: Option<js_ast::Expr> = None;
-        while p.lexer.token != T::TCloseBrace {
-            let mut body = StmtList::new_in(p.allocator);
-            value = None;
-            if p.lexer.token == T::TDefault {
-                if found_default {
-                    p.log.add_range_error(
-                        Some(p.source),
-                        p.lexer.range(),
-                        b"Multiple default clauses are not allowed",
-                    )?;
-                    p.pop_scope();
-                    return Err(err!("SyntaxError"));
+                    found_default = true;
+                    p.lexer.next()?;
+                    p.lexer.expect(T::TColon)?;
+                } else {
+                    p.lexer.expect(T::TCase)?;
+                    value = Some(p.parse_expr(Level::Lowest)?);
+                    p.lexer.expect(T::TColon)?;
                 }
 
-                found_default = true;
-                p.lexer.next()?;
-                p.lexer.expect(T::TColon)?;
-            } else {
-                p.lexer.expect(T::TCase)?;
-                value = Some(p.parse_expr(Level::Lowest)?);
-                p.lexer.expect(T::TColon)?;
-            }
-
-            'case_body: loop {
-                match p.lexer.token {
-                    T::TCloseBrace | T::TCase | T::TDefault => {
-                        break 'case_body;
-                    }
-                    _ => {
-                        stmt_opts = ParseStatementOptions {
-                            lexical_decl: LexicalDecl::AllowAll,
-                            ..Default::default()
-                        };
-                        body.push(p.parse_stmt(&mut stmt_opts)?);
+                'case_body: loop {
+                    match p.lexer.token {
+                        T::TCloseBrace | T::TCase | T::TDefault => {
+                            break 'case_body;
+                        }
+                        _ => {
+                            stmt_opts = ParseStatementOptions {
+                                lexical_decl: LexicalDecl::AllowAll,
+                                ..Default::default()
+                            };
+                            body.push(p.parse_stmt(&mut stmt_opts)?);
+                        }
                     }
                 }
+                cases.push(js_ast::Case {
+                    value,
+                    body: body.into_bump_slice_mut(),
+                    loc: logger::Loc::EMPTY,
+                });
             }
-            cases.push(js_ast::Case {
-                value,
-                body: body.into_bump_slice_mut(),
-                loc: logger::Loc::EMPTY,
-            });
-        }
-        p.lexer.expect(T::TCloseBrace)?;
+            p.lexer.expect(T::TCloseBrace)?;
+            Ok(p.s(
+                S::Switch {
+                    test_,
+                    body_loc,
+                    cases: cases.into_bump_slice_mut(),
+                },
+                loc,
+            ))
+        })();
         p.pop_scope();
-        Ok(p.s(
-            S::Switch {
-                test_,
-                body_loc,
-                cases: cases.into_bump_slice_mut(),
-            },
-            loc,
-        ))
+        result
     }
 
     fn t_try(

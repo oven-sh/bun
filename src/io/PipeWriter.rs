@@ -551,15 +551,20 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Function table for `PosixStreamingWriter`.
+/// All methods take `*mut Self` (not `&mut self`) because the writer is an
+/// intrusive *field of* the parent — see PipeWriter.zig `parent: *Parent`.
+/// Materializing `&mut Parent` while a `&mut writer` is live would alias under
+/// Stacked Borrows. Zig's `*Parent` freely aliases; we mirror that with raw
+/// pointers and never form a `&mut Parent` inside the writer.
 pub trait PosixStreamingWriterParent {
-    fn on_write(&mut self, amount: usize, status: WriteStatus);
-    fn on_error(&mut self, err: sys::Error);
+    fn on_write(this: *mut Self, amount: usize, status: WriteStatus);
+    fn on_error(this: *mut Self, err: sys::Error);
     const HAS_ON_READY: bool;
-    fn on_ready(&mut self) {}
-    fn on_close(&mut self);
-    fn event_loop(&self) -> EventLoopHandle;
+    fn on_ready(_this: *mut Self) {}
+    fn on_close(this: *mut Self);
+    fn event_loop(this: *mut Self) -> EventLoopHandle;
     // CYCLEBREAK(TYPE_ONLY): bun_uws::Loop → bun_uws_sys::Loop (T0).
-    fn loop_(&self) -> *mut bun_uws_sys::Loop;
+    fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop;
 }
 
 pub struct PosixStreamingWriter<Parent: PosixStreamingWriterParent> {

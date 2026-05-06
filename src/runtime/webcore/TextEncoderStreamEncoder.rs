@@ -138,8 +138,8 @@ impl TextEncoderStreamEncoder {
             };
 
             // SAFETY: result.written bytes were just initialized in spare capacity.
-            unsafe { buffer.set_len(buffer.len() + result.written) };
-            remain = &remain[result.read..];
+            unsafe { buffer.set_len(buffer.len() + result.written as usize) };
+            remain = &remain[result.read as usize..];
 
             if result.written == 0 && result.read == 0 {
                 // TODO(port): Zig threw a JS OOM exception on alloc failure; Rust Vec aborts on OOM.

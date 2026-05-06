@@ -5615,16 +5615,16 @@ impl H2FrameParser {
         let this_value = callframe.this();
         let args_list = callframe.arguments_old::<1>();
         if args_list.len < 1 {
-            return global_object.throw("Expected 1 argument");
+            return Err(global_object.throw("Expected 1 argument"));
         }
 
         let options = args_list.ptr[0];
         if options.is_empty_or_undefined_or_null() || options.is_boolean() || !options.is_object() {
-            return global_object.throw_invalid_arguments("expected options as argument");
+            return Err(global_object.throw_invalid_arguments("expected options as argument"));
         }
 
         let Some(context_obj) = options.get(global_object, "context")? else {
-            return global_object.throw("Expected \"context\" option");
+            return Err(global_object.throw("Expected \"context\" option"));
         };
         let mut handler_js = JSValue::ZERO;
         if let Some(handlers_) = options.get(global_object, "handlers")? {

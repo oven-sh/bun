@@ -1389,26 +1389,26 @@ impl VectorArrayBuffer {
 impl VectorArrayBuffer {
     pub fn from_js(global_object: &JSGlobalObject, val: JSValue) -> JsResult<VectorArrayBuffer> {
         if !val.js_type().is_array_like() {
-            return global_object.throw_invalid_arguments("Expected ArrayBufferView[]", format_args!(""));
+            return Err(global_object.throw_invalid_arguments("Expected ArrayBufferView[]"));
         }
 
         let mut bufferlist: Vec<PlatformIoVec> = Vec::new();
         let mut i: usize = 0;
-        let len = val.get_length(global_object)?;
+        let len = val.get_length(global_object)? as usize;
         bufferlist.reserve_exact(len);
 
         while i < len {
             let element = val.get_index(global_object, i as u32)?;
 
             if !element.is_cell() {
-                return global_object.throw_invalid_arguments("Expected ArrayBufferView[]", format_args!(""));
+                return Err(global_object.throw_invalid_arguments("Expected ArrayBufferView[]"));
             }
 
-            let Some(array_buffer) = element.as_array_buffer(global_object) else {
-                return global_object.throw_invalid_arguments("Expected ArrayBufferView[]", format_args!(""));
+            let Some(mut array_buffer) = element.as_array_buffer(global_object) else {
+                return Err(global_object.throw_invalid_arguments("Expected ArrayBufferView[]"));
             };
 
-            let buf = array_buffer.byte_slice();
+            let buf = array_buffer.byte_slice_mut();
             bufferlist.push(bun_sys::platform_iovec_create(buf));
             i += 1;
         }

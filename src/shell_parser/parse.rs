@@ -3976,26 +3976,35 @@ pub fn has_eq_sign(str: &[u8]) -> Option<u32> {
 #[inline]
 fn is_all_ascii(s: &[u8]) -> bool {
     strings::is_all_ascii(s)
+}
 
 // ───────────────────────────── escaping ─────────────────────────────
 
 /// Characters that need to be escaped
-const SPECIAL_CHARS: [u8; 34] = [
+pub const SPECIAL_CHARS: [u8; 34] = [
     b'~', b'[', b']', b'#', b';', b'\n', b'*', b'{', b',', b'}', b'`', b'$', b'=', b'(', b')',
     b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', b'|', b'>', b'<', b'&', b'\'',
     b'"', b' ', b'\\', SPECIAL_JS_CHAR,
 ];
 
-const SPECIAL_CHARS_TABLE: IntegerBitSet<256> = {
-    let mut table = IntegerBitSet::<256>::empty();
+// PORT NOTE: Zig uses `bit_set.IntegerBitSet(256)`. The Rust
+// `bun_collections::IntegerBitSet<N>` is single-`usize`-backed (≤64 bits), so a
+// 256-entry membership table is materialised as `[bool; 256]` instead — same
+// O(1) byte-indexed lookup, const-evaluable.
+pub struct ByteTable(pub [bool; 256]);
+impl ByteTable {
+    #[inline]
+    pub const fn is_set(&self, idx: usize) -> bool { self.0[idx] }
+}
+pub const SPECIAL_CHARS_TABLE: ByteTable = {
+    let mut table = [false; 256];
     let mut i = 0;
     while i < SPECIAL_CHARS.len() {
-        table = table.with_set(SPECIAL_CHARS[i] as usize);
+        table[SPECIAL_CHARS[i] as usize] = true;
         i += 1;
     }
-    table
+    ByteTable(table)
 };
-// TODO(port): IntegerBitSet const-fn API (`empty`/`with_set`/`is_set`) — confirm in bun_collections.
 
 pub fn assert_special_char(c: u8) {
     debug_assert!(SPECIAL_CHARS_TABLE.is_set(c as usize));

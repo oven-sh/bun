@@ -744,16 +744,14 @@ pub trait Parse: Sized {
 /// `T::parse_with_options(&mut Parser, &ParserOptions) -> CssResult<T>`.
 ///
 /// Zig falls through to `parse` when a type has no `parseWithOptions` decl.
-/// Here that's the trait's *default method* — leaf impls only override when the
-/// type actually consumes options (e.g. CSS-modules `Composes`, `TokenList`).
+/// PORT NOTE: Rust can't express that as a `where Self: Parse` default method
+/// — the bound becomes part of the *method signature*, so the free
+/// `parse_with_options::<T>` below would require `T: Parse` even for impls
+/// that override the body. Instead the fallthrough lives in
+/// `impl_pwo_via_parse!`/`impl_parse_tocss_via_inherent!` and the container
+/// impls; every `ParseWithOptions` impl provides the method explicitly.
 pub trait ParseWithOptions: Sized {
-    fn parse_with_options(input: &mut Parser, options: &ParserOptions) -> CssResult<Self>
-    where
-        Self: Parse,
-    {
-        let _ = options;
-        <Self as Parse>::parse(input)
-    }
+    fn parse_with_options(input: &mut Parser, options: &ParserOptions) -> CssResult<Self>;
 }
 
 #[inline]

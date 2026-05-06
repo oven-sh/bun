@@ -781,28 +781,36 @@ fn transpile_source_code_inner(
             let mut arena_guard = scopeguard::guard(
                 (jsc_vm, arena, give_back_arena, args.flags),
                 |(jsc_vm, mut arena, give_back, flags)| {
-                    if !give_back {
-                        // Spec :146-165 — when `give_back_arena == false` the
-                        // Zig `defer` is a no-op because ownership was already
-                        // transferred (to the AsyncModule queue, or held past
-                        // `processFetchLog` so log spans pointing into it stay
-                        // valid). In this port the hand-off paths are
-                        // `#[cfg(any())]`-gated, so no transfer happens and
-                        // `mem::forget` would be a pure leak (PORTING.md
-                        // §Forbidden). Drop (free) instead.
-                        // TODO(b2-cycle): once AsyncModule / processFetchLog
-                        // un-gate, the hand-off sites must call
-                        // `scopeguard::ScopeGuard::into_inner(arena_guard)` and
-                        // move the `Box<Arena>` to the consumer instead of
-                        // flipping `give_back` and reaching here.
-                        drop(arena);
-                        return;
-                    }
                     // SAFETY: `jsc_vm` is the live per-thread VM (closure runs
                     // on the same thread, before the hook returns).
                     let slot = unsafe {
                         &mut (*jsc_vm).module_loader.transpile_source_code_arena
                     };
+                    if !give_back {
+                        // Spec :146-165 — when `give_back_arena == false` the
+                        // Zig `defer` is a no-op because ownership was already
+                        // transferred (to the AsyncModule queue, or held past
+                        // `processFetchLog` so log spans pointing into it stay
+                        // valid). The ParseError path that flips
+                        // `give_back=false` is LIVE (not gated): the caller
+                        // (`transpile_file` → `process_fetch_log`, spec
+                        // :1112-1114) reads `log` entries whose spans point
+                        // into arena-owned source bytes. Freeing here would be
+                        // a use-after-free.
+                        //
+                        // PORT NOTE: we can't widen `TranspileExtra` (lower
+                        // tier) to carry the `Box<Arena>` back, so park it in
+                        // the per-VM slot UN-reset. `transpile_file`'s
+                        // `_reset_arena` scopeguard (`ModuleLoader::reset_arena`,
+                        // spec :1083) runs after `process_fetch_log` and
+                        // resets/reclaims it then — matching the spec lifetime.
+                        // TODO(b2-cycle): once AsyncModule un-gates, the
+                        // enqueue site must `ScopeGuard::into_inner` and hand
+                        // the `Box<Arena>` to the queue instead of reaching
+                        // here.
+                        *slot = Some(arena);
+                        return;
+                    }
                     if slot.is_none() {
                         if flags != FetchFlags::PrintSource {
                             // PERF(port): Zig `.retain_with_limit(8M)` — bumpalo
@@ -839,15 +847,17 @@ fn transpile_source_code_inner(
             let mut cache = bun_bundler::cache::RuntimeTranspilerCache::default();
 
             // ── Swap `vm.transpiler.log` (and linker/resolver/pm logs) ──────
-            // Spec :184-199.
-            // TODO(b2-cycle): `vm.transpiler` is never initialized by
-            // `VirtualMachine::init` / `init_runtime_state` yet (zero-bit-
-            // pattern `Transpiler<'static>` — validity-invariant UB on first
-            // read). Gate the live read/write until `init_runtime_state`
-            // writes a real `Transpiler`.
-            #[cfg(any())]
+            // Spec :184-199. `parse_maybe_return_file_only` writes diagnostics
+            // to `vm.transpiler.log`; the per-call `args.log` is what
+            // `Bun__transpileFile` later passes to `process_fetch_log`
+            // (spec :1112-1114). Without this swap, parse errors land in the
+            // VM's stale log and the user-visible error formatting reads an
+            // empty buffer.
+            // PORT NOTE: `vm.transpiler` is already read live below
+            // (`.reset_store()`, `.linker`, `.log` at :338) so the original
+            // "uninitialized Transpiler" gate was stale.
+            // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
             let old_log = unsafe { (*jsc_vm).transpiler.log };
-            #[cfg(any())]
             unsafe {
                 (*jsc_vm).transpiler.log = args.log;
                 // TODO(port): lifetime — `Resolver.log` is `&'static mut Log`
@@ -867,7 +877,6 @@ fn transpile_source_code_inner(
                     }
                 }
             }
-            #[cfg(any())]
             let _log_guard = scopeguard::guard(jsc_vm, move |jsc_vm| unsafe {
                 (*jsc_vm).transpiler.log = old_log;
                 #[cfg(any())]

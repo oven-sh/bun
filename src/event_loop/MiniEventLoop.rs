@@ -588,8 +588,11 @@ impl JsVM {
         unsafe { (self.vtable.inc_pending_unref)(self.vm) };
     }
 
+    /// SAFETY: `JsVM` holds a raw `*mut ()`; two calls would otherwise produce
+    /// aliased `&mut FilePollStore` (UB). Caller must not hold another live
+    /// `&mut` to the store across this borrow.
     #[inline]
-    pub fn file_polls(&self) -> &mut FilePollStore {
+    pub unsafe fn file_polls(&self) -> &mut FilePollStore {
         // SAFETY: vtable contract.
         unsafe { &mut *(self.vtable.file_polls)(self.vm) }
     }

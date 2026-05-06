@@ -1009,14 +1009,17 @@ impl<'a> Transpiler<'a> {
                 opts.features.dead_code_elimination = self.options.dead_code_elimination;
                 opts.features.remove_cjs_module_wrapper =
                     this_parse.remove_cjs_module_wrapper;
-                // TODO(port): `Features.bundler_feature_flags` is
-                // `Option<Box<StringSet>>` (owned). Zig stored a `*const`
-                // alias of `transpiler.options.bundler_feature_flags`; Rust
-                // would have to move/clone it. `StringSet` isn't `Clone` and
-                // moving it out of `BundleOptions` would break the next parse
-                // call. Change the parser-side field to `Option<&'a StringSet>`
-                // (matches the Zig `*const` semantics) in B-3, then thread it.
-                opts.features.bundler_feature_flags = None;
+                // Spec transpiler.zig:925 forwards `transpiler.options
+                // .bundler_feature_flags`. Zig aliased a `*const StringSet`;
+                // `Features.bundler_feature_flags` is currently owned
+                // (`Option<Box<StringSet>>`), so clone by value until B-3
+                // changes the parser-side field to `Option<&'a StringSet>`.
+                // The clone drops with `opts` — no leak.
+                opts.features.bundler_feature_flags = self
+                    .options
+                    .bundler_feature_flags
+                    .as_deref()
+                    .and_then(|s| s.clone().ok().map(Box::new));
                 opts.features.repl_mode = self.options.repl_mode;
 
                 // we'll just always enable top-level await
@@ -1025,13 +1028,14 @@ impl<'a> Transpiler<'a> {
 
                 opts.features.is_macro_runtime =
                     target == crate::options_impl::Target::BunMacro;
-                // TODO(port): type unification — `Features.replace_exports` is
-                // `parser::Runtime::ReplaceableExportMap` (newtype over
-                // `StringArrayHashMap<parser::Runtime::ReplaceableExport>`),
-                // but `this_parse.replace_exports` carries
-                // `runtime_full::ReplaceableExport` values. Convert once the
-                // two `ReplaceableExport` enums collapse (B-3).
-                let _ = this_parse.replace_exports;
+                // Spec transpiler.zig:943: `opts.features.replace_exports =
+                // this_parse.replace_exports`. B-3 UNIFIED —
+                // `js_ast::runtime::ReplaceableExport` IS
+                // `js_ast::Runtime::ReplaceableExport`, so the inner
+                // `StringArrayHashMap` moves directly into the newtype.
+                opts.features.replace_exports = js_ast::Runtime::ReplaceableExportMap {
+                    entries: this_parse.replace_exports,
+                };
 
                 if self.macro_context.is_none() {
                     // PORT NOTE: `MacroContext::init(transpiler)` is a

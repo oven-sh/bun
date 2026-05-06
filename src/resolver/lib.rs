@@ -2864,6 +2864,47 @@ pub use crate::data_url::DataURL;
 pub use crate::dir_info as DirInfo;
 pub use ::bun_options_types::GlobalCache::GlobalCache;
 
+// ── Process-lifetime arenas for DirInfo-cached parses ─────────────────────
+// The DirInfo cache (`DirInfo::hash_map_instance()`) is a true process-lifetime
+// singleton; entries hold `&'static PackageJSON` / `&'static TSConfigJSON` and
+// borrow `&'static [u8]` source bytes. Zig models this with `bun.TrivialNew`
+// (heap-allocate, never free). PORTING.md §Forbidden bars `Box::leak`/
+// `mem::forget` for this — process-lifetime storage must go through
+// `LazyLock`. These append-only arenas are that storage; the `Box<T>` heap
+// address is stable across `Vec` growth, so handing out `&'static T` is sound.
+
+/// Intern a parsed `PackageJSON` into the process-lifetime DirInfo arena.
+fn intern_package_json(pkg: PackageJSON) -> &'static PackageJSON {
+    static ARENA: std::sync::LazyLock<parking_lot::Mutex<Vec<Box<PackageJSON>>>> =
+        std::sync::LazyLock::new(Default::default);
+    let mut guard = ARENA.lock();
+    guard.push(Box::new(pkg));
+    let last: &PackageJSON = guard.last().unwrap();
+    // SAFETY: ARENA is `'static` (LazyLock); entries are never removed; the
+    // `Box<PackageJSON>` heap address is stable across `Vec` reallocation.
+    unsafe { &*(last as *const PackageJSON) }
+}
+
+/// Intern tsconfig.json source bytes into the process-lifetime DirInfo arena.
+/// `use_shared_buffer = false` at the read site guarantees `Owned`/`Empty`.
+fn intern_tsconfig_contents(contents: Fs::file_system::cache_entry::Contents) -> &'static [u8] {
+    use Fs::file_system::cache_entry::Contents;
+    let owned: Box<[u8]> = match contents {
+        Contents::Empty => return b"",
+        Contents::Owned(v) => v.into_boxed_slice(),
+        // Unreachable for the `parse_tsconfig` caller (use_shared_buffer=false);
+        // fall back to a copy so we never hand out a dangling slice.
+        other => Box::from(other.as_slice()),
+    };
+    static ARENA: std::sync::LazyLock<parking_lot::Mutex<Vec<Box<[u8]>>>> =
+        std::sync::LazyLock::new(Default::default);
+    let mut guard = ARENA.lock();
+    guard.push(owned);
+    let last: &[u8] = guard.last().unwrap();
+    // SAFETY: see `intern_package_json` — same append-only LazyLock invariant.
+    unsafe { core::slice::from_raw_parts(last.as_ptr(), last.len()) }
+}
+
 // TODO(b2-blocked): bun_output is a thin facade over bun_core::output but is
 // not in this crate's dep set; alias the underlying macros directly.
 macro_rules! debuglog {

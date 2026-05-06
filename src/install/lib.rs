@@ -111,12 +111,12 @@ macro_rules! gated_mod {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub mod npm;
-#[path = "PackageManifestMap.rs"]
+#[cfg(any())] #[path = "PackageManifestMap.rs"]
 pub mod package_manifest_map;
 pub mod resolution;
 #[path = "PnpmMatcher.rs"]
 pub mod pnpm_matcher;
-pub mod postinstall_optimizer;
+#[cfg(any())] pub mod postinstall_optimizer;
 #[path = "ExternalSlice.rs"]
 pub mod external_slice;
 pub mod integrity;
@@ -150,9 +150,10 @@ pub mod versioned_url;
 #[cfg(any())] pub mod pnpm;
 #[cfg(any())] pub mod yarn;
 
-/// Stub: `repository.rs` — only `Repository` struct shape is read by
+/// Stub: `repository.rs` — `Repository` struct shape + method stubs read by
 /// `resolution.rs` / `dependency.rs`.
 pub mod repository {
+    use core::cmp::Ordering;
     #[derive(Default, Clone, Copy)]
     pub struct Repository {
         pub owner: bun_semver::String,
@@ -161,15 +162,37 @@ pub mod repository {
         pub resolved: bun_semver::String,
         pub package_name: bun_semver::String,
     }
+    impl Repository {
+        pub fn parse_append_git<B>(_b: &mut B, _s: bun_semver::SlicedString) -> Self { todo!("phase-b2: Repository::parse_append_git (gated)") }
+        pub fn parse_append_github<B>(_b: &mut B, _s: bun_semver::SlicedString) -> Self { todo!("phase-b2: Repository::parse_append_github (gated)") }
+        pub fn order(&self, _o: &Self, _a: &[u8], _b: &[u8]) -> Ordering { todo!("phase-b2: Repository::order (gated)") }
+        pub fn count<B>(&self, _b: &mut B, _s: &[u8]) { todo!("phase-b2: Repository::count (gated)") }
+        pub fn eql(&self, _o: &Self, _a: &[u8], _b: &[u8]) -> bool { todo!("phase-b2: Repository::eql (gated)") }
+        pub fn fmt_store_path<W: core::fmt::Write>(&self, _w: &mut W, _s: &[u8]) -> core::fmt::Result { todo!("phase-b2: Repository::fmt_store_path (gated)") }
+        pub fn format_as<'a>(&'a self, _label: &'a str, _buf: &'a [u8]) -> impl core::fmt::Display + 'a { struct F; impl core::fmt::Display for F { fn fmt(&self, _: &mut core::fmt::Formatter<'_>) -> core::fmt::Result { todo!("phase-b2: Repository::format_as (gated)") } } F }
+        pub fn clone<B>(&self, _b: &mut B, _s: &[u8]) -> Self { todo!("phase-b2: Repository::clone (gated)") }
+    }
 }
-/// Stub: `bin.rs` — only `Bin` struct is read by `npm.rs` parse.
+/// Stub: `bin.rs` — `Bin` struct + Value union read by `npm.rs` parse.
 pub mod bin {
     #[derive(Default, Clone, Copy)]
     pub struct Bin {
         pub tag: Tag,
-        pub value: crate::external_slice::ExternalString,
-        pub named_value: crate::external_slice::ExternalStringMap,
-        pub extern_string_buf: crate::external_slice::ExternalStringList,
+        pub value: Value,
+        pub _padding_tag: [u8; 3],
+    }
+    impl Bin {
+        pub fn init() -> Self { Self::default() }
+    }
+    #[derive(Default, Clone, Copy)]
+    pub struct Value {
+        pub file: bun_semver::String,
+        pub named_file: [bun_semver::String; 2],
+        pub dir: bun_semver::String,
+        pub map: crate::ExternalStringList,
+    }
+    impl Value {
+        pub fn init(_v: impl core::any::Any) -> Self { Self::default() }
     }
     #[derive(Default, Clone, Copy, PartialEq, Eq)]
     #[repr(u8)]
@@ -177,7 +200,7 @@ pub mod bin {
 }
 /// Stub: `lockfile.rs` — type surface for `dependency.rs` / `npm.rs`.
 pub mod lockfile {
-    pub type StringBuilder = bun_semver::string_builder::StringBuilder;
+    pub use bun_semver::StringBuilder;
     #[derive(Default)] pub struct Lockfile;
     #[derive(Default)] pub struct PatchedDep;
     #[derive(Default)] pub struct LoadResult;
@@ -208,6 +231,7 @@ pub mod package_installer {}
 pub mod isolated_install {
     pub use super::Store;
     pub use super::FileCopier;
+    pub type EntryId = u32;
 }
 pub mod patch_install { pub use super::PatchTask; }
 pub mod hoisted_install {}
@@ -603,11 +627,11 @@ pub mod hosted_git_info_stub {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub use npm as Npm;
-pub use package_manifest_map::PackageManifestMap;
-pub use package_manager_task::Task;
 pub use resolution::Resolution;
 pub use pnpm_matcher::PnpmMatcher;
-pub use postinstall_optimizer::PostinstallOptimizer;
+#[derive(Default)] pub struct PackageManifestMap;
+#[derive(Default)] pub struct PostinstallOptimizer;
+pub type Task = ();
 
 pub use bun_collections::identity_context::ArrayIdentityContext;
 pub use bun_collections::identity_context::IdentityContext;
@@ -636,12 +660,10 @@ pub use lockfile::{Lockfile, PatchedDep, LoadResult, LoadStep};
 #[derive(Default)] pub struct NetworkTask;
 #[derive(Default)] pub struct TarballStream;
 #[derive(Default)] pub struct PackageManager;
-#[derive(Default)] pub struct Bin;
 #[derive(Default)] pub struct FolderResolution;
 #[derive(Default)] pub struct LifecycleScriptSubprocess;
 #[derive(Default)] pub struct SecurityScanSubprocess;
 #[derive(Default)] pub struct PackageInstall;
-#[derive(Default)] pub struct Repository;
 #[derive(Default)] pub struct Store;
 #[derive(Default)] pub struct FileCopier;
 #[derive(Default)] pub struct Lockfile;

@@ -124,6 +124,11 @@ pub use generics::{implement_deep_clone, implement_eql, implement_hash};
 // Same-name trait + derive macro re-export so `#[derive(bun_css::DeepClone)]`
 // (and `use bun_css::DeepClone;` at leaf sites) brings both into scope.
 pub use generics::DeepClone;
+// Keyword-enum / `union(enum)` derive macros (port of Zig's `DefineEnumProperty`
+// / `DeriveParse` / `DeriveToCss` comptime fns). The `EnumProperty` *trait* is
+// re-exported above from `css_parser`; the *derive* of the same name lives in
+// the proc-macro crate. `Parse`/`ToCss` are short aliases used by some leaves.
+pub use bun_css_derive::{DefineEnumProperty, DeriveParse, DeriveToCss, Parse, ToCss};
 // Serializer + dtoa helpers live in the parser hub but are referenced as
 // `css::serializer` / `css::f32_length_with_5_digits` from value modules.
 pub use css_parser::{dtoa_short, f32_length_with_5_digits, serializer, to_css};

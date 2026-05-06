@@ -520,23 +520,14 @@ impl<'a> Parser<'a> {
     }
 
     fn _parse<const TS: bool, JX: JsxT>(&mut self) -> Result<js_ast::Result, Error> {
-        // reconciler-6: full body re-gated below — ~148 port errors against round-G
-        // P surface (p.allocator→allocator, Stmt::Data paths, Tracer.end(), etc.).
-        // Body preserved verbatim under #[cfg(any())] sibling for diff-pass.
-        let _ = self;
-        todo!("phase-b2: Parser::_parse re-gated by reconciler-6")
-    }
-
-    #[cfg(any())] // reconciler-6: _parse re-gated (body preserved)
-    fn _parse_gated<const TS: bool, JX: JsxT>(&mut self) -> Result<js_ast::Result, Error> {
         // TODO(port): narrow error set
-        let prev_action = (); // TODO(b2-blocked): bun_crash_handler::current_action
+        // TODO(b2-blocked): bun_crash_handler::current_action — `Action` stores
+        // `&'static [u8]` but `self.source.path.text` is `'a`; Phase B widens
+        // the lifetime on `Action` (Zig held the same pointer).
+        let _prev_action = (); // bun_crash_handler::CURRENT_ACTION.replace(...)
         let _restore = scopeguard::guard((), |_| {
-            /* TODO(b2-blocked): set_current_action */ drop(prev_action);
+            // bun_crash_handler::CURRENT_ACTION.set(prev_action);
         });
-        /* TODO(b2-blocked): set_current_action */ drop(bun_crash_handler::Action::Parse(
-            self.source.path.text,
-        ));
 
         // SAFETY: see `log_mut` — `self.log` aliases the `&'a mut Log` handed
         // to the lexer at `Parser::init`; reading the error count is sound.
@@ -566,9 +557,9 @@ impl<'a> Parser<'a> {
         }
 
         // PERF(port): was stack-fallback allocator (42 * sizeof(BinaryExpressionVisitor)) — profile in Phase B
-        p.binary_expression_stack = Vec::with_capacity(41);
+        p.binary_expression_stack = BumpVec::with_capacity_in(41, p.allocator);
         // PERF(port): was stack-fallback allocator (48 * sizeof(BinaryExpressionSimplifyVisitor)) — profile in Phase B
-        p.binary_expression_simplify_stack = Vec::with_capacity(47);
+        p.binary_expression_simplify_stack = BumpVec::with_capacity_in(47, p.allocator);
 
         // (Zig asserted the stack-fallback allocator owns the buffer; not applicable here.)
 
@@ -598,13 +589,14 @@ impl<'a> Parser<'a> {
         // We don't want to ever put files with `// @bun` into this cache, as that would be wasteful.
         #[cfg(not(target_arch = "wasm32"))]
         if true /* TODO(b2-blocked): feature_flag */ {
-            // TODO(b0): RuntimeTranspilerCache arrives from move-in (was bun_jsc → js_parser)
-            let runtime_transpiler_cache: Option<&mut crate::RuntimeTranspilerCache> =
-                p.options.features.runtime_transpiler_cache;
-            if let Some(cache) = runtime_transpiler_cache {
+            if let Some(cache_ptr) = p.options.features.runtime_transpiler_cache {
+                // SAFETY: `runtime_transpiler_cache` is `Option<*mut _>` (see
+                // parser.rs PORT NOTE) — the caller guarantees the pointer is
+                // unique and outlives the parse; Zig held `*RuntimeTranspilerCache`.
+                let cache = unsafe { &mut *cache_ptr };
                 if cache.get(
                     p.source,
-                    &p.options,
+                    &p.options as *const _ as *const (),
                     p.options.jsx.parse
                         && (!p.source.path.is_node_module() || p.source.path.is_jsx_file()),
                 ) {
@@ -648,11 +640,10 @@ impl<'a> Parser<'a> {
             return Err(err!("SyntaxError"));
         }
 
-        /* TODO(b2-blocked): set_current_action */ drop(bun_crash_handler::Action::Visit(
-            self.source.path.text,
-        ));
+        // TODO(b2-blocked): bun_crash_handler::CURRENT_ACTION.set(Action::Visit(self.source.path.text))
+        // — see lifetime note at top of fn.
 
-        let visit_tracer = /* TODO(b2-blocked): bun_perf */ (); // TODO(b2-blocked): bun_perf::trace
+        let visit_tracer = bun_core::perf::trace("JSParser::visit");
         p.prepare_for_visit_pass()?;
 
         let mut before = BumpVec::<js_ast::Part>::new_in(p.allocator);
@@ -869,7 +860,7 @@ impl<'a> Parser<'a> {
             return Err(err!("SyntaxError"));
         }
 
-        let postvisit_tracer = /* TODO(b2-blocked): bun_perf */ (); // TODO(b2-blocked): bun_perf::trace
+        let postvisit_tracer = bun_core::perf::trace("JSParser::postvisit");
         let _postvisit_guard = scopeguard::guard((), move |_| postvisit_tracer.end());
 
         let mut uses_dirname =

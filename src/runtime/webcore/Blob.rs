@@ -1483,6 +1483,18 @@ pub fn mkdir_if_not_exists<T: MkdirpTarget>(
     Retry::No
 }
 
+/// Local shim for Zig's `bun.sys.Error.withPathLike` — `bun_sys::Error` only
+/// exposes `with_path(&[u8])` on the Rust side, so route through the
+/// `PathOrFileDescriptor`'s slice when it's a path and leave the error
+/// unchanged for fds (matching Zig, which formats the fd into the message).
+#[inline]
+fn sys_error_with_path_like(err: &bun_sys::Error, pathlike: &PathOrFileDescriptor) -> bun_sys::Error {
+    match pathlike {
+        PathOrFileDescriptor::Path(p) => err.with_path(p.slice()),
+        PathOrFileDescriptor::Fd(_) => err.clone(),
+    }
+}
+
 /// Trait extracted from the Zig `anytype` receiver of `mkdir_if_not_exists`.
 /// The Zig body uses `@hasField` to optionally write `errno` / `opened_fd`.
 pub trait MkdirpTarget {
@@ -1812,8 +1824,10 @@ pub fn write_file_with_source_destination(
         // this is an edgecase
         // it will happen if someone did Bun.write(new Blob([123]), new Blob([456]))
         let cloned = Blob::new(source_blob.dupe());
-        // SAFETY: ptr was just produced by Box::into_raw in Blob::new.
-        return Ok(JSPromise::resolved_promise_value(ctx, unsafe { (*cloned).to_js(ctx) }));
+        // SAFETY: ptr was just produced by Box::into_raw in Blob::new; the
+        // inherent `to_js(&mut self)` (not the by-value `JsClass` one) hands
+        // ownership to the C++ wrapper.
+        return Ok(JSPromise::resolved_promise_value(ctx, unsafe { (&mut *cloned).to_js(ctx) }));
     } else if destination_type == store::DataTag::Bytes
         && (source_type == store::DataTag::File || source_type == store::DataTag::S3)
     {

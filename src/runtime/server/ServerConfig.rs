@@ -1276,13 +1276,17 @@ impl ServerConfig {
 
         // ---- base_uri / base_url normalization ----
         if !args.base_uri.is_empty() {
-            args.base_url = URL::parse(&args.base_uri);
+            // SAFETY: base_url borrows into base_uri's heap allocation; we reset
+            // base_url to default before every base_uri reassignment below.
+            args.base_url = unsafe { parse_base_url_static(&args.base_uri) };
             if args.base_url.hostname.is_empty() {
+                args.base_url = URL::default();
                 args.base_uri = Box::default();
                 return Err(global.throw_invalid_arguments("baseURI must have a hostname"));
             }
 
             if !strings::is_all_ascii(&args.base_uri) {
+                args.base_url = URL::default();
                 args.base_uri = Box::default();
                 return Err(global.throw_invalid_arguments(
                     "Unicode baseURI must already be encoded for now.\nnew URL(baseuRI).toString() should do the trick.",

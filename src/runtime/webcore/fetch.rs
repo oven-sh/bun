@@ -128,6 +128,23 @@ impl FetchGlobalErrExt for JSGlobalObject {
     }
 }
 
+/// `bun.String.hasPrefixComptime` — upstream `bun_str::String` only exposes
+/// `eql_comptime`; prefix matching is in `bun_str::strings::has_prefix_comptime`
+/// (free fn over `&[u8]`). Bridge via the encoding-aware byte view.
+trait FetchBunStringExt {
+    fn has_prefix_comptime(&self, prefix: &'static [u8]) -> bool;
+}
+impl FetchBunStringExt for BunString {
+    #[inline]
+    fn has_prefix_comptime(&self, prefix: &'static [u8]) -> bool {
+        if self.is_utf16() {
+            strings::has_prefix_comptime_utf16(self.utf16(), prefix)
+        } else {
+            strings::has_prefix_comptime(self.latin1(), prefix)
+        }
+    }
+}
+
 /// `jsc.URL.fileURLFromString` — the un-gated `bun_jsc::URL` stub only has
 /// `href_from_js` / `path_from_file_url`; the file-URL builder is gated.
 #[inline]
@@ -336,7 +353,8 @@ pub fn bun_fetch_preconnect(
     // TODO(port): lifetime — `url` borrows `href`; preconnect(url, true) takes ownership of href.
     // PORT NOTE: `preconnect` is a free fn in `bun_http::async_http`, not an `AsyncHTTP` method.
     {
-        let _ = (url, href);
+        let _ = url;
+        let _ = href;
         todo!("blocked_on: bun_http::async_http::preconnect (URL<'static> lifetime)")
     };
     #[allow(unreachable_code)]
@@ -449,7 +467,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let mut disable_timeout = false;
     let mut disable_keepalive = false;
     let mut disable_decompression = false;
-    let mut verbose: http::HTTPVerboseLevel = if vm.log.level.at_least(bun_logger::Level::Debug) {
+    // SAFETY: `vm.log` is set during VM init and live for the VM lifetime.
+    let mut verbose: http::HTTPVerboseLevel = if vm
+        .log
+        .map(|p| unsafe { p.as_ref() }.level.at_least(bun_logger::Level::Debug))
+        .unwrap_or(false)
+    {
         http::HTTPVerboseLevel::Headers
     } else {
         http::HTTPVerboseLevel::None
@@ -1470,8 +1493,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     }
                 };
                 #[cfg(not(windows))]
-                // SAFETY: bun_vm() returns the live thread-local VM pointer.
-                let cwd = unsafe { (*global_this.bun_vm()).transpiler.fs.top_level_dir };
+                // SAFETY: bun_vm() returns the live thread-local VM pointer; `transpiler.fs`
+                // is a raw `*mut FileSystem` set during init.
+                let cwd = unsafe { (*(*global_this.bun_vm()).transpiler.fs).top_level_dir };
 
                 // SAFETY: bun_vm() returns the live thread-local VM pointer.
                 let main = unsafe { (*global_this.bun_vm()).main };

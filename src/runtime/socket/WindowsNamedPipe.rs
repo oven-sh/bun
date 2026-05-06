@@ -30,7 +30,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 use bun_sys::{self, Fd};
-use bun_uws_sys::us_bun_verify_error_t;
+use bun_uws::us_bun_verify_error_t;
 
 use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState};
 use crate::socket::SSLConfig;
@@ -155,9 +155,11 @@ impl WindowsNamedPipe {
             bun_core::is_slice_in_buffer(buffer, alloc_bytes)
         });
 
-        let data = self.incoming.slice();
-
+        // PORT NOTE: reordered before `incoming.slice()` for borrowck — `reset_timeout`
+        // only touches timer fields, never `self.incoming`.
         self.reset_timeout();
+
+        let data = self.incoming.slice();
 
         if let Some(wrapper) = self.wrapper.as_mut() {
             // PORT NOTE: reshaped for borrowck — `data` borrows self.incoming while wrapper borrows self.wrapper
@@ -245,14 +247,14 @@ impl WindowsNamedPipe {
         bun_output::scoped_log!(WindowsNamedPipe, "onHandshake");
 
         self.ssl_error = CertError {
-            error_no: ssl_error.error,
-            code: if ssl_error.code.is_null() || ssl_error.error == 0 {
+            error_no: ssl_error.error_no,
+            code: if ssl_error.code.is_null() || ssl_error.error_no == 0 {
                 None
             } else {
                 // SAFETY: code is a NUL-terminated C string from BoringSSL when non-null
                 Some(unsafe { CStr::from_ptr(ssl_error.code) }.into())
             },
-            reason: if ssl_error.reason.is_null() || ssl_error.error == 0 {
+            reason: if ssl_error.reason.is_null() || ssl_error.error_no == 0 {
                 None
             } else {
                 // SAFETY: reason is a NUL-terminated C string from BoringSSL when non-null
@@ -826,7 +828,7 @@ impl WindowsNamedPipe {
 
     pub fn ssl_error(&self) -> us_bun_verify_error_t {
         us_bun_verify_error_t {
-            error: self.ssl_error.error_no,
+            error_no: self.ssl_error.error_no,
             // CertError.code/.reason are owned `Box<CStr>`s; fall back to "" when absent.
             code: self
                 .ssl_error

@@ -838,14 +838,14 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
             h.update(&sc.server_runtime_import);
             h.update(&[0]);
         } else {
-            bun_core::write_any_to_hasher(&mut h, &false);
+            bun_core::write_any_to_hasher(&mut h, &0u8);
         }
 
         if let Some(rfr) = &dev.framework.react_fast_refresh {
-            bun_core::write_any_to_hasher(&mut h, &true);
+            bun_core::write_any_to_hasher(&mut h, &1u8);
             h.update(&rfr.import_source);
         } else {
-            bun_core::write_any_to_hasher(&mut h, &false);
+            bun_core::write_any_to_hasher(&mut h, &0u8);
         }
 
         for (k, v) in dev

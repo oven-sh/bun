@@ -12,7 +12,6 @@ use crate::api::bun::process::sync as spawn_sync;
 use crate::api::bun::process::SignalCodeExt as _;
 use bun_collections::StringSet;
 use bun_core::{Global, Output};
-use bun_js_parser::ast as js_ast;
 use bun_js_parser::ast::bundled_ast::BundledAstListExt as _;
 use bun_js_parser::js_lexer;
 use bun_logger::Source as LoggerSource;
@@ -541,7 +540,7 @@ pub fn generate_files(
 // Check if any source files contain Tailwind classes
 fn has_any_tailwind_classes_in_source_files(
     bundler: &BundleV2,
-    reachable_files: &[js_ast::Index],
+    reachable_files: &[bun_bundler::Index],
 ) -> bool {
     let input_files = bundler.graph.input_files.slice();
     let sources = input_files.items_source();
@@ -555,9 +554,9 @@ fn has_any_tailwind_classes_in_source_files(
     ];
 
     for file in reachable_files {
-        match loaders[file.get()] {
+        match loaders[file.get() as usize] {
             bun_bundler::options::Loader::Tsx | bun_bundler::options::Loader::Jsx => {
-                let source: &LoggerSource = &sources[file.get()];
+                let source: &LoggerSource = &sources[file.get() as usize];
                 let mut source_code: &[u8] = &source.contents;
 
                 // First check for className=" or className='
@@ -587,7 +586,7 @@ fn has_any_tailwind_classes_in_source_files(
                 }
             }
             bun_bundler::options::Loader::Html => {
-                let source: &LoggerSource = &sources[file.get()];
+                let source: &LoggerSource = &sources[file.get() as usize];
                 let source_code: &[u8] = &source.contents;
 
                 // Look for class=" or class='
@@ -635,16 +634,16 @@ fn has_any_tailwind_classes_in_source_files(
 // Get list of shadcn components used in source files
 fn get_shadcn_components(
     bundler: &BundleV2,
-    reachable_files: &[js_ast::Index],
+    reachable_files: &[bun_bundler::Index],
 ) -> Result<StringSet, bun_alloc::AllocError> {
     let input_files = bundler.graph.input_files.slice();
     let loaders = input_files.items_loader();
     let all = bundler.graph.ast.items_import_records();
     let mut icons = StringSet::new();
     for file in reachable_files {
-        match loaders[file.get()] {
+        match loaders[file.get() as usize] {
             bun_bundler::options::Loader::Tsx | bun_bundler::options::Loader::Jsx => {
-                let import_records = &all[file.get()];
+                let import_records = &all[file.get() as usize];
                 for import_record in import_records.slice() {
                     if import_record.path.text.starts_with(b"@/components/ui/") {
                         icons.insert(&import_record.path.text[b"@/components/ui/".len()..])?;

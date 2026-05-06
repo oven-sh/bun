@@ -126,6 +126,35 @@ pub fn s3_error_to_js_with_async_stack(
     value
 }
 
+/// Method-syntax extension over [`S3Error`] so call sites in `S3File` /
+/// `blob::Store` keep the Zig-spec spelling `err.to_js_with_async_stack(…)`.
+/// Forwards to the free fn above; returns `JsResult` because the consuming
+/// `JSPromiseStrong::reject` takes `JsResult<JSValue>`.
+pub trait S3ErrorJsc {
+    fn to_js(&self, global_object: &JSGlobalObject, path: Option<&[u8]>) -> JSValue;
+    fn to_js_with_async_stack(
+        &self,
+        global_object: &JSGlobalObject,
+        path: Option<&[u8]>,
+        promise: &JSPromise,
+    ) -> bun_jsc::JsResult<JSValue>;
+}
+impl S3ErrorJsc for S3Error<'_> {
+    #[inline]
+    fn to_js(&self, global_object: &JSGlobalObject, path: Option<&[u8]>) -> JSValue {
+        s3_error_to_js(self, global_object, path)
+    }
+    #[inline]
+    fn to_js_with_async_stack(
+        &self,
+        global_object: &JSGlobalObject,
+        path: Option<&[u8]>,
+        promise: &JSPromise,
+    ) -> bun_jsc::JsResult<JSValue> {
+        Ok(s3_error_to_js_with_async_stack(self, global_object, path, promise))
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/webcore/s3/error_jsc.zig (74 lines)

@@ -59,8 +59,12 @@ pub const WEAK_REF_ENTRY_MAX: usize = 16;
 /// IncrementalGraph stores partial source maps for each file. A
 /// `SourceMapStore.Entry` is the information + refcount holder to
 /// construct the actual JSON file associated with a bundle/hot update.
+// PORT NOTE: Zig's `dev_allocator: DevAllocator` field is dropped — its sole
+// reader was `Entry.allocator()` which fed `paths`/`files` frees in `deinit`.
+// In Rust those are `Box`/`Vec` backed by the global mimalloc; the borrowed
+// `AllocationScope` handle would be dead state and would force a lifetime
+// parameter on `Entry`.
 pub struct Entry {
-    pub dev_allocator: DevAllocator,
     /// Sum of:
     /// - How many active sockets have code that could reference this source map?
     /// - For route bundle client scripts, +1 until invalidation.
@@ -86,8 +90,6 @@ pub struct Entry {
 impl Default for Entry {
     fn default() -> Self {
         Self {
-            // `bun_alloc::AllocationScope` is a unit-struct stub upstream.
-            dev_allocator: bun_alloc::AllocationScope,
             ref_count: 0,
             paths: Box::default(),
             files: Vec::new(),
@@ -238,7 +240,7 @@ impl Entry {
         // errdefer @compileError("last try should be the final alloc") — no further fallible ops below.
 
         #[cfg(feature = "bake_debugging_features")]
-        if let Some(dump_dir) = dev.dump_dir.as_ref() {
+        if let Some(dump_dir) = dev.dump_dir.as_mut() {
             let rel_path_escaped: &[u8] = if side == Side::Client {
                 b"latest_chunk.js.map"
             } else {
@@ -367,18 +369,15 @@ impl Entry {
     /// `SourceMapStore.Entry.deinit` — Rust drop handles `files` (each
     /// `Shared` decrements its `Rc<PackedMap>`) and `paths` (outer box only;
     /// inner slices are borrowed from IncrementalGraph and not freed).
+    ///
+    /// PORT NOTE: not `impl Drop` — Zig only asserted `ref_count == 0` on the
+    /// explicit `unrefAtIndex` release path. Whole-store teardown and
+    /// `*out = Entry { .. }` overwrites legitimately drop entries with nonzero
+    /// counts, where a `Drop` assertion would diverge from spec and panic.
     pub fn deinit(&mut self) {
         debug_assert_eq!(self.ref_count, 0);
         self.files.clear();
         self.paths = Box::default();
-    }
-}
-
-impl Drop for Entry {
-    fn drop(&mut self) {
-        // PORT NOTE: Zig `deinit` used `useAllFields` to statically assert
-        // every field is handled. `Box`/`Vec` fields drop automatically.
-        debug_assert_eq!(self.ref_count, 0);
     }
 }
 

@@ -708,14 +708,24 @@ impl JSValue {
         if s.is_empty() { Ok(None) } else { Ok(Some(s)) }
     }
     /// JSValue.zig `getOptional(ZigString.Slice, ...)` — own/prototype lookup,
-    /// `null`/`undefined` → `None`, otherwise coerce to a UTF-8 slice.
+    /// `null`/`undefined` → `None`, non-string → `ERR_INVALID_ARG_TYPE`,
+    /// otherwise return the UTF-8 slice (spec: `coerceOptional` checks
+    /// `prop.isString()` before `toSlice`).
     pub fn get_optional_slice(
         self,
         global: &JSGlobalObject,
         property: impl AsRef<[u8]>,
     ) -> JsResult<Option<bun_string::ZigStringSlice>> {
+        let property = property.as_ref();
         match self.get(global, property)? {
-            Some(v) if !v.is_undefined_or_null() => Ok(Some(v.to_slice(global)?)),
+            Some(v) if !v.is_undefined_or_null() => {
+                if !v.is_string() {
+                    return Err(
+                        global.throw_invalid_argument_type_value(property, b"string", v),
+                    );
+                }
+                Ok(Some(v.to_slice(global)?))
+            }
             _ => Ok(None),
         }
     }
@@ -1368,28 +1378,47 @@ impl JSValue {
             _ => Ok(None),
         }
     }
-    /// `JSValue.getOwnObject` — own-property lookup, filtered to objects.
+    /// `JSValue.getOwnObject` — own-property lookup; throws "{prop} must be an
+    /// object" when the own-truthy value is not an object (JSValue.zig:1812).
     pub fn get_own_object(
         self,
         global: &JSGlobalObject,
         property_name: impl AsRef<[u8]>,
     ) -> JsResult<Option<*mut JSObject>> {
+        let property_name = property_name.as_ref();
         match self.get_own_truthy(global, property_name)? {
-            Some(v) => Ok(v.get_object()),
+            Some(v) => match v.get_object() {
+                Some(obj) => Ok(Some(obj)),
+                None => Err(global.throw_invalid_arguments(format_args!(
+                    "{} must be an object",
+                    alloc::string::String::from_utf8_lossy(property_name),
+                ))),
+            },
             None => Ok(None),
         }
     }
-    /// `JSValue.getOwnArray` — own-property lookup (no prototype walk),
-    /// filtered to array values.
+    /// `JSValue.getOwnArray` — own-property lookup (no prototype walk) routed
+    /// through `coerceToArray` (JSValue.zig:1784): non-array truthy → throw
+    /// "{prop} must be an array"; empty array → `None`.
     pub fn get_own_array(
         self,
         global: &JSGlobalObject,
         property_name: impl AsRef<[u8]>,
     ) -> JsResult<Option<JSValue>> {
-        match self.get_own_truthy(global, property_name)? {
-            Some(v) if v.is_cell() && v.js_type().is_array() => Ok(Some(v)),
-            _ => Ok(None),
+        let property_name = property_name.as_ref();
+        let Some(v) = self.get_own_truthy(global, property_name)? else {
+            return Ok(None);
+        };
+        if !(v.is_cell() && v.js_type().is_array()) {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "{} must be an array",
+                alloc::string::String::from_utf8_lossy(property_name),
+            )));
         }
+        if v.get_length(global)? == 0 {
+            return Ok(None);
+        }
+        Ok(Some(v))
     }
     /// `JSValue.isClass` — true if the callable is a class constructor.
     pub fn is_class(self, global: &JSGlobalObject) -> bool {

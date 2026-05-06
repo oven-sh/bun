@@ -1526,7 +1526,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     let _exit_notify_guard = scopeguard::guard((), |_| {
         if send_exit_notification {
             // SAFETY: subprocess_ptr is live for the lifetime of this scopeguard.
-            let proc = unsafe { process_mut(&(*subprocess_ptr).process) };
+            let proc = unsafe { process_mut((*subprocess_ptr).process) };
             if proc.has_exited() {
                 // process has already exited, we called wait4(), but we did not call onProcessExit()
                 // SAFETY: all-zero is a valid Rusage (POD).
@@ -1604,11 +1604,10 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     }
 
     if !IS_SYNC {
-        if !subprocess.process.has_exited() {
+        if !subprocess.has_exited() {
             // SAFETY: jsc_vm_ptr points to the live thread VM.
-            unsafe { &mut *jsc_vm_ptr }.on_subprocess_spawn(
-                std::sync::Arc::as_ptr(&subprocess.process) as *mut core::ffi::c_void,
-            );
+            unsafe { &mut *jsc_vm_ptr }
+                .on_subprocess_spawn(subprocess.process.cast::<core::ffi::c_void>());
         }
         return Ok(out);
     }
@@ -1650,11 +1649,10 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
     }
 
-    if !subprocess.process.has_exited() {
+    if !subprocess.has_exited() {
         // SAFETY: jsc_vm_ptr points to the live thread VM.
-        unsafe { &mut *jsc_vm_ptr }.on_subprocess_spawn(
-            std::sync::Arc::as_ptr(&subprocess.process) as *mut core::ffi::c_void,
-        );
+        unsafe { &mut *jsc_vm_ptr }
+            .on_subprocess_spawn(subprocess.process.cast::<core::ffi::c_void>());
     }
 
     let mut did_timeout = false;

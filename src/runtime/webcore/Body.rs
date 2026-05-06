@@ -666,10 +666,10 @@ impl Value {
                 // PORT NOTE: reshaped for borrowck — take str out before reassigning *self.
                 let _str = core::mem::replace(self, Value::Null);
                 // _str dropped at end of scope (deref via Arc Drop / intrusive deref).
+                // Zig: `fromOwnedSlice(@constCast(bytes.slice()))` — the UTF-8 buffer is
+                // already heap-owned by the slice wrapper; transfer it (no copy).
                 *self = Value::InternalBlob(InternalBlob {
-                    bytes: bytes.slice().to_vec(),
-                    // TODO(port): Zig used fromOwnedSlice on @constCast(bytes.slice()); ownership
-                    // semantics depend on toUTF8IfNeeded contract — verify in Phase B.
+                    bytes: bytes.into_vec(),
                     was_string: true,
                 });
             }
@@ -771,8 +771,8 @@ impl Value {
             Value::Empty => ReadableStream::empty(global_this),
             Value::Null => Ok(JSValue::NULL),
             Value::InternalBlob(_) | Value::Blob(_) | Value::WTFStringImpl(_) => {
-                let mut blob = self.use_();
-                // defer blob.detach() — done below before return
+                // Zig: `defer blob.detach()` — must run on every exit incl. `?` paths.
+                let mut blob = scopeguard::guard(self.use_(), |mut b| b.detach());
                 blob.resolve_size();
                 let blob_size = blob.size;
                 let value = ReadableStream::from_blob_copy_ref(global_this, &mut blob, blob_size)?;
@@ -782,7 +782,6 @@ impl Value {
                     readable: webcore::readable_stream::Strong::init(stream, global_this),
                     ..PendingValue::new(global_this)
                 });
-                blob.detach();
                 Ok(value)
             }
             Value::Locked(locked) => {
@@ -902,14 +901,10 @@ impl Value {
                     return Ok(Value::Empty);
                 }
 
-                let owned = match bytes.to_vec().into_boxed_slice() {
-                    // PORT NOTE: Zig used `catch` on dupe; Rust Vec aborts on OOM. Keeping the
-                    // error path as a TODO since global allocator can't return Err here.
-                    items => items,
-                };
-                // TODO(port): original threw "Failed to clone ArrayBufferView" on OOM.
+                // PORT NOTE: Zig threw "Failed to clone ArrayBufferView" on OOM; Rust's
+                // global allocator aborts on OOM, so the error path is unreachable.
                 return Ok(Value::InternalBlob(InternalBlob {
-                    bytes: owned.into_vec(),
+                    bytes: bytes.to_vec(),
                     was_string: false,
                 }));
             }
@@ -996,9 +991,12 @@ impl Value {
             Ok(b) => b,
             Err(_err) => {
                 if !global_this.has_exception() {
-                    // TODO(port): Zig matched `error.InvalidArguments` from a wider error set;
-                    // `JsResult` carries only `JsError`, so the message-selection branch
-                    // collapses. Revisit once `Blob::get` carries a discriminator.
+                    // PORT NOTE: Zig matched `error.InvalidArguments` here for an
+                    // "Expected an Array" message. With `REQUIRE_ARRAY = false` that
+                    // branch is unreachable in Zig's `Blob.get` too (the only
+                    // `error.InvalidArguments` producer is gated on `require_array`),
+                    // and every other failure path throws first (sets the exception).
+                    // The Rust `JsResult` collapse is therefore semantics-preserving.
                     return Err(global_this.throw_invalid_arguments("Invalid Body object"));
                 }
                 return Err(bun_jsc::JsError::Thrown);

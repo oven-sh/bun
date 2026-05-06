@@ -820,15 +820,7 @@ pub mod bun_object {
     // PORT NOTE: Zig's `lazyPropertyCallbackName`/`callbackName` were comptime
     // string concats used only at `comptime @export` sites. The export names
     // are now spelled out verbatim in the `export_*!` macro invocations above,
-    // so the runtime variant just leaks the formatted name (no callers on the
-    // hot path).
-    pub fn lazy_property_callback_name(base_name: &str) -> &'static str {
-        Box::leak(format!("BunObject_lazyPropCb_{base_name}").into_boxed_str())
-    }
-
-    pub fn callback_name(base_name: &str) -> &'static str {
-        Box::leak(format!("BunObject_callback_{base_name}").into_boxed_str())
-    }
+    // so the comptime-only helpers are dropped (no runtime callers).
 
     // type LazyPropertyCallback = extern "C" fn(*mut JSGlobalObject, *mut JSObject) -> JSValue
     // (the `callconv(jsc.conv)` ABI is emitted by `#[bun_jsc::host_fn]` / the macro above;

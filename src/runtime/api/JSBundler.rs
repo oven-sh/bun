@@ -2115,12 +2115,11 @@ impl BuildArtifact {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_size(this: &Self, global_object: &JSGlobalObject) -> JSValue {
-        // SAFETY: `host_fn(getter)` shim receives `*mut Self` from the C++
-        // wrapper's `m_ctx`; the `&Self` it forwards is uniquely borrowed for
-        // the call, and `Blob::get_size` only mutates lazy size caches.
-        let blob = unsafe { &mut *(core::ptr::addr_of!(this.blob) as *mut Blob) };
-        Blob::get_size(blob, global_object)
+    pub fn get_size(this: &mut Self, global_object: &JSGlobalObject) -> JSValue {
+        // `Blob::get_size` mutates lazy size caches; the `host_fn(getter)`
+        // shim already receives `*mut Self`, so take `&mut` directly instead
+        // of casting through a shared-ref-derived raw (UB under SB/TB).
+        Blob::get_size(&mut this.blob, global_object)
     }
 
     #[bun_jsc::host_fn(getter)]

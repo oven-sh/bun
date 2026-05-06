@@ -1980,6 +1980,14 @@ pub const UTIME_OMIT: i64 = -2;
 #[path = "sys_uv.rs"]
 pub mod sys_uv;
 
+/// Zig: `pub const sys_uv = if (Environment.isWindows) @import("./sys_uv.zig") else sys;`
+/// On non-Windows, `sys_uv` is just an alias for the regular syscall surface so
+/// callers (e.g. `pack_command`) can write `bun_sys::sys_uv::fstat(fd)` portably.
+#[cfg(not(windows))]
+pub mod sys_uv {
+    pub use super::{close, fstat, lstat, mkdir, open, pread, pwrite, read, rename, stat, unlink, write};
+}
+
 #[cfg(windows)]
 mod windows_impl {
     // PORT: NT/kernel32/libuv triad (sys.zig + sys_uv.zig). The libuv-backed ops

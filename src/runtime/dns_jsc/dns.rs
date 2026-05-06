@@ -833,7 +833,6 @@ impl CAresNameInfo {
         let Some(mut name_info) = result else {
             // SAFETY: see fn contract.
             unsafe {
-                c_ares::Error::ENOTFOUND
                 error_to_deferred(c_ares::Error::ENOTFOUND, b"getnameinfo", Some((*this).name.as_ref()), &mut (*this).promise)
                     .reject_later(global_this);
                 Self::destroy(this);
@@ -1492,7 +1491,6 @@ impl CAresReverse {
                 return;
             }
             let Some(node) = result else {
-                c_ares::Error::ENOTFOUND
                 error_to_deferred(c_ares::Error::ENOTFOUND, b"getHostByAddr", Some(&(*this).name), &mut (*this).promise)
                     .reject_later(global_this);
                 Self::destroy(this);
@@ -1605,8 +1603,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
                 return;
             }
             let Some(node) = result else {
-                c_ares::Error::ENOTFOUND
-                    .to_deferred(syscall, Some(&(*this).name), &mut (*this).promise)
+                error_to_deferred(c_ares::Error::ENOTFOUND, syscall.as_bytes(), Some(&(*this).name), &mut (*this).promise)
                     .reject_later(global_this);
                 Self::destroy(this);
                 return;
@@ -1707,7 +1704,7 @@ impl DNSLookup {
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
             if let Some(err) = c_ares::Error::init_eai(status) {
-                err.to_deferred("getaddrinfo", None, &mut (*this).promise)
+                error_to_deferred(err, b"getaddrinfo", None, &mut (*this).promise)
                     .reject_later(&*(*this).global_this);
                 Self::destroy(this);
                 return;
@@ -1738,7 +1735,7 @@ impl DNSLookup {
         unsafe {
             let global_this = &*(*this).global_this;
             if let Some(err) = err_ {
-                err.to_deferred("getaddrinfo", None, &mut (*this).promise)
+                error_to_deferred(err, b"getaddrinfo", None, &mut (*this).promise)
                     .reject_later(global_this);
                 Self::destroy(this);
                 return;
@@ -1746,8 +1743,7 @@ impl DNSLookup {
 
             // `r` is the c-ares-allocated AddrInfo valid for the callback's duration.
             let Some(r) = result.filter(|r| !(**r).node.is_null()) else {
-                c_ares::Error::ENOTFOUND
-                    .to_deferred("getaddrinfo", None, &mut (*this).promise)
+                error_to_deferred(c_ares::Error::ENOTFOUND, b"getaddrinfo", None, &mut (*this).promise)
                     .reject_later(global_this);
                 Self::destroy(this);
                 return;
@@ -2642,7 +2638,7 @@ pub mod internal {
         let arguments = callframe.arguments();
 
         if arguments.len() < 1 {
-            return global_this.throw_not_enough_arguments("prefetch", 1, arguments.len());
+            return Err(global_this.throw_not_enough_arguments("prefetch", 1, arguments.len()));
         }
 
         let hostname_or_url = arguments[0];
@@ -4134,7 +4130,7 @@ impl Resolver {
     pub fn resolve(this: &mut Self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<3>();
         if arguments.len < 1 {
-            return global_this.throw_not_enough_arguments("resolve", 3, arguments.len);
+            return Err(global_this.throw_not_enough_arguments("resolve", 3, arguments.len));
         }
 
         let record_type: RecordType = if arguments.len <= 1 {
@@ -4314,8 +4310,7 @@ impl Resolver {
         if name.len() >= MAX_PATH_BYTES {
             let mut promise = JSPromiseStrong::init(global_this);
             let promise_value = promise.value();
-            c_ares::Error::ENOTFOUND
-                .to_deferred("getaddrinfo", Some(name), &mut promise)
+            error_to_deferred(c_ares::Error::ENOTFOUND, b"getaddrinfo", Some(name), &mut promise)
                 .reject_later(global_this);
             return Ok(promise_value);
         }

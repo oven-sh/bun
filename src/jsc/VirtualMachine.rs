@@ -58,9 +58,11 @@ pub static mut STRING_ALLOCATION_LIMIT: usize = u32::MAX as usize;
 pub type OnUnhandledRejection = fn(&mut VirtualMachine, &JSGlobalObject, JSValue);
 pub type OnException = fn(&mut ZigException);
 pub type MacroMap = bun_collections::ArrayHashMap<i32, jsc::C::JSObjectRef>;
-// TODO(b2-cycle): `api::JsException` lives in `bun_options_types::schema::api` —
-// not surfaced at this tier yet. Surface as `Vec<()>` placeholder.
-pub type ExceptionList = Vec<()>;
+/// Spec VirtualMachine.zig:144 `ExceptionList`. `api::JsException` lives in
+/// [`crate::schema_api`] (not `bun_options_types::schema::api`) because its
+/// `stack: StackTrace` field transitively names `ZigStackFramePosition` from
+/// this crate — see the `schema_api` module doc in lib.rs.
+pub type ExceptionList = Vec<crate::schema_api::JsException>;
 
 // ──────────────────────────────────────────────────────────────────────────
 // VirtualMachine struct (file-level @This())

@@ -857,8 +857,17 @@ impl Query {
 
     #[inline]
     pub fn kind(self) -> QueryKind {
-        // SAFETY: top 3 bits always written from a QueryKind
-        unsafe { core::mem::transmute::<u8, QueryKind>((self.0 >> 29) as u8) }
+        // Zig `enum(u3)` type-checks the field on assignment so 5..=7 are
+        // unrepresentable; transmuting an out-of-range tag is UB in Rust
+        // (PORTING.md §Forbidden: transmute-to-enum). Match exhaustively.
+        match (self.0 >> 29) as u8 {
+            0 => QueryKind::None,
+            1 => QueryKind::Asset,
+            2 => QueryKind::Chunk,
+            3 => QueryKind::Scb,
+            4 => QueryKind::HtmlImport,
+            _ => unreachable!("Query: invalid kind tag"),
+        }
     }
 }
 

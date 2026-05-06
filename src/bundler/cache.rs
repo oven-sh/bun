@@ -580,10 +580,8 @@ impl Json {
     }
 }
 
-// TODO(b2-blocked): bun_interchange::json_parser::Expr — interchange stub
-// returns a local opaque `Expr(())`, not `bun_js_parser::Expr` (GENUINE T4
-// cycle per interchange/lib.rs). Bodies compile against the stub; callers
-// get the stub `Expr` until interchange is un-gated.
+// `bun_interchange::json_parser::Expr` is the real `bun_logger::js_ast::Expr`
+// (T2 value-subset). Bodies call straight through to `json_parser::parse*`.
 impl Json {
     fn parse<F>(
         &mut self,

@@ -124,7 +124,7 @@ pub struct InputFile {
 /// this trait bridges that.
 pub trait InputFileListExt {
     fn items_source(&self) -> &[logger::Source];
-    fn items_source_mut(&self) -> &mut [logger::Source];
+    fn items_source_mut(&mut self) -> &mut [logger::Source];
     fn items_loader(&self) -> &[options::Loader];
     fn items_side_effects(&self) -> &[SideEffects];
     fn items_additional_files(&self) -> &[BabyList<AdditionalFile>];
@@ -138,8 +138,10 @@ impl InputFileListExt for MultiArrayList<InputFile> {
         unsafe { self.items::<logger::Source>(InputFileField::source) }
     }
     #[inline]
-    fn items_source_mut(&self) -> &mut [logger::Source] {
-        // SAFETY: see above. `MultiArrayList::items` already hands back `&mut [F]`.
+    fn items_source_mut(&mut self) -> &mut [logger::Source] {
+        // SAFETY: see above. `&mut self` enforces exclusive access to the column;
+        // fabricating `&mut [F]` from `&self` (the old shape) is the forbidden
+        // aliased-&mut pattern (PORTING.md §Forbidden).
         unsafe { self.items::<logger::Source>(InputFileField::source) }
     }
     #[inline]

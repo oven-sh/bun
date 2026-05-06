@@ -1234,7 +1234,7 @@ impl<'a> LinkerContext<'a> {
         // that live in separate parts in the same file must not be merged. This only
         // needs to be done for JavaScript files, not CSS files.
         if let Chunk::Content::Javascript(js) = &chunk.content {
-            // SAFETY: parse_graph backref
+            // SAFETY: parse_graph backref; exclusive access via &mut *.
             let sources = unsafe { (*self.parse_graph).input_files.items_source_mut() };
             for part_range in js.parts_in_chunk_in_order.iter() {
                 let source: &mut Source = &mut sources[part_range.source_index.get() as usize];
@@ -1894,7 +1894,10 @@ impl<'a> LinkerContext<'a> {
         entry_points_count: usize,
         distances: &mut [u32],
         distance: u32,
-        parts: &mut [BabyList<Part>],
+        // Spec (LinkerContext.zig:1579) passes `parts: []BabyList(Part)` and only
+        // reads it. `&mut` here forced an aliased reborrow against the
+        // `parts_in_file` slice below — borrowck conflict in un-gated code.
+        parts: &[BabyList<Part>],
         import_records: &[BabyList<ImportRecord>],
         file_entry_bits: &mut [AutoBitSet],
         css_reprs: &[Option<*mut css::BundlerStyleSheet>],

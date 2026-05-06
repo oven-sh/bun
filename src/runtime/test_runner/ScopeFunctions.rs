@@ -829,10 +829,33 @@ pub fn create_unbound(global: &JSGlobalObject, mode: Mode, each: JSValue, cfg: B
 }
 
 pub fn bind(value: JSValue, global: &JSGlobalObject, name: BunString) -> JsResult<JSValue> {
-    let call_fn = bun_jsc::JSFunction::create(global, name, call_as_function, 1, Default::default());
-    let bound = call_fn.bind(global, value, &name, 1, &[])?;
+    // `#[bun_jsc::host_fn]` on `call_as_function` emits the C-ABI thunk
+    // `__jsc_host_call_as_function`; `JSFunction::create` wants the raw
+    // `JSHostFn` shape, not the safe Rust signature.
+    let call_fn = bun_jsc::JSFunction::create(global, name.clone(), __jsc_host_call_as_function, 1, Default::default());
+    let bound = JSValueTestExt::bind(call_fn, global, value, &name, 1.0, &[])?;
     bound.set_prototype_direct(value.get_prototype(global), global)?;
     Ok(bound)
+}
+
+/// Local shim for `JSValue::withAsyncContextIfNeeded` (not yet on
+/// `bun_jsc::JSValue`). Wraps a callback so it restores the current
+/// AsyncLocalStorage context when invoked later.
+// TODO(port): land as inherent `JSValue::with_async_context_if_needed` in bun_jsc.
+fn with_async_context_if_needed(callback: JSValue, global: &JSGlobalObject) -> JSValue {
+    unsafe extern "C" {
+        fn AsyncContextFrame__withAsyncContextIfNeeded(
+            global: *mut JSGlobalObject,
+            callback: JSValue,
+        ) -> JSValue;
+    }
+    // SAFETY: FFI into JSC; `global` is live for the call.
+    unsafe {
+        AsyncContextFrame__withAsyncContextIfNeeded(
+            global as *const JSGlobalObject as *mut JSGlobalObject,
+            callback,
+        )
+    }
 }
 
 pub fn create_bound(

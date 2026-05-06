@@ -2183,15 +2183,85 @@ impl NetworkSink {
 
     pub fn memory_cost(&self) -> usize {
         // Since this is a JSSink, the NewJSSink function does @sizeOf(JSSink) which includes @sizeOf(ArrayBufferSink).
-        if let Some(task) = self.task {
+        if let Some(_task) = self.task {
             //TODO: we could do better here
             // SAFETY: task ref-counted, alive
-            return unsafe { task.as_ref() }.buffered.memory_cost();
+            todo!("blocked_on: webcore::StreamBuffer::memory_cost");
         }
         0
     }
 
     pub const NAME: &'static str = "NetworkSink";
+}
+
+impl SinkHandler for NetworkSink {
+    fn write(&mut self, data: StreamResult) -> Writable {
+        Self::write(self, data)
+    }
+    fn write_latin1(&mut self, data: StreamResult) -> Writable {
+        Self::write_latin1(self, data)
+    }
+    fn write_utf16(&mut self, data: StreamResult) -> Writable {
+        Self::write_utf16(self, data)
+    }
+    fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
+        Self::end(self, err)
+    }
+    fn connect(&mut self, signal: Signal) -> bun_sys::Result<()> {
+        Self::connect(self, signal);
+        bun_sys::Result::Ok(())
+    }
+}
+
+// `NetworkSink` is exposed to JS via `Sink.JSSink(@This(), "NetworkSink")` —
+// the resolved C externs are spelled out here so the generic `JSSink<NetworkSink>`
+// can dispatch (see FileSink for the same pattern).
+unsafe extern "C" {
+    fn NetworkSink__fromJS(value: JSValue) -> usize;
+    fn NetworkSink__createObject(
+        global: *mut JSGlobalObject,
+        object: *mut c_void,
+        destructor: usize,
+    ) -> JSValue;
+    fn NetworkSink__setDestroyCallback(value: JSValue, callback: usize);
+    fn NetworkSink__assignToStream(
+        global: *mut JSGlobalObject,
+        stream: JSValue,
+        ptr: *mut c_void,
+        jsvalue_ptr: *mut *mut c_void,
+    ) -> JSValue;
+    fn NetworkSink__onClose(ptr: JSValue, reason: JSValue);
+    fn NetworkSink__onReady(ptr: JSValue, amount: JSValue, offset: JSValue);
+}
+
+impl crate::webcore::sink::JsSinkAbi for NetworkSink {
+    unsafe fn from_js_extern(value: JSValue) -> usize {
+        unsafe { NetworkSink__fromJS(value) }
+    }
+    unsafe fn create_object_extern(
+        global: *mut JSGlobalObject,
+        object: *mut c_void,
+        destructor: usize,
+    ) -> JSValue {
+        unsafe { NetworkSink__createObject(global, object, destructor) }
+    }
+    unsafe fn set_destroy_callback_extern(value: JSValue, callback: usize) {
+        unsafe { NetworkSink__setDestroyCallback(value, callback) }
+    }
+    unsafe fn assign_to_stream_extern(
+        global: *mut JSGlobalObject,
+        stream: JSValue,
+        ptr: *mut c_void,
+        jsvalue_ptr: *mut *mut c_void,
+    ) -> JSValue {
+        unsafe { NetworkSink__assignToStream(global, stream, ptr, jsvalue_ptr) }
+    }
+    unsafe fn on_close_extern(ptr: JSValue, reason: JSValue) {
+        unsafe { NetworkSink__onClose(ptr, reason) }
+    }
+    unsafe fn on_ready_extern(ptr: JSValue, amount: JSValue, offset: JSValue) {
+        unsafe { NetworkSink__onReady(ptr, amount, offset) }
+    }
 }
 
 // TODO(port): `pub const JSSink = Sink.JSSink(@This(), name)` — type generator; needs macro/codegen

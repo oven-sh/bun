@@ -325,7 +325,7 @@ impl CreateCommand {
 
         let destination = filesystem
             .dirname_store
-            .append(bun_paths::resolve_path::join_abs::<bun_paths::platform::Loose>(filesystem.top_level_dir, dirname))?;
+            .append_slice(bun_paths::resolve_path::join_abs::<bun_paths::platform::Loose>(filesystem.top_level_dir, dirname))?;
 
         let mut progress = Progress::default();
         progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();

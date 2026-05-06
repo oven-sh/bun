@@ -173,10 +173,10 @@ impl Entry {
         side: Side,
     ) -> Result<Vec<u8>, bun_core::Error> {
         // TODO(port): narrow error set
-        let map_files = self.files.slice();
+        let map_files = self.files.as_slice();
         let paths = &self.paths;
 
-        let mut j = StringJoiner::new(arena);
+        let mut j = StringJoiner::default();
 
         j.push_static(br#"{"version":3,"sources":["bun://Bun/Bun HMR Runtime""#);
 

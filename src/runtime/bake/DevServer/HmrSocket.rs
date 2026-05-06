@@ -274,10 +274,10 @@ impl HmrSocket {
                 let dev = unsafe { self.dev() };
 
                 // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
-            if let Some(agent) = unsafe { dev.inspector() } {
-                    let log_str = bun_str::String::init(data);
+                if let Some(agent) = unsafe { dev.inspector() } {
+                    let mut log_str = bun_str::String::init(data);
                     // `defer log_str.deref()` → Drop on bun_str::String
-                    agent.notify_console_log(dev.inspector_server_id, kind, &log_str);
+                    agent.notify_console_log(dev.inspector_server_id, kind, &mut log_str);
                 }
 
                 if dev.broadcast_console_log_from_browser_to_server {

@@ -477,6 +477,45 @@ use crate::api::csrf_jsc;
 use crate::valkey_jsc::js_valkey::SubscriptionCtx;
 use crate::test_runner::jest::Jest;
 use crate::api::JSBundler;
+use bun_jsc::ZigStringJsc as _; // to_error_instance / to_type_error_instance
+use bun_jsc::call_frame::ArgumentsSlice;
+
+// ── local shim: JSC-side `ZigString.toJS / toExternalValue / toAtomicValue` ──
+// `bun_jsc::ZigString` is a `pub type` alias for `bun_str::ZigString`; the
+// inherent JSC conversion methods live on the *separate* `bun_jsc::zig_string::
+// ZigString` (same `#[repr(C)] (ptr,len)` layout). Forward through the raw C++
+// symbols so callers in this file can stay on `bun_str::ZigString`.
+unsafe extern "C" {
+    fn ZigString__toValueGC(this: *const ZigString, global: *const JSGlobalObject) -> JSValue;
+    fn ZigString__toAtomicValue(this: *const ZigString, global: *const JSGlobalObject) -> JSValue;
+    fn ZigString__toExternalValue(this: *const ZigString, global: *const JSGlobalObject) -> JSValue;
+    fn ZigString__toExternalU16(ptr: *const u16, len: usize, global: *const JSGlobalObject) -> JSValue;
+}
+trait ZigStringToJs {
+    fn to_js(&self, global: &JSGlobalObject) -> JSValue;
+    fn to_atomic_value(&self, global: &JSGlobalObject) -> JSValue;
+    fn to_external_value(&self, global: &JSGlobalObject) -> JSValue;
+}
+impl ZigStringToJs for ZigString {
+    #[inline]
+    fn to_js(&self, global: &JSGlobalObject) -> JSValue {
+        if self.is_globally_allocated() {
+            return self.to_external_value(global);
+        }
+        // SAFETY: `self` is `#[repr(C)] (ptr,len)`; `global` is live.
+        unsafe { ZigString__toValueGC(self, global) }
+    }
+    #[inline]
+    fn to_atomic_value(&self, global: &JSGlobalObject) -> JSValue {
+        // SAFETY: see `to_js`.
+        unsafe { ZigString__toAtomicValue(self, global) }
+    }
+    #[inline]
+    fn to_external_value(&self, global: &JSGlobalObject) -> JSValue {
+        // SAFETY: see `to_js`.
+        unsafe { ZigString__toExternalValue(self, global) }
+    }
+}
 
 // PORT NOTE: `bun_gen::bun_object::BracesOptions` is codegen output from
 // BunObject.bind.ts. The `bun_gen` crate is not yet wired, so define the

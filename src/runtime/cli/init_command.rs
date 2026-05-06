@@ -1136,7 +1136,9 @@ impl Assets {
             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
             0o666,
         )?;
-        let _close = scopeguard::guard(&file, |f| f.close());
+        let _close = scopeguard::guard(&file, |f| {
+            let _ = f.close();
+        });
 
         if is_template {
             // TODO(port): same templating limitation as create_full_inner
@@ -1144,15 +1146,16 @@ impl Assets {
             if let Some(a) = args {
                 let _ = write!(&mut buf, "{}", a);
             }
-            file.write_all(&buf).unwrap_result()?;
+            file.write_all(&buf)?;
         } else {
-            file.write_all(contents).unwrap_result()?;
+            file.write_all(contents)?;
         }
 
-        Output::prettyln(
-            " + <r><d>{s}{s}<r>",
-            format_args!("{}{}", bstr::BStr::new(filename), message_suffix),
-        );
+        Output::prettyln(format_args!(
+            " + <r><d>{}{}<r>",
+            bstr::BStr::new(filename),
+            message_suffix,
+        ));
         Output::flush();
         Ok(())
     }

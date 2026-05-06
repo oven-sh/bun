@@ -630,6 +630,22 @@ pub struct DevServer {
 }
 
 impl DevServer {
+    /// `DevServer.publish` — DevServer.zig:4163. Full body in gated `../DevServer.rs`
+    /// draft (depends on `AnyServer::publish`).
+    pub fn publish(&self, _topic: HmrTopic, _message: &[u8], _opcode: bun_uws::Opcode) {
+        todo!("blocked_on: dev_server::DevServer::publish (AnyServer::publish un-gate)")
+    }
+
+    /// `DevServer.startAsyncBundle`. Full body in gated `../DevServer.rs` draft.
+    pub fn start_async_bundle(
+        &mut self,
+        _entry_points: EntryPointList,
+        _is_hot_reload: bool,
+        _timer: std::time::Instant,
+    ) -> Result<(), bun_core::Error> {
+        todo!("blocked_on: dev_server::DevServer::start_async_bundle body un-gate")
+    }
+
     /// `DevServer.memoryCost`. Full body gated in `../DevServer/memory_cost.rs`
     /// (depends on `IncrementalGraph::memory_cost_detailed` + `Assets::memory_cost`
     /// which are still draft-only). Stub returns the struct size so

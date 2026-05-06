@@ -807,14 +807,14 @@ pub mod js_bundler {
                                     plugin_result = val;
                                 }
                                 jsc::PromiseResult::Rejected(err) => {
-                                    return global_this.throw_value(err);
+                                    return Err(global_this.throw_value(err));
                                 }
                             }
                         }
                     }
 
                     if let Some(err) = plugin_result.to_error() {
-                        return global_this.throw_value(err);
+                        return Err(global_this.throw_value(err));
                     } else if global_this.has_exception() {
                         return Err(JsError::Thrown);
                     }

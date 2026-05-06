@@ -402,7 +402,11 @@ impl<'a> Scanner<'a> {
                     return;
                 }
 
-                entry.abs_path = PathString::init(self.fs.filename_store.append(path));
+                let stored = match self.fs.filename_store.append_slice(path) {
+                    Ok(s) => s,
+                    Err(_) => bun::out_of_memory(),
+                };
+                entry.abs_path = PathString::init(stored);
                 self.test_files.push(entry.abs_path);
             }
         }

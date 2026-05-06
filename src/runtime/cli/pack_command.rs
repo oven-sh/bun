@@ -541,17 +541,13 @@ fn add_entire_tree(
 
             if let Some((pattern, kind)) = is_excluded(&entry, &entry_subpath, dir_depth, &ignores) {
                 if log_level.is_verbose() {
-                    Output::prettyln(
+                    Output::prettyln(format_args!(
                         "<r><blue>ignore<r> <d>[{}:{}]<r> {}{}",
-                        format_args!(
-                            "{}:{} {}{}",
-                            <&str>::from(kind),
-                            bstr::BStr::new(pattern),
-                            bstr::BStr::new(entry_subpath.as_bytes()),
-                            if entry.kind == bun_sys::FileKind::Directory { "/" } else { "" },
-                        ),
-                    );
-                    // TODO(port): Output::prettyln format-string handling differs; Phase B fixup
+                        <&str>::from(kind),
+                        bstr::BStr::new(pattern),
+                        bstr::BStr::new(entry_subpath.as_bytes()),
+                        if entry.kind == bun_sys::FileKind::Directory { "/" } else { "" },
+                    ));
                     Output::flush();
                 }
                 continue;

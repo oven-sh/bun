@@ -1007,17 +1007,10 @@ impl IncrementalGraph<Client> {
 
             // Free a failure if it exists
             if existing.failed {
-                let dev = self.owner();
-                let kv = dev
-                    .bundling_failures
-                    .fetch_swap_remove_adapted(
-                        SerializedFailure::Owner::Client(file_index),
-                        SerializedFailure::ArrayHashAdapter {},
-                    )
-                    .unwrap_or_else(|| {
-                        Output::panic(format_args!("Missing SerializedFailure in IncrementalGraph"))
-                    });
-                dev.incremental_result.failures_removed.push(kv.key);
+                let _dev = self.owner();
+                let _ = (file_index,);
+                // TODO(port): blocked_on: bun_collections::ArrayHashMap::fetch_swap_remove_adapted
+                todo!("blocked_on: bun_collections::ArrayHashMap::fetch_swap_remove_adapted");
             }
 
             // Persist some data

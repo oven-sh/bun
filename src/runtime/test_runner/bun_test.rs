@@ -5,12 +5,14 @@ use std::rc::{Rc, Weak};
 use bun_alloc::AllocationScope;
 use bun_collections::LinearFifo;
 use bun_core::{Output, Timespec};
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, Strong, VirtualMachine};
-use bun_jsc::jest::{self as Jest, TestRunner};
-use bun_runtime::api::timer::EventLoopTimer;
+use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, Strong};
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::js_promise::Status as PromiseStatus;
+use super::jest::{Jest, TestRunner, FileId};
+use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use crate::cli::test_command::{self, CommandLineReporter};
 
-bun_output::declare_scope!(bun_test_group, hidden);
+bun_core::declare_scope!(bun_test_group, hidden);
 // `group` in the Zig is `debug.group` (an Output.scoped). The macro form differs;
 // callers use `group_log!` / `group_begin!` / `group_end!` below.
 // TODO(port): wire to debug::group exactly once debug.rs is ported.
@@ -81,7 +83,9 @@ pub mod js_fns {
 
     /// Tags accepted by `generic_hook`. Superset of `DescribeScope::HookTag`
     /// (adds `OnTestFinished`).
-    #[derive(Copy, Clone, PartialEq, Eq, core::marker::ConstParamTy, strum::IntoStaticStr)]
+    // PORT NOTE: was a const-generic param (`adt_const_params` is unstable);
+    // reshaped to runtime dispatch with per-tag thin host_fn wrappers below.
+    #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
     pub enum GenericHookTag {
         #[strum(serialize = "beforeAll")]
         BeforeAll,
@@ -164,7 +168,7 @@ pub mod js_fns {
                         tag_name
                     )));
                 }
-                bun_output::scoped_log!(bun_test_group, "genericHook in preload");
+                bun_core::scoped_log!(bun_test_group, "genericHook in preload");
 
                 let _ = bun_test_root.hook_scope.append_hook(
                     TAG.as_hook_tag().unwrap(),
@@ -529,7 +533,7 @@ impl<'a> BunTest<'a> {
     pub fn ref_(this_strong: &BunTestPtr, phase: RefDataValue) -> RefDataPtr {
         debug::group::begin();
         let _g = scopeguard::guard((), |_| debug::group::end());
-        bun_output::scoped_log!(bun_test_group, "ref: {}", phase);
+        bun_core::scoped_log!(bun_test_group, "ref: {}", phase);
 
         bun_ptr::IntrusiveRc::new(RefData {
             buntest_weak: Rc::downgrade(this_strong),
@@ -557,7 +561,7 @@ impl<'a> BunTest<'a> {
         // defer refdata.deref() → IntrusiveRc::drop at end of scope
         let has_one_ref = refdata.has_one_ref();
         let Some(this_strong) = refdata.buntest_weak.upgrade() else {
-            bun_output::scoped_log!(bun_test_group, "bunTestThenOrCatch -> the BunTest is no longer active");
+            bun_core::scoped_log!(bun_test_group, "bunTestThenOrCatch -> the BunTest is no longer active");
             return Ok(());
         };
         // SAFETY: see BunTestPtr TODO — interior mutability
@@ -567,7 +571,7 @@ impl<'a> BunTest<'a> {
             this.on_uncaught_exception(global_this, Some(result), true, refdata.phase.clone());
         }
         if !has_one_ref && !is_catch {
-            bun_output::scoped_log!(bun_test_group, "bunTestThenOrCatch -> refdata has multiple refs; don't add result until the last ref");
+            bun_core::scoped_log!(bun_test_group, "bunTestThenOrCatch -> refdata has multiple refs; don't add result until the last ref");
             return Ok(());
         }
 
@@ -736,7 +740,7 @@ impl<'a> BunTest<'a> {
         debug::group::begin();
         let _g = scopeguard::guard((), |_| debug::group::end());
         // only set the timer if the new timeout is sooner than the current timeout. this unfortunately means that we can't unset an unnecessary timer.
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             bun_test_group,
             "-> timeout: {} {}, {}",
             min_timeout,
@@ -744,30 +748,30 @@ impl<'a> BunTest<'a> {
             <&'static str>::from(min_timeout.order_ignore_epoch(&self.timer.next))
         );
         if min_timeout.order_ignore_epoch(&self.timer.next) == core::cmp::Ordering::Less {
-            bun_output::scoped_log!(bun_test_group, "-> setting timer to {}", min_timeout);
+            bun_core::scoped_log!(bun_test_group, "-> setting timer to {}", min_timeout);
             if !self.timer.next.eql(&Timespec::EPOCH) {
-                bun_output::scoped_log!(bun_test_group, "-> removing existing timer");
+                bun_core::scoped_log!(bun_test_group, "-> removing existing timer");
                 global_this.bun_vm().timer.remove(&mut self.timer);
             }
             self.timer.next = *min_timeout;
             if !self.timer.next.eql(&Timespec::EPOCH) {
-                bun_output::scoped_log!(bun_test_group, "-> inserting timer");
+                bun_core::scoped_log!(bun_test_group, "-> inserting timer");
                 global_this.bun_vm().timer.insert(&mut self.timer);
                 if debug::group::get_log_enabled() {
                     let duration = self.timer.next.duration(&Timespec::now_force_real_time());
-                    bun_output::scoped_log!(bun_test_group, "-> timer duration: {}", duration);
+                    bun_core::scoped_log!(bun_test_group, "-> timer duration: {}", duration);
                 }
             }
-            bun_output::scoped_log!(bun_test_group, "-> timer set");
+            bun_core::scoped_log!(bun_test_group, "-> timer set");
         }
     }
 
     fn _advance(&mut self, _global_this: &JSGlobalObject) -> JsResult<Advance> {
         debug::group::begin();
         let _g = scopeguard::guard((), |_| debug::group::end());
-        bun_output::scoped_log!(bun_test_group, "advance from {}", <&'static str>::from(self.phase));
+        bun_core::scoped_log!(bun_test_group, "advance from {}", <&'static str>::from(self.phase));
         let _g2 = scopeguard::guard((), |_| {
-            bun_output::scoped_log!(bun_test_group, "advance -> {}", <&'static str>::from(self.phase));
+            bun_core::scoped_log!(bun_test_group, "advance -> {}", <&'static str>::from(self.phase));
         });
         // TODO(port): defer captures &self.phase; reshape for borrowck
 
@@ -858,7 +862,7 @@ impl<'a> BunTest<'a> {
         let mut done_callback: JSValue = JSValue::ZERO;
 
         if cfg_done_parameter {
-            bun_output::scoped_log!(bun_test_group, "callTestCallback -> appending done callback param: data {}", cfg_data);
+            bun_core::scoped_log!(bun_test_group, "callTestCallback -> appending done callback param: data {}", cfg_data);
             done_callback = DoneCallback::create_unbound(global_this);
             done_arg = match DoneCallback::bind(done_callback, global_this) {
                 Ok(v) => v,
@@ -881,7 +885,7 @@ impl<'a> BunTest<'a> {
             Err(_) => {
                 global_this.clear_termination_exception();
                 this.on_uncaught_exception(global_this, global_this.try_take_exception(), false, cfg_data.clone());
-                bun_output::scoped_log!(bun_test_group, "callTestCallback -> error");
+                bun_core::scoped_log!(bun_test_group, "callTestCallback -> error");
                 JSValue::ZERO
             }
         };
@@ -926,7 +930,7 @@ impl<'a> BunTest<'a> {
             if let Some(promise) = result.as_promise() {
                 let _keep = bun_jsc::EnsureStillAlive(result); // because sometimes we use promise without result
 
-                bun_output::scoped_log!(bun_test_group, "callTestCallback -> promise: data {}", cfg_data);
+                bun_core::scoped_log!(bun_test_group, "callTestCallback -> promise: data {}", cfg_data);
 
                 match promise.status() {
                     jsc::PromiseStatus::Pending => {
@@ -958,11 +962,11 @@ impl<'a> BunTest<'a> {
 
         if dcb_ref.is_some() {
             // completed asynchronously
-            bun_output::scoped_log!(bun_test_group, "callTestCallback -> wait for done callback");
+            bun_core::scoped_log!(bun_test_group, "callTestCallback -> wait for done callback");
             return None;
         }
 
-        bun_output::scoped_log!(bun_test_group, "callTestCallback -> sync");
+        bun_core::scoped_log!(bun_test_group, "callTestCallback -> sync");
         Some(cfg_data)
     }
 
@@ -985,7 +989,7 @@ impl<'a> BunTest<'a> {
             Phase::Execution => self.execution.handle_uncaught_exception(&user_data),
         };
 
-        bun_output::scoped_log!(bun_test_group, "onUncaughtException -> {}", <&'static str>::from(handle_status));
+        bun_core::scoped_log!(bun_test_group, "onUncaughtException -> {}", <&'static str>::from(handle_status));
 
         if handle_status == HandleUncaughtExceptionResult::HideError {
             return; // do not print error, it was already consumed
@@ -1148,7 +1152,7 @@ impl bun_ptr::IntrusiveRefCounted for RefData {
         let _g = scopeguard::guard((), |_| debug::group::end());
         // SAFETY: refcount hit zero; we own the allocation
         unsafe {
-            bun_output::scoped_log!(bun_test_group, "refData: {}", (*this).phase);
+            bun_core::scoped_log!(bun_test_group, "refData: {}", (*this).phase);
             // buntest_weak.deinit() → Weak::drop
             drop(Box::from_raw(this));
         }

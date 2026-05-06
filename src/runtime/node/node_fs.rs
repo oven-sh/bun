@@ -140,6 +140,86 @@ use bun_sys::sys_uv as Syscall;
 #[cfg(not(windows))]
 use bun_sys as Syscall;
 
+// ──────────────────────────────────────────────────────────────────────────
+// Local cross-crate shims
+//
+// These wrap symbols whose canonical home moved (or hasn't been wired into
+// `bun_sys`/`bun_core` yet) so the hundreds of call sites below — which
+// mirror `node_fs.zig` 1:1 — don't have to be rewritten per-line. Each is a
+// thin forwarder; bodies that are genuinely missing upstream are `todo!` with
+// a `blocked_on:` tag.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `bun.strings.withoutNTPrefix` — lives in `bun_string::strings::paths`
+/// under the Rust crate split, not at the `strings` root.
+#[inline]
+fn without_nt_prefix<T: bun_string::strings::paths::Ch>(path: &[T]) -> &[T] {
+    bun_string::strings::paths::without_nt_prefix(path)
+}
+
+/// `bun.paths.OSPathLiteral("")` — Zig comptime string→`[:0]const OSPathChar`.
+/// Only the empty-string case is used in this file.
+#[inline]
+fn os_path_literal_empty() -> OSPathSliceZ<'static> {
+    #[cfg(windows)]
+    { unsafe { OSPathSliceZ::from_raw_parts([0u16].as_ptr(), 0) } }
+    #[cfg(not(windows))]
+    { ZStr::from_static(b"\0") }
+}
+
+/// `bun.StandaloneModuleGraph::get()` — singleton accessor. The graph type
+/// lives in the `bun_standalone_graph` crate which is not a dependency of
+/// `bun_runtime` (it sits above us in the link order). The Zig source only
+/// uses it to short-circuit `stat`/`exists`/`readFile` for embedded files in
+/// compiled binaries; returning `None` here is the correct behaviour for the
+/// non-standalone case and keeps the rest of the body live.
+#[inline]
+fn standalone_module_graph_get() -> Option<&'static StandaloneModuleGraphStub> { None }
+struct StandaloneModuleGraphStub;
+impl StandaloneModuleGraphStub {
+    fn find(&self, _: &[u8]) -> Option<()> { None }
+    fn stat(&self, _: &ZStr) -> Option<sys::Stat> { None }
+}
+
+/// `bun.getTotalMemorySize()` — defined in `src/bun.rs` (the umbrella crate),
+/// not `bun_core`. Re-implement the platform query here; matches the Zig
+/// fallback path (`/proc/meminfo` → sysconf).
+#[inline]
+fn get_total_memory_size() -> u64 {
+    #[cfg(target_os = "linux")]
+    unsafe {
+        let pages = libc::sysconf(libc::_SC_PHYS_PAGES);
+        let pgsz = libc::sysconf(libc::_SC_PAGESIZE);
+        if pages > 0 && pgsz > 0 { return (pages as u64).saturating_mul(pgsz as u64); }
+    }
+    u64::MAX
+}
+
+/// `bun.sys.PosixStat` — uv-shaped stat struct (`src/sys/PosixStat.rs`).
+/// Until `bun_sys` declares the module, route through the sibling `stat`
+/// module's import of it (which owns the canonical conversion).
+type PosixStat = super::stat::PosixStat;
+
+/// Node `fs.rm` mapping helper — `bun_core::err!("Name")` produces a
+/// `bun_core::Error` from a static error-set name; the *reverse* (name →
+/// `Error` for return) needs the same constructor. `bun_core` has the macro
+/// but no free fn, so wrap it.
+#[inline]
+fn err_from_static(name: &'static str) -> bun_core::Error {
+    todo!("blocked_on: bun_core::err_from_static")
+}
+
+/// `bun.sys.preallocate_supported` / `preallocate_length` — the Zig consts
+/// were dropped in the lib.rs port (only `preallocate_file()` remains). Mirror
+/// the original values from `sys.zig` so the write-file fast path keeps its
+/// guard. 2 MiB matches `node_fs.zig`'s threshold.
+const PREALLOCATE_SUPPORTED: bool = cfg!(target_os = "linux");
+const PREALLOCATE_LENGTH: usize = 2048 * 1024;
+
+/// `PathString.PathInt` — Zig packed-struct field width. `bun_string::PathString`
+/// stores it as `u32` on the Rust side (see `PathString.rs` POINTER_BITS).
+type PathInt = u32;
+
 type ReadPosition = i64;
 type Buffer = super::types::Buffer;
 type ArrayBuffer = bun_jsc::MarkedArrayBuffer;

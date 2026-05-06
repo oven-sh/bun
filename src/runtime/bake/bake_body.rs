@@ -1393,18 +1393,30 @@ pub fn add_import_meta_defines(
     Ok(())
 }
 
-// TODO(port): logger::Source const construction — verify Path::init_for_kit_built_in is const fn
-pub static SERVER_VIRTUAL_SOURCE: logger::Source = logger::Source {
-    path: bun_fs::Path::init_for_kit_built_in("bun", "bake/server"),
-    contents: b"", // Virtual
-    index: bun_js_parser::Index::BAKE_SERVER_DATA,
-};
+// PORT NOTE: `logger::fs::Path` (the minimal type `logger::Source` actually
+// stores) has no `init_for_kit_built_in`; that constructor lives on the
+// richer `bun_resolver::fs::Path` (a different nominal type) and is not
+// `const fn`. Mirror what `bun_bundler::bundle_v2` does and build the
+// virtual sources lazily.
+// TODO(port): once the two `fs::Path` types are unified, restore the static
+// initializers from bake.zig:976-984.
+pub fn server_virtual_source() -> logger::Source {
+    logger::Source {
+        // bun:bake/server
+        path: logger::fs::Path::init(b"bun:bake/server"),
+        contents: b"", // Virtual
+        ..Default::default()
+    }
+}
 
-pub static CLIENT_VIRTUAL_SOURCE: logger::Source = logger::Source {
-    path: bun_fs::Path::init_for_kit_built_in("bun", "bake/client"),
-    contents: b"", // Virtual
-    index: bun_js_parser::Index::BAKE_CLIENT_DATA,
-};
+pub fn client_virtual_source() -> logger::Source {
+    logger::Source {
+        // bun:bake/client
+        path: logger::fs::Path::init(b"bun:bake/client"),
+        contents: b"", // Virtual
+        ..Default::default()
+    }
+}
 
 /// Stack-allocated structure that is written to from end to start.
 /// Used as a staging area for building pattern strings.
@@ -1427,6 +1439,12 @@ impl PatternBuffer {
         self.slice_mut()[..chunk.len()].copy_from_slice(chunk);
     }
 
+    // `FrameworkRouter.Part` lives in the gated `FrameworkRouter.rs` draft
+    // (parent's inline `framework_router` mod only exposes `Style` +
+    // index newtypes). Gate `prepend_part` until `Part` un-gates; the only
+    // caller is `DevServer::finalize_bundle`, also gated.
+    // TODO(b2-blocked): super::framework_router::Part — un-gate FrameworkRouter.rs
+    #[cfg(any())]
     pub fn prepend_part(&mut self, part: framework_router::Part) {
         match part {
             framework_router::Part::Text(text) => {
@@ -1440,7 +1458,7 @@ impl PatternBuffer {
                 self.prepend(name);
                 self.prepend(b"/:");
             }
-            framework_router::Part::Group => {}
+            framework_router::Part::Group(_) => {}
         }
     }
 

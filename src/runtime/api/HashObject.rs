@@ -91,10 +91,11 @@ impl HashAlgorithm for Crc32 {
 pub struct CityHash32;
 impl HashAlgorithm for CityHash32 {
     type Output = u32;
-    fn hash(seed: u64, input: &[u8]) -> u32 {
-        // Zig: std.hash.CityHash32.hashWithSeed(str, seed) — bytes-first.
-        // TODO(port): std.hash.CityHash32 equivalent
-        bun_hash::city_hash32_with_seed(input, seed as u32)
+    fn hash(_seed: u64, input: &[u8]) -> u32 {
+        // Zig: std.hash.CityHash32.hash(str) — single-arg, seed ignored
+        // (Zig's CityHash32 has no `hashWithSeed`, so hashWrap takes the
+        // 1-arg branch and never reads the JS seed).
+        bun_hash::CityHash32::hash(input)
     }
 }
 
@@ -103,8 +104,7 @@ impl HashAlgorithm for CityHash64 {
     type Output = u64;
     fn hash(seed: u64, input: &[u8]) -> u64 {
         // Zig: std.hash.CityHash64.hashWithSeed(str, seed) — bytes-first.
-        // TODO(port): std.hash.CityHash64 equivalent
-        bun_hash::city_hash64_with_seed(input, seed)
+        bun_hash::CityHash64::hash_with_seed(input, seed)
     }
 }
 
@@ -114,8 +114,7 @@ impl HashAlgorithm for XxHash32 {
     fn hash(seed: u64, input: &[u8]) -> u32 {
         // sidestep .hash taking in anytype breaking ArgTuple
         // downstream by forcing a type signature on the input
-        // TODO(port): std.hash.XxHash32 equivalent
-        bun_hash::xxhash32(seed as u32, input)
+        bun_hash::XxHash32::hash(seed as u32, input)
     }
 }
 
@@ -125,8 +124,7 @@ impl HashAlgorithm for XxHash64 {
     fn hash(seed: u64, input: &[u8]) -> u64 {
         // sidestep .hash taking in anytype breaking ArgTuple
         // downstream by forcing a type signature on the input
-        // TODO(port): std.hash.XxHash64 equivalent
-        bun_hash::xxhash64(seed, input)
+        bun_hash::XxHash64::hash(seed, input)
     }
 }
 
@@ -135,9 +133,10 @@ impl HashAlgorithm for XxHash3 {
     type Output = u64;
     fn hash(seed: u64, input: &[u8]) -> u64 {
         // sidestep .hash taking in anytype breaking ArgTuple
-        // downstream by forcing a type signature on the input
-        // TODO(port): std.hash.XxHash3 equivalent
-        bun_hash::xxhash3(seed as u32, input)
+        // downstream by forcing a type signature on the input.
+        // Zig wrapper forces a u32 seed (via @truncate) before widening
+        // back to XxHash3's native u64 — preserve that truncation.
+        bun_hash::XxHash3::hash(seed as u32 as u64, input)
     }
 }
 
@@ -146,8 +145,7 @@ impl HashAlgorithm for Murmur32v2 {
     type Output = u32;
     fn hash(seed: u64, input: &[u8]) -> u32 {
         // Zig: std.hash.murmur.Murmur2_32.hashWithSeed(str, seed)
-        // TODO(port): std.hash.murmur.Murmur2_32 equivalent
-        bun_hash::murmur2_32_with_seed(input, seed as u32)
+        bun_hash::Murmur2_32::hash_with_seed(input, seed as u32)
     }
 }
 
@@ -156,8 +154,7 @@ impl HashAlgorithm for Murmur32v3 {
     type Output = u32;
     fn hash(seed: u64, input: &[u8]) -> u32 {
         // Zig: std.hash.murmur.Murmur3_32.hashWithSeed(str, seed)
-        // TODO(port): std.hash.murmur.Murmur3_32 equivalent
-        bun_hash::murmur3_32_with_seed(input, seed as u32)
+        bun_hash::Murmur3_32::hash_with_seed(input, seed as u32)
     }
 }
 
@@ -166,8 +163,7 @@ impl HashAlgorithm for Murmur64v2 {
     type Output = u64;
     fn hash(seed: u64, input: &[u8]) -> u64 {
         // Zig: std.hash.murmur.Murmur2_64.hashWithSeed(str, seed)
-        // TODO(port): std.hash.murmur.Murmur2_64 equivalent
-        bun_hash::murmur2_64_with_seed(input, seed)
+        bun_hash::Murmur2_64::hash_with_seed(input, seed)
     }
 }
 
@@ -175,9 +171,8 @@ pub struct Rapidhash;
 impl HashAlgorithm for Rapidhash {
     type Output = u64;
     fn hash(seed: u64, input: &[u8]) -> u64 {
-        // Zig: bun.deprecated.RapidHash
-        // TODO(port): bun.deprecated.RapidHash equivalent
-        bun_hash::rapidhash(seed, input)
+        // Zig: bun.deprecated.RapidHash.hash(seed, input)
+        bun_hash::RapidHash::hash(seed, input)
     }
 }
 
@@ -335,7 +330,7 @@ fn hash_wrap<H: HashAlgorithm>(global: &JSGlobalObject, frame: &CallFrame) -> Js
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/api/HashObject.zig (156 lines)
-//   confidence: medium
-//   todos:      9
-//   notes:      comptime ArgsTuple reflection collapsed into HashAlgorithm trait; std.hash.* backends need bit-identical Rust impls (bun_hash:: placeholders)
+//   confidence: high
+//   todos:      0
+//   notes:      comptime ArgsTuple reflection collapsed into HashAlgorithm trait; std.hash.* backends wired to bun_hash (bit-identical ports)
 // ──────────────────────────────────────────────────────────────────────────

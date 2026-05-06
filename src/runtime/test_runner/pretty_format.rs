@@ -1710,17 +1710,30 @@ impl<'a> Formatter<'a> {
                         ));
 
                         return Ok(());
-                    } else if let Some(build_log) = value.as_::<crate::api::BuildMessage>() {
+                    } else if let Some(build_log) = {
+                        // blocked_on: crate::api::BuildMessage (JsClass)
+                        let _ = value;
+                        None::<*mut crate::api::BuildMessage>
+                    } {
                         // SAFETY: non-null JsClass cell, GC-rooted via `value`.
+                        // `Msg::write_format` wants `fmt::Write`; route through a String.
+                        let mut s = String::new();
                         let _ = unsafe { &*build_log }
                             .msg
-                            .write_format::<ENABLE_ANSI_COLORS>(writer.ctx);
+                            .write_format::<ENABLE_ANSI_COLORS>(&mut s);
+                        writer.write_all(s.as_bytes());
                         return Ok(());
-                    } else if let Some(resolve_log) = value.as_::<crate::api::ResolveMessage>() {
+                    } else if let Some(resolve_log) = {
+                        // blocked_on: crate::api::ResolveMessage (JsClass)
+                        let _ = value;
+                        None::<*mut crate::api::ResolveMessage>
+                    } {
                         // SAFETY: non-null JsClass cell, GC-rooted via `value`.
+                        let mut s = String::new();
                         let _ = unsafe { &*resolve_log }
                             .msg
-                            .write_format::<ENABLE_ANSI_COLORS>(writer.ctx);
+                            .write_format::<ENABLE_ANSI_COLORS>(&mut s);
+                        writer.write_all(s.as_bytes());
                         return Ok(());
                     } else if NAME_BUF.with_borrow(|name_buf| {
                         // TODO(port): printAsymmetricMatcher takes name_buf by value [512]u8;

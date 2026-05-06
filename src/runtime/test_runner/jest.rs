@@ -156,7 +156,7 @@ pub struct TestRunner<'a> {
 
 impl<'a> TestRunner<'a> {
     pub fn get_active_timeout(&self) -> bun_core::Timespec {
-        let Some(active_file) = self.bun_test_root.active_file.get() else {
+        let Some(active_file) = self.bun_test_root.active_file.as_deref() else {
             return bun_core::Timespec::EPOCH;
         };
         if active_file.timer.state != TimerState::ACTIVE
@@ -168,9 +168,12 @@ impl<'a> TestRunner<'a> {
     }
 
     pub fn remove_active_timeout(&mut self, vm: &mut VirtualMachine) {
-        let Some(active_file) = self.bun_test_root.active_file.get() else {
+        let Some(active_file) = self.bun_test_root.active_file.as_ref() else {
             return;
         };
+        // SAFETY: see BunTestPtr TODO — interior mutability; single-threaded JS VM.
+        let active_file =
+            unsafe { &mut *(Rc::as_ptr(active_file) as *mut bun_test::BunTest<'_>) };
         if active_file.timer.state != TimerState::ACTIVE
             || active_file.timer.next.eql(&bun_core::Timespec::EPOCH)
         {
@@ -413,7 +416,7 @@ pub mod Jest {
         module.put(global_object, ZigString::static_str("spyOn"), spy_on);
         module.put(global_object, ZigString::static_str("expect"), Expect::js::get_constructor(global_object));
 
-        let vi = JSValue::create_empty_object(global_object, 6 + bun_test::FakeTimers::TIMER_FNS_COUNT);
+        let vi = JSValue::create_empty_object(global_object, 6 + fake_timers::TIMER_FNS_COUNT);
         vi.put(global_object, ZigString::static_str("fn"), mock_fn);
         vi.put(global_object, ZigString::static_str("mock"), mock_module_fn);
         vi.put(global_object, ZigString::static_str("spyOn"), spy_on);
@@ -422,7 +425,7 @@ pub mod Jest {
         vi.put(global_object, ZigString::static_str("clearAllMocks"), clear_all_mocks);
         module.put(global_object, ZigString::static_str("vi"), vi);
 
-        bun_test::FakeTimers::put_timers_fns(global_object, jest, vi);
+        fake_timers::put_timers_fns(global_object, jest, vi);
     }
 
     // TODO(port): move to <area>_sys
@@ -494,22 +497,31 @@ pub mod on_unhandled_rejection {
         global_object: &JSGlobalObject,
         rejection: JSValue,
     ) {
-        if let Some(buntest_strong_) = bun_test::clone_active_strong() {
-            let mut buntest_strong = buntest_strong_;
-            // PORT NOTE: `defer buntest_strong.deinit()` — Drop handles this.
-
-            let buntest = buntest_strong.get();
+        if let Some(buntest_strong) = bun_test::clone_active_strong() {
+            // PORT NOTE: `defer buntest_strong.deinit()` — Rc::drop handles this.
+            // SAFETY: see BunTestPtr TODO — interior mutability; single-threaded JS VM.
+            let buntest =
+                unsafe { &mut *(Rc::as_ptr(&buntest_strong) as *mut bun_test::BunTest<'_>) };
             // mark unhandled errors as belonging to the currently active test. note that this can be misleading.
             let mut current_state_data = buntest.get_current_state_data();
-            if let Some(entry) = current_state_data.entry(buntest) {
+            // PORT NOTE: split entry()/sequence() borrows via raw-ptr capture (per-use reborrow).
+            let entry_ptr: Option<*mut bun_test::ExecutionEntry> = current_state_data
+                .entry(buntest)
+                .map(|e| e as *mut bun_test::ExecutionEntry);
+            if let Some(entry) = entry_ptr {
                 if let Some(sequence) = current_state_data.sequence(buntest) {
-                    if entry != sequence.test_entry {
+                    if sequence.test_entry.map(|p| p.as_ptr()) != Some(entry) {
                         // mark errors in hooks as 'unhandled error between tests'
-                        current_state_data = bun_test::StateData::Start;
+                        current_state_data = RefDataValue::Start;
                     }
                 }
             }
-            buntest.on_uncaught_exception(global_object, rejection, true, current_state_data);
+            buntest.on_uncaught_exception(
+                global_object,
+                Some(rejection),
+                true,
+                current_state_data.clone(),
+            );
             buntest.add_result(current_state_data);
             if let Err(e) = bun_test::BunTest::run(buntest_strong, global_object) {
                 global_object.report_uncaught_exception_from_error(e);
@@ -729,7 +741,7 @@ pub fn capture_test_line_number(callframe: &CallFrame, global_this: &JSGlobalObj
 }
 
 pub fn error_in_ci(global_object: &JSGlobalObject, message: &[u8]) -> JsResult<()> {
-    if bun_core::ci::is_ci() {
+    if crate::cli::ci_info::is_ci() {
         return global_object.throw_pretty(format_args!(
             "{}\nTo override, set the environment variable CI=false.",
             bstr::BStr::new(message)

@@ -727,8 +727,7 @@ impl ExtractContext {
             self.store.shared_view(),
             &self.path,
             None,
-            (),
-            (),
+            &mut (),
             libarchive::ExtractOptions {
                 depth_to_skip: 0,
                 close_handles: true,

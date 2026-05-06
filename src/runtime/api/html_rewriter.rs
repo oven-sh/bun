@@ -340,25 +340,29 @@ impl HTMLRewriterLoader {
             .write(StreamResult::Temporary(ByteList::from_borrowed_slice_dangerous(bytes)));
 
         match write_result {
-            StreamResult::Writable::Err(err) => {
+            Writable::Err(err) => {
                 self.fail(err);
             }
-            StreamResult::Writable::OwnedAndDone(_)
-            | StreamResult::Writable::TemporaryAndDone(_)
-            | StreamResult::Writable::IntoArrayAndDone(_) => {
+            Writable::OwnedAndDone(_)
+            | Writable::TemporaryAndDone(_)
+            | Writable::IntoArrayAndDone(_) => {
                 self.done();
             }
-            StreamResult::Writable::Pending(pending) => {
-                pending.apply_backpressure(&mut self.output, pending, bytes);
+            Writable::Pending(_pending) => {
+                // TODO(b2-blocked): WritablePending::apply_backpressure not yet
+                // ported on streams::WritablePending.
+                let _ = bytes;
+                todo!("blocked_on: webcore::streams::WritablePending::apply_backpressure")
             }
-            StreamResult::Writable::IntoArray(_)
-            | StreamResult::Writable::Owned(_)
-            | StreamResult::Writable::Temporary(_) => {
+            Writable::IntoArray(_)
+            | Writable::Owned(_)
+            | Writable::Temporary(_) => {
                 self.signal.ready(
                     if self.chunk_size > 0 { Some(self.chunk_size) } else { None },
                     None,
                 );
             }
+            Writable::Done => {}
         }
     }
 
@@ -373,7 +377,7 @@ impl HTMLRewriterLoader {
         builder: *mut lolhtml_sys::HTMLRewriterBuilder,
         context: Rc<RefCell<LOLHTMLContext>>,
         size_hint: Option<usize>,
-        output: webcore::Sink,
+        output: webcore::Sink<'static>,
     ) -> Option<&'static [u8]> {
         let chunk_size = size_hint.unwrap_or(16384).max(1024);
         // SAFETY: builder valid; `self` outlives the rewriter (deinit'd in finalize()).
@@ -409,8 +413,11 @@ impl HTMLRewriterLoader {
         None
     }
 
-    pub fn sink(&mut self) -> webcore::Sink {
-        webcore::Sink::init(self)
+    pub fn sink(&mut self) -> webcore::Sink<'_> {
+        // TODO(b2-blocked): `webcore::sink::SinkHandler` impl for
+        // HTMLRewriterLoader (vtable wraps connect/write/end). Until that
+        // trait impl lands, this would not type-check against `Sink::init`.
+        todo!("blocked_on: webcore::sink::SinkHandler for HTMLRewriterLoader")
     }
 
     fn write_bytes<const DEINIT: bool>(&mut self, bytes: ByteList) -> Option<bun_sys::Error> {

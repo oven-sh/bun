@@ -26,4 +26,4 @@ test("async transform() rejecting with parse errors does not read freed memory",
   const out = stdout.toString();
   const err = stderr.toString();
   expect({ exitCode, signalCode, out, err }).toEqual({ exitCode: 0, signalCode: undefined, out: "ok\n", err: "" });
-}, 60_000);
+});

@@ -2074,14 +2074,17 @@ impl<S: GraphSide> IncrementalGraph<S> {
         let (gop_index, found_existing, file_index) = match key {
             InsertFailureKey::AbsPath(abs_path) => {
                 let gop = self.bundled_files.get_or_put(Box::<[u8]>::from(abs_path))?;
-                if !gop.found_existing {
+                let gop_index = gop.index;
+                let found_existing = gop.found_existing;
+                drop(gop);
+                if !found_existing {
                     self.first_dep.push(OptionalEdgeIndex::NONE);
                     self.first_import.push(OptionalEdgeIndex::NONE);
                 }
                 (
-                    gop.index,
-                    gop.found_existing,
-                    FileIndex::init(u32::try_from(gop.index).unwrap()),
+                    gop_index,
+                    found_existing,
+                    FileIndex::init(u32::try_from(gop_index).unwrap()),
                 )
             }
             // When given an index, no fetch is needed.

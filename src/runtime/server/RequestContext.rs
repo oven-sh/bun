@@ -1402,7 +1402,7 @@ where
             }
         };
 
-        let mode = stat.mode as bun_sys::Mode;
+        let mode = stat.st_mode as bun_sys::Mode;
         let is_regular = bun_sys::S::ISREG(mode);
         let (file_type, pollable): (bun_io::FileType, bool) = 'brk: {
             if bun_sys::S::ISFIFO(mode) || bun_sys::S::ISCHR(mode) {

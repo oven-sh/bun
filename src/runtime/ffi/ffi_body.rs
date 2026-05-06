@@ -2367,13 +2367,13 @@ impl Function {
             return Ok(());
         }
 
-        let Some(symbol) = state.get_symbol(b"my_callback_function") else {
+        let Some(symbol) = state.get_symbol(zstr!(b"my_callback_function")) else {
             self.fail(b"missing generated symbol in source code");
             return Ok(());
         };
 
         self.step = Step::Compiled(Compiled {
-            ptr: symbol,
+            ptr: symbol.as_ptr() as *mut c_void,
             js_function,
             // SAFETY: opaque-handle storage only (Zig: `?*anyopaque`). Never
             // dereferenced or written through on the Rust side; stored as

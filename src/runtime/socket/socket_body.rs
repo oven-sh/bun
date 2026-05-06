@@ -2182,11 +2182,11 @@ impl<const SSL: bool> NewSocket<SSL> {
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
 
-        let mut args = callframe.arguments_undef(5);
+        let mut args = callframe.arguments_undef::<5>();
 
-        log!("end({} args)", args.len());
+        log!("end({} args)", args.len);
         if this.socket.is_detached() {
-            return Ok(JSValue::js_number(-1i32));
+            return Ok(JSValue::js_number(-1.0));
         }
 
         this.ref_();
@@ -2198,7 +2198,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 if wrote >= 0 && usize::try_from(wrote).unwrap() == total {
                     this.internal_flush();
                 }
-                JSValue::js_number(wrote)
+                JSValue::js_number(wrote as f64)
             }
         };
         this.deref();

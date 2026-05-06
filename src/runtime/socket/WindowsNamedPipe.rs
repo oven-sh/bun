@@ -660,15 +660,15 @@ impl WindowsNamedPipe {
         self.flags.set_is_ssl(true);
         if self.start(is_client) {
             self.wrapper = Some(WrapperType::init(
-                ssl_options,
+                &ssl_options,
                 is_client,
-                WrapperType::Handlers {
+                ssl_wrapper::Handlers {
                     ctx: self as *mut _,
-                    on_open: Self::on_open,
-                    on_handshake: Self::on_handshake,
-                    on_data: Self::on_data,
-                    on_close: Self::on_close,
-                    write: Self::internal_write,
+                    on_open: Self::ssl_on_open,
+                    on_handshake: Self::ssl_on_handshake,
+                    on_data: Self::ssl_on_data,
+                    on_close: Self::ssl_on_close,
+                    write: Self::ssl_write,
                 },
             )?);
 

@@ -482,8 +482,6 @@ use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::{StringJsc as _, bun_string_jsc};
 use bun_str::zig_string::Slice as ZigStringSlice;
 use crate::test_runner::expect::{JSGlobalObjectTestExt as _, JSValueTestExt as _};
-use bun_str::zig_string::Slice as ZigStringSlice;
-use crate::test_runner::expect::{JSGlobalObjectTestExt as _, JSValueTestExt as _};
 
 // ── local shim: JSC-side `ZigString.toJS / toExternalValue / toAtomicValue` ──
 // `bun_jsc::ZigString` is a `pub type` alias for `bun_str::ZigString`; the
@@ -859,7 +857,7 @@ pub fn braces(
     let mut arena = bun_alloc::Arena::new();
     let _ = &mut arena;
 
-    let lexer_output = 'lexer_output: {
+    let mut lexer_output = 'lexer_output: {
         if strings::is_all_ascii(brace_slice.slice()) {
             break 'lexer_output match Braces::Lexer::tokenize(brace_slice.slice()) {
                 Ok(v) => v,
@@ -1473,8 +1471,13 @@ pub extern "C" fn Bun__gc(vm: *mut VirtualMachine, sync: bool) -> usize {
 #[bun_jsc::host_fn]
 pub fn shrink(global_object: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
     // PORT NOTE: `bun_jsc::VM` (the lib.rs opaque stub) lacks `shrink_footprint`;
-    // call through the VM.rs FFI directly.
-    jsc::vm::VM::shrink_footprint(global_object.vm());
+    // the real impl lives in the gated `bun_jsc::vm` module. Call the C++ symbol
+    // directly (matches src/jsc/VM.rs:125).
+    unsafe extern "C" {
+        fn JSC__VM__shrinkFootprint(vm: *mut jsc::VM);
+    }
+    // SAFETY: `global_object.vm()` returns a live JSC VM; FFI has no extra preconditions.
+    unsafe { JSC__VM__shrinkFootprint(global_object.vm() as *const _ as *mut _) };
     Ok(JSValue::UNDEFINED)
 }
 

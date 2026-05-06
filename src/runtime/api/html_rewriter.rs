@@ -2559,7 +2559,8 @@ impl Element {
         self.attribute_iterators.push(attr_iter);
         // SAFETY: attr_iter is live (refcount==2 now); to_js wraps it as the JS
         // wrapper's m_ctx.
-        unsafe { (*attr_iter).to_js(global_object) }
+        let _ = (attr_iter, global_object);
+        todo!("blocked_on: bun_jsc::JsClass to_js for *mut Self (intrusive-rc wrapper)")
     }
 }
 

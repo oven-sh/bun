@@ -1272,7 +1272,7 @@ impl ServerWebSocket {
                                 name,
                                 buffer.len()
                             );
-                            JSValue::js_number(-1)
+                            JSValue::js_number(-1.0)
                         }
                         SendStatus::Success => {
                             bun_output::scoped_log!(
@@ -1281,7 +1281,7 @@ impl ServerWebSocket {
                                 name,
                                 buffer.len()
                             );
-                            JSValue::js_number(buffer.len())
+                            JSValue::js_number(buffer.len() as f64)
                         }
                         SendStatus::Dropped => {
                             bun_output::scoped_log!(
@@ -1290,7 +1290,7 @@ impl ServerWebSocket {
                                 name,
                                 buffer.len()
                             );
-                            JSValue::js_number(0)
+                            JSValue::js_number(0.0)
                         }
                     });
                 } else if value.is_string() {
@@ -1305,7 +1305,7 @@ impl ServerWebSocket {
                                 name,
                                 buffer.len()
                             );
-                            JSValue::js_number(-1)
+                            JSValue::js_number(-1.0)
                         }
                         SendStatus::Success => {
                             bun_output::scoped_log!(
@@ -1314,7 +1314,7 @@ impl ServerWebSocket {
                                 name,
                                 buffer.len()
                             );
-                            JSValue::js_number(buffer.len())
+                            JSValue::js_number(buffer.len() as f64)
                         }
                         SendStatus::Dropped => {
                             bun_output::scoped_log!(
@@ -1323,12 +1323,12 @@ impl ServerWebSocket {
                                 name,
                                 buffer.len()
                             );
-                            JSValue::js_number(0)
+                            JSValue::js_number(0.0)
                         }
                     });
                 } else {
-                    return global_this
-                        .throw_pretty(format_args!("{} requires a string or BufferSource", name));
+                    return Err(global_this
+                        .throw(format_args!("{} requires a string or BufferSource", name)));
                 }
             }
         }
@@ -1336,15 +1336,15 @@ impl ServerWebSocket {
         Ok(match self.websocket().send(&[], opcode, false, true) {
             SendStatus::Backpressure => {
                 bun_output::scoped_log!(WebSocketServer, "{}() backpressure ({} bytes)", name, 0);
-                JSValue::js_number(-1)
+                JSValue::js_number(-1.0)
             }
             SendStatus::Success => {
                 bun_output::scoped_log!(WebSocketServer, "{}() success ({} bytes)", name, 0);
-                JSValue::js_number(0)
+                JSValue::js_number(0.0)
             }
             SendStatus::Dropped => {
                 bun_output::scoped_log!(WebSocketServer, "{}() dropped ({} bytes)", name, 0);
-                JSValue::js_number(0)
+                JSValue::js_number(0.0)
             }
         })
     }

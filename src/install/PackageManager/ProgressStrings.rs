@@ -145,7 +145,7 @@ impl PackageManager {
         downloads_node.set_completed_items(downloads_node.unprotected_estimated_total_items);
         self.progress.refresh();
         self.progress.root.end();
-        self.progress = Progress::default();
+        self.progress = Default::default();
         self.downloads_node = None;
     }
 }

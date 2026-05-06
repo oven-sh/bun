@@ -29,6 +29,7 @@ use bun_js_parser::ast::bundled_ast::{self, NamedExports, NamedImports};
 use bun_js_parser::ast::symbol::{self, Kind as SymbolKind};
 use bun_js_parser::{Dependency, ExportsKind, PartList, Ref};
 
+use crate::linker_context_mod::LinkerCtx;
 use crate::linker_graph::FileField;
 use crate::ungate_support::js_meta::JSMetaField;
 use crate::Graph::InputFileField;
@@ -303,7 +304,7 @@ pub fn scan_imports_and_exports(
                 wrap_esm_count += (flag.wrap == WrapKind::Esm) as usize;
             }
             bun_core::scoped_log!(
-                crate::linker_context_mod::LinkerCtx,
+                LinkerCtx,
                 "Step 1: {} CommonJS modules (+ {} wrapped), {} ES modules (+ {} wrapped)",
                 cjs_count,
                 wrap_cjs_count,
@@ -805,7 +806,7 @@ pub fn scan_imports_and_exports(
 
             // Encode import-specific constraints in the dependency graph
             bun_core::scoped_log!(
-                crate::linker_context_mod::LinkerCtx,
+                LinkerCtx,
                 "Binding {} imports for file {} (#{})",
                 col_ref!(import_records_list)[id].len(),
                 bstr::BStr::new(&source.path.text),

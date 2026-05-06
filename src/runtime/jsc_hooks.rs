@@ -144,21 +144,25 @@ unsafe fn init_runtime_state(
     // `VirtualMachine::init` immediately before this hook fires.
     let log: *mut bun_logger::Log =
         unsafe { (*vm).log }.map(|p| p.as_ptr()).unwrap_or(ptr::null_mut());
-    // TODO(b2-blocked): `bun_bundler::Transpiler::init` — the un-gated
-    // `Transpiler<'a>` (transpiler.rs:52) has no constructor; the real `init`
-    // lives in `bun_bundler::transpiler::__phase_a_draft`. Un-gate the body
-    // below once that fn moves to the public impl. The `ptr::write` shape is
-    // load-bearing: do not replace with `(*vm).transpiler = ...` (drops zeroed
-    // bytes → UB).
-    #[cfg(any())]
+    // `bun_bundler::Transpiler::init` is now public (transpiler.rs); its body
+    // sub-gates the `BundleOptions::from_api` / `Resolver::init1` tail and
+    // returns `Err(Error::TODO)` until those surface, so the `Err` arm below
+    // is the live path for now. The `ptr::write` shape is load-bearing: do
+    // not replace with `(*vm).transpiler = ...` (drops zeroed bytes → UB).
     {
-        use bun_schema::api;
+        use bun_options_types::schema::api;
         let mut args = api::TransformOptions::default();
         // Inlined `configure_transform_options_for_bun_vm`:
         args.write = Some(false);
         args.resolve = Some(api::ResolveMode::Lazy);
         args.target = Some(api::Target::Bun);
-        match bun_bundler::Transpiler::init(log, args, None) {
+        // PORT NOTE: Zig passed `bun.default_allocator`; the Rust struct
+        // threads `&'a Arena` (`bumpalo::Bump`). Process-lifetime per-VM
+        // arena, paired with `vm.transpiler` itself (never dropped — see
+        // `ptr::write` note below).
+        let allocator: &'static bun_alloc::Arena =
+            Box::leak(Box::new(bun_alloc::Arena::new()));
+        match bun_bundler::Transpiler::init(allocator, log, args, None) {
             Ok(transpiler) => {
                 // SAFETY: `vm` is the unique freshly-boxed VM; `transpiler`
                 // field is zero-init'd uninhabited memory (never dropped).
@@ -174,7 +178,6 @@ unsafe fn init_runtime_state(
             }
         }
     }
-    let _ = log;
 
     // TODO(b2-cycle): `webcore::Body::Value::HiveAllocator::init()` — gated.
     // TODO(b2-cycle): `ParentDeathWatchdog::install_on_event_loop` — spec

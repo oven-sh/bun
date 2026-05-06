@@ -527,18 +527,18 @@ impl Default for AWSSignatureCache {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// TODO(port): the `RareData` accessor / lazy-init bodies below depend on:
-//   - `bun_core::Mutex::lock()/unlock()` (parking_lot Mutex<()> uses RAII guard)
-//   - `bun_uws::SocketGroup::loop_` field / `init()` shape
-//   - `bun_sys::disable_linger`, `Fd::close`
-//   - `bun_http::MimeType::create_hash_table`
-//   - `bun_aio::file_poll::Store::init`
-//   - `bun_collections::StringArrayHashMap` get_key/get_entry/ordered_remove
-//   - `SpawnSyncEventLoop::init(vm)` (takes different args at this tier)
-//   - `bun_string::ZStr::from_bytes` (owned NUL-terminated alloc)
-// Gated wholesale; the struct + `Default` + `EntropyCache` + `CleanupHook` +
-// `entropy_slice`/`next_uuid`/`mysql_context`/`postgresql_context` accessors
-// stay un-gated above/below to satisfy current downstream callers.
+// `_accessor_body`: residual high-tier bodies kept gated.
+//
+// The lazy-init / socket-group / close_all / Drop / HotMap bodies have been
+// lifted to the un-gated section below. What remains here is everything that
+// still names a `bun_runtime` / `bun_http_jsc` / `bun_boringssl_sys` type or a
+// `StringArrayHashMap` API not yet ported (`get_key`/`get_entry`/`ordered_remove`):
+//   - AWSSignatureCache::{get,set}       (scopeguard + get_key/clear)
+//   - mime_type_from_string              (MimeType::create_hash_table)
+//   - HotMap typed get<T>/insert<T>      (TaggedPtrUnion over api::*)
+//   - stderr/stdout/stdin + StdinFdType  (BlobStore/FileStore)
+//   - TLS-ciphers JS host fns            (#[crate::host_fn])
+//   - default_client_ssl_ctx / dns / s3  (high-tier ctors)
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(any())]
 mod _accessor_body {
@@ -1389,48 +1389,352 @@ impl RareData {
 
 } // mod _accessor_body
 
-// ─── Un-gated accessors (no high-tier deps) ──────────────────────────────────
+// ──────────────────────────────────────────────────────────────────────────
+// RareData accessor bodies (un-gated).
+//
+// Lifted out of `_accessor_body` once their lower-tier deps stabilised:
+// `bun_uws::SocketGroup::init`/`Loop::{close_all_groups,drain_closed_sockets}`,
+// `bun_aio::file_poll::Store::init`, `bun_core::{Mutex,csprng}`. The high-tier
+// bodies (Blob/S3/DNS/SSLContextCache/TaggedPtrUnion) stay inside the gated
+// module above.
+// ──────────────────────────────────────────────────────────────────────────
+
+unsafe extern "C" {
+    // Defined in src/jsc/bindings/BunProcess.cpp — sets SO_LINGER {1,0} so
+    // closing a listen socket sends RST instead of entering TIME_WAIT.
+    #[cfg(not(windows))]
+    fn Bun__disableSOLinger(fd: core::ffi::c_int);
+    #[cfg(windows)]
+    fn Bun__disableSOLinger(fd: *mut core::ffi::c_void);
+}
+
+/// Expand `$body` once per embedded `SocketGroup` field — the Rust analogue of
+/// Zig's `inline for (socket_group_fields) |f| @field(this, f)`.
+macro_rules! for_each_socket_group {
+    ($self:ident, |$g:ident| $body:block) => {{
+        { let $g = &mut $self.spawn_ipc_group;         $body }
+        { let $g = &mut $self.test_parallel_ipc_group;  $body }
+        { let $g = &mut $self.bun_connect_group_tcp;   $body }
+        { let $g = &mut $self.bun_connect_group_tls;   $body }
+        { let $g = &mut $self.postgres_group;          $body }
+        { let $g = &mut $self.postgres_tls_group;      $body }
+        { let $g = &mut $self.mysql_group_;            $body }
+        { let $g = &mut $self.mysql_tls_group;         $body }
+        { let $g = &mut $self.valkey_group_;           $body }
+        { let $g = &mut $self.valkey_tls_group;        $body }
+        { let $g = &mut $self.ws_upgrade_group_;       $body }
+        { let $g = &mut $self.ws_upgrade_tls_group;    $body }
+        { let $g = &mut $self.ws_client_group_;        $body }
+        { let $g = &mut $self.ws_client_tls_group;     $body }
+    }};
+}
+
 impl RareData {
-    /// `RareData.mysqlContext`.
+    // ── trivial field accessors ────────────────────────────────────────────
     #[inline]
     pub fn mysql_context(&mut self) -> &mut MySQLContext { &mut self.mysql_context }
-    /// `RareData.postgresqlContext`.
     #[inline]
     pub fn postgresql_context(&mut self) -> &mut PostgresSQLContext { &mut self.postgresql_context }
+    #[inline]
+    pub fn aws_cache(&mut self) -> &mut AWSSignatureCache { &mut self.aws_signature_cache }
+    #[inline]
+    pub fn ssl_ctx_cache(&mut self) -> &mut SSLContextCache { &mut self.ssl_ctx_cache }
 
-    pub fn entropy_slice(&mut self, len: usize) -> &mut [u8] {
-        self.entropy_cache
-            .get_or_insert_with(|| {
-                let mut c = Box::new(EntropyCache::default());
-                c.fill();
-                c
-            })
-            .slice(len)
+    // ── lazy-init: hot_map ─────────────────────────────────────────────────
+    pub fn hot_map(&mut self) -> &mut HotMap {
+        if self.hot_map.is_none() {
+            self.hot_map = Some(HotMap::init());
+        }
+        self.hot_map.as_mut().unwrap()
     }
 
+    // ── lazy-init: entropy ─────────────────────────────────────────────────
+    fn entropy(&mut self) -> &mut EntropyCache {
+        self.entropy_cache.get_or_insert_with(|| {
+            let mut c = Box::new(EntropyCache::default());
+            c.fill();
+            c
+        })
+    }
+    pub fn entropy_slice(&mut self, len: usize) -> &mut [u8] { self.entropy().slice(len) }
     pub fn next_uuid(&mut self) -> UUID {
-        let bytes = self
-            .entropy_cache
-            .get_or_insert_with(|| {
-                let mut c = Box::new(EntropyCache::default());
-                c.fill();
-                c
-            })
-            .get();
+        let bytes = self.entropy().get();
         UUID::init_with(&bytes)
     }
 
-    pub fn ws_client_group<const SSL: bool>(
-        &mut self,
-        _vm: &mut crate::virtual_machine::VirtualMachine,
-    ) -> &mut SocketGroup {
-        // TODO(port): lazy `SocketGroup::init` body — gated (see _accessor_body).
-        if SSL { &mut self.ws_client_tls_group } else { &mut self.ws_client_group_ }
+    // ── lazy-init: misc heap slots ────────────────────────────────────────
+    pub fn pipe_read_buffer(&mut self) -> &mut PipeReadBuffer {
+        self.temp_pipe_read_buffer.get_or_insert_with(|| {
+            // SAFETY: zeroed [u8; N] is valid.
+            unsafe { Box::<PipeReadBuffer>::new_zeroed().assume_init() }
+        })
+    }
+
+    pub fn file_polls(&mut self, _vm: &mut VirtualMachine) -> &mut FilePollStore {
+        self.file_polls_
+            .get_or_insert_with(|| Box::new(FilePollStore::init()))
+    }
+
+    pub fn websocket_deflate(&mut self) -> &mut WebSocketDeflateRareData {
+        self.websocket_deflate
+            .get_or_insert_with(|| Box::new(WebSocketDeflateRareData::default()))
     }
 
     pub fn boring_engine(&mut self) -> *mut boring_sys::ENGINE {
         // TODO(port): bun_boringssl_sys::ENGINE_new lazy-init — gated.
         self.boring_ssl_engine.unwrap_or(core::ptr::null_mut())
+    }
+
+    pub fn default_csrf_secret(&mut self) -> &[u8] {
+        if self.default_csrf_secret.is_empty() {
+            let mut secret = vec![0u8; 16].into_boxed_slice();
+            bun_core::csprng(&mut secret);
+            self.default_csrf_secret = secret;
+        }
+        &self.default_csrf_secret
+    }
+
+    pub fn tls_default_ciphers(&self) -> Option<&[u8]> {
+        // PORT NOTE: Zig returns `[:0]const u8`; the stored buffer is
+        // NUL-terminated (set_tls_default_ciphers appends 0) so callers needing
+        // a C string can take `.as_ptr()` of the trailing-NUL slice.
+        self.tls_default_ciphers.as_deref()
+    }
+
+    pub fn set_tls_default_ciphers(&mut self, ciphers: &[u8]) {
+        // Old value (if any) drops here via Box<[u8]> Drop.
+        let mut owned = Vec::with_capacity(ciphers.len() + 1);
+        owned.extend_from_slice(ciphers);
+        owned.push(0);
+        self.tls_default_ciphers = Some(owned.into_boxed_slice());
+    }
+
+    pub fn push_cleanup_hook(
+        &mut self,
+        global_this: &JSGlobalObject,
+        ctx: *mut c_void,
+        func: CleanupHookFunction,
+    ) {
+        self.cleanup_hooks.push(CleanupHook::from(global_this, ctx, func));
+    }
+
+    pub fn spawn_sync_event_loop(&mut self, vm: &mut VirtualMachine) -> &mut SpawnSyncEventLoop {
+        if self.spawn_sync_event_loop_.is_none() {
+            // PORT NOTE: in-place out-param init — Zig used Owned::new(undefined)
+            // then ptr.init(vm). `event_loop` inside captures `self`-addr, so the
+            // value must not move after init; allocate the Box first, init into it.
+            let mut boxed = Box::<core::mem::MaybeUninit<SpawnSyncEventLoop>>::new_uninit();
+            SpawnSyncEventLoop::init(
+                // SAFETY: `MaybeUninit<MaybeUninit<T>>` and `MaybeUninit<T>` have
+                // identical layout; `assume_init_mut` here just peels the outer
+                // wrapper around still-uninitialised storage.
+                unsafe { boxed.assume_init_mut() },
+                vm as *mut VirtualMachine as *mut (),
+            );
+            // SAFETY: `init` fully initialised the slot.
+            self.spawn_sync_event_loop_ = Some(unsafe { boxed.assume_init() });
+        }
+        self.spawn_sync_event_loop_.as_mut().unwrap()
+    }
+
+    // ── watch-mode listen sockets ─────────────────────────────────────────
+    pub fn add_listening_socket_for_watch_mode(&mut self, socket: Fd) {
+        let _g = self.listening_sockets_for_watch_mode_lock.lock();
+        self.listening_sockets_for_watch_mode.push(socket);
+    }
+
+    pub fn remove_listening_socket_for_watch_mode(&mut self, socket: Fd) {
+        let _g = self.listening_sockets_for_watch_mode_lock.lock();
+        if let Some(i) = self
+            .listening_sockets_for_watch_mode
+            .iter()
+            .position(|s| *s == socket)
+        {
+            self.listening_sockets_for_watch_mode.swap_remove(i);
+        }
+    }
+
+    pub fn close_all_listen_sockets_for_watch_mode(&mut self) {
+        let _g = self.listening_sockets_for_watch_mode_lock.lock();
+        for socket in self.listening_sockets_for_watch_mode.drain(..) {
+            // Prevent TIME_WAIT state.
+            // SAFETY: FFI; `socket` is a live fd we registered.
+            unsafe { Bun__disableSOLinger(socket.cast()) };
+            socket.close();
+        }
+    }
+
+    // ── isolation watchers (FSWatcher / StatWatcher) ──────────────────────
+    pub fn add_fs_watcher_for_isolation(&mut self, watcher: *mut FSWatcher) {
+        self.fs_watchers_for_isolation.push(watcher);
+    }
+    pub fn remove_fs_watcher_for_isolation(&mut self, watcher: *mut FSWatcher) {
+        if let Some(i) = self.fs_watchers_for_isolation.iter().position(|w| *w == watcher) {
+            self.fs_watchers_for_isolation.swap_remove(i);
+        }
+    }
+    pub fn add_stat_watcher_for_isolation(&mut self, watcher: *mut StatWatcher) {
+        self.stat_watchers_for_isolation.push(watcher);
+    }
+    pub fn remove_stat_watcher_for_isolation(&mut self, watcher: *mut StatWatcher) {
+        if let Some(i) = self.stat_watchers_for_isolation.iter().position(|w| *w == watcher) {
+            self.stat_watchers_for_isolation.swap_remove(i);
+        }
+    }
+    pub fn close_all_watchers_for_isolation(&mut self) {
+        // TODO(port): high-tier — FSWatcher::detach / StatWatcher::close live in
+        // bun_runtime::node. Gated until cycle-break vtable lands.
+        #[cfg(any())]
+        {
+            while let Some(w) = self.fs_watchers_for_isolation.pop() {
+                // SAFETY: registered via add_fs_watcher_for_isolation; still live.
+                unsafe { (*w).detach() };
+            }
+            while let Some(w) = self.stat_watchers_for_isolation.pop() {
+                // SAFETY: registered via add_stat_watcher_for_isolation; still live.
+                unsafe { (*w).close() };
+            }
+        }
+        self.fs_watchers_for_isolation.clear();
+        self.stat_watchers_for_isolation.clear();
+    }
+
+    // ── socket groups: lazy init ──────────────────────────────────────────
+    #[inline]
+    fn lazy_group<'a>(g: &'a mut SocketGroup, vm: &VirtualMachine) -> &'a mut SocketGroup {
+        // PORT NOTE: Zig took `comptime field: []const u8` + @field; Rust takes
+        // the field reference directly since callers know the field statically.
+        if g.loop_.is_null() {
+            g.init(vm.uws_loop(), None, core::ptr::null_mut());
+        }
+        g
+    }
+
+    pub fn spawn_ipc_group(&mut self, vm: &VirtualMachine) -> &mut SocketGroup {
+        Self::lazy_group(&mut self.spawn_ipc_group, vm)
+    }
+    pub fn test_parallel_ipc_group(&mut self, vm: &VirtualMachine) -> &mut SocketGroup {
+        Self::lazy_group(&mut self.test_parallel_ipc_group, vm)
+    }
+    /// One shared group per (VM, ssl) for every `Bun.connect` / `tls.connect`
+    /// client socket. Replaces the old per-connection `us_socket_context_t`
+    /// allocation that was the root of the SSL_CTX-per-connect leak.
+    pub fn bun_connect_group<const SSL: bool>(&mut self, vm: &VirtualMachine) -> &mut SocketGroup {
+        Self::lazy_group(
+            if SSL { &mut self.bun_connect_group_tls } else { &mut self.bun_connect_group_tcp },
+            vm,
+        )
+    }
+    pub fn postgres_group<const SSL: bool>(&mut self, vm: &VirtualMachine) -> &mut SocketGroup {
+        Self::lazy_group(
+            if SSL { &mut self.postgres_tls_group } else { &mut self.postgres_group },
+            vm,
+        )
+    }
+    pub fn mysql_group<const SSL: bool>(&mut self, vm: &VirtualMachine) -> &mut SocketGroup {
+        Self::lazy_group(
+            if SSL { &mut self.mysql_tls_group } else { &mut self.mysql_group_ },
+            vm,
+        )
+    }
+    pub fn valkey_group<const SSL: bool>(&mut self, vm: &VirtualMachine) -> &mut SocketGroup {
+        Self::lazy_group(
+            if SSL { &mut self.valkey_tls_group } else { &mut self.valkey_group_ },
+            vm,
+        )
+    }
+    pub fn ws_upgrade_group<const SSL: bool>(&mut self, vm: &VirtualMachine) -> &mut SocketGroup {
+        Self::lazy_group(
+            if SSL { &mut self.ws_upgrade_tls_group } else { &mut self.ws_upgrade_group_ },
+            vm,
+        )
+    }
+    pub fn ws_client_group<const SSL: bool>(&mut self, vm: &VirtualMachine) -> &mut SocketGroup {
+        Self::lazy_group(
+            if SSL { &mut self.ws_client_tls_group } else { &mut self.ws_client_group_ },
+            vm,
+        )
+    }
+
+    // ── close_all_socket_groups ───────────────────────────────────────────
+    /// Drain every embedded socket group. Must run BEFORE JSC teardown — closeAll
+    /// fires on_close → JS callbacks → needs a live VM. RareData.deinit() runs
+    /// after `WebWorker__teardownJSCVM` (web_worker.zig), so doing the closeAll
+    /// there would dispatch into freed JSC heap.
+    pub fn close_all_socket_groups(&mut self, vm: &VirtualMachine) {
+        // closeAll() dispatches on_close into JS while the VM is still alive, so a
+        // handler can call Bun.connect/postgres/etc. and re-populate a group we
+        // just drained. Loop until every group is observed empty in the same pass
+        // (bounded — each retry only happens if a JS callback opened a *new*
+        // socket, and the cap stops a deliberately-spinning on_close from wedging
+        // teardown; the post-close force-drain in close_all handles whatever's
+        // left after the cap).
+        // Walk the loop's linked-group list rather than just our 14 embedded
+        // fields: Listener/uWS-App groups own their own SocketGroup, and accepted
+        // sockets land *there*, not in RareData. Iterating only the embedded
+        // fields missed those, leaking one 88-byte us_socket_t per still-open
+        // accepted connection at process.exit() (the LSAN cluster on #29932
+        // build 49245).
+        let _ = self;
+        let loop_ = vm.uws_loop();
+        let mut rounds: u8 = 0;
+        while rounds < 8 {
+            // SAFETY: `uws_loop()` returns a live loop for the VM lifetime.
+            if !unsafe { (*loop_).close_all_groups() } {
+                break;
+            }
+            rounds += 1;
+        }
+        // us_socket_close pushes to loop->data.closed_head; loop_post() normally
+        // frees it on the next tick. We're past the last tick, so drain it now —
+        // every us_socket_t is libc-allocated and otherwise becomes an LSAN leak
+        // (the only pointer into it lives in mimalloc-backed RareData, which LSAN
+        // can't trace once we unregister the root region).
+        // SAFETY: same as above.
+        unsafe { (*loop_).drain_closed_sockets() };
+    }
+}
+
+#[repr(i32)]
+pub enum StdinFdType {
+    File = 0,
+    Pipe = 1,
+    Socket = 2,
+}
+
+impl Drop for RareData {
+    fn drop(&mut self) {
+        // temp_pipe_read_buffer / spawn_sync_event_loop_ / aws_signature_cache /
+        // s3_default_client / default_csrf_secret / cleanup_hooks / cron_jobs /
+        // path_buf / websocket_deflate / tls_default_ciphers / valkey_context:
+        // all dropped automatically via field Drop.
+
+        // TODO(port): bun_boringssl_sys not in dep graph — gated.
+        #[cfg(any())]
+        if let Some(engine) = self.boring_ssl_engine.take() {
+            // SAFETY: engine was created by ENGINE_new.
+            unsafe { boring_sys::ENGINE_free(engine) };
+        }
+        debug_assert!(self.cron_jobs.is_empty());
+
+        #[cfg(any())]
+        if let Some(s) = self.default_client_ssl_ctx.take() {
+            // SAFETY: returned by ssl_ctx_cache.get_or_create_opts with +1 ref.
+            unsafe { boring_sys::SSL_CTX_free(s) };
+        }
+        // After the default-ctx free so the tombstone callback still finds a live
+        // map; deinit then clears every remaining entry's ex_data so any later
+        // SSL_CTX_free (from sockets that survive RareData) doesn't deref freed
+        // Entries.
+        // TODO(port): verify field-drop ordering wrt ssl_ctx_cache; may need ManuallyDrop.
+
+        // closeAllSocketGroups() must have already run (before JSC teardown) so
+        // these are empty; deinit() asserts that in debug.
+        for_each_socket_group!(self, |g| {
+            // SAFETY: embedded by-value group; loop has already unlinked it
+            // (close_all_socket_groups ran), so destroy is a no-op assert.
+            unsafe { SocketGroup::destroy(g as *mut SocketGroup) };
+        });
     }
 }
 

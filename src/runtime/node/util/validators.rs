@@ -312,7 +312,6 @@ pub fn validate_number(
         valid = false;
     }
     if !valid {
-        let name = bstr::BStr::new(name);
         if let (Some(min), Some(max)) = (maybe_min, maybe_max) {
             return Err(throw_range_error(
                 global_this,

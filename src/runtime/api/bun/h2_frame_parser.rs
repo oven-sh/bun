@@ -3726,7 +3726,7 @@ impl H2FrameParser {
 
     pub fn load_settings_from_js_value(&mut self, global_object: &JSGlobalObject, options: JSValue) -> JsResult<()> {
         if options.is_empty_or_undefined_or_null() || !options.is_object() {
-            return global_object.throw("Expected settings to be a object");
+            return Err(global_object.throw("Expected settings to be a object"));
         }
 
         macro_rules! number_setting {
@@ -3786,7 +3786,7 @@ impl H2FrameParser {
                 let mut iter = bun_jsc::JSPropertyIterator::init(
                     global_object,
                     custom_settings_obj,
-                    bun_jsc::JSPropertyIteratorOptions { skip_empty_name: false, include_value: true },
+                    bun_jsc::JSPropertyIteratorOptions { skip_empty_name: false, include_value: true, ..Default::default() },
                 )?;
 
                 while let Some(prop_name) = iter.next()? {
@@ -3799,7 +3799,7 @@ impl H2FrameParser {
                     let setting_id_str = prop_name.to_utf8();
                     // Parse bytes directly (ASCII decimal) — Zig: std.fmt.parseInt(u32, slice, 10).
                     // Do not insert UTF-8 validation on external data per PORTING.md §Strings.
-                    let Some(setting_id) = bun_str::strings::parse_int::<u32>(setting_id_str.as_bytes(), 10).ok()
+                    let Some(setting_id) = bun_str::strings::parse_int::<u32>(setting_id_str.slice(), 10).ok()
                     else {
                         return global_object.err_http2_invalid_setting_value_range_error("Invalid custom setting identifier").throw();
                     };

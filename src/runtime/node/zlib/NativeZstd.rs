@@ -201,12 +201,12 @@ impl NativeZstd {
                 this.stream.close();
                 // SAFETY: err_.msg is non-null when is_error() is true; it is a NUL-terminated C string.
                 let msg = unsafe { CStr::from_ptr(err_.msg) }.to_bytes();
-                return global
+                return Err(global
                     .err(
                         jsc::ErrorCode::ZLIB_INITIALIZATION_FAILED,
                         format_args!("{}", bstr::BStr::new(msg)),
                     )
-                    .throw();
+                    .throw());
             }
         }
 

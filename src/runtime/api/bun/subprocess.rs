@@ -1334,17 +1334,16 @@ impl Subprocess<'_> {
 
         match &self.process.status {
             Status::Exited(exit) => {
-                JSPromise::resolved_promise_value(global_this, JSValue::js_number(exit.code))
+                JSPromise::resolved_promise_value(global_this, JSValue::js_number(exit.code as f64))
             }
             Status::Signaled(signal) => JSPromise::resolved_promise_value(
                 global_this,
-                JSValue::js_number(signal.to_exit_code().unwrap_or(254)),
+                JSValue::js_number(
+                    bun_sys::SignalCode(*signal).to_exit_code().unwrap_or(254) as f64,
+                ),
             ),
             Status::Err(err) => {
-                let js_err = match err.to_js(global_this) {
-                    Ok(v) => v,
-                    Err(_) => return JSValue::ZERO,
-                };
+                let js_err = err.to_js(global_this);
                 JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                     global_this,
                     js_err,

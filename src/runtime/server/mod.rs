@@ -1366,6 +1366,13 @@ pub struct SavedRequest {
     pub response: uws::AnyResponse,
 }
 
+impl SavedRequest {
+    /// `SavedRequest.deinit` — full body in gated `server_body.rs` draft.
+    pub fn deinit(&mut self) {
+        todo!("blocked_on: server::SavedRequest::deinit body un-gate")
+    }
+}
+
 // ─── ServerAllConnectionsClosedTask ──────────────────────────────────────────
 pub struct ServerAllConnectionsClosedTask {
     pub global_object: *const jsc::JSGlobalObject,

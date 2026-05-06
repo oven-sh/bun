@@ -85,13 +85,15 @@ impl Flags {
     }
 }
 
+impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
+    pub const EMPTY: Self = Self::init_static(&[]);
+}
+
 impl<T, const Z: bool> CowSliceZ<T, Z> {
     // TODO(port): Zig exposed `pub const Slice` / `SliceMut` associated type
     // aliases that switched on `sentinel` (`[:z]const T` vs `[]const T`). Rust
     // has no inherent associated type aliases; callers use `&[T]` / `&mut [T]`
     // directly. For `Z = true` the NUL is at `slice()[len]` in backing storage.
-
-    pub const EMPTY: Self = Self::init_static(&[]);
 
     /// Create a new Cow that owns its allocation.
     ///

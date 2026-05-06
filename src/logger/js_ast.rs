@@ -301,6 +301,20 @@ pub mod E {
             }
             true
         }
+        /// Zig `toUTF8(allocator)` — in-place transcode `data` to UTF-8 if it
+        /// is currently UTF-16. No-op when already UTF-8.
+        pub fn to_utf8(&mut self, bump: &Bump) -> Result<(), AllocError> {
+            if !self.is_utf16 {
+                return Ok(());
+            }
+            let v = strings::to_utf8_alloc(self.slice16());
+            let buf = bump.alloc_slice_copy(&v);
+            // SAFETY: arena-owned slice; lifetime erased per Phase-A `Str`
+            // alias (`&'static [u8]` standing in for arena lifetime).
+            self.data = unsafe { core::mem::transmute::<&[u8], &'static [u8]>(buf) };
+            self.is_utf16 = false;
+            Ok(())
+        }
         /// Zig `string(allocator)` — return UTF-8 bytes, transcoding if UTF-16.
         pub fn string<'b>(&self, bump: &'b Bump) -> Result<&'b [u8], AllocError> {
             if self.is_utf8() {

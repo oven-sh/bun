@@ -14,6 +14,8 @@ use bun_sql::shared::data::Data;
 use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode as PostgresSQLQueryResultMode;
 
 pub use crate::shared::sql_data_cell::SQLDataCell;
+pub use crate::shared::sql_data_cell::{Flags, Tag, Value};
+use bun_sql::shared::column_identifier::ColumnIdentifier;
 
 // TODO(port): narrow error set — Zig used inferred error sets that flow into
 // AnyPostgresError. Phase B should confirm AnyPostgresError covers all variants
@@ -459,7 +461,7 @@ fn parse_array(
                                 return Err(err!("UnsupportedArrayFormat").into());
                             }
 
-                            if bun_string::strings::eql_case_insensitive_ascii(&slice[0..8], b"Infinity", false) {
+                            if bun_core::strings::eql_case_insensitive_ascii(&slice[0..8], b"Infinity", false) {
                                 if matches!(
                                     array_type,
                                     types::Tag::DateArray | types::Tag::TimestampArray | types::Tag::TimestamptzArray
@@ -556,7 +558,7 @@ fn parse_array(
                                         if element.len() < 8 {
                                             return Err(err!("UnsupportedArrayFormat").into());
                                         }
-                                        if bun_string::strings::eql_case_insensitive_ascii(&element[0..8], b"Infinity", false) {
+                                        if bun_core::strings::eql_case_insensitive_ascii(&element[0..8], b"Infinity", false) {
                                             let val = if is_negative { -f64::INFINITY } else { f64::INFINITY };
                                             if matches!(
                                                 array_type,
@@ -601,7 +603,7 @@ fn parse_array(
                                 array.push(SQLDataCell {
                                     tag: SQLDataCell::Tag::Float8,
                                     value: SQLDataCell::Value {
-                                        float8: bun_core::parse_double(element).unwrap_or(f64::NAN),
+                                        float8: bun_string::parse_double(element).unwrap_or(f64::NAN),
                                     },
                                     ..Default::default()
                                 });
@@ -900,7 +902,7 @@ pub fn from_bytes(
                     ..Default::default()
                 })
             } else {
-                let float8: f64 = bun_core::parse_double(bytes).unwrap_or(f64::NAN);
+                let float8: f64 = bun_string::parse_double(bytes).unwrap_or(f64::NAN);
                 Ok(SQLDataCell {
                     tag: SQLDataCell::Tag::Float8,
                     value: SQLDataCell::Value { float8 },
@@ -916,7 +918,7 @@ pub fn from_bytes(
                     ..Default::default()
                 })
             } else {
-                let float4: f64 = bun_core::parse_double(bytes).unwrap_or(f64::NAN);
+                let float4: f64 = bun_string::parse_double(bytes).unwrap_or(f64::NAN);
                 Ok(SQLDataCell {
                     tag: SQLDataCell::Tag::Float8,
                     value: SQLDataCell::Value { float8: float4 },
@@ -996,18 +998,18 @@ pub fn from_bytes(
                 match tag {
                     T::Timestamptz => Ok(SQLDataCell {
                         tag: SQLDataCell::Tag::DateWithTimeZone,
-                        value: SQLDataCell::Value { date_with_time_zone: types::date::from_binary(bytes) },
+                        value: SQLDataCell::Value { date_with_time_zone: crate::postgres::types::date::from_binary(bytes) },
                         ..Default::default()
                     }),
                     T::Timestamp => Ok(SQLDataCell {
                         tag: SQLDataCell::Tag::Date,
-                        value: SQLDataCell::Value { date: types::date::from_binary(bytes) },
+                        value: SQLDataCell::Value { date: crate::postgres::types::date::from_binary(bytes) },
                         ..Default::default()
                     }),
                     _ => unreachable!(),
                 }
             } else {
-                if bun_string::strings::eql_case_insensitive_ascii(bytes, b"NULL", true) {
+                if bun_core::strings::eql_case_insensitive_ascii(bytes, b"NULL", true) {
                     return Ok(SQLDataCell {
                         tag: SQLDataCell::Tag::Null,
                         value: SQLDataCell::Value { null: 0 },
@@ -1510,7 +1512,7 @@ impl<'a> Putter<'a> {
         self.count += 1;
         cell.index = match &field.name_or_index {
             // The indexed columns can be out of order.
-            protocol::NameOrIndex::Index(i) => *i,
+            ColumnIdentifier::Index(i) => *i,
             _ => i32::try_from(index).unwrap(),
             // TODO(port): confirm cell.index width — Zig used @intCast(index)
         };
@@ -1519,9 +1521,9 @@ impl<'a> Putter<'a> {
         // and not a .values() array, we can discard the data
         // immediately.
         cell.is_indexed_column = match &field.name_or_index {
-            protocol::NameOrIndex::Duplicate => 2,
-            protocol::NameOrIndex::Index(_) => 1,
-            protocol::NameOrIndex::Name(_) => 0,
+            ColumnIdentifier::Duplicate => 2,
+            ColumnIdentifier::Index(_) => 1,
+            ColumnIdentifier::Name(_) => 0,
         };
         Ok(true)
     }

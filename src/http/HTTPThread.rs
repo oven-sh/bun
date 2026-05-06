@@ -930,7 +930,11 @@ mod _event_loop_draft {
         Output::Source::configure_named_thread(bun_core::zstr!("HTTP Client"));
         // PERF(port): was MimallocArena bulk-free for bun.http.default_allocator.
 
-        let loop_ = MiniEventLoop::init_global(None, None);
+        // TODO(b2-blocked): MiniEventLoop::init_global lives in bun_event_loop
+        // (higher tier). Until that's wired into bun_http's deps, drive the
+        // raw uws Loop directly. The MiniEventLoop wrapper handle (`loop_`)
+        // stays null; only `uws_loop` is consumed below.
+        let uws_loop = uws::Loop::get();
 
         #[cfg(windows)]
         {
@@ -943,8 +947,8 @@ mod _event_loop_draft {
         }
 
         let thread = crate::http_thread_mut();
-        thread.loop_ = loop_;
-        thread.uws_loop = loop_.loop_;
+        thread.loop_ = core::ptr::null();
+        thread.uws_loop = uws_loop;
         thread.http_context.init();
         if let Err(err) = thread.https_context.init_with_thread_opts(&opts) {
             (opts.on_init_error)(err, &opts);

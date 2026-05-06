@@ -850,6 +850,13 @@ impl<'a> Lexer<'a> {
                         }
                     }
 
+                    // PORT NOTE: reshaped for borrowck — capture slice bounds as indices
+                    // instead of laundering a `&'a [u8]` through a raw pointer. On the fast
+                    // path we reslice immediately before `return`; on the slow path we
+                    // reslice after the loop and hand it straight to
+                    // `decode_escape_sequences` without stashing in `self` first.
+                    let slice_lo: usize;
+                    let slice_hi: usize;
                     if is_multiline_string_literal {
                         loop {
                             match self.code_point {
@@ -877,15 +884,13 @@ impl<'a> Lexer<'a> {
                                     self.step();
 
                                     self.token = T::t_string_literal;
-                                    // SAFETY: detach from `&self.source.contents` so the
-                                    // slow-pass `decode_escape_sequences(&mut self, ..)` below
-                                    // can borrow `self` mutably; contents is not mutated there.
-                                    self.string_literal_slice = unsafe {
-                                        &*(&self.source.contents[start + 2..end] as *const [u8])
-                                    };
                                     if needs_slow_pass {
+                                        slice_lo = start + 2;
+                                        slice_hi = end;
                                         break;
                                     }
+                                    self.string_literal_slice =
+                                        &self.source.contents[start + 2..end];
                                     return Ok(());
                                 }
                                 _ => {}
@@ -919,16 +924,13 @@ impl<'a> Lexer<'a> {
                                     self.step();
 
                                     self.token = T::t_string_literal;
-                                    // SAFETY: detach from `&self.source.contents` so the
-                                    // slow-pass `decode_escape_sequences(&mut self, ..)` below
-                                    // can borrow `self` mutably; contents is not mutated there.
-                                    self.string_literal_slice = unsafe {
-                                        &*(&self.source.contents[start..self.end - 1]
-                                            as *const [u8])
-                                    };
                                     if needs_slow_pass {
+                                        slice_lo = start;
+                                        slice_hi = self.end - 1;
                                         break;
                                     }
+                                    self.string_literal_slice =
+                                        &self.source.contents[start..self.end - 1];
                                     return Ok(());
                                 }
                                 _ => {}
@@ -939,7 +941,7 @@ impl<'a> Lexer<'a> {
 
                     self.start = start;
                     if needs_slow_pass {
-                        let text = self.string_literal_slice;
+                        let text = &self.source.contents[slice_lo..slice_hi];
                         let mut array_list =
                             bumpalo::collections::Vec::with_capacity_in(text.len(), self.bump);
                         if is_multiline_string_literal {

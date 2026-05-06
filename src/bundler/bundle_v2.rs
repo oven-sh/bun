@@ -63,10 +63,11 @@ pub struct PendingImport {
 }
 
 pub struct BundleV2<'a> {
-    // PORT NOTE: raw ptrs — Zig stored `*Transpiler` (and aliased the same
-    // pointer into `ssr_transpiler` when SSR graph isn't separate). `&'a mut`
-    // would forbid that aliasing. TODO(port): lifetime.
-    pub transpiler: *mut Transpiler<'a>,
+    // PORT NOTE: Zig stored `*Transpiler` (and aliased the same pointer into
+    // `ssr_transpiler` when SSR graph isn't separate). `ssr_transpiler` stays
+    // `*mut` so the alias is legal; `transpiler` is `&'a mut` for ergonomic
+    // field access throughout the bundler bodies.
+    pub transpiler: &'a mut Transpiler<'a>,
     /// When Server Components is enabled, this is used for the client bundles
     /// and `transpiler` is used for the server bundles.
     pub client_transpiler: Option<NonNull<Transpiler<'a>>>,

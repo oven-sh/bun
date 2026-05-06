@@ -1006,7 +1006,8 @@ impl PathLike {
         // `&mut self` interchangeably, so take by reference and rely on Drop
         // for the owned-side release.
         match self {
-            Self::EncodedSlice(val) => val.deinit(),
+            // `ZigStringSlice` cleanup happens in its own `Drop`.
+            Self::EncodedSlice(_) => {}
             Self::ThreadsafeString(val) => val.deinit(),
             Self::SliceWithUnderlyingString(val) => val.deinit(),
             Self::Buffer(val) => {

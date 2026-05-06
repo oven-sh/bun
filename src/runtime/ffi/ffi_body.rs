@@ -991,7 +991,7 @@ impl CompileC {
         let source_first = ZBox::from_bytes(self.source.first().as_bytes());
         let mut iter = self.symbols.map.iterator();
         while let Some(entry) = iter.next() {
-            let symbol: &[u8] = entry.key_ptr;
+            let symbol: &[u8] = &**entry.key_ptr;
             // FIXME: why are we duping here? can we at least use a stack
             // fallback allocator?
             let duped = ZBox::from_bytes(symbol);

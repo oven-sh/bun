@@ -2830,11 +2830,12 @@ impl_cares_record_type!(c_ares::struct_any_reply, "any", "queryAny", PendingAnyC
 
 /// Transparent newtype over `struct_hostent` carrying the comptime `type_name` tag.
 macro_rules! hostent_newtype {
-    ($name:ident, $inner:ty, $tag:literal, $field:ident, $to_js:path, $destroy:expr) => {
+    ($name:ident, $inner:ty, $tag:literal, $syscall:literal, $field:ident, $to_js:path, $destroy:expr) => {
         #[repr(transparent)]
         pub struct $name(pub $inner);
         impl CAresRecordType for $name {
             const TYPE_NAME: &'static str = $tag;
+            const SYSCALL: &'static str = $syscall;
             const CACHE_FIELD: PendingCacheField = PendingCacheField::$field;
             fn to_js_response(&mut self, global: &JSGlobalObject, type_name: &'static str) -> JsResult<JSValue> {
                 $to_js(&mut self.0, global, type_name.as_bytes())
@@ -2847,17 +2848,17 @@ macro_rules! hostent_newtype {
     };
 }
 
-hostent_newtype!(NsHostent, c_ares::struct_hostent, "ns", PendingNsCacheCares,
+hostent_newtype!(NsHostent, c_ares::struct_hostent, "ns", "queryNs", PendingNsCacheCares,
     super::cares_jsc::hostent_to_js_response, c_ares::struct_hostent::destroy);
-hostent_newtype!(PtrHostent, c_ares::struct_hostent, "ptr", PendingPtrCacheCares,
+hostent_newtype!(PtrHostent, c_ares::struct_hostent, "ptr", "queryPtr", PendingPtrCacheCares,
     super::cares_jsc::hostent_to_js_response, c_ares::struct_hostent::destroy);
-hostent_newtype!(CnameHostent, c_ares::struct_hostent, "cname", PendingCnameCacheCares,
+hostent_newtype!(CnameHostent, c_ares::struct_hostent, "cname", "queryCname", PendingCnameCacheCares,
     super::cares_jsc::hostent_to_js_response, c_ares::struct_hostent::destroy);
-hostent_newtype!(AHostentWithTtls, c_ares::hostent_with_ttls, "a", PendingACacheCares,
+hostent_newtype!(AHostentWithTtls, c_ares::hostent_with_ttls, "a", "queryA", PendingACacheCares,
     super::cares_jsc::hostent_with_ttls_to_js_response,
     // `hostent_with_ttls` is heap-boxed (parser returns `Box<_>`); Drop calls `ares_free_hostent`.
     |p: *mut c_ares::hostent_with_ttls| drop(Box::from_raw(p)));
-hostent_newtype!(AaaaHostentWithTtls, c_ares::hostent_with_ttls, "aaaa", PendingAaaaCacheCares,
+hostent_newtype!(AaaaHostentWithTtls, c_ares::hostent_with_ttls, "aaaa", "queryAaaa", PendingAaaaCacheCares,
     super::cares_jsc::hostent_with_ttls_to_js_response,
     |p: *mut c_ares::hostent_with_ttls| drop(Box::from_raw(p)));
 

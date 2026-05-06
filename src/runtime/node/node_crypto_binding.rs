@@ -338,7 +338,7 @@ pub trait CryptoJobCtx: Sized {
 // trait impls themselves remain gated.
 #[repr(C)]
 pub struct CryptoJob<Ctx> {
-    vm: &'static VirtualMachine,
+    vm: *mut VirtualMachine,
     task: WorkPoolTask,
     any_task: AnyTask,
     poll: KeepAlive,

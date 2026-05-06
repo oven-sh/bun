@@ -51,18 +51,18 @@ impl Expect {
         }
 
         // handle failure
-        // TODO(port): ConsoleObject::Formatter field init — other fields rely on Zig defaults
+        // PORT NOTE: to_fmt() mutably borrows the formatter for the lifetime of the returned
+        // ZigFormatter, so two concurrent to_fmt() values need two formatter instances.
         let mut formatter = super::make_formatter(global);
-        let value_fmt = value.to_fmt(&mut formatter);
-        let expected_fmt = expected.to_fmt(&mut formatter);
+        let mut formatter2 = super::make_formatter(global);
         if not {
-            let received_fmt = value.to_fmt(&mut formatter);
             return this.throw(
                 global,
                 Expect::get_signature("toContainValue", "<green>expected<r>", true),
                 format_args!(
                     "\n\nExpected to not contain: <green>{}<r>\nReceived: <red>{}<r>\n",
-                    expected_fmt, received_fmt,
+                    expected.to_fmt(&mut formatter),
+                    value.to_fmt(&mut formatter2),
                 ),
             );
         }
@@ -72,7 +72,8 @@ impl Expect {
             Expect::get_signature("toContainValue", "<green>expected<r>", false),
             format_args!(
                 "\n\nExpected to contain: <green>{}<r>\nReceived: <red>{}<r>\n",
-                expected_fmt, value_fmt,
+                expected.to_fmt(&mut formatter),
+                value.to_fmt(&mut formatter2),
             ),
         )
     }

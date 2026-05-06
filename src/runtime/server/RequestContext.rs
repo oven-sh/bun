@@ -1872,6 +1872,7 @@ where
         response_stream.sink.finalize();
         this.sink = None; // sink.destroy() — Box drops
         this.render_missing();
+        */
     }
 
     pub fn did_upgrade_web_socket(&self) -> bool {

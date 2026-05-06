@@ -60,6 +60,33 @@ unsafe extern "C" {
     fn ERR_lib_error_string(packed_error: u32) -> *const c_char;
 }
 
+/// Local shims over `bun_string_jsc.zig` symbols not yet surfaced through the
+/// top-level `bun_jsc::bun_string_jsc` re-export module.
+mod bun_string_jsc_shim {
+    use super::{BunString, JSGlobalObject, JSValue, JsError, JsResult};
+
+    unsafe extern "C" {
+        fn BunString__toJSDOMURL(global_object: *mut JSGlobalObject, in_: *mut BunString) -> JSValue;
+        fn BunString__createArray(
+            global_object: *mut JSGlobalObject,
+            ptr: *const BunString,
+            len: usize,
+        ) -> JSValue;
+    }
+
+    pub fn to_jsdomurl(this: &mut BunString, global_object: &JSGlobalObject) -> JSValue {
+        // SAFETY: `this` is a live &mut BunString; `global_object` borrowed for call duration.
+        unsafe { BunString__toJSDOMURL(global_object.as_ptr(), this) }
+    }
+
+    /// Calls `toJS` on each element of `array` and returns a JSArray.
+    pub fn to_js_array(global_object: &JSGlobalObject, array: &[BunString]) -> JsResult<JSValue> {
+        // SAFETY: ptr/len from a live slice; `global_object` borrowed for call duration.
+        let v = unsafe { BunString__createArray(global_object.as_ptr(), array.as_ptr(), array.len()) };
+        if global_object.has_exception() { Err(JsError::Thrown) } else { Ok(v) }
+    }
+}
+
 // ─── Re-exports ──────────────────────────────────────────────────────────────
 pub use super::web_socket_server_context::WebSocketServerContext;
 pub use super::http_status_text as HTTPStatusText;
@@ -901,7 +928,7 @@ impl ServePlugins {
         for raw_plugin in &plugin_list {
             bunstring_array.push(BunString::init(&***raw_plugin));
         }
-        let plugin_js_array = jsc::bun_string_jsc::to_js_array(global, &bunstring_array)?;
+        let plugin_js_array = bun_string_jsc_shim::to_js_array(global, &bunstring_array)?;
         let bunfig_folder_bunstr = jsc::bun_string_jsc::create_utf8_for_js(global, bunfig_folder)?;
 
         self.state = ServePluginsState::Pending {
@@ -2075,7 +2102,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     #[bun_jsc::host_fn(getter)]
     pub fn get_url(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let mut url = self.get_url_as_string().map_err(|_| global.throw_out_of_memory())?;
-        let r = jsc::bun_string_jsc::to_jsdomurl(&mut url, global);
+        let r = bun_string_jsc_shim::to_jsdomurl(&mut url, global);
         url.deref();
         Ok(r)
     }
@@ -2856,15 +2883,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             node_response.promise = mem::replace(&mut strong_promise, StrongOptional::empty());
                             // TODO: properly propagate exception upwards
                             let _ = (result, strong_self);
+                            // result.then2(global, strong_self,
+                            //     node_http_response::Bun__NodeHTTPRequest__onResolve,
+                            //     node_http_response::Bun__NodeHTTPRequest__onReject) catch {};
                             todo!("blocked_on: bun_jsc::JSValue::then2 (JSValue-ctx variant)");
                             #[allow(unreachable_code)]
                             {
-                                let _ = (
-                                    super::node_http_response::Bun__NodeHTTPRequest__onResolve,
-                                    super::node_http_response::Bun__NodeHTTPRequest__onReject,
-                                );
+                                is_async = true;
                             }
-                            is_async = true;
                         }
 
                         break 'brk HTTPResult::Pending(result);

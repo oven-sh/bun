@@ -14,7 +14,7 @@ use super::SSLConfig;
 use super::SocketMode;
 
 // ─── local shims (upstream-crate gaps) ──────────────────────────────────────
-extern "C" {
+unsafe extern "C" {
     fn AsyncContextFrame__withAsyncContextIfNeeded(
         global: *const JSGlobalObject,
         callback: JSValue,

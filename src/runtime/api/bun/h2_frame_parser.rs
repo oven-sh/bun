@@ -7,7 +7,13 @@ use core::marker::PhantomData;
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, Strong, StrongOptional};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::abort_signal::{AbortSignal, AbortListener};
+// `bun_jsc::abort_signal` is currently parked behind `mod _gated { #![cfg(any())] }`
+// (see src/jsc/lib.rs), so the real module isn't visible to dependents yet. Pull
+// the opaque `stub_ty!`-generated `AbortSignal` from the crate root and shim the
+// handful of methods this file calls via a local extension trait until the
+// upstream module is un-gated.
+use bun_jsc::AbortSignal;
+use self::abort_signal_shim::{AbortListener, AbortSignalExt as _};
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::ErrorCode as JscErrorCode;
 use bun_jsc::StringJsc as _;

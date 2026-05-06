@@ -29,83 +29,8 @@ use bun_uws::{self as uws, ConnectingSocket, Loop};
 use bun_wyhash::hash as wyhash;
 
 use bun_cares_sys::c_ares_draft as c_ares;
+use super::cares_jsc::error_to_deferred;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, ElTimespec};
-
-// ──────────────────────────────────────────────────────────────────────────
-// Local shims (Phase D — upstream `JSGlobalObject.rs` impl block is still
-// `validate_integer_range` are unavailable as inherent methods).
-// ──────────────────────────────────────────────────────────────────────────
-
-trait JSGlobalObjectDnsExt {
-    fn throw_not_enough_arguments(
-        &self,
-        name_: &str,
-        expected: usize,
-        got: usize,
-    ) -> JsResult<JSValue>;
-    fn throw_invalid_argument_property_value(
-        &self,
-        name: &str,
-        expected: &str,
-        value: JSValue,
-    ) -> JsResult<JSValue>;
-    fn throw_invalid_argument_value(&self, name: &str, value: JSValue) -> JsResult<JSValue>;
-}
-impl JSGlobalObjectDnsExt for JSGlobalObject {
-    fn throw_not_enough_arguments(
-        &self,
-        name_: &str,
-        expected: usize,
-        got: usize,
-    ) -> JsResult<JSValue> {
-        Err(self.throw_invalid_arguments(format_args!(
-            "Not enough arguments to '{name_}'. Expected {expected}, got {got}."
-        )))
-    }
-    fn throw_invalid_argument_property_value(
-        &self,
-        name: &str,
-        expected: &str,
-        value: JSValue,
-    ) -> JsResult<JSValue> {
-        let _ = value;
-        Err(self.throw_invalid_arguments(format_args!(
-            "The \"{name}\" property must be {expected}."
-        )))
-    }
-    fn throw_invalid_argument_value(&self, name: &str, value: JSValue) -> JsResult<JSValue> {
-        let _ = value;
-        Err(self.throw_invalid_arguments(format_args!(
-            "The value of \"{name}\" is invalid."
-        )))
-    }
-}
-
-/// `JSValue::to_port_number` — local trait extension (the inherent method
-/// has not yet landed on `bun_jsc::JSValue`; ported here from
-/// `JSValue.zig::toPortNumber`).
-pub(crate) trait JSValueDnsExt {
-    fn to_port_number(self, global: &JSGlobalObject) -> JsResult<u16>;
-}
-impl JSValueDnsExt for JSValue {
-    fn to_port_number(self, global: &JSGlobalObject) -> JsResult<u16> {
-        if self.is_number() {
-            let double = self.to_number(global)?;
-            if double.is_nan() {
-                return Err(jsc::ErrorCode::SOCKET_BAD_PORT
-                    .throw(global, format_args!("Invalid port number")));
-            }
-            let port = self.to_int64();
-            if (0..=65535).contains(&port) {
-                return Ok(port.max(0) as u16);
-            }
-            return Err(jsc::ErrorCode::SOCKET_BAD_PORT
-                .throw(global, format_args!("Port number out of range: {port}")));
-        }
-        Err(jsc::ErrorCode::SOCKET_BAD_PORT
-            .throw(global, format_args!("Invalid port number")))
-    }
-}
 
 /// Helper: fetch the per-VM global DNS resolver (port of
 /// `RareData::globalDNSResolver`). The slot itself lives in `bun_jsc::RareData`
@@ -155,29 +80,6 @@ unsafe impl<T> Send for SendPtr<T> {}
 #[inline]
 pub(crate) fn js_event_loop_ctx() -> Async::EventLoopCtx {
     Async::posix_event_loop::get_vm_ctx(Async::AllocatorType::Js)
-}
-
-/// Local extension over `c_ares::Error` — `to_deferred` lives in `cares_jsc.rs`
-/// as a free function (`error_to_deferred`); this trait restores the Zig
-/// `err.toDeferred(...)` method-call shape used throughout this file.
-pub(crate) trait CAresErrorExt {
-    fn to_deferred(
-        self,
-        syscall: &'static str,
-        hostname: Option<&[u8]>,
-        promise: &mut JSPromiseStrong,
-    ) -> Box<super::cares_jsc::ErrorDeferred>;
-}
-impl CAresErrorExt for c_ares::Error {
-    #[inline]
-    fn to_deferred(
-        self,
-        syscall: &'static str,
-        hostname: Option<&[u8]>,
-        promise: &mut JSPromiseStrong,
-    ) -> Box<super::cares_jsc::ErrorDeferred> {
-        super::cares_jsc::error_to_deferred(self, syscall.as_bytes(), hostname, promise)
-    }
 }
 
 bun_output::declare_scope!(LibUVBackend, visible);

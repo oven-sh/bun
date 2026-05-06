@@ -2458,7 +2458,9 @@ unsafe fn transpile_file(
         // TODO(b2-cycle): `node_module_module::find_longest_registered_extension`
         // — `vm.commonjs_custom_extensions` is still typed `StringArrayHashMap<()>`
         // on the low-tier VM (VirtualMachine.rs:262); widen to
-        // `StringArrayHashMap<CustomLoader>` and un-gate.
+        // `StringArrayHashMap<CustomLoader>` and un-gate. The module itself is
+        // still parked under `bun_jsc::_gated` (lib.rs `#![cfg(any())]`).
+        #[cfg(any())]
         {
             use bun_jsc::node_module_module::{
                 find_longest_registered_extension, CustomLoader,

@@ -6,11 +6,11 @@ use bun_core::{fmt as bun_fmt, Output, SignalCode, StackCheck};
 use bun_io::MaxBuf;
 use bun_jsc::{
     self as jsc, CallFrame, EventLoop, EventLoopHandle, JSGlobalObject, JSObject,
-    JSPropertyIterator, JSValue, JsError, JsResult, SystemError, ZigString,
+    JSPropertyIterator, JSValue, JsError, JsResult, SystemError,
 };
 use bun_jsc::ipc as IPC;
 use bun_paths::PathBuffer;
-use bun_str::{self as strings_mod, strings, String as BunString, ZStr};
+use bun_str::{self as strings_mod, strings, String as BunString, ZStr, ZigString};
 use bun_sys::{self as sys, Fd};
 
 // Process / spawn machinery is local to this crate (api/bun/process.rs).

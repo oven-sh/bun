@@ -239,8 +239,6 @@ mod _gated_reexports {
     pub use crate::api::unsafe_object as UnsafeObject;
     pub use crate::api::json5_object as JSON5Object;
     pub use crate::api::yaml_object as YAMLObject;
-    // TODO(b2-blocked): crate::timer (module not declared)
-    pub use crate::timer as Timer;
     // TODO(b2-blocked): crate::dns_jsc (module not declared)
     pub use crate::dns_jsc::dns;
     pub use crate::api::glob as Glob;

@@ -42,7 +42,7 @@ use crate::shell::io::IO;
 use crate::shell::states::assigns::Assigns;
 use crate::shell::states::base::Base;
 use crate::shell::states::binary::Binary;
-use crate::shell::states::cmd::Cmd;
+pub use crate::shell::states::cmd::Cmd;
 use crate::shell::states::cond_expr::CondExpr;
 use crate::shell::states::expansion::Expansion;
 use crate::shell::states::pipeline::Pipeline;

@@ -1367,17 +1367,21 @@ impl framework_router::InsertionHandler for EntryPointMap {
     fn get_file_id_for_router(
         &mut self,
         abs_path: &[u8],
-        _: framework_router::RouteIndex,
-        _: framework_router::FileKind,
-    ) -> Result<OpaqueFileId, bun_alloc::AllocError> {
+        _: fr::RouteIndex,
+        _: fr::FileKind,
+    ) -> Result<fr::OpaqueFileId, bun_alloc::AllocError> {
+        // PORT NOTE: `fr::OpaqueFileId` and `framework_router::OpaqueFileId` are
+        // structurally identical newtypes split across the stub/draft; convert
+        // by `.get()` round-trip until Phase B unifies.
         self.get_or_put_entry_point(abs_path, bake::Side::Server)
+            .map(|id| fr::OpaqueFileId::init(id.get()))
             .map_err(|_| bun_alloc::AllocError)
     }
 
     fn on_router_syntax_error(
         &mut self,
         _rel_path: &[u8],
-        _fail: framework_router::TinyLog,
+        _fail: fr::TinyLog,
     ) -> Result<(), bun_alloc::AllocError> {
         // PORT NOTE: Zig's `wrap()` only fills vtable slots for decls that exist
         // on the wrapped type; `EntryPointMap` doesn't define
@@ -1388,8 +1392,8 @@ impl framework_router::InsertionHandler for EntryPointMap {
     fn on_router_collision_error(
         &mut self,
         rel_path: &[u8],
-        other_id: OpaqueFileId,
-        ty: framework_router::FileKind,
+        other_id: fr::OpaqueFileId,
+        ty: fr::FileKind,
     ) -> Result<(), bun_alloc::AllocError> {
         EntryPointMap::on_router_collision_error(self, rel_path, other_id, ty)
     }

@@ -15,9 +15,10 @@ use bun_paths::{self, PathBuffer, SEP_STR};
 use bun_sys as sys;
 use bun_logger as logger;
 use bun_js_parser as js_ast;
-use bun_json as JSON;
+use bun_interchange::json as JSON;
 use bun_http::{self as HTTP, Headers};
-use bun_jsc::{self as jsc, JSGlobalObject, CallFrame, JSValue, JsResult, ZigString};
+use bun_jsc::{self as jsc, JSGlobalObject, CallFrame, JSValue, JsResult};
+use bun_string::ZigString;
 
 use crate::cli::Command;
 

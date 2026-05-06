@@ -320,8 +320,11 @@ pub use cli as Cli;
 // ─── debug_flags (resolve/print breakpoints) ─────────────────────────────────
 pub mod debug_flags {
     // SHOW_CRASH_TRACE-only in Zig; harmless to always declare here.
-    pub static mut RESOLVE_BREAKPOINTS: &[&[u8]] = &[];
-    pub static mut PRINT_BREAKPOINTS: &[&[u8]] = &[];
+    // PORT NOTE: `Vec<&'static [u8]>` (not `&'static [&[u8]]`) so `parse()` can
+    // hand off ownership of the argv-borrowed list without leaking the backing
+    // storage. Each `&'static [u8]` element is a process-lifetime argv slice.
+    pub static mut RESOLVE_BREAKPOINTS: Vec<&'static [u8]> = Vec::new();
+    pub static mut PRINT_BREAKPOINTS: Vec<&'static [u8]> = Vec::new();
 }
 
 // ─── HelpCommand ─────────────────────────────────────────────────────────────

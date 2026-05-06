@@ -1604,14 +1604,11 @@ pub mod js_bundler {
         unsafe { (*this.bv2).on_load_async(this) };
     }
 
-    /// Opaque FFI handle for the C++ JSBundlerPlugin.
-    #[repr(C)]
-    pub struct Plugin {
-        _p: [u8; 0],
-        _m: core::marker::PhantomData<(*mut u8, core::marker::PhantomPinned)>,
-    }
+    /// Opaque FFI handle for the C++ `JSBundlerPlugin`. The opaque type and
+    /// `has_any_matches` (the one method `bun_bundler` needs) live in the
+    /// lower-tier crate; JSC-aware methods are added here via `PluginJscExt`.
+    pub use bun_bundler::bundle_v2::api::JSBundler::Plugin;
 
-    // TODO(port): move to runtime_sys
     unsafe extern "C" {
         fn JSBundlerPlugin__create(
             global: *mut JSGlobalObject,
@@ -1635,12 +1632,6 @@ pub mod js_bundler {
             rejection: JSValue,
         ) -> JSValue;
         fn JSBundlerPlugin__globalObject(plugin: *mut Plugin) -> *mut JSGlobalObject;
-        fn JSBundlerPlugin__anyMatches(
-            plugin: *mut Plugin,
-            namespace_string: *const BunString,
-            path: *const BunString,
-            is_on_load: bool,
-        ) -> bool;
         fn JSBundlerPlugin__matchOnLoad(
             plugin: *mut Plugin,
             namespace_string: *const BunString,
@@ -1670,11 +1661,62 @@ pub mod js_bundler {
         ) -> JSValue;
     }
 
-    impl Plugin {
-        pub fn create(
-            global: &JSGlobalObject,
-            target: jsc::BunPluginTarget,
-        ) -> *mut Plugin {
+    /// JSC-aware methods on the C++ `JSBundlerPlugin` opaque. The opaque type
+    /// itself is owned by `bun_bundler` (lower tier, no JSC dep), so these are
+    /// added as an extension trait rather than an inherent `impl`.
+    pub trait PluginJscExt {
+        fn create(global: &JSGlobalObject, target: jsc::BunPluginTarget) -> *mut Plugin;
+        fn call_on_before_parse_plugins(
+            &mut self,
+            ctx: *mut c_void,
+            namespace: &BunString,
+            path: &BunString,
+            on_before_parse_args: Option<*mut c_void>,
+            on_before_parse_result: Option<*mut c_void>,
+            should_continue: *mut i32,
+        ) -> i32;
+        fn has_on_before_parse_plugins(&mut self) -> bool;
+        fn run_on_end_callbacks(
+            &mut self,
+            global_this: &JSGlobalObject,
+            build_promise: &jsc::JSPromise,
+            build_result: JSValue,
+            rejection: JsResult<JSValue>,
+        ) -> JsResult<JSValue>;
+        /// SAFETY: `this` must be a live handle previously returned by `Plugin::create`.
+        unsafe fn destroy(this: *mut Plugin);
+        fn global_object(&mut self) -> &JSGlobalObject;
+        fn append_defer_promise(&mut self) -> JSValue;
+        fn match_on_load(
+            &mut self,
+            path: &[u8],
+            namespace: &[u8],
+            context: *mut c_void,
+            default_loader: options::Loader,
+            is_server_side: bool,
+        );
+        fn match_on_resolve(
+            &mut self,
+            path: &[u8],
+            namespace: &[u8],
+            importer: &[u8],
+            context: *mut c_void,
+            import_record_kind: ImportKind,
+        );
+        fn add_plugin(
+            &mut self,
+            object: JSValue,
+            config: JSValue,
+            onstart_promises_array: JSValue,
+            is_last: bool,
+            is_bake: bool,
+        ) -> JsResult<JSValue>;
+        fn drain_deferred(&mut self, rejected: bool) -> JsResult<()>;
+        fn set_config(&mut self, config: *mut c_void);
+    }
+
+    impl PluginJscExt for Plugin {
+        fn create(global: &JSGlobalObject, target: jsc::BunPluginTarget) -> *mut Plugin {
             jsc::mark_binding();
             // SAFETY: FFI — `global` is a live `JSGlobalObject*`. `as_ptr()` goes
             // through the `UnsafeCell` interior so the `*mut` carries write
@@ -1685,7 +1727,7 @@ pub mod js_bundler {
             plugin
         }
 
-        pub fn call_on_before_parse_plugins(
+        fn call_on_before_parse_plugins(
             &mut self,
             ctx: *mut c_void,
             namespace: &BunString,
@@ -1712,12 +1754,12 @@ pub mod js_bundler {
             }
         }
 
-        pub fn has_on_before_parse_plugins(&mut self) -> bool {
+        fn has_on_before_parse_plugins(&mut self) -> bool {
             // SAFETY: self is valid opaque FFI handle
             unsafe { JSBundlerPlugin__hasOnBeforeParsePlugins(self) != 0 }
         }
 
-        pub fn run_on_end_callbacks(
+        fn run_on_end_callbacks(
             &mut self,
             global_this: &JSGlobalObject,
             build_promise: &jsc::JSPromise,
@@ -1752,43 +1794,24 @@ pub mod js_bundler {
             Ok(value)
         }
 
-        /// FFI destroy — Plugin is an opaque JSCell handle created via JSBundlerPlugin__create.
-        /// SAFETY: `this` must be a live handle previously returned by `Plugin::create`.
-        pub unsafe fn destroy(this: *mut Self) {
+        unsafe fn destroy(this: *mut Plugin) {
             jsc::mark_binding();
             // SAFETY: caller contract — `this` is a live JSBundlerPlugin handle.
             unsafe { JSBundlerPlugin__tombstone(this) };
             JSValue::from_cell(this).unprotect();
         }
 
-        pub fn global_object(&mut self) -> &JSGlobalObject {
+        fn global_object(&mut self) -> &JSGlobalObject {
             // SAFETY: self is valid opaque FFI handle; returned global outlives self
             unsafe { &*JSBundlerPlugin__globalObject(self) }
         }
 
-        pub fn append_defer_promise(&mut self) -> JSValue {
+        fn append_defer_promise(&mut self) -> JSValue {
             // SAFETY: self is valid opaque FFI handle
             unsafe { JSBundlerPlugin__appendDeferPromise(self) }
         }
 
-        pub fn has_any_matches(&mut self, path: &Fs::Path, is_on_load: bool) -> bool {
-            jsc::mark_binding();
-            let _tracer = bun_core::perf::trace("JSBundler.hasAnyMatches");
-
-            let namespace_string = if path.is_file() {
-                BunString::empty()
-            } else {
-                BunString::clone_utf8(path.namespace())
-            };
-            let path_string = BunString::clone_utf8(path.text());
-            // namespace_string/path_string deref on Drop
-            // SAFETY: self is valid opaque FFI handle
-            unsafe {
-                JSBundlerPlugin__anyMatches(self, &namespace_string, &path_string, is_on_load)
-            }
-        }
-
-        pub fn match_on_load(
+        fn match_on_load(
             &mut self,
             path: &[u8],
             namespace: &[u8],
@@ -1824,7 +1847,7 @@ pub mod js_bundler {
             }
         }
 
-        pub fn match_on_resolve(
+        fn match_on_resolve(
             &mut self,
             path: &[u8],
             namespace: &[u8],
@@ -1854,7 +1877,7 @@ pub mod js_bundler {
             }
         }
 
-        pub fn add_plugin(
+        fn add_plugin(
             &mut self,
             object: JSValue,
             config: JSValue,
@@ -1866,7 +1889,7 @@ pub mod js_bundler {
             let _tracer = bun_core::perf::trace("JSBundler.addPlugin");
             // SAFETY: self is valid opaque FFI handle; raw ptr avoids the
             // closure-vs-`self.global_object()` aliasing borrow conflict.
-            let this: *mut Self = self;
+            let this: *mut Plugin = self;
             jsc::from_js_host_call(self.global_object(), || unsafe {
                 JSBundlerPlugin__runSetupFunction(
                     this,
@@ -1879,88 +1902,61 @@ pub mod js_bundler {
             })
         }
 
-        pub fn drain_deferred(&mut self, rejected: bool) -> JsResult<()> {
+        fn drain_deferred(&mut self, rejected: bool) -> JsResult<()> {
             // SAFETY: self is valid opaque FFI handle; raw ptr avoids the
             // closure-vs-`self.global_object()` aliasing borrow conflict.
-            let this: *mut Self = self;
+            let this: *mut Plugin = self;
             jsc::from_js_host_call_generic(self.global_object(), || unsafe {
                 JSBundlerPlugin__drainDeferred(this, rejected)
             })
         }
 
-        pub fn set_config(&mut self, config: *mut c_void) {
+        fn set_config(&mut self, config: *mut c_void) {
             jsc::mark_binding();
             // SAFETY: self is valid opaque FFI handle
             unsafe { JSBundlerPlugin__setConfig(self, config) };
         }
+    }
 
-        /// Convert a JS exception value into a `logger.Msg`. If the conversion itself throws
-        /// (e.g. `Symbol.toPrimitive` on the thrown object throws), clear that secondary
-        /// exception and return a generic fallback message so `onResolveAsync`/`onLoadAsync`
-        /// is still called and the bundler's pending-item counter is decremented. Returning
-        /// early here would cause `Bun.build` to hang forever waiting on the counter.
-        fn msg_from_js(plugin: &mut Plugin, file: &[u8], exception: JSValue) -> logger::Msg {
-            // SAFETY: `file` borrows from `Resolve.import_record.source_file` /
-            // `Load.path` — sibling fields of the `Msg` slot it is stored into
-            // (`ResolveValue::Err` / `LoadValue::Err`). Both live for the rest
-            // of the build, so the `'static` constraint on `logger::Location.file`
-            // is satisfied for the message's actual lifetime.
-            let file: &'static [u8] =
-                unsafe { core::mem::transmute::<&[u8], &'static [u8]>(file) };
-            let global = plugin.global_object();
-            match Self::msg_from_js_inner(global, file, exception) {
-                Ok(msg) => msg,
-                Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
-                Err(_) => {
-                    // We are already producing a build error for the original plugin
-                    // exception; the secondary exception from string conversion is not
-                    // useful to the user and should not be treated as unhandled.
-                    let _ = global.clear_exception_except_termination();
-                    logger::Msg {
-                        data: logger::Data {
-                            text: std::borrow::Cow::Owned(
-                                b"A bundler plugin threw a value that could not be converted to a string"
-                                    .to_vec(),
-                            ),
-                            location: Some(logger::Location {
-                                file,
-                                line: -1,
-                                column: -1,
-                                ..Default::default()
-                            }),
-                        },
-                        ..Default::default()
-                    }
+    /// Convert a JS exception value into a `logger.Msg`. If the conversion itself
+    /// throws (e.g. `Symbol.toPrimitive` on the thrown object throws), clear that
+    /// secondary exception and return a generic fallback message so
+    /// `onResolveAsync`/`onLoadAsync` is still called and the bundler's
+    /// pending-item counter is decremented. Returning early here would cause
+    /// `Bun.build` to hang forever waiting on the counter.
+    fn plugin_msg_from_js(plugin: &mut Plugin, file: &[u8], exception: JSValue) -> logger::Msg {
+        // SAFETY: `file` borrows from `Resolve.import_record.source_file` /
+        // `Load.path` — sibling fields of the `Msg` slot it is stored into
+        // (`ResolveValue::Err` / `LoadValue::Err`). Both live for the rest of
+        // the build, so the `'static` constraint on `logger::Location.file` is
+        // satisfied for the message's actual lifetime.
+        let file: &'static [u8] =
+            unsafe { core::mem::transmute::<&[u8], &'static [u8]>(file) };
+        let global = plugin.global_object();
+        match bun_logger_jsc::msg_from_js(global, file, exception) {
+            Ok(msg) => msg,
+            Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
+            Err(_) => {
+                // We are already producing a build error for the original plugin
+                // exception; the secondary exception from string conversion is not
+                // useful to the user and should not be treated as unhandled.
+                let _ = global.clear_exception_except_termination();
+                logger::Msg {
+                    data: logger::Data {
+                        text: std::borrow::Cow::Owned(
+                            b"A bundler plugin threw a value that could not be converted to a string"
+                                .to_vec(),
+                        ),
+                        location: Some(logger::Location {
+                            file,
+                            line: -1,
+                            column: -1,
+                            ..Default::default()
+                        }),
+                    },
+                    ..Default::default()
                 }
             }
-        }
-
-        /// `logger.Msg.fromJS` — inlined here because `bun_logger_jsc` is a
-        /// lower-tier crate whose `msg_from_js` requires `&'static` for `file`;
-        /// the body is small enough that the dependency edge isn't worth it.
-        fn msg_from_js_inner(
-            global: &JSGlobalObject,
-            file: &'static [u8],
-            err: JSValue,
-        ) -> JsResult<logger::Msg> {
-            let mut holder = jsc::zig_exception::Holder::init();
-            if let Some(value) = err.to_error() {
-                value.to_zig_exception(global, holder.zig_exception());
-            } else {
-                holder.zig_exception().message = err.to_bun_string(global)?;
-            }
-            Ok(logger::Msg {
-                data: logger::Data {
-                    text: std::borrow::Cow::Owned(
-                        holder.zig_exception().message.to_owned_slice(),
-                    ),
-                    location: Some(logger::Location {
-                        file,
-                        ..Default::default()
-                    }),
-                },
-                ..Default::default()
-            })
         }
     }
 

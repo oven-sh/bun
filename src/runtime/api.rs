@@ -159,6 +159,8 @@ pub mod js_transpiler;
 pub mod js_bundler;
 #[path = "api/js_bundle_completion_task.rs"]
 pub mod js_bundle_completion_task;
+#[path = "api/output_file_jsc.rs"]
+pub mod output_file_jsc;
 #[path = "api/BunObject.rs"]
 pub mod bun_object;
 #[path = "api/HashObject.rs"]

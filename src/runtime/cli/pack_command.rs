@@ -1634,16 +1634,28 @@ fn file_kind_tag(kind: bun_core::FileKind) -> &'static str {
     }
 }
 
-/// Construct a `BufferedFileReader` (no `Default`/`new` upstream because
-/// `bun_sys::File` doesn't impl `DeprecatedRead`).
+/// Heap-allocate a 512 KiB `BufferedFileReader` without materializing it on
+/// the stack. Zig: `allocator.create(BufferedFileReader)` then field-init with
+/// `.buf = undefined`. `Box::new_zeroed` maps to a `calloc` (typically a free
+/// kernel zero-page for this size) and avoids the 512 KiB stack temporary.
+fn new_boxed_buffered_file_reader(file: bun_sys::File) -> Box<BufferedFileReader> {
+    // SAFETY: all-zero is a valid bit pattern for `[u8; N]`, `usize`, and
+    // `File { handle: Fd }` (`Fd` is a `#[repr(C)]` integer newtype). The
+    // `unbuffered_reader` slot is overwritten before any read.
+    let mut b: Box<BufferedFileReader> =
+        unsafe { Box::<BufferedFileReader>::new_zeroed().assume_init() };
+    b.unbuffered_reader = file;
+    b
+}
+
+/// Re-seat the underlying file and reset the buffer cursor in place — avoids
+/// the 512 KiB stack temporary that `*file_reader = BufferedFileReader { ... }`
+/// would create. Zig: `file_reader.* = .{ .unbuffered_reader = ..., .buf = undefined }`.
 #[inline]
-fn make_buffered_file_reader(file: bun_sys::File) -> BufferedFileReader {
-    bun_core::deprecated::BufferedReader {
-        unbuffered_reader: file,
-        buf: [0u8; 1024 * 512],
-        start: 0,
-        end: 0,
-    }
+fn reset_buffered_file_reader(r: &mut BufferedFileReader, file: bun_sys::File) {
+    r.unbuffered_reader = file;
+    r.start = 0;
+    r.end = 0;
 }
 
 /// `BufferedFileReader::read` shim — `bun_sys::File` doesn't impl
@@ -1982,10 +1994,10 @@ pub fn pack<const FOR_PUBLISH: bool>(
     };
     let _close_root = scopeguard::guard((), |_| root_dir.close());
 
-    ctx.bundled_deps = get_bundled_deps(&json.root, "bundledDependencies")?
-        .or_else(|| get_bundled_deps(&json.root, "bundleDependencies").ok().flatten())
-        // TODO(port): second `?` short-circuits differently than `orelse try`; Phase B verify
-        .unwrap_or_default();
+    ctx.bundled_deps = match get_bundled_deps(&json.root, "bundledDependencies")? {
+        Some(deps) => deps,
+        None => get_bundled_deps(&json.root, "bundleDependencies")?.unwrap_or_default(),
+    };
 
     let mut pack_queue: PackQueue = new_pack_queue();
 
@@ -2237,10 +2249,10 @@ pub fn pack<const FOR_PUBLISH: bool>(
     let mut pack_list: PackList = Vec::new();
 
     let mut read_buf = [0u8; 8192];
-    let mut file_reader: Box<BufferedFileReader> = Box::new(make_buffered_file_reader(File::from_fd(Fd::invalid())));
-    // TODO(port): Zig used allocator.create + manual init; Box::new equivalent
+    let mut file_reader: Box<BufferedFileReader> =
+        new_boxed_buffered_file_reader(File::from_fd(Fd::invalid()));
 
-    let mut entry = ArchiveEntry::new();
+    let mut entry = ArchiveEntry::new2(archive);
 
     {
         let mut progress = Progress::Progress::default();
@@ -2250,14 +2262,12 @@ pub fn pack<const FOR_PUBLISH: bool>(
             node = Some(progress.start(b"", pack_queue.count() + bundled_pack_queue.count() + 1));
             node.as_mut().unwrap().unit = Progress::Unit::Files;
         }
-        let _end = scopeguard::guard((), |_| {
-            if log_level.show_progress() {
-                if let Some(n) = node.as_mut() {
-                    n.end();
-                }
-            }
-        });
-        // TODO(port): scopeguard borrows of `node`; Phase B reshape
+        // PORT NOTE: Zig had `defer node.end()` / `defer node.completeOne()`.
+        // The loop bodies' only early exits are `continue` (where the Zig
+        // `defer` still fires) and `Global::crash()` (never returns, no
+        // unwinding). `scopeguard` captures of `&mut node` overlap the inline
+        // uses below, so call `complete_one()` explicitly at every loop-body
+        // exit and `end()` once after the loops.
 
         entry = archive_package_json(ctx, unsafe { &mut *archive }, entry, &root_dir, &edited_package_json)?;
         if log_level.show_progress() {
@@ -2265,15 +2275,6 @@ pub fn pack<const FOR_PUBLISH: bool>(
         }
 
         while let Some(item) = pack_queue.remove_or_null() {
-            let _complete = scopeguard::guard((), |_| {
-                if log_level.show_progress() {
-                    if let Some(n) = node.as_mut() {
-                        n.complete_one();
-                    }
-                }
-            });
-            // TODO(port): defer-in-loop with mutable borrow; Phase B reshape
-
             let file = match bun_sys::openat(Fd::from_std_dir(&root_dir), &item.path, bun_sys::O::RDONLY, 0) {
                 Ok(f) => f,
                 Err(err) => {

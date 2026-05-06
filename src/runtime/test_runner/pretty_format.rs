@@ -266,12 +266,9 @@ impl JestPrettyFormat {
     ) -> JsResult<()> {
         let mut fmt: Formatter;
         // Zig: defer { if (fmt.map_node) |node| { node.data = fmt.map; node.data.clearRetainingCapacity(); node.release(); } }
-        // The pool node is acquired lazily inside print_as (Visited::Pool::get_node). A
-        // `scopeguard` capturing `&mut fmt` here would alias the `fmt.format(..)` borrows
-        // below, so the release is open-coded at the function tail instead. Early-return
-        // paths (`len == 1`) skip release for now; Phase B should give `Formatter` a
-        // `Drop` that swaps the map back into the pool node.
-        // TODO(port): RAII release of `fmt.map_node` on every exit path.
+        // (.zig:79-85). Realized as `impl Drop for Formatter` below — the pool
+        // node is acquired lazily inside `print_as` and swapped back on every
+        // exit path of this function (early return, `?` propagation, happy path).
 
         if len == 1 {
             fmt = Formatter {
@@ -383,17 +380,8 @@ impl JestPrettyFormat {
             let _ = writer.flush();
         }
 
-        // Mirrors Zig `defer { node.data = fmt.map; node.data.clearRetainingCapacity(); node.release(); }`
-        if let Some(node) = fmt.map_node.take() {
-            // SAFETY: `node` came from `visited::Pool::get_node()` and is exclusively
-            // owned for `fmt`'s lifetime; its `data` was initialized by `Map::INIT`.
-            unsafe {
-                let data = (*node.as_ptr()).data.assume_init_mut();
-                *data = core::mem::take(&mut fmt.map);
-                data.clear();
-                visited::Pool::release(node.as_ptr());
-            }
-        }
+        // map_node release handled by `impl Drop for Formatter`.
+        drop(fmt);
         Ok(())
     }
 }
@@ -490,6 +478,29 @@ impl<'a> Formatter<'a> {
 
     pub fn add_for_new_line(&mut self, len: usize) {
         self.estimated_line_length = self.estimated_line_length.saturating_add(len);
+    }
+}
+
+// Mirrors the top-level Zig defer in `JestPrettyFormat.format` (.zig:79-85):
+// `defer { if (fmt.map_node) |node| { node.data = fmt.map; node.data.clearRetainingCapacity(); node.release(); } }`
+// The node is acquired lazily inside `print_as` via `visited::Pool::get_node()`;
+// releasing here covers every exit path of `format` (early `len == 1` return,
+// `?` propagation from `Tag::get`/`fmt.format`, and the happy path) without
+// the borrow-aliasing a `scopeguard` would introduce.
+impl Drop for Formatter<'_> {
+    fn drop(&mut self) {
+        if let Some(node) = self.map_node.take() {
+            // SAFETY: `node` came from `visited::Pool::get_node()` and is
+            // exclusively owned for this `Formatter`'s lifetime; its `data` was
+            // initialized by `Map::INIT`, so `assume_init_mut` observes a valid
+            // `Map`.
+            unsafe {
+                let data = (*node.as_ptr()).data.assume_init_mut();
+                *data = core::mem::take(&mut self.map);
+                data.clear();
+                visited::Pool::release(node.as_ptr());
+            }
+        }
     }
 }
 

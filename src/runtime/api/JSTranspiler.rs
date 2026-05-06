@@ -1538,31 +1538,18 @@ fn named_exports_to_js(
     }
 
     // PERF(port): was stack-fallback allocator — profile in Phase B
-    let mut names: Vec<BunString> = Vec::with_capacity(named_exports.count());
-    // TODO(port): Zig sorted in-place via `StringArrayByIndexSorter`; `StringArrayHashMap`
-    // lacks `.sort`. Iterate unsorted for now and sort the output Vec instead.
+    // PORT NOTE: Zig sorted the map in-place via `StringArrayByIndexSorter` then iterated.
+    // `StringArrayHashMap` in Rust has no in-place sort, so collect the keys, sort them
+    // lexicographically (matching `strings.order`), then emit `BunString`s in that order.
+    let mut keys: Vec<&[u8]> = Vec::with_capacity(named_exports.count());
     let mut named_exports_iter = named_exports.iterator();
     while let Some(entry) = named_exports_iter.next() {
-        names.push(BunString::from_bytes(&**entry.key_ptr));
+        keys.push(&**entry.key_ptr);
     }
-    // TODO(port): `bun_str::String::to_js_array` — use the free fn in bun_jsc.
-    bun_string_to_js_array(global, &names)
-}
+    keys.sort_unstable();
 
-/// Local shim for `bun.String.toJSArray` — `bun_jsc::bun_string_jsc` (the inline
-/// module re-exported at the crate root) does not yet expose `to_js_array`.
-// TODO(port): drop once `bun_jsc::bun_string_jsc::to_js_array` is re-exported.
-fn bun_string_to_js_array(global: &JSGlobalObject, array: &[BunString]) -> JsResult<JSValue> {
-    unsafe extern "C" {
-        fn BunString__createArray(
-            global_object: *mut JSGlobalObject,
-            ptr: *const BunString,
-            len: usize,
-        ) -> JSValue;
-    }
-    // SAFETY: ptr/len from a live slice; `global` borrowed for the call duration.
-    let v = unsafe { BunString__createArray(global.as_ptr(), array.as_ptr(), array.len()) };
-    if global.has_exception() { Err(JsError::Thrown) } else { Ok(v) }
+    let names: Vec<BunString> = keys.into_iter().map(BunString::from_bytes).collect();
+    bun_jsc::bun_string_jsc::to_js_array(global, &names)
 }
 
 fn named_imports_to_js(
@@ -1661,18 +1648,24 @@ impl JSTranspiler {
 
         // PERF(port): was MimallocArena bulk-free — profile in Phase B
         let arena = Arena::new();
-        let prev_allocator = self.transpiler.allocator;
-        let mut ast_memory_allocator = JSAst::ASTMemoryAllocator::new(&arena);
-        let _ast_scope = ast_memory_allocator.enter();
-
-        // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
-        // allocator is restored to `prev_allocator` before return.
-        self.transpiler
-            .set_allocator(unsafe { &*(&arena as *const Arena) });
         let mut log = logger::Log::init();
         // defer log.deinit() → Drop
+        let prev_allocator = self.transpiler.allocator;
+        // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
+        // `_restore` (declared after `arena`/`log`, so dropped first) restores
+        // `prev_allocator` and `&self.config.log` before either local drops.
+        self.transpiler
+            .set_allocator(unsafe { &*(&arena as *const Arena) });
         self.transpiler.set_log(&mut log);
-        // TODO(port): errdefer — restore log/allocator on every exit; Phase B scopeguard.
+        let _restore = TranspilerStateGuard {
+            transpiler: &mut self.transpiler,
+            prev_allocator,
+            restore_log: &mut self.config.log,
+            prev_macro_context: None,
+        };
+
+        let mut ast_memory_allocator = JSAst::ASTMemoryAllocator::new(&arena);
+        let _ast_scope = ast_memory_allocator.enter();
 
         let source = logger::Source::init_path_string(loader.stdin_name(), code);
         let jsx = match self.config.tsconfig.as_deref() {
@@ -1727,8 +1720,6 @@ impl JSTranspiler {
             self.config.trim_unused_imports.unwrap_or(false),
         )?;
         self.scan_pass_result.reset();
-        self.transpiler.set_log(&mut self.config.log);
-        self.transpiler.allocator = prev_allocator;
         Ok(named_imports_value)
     }
 }

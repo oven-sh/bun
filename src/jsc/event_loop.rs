@@ -224,12 +224,13 @@ fn tick_queue_with_count(el: &mut EventLoop, vm: *mut VirtualMachine, counter: &
         // so they can run once the hook is installed. Draining here would
         // silently drop every Task (state-destroying no-op); be loud instead so
         // a missing `set_tick_queue_hook` registration surfaces immediately.
-        debug_assert!(
-            el.tasks.readable_length() == 0,
-            "TICK_QUEUE_HOOK not installed but {} task(s) queued — \
+        let pending = el.tasks.readable_length();
+        debug_assert_eq!(
+            pending, 0,
+            "TICK_QUEUE_HOOK not installed but {pending} task(s) queued — \
              bun_runtime must call set_tick_queue_hook() at startup",
-            el.tasks.readable_length(),
         );
+        let _ = pending;
         return Ok(());
     }
     // SAFETY: `p` was stored from a `TickQueueFn` (same layout).

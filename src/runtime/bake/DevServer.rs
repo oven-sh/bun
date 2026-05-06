@@ -156,6 +156,31 @@ pub use crate::bake::dev_server::HotReloadEvent;
 pub use crate::bake::dev_server::incremental_graph::IncrementalGraph;
 pub use crate::bake::dev_server::memory_cost_body::MemoryCost;
 
+/// Project the fields the bundler reads into the lower-tier
+/// `bun_bundler::bake_types::Framework`. LAYERING: `bun_bundler` (T5) cannot
+/// name `bun_runtime::bake::Framework` (T6), so it carries a TYPE_ONLY subset;
+/// populate it here at the seam (mirrors `bake_body::Framework::as_bundler_view`
+/// for the keystone `bake::Framework` shape).
+fn framework_as_bundler_view(f: &bake::Framework) -> bundler::bake_types::Framework {
+    use bundler::bake_types as bt;
+    let mut built_in_modules = bun_collections::StringArrayHashMap::new();
+    for (k, v) in f.built_in_modules.iter() {
+        // `bake::BuiltInModule` IS `bun_bundler::bake_types::BuiltInModule`
+        // (re-export at `bake/mod.rs:60`); clone the boxed slice.
+        let bv = match v {
+            bt::BuiltInModule::Import(p) => bt::BuiltInModule::Import(p.clone()),
+            bt::BuiltInModule::Code(c) => bt::BuiltInModule::Code(c.clone()),
+        };
+        bun_core::handle_oom(built_in_modules.put(k, bv));
+    }
+    let server_components = f.server_components.as_ref().map(|sc| bt::ServerComponents {
+        separate_ssr_graph: sc.separate_ssr_graph,
+        server_runtime_import: sc.server_runtime_import.as_ref().into(),
+        server_register_client_reference: sc.server_register_client_reference.as_ref().into(),
+    });
+    bt::Framework::new(built_in_modules, server_components, f.is_built_in_react)
+}
+
 impl DevServer<'_> {
     /// `DevServer.memoryCost` — see `DevServer/memory_cost.rs` for the
     /// keystone-typed version. Ported inline here against the body
@@ -2785,15 +2810,20 @@ impl DevServer<'_> {
             self.graph_safety_lock.unlock();
         }
 
-        // PORT NOTE: `bun_bundler::bake_types::EntryPointList` and the local
-        // `dev_server_body::EntryPointList` are nominally distinct (different
-        // `Flags` newtypes / map kinds). Convert in-place once the upstream
-        // shape stabilizes; for now, hand-build the bundler-side value.
+        // LAYERING: `bun_bundler::bake_types::EntryPointList` is the TYPE_ONLY
+        // mirror of this file's `EntryPointList` (moved down so `bun_bundler`
+        // can name it without depending on `bun_runtime`). Convert by value —
+        // both `Flags` are `#[repr(transparent)] u8` with identical bit layout.
         let start_data = bv2.start_from_bake_dev_server({
-            let _ = &entry_points;
-            todo!("blocked_on: dev_server_body::EntryPointList → bun_bundler::bake_types::EntryPointList conversion")
+            let mut bt = bundler::bake_types::EntryPointList::empty();
+            for (k, v) in entry_points.set.iter() {
+                bun_core::handle_oom(
+                    bt.set.put(k, bundler::bake_types::EntryPointFlags(v.bits())),
+                );
+            }
+            bt
         })?;
-        let _ = entry_points;
+        drop(entry_points);
         self.current_bundle = Some(CurrentBundle {
             bv2,
             timer,

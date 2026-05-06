@@ -29,18 +29,26 @@ use crate::api::bun_terminal_body::{
 };
 use crate::webcore as WebCore;
 
-// ── local shims for upstream-crate methods not yet available ────────────────
-// `JSValue::withAsyncContextIfNeeded` (Zig) — async-context wrapper. Upstream
-// `bun_jsc` hasn't exposed it yet; pass through unchanged so calls type-check.
+// ── local extension shims (real-body wrappers, not stubs) ───────────────────
+// `JSValue::withAsyncContextIfNeeded` (Zig) — wraps a callback so its
+// AsyncLocalStorage context is restored at fire-time. The C-ABI symbol lives in
+// `src/jsc/bindings/AsyncContextFrame.cpp`; matches the per-callsite FFI used
+// by Timer.rs / udp_socket.rs / node_crypto_binding.rs.
+unsafe extern "C" {
+    fn AsyncContextFrame__withAsyncContextIfNeeded(
+        global: *const JSGlobalObject,
+        callback: JSValue,
+    ) -> JSValue;
+}
 trait JSValueSpawnExt {
-    fn with_async_context_if_needed(self, _global: &JSGlobalObject) -> JSValue;
+    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue;
     fn is_finite(self) -> bool;
 }
 impl JSValueSpawnExt for JSValue {
     #[inline]
-    fn with_async_context_if_needed(self, _global: &JSGlobalObject) -> JSValue {
-        // TODO(port): wire to JSC__JSValue__withAsyncContextIfNeeded once exported.
-        self
+    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue {
+        // SAFETY: thin FFI forward; allocates a wrapper cell on the JS heap.
+        unsafe { AsyncContextFrame__withAsyncContextIfNeeded(global, self) }
     }
     #[inline]
     fn is_finite(self) -> bool {
@@ -48,18 +56,23 @@ impl JSValueSpawnExt for JSValue {
     }
 }
 
-/// `bun.String.indexOfAsciiChar` — upstream `bun_str::String` doesn't expose it
-/// yet; route through the underlying byte view.
+/// `bun.String.indexOfAsciiChar` — encoding-aware ASCII-char search over the
+/// string's storage code units (Latin-1 bytes or UTF-16 u16s). Matches Zig
+/// `bun.String.indexOfAsciiChar` exactly; `bun_str::String` does not expose it
+/// inherently yet.
 trait BunStringSpawnExt {
     fn index_of_ascii_char(&self, chr: u8) -> Option<usize>;
 }
 impl BunStringSpawnExt for BunString {
     #[inline]
     fn index_of_ascii_char(&self, chr: u8) -> Option<usize> {
-        // PORT NOTE: Zig walks the WTFStringImpl encoding-aware; for the
-        // null-byte-injection check (chr == 0) a UTF-8 view scan is equivalent.
-        let zs = self.to_zig_string();
-        strings::index_of_char(zs.slice(), chr).map(|i| i as usize)
+        debug_assert!(chr < 128);
+        if self.is_utf16() {
+            self.utf16().iter().position(|&c| c == u16::from(chr))
+        } else {
+            // Latin-1 / ASCII: 1 byte == 1 code unit.
+            strings::index_of_char(self.latin1(), chr).map(|i| i as usize)
+        }
     }
 }
 

@@ -2259,8 +2259,9 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
     {
         // SAFETY: single-threaded CLI startup; argv slices are process-lifetime.
         unsafe {
-            cli::debug_flags::RESOLVE_BREAKPOINTS = args.options(b"--breakpoint-resolve");
-            cli::debug_flags::PRINT_BREAKPOINTS = args.options(b"--breakpoint-print");
+            cli::debug_flags::RESOLVE_BREAKPOINTS =
+                args.options(b"--breakpoint-resolve").to_vec();
+            cli::debug_flags::PRINT_BREAKPOINTS = args.options(b"--breakpoint-print").to_vec();
         }
     }
 

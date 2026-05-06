@@ -4221,7 +4221,17 @@ impl RunCommand {
         }
 
         if !ctx.debug.loaded_bunfig {
-            let _ = cli::Arguments::load_config_path(cli::Command::Tag::RunCommand, true, bun_core::zstr!("bunfig.toml"), ctx);
+            // SAFETY: `ctx: &Command::Context` is `& &mut ContextData`; the underlying
+            // exclusive borrow is held by single-threaded CLI dispatch, so reborrowing
+            // it as `&mut` for the `Context<'_>` parameter does not alias.
+            let ctx_mut: Command::Context =
+                unsafe { &mut *((&**ctx) as *const _ as *mut cli::command::ContextData) };
+            let _ = cli::Arguments::load_config_path(
+                cli::Command::Tag::RunCommand,
+                true,
+                bun_core::zstr!("bunfig.toml"),
+                ctx_mut,
+            );
         }
 
         // try fast run (check if the file exists and is not a folder, then run it)
@@ -4250,7 +4260,8 @@ impl RunCommand {
             root_dir_info.abs_path,
             force_using_bun,
         )?;
-        this_transpiler.env.map.put(b"npm_command", b"run-script").expect("unreachable");
+        // SAFETY: `Transpiler::env` is a non-null `*mut Loader` for the transpiler's lifetime.
+        unsafe { (*this_transpiler.env).map.put(b"npm_command", b"run-script") }.expect("unreachable");
 
         // check for empty command
 
@@ -4259,7 +4270,7 @@ impl RunCommand {
                 Self::print_help(Some(package_json));
             } else {
                 Self::print_help(None);
-                Output::prettyln("\n<r><yellow>No package.json found.<r>\n", ());
+                Output::prettyln(format_args!("\n<r><yellow>No package.json found.<r>\n"));
                 Output::flush();
             }
 
@@ -4275,11 +4286,13 @@ impl RunCommand {
             // PERF(port): was stack-fallback allocator
             let mut list: Vec<u8> = Vec::new();
             // TODO(port): std.fs.File.stdin().readerStreaming → bun_sys equivalent
-            if sys::File::stdin().read_to_end(&mut list).is_err() {
+            if sys::File::stdin().read_to_end_into(&mut list).is_err() {
                 return Ok(false);
             }
-            ctx.runtime_options.eval.script = list.into_boxed_slice();
-            // TODO(port): ctx mutability — Zig Context is mutable through pointer
+            // SAFETY: see `ctx_mut` reborrow note above — single-threaded CLI dispatch.
+            let ctx_mut: Command::Context =
+                unsafe { &mut *((&**ctx) as *const _ as *mut cli::command::ContextData) };
+            ctx_mut.runtime_options.eval.script = list.into_boxed_slice();
 
             const TRIGGER: &[u8] = path_literal!(b"/[stdin]", b"\\[stdin]");
             let mut entry_point_buf = [0u8; MAX_PATH_BYTES + TRIGGER.len()];
@@ -4287,21 +4300,23 @@ impl RunCommand {
             entry_point_buf[cwd_len..cwd_len + TRIGGER.len()].copy_from_slice(TRIGGER);
             let entry_path = &entry_point_buf[..cwd_len + TRIGGER.len()];
 
-            let mut passthrough_list: Vec<&[u8]> = Vec::with_capacity(ctx.passthrough.len() + 1);
-            passthrough_list.push(b"-");
+            let mut passthrough_list: Vec<Box<[u8]>> =
+                Vec::with_capacity(ctx_mut.passthrough.len() + 1);
+            passthrough_list.push(Box::from(b"-".as_slice()));
             // PERF(port): was assume_capacity
-            passthrough_list.extend_from_slice(ctx.passthrough);
-            ctx.passthrough = passthrough_list.into_boxed_slice();
-            // TODO(port): ctx mutability
+            passthrough_list.extend(ctx_mut.passthrough.iter().cloned());
+            ctx_mut.passthrough = passthrough_list;
 
             let dup: Box<[u8]> = entry_path.to_vec().into_boxed_slice();
-            if let Err(err) = super::Run::boot(ctx, dup, None) {
-                let _ = ctx.log.print(Output::error_writer());
+            if let Err(err) = bun_bun_js::Run::boot(ctx, dup, None) {
+                // SAFETY: `ctx.log` is a non-null `*mut Log` after `create_context_data`.
+                let _ = unsafe { &*ctx.log }.print(Output::error_writer());
 
-                Output::pretty_errorln(
+                Output::pretty_errorln(format_args!(
                     "<r><red>error<r>: Failed to run <b>{}<r> due to error <b>{}<r>",
-                    (bstr::BStr::new(bun_paths::basename(target_name)), err.name()),
-                );
+                    bstr::BStr::new(bun_paths::basename(target_name)),
+                    err.name(),
+                ));
                 bun_core::handle_error_return_trace(&err);
                 Global::exit(1);
             }
@@ -4320,10 +4335,8 @@ impl RunCommand {
                             bstr::BStr::new(script_content)
                         );
                         Global::configure_allocator(Global::AllocatorConfiguration { long_running: false, ..Default::default() });
-                        this_transpiler
-                            .env
-                            .map
-                            .put(b"npm_lifecycle_event", target_name)
+                        // SAFETY: `Transpiler::env` is a non-null `*mut Loader`.
+                        unsafe { (*this_transpiler.env).map.put(b"npm_lifecycle_event", target_name) }
                             .expect("unreachable");
 
                         // allocate enough to hold "post${scriptname}"
@@ -4351,7 +4364,8 @@ impl RunCommand {
                                 prescript,
                                 &temp_script_buffer[1..],
                                 package_json_dir,
-                                this_transpiler.env,
+                                // SAFETY: non-null `*mut Loader` owned by transpiler.
+                                unsafe { &mut *this_transpiler.env },
                                 &[],
                                 ctx.debug.silent,
                                 ctx.debug.use_system_shell,
@@ -4363,7 +4377,8 @@ impl RunCommand {
                             script_content,
                             target_name,
                             package_json_dir,
-                            this_transpiler.env,
+                            // SAFETY: non-null `*mut Loader` owned by transpiler.
+                            unsafe { &mut *this_transpiler.env },
                             passthrough,
                             ctx.debug.silent,
                             ctx.debug.use_system_shell,
@@ -4377,7 +4392,8 @@ impl RunCommand {
                                 postscript,
                                 &temp_script_buffer,
                                 package_json_dir,
-                                this_transpiler.env,
+                                // SAFETY: non-null `*mut Loader` owned by transpiler.
+                                unsafe { &mut *this_transpiler.env },
                                 &[],
                                 ctx.debug.silent,
                                 ctx.debug.use_system_shell,
@@ -4393,11 +4409,13 @@ impl RunCommand {
         // load module and run that module
         // TODO: run module resolution here - try the next condition if the module can't be found
 
+        // SAFETY: `Transpiler::fs` is a non-null `*mut FileSystem` for the transpiler's lifetime.
+        let top_level_dir: &[u8] = unsafe { &(*this_transpiler.fs).top_level_dir };
         bun_output::scoped_log!(
             RUN,
             "Try resolve `{}` in `{}`",
             bstr::BStr::new(target_name),
-            bstr::BStr::new(this_transpiler.fs.top_level_dir)
+            bstr::BStr::new(top_level_dir)
         );
         let resolution = {
             let preserve_symlinks = this_transpiler.resolver.opts.preserve_symlinks;
@@ -4406,18 +4424,18 @@ impl RunCommand {
                 // borrowck reshape needed — captured this_transpiler mutably
             });
             this_transpiler.resolver.opts.preserve_symlinks = ctx.runtime_options.preserve_symlinks_main
-                || env_var::NODE_PRESERVE_SYMLINKS_MAIN.get();
+                || env_var::NODE_PRESERVE_SYMLINKS_MAIN.get().unwrap_or(false);
             let res = this_transpiler
                 .resolver
                 .resolve(
-                    this_transpiler.fs.top_level_dir,
+                    top_level_dir,
                     target_name,
                     bun_options_types::ImportKind::EntryPointRun,
                 )
                 .or_else(|_| {
                     let joined: Vec<u8> = [b"./".as_slice(), target_name].concat();
                     this_transpiler.resolver.resolve(
-                        this_transpiler.fs.top_level_dir,
+                        top_level_dir,
                         &joined,
                         bun_options_types::ImportKind::EntryPointRun,
                     )
@@ -4515,7 +4533,8 @@ impl RunCommand {
             }
         }
 
-        let path = this_transpiler.env.get(b"PATH").unwrap_or(b"");
+        // SAFETY: non-null `*mut Loader` owned by transpiler.
+        let path = unsafe { &*this_transpiler.env }.get(b"PATH").unwrap_or(b"");
         let mut path_for_which = path;
         if bin_dirs_only {
             if original_path.len() < path.len() {
@@ -4527,7 +4546,7 @@ impl RunCommand {
 
         if !path_for_which.is_empty() {
             let dest = PATH_BUF.with_borrow_mut(|path_buf| {
-                which(path_buf, path_for_which, this_transpiler.fs.top_level_dir, target_name)
+                which(path_buf, path_for_which, top_level_dir, target_name)
                     .map(|d| {
                         // SAFETY: borrow into thread-local PATH_BUF; consumed (copied via
                         // dirname_store.append) before PATH_BUF is reused.
@@ -4537,13 +4556,15 @@ impl RunCommand {
             });
             if let Some(destination) = dest {
                 let out = destination.as_bytes();
-                let stored = this_transpiler.fs.dirname_store.append(out)?;
+                // SAFETY: non-null `*mut FileSystem` owned by transpiler.
+                let stored = unsafe { &mut *this_transpiler.fs }.dirname_store.append(out)?;
                 Self::run_binary_without_bunx_path(
                     ctx,
                     stored,
                     destination.as_ptr() as *const c_char,
-                    this_transpiler.fs.top_level_dir,
-                    this_transpiler.env,
+                    top_level_dir,
+                    // SAFETY: non-null `*mut Loader` owned by transpiler.
+                    unsafe { &mut *this_transpiler.env },
                     passthrough,
                     Some(target_name),
                 )?;
@@ -4572,14 +4593,14 @@ impl RunCommand {
             if let Some(info) = resolved_to_unrunnable_file {
                 // SAFETY: BACKREF into resolver-owned path text; resolver outlives this scope.
                 let path = unsafe { &*info.path };
-                Output::pretty_error(
+                Output::pretty_error(format_args!(
                     "<r><red>error<r><d>:<r> <b>Cannot run \"{}\"<r>\n",
-                    (bstr::BStr::new(path),),
-                );
-                Output::pretty_error(
+                    bstr::BStr::new(path),
+                ));
+                Output::pretty_error(format_args!(
                     "<r><d>note<r><d>:<r> Bun cannot run {} files directly\n",
-                    (<&'static str>::from(info.loader),),
-                );
+                    <&'static str>::from(info.loader),
+                ));
             } else {
                 let ext = bun_paths::extension(target_name);
                 let default_loader = options::DEFAULT_LOADERS.get(ext).copied();
@@ -4589,20 +4610,20 @@ impl RunCommand {
                             || target_name[0] == b'/'
                             || bun_paths::is_absolute(target_name)))
                 {
-                    Output::pretty_error(
+                    Output::pretty_error(format_args!(
                         "<r><red>error<r><d>:<r> <b>Module not found \"<b>{}<r>\"\n",
-                        (bstr::BStr::new(target_name),),
-                    );
+                        bstr::BStr::new(target_name),
+                    ));
                 } else if !ext.is_empty() {
-                    Output::pretty_error(
+                    Output::pretty_error(format_args!(
                         "<r><red>error<r><d>:<r> <b>File not found \"<b>{}<r>\"\n",
-                        (bstr::BStr::new(target_name),),
-                    );
+                        bstr::BStr::new(target_name),
+                    ));
                 } else {
-                    Output::pretty_error(
+                    Output::pretty_error(format_args!(
                         "<r><red>error<r><d>:<r> <b>Script not found \"<b>{}<r>\"\n",
-                        (bstr::BStr::new(target_name),),
-                    );
+                        bstr::BStr::new(target_name),
+                    ));
                 }
             }
 
@@ -4613,14 +4634,15 @@ impl RunCommand {
     }
 
     pub fn exec_as_if_node(ctx: &Command::Context) -> Result<(), bun_core::Error> {
-        debug_assert!(cli::PRETEND_TO_BE_NODE.get());
+        // SAFETY: single-threaded CLI startup; `PRETEND_TO_BE_NODE` is set in main().
+        debug_assert!(unsafe { cli::PRETEND_TO_BE_NODE });
 
         if !ctx.runtime_options.eval.script.is_empty() {
             const TRIGGER: &[u8] = path_literal!(b"/[eval]", b"\\[eval]");
             let mut entry_point_buf = [0u8; MAX_PATH_BYTES + TRIGGER.len()];
             let cwd_len = sys::getcwd(&mut entry_point_buf[..MAX_PATH_BYTES])?;
             entry_point_buf[cwd_len..cwd_len + TRIGGER.len()].copy_from_slice(TRIGGER);
-            super::Run::boot(
+            bun_bun_js::Run::boot(
                 ctx,
                 entry_point_buf[..cwd_len + TRIGGER.len()].to_vec().into_boxed_slice(),
                 None,
@@ -4639,7 +4661,7 @@ impl RunCommand {
         // TODO(@paperclover): merge windows branch
         // var win_resolver = resolve_path.PosixToWinNormalizer{};
 
-        let filename = ctx.positionals[0];
+        let filename: &[u8] = &ctx.positionals[0];
 
         let normalized_filename: &[u8] = if bun_paths::is_absolute(filename) {
             // TODO(@paperclover): merge windows branch
@@ -4648,10 +4670,13 @@ impl RunCommand {
         } else {
             // TODO(port): uses module-level path_buf/path_buf2 globals
             PATH_BUF.with_borrow_mut(|path_buf| -> Result<&'static [u8], bun_core::Error> {
-                let cwd = bun_core::getcwd(path_buf)?;
+                // SAFETY: bun_paths::PathBuffer and bun_core::PathBuffer are layout-identical.
+                let cwd = bun_core::getcwd(unsafe {
+                    &mut *(path_buf as *mut PathBuffer as *mut bun_core::PathBuffer)
+                })?;
                 let cwd_len = cwd.len();
                 path_buf[cwd_len] = b'/'; // sep_posix
-                let parts = [filename];
+                let parts: [&[u8]; 1] = [filename];
                 PATH_BUF2.with_borrow_mut(|path_buf2| {
                     let r = bun_paths::resolve_path::join_abs_string_buf::<
                         bun_paths::platform::Loose,
@@ -4663,9 +4688,10 @@ impl RunCommand {
         };
 
         if let Err(err) =
-            super::Run::boot(ctx, normalized_filename.to_vec().into_boxed_slice(), None)
+            bun_bun_js::Run::boot(ctx, normalized_filename.to_vec().into_boxed_slice(), None)
         {
-            let _ = ctx.log.print(Output::error_writer());
+            // SAFETY: `ctx.log` is a non-null `*mut Log` after `create_context_data`.
+            let _ = unsafe { &*ctx.log }.print(Output::error_writer());
 
             Output::err(
                 err,
@@ -4682,14 +4708,19 @@ impl RunCommand {
         let mut entry_point_buf = [0u8; MAX_PATH_BYTES + TRIGGER.len()];
         let cwd_len = sys::getcwd(&mut entry_point_buf[..MAX_PATH_BYTES])?;
         entry_point_buf[cwd_len..cwd_len + TRIGGER.len()].copy_from_slice(TRIGGER);
-        ctx.runtime_options.eval.script = if Environment::CODEGEN_EMBED {
-            // TODO(port): @embedFile → include_str! (path relative to this .rs)
-            include_str!("../../js/eval/feedback.ts")
+        // SAFETY: `ctx: &Command::Context` is `& &mut ContextData`; single-threaded CLI dispatch.
+        let ctx_mut: Command::Context =
+            unsafe { &mut *((&**ctx) as *const _ as *mut cli::command::ContextData) };
+        ctx_mut.runtime_options.eval.script = if Environment::CODEGEN_EMBED {
+            // TODO(port): @embedFile → include_bytes! (path relative to this .rs)
+            include_bytes!("../../js/eval/feedback.ts").to_vec().into_boxed_slice()
         } else {
             bun_core::runtime_embed_file(bun_core::EmbedKind::Codegen, "eval/feedback.ts")
+                .as_bytes()
+                .to_vec()
+                .into_boxed_slice()
         };
-        // TODO(port): ctx mutability
-        super::Run::boot(
+        bun_bun_js::Run::boot(
             ctx,
             entry_point_buf[..cwd_len + TRIGGER.len()].to_vec().into_boxed_slice(),
             None,
@@ -4752,8 +4783,10 @@ impl<'a> RemoteImageDownload<'a> {
         // to the channel.
         // SAFETY: async_http.real points back at &mut self.async_http (set by AsyncHTTP::init)
         unsafe {
-            *async_http.real.unwrap() = *async_http;
-            (*async_http.real.unwrap()).response_buffer = async_http.response_buffer;
+            let real = async_http.real.unwrap().as_ptr();
+            // TODO(port): `AsyncHTTP` is not `Copy`; Zig did a struct-value copy. Phase B
+            // should re-express this with `core::ptr::copy_nonoverlapping` once layout is stable.
+            (*real).response_buffer = async_http.response_buffer;
         }
         // TODO(port): raw-pointer copy semantics — Phase B verify AsyncHTTP layout
         // Channel payload is a placeholder tick — the main thread

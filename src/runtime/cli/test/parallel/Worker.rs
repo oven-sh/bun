@@ -21,7 +21,7 @@ use crate::api::bun::process::WindowsStdio as Stdio;
 use super::channel::{Channel, ChannelOwner};
 use super::coordinator::Coordinator;
 use super::file_range::FileRange;
-use super::frame::{self, Frame};
+use super::frame;
 
 pub struct Worker {
     // TODO(port): LIFETIMES.tsv classifies this BACKREF → *const, but the Zig

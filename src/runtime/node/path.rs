@@ -876,7 +876,7 @@ pub fn dirname_windows_js_t<T: PathChar>(
     global_object: &JSGlobalObject,
     path: &[T],
 ) -> JsResult<JSValue> {
-    BunString::create_utf8_for_js(global_object, dirname_windows_t(path))
+    create_js_string_t::<T>(global_object, dirname_windows_t(path))
 }
 
 pub fn dirname_js_t<T: PathChar>(
@@ -1133,14 +1133,14 @@ pub fn extname_posix_js_t<T: PathChar>(
     global_object: &JSGlobalObject,
     path: &[T],
 ) -> JsResult<JSValue> {
-    BunString::create_utf8_for_js(global_object, extname_posix_t(path))
+    create_js_string_t::<T>(global_object, extname_posix_t(path))
 }
 
 pub fn extname_windows_js_t<T: PathChar>(
     global_object: &JSGlobalObject,
     path: &[T],
 ) -> JsResult<JSValue> {
-    BunString::create_utf8_for_js(global_object, extname_windows_t(path))
+    create_js_string_t::<T>(global_object, extname_windows_t(path))
 }
 
 pub fn extname_js_t<T: PathChar>(
@@ -1283,7 +1283,7 @@ pub fn format_posix_js_t<T: PathChar>(
     path_object: &PathParsed<'_, T>,
     buf: &mut [T],
 ) -> JsResult<JSValue> {
-    BunString::create_utf8_for_js(
+    create_js_string_t::<T>(
         global_object,
         _format_t(path_object, T::from_u8(CHAR_FORWARD_SLASH), buf),
     )

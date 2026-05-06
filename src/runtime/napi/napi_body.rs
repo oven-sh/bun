@@ -13,13 +13,86 @@ use bun_jsc::{
     self as jsc, CallFrame, Debugger, JSGlobalObject, JSPromise, JSPromiseStrong, JSValue, Strong,
     StrongOptional, Task,
 };
+#[allow(unused_imports)]
+use bun_jsc::StringJsc;
 use bun_jsc::event_loop::{ConcurrentTaskItem as ConcurrentTask, EventLoop};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_event_loop::AnyTask::AnyTask;
 use bun_event_loop::ConcurrentTask::AutoDeinit;
+use bun_event_loop::{Taskable, TaskTag, task_tag};
 use bun_threading::Mutex;
 use bun_threading::Condition as Condvar;
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
+
+// ─── local shims for upstream-crate gaps (see PORTING.md §extension traits) ───
+
+/// JS-thread `EventLoopCtx` for `KeepAlive::ref_/unref`. Zig passed the
+/// `*VirtualMachine` directly (anytype dispatch); the Rust split routes
+/// through the aio hook registered by `crate::init()`.
+#[inline]
+fn vm_ctx() -> bun_aio::EventLoopCtx {
+    bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js)
+}
+
+/// Local extension shims for `JSValue` methods that exist in Zig but are not
+/// yet surfaced on the Rust `bun_jsc::JSValue` type. Declared as a trait so the
+/// call sites read identically to the Zig source.
+trait JSValueNapiExt {
+    fn js_type_loose(self) -> jsc::JSType;
+    fn is_strict_equal(self, other: JSValue, global: &JSGlobalObject) -> jsc::JsResult<bool>;
+    fn is_async_context_frame(self) -> bool;
+    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue;
+    fn create_buffer_from_length(global: &JSGlobalObject, len: usize) -> jsc::JsResult<JSValue>;
+}
+
+unsafe extern "C" {
+    fn JSC__JSValue__isStrictEqual(this: JSValue, other: JSValue, global: *mut JSGlobalObject) -> bool;
+    fn Bun__JSValue__isAsyncContextFrame(value: JSValue) -> bool;
+    fn AsyncContextFrame__withAsyncContextIfNeeded(global: *mut JSGlobalObject, callback: JSValue) -> JSValue;
+    fn JSBuffer__bufferFromLength(global: *mut JSGlobalObject, len: i64) -> JSValue;
+}
+
+impl JSValueNapiExt for JSValue {
+    /// Zig `jsTypeLoose()` — like `js_type()` but returns `Cell` for non-cell
+    /// values instead of triggering UB on the cell-type read.
+    #[inline]
+    fn js_type_loose(self) -> jsc::JSType {
+        if self.is_cell() { self.js_type() } else { jsc::JSType::Cell }
+    }
+    fn is_strict_equal(self, other: JSValue, global: &JSGlobalObject) -> jsc::JsResult<bool> {
+        // SAFETY: FFI; may run JS (getters on Proxy etc.).
+        let r = unsafe { JSC__JSValue__isStrictEqual(self, other, global.as_ptr()) };
+        if global.has_exception() { return Err(jsc::JsError::Thrown); }
+        Ok(r)
+    }
+    #[inline]
+    fn is_async_context_frame(self) -> bool {
+        // SAFETY: trivial FFI.
+        unsafe { Bun__JSValue__isAsyncContextFrame(self) }
+    }
+    #[inline]
+    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue {
+        // SAFETY: FFI; allocates a wrapper object when an async context is active.
+        unsafe { AsyncContextFrame__withAsyncContextIfNeeded(global.as_ptr(), self) }
+    }
+    fn create_buffer_from_length(global: &JSGlobalObject, len: usize) -> jsc::JsResult<JSValue> {
+        // SAFETY: FFI; may throw OOM.
+        let v = unsafe { JSBuffer__bufferFromLength(global.as_ptr(), len as i64) };
+        if global.has_exception() { return Err(jsc::JsError::Thrown); }
+        Ok(v)
+    }
+}
+
+// `Taskable` impls for the napi heap tasks dispatched through the JS event loop.
+impl Taskable for napi_async_work {
+    const TAG: TaskTag = task_tag::NapiAsyncWork;
+}
+impl Taskable for ThreadSafeFunction {
+    const TAG: TaskTag = task_tag::ThreadSafeFunction;
+}
+impl Taskable for NapiFinalizerTask {
+    const TAG: TaskTag = task_tag::NapiFinalizerTask;
+}
 
 bun_output::declare_scope!(napi, visible);
 

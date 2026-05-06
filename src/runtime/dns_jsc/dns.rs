@@ -1518,9 +1518,9 @@ impl<T: CAresRecordType> CAresLookup<T> {
     /// (allocated == false; owner drops it) or a Boxed tail node (allocated == true;
     /// freed via `Self::destroy`). No `&mut` may alias `*this` across this call.
     pub unsafe fn process_resolve(this: *mut Self, err_: Option<c_ares::Error>, _timeout: i32, result: Option<*mut T>) {
-        // syscall = "query" + ucfirst(TYPE_NAME)
-        // TODO(port): const-eval — Zig built this at comptime
-        let syscall = T::syscall_name(); // e.g. "querySrv"
+        // syscall = "query" + ucfirst(TYPE_NAME) — Zig built this at comptime;
+        // each `CAresRecordType` impl carries the precomputed literal.
+        let syscall = T::SYSCALL; // e.g. "querySrv"
         // This path is reached when the pending cache is full (`.disabled`),
         // so we own the c-ares result here. The cached path frees it in
         // `drainPendingCares`; callers from there always pass `null`.

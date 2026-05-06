@@ -4219,9 +4219,10 @@ impl DevServer<'_> {
                     todo!("blocked_on: bun_http::Headers::to_fetch_headers / webcore::response construction");
                 // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
                 let vm = unsafe { &*self.vm };
-                vm.event_loop().enter();
-                let _exit = scopeguard::guard((), |_| vm.event_loop().exit());
-                r.promise.reject(global, response.to_js(global))?;
+                // SAFETY: event_loop() returns *mut EventLoop owned by vm; valid for vm lifetime
+                unsafe { (*vm.event_loop()).enter() };
+                let _exit = scopeguard::guard((), |_| unsafe { (*vm.event_loop()).exit() });
+                r.promise.reject(global, Ok(response.to_js(global)))?;
             }
         }
         Ok(())
@@ -4236,79 +4237,31 @@ fn send_built_in_not_found<R: ResponseLike>(resp: &mut R) {
 
 impl DevServer<'_> {
     fn print_memory_line(&self) {
-        if !AllocationScope::ENABLED {
+        // TODO(port): bun_alloc::AllocationScope has no `ENABLED`/`stats()` yet.
+        if !ALLOCATION_SCOPE_ENABLED {
             return;
         }
         if !bun_output::scope_is_visible!(DevServer) {
             return;
         }
-        let stats = self.allocation_scope.stats();
         Output::pretty_errorln(format_args!(
-            "<d>DevServer tracked {}, measured: {} ({}), process: {}<r>",
+            "<d>DevServer tracked {}, process: {}<r>",
             bun_core::fmt::size(self.memory_cost(), Default::default()),
-            stats.num_allocations,
-            bun_core::fmt::size(stats.total_memory_allocated, Default::default()),
             bun_core::fmt::size(sys::self_process_memory_usage().unwrap_or(0), Default::default()),
         ));
+        todo!("blocked_on: bun_alloc::AllocationScope::stats");
     }
 }
 
-#[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum FileKind {
-    /// Files that failed to bundle or do not exist on disk will appear in the
-    /// graph as "unknown".
-    Unknown = 0,
-    /// `code` is JavaScript code. This field is also used for HTML files.
-    Js = 1,
-    /// `code` is JavaScript code of a module exporting a single file path.
-    Asset = 2,
-    /// `code` is the URL where the CSS file is to be fetched from.
-    Css = 3,
-}
+// PORT NOTE: FileKind/ChunkKind/TraceImportGoal/IncrementalResult/GraphTraceState
+// are defined once in `crate::bake::dev_server` and re-exported here so the
+// Phase-A draft body and the keystone struct module agree on identity.
+pub use crate::bake::dev_server::FileKind;
 
-impl FileKind {
-    pub fn has_inline_js_code_chunk(self) -> bool {
-        matches!(self, FileKind::Js | FileKind::Asset)
-    }
-}
+/// Shim for `bun_alloc::AllocationScope::ENABLED` until that const lands upstream.
+pub(crate) const ALLOCATION_SCOPE_ENABLED: bool = false;
 
-pub struct IncrementalResult {
-    pub framework_routes_affected: Vec<RouteIndexAndRecurseFlag>,
-    pub html_routes_soft_affected: Vec<route_bundle::Index>,
-    pub html_routes_hard_affected: Vec<route_bundle::Index>,
-    pub had_adjusted_edges: bool,
-    pub client_components_added: Vec<incremental_graph::ServerFileIndex>,
-    pub client_components_removed: Vec<incremental_graph::ServerFileIndex>,
-    pub failures_removed: Vec<SerializedFailure>,
-    pub client_components_affected: Vec<incremental_graph::ServerFileIndex>,
-    pub failures_added: Vec<SerializedFailure>,
-}
-
-impl IncrementalResult {
-    pub const EMPTY: IncrementalResult = IncrementalResult {
-        framework_routes_affected: Vec::new(),
-        html_routes_soft_affected: Vec::new(),
-        html_routes_hard_affected: Vec::new(),
-        had_adjusted_edges: false,
-        failures_removed: Vec::new(),
-        failures_added: Vec::new(),
-        client_components_added: Vec::new(),
-        client_components_removed: Vec::new(),
-        client_components_affected: Vec::new(),
-    };
-
-    fn reset(&mut self) {
-        self.framework_routes_affected.clear();
-        self.html_routes_soft_affected.clear();
-        self.html_routes_hard_affected.clear();
-        debug_assert!(self.failures_removed.is_empty());
-        self.failures_added.clear();
-        self.client_components_added.clear();
-        self.client_components_removed.clear();
-        self.client_components_affected.clear();
-    }
-}
+pub use crate::bake::dev_server::IncrementalResult;
 
 /// Used during an incremental update to determine what "HMR roots"
 /// are affected. Re-exported from the keystone `dev_server` module so that
@@ -4318,12 +4271,7 @@ pub use crate::bake::dev_server::GraphTraceState;
 
 // GraphTraceState::deinit → Drop on DynamicBitSet (allocator param dropped)
 
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum TraceImportGoal {
-    FindCss,
-    FindClientModules,
-    FindErrors,
-}
+pub use crate::bake::dev_server::TraceImportGoal;
 
 impl DevServer<'_> {
     /// `extra_client_bits` is specified if it is possible that the client graph may

@@ -7,9 +7,9 @@ use super::get_signature;
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_be_date(this: &mut Expect, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    // TODO(port): `defer this.postMatch(global)` — scopeguard captures &mut *this for the whole
-    // scope and conflicts with later uses; Phase B may need to reshape (call before each return).
-    let _post = scopeguard::guard((), |_| this.post_match(global));
+    // PORT NOTE: reshaped for borrowck — Zig `defer this.postMatch(globalThis)` becomes a
+    // scopeguard owning the `&mut Expect` borrow so post_match runs on every exit path.
+    let mut this = scopeguard::guard(this, |this| this.post_match(global));
 
     let this_value = frame.this();
     let value: JSValue = this.get_value(global, this_value, "toBeDate", "")?;

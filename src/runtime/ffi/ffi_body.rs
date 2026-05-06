@@ -1172,7 +1172,7 @@ impl FFI {
                 let mut flags: Vec<u8> = Vec::new();
                 flags.extend_from_slice(CompileC::DEFAULT_TCC_OPTIONS.as_bytes());
 
-                while let Some(value) = iter.next(global_this)? {
+                while let Some(value) = iter.next()? {
                     if !value.is_string() {
                         return Err(global_this.throw_invalid_argument_type_value(
                             "flags",
@@ -1181,16 +1181,14 @@ impl FFI {
                         ));
                     }
                     let slice = value.to_slice(global_this)?;
-                    if slice.len() == 0 {
+                    if slice.slice().is_empty() {
                         continue;
                     }
                     flags.push(b' ');
                     flags.extend_from_slice(slice.slice());
                 }
                 flags.push(0);
-                let len = flags.len() - 1;
-                // SAFETY: flags[len] == 0 written above
-                compile_c.flags = unsafe { ZStr::from_vec_with_nul(flags, len) };
+                compile_c.flags = ZBox::from_vec_with_nul(flags);
             } else {
                 if !flags_value.is_string() {
                     return Err(global_this.throw_invalid_argument_type_value(
@@ -1201,7 +1199,7 @@ impl FFI {
                 }
 
                 let str = flags_value.get_zig_string(global_this)?;
-                if !str.is_empty() {
+                if str.len > 0 {
                     compile_c.flags = str.to_owned_slice_z();
                 }
             }

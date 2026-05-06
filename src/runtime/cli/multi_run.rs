@@ -968,27 +968,29 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
         }
     } else {
         // Single-package mode: use the root package.json
+        let run_in_bun = ctx.debug.run_in_bun;
         let path_env = RunCommand::configure_path_for_run_with_package_json_dir(
             ctx,
             b"",
-            &mut this_transpiler,
+            this_transpiler,
             None,
             cwd,
-            ctx.debug.run_in_bun,
+            run_in_bun,
         )?;
 
         // Load package.json scripts
         let root_dir_info = match this_transpiler.resolver.read_dir_info(cwd) {
             Ok(Some(info)) => info,
             Ok(None) | Err(_) => {
-                Output::pretty_errorln("<r><red>error<r>: Failed to read directory", ());
+                Output::pretty_errorln("<r><red>error<r>: Failed to read directory");
                 Global::exit(1);
             }
         };
 
-        let package_json = root_dir_info.enclosing_package_json;
-        let scripts_map: Option<&StringArrayHashMap<String>> =
-            package_json.and_then(|pkg| pkg.scripts);
+        // SAFETY: read_dir_info returns a borrow into the resolver's directory cache
+        // (process-lifetime).
+        let package_json = unsafe { (*root_dir_info).enclosing_package_json };
+        let scripts_map: Option<&ScriptsMap> = package_json.and_then(|pkg| pkg.scripts.as_deref());
 
         for raw_name in &script_names {
             // Check if this is a glob pattern
@@ -997,8 +999,8 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
                     // Collect matching script names
                     let mut matches: Vec<&[u8]> = Vec::new();
                     for key in sm.keys() {
-                        if matches_glob(raw_name, key.as_bytes()) {
-                            matches.push(key.as_bytes());
+                        if matches_glob(raw_name, key) {
+                            matches.push(key);
                         }
                     }
 
@@ -1006,10 +1008,10 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
                     matches.sort();
 
                     if matches.is_empty() {
-                        Output::pretty_errorln(
-                            "<r><red>error<r>: No scripts match pattern \"{s}\"",
-                            (bstr::BStr::new(raw_name),),
-                        );
+                        Output::pretty_errorln(format_args!(
+                            "<r><red>error<r>: No scripts match pattern \"{}\"",
+                            bstr::BStr::new(raw_name),
+                        ));
                         Global::exit(1);
                     }
 
@@ -1025,10 +1027,10 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
                         )?;
                     }
                 } else {
-                    Output::pretty_errorln(
-                        "<r><red>error<r>: Cannot use glob pattern \"{s}\" without package.json scripts",
-                        (bstr::BStr::new(raw_name),),
-                    );
+                    Output::pretty_errorln(format_args!(
+                        "<r><red>error<r>: Cannot use glob pattern \"{}\" without package.json scripts",
+                        bstr::BStr::new(raw_name),
+                    ));
                     Global::exit(1);
                 }
             } else {

@@ -184,7 +184,7 @@ pub extern "C" fn us_dispatch_connecting_error(
     c: *mut ConnectingSocket,
     code: c_int,
 ) -> *mut ConnectingSocket {
-    if let Some(f) = vtc(c).on_connecting_error { f(c, code) } else { c }
+    if let Some(f) = vtc(c).on_connecting_error { unsafe { f(c, code) } } else { c }
 }
 
 #[unsafe(no_mangle)]
@@ -194,7 +194,7 @@ pub extern "C" fn us_dispatch_handshake(
     err: us_bun_verify_error_t,
 ) {
     if let Some(f) = vt(s).on_handshake {
-        f(s, ok, err, core::ptr::null_mut());
+        unsafe { f(s, ok, err, core::ptr::null_mut()) };
     }
 }
 

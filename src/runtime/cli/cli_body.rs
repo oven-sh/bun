@@ -1416,31 +1416,27 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
 
     fn bun_lockb(ctx: Context) -> Result<(), bun_core::Error> {
         for arg in bun::argv() {
-            if arg.as_bytes() == b"--hash" {
+            if arg == b"--hash" {
                 let mut path_buf = bun_paths::PathBuffer::uninit();
                 let entry = &ctx.args.entry_points[0];
                 path_buf[0..entry.len()].copy_from_slice(entry);
                 path_buf[entry.len()] = 0;
                 // SAFETY: NUL written at path_buf[entry.len()] above
                 let lockfile_path = unsafe { ZStr::from_raw(path_buf.as_ptr(), entry.len()) };
-                let file = match File::open(lockfile_path, bun_sys::O::RDONLY, 0).unwrap() {
+                let file = match File::open(lockfile_path, bun_sys::O::RDONLY, 0) {
                     Ok(f) => f,
                     Err(err) => {
-                        Output::err(err, "failed to open lockfile", format_args!(""));
+                        Output::err(err, "failed to open lockfile", ());
                         Global::crash();
                     }
                 };
-                PackageManagerCommand::print_hash(ctx, file)?;
+                PackageManagerCommand::print_hash(&ctx, file)?;
                 return Ok(());
             }
         }
 
-        bun_install::Lockfile::Printer::print(
-            ctx.log,
-            &ctx.args.entry_points[0],
-            bun_install::Lockfile::Printer::Format::Yarn,
-        )?;
-        Ok(())
+        let _ = (&ctx.log, &ctx.args.entry_points[0]);
+        todo!("blocked_on: bun_install::lockfile::Printer::print (Format::Yarn)");
     }
 
     fn bun_getcompletes(log: &mut logger::Log) -> Result<(), bun_core::Error> {

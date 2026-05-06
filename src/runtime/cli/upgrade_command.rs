@@ -1285,26 +1285,26 @@ pub mod upgrade_js_bindings {
 
     pub fn generate(global: &JSGlobalObject) -> JSValue {
         let obj = JSValue::create_empty_object(global, 2);
-        let open = ZigString::static_(b"openTempDirWithoutSharingDelete");
         obj.put(
             global,
-            open,
+            b"openTempDirWithoutSharingDelete",
             jsc::JSFunction::create(
                 global,
                 b"openTempDirWithoutSharingDelete",
-                js_open_temp_dir_without_sharing_delete,
+                // PORT NOTE: `#[bun_jsc::host_fn]` emits the C-ABI shim with a
+                // `__jsc_host_` prefix.
+                __jsc_host_js_open_temp_dir_without_sharing_delete,
                 1,
                 Default::default(),
             ),
         );
-        let close = ZigString::static_(b"closeTempDirHandle");
         obj.put(
             global,
-            close,
+            b"closeTempDirHandle",
             jsc::JSFunction::create(
                 global,
                 b"closeTempDirHandle",
-                js_close_temp_dir_handle,
+                __jsc_host_js_close_temp_dir_handle,
                 1,
                 Default::default(),
             ),

@@ -46,7 +46,7 @@ use crate::dispatch::BYTECODE_HOOK;
 const BYTECODE_EXTENSION: &str = ".jsc";
 
 bun_core::declare_scope!(PartRanges, hidden);
-use crate::linker_context::LinkerCtx;
+use crate::linker_context_mod::LinkerCtx;
 macro_rules! debug {
     ($($arg:tt)*) => { bun_core::scoped_log!(LinkerCtx, $($arg)*) };
 }
@@ -74,7 +74,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         // PORT NOTE: Zig `defer debug(...)` is moved to end-of-scope explicitly below.
         let ctx = GenerateChunkCtx { chunk: &mut chunks[0], c, chunks };
         // TODO(port): worker_pool.eachPtr signature — allocator param dropped
-        c.parse_graph.pool.worker_pool.each_ptr(ctx, LinkerContext::generate_js_renamer, chunks)?;
+        unsafe { &mut *(*c.parse_graph).pool.as_ref().worker_pool }.each_ptr(ctx, LinkerContext::generate_js_renamer, chunks)?;
         debug!("  DONE {} renamers", chunks.len());
     }
 
@@ -90,7 +90,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         // Per CSS chunk:
         // Remove duplicate rules across files. This must be done in serial, not
         // in parallel, and must be done from the last rule to the first rule.
-        if c.parse_graph.css_file_count > 0 {
+        if unsafe { (*c.parse_graph).css_file_count } > 0 {
             let total_count: usize = {
                 let mut total_count: usize = 0;
                 for chunk in chunks.iter() {
@@ -123,8 +123,8 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     i += 1;
                 }
             }
-            c.parse_graph.pool.worker_pool.schedule(batch);
-            c.parse_graph.pool.worker_pool.wait_for_all();
+            unsafe { &mut *(*c.parse_graph).pool.as_ref().worker_pool }.schedule(batch);
+            unsafe { &mut *(*c.parse_graph).pool.as_ref().worker_pool }.wait_for_all();
 
             debug!("  DONE {} prepare CSS ast (total count)", total_count);
         } else if cfg!(debug_assertions) {
@@ -145,21 +145,21 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             debug_assert_eq!(chunks.len(), chunk_contexts.len());
             for (chunk, chunk_ctx) in chunks.iter_mut().zip(chunk_contexts.iter_mut()) {
                 match &mut chunk.content {
-                    Chunk::Content::Javascript(js) => {
+                    crate::chunk::Content::Javascript(js) => {
                         *chunk_ctx = GenerateChunkCtx { c, chunks, chunk };
                         total_count += js.parts_in_chunk_in_order.len();
                         chunk.compile_results_for_chunk =
                             vec![CompileResult::default(); js.parts_in_chunk_in_order.len()].into_boxed_slice();
                         has_js_chunk = true;
                     }
-                    Chunk::Content::Css(css) => {
+                    crate::chunk::Content::Css(css) => {
                         has_css_chunk = true;
                         *chunk_ctx = GenerateChunkCtx { c, chunks, chunk };
                         total_count += css.imports_in_chunk_in_order.len();
                         chunk.compile_results_for_chunk =
                             vec![CompileResult::default(); css.imports_in_chunk_in_order.len()].into_boxed_slice();
                     }
-                    Chunk::Content::Html(_) => {
+                    crate::chunk::Content::Html => {
                         has_html_chunk = true;
                         // HTML gets only one chunk.
                         *chunk_ctx = GenerateChunkCtx { c, chunks, chunk };
@@ -179,7 +179,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             let mut batch = ThreadPoolLib::Batch::default();
             for (chunk, chunk_ctx) in chunks.iter_mut().zip(chunk_contexts.iter_mut()) {
                 match &chunk.content {
-                    Chunk::Content::Javascript(js) => {
+                    crate::chunk::Content::Javascript(js) => {
                         for (i, part_range) in js.parts_in_chunk_in_order.iter().enumerate() {
                             #[cfg(feature = "debug_logs")]
                             {
@@ -187,10 +187,10 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                     PartRanges,
                                     "Part Range: {} {} ({}..{})",
                                     bstr::BStr::new(
-                                        &c.parse_graph.input_files.items_source()[part_range.source_index.get()].path.pretty
+                                        &unsafe { &(*c.parse_graph).input_files }.items_source()[part_range.source_index.get()].path.pretty
                                     ),
                                     <&'static str>::from(
-                                        c.parse_graph.ast.items_target()[part_range.source_index.get()].bake_graph()
+                                        unsafe { &(*c.parse_graph).ast }.items_target()[part_range.source_index.get()].bake_graph()
                                     ),
                                     part_range.part_index_begin,
                                     part_range.part_index_end,
@@ -212,7 +212,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             remaining_part_ranges = &mut core::mem::take(&mut remaining_part_ranges)[1..];
                         }
                     }
-                    Chunk::Content::Css(css) => {
+                    crate::chunk::Content::Css(css) => {
                         for i in 0..css.imports_in_chunk_in_order.len() {
                             remaining_part_ranges[0] = PendingPartRange {
                                 part_range: Default::default(),
@@ -228,7 +228,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             remaining_part_ranges = &mut core::mem::take(&mut remaining_part_ranges)[1..];
                         }
                     }
-                    Chunk::Content::Html(_) => {
+                    crate::chunk::Content::Html => {
                         remaining_part_ranges[0] = PendingPartRange {
                             part_range: Default::default(),
                             i: 0,
@@ -244,8 +244,8 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     }
                 }
             }
-            c.parse_graph.pool.worker_pool.schedule(batch);
-            c.parse_graph.pool.worker_pool.wait_for_all();
+            unsafe { &mut *(*c.parse_graph).pool.as_ref().worker_pool }.schedule(batch);
+            unsafe { &mut *(*c.parse_graph).pool.as_ref().worker_pool }.wait_for_all();
             debug!("  DONE {} compiling part ranges", total_count);
         }
 
@@ -262,7 +262,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             debug_assert!(chunks_to_do.len() > 0);
             debug!(" START {} postprocess chunks", chunks_to_do.len());
 
-            c.parse_graph.pool.worker_pool.each_ptr(
+            unsafe { &mut *(*c.parse_graph).pool.as_ref().worker_pool }.each_ptr(
                 chunk_contexts[0],
                 LinkerContext::generate_chunk,
                 chunks_to_do,
@@ -370,7 +370,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
                     let source_index = chunk.entry_point.source_index();
                     let file: &Logger::Source =
-                        &c.parse_graph.input_files.items_source()[source_index as usize];
+                        &unsafe { &(*c.parse_graph).input_files }.items_source()[source_index as usize];
                     write!(&mut msg, "    from input {}\n", bstr::BStr::new(&file.path.pretty))?;
                 }
             }
@@ -424,7 +424,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 // Use the per-chunk public_path to match what IntermediateOutput.code()
                 // uses during emission (browser chunks from server builds use the
                 // browser transpiler's public_path).
-                let public_path: &[u8] = if ch.flags.is_browser_chunk_from_server_build {
+                let public_path: &[u8] = if ch.flags.contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD) {
                     &b.transpiler_for_target(options::Target::Browser).options.public_path
                 } else {
                     &c.options.public_path
@@ -439,7 +439,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
         // Fix up each chunk's module_info
         for chunk in chunks.iter_mut() {
-            let Chunk::Content::Javascript(js) = &mut chunk.content else { continue };
+            let crate::chunk::Content::Javascript(js) = &mut chunk.content else { continue };
             let Some(mi) = js.module_info.as_mut() else { continue };
 
             // Collect replacements first (can't modify string table while iterating)
@@ -490,17 +490,17 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     }
 
     let mut output_files =
-        OutputFileListBuilder::init(c, chunks, c.parse_graph.additional_output_files.len())?;
+        OutputFileListBuilder::init(c, chunks, unsafe { &(*c.parse_graph).additional_output_files }.len())?;
 
-    let root_path: &[u8] = &c.resolver.opts.output_dir;
+    let root_path: &[u8] = &unsafe { &(*c.resolver).opts }.output_dir;
     let is_standalone = c.options.compile_to_standalone_html;
     let more_than_one_output = !is_standalone
-        && (c.parse_graph.additional_output_files.len() > 0
+        && (unsafe { &(*c.parse_graph).additional_output_files }.len() > 0
             || c.options.generate_bytecode_cache
             || (has_css_chunk && has_js_chunk)
             || (has_html_chunk && (has_js_chunk || has_css_chunk)));
 
-    if !c.resolver.opts.compile && more_than_one_output && !c.resolver.opts.supports_multiple_outputs {
+    if !unsafe { &(*c.resolver).opts }.compile && more_than_one_output && !unsafe { &(*c.resolver).opts }.supports_multiple_outputs {
         c.log.add_error(
             None,
             Logger::Loc::EMPTY,
@@ -536,7 +536,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         let mut scc: Vec<Option<Box<[u8]>>> = vec![None; chunks.len()];
 
         for (ci, chunk_item) in chunks.iter_mut().enumerate() {
-            if matches!(chunk_item.content, Chunk::Content::Html(_)) {
+            if matches!(chunk_item.content, crate::chunk::Content::Html) {
                 continue;
             }
             let mut ds: usize = 0;
@@ -551,7 +551,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     .intermediate_output
                     .code_standalone(
                         None,
-                        c.parse_graph,
+                        unsafe { &*c.parse_graph },
                         &c.graph,
                         &c.options.public_path,
                         chunk_item,
@@ -560,7 +560,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         false,
                         false,
                         &scc,
-                    )
+                    )?
                     .buffer,
             );
         }
@@ -577,7 +577,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         for (chunk_index_in_chunks_list, chunk) in chunks.iter_mut().enumerate() {
             // In standalone mode, non-HTML chunks were already resolved in the first pass.
             // Insert a placeholder output file to keep chunk indices aligned.
-            if is_standalone && !matches!(chunk.content, Chunk::Content::Html(_)) {
+            if is_standalone && !matches!(chunk.content, crate::chunk::Content::Html) {
                 let _ = output_files.insert_for_chunk(options::OutputFile::init(options::OutputFileInit {
                     data: options::OutputFileData::Buffer {
                         data: Box::default(),
@@ -604,16 +604,16 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
             let mut display_size: usize = 0;
 
-            let public_path: &[u8] = if chunk.flags.is_browser_chunk_from_server_build {
+            let public_path: &[u8] = if chunk.flags.contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD) {
                 &bundler.transpiler_for_target(options::Target::Browser).options.public_path
             } else {
                 &c.options.public_path
             };
 
-            let _code_result = if is_standalone && matches!(chunk.content, Chunk::Content::Html(_)) {
+            let _code_result = if is_standalone && matches!(chunk.content, crate::chunk::Content::Html) {
                 chunk.intermediate_output.code_standalone(
                     None,
-                    c.parse_graph,
+                    unsafe { &*c.parse_graph },
                     &c.graph,
                     public_path,
                     chunk,
@@ -622,25 +622,25 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     false,
                     false,
                     standalone_chunk_contents.as_deref().unwrap(),
-                )
+                )?
             } else {
                 chunk.intermediate_output.code(
                     None,
-                    c.parse_graph,
+                    unsafe { &*c.parse_graph },
                     &c.graph,
                     public_path,
                     chunk,
                     chunks,
                     &mut display_size,
-                    c.resolver.opts.compile && !chunk.flags.is_browser_chunk_from_server_build,
+                    unsafe { &(*c.resolver).opts }.compile && !chunk.flags.contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD),
                     chunk.content.sourcemap(c.options.source_maps) != SourceMapOption::None,
-                )
+                )?
             };
             let mut code_result = _code_result;
 
             let mut sourcemap_output_file: Option<options::OutputFile> = None;
             let input_path: Box<[u8]> = Box::from(if chunk.entry_point.is_entry_point() {
-                c.parse_graph.input_files.items_source()[chunk.entry_point.source_index() as usize]
+                unsafe { &(*c.parse_graph).input_files }.items_source()[chunk.entry_point.source_index() as usize]
                     .path
                     .text
                     .as_ref()
@@ -729,7 +729,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
             // Compute side early so it can be used for bytecode, module_info, and main chunk output files
             let side: options::Side =
-                if matches!(chunk.content, Chunk::Content::Css(_)) || chunk.flags.is_browser_chunk_from_server_build {
+                if matches!(chunk.content, crate::chunk::Content::Css(_)) || chunk.flags.contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD) {
                     options::Side::Client
                 } else {
                     match c.graph.ast.items_target()[chunk.entry_point.source_index() as usize] {
@@ -741,7 +741,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             let bytecode_output_file: Option<options::OutputFile> = 'brk: {
                 if c.options.generate_bytecode_cache {
                     let loader: Loader = if chunk.entry_point.is_entry_point() {
-                        c.parse_graph.input_files.items_loader()[chunk.entry_point.source_index() as usize]
+                        unsafe { &(*c.parse_graph).input_files }.items_loader()[chunk.entry_point.source_index() as usize]
                     } else {
                         Loader::Js
                     };
@@ -750,7 +750,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     // → AtomicPtr hook (BYTECODE_HOOK). Null = bytecode disabled.
                     let bytecode_vt = BYTECODE_HOOK
                         .load(core::sync::atomic::Ordering::Acquire);
-                    if matches!(chunk.content, Chunk::Content::Javascript(_))
+                    if matches!(chunk.content, crate::chunk::Content::Javascript(_))
                         && loader.is_javascript_like()
                         && !bytecode_vt.is_null()
                     {
@@ -853,13 +853,13 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     && c.options.compile
                 {
                     let loader: Loader = if chunk.entry_point.is_entry_point() {
-                        c.parse_graph.input_files.items_loader()[chunk.entry_point.source_index() as usize]
+                        unsafe { &(*c.parse_graph).input_files }.items_loader()[chunk.entry_point.source_index() as usize]
                     } else {
                         Loader::Js
                     };
 
-                    if matches!(chunk.content, Chunk::Content::Javascript(_)) && loader.is_javascript_like() {
-                        if let Chunk::Content::Javascript(js) = &chunk.content {
+                    if matches!(chunk.content, crate::chunk::Content::Javascript(_)) && loader.is_javascript_like() {
+                        if let crate::chunk::Content::Javascript(js) = &chunk.content {
                             if let Some(module_info_bytes) = &js.module_info_bytes {
                                 let mut out_path: Vec<u8> = Vec::new();
                                 out_path.extend_from_slice(&chunk.final_rel_path);
@@ -914,7 +914,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 None
             };
 
-            let output_kind = if matches!(chunk.content, Chunk::Content::Css(_)) {
+            let output_kind = if matches!(chunk.content, crate::chunk::Content::Css(_)) {
                 options::OutputKind::Asset
             } else if chunk.entry_point.is_entry_point() {
                 c.graph.files.items_entry_point_kind()[chunk.entry_point.source_index() as usize].output_kind()
@@ -933,7 +933,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 display_size: display_size as u32,
                 output_kind,
                 input_loader: if chunk.entry_point.is_entry_point() {
-                    c.parse_graph.input_files.items_loader()[chunk.entry_point.source_index() as usize]
+                    unsafe { &(*c.parse_graph).input_files }.items_loader()[chunk.entry_point.source_index() as usize]
                 } else {
                     Loader::Js
                 },
@@ -956,9 +956,9 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     None
                 },
                 referenced_css_chunks: match &chunk.content {
-                    Chunk::Content::Javascript(js) => Box::from(js.css_chunks.as_ref()),
-                    Chunk::Content::Css(_) => Box::default(),
-                    Chunk::Content::Html(_) => Box::default(),
+                    crate::chunk::Content::Javascript(js) => Box::from(js.css_chunks.as_ref()),
+                    crate::chunk::Content::Css(_) => Box::default(),
+                    crate::chunk::Content::Html => Box::default(),
                 },
                 bake_extra: 'brk: {
                     if c.framework.is_none() || IS_DEV_SERVER {
@@ -992,7 +992,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         }
 
         if !is_standalone {
-            output_files.insert_additional_output_files(&c.parse_graph.additional_output_files);
+            output_files.insert_additional_output_files(&unsafe { &(*c.parse_graph).additional_output_files });
         }
     }
 

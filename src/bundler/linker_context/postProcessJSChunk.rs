@@ -35,7 +35,7 @@ pub fn post_process_js_chunk(
 
     let _ = chunk_index;
     let c = ctx.c;
-    debug_assert!(matches!(chunk.content, Chunk::Content::Javascript(_)));
+    debug_assert!(matches!(chunk.content, crate::chunk::Content::Javascript(_)));
 
     js_ast::expr::data::Store::create();
     js_ast::stmt::data::Store::create();
@@ -66,7 +66,7 @@ pub fn post_process_js_chunk(
     let generate_module_info = c.options.generate_bytecode_cache
         && c.options.output_format == options::OutputFormat::Esm
         && c.options.compile;
-    let loader = c.parse_graph.input_files.items_loader()[chunk.entry_point.source_index() as usize];
+    let loader = unsafe { &(*c.parse_graph).input_files }.items_loader()[chunk.entry_point.source_index() as usize];
     let is_typescript = loader.is_type_script();
     // Zig: ModuleInfo.create(bun.default_allocator, ...) returns heap-allocated *ModuleInfo,
     // later stored on chunk.content.javascript.module_info — OWNED → Box<ModuleInfo>.
@@ -114,7 +114,7 @@ pub fn post_process_js_chunk(
         cross_chunk_prefix = js_printer::print(
             // TODO(port): allocator param — AST crate; thread &'bump Bump or drop
             worker.allocator,
-            c.resolver.opts.target,
+            unsafe { &(*c.resolver).opts }.target,
             ast.to_ast(),
             c.get_source(chunk.entry_point.source_index()),
             print_options,
@@ -128,7 +128,7 @@ pub fn post_process_js_chunk(
         );
         cross_chunk_suffix = js_printer::print(
             worker.allocator,
-            c.resolver.opts.target,
+            unsafe { &(*c.resolver).opts }.target,
             ast.to_ast(),
             c.get_source(chunk.entry_point.source_index()),
             print_options,
@@ -189,7 +189,7 @@ pub fn post_process_js_chunk(
         // generator is dropped — the entry promise resolves immediately and the
         // process exits before the awaited value lands.
         {
-            let tla_keywords = c.parse_graph.ast.items_top_level_await_keyword();
+            let tla_keywords = unsafe { &(*c.parse_graph).ast }.items_top_level_await_keyword();
             let wraps = c.graph.meta.items_flags();
             for part_range in chunk.content.javascript().parts_in_chunk_in_order.iter() {
                 let idx = part_range.source_index.get();
@@ -516,8 +516,8 @@ pub fn post_process_js_chunk(
             false
         });
 
-    let sources: &[Logger::Source] = c.parse_graph.input_files.items_source();
-    let targets: &[options::Target] = c.parse_graph.ast.items_target();
+    let sources: &[Logger::Source] = unsafe { &(*c.parse_graph).input_files }.items_source();
+    let targets: &[options::Target] = unsafe { &(*c.parse_graph).ast }.items_target();
     for compile_result in compile_results.iter() {
         let source_index = compile_result.source_index();
         let is_runtime = source_index == Index::runtime().value();
@@ -657,7 +657,7 @@ pub fn post_process_js_chunk(
             }
             {
                 let input =
-                    &c.parse_graph.input_files.items_source()[chunk.entry_point.source_index() as usize].path;
+                    &unsafe { &(*c.parse_graph).input_files }.items_source()[chunk.entry_point.source_index() as usize].path;
                 let mut buf = MutableString::init_empty();
                 // PERF(port): worker.allocator is an arena in Zig
                 js_printer::quote_for_json(input.pretty, &mut buf, true);
@@ -715,7 +715,7 @@ pub fn post_process_js_chunk(
             chunk.isolated_hash,
             worker,
             compile_results_for_source_map,
-            c.resolver.opts.output_dir,
+            unsafe { &(*c.resolver).opts }.output_dir,
             can_have_shifts,
         )?;
     }
@@ -1198,7 +1198,7 @@ pub fn generate_entry_point_tail_js(
     CompileResult::Javascript(CompileResult::Javascript {
         result: js_printer::print(
             allocator,
-            c.resolver.opts.target,
+            unsafe { &(*c.resolver).opts }.target,
             ast.to_ast(),
             c.get_source(source_index),
             print_options,

@@ -2602,7 +2602,7 @@ impl<'a> BundleV2<'a> {
         }
 
         server.append_stmt(S::Local {
-            kind: js_ast::ast::s::LocalKind::Const,
+            kind: js_ast::ast::s::Kind::KConst,
             decls: js_ast::ast::g::DeclList::from_slice(alloc, &[G::Decl {
                 binding: Binding::alloc(alloc, js_ast::ast::b::Identifier {
                     r#ref: server.new_symbol(js_ast::ast::symbol::Kind::Other, b"serverManifest")?,
@@ -2616,7 +2616,7 @@ impl<'a> BundleV2<'a> {
             ..Default::default()
         })?;
         server.append_stmt(S::Local {
-            kind: js_ast::ast::s::LocalKind::Const,
+            kind: js_ast::ast::s::Kind::KConst,
             decls: js_ast::ast::g::DeclList::from_slice(alloc, &[G::Decl {
                 binding: Binding::alloc(alloc, js_ast::ast::b::Identifier {
                     r#ref: server.new_symbol(js_ast::ast::symbol::Kind::Other, b"ssrManifest")?,
@@ -2832,13 +2832,13 @@ impl<'a> BundleV2<'a> {
         )?;
         this.unique_key = generate_unique_key();
 
-        if this.transpiler.log.has_errors() {
+        if unsafe { (*this.transpiler.log).has_errors() } {
             return Err(bun_core::err!("BuildFailed"));
         }
 
         this.enqueue_entry_points_normal(&this.transpiler.options.entry_points)?;
 
-        if this.transpiler.log.has_errors() {
+        if unsafe { (*this.transpiler.log).has_errors() } {
             return Err(bun_core::err!("BuildFailed"));
         }
 
@@ -2847,7 +2847,7 @@ impl<'a> BundleV2<'a> {
         *minify_duration = (((bun_core::time::nano_timestamp() as i64) - (bun_core::start_time() as i64)) / (bun_core::time::NS_PER_MS as i64)) as u64;
         *source_code_size = this.source_code_length as u64;
 
-        if this.transpiler.log.has_errors() {
+        if unsafe { (*this.transpiler.log).has_errors() } {
             return Err(bun_core::err!("BuildFailed"));
         }
 
@@ -2933,7 +2933,7 @@ impl<'a> BundleV2<'a> {
         )?;
         this.unique_key = generate_unique_key();
 
-        if this.transpiler.log.has_errors() {
+        if unsafe { (*this.transpiler.log).has_errors() } {
             return Err(bun_core::err!("BuildFailed"));
         }
 
@@ -2971,19 +2971,19 @@ impl<'a> BundleV2<'a> {
         )?;
         this.unique_key = generate_unique_key();
 
-        if this.transpiler.log.has_errors() {
+        if unsafe { (*this.transpiler.log).has_errors() } {
             return Err(bun_core::err!("BuildFailed"));
         }
 
         this.enqueue_entry_points_bake_production(entry_points)?;
 
-        if this.transpiler.log.has_errors() {
+        if unsafe { (*this.transpiler.log).has_errors() } {
             return Err(bun_core::err!("BuildFailed"));
         }
 
         this.wait_for_parse();
 
-        if this.transpiler.log.has_errors() {
+        if unsafe { (*this.transpiler.log).has_errors() } {
             return Err(bun_core::err!("BuildFailed"));
         }
 
@@ -3511,7 +3511,7 @@ impl<'a> BundleV2<'a> {
     ) -> Result<BuildResult, Error> {
         self.unique_key = generate_unique_key();
 
-        if self.transpiler.log.errors > 0 {
+        if unsafe { (*self.transpiler.log).errors } > 0 {
             return Err(bun_core::err!("BuildFailed"));
         }
 
@@ -3524,7 +3524,7 @@ impl<'a> BundleV2<'a> {
 
         /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
-        if self.transpiler.log.errors > 0 {
+        if unsafe { (*self.transpiler.log).errors } > 0 {
             return Err(bun_core::err!("BuildFailed"));
         }
 
@@ -3551,7 +3551,7 @@ impl<'a> BundleV2<'a> {
             &reachable_files,
         )?;
 
-        if self.transpiler.log.errors > 0 {
+        if unsafe { (*self.transpiler.log).errors } > 0 {
             return Err(bun_core::err!("BuildFailed"));
         }
 
@@ -3739,8 +3739,7 @@ impl<'a> BundleV2<'a> {
                             css_asts,
                             sources,
                             loaders,
-                            &mut log,
-                        ) == crate::linker_context_mod::ScanCssResult::Errors {
+                        ) == crate::linker_context_mod::ScanCssImportsResult::Errors {
                             // TODO: it could be possible for a plugin to change
                             // the type of loader from whatever it was into a
                             // css-compatible loader.
@@ -4529,9 +4528,9 @@ impl<'a> BundleV2<'a> {
                             import_record.path.text = path.text.to_vec().into_boxed_slice();
                             import_record.path.namespace = b"file";
                             import_record.path.pretty = self.allocator().alloc_str(&format!(
-                                "{}/{}{}",
+                                "{}/{:016x}{}",
                                 bake_types::ASSET_PREFIX,
-                                bun_string::fmt::hex_bytes_lower(bytemuck::bytes_of(&hash)),
+                                hash,
                                 bstr::BStr::new(bun_paths::extension(&path.text)),
                             ));
                             import_record.path.is_disabled = false;

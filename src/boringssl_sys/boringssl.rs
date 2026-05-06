@@ -433,6 +433,11 @@ pub type sk_GENERAL_NAME_free_func = unsafe extern "C" fn(*mut struct_stack_st_G
 
 #[inline]
 pub unsafe fn sk_X509_value(sk: *const struct_stack_st_X509, i: usize) -> *mut X509 {
+    // SAFETY: Two independent type casts, not a const→mut provenance laundering:
+    //   - `sk` is reinterpreted `*const opaque -> *const OPENSSL_STACK` (const→const).
+    //   - `sk_value` returns `*mut c_void` from the C heap; we narrow that to
+    //     `*mut X509` (mut→mut). Mutability originates from BoringSSL's ABI
+    //     (`void *sk_value(const _STACK *, size_t)`), not from `sk`.
     unsafe { sk_value(sk as *const OPENSSL_STACK, i) as *mut X509 }
 }
 
@@ -446,6 +451,9 @@ pub unsafe fn sk_GENERAL_NAME_value(
     sk: *const struct_stack_st_GENERAL_NAME,
     i: usize,
 ) -> *mut GENERAL_NAME {
+    // SAFETY: `sk` cast is const→const between opaque stack types; the `*mut`
+    // return is narrowed from `sk_value`'s own `*mut c_void` result (C-heap
+    // provenance), not derived from `sk`. No const→mut on a single value.
     unsafe { sk_value(sk as *const OPENSSL_STACK, i) as *mut GENERAL_NAME }
 }
 

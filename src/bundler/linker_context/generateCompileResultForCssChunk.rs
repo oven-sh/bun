@@ -8,7 +8,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_collections::BabyList;
 use bun_options_types::ImportRecord;
-use bun_threading::ThreadPool as ThreadPoolLib;
+use bun_threading::thread_pool as ThreadPoolLib;
 
 use crate::bun_css::{BundlerStyleSheet, ImportInfo, PrinterOptions, Targets};
 

@@ -23,7 +23,7 @@ pub fn generate_code_for_lazy_export(
     source_index: Index::Int,
 ) -> Result<(), AllocError> {
     let exports_kind = this.graph.ast.items_exports_kind()[source_index as usize];
-    let all_sources = this.parse_graph.input_files.items_source();
+    let all_sources = unsafe { &(*this.parse_graph).input_files }.items_source();
     let all_css_asts = this.graph.ast.items_css();
     let maybe_css_ast: Option<&BundlerStyleSheet> = all_css_asts[source_index as usize];
     // PORT NOTE: reshaped for borrowck — `parts` re-borrowed below after other graph borrows drop.
@@ -503,7 +503,7 @@ pub fn generate_code_for_lazy_export(
                 write!(
                     &mut name_buf,
                     "{}_default",
-                    this.parse_graph.input_files.items_source()[source_index as usize]
+                    unsafe { &(*this.parse_graph).input_files }.items_source()[source_index as usize]
                         .fmt_identifier()
                 )
                 .expect("write to Vec<u8> cannot fail");

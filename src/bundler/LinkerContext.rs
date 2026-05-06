@@ -2355,13 +2355,9 @@ impl<'a> LinkerContext<'a> {
 // Phase-A drafts (now duplicated) until the next sweep removes them.
 // ══════════════════════════════════════════════════════════════════════════
 
-// Local imports for the un-gated bodies. Kept here (not at the top of the
-// file) so the still-gated impl block above keeps compiling against its own
-// import set until it's removed.
-use bun_js_parser::ast::bundled_ast::Flags as AstFlags;
-use bun_js_parser::{
-    DeclaredSymbolList, DependencyList, ImportItemStatus, PartSymbolUseMap,
-};
+// Local imports for the un-gated bodies. `AstFlags` / `DeclaredSymbolList`
+// already imported at the top of the file.
+use bun_js_parser::{DependencyList, ImportItemStatus, PartSymbolUseMap};
 use bun_js_parser::ast::symbol::Use as SymbolUse;
 
 /// `bundle_v2.zig:ImportTracker.Status`. Mirrors the still-gated

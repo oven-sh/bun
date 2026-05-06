@@ -2576,11 +2576,16 @@ pub mod JSZlib {
                 ))
             }
             Library::Libdeflate => {
-                let Some(decompressor) = bun_libdeflate::Decompressor::alloc() else {
+                let decompressor_ptr = bun_libdeflate::Decompressor::alloc();
+                if decompressor_ptr.is_null() {
                     drop(list);
                     return global_this.throw_out_of_memory();
-                };
-                // decompressor drops on scope exit
+                }
+                // SAFETY: non-null per check above; freed via the scopeguard below.
+                let decompressor = unsafe { &mut *decompressor_ptr };
+                let _decompressor_guard = scopeguard::guard(decompressor_ptr, |p| unsafe {
+                    bun_libdeflate::Decompressor::destroy(p)
+                });
                 loop {
                     // Zig passes list.allocatedSlice() (= [0..capacity]) every iteration;
                     // libdeflate restarts decompression from scratch on each call. Reset len
@@ -2736,10 +2741,15 @@ pub mod JSZlib {
                 ))
             }
             Library::Libdeflate => {
-                let Some(compressor) = bun_libdeflate::Compressor::alloc(level.unwrap_or(6))
-                else {
+                let compressor_ptr = bun_libdeflate::Compressor::alloc(level.unwrap_or(6));
+                if compressor_ptr.is_null() {
                     return global_this.throw_out_of_memory();
-                };
+                }
+                // SAFETY: non-null per check above; freed via the scopeguard below.
+                let compressor = unsafe { &mut *compressor_ptr };
+                let _compressor_guard = scopeguard::guard(compressor_ptr, |p| unsafe {
+                    bun_libdeflate::Compressor::destroy(p)
+                });
                 let encoding = if is_gzip {
                     bun_libdeflate::Encoding::Gzip
                 } else {

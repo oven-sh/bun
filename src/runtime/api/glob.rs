@@ -58,7 +58,7 @@ impl ScanOpts {
 
             if !absolute {
                 let parts: &[&[u8]] = &[cwd_utf8.slice()];
-                let cwd_str = resolve_path::join_string_buf(&mut path_buf2, parts, resolve_path::Platform::Auto);
+                let cwd_str = join_string_buf::<platform::Auto>(&mut path_buf2, parts);
                 break 'cwd_str Box::<[u8]>::from(cwd_str);
             }
 

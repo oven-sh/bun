@@ -81,8 +81,7 @@ pub fn merge_junit_fragments(coord: &mut Coordinator, outfile: &[u8], summary: &
     }
 
     let mut contents: Vec<u8> = Vec::new();
-    // TODO(port): bun_core::nano_timestamp() / bun_core::START_TIME equivalents
-    let elapsed_time = (bun_core::nano_timestamp() - bun_core::START_TIME) as f64 / 1_000_000_000.0;
+    let elapsed_time = (bun_core::time::nano_timestamp() - bun_core::start_time()) as f64 / 1_000_000_000.0;
     let _ = write!(
         &mut contents,
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\

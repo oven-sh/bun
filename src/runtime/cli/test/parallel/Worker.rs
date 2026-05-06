@@ -367,7 +367,7 @@ impl WorkerPipe {
     pub fn on_reader_error(&mut self, _: bun_sys::Error) {
         self.done = true;
     }
-    pub fn event_loop(&self) -> &jsc::EventLoop {
+    pub fn event_loop(&self) -> *mut jsc::event_loop::EventLoop {
         // SAFETY: worker/coord backrefs valid for pipe lifetime.
         unsafe { (*(*self.worker).coord).vm.event_loop() }
     }

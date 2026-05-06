@@ -1050,7 +1050,7 @@ pub mod command {
             Tag::TestCommand => arguments::TEST_PARAMS,
             Tag::BunxCommand => arguments::RUN_PARAMS,
             // TODO(port): comptime concat of base_params_ ++ runtime_params_ ++ transpiler_params_
-            _ => arguments::BASE_RUNTIME_TRANSPILER_PARAMS,
+            _ => arguments::BASE_PARAMS_,
         }
     }
 

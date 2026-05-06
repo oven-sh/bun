@@ -348,8 +348,19 @@ impl Editor {
         // crate::process::spawn (async) or a bun_threading worker that owns
         // SpawnedEditorContext and calls bun.spawnSync.
         let spawned_ptr = Box::into_raw(spawned);
-        // TODO(port): std.Thread.spawn → bun_threading::spawn_detached
-        bun_threading::spawn_detached(move || auto_close(spawned_ptr))
+        // PORT NOTE: Zig used `std.Thread.spawn(.{}, autoClose, .{spawned})` then `.detach()`.
+        // bun_threading has no detached-spawn helper; std::thread::spawn matches semantics
+        // (the JoinHandle is dropped, detaching the thread).
+        // SAFETY: `spawned_ptr` is a uniquely-owned Box raw pointer; ownership is
+        // transferred to the spawned thread which reconstitutes it via Box::from_raw.
+        struct SendPtr(*mut SpawnedEditorContext);
+        unsafe impl Send for SendPtr {}
+        let send_ptr = SendPtr(spawned_ptr);
+        std::thread::Builder::new()
+            .spawn(move || {
+                let SendPtr(p) = send_ptr;
+                auto_close(p)
+            })
             .map_err(|_| bun_core::err!("ThreadSpawnFailed"))?;
         Ok(())
     }

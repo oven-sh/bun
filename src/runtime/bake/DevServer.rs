@@ -3463,7 +3463,7 @@ pub fn finalize_bundle(
 
     if dev.bundling_failures.is_empty() {
         if current_bundle.had_reload_event {
-            let clear_terminal = !bun_output::scope_is_visible(DevServer)
+            let clear_terminal = !bun_output::scope_is_visible!(DevServer)
                 // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime
                 && !unsafe { &*dev.vm }
                     .transpiler

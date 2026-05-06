@@ -10,18 +10,24 @@
 use bun_collections::{bit_set::DynamicBitSetUnmanaged, MultiArrayList, StringArrayHashMap};
 
 use super::{packed_map, route_bundle, FileKind};
+use crate::bake;
 
 /// `bun.GenericIndex(u32, File)` — file index into `bundled_files`.
+///
+/// Const-generic over `bake::Side` so that `IncrementalGraph(.server).FileIndex`
+/// and `IncrementalGraph(.client).FileIndex` are distinct types as in the Zig
+/// spec. A default of `Server` is provided so the many call sites that have not
+/// yet been side-annotated continue to resolve while the port catches up.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
-pub struct FileIndex(pub u32);
-impl FileIndex {
+pub struct FileIndex<const SIDE: bake::Side = { bake::Side::Server }>(pub u32);
+impl<const SIDE: bake::Side> FileIndex<SIDE> {
     #[inline] pub const fn init(v: u32) -> Self { Self(v) }
     #[inline] pub const fn get(self) -> u32 { self.0 }
 }
 /// Alias used by `DevServer.route_lookup` (Zig: `IncrementalGraph(.server).FileIndex`).
-pub type ServerFileIndex = FileIndex;
-pub type ClientFileIndex = FileIndex;
+pub type ServerFileIndex = FileIndex<{ bake::Side::Server }>;
+pub type ClientFileIndex = FileIndex<{ bake::Side::Client }>;
 
 /// `bun.GenericIndex(u32, Edge)`.
 #[repr(transparent)]

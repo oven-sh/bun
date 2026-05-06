@@ -2343,7 +2343,7 @@ impl IncrementalGraph<Client> {
                     );
                     w.extend_from_slice(b",\n  generation: \"");
                     let generation: u32 = u32::try_from(options.script_id.get() >> 32).unwrap();
-                    write!(w, "{:x}", bun_fmt::HexBytes(&generation.to_ne_bytes()))?;
+                    w.extend_from_slice(bun_fmt::bytes_to_hex_lower_string(&generation.to_ne_bytes()).as_bytes());
                     w.extend_from_slice(b"\",\n  version: \"");
                     w.extend_from_slice(&self.owner().configuration_hash_key);
 
@@ -2355,11 +2355,10 @@ impl IncrementalGraph<Client> {
 
                     if !options.react_refresh_entry_point.is_empty() {
                         w.extend_from_slice(b",\n  refresh: ");
-                        let mut relative_path_buf = path_buffer_pool().get();
-                        bun_js_parser::printer::write_json_string(
+                        let mut relative_path_buf = path_buffer_pool::get();
+                        bun_js_printer::write_json_string::<_, { bun_js_printer::Encoding::Utf8 }>(
                             self.owner().relative_path(&mut *relative_path_buf, options.react_refresh_entry_point),
                             w,
-                            bun_js_parser::printer::Encoding::Utf8,
                         )?;
                     }
                     w.extend_from_slice(b"\n})");

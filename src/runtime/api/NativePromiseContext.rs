@@ -167,7 +167,9 @@ impl DeferredDerefTask {
     const TAG_MASK: usize = 0b111;
 
     pub fn schedule(ctx: *mut c_void, tag: Tag) {
-        let vm = VirtualMachine::get();
+        // SAFETY: called from the JS thread (GC sweep → C++ destructor); the
+        // thread-local VM is alive for the duration of this call.
+        let vm = unsafe { &*VirtualMachine::get() };
         // Process is dying; the leak no longer matters and the task
         // queue won't drain.
         if vm.is_shutting_down() {
@@ -182,7 +184,9 @@ impl DeferredDerefTask {
         // Zig: @truncate(addr | @intFromEnum(tag)) → set_uintptr stores into the
         // 49-bit _ptr field; truncation to u49 happens inside set_uintptr.
         task.set_uintptr(addr | (tag as usize));
-        vm.event_loop().enqueue_task(task);
+        // SAFETY: event_loop() returns the VM's owned EventLoop; we are the
+        // sole mutator on the JS thread here.
+        unsafe { (*vm.event_loop()).enqueue_task(task) };
     }
 
     pub fn run_from_js_thread(packed_ptr: usize) {

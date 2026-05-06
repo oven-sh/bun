@@ -91,18 +91,28 @@ pub fn hostent_with_ttls_to_js_response(
             if addr.is_null() {
                 break;
             }
-            // TODO(port): verify bun_dns::Address constructors / address_to_js signature
+            // PORT NOTE: Zig built std.net.Address via .initIp4/.initIp6. Rust
+            // bun_dns::Address (= bun_sys::net::Address) only exposes init_posix,
+            // so build a sockaddr_in/in6 on the stack and copy through that.
             let addr_string = {
-                let res = if this.hostent.h_addrtype == c_ares::AF::INET6 {
+                let address = if this.hostent.h_addrtype == c_ares::AF::INET6 {
                     // SAFETY: addr points to ≥16 bytes for AF_INET6.
                     let bytes: [u8; 16] = unsafe { *(addr as *const [u8; 16]) };
-                    bun_dns::address_to_js(&bun_dns::Address::init_ip6(bytes, 0, 0, 0), global_this)
+                    let mut sa6: libc::sockaddr_in6 = unsafe { core::mem::zeroed() };
+                    sa6.sin6_family = libc::AF_INET6 as _;
+                    sa6.sin6_addr.s6_addr = bytes;
+                    // SAFETY: &sa6 is a valid sockaddr_in6.
+                    unsafe { bun_dns::Address::init_posix((&sa6 as *const libc::sockaddr_in6).cast()) }
                 } else {
                     // SAFETY: addr points to ≥4 bytes for AF_INET.
                     let bytes: [u8; 4] = unsafe { *(addr as *const [u8; 4]) };
-                    bun_dns::address_to_js(&bun_dns::Address::init_ip4(bytes, 0), global_this)
+                    let mut sa4: libc::sockaddr_in = unsafe { core::mem::zeroed() };
+                    sa4.sin_family = libc::AF_INET as _;
+                    sa4.sin_addr.s_addr = u32::from_ne_bytes(bytes);
+                    // SAFETY: &sa4 is a valid sockaddr_in.
+                    unsafe { bun_dns::Address::init_posix((&sa4 as *const libc::sockaddr_in).cast()) }
                 };
-                match res {
+                match address_to_js(&address, global_this) {
                     Ok(v) => v,
                     Err(_) => return Ok(global_this.throw_out_of_memory_value()),
                 }

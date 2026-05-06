@@ -1120,7 +1120,7 @@ impl FrameworkRouter {
         file_kind: FileKind,
         file_path: &[u8],
         ctx: &mut dyn InsertionHandler,
-        /// When `InsertError::RouteCollision` is returned, this is set to the existing file index.
+        // When `InsertError::RouteCollision` is returned, this is set to the existing file index.
         out_colliding_file_id: &mut OpaqueFileId,
     ) -> Result<(), InsertError> {
         // The root route is the index of the type

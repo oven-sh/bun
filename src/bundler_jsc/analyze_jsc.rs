@@ -18,23 +18,13 @@ pub extern "C" fn zig__renderDiff(
     received_len: usize,
     global_this: &JSGlobalObject,
 ) {
-    
-    {
-        // TODO(b2-blocked): bun_runtime::test_runner::diff_format::DiffFormatter (higher-tier crate)
-        use bun_runtime::test_runner::diff_format::DiffFormatter;
-        // SAFETY: caller (C++) guarantees ptr is valid for `len` bytes and NUL-terminated.
-        let received = unsafe { core::slice::from_raw_parts(received_ptr as *const u8, received_len) };
-        // SAFETY: same as above.
-        let expected = unsafe { core::slice::from_raw_parts(expected_ptr as *const u8, expected_len) };
-        let formatter = DiffFormatter {
-            received_string: received,
-            expected_string: expected,
-            global_this,
-        };
-        let _ = write!(bun_core::Output::error_writer(), "DIFF:\n{}\n", formatter);
-    }
+    // TODO(b2-blocked): bun_runtime::test_runner::diff_format::DiffFormatter lives in a
+    // higher-tier crate (`bun_runtime`) that this crate cannot depend on. The Zig original
+    // builds a `DiffFormatter{ received_string, expected_string, globalThis }` and prints it
+    // to `Output.errorWriter()`. Re-enable once the crate-layering allows the dependency or
+    // DiffFormatter is moved to a lower tier.
     let _ = (expected_ptr, expected_len, received_ptr, received_len, global_this);
-    unreachable!("b2-blocked: bun_runtime::test_runner is higher-tier")
+    todo!("blocked_on: bun_runtime::test_runner::diff_format::DiffFormatter")
 }
 
 #[unsafe(no_mangle)]
@@ -145,11 +135,13 @@ pub extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
             RequestedModuleValue::Json => {
                 module_record.add_requested_module_json(identifiers, reqk)
             }
-            // Zig open-enum tail: `else => |uv| @enumFromInt(@intFromEnum(uv))`.
+            // Zig open-enum tail: `else => |uv| @enumFromInt(@intFromEnum(uv))` —
+            // FetchParameters and StringID are both `#[repr(transparent)] u32`, so this
+            // is a bitcast of the raw discriminant back into the interned-string index.
             uv => module_record.add_requested_module_host_defined(
                 identifiers,
                 reqk,
-                uv.as_string_id(),
+                StringID(uv.0),
             ),
         }
     }
@@ -487,8 +479,6 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         unsafe { JSC_JSModuleRecord__addImportEntryNamespace(self, ia, import_name, local_name, module_name) }
     }
 }
-
-use core::fmt::Write as _;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

@@ -4,7 +4,6 @@ use core::ptr::NonNull;
 
 use bun_aio::KeepAlive;
 use bun_boringssl as boringssl;
-use bun_collections::LinearFifo;
 use bun_jsc::{
     self as jsc, CallFrame, JSArray, JSGlobalObject, JSMap, JSPromise, JSValue, JsRef, JsResult,
 };
@@ -1947,7 +1946,9 @@ impl<const SSL: bool> SocketHandler<SSL> {
                     hostname = &hostname[1..hostname.len() - 1];
                 }
                 if !hostname.is_empty()
-                    && !boringssl::check_server_identity(ssl_ptr, hostname)
+                    // SAFETY: in the TLS handshake-success path the socket's native
+                    // handle is a live `SSL*`; Zig calls `@ptrCast` on it directly.
+                    && !boringssl::check_server_identity(unsafe { &mut *ssl_ptr }, hostname)
                 {
                     let err = this
                         .global_object

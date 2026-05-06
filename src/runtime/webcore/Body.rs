@@ -1205,7 +1205,7 @@ impl Value {
                     p.ensure_still_alive();
                 });
                 if let Some(promise) = promise_value.as_any_promise() {
-                    if promise.status() == jsc::PromiseStatus::Pending {
+                    if promise.status() == jsc::js_promise::Status::Pending {
                         promise.reject_with_async_stack(global, err_ref.to_js(global))?;
                     }
                 }
@@ -2133,7 +2133,7 @@ impl<'a> ValueBufferer<'a> {
             // it returns a Promise when it goes through ReadableStreamDefaultReader
             if let Some(promise) = assignment_result.as_any_promise() {
                 match promise.status() {
-                    jsc::PromiseStatus::Pending => {
+                    jsc::js_promise::Status::Pending => {
                         let cell = crate::api::NativePromiseContext::create(global_this, self);
                         let _ = assignment_result.then_with_value(
                             global_this,
@@ -2142,11 +2142,11 @@ impl<'a> ValueBufferer<'a> {
                             Self::on_reject_stream,
                         );
                     }
-                    jsc::PromiseStatus::Fulfilled => {
+                    jsc::js_promise::Status::Fulfilled => {
                         self.handle_resolve_stream(false);
                         stream.value.unprotect();
                     }
-                    jsc::PromiseStatus::Rejected => {
+                    jsc::js_promise::Status::Rejected => {
                         self.handle_reject_stream(promise.result(global_this.vm()), false);
                         stream.value.unprotect();
                     }

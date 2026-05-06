@@ -511,12 +511,13 @@ impl<'a> Iterator for EncodedPatternIterator<'a> {
 }
 
 /// Hash context for DynamicRouteMap — hashes/compares by effective URL.
+#[derive(Default, Clone, Copy)]
 pub struct EffectiveUrlContext;
-impl EffectiveUrlContext {
-    pub fn hash(p: &EncodedPattern) -> u32 {
+impl ArrayHashContext<EncodedPattern> for EffectiveUrlContext {
+    fn hash(&self, p: &EncodedPattern) -> u32 {
         p.effective_url_hash() as u32 // @truncate
     }
-    pub fn eql(a: &EncodedPattern, b: &EncodedPattern, _: usize) -> bool {
+    fn eql(&self, a: &EncodedPattern, b: &EncodedPattern, _: usize) -> bool {
         a.effective_url_hash() == b.effective_url_hash()
     }
 }
@@ -746,14 +747,14 @@ impl Style {
             let bun_string = value.to_bun_string(global)?;
             // PERF(port): was stack-fallback allocator
             let utf8 = bun_string.to_utf8();
-            if let Some(style) = STYLE_MAP.get(utf8.as_bytes()) {
+            if let Some(style) = STYLE_MAP.get(utf8.slice()) {
                 return Ok(style());
             }
         } else if value.is_callable() {
             return Ok(Style::JavascriptDefined(Strong::create(value, global)));
         }
 
-        Err(global.throw_invalid_arguments(STYLE_ERROR_MESSAGE, &[]))
+        Err(global.throw_invalid_arguments(STYLE_ERROR_MESSAGE))
     }
 }
 
@@ -957,6 +958,7 @@ impl Style {
                 }
                 // Potential future proofing
                 if let Some(bad_char_index) = strings::index_of_any(param_name, b"?*{}()=:#,") {
+                    let bad_char_index = bad_char_index as usize;
                     return Err(log
                         .fail(
                             format_args!(
@@ -1312,8 +1314,12 @@ impl MatchedParams {
             let key_str = bun_str::String::clone_utf8(key);
             let value_str = bun_str::String::clone_utf8(value);
 
-            obj.put_bun_string_one_or_array(global, &key_str, value_str.to_js(global).expect("unreachable"))
-                .expect("unreachable");
+            obj.put_bun_string_one_or_array(
+                global,
+                &key_str,
+                value_str.to_js(global).expect("unreachable"),
+            )
+            .expect("unreachable");
         }
         obj
     }
@@ -1375,6 +1381,12 @@ impl FrameworkRouter {
 pub enum PatternParseError {
     #[error("InvalidRoutePattern")]
     InvalidRoutePattern,
+}
+
+impl From<PatternParseError> for bun_core::Error {
+    fn from(e: PatternParseError) -> Self {
+        bun_core::Error::intern(<&'static str>::from(&e))
+    }
 }
 
 const TINY_LOG_CAP: usize = 512 + if MAX_PATH_BYTES < 4096 { MAX_PATH_BYTES } else { 4096 };

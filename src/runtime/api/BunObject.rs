@@ -483,6 +483,20 @@ use bun_jsc::{StringJsc as _, bun_string_jsc};
 use bun_str::zig_string::Slice as ZigStringSlice;
 use crate::test_runner::expect::{JSGlobalObjectTestExt as _, JSValueTestExt as _};
 
+// Local shim for `globalObject.throwNotEnoughArguments(name, expected, got)` —
+// upstream `bun_jsc::JSGlobalObject` doesn't expose it yet, so several runtime
+// modules each carry a tiny extension trait until it's promoted.
+trait JSGlobalObjectBunObjExt {
+    fn throw_not_enough_arguments(&self, name_: &str, expected: usize, got: usize) -> jsc::JsError;
+}
+impl JSGlobalObjectBunObjExt for JSGlobalObject {
+    fn throw_not_enough_arguments(&self, name_: &str, expected: usize, got: usize) -> jsc::JsError {
+        self.throw_invalid_arguments(format_args!(
+            "Not enough arguments to '{name_}'. Expected {expected}, got {got}."
+        ))
+    }
+}
+
 /// `bun.String.toJSArray` — the un-gated `bun_jsc::bun_string_jsc` module lacks
 /// `to_js_array`; declare the C++ symbol locally (matches src/jsc/bun_string_jsc.rs:111).
 #[inline]

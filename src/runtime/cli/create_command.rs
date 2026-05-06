@@ -2,8 +2,10 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use std::cell::Cell;
 use std::io::Write as _;
 
-use bun_core::{Global, Output, Progress};
+use bun_core::{Global, Output};
+use bun_core::Progress::{Progress, Node as ProgressNode};
 use bun_threading::Futex;
+use crate::api::bun_process::sync as spawn_sync;
 use bun_str::{strings, MutableString};
 use bun_paths::{self as resolve_path, PathBuffer, OSPathSlice};
 use bun_logger as logger;
@@ -159,17 +161,14 @@ fn exec_task(task_: &[u8], cwd: &[u8], _path: &[u8], npm_client: Option<NPMClien
     Output::disable_buffering();
     let _reenable = scopeguard::guard((), |_| Output::enable_buffering());
 
-    let _ = bun_core::spawn_sync(&bun_core::SpawnOptions {
-        argv,
+    let _ = spawn_sync::spawn(&spawn_sync::Options {
+        argv: argv.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
         envp: None,
-        cwd,
-        stderr: bun_core::Stdio::Inherit,
-        stdout: bun_core::Stdio::Inherit,
-        stdin: bun_core::Stdio::Inherit,
-        #[cfg(windows)]
-        windows: bun_core::WindowsSpawnOptions {
-            loop_: bun_jsc::EventLoopHandle::init(bun_event_loop::MiniEventLoop::init_global(None, None)),
-        },
+        cwd: Box::from(cwd),
+        stderr: spawn_sync::SyncStdio::Inherit,
+        stdout: spawn_sync::SyncStdio::Inherit,
+        stdin: spawn_sync::SyncStdio::Inherit,
+        // TODO(port): windows: { loop = EventLoopHandle.init(MiniEventLoop.initGlobal(...)) }
         ..Default::default()
     });
 }

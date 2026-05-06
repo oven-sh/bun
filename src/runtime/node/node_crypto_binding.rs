@@ -51,7 +51,7 @@ macro_rules! extern_crypto_job {
             pub struct Job {
                 vm: &'static VirtualMachine,
                 task: WorkPoolTask,
-                any_task: jsc::AnyTask,
+                any_task: AnyTask,
                 poll: KeepAlive,
                 callback: StrongOptional, // Strong.Optional
                 ctx: *mut Ctx,
@@ -236,7 +236,7 @@ pub trait CryptoJobCtx: Sized {
 pub struct CryptoJob<Ctx> {
     vm: &'static VirtualMachine,
     task: WorkPoolTask,
-    any_task: jsc::AnyTask,
+    any_task: AnyTask,
     poll: KeepAlive,
     callback: StrongOptional, // Strong.Optional
     ctx: Ctx,

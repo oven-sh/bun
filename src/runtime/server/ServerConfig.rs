@@ -4,6 +4,8 @@ use std::io::Write as _;
 
 use bun_collections::{BabyList, StringHashMap};
 use bun_str::strings;
+use bun_uws_sys as uws;
+use bun_wyhash::Wyhash;
 
 use bun_http_types::Method as http_method;
 pub use http_method::{Method, Optional as MethodOptional};

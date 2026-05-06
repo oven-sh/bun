@@ -270,20 +270,20 @@ impl LinuxMemFdAllocator {
         }
     }
 
-    pub fn is_instance(allocator: &dyn crate::Allocator) -> bool {
+    pub fn is_instance(allocator: &dyn Allocator) -> bool {
         Self::from(allocator).is_some()
     }
 }
 
 // ─── AllocatorInterface ─────────────────────────────────────────────────────
 // Zig defined a private `AllocatorInterface` struct holding alloc/free/VTable.
-// `crate::Allocator` is a marker trait (type_id-only); the vtable functions are
-// kept as raw-ptr free functions matching Zig's `*anyopaque` signatures so that
-// `free` retains the `Box::into_raw` *mut provenance it needs to drop `self`.
+// `bun_alloc::Allocator` is a marker trait (type_id-only); the vtable functions
+// are kept as raw-ptr free functions matching Zig's `*anyopaque` signatures so
+// that `free` retains the `Box::into_raw` *mut provenance it needs to drop `self`.
 
-impl crate::Allocator for LinuxMemFdAllocator {
+impl Allocator for LinuxMemFdAllocator {
     // resize/remap: Zig used `std.mem.Allocator.noResize` / `noRemap`.
-    // TODO(port): rely on `crate::Allocator` default no-op impls for resize/remap.
+    // `bun_alloc::Allocator` is a marker trait — only `type_id()` is provided.
 }
 
 mod allocator_interface {

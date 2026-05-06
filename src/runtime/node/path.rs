@@ -251,7 +251,7 @@ fn format_ext_t<'a, T: PathChar>(ext: &'a [T], buf: &'a mut [T]) -> &'a [T] {
 mod _cwd {
 use super::*;
 
-fn posix_cwd_t<T: PathChar>(buf: &mut [T]) -> MaybeBuf<'_, T> {
+pub fn posix_cwd_t<T: PathChar>(buf: &mut [T]) -> MaybeBuf<'_, T> {
     let cwd = match get_cwd_t(buf) {
         Ok(r) => r,
         Err(e) => return Err(e),

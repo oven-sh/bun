@@ -781,13 +781,13 @@ impl BuildCommand {
                         }
                     };
 
-                if !matches!(
-                    result,
-                    bun_standalone_module_graph::ToExecutableResult::Success
-                ) {
+                if let bun_standalone_module_graph::StandaloneModuleGraph::CompileResult::Err(
+                    err,
+                ) = &result
+                {
                     Output::print_errorln(format_args!(
                         "{}",
-                        bstr::BStr::new(result.err().slice())
+                        bstr::BStr::new(err.slice())
                     ));
                     Global::exit(1);
                 }

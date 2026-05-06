@@ -1045,14 +1045,14 @@ impl BunxCommand {
         }
 
         // TODO(port): Zig used std.fs.cwd().makeOpenPath; map to bun_sys recursive mkdir + open.
-        let bunx_install_dir = bun_sys::make_open_path(Fd::cwd(), bunx_cache_dir)?;
+        let bunx_install_dir = Fd::cwd().make_open_path(bunx_cache_dir)?;
 
         'create_package_json: {
             // create package.json, but only if it doesn't exist
-            let package_json = match bun_sys::File::create_at_z(
-                bunx_install_dir,
-                ZStr::from_literal(b"package.json\0"),
-                bun_sys::CreateOptions { truncate: true, ..Default::default() },
+            let package_json = match bun_sys::File::create(
+                bunx_install_dir.fd,
+                b"package.json",
+                /* truncate */ true,
             ) {
                 Ok(f) => f,
                 Err(_) => break 'create_package_json,

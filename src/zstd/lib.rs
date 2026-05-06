@@ -141,6 +141,25 @@ pub mod c {
         //          read each contained frame header.  This is fast as most of the data is skipped,
         //          however it does mean that all frame data must be present and valid. */
         pub fn ZSTD_findDecompressedSize(src: *const c_void, src_size: usize) -> c_ulonglong;
+
+        // ── streaming-compress / advanced API (used by NativeZstd) ───────
+        pub fn ZSTD_createCCtx() -> *mut ZSTD_CCtx;
+        pub fn ZSTD_freeCCtx(cctx: *mut ZSTD_CCtx) -> usize;
+        pub fn ZSTD_createDCtx() -> *mut ZSTD_DCtx;
+        pub fn ZSTD_freeDCtx(dctx: *mut ZSTD_DCtx) -> usize;
+        pub fn ZSTD_CCtx_setPledgedSrcSize(cctx: *mut ZSTD_CCtx, pledged_src_size: c_ulonglong) -> usize;
+        pub fn ZSTD_CCtx_setParameter(cctx: *mut ZSTD_CCtx, param: ZSTD_cParameter, value: c_int) -> usize;
+        pub fn ZSTD_DCtx_setParameter(dctx: *mut ZSTD_DCtx, param: ZSTD_dParameter, value: c_int) -> usize;
+        pub fn ZSTD_CCtx_reset(cctx: *mut ZSTD_CCtx, reset: ZSTD_ResetDirective) -> usize;
+        pub fn ZSTD_DCtx_reset(dctx: *mut ZSTD_DCtx, reset: ZSTD_ResetDirective) -> usize;
+        pub fn ZSTD_compressStream2(
+            cctx: *mut ZSTD_CCtx,
+            output: *mut ZSTD_outBuffer,
+            input: *mut ZSTD_inBuffer,
+            end_op: ZSTD_EndDirective,
+        ) -> usize;
+        pub fn ZSTD_getErrorCode(function_result: usize) -> ZSTD_ErrorCode;
+        pub fn ZSTD_getErrorString(code: ZSTD_ErrorCode) -> *const c_char;
     }
 }
 

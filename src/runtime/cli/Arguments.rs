@@ -2463,17 +2463,20 @@ pub fn parse<const CMD: Command::Tag>(ctx: &mut Command::Context) -> Result<api:
     }
 
     if let Some(log_level) = opts.log_level {
-        logger::Log::set_default_log_level(match log_level {
-            api::LogLevel::Debug => logger::Log::Level::Debug,
-            api::LogLevel::Err => logger::Log::Level::Err,
-            api::LogLevel::Warn => logger::Log::Level::Warn,
-            _ => logger::Log::Level::Err,
-        });
-        ctx.log.level = logger::Log::default_log_level();
+        // SAFETY: single-threaded startup; mirrors Zig `Log.default_log_level = …`
+        unsafe {
+            logger::DEFAULT_LOG_LEVEL = match log_level {
+                api::MessageLevel::Debug => logger::Level::Debug,
+                api::MessageLevel::Err => logger::Level::Err,
+                api::MessageLevel::Warn => logger::Level::Warn,
+                _ => logger::Level::Err,
+            };
+            ctx.log.level = logger::DEFAULT_LOG_LEVEL;
+        }
     }
 
     if args.flag("--no-macros") {
-        ctx.debug.macros = cli::MacroOptions::Disable;
+        ctx.debug.macros = MacroOptions::Disable;
     }
 
     opts.output_dir = output_dir;

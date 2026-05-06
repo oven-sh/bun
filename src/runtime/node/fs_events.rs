@@ -490,8 +490,7 @@ impl FSEventsLoop {
             mutex: Mutex::new(),
             loop_: ptr::null_mut(),
             sem: Semaphore::default(),
-            // TODO(port): Thread default/uninit representation
-            thread: Thread::default(),
+            thread: None,
             tasks: UnboundedQueue::default(),
             watchers: BabyList::default(),
             watcher_count: 0,
@@ -525,8 +524,14 @@ impl FSEventsLoop {
         // SAFETY: this is a valid freshly-boxed pointer
         unsafe {
             (*this).signal_source = signal_source;
-            // TODO(port): bun_threading::Thread::spawn signature
-            (*this).thread = Thread::spawn(move || (&mut *this).cf_thread_loop())?;
+            // PORT NOTE: Zig std.Thread.spawn → std::thread::spawn. The raw `this`
+            // pointer is moved into the closure; the FSEventsLoop is heap-allocated
+            // and outlives the thread (joined in Drop).
+            let this_addr = this as usize;
+            (*this).thread = Some(std::thread::spawn(move || {
+                // SAFETY: see above — `this` is a valid heap allocation for the thread's lifetime.
+                unsafe { (*(this_addr as *mut FSEventsLoop)).cf_thread_loop() }
+            }));
 
             // sync threads
             (*this).sem.wait();

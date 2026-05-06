@@ -558,11 +558,8 @@ impl<'a> ParseRenderer<'a> {
         }
     }
 
-    fn renderer(&mut self) -> md::Renderer {
-        md::Renderer {
-            ptr: self as *mut _ as *mut c_void,
-            vtable: &Self::VTABLE,
-        }
+    fn renderer(&mut self) -> md::Renderer<'_> {
+        md::Renderer { ptr: self }
     }
 
     fn get_result(&self) -> JSValue {
@@ -1035,11 +1032,8 @@ impl<'a> JsCallbackRenderer<'a> {
 
     // PORT NOTE: deinit() dropped — Vec<CallbackStackEntry> (with Vec<u8> buffers) and HeadingIdTracker free via Drop.
 
-    fn renderer(&mut self) -> md::Renderer {
-        md::Renderer {
-            ptr: self as *mut _ as *mut c_void,
-            vtable: &Self::VTABLE,
-        }
+    fn renderer(&mut self) -> md::Renderer<'_> {
+        md::Renderer { ptr: self }
     }
 
     const VTABLE: md::types::VTable = md::types::VTable {

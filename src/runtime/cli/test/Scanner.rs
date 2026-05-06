@@ -153,13 +153,8 @@ impl<'a> Scanner<'a> {
                         name_len,
                     )
                 };
-                // bun.openDir → sys.openat(dir, pathZ, O.DIRECTORY|O.CLOEXEC|O.RDONLY, 0)
-                let Ok(child_fd) = bun_sys::openat(
-                    dir,
-                    path_z,
-                    bun_sys::O::DIRECTORY | bun_sys::O::CLOEXEC | bun_sys::O::RDONLY,
-                    0,
-                ) else {
+                // bun.openDir → sys.openat(dir, pathZ, O.DIRECTORY|O.CLOEXEC|O.RDONLY, 0).stdDir()
+                let Ok(child_fd) = bun_sys::open_dir_at(dir, path_z.as_bytes()) else {
                     continue;
                 };
                 let child_dir = bun_sys::Dir::from_fd(child_fd);

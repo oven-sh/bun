@@ -90,9 +90,14 @@ pub fn print_diff_main(
 
     let mut dmp = DmpUsize::default();
     dmp.config.diff_timeout = 200;
-    let lines_to_chars = Dmp::diff_lines_to_chars(expected_slice, received_slice);
-    let char_diffs = dmp.diff(&lines_to_chars.chars_1, &lines_to_chars.chars_2, false);
-    let diffs = Dmp::diff_chars_to_lines(&char_diffs, lines_to_chars.line_array.as_slice());
+    let lines_to_chars =
+        bun_core::handle_oom(diff_match_patch::diff_lines_to_chars(expected_slice, received_slice));
+    let char_diffs =
+        bun_core::handle_oom(dmp.diff(&lines_to_chars.chars_1, &lines_to_chars.chars_2, false));
+    let diffs = bun_core::handle_oom(diff_match_patch::diff_chars_to_lines(
+        &char_diffs,
+        lines_to_chars.line_array.as_slice(),
+    ));
 
     let mut diff_segments: Vec<DiffSegment> = Vec::new();
     for diff in diffs.iter() {
@@ -525,8 +530,9 @@ fn print_modified_segment(
         return print_modified_segment_without_diffdiff(writer, config, segment, modified_style);
     }
 
-    let mut char_diff = Dmp::default().diff(segment.removed, segment.inserted, true);
-    Dmp::diff_cleanup_semantic(&mut char_diff);
+    let mut char_diff =
+        bun_core::handle_oom(Dmp::default().diff(segment.removed, segment.inserted, true));
+    bun_core::handle_oom(diff_match_patch::diff_cleanup_semantic(&mut char_diff));
 
     let mut deleted_highlighted_length: usize = 0;
     let mut inserted_highlighted_length: usize = 0;

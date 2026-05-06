@@ -818,6 +818,12 @@ pub use bin::Bin;
 pub use repository::Repository;
 pub use lockfile::{Lockfile, PatchedDep, LoadResult, LoadStep};
 pub use package_manager::Options::LogLevel;
+pub use package_manager::{
+    WorkspaceFilter, ManifestCacheOptions, ManifestCacheRequest, ManifestLoad,
+    WorkspacePackageJsonCacheEntry, GetJsonOptions, GetJsonResult,
+};
+pub use resolution::Tag as ResolutionTag;
+pub use dependency::Tag as DependencyVersionTag;
 #[derive(Default)] pub struct ExtractTarball;
 impl ExtractTarball {
     /// Stub for `ExtractTarball.run` (src/install/extract_tarball.zig). Real

@@ -1730,7 +1730,7 @@ impl DevServer<'_> {
                 None => 'str: {
                     let name = &self.server_graph.bundled_files.keys()
                         [from_opaque_file_id::<{ bake::Side::Server }>(router_type.server_file).get() as usize];
-                    let buf = paths::path_buffer_pool::get();
+                    let mut buf = paths::path_buffer_pool::get();
                     let s = BunString::create_utf8_for_js(global, self.relative_path(&mut *buf, name))?;
                     router_type.server_file_string = jsc::StrongOptional::create(s, global);
                     break 'str s;
@@ -4509,7 +4509,7 @@ impl DevServer<'_> {
                 payload.extend_from_slice(&u32::try_from(g.bundled_files.len()).unwrap().to_le_bytes());
                 for (i, (k, v)) in g.bundled_files.keys().iter().zip(g.bundled_files.values()).enumerate() {
                     let file = v.unpack();
-                    let buf = paths::path_buffer_pool::get();
+                    let mut buf = paths::path_buffer_pool::get();
                     let normalized_key = self.relative_path(&mut *buf, k);
                     payload.extend_from_slice(&u32::try_from(normalized_key.len()).unwrap().to_le_bytes());
                     if k.is_empty() { continue; }

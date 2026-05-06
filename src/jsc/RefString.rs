@@ -36,8 +36,11 @@ pub struct RefString {
 }
 
 impl RefString {
-    pub fn to_js(&self, global: &JSGlobalObject) -> JSValue {
-        bun_string::String::init(self.impl_).to_js(global)
+    pub fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        // Zig: `bun.String.init(this.impl).toJS(global)` — wrap the raw
+        // `WTFStringImpl` pointer without bumping the refcount (`String` has
+        // no `Drop`, so this is the same adopt-then-forget as Zig's init).
+        bun_string::String::adopt_wtf_impl(self.impl_).to_js(global)
     }
 
     pub fn compute_hash(input: &[u8]) -> u32 {
@@ -52,7 +55,8 @@ impl RefString {
     }
 
     pub fn ref_(&self) {
-        self.impl_.ref_();
+        // SAFETY: `impl_` is a live `WTF::StringImpl*` for the lifetime of `self`.
+        unsafe { (*self.impl_).r#ref() };
     }
 
     pub fn leak(&self) -> &[u8] {
@@ -63,7 +67,8 @@ impl RefString {
     }
 
     pub fn deref(&self) {
-        self.impl_.deref();
+        // SAFETY: `impl_` is a live `WTF::StringImpl*` for the lifetime of `self`.
+        unsafe { (*self.impl_).deref() };
     }
 
     /// Called when the underlying `WTF::StringImpl` refcount reaches zero.

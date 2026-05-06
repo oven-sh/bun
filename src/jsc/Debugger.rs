@@ -188,7 +188,7 @@ impl Debugger {
     ) -> Result<(), bun_core::Error> {
         let _ = (this, global_object);
         bun_core::scoped_log!(debugger, "create");
-        jsc::mark_binding(core::panic::Location::caller());
+        jsc::mark_binding();
         // TODO(b2): RuntimeHooks dispatch — `init_runtime_state` calls
         // `configureDebugger()` which subsumes this.
         Ok(())
@@ -212,7 +212,7 @@ impl Debugger {
         // (those are wired by `RuntimeHooks::init_runtime_state`).
         bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Debugger"));
         bun_core::scoped_log!(debugger, "startJSDebuggerThread");
-        jsc::mark_binding(core::panic::Location::caller());
+        jsc::mark_binding();
 
         let vm_ptr = VirtualMachine::init(crate::virtual_machine::InitOptions {
             // Spec: `args = std.mem.zeroes(TransformOptions)`, `store_fd = false`.
@@ -267,7 +267,7 @@ impl Debugger {
     /// Spec Debugger.zig:185-187 holds raw `*VirtualMachine` / `*EventLoop`
     /// (no exclusivity), which is what we mirror.
     fn start(other_vm: *mut VirtualMachine) {
-        jsc::mark_binding(core::panic::Location::caller());
+        jsc::mark_binding();
 
         // Raw pointers only — see PORT NOTE above.
         let this: *mut VirtualMachine = VirtualMachine::get();
@@ -468,7 +468,7 @@ pub fn did_schedule_async_call(
     id: u64,
     single_shot: bool,
 ) {
-    jsc::mark_binding(core::panic::Location::caller());
+    jsc::mark_binding();
     // SAFETY: `global_object` is a live opaque JSC handle (ZST on the Rust side);
     // any mutation happens in C++-owned memory outside Rust's aliasing model.
     unsafe {
@@ -476,7 +476,7 @@ pub fn did_schedule_async_call(
     }
 }
 pub fn did_cancel_async_call(global_object: &JSGlobalObject, call: AsyncCallType, id: u64) {
-    jsc::mark_binding(core::panic::Location::caller());
+    jsc::mark_binding();
     // SAFETY: `global_object` is a live opaque JSC handle (ZST on the Rust side);
     // any mutation happens in C++-owned memory outside Rust's aliasing model.
     unsafe {
@@ -484,7 +484,7 @@ pub fn did_cancel_async_call(global_object: &JSGlobalObject, call: AsyncCallType
     }
 }
 pub fn did_dispatch_async_call(global_object: &JSGlobalObject, call: AsyncCallType, id: u64) {
-    jsc::mark_binding(core::panic::Location::caller());
+    jsc::mark_binding();
     // SAFETY: `global_object` is a live opaque JSC handle (ZST on the Rust side);
     // any mutation happens in C++-owned memory outside Rust's aliasing model.
     unsafe {
@@ -492,7 +492,7 @@ pub fn did_dispatch_async_call(global_object: &JSGlobalObject, call: AsyncCallTy
     }
 }
 pub fn will_dispatch_async_call(global_object: &JSGlobalObject, call: AsyncCallType, id: u64) {
-    jsc::mark_binding(core::panic::Location::caller());
+    jsc::mark_binding();
     // SAFETY: `global_object` is a live opaque JSC handle (ZST on the Rust side);
     // any mutation happens in C++-owned memory outside Rust's aliasing model.
     unsafe {

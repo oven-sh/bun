@@ -812,7 +812,7 @@ impl VirtualMachine {
             match display {
                 Some(zs) => {
                     let utf8 = zs.to_owned_slice();
-                    let _ = writer.write_all(utf8.slice());
+                    let _ = writer.write_all(utf8.as_slice());
                     let _ = writer.write_all(b"\n");
                 }
                 None => {

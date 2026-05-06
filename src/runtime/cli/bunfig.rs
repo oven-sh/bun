@@ -1,3 +1,41 @@
+//! Port of `src/runtime/cli/bunfig.zig`.
+//!
+//! B-2 round 2: thin un-gate. `Bunfig` marker type + re-exports compile;
+//! `Parser` body gated on `bun_js_parser::{E,Expr}`, `bun_interchange::toml`,
+//! `bun_install::PackageManager`, `bun_bundler::options::BundleOverride`, and
+//! const-generic `Command::Tag`.
+
+use bun_collections::ArrayHashMap;
+use bun_logger as logger;
+
+use crate::cli::command::{ContextData, Tag as CommandTag};
+
+pub type MacroImportReplacementMap = ArrayHashMap<Box<[u8]>, Box<[u8]>>;
+pub type MacroMap = ArrayHashMap<Box<[u8]>, MacroImportReplacementMap>;
+
+// Re-exports (Zig: `pub const OfflineMode = @import("../options_types/OfflineMode.zig").OfflineMode;`)
+pub use bun_options_types::OfflineMode::OfflineMode;
+
+// TODO: replace api.TransformOptions with Bunfig
+pub struct Bunfig;
+
+impl Bunfig {
+    pub fn parse(
+        _cmd: CommandTag,
+        _source: &logger::Source,
+        _ctx: &mut ContextData<'_>,
+    ) -> Result<(), bun_core::Error> {
+        // TODO(b2-blocked): bun_js_parser::Expr/E + bun_interchange::toml::TOML
+        // + bun_install::PackageManager. Full body in phase_a_draft below.
+        todo!("Bunfig::parse — see phase_a_draft")
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase-A draft preserved verbatim. Re-gate lifted once lower-tier crates land.
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(any())]
+mod phase_a_draft {
 use std::io::Write as _;
 
 use bun_bundler::options;
@@ -1632,3 +1670,4 @@ impl Bunfig {
 //   todos:      5
 //   notes:      Parser holds overlapping &mut into ctx (bunfig=&ctx.args + ctx) — Phase B must collapse to single ctx borrow; const-generic CommandTag needs ConstParamTy; ExprData accessor names (.as_e_string/.tag) assumed.
 // ──────────────────────────────────────────────────────────────────────────
+} // mod phase_a_draft

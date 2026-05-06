@@ -1,3 +1,78 @@
+//! Port of `src/runtime/cli/run_command.zig`.
+//!
+//! B-2 round 2: thin un-gate. `RunCommand::print_help` is real (called from
+//! the `bun run --help` path). `exec()` and the file-detection / spawn path
+//! stay gated — they need `bun_jsc`, `bun_bundler::Transpiler`, `bun_md`,
+//! `bun_resolver::dir_info`, and the not-yet-un-gated `filter_run`/`multi_run`
+//! siblings.
+
+use bun_core::{self as core, Global, Output};
+use bun_core::{pretty, prettyln};
+
+use crate::cli::command::{ContextData, Tag as CommandTag};
+
+pub struct NpmArgs;
+impl NpmArgs {
+    // https://github.com/npm/rfcs/blob/main/implemented/0021-reduce-lifecycle-script-environment.md#detailed-explanation
+    pub const PACKAGE_NAME: &'static [u8] = b"npm_package_name";
+    pub const PACKAGE_VERSION: &'static [u8] = b"npm_package_version";
+}
+
+pub struct RunCommand;
+
+impl RunCommand {
+    /// `bun run --help` body. Real (no JSC/transpiler deps).
+    pub fn print_help(_package_json: Option<&()>) {
+        // TODO(port): `package_json: Option<&PackageJSON>` — script-listing
+        // section gated on bun_resolver::package_json::PackageJSON shape.
+        const INTRO_TEXT: &str = "\
+<b>Usage<r>: <b><green>bun run<r> <cyan>[flags]<r> <blue>\\<file or script\\><r>
+
+  Run a JavaScript or TypeScript file, or a package.json script.
+
+<b>Flags:<r>";
+
+        const OUTRO_TEXT: &str = "\
+<b>Examples:<r>
+  <d>Run a JavaScript or TypeScript file<r>
+  <b><green>bun run<r> <blue>./index.js<r>
+  <b><green>bun run<r> <blue>./index.tsx<r>
+
+  <d>Run a package.json script<r>
+  <b><green>bun run<r> <blue>dev<r>
+  <b><green>bun run<r> <blue>lint<r>
+
+Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
+";
+
+        pretty!("{}", INTRO_TEXT);
+        Output::flush();
+        bun_clap::simple_help(crate::cli::arguments::RUN_ONLY_PARAMS.as_slice());
+        prettyln!("\n");
+        pretty!("{}", OUTRO_TEXT);
+        Output::flush();
+    }
+
+    pub fn exec(_ctx: &mut ContextData<'_>, _bin_dirs_only: bool) -> Result<bool, bun_core::Error> {
+        // TODO(b2-blocked): bun_jsc + Transpiler + spawn path. ~2.6k-line body
+        // preserved in phase_a_draft below.
+        todo!("RunCommand::exec — see phase_a_draft")
+    }
+
+    pub fn exec_as_if_node(_ctx: &mut ContextData<'_>) -> Result<(), bun_core::Error> {
+        todo!("RunCommand::exec_as_if_node — see phase_a_draft")
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Filter { Script, Bin, BunJs, All, AllPlusBunJs, ScriptExclude, ScriptAndDescriptions }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase-A draft preserved verbatim. Re-gate lifted once bun_jsc / transpiler /
+// resolver siblings are green.
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(any())]
+mod phase_a_draft {
 use core::ffi::{c_char, CStr};
 use std::cell::RefCell;
 use std::io::Write as _;
@@ -2445,8 +2520,8 @@ impl RunCommand {
                     };
                     BunXFastPath::try_launch(ctx, path_to_use, this_transpiler.env, ctx.passthrough);
                 });
-                let _ = 'try_bunx_file;
                 // TODO(port): labeled-block control flow reshaped into closure for borrowck
+                // (was: `let _ = 'try_bunx_file;` — invalid Rust label-as-expr)
             }
         }
 
@@ -2931,3 +3006,4 @@ impl BunXFastPath {
 //   todos:      46
 //   notes:      heavy use of mutable global PathBuffers via thread_local; ctx mutability, Transpiler init-out-param, and Windows bunx fast-path buffer reslicing all need Phase B reshape; Output::* call signatures are placeholder (fmt-args tuple). All unsafe blocks now carry SAFETY annotations.
 // ──────────────────────────────────────────────────────────────────────────
+} // mod phase_a_draft

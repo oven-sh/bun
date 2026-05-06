@@ -1,3 +1,212 @@
+//! Port of `src/runtime/cli/Arguments.zig`.
+//!
+//! B-2 round 2: thin un-gate. Param tables compile via runtime
+//! `bun_clap::parse_param` inside `LazyLock` (the `parse_param!` /
+//! `concat_params!` proc-macros do not exist yet). `parse()` body and
+//! `load_config*` bodies remain gated — they need const-generic `Command::Tag`
+//! (no `ConstParamTy`), `bun_jsc::RegularExpression`, `bun_standalone`,
+//! `bun_bundler::options`, and the full `Bunfig::parse` path.
+
+use std::sync::LazyLock;
+
+use bun_clap as clap;
+use bun_core::{self, Global, Output};
+use bun_logger as logger;
+use bun_options_types::schema::api;
+use bun_str::ZStr;
+use bstr::BStr;
+
+use crate::cli::{parse_param, concat_params};
+use crate::cli::command::{Context, Tag as CommandTag};
+
+pub type ParamType = clap::Param<clap::Help>;
+
+// ─── param tables ────────────────────────────────────────────────────────────
+// Zig built these at comptime via `clap.parseParam("...") catch unreachable`
+// concatenated with `++`. `bun_clap::parse_param` is a runtime fn, so the
+// tables are `LazyLock<Vec<ParamType>>` until a const/proc-macro lands.
+// TODO(b2-blocked): bun_clap::parse_param! const form → `&'static [ParamType]`.
+
+pub static BASE_PARAMS_: LazyLock<Vec<ParamType>> = LazyLock::new(|| {
+    concat_params!([
+        parse_param!("--env-file <STR>...               Load environment variables from the specified file(s)"),
+        parse_param!("--no-env-file                     Disable automatic loading of .env files"),
+        parse_param!("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd."),
+        parse_param!("-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml"),
+        parse_param!("-h, --help                        Display this menu and exit"),
+        parse_param!("<POS>..."),
+    ])
+});
+
+pub static RUNTIME_PARAMS_: LazyLock<Vec<ParamType>> = LazyLock::new(|| {
+    // TODO(port): full 50-entry list — see phase_a_draft::RUNTIME_PARAMS_ below.
+    concat_params!([
+        parse_param!("--watch                           Automatically restart the process on file change"),
+        parse_param!("--hot                             Enable auto reload in the Bun runtime, test runner, or bundler"),
+        parse_param!("--no-clear-screen                 Disable clearing the terminal screen on reload when --hot or --watch is enabled"),
+        parse_param!("--smol                            Use less memory, but run garbage collection more often"),
+        parse_param!("-r, --preload <STR>...            Import a module before other modules are loaded"),
+        parse_param!("--inspect <STR>?                  Activate Bun's debugger"),
+        parse_param!("-e, --eval <STR>                  Evaluate argument as a script"),
+        parse_param!("-p, --print <STR>                 Evaluate argument as a script and print the result"),
+        parse_param!("--port <STR>                      Set the default port for Bun.serve"),
+    ])
+});
+
+pub static TRANSPILER_PARAMS_: LazyLock<Vec<ParamType>> = LazyLock::new(|| {
+    // TODO(port): full list — see phase_a_draft::TRANSPILER_PARAMS_ below.
+    concat_params!([
+        parse_param!("--main-fields <STR>...            Main fields to lookup in package.json. Defaults to --target dependent"),
+        parse_param!("--tsconfig-override <STR>         Specify custom tsconfig.json"),
+        parse_param!("-d, --define <STR>...             Substitute K:V while parsing. Values are parsed as JSON."),
+        parse_param!("-l, --loader <STR>...             Parse files with .ext:loader, e.g. --loader .js:jsx."),
+    ])
+});
+
+pub static AUTO_OR_RUN_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| {
+    concat_params!([
+        parse_param!("--silent                          Don't print the script command"),
+        parse_param!("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)"),
+        parse_param!("--shell <STR>                     Control the shell used for package.json scripts."),
+        parse_param!("-F, --filter <STR>...             Run a script in all workspace packages matching the pattern"),
+        parse_param!("--elide-lines <NUMBER>            Number of lines of script output shown when using --filter."),
+        parse_param!("--no-addons                       Throw an error if process.dlopen is called"),
+        parse_param!("--unhandled-rejections <STR>      One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\""),
+    ])
+});
+
+pub static AUTO_ONLY_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| {
+    concat_params!(AUTO_OR_RUN_PARAMS, [
+        parse_param!("-v, --version                     Print version and exit"),
+        parse_param!("--revision                        Print version with revision and exit"),
+        parse_param!("--no-deprecation                  Suppress all Bun-generated deprecation warnings"),
+        parse_param!("--throw-deprecation               Determine whether or not deprecation warnings result in errors."),
+    ])
+});
+
+pub static AUTO_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| {
+    concat_params!(AUTO_ONLY_PARAMS, RUNTIME_PARAMS_, TRANSPILER_PARAMS_, BASE_PARAMS_)
+});
+
+pub static RUN_ONLY_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| {
+    concat_params!(AUTO_OR_RUN_PARAMS, [
+        parse_param!("--if-present                      Exit without an error if the entrypoint does not exist"),
+    ])
+});
+
+pub static RUN_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| {
+    concat_params!(RUN_ONLY_PARAMS, RUNTIME_PARAMS_, TRANSPILER_PARAMS_, BASE_PARAMS_)
+});
+
+pub static BUILD_ONLY_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| {
+    // TODO(port): full ~60-entry list — see phase_a_draft::BUILD_ONLY_PARAMS below.
+    concat_params!([
+        parse_param!("--compile                         Generate a standalone Bun executable containing your bundled code"),
+        parse_param!("--bytecode                        Use a bytecode cache"),
+        parse_param!("--watch                           Automatically restart the process on file change"),
+        parse_param!("--target <STR>                    The intended execution environment for the bundle."),
+        parse_param!("--outdir <STR>                    Default to \"dist\" if multiple files"),
+        parse_param!("--outfile <STR>                   Write to a file"),
+        parse_param!("--sourcemap <STR>?                Build with sourcemaps"),
+        parse_param!("--minify                          Enable all minification flags"),
+        parse_param!("--splitting                       Enable code splitting"),
+    ])
+});
+
+pub static BUILD_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| {
+    concat_params!(BUILD_ONLY_PARAMS, TRANSPILER_PARAMS_, BASE_PARAMS_)
+});
+
+pub static TEST_ONLY_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| {
+    // TODO(port): full ~30-entry list — see phase_a_draft::TEST_ONLY_PARAMS below.
+    concat_params!([
+        parse_param!("--timeout <NUMBER>                Set the per-test timeout in milliseconds"),
+        parse_param!("--update-snapshots                Update snapshot files"),
+        parse_param!("--rerun-each <NUMBER>             Re-run each test file <NUMBER> times"),
+        parse_param!("--only                            Only run tests that are marked with \"test.only()\""),
+        parse_param!("--coverage                        Generate a coverage profile"),
+        parse_param!("--bail <NUMBER>?                  Exit the test suite after <NUMBER> failures."),
+        parse_param!("-t, --test-name-pattern <STR>     Run only tests with a name that matches the given regex."),
+    ])
+});
+
+pub static TEST_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| {
+    concat_params!(TEST_ONLY_PARAMS, RUNTIME_PARAMS_, TRANSPILER_PARAMS_, BASE_PARAMS_)
+});
+
+pub static BUNX_COMMANDS: LazyLock<Vec<ParamType>> = LazyLock::new(|| {
+    concat_params!([
+        parse_param!("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)"),
+        parse_param!("-p, --package <STR>               Install this package if the binary is missing"),
+    ], BASE_PARAMS_)
+});
+
+// ─── exported FFI globals (written by parse(), read from C++) ────────────────
+#[unsafe(no_mangle)]
+pub static mut Bun__Node__ZeroFillBuffers: bool = false;
+#[unsafe(no_mangle)]
+pub static mut Bun__Node__ProcessNoDeprecation: bool = false;
+#[unsafe(no_mangle)]
+pub static mut Bun__Node__ProcessThrowDeprecation: bool = false;
+
+#[repr(u8)]
+pub enum BunCAStore { Unset, Bundled, System }
+#[unsafe(no_mangle)]
+pub static mut Bun__Node__CAStore: BunCAStore = BunCAStore::Bundled;
+#[unsafe(no_mangle)]
+pub static mut Bun__Node__UseSystemCA: bool = false;
+
+// ─── public fn surface (bodies gated) ────────────────────────────────────────
+
+pub fn file_read_error(err: bun_core::Error, stderr: &mut impl std::io::Write, filename: &[u8], kind: &[u8]) -> ! {
+    let _ = write!(stderr, "Error reading file \"{}\" for {}: {}", BStr::new(filename), BStr::new(kind), BStr::new(err.name()));
+    Global::exit(1);
+}
+
+pub fn load_config(
+    _cmd: CommandTag,
+    _user_config_path: Option<&[u8]>,
+    _ctx: Context<'_>,
+) -> Result<(), bun_core::Error> {
+    // TODO(b2-blocked): bun_standalone::StandaloneModuleGraph + Bunfig::parse +
+    // bun_paths::join_abs_string_buf_z. Full body in phase_a_draft below.
+    todo!("Arguments::load_config")
+}
+
+pub fn load_config_path(
+    _cmd: CommandTag,
+    _auto_loaded: bool,
+    _config_path: &ZStr,
+    _ctx: Context<'_>,
+) -> Result<(), bun_core::Error> {
+    todo!("Arguments::load_config_path")
+}
+
+pub fn load_config_with_cmd_args(
+    cmd: CommandTag,
+    args: &clap::Args<clap::Help>,
+    ctx: Context<'_>,
+) -> Result<(), bun_core::Error> {
+    load_config(cmd, args.option(b"--config"), ctx)
+}
+
+/// Parse `argv` into `api::TransformOptions` for the given subcommand. Full
+/// 1.4k-line body gated on `bun_jsc::RegularExpression`, `bun_bundler::options`,
+/// `bun_options_types::CompileTarget` parsing, and `ConstParamTy` for `Tag`.
+// PORT NOTE: `comptime cmd: Command.Tag` demoted to runtime arg (no ConstParamTy).
+pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions, bun_core::Error> {
+    let _ = (cmd, ctx);
+    // TODO(b2-blocked): bun_jsc + bun_bundler::options + full Bunfig pipeline.
+    todo!("Arguments::parse — see phase_a_draft below")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase-A draft preserved verbatim. Re-gate lifted once lower-tier crates
+// (bun_jsc, bun_bundler::options, bun_standalone, bun_clap proc-macros,
+// ConstParamTy on CommandTag::Tag) are green.
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(any())]
+mod phase_a_draft {
 use bun_core::{Global, Output, FeatureFlags, Environment};
 use bun_core::env_var;
 use bun_cli as cli;
@@ -1911,3 +2120,4 @@ pub static mut Bun__Node__UseSystemCA: bool = false;
 //   notes:      comptime param arrays use placeholder clap::parse_param!/concat_params! macros; const-generic Command::Tag needs ConstParamTy; Output/Global call signatures are approximate; mutable export statics need atomic/UnsafeCell wrappers in Phase B
 // ──────────────────────────────────────────────────────────────────────────
 
+} // mod phase_a_draft

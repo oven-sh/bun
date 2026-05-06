@@ -22,7 +22,7 @@ pub static BUILD_COMMAND_EXEC_HOOK: AtomicPtr<()> = AtomicPtr::new(null_mut());
 pub static CLI_LOG_HOOK: AtomicPtr<()> = AtomicPtr::new(null_mut());
 use crate::bun_fs::FileSystem;
 use bun_install::PackageNameHash;
-use bun_js_parser::js_printer as js_printer;
+use bun_js_printer as js_printer;
 use crate::bun_json as json;
 use bun_logger as logger;
 use bun_paths::{self, PathBuffer, SEP_STR};
@@ -31,9 +31,10 @@ use bun_str::strings;
 use bun_sys::{self, Fd, File};
 
 use super::{
-    attempt_to_create_package_json, Command, CommandLineArguments, PackageJSONEditor,
+    attempt_to_create_package_json, Command, PackageJSONEditor,
     PackageManager, PatchCommitResult, Subcommand, UpdateRequest,
 };
+use super::command_line_arguments::CommandLineArguments;
 // TODO(port): `update_request::Array` is a type alias in Zig (likely `ArrayListUnmanaged(UpdateRequest)`).
 use super::update_request::Array as UpdateRequestArray;
 
@@ -648,47 +649,52 @@ fn update_package_json_and_install_with_manager_with_updates(
 
             // This is where we clean dangling symlinks
             // This could be slow if there are a lot of symlinks
-            match bun_sys::open_dir(cwd, &manager.options.bin_path) {
-                Ok(node_modules_bin_handle) => {
-                    let mut node_modules_bin = node_modules_bin_handle;
-                    // `defer node_modules_bin.close()` — handled by Drop on `bun_sys::Dir`.
-                    let mut iter = node_modules_bin.iterate();
+            match bun_sys::open_dir_for_iteration(cwd.fd, manager.options.bin_path.as_bytes()) {
+                Ok(node_modules_bin) => {
+                    // `defer node_modules_bin.close()` — explicit close below (Fd is Copy, no Drop).
+                    let mut iter = bun_sys::iterate_dir(node_modules_bin);
                     'iterator: while let Some(entry) = iter.next().ok().flatten() {
                         match entry.kind {
-                            bun_sys::DirEntryKind::SymLink => {
+                            bun_sys::EntryKind::SymLink => {
                                 // any symlinks which we are unable to open are assumed to be dangling
                                 // note that using access won't work here, because access doesn't resolve symlinks
-                                node_modules_buf[..entry.name.len()]
-                                    .copy_from_slice(entry.name);
-                                node_modules_buf[entry.name.len()] = 0;
-                                // SAFETY: node_modules_buf[entry.name.len()] == 0 written above
+                                let name = entry.name.slice_u8();
+                                node_modules_buf[..name.len()].copy_from_slice(name);
+                                node_modules_buf[name.len()] = 0;
+                                // SAFETY: node_modules_buf[name.len()] == 0 written above
                                 let buf: &bun_str::ZStr = unsafe {
                                     bun_str::ZStr::from_raw(
                                         node_modules_buf.as_ptr(),
-                                        entry.name.len(),
+                                        name.len(),
                                     )
                                 };
 
-                                let file = match node_modules_bin.open_file_z(
+                                let file = match bun_sys::openat(
+                                    node_modules_bin,
                                     buf,
-                                    bun_sys::OpenOptions::read_only(),
+                                    bun_sys::O::RDONLY,
+                                    0,
                                 ) {
                                     Ok(f) => f,
                                     Err(_) => {
-                                        let _ = node_modules_bin.delete_file_z(buf);
+                                        let _ = bun_sys::unlinkat(node_modules_bin, buf);
                                         continue 'iterator;
                                     }
                                 };
 
-                                file.close();
+                                let _ = bun_sys::close(file);
                             }
                             _ => {}
                         }
                     }
+                    let _ = bun_sys::close(node_modules_bin);
                 }
                 Err(err) => {
-                    if err != err!("ENOENT") {
-                        Output::err(err, format_args!("while reading node_modules/.bin"));
+                    if err.get_errno() != bun_sys::E::ENOENT {
+                        Output::err(
+                            bun_core::Error::from(err),
+                            format_args!("while reading node_modules/.bin"),
+                        );
                         Global::crash();
                     }
                 }

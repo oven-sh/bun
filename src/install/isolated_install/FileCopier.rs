@@ -2,8 +2,8 @@ use core::ptr;
 
 use bun_alloc::AllocError;
 use bun_core::{err, fmt as bun_fmt, Error, Global, Output};
-use bun_paths::{self, OsPathChar, OsPathSlice};
-use bun_sys::{self as sys, walker_skippable::Walker, Fd, E};
+use bun_paths::{self, OSPathChar, OSPathSlice};
+use bun_sys::{self as sys, walker_skippable::Walker, EntryKind, Fd, E};
 
 // TODO(port): `bun.AbsPath(.{ .sep = .auto, .unit = .os })` / `bun.Path(...)` are
 // comptime-configured path-builder types. Phase B must pick the concrete Rust
@@ -22,7 +22,7 @@ impl FileCopier {
         src_dir: Fd,
         src_path: AbsPathAutoOs,
         dest_subpath: PathAutoOs,
-        skip_dirnames: &[OsPathSlice],
+        skip_dirnames: &[&OSPathSlice],
     ) -> Result<FileCopier, AllocError> {
         Ok(FileCopier {
             src_path,
@@ -111,7 +111,7 @@ impl FileCopier {
         };
         // `defer dest_dir.close()` → handled by Drop on `dest_dir`.
 
-        let mut copy_file_state = bun_sys::CopyFileState::default();
+        let mut copy_file_state = bun_sys::copy_file::CopyFileState::default();
 
         loop {
             let entry = match self.walker.next() {
@@ -125,7 +125,7 @@ impl FileCopier {
             #[cfg(windows)]
             {
                 match entry.kind {
-                    walker_skippable::Kind::Directory | walker_skippable::Kind::File => {}
+                    EntryKind::Directory | EntryKind::File => {}
                     _ => continue,
                 }
 
@@ -140,7 +140,7 @@ impl FileCopier {
                 self.dest_subpath.append(entry.path);
 
                 match entry.kind {
-                    walker_skippable::Kind::Directory => {
+                    EntryKind::Directory => {
                         if bun_sys::windows::CreateDirectoryExW(
                             self.src_path.slice_z(),
                             self.dest_subpath.slice_z(),
@@ -150,7 +150,7 @@ impl FileCopier {
                             let _ = bun_sys::make_path::make_path::<u16>(&dest_dir, entry.path);
                         }
                     }
-                    walker_skippable::Kind::File => {
+                    EntryKind::File => {
                         match bun_sys::copy_file(self.src_path.slice_z(), self.dest_subpath.slice_z()) {
                             sys::Result::Ok(()) => {}
                             sys::Result::Err(first_err) => {
@@ -165,7 +165,7 @@ impl FileCopier {
                                 // global-store entry be renamed into place
                                 // with files missing.
                                 let Some(entry_dirname) =
-                                    bun_paths::dirname::dirname::<u16>(entry.path)
+                                    bun_paths::Dirname::dirname::<u16>(entry.path)
                                 else {
                                     return sys::Result::Err(first_err);
                                 };
@@ -188,7 +188,7 @@ impl FileCopier {
             }
             #[cfg(not(windows))]
             {
-                if entry.kind != walker_skippable::Kind::File {
+                if entry.kind != EntryKind::File {
                     continue;
                 }
 
@@ -204,9 +204,9 @@ impl FileCopier {
                     Ok(f) => f,
                     Err(_) => 'dest: {
                         if let Some(entry_dirname) =
-                            bun_paths::dirname::dirname::<OsPathChar>(entry.path)
+                            bun_paths::Dirname::dirname::<OSPathChar>(entry.path)
                         {
-                            let _ = bun_sys::make_path::make_path::<OsPathChar>(
+                            let _ = bun_sys::make_path::make_path::<OSPathChar>(
                                 &dest_dir,
                                 entry_dirname,
                             );
@@ -243,7 +243,7 @@ impl FileCopier {
                     }
                 }
 
-                match bun_sys::copy_file_with_state(
+                match bun_sys::copy_file::copy_file_with_state(
                     src,
                     Fd::from_std_file(&dest),
                     &mut copy_file_state,
@@ -259,8 +259,6 @@ impl FileCopier {
         sys::Result::Ok(())
     }
 }
-
-use bun_sys::walker_skippable;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

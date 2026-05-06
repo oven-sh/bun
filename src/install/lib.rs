@@ -1,4 +1,4 @@
-#![allow(unused, nonstandard_style, ambiguous_glob_reexports)]
+#![allow(unused, nonstandard_style, ambiguous_glob_reexports, incomplete_features)]
 #![feature(adt_const_params)]
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -194,6 +194,57 @@ pub mod resolution {
     pub enum Tag {
         #[default] Uninitialized, Root, Npm, Folder, LocalTarball, Github, Git,
         Symlink, Workspace, RemoteTarball, SingleFileModule,
+    }
+
+    impl Resolution {
+        /// Port of `Resolution.fmt` (src/install/resolution.zig:275).
+        pub fn fmt<'a>(
+            &'a self,
+            buf: &'a [u8],
+            path_sep: bun_core::fmt::PathSep,
+        ) -> Formatter<'a> {
+            Formatter { resolution: self, buf, path_sep }
+        }
+    }
+
+    /// Port of `Resolution.Formatter` (src/install/resolution.zig:400).
+    pub struct Formatter<'a> {
+        pub resolution: &'a Resolution,
+        pub buf: &'a [u8],
+        pub path_sep: bun_core::fmt::PathSep,
+    }
+
+    impl<'a> core::fmt::Display for Formatter<'a> {
+        fn fmt(&self, writer: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            use bun_core::fmt::{fmt_path_u8, PathFormatOptions};
+            let buf = self.buf;
+            let value = &self.resolution.value;
+            let opts = PathFormatOptions { path_sep: self.path_sep, ..Default::default() };
+            match self.resolution.tag {
+                Tag::Npm => write!(writer, "{}", value.npm.version.fmt(buf)),
+                Tag::LocalTarball => {
+                    write!(writer, "{}", fmt_path_u8(value.local_tarball.slice(buf), opts))
+                }
+                Tag::Folder => write!(writer, "{}", fmt_path_u8(value.folder.slice(buf), opts)),
+                Tag::RemoteTarball => {
+                    writer.write_str(&String::from_utf8_lossy(value.remote_tarball.slice(buf)))
+                }
+                Tag::Git => value.git.format_as("git+", buf, writer),
+                Tag::Github => value.github.format_as("github:", buf, writer),
+                Tag::Workspace => {
+                    write!(writer, "workspace:{}", fmt_path_u8(value.workspace.slice(buf), opts))
+                }
+                Tag::Symlink => {
+                    write!(writer, "link:{}", fmt_path_u8(value.symlink.slice(buf), opts))
+                }
+                Tag::SingleFileModule => write!(
+                    writer,
+                    "module:{}",
+                    bstr::BStr::new(value.single_file_module.slice(buf))
+                ),
+                _ => Ok(()),
+            }
+        }
     }
 }
 #[path = "PnpmMatcher.rs"]
@@ -567,7 +618,32 @@ pub mod lockfile {
 
     pub type DependencyIDSlice = ExternalSlice<DependencyID>;
     pub type DependencyIDList = Vec<DependencyID>;
-    pub use crate::lockfile_real::DepSorter;
+
+    /// Port of `Lockfile.DepSorter` (src/install/lockfile.zig) — comparator over
+    /// `buffers.dependencies` by `(behavior, name)`. Kept in the stub module so it
+    /// types against the stub `Lockfile`/`Buffers` until `lockfile_real` un-gates.
+    pub struct DepSorter<'a> {
+        pub lockfile: &'a Lockfile,
+    }
+    impl<'a> DepSorter<'a> {
+        pub fn is_less_than(&self, l: DependencyID, r: DependencyID) -> bool {
+            use core::cmp::Ordering;
+            let deps_buf = self.lockfile.buffers.dependencies.as_slice();
+            let string_buf = self.lockfile.buffers.string_bytes.as_slice();
+            let l_dep = &deps_buf[l as usize];
+            let r_dep = &deps_buf[r as usize];
+            match l_dep.behavior.cmp(&r_dep.behavior) {
+                Ordering::Less => true,
+                Ordering::Greater => false,
+                Ordering::Equal => {
+                    bun_string::order(
+                        l_dep.name.slice(string_buf),
+                        r_dep.name.slice(string_buf),
+                    ) == Ordering::Less
+                }
+            }
+        }
+    }
 
     #[derive(Default)] pub struct Lockfile {
         pub buffers: Buffers,

@@ -176,6 +176,9 @@ static AUDIT_PARAMS: &[ParamType] = &[
     clap::param!("--ignore <STR>...                      Ignore specific CVE IDs from audit"),
 ];
 
+static AUDIT_PARAMS_FULL: LazyLock<Vec<ParamType>> =
+    LazyLock::new(|| concat_params![SHARED_PARAMS, AUDIT_PARAMS]);
+
 static INFO_PARAMS: LazyLock<Vec<ParamType>> = LazyLock::new(|| concat_params![SHARED_PARAMS, &[
     clap::param!("<POS> ...                              Package name or path to package.json"),
     clap::param!("--json                                 Output in JSON format"),
@@ -216,7 +219,7 @@ pub struct CommandLineArguments {
     pub global: bool,
     pub config: Option<&'static [u8]>,
     pub network_concurrency: Option<u16>,
-    pub backend: Option<PackageInstall::Method>,
+    pub backend: Option<package_install::Method>,
     pub analyze: bool,
     pub only_missing: bool,
     pub positionals: &'static [&'static [u8]],
@@ -454,7 +457,7 @@ impl CommandLineArguments {
 Full documentation is available at <magenta>https://bun.com/docs/cli/install<r>.
 ";
                 Output::pretty(intro_text);
-                clap::simple_help(INSTALL_PARAMS);
+                clap::simple_help(&INSTALL_PARAMS);
                 Output::pretty(outro_text);
                 Output::flush();
             }
@@ -483,7 +486,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/install<r>.
 Full documentation is available at <magenta>https://bun.com/docs/cli/update<r>.
 ";
                 Output::pretty(intro_text);
-                clap::simple_help(UPDATE_PARAMS);
+                clap::simple_help(&UPDATE_PARAMS);
                 Output::pretty(outro_text);
                 Output::flush();
             }
@@ -511,7 +514,7 @@ Full documentation is available at <magenta>https://bun.com/docs/install/patch<r
 ";
 
                 Output::pretty(intro_text);
-                clap::simple_help(PATCH_PARAMS);
+                clap::simple_help(&PATCH_PARAMS);
                 Output::pretty(outro_text);
                 Output::flush();
             }
@@ -534,7 +537,7 @@ Full documentation is available at <magenta>https://bun.com/docs/install/patch<r
 Full documentation is available at <magenta>https://bun.com/docs/install/patch<r>.
 "#;
                 Output::pretty(intro_text);
-                clap::simple_help(PATCH_PARAMS);
+                clap::simple_help(&PATCH_PARAMS);
                 Output::pretty(outro_text);
                 Output::flush();
             }
@@ -565,7 +568,7 @@ Full documentation is available at <magenta>https://bun.com/docs/install/patch<r
 Full documentation is available at <magenta>https://bun.com/docs/cli/add<r>.
 ";
                 Output::pretty(intro_text);
-                clap::simple_help(ADD_PARAMS);
+                clap::simple_help(&ADD_PARAMS);
                 Output::pretty(outro_text);
                 Output::flush();
             }
@@ -586,7 +589,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/add<r>.
 Full documentation is available at <magenta>https://bun.com/docs/cli/remove<r>.
 ";
                 Output::pretty(intro_text);
-                clap::simple_help(REMOVE_PARAMS);
+                clap::simple_help(&REMOVE_PARAMS);
                 Output::pretty(outro_text);
                 Output::flush();
             }
@@ -610,7 +613,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/remove<r>.
 Full documentation is available at <magenta>https://bun.com/docs/cli/link<r>.
 ";
                 Output::pretty(intro_text);
-                clap::simple_help(LINK_PARAMS);
+                clap::simple_help(&LINK_PARAMS);
                 Output::pretty(outro_text);
                 Output::flush();
             }
@@ -632,7 +635,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/unlink<r>.
 ";
 
                 Output::pretty(intro_text);
-                clap::simple_help(UNLINK_PARAMS);
+                clap::simple_help(&UNLINK_PARAMS);
                 Output::pretty(outro_text);
                 Output::flush();
             }
@@ -830,26 +833,25 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         Output::set_is_verbose(Output::is_verbose());
 
         let params: &'static [ParamType] = match SUBCOMMAND {
-            Subcommand::Install => INSTALL_PARAMS,
-            Subcommand::Update => UPDATE_PARAMS,
-            Subcommand::Pm => PM_PARAMS,
-            Subcommand::Add => ADD_PARAMS,
-            Subcommand::Remove => REMOVE_PARAMS,
-            Subcommand::Link => LINK_PARAMS,
-            Subcommand::Unlink => UNLINK_PARAMS,
-            Subcommand::Patch => PATCH_PARAMS,
-            Subcommand::PatchCommit => PATCH_COMMIT_PARAMS,
-            Subcommand::Outdated => OUTDATED_PARAMS,
-            Subcommand::Pack => PACK_PARAMS,
-            Subcommand::Publish => PUBLISH_PARAMS,
-            Subcommand::Why => WHY_PARAMS,
+            Subcommand::Install => INSTALL_PARAMS.as_slice(),
+            Subcommand::Update => UPDATE_PARAMS.as_slice(),
+            Subcommand::Pm => PM_PARAMS.as_slice(),
+            Subcommand::Add => ADD_PARAMS.as_slice(),
+            Subcommand::Remove => REMOVE_PARAMS.as_slice(),
+            Subcommand::Link => LINK_PARAMS.as_slice(),
+            Subcommand::Unlink => UNLINK_PARAMS.as_slice(),
+            Subcommand::Patch => PATCH_PARAMS.as_slice(),
+            Subcommand::PatchCommit => PATCH_COMMIT_PARAMS.as_slice(),
+            Subcommand::Outdated => OUTDATED_PARAMS.as_slice(),
+            Subcommand::Pack => PACK_PARAMS.as_slice(),
+            Subcommand::Publish => PUBLISH_PARAMS.as_slice(),
+            Subcommand::Why => WHY_PARAMS.as_slice(),
 
             // TODO: we will probably want to do this for other *_params. this way extra params
             // are not included in the help text
-            // TODO(port): comptime `shared_params ++ audit_params` — needs const concat
-            Subcommand::Audit => concat_params![SHARED_PARAMS, AUDIT_PARAMS],
-            Subcommand::Info => INFO_PARAMS,
-            Subcommand::Scan => PM_PARAMS, // scan uses the same params as pm command
+            Subcommand::Audit => AUDIT_PARAMS_FULL.as_slice(),
+            Subcommand::Info => INFO_PARAMS.as_slice(),
+            Subcommand::Scan => PM_PARAMS.as_slice(), // scan uses the same params as pm command
         };
 
         let mut diag = clap::Diagnostic::default();
@@ -911,7 +913,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
 
         if let Some(network_concurrency) = args.option("--network-concurrency") {
             // TODO(port): parse u16 from &[u8] — bun_str helper or core::str::from_utf8 + parse
-            cli.network_concurrency = Some(match bun_str::parse_int::<u16>(network_concurrency, 10) {
+            cli.network_concurrency = Some(match strings::parse_int::<u16>(network_concurrency, 10) {
                 Ok(n) => n,
                 Err(_) => {
                     Output::err_generic(format_args!(
@@ -929,7 +931,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
 
         if let Some(min_age_secs) = args.option("--minimum-release-age") {
             // TODO(port): parse f64 from &[u8]
-            let secs: f64 = match bun_str::parse_float(min_age_secs) {
+            let secs: f64 = match bun_str::parse_double(min_age_secs) {
                 Ok(s) => s,
                 Err(_) => {
                     Output::err_generic(format_args!(
@@ -1150,7 +1152,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         }
 
         if let Some(concurrency) = args.option("--concurrent-scripts") {
-            cli.concurrent_scripts = bun_str::parse_int::<usize>(concurrency, 10).ok();
+            cli.concurrent_scripts = strings::parse_int::<usize>(concurrency, 10).ok();
         }
 
         if let Some(cwd_) = args.option("--cwd") {
@@ -1160,7 +1162,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
             if !cwd_.is_empty() && cwd_[0] == b'.' {
                 let cwd = bun_sys::getcwd(&mut buf)?;
                 let parts: [&[u8]; 1] = [cwd_];
-                let path_ = Path::join_abs_string_buf(cwd, &mut buf2, &parts, Path::Style::Auto);
+                let path_ = Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(cwd, &mut buf2, &parts);
                 let len = path_.len();
                 buf2[len] = 0;
                 // SAFETY: buf2[len] == 0 written above
@@ -1187,9 +1189,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
             cli.recursive = args.flag("--recursive");
         }
 
-        let specified_backend: Option<PackageInstall::Method> = 'brk: {
+        let specified_backend: Option<package_install::Method> = 'brk: {
             if let Some(backend_) = args.option("--backend") {
-                break 'brk PackageInstall::Method::MAP.get(backend_).copied();
+                break 'brk package_install::METHOD_MAP.get(backend_).copied();
             }
             break 'brk None;
         };
@@ -1262,7 +1264,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         if matches!(SUBCOMMAND, Subcommand::Pm | Subcommand::Why) {
             cli.top_only = args.flag("--top");
             if let Some(depth) = args.option("--depth") {
-                cli.depth = Some(match bun_str::parse_int::<usize>(depth, 10) {
+                cli.depth = Some(match strings::parse_int::<usize>(depth, 10) {
                     Ok(d) => d,
                     Err(_) => {
                         Output::err_generic(format_args!(

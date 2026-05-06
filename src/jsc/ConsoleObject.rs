@@ -3842,8 +3842,6 @@ pub mod formatter {
                         estimated_line_length: &mut self.estimated_line_length,
                     };
                 }
-                // Exhaustive — `StringPossiblyFormatted` already handled above.
-                Tag::StringPossiblyFormatted => unreachable!(),
             }
 
             // Mirror Zig `defer { if writer.failed self.failed = true }`.

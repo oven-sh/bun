@@ -349,7 +349,9 @@ fn get_line_column(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<[i32;
 unsafe extern "C" {
     // Codegen-emitted constructor thunk (`js.toJS` → `SourceMap__create` in
     // ZigGeneratedClasses.zig); ownership of `ctx` transfers to the C++ JSCell.
-    fn SourceMap__create(globalObject: *mut JSGlobalObject, ctx: *mut JSSourceMap) -> JSValue;
+    // `ctx` is type-erased to `*mut ()` (C++ stores it as `void* m_ctx`) to keep
+    // the extern FFI-safe — `JSSourceMap` itself has Rust-only field layout.
+    fn SourceMap__create(globalObject: *mut JSGlobalObject, ctx: *mut ()) -> JSValue;
 
     // Codegen-emitted cached-value setters (see `js.payloadSetCached` in
     // JSSourceMap.zig); name matches generated_classes.ts output.

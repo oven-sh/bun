@@ -192,7 +192,8 @@ pub mod attrs {
             self.prefix.eql(&rhs.prefix) && strings::eql(self.url, rhs.url)
         }
         pub fn deep_clone(&self) -> Self {
-            Self { prefix: self.prefix.clone(), url: self.url.clone() }
+            // `NamespaceUrl = &'static [u8]` (arena-backed) — identity copy.
+            Self { prefix: self.prefix.clone(), url: self.url }
         }
         pub fn hash(&self, hasher: &mut Wyhash) {
             self.prefix.hash(hasher);
@@ -2215,9 +2216,9 @@ impl<Impl: BunSelectorImpl> GenericComponent<Impl> {
             C::Combinator(c) => C::Combinator(*c),
             C::ExplicitAnyNamespace => C::ExplicitAnyNamespace,
             C::ExplicitNoNamespace => C::ExplicitNoNamespace,
-            C::DefaultNamespace(u) => C::DefaultNamespace(u.clone()),
+            C::DefaultNamespace(u) => C::DefaultNamespace(*u),
             C::Namespace { prefix, url } => {
-                C::Namespace { prefix: prefix.clone(), url: url.clone() }
+                C::Namespace { prefix: prefix.clone(), url: *url }
             }
             C::ExplicitUniversalType => C::ExplicitUniversalType,
             C::LocalName(ln) => C::LocalName(ln.deep_clone()),

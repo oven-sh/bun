@@ -249,7 +249,8 @@ impl<'a> Writable<'a> {
                         // SAFETY: pipe is live; deref may free it.
                         unsafe { FileSink::deref(pipe_ptr) };
                         subprocess.deref();
-                        return Err(global.throw_value(err_val).into());
+                        let _ = global.throw_value(err_val);
+                        return Err(err!(JSError));
                     }
                     *promise_for_stream = assign_result;
                 }

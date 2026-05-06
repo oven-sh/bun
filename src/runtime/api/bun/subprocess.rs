@@ -775,7 +775,7 @@ impl Subprocess<'_> {
         if self.has_exited() {
             return bun_sys::Result::Ok(());
         }
-        self.process.kill(sig as u8)
+        self.process_mut().kill(sig.0)
     }
 
     fn has_called_getter(&self, getter: ObservableGetter) -> bool {
@@ -789,7 +789,7 @@ impl Subprocess<'_> {
         }
         #[cfg(target_os = "linux")]
         {
-            self.process.close();
+            self.process_mut().close();
         }
     }
 

@@ -791,15 +791,20 @@ pub mod command {
                     break 'brk unsafe { &mut *GLOBAL_CLI_CTX };
                 };
 
-                ctx.args.target = api::Target::Bun;
-                if ctx.debug.global_cache == DebugOptions::GlobalCache::Auto {
-                    ctx.debug.global_cache = DebugOptions::GlobalCache::Disable;
+                ctx.args.target = Some(api::Target::Bun);
+                use bun_options_types::GlobalCache::GlobalCache;
+                if ctx.debug.global_cache == GlobalCache::Auto {
+                    ctx.debug.global_cache = GlobalCache::Disable;
                 }
-                // TODO(port): GlobalCache enum lives on options_types::Context; verify path
 
-                ctx.passthrough = &bun::argv()[offset_for_passthrough..];
+                ctx.passthrough = bun::argv()
+                    .iter()
+                    .skip(offset_for_passthrough)
+                    .map(|a| a.to_vec().into_boxed_slice())
+                    .collect();
 
-                bun_bun_js::Run::boot_standalone(ctx, graph.entry_point().name, graph)?;
+                let entry_name = graph.entry_point().name.to_vec();
+                bun_bun_js::Run::boot_standalone(ctx, &entry_name, graph)?;
                 return Ok(());
             }
         }

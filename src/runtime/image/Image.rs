@@ -325,7 +325,7 @@ impl Image {
         // for ArrayBuffer inputs — pass `.zero` and assert below.
         img.source = source_from_js(global, blob_value, JSValue::ZERO)?;
         debug_assert!(!matches!(img.source, Source::JsBuffer));
-        Ok(img.to_js(global))
+        img.to_js(global)
     }
 
     pub fn finalize(this: *mut Image) {

@@ -11,6 +11,69 @@ use bun_str::{self as strings, ZigString};
 #[allow(unused_imports)]
 use crate::ffi::FFI;
 
+// ── Local JSValue extension shims (upstream `bun_jsc::JSValue` has not yet ──
+// ported `asPtrAddress` / `toUInt64NoTruncate` / `fromUInt64NoTruncate`).
+// TODO(port): move to <area>_sys / drop once bun_jsc grows these.
+#[allow(non_snake_case)]
+unsafe extern "C" {
+    fn JSC__JSValue__toUInt64NoTruncate(this: JSValue) -> u64;
+    fn JSC__JSValue__fromUInt64NoTruncate(global: *const JSGlobalObject, i: u64) -> JSValue;
+    fn JSBuffer__bufferFromPointerAndLengthAndDeinit(
+        global: *const JSGlobalObject,
+        ptr: *mut u8,
+        len: usize,
+        ctx: *mut c_void,
+        deallocator: jsc::c::JSTypedArrayBytesDeallocator,
+    ) -> JSValue;
+}
+
+trait JSValueFFIExt: Copy {
+    fn as_ptr_address(self) -> usize;
+    fn to_uint64_no_truncate(self) -> u64;
+}
+impl JSValueFFIExt for JSValue {
+    /// Spec (JSValue.zig:2097): `@intFromFloat(this.asNumber())`.
+    #[inline]
+    fn as_ptr_address(self) -> usize {
+        self.as_number() as usize
+    }
+    #[inline]
+    fn to_uint64_no_truncate(self) -> u64 {
+        // SAFETY: FFI — `self` is a valid encoded JSValue.
+        unsafe { JSC__JSValue__toUInt64NoTruncate(self) }
+    }
+}
+
+#[inline]
+fn from_uint64_no_truncate(global: &JSGlobalObject, i: u64) -> JSValue {
+    // SAFETY: FFI — `global` is live for the call.
+    unsafe { JSC__JSValue__fromUInt64NoTruncate(global, i) }
+}
+
+/// Local port of Zig `JSValue.createBuffer(global, slice, ctx, callback)` —
+/// upstream `JSValue::create_buffer` hard-codes `MarkedArrayBuffer_deallocator`,
+/// which would free FFI-owned memory. This variant passes the caller's
+/// (possibly null) deallocator through.
+#[inline]
+fn create_buffer_with_ctx(
+    global: &JSGlobalObject,
+    slice: &mut [u8],
+    ctx: *mut c_void,
+    callback: jsc::c::JSTypedArrayBytesDeallocator,
+) -> JSValue {
+    // SAFETY: `global` is live; slice describes FFI-owned memory whose
+    // ownership transfers to JSC (freed via `callback`, or never if None).
+    unsafe {
+        JSBuffer__bufferFromPointerAndLengthAndDeinit(
+            global,
+            slice.as_mut_ptr(),
+            slice.len(),
+            ctx,
+            callback,
+        )
+    }
+}
+
 // ── DOM-call C++ put helpers (generated in ZigLazyStaticFunctions-inlines.h) ──
 // In Zig these are `@extern`ed by the comptime `DOMCall(...)` type-generator;
 // here we declare them directly since the `#[bun_jsc::dom_call]` proc-macro is

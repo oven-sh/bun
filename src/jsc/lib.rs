@@ -1415,15 +1415,22 @@ impl JSGlobalObject {
         self.vm().clear_termination_exception();
     }
 
+    /// `validateObject(arg_name, value, opts)` (JSGlobalObject.zig:710) —
+    /// Node-compat object validator. Throws `ERR_INVALID_ARG_TYPE` when `value`
+    /// fails the (nullable / array / function) gates.
     pub fn validate_object(
         &self,
         name: &'static str,
         value: JSValue,
         opts: ValidateObjectOpts,
     ) -> JsResult<()> {
-        let _ = (name, value, opts);
-        // TODO(b2): full impl — gated.
-        todo!("JSGlobalObject::validate_object")
+        if (!opts.allow_nullable && value.is_null())
+            || (!opts.allow_array && value.is_array())
+            || (!value.is_object() && (!opts.allow_function || !value.is_function()))
+        {
+            return Err(self.throw_invalid_argument_type_value(name, "object", value));
+        }
+        Ok(())
     }
 
     /// `JSGlobalObject.queueMicrotaskCallback(ctx, comptime fn(ctx))` —

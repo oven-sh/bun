@@ -27,6 +27,7 @@ extern crate alloc;
 extern crate self as bun_jsc;
 
 use core::ffi::{c_char, c_void};
+use core::marker::PhantomData;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Proc-macro re-exports. `#[bun_jsc::host_fn]` / `#[bun_jsc::JsClass]` /
@@ -286,23 +287,50 @@ macro_rules! stub_ty {
 }
 
 /// Binding for JSCInitialize in ZigGlobalObject.cpp
-pub fn initialize(_eval_mode: bool) {
-    // TODO(b1): gated — bun_core::analytics::Features::jsc_inc / bun_sys::environ missing
-    todo!("bun_jsc::initialize")
+pub fn initialize(eval_mode: bool) {
+    // TODO(port): bun_core::analytics::Features::jsc_inc — analytics counter not yet wired.
+    let env = bun_sys::environ();
+    // SAFETY: `env` borrows the libc `environ` global for the duration of the
+    // call; `on_jsc_invalid_env_var` is `extern "C"` and only reads the (ptr,len)
+    // it is handed. JSCInitialize is called exactly once at startup.
+    unsafe { JSCInitialize(env.as_ptr(), env.len(), on_jsc_invalid_env_var, eval_mode) };
 }
 
-stub_ty!(JSValue);
+/// Port of `onJSCInvalidEnvVar` (jsc.zig:254).
+unsafe extern "C" fn on_jsc_invalid_env_var(name: *const u8, len: usize) {
+    // SAFETY: C++ guarantees `name[..len]` is valid for the call.
+    let name = unsafe { core::slice::from_raw_parts(name, len) };
+    bun_core::output::err_generic(format_args!(
+        "invalid JSC environment variable\n\n    <b>{}<r>\n\n\
+For a list of options, see this file:\n\n    \
+https://github.com/oven-sh/webkit/blob/main/Source/JavaScriptCore/runtime/OptionsList.h\n\n\
+Environment variables must be prefixed with \"BUN_JSC_\". This code runs before .env files are loaded, so those won't work here.\n\n\
+Warning: options change between releases of Bun and WebKit without notice. This is not a stable API, you should not rely on it beyond debugging something, and it may be removed entirely in a future version of Bun.",
+        bun_string::fmt::Bytes(name),
+    ));
+    bun_core::global::exit(1);
+}
+
+// `JSValue` stub — `#[repr(transparent)]` over the encoded 64-bit JSC::JSValue.
+// PhantomData<*const ()> makes the type `!Send + !Sync` (PORTING.md §JSC types):
+// JSValues are GC-cell pointers and must never cross threads.
+// TODO(b2): inner type should be `i64` per spec; kept `usize` (same width on
+// all supported 64-bit targets) until `JSValue.rs` is un-gated to avoid a
+// cascading bit-twiddle rewrite of the tag-mask helpers below.
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct JSValue(pub usize, PhantomData<*const ()>);
 
 // B-2: minimal `JSValue` surface so un-gated leaf modules type-check while
 // `JSValue.rs` itself remains gated. These match the real definitions in
 // `JSValue.rs` (`#[repr(transparent)] i64` — stub uses `usize`, same size).
 impl JSValue {
-    pub const ZERO: JSValue = JSValue(0);
-    pub const UNDEFINED: JSValue = JSValue(0xa);
-    pub const NULL: JSValue = JSValue(0x2);
+    pub const ZERO: JSValue = JSValue(0, PhantomData);
+    pub const UNDEFINED: JSValue = JSValue(0xa, PhantomData);
+    pub const NULL: JSValue = JSValue(0x2, PhantomData);
     /// `JSC::JSValue::ValueDeleted` (0x4) — sentinel returned by
     /// `getIfPropertyExistsImpl` when the property does not exist.
-    pub const PROPERTY_DOES_NOT_EXIST: JSValue = JSValue(0x4);
+    pub const PROPERTY_DOES_NOT_EXIST: JSValue = JSValue(0x4, PhantomData);
     #[inline] pub fn is_empty(self) -> bool { self.0 == 0 }
 }
 
@@ -312,8 +340,8 @@ impl JSValue {
 // the rest are `todo!()` until JSValue.rs is un-gated.
 // ──────────────────────────────────────────────────────────────────────────
 impl JSValue {
-    pub const TRUE: JSValue = JSValue(0x7);
-    pub const FALSE: JSValue = JSValue(0x6);
+    pub const TRUE: JSValue = JSValue(0x7, PhantomData);
+    pub const FALSE: JSValue = JSValue(0x6, PhantomData);
 
     // ── tag predicates (inline mirrors of JSValue.zig) ────────────────────
     #[inline] pub fn is_undefined(self) -> bool { self.0 == Self::UNDEFINED.0 }
@@ -391,7 +419,7 @@ impl JSValue {
     #[inline] pub fn js_number_from_int32(i: i32) -> JSValue {
         // NumberTag | i (low 32 bits).
         const NUMBER_TAG: usize = 0xfffe_0000_0000_0000;
-        JSValue(NUMBER_TAG | (i as u32 as usize))
+        JSValue(NUMBER_TAG | (i as u32 as usize), PhantomData)
     }
     pub fn js_number_from_uint64(i: u64) -> JSValue {
         if i <= i32::MAX as u64 {
@@ -1176,7 +1204,7 @@ unsafe extern "C" {
 impl JSValue {
     /// Construct a JSValue from an opaque encoded bit-pattern (Zig: `@enumFromInt`).
     #[inline]
-    pub const fn from_encoded(bits: usize) -> JSValue { JSValue(bits) }
+    pub const fn from_encoded(bits: usize) -> JSValue { JSValue(bits, PhantomData) }
     /// Read the raw encoded bit-pattern (Zig: `@intFromEnum`).
     #[inline]
     pub const fn encoded(self) -> usize { self.0 }

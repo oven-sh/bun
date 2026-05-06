@@ -95,8 +95,13 @@ pub struct HeapRequestBodyBuffer {
 /// Bridge stub: `AsyncHTTP::send_sync` calls `crate::http_thread::init(...)` but
 /// the real `init`/`InitOpts` live inside the gated `_phase_a_draft` block below.
 /// `Default::default()` at the callsite infers `T = ()` here until un-gated.
+/// Bridge stub: real `InitOpts` lives inside the gated `_phase_a_draft` block
+/// below; HTTPContext.rs / AsyncHTTP.rs name it for type signatures only.
+#[derive(Default, Clone, Copy)]
+pub struct InitOpts;
+
 #[doc(hidden)]
-pub fn init(_opts: &()) {
+pub fn init(_opts: &InitOpts) {
     todo!("http_thread::init — gated; un-gate with HTTPThread.rs _phase_a_draft")
 }
 

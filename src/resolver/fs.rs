@@ -296,28 +296,29 @@ impl DirEntry {
     pub fn add_entry<I: DirEntryIterator>(
         &mut self,
         prev_map: Option<&mut dir_entry::EntryMap>,
-        entry: &bun_sys::DirIteratorResult,
+        entry: &bun_sys::dir_iterator::IteratorResult,
         iterator: I,
     ) -> Result<(), bun_core::Error> {
+        use bun_sys::FileKind as DK;
         let name_slice = entry.name.slice();
         let found_kind: Option<EntryKind> = match entry.kind {
-            bun_sys::DirEntryKind::Directory => Some(EntryKind::Dir),
-            bun_sys::DirEntryKind::File => Some(EntryKind::File),
+            DK::Directory => Some(EntryKind::Dir),
+            DK::File => Some(EntryKind::File),
 
             // For a symlink, we will need to stat the target later
-            bun_sys::DirEntryKind::SymLink
+            DK::SymLink
             // Some filesystems return `.unknown` from getdents() no matter the actual kind of the file
             // (often because it would be slow to look up the kind). If we get this, then code that
             // needs the kind will have to find it out later by calling stat().
-            | bun_sys::DirEntryKind::Unknown => None,
+            | DK::Unknown => None,
 
-            bun_sys::DirEntryKind::BlockDevice
-            | bun_sys::DirEntryKind::CharacterDevice
-            | bun_sys::DirEntryKind::NamedPipe
-            | bun_sys::DirEntryKind::UnixDomainSocket
-            | bun_sys::DirEntryKind::Whiteout
-            | bun_sys::DirEntryKind::Door
-            | bun_sys::DirEntryKind::EventPort => return Ok(()),
+            DK::BlockDevice
+            | DK::CharacterDevice
+            | DK::NamedPipe
+            | DK::UnixDomainSocket
+            | DK::Whiteout
+            | DK::Door
+            | DK::EventPort => return Ok(()),
         };
 
         let stored: *mut Entry = 'brk: {
@@ -328,7 +329,11 @@ impl DirEntry {
                 if let Some(&existing_ptr) = map.get_adapted(name_slice, &prehashed) {
                     // SAFETY: EntryStore-owned pointer, valid for lifetime of store
                     let existing = unsafe { &mut *existing_ptr };
-                    let _guard = existing.mutex.lock();
+                    existing.mutex.lock();
+                    let _guard = scopeguard::guard(core::ptr::addr_of!(existing.mutex), |m| {
+                        // SAFETY: `m` points into `*existing`, which outlives this guard.
+                        unsafe { (*m).unlock() }
+                    });
                     existing.dir = self.dir;
 
                     existing.need_stat = existing.need_stat
@@ -357,11 +362,11 @@ impl DirEntry {
                 FilenameStore::instance(),
             )?;
 
-            dir_entry::EntryStore::instance().append(Entry {
+            dir_entry::EntryStore::append(Entry {
                 base_: name,
                 base_lowercase_: name_lowercased,
                 dir: self.dir,
-                mutex: Mutex::new(),
+                mutex: Mutex::default(),
                 // Call "stat" lazily for performance. The "@material-ui/icons" package
                 // contains a directory with over 11,000 entries in it and running "stat"
                 // for each entry was a big performance issue for that package.
@@ -389,9 +394,9 @@ impl DirEntry {
 
         if FeatureFlags::VERBOSE_FS {
             if found_kind == Some(EntryKind::Dir) {
-                Output::prettyln("   + {}/", (BStr::new(stored_name),));
+                bun_core::prettyln!("   + {}/", BStr::new(stored_name));
             } else {
-                Output::prettyln("   + {}", (BStr::new(stored_name),));
+                bun_core::prettyln!("   + {}", BStr::new(stored_name));
             }
         }
 
@@ -400,7 +405,7 @@ impl DirEntry {
 
     pub fn init(dir: &'static [u8], generation: Generation) -> DirEntry {
         if FeatureFlags::VERBOSE_FS {
-            Output::prettyln("\n  {}", (BStr::new(dir),));
+            bun_core::prettyln!("\n  {}", BStr::new(dir));
         }
 
         DirEntry {
@@ -417,12 +422,12 @@ impl DirEntry {
         }
         let mut scratch_lookup_buffer = PathBuffer::uninit();
 
-        let query = strings::copy_lowercase_if_needed(query_, &mut scratch_lookup_buffer);
+        let query = strings::copy_lowercase_if_needed(query_, &mut scratch_lookup_buffer[..]);
         let &result_ptr = self.data.get(query)?;
         // SAFETY: EntryStore-owned pointer
         let result = unsafe { &*result_ptr };
         let basename = result.base();
-        if !strings::eql_long(basename, query_, true) {
+        if !strings::eql_long::<true>(basename, query_) {
             return Some(EntryLookup {
                 entry: result,
                 diff_case: Some(DifferentCase {
@@ -461,7 +466,7 @@ impl DirEntry {
 
     pub fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool {
         // PERF(port): was comptime hash precompute — profile in Phase B
-        self.data.contains(query_lower)
+        self.data.contains_key(query_lower)
     }
 }
 

@@ -3337,21 +3337,20 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         Ok(())
     }
 
-    #[cfg(any())] // blocked_on: source.path.name.non_unique_name_string (logger::fs::PathName API)
     pub fn create_default_name(&mut self, loc: logger::Loc) -> Result<js_ast::LocRef, bun_core::Error> {
+        // PORT NOTE: Zig `try p.source.path.name.nonUniqueNameString(allocator)` allocates the
+        // sanitized identifier, then `allocPrint` formats `{s}_default`. logger::fs::PathName
+        // exposes the same sanitizer as a Display formatter (`fmt_identifier()`), so write both
+        // pieces into the bump arena in one shot.
         let mut buf = BumpVec::new_in(self.allocator);
-        let _ = write!(
-            &mut buf,
-            "{}_default",
-            bstr::BStr::new(self.source.path.name.non_unique_name_string(self.allocator)?)
-        );
-        let identifier = buf.into_bump_slice();
+        let _ = write!(&mut buf, "{}_default", self.source.path.name.fmt_identifier());
+        let identifier: &'a [u8] = buf.into_bump_slice();
 
-        let name = js_ast::LocRef { loc, r#ref: Some(self.new_symbol(js_ast::symbol::Kind::Other, identifier)?) };
+        let name = js_ast::LocRef { loc, ref_: Some(self.new_symbol(js_ast::symbol::Kind::Other, identifier)?) };
 
         // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
         let scope = unsafe { &mut *self.current_scope };
-        scope.generated.push(self.allocator, name.r#ref.unwrap())?;
+        scope.generated.push(name.ref_.unwrap());
 
         Ok(name)
     }
@@ -3372,28 +3371,27 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool>
         ))
     }
 
-    #[cfg(any())] // blocked_on: create_default_name; E::Function/Class field shapes
     pub fn default_name_for_expr(&mut self, expr: Expr, loc: logger::Loc) -> LocRef {
         match &expr.data {
             js_ast::ExprData::EFunction(func_container) => {
                 if let Some(_name) = &func_container.func.name {
-                    if let Some(r#ref) = _name.r#ref {
-                        return LocRef { loc, r#ref: Some(r#ref) };
+                    if let Some(r#ref) = _name.ref_ {
+                        return LocRef { loc, ref_: Some(r#ref) };
                     }
                 }
             }
             js_ast::ExprData::EIdentifier(ident) => {
-                return LocRef { loc, r#ref: Some(ident.r#ref) };
+                return LocRef { loc, ref_: Some(ident.ref_) };
             }
             js_ast::ExprData::EImportIdentifier(ident) => {
-                if !Self::ALLOW_MACROS || (Self::ALLOW_MACROS && !self.macro_.refs.contains(&ident.r#ref)) {
-                    return LocRef { loc, r#ref: Some(ident.r#ref) };
+                if !Self::ALLOW_MACROS || (Self::ALLOW_MACROS && !self.macro_.refs.contains(&ident.ref_)) {
+                    return LocRef { loc, ref_: Some(ident.ref_) };
                 }
             }
             js_ast::ExprData::EClass(class) => {
                 if let Some(_name) = &class.class_name {
-                    if let Some(r#ref) = _name.r#ref {
-                        return LocRef { loc, r#ref: Some(r#ref) };
+                    if let Some(r#ref) = _name.ref_ {
+                        return LocRef { loc, ref_: Some(r#ref) };
                     }
                 }
             }

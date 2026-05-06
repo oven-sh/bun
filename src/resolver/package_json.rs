@@ -869,38 +869,38 @@ impl PackageJSON {
         // Feels like a codegen issue.
         // or that looping over every property doesn't really matter because most package.jsons are < 20 properties
         if let Some(version_json) = json.as_property(b"version") {
-            if let Some(version_str) = version_json.expr.as_string() {
+            if let Some(version_str) = version_json.expr.as_utf8_string_literal() {
                 if !version_str.is_empty() {
-                    package_json.version = Box::from(version_str.as_ref());
+                    package_json.version = Box::from(version_str);
                 }
             }
         }
 
         if let Some(name_json) = json.as_property(b"name") {
-            if let Some(name_str) = name_json.expr.as_string() {
+            if let Some(name_str) = name_json.expr.as_utf8_string_literal() {
                 if !name_str.is_empty() {
-                    package_json.name = Box::from(name_str.as_ref());
+                    package_json.name = Box::from(name_str);
                 }
             }
         }
 
         if let Some(type_json) = json.as_property(b"type") {
-            if let Some(type_str) = type_json.expr.as_string() {
-                match options::ModuleType::LIST.get(&type_str).copied().unwrap_or(options::ModuleType::Unknown) {
-                    options::ModuleType::Cjs => {
-                        package_json.module_type = options::ModuleType::Cjs;
+            if let Some(type_str) = type_json.expr.as_utf8_string_literal() {
+                match ModuleType::LIST.get(type_str).copied().unwrap_or(ModuleType::Unknown) {
+                    ModuleType::Cjs => {
+                        package_json.module_type = ModuleType::Cjs;
                     }
-                    options::ModuleType::Esm => {
-                        package_json.module_type = options::ModuleType::Esm;
+                    ModuleType::Esm => {
+                        package_json.module_type = ModuleType::Esm;
                     }
-                    options::ModuleType::Unknown => {
+                    ModuleType::Unknown => {
                         r.log
                             .add_range_warning_fmt(
                                 Some(json_source),
                                 json_source.range_of_string(type_json.loc),
                                 format_args!(
                                     "\"{}\" is not a valid value for \"type\" field (must be either \"commonjs\" or \"module\")",
-                                    bstr::BStr::new(&type_str)
+                                    bstr::BStr::new(type_str)
                                 ),
                             )
                             .expect("unreachable");
@@ -908,7 +908,7 @@ impl PackageJSON {
                 }
             } else {
                 r.log
-                    .add_warning(Some(json_source), type_json.loc, "The value for \"type\" must be a string")
+                    .add_warning(Some(json_source), type_json.loc, b"The value for \"type\" must be a string")
                     .expect("unreachable");
             }
         }
@@ -918,9 +918,9 @@ impl PackageJSON {
             if let Some(main_json) = json.as_property(main) {
                 let expr: &js_ast::Expr = &main_json.expr;
 
-                if let Some(str) = expr.as_string() {
+                if let Some(str) = expr.as_utf8_string_literal() {
                     if !str.is_empty() {
-                        package_json.main_fields.put(main, str).expect("unreachable");
+                        package_json.main_fields.put(main, Box::from(str)).expect("unreachable");
                     }
                 }
             }

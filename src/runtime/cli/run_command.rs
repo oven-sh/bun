@@ -228,7 +228,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 struct Run {
     vm: *mut VirtualMachine,
     entry_path: &'static [u8],
-    any_unhandled: bool,
     /// Snapshot of `ctx.runtime_options.eval.eval_and_print` (the full
     /// `Command::Context` is not stored — its only consumers in `start()`
     /// beyond this flag are gated b2 features).
@@ -239,9 +238,16 @@ struct Run {
 static mut RUN: Run = Run {
     vm: ::core::ptr::null_mut(),
     entry_path: b"",
-    any_unhandled: false,
     eval_and_print: false,
 };
+
+// PORT NOTE: Zig writes `run.any_unhandled = true` from inside the
+// unhandled-rejection callback while `Run::start` holds `&mut self` (via the
+// `holdAPILock` trampoline). Storing the flag on `Run` and writing through a
+// fresh `&raw mut RUN` would alias that exclusive borrow (PORTING.md
+// §Forbidden — Stacked Borrows UB). Keep it as a sibling static instead so the
+// callback's write and `start()`'s reads never overlap a `&mut`.
+static ANY_UNHANDLED: AtomicBool = AtomicBool::new(false);
 
 impl Run {
     /// `onUnhandledRejectionBeforeClose` — record that *something* rejected so
@@ -257,8 +263,7 @@ impl Run {
             .on_unhandled_rejection_exception_list
             .map(|p| unsafe { &mut *p.as_ptr() });
         this.run_error_handler(value, list);
-        // SAFETY: single-threaded JS; `RUN` is the static that owns `this.vm`.
-        unsafe { (*(&raw mut RUN)).any_unhandled = true };
+        ANY_UNHANDLED.store(true, Ordering::Relaxed);
     }
 
     /// Inlined `VirtualMachine.onBeforeExit` (gated upstream): dispatch
@@ -352,14 +357,21 @@ impl Run {
                     promise.set_handled();
                     vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
 
-                    if vm.is_watcher_enabled() {
+                    // Spec bun.js.zig:407 gates on `vm.hot_reload != .none or handled`;
+                    // `is_watcher_enabled()` reads `bun_watcher`, which is only set
+                    // by the (gated) `enableHotModuleReloading`. Key off `hot_reload`
+                    // directly so `--hot`/`--watch` keep the process alive on a
+                    // rejected entry point regardless of watcher wiring.
+                    // TODO(b2-blocked): `or handled` — needs `vm.uncaught_exception`
+                    // un-gated to thread the bool back here.
+                    if vm.hot_reload != 0 {
                         // TODO(b2-blocked): `add_main_to_watcher_if_needed()` — gated.
                         vm.event_loop().tick();
                         vm.event_loop().tick_possibly_forever();
                     } else {
                         vm.exit_handler.exit_code = 1;
                         Run::on_exit(vm);
-                        if self.any_unhandled {
+                        if ANY_UNHANDLED.load(Ordering::Relaxed) {
                             printed_sourcemap_warning_and_version = true;
                             // TODO(b2-blocked): `SavedSourceMap::MissingSourceMapNoteInfo::print()`
                             // — real impl lives in the gated `SavedSourceMap.rs`.
@@ -393,7 +405,7 @@ impl Run {
                 }
                 vm.exit_handler.exit_code = 1;
                 Run::on_exit(vm);
-                if self.any_unhandled {
+                if ANY_UNHANDLED.load(Ordering::Relaxed) {
                     printed_sourcemap_warning_and_version = true;
                     pretty_errorln!(
                         "<r>\n<d>{}<r>",
@@ -454,7 +466,7 @@ impl Run {
         vm.global().handle_rejected_promises();
         Run::on_exit(vm);
 
-        if self.any_unhandled && !printed_sourcemap_warning_and_version {
+        if ANY_UNHANDLED.load(Ordering::Relaxed) && !printed_sourcemap_warning_and_version {
             vm.exit_handler.exit_code = 1;
             // TODO(b2-blocked): `SavedSourceMap::MissingSourceMapNoteInfo::print()`.
             pretty_errorln!(

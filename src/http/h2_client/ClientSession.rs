@@ -3,27 +3,37 @@
 //! See `src/http/H2Client.zig` for the module-level overview.
 
 use core::cell::Cell;
+use core::ptr::NonNull;
+use core::sync::atomic::Ordering;
 
 use bun_collections::ArrayHashMap;
 use bun_core::{err, Error};
-use bun_str::strings;
+use bun_picohttp as picohttp;
+use bun_string::immutable as strings;
 
-use crate::h2_client::stream::Stream;
-use crate::h2_client::{dispatch, encode};
+use super::bridge::socket_is_closed_or_has_error;
+use super::stream::{State as StreamState, Stream};
+use super::{dispatch, encode};
 use crate::h2_frame_parser as wire;
+use crate::http_context::HTTPSocket;
+use crate::http_request_body::HTTPRequestBody;
+use crate::internal_state::HTTPStage;
 use crate::lshpack;
-use crate::picohttp;
-use crate::HTTPClient;
-use crate::NewHTTPContext;
-use crate::SSLConfig;
-use crate::{self as h2, H2Client as H2};
-// TODO(b0): SSLConfig arrives from move-in (MOVE_DOWN → bun_http::ssl_config)
+use crate::signals;
+use crate::ssl_config;
+use crate::{HTTPClient, HTTPVerboseLevel, NewHTTPContext, Protocol, ShouldContinue};
+use bun_http_types::Encoding::Encoding;
 
-pub type Socket = <NewHTTPContext<true> as crate::HttpContext>::HTTPSocket;
-// TODO(port): NewHTTPContext(true).HTTPSocket — exact Rust spelling depends on how the
-// `fn NewHTTPContext(comptime ssl: bool) type` generic is ported (struct + const-generic).
+/// HTTP/2 only ever runs over TLS in this client (ALPN "h2").
+pub type Socket = HTTPSocket<true>;
 
-const LOCAL_INITIAL_WINDOW_SIZE: u32 = h2::LOCAL_INITIAL_WINDOW_SIZE;
+const LOCAL_INITIAL_WINDOW_SIZE: u32 = super::LOCAL_INITIAL_WINDOW_SIZE;
+
+// PORT NOTE: Zig `u31`/`u24` widened to u32; range asserts at use sites.
+#[allow(non_camel_case_types)]
+type u31 = u32;
+#[allow(non_camel_case_types)]
+type u24 = u32;
 
 pub struct ClientSession {
     /// Ref holders: the socket-ext tag while the session is the ActiveSocket
@@ -32,14 +42,14 @@ pub struct ClientSession {
     /// pool transfer a ref rather than touching the count.
     pub ref_count: Cell<u32>,
 
-    pub hpack: *mut lshpack::HPACK, // TODO(port): lifetime — FFI handle owned via init/deinit
+    pub hpack: *mut lshpack::HPACK, // FFI handle owned via init/destroy
     pub socket: Socket,
     pub ctx: *mut NewHTTPContext<true>, // BACKREF: context outlives and registers this session
 
     /// Pool key. Owned copy so the session can outlive the originating client.
     pub hostname: Box<[u8]>,
     pub port: u16,
-    pub ssl_config: Option<SSLConfig::SharedPtr>,
+    pub ssl_config: Option<ssl_config::SharedPtr>,
     pub did_have_handshaking_error: bool,
 
     /// Queued bytes for the socket; whole frames are written here and
@@ -50,7 +60,7 @@ pub struct ClientSession {
     /// available, so frame handlers always see complete frames.
     pub read_buffer: Vec<u8>,
 
-    pub streams: ArrayHashMap<u31, *mut Stream>, // TODO(port): u31 → newtype StreamId(u32); values are owned (see Drop)
+    pub streams: ArrayHashMap<u31, *mut Stream>,
     pub next_stream_id: u31,
     /// Stream id whose CONTINUATION sequence is in progress; 0 = none.
     pub expecting_continuation: u31,
@@ -88,7 +98,7 @@ pub struct ClientSession {
     /// alloc/free its own header-block buffer.
     pub encode_scratch: Vec<u8>,
 
-    pub remote_max_frame_size: u24, // TODO(port): u24 → u32 (Rust has no u24)
+    pub remote_max_frame_size: u24,
     pub remote_max_concurrent_streams: u32,
     pub remote_initial_window_size: u32,
     /// SETTINGS_HEADER_TABLE_SIZE received from the peer that hasn't yet been
@@ -105,14 +115,11 @@ pub struct ClientSession {
 
     /// Index in the context's active-session list while reachable for
     /// concurrent attachment; maxInt when not listed.
-    pub registry_index: u32,
+    pub registry_index: Cell<u32>,
 }
 
 // Intrusive refcount (single-thread). `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`
-// → `bun_ptr::IntrusiveRc<ClientSession>` clones via `ref()`, drops via `deref()`, and
-// calls `Drop` when the count hits zero.
-pub type Ref = bun_ptr::IntrusiveRc<ClientSession>;
-
+// → manual ref()/deref() pair; the last deref drops the Box.
 impl ClientSession {
     #[inline]
     pub fn r#ref(&self) {
@@ -129,8 +136,23 @@ impl ClientSession {
         }
     }
 
+    #[inline]
+    pub fn registry_index(&self) -> u32 {
+        self.registry_index.get()
+    }
+    #[inline]
+    pub fn set_registry_index(&self, i: u32) {
+        self.registry_index.set(i);
+    }
+
+    #[inline]
+    pub(crate) fn hpack(&self) -> &mut lshpack::HPACK {
+        // SAFETY: hpack was allocated by lshpack_wrapper_init and is freed in Drop.
+        unsafe { &mut *self.hpack }
+    }
+
     pub fn create(
-        ctx: &mut NewHTTPContext<true>,
+        ctx: *mut NewHTTPContext<true>,
         socket: Socket,
         client: &HTTPClient,
     ) -> *mut ClientSession {
@@ -138,10 +160,10 @@ impl ClientSession {
             ref_count: Cell::new(1),
             hpack: lshpack::HPACK::init(4096),
             socket,
-            ctx: ctx as *mut _,
-            hostname: Box::<[u8]>::from(client.connected_url.hostname()),
+            ctx,
+            hostname: Box::<[u8]>::from(client.connected_url.hostname),
             port: client.connected_url.get_port_auto(),
-            ssl_config: client.tls_props.as_ref().map(|p| p.clone()),
+            ssl_config: client.tls_props.clone(),
             did_have_handshaking_error: client.flags.did_have_handshaking_error,
             write_buffer: bun_io::StreamBuffer::default(),
             read_buffer: Vec::new(),
@@ -165,11 +187,11 @@ impl ClientSession {
             pending_hpack_enc_capacity: None,
             conn_send_window: wire::DEFAULT_WINDOW_SIZE as i32,
             conn_unacked_bytes: 0,
-            registry_index: u32::MAX,
+            registry_index: Cell::new(u32::MAX),
         }));
-        H2::live_sessions().fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-        // SAFETY: `this` was just allocated and is non-null.
-        ctx.register_h2(unsafe { &mut *this });
+        super::live_sessions.fetch_add(1, Ordering::Relaxed);
+        // SAFETY: ctx is a live back-ref to the owning context.
+        unsafe { (*ctx).h2_register(this) };
         this
     }
 
@@ -181,14 +203,21 @@ impl ClientSession {
             && self.next_stream_id < wire::MAX_STREAM_ID
     }
 
-    pub fn matches(&self, hostname: &[u8], port: u16, ssl_config: Option<&SSLConfig>) -> bool {
+    pub fn matches(
+        &self,
+        hostname: &[u8],
+        port: u16,
+        ssl_config: Option<*const ssl_config::SSLConfig>,
+    ) -> bool {
+        let mine: Option<*const ssl_config::SSLConfig> =
+            self.ssl_config.as_ref().map(|p| p.get() as *const _);
         self.port == port
-            && SSLConfig::raw_ptr(&self.ssl_config) == ssl_config.map_or(core::ptr::null(), |p| p as *const _)
-            && strings::eql_long(&self.hostname, hostname, true)
+            && mine == ssl_config
+            && strings::eql_long::<true>(&self.hostname, hostname)
     }
 
     pub fn adopt(&mut self, client: &mut HTTPClient) {
-        client.register_abort_tracker(true, self.socket);
+        client.h2_register_abort_tracker(self.socket);
         // Park instead of attaching when (a) we're inside onData's deliver
         // loop — attach() mustn't mutate `streams` under iteration — or (b)
         // the server's first SETTINGS hasn't arrived yet, so the real
@@ -205,7 +234,7 @@ impl ClientSession {
         // remote_max_concurrent_streams == 0 if a mid-connection SETTINGS
         // dropped it. Re-dispatch instead of asserting in attach().
         if !self.has_headroom() {
-            client.retry_after_h2_coalesce();
+            client.h2_retry_after_coalesce();
             self.maybe_release();
             return;
         }
@@ -221,7 +250,7 @@ impl ClientSession {
     /// Park a coalesced request until the server's SETTINGS arrive. Abort
     /// is routed via the session socket so `abortByHttpId` can find it.
     pub fn enqueue(&mut self, client: &mut HTTPClient) {
-        client.register_abort_tracker(true, self.socket);
+        client.h2_register_abort_tracker(self.socket);
         self.pending_attach.push(client as *mut _);
         self.rearm_timeout();
     }
@@ -235,13 +264,13 @@ impl ClientSession {
             // SAFETY: pending_attach entries are live HTTPClient back-refs registered via enqueue/adopt.
             let client = unsafe { &mut *client_ptr };
             if let Some(err) = self.fatal_error {
-                client.fail_from_h2(err);
-            } else if client.signals.get(crate::Signal::Aborted) {
-                client.fail_from_h2(err!("Aborted"));
+                client.h2_fail(err);
+            } else if client.signals.get(signals::Field::Aborted) {
+                client.h2_fail(err!(Aborted));
             } else if self.has_headroom() {
                 self.attach(client);
             } else {
-                client.retry_after_h2_coalesce();
+                client.h2_retry_after_coalesce();
             }
         }
     }
@@ -261,8 +290,9 @@ impl ClientSession {
             && self.next_stream_id < wire::MAX_STREAM_ID
     }
 
+    #[inline]
     pub fn queue(&mut self, bytes: &[u8]) {
-        self.write_buffer.write(bytes);
+        let _ = self.write_buffer.write(bytes);
     }
 
     pub fn write_frame(
@@ -272,23 +302,14 @@ impl ClientSession {
         stream_id: u32,
         payload: &[u8],
     ) {
-        let mut header = wire::FrameHeader {
-            r#type: frame_type as u8,
-            flags,
-            stream_identifier: stream_id,
-            length: u32::try_from(payload.len()).unwrap(), // TODO(port): u24
-        };
-        // TODO(port): std.mem.byteSwapAllFields — wire::FrameHeader should expose
-        // a `to_be()` / `byte_swap_all_fields()` helper.
-        header.byte_swap_all_fields();
-        // SAFETY: FrameHeader is #[repr(C)] POD; reading its first byteSize bytes is sound.
-        let header_bytes = unsafe {
-            core::slice::from_raw_parts(
-                &header as *const _ as *const u8,
-                wire::FrameHeader::BYTE_SIZE,
-            )
-        };
-        self.queue(header_bytes);
+        // Wire format: u24 length BE, u8 type, u8 flags, u32 stream-id BE.
+        let len = u32::try_from(payload.len()).unwrap();
+        let mut header = [0u8; wire::FrameHeader::BYTE_SIZE];
+        header[0..3].copy_from_slice(&len.to_be_bytes()[1..4]);
+        header[3] = frame_type as u8;
+        header[4] = flags;
+        header[5..9].copy_from_slice(&stream_id.to_be_bytes());
+        self.queue(&header);
         self.queue(payload);
     }
 
@@ -297,24 +318,22 @@ impl ClientSession {
     pub fn attach(&mut self, client: &mut HTTPClient) {
         debug_assert!(self.has_headroom());
 
-        let stream = Box::into_raw(Box::new(Stream {
-            id: self.next_stream_id,
-            session: self as *mut _,
-            client: Some(client as *mut _),
-            send_window: i32::try_from(
-                self.remote_initial_window_size.min(wire::MAX_WINDOW_SIZE as u32),
-            )
-            .unwrap(),
-            ..Default::default()
-        }));
-        // TODO(port): Stream::new(.{...}) — exact field set depends on Stream port; using struct-init + Default for unlisted fields.
-        H2::live_streams().fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        let send_window =
+            i32::try_from(self.remote_initial_window_size.min(wire::MAX_WINDOW_SIZE)).unwrap();
+        let stream = Box::into_raw(Stream::new(
+            self.next_stream_id,
+            self as *mut _,
+            Some(NonNull::from(&mut *client)),
+            send_window,
+        ));
+        super::live_streams.fetch_add(1, Ordering::Relaxed);
         self.next_stream_id = self.next_stream_id.saturating_add(2);
         // SAFETY: `stream` was just allocated and is non-null.
         let stream_ref = unsafe { &mut *stream };
-        self.streams.put(stream_ref.id, stream);
-        client.h2 = Some(stream);
-        client.flags.protocol = crate::Protocol::Http2;
+        let _ = self.streams.put(stream_ref.id, stream);
+        // SAFETY: stream is non-null.
+        client.h2 = Some(unsafe { NonNull::new_unchecked(stream) });
+        client.flags.protocol = Protocol::Http2;
         client.allow_retry = false;
 
         if !self.preface_sent {
@@ -322,8 +341,8 @@ impl ClientSession {
         }
 
         self.rearm_timeout();
-        let request = client.build_request(client.state.original_request_body.len());
-        if let Err(err) = encode::write_request(self, client, stream_ref, request) {
+        let request = client.h2_build_request(client.state.original_request_body.len());
+        if let Err(err) = encode::write_request(self, client, stream_ref, &request) {
             // encodeHeader pushes into the HPACK encoder's dynamic table per
             // call, so a mid-encode failure leaves entries the server will
             // never see. Mark the session unusable for future streams and
@@ -331,19 +350,18 @@ impl ClientSession {
             // never opened (RST on an idle stream is a connection error per
             // RFC 9113 §5.1).
             self.encoder_poisoned = true;
-            self.streams.swap_remove(stream_ref.id);
+            self.streams.swap_remove(&stream_ref.id);
             // SAFETY: stream was Box::into_raw'd above and removed from the map; sole owner.
             unsafe { drop(Box::from_raw(stream)) };
             client.h2 = None;
-            client.fail_from_h2(err);
+            client.h2_fail(err);
             // The poisoned session is dead for new work; bounce any waiters
             // and let maybeRelease() drop the registration so the next fetch
             // opens a fresh connection instead of waiting for idle-timeout.
-            for c in &self.pending_attach {
+            for c in core::mem::take(&mut self.pending_attach) {
                 // SAFETY: pending_attach entries are live HTTPClient back-refs.
-                unsafe { (**c).retry_after_h2_coalesce() };
+                unsafe { (*c).h2_retry_after_coalesce() };
             }
-            self.pending_attach.clear();
             let _ = self.flush();
             // Do NOT maybeRelease() here: attach() runs from drainPending()
             // inside onData (whose tail maybeRelease handles cleanup) and from
@@ -351,22 +369,23 @@ impl ClientSession {
             // session empty). Releasing twice would close+deref twice.
             return;
         }
-        if client.verbose != crate::Verbose::None {
-            HTTPClient::print_request(
-                crate::Protocol::Http2,
-                request,
+        if client.verbose != HTTPVerboseLevel::None {
+            crate::print_request(
+                Protocol::Http2,
+                &request,
                 client.url.href(),
                 !client.flags.reject_unauthorized,
-                client.state.request_body(),
-                client.verbose == crate::Verbose::Curl,
+                // SAFETY: request_body points into original_request_body.bytes.
+                unsafe { &*client.state.request_body },
+                client.verbose == HTTPVerboseLevel::Curl,
             );
         }
         client.state.request_stage = if stream_ref.local_closed() {
-            crate::RequestStage::Done
+            HTTPStage::Done
         } else {
-            crate::RequestStage::Body
+            HTTPStage::Body
         };
-        client.state.response_stage = crate::ResponseStage::Headers;
+        client.state.response_stage = HTTPStage::Headers;
 
         if let Err(err) = self.flush() {
             self.fail_all(err);
@@ -374,8 +393,7 @@ impl ClientSession {
         }
 
         if client.flags.is_streaming_request_body {
-            // SAFETY: ctx back-ref is valid for the session's lifetime.
-            client.progress_update(true, unsafe { &mut *self.ctx }, self.socket);
+            client.h2_progress_update(self.ctx, self.socket);
         }
     }
 
@@ -390,7 +408,7 @@ impl ClientSession {
         if self.expecting_continuation == s.id {
             self.orphan_header_block = core::mem::take(&mut s.header_block);
         }
-        self.streams.swap_remove(s.id);
+        self.streams.swap_remove(&s.id);
         // SAFETY: stream was Box::into_raw'd in attach(); we are the sole owner after map removal.
         unsafe { drop(Box::from_raw(stream)) };
     }
@@ -405,12 +423,12 @@ impl ClientSession {
         let client = s.client.take();
         if let Some(c) = client {
             // SAFETY: stream.client is a live HTTPClient back-ref while set.
-            unsafe { (*c).h2 = None };
+            unsafe { (*c.as_ptr()).h2 = None };
         }
         self.remove_stream(stream);
         if let Some(c) = client {
             // SAFETY: same as above.
-            unsafe { (*c).fail_from_h2(err) };
+            unsafe { (*c.as_ptr()).h2_fail(err) };
         }
     }
 
@@ -427,7 +445,7 @@ impl ClientSession {
                 let s = unsafe { &**s };
                 let Some(c) = s.client else { continue };
                 // SAFETY: stream.client is a live back-ref while set.
-                if !unsafe { (*c).flags.disable_timeout } {
+                if !unsafe { (*c.as_ptr()).flags.disable_timeout } {
                     break 'blk true;
                 }
             }
@@ -448,18 +466,19 @@ impl ClientSession {
     /// metadata delivery and `getReader()`.
     pub fn drain_response_body_by_http_id(&mut self, async_http_id: u32) {
         self.r#ref();
-        let _guard = scopeguard::guard((), |_| self.deref());
-        // TODO(port): scopeguard borrows &self; ref/deref pattern may need IntrusiveRc RAII helper instead.
-        for stream in self.streams.values() {
+        // PORT NOTE: scopeguard borrows &self via raw ptr to avoid &mut overlap.
+        let self_ptr = self as *const Self;
+        let _guard = scopeguard::guard((), move |_| unsafe { (*self_ptr).deref() });
+        for &stream in self.streams.values() {
             // SAFETY: owned live Stream pointer.
-            let stream = unsafe { &mut **stream };
+            let stream = unsafe { &mut *stream };
             let Some(client) = stream.client else { continue };
             // SAFETY: stream.client is a live back-ref while set.
-            let client = unsafe { &mut *client };
+            let client = unsafe { &mut *client.as_ptr() };
             if client.async_http_id != async_http_id {
                 continue;
             }
-            client.drain_response_body(true, self.socket);
+            client.h2_drain_response_body(self.socket);
             return;
         }
     }
@@ -468,26 +487,26 @@ impl ClientSession {
     /// end-of-body) are available in the ThreadSafeStreamBuffer.
     pub fn stream_body_by_http_id(&mut self, async_http_id: u32, ended: bool) {
         self.r#ref();
-        let _guard = scopeguard::guard((), |_| self.deref());
-        // TODO(port): same ref/deref RAII concern as above.
+        let self_ptr = self as *const Self;
+        let _guard = scopeguard::guard((), move |_| unsafe { (*self_ptr).deref() });
         // PORT NOTE: reshaped for borrowck — collect target stream ptr before mutating self.
         let mut target: Option<*mut Stream> = None;
-        for stream in self.streams.values() {
+        for &stream in self.streams.values() {
             // SAFETY: owned live Stream pointer.
-            let s = unsafe { &mut **stream };
+            let s = unsafe { &mut *stream };
             let Some(client_ptr) = s.client else { continue };
             // SAFETY: stream.client is a live back-ref while set.
-            let client = unsafe { &mut *client_ptr };
+            let client = unsafe { &mut *client_ptr.as_ptr() };
             if client.async_http_id != async_http_id {
                 continue;
             }
-            if !matches!(client.state.original_request_body, crate::RequestBody::Stream(_)) {
+            if !matches!(client.state.original_request_body, HTTPRequestBody::Stream(_)) {
                 return;
             }
-            if let crate::RequestBody::Stream(ref mut st) = client.state.original_request_body {
+            if let HTTPRequestBody::Stream(ref mut st) = client.state.original_request_body {
                 st.ended = ended;
             }
-            target = Some(*stream);
+            target = Some(stream);
             break;
         }
         if let Some(stream) = target {
@@ -501,56 +520,55 @@ impl ClientSession {
     }
 
     pub fn write_window_update(&mut self, stream_id: u32, increment: u31) {
-        let value: u32 = (increment as u32).swap_bytes();
-        // SAFETY: u32 is POD; reinterpreting as 4 bytes is sound.
-        let bytes = value.to_ne_bytes();
+        let bytes = increment.to_be_bytes();
         self.write_frame(wire::FrameType::HTTP_FRAME_WINDOW_UPDATE, 0, stream_id, &bytes);
     }
 
     fn replenish_window(&mut self) {
         let threshold = LOCAL_INITIAL_WINDOW_SIZE / 2;
         if self.conn_unacked_bytes >= threshold {
-            self.write_window_update(0, u31::try_from(self.conn_unacked_bytes).unwrap());
+            self.write_window_update(0, self.conn_unacked_bytes);
             self.conn_unacked_bytes = 0;
         }
         // PORT NOTE: reshaped for borrowck — collect (id, unacked) pairs before mutating self.
         let mut updates: Vec<(u32, u32)> = Vec::new();
-        for s in self.streams.values() {
+        for &s in self.streams.values() {
             // SAFETY: owned live Stream pointer.
-            let s = unsafe { &mut **s };
+            let s = unsafe { &mut *s };
             if s.unacked_bytes >= threshold && !s.remote_closed() {
-                updates.push((s.id as u32, s.unacked_bytes));
+                updates.push((s.id, s.unacked_bytes));
                 s.unacked_bytes = 0;
             }
         }
         for (id, unacked) in updates {
-            self.write_window_update(id, u31::try_from(unacked).unwrap());
+            self.write_window_update(id, unacked);
         }
         // PERF(port): Zig iterated and wrote in one pass; profile if extra Vec matters.
     }
 
     pub fn flush(&mut self) -> Result<bool, Error> {
-        // TODO(port): narrow error set
         let pending = self.write_buffer.slice();
         if pending.is_empty() {
             return Ok(false);
         }
-        let mut remaining = pending;
+        // PORT NOTE: reshaped for borrowck — write to socket via raw ptr/len so
+        // we can mutate write_buffer cursor afterward.
+        let base = pending.as_ptr();
+        let len = pending.len();
         let mut total: usize = 0;
-        while !remaining.is_empty() {
-            let wrote = self.socket.write(remaining);
+        while total < len {
+            // SAFETY: base[total..len] is a subslice of write_buffer.slice().
+            let chunk = unsafe { core::slice::from_raw_parts(base.add(total), len - total) };
+            let wrote = self.socket.write(chunk);
             if wrote < 0 {
-                return Err(err!("WriteFailed"));
+                return Err(err!(WriteFailed));
             }
-            let n: usize = usize::try_from(wrote).unwrap();
+            let n = wrote as usize;
             total += n;
-            remaining = &remaining[n..];
             if n == 0 {
                 break;
             }
         }
-        // PORT NOTE: reshaped for borrowck — drop `remaining` borrow before re-borrowing write_buffer.
-        let _ = remaining;
         self.write_buffer.wrote(total);
         if self.write_buffer.is_empty() {
             self.write_buffer.reset();
@@ -565,8 +583,8 @@ impl ClientSession {
     /// free the client.
     pub fn on_data(&mut self, incoming: &[u8]) {
         self.r#ref();
-        let _guard = scopeguard::guard((), |_| self.deref());
-        // TODO(port): ref/deref RAII — see drain_response_body_by_http_id note.
+        let self_ptr = self as *const Self;
+        let _guard = scopeguard::guard((), move |_| unsafe { (*self_ptr).deref() });
         self.stream_progressed = false;
         if self.read_buffer.is_empty() {
             let consumed = dispatch::parse_frames(self, incoming);
@@ -576,11 +594,11 @@ impl ClientSession {
         } else {
             self.read_buffer.extend_from_slice(incoming);
             // PORT NOTE: reshaped for borrowck — pass raw slice; parse_frames must not retain it.
-            let consumed = dispatch::parse_frames(self, {
-                // SAFETY: read_buffer is not reallocated during parse_frames (only consumed).
-                // TODO(port): verify dispatch::parse_frames does not push into self.read_buffer.
-                unsafe { core::slice::from_raw_parts(self.read_buffer.as_ptr(), self.read_buffer.len()) }
-            });
+            // SAFETY: read_buffer is not reallocated during parse_frames (only consumed).
+            let buf = unsafe {
+                core::slice::from_raw_parts(self.read_buffer.as_ptr(), self.read_buffer.len())
+            };
+            let consumed = dispatch::parse_frames(self, buf);
             let tail = self.read_buffer.len() - consumed;
             if tail > 0 && consumed > 0 {
                 self.read_buffer.copy_within(consumed.., 0);
@@ -588,11 +606,8 @@ impl ClientSession {
             self.read_buffer.truncate(tail);
         }
 
-        match self.flush() {
-            Ok(_) => {}
-            Err(_) => {
-                self.fatal_error = Some(err!("WriteFailed"));
-            }
+        if self.flush().is_err() {
+            self.fatal_error = Some(err!(WriteFailed));
         }
 
         if let Some(err) = self.fatal_error {
@@ -627,7 +642,7 @@ impl ClientSession {
                 // perspective (we never sent END_STREAM, *or* the server
                 // never did and hasn't RST'd) must signal abandonment so the
                 // server can release its concurrency slot. rst() is idempotent.
-                if s.state != crate::h2_client::stream::State::Closed {
+                if s.state != StreamState::Closed {
                     s.rst(wire::ErrorCode::CANCEL);
                     rst_any = true;
                 }
@@ -666,7 +681,8 @@ impl ClientSession {
     /// Socket onWritable entry point.
     pub fn on_writable(&mut self) {
         self.r#ref();
-        let _guard = scopeguard::guard((), |_| self.deref());
+        let self_ptr = self as *const Self;
+        let _guard = scopeguard::guard((), move |_| unsafe { (*self_ptr).deref() });
         if let Err(err) = self.flush() {
             return self.fail_all(err);
         }
@@ -683,17 +699,18 @@ impl ClientSession {
     /// PING/SETTINGS, records GOAWAY, discards anything stream-addressed.
     pub fn on_idle_data(&mut self, incoming: &[u8]) {
         self.read_buffer.extend_from_slice(incoming);
-        let consumed = dispatch::parse_frames(self, {
-            // SAFETY: see on_data note.
-            unsafe { core::slice::from_raw_parts(self.read_buffer.as_ptr(), self.read_buffer.len()) }
-        });
+        // SAFETY: see on_data note.
+        let buf = unsafe {
+            core::slice::from_raw_parts(self.read_buffer.as_ptr(), self.read_buffer.len())
+        };
+        let consumed = dispatch::parse_frames(self, buf);
         let tail = self.read_buffer.len() - consumed;
         if tail > 0 && consumed > 0 {
             self.read_buffer.copy_within(consumed.., 0);
         }
         self.read_buffer.truncate(tail);
         if self.flush().is_err() {
-            self.fatal_error = Some(err!("WriteFailed"));
+            self.fatal_error = Some(err!(WriteFailed));
         }
     }
 
@@ -701,31 +718,30 @@ impl ClientSession {
     /// streams just fail and the session is destroyed.
     pub fn on_close(&mut self, err: Error) {
         self.r#ref();
-        let _guard = scopeguard::guard((), |_| self.deref());
+        let self_ptr = self as *const Self;
+        let _guard = scopeguard::guard((), move |_| unsafe { (*self_ptr).deref() });
         // SAFETY: ctx back-ref is valid for the session's lifetime.
-        unsafe { (*self.ctx).unregister_h2(self) };
-        for client in &self.pending_attach {
+        unsafe { (*self.ctx).h2_unregister(self) };
+        for client in core::mem::take(&mut self.pending_attach) {
             // SAFETY: pending_attach entries are live back-refs.
-            unsafe { (**client).fail_from_h2(err) };
+            unsafe { (*client).h2_fail(err) };
         }
-        self.pending_attach.clear();
-        for e in self.streams.values() {
-            let stream_ptr = *e;
+        for &e in self.streams.values() {
             // SAFETY: owned live Stream pointer.
-            let stream = unsafe { &mut *stream_ptr };
+            let stream = unsafe { &mut *e };
             let client = stream.client.take();
             if let Some(c) = client {
                 // SAFETY: live back-ref.
-                unsafe { (*c).h2 = None };
+                unsafe { (*c.as_ptr()).h2 = None };
             }
             // SAFETY: stream was Box::into_raw'd in attach(); sole owner here.
-            unsafe { drop(Box::from_raw(stream_ptr)) };
+            unsafe { drop(Box::from_raw(e)) };
             if let Some(c) = client {
                 // SAFETY: live back-ref.
-                unsafe { (*c).fail_from_h2(err) };
+                unsafe { (*c.as_ptr()).h2_fail(err) };
             }
         }
-        self.streams.clear(); // PERF(port): was clearRetainingCapacity
+        self.streams.clear_retaining_capacity();
         self.deref();
     }
 
@@ -735,7 +751,7 @@ impl ClientSession {
         // RFC 9113 §5.4.1: an endpoint that encounters a connection error
         // SHOULD first send GOAWAY. Best-effort only; the socket may already
         // be dead.
-        if !sock.is_closed_or_has_error() {
+        if !socket_is_closed_or_has_error(&sock) {
             let mut goaway = [0u8; 8];
             goaway[0..4].copy_from_slice(&0u32.to_be_bytes());
             goaway[4..8].copy_from_slice(&(dispatch::error_code_for(err) as u32).to_be_bytes());
@@ -744,7 +760,7 @@ impl ClientSession {
         }
         NewHTTPContext::<true>::mark_socket_as_dead(sock);
         self.on_close(err);
-        sock.close(crate::CloseReason::Failure);
+        sock.close(bun_uws::CloseKind::Failure);
     }
 
     /// Called from the HTTP thread's shutdown queue when a fetch on this
@@ -755,7 +771,7 @@ impl ClientSession {
             let client = unsafe { &mut **client };
             if client.async_http_id == async_http_id {
                 let _ = self.pending_attach.swap_remove(i);
-                client.fail_from_h2(err!("Aborted"));
+                client.h2_fail(err!(Aborted));
                 self.rearm_timeout();
                 self.maybe_release();
                 return;
@@ -763,18 +779,18 @@ impl ClientSession {
         }
         // PORT NOTE: reshaped for borrowck — find target before detaching.
         let mut target: Option<*mut Stream> = None;
-        for e in self.streams.values() {
+        for &e in self.streams.values() {
             // SAFETY: owned live Stream pointer.
-            let stream = unsafe { &**e };
+            let stream = unsafe { &*e };
             let Some(client) = stream.client else { continue };
             // SAFETY: live back-ref.
-            if unsafe { (*client).async_http_id } == async_http_id {
-                target = Some(*e);
+            if unsafe { (*client.as_ptr()).async_http_id } == async_http_id {
+                target = Some(e);
                 break;
             }
         }
         if let Some(stream) = target {
-            self.detach_with_failure(stream, err!("Aborted"));
+            self.detach_with_failure(stream, err!(Aborted));
         }
         self.rearm_timeout();
         self.maybe_release();
@@ -791,8 +807,8 @@ impl ClientSession {
                 continue;
             };
             // SAFETY: live back-ref.
-            if unsafe { (*client).signals.get(crate::Signal::Aborted) } {
-                self.detach_with_failure(stream, err!("Aborted"));
+            if unsafe { (*client.as_ptr()).signals.get(signals::Field::Aborted) } {
+                self.detach_with_failure(stream, err!(Aborted));
             } else {
                 i += 1;
             }
@@ -807,24 +823,29 @@ impl ClientSession {
         // the sentinel — `registerH2` re-arms it on keep-alive resume, and any
         // path that has already unregistered (encoder-poison, abort) leaves it
         // at maxInt so a second caller can't double-close+deref.
-        if self.registry_index == u32::MAX {
+        if self.registry_index.get() == u32::MAX {
             return;
         }
         // SAFETY: ctx back-ref is valid for the session's lifetime.
         let ctx = unsafe { &mut *self.ctx };
-        ctx.unregister_h2(self);
-        if self.can_pool() && !self.socket.is_closed_or_has_error() {
+        ctx.h2_unregister(self);
+        if self.can_pool() && !socket_is_closed_or_has_error(&self.socket) {
+            // PORT NOTE: lib.rs bridge `release_socket` signature ends in
+            // `Option<AlpnOffer>`; the real (gated) one ends in
+            // `Option<Arc<ClientSession>>`. Pass `None` so this compiles
+            // against the bridge; the gated impl will need the session ref.
+            // TODO(b2-bridge): pass `Some(self)` once HTTPContext.rs un-gates.
             ctx.release_socket(
                 self.socket,
                 self.did_have_handshaking_error,
                 &self.hostname,
                 self.port,
-                self.ssl_config.clone(),
+                self.ssl_config.as_ref(),
                 None,
                 b"",
                 0,
                 0,
-                Some(self as *mut _),
+                None,
             );
         } else {
             NewHTTPContext::<true>::close_socket(self.socket);
@@ -836,21 +857,21 @@ impl ClientSession {
     /// Returns true when the stream is finished and should be removed.
     /// After a true return, neither `stream.client` nor the client's memory
     /// may be touched.
-    fn deliver_stream(&mut self, stream: *mut Stream) -> bool {
+    fn deliver_stream(&mut self, stream_ptr: *mut Stream) -> bool {
         // SAFETY: caller passes a live entry from self.streams.
-        let stream = unsafe { &mut *stream };
+        let stream = unsafe { &mut *stream_ptr };
         let Some(client_ptr) = stream.client else {
             return true;
         };
         // SAFETY: stream.client is a live back-ref while set.
-        let client = unsafe { &mut *client_ptr };
+        let client = unsafe { &mut *client_ptr.as_ptr() };
 
-        if client.signals.get(crate::Signal::Aborted) {
+        if client.signals.get(signals::Field::Aborted) {
             stream.rst(wire::ErrorCode::CANCEL);
             let _ = self.flush();
             stream.client = None;
             client.h2 = None;
-            client.fail_from_h2(err!("Aborted"));
+            client.h2_fail(err!(Aborted));
             return true;
         }
 
@@ -861,14 +882,14 @@ impl ClientSession {
             // before producing any of it (REFUSED_STREAM after HEADERS would
             // be a server bug, but retrying then re-streams a body prefix
             // into a Response that JS already holds — silent corruption).
-            if err == err!("HTTP2RefusedStream")
+            if err == err!(HTTP2RefusedStream)
                 && stream.status_code == 0
-                && client.h2_retries < HTTPClient::MAX_H2_RETRIES
-                && matches!(client.state.original_request_body, crate::RequestBody::Bytes(_))
+                && client.h2_retries < crate::MAX_H2_RETRIES
+                && matches!(client.state.original_request_body, HTTPRequestBody::Bytes(_))
             {
-                client.retry_from_h2();
+                client.h2_retry();
             } else {
-                client.fail_from_h2(err);
+                client.h2_fail(err);
             }
             return true;
         }
@@ -882,7 +903,7 @@ impl ClientSession {
                     let _ = self.flush();
                     stream.client = None;
                     client.h2 = None;
-                    client.fail_from_h2(err);
+                    client.h2_fail(err);
                     return true;
                 }
             };
@@ -899,8 +920,7 @@ impl ClientSession {
                 let _ = self.flush();
                 stream.client = None;
                 client.h2 = None;
-                // SAFETY: ctx back-ref is valid for the session's lifetime.
-                client.do_redirect(true, unsafe { &mut *self.ctx }, self.socket);
+                client.h2_do_redirect(self.ctx, self.socket);
                 return true;
             }
             if result == HeaderResult::Finished
@@ -908,7 +928,7 @@ impl ClientSession {
             {
                 stream.client = None;
                 client.h2 = None;
-                client.clone_metadata();
+                client.h2_clone_metadata();
                 client.state.flags.received_last_chunk = true;
                 // .finished = HEAD/204/304: no body is expected regardless of
                 // any Content-Length header, so clear it. Otherwise leave the
@@ -919,18 +939,17 @@ impl ClientSession {
                 }
                 return self.finish_stream(stream, client);
             }
-            client.clone_metadata();
+            client.h2_clone_metadata();
             // Mirror the h1 path (http.zig handleOnDataHeaders): deliver headers
             // to JS now so `await fetch()` resolves and `getReader()` can enable
             // response_body_streaming. Without this, a content-length response
             // buffers the entire body before the Response promise settles.
-            if client.signals.get(crate::Signal::HeaderProgress) {
-                // SAFETY: ctx back-ref is valid for the session's lifetime.
-                client.progress_update(true, unsafe { &mut *self.ctx }, self.socket);
+            if client.signals.get(signals::Field::HeaderProgress) {
+                client.h2_progress_update(self.ctx, self.socket);
             }
         }
 
-        if client.state.response_stage != crate::ResponseStage::Body {
+        if client.state.response_stage != HTTPStage::Body {
             return false;
         }
 
@@ -941,7 +960,7 @@ impl ClientSession {
                 stream.client = None;
                 client.h2 = None;
             }
-            let report = match client.handle_response_body(&stream.body_buffer, false) {
+            let report = match client.h2_handle_response_body(&stream.body_buffer, false) {
                 Ok(r) => r,
                 Err(err) => {
                     stream.body_buffer.clear();
@@ -951,7 +970,7 @@ impl ClientSession {
                         stream.client = None;
                         client.h2 = None;
                     }
-                    client.fail_from_h2(err);
+                    client.h2_fail(err);
                     return true;
                 }
             };
@@ -968,12 +987,10 @@ impl ClientSession {
                 if client.state.is_done() {
                     stream.client = None;
                     client.h2 = None;
-                    // SAFETY: ctx back-ref is valid for the session's lifetime.
-                    client.progress_update(true, unsafe { &mut *self.ctx }, self.socket);
+                    client.h2_progress_update(self.ctx, self.socket);
                     return true;
                 }
-                // SAFETY: ctx back-ref is valid for the session's lifetime.
-                client.progress_update(true, unsafe { &mut *self.ctx }, self.socket);
+                client.h2_progress_update(self.ctx, self.socket);
             }
             return false;
         }
@@ -994,13 +1011,12 @@ impl ClientSession {
     /// so compare the raw DATA byte count instead — that catches overshoot too.
     fn finish_stream(&mut self, stream: &mut Stream, client: &mut HTTPClient) -> bool {
         if let Some(cl) = client.state.content_length {
-            if stream.data_bytes_received != cl {
-                client.fail_from_h2(err!("HTTP2ContentLengthMismatch"));
+            if stream.data_bytes_received != cl as u64 {
+                client.h2_fail(err!(HTTP2ContentLengthMismatch));
                 return true;
             }
         }
-        // SAFETY: ctx back-ref is valid for the session's lifetime.
-        client.progress_update(true, unsafe { &mut *self.ctx }, self.socket);
+        client.h2_progress_update(self.ctx, self.socket);
         true
     }
 
@@ -1011,31 +1027,37 @@ impl ClientSession {
         stream: &mut Stream,
         client: &mut HTTPClient,
     ) -> Result<HeaderResult, Error> {
-        // TODO(port): narrow error set
+        // SAFETY: decoded_headers borrow stream.decoded_bytes; lifetime erased
+        // because the slice outlives the call. Cast away to 'static so the
+        // pending_response field (Response<'static>) can hold it.
+        let headers: &'static [picohttp::Header] = unsafe {
+            core::slice::from_raw_parts(
+                stream.decoded_headers.as_ptr(),
+                stream.decoded_headers.len(),
+            )
+        };
         let mut response = picohttp::Response {
             minor_version: 0,
             status_code: stream.status_code,
             status: b"",
-            headers: picohttp::Headers {
-                list: stream.decoded_headers.as_slice(),
-            },
+            headers: picohttp::HeaderList { list: headers },
             bytes_read: 0,
         };
         client.state.pending_response = Some(response);
 
-        let should_continue = client.handle_response_metadata(&mut response)?;
+        let should_continue = client.h2_handle_response_metadata(&mut response)?;
         // handleResponseMetadata may mutate *response (e.g. the 304 rewrite for
         // force_last_modified); cloneMetadata reads pending_response, so re-sync.
         client.state.pending_response = Some(response);
         // h2 framing delimits the body; chunked transfer-encoding and the
         // HTTP/1.1 "no Content-Length ⇒ no keep-alive" rule don't apply.
-        client.state.transfer_encoding = crate::TransferEncoding::Identity;
-        if client.state.response_stage == crate::ResponseStage::BodyChunk {
-            client.state.response_stage = crate::ResponseStage::Body;
+        client.state.transfer_encoding = Encoding::Identity;
+        if client.state.response_stage == HTTPStage::BodyChunk {
+            client.state.response_stage = HTTPStage::Body;
         }
         client.state.flags.allow_keepalive = true;
 
-        Ok(if should_continue == crate::ShouldContinue::Finished {
+        Ok(if should_continue == ShouldContinue::Finished {
             HeaderResult::Finished
         } else {
             HeaderResult::HasBody
@@ -1045,18 +1067,18 @@ impl ClientSession {
 
 impl Drop for ClientSession {
     fn drop(&mut self) {
-        H2::live_sessions().fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
-        debug_assert!(self.registry_index == u32::MAX);
+        super::live_sessions.fetch_sub(1, Ordering::Relaxed);
+        debug_assert!(self.registry_index.get() == u32::MAX);
         // SAFETY: hpack was allocated by lshpack::HPACK::init and not yet freed.
-        unsafe { lshpack::HPACK::deinit(self.hpack) };
+        unsafe { lshpack::HPACK::destroy(self.hpack) };
         // write_buffer / read_buffer / pending_attach / orphan_header_block /
         // encode_scratch / hostname / ssl_config are dropped automatically.
-        for e in self.streams.values() {
+        for &e in self.streams.values() {
             // SAFETY: streams values are Box::into_raw'd in attach(); sole owner here.
-            unsafe { drop(Box::from_raw(*e)) };
+            unsafe { drop(Box::from_raw(e)) };
         }
         // streams map storage drops automatically.
-        // bun.destroy(this) — handled by IntrusiveRc / Box::from_raw in `deref`.
+        // bun.destroy(this) — handled by Box::from_raw in `deref`.
     }
 }
 
@@ -1066,17 +1088,14 @@ enum HeaderResult {
     Finished,
 }
 
-// TODO(port): `u31` / `u24` are Zig arbitrary-width ints with no Rust primitive.
-// Phase B should newtype them (`StreamId(u32)`, `FrameLen(u32)`) with range asserts.
-#[allow(non_camel_case_types)]
-type u31 = u32;
-#[allow(non_camel_case_types)]
-type u24 = u32;
-
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/http/h2_client/ClientSession.zig (814 lines)
 //   confidence: medium
-//   todos:      12
-//   notes:      heavy raw-ptr back-refs (ctx/client/stream); ref()/deref() RAII guards conflict with &mut self — Phase B needs IntrusiveRc helper; u31/u24 aliased to u32; parse_frames borrows read_buffer via raw slice
+//   todos:      1
+//   notes:      heavy raw-ptr back-refs (ctx/client/stream); ref()/deref()
+//               RAII guards via scopeguard + raw self ptr; HTTPClient/
+//               HTTPContext methods routed through h2_* bridge stubs until
+//               lib.rs _phase_a_draft un-gates; u31/u24 aliased to u32;
+//               parse_frames borrows read_buffer via raw slice
 // ──────────────────────────────────────────────────────────────────────────

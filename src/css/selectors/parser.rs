@@ -141,7 +141,7 @@ pub mod attrs {
         pub url: Impl::NamespaceUrl,
     }
 
-    impl<Impl: SelectorImpl> NamespaceUrl<Impl> {
+    impl<Impl: BunSelectorImpl> NamespaceUrl<Impl> {
         pub fn eql(&self, rhs: &Self) -> bool {
             protocol_shims::implement_eql(self, rhs)
         }
@@ -162,7 +162,7 @@ pub mod attrs {
         pub never_matches: bool,
     }
 
-    impl<Impl: SelectorImpl> AttrSelectorWithOptionalNamespace<Impl> {
+    impl<Impl: BunSelectorImpl> AttrSelectorWithOptionalNamespace<Impl> {
         pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
             dest.write_char(b'[')?;
             if let Some(nsp) = &self.namespace {
@@ -724,10 +724,10 @@ fn parse_relative_selector<Impl: BunSelectorImpl>(
     let combinator: Option<Combinator> = 'combinator: {
         let tok = input.next()?;
         if let Token::Delim(c) = tok {
-            match *c {
-                '>' => break 'combinator Some(Combinator::Child),
-                '+' => break 'combinator Some(Combinator::NextSibling),
-                '~' => break 'combinator Some(Combinator::LaterSibling),
+            match u8::try_from(*c).ok() {
+                Some(b'>') => break 'combinator Some(Combinator::Child),
+                Some(b'+') => break 'combinator Some(Combinator::NextSibling),
+                Some(b'~') => break 'combinator Some(Combinator::LaterSibling),
                 _ => {}
             }
         }
@@ -1510,7 +1510,7 @@ impl<'a, Impl: SelectorImpl> fmt::Display for SelectorListDebugFmt<'a, Impl> {
     }
 }
 
-impl<Impl: SelectorImpl> GenericSelectorList<Impl> {
+impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
     pub fn debug(&self) -> SelectorListDebugFmt<'_, Impl> {
         SelectorListDebugFmt(self)
     }
@@ -1748,7 +1748,7 @@ impl<'a, Impl: SelectorImpl> fmt::Display for SelectorDebugFmt<'a, Impl> {
     }
 }
 
-impl<Impl: SelectorImpl> GenericSelector<Impl> {
+impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
     pub fn debug(&self) -> SelectorDebugFmt<'_, Impl> {
         SelectorDebugFmt(self)
     }
@@ -1991,7 +1991,7 @@ pub enum GenericComponent<Impl: SelectorImpl> {
     Nesting,
 }
 
-impl<Impl: SelectorImpl> GenericComponent<Impl> {
+impl<Impl: BunSelectorImpl> GenericComponent<Impl> {
     /// If css modules is enabled these will be locally scoped
     pub fn is_locally_scoped(&self) -> bool {
         matches!(self, Self::Id(_) | Self::Class(_))
@@ -2049,7 +2049,7 @@ impl<Impl: SelectorImpl> GenericComponent<Impl> {
     }
 }
 
-impl<Impl: SelectorImpl> fmt::Display for GenericComponent<Impl> {
+impl<Impl: BunSelectorImpl> fmt::Display for GenericComponent<Impl> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // TODO(port): Zig matches on a few variants and falls through to `@tagName`.
         // Rust enums need `strum::IntoStaticStr` for the tag name; Phase B.
@@ -2171,7 +2171,7 @@ pub struct NthOfSelectorData<Impl: SelectorImpl> {
     pub selectors: Box<[GenericSelector<Impl>]>,
 }
 
-impl<Impl: SelectorImpl> NthOfSelectorData<Impl> {
+impl<Impl: BunSelectorImpl> NthOfSelectorData<Impl> {
     pub fn eql(&self, rhs: &Self) -> bool {
         protocol_shims::implement_eql(self, rhs)
     }
@@ -2984,7 +2984,7 @@ pub fn parse_attribute_selector<Impl: BunSelectorImpl>(
 
         match tok {
             // [foo=bar]
-            Token::Delim(d) if d == '=' => break 'operator attrs::AttrSelectorOperator::Equal,
+            Token::Delim(d) if d == b'=' as u32 => break 'operator attrs::AttrSelectorOperator::Equal,
             // [foo~=bar]
             Token::IncludeMatch => break 'operator attrs::AttrSelectorOperator::Includes,
             // [foo|=bar]
@@ -3411,7 +3411,7 @@ pub fn parse_qualified_name<Impl: BunSelectorImpl>(
             let value = *value;
             let after_ident = input.state();
             let n = if let Ok(t) = input.next_including_whitespace() {
-                matches!(t, Token::Delim('|'))
+                matches!(t, Token::Delim(d) if *d == b'|' as u32)
             } else {
                 false
             };
@@ -3440,12 +3440,12 @@ pub fn parse_qualified_name<Impl: BunSelectorImpl>(
                 return Ok(parse_qualified_name_default_namespace_helper::<Impl>(parser, Some(value)));
             }
         }
-        Token::Delim(c) => match *c {
-            '*' => {
+        Token::Delim(c) => match u8::try_from(*c).ok() {
+            Some(b'*') => {
                 let after_star = input.state();
                 let result = input.next_including_whitespace();
                 if let Ok(t) = &result {
-                    if matches!(t, Token::Delim('|')) {
+                    if matches!(t, Token::Delim(d) if *d == b'|' as u32) {
                         return parse_qualified_name_eplicit_namespace_helper::<Impl>(
                             input,
                             QNamePrefix::ExplicitAnyNamespace,
@@ -3469,7 +3469,7 @@ pub fn parse_qualified_name<Impl: BunSelectorImpl>(
                     return Ok(parse_qualified_name_default_namespace_helper::<Impl>(parser, None));
                 }
             }
-            '|' => {
+            Some(b'|') => {
                 return parse_qualified_name_eplicit_namespace_helper::<Impl>(
                     input,
                     QNamePrefix::ExplicitNoNamespace,
@@ -3505,7 +3505,7 @@ fn parse_qualified_name_eplicit_namespace_helper<Impl: BunSelectorImpl>(
     let t = input.next_including_whitespace()?.clone();
     match &t {
         Token::Ident(local_name) => return Ok(OptionalQName::Some(namespace, Some(*local_name))),
-        Token::Delim(c) if *c == '*' => {
+        Token::Delim(c) if *c == b'*' as u32 => {
             return Ok(OptionalQName::Some(namespace, None));
         }
         _ => {}
@@ -3523,7 +3523,7 @@ pub struct LocalName<Impl: SelectorImpl> {
     pub lower_name: Impl::LocalName,
 }
 
-impl<Impl: SelectorImpl> LocalName<Impl> {
+impl<Impl: BunSelectorImpl> LocalName<Impl> {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         IdentFns::to_css(&self.name, dest)
     }

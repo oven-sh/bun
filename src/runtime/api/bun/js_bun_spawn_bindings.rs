@@ -76,82 +76,6 @@ impl BunStringSpawnExt for BunString {
     }
 }
 
-// ── AbortSignal local extension ─────────────────────────────────────────────
-// `WebCore::AbortSignal` is a C++-owned type; wrap the FFI accessors directly
-// so call sites keep the Zig-spec spelling.
-unsafe extern "C" {
-    fn WebCore__AbortSignal__fromJS(value: JSValue) -> *mut WebCore::AbortSignal;
-    fn WebCore__AbortSignal__ref(this: *mut WebCore::AbortSignal) -> *mut WebCore::AbortSignal;
-    fn WebCore__AbortSignal__unref(this: *mut WebCore::AbortSignal);
-    fn WebCore__AbortSignal__incrementPendingActivity(this: *mut WebCore::AbortSignal);
-    fn WebCore__AbortSignal__addListener(
-        this: *mut WebCore::AbortSignal,
-        ctx: *mut core::ffi::c_void,
-        callback: Option<unsafe extern "C" fn(*mut core::ffi::c_void, JSValue)>,
-    ) -> *mut WebCore::AbortSignal;
-}
-trait AbortSignalSpawnExt {
-    fn from_js(value: JSValue) -> Option<*mut WebCore::AbortSignal>;
-    fn ref_(&self) -> *mut WebCore::AbortSignal;
-    fn unref(&self);
-    fn pending_activity_ref(&self);
-    fn add_listener(
-        &self,
-        ctx: *mut core::ffi::c_void,
-        callback: extern "C" fn(*mut core::ffi::c_void, JSValue),
-    ) -> *mut WebCore::AbortSignal;
-    fn get_timeout(&self) -> Option<&crate::timer::AbortSignalTimeout>;
-}
-impl AbortSignalSpawnExt for WebCore::AbortSignal {
-    #[inline]
-    fn from_js(value: JSValue) -> Option<*mut WebCore::AbortSignal> {
-        // SAFETY: thin FFI forward; ptr borrowed from the JS wrapper.
-        let ptr = unsafe { WebCore__AbortSignal__fromJS(value) };
-        if ptr.is_null() { None } else { Some(ptr) }
-    }
-    #[inline]
-    fn ref_(&self) -> *mut WebCore::AbortSignal {
-        // SAFETY: increments C++ intrusive refcount, returns self.
-        unsafe { WebCore__AbortSignal__ref((self as *const Self).cast_mut()) }
-    }
-    #[inline]
-    fn unref(&self) {
-        // SAFETY: decrements C++ intrusive refcount.
-        unsafe { WebCore__AbortSignal__unref((self as *const Self).cast_mut()) }
-    }
-    #[inline]
-    fn pending_activity_ref(&self) {
-        // SAFETY: thin FFI forward.
-        unsafe { WebCore__AbortSignal__incrementPendingActivity((self as *const Self).cast_mut()) }
-    }
-    #[inline]
-    fn add_listener(
-        &self,
-        ctx: *mut core::ffi::c_void,
-        callback: extern "C" fn(*mut core::ffi::c_void, JSValue),
-    ) -> *mut WebCore::AbortSignal {
-        // SAFETY: self is a live WebCore::AbortSignal; addListener returns self.
-        unsafe {
-            WebCore__AbortSignal__addListener(
-                (self as *const Self).cast_mut(),
-                ctx,
-                // SAFETY: `extern "C" fn` → `unsafe extern "C" fn` is a valid coercion target.
-                Some(core::mem::transmute::<
-                    extern "C" fn(*mut core::ffi::c_void, JSValue),
-                    unsafe extern "C" fn(*mut core::ffi::c_void, JSValue),
-                >(callback)),
-            )
-        }
-    }
-    #[inline]
-    fn get_timeout(&self) -> Option<&crate::timer::AbortSignalTimeout> {
-        // TODO(port): blocked_on bun_jsc::abort_signal::AbortSignal::get_timeout
-        // `AbortSignal.timeout` honoring in spawnSync; returning `None` falls
-        // back to the user-supplied `timeout:` value.
-        None
-    }
-}
-
 /// `SignalCode.fromJS` — `bun_sys_jsc` is not a dependency of `bun_runtime`;
 /// route through the crate-local port in `bun_subprocess`.
 #[inline]
@@ -234,15 +158,18 @@ fn subprocess_ipc_owner(ptr: *mut SubprocessT<'_>) -> IPC::SendQueueOwner {
     }
 }
 
-/// Obtain `&mut Process` from `ManuallyDrop<Arc<Process>>`. Zig stores
-/// `*Process` and mutates freely; the Rust port currently uses `Arc<Process>`
-/// (TODO(port): switch to intrusive `RefPtr<Process>`). Until then, cast through
-/// the Arc's data pointer — sound because every `Process` is single-threaded
-/// and only ever mutated from the owning event-loop thread.
+/// Obtain `&mut Process` from the intrusively-refcounted `*mut Process` stored
+/// on `Subprocess`. Zig stores `*Process` and mutates freely; every `Process`
+/// is single-threaded and only ever mutated from the owning event-loop thread.
+///
+/// # Safety
+/// `p` must be a live `Process` allocated by `Process::init_posix`/`init_windows`
+/// (Box-backed, intrusive `ThreadSafeRefCount`); caller must be on the owning
+/// JS thread with no other live `&mut Process` to the same allocation.
 #[inline]
-unsafe fn process_mut(p: &core::mem::ManuallyDrop<std::sync::Arc<Process>>) -> &mut Process {
+unsafe fn process_mut<'a>(p: *mut Process) -> &'a mut Process {
     // SAFETY: see fn doc; Process has interior single-thread ownership.
-    unsafe { &mut *(std::sync::Arc::as_ptr(p) as *mut Process) }
+    unsafe { &mut *p }
 }
 
 /// `MaxBuf` owner vtable for `Subprocess` — routes max-buffer-exceeded

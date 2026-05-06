@@ -1750,6 +1750,6 @@ pub fn is_likely_object_literal(code: &[u8]) -> bool {
 // PORT STATUS
 //   source:     src/runtime/api/JSTranspiler.zig (1228 lines)
 //   confidence: medium
-//   todos:      30+
-//   notes:      LIFETIMES.tsv lists Arc<JSTranspiler> but ported as IntrusiveRc per §Pointers (reconcile); several `defer`/restore blocks need scopeguard borrowck reshaping; arena field retained in non-AST crate. Multiple upstream blockers: Transpiler/MacroMap not Clone, ConcurrentPromiseTask stub, JSValue::create_object2 missing, jsx::Pragma type split between resolver/bundler.
+//   todos:      10
+//   notes:      LIFETIMES.tsv lists Arc<JSTranspiler> but ported as IntrusiveRc per §Pointers (reconcile); arena field retained in non-AST crate. transformSync's by-value `prev_bundler` snapshot reduced to allocator/log/macro_context restore via TranspilerStateGuard.
 // ──────────────────────────────────────────────────────────────────────────

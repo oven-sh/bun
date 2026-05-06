@@ -2280,6 +2280,9 @@ pub fn pack<const FOR_PUBLISH: bool>(
                 Err(err) => {
                     if item.optional {
                         ctx.stats.total_files -= 1;
+                        if log_level.show_progress() {
+                            node.as_mut().unwrap().complete_one();
+                        }
                         continue;
                     }
                     Output::err(err, "failed to open file: \"{}\"", format_args!("{}", bstr::BStr::new(item.path.as_bytes())));
@@ -2297,7 +2300,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
 
             let _close_fd = scopeguard::guard((), |_| fd.close());
 
-            let stat = match bun_sys::fstat(fd) {
+            let stat = match bun_sys::sys_uv::fstat(fd) {
                 Ok(s) => s,
                 Err(err) => {
                     Output::err(err, "failed to stat file: \"{}\"", format_args!("{}", bstr::BStr::new(item.path.as_bytes())));
@@ -2322,23 +2325,21 @@ pub fn pack<const FOR_PUBLISH: bool>(
                 &mut print_buf,
                 &bins,
             )?;
+
+            if log_level.show_progress() {
+                node.as_mut().unwrap().complete_one();
+            }
         }
 
         while let Some(item) = bundled_pack_queue.remove_or_null() {
-            let _complete = scopeguard::guard((), |_| {
-                if log_level.show_progress() {
-                    if let Some(n) = node.as_mut() {
-                        n.complete_one();
-                    }
-                }
-            });
-            // TODO(port): same defer-in-loop borrow caveat
-
             let file = match File::openat(Fd::from_std_dir(&root_dir), &item.path, bun_sys::O::RDONLY, 0) {
                 Ok(f) => f,
                 Err(err) => {
                     if item.optional {
                         ctx.stats.total_files -= 1;
+                        if log_level.show_progress() {
+                            node.as_mut().unwrap().complete_one();
+                        }
                         continue;
                     }
                     Output::err(err, "failed to open file: \"{}\"", format_args!("{}", bstr::BStr::new(item.path.as_bytes())));
@@ -2366,10 +2367,20 @@ pub fn pack<const FOR_PUBLISH: bool>(
                 &mut print_buf,
                 &bins,
             )?;
+
+            if log_level.show_progress() {
+                node.as_mut().unwrap().complete_one();
+            }
+        }
+
+        if log_level.show_progress() {
+            if let Some(n) = node.as_mut() {
+                n.end();
+            }
         }
     }
 
-    // SAFETY: entry came from `ArchiveEntry::new()` and is valid.
+    // SAFETY: entry came from `ArchiveEntry::new2()` and is valid.
     unsafe { &*entry }.free();
 
     match archive.write_close() {
@@ -2424,7 +2435,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
             break 'tarball_bytes Some(bytes);
         }
 
-        *file_reader = make_buffered_file_reader(File::from_fd(tarball_file.handle));
+        reset_buffered_file_reader(&mut file_reader, File::from_fd(tarball_file.handle));
 
         let mut size: usize = 0;
         let mut read = match buffered_file_reader_read(&mut file_reader, &mut read_buf) {

@@ -284,8 +284,6 @@ impl Store {
     // `allocator.free(file.pathlike.path.slice())` / `s3.deinit(allocator)` paths are
     // now handled by the owned types' own `Drop` impls.
 
-    // TODO(b2-blocked): node::PathOrFileDescriptorSerializeTag (gated in crate::node).
-    
     pub fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         match &self.data {

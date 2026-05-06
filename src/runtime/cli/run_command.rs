@@ -2296,13 +2296,89 @@ impl RunCommand {
             }
         }
 
-        // ── module resolution fallback ──────────────────────────────────────
-        // TODO(b2-blocked): `this_transpiler.resolver.resolve(top_level_dir,
-        // target_name, EntryPointRun)` — needs Transpiler + bun_resolver wired
-        // via `configure_env_for_run`. Until then, attempt the on-disk
-        // `./target_name` path directly (covers `bun run script.ts`).
-        if Self::maybe_open_with_bun_js(ctx, target_name) {
-            return Ok(true);
+        // ── module resolution fallback (run_command.zig:1820-1857) ──────────
+        // load module and run that module
+        // TODO: run module resolution here - try the next condition if the module can't be found
+        bun_core::scoped_log!(
+            RUN_LOG,
+            "Try resolve `{}` in `{}`",
+            bstr::BStr::new(target_name),
+            bstr::BStr::new(unsafe { (*this_transpiler.fs).top_level_dir }),
+        );
+        // Temporarily honor `--preserve-symlinks-main` / NODE_PRESERVE_SYMLINKS_MAIN
+        // for this one resolve. Zig: `defer resolver.opts.preserve_symlinks = saved`.
+        let resolution: ::core::result::Result<bun_resolver::Result, bun_core::Error> = {
+            let saved_preserve = this_transpiler.resolver.opts.preserve_symlinks;
+            this_transpiler.resolver.opts.preserve_symlinks = ctx
+                .runtime_options
+                .preserve_symlinks_main
+                || bun_core::env_var::NODE_PRESERVE_SYMLINKS_MAIN.get().unwrap_or(false);
+            // SAFETY: `Transpiler::init` always sets `fs`; resolver-cache lifetime.
+            let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
+            let resolved = match this_transpiler.resolver.resolve(
+                top_level_dir,
+                target_name,
+                bun_options_types::ImportKind::EntryPointRun,
+            ) {
+                ok @ Ok(_) => ok,
+                Err(_) => {
+                    // Retry with explicit `./` prefix (run_command.zig:1832-1836).
+                    let prefixed: Vec<u8> =
+                        [b"./".as_slice(), target_name].concat();
+                    this_transpiler.resolver.resolve(
+                        top_level_dir,
+                        &prefixed,
+                        bun_options_types::ImportKind::EntryPointRun,
+                    )
+                }
+            };
+            this_transpiler.resolver.opts.preserve_symlinks = saved_preserve;
+            resolved
+        };
+        // (path, loader) — captured if the resolve hit a real file whose
+        // loader Bun cannot execute (e.g. `.css`); used by the `log_errors`
+        // tail to print "Cannot run … / Bun cannot run {loader} files".
+        let mut resolved_to_unrunnable_file: Option<(Box<[u8]>, Loader)> = None;
+        match resolution {
+            Ok(mut resolved) => {
+                let path = resolved.path().expect("resolved primary path");
+                let ext = path.name.ext;
+                let loader: Loader = this_transpiler
+                    .options
+                    .loaders
+                    .get(ext)
+                    .copied()
+                    .or_else(|| bun_bundler::options::DEFAULT_LOADERS.get(ext).copied())
+                    .unwrap_or(Loader::Tsx);
+                if loader.can_be_run_by_bun() || loader == Loader::Html || loader == Loader::Md {
+                    bun_core::scoped_log!(
+                        RUN_LOG,
+                        "Resolved to: `{}`",
+                        bstr::BStr::new(path.text)
+                    );
+                    // PORT NOTE: borrowck — `_boot_and_handle_error` takes
+                    // `&mut ctx`; copy `path.text` out of the resolver borrow.
+                    let text: Box<[u8]> = path.text.to_vec().into_boxed_slice();
+                    return Ok(Self::_boot_and_handle_error(ctx, &text, Some(loader)));
+                } else {
+                    bun_core::scoped_log!(
+                        RUN_LOG,
+                        "Resolved file `{}` but ignoring because loader is {}",
+                        bstr::BStr::new(path.text),
+                        <&'static str>::from(loader),
+                    );
+                    resolved_to_unrunnable_file =
+                        Some((path.text.to_vec().into_boxed_slice(), loader));
+                }
+            }
+            Err(_) => {
+                // Support globs for HTML entry points.
+                if strings::has_suffix_comptime(target_name, b".html")
+                    && strings::contains_char(target_name, b'*')
+                {
+                    return Ok(Self::_boot_and_handle_error(ctx, target_name, Some(Loader::Html)));
+                }
+            }
         }
 
         // ── Windows .bunx fast-path (run_command.zig:1862-1888) ─────────────
@@ -2311,7 +2387,9 @@ impl RunCommand {
             // SAFETY: process-lifetime static, single-threaded CLI dispatch.
             let buf =
                 unsafe { &mut *::core::ptr::addr_of_mut!(bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER) };
-            let root = bun_string::w!("\\\\?\\");
+            // NT object-manager prefix (`\??\`), NOT the Win32 long-path
+            // `\\?\` — `try_launch` hands this to NtCreateFile.
+            let root = bun_string::w!("\\??\\");
             buf[..root.len()].copy_from_slice(root);
             let cwd_len = unsafe {
                 sys::windows::kernel32::GetCurrentDirectoryW(

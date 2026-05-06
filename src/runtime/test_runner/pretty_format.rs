@@ -271,12 +271,8 @@ impl JestPrettyFormat {
         // exit path of this function (early return, `?` propagation, happy path).
 
         if len == 1 {
-            fmt = Formatter {
-                remaining_values: &[],
-                global_this: global,
-                quote_strings: options.quote_strings,
-                ..Formatter::new(global)
-            };
+            fmt = Formatter::new(global);
+            fmt.quote_strings = options.quote_strings;
             let tag = Tag::get(vals[0], global)?;
 
             if tag.tag == Tag::String {
@@ -316,12 +312,9 @@ impl JestPrettyFormat {
         // PORT NOTE: defer { if (options.flush) writer.flush() } — handled at fn end
 
         let mut this_value: JSValue = vals[0];
-        fmt = Formatter {
-            remaining_values: &vals[..len][1..],
-            global_this: global,
-            quote_strings: options.quote_strings,
-            ..Formatter::new(global)
-        };
+        fmt = Formatter::new(global);
+        fmt.remaining_values = &vals[..len][1..];
+        fmt.quote_strings = options.quote_strings;
         let mut tag: TagResult;
 
         let mut any = false;

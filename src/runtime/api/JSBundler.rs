@@ -1352,9 +1352,8 @@ pub mod js_bundler {
     /// SAFETY: caller guarantees `bv2` is a valid backref with `plugins.is_some()`.
     #[inline]
     unsafe fn bv2_plugin(bv2: *mut BundleV2<'static>) -> *mut Plugin {
-        // The bundler-side `JSBundlerPlugin` and the local opaque `Plugin` both
-        // describe the same C++ `BunPlugin` cell — cast through the shared FFI handle.
-        unsafe { (*bv2).plugins.unwrap().as_ptr() as *mut Plugin }
+        // `Plugin` is the shared `bun_bundler` opaque — no cast needed.
+        unsafe { (*bv2).plugins.unwrap().as_ptr() }
     }
 
     /// JS-thread plumbing for `Resolve` (upstream owns `init`/`dispatch`).
@@ -1365,12 +1364,7 @@ pub mod js_bundler {
 
     impl ResolveJsExt for Resolve {
         fn dispatch_js(&mut self) {
-            // SAFETY: upstream reserves `js_task: [usize; 2]` as erased
-            // `jsc::AnyTask` storage; `AnyTask` is two pointer-sized fields.
-            let js_task = unsafe {
-                &mut *(self.js_task.as_mut_ptr() as *mut AnyTask)
-            };
-            *js_task = AnyTask {
+            self.js_task = AnyTask {
                 ctx: core::ptr::NonNull::new(self as *mut Self as *mut c_void),
                 callback: resolve_run_on_js_thread_wrap,
             };
@@ -1378,7 +1372,7 @@ pub mod js_bundler {
             unsafe {
                 (*self.bv2)
                     .js_loop_for_plugins()
-                    .enqueue_task_concurrent(ConcurrentTask::create(js_task.task()));
+                    .enqueue_task_concurrent(ConcurrentTask::create(self.js_task.task()));
             }
         }
 

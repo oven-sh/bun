@@ -491,12 +491,16 @@ pub mod bun_object {
     // below expand the static export tables; Phase B should verify the shim
     // ABI matches `LazyPropertyCallback` for the property variants.
 
+    // Ident concat via `${concat()}` is unstable (`macro_metavar_expr_concat`),
+    // so the full `BunObject_callback_<name>` / `BunObject_lazyPropCb_<name>`
+    // export symbol is supplied verbatim by the caller (same pattern as
+    // `lazy_prop!` above).
     macro_rules! export_callbacks {
-        ($( $(#[$attr:meta])* $name:ident => $target:path ),* $(,)?) => {
+        ($( $(#[$attr:meta])* $sym:ident => $target:path ),* $(,)?) => {
             $(
                 $(#[$attr])*
                 #[unsafe(no_mangle)]
-                pub extern "C" fn ${concat(BunObject_callback_, $name)}(
+                pub extern "C" fn $sym(
                     g: *mut JSGlobalObject,
                     f: *mut CallFrame,
                 ) -> JSValue {
@@ -508,10 +512,10 @@ pub mod bun_object {
     }
 
     macro_rules! export_lazy_prop_callbacks {
-        ($( $name:ident => $target:path ),* $(,)?) => {
+        ($( $sym:ident => $target:path ),* $(,)?) => {
             $(
                 #[unsafe(no_mangle)]
-                pub extern "C" fn ${concat(BunObject_lazyPropCb_, $name)}(
+                pub extern "C" fn $sym(
                     this: *mut JSGlobalObject,
                     object: *mut JSObject,
                 ) -> JSValue {

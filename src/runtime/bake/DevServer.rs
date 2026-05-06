@@ -4058,11 +4058,17 @@ impl DevServer {
         );
         let post = "</script></body></html>";
 
-        if Environment::CODEGEN_EMBED {
+        // PORT NOTE: split into `#[cfg]` branches so the `include_bytes!` arm
+        // is not typechecked when `codegen_embed` is off (the codegen output
+        // dir does not exist during a non-embed build).
+        #[cfg(feature = "codegen_embed")]
+        {
             buf.extend_from_slice(pre.as_bytes());
             buf.extend_from_slice(include_bytes!("bake-codegen/bake.error.js"));
             buf.extend_from_slice(post.as_bytes());
-        } else {
+        }
+        #[cfg(not(feature = "codegen_embed"))]
+        {
             buf.extend_from_slice(pre.as_bytes());
             buf.extend_from_slice(bun_core::runtime_embed_file(
                 bun_core::EmbedKind::CodegenEager,

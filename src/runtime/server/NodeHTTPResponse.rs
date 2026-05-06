@@ -1989,10 +1989,10 @@ pub extern "C" fn NodeHTTPResponse__createForJS(
     // SAFETY: `response` was just allocated and leaked; we hold the only reference.
     let response_ref = unsafe { &mut *response };
     if *has_body {
-        response_ref.body_read_ref.ref_(vm);
+        response_ref.body_read_ref.r#ref(vm);
     }
-    response_ref.poll_ref.ref_(vm);
-    let js_this = response_ref.to_js(global_object);
+    response_ref.poll_ref.r#ref(vm);
+    let js_this = NodeHTTPResponse::to_js_ptr(response, global_object);
     // SAFETY: out-param provided by caller.
     unsafe { *node_response_ptr = response };
     js_this
@@ -2009,7 +2009,8 @@ pub extern "C" fn NodeHTTPResponse__setTimeout(
     let global_this = unsafe { &*global_this };
 
     if !seconds.is_number() {
-        let _ = global_this.throw_invalid_argument_type_value("timeout", "number", seconds);
+        let _: jsc::JsError =
+            global_this.throw_invalid_argument_type_value("timeout", "number", seconds);
         return false;
     }
 

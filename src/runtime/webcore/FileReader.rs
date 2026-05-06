@@ -401,8 +401,10 @@ impl FileReader {
         }
 
         // SAFETY: see `parent()` — tight deref, no overlapping &mut held.
-        self.event_loop =
-            EventLoopHandle::init(unsafe { (*self.parent()).global_this() }.bun_vm().event_loop());
+        {
+            let global = unsafe { &*(*self.parent()).global_this };
+            self.event_loop = EventLoopHandle::init(global.bun_vm().event_loop() as *mut ());
+        }
 
         if was_lazy {
             // SAFETY: see `parent()`.

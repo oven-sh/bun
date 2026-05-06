@@ -1434,7 +1434,7 @@ pub fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mod
         }
 
         if !value.is_string() {
-            return ctx.throw_invalid_argument_type_value("mode", "number", value);
+            return Err(ctx.throw_invalid_argument_type_value("mode", "number", value));
         }
 
         // An easier method of constructing the mode is to use a sequence of

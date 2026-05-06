@@ -699,7 +699,7 @@ impl StaticRoute {
     /// # Safety
     /// See [`on_head_request`]. May free `*this` via `on_response_complete` when it
     /// returns `true`.
-    unsafe fn render_304_not_modified_if_none_match(this: *mut Self, req: &AnyRequest, resp: AnyResponse) -> bool {
+    unsafe fn render_304_not_modified_if_none_match(this: *mut Self, req: &mut AnyRequest, resp: AnyResponse) -> bool {
         // SAFETY: caller contract.
         unsafe {
             let Some(if_none_match) = req.header(b"if-none-match") else {
@@ -717,6 +717,7 @@ impl StaticRoute {
             }
 
             // Return 304 Not Modified
+            req.set_yield(false);
             (*this).ref_();
             if let Some(mut server) = (*this).server.get() {
                 server.on_pending_request();

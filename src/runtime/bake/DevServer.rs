@@ -2398,12 +2398,6 @@ impl DevServer<'_> {
         }
 
         self.incremental_result.reset();
-        let alloc = &heap;
-        // TODO(port): ASTMemoryAllocator scope — bake is an AST crate; arena threading required
-        let _ = alloc;
-        todo!("blocked_on: bun_js_parser::ASTMemoryAllocator::enter (arena threading)");
-        #[allow(unreachable_code)]
-        }
 
         let mut heap = bun_alloc::MimallocArena::new();
         // TODO(port): heap is moved into BundleV2; errdefer heap.deinit() handled by Drop

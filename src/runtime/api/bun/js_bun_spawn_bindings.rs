@@ -1425,10 +1425,10 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     // Use the isolated event loop to tick instead of the main event loop
     // This ensures JavaScript timers don't fire and stdin/stdout from the main process aren't affected
     {
-        let mut absolute_timespec = bun_core::timespec::EPOCH;
-        let mut now = bun_core::timespec::now(bun_core::timespec::Mode::AllowMockedTime);
-        let mut user_timespec: bun_core::timespec::Timespec = if let Some(timeout_ms) = timeout {
-            now.add_ms(timeout_ms)
+        let mut absolute_timespec = Timespec::EPOCH;
+        let mut now = Timespec::now(TimespecMockMode::AllowMockedTime);
+        let mut user_timespec: Timespec = if let Some(timeout_ms) = timeout {
+            now.add_ms(i64::from(timeout_ms))
         } else {
             absolute_timespec
         };
@@ -1436,36 +1436,41 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         // Support `AbortSignal.timeout`, but it's best-effort.
         // Specifying both `timeout: number` and `AbortSignal.timeout` chooses the soonest one.
         // This does mean if an AbortSignal times out it will throw
-        if let Some(signal) = subprocess.abort_signal {
-            // SAFETY: subprocess.abort_signal was ref'd via pending_activity_ref above and is live until unref.
-            if let Some(abort_signal_timeout) = unsafe { (*signal).get_timeout() } {
+        if let Some(signal) = subprocess.abort_signal.as_deref() {
+            if let Some(abort_signal_timeout) = signal.get_timeout() {
+                // PORT NOTE: `AbortSignal::Timeout.event_loop_timer` uses the
+                // bun_event_loop-local `Timespec` stub; convert fieldwise.
                 if abort_signal_timeout.event_loop_timer.state == crate::timer::EventLoopTimerState::ACTIVE {
-                    if user_timespec.eql(&bun_core::timespec::EPOCH)
-                        || abort_signal_timeout.event_loop_timer.next.order(&user_timespec)
-                            == core::cmp::Ordering::Less
+                    let next = &abort_signal_timeout.event_loop_timer.next;
+                    let next_ts = Timespec { sec: next.sec, nsec: next.nsec };
+                    if user_timespec.eql(&Timespec::EPOCH)
+                        || next_ts.order(&user_timespec) == core::cmp::Ordering::Less
                     {
-                        user_timespec = abort_signal_timeout.event_loop_timer.next;
+                        user_timespec = next_ts;
                     }
                 }
             }
         }
 
-        let has_user_timespec = !user_timespec.eql(&bun_core::timespec::EPOCH);
+        let has_user_timespec = !user_timespec.eql(&Timespec::EPOCH);
 
-        let sync_loop = jsc_vm.rare_data().spawn_sync_event_loop(jsc_vm);
+        // SAFETY: jsc_vm_ptr is the live thread VM; re-borrowed for the nested arg.
+        let sync_loop = unsafe { &mut *jsc_vm_ptr }
+            .rare_data()
+            .spawn_sync_event_loop(unsafe { &mut *jsc_vm_ptr });
 
         while subprocess.compute_has_pending_activity() {
             // Re-evaluate this at each iteration of the loop since it may change between iterations.
-            let bun_test_timeout: bun_core::timespec::Timespec =
+            let bun_test_timeout: Timespec =
                 if let Some(runner) = crate::test_runner::jest::Jest::runner() {
                     runner.get_active_timeout()
                 } else {
-                    bun_core::timespec::EPOCH
+                    Timespec::EPOCH
                 };
-            let has_bun_test_timeout = !bun_test_timeout.eql(&bun_core::timespec::EPOCH);
+            let has_bun_test_timeout = !bun_test_timeout.eql(&Timespec::EPOCH);
 
             if has_bun_test_timeout {
-                match bun_test_timeout.order_ignore_epoch(&user_timespec) {
+                match timespec_order_ignore_epoch(&bun_test_timeout, &user_timespec) {
                     core::cmp::Ordering::Less => absolute_timespec = bun_test_timeout,
                     core::cmp::Ordering::Equal => {}
                     core::cmp::Ordering::Greater => absolute_timespec = user_timespec,

@@ -250,7 +250,7 @@ impl TextEncoderStreamEncoder {
         if result.status == simdutf::Status::SUCCESS {
             // SAFETY: result.count bytes were just initialized in spare capacity.
             unsafe { buf.set_len(buf.len() + result.count) };
-            JSUint8Array::from_bytes(global, buf)
+            JSUint8Array::from_bytes(global, buf.into())
         } else {
             // Slow path: there was invalid UTF-16, so we need to convert it without simdutf.
             let lead_surrogate = match strings::to_utf8_list_with_type_bun::<true>(&mut buf, remain) {
@@ -265,7 +265,7 @@ impl TextEncoderStreamEncoder {
                 }
             }
 
-            JSUint8Array::from_bytes(global, buf)
+            JSUint8Array::from_bytes(global, buf.into())
         }
     }
 

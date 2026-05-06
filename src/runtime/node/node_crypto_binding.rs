@@ -600,11 +600,11 @@ pub mod random {
         };
 
         if !callback.is_undefined() {
-            callback.call_next_tick(global, [JSValue::UNDEFINED, JSValue::js_number(res)])?;
+            callback.call_next_tick_2(global, JSValue::UNDEFINED, JSValue::js_number(res as f64))?;
             return Ok(JSValue::UNDEFINED);
         }
 
-        Ok(JSValue::js_number(res))
+        Ok(JSValue::js_number(res as f64))
     }
 
     #[bun_jsc::host_fn]

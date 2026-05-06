@@ -172,10 +172,14 @@ impl ServerWebSocket {
 
     /// Deref the raw handler pointer. The handler lives in `ServerConfig.websocket`
     /// for the server's lifetime; non-null while any `ServerWebSocket` exists.
+    /// PORT NOTE: returns an unbounded (`'a`) borrow detached from `&self` so
+    /// callers can interleave `&mut self` (flags mutation) with handler reads —
+    /// the Zig original aliased freely through `*Handler`.
     #[inline]
-    fn handler(&self) -> &WebSocketServerHandler {
-        // SAFETY: see PORT NOTE on the `handler` field.
-        unsafe { &*self.handler }
+    fn handler<'a>(&self) -> &'a WebSocketServerHandler {
+        let p = self.handler;
+        // SAFETY: see PORT NOTE on the `handler` field — outlives this socket.
+        unsafe { &*p }
     }
 
     // toJS — stubbed until #[bun_jsc::JsClass] codegen lands.
@@ -646,7 +650,8 @@ impl ServerWebSocket {
 
         {
             let js_string = message_value.to_js_string(global_this)?;
-            let view = js_string.view(global_this);
+            // SAFETY: to_js_string returns a non-null *mut JSString on Ok.
+            let view = unsafe { &*js_string }.view(global_this);
             let slice = view.to_slice();
 
             let buffer = slice.slice();
@@ -674,7 +679,7 @@ impl ServerWebSocket {
                     0.0
                 },
             );
-            js_string.ensure_still_alive();
+            unsafe { &*js_string }.ensure_still_alive();
             Ok(ret)
         }
     }
@@ -723,7 +728,8 @@ impl ServerWebSocket {
         }
 
         let js_string = message_value.to_js_string(global_this)?;
-        let view = js_string.view(global_this);
+        // SAFETY: to_js_string returns a non-null *mut JSString on Ok.
+        let view = unsafe { &*js_string }.view(global_this);
         let slice = view.to_slice();
 
         let buffer = slice.slice();
@@ -751,7 +757,7 @@ impl ServerWebSocket {
                 0.0
             },
         );
-        js_string.ensure_still_alive();
+        unsafe { &*js_string }.ensure_still_alive();
         Ok(ret)
     }
 
@@ -1034,7 +1040,8 @@ impl ServerWebSocket {
 
         {
             let js_string = message_value.to_js_string(global_this)?;
-            let view = js_string.view(global_this);
+            // SAFETY: to_js_string returns a non-null *mut JSString on Ok.
+            let view = unsafe { &*js_string }.view(global_this);
             let slice = view.to_slice();
 
             let buffer = slice.slice();
@@ -1064,7 +1071,7 @@ impl ServerWebSocket {
                     JSValue::js_number(0.0)
                 }
             };
-            js_string.ensure_still_alive();
+            unsafe { &*js_string }.ensure_still_alive();
             Ok(ret)
         }
     }
@@ -1102,7 +1109,8 @@ impl ServerWebSocket {
         }
 
         let js_string = message_value.to_js_string(global_this)?;
-        let view = js_string.view(global_this);
+        // SAFETY: to_js_string returns a non-null *mut JSString on Ok.
+        let view = unsafe { &*js_string }.view(global_this);
         let slice = view.to_slice();
 
         let buffer = slice.slice();
@@ -1132,7 +1140,7 @@ impl ServerWebSocket {
                 JSValue::js_number(0.0)
             }
         };
-        js_string.ensure_still_alive();
+        unsafe { &*js_string }.ensure_still_alive();
         Ok(ret)
     }
 

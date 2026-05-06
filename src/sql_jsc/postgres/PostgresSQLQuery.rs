@@ -161,13 +161,15 @@ impl PostgresSQLQuery {
 
     pub fn finalize(this: *mut Self) {
         bun_core::scoped_log!(Postgres, "PostgresSQLQuery finalize");
-        // SAFETY: called from JSC finalizer on mutator thread; `this` is the m_ctx payload.
-        let this = unsafe { &*this };
-        // TODO(port): JsRef::finalize takes &mut self in the Zig; reconcile with &*this above.
-        // SAFETY: `this` is the m_ctx payload; finalize runs on the mutator thread with
-        // exclusive access during sweep, so forming a &mut to flip the JsRef tag is sound.
-        unsafe { (*(this as *const Self as *mut Self)).this_value.finalize() };
-        this.deref_();
+        // SAFETY: called from the JSC finalizer on the mutator thread; `this` is the
+        // m_ctx payload and the GC sweep grants exclusive access. We keep the access
+        // raw-pointer-only — no `&Self` is materialized — so the `&mut JsRef` field
+        // projection carries write provenance from `*mut Self`, and the terminal
+        // `deref_` (which may free the allocation) does not dangle any live borrow.
+        unsafe {
+            (*this).this_value.finalize();
+            Self::deref_(this);
+        }
     }
 
     pub fn on_write_fail(

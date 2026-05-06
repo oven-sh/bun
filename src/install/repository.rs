@@ -39,10 +39,19 @@ thread_local! {
 }
 
 fn tl_bufs() -> &'static mut TlBufs {
-    // SAFETY: single-threaded per-thread access; callers never hold two &mut to the
-    // same buffer at once (matches Zig `tl_bufs.get()` semantics).
-    // TODO(port): lifetime — returning &'static mut from thread_local! is unsound if
-    // re-entered; reshape in Phase B.
+    // SAFETY (audited phase-d):
+    // - `TL_BUFS` is thread-local `UnsafeCell<TlBufs>`: no cross-thread sharing, and
+    //   `UnsafeCell::get()` is the sanctioned way to obtain `*mut` for interior mut.
+    // - Zig's `bun.ThreadlocalBuffers(T).get()` returns `*T` (freely-aliasing raw ptr);
+    //   here we materialize `&mut` instead, so callers MUST uphold uniqueness manually.
+    // - All call sites in this module — `try_ssh`, `try_https`, `download`,
+    //   `find_commit`, `checkout` — invoke `tl_bufs()` exactly once per call, never
+    //   re-enter while the borrow is live, and never call each other while holding it,
+    //   so no two `&mut TlBufs` overlap at runtime (single-owner per access).
+    // - The `'static` lifetime is an over-approximation (thread-local outlives all
+    //   in-thread borrows; `TlBufs` has no `Drop`). It is a deliberate escape hatch so
+    //   `try_ssh`/`try_https` can return slices into the buffer, mirroring the Zig API.
+    //   Callers must not retain such slices across a subsequent `tl_bufs()` call.
     TL_BUFS.with(|b| unsafe { &mut *b.get() })
 }
 

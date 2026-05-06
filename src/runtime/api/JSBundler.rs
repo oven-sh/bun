@@ -1922,10 +1922,11 @@ pub mod js_bundler {
             target: jsc::JSGlobalObject::BunPluginTarget,
         ) -> *mut Plugin {
             jsc::mark_binding();
-            // SAFETY: FFI call with valid global
-            let plugin = unsafe {
-                JSBundlerPlugin__create(global as *const _ as *mut JSGlobalObject, target)
-            };
+            // SAFETY: FFI — `global` is a live `JSGlobalObject*`. `as_ptr()` goes
+            // through the `UnsafeCell` interior so the `*mut` carries write
+            // provenance (the C++ side allocates/mutates via the global's VM);
+            // a raw `&T as *const T as *mut T` cast here would be UB.
+            let plugin = unsafe { JSBundlerPlugin__create(global.as_ptr(), target) };
             JSValue::from_cell(plugin).protect();
             plugin
         }

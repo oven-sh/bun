@@ -1449,7 +1449,7 @@ impl FetchTasklet {
 
         if needs_schedule {
             // wakeup the http thread to write the data
-            http::http_thread().schedule_request_write(self.http.as_mut().unwrap(), http::RequestWriteKind::Data);
+            http::http_thread().schedule_request_write(self.http.as_mut().unwrap(), http::http_thread::WriteMessageType::Data);
         }
 
         // pause the stream if we hit the high water mark
@@ -1480,7 +1480,7 @@ impl FetchTasklet {
                 thread_safe_stream_buffer.release();
             }
             if let Some(http_) = self.http.as_mut() {
-                http::http_thread().schedule_request_write(http_, http::RequestWriteKind::End);
+                http::http_thread().schedule_request_write(http_, http::http_thread::WriteMessageType::End);
             }
         }
         FetchTasklet::deref(this_ptr);
@@ -1501,7 +1501,7 @@ impl FetchTasklet {
         promise: jsc::JSPromiseStrong,
     ) -> Result<*mut FetchTasklet, BunError> {
         // TODO(port): narrow error set
-        http::HTTPThread::init(&http::HTTPThreadInitOptions::default());
+        http::HTTPThread::init(&http::http_thread::InitOpts::default());
         let node = Self::get(global, fetch_options, promise)?;
 
         // SAFETY: node freshly allocated, exclusive access

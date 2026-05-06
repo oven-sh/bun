@@ -265,47 +265,53 @@ pub fn get_peer_certificate(this: &mut This, global: &JSGlobalObject, frame: &Ca
             // X509::to_js only borrows the pointer (X509View is non-owning).
             // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
             let cert = unsafe { ffi::SSL_get_peer_certificate(ssl_ptr) };
-            if let Some(x509) = cert {
-                let guard = scopeguard::guard(x509, |c| c.free());
-                return X509::to_js(*guard, global);
+            if !cert.is_null() {
+                // SAFETY: `c` is the +1 X509 reference returned by SSL_get_peer_certificate; we own it.
+                let guard = scopeguard::guard(cert, |c| unsafe { ffi::X509_free(c) });
+                // SAFETY: *guard is a non-null *mut X509 (null-checked above).
+                return X509::to_js(unsafe { &mut **guard }, global);
             }
         }
 
         // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
-        let Some(cert_chain) = (unsafe { boringssl::SSL_get_peer_cert_chain(ssl_ptr) }) else {
+        let cert_chain = unsafe { boringssl::SSL_get_peer_cert_chain(ssl_ptr) };
+        if cert_chain.is_null() {
             return Ok(JSValue::UNDEFINED);
-        };
+        }
         // SAFETY: cert_chain is a non-null STACK_OF(X509) just returned by SSL_get_peer_cert_chain.
-        let Some(cert) = (unsafe { boringssl::sk_X509_value(cert_chain, 0) }) else {
+        let cert = unsafe { boringssl::sk_X509_value(cert_chain, 0) };
+        if cert.is_null() {
             return Ok(JSValue::UNDEFINED);
-        };
-        return X509::to_js(cert, global);
+        }
+        // SAFETY: cert is a non-null *mut X509 (null-checked above).
+        return X509::to_js(unsafe { &mut *cert }, global);
     }
 
-    let mut cert: Option<*mut boringssl::X509> = None;
+    let mut cert: *mut boringssl::X509 = core::ptr::null_mut();
     if this.is_server() {
         // SSL_get_peer_certificate returns a +1 reference; we must free it.
         // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
         cert = unsafe { ffi::SSL_get_peer_certificate(ssl_ptr) };
     }
     let _guard = scopeguard::guard(cert, |c| {
-        if let Some(c) = c {
-            c.free();
+        if !c.is_null() {
+            // SAFETY: `c` is the +1 X509 reference returned by SSL_get_peer_certificate; we own it.
+            unsafe { ffi::X509_free(c) };
         }
     });
 
     // SAFETY: ssl_ptr is a live *mut SSL returned by this.socket.ssl().
     let cert_chain = unsafe { boringssl::SSL_get_peer_cert_chain(ssl_ptr) };
-    let first_cert = if let Some(c) = cert {
-        Some(c)
-    } else if let Some(cc) = cert_chain {
-        // SAFETY: cc is a non-null STACK_OF(X509) just returned by SSL_get_peer_cert_chain.
-        unsafe { boringssl::sk_X509_value(cc, 0) }
+    let first_cert: *mut boringssl::X509 = if !cert.is_null() {
+        cert
+    } else if !cert_chain.is_null() {
+        // SAFETY: cert_chain is a non-null STACK_OF(X509) just returned by SSL_get_peer_cert_chain.
+        unsafe { boringssl::sk_X509_value(cert_chain, 0) }
     } else {
-        None
+        core::ptr::null_mut()
     };
 
-    if first_cert.is_none() {
+    if first_cert.is_null() {
         return Ok(JSValue::UNDEFINED);
     }
 

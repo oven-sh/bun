@@ -11,6 +11,7 @@
 //! VirtualMachine.rs §Dispatch) by the high tier, so the public fns here
 //! delegate to the hook table with `TODO(b2)` markers.
 
+use core::cell::UnsafeCell;
 use core::ffi::{c_int, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -115,7 +116,11 @@ pub struct Debugger {
 
     pub test_reporter_agent: TestReporterAgent,
     pub lifecycle_reporter_agent: LifecycleAgent,
-    pub frontend_dev_server_agent: BunFrontendDevServerAgent,
+    /// `UnsafeCell` because `DevServer::inspector()` hands out `&mut` to this
+    /// agent through a shared `&VirtualMachine` borrow (Zig spec: `*const
+    /// DevServer -> *BunFrontendDevServerAgent`, free aliasing). JS-thread
+    /// only; callers must not hold overlapping `&mut` borrows.
+    pub frontend_dev_server_agent: UnsafeCell<BunFrontendDevServerAgent>,
     pub http_server_agent: HTTPServerAgent,
     pub must_block_until_connected: bool,
 }
@@ -133,7 +138,7 @@ impl Default for Debugger {
             mode: Mode::Listen,
             test_reporter_agent: TestReporterAgent::default(),
             lifecycle_reporter_agent: LifecycleAgent::default(),
-            frontend_dev_server_agent: BunFrontendDevServerAgent::default(),
+            frontend_dev_server_agent: UnsafeCell::new(BunFrontendDevServerAgent::default()),
             http_server_agent: HTTPServerAgent::default(),
             must_block_until_connected: false,
         }

@@ -464,7 +464,7 @@ pub mod ast {
 
     #[derive(strum::IntoStaticStr)]
     pub enum Expr<'arena> {
-        Assign(&'arena mut [Assign<'arena>]),
+        Assign(&'arena [Assign<'arena>]),
         Binary(&'arena Binary<'arena>),
         Pipeline(&'arena Pipeline<'arena>),
         Cmd(&'arena Cmd<'arena>),
@@ -525,8 +525,9 @@ pub mod ast {
 
         pub fn as_pipeline_item(&self) -> Option<PipelineItem<'arena>> {
             match self {
-                Expr::Assign(a) => Some(PipelineItem::Assigns(*a as *const _ as *mut _)),
-                // TODO(port): borrowck — Zig copies the arena ptr; here we re-borrow
+                // SAFETY: arena slice is read-only after parse (Zig `[]Assign` is never
+                // mutated post-construction); shared `&'arena` ref is Copy and sound.
+                Expr::Assign(a) => Some(PipelineItem::Assigns(*a)),
                 Expr::Cmd(c) => Some(PipelineItem::Cmd(*c)),
                 Expr::Subshell(s) => Some(PipelineItem::Subshell(*s)),
                 Expr::If(i) => Some(PipelineItem::If(*i)),
@@ -775,7 +776,7 @@ pub mod ast {
 
     pub enum PipelineItem<'arena> {
         Cmd(&'arena Cmd<'arena>),
-        Assigns(*mut [Assign<'arena>]), // TODO(port): lifetime — arena slice shared with Expr::Assign
+        Assigns(&'arena [Assign<'arena>]),
         Subshell(&'arena Subshell<'arena>),
         If(&'arena If<'arena>),
         CondExpr(&'arena CondExpr<'arena>),
@@ -787,8 +788,7 @@ pub mod ast {
             match self {
                 PipelineItem::Cmd(cmd) => cost += cmd.memory_cost(),
                 PipelineItem::Assigns(assigns) => {
-                    // SAFETY: arena slice is live for 'arena
-                    for assign in unsafe { &**assigns }.iter() {
+                    for assign in assigns.iter() {
                         cost += assign.memory_cost();
                     }
                 }
@@ -802,7 +802,7 @@ pub mod ast {
 
     pub enum CmdOrAssigns<'arena> {
         Cmd(Cmd<'arena>),
-        Assigns(&'arena mut [Assign<'arena>]),
+        Assigns(&'arena [Assign<'arena>]),
     }
 
     #[derive(Clone, Copy)]

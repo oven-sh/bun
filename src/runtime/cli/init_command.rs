@@ -7,7 +7,7 @@ use bun_collections::IntegerBitSet;
 use bun_core::{self as bun, env_var, fmt as bun_fmt, Environment, Error, Global, Output};
 use bun_js_parser as js_ast;
 use bun_js_printer as js_printer;
-use bun_json as json;
+use bun_interchange::json;
 use bun_logger as logger;
 use bun_paths::{self, path_buffer_pool, PathBuffer};
 use bun_resolver::fs as Fs;

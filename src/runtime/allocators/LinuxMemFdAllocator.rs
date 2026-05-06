@@ -233,13 +233,13 @@ impl LinuxMemFdAllocator {
                             continue;
                         }
 
-                        bun_core::output::debug_warn!("Failed to write to memfd: {}", err);
+                        bun_core::debug_warn!("Failed to write to memfd: {}", err);
                         fd.close();
                         return Err(err);
                     }
                     Ok(result) => {
                         if result == 0 {
-                            bun_core::output::debug_warn!("Failed to write to memfd: EOF");
+                            bun_core::debug_warn!("Failed to write to memfd: EOF");
                             fd.close();
                             return Err(sys::Error::from_code(sys::Errno::NOMEM, sys::Tag::Write));
                         }
@@ -344,7 +344,7 @@ mod allocator_interface {
         match sys::munmap(buf_ptr, buf_len) {
             Ok(()) => {}
             Err(err) => {
-                bun_core::output::debug_warn!("Failed to munmap memfd: {}", err);
+                bun_core::debug_warn!("Failed to munmap memfd: {}", err);
             }
         }
         // SAFETY: caller contract — `this` is the Box-allocated `*mut Self` and

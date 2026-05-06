@@ -18,12 +18,12 @@ use bun_alloc::AllocError;
 use bun_bundler::{BundleV2, Transpiler};
 use bun_collections::{DynamicBitSet, StringHashMap, StringSet};
 use bun_core::{self, env_var, fmt as bun_fmt, getenv_z, which, Global, Output};
-use bun_fs::FileSystem;
+use bun_bundler::bun_fs::FileSystem;
 use bun_js_parser::Index;
 use bun_jsc::{self as jsc, EventLoopHandle, VirtualMachine};
 use bun_logger as logger;
-use bun_paths::{self, PathBuffer, PathString, SEP};
-use bun_str::{strings, ZStr};
+use bun_paths::{self, PathBuffer, SEP};
+use bun_str::{strings, PathString, ZStr};
 use bun_sys as sys;
 
 use crate::Command;

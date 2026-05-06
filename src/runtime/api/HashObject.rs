@@ -265,7 +265,7 @@ pub fn create(global: &JSGlobalObject) -> JSValue {
     ];
     for &(name, host_fn) in FNS {
         let value = JSFunction::create(global, name, host_fn, 1, Default::default());
-        function.put(global, ZigString::static_(name), value);
+        function.put(global, name.as_bytes(), value);
     }
 
     function

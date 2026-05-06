@@ -183,15 +183,19 @@ impl WindowsWatcher {
     //
     // TODO(b2-blocked): body re-gated — depends on lower-tier surface that has
     // not landed yet:
-    //   - `bun_windows_sys::ntdll::NtCreateFile` (no `ntdll` mod at crate root)
-    //   - `bun_windows_sys::FILE_OPEN` (CreateDisposition const)
-    //   - `bun_string::strings::to_nt_path` / `char_is_any_slash`
-    //     (`immutable/paths.rs` is not yet wired into `bun_string::strings`)
+    //   - `bun_windows_sys::ntdll::NtCreateFile` (`bun_windows_sys` exposes only
+    //     `pub mod externs;` — no `ntdll` mod, yet `bun_sys::windows` already
+    //     re-exports it, so that crate is also broken on `--target windows`)
+    //   - `bun_windows_sys::FILE_OPEN` (CreateDisposition const; referenced by
+    //     `bun_sys::windows` as `windows::FILE_OPEN` but defined nowhere)
+    // The `to_nt_path` / `char_is_any_slash` blockers are resolved — now reached
+    // via `bun_string::strings::paths`.
     pub fn init(&mut self, root: &[u8]) -> Result<(), bun_core::Error> {
         #[cfg(any())]
         {
+            use bun_string::strings::paths;
             let mut pathbuf = WPathBuffer::uninit();
-            let wpath = strings::to_nt_path(&mut pathbuf, root);
+            let wpath = paths::to_nt_path(&mut pathbuf, root);
             let path_len_bytes: u16 = (wpath.len() * 2) as u16;
             let mut nt_name = w::UNICODE_STRING {
                 Length: path_len_bytes,
@@ -259,7 +263,7 @@ impl WindowsWatcher {
             };
 
             self.buf[..root.len()].copy_from_slice(root);
-            let needs_slash = root.is_empty() || !strings::char_is_any_slash(root[root.len() - 1]);
+            let needs_slash = root.is_empty() || !paths::char_is_any_slash(root[root.len() - 1]);
             if needs_slash {
                 self.buf[root.len()] = b'\\';
             }
@@ -273,7 +277,7 @@ impl WindowsWatcher {
         #[allow(unreachable_code)]
         {
             let _ = root;
-            todo!("WindowsWatcher::init — bun_windows_sys::ntdll / bun_string::strings::to_nt_path")
+            todo!("WindowsWatcher::init — bun_windows_sys::ntdll::NtCreateFile / bun_windows_sys::FILE_OPEN")
         }
     }
 

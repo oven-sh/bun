@@ -668,24 +668,39 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             Kind::Any => {}
         }
 
-        // TODO(b2-blocked): `Fd::get_fd_path` is a syscall (`bun_sys::FdExt`, T1).
-        // `bun_paths` is also T1 and (per gen-cargo same-tier ordering) cannot
-        // depend on `bun_sys`. Route through a `bun_core` AtomicPtr hook
-        // (CYCLEBREAK §Debug-hook), or hoist this constructor to `bun_sys`.
-        #[cfg(any())]
-        {
-            let mut this = Self::init();
-            let buf = U::buffer_as_mut_slice(&mut this._buf.pooled);
-            let raw = fd.get_fd_path(buf)?;
-            let trimmed = trim_input(TrimInputKind::Abs, raw);
-            this._buf.len = trimmed.len();
-            Ok(this)
+        // CYCLEBREAK: `getFdPath` is a syscall living in `bun_sys` (T1 sibling),
+        // which `bun_paths` cannot depend on. Route through `bun_core::FD_PATH_HOOK`
+        // — bun_sys installs it at startup with signature
+        // `unsafe fn(Fd, *mut u8, cap: usize) -> isize` (>0 = bytes, <0 = error).
+        // PORT NOTE: hook is u8-only; the Zig `fd.getFdPath(this._buf.pooled)`
+        // also type-errors on u16 instantiation (lazy eval hides it). u16 callers
+        // should transcode at the call site or use the bun_sys constructor directly.
+        use core::any::TypeId;
+        if TypeId::of::<U>() != TypeId::of::<u8>() {
+            unimplemented!("init_fd_path: u16 unit — use bun_sys getFdPathW directly");
         }
-        #[cfg(not(any()))]
-        {
-            let _ = fd;
-            todo!("init_fd_path: bun_sys::FdExt::get_fd_path hook (T1 same-tier)")
+
+        let mut this = Self::init();
+        // SAFETY: TypeId check above proves U == u8; identity slice cast.
+        let buf: &mut [u8] =
+            unsafe { core::mem::transmute(U::buffer_as_mut_slice(&mut this._buf.pooled)) };
+
+        let hook = bun_core::FD_PATH_HOOK.load(core::sync::atomic::Ordering::Acquire);
+        if hook.is_null() {
+            // bun_sys hasn't installed the hook yet (early init / isolated test).
+            return Err(bun_core::Error::TODO);
         }
+        // SAFETY: hook installed by bun_sys with `unsafe fn(Fd, *mut u8, usize) -> isize`.
+        let f: unsafe fn(Fd, *mut u8, usize) -> isize = unsafe { core::mem::transmute(hook) };
+        // SAFETY: buf is valid for buf.len() writable bytes.
+        let n = unsafe { f(fd, buf.as_mut_ptr(), buf.len()) };
+        if n < 0 {
+            return Err(bun_core::Error::from_errno(9)); // EBADF — hook surfaces no errno
+        }
+        let raw = &buf[..n as usize];
+        let trimmed = trim_input(TrimInputKind::Abs, raw);
+        this._buf.len = trimmed.len();
+        Ok(this)
     }
 
     pub fn from_long_path<C: PathUnit>(input: &[C]) -> options::Result<Self> {
@@ -1072,18 +1087,10 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                     unsafe { core::mem::transmute(U::buffer_as_mut_slice(&mut self._buf.pooled)) };
                 // SAFETY: TypeId check above proves C == u16; identity slice cast.
                 let part_u16: &[u16] = unsafe { core::mem::transmute(part) };
-                // TODO(b2-blocked): `resolve_path::join_string_buf_w` currently
-                // only accepts `&[&[u8]]` parts (its TODO notes Zig's `anytype`
-                // allowed u16). Needs a `parts: &[&[u16]]` overload (or
-                // `join_string_buf_t::<u16, P>` exposed). Windows-only path.
-                let _ = (pooled, cwd_path, part_u16);
-                #[cfg(any())]
-                {
-                    let joined = sep_dispatch!(join_string_buf_w(pooled, &[cwd_path, part_u16]));
-                    let trimmed = trim_input(TrimInputKind::Abs, joined);
-                    self._buf.len = trimmed.len();
-                }
-                todo!("append_join (u16,u16): join_string_buf_w &[&[u16]] overload");
+                let joined =
+                    sep_dispatch!(join_string_buf_w_same(pooled, &[cwd_path, part_u16]));
+                let trimmed = trim_input(TrimInputKind::Abs, joined);
+                self._buf.len = trimmed.len();
             }
             (false, true) => {
                 // part: &[u16], unit: u8 → transcode then recurse
@@ -1111,28 +1118,30 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         &self,
         to: &Path<U, K2, SEP_OPT, CHECK>,
     ) -> RelPath<U, SEP_OPT, CHECK> {
-        // TODO(b2-blocked): `resolve_path::relative_buf_z` is `&[u8]`-only;
-        // the Zig had no u16 variant either (Path.zig:301 calls
-        // `bun.path.relativeBufZ` which is u8). When `U == u16` this requires
-        // a transcode round-trip. Gate the body until a width-generic
-        // `relative_buf_z_t<C>` lands in resolve_path.
-        #[cfg(any())]
-        {
-            let mut output: RelPath<U, SEP_OPT, CHECK> = Path::init();
-            let rel = path::relative_buf_z(
-                U::buffer_as_mut_slice(&mut output._buf.pooled),
-                self.slice(),
-                to.slice(),
-            );
-            let trimmed = trim_input(TrimInputKind::Rel, rel);
-            output._buf.len = trimmed.len();
-            output
+        // PORT NOTE: `resolve_path::relative_buf_z` is `&[u8]`-only and the Zig
+        // had no u16 variant either — Path.zig `relative` calls `relativeBufZ`
+        // unconditionally, which would compile-error on a u16 instantiation
+        // (Zig's lazy eval hides that). Rust monomorphizes eagerly, so we
+        // TypeId-dispatch: u8 → identity-cast and call; u16 → panic (matches
+        // Zig's effective behavior). TODO(port): width-generic
+        // `relative_buf_z_t<C>` if a u16 caller ever materializes.
+        use core::any::TypeId;
+        if TypeId::of::<U>() != TypeId::of::<u8>() {
+            unimplemented!("Path::relative is u8-only (no u16 relativeBufZ in Zig either)");
         }
-        #[cfg(not(any()))]
-        {
-            let _ = to;
-            todo!("relative: width-generic relative_buf_z_t (resolve_path)")
-        }
+
+        let mut output: RelPath<U, SEP_OPT, CHECK> = Path::init();
+        // SAFETY: TypeId check above proves U == u8; identity slice casts.
+        let pooled: &mut [u8] =
+            unsafe { core::mem::transmute(U::buffer_as_mut_slice(&mut output._buf.pooled)) };
+        // SAFETY: TypeId check above proves U == u8; identity slice cast.
+        let from_u8: &[u8] = unsafe { core::mem::transmute(self.slice()) };
+        // SAFETY: TypeId check above proves U == u8; identity slice cast.
+        let to_u8: &[u8] = unsafe { core::mem::transmute(to.slice()) };
+        let rel = path::relative_buf_z(pooled, from_u8, to_u8);
+        let trimmed = trim_input(TrimInputKind::Rel, rel.as_bytes());
+        output._buf.len = trimmed.len();
+        output
     }
 
     pub fn undo(&mut self, n_components: usize) {

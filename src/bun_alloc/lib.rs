@@ -2,6 +2,9 @@
 
 use core::fmt::Write as _;
 use core::mem::size_of;
+use core::ptr::NonNull;
+use core::sync::atomic::{AtomicU16, Ordering};
+use std::collections::HashMap;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports (thin — match Zig `pub const X = @import(...)` lines)
@@ -105,7 +108,37 @@ pub mod stubs {
     #[inline] pub fn is_smol_mode() -> bool { false }
     pub mod strings {
         #[inline] pub fn includes(h: &[u8], n: &[u8]) -> bool { bstr::ByteSlice::find(h, n).is_some() }
+        #[inline]
+        pub fn trim_right<'a>(s: &'a [u8], chars: &[u8]) -> &'a [u8] {
+            let mut end = s.len();
+            while end > 0 && chars.contains(&s[end - 1]) { end -= 1; }
+            &s[..end]
+        }
     }
+}
+
+// ── Non-RAII Mutex ────────────────────────────────────────────────────────
+// Zig's `bun.Mutex` exposes bare `lock()`/`unlock()` (no guard); the BSS
+// containers below were ported against that shape. Wrap parking_lot's
+// `RawMutex` so callers can lock/unlock across `&mut self` borrows without
+// the borrow checker tying the guard to `self`.
+pub struct Mutex(parking_lot::RawMutex);
+impl Mutex {
+    pub const fn new() -> Self {
+        Self(<parking_lot::RawMutex as parking_lot::lock_api::RawMutex>::INIT)
+    }
+    #[inline]
+    pub fn lock(&self) {
+        parking_lot::lock_api::RawMutex::lock(&self.0);
+    }
+    #[inline]
+    pub fn unlock(&self) {
+        // SAFETY: caller contract — paired with a prior `lock()` on this mutex.
+        unsafe { parking_lot::lock_api::RawMutex::unlock(&self.0) };
+    }
+}
+impl Default for Mutex {
+    fn default() -> Self { Self::new() }
 }
 
 // Per PORTING.md type map: `OOM!T` / `error{OutOfMemory}!T` → `Result<T, bun_alloc::AllocError>`.
@@ -630,69 +663,12 @@ pub enum ItemStatus {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// BSSList / BSSStringList / BSSMapInner — minimal type shapes
-//
-// Full method bodies live in the `_bss_gated` module below (blocked on
-// `bun_collections` + a non-RAII `Mutex` and per-monomorphization statics).
-// These shapes let dependents (`resolver::dir_info`, `bundler::linker`) name
-// the types and store them in fields; instantiation goes through `init()`
-// which is a Phase-B `unimplemented!()` until the gated impl is un-gated.
+// BSSList / BSSStringList / BSSMapInner — real method bodies follow below.
+// `init()` remains a Phase-B `unimplemented!()` (per-monomorphization
+// statics aren't expressible on stable Rust); all other methods are live so
+// dependents (`resolver::dir_info`, `bundler::linker`) can call
+// `get_or_put` / `put` / `mark_not_found` / `append` against real storage.
 // ──────────────────────────────────────────────────────────────────────────
-
-/// "Formerly-BSSList" — fixed-capacity backing array with heap-chunked overflow.
-/// `COUNT` is the post-doubled capacity (Zig: `count = _count * 2`).
-pub struct BSSList<ValueType, const COUNT: usize> {
-    _value: core::marker::PhantomData<ValueType>,
-    // Real fields (backing_buf, head/tail overflow chain, mutex) live in the
-    // gated impl; PhantomData keeps the type non-ZST-agnostic for variance.
-}
-
-impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
-    pub fn init() -> &'static mut Self {
-        // TODO(port): per-monomorphization singleton (generic statics not on stable).
-        unimplemented!("BSSList::init requires per-type static storage (Phase B)")
-    }
-}
-
-/// Append-only string interner backed by a `.bss` slab, overflowing to heap.
-/// `COUNT` / `ITEM_LENGTH` are the post-adjusted Zig values
-/// (`count = _count * 2`, `item_length = _item_length + 1`).
-pub struct BSSStringList<const COUNT: usize, const ITEM_LENGTH: usize> {
-    _priv: (),
-}
-
-impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LENGTH> {
-    pub fn init() -> &'static mut Self {
-        // TODO(port): per-monomorphization singleton.
-        unimplemented!("BSSStringList::init requires per-type static storage (Phase B)")
-    }
-}
-
-/// `BSSMap` with `store_keys = false` — wyhash-keyed `IndexMap` over a fixed
-/// backing array + overflow list.
-pub struct BSSMapInner<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool> {
-    _value: core::marker::PhantomData<ValueType>,
-}
-
-impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
-    BSSMapInner<ValueType, COUNT, REMOVE_TRAILING_SLASHES>
-{
-    pub fn init() -> &'static mut Self {
-        // TODO(port): per-monomorphization singleton.
-        unimplemented!("BSSMapInner::init requires per-type static storage (Phase B)")
-    }
-
-    /// Zig: `BSSMap.atIndex` — resolve an `IndexType` to the stored value.
-    /// Returns `None` for `NOT_FOUND` / `UNASSIGNED`. Real lookups require the
-    /// backing-array + overflow-list storage (see `_bss_gated::BSSMapInner`);
-    /// since `init()` is Phase-B-gated no live instance can hold a real index.
-    pub fn at_index(&mut self, index: IndexType) -> Option<&mut ValueType> {
-        if index.index() == NOT_FOUND.index() || index.index() == UNASSIGNED.index() {
-            return None;
-        }
-        unimplemented!("BSSMapInner::at_index requires per-type static storage (Phase B)")
-    }
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // `bun.allocators` namespace shim
@@ -856,47 +832,15 @@ macro_rules! get_zone {
     }};
 }
 
-// ── B-1 gate: BSSList/BSSMap/FBS need bun_collections + bare Mutex ────────
-#[cfg(any())]
-mod _bss_gated {
-use super::*;
 // ──────────────────────────────────────────────────────────────────────────
-// IndexType / IndexMap / Result / ItemStatus
+// IndexMap / Result
+// (`IndexType`, `ItemStatus`, `NOT_FOUND`, `UNASSIGNED` defined above.)
 // ──────────────────────────────────────────────────────────────────────────
-
-/// `packed struct(u32) { index: u31, is_overflow: bool = false }`
-/// Zig packed-struct fields are LSB-first: bits 0..=30 = index, bit 31 = is_overflow.
-#[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct IndexType(u32);
-
-impl IndexType {
-    #[inline]
-    pub const fn new(index: u32, is_overflow: bool) -> Self {
-        Self((index & 0x7FFF_FFFF) | ((is_overflow as u32) << 31))
-    }
-    #[inline]
-    pub const fn index(self) -> u32 {
-        self.0 & 0x7FFF_FFFF
-    }
-    #[inline]
-    pub const fn is_overflow(self) -> bool {
-        (self.0 >> 31) != 0
-    }
-    #[inline]
-    pub fn set_index(&mut self, index: u32) {
-        self.0 = (self.0 & 0x8000_0000) | (index & 0x7FFF_FFFF);
-    }
-    #[inline]
-    pub fn set_is_overflow(&mut self, v: bool) {
-        self.0 = (self.0 & 0x7FFF_FFFF) | ((v as u32) << 31);
-    }
-}
 
 type HashKeyType = u64;
 
 // Zig `IndexMapContext` is the identity hash on a u64 key.
-// TODO(port): `bun_collections::HashMap` needs an identity-hash builder; using default for now.
+// TODO(port): `bun_collections::HashMap` needs an identity-hash builder; using std default for now.
 pub type IndexMap = HashMap<HashKeyType, IndexType>;
 pub type IndexMapManaged = HashMap<HashKeyType, IndexType>;
 
@@ -914,19 +858,8 @@ impl Result {
     pub fn is_overflowing<const COUNT: usize>(&self) -> bool {
         // TODO(port): Zig compares the whole packed struct against a usize here
         // (`r.index >= count`); reproduce by comparing the raw u32.
-        self.index.0 as usize >= COUNT
+        self.index.raw() as usize >= COUNT
     }
-}
-
-pub const NOT_FOUND: IndexType = IndexType::new(u32::MAX >> 1, false); // maxInt(u31)
-pub const UNASSIGNED: IndexType = IndexType::new((u32::MAX >> 1) - 1, false); // maxInt(u31) - 1
-
-#[repr(u8)] // Zig: enum(u3)
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum ItemStatus {
-    Unknown,
-    Exists,
-    NotFound,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1220,11 +1153,11 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
         ValueType: Clone,
     {
         self.mutex.lock();
-        let _guard = scopeguard::guard(&mut self.mutex, |m| m.unlock());
-        // TODO(port): parking_lot::Mutex needs an RAII guard that does not borrow `&mut self`
-        // so the lock stays held across append_overflow (Zig: `defer self.mutex.unlock()`).
-        // Do NOT release early — append_overflow mutates head/used and must run under the lock.
-        // Phase A accepts the borrowck conflict here; correctness > compilation.
+        // Hold the lock across the body via raw-ptr scopeguard so the guard
+        // doesn't borrow `self` (Zig: `defer self.mutex.unlock()`).
+        let mutex = core::ptr::addr_of!(self.mutex);
+        // SAFETY: `mutex` points into `*self`, which outlives `_guard` (drops at end of fn).
+        let _guard = scopeguard::guard((), move |_| unsafe { (*mutex).unlock() });
         // TODO(port): Zig reads `instance.*` here even though `self == instance`; kept as `self`.
         if self.used as usize > Self::MAX_INDEX {
             self.append_overflow(value)
@@ -1366,10 +1299,9 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         value: A,
     ) -> core::result::Result<&[u8], AllocError> {
         self.mutex.lock();
-        let _guard = scopeguard::guard((), |_| self.mutex.unlock());
-        // PORT NOTE: reshaped for borrowck — guard captures self.mutex; Phase B should make
-        // parking_lot::Mutex return an RAII guard so this is `let _g = self.mutex.lock();`.
-        // TODO(port): borrowck conflict between guard closure and self.do_append; fix with RAII Mutex.
+        let mutex = core::ptr::addr_of!(self.mutex);
+        // SAFETY: `mutex` points into `*self`, which outlives `_guard` (drops at end of fn).
+        let _guard = scopeguard::guard((), move |_| unsafe { (*mutex).unlock() });
         self.do_append(value)
     }
 
@@ -1382,7 +1314,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
 
         thread_local! {
             static LOWERCASE_BUF: core::cell::RefCell<crate::stubs::PathBuffer> =
-                const { core::cell::RefCell::new(crate::stubs::PathBuffer::ZEROED) };
+                const { core::cell::RefCell::new([0u8; 4096]) };
         }
         // TODO(port): can't return a borrow of thread_local across `with_borrow_mut`; copy into
         // backing_buf inside the closure then return that. Phase B reshape.
@@ -1505,10 +1437,8 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         self.mutex.lock();
         // TODO(port): RAII mutex guard.
         // TODO(port): narrow error set — IndexMap::get_or_put can only OOM.
-        // TODO(b0-genuine): bun_collections (T1) — BSSMap needs HashMap; either hoist BSSMap to T≥1
-        // or move a minimal HashMap into bun_core.
         match self.index.entry(_key) {
-            bun_collections::hash_map::Entry::Occupied(e) => {
+            std::collections::hash_map::Entry::Occupied(e) => {
                 let v = *e.get();
                 self.mutex.unlock();
                 Ok(Result {
@@ -1521,7 +1451,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
                     },
                 })
             }
-            bun_collections::hash_map::Entry::Vacant(e) => {
+            std::collections::hash_map::Entry::Vacant(e) => {
                 e.insert(UNASSIGNED);
                 self.mutex.unlock();
                 Ok(Result {
@@ -1781,7 +1711,6 @@ impl<ValueType, const COUNT: usize, const ESTIMATED_KEY_LENGTH: usize, const REM
         self.map.remove(key)
     }
 }
-} // _bss_gated
 
 // ──────────────────────────────────────────────────────────────────────────
 // Allocator-trait surface — OBSOLETE per PORTING.md §Allocators

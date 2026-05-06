@@ -1,32 +1,23 @@
-use core::ffi::c_char;
-use core::fmt;
-use core::mem::offset_of;
+use core::ffi::CStr;
 
-use bstr::BStr;
-
-use bun_jsc::{EventLoopHandle, EventLoopTask, SystemError, WorkPoolTask};
-use bun_paths as resolve_path;
-use bun_runtime::node::fs as node_fs;
-use bun_runtime::node::TimeLike;
-use crate::shell::interpreter::builtin::Result as BuiltinResult;
+use crate::shell::builtin::{Builtin, IoKind, Kind};
 use crate::shell::interpreter::{
-    unsupported_flag, Builtin, BuiltinImpl, BuiltinKind, FlagParser, OutputSrc, OutputTask,
-    OutputTaskVTable, ParseError, ParseFlagResult,
+    parse_flags, unsupported_flag, EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc,
+    OutputTask, OutputTaskVTable, ParseError, ParseFlagResult, ShellTask,
 };
-use crate::shell::{ExitCode, Yield};
-use bun_str::{PathString, ZStr};
-use bun_sys as syscall;
-use bun_threading::WorkPool;
+use crate::shell::io_writer::{ChildPtr, WriterTag};
+use crate::shell::yield_::Yield;
+use crate::shell::ExitCode;
 
-bun_output::declare_scope!(ShellTouch, hidden);
-
+#[derive(Default)]
 pub struct Touch {
     pub opts: Opts,
     pub state: State,
 }
 
-#[derive(strum::IntoStaticStr)]
+#[derive(Default)]
 pub enum State {
+    #[default]
     Idle,
     Exec(ExecState),
     WaitingWriteErr,
@@ -39,508 +30,316 @@ pub struct ExecState {
     pub tasks_done: usize,
     pub output_done: usize,
     pub output_waiting: usize,
-    pub started_output_queue: bool,
-    // TODO(port): lifetime — borrowed from Builtin::args_slice() (shell arena)
-    pub args: *const [*const c_char],
-    pub err: Option<SystemError>,
+    /// Index into argv where filepath args start.
+    pub args_start: usize,
+    pub err: Option<bun_sys::Error>,
 }
 
-impl Default for Touch {
-    fn default() -> Self {
-        Self { opts: Opts::default(), state: State::Idle }
-    }
-}
-
-impl Default for ExecState {
-    fn default() -> Self {
-        Self {
+impl Touch {
+    pub fn start(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+        let mut opts = Opts::default();
+        let args_start = {
+            let args = Builtin::of(interp, cmd).args_slice();
+            match parse_flags(&mut opts, args) {
+                Ok(Some(rest)) => args.len() - rest.len(),
+                Ok(None) => {
+                    Self::state_mut(interp, cmd).state = State::WaitingWriteErr;
+                    return Builtin::write_failing_error(
+                        interp,
+                        cmd,
+                        Kind::Touch.usage_string(),
+                        1,
+                    );
+                }
+                Err(e) => return Self::fail_parse(interp, cmd, e),
+            }
+        };
+        Self::state_mut(interp, cmd).opts = opts;
+        Self::state_mut(interp, cmd).state = State::Exec(ExecState {
             started: false,
             tasks_count: 0,
             tasks_done: 0,
             output_done: 0,
             output_waiting: 0,
-            started_output_queue: false,
-            args: core::ptr::slice_from_raw_parts(core::ptr::null(), 0),
+            args_start,
             err: None,
-        }
-    }
-}
-
-impl fmt::Display for Touch {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "Touch(0x{:x}, state={})",
-            self as *const _ as usize,
-            <&'static str>::from(&self.state),
-        )
-    }
-}
-
-impl Drop for Touch {
-    fn drop(&mut self) {
-        bun_output::scoped_log!(ShellTouch, "{} deinit", self);
-    }
-}
-
-impl Touch {
-    pub fn start(&mut self) -> Yield {
-        let filepath_args = match self.opts.parse(self.bltn().args_slice()) {
-            BuiltinResult::Ok(filepath_args) => filepath_args,
-            BuiltinResult::Err(e) => {
-                let buf = match e {
-                    ParseError::IllegalOption(opt_str) => self.bltn().fmt_error_arena(
-                        BuiltinKind::Touch,
-                        format_args!("illegal option -- {}\n", BStr::new(opt_str)),
-                    ),
-                    ParseError::ShowUsage => BuiltinKind::Touch.usage_string(),
-                    ParseError::Unsupported(unsupported) => self.bltn().fmt_error_arena(
-                        BuiltinKind::Touch,
-                        format_args!(
-                            "unsupported option, please open a GitHub issue -- {}\n",
-                            BStr::new(unsupported)
-                        ),
-                    ),
-                };
-
-                return self.write_failing_error(buf, 1);
-            }
-        };
-
-        let Some(filepath_args) = filepath_args else {
-            return self.write_failing_error(BuiltinKind::Touch.usage_string(), 1);
-        };
-
-        self.state = State::Exec(ExecState {
-            args: filepath_args as *const [*const c_char],
-            ..ExecState::default()
         });
-
-        self.next()
+        Self::next(interp, cmd)
     }
 
-    pub fn next(&mut self) -> Yield {
-        match &mut self.state {
+    fn fail_parse(interp: &mut Interpreter, cmd: NodeId, e: ParseError) -> Yield {
+        let buf: Vec<u8> = match e {
+            ParseError::IllegalOption(s) => Builtin::fmt_error_arena(
+                interp,
+                cmd,
+                Some(Kind::Touch),
+                // SAFETY: payload borrows argv or is 'static.
+                format_args!("illegal option -- {}\n", bstr::BStr::new(unsafe { &*s })),
+            )
+            .to_vec(),
+            ParseError::ShowUsage => Kind::Touch.usage_string().to_vec(),
+            ParseError::Unsupported(s) => Builtin::fmt_error_arena(
+                interp,
+                cmd,
+                Some(Kind::Touch),
+                format_args!(
+                    "unsupported option, please open a GitHub issue -- {}\n",
+                    // SAFETY: see above.
+                    bstr::BStr::new(unsafe { &*s })
+                ),
+            )
+            .to_vec(),
+        };
+        Self::state_mut(interp, cmd).state = State::WaitingWriteErr;
+        Builtin::write_failing_error(interp, cmd, &buf, 1)
+    }
+
+    pub fn next(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+        enum Action { Done(ExitCode), Schedule(usize) }
+        let action = match &mut Self::state_mut(interp, cmd).state {
             State::Idle => panic!("Invalid state"),
             State::Exec(exec) => {
                 if exec.started {
                     if exec.tasks_done >= exec.tasks_count
                         && exec.output_done >= exec.output_waiting
                     {
-                        let exit_code: ExitCode = if exec.err.is_some() { 1 } else { 0 };
-                        if let Some(e) = exec.err.take() {
-                            e.deref();
-                        }
-                        self.state = State::Done;
-                        return self.bltn().done(exit_code);
+                        let code: ExitCode = if exec.err.is_some() { 1 } else { 0 };
+                        exec.err = None;
+                        Action::Done(code)
+                    } else {
+                        return Yield::suspended();
                     }
-                    return Yield::Suspended;
+                } else {
+                    exec.started = true;
+                    Action::Schedule(exec.args_start)
                 }
-
-                exec.started = true;
-                // SAFETY: args was set from Builtin::args_slice() which outlives self
-                let args = unsafe { &*exec.args };
-                exec.tasks_count = args.len();
-
-                // PORT NOTE: reshaped for borrowck — hoist scalars so the `exec` borrow
-                // ends (NLL) before calling self.bltn(), which needs &mut self.
-                let opts = self.opts;
-                let cwd = self.bltn().parent_cmd().base.shell.cwd_z();
-                let this_ptr: *mut Touch = self;
-                for &dir_to_mk_ in args {
-                    // SAFETY: arg is a NUL-terminated string from the shell arg vector
-                    let dir_to_mk = unsafe { ZStr::from_ptr(dir_to_mk_.cast()) };
-                    let task = ShellTouchTask::create(this_ptr, opts, dir_to_mk, cwd);
-                    // SAFETY: task is a freshly Box::into_raw'd ShellTouchTask; uniquely
-                    // owned here until schedule() hands it to the work pool.
-                    unsafe { (*task).schedule() };
-                }
-                Yield::Suspended
             }
-            State::WaitingWriteErr => Yield::Failed,
-            State::Done => self.bltn().done(0),
-        }
-    }
-
-    pub fn on_io_writer_chunk(&mut self, _: usize, e: Option<SystemError>) -> Yield {
-        if let Some(err) = e {
-            err.deref();
-        }
-
-        if matches!(self.state, State::WaitingWriteErr) {
-            return self.bltn().done(1);
-        }
-
-        self.next()
-    }
-
-    pub fn write_failing_error(&mut self, buf: &[u8], exit_code: ExitCode) -> Yield {
-        if let Some(safeguard) = self.bltn().stderr.needs_io() {
-            self.state = State::WaitingWriteErr;
-            // PORT NOTE: reshaped for borrowck
-            let this_ptr: *mut Touch = self;
-            return self.bltn().stderr.enqueue(this_ptr, buf, safeguard);
-        }
-
-        let _ = self.bltn().write_no_io(BuiltinIoKind::Stderr, buf);
-
-        self.bltn().done(exit_code)
-    }
-
-    pub fn on_shell_touch_task_done(&mut self, task: *mut ShellTouchTask) {
-        // SAFETY: task was Box::into_raw'd in ShellTouchTask::create; we reclaim ownership here
-        let mut task = unsafe { Box::from_raw(task) };
-
-        let State::Exec(exec) = &mut self.state else {
-            unreachable!("on_shell_touch_task_done called outside Exec state");
+            State::WaitingWriteErr => return Yield::failed(),
+            State::Done => return Builtin::done(interp, cmd, 0),
         };
-
-        bun_output::scoped_log!(
-            ShellTouch,
-            "{} onShellTouchTaskDone {} tasks_done={} tasks_count={}",
-            // TODO(port): cannot Display `self` while `exec` borrow is live; using ptr for now
-            self as *const _ as usize,
-            &*task,
-            exec.tasks_done,
-            exec.tasks_count
-        );
-
-        exec.tasks_done += 1;
-        let err = task.err.take();
-        // `task` (Box) drops at end of scope — replaces `defer bun.default_allocator.destroy(task)`
-
-        if let Some(e) = err {
-            let output_task: *mut ShellTouchOutputTask = Box::into_raw(Box::new(
-                ShellTouchOutputTask {
-                    parent: self,
-                    output: OutputSrc::Arrlist(Default::default()),
-                    state: OutputTaskState::WaitingWriteErr,
-                },
-            ));
-            let error_string = self.bltn().task_error_to_string(BuiltinKind::Touch, &e);
-            let State::Exec(exec) = &mut self.state else { unreachable!() };
-            if let Some(prev) = exec.err.take() {
-                prev.deref();
+        match action {
+            Action::Done(code) => {
+                Self::state_mut(interp, cmd).state = State::Done;
+                Builtin::done(interp, cmd, code)
             }
-            exec.err = Some(e);
-            // SAFETY: output_task is a freshly-allocated Box; OutputTask owns its own lifecycle
-            unsafe { (*output_task).start(error_string).run() };
+            Action::Schedule(args_start) => {
+                let argc = Builtin::of(interp, cmd).args_slice().len();
+                if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
+                    exec.tasks_count = argc - args_start;
+                }
+                let opts = Self::state_mut(interp, cmd).opts;
+                let cwd = Builtin::shell(interp, cmd).cwd().to_vec();
+                let evtloop = Builtin::event_loop(interp, cmd);
+                for i in args_start..argc {
+                    let p = Builtin::of(interp, cmd).args_slice()[i];
+                    // SAFETY: argv entries are NUL-terminated.
+                    let path = unsafe { CStr::from_ptr(p) }.to_bytes().to_vec();
+                    let task = ShellTouchTask::create(cmd, opts, path, cwd.clone(), evtloop);
+                    // SAFETY: freshly Box::into_raw'd.
+                    unsafe { (*task).task.schedule() };
+                }
+                Yield::suspended()
+            }
+        }
+    }
+
+    pub fn on_io_writer_chunk(
+        interp: &mut Interpreter,
+        cmd: NodeId,
+        _: usize,
+        _e: Option<bun_sys::SystemError>,
+    ) -> Yield {
+        if matches!(Self::state_mut(interp, cmd).state, State::WaitingWriteErr) {
+            return Builtin::done(interp, cmd, 1);
+        }
+        Self::next(interp, cmd)
+    }
+
+    /// Spec: touch.zig `onShellTouchTaskDone`.
+    pub fn on_shell_touch_task_done(
+        interp: &mut Interpreter,
+        cmd: NodeId,
+        task: *mut ShellTouchTask,
+    ) {
+        // SAFETY: task was Box::into_raw'd in create(); reclaim.
+        let mut task = unsafe { Box::from_raw(task) };
+        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
+            exec.tasks_done += 1;
+        }
+        if let Some(e) = task.err.take() {
+            let output_task = OutputTask::<Touch>::new(cmd, OutputSrc::Arrlist(Vec::new()));
+            let errstr = Builtin::task_error_to_string(interp, cmd, Kind::Touch, &e).to_vec();
+            if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
+                exec.err = Some(e);
+            }
+            // SAFETY: freshly allocated.
+            unsafe { OutputTask::<Touch>::start(output_task, interp, Some(&errstr)) }.run(interp);
             return;
         }
-
-        self.next().run();
+        Self::next(interp, cmd).run(interp);
     }
 
     #[inline]
-    pub fn bltn(&mut self) -> &mut Builtin {
-        // SAFETY: self is the `touch` field of Builtin::Impl, which is the `impl` field of Builtin.
-        unsafe {
-            let impl_ptr = (self as *mut Touch as *mut u8)
-                .sub(offset_of!(BuiltinImpl, touch))
-                .cast::<BuiltinImpl>();
-            &mut *(impl_ptr as *mut u8)
-                .sub(offset_of!(Builtin, impl_))
-                .cast::<Builtin>()
+    fn state_mut(interp: &mut Interpreter, cmd: NodeId) -> &mut Touch {
+        match &mut Builtin::of_mut(interp, cmd).impl_ {
+            crate::shell::builtin::Impl::Touch(t) => &mut **t,
+            _ => unreachable!(),
         }
     }
 }
 
-// TODO(port): OutputTask is a Zig type-generator `fn OutputTask(comptime Parent, comptime vtable) type`.
-// Modeled here as a generic over the parent type with an `OutputTaskVTable` trait impl.
 pub type ShellTouchOutputTask = OutputTask<Touch>;
-// TODO(port): OutputTaskState / OutputSrc variants — exact shape lives in interpreter.rs
-use crate::shell::interpreter::OutputTaskState;
-use crate::shell::interpreter::BuiltinIoKind;
 
 impl OutputTaskVTable for Touch {
-    fn write_err<C>(this: &mut Touch, childptr: C, errbuf: &[u8]) -> Option<Yield> {
-        let State::Exec(exec) = &mut this.state else { unreachable!() };
-        exec.output_waiting += 1;
-        if let Some(safeguard) = this.bltn().stderr.needs_io() {
-            return Some(this.bltn().stderr.enqueue(childptr, errbuf, safeguard));
+    fn write_err(
+        interp: &mut Interpreter,
+        cmd: NodeId,
+        _child: *mut OutputTask<Self>,
+        errbuf: &[u8],
+    ) -> Option<Yield> {
+        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
+            exec.output_waiting += 1;
         }
-        let _ = this.bltn().write_no_io(BuiltinIoKind::Stderr, errbuf);
-        None
-    }
-
-    fn on_write_err(this: &mut Touch) {
-        let State::Exec(exec) = &mut this.state else { unreachable!() };
-        exec.output_done += 1;
-    }
-
-    fn write_out<C>(this: &mut Touch, childptr: C, output: &mut OutputSrc) -> Option<Yield> {
-        let State::Exec(exec) = &mut this.state else { unreachable!() };
-        exec.output_waiting += 1;
-        if let Some(safeguard) = this.bltn().stdout.needs_io() {
-            let slice = output.slice();
-            bun_output::scoped_log!(
-                ShellTouch,
-                "THE SLICE: {} {}",
-                slice.len(),
-                BStr::new(slice)
+        if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
+            let child = ChildPtr { node: cmd, tag: WriterTag::Builtin };
+            return Some(
+                Builtin::of_mut(interp, cmd)
+                    .stderr
+                    .enqueue(child, errbuf, safeguard),
             );
-            return Some(this.bltn().stdout.enqueue(childptr, slice, safeguard));
         }
-        let _ = this.bltn().write_no_io(BuiltinIoKind::Stdout, output.slice());
+        Builtin::write_no_io(interp, cmd, IoKind::Stderr, errbuf);
         None
     }
-
-    fn on_write_out(this: &mut Touch) {
-        let State::Exec(exec) = &mut this.state else { unreachable!() };
-        exec.output_done += 1;
-    }
-
-    fn on_done(this: &mut Touch) -> Yield {
-        this.next()
-    }
-}
-
-pub struct ShellTouchTask {
-    pub touch: *mut Touch,
-
-    pub opts: Opts,
-    // TODO(port): lifetime — borrowed from shell arg vector (arena) for the task's duration
-    pub filepath: ZStr<'static>,
-    // TODO(port): lifetime — borrowed from shell cwd buffer for the task's duration
-    pub cwd_path: ZStr<'static>,
-
-    pub err: Option<SystemError>,
-    pub task: WorkPoolTask,
-    pub event_loop: EventLoopHandle,
-    pub concurrent_task: EventLoopTask,
-}
-
-impl fmt::Display for ShellTouchTask {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "ShellTouchTask(0x{:x}, filepath={})",
-            self as *const _ as usize,
-            BStr::new(self.filepath.as_bytes()),
-        )
-    }
-}
-
-impl Drop for ShellTouchTask {
-    fn drop(&mut self) {
-        if let Some(e) = self.err.take() {
-            e.deref();
+    fn on_write_err(interp: &mut Interpreter, cmd: NodeId) {
+        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
+            exec.output_done += 1;
         }
-        // `bun.default_allocator.destroy(this)` is handled by Box drop at the call site.
     }
+    fn write_out(
+        interp: &mut Interpreter,
+        cmd: NodeId,
+        _child: *mut OutputTask<Self>,
+        output: &mut OutputSrc,
+    ) -> Option<Yield> {
+        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
+            exec.output_waiting += 1;
+        }
+        if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
+            let child = ChildPtr { node: cmd, tag: WriterTag::Builtin };
+            let buf = output.slice().to_vec();
+            return Some(
+                Builtin::of_mut(interp, cmd)
+                    .stdout
+                    .enqueue(child, &buf, safeguard),
+            );
+        }
+        let buf = output.slice().to_vec();
+        Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
+        None
+    }
+    fn on_write_out(interp: &mut Interpreter, cmd: NodeId) {
+        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
+            exec.output_done += 1;
+        }
+    }
+    fn on_done(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+        Self::next(interp, cmd)
+    }
+}
+
+/// Spec: touch.zig `ShellTouchTask`. utimes() the path (creating it on
+/// ENOENT) on a worker thread.
+pub struct ShellTouchTask {
+    pub cmd: NodeId,
+    pub opts: Opts,
+    pub filepath: Vec<u8>,
+    pub cwd_path: Vec<u8>,
+    pub err: Option<bun_sys::Error>,
+    pub task: ShellTask,
 }
 
 impl ShellTouchTask {
     pub fn create(
-        touch: *mut Touch,
+        cmd: NodeId,
         opts: Opts,
-        filepath: ZStr<'static>,
-        cwd_path: ZStr<'static>,
+        filepath: Vec<u8>,
+        cwd_path: Vec<u8>,
+        evtloop: EventLoopHandle,
     ) -> *mut ShellTouchTask {
-        // SAFETY: `touch` is a valid backref to the owning Touch (BACKREF per LIFETIMES.tsv)
-        let event_loop = unsafe { (*touch).bltn() }.event_loop();
         Box::into_raw(Box::new(ShellTouchTask {
-            touch,
+            cmd,
             opts,
-            cwd_path,
             filepath,
-            event_loop,
-            concurrent_task: EventLoopTask::from_event_loop(event_loop),
+            cwd_path,
             err: None,
-            task: WorkPoolTask { callback: Self::run_from_thread_pool },
+            task: ShellTask::new(evtloop),
         }))
     }
 
-    pub fn schedule(&mut self) {
-        bun_output::scoped_log!(ShellTouch, "{} schedule", self);
-        WorkPool::schedule(&mut self.task);
+    /// Spec: touch.zig `runFromThreadPool`.
+    pub fn run_from_thread_pool(this: *mut ShellTouchTask) {
+        // SAFETY: `this` is a live Box::into_raw'd task.
+        let this = unsafe { &mut *this };
+        // TODO(b2-blocked): bun_paths::join_z, NodeFS::utimes, bun_sys::open —
+        // the actual touch is `utimes(path)` falling back to
+        // `open(O_CREAT|O_WRONLY)` on ENOENT.
+        let _ = (&this.filepath, &this.cwd_path, this.opts);
+        this.task.on_finish();
     }
 
-    pub fn run_from_main_thread(&mut self) {
-        bun_output::scoped_log!(ShellTouch, "{} runFromJS", self);
-        // SAFETY: `touch` backref is valid for the lifetime of this task
-        unsafe { (*self.touch).on_shell_touch_task_done(self) };
-    }
-
-    pub fn run_from_main_thread_mini(&mut self, _: &mut ()) {
-        self.run_from_main_thread();
-    }
-
-    fn run_from_thread_pool(task: *mut WorkPoolTask) {
-        // SAFETY: task points to ShellTouchTask.task
-        let this: &mut ShellTouchTask = unsafe {
-            &mut *(task as *mut u8)
-                .sub(offset_of!(ShellTouchTask, task))
-                .cast::<ShellTouchTask>()
-        };
-        bun_output::scoped_log!(ShellTouch, "{} runFromThreadPool", this);
-
-        // We have to give an absolute path
-        let filepath: ZStr<'_> = 'brk: {
-            if resolve_path::Platform::Auto.is_absolute(this.filepath.as_bytes()) {
-                break 'brk this.filepath;
-            }
-            let parts: &[&[u8]] = &[this.cwd_path.as_bytes(), this.filepath.as_bytes()];
-            break 'brk resolve_path::join_z(parts, resolve_path::Platform::Auto);
-        };
-
-        let mut node_fs_ = node_fs::NodeFS::default();
-        // TODO(port): std.time.milliTimestamp() equivalent
-        let milliseconds: f64 = bun_core::time::milli_timestamp() as f64;
-        #[cfg(windows)]
-        let atime: TimeLike = milliseconds / 1000.0;
-        #[cfg(not(windows))]
-        let atime: TimeLike = TimeLike {
-            sec: (milliseconds / MS_PER_S).floor() as i64,
-            nsec: ((milliseconds % MS_PER_S) * NS_PER_MS) as i64,
-        };
-        let mtime = atime;
-        let args = node_fs::Arguments::Utimes {
-            atime,
-            mtime,
-            path: node_fs::PathLike::String(PathString::init(filepath.as_bytes())),
-        };
-        'out: {
-            if let Some(err) = node_fs_.utimes(args, node_fs::Flavor::Sync).as_err() {
-                if err.get_errno() == bun_sys::Errno::NOENT {
-                    let perm = 0o664;
-                    match syscall::open(&filepath, bun_sys::O::CREAT | bun_sys::O::WRONLY, perm) {
-                        bun_sys::Result::Ok(fd) => {
-                            fd.close();
-                            break 'out;
-                        }
-                        bun_sys::Result::Err(e) => {
-                            this.err =
-                                Some(e.with_path(filepath.as_bytes()).to_shell_system_error());
-                            break 'out;
-                        }
-                    }
-                }
-                this.err = Some(err.with_path(filepath.as_bytes()).to_shell_system_error());
-            }
-        }
-
-        match &mut this.event_loop {
-            EventLoopHandle::Js(js) => {
-                // TODO(port): ConcurrentTask::from(this, .manual_deinit) — exact API in bun_jsc
-                js.enqueue_task_concurrent(this.concurrent_task.js().from(
-                    this,
-                    bun_jsc::ConcurrentTaskDeinit::Manual,
-                ));
-            }
-            EventLoopHandle::Mini(mini) => {
-                mini.enqueue_task_concurrent(
-                    this.concurrent_task
-                        .mini()
-                        .from(this, "runFromMainThreadMini"),
-                );
-            }
-        }
+    pub fn run_from_main_thread(this: *mut ShellTouchTask, interp: &mut Interpreter) {
+        // SAFETY: `this` is a live Box::into_raw'd task.
+        let cmd = unsafe { (*this).cmd };
+        Touch::on_shell_touch_task_done(interp, cmd, this);
     }
 }
-
-const MS_PER_S: f64 = 1000.0;
-const NS_PER_MS: f64 = 1_000_000.0;
 
 #[derive(Clone, Copy, Default)]
 pub struct Opts {
-    /// -a
-    ///
-    /// change only the access time
+    /// `-a` — change only the access time
     pub access_time_only: bool,
-
-    /// -c, --no-create
-    ///
-    /// do not create any files
+    /// `-c`, `--no-create` — do not create any files
     pub no_create: bool,
-
-    /// -d, --date=STRING
-    ///
-    /// parse STRING and use it instead of current time
-    pub date: Option<&'static [u8]>,
-
-    /// -h, --no-dereference
-    ///
-    /// affect each symbolic link instead of any referenced file
-    /// (useful only on systems that can change the timestamps of a symlink)
+    /// `-h`, `--no-dereference` — affect each symbolic link instead of any
+    /// referenced file
     pub no_dereference: bool,
-
-    /// -m
-    ///
-    /// change only the modification time
+    /// `-m` — change only the modification time
     pub modification_time_only: bool,
-
-    /// -r, --reference=FILE
-    ///
-    /// use this file's times instead of current time
-    pub reference: Option<&'static [u8]>,
-
-    /// -t STAMP
-    ///
-    /// use [[CC]YY]MMDDhhmm[.ss] instead of current time
-    pub timestamp: Option<&'static [u8]>,
-
-    /// --time=WORD
-    ///
-    /// change the specified time:
-    /// WORD is access, atime, or use: equivalent to -a
-    /// WORD is modify or mtime: equivalent to -m
-    pub time: Option<&'static [u8]>,
 }
 
-impl Opts {
-    pub fn parse(
-        &mut self,
-        args: &[*const c_char],
-    ) -> BuiltinResult<Option<&[*const c_char]>, ParseError> {
-        FlagParser::<Opts>::parse_flags(self, args)
+impl FlagParser for Opts {
+    fn parse_long(&mut self, flag: &[u8]) -> Option<ParseFlagResult> {
+        match flag {
+            b"--no-create" => Some(ParseFlagResult::Unsupported(unsupported_flag(b"--no-create"))),
+            b"--date" => Some(ParseFlagResult::Unsupported(unsupported_flag(b"--date"))),
+            b"--reference" => {
+                Some(ParseFlagResult::Unsupported(unsupported_flag(b"--reference=FILE")))
+            }
+            b"--time" => {
+                Some(ParseFlagResult::Unsupported(unsupported_flag(b"--reference=FILE")))
+            }
+            _ => None,
+        }
     }
 
-    pub fn parse_long(&mut self, flag: &[u8]) -> Option<ParseFlagResult> {
-        let _ = self;
-        if flag == b"--no-create" {
-            return Some(ParseFlagResult::Unsupported(unsupported_flag("--no-create")));
+    fn parse_short(&mut self, ch: u8, smallflags: &[u8], i: usize) -> Option<ParseFlagResult> {
+        match ch {
+            b'a' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-a"))),
+            b'c' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-c"))),
+            b'd' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-d"))),
+            b'h' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-h"))),
+            b'm' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-m"))),
+            b'r' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-r"))),
+            b't' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-t"))),
+            _ => Some(ParseFlagResult::IllegalOption(&smallflags[1 + i..] as *const [u8])),
         }
-
-        if flag == b"--date" {
-            return Some(ParseFlagResult::Unsupported(unsupported_flag("--date")));
-        }
-
-        if flag == b"--reference" {
-            return Some(ParseFlagResult::Unsupported(unsupported_flag(
-                "--reference=FILE",
-            )));
-        }
-
-        if flag == b"--time" {
-            return Some(ParseFlagResult::Unsupported(unsupported_flag(
-                "--reference=FILE",
-            )));
-        }
-
-        None
-    }
-
-    pub fn parse_short(&mut self, char: u8, smallflags: &[u8], i: usize) -> Option<ParseFlagResult> {
-        let _ = self;
-        match char {
-            b'a' => Some(ParseFlagResult::Unsupported(unsupported_flag("-a"))),
-            b'c' => Some(ParseFlagResult::Unsupported(unsupported_flag("-c"))),
-            b'd' => Some(ParseFlagResult::Unsupported(unsupported_flag("-d"))),
-            b'h' => Some(ParseFlagResult::Unsupported(unsupported_flag("-h"))),
-            b'm' => Some(ParseFlagResult::Unsupported(unsupported_flag("-m"))),
-            b'r' => Some(ParseFlagResult::Unsupported(unsupported_flag("-r"))),
-            b't' => Some(ParseFlagResult::Unsupported(unsupported_flag("-t"))),
-            _ => Some(ParseFlagResult::IllegalOption(&smallflags[1 + i..])),
-        }
-        // Zig had a trailing `return null;` here which is unreachable after the exhaustive switch.
     }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/shell/builtin/touch.zig (414 lines)
-//   confidence: medium
-//   todos:      8
-//   notes:      OutputTask vtable modeled as trait; ZStr<'static> fields need real lifetimes; EventLoopTask/NodeFS API shapes guessed
+//   confidence: medium (NodeId style; thread-pool body stubbed)
+//   blocked_on: NodeFS::utimes, bun_sys::open, WorkPool, IOWriter::enqueue body
 // ──────────────────────────────────────────────────────────────────────────

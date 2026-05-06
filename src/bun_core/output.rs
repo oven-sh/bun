@@ -65,6 +65,9 @@ pub struct OutputSinkVTable {
     pub tty_winsize: unsafe fn(fd: Fd) -> Option<crate::Winsize>,
     /// `isatty(fd)`. Progress.rs uses this to gate ANSI output.
     pub is_terminal: unsafe fn(fd: Fd) -> bool,
+    /// Blocking `read(2)` on `fd` into `buf`. Backs the stdin readers below
+    /// (`bun_sys::File::read` / `ReadFile` on Windows).
+    pub read: unsafe fn(fd: Fd, buf: &mut [u8]) -> Result<usize, crate::Error>,
 }
 
 /// Installed by `bun_sys` at startup via [`install_output_sink`]. Startup ordering
@@ -2205,10 +2208,15 @@ pub fn err_fmt(formatter: impl fmt::Display) {
     err_generic!("{}", formatter);
 }
 
-// TODO(b0-genuine): bun_sys::deprecated::BufferedReader<4096, bun_sys::file::Reader>
-// is a higher-tier concrete type. The static moves to bun_sys (move-in pass) and
-// is re-exported back here via a `pub use`. bun_core only needs the `Fd::stdin()`
-// constant which already lives here.
+// ──────────────────────────────────────────────────────────────────────────
+// Stdin readers (CYCLEBREAK §Dispatch cold path)
+//
+// Zig's `bun.Output.buffered_stdin` is a `bun.deprecated.BufferedReader(4096,
+// File.Reader)`. The concrete `File.Reader` lives in bun_sys; bun_core routes
+// the underlying `read(2)` through the [`OutputSinkVTable::read`] slot so the
+// `prompt`/`init`/`publish` callers can read stdin without naming bun_sys.
+// ──────────────────────────────────────────────────────────────────────────
+
 pub static mut BUFFERED_STDIN: BufferedStdin = BufferedStdin {
     fd: {
         #[cfg(windows)]
@@ -2221,14 +2229,162 @@ pub static mut BUFFERED_STDIN: BufferedStdin = BufferedStdin {
         }
     },
     buf: [0; 4096],
+    start: 0,
+    end: 0,
 };
 
-/// Opaque stand-in for `bun_sys::deprecated::BufferedReader<4096, file::Reader>`.
-/// SAFETY: erased; bun_sys casts back via `#[repr(C)]` layout match.
+/// `bun.deprecated.BufferedReader(4096, File.Reader)` over the process stdin.
+/// Layout is local to bun_core; bun_sys never casts into this (it only fills
+/// `.fd` during Windows startup).
 #[repr(C)]
 pub struct BufferedStdin {
     pub fd: Fd,
     pub buf: [u8; 4096],
+    pub start: usize,
+    pub end: usize,
+}
+
+impl BufferedStdin {
+    /// Zig `BufferedReader.reader()` — the std adapter just hands back `&mut
+    /// Self` (which already exposes `read`/`read_byte`).
+    #[inline]
+    pub fn reader(&mut self) -> &mut Self { self }
+
+    /// Zig `BufferedReader.read` — fill `dest` from the buffer, refilling from
+    /// the underlying fd until `dest` is full or EOF. Returns `Ok(0)` on EOF.
+    ///
+    /// PORT NOTE: matches std `BufferedReader.read` fill-to-completion semantics
+    /// (loops on the underlying fd), not POSIX partial-read.
+    pub fn read(&mut self, dest: &mut [u8]) -> Result<usize, crate::Error> {
+        let mut written: usize = 0;
+        loop {
+            let current = &self.buf[self.start..self.end];
+            if !current.is_empty() {
+                let n = current.len().min(dest.len() - written);
+                dest[written..written + n].copy_from_slice(&current[..n]);
+                self.start += n;
+                written += n;
+                if written == dest.len() {
+                    return Ok(written);
+                }
+            }
+            let remaining = dest.len() - written;
+            if remaining >= self.buf.len() {
+                // Large dest tail: bypass the buffer.
+                // SAFETY: vtable installed at startup; fd is the process stdin.
+                let n = unsafe { (output_sink().read)(self.fd, &mut dest[written..]) }?;
+                if n == 0 {
+                    return Ok(written);
+                }
+                written += n;
+                if written == dest.len() {
+                    return Ok(written);
+                }
+                continue;
+            }
+            // SAFETY: vtable installed at startup; fd is the process stdin.
+            self.end = unsafe { (output_sink().read)(self.fd, &mut self.buf) }?;
+            self.start = 0;
+            if self.end == 0 {
+                return Ok(written);
+            }
+        }
+    }
+
+    /// Zig `GenericReader.readByte` — `Err` on I/O error *or* EOF (matches
+    /// `error.EndOfStream`).
+    pub fn read_byte(&mut self) -> Result<u8, crate::Error> {
+        if self.start < self.end {
+            let b = self.buf[self.start];
+            self.start += 1;
+            return Ok(b);
+        }
+        let mut one = [0u8; 1];
+        match self.read(&mut one)? {
+            0 => Err(crate::Error::TODO), // EndOfStream
+            _ => Ok(one[0]),
+        }
+    }
+
+    /// Zig `GenericReader.readUntilDelimiterArrayList` — appends bytes (not
+    /// including `delimiter`) into `out`; errors with `StreamTooLong`
+    /// semantics if `out.len()` would exceed `max_size`.
+    pub fn read_until_delimiter_array_list(
+        &mut self,
+        out: &mut Vec<u8>,
+        delimiter: u8,
+        max_size: usize,
+    ) -> Result<(), crate::Error> {
+        out.clear();
+        loop {
+            if out.len() >= max_size {
+                return Err(crate::Error::TODO); // StreamTooLong
+            }
+            let b = self.read_byte()?;
+            if b == delimiter {
+                return Ok(());
+            }
+            out.push(b);
+        }
+    }
+}
+
+/// Unbuffered stdin byte reader (`std.fs.File.stdin().readerStreaming(..)` in
+/// the Zig). Each `take_byte` is a 1-byte blocking read on the process stdin.
+pub struct StdinReader {
+    fd: Fd,
+}
+
+impl StdinReader {
+    /// Zig `Reader.takeByte` — `Err` on I/O error *or* EOF.
+    #[inline]
+    pub fn take_byte(&mut self) -> Result<u8, crate::Error> {
+        let mut one = [0u8; 1];
+        // SAFETY: vtable installed at startup; fd is the process stdin.
+        match unsafe { (output_sink().read)(self.fd, &mut one) }? {
+            0 => Err(crate::Error::TODO), // EndOfStream
+            _ => Ok(one[0]),
+        }
+    }
+    /// Alias for callers that spell it `read_byte`.
+    #[inline]
+    pub fn read_byte(&mut self) -> Result<u8, crate::Error> { self.take_byte() }
+}
+
+/// `std.fs.File.stdin().readerStreaming(&buf)` — fresh, unbuffered stdin
+/// reader. Used by `alert()`/`confirm()` which read a handful of bytes.
+#[inline]
+pub fn stdin_reader() -> StdinReader {
+    StdinReader { fd: Fd::stdin() }
+}
+
+/// `bun.Output.buffered_stdin.reader()` — borrow the process-global 4 KiB
+/// buffered stdin. Used by `prompt()`/`bun init`/`bun publish` line reads.
+///
+/// SAFETY: the static is single-threaded by construction (only ever touched
+/// from the main JS/CLI thread while blocked on user input).
+#[inline]
+#[allow(static_mut_refs)]
+pub fn buffered_stdin_reader() -> &'static mut BufferedStdin {
+    unsafe { &mut BUFFERED_STDIN }
+}
+
+/// `bun.Output.buffered_stdin` — same borrow as [`buffered_stdin_reader`]; the
+/// Zig spelling exposed the static itself and callers chained `.reader()`.
+#[inline]
+#[allow(static_mut_refs)]
+pub fn buffered_stdin() -> &'static mut BufferedStdin {
+    unsafe { &mut BUFFERED_STDIN }
+}
+
+/// Convenience for `bun.Output.buffered_stdin.reader().readUntilDelimiterArrayList`.
+#[inline]
+pub fn buffered_stdin_read_until_delimiter(
+    out: &mut Vec<u8>,
+    delimiter: u8,
+    max_size: usize,
+) -> Result<(), crate::Error> {
+    buffered_stdin().read_until_delimiter_array_list(out, delimiter, max_size)
 }
 
 /// https://gist.github.com/christianparpart/d8a62cc1ab659194337d73e399004036

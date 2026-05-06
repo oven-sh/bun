@@ -32,7 +32,6 @@ mod _gated_submods {
     pub mod cookie_map;
     pub use cookie_map::CookieMap;
     pub mod object_url_registry;
-    pub mod sink;
     pub mod byte_blob_loader;
     pub mod byte_stream;
 
@@ -163,6 +162,10 @@ pub use readable_stream::{ReadableStream, Tag as ReadableStreamTag, Source as Re
 #[path = "webcore/FileReader.rs"]
 pub mod file_reader;
 pub use file_reader::FileReader;
+
+#[path = "webcore/Sink.rs"]
+pub mod sink;
+pub use sink::Sink;
 
 #[path = "webcore/FileSink.rs"]
 pub mod file_sink;

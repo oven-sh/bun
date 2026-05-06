@@ -1,4 +1,4 @@
-use core::cell::RefCell;
+use core::cell::UnsafeCell;
 
 use crate::{
     is_absolute_posix, is_absolute_windows, is_absolute_windows_t, disk_designator_windows,
@@ -9,9 +9,16 @@ use bun_alloc::{is_slice_in_buffer, is_slice_in_buffer_t};
 // MOVE_DOWN(CYCLEBREAK): bun_resolver::fs → crate::fs (move-in pass adds the module).
 use crate::fs as Fs;
 
+// PORT NOTE: Zig `threadlocal var` buffers. Stored in `UnsafeCell` (not `RefCell`)
+// because callers must receive a raw `&mut` slice that outlives the `.with` closure
+// to match Zig's "valid until next call on this thread" pointer semantics. RefCell's
+// runtime borrow tracking cannot express that contract and would force an
+// unsafe-lifetime-extend through `RefCell::as_ptr` (PORTING.md §Forbidden).
+// SAFETY invariant: each buffer has at most one live mutable borrow per thread;
+// callers must not re-enter the accessor while a previous borrow is alive.
 thread_local! {
-    static PARSER_JOIN_INPUT_BUFFER: RefCell<[u8; 4096]> = const { RefCell::new([0u8; 4096]) };
-    static PARSER_BUFFER: RefCell<[u8; 1024]> = const { RefCell::new([0u8; 1024]) };
+    static PARSER_JOIN_INPUT_BUFFER: UnsafeCell<[u8; 4096]> = const { UnsafeCell::new([0u8; 4096]) };
+    static PARSER_BUFFER: UnsafeCell<[u8; 1024]> = const { UnsafeCell::new([0u8; 1024]) };
 }
 
 pub fn z<'a>(input: &[u8], output: &'a mut PathBuffer) -> &'a ZStr {
@@ -380,32 +387,27 @@ pub fn longest_common_path_posix<'a>(input: &[&'a [u8]]) -> &'a [u8] {
     longest_common_path_generic::<platform::Posix>(input)
 }
 
-// TODO(port): bun.ThreadlocalBuffers(struct {...}) is a typed thread-local pool.
-// Represent as plain thread_local! RefCells of PathBuffer.
-struct RelativeBufs {
-    relative_to_common_path_buf: PathBuffer,
-    relative_from_buf: PathBuffer,
-    relative_to_buf: PathBuffer,
-}
+// PORT NOTE: bun.ThreadlocalBuffers(struct {...}) is a typed thread-local pool.
+// Represented as three independent `UnsafeCell<PathBuffer>` thread-locals so that
+// `relative_platform_buf` can hold disjoint `&mut` to from/to buffers while
+// `relative_to_common_path_buf()` is borrowed elsewhere without aliasing a single
+// parent payload. See the SAFETY invariant on PARSER_BUFFER above.
 thread_local! {
-    static RELATIVE_BUFS: RefCell<RelativeBufs> = const {
-        RefCell::new(RelativeBufs {
-            relative_to_common_path_buf: PathBuffer::ZEROED,
-            relative_from_buf: PathBuffer::ZEROED,
-            relative_to_buf: PathBuffer::ZEROED,
-        })
-    };
+    static RELATIVE_TO_COMMON_PATH_BUF: UnsafeCell<PathBuffer> =
+        const { UnsafeCell::new(PathBuffer::ZEROED) };
+    static RELATIVE_FROM_BUF: UnsafeCell<PathBuffer> =
+        const { UnsafeCell::new(PathBuffer::ZEROED) };
+    static RELATIVE_TO_BUF: UnsafeCell<PathBuffer> =
+        const { UnsafeCell::new(PathBuffer::ZEROED) };
 }
 
 #[inline]
 pub fn relative_to_common_path_buf() -> &'static mut PathBuffer {
-    // TODO(port): Zig returned a raw pointer into the thread-local; Rust cannot
-    // safely hand out &'static mut from thread_local!. Phase B: change callers
-    // to use `.with_borrow_mut(|b| ...)` or expose a guard type.
-    RELATIVE_BUFS.with(|b| {
-        // SAFETY: thread-local, single-threaded access; matches Zig pointer semantics
-        unsafe { &mut (*b.as_ptr()).relative_to_common_path_buf }
-    })
+    // PORT NOTE: Zig returned a raw pointer into the thread-local. Returned borrow
+    // is valid until the next call on this thread; callers must not hold it across
+    // re-entry. Matches Zig threadlocal-var pointer semantics.
+    // SAFETY: thread-local UnsafeCell; single live borrow per thread (see invariant above).
+    RELATIVE_TO_COMMON_PATH_BUF.with(|b| unsafe { &mut *b.get() })
 }
 
 /// Find a relative path from a common path
@@ -688,11 +690,12 @@ pub fn relative_platform_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
     from: &[u8],
     to: &[u8],
 ) -> &'a [u8] {
-    // TODO(port): thread-local buffer access via raw pointers; see relative_to_common_path_buf note
-    // SAFETY: thread-local, single-threaded access; matches Zig threadlocal-var pointer semantics
-    let relative_from_buf = RELATIVE_BUFS.with(|b| unsafe { &mut (*b.as_ptr()).relative_from_buf });
-    // SAFETY: thread-local, single-threaded access; matches Zig threadlocal-var pointer semantics
-    let relative_to_buf = RELATIVE_BUFS.with(|b| unsafe { &mut (*b.as_ptr()).relative_to_buf });
+    // SAFETY: thread-local UnsafeCell; RELATIVE_FROM_BUF and RELATIVE_TO_BUF are
+    // independent cells so the two `&mut` borrows below are disjoint. Single live
+    // borrow per cell per thread (see invariant on PARSER_BUFFER).
+    let relative_from_buf = RELATIVE_FROM_BUF.with(|b| unsafe { &mut *b.get() });
+    // SAFETY: see above — disjoint thread-local UnsafeCell.
+    let relative_to_buf = RELATIVE_TO_BUF.with(|b| unsafe { &mut *b.get() });
 
     let normalized_from: &[u8] = if P::P.is_absolute(from) {
         'brk: {
@@ -749,22 +752,16 @@ pub fn relative_platform_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
             break 'brk &relative_to_buf[0..path_len + 1];
         }
     } else {
-        // PORT NOTE: Zig aliased relative_to_buf as both input and output.
-        // Reshape: normalize into relative_from_buf scratch (already consumed
-        // above into normalized_from, which is &[u8] not &mut), then join.
-        // SAFETY: normalized_from points into relative_from_buf; we need a
-        // disjoint scratch. Use raw-ptr re-derive of relative_from_buf tail
-        // past normalized_from.len() — too fragile. Gate this arm.
-        #[cfg(any())]
-        {
-            join_abs_string_buf::<P>(
-                Fs::FileSystem::instance().top_level_dir(),
-                relative_to_buf,
-                &[normalize_string_buf::<true, P, true>(to, &mut relative_to_buf[1..])],
-            )
-        }
-        // TODO(b2-reshape): non-absolute `to` path — needs separate scratch buffer.
-        todo!("relative_platform_buf: non-absolute `to` — needs aliasing reshape")
+        // PORT NOTE: Zig aliased relative_to_buf as both input (normalize result)
+        // and output (join target). Reshape: normalize into `buf` scratch (caller
+        // output buffer, untouched until the final relative_normalized_buf call
+        // and disjoint from both threadlocals), then join into relative_to_buf.
+        let norm_len = normalize_string_buf::<true, P, true>(to, buf).len();
+        join_abs_string_buf::<P>(
+            Fs::FileSystem::instance().top_level_dir(),
+            relative_to_buf,
+            &[&buf[..norm_len]],
+        )
     };
 
     relative_normalized_buf::<P, ALWAYS_COPY>(buf, normalized_from, normalized_to)
@@ -1368,10 +1365,11 @@ impl Platform {
 pub fn normalize_string<const ALLOW_ABOVE_ROOT: bool, P: PlatformT>(
     str: &[u8],
 ) -> &mut [u8] {
-    // TODO(port): returns slice into thread-local PARSER_BUFFER; lifetime hazard
+    // PORT NOTE: returns slice into thread-local PARSER_BUFFER; valid until the
+    // next call on this thread (Zig threadlocal-var semantics).
     PARSER_BUFFER.with(|b| {
-        // SAFETY: thread-local, single-threaded access; matches Zig threadlocal-var pointer semantics
-        let buf = unsafe { &mut *b.as_ptr() };
+        // SAFETY: thread-local UnsafeCell; single live borrow per thread (see invariant above).
+        let buf = unsafe { &mut *b.get() };
         normalize_string_buf::<ALLOW_ABOVE_ROOT, P, false>(str, buf)
     })
 }
@@ -1380,8 +1378,8 @@ pub fn normalize_string_z<const ALLOW_ABOVE_ROOT: bool, P: PlatformT>(
     str: &[u8],
 ) -> &mut ZStr {
     PARSER_BUFFER.with(|b| {
-        // SAFETY: thread-local, single-threaded access; matches Zig threadlocal-var pointer semantics
-        let buf = unsafe { &mut *b.as_ptr() };
+        // SAFETY: thread-local UnsafeCell; single live borrow per thread (see invariant above).
+        let buf = unsafe { &mut *b.get() };
         let normalized = normalize_string_buf::<ALLOW_ABOVE_ROOT, P, false>(str, buf);
         let len = normalized.len();
         buf[len] = 0;
@@ -1490,8 +1488,8 @@ pub fn join_abs<'a, P: PlatformT>(cwd: &'a [u8], part: &[u8]) -> &'a [u8] {
 // directly when `parts.is_empty()`. Return tied to `cwd`'s lifetime ('static: 'a).
 pub fn join_abs_string<'a, P: PlatformT>(cwd: &'a [u8], parts: &[&[u8]]) -> &'a [u8] {
     PARSER_JOIN_INPUT_BUFFER.with(|b| {
-        // SAFETY: thread-local, single-threaded access; matches Zig threadlocal-var pointer semantics
-        let buf = unsafe { &mut *b.as_ptr() };
+        // SAFETY: thread-local UnsafeCell; single live borrow per thread (see invariant above).
+        let buf = unsafe { &mut *b.get() };
         join_abs_string_buf::<P>(cwd, buf, parts)
     })
 }
@@ -1503,28 +1501,28 @@ pub fn join_abs_string<'a, P: PlatformT>(cwd: &'a [u8], parts: &[&[u8]]) -> &'a 
 /// Returned path is stored in a temporary buffer. It must be copied if it needs to be stored.
 pub fn join_abs_string_z<'a, P: PlatformT>(cwd: &'a [u8], parts: &[&[u8]]) -> &'a ZStr {
     PARSER_JOIN_INPUT_BUFFER.with(|b| {
-        // SAFETY: thread-local, single-threaded access; matches Zig threadlocal-var pointer semantics
-        let buf = unsafe { &mut *b.as_ptr() };
+        // SAFETY: thread-local UnsafeCell; single live borrow per thread (see invariant above).
+        let buf = unsafe { &mut *b.get() };
         join_abs_string_buf_z::<P>(cwd, buf, parts)
     })
 }
 
 thread_local! {
-    pub static JOIN_BUF: RefCell<[u8; 4096]> = const { RefCell::new([0u8; 4096]) };
+    pub static JOIN_BUF: UnsafeCell<[u8; 4096]> = const { UnsafeCell::new([0u8; 4096]) };
 }
 
 pub fn join<P: PlatformT>(parts: &[&[u8]]) -> &'static [u8] {
     JOIN_BUF.with(|b| {
-        // SAFETY: thread-local, single-threaded access; matches Zig threadlocal-var pointer semantics
-        let buf = unsafe { &mut *b.as_ptr() };
+        // SAFETY: thread-local UnsafeCell; single live borrow per thread (see invariant above).
+        let buf = unsafe { &mut *b.get() };
         join_string_buf::<P>(buf, parts)
     })
 }
 
 pub fn join_z<P: PlatformT>(parts: &[&[u8]]) -> &'static ZStr {
     JOIN_BUF.with(|b| {
-        // SAFETY: thread-local, single-threaded access; matches Zig threadlocal-var pointer semantics
-        let buf = unsafe { &mut *b.as_ptr() };
+        // SAFETY: thread-local UnsafeCell; single live borrow per thread (see invariant above).
+        let buf = unsafe { &mut *b.get() };
         join_z_buf::<P>(buf, parts)
     })
 }
@@ -1551,6 +1549,65 @@ pub fn join_string_buf_w<'a, P: PlatformT>(buf: &'a mut [u16], parts: &[&[u8]]) 
     // TODO(port): Zig `parts: anytype` allowed mixed u8/u16 elements; we accept
     // &[&[u8]] and transcode below to match the common callsite.
     join_string_buf_t::<u16, P>(buf, parts)
+}
+
+/// `joinStringBufW` overload for u16 parts (no transcode). Covers the
+/// `T == u16 && Elem == u16` arm of Zig's `joinStringBufT` `anytype` dispatch.
+pub fn join_string_buf_w_same<'a, P: PlatformT>(
+    buf: &'a mut [u16],
+    parts: &[&[u16]],
+) -> &'a [u16] {
+    join_string_buf_t_same::<u16, P>(buf, parts)
+}
+
+/// Same-width `joinStringBufT`: parts already match `T`, so no UTF-8→16 transcode.
+/// PORT NOTE: split out of `join_string_buf_t` because Rust can't monomorphize on
+/// `parts: anytype` element types like Zig — callers pick the overload.
+pub fn join_string_buf_t_same<'a, T: PathChar, P: PlatformT>(
+    buf: &'a mut [T],
+    parts: &[&[T]],
+) -> &'a [T] {
+    let mut written: usize = 0;
+    let mut temp_buf_: [T; 4096] = [T::from_u8(0); 4096];
+    let mut temp_buf: &mut [T] = &mut temp_buf_;
+    let mut heap_temp_buf: Vec<T>;
+    // PERF(port): was stack-fallback (manual free) — Vec drops on scope exit
+
+    let mut count: usize = 0;
+    for part in parts {
+        if part.is_empty() {
+            continue;
+        }
+        count += part.len() + 1;
+    }
+
+    if count * 2 > temp_buf.len() {
+        heap_temp_buf = vec![T::from_u8(0); count * 2];
+        temp_buf = &mut heap_temp_buf;
+    }
+
+    temp_buf[0] = T::from_u8(0);
+
+    for part in parts {
+        if part.is_empty() {
+            continue;
+        }
+
+        if written > 0 {
+            temp_buf[written] = T::from_u8(P::P.separator());
+            written += 1;
+        }
+
+        temp_buf[written..written + part.len()].copy_from_slice(part);
+        written += part.len();
+    }
+
+    if written == 0 {
+        buf[0] = T::from_u8(b'.');
+        return &buf[0..1];
+    }
+
+    normalize_string_node_t::<T, P>(&temp_buf[0..written], buf)
 }
 
 pub fn join_string_buf_wz<'a, P: PlatformT>(buf: &'a mut [u16], parts: &[&[u8]]) -> &'a WStr {
@@ -2675,11 +2732,25 @@ impl PathChar for u16 {
     }
     #[inline]
     fn lit(s: &'static str) -> &'static [Self] {
-        // TODO(port): needs `w!("...")` macro to produce &'static [u16] at compile time.
-        // Placeholder: callers only use ASCII literals; leak a converted Vec.
-        // PERF(port): replace with const_format/w!() macro.
-        let v: Vec<u16> = s.bytes().map(|b| b as u16).collect();
-        Box::leak(v.into_boxed_slice())
+        // PORT NOTE: Zig `strings.literal(u16, "...")` is a comptime constant. Rust
+        // has no stable const UTF-16 transmute for arbitrary literals, so dispatch on
+        // the closed set of ASCII literals actually passed by callers in this file.
+        // Zero allocation; matches Zig's zero-runtime-cost behavior.
+        // Box::leak is forbidden here (PORTING.md §Forbidden) — it leaked per call.
+        static SLASH_BSLASH: [u16; 2] = [b'/' as u16, b'\\' as u16];
+        static COLON_BSLASH: [u16; 2] = [b':' as u16, b'\\' as u16];
+        static NT_PREFIX: [u16; 4] = [b'\\' as u16, b'?' as u16, b'?' as u16, b'\\' as u16];
+        static UNC: [u16; 3] = [b'U' as u16, b'N' as u16, b'C' as u16];
+        static BSLASH_COLON_BSLASH: [u16; 3] = [b'\\' as u16, b':' as u16, b'\\' as u16];
+        match s {
+            "/\\" => &SLASH_BSLASH,
+            ":\\" => &COLON_BSLASH,
+            "\\??\\" => &NT_PREFIX,
+            "UNC" => &UNC,
+            "\\:\\" => &BSLASH_COLON_BSLASH,
+            // Unreachable for current callers; fail loudly rather than leak.
+            _ => unreachable!("PathChar::<u16>::lit: unhandled literal {:?}", s),
+        }
     }
 }
 

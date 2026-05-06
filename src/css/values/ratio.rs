@@ -1,6 +1,5 @@
-use crate::css_parser as css;
-use crate::css_parser::{Parser, Printer, PrintErr, Result};
-use crate::css_parser::css_values::number::{CSSNumber, CSSNumberFns};
+use crate::css_parser::{CssResult as Result, Parser, PrintErr, Printer};
+use crate::values::number::{CSSNumber, CSSNumberFns};
 
 /// A CSS [`<ratio>`](https://www.w3.org/TR/css-values-4/#ratios) value,
 /// representing the ratio of two numeric values.
@@ -13,7 +12,7 @@ pub struct Ratio {
 impl Ratio {
     pub fn parse(input: &mut Parser) -> Result<Ratio> {
         let first = CSSNumberFns::parse(input)?;
-        let second = if input.try_parse(|i| i.expect_delim('/')).is_ok() {
+        let second = if input.try_parse(|i| i.expect_delim(b'/')).is_ok() {
             CSSNumberFns::parse(input)?
         } else {
             1.0
@@ -25,7 +24,7 @@ impl Ratio {
     /// Parses a ratio where both operands are required.
     pub fn parse_required(input: &mut Parser) -> Result<Ratio> {
         let first = CSSNumberFns::parse(input)?;
-        input.expect_delim('/')?;
+        input.expect_delim(b'/')?;
         let second = CSSNumberFns::parse(input)?;
         Ok(Ratio { numerator: first, denominator: second })
     }
@@ -33,7 +32,7 @@ impl Ratio {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         CSSNumberFns::to_css(&self.numerator, dest)?;
         if self.denominator != 1.0 {
-            dest.delim('/', true)?;
+            dest.delim(b'/', true)?;
             CSSNumberFns::to_css(&self.denominator, dest)?;
         }
         Ok(())

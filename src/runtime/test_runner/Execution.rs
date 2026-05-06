@@ -41,10 +41,10 @@ use bun_core::Timespec; // TODO(port): confirm crate path for bun.timespec
 use bun_jsc::{JSGlobalObject, JsResult, VirtualMachine};
 use bun_output::scoped_log;
 
-use crate::debug::group as group_log; // bun_test.debug.group
-use crate::{
-    BunTest, BunTestPtr, ExecutionEntry, HandleUncaughtExceptionResult, Order, ScopeMode,
-    StepResult,
+use super::debug::group as group_log; // bun_test.debug.group
+use super::bun_test::{
+    BunTest, BunTestPtr, EntryData, ExecutionEntry, HandleUncaughtExceptionResult, Order, Phase,
+    RefDataValue, ScopeMode, StepResult,
 };
 use crate::cli::test_command;
 
@@ -297,14 +297,14 @@ impl Execution {
             }
         }
 
-        self.bun_test().add_result(crate::RefDataValue::Start);
+        self.bun_test().add_result(RefDataValue::Start);
         Ok(())
     }
 
     pub fn step(
         buntest_strong: BunTestPtr,
         global_this: &JSGlobalObject,
-        data: crate::bun_test::RefDataValue,
+        data: RefDataValue,
     ) -> JsResult<StepResult> {
         let _scope = group_log::begin();
         let buntest = buntest_strong.get();
@@ -312,7 +312,7 @@ impl Execution {
         let mut now = Timespec::now_force_real_time();
 
         match data {
-            crate::bun_test::RefDataValue::Start => {
+            RefDataValue::Start => {
                 return step_group(buntest_strong, global_this, &mut now);
             }
             _ => {
@@ -390,7 +390,7 @@ impl Execution {
 
     pub fn get_current_and_valid_execution_sequence(
         &mut self,
-        data: &crate::bun_test::RefDataValue,
+        data: &RefDataValue,
     ) -> Option<(&mut ExecutionSequence, &mut ConcurrentGroup)> {
         // TODO(port): borrowck — returns two &mut into disjoint self.groups / self.sequences
         // while also calling self.bun_test(); Phase B may need raw NonNull or split-borrow helper.
@@ -398,11 +398,11 @@ impl Execution {
 
         group_log::log(format_args!("runOneCompleted: data: {}", data));
 
-        let crate::bun_test::RefDataValue::Execution(exec) = data else {
+        let RefDataValue::Execution { entry_data, .. } = data else {
             group_log::log("runOneCompleted: the data is not execution");
             return None;
         };
-        if exec.entry_data.is_none() {
+        if entry_data.is_none() {
             group_log::log(
                 "runOneCompleted: the data did not know which entry was active in the group",
             );
@@ -424,15 +424,17 @@ impl Execution {
             group_log::log("runOneCompleted: the data did not know the sequence");
             return None;
         };
-        let entry_data = exec.entry_data.as_ref().unwrap();
+        let entry_data = entry_data.as_ref().unwrap();
         if sequence.remaining_repeat_count != entry_data.remaining_repeat_count {
             group_log::log(
                 "runOneCompleted: the data is for a previous repeat count (outdated)",
             );
             return None;
         }
-        if sequence.active_entry.map(|p| p.as_ptr() as *mut core::ffi::c_void)
-            != entry_data.entry.map(|p| p.as_ptr() as *mut core::ffi::c_void)
+        if sequence
+            .active_entry
+            .map_or(core::ptr::null(), |p| p.as_ptr() as *const ())
+            != entry_data.entry
         {
             group_log::log(
                 "runOneCompleted: the data is for a different sequence index (outdated)",
@@ -617,7 +619,7 @@ impl Execution {
             if entry.base.test_id_for_debugger != 0 {
                 if let Some(debugger) = VirtualMachine::get().debugger.as_mut() {
                     if debugger.test_reporter_agent.is_enabled() {
-                        use crate::TestReporterStatus as S; // TODO(port): confirm enum path for reportTestEnd status
+                        use bun_jsc::Debugger::TestStatus as S;
                         debugger.test_reporter_agent.report_test_end(
                             entry.base.test_id_for_debugger,
                             match sequence.result {
@@ -655,7 +657,7 @@ impl Execution {
                 // remove entries that were added in the execution phase
                 while let Some(next) = entry.next {
                     // SAFETY: arena-owned entry
-                    if unsafe { next.as_ref() }.added_in_phase != crate::Phase::Execution {
+                    if unsafe { next.as_ref() }.added_in_phase != Phase::Execution {
                         break;
                     }
                     // SAFETY: arena-owned entry, alive for lifetime of BunTest
@@ -686,7 +688,7 @@ impl Execution {
         // Zeroing all entries matches Jest (SnapshotState.clear() on test_retry,
         // jestjs/jest#7493). Concurrent tests never touch the counts map — see
         // SnapshotInConcurrentGroup in expect.zig.
-        if let Some(runner) = bun_jsc::Jest::runner() {
+        if let Some(runner) = super::jest::Jest::runner() {
             runner.snapshots.reset_counts();
         }
         let _ = self;
@@ -694,7 +696,7 @@ impl Execution {
 
     pub fn handle_uncaught_exception(
         &mut self,
-        user_data: crate::bun_test::RefDataValue,
+        user_data: RefDataValue,
     ) -> HandleUncaughtExceptionResult {
         let _scope = group_log::begin();
 
@@ -912,14 +914,14 @@ fn step_sequence_one(
     if let Some(cb) = next_item.callback.as_ref() {
         group_log::log("runSequence queued callback");
 
-        let callback_data = crate::bun_test::RefDataValue::Execution(crate::bun_test::ExecutionRef {
+        let callback_data = RefDataValue::Execution {
             group_index: this.group_index,
-            entry_data: Some(crate::bun_test::EntryData {
+            entry_data: Some(EntryData {
                 sequence_index,
-                entry: Some(next_item_ptr),
+                entry: next_item_ptr.as_ptr() as *const (),
                 remaining_repeat_count: sequence.remaining_repeat_count,
             }),
-        });
+        };
         group_log::log(format_args!("runSequence queued callback: {}", callback_data));
 
         if BunTest::run_test_callback(

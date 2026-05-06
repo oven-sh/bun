@@ -1,260 +1,227 @@
 //! 1 arg  => returns absolute path of the arg (not found becomes exit code 1)
 //!
-//! N args => returns absolute path of each separated by newline, if any path is not found, exit code becomes 1, but continues execution until all args are processed
+//! N args => returns absolute path of each separated by newline, if any path
+//! is not found, exit code becomes 1, but continues execution until all args
+//! are processed.
 
-use core::ffi::{c_char, CStr};
-use core::mem::offset_of;
+use core::ffi::CStr;
 
-use bun_jsc::SystemError;
-use bun_paths::path_buffer_pool;
-use bun_core::which;
-// TODO(port): verify crate path for `bun.which` (src/which.zig) — assuming bun_core::which
-
-use crate::interpreter::EnvStr;
-use crate::interpreter::Builtin;
-use crate::Yield;
-
-bun_output::declare_scope!(which, hidden);
+use crate::shell::builtin::{Builtin, IoKind, Kind};
+use crate::shell::env_str::EnvStr;
+use crate::shell::interpreter::{Interpreter, NodeId};
+use crate::shell::io_writer::{ChildPtr, WriterTag};
+use crate::shell::yield_::Yield;
 
 #[derive(Default)]
 pub struct Which {
     pub state: State,
 }
 
+#[derive(Default)]
 pub enum State {
+    #[default]
     Idle,
+    /// Called with no args: queued a single "\n" and waiting for the write.
     OneArg,
-    MultiArgs(MultiArgs),
+    MultiArgs {
+        arg_idx: usize,
+        had_not_found: bool,
+        waiting_write: bool,
+    },
     Done,
 }
 
-impl Default for State {
-    fn default() -> Self {
-        State::Idle
-    }
-}
-
-pub struct MultiArgs {
-    // TODO(port): lifetime — borrowed from parent Builtin's argsSlice(); using raw fat ptr to avoid struct lifetime in Phase A
-    pub args_slice: *const [*const c_char],
-    pub arg_idx: usize,
-    pub had_not_found: bool,
-    pub state: MultiArgsState,
-}
-
-pub enum MultiArgsState {
-    None,
-    WaitingWrite,
-}
-
 impl Which {
-    pub fn start(&mut self) -> Yield {
-        let args = self.bltn().args_slice();
-        if args.is_empty() {
-            if let Some(safeguard) = self.bltn().stdout.needs_io() {
-                self.state = State::OneArg;
-                return self.bltn().stdout.enqueue(self, b"\n", safeguard);
+    pub fn start(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+        let argc = Builtin::of(interp, cmd).args_slice().len();
+        if argc == 0 {
+            if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
+                Self::state_mut(interp, cmd).state = State::OneArg;
+                let child = ChildPtr { node: cmd, tag: WriterTag::Builtin };
+                return Builtin::of_mut(interp, cmd)
+                    .stdout
+                    .enqueue(child, b"\n", safeguard);
             }
-            let _ = self.bltn().write_no_io(.stdout, b"\n");
-            // TODO(port): `.stdout` is a Zig enum literal selecting the fd kind; map to Builtin::Fd::Stdout or similar in Phase B
-            return self.bltn().done(1);
+            Builtin::write_no_io(interp, cmd, IoKind::Stdout, b"\n");
+            return Builtin::done(interp, cmd, 1);
         }
 
-        if self.bltn().stdout.needs_io().is_none() {
-            let path_buf = path_buffer_pool().get();
-            let path_env = self
-                .bltn()
-                .parent_cmd()
-                .base
-                .shell
-                .export_env
-                .get(EnvStr::init_slice(b"PATH"))
-                .unwrap_or_else(|| EnvStr::init_slice(b""));
-            // `defer PATH.deref()` — EnvStr Drop handles deref
+        if Builtin::of(interp, cmd).stdout.needs_io().is_none() {
+            // Synchronous path: resolve every arg, write straight to the
+            // captured buffer, then finish.
+            let (path_env, cwd) = Self::path_and_cwd(interp, cmd);
             let mut had_not_found = false;
-            for &arg_raw in args {
-                // SAFETY: args from argsSlice() are NUL-terminated C strings
-                let arg = unsafe { CStr::from_ptr(arg_raw) }.to_bytes();
-                let resolved = match which(
-                    &mut *path_buf,
-                    path_env.slice(),
-                    self.bltn().parent_cmd().base.shell.cwd_z(),
-                    arg,
-                ) {
-                    Some(r) => r,
+            for i in 0..argc {
+                let arg = Self::arg(interp, cmd, i);
+                match Self::resolve(&path_env, &cwd, &arg) {
+                    Some(resolved) => {
+                        let buf = Builtin::fmt_error_arena(
+                            interp,
+                            cmd,
+                            None,
+                            format_args!("{}\n", bstr::BStr::new(&resolved)),
+                        )
+                        .to_vec();
+                        Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
+                    }
                     None => {
                         had_not_found = true;
-                        let buf = self.bltn().fmt_error_arena(
-                            Some(.which),
-                            // TODO(port): `.which` is Builtin.Kind enum literal
-                            format_args!("{} not found\n", bstr::BStr::new(arg)),
-                        );
-                        let _ = self.bltn().write_no_io(.stdout, buf);
-                        continue;
+                        let buf = Builtin::fmt_error_arena(
+                            interp,
+                            cmd,
+                            Some(Kind::Which),
+                            format_args!("{} not found\n", bstr::BStr::new(&arg)),
+                        )
+                        .to_vec();
+                        Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
                     }
-                };
-
-                let _ = self.bltn().write_no_io(.stdout, resolved);
+                }
             }
-            return self.bltn().done(had_not_found as u8);
+            return Builtin::done(interp, cmd, if had_not_found { 1 } else { 0 });
         }
 
-        self.state = State::MultiArgs(MultiArgs {
-            args_slice: args as *const _,
+        Self::state_mut(interp, cmd).state = State::MultiArgs {
             arg_idx: 0,
             had_not_found: false,
-            state: MultiArgsState::None,
-        });
-        self.next()
+            waiting_write: false,
+        };
+        Self::next(interp, cmd)
     }
 
-    pub fn next(&mut self) -> Yield {
-        // PORT NOTE: reshaped for borrowck — capture needed scalars before re-borrowing self via bltn()
-        let State::MultiArgs(multiargs) = &mut self.state else {
-            unreachable!()
+    pub fn next(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+        let argc = Builtin::of(interp, cmd).args_slice().len();
+        let (arg_idx, had_not_found) = match &Self::state_mut(interp, cmd).state {
+            State::MultiArgs { arg_idx, had_not_found, .. } => (*arg_idx, *had_not_found),
+            _ => unreachable!(),
         };
-        // SAFETY: args_slice points into parent Builtin's args, which outlive this Which
-        let args_slice = unsafe { &*multiargs.args_slice };
-        if multiargs.arg_idx >= args_slice.len() {
-            // Done
-            let had_not_found = multiargs.had_not_found;
-            return self.bltn().done(had_not_found as u8);
+        if arg_idx >= argc {
+            return Builtin::done(interp, cmd, if had_not_found { 1 } else { 0 });
         }
 
-        let arg_raw = args_slice[multiargs.arg_idx];
-        // SAFETY: args from argsSlice() are NUL-terminated C strings
-        let arg = unsafe { CStr::from_ptr(arg_raw) }.to_bytes();
+        let arg = Self::arg(interp, cmd, arg_idx);
+        let (path_env, cwd) = Self::path_and_cwd(interp, cmd);
+        let resolved = Self::resolve(&path_env, &cwd, &arg);
 
-        let path_buf = path_buffer_pool().get();
-        let path_env = self
-            .bltn()
-            .parent_cmd()
-            .base
-            .shell
-            .export_env
-            .get(EnvStr::init_slice(b"PATH"))
-            .unwrap_or_else(|| EnvStr::init_slice(b""));
-        // `defer PATH.deref()` — EnvStr Drop handles deref
-
-        let resolved = match which(
-            &mut *path_buf,
-            path_env.slice(),
-            self.bltn().parent_cmd().base.shell.cwd_z(),
-            arg,
-        ) {
-            Some(r) => r,
+        let child = ChildPtr { node: cmd, tag: WriterTag::Builtin };
+        match resolved {
             None => {
-                let State::MultiArgs(multiargs) = &mut self.state else {
-                    unreachable!()
-                };
-                multiargs.had_not_found = true;
-                if let Some(safeguard) = self.bltn().stdout.needs_io() {
-                    let State::MultiArgs(multiargs) = &mut self.state else {
-                        unreachable!()
-                    };
-                    multiargs.state = MultiArgsState::WaitingWrite;
-                    return self.bltn().stdout.enqueue_fmt_bltn(
-                        self,
+                if let State::MultiArgs { had_not_found, waiting_write, .. } =
+                    &mut Self::state_mut(interp, cmd).state
+                {
+                    *had_not_found = true;
+                    *waiting_write = true;
+                }
+                if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
+                    return Builtin::of_mut(interp, cmd).stdout.enqueue_fmt(
+                        child,
                         None,
-                        format_args!("{} not found\n", bstr::BStr::new(arg)),
+                        format_args!("{} not found\n", bstr::BStr::new(&arg)),
                         safeguard,
                     );
                 }
-
-                let buf = self
-                    .bltn()
-                    .fmt_error_arena(None, format_args!("{} not found\n", bstr::BStr::new(arg)));
-                let _ = self.bltn().write_no_io(.stdout, buf);
-                return self.arg_complete();
+                let buf = Builtin::fmt_error_arena(
+                    interp,
+                    cmd,
+                    None,
+                    format_args!("{} not found\n", bstr::BStr::new(&arg)),
+                )
+                .to_vec();
+                Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
+                Self::arg_complete(interp, cmd)
             }
-        };
-
-        if let Some(safeguard) = self.bltn().stdout.needs_io() {
-            let State::MultiArgs(multiargs) = &mut self.state else {
-                unreachable!()
-            };
-            multiargs.state = MultiArgsState::WaitingWrite;
-            return self.bltn().stdout.enqueue_fmt_bltn(
-                self,
-                None,
-                format_args!("{}\n", bstr::BStr::new(resolved)),
-                safeguard,
-            );
+            Some(resolved) => {
+                if let State::MultiArgs { waiting_write, .. } =
+                    &mut Self::state_mut(interp, cmd).state
+                {
+                    *waiting_write = true;
+                }
+                if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
+                    return Builtin::of_mut(interp, cmd).stdout.enqueue_fmt(
+                        child,
+                        None,
+                        format_args!("{}\n", bstr::BStr::new(&resolved)),
+                        safeguard,
+                    );
+                }
+                let buf = Builtin::fmt_error_arena(
+                    interp,
+                    cmd,
+                    None,
+                    format_args!("{}\n", bstr::BStr::new(&resolved)),
+                )
+                .to_vec();
+                Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
+                Self::arg_complete(interp, cmd)
+            }
         }
-
-        let buf = self
-            .bltn()
-            .fmt_error_arena(None, format_args!("{}\n", bstr::BStr::new(resolved)));
-        let _ = self.bltn().write_no_io(.stdout, buf);
-        self.arg_complete()
     }
 
-    fn arg_complete(&mut self) -> Yield {
-        if cfg!(debug_assertions) {
-            debug_assert!(matches!(
-                &self.state,
-                State::MultiArgs(m) if matches!(m.state, MultiArgsState::WaitingWrite)
-            ));
+    fn arg_complete(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+        if let State::MultiArgs { arg_idx, waiting_write, .. } =
+            &mut Self::state_mut(interp, cmd).state
+        {
+            *arg_idx += 1;
+            *waiting_write = false;
         }
-
-        let State::MultiArgs(multiargs) = &mut self.state else {
-            unreachable!()
-        };
-        multiargs.arg_idx += 1;
-        multiargs.state = MultiArgsState::None;
-        self.next()
+        Self::next(interp, cmd)
     }
 
-    pub fn on_io_writer_chunk(&mut self, _: usize, e: Option<SystemError>) -> Yield {
-        if cfg!(debug_assertions) {
-            debug_assert!(
-                matches!(self.state, State::OneArg)
-                    || matches!(
-                        &self.state,
-                        State::MultiArgs(m) if matches!(m.state, MultiArgsState::WaitingWrite)
-                    )
-            );
-        }
-
+    pub fn on_io_writer_chunk(
+        interp: &mut Interpreter,
+        cmd: NodeId,
+        _: usize,
+        e: Option<bun_sys::SystemError>,
+    ) -> Yield {
         if let Some(err) = e {
-            // `defer err.deref()` — SystemError Drop handles deref
-            let errno = err.get_errno();
-            return self.bltn().done(errno);
+            return Builtin::done(interp, cmd, err.errno as crate::shell::ExitCode);
         }
-
-        if matches!(self.state, State::OneArg) {
-            // Calling which with on arguments returns exit code 1
-            return self.bltn().done(1);
+        match Self::state_mut(interp, cmd).state {
+            State::OneArg => Builtin::done(interp, cmd, 1),
+            State::MultiArgs { .. } => Self::arg_complete(interp, cmd),
+            _ => Builtin::done(interp, cmd, 0),
         }
+    }
 
-        self.arg_complete()
+    // ── helpers ────────────────────────────────────────────────────────────
+
+    /// Look up `$PATH` from the export env and the cwd from the shell env.
+    fn path_and_cwd(interp: &Interpreter, cmd: NodeId) -> (Vec<u8>, Vec<u8>) {
+        let shell = Builtin::shell(interp, cmd);
+        let path = shell
+            .export_env
+            .get(EnvStr::init_slice(b"PATH"))
+            .map(|s| s.slice().to_vec())
+            .unwrap_or_default();
+        (path, shell.cwd().to_vec())
+    }
+
+    fn arg(interp: &Interpreter, cmd: NodeId, idx: usize) -> Vec<u8> {
+        let args = Builtin::of(interp, cmd).args_slice();
+        // SAFETY: argv entries are NUL-terminated.
+        unsafe { CStr::from_ptr(args[idx]) }.to_bytes().to_vec()
+    }
+
+    /// Spec: which.zig — `bun.which(path_buf, PATH, cwd, arg)`.
+    fn resolve(path_env: &[u8], cwd: &[u8], arg: &[u8]) -> Option<Vec<u8>> {
+        // TODO(b2-blocked): bun_core::which — full PATH search with cwd
+        // fallback. Stubbed: returns None so behaviour is "not found" until
+        // the helper is wired (matches Zig's failure path).
+        let _ = (path_env, cwd, arg);
+        None
     }
 
     #[inline]
-    pub fn bltn(&mut self) -> &mut Builtin {
-        // SAFETY: self points to the `which` field inside Builtin.Impl, which is the `impl` field inside Builtin
-        unsafe {
-            let impl_ptr = (self as *mut Which as *mut u8)
-                .sub(offset_of!(Builtin::Impl, which))
-                .cast::<Builtin::Impl>();
-            // TODO(port): Builtin::Impl is a Zig union(enum); Rust enum layout differs — Phase B must rework @fieldParentPtr chain
-            &mut *(impl_ptr as *mut u8)
-                .sub(offset_of!(Builtin, impl_))
-                .cast::<Builtin>()
+    fn state_mut(interp: &mut Interpreter, cmd: NodeId) -> &mut Which {
+        match &mut Builtin::of_mut(interp, cmd).impl_ {
+            crate::shell::builtin::Impl::Which(w) => &mut **w,
+            _ => unreachable!(),
         }
-    }
-}
-
-impl Drop for Which {
-    fn drop(&mut self) {
-        bun_output::scoped_log!(which, "({}) deinit", "which");
     }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/shell/builtin/which.zig (156 lines)
-//   confidence: medium
-//   todos:      4
-//   notes:      `.stdout`/`.which` enum literals and @fieldParentPtr chain over union(enum) need Phase B rework; args_slice stored as raw fat ptr (borrowed from parent)
+//   confidence: medium (NodeId style; resolve() stubbed on bun_core::which)
+//   blocked_on: bun_core::which, IOWriter::enqueue body
 // ──────────────────────────────────────────────────────────────────────────

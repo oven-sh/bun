@@ -1343,7 +1343,7 @@ mod strings {
     }
     #[inline]
     pub fn index_of_any(slice: &[u8], chars: &'static [u8]) -> Option<usize> {
-        bun_string::strings::index_of_any(slice, chars).map(|v| v.get() as usize)
+        bun_string::strings::index_of_any(slice, chars).map(|v| v as usize)
     }
 }
 // bun_sys shim — adds the dir-iteration / openat surface the resolver names.
@@ -1406,12 +1406,6 @@ impl FdZero for ::bun_sys::Fd { const ZERO: ::bun_sys::Fd = ::bun_sys::Fd::INVAL
 // `Result`/`Status` shapes the BSSMap path needs.
 pub mod allocators {
     pub use bun_alloc::allocators::*;
-    #[derive(Clone, Copy, Default)]
-    pub struct Result {
-        pub index: IndexType,
-        pub hash: u64,
-        pub status: Status,
-    }
     pub use bun_alloc::ItemStatus as Status;
 }
 
@@ -1446,7 +1440,7 @@ mod options {
     }
 
     /// FORWARD_DECL: `bun_bundler::options::Conditions`.
-    #[derive(Clone, Default)]
+    #[derive(Default)]
     pub struct Conditions {
         pub import: crate::package_json::ConditionsMap,
         pub require: crate::package_json::ConditionsMap,
@@ -1525,7 +1519,6 @@ use ::bun_options_types::import_record as ast;
 use self::bun_paths as ResolvePath;
 use bun_paths::{PathBuffer, MAX_PATH_BYTES, SEP, SEP_STR};
 use bun_perf::system_timer::Timer;
-use bun_string::strings;
 use bun_sys::Fd as FD;
 
 use crate::fs as Fs;
@@ -1545,8 +1538,13 @@ macro_rules! debuglog {
 macro_rules! scoped_log {
     ($scope:ident, $($arg:tt)*) => { if false { let _ = format_args!($($arg)*); } };
 }
+// `macro_rules!` is textual-scoped — `pub use` it so `bun_output::scoped_log!`
+// path-qualifies (matches Zig `bun.Output.scoped`).
+#[allow(unused_imports)]
+pub(crate) use scoped_log;
 mod bun_output {
-    pub use super::scoped_log;
+    #[allow(unused_imports)]
+    pub(crate) use super::scoped_log;
 }
 
 // PORT NOTE: `Path` in the body is the `'static`-interned variant (paths borrow
@@ -1724,7 +1722,7 @@ pub struct Result {
 
     pub package_json: Option<*const PackageJSON>,
 
-    pub diff_case: Option<Fs::file_system::entry::lookup::DifferentCase>,
+    pub diff_case: Option<Fs::file_system::entry::lookup::DifferentCase<'static>>,
 
     // If present, any ES6 imports to this file can be considered to have no side
     // effects. This means they should be removed if unused.
@@ -2009,7 +2007,7 @@ pub struct MatchResult {
     pub file_fd: FD,
     pub is_node_module: bool,
     pub package_json: Option<*const PackageJSON>,
-    pub diff_case: Option<Fs::file_system::entry::lookup::DifferentCase>,
+    pub diff_case: Option<Fs::file_system::entry::lookup::DifferentCase<'static>>,
     pub dir_info: Option<*const DirInfo::DirInfo>,
     pub module_type: options::ModuleType,
     pub is_external: bool,
@@ -2094,19 +2092,22 @@ pub enum PendingResolutionTag {
 
 pub struct LoadResult {
     pub path: &'static [u8], // TODO(port): lifetime — interned in dirname_store
-    pub diff_case: Option<Fs::file_system::entry::lookup::DifferentCase>,
+    pub diff_case: Option<Fs::file_system::entry::lookup::DifferentCase<'static>>,
     pub dirname_fd: FD,
     pub file_fd: FD,
     pub dir_info: Option<*const DirInfo::DirInfo>,
 }
 
 // This is a global so even if multiple resolvers are created, the mutex will still work
-static RESOLVER_MUTEX: Mutex = Mutex::default();
+// TODO(port): `bun_threading::Mutex` has no `const fn new()`; use LazyLock until it does.
+static RESOLVER_MUTEX: std::sync::LazyLock<Mutex> = std::sync::LazyLock::new(Mutex::default);
 // Zig had `resolver_Mutex_loaded` to lazily zero-init; Rust const init handles that.
 
 type BinFolderArray = BoundedArray<&'static [u8], 128>;
-static mut BIN_FOLDERS: BinFolderArray = BinFolderArray::default(); // TODO(port): proper static mut wrapper
-static BIN_FOLDERS_LOCK: Mutex = Mutex::default();
+// TODO(port): `BoundedArray` has no const constructor; init lazily under
+// `BIN_FOLDERS_LOADED` (matches Zig's `bin_folders_loaded` lazy zero-init).
+static mut BIN_FOLDERS: core::mem::MaybeUninit<BinFolderArray> = core::mem::MaybeUninit::uninit();
+static BIN_FOLDERS_LOCK: std::sync::LazyLock<Mutex> = std::sync::LazyLock::new(Mutex::default);
 static mut BIN_FOLDERS_LOADED: bool = false;
 
 pub struct AnyResolveWatcher {
@@ -2155,7 +2156,7 @@ pub struct Resolver<'a> {
 
     pub package_manager: Option<NonNull<PackageManager>>, // TODO(port): lifetime
     pub on_wake_package_manager: Install::WakeHandler,
-    pub env_loader: Option<&'a DotEnv::Loader>,
+    pub env_loader: Option<&'a DotEnv::Loader<'a>>,
     pub store_fd: bool,
 
     pub standalone_module_graph: Option<&'a bun_core::StandaloneModuleGraph>,
@@ -2281,7 +2282,7 @@ impl<'a> Resolver<'a> {
         Resolver {
             // allocator dropped
             dir_cache: DirInfo::HashMap::init(),
-            mutex: &RESOLVER_MUTEX,
+            mutex: &*RESOLVER_MUTEX,
             caches: CacheSet::init(),
             opts,
             timer: Timer::start().unwrap_or_else(|_| panic!("Timer fail")),
@@ -4697,7 +4698,7 @@ impl<'a> Resolver<'a> {
             if !BIN_FOLDERS_LOADED {
                 return &[];
             }
-            BIN_FOLDERS.const_slice()
+            BIN_FOLDERS.assume_init_ref().const_slice()
         }
     }
 
@@ -6184,7 +6185,7 @@ impl<'a> Resolver<'a> {
                         unsafe {
                             if !BIN_FOLDERS_LOADED {
                                 BIN_FOLDERS_LOADED = true;
-                                BIN_FOLDERS = BinFolderArray::default();
+                                BIN_FOLDERS.write(BinFolderArray::default());
                             }
                         }
 
@@ -6201,7 +6202,7 @@ impl<'a> Resolver<'a> {
 
                         // SAFETY: BIN_FOLDERS guarded by BIN_FOLDERS_LOCK acquired above.
                         unsafe {
-                            for existing_folder in BIN_FOLDERS.const_slice() {
+                            for existing_folder in BIN_FOLDERS.assume_init_ref().const_slice() {
                                 if *existing_folder == bin_path {
                                     break 'append_bin_dir;
                                 }
@@ -6210,7 +6211,7 @@ impl<'a> Resolver<'a> {
                             let Ok(stored) = self.fs.dirname_store.append_slice(bin_path) else {
                                 break 'append_bin_dir;
                             };
-                            let _ = BIN_FOLDERS.append(stored);
+                            let _ = BIN_FOLDERS.assume_init_mut().append(stored);
                         }
                     }
                 }
@@ -6222,7 +6223,7 @@ impl<'a> Resolver<'a> {
                             unsafe {
                                 if !BIN_FOLDERS_LOADED {
                                     BIN_FOLDERS_LOADED = true;
-                                    BIN_FOLDERS = BinFolderArray::default();
+                                    BIN_FOLDERS.write(BinFolderArray::default());
                                 }
                             }
 
@@ -6238,7 +6239,7 @@ impl<'a> Resolver<'a> {
 
                             // SAFETY: BIN_FOLDERS guarded by BIN_FOLDERS_LOCK acquired above.
                             unsafe {
-                                for existing_folder in BIN_FOLDERS.const_slice() {
+                                for existing_folder in BIN_FOLDERS.assume_init_ref().const_slice() {
                                     if *existing_folder == bin_path {
                                         break 'append_bin_dir;
                                     }
@@ -6247,7 +6248,7 @@ impl<'a> Resolver<'a> {
                                 let Ok(stored) = self.fs.dirname_store.append_slice(bin_path) else {
                                     break 'append_bin_dir;
                                 };
-                                let _ = BIN_FOLDERS.append(stored);
+                                let _ = BIN_FOLDERS.assume_init_mut().append(stored);
                             }
                         }
                     }

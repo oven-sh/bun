@@ -19,21 +19,26 @@
 //! thread-safe. Each VirtualMachine instance should have its own controller.
 
 use core::ffi::c_int;
+#[allow(unused_imports)]
 use core::mem::offset_of;
 
+#[allow(unused_imports)]
 use bun_core::env_var;
-use bun_jsc::{VirtualMachine, VM};
 use bun_uws as uws;
 
+#[allow(unused_imports)]
+use crate::{VirtualMachine, VM};
+
 pub struct GarbageCollectionController {
-    // TODO(port): lifetime — FFI handle created by uws::Timer::create_fallthrough, freed in Drop
-    pub gc_timer: *mut uws::Timer,
+    // TODO(port): lifetime — FFI handle created by uws::Timer::create_fallthrough, freed in Drop.
+    // Stored as `Option<NonNull<Timer>>` (None = uninit; Some after `init`).
+    pub gc_timer: Option<core::ptr::NonNull<uws::Timer>>,
     pub gc_last_heap_size: usize,
     pub gc_last_heap_size_on_repeating_timer: usize,
     pub heap_size_didnt_change_for_repeating_timer_ticks_count: u8,
     pub gc_timer_state: GCTimerState,
     // TODO(port): lifetime — FFI handle created by uws::Timer::create_fallthrough, freed in Drop
-    pub gc_repeating_timer: *mut uws::Timer,
+    pub gc_repeating_timer: Option<core::ptr::NonNull<uws::Timer>>,
     pub gc_timer_interval: i32,
     pub gc_repeating_timer_fast: bool,
     pub disabled: bool,
@@ -42,12 +47,12 @@ pub struct GarbageCollectionController {
 impl Default for GarbageCollectionController {
     fn default() -> Self {
         Self {
-            gc_timer: core::ptr::null_mut(),
+            gc_timer: None,
             gc_last_heap_size: 0,
             gc_last_heap_size_on_repeating_timer: 0,
             heap_size_didnt_change_for_repeating_timer_ticks_count: 0,
             gc_timer_state: GCTimerState::Pending,
-            gc_repeating_timer: core::ptr::null_mut(),
+            gc_repeating_timer: None,
             gc_timer_interval: 0,
             gc_repeating_timer_fast: true,
             disabled: false,
@@ -63,48 +68,57 @@ pub enum GcRepeatSetting {
 
 impl GarbageCollectionController {
     pub fn init(&mut self, vm: &mut VirtualMachine) {
-        let actual = uws::Loop::get();
-        self.gc_timer = uws::Timer::create_fallthrough(actual, self as *mut Self as *mut core::ffi::c_void);
-        self.gc_repeating_timer = uws::Timer::create_fallthrough(actual, self as *mut Self as *mut core::ffi::c_void);
-        actual.internal_loop_data.jsc_vm = vm.jsc_vm;
+        // SAFETY: uws::Loop::get() returns the live process-global loop.
+        let actual = unsafe { &mut *uws::Loop::get() };
+        self.gc_timer = Some(uws::Timer::create_fallthrough(actual, self as *mut Self));
+        self.gc_repeating_timer = Some(uws::Timer::create_fallthrough(actual, self as *mut Self));
+        actual.internal_loop_data.jsc_vm = vm.jsc_vm.cast();
 
-        #[cfg(debug_assertions)]
+        #[cfg(any())] // TODO(b2-blocked): bun_jsc::EventLoop.debug.track_last_fn_name, bun_transpiler::Transpiler.env
         {
-            // TODO(port): env_var accessor return type (bool vs Option) — verify in Phase B
-            if env_var::BUN_TRACK_LAST_FN_NAME.get() {
-                vm.event_loop().debug.track_last_fn_name = true;
-            }
-        }
-
-        let mut gc_timer_interval: i32 = 1000;
-        if let Some(timer) = vm.transpiler.env.get(b"BUN_GC_TIMER_INTERVAL") {
-            if let Some(parsed) = parse_int_i32(timer) {
-                if parsed > 0 {
-                    gc_timer_interval = parsed;
+            #[cfg(debug_assertions)]
+            {
+                // TODO(port): env_var accessor return type (bool vs Option) — verify in Phase B
+                if env_var::BUN_TRACK_LAST_FN_NAME.get() {
+                    vm.event_loop().debug.track_last_fn_name = true;
                 }
             }
-        }
-        self.gc_timer_interval = gc_timer_interval;
 
-        if let Some(val) = vm.transpiler.env.get(b"BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS") {
-            if let Some(parsed) = parse_int_c_int(val) {
-                if parsed >= 0 {
-                    // SAFETY: single-threaded init; mirrors Zig assignment to extern var
-                    unsafe {
-                        VirtualMachine::Bun__defaultRemainingRunsUntilSkipReleaseAccess = parsed;
+            let mut gc_timer_interval: i32 = 1000;
+            if let Some(timer) = vm.transpiler.env.get(b"BUN_GC_TIMER_INTERVAL") {
+                if let Some(parsed) = parse_int_i32(timer) {
+                    if parsed > 0 {
+                        gc_timer_interval = parsed;
                     }
                 }
             }
-        }
+            self.gc_timer_interval = gc_timer_interval;
 
-        self.disabled = vm.transpiler.env.has(b"BUN_GC_TIMER_DISABLE");
+            if let Some(val) = vm.transpiler.env.get(b"BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS") {
+                if let Some(parsed) = parse_int_c_int(val) {
+                    if parsed >= 0 {
+                        // SAFETY: single-threaded init; mirrors Zig assignment to extern var
+                        unsafe {
+                            crate::virtual_machine::Bun__defaultRemainingRunsUntilSkipReleaseAccess = parsed;
+                        }
+                    }
+                }
+            }
+
+            self.disabled = vm.transpiler.env.has(b"BUN_GC_TIMER_DISABLE");
+        }
+        // TODO(b2-blocked): the env-var reads above are gated until
+        // `vm.transpiler.env` (bun_transpiler::Transpiler / bun_dotenv::Map) un-gates.
+        // Default the interval so the timer arms at the spec default.
+        let gc_timer_interval: i32 = 1000;
+        self.gc_timer_interval = gc_timer_interval;
 
         if !self.disabled {
             // SAFETY: gc_repeating_timer was just created above and is non-null
             unsafe {
-                (*self.gc_repeating_timer).set(
-                    self as *mut Self as *mut core::ffi::c_void,
-                    on_gc_repeating_timer,
+                (*self.gc_repeating_timer.unwrap().as_ptr()).set(
+                    self as *mut Self,
+                    Some(on_gc_repeating_timer),
                     gc_timer_interval,
                     gc_timer_interval,
                 );
@@ -116,9 +130,9 @@ impl GarbageCollectionController {
         self.gc_timer_state = GCTimerState::Scheduled;
         // SAFETY: gc_timer is non-null after init()
         unsafe {
-            (*self.gc_timer).set(
-                self as *mut Self as *mut core::ffi::c_void,
-                on_gc_timer,
+            (*self.gc_timer.unwrap().as_ptr()).set(
+                self as *mut Self,
+                Some(on_gc_timer),
                 16,
                 0,
             );
@@ -126,12 +140,16 @@ impl GarbageCollectionController {
     }
 
     pub fn bun_vm(&mut self) -> &mut VirtualMachine {
-        // SAFETY: self is the `gc_controller` field embedded in a VirtualMachine
-        unsafe {
-            &mut *(self as *mut Self as *mut u8)
-                .sub(offset_of!(VirtualMachine, gc_controller))
-                .cast::<VirtualMachine>()
+        #[cfg(any())] // TODO(b2-blocked): VirtualMachine.gc_controller field is `()` placeholder; offset_of! invalid until real type wired
+        {
+            // SAFETY: self is the `gc_controller` field embedded in a VirtualMachine
+            return unsafe {
+                &mut *(self as *mut Self as *mut u8)
+                    .sub(offset_of!(VirtualMachine, gc_controller))
+                    .cast::<VirtualMachine>()
+            };
         }
+        todo!("bun_vm — blocked on VirtualMachine.gc_controller field type")
     }
 
     // We want to always run GC once in awhile
@@ -151,9 +169,9 @@ impl GarbageCollectionController {
             self.gc_repeating_timer_fast = true;
             // SAFETY: gc_repeating_timer is non-null after init()
             unsafe {
-                (*self.gc_repeating_timer).set(
-                    self as *mut Self as *mut core::ffi::c_void,
-                    on_gc_repeating_timer,
+                (*self.gc_repeating_timer.unwrap().as_ptr()).set(
+                    self as *mut Self,
+                    Some(on_gc_repeating_timer),
                     self.gc_timer_interval,
                     self.gc_timer_interval,
                 );
@@ -163,9 +181,9 @@ impl GarbageCollectionController {
             self.gc_repeating_timer_fast = false;
             // SAFETY: gc_repeating_timer is non-null after init()
             unsafe {
-                (*self.gc_repeating_timer).set(
-                    self as *mut Self as *mut core::ffi::c_void,
-                    on_gc_repeating_timer,
+                (*self.gc_repeating_timer.unwrap().as_ptr()).set(
+                    self as *mut Self,
+                    Some(on_gc_repeating_timer),
                     30_000,
                     30_000,
                 );
@@ -178,8 +196,11 @@ impl GarbageCollectionController {
         if self.disabled {
             return;
         }
-        let vm = self.bun_vm().jsc_vm;
-        self.process_gc_timer_with_heap_size(vm, vm.block_bytes_allocated());
+        #[cfg(any())] // TODO(b2-blocked): bun_jsc::VM::block_bytes_allocated
+        {
+            let vm = self.bun_vm().jsc_vm;
+            self.process_gc_timer_with_heap_size(vm, vm.block_bytes_allocated());
+        }
     }
 
     fn process_gc_timer_with_heap_size(&mut self, vm: &VM, this_heap_size: usize) {
@@ -221,25 +242,33 @@ impl GarbageCollectionController {
         if self.disabled {
             return;
         }
-        let vm = self.bun_vm().jsc_vm;
-        vm.collect_async();
-        self.gc_last_heap_size = vm.block_bytes_allocated();
+        #[cfg(any())] // TODO(b2-blocked): bun_jsc::VM::block_bytes_allocated
+        {
+            let vm = self.bun_vm().jsc_vm;
+            vm.collect_async();
+            self.gc_last_heap_size = vm.block_bytes_allocated();
+        }
     }
 }
 
 impl Drop for GarbageCollectionController {
     fn drop(&mut self) {
-        // SAFETY: timers are non-null after init(); deinit(true) frees the uws timer
+        // SAFETY: timers are non-null after init(); close::<true> frees the uws fallthrough timer
         unsafe {
-            (*self.gc_timer).deinit(true);
-            (*self.gc_repeating_timer).deinit(true);
+            if let Some(t) = self.gc_timer {
+                uws::Timer::close::<true>(t.as_ptr());
+            }
+            if let Some(t) = self.gc_repeating_timer {
+                uws::Timer::close::<true>(t.as_ptr());
+            }
         }
     }
 }
 
 pub extern "C" fn on_gc_timer(timer: *mut uws::Timer) {
     // SAFETY: timer ext data was set to *mut GarbageCollectionController in init()
-    let this = unsafe { &mut *uws::Timer::r#as::<GarbageCollectionController>(timer) };
+    let this: *mut GarbageCollectionController = unsafe { (*timer).as_() };
+    let this = unsafe { &mut *this };
     if this.disabled {
         return;
     }
@@ -248,7 +277,8 @@ pub extern "C" fn on_gc_timer(timer: *mut uws::Timer) {
 
 pub extern "C" fn on_gc_repeating_timer(timer: *mut uws::Timer) {
     // SAFETY: timer ext data was set to *mut GarbageCollectionController in init()
-    let this = unsafe { &mut *uws::Timer::r#as::<GarbageCollectionController>(timer) };
+    let this: *mut GarbageCollectionController = unsafe { (*timer).as_() };
+    let this = unsafe { &mut *this };
     let prev_heap_size = this.gc_last_heap_size_on_repeating_timer;
     this.perform_gc();
     this.gc_last_heap_size_on_repeating_timer = this.gc_last_heap_size;

@@ -18,7 +18,11 @@ pub mod wtf;
 // Submodules (unicode_draft etc.) gated inside; core scalar+highway fns real.
 #[path = "immutable.rs"] pub mod immutable;
 // Full Phase-A draft of string.zig (the 5-variant String impl). Real
-// `String`/`ZigString` already MOVE-IN'd to bun_alloc (T0); re-exported below.
+// `String`/`ZigString` already implemented above; this draft is the broader
+// surface (encode_with_allocator, ref_count_allocator, etc.) and depends on
+// `bun_cpp` (BunString FFI shim crate, not yet wired) plus ~30 ZigString
+// methods that haven't been split out from `string.zig` yet. Re-gated until
+// `bun_cpp` lands; the 6 sub-gates below are now live.
 #[cfg(any())] #[path = "lib_draft_b1.rs"] mod draft;
 
 use core::sync::atomic::{AtomicPtr, Ordering};
@@ -770,6 +774,57 @@ impl ZigString {
             // None ⇒ all-ASCII; safe to borrow as-is.
         }
         ZigStringSlice::Static(Self::untagged(self.ptr), self.len)
+    }
+
+    /// `ZigString.toOwnedSlice` — allocate a fresh UTF-8 `Vec<u8>` regardless
+    /// of the source encoding (ZigString.zig:239). UTF-16 → transcode; UTF-8 →
+    /// copy; Latin-1 → transcode (or copy if all-ASCII).
+    pub fn to_owned_slice(&self) -> Vec<u8> {
+        if self.len == 0 { return Vec::new(); }
+        if self.is_16bit() {
+            return bun_core::strings::to_utf8_alloc(self.utf16_slice());
+        }
+        let bytes = self.slice();
+        if self.is_utf8() {
+            return bytes.to_vec();
+        }
+        // Latin-1: transcode non-ASCII, else byte-copy.
+        bun_core::strings::to_utf8_from_latin1(bytes).unwrap_or_else(|| bytes.to_vec())
+    }
+
+    /// `ZigString.toSliceClone` — the returned slice is *always* heap-owned
+    /// (ZigString.zig:693). Unlike `to_slice`, this never borrows the source
+    /// bytes, so the result outlives a GC'd `JSString` that produced `self`.
+    ///
+    /// PORT NOTE: Zig returned `OOM!Slice`; with mimalloc as the global
+    /// allocator OOM aborts the process, so this is infallible.
+    pub fn to_slice_clone(&self) -> ZigStringSlice {
+        if self.len == 0 { return ZigStringSlice::EMPTY; }
+        ZigStringSlice::Owned(self.to_owned_slice())
+    }
+
+    /// `ZigString.toSliceZ` — heap-owned UTF-8 with a NUL sentinel one past
+    /// the end (`slice().as_ptr()` is a valid C string of length `slice().len()`).
+    /// `slice()` itself does *not* include the terminator.
+    ///
+    /// PORT NOTE: the Zig method this targets was never instantiated (lazy
+    /// compilation); JSString/JSValue callers reached for it but no `.zig`
+    /// caller forced codegen. Semantics here match `toOwnedSliceZ` wrapped in
+    /// a `Slice` so `JSValue::to_slice_z` / `JSString::to_slice_z` get the
+    /// `[:0]` guarantee they document.
+    pub fn to_slice_z(&self) -> ZigStringSlice {
+        if self.len == 0 {
+            // Static "" already points at a NUL byte.
+            return ZigStringSlice::Static(b"\0".as_ptr(), 0);
+        }
+        let mut v = self.to_owned_slice();
+        v.reserve_exact(1);
+        // SAFETY: `reserve_exact(1)` guarantees `cap >= len + 1`; the byte at
+        // `len` is inside the allocation. We write the sentinel without
+        // bumping `len` so `slice()` excludes it while `as_ptr()` stays
+        // NUL-terminated.
+        unsafe { *v.as_mut_ptr().add(v.len()) = 0; }
+        ZigStringSlice::Owned(v)
     }
 }
 

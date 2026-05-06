@@ -35,8 +35,9 @@ pub mod analyze_transpiled_module;
 pub mod linker;
 pub mod defines;
 pub mod barrel_imports;
-#[cfg(any())]
-pub mod LinkerGraph;
+/// Real `LinkerGraph` (un-gated B-2).
+#[path = "LinkerGraph.rs"]
+pub mod linker_graph;
 #[path = "Chunk.rs"]
 pub mod chunk;
 #[path = "defines-table.rs"]
@@ -49,6 +50,18 @@ pub mod options_impl;
 #[path = "LinkerContext.rs"]
 pub mod linker_context_mod;
 pub mod bundle_v2;
+
+/// `linker_context/` submodule directory. Un-gated B-2: only
+/// `scanImportsAndExports.rs` so far; remaining files un-gate as their
+/// `LinkerGraph` SoA accessors land.
+pub mod linker_context {
+    // Re-export the parent `LinkerContext` `debug!` macro so submodules that
+    // wrote `use super::debug;` resolve.
+    pub(crate) use crate::linker_context_mod::debug;
+
+    #[path = "scanImportsAndExports.rs"]
+    pub mod scan_imports_and_exports;
+}
 
 // ---------------------------------------------------------------------------
 // Minimal stub surface for downstream crates (B-1). Opaque newtypes + todo!()
@@ -69,13 +82,15 @@ pub use chunk::Chunk;
 pub use linker_context_mod::LinkerContext;
 /// Stub: see gated `linker` module — `Transpiler.linker` field placeholder.
 pub struct Linker(());
-/// Stub: see gated `LinkerGraph` module.
-pub struct LinkerGraph(());
+/// Real `LinkerGraph` (un-gated B-2). See `linker_graph` module.
+pub use linker_graph::LinkerGraph;
 pub use Graph::Graph as GraphStruct;
 /// Real `ParseTask` (un-gated B-2). See `parse_task` module.
 pub use parse_task::ParseTask;
-/// Stub: see gated `entry_points` module.
-pub struct EntryPoint(());
+/// Real `EntryPoint` struct (un-gated B-2). The companion `EntryPoint` *module*
+/// (for `EntryPoint::Kind`) lives in `ungate_support` and is glob-re-exported
+/// above; types and modules occupy separate namespaces so both resolve.
+pub use ungate_support::entry_point::EntryPoint;
 pub use defines::Define;
 /// Stub: see gated `ThreadPool` module.
 pub struct ThreadPool(());

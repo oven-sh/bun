@@ -779,6 +779,300 @@ pub fn closefd(fd: Fd) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// Builtin flag-parsing infra (Spec: interpreter.zig `ParseError` / `FlagParser`)
+// ────────────────────────────────────────────────────────────────────────────
+
+/// Custom parse error for invalid options. Spec: interpreter.zig `ParseError`.
+///
+/// Payload slices borrow from the builtin's argv (NUL-terminated arena strings)
+/// or are `'static` literals; the builtin formats them into an error message
+/// before the next argv mutation, so a raw fat pointer is safe.
+pub enum ParseError {
+    IllegalOption(*const [u8]),
+    Unsupported(*const [u8]),
+    ShowUsage,
+}
+
+/// Spec: interpreter.zig `ParseFlagResult`.
+pub enum ParseFlagResult {
+    ContinueParsing,
+    Done,
+    IllegalOption(*const [u8]),
+    Unsupported(*const [u8]),
+    ShowUsage,
+}
+
+/// Spec: interpreter.zig `unsupportedFlag`. Zig concatenates at comptime; in
+/// Rust we just hand back the flag and let the caller `fmt_error_arena` it.
+#[inline]
+pub const fn unsupported_flag(name: &'static [u8]) -> *const [u8] {
+    name as *const [u8]
+}
+
+/// Per-builtin opts type implements this to plug into `FlagParser::parse_flags`.
+/// Spec: interpreter.zig `FlagParser(comptime Opts)` — the Zig version is a
+/// type-generator; in Rust the per-opts hooks are a trait.
+pub trait FlagParser {
+    /// Handle a `--long` flag. Return `None` to fall through to short parsing.
+    fn parse_long(&mut self, flag: &[u8]) -> Option<ParseFlagResult>;
+    /// Handle one byte of a `-abc` cluster. Return `None` to keep iterating.
+    fn parse_short(&mut self, ch: u8, smallflags: &[u8], i: usize) -> Option<ParseFlagResult>;
+}
+
+/// Spec: interpreter.zig `FlagParser.parseFlags`. Returns the trailing
+/// non-flag args (`args[idx..]`) on success.
+pub fn parse_flags<'a, O: FlagParser>(
+    opts: &mut O,
+    args: &'a [*const core::ffi::c_char],
+) -> Result<Option<&'a [*const core::ffi::c_char]>, ParseError> {
+    if args.is_empty() {
+        return Ok(None);
+    }
+    let mut idx = 0usize;
+    while idx < args.len() {
+        // SAFETY: argv entries are NUL-terminated C strings (see Builtin::init).
+        let flag = unsafe { core::ffi::CStr::from_ptr(args[idx]) }.to_bytes();
+        match parse_one_flag(opts, flag) {
+            ParseFlagResult::Done => return Ok(Some(&args[idx..])),
+            ParseFlagResult::ContinueParsing => {}
+            ParseFlagResult::IllegalOption(s) => return Err(ParseError::IllegalOption(s)),
+            ParseFlagResult::Unsupported(s) => return Err(ParseError::Unsupported(s)),
+            ParseFlagResult::ShowUsage => return Err(ParseError::ShowUsage),
+        }
+        idx += 1;
+    }
+    Err(ParseError::ShowUsage)
+}
+
+/// Spec: interpreter.zig `FlagParser.parseFlag`.
+fn parse_one_flag<O: FlagParser>(opts: &mut O, flag: &[u8]) -> ParseFlagResult {
+    if flag.is_empty() || flag[0] != b'-' {
+        return ParseFlagResult::Done;
+    }
+    if flag.len() == 1 {
+        return ParseFlagResult::IllegalOption(b"-" as *const [u8]);
+    }
+    if flag.len() > 2 && flag[1] == b'-' {
+        if let Some(r) = opts.parse_long(flag) {
+            return r;
+        }
+    }
+    let small_flags = &flag[1..];
+    for (i, &ch) in small_flags.iter().enumerate() {
+        if let Some(r) = opts.parse_short(ch, small_flags, i) {
+            return r;
+        }
+    }
+    ParseFlagResult::ContinueParsing
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// OutputTask (Spec: interpreter.zig `OutputTask` / `OutputSrc`)
+// ────────────────────────────────────────────────────────────────────────────
+
+/// Spec: interpreter.zig `OutputSrc`. Owned bytes a builtin's async sub-task
+/// produced off-thread, queued for stdout once back on the main thread.
+pub enum OutputSrc {
+    /// `std.ArrayListUnmanaged(u8)` — owned, freed on drop.
+    Arrlist(Vec<u8>),
+    /// Heap slice owned by us (freed on drop).
+    OwnedBuf(Box<[u8]>),
+    /// Borrowed; not freed (e.g. arena-backed).
+    BorrowedBuf(*const [u8]),
+}
+
+impl OutputSrc {
+    pub fn slice(&self) -> &[u8] {
+        match self {
+            OutputSrc::Arrlist(v) => v.as_slice(),
+            OutputSrc::OwnedBuf(b) => b,
+            // SAFETY: caller guarantees the borrow outlives the OutputTask.
+            OutputSrc::BorrowedBuf(p) => unsafe { &**p },
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum OutputTaskState {
+    WaitingWriteErr,
+    WaitingWriteOut,
+    Done,
+}
+
+/// Spec: interpreter.zig `OutputTask` vtable. In Zig this is a comptime struct
+/// of fn pointers; here it's a trait the parent builtin implements. All hooks
+/// take `(&mut Interpreter, NodeId)` (NodeId style — the parent builtin lives
+/// inside the interpreter's node arena).
+///
+/// `child` is the heap-allocated `OutputTask` itself, passed so `write_*` can
+/// register it as the IOWriter callback target.
+pub trait OutputTaskVTable: Sized {
+    fn write_err(
+        interp: &mut Interpreter,
+        cmd: NodeId,
+        child: *mut OutputTask<Self>,
+        errbuf: &[u8],
+    ) -> Option<Yield>;
+    fn on_write_err(interp: &mut Interpreter, cmd: NodeId);
+    fn write_out(
+        interp: &mut Interpreter,
+        cmd: NodeId,
+        child: *mut OutputTask<Self>,
+        output: &mut OutputSrc,
+    ) -> Option<Yield>;
+    fn on_write_out(interp: &mut Interpreter, cmd: NodeId);
+    fn on_done(interp: &mut Interpreter, cmd: NodeId) -> Yield;
+}
+
+/// A task that can write to stdout and/or stderr. Spec: interpreter.zig
+/// `OutputTask(Parent, vtable)`.
+///
+/// Heap-allocated (`Box::into_raw`) so the IOWriter can hold a raw pointer to
+/// it across async chunks; freed by `deinit`.
+pub struct OutputTask<P: OutputTaskVTable> {
+    /// Owning Cmd node (the builtin's `cmd` id). Replaces Zig's `*Parent`.
+    pub parent: NodeId,
+    pub output: OutputSrc,
+    pub state: OutputTaskState,
+    _marker: core::marker::PhantomData<P>,
+}
+
+impl<P: OutputTaskVTable> OutputTask<P> {
+    pub fn new(parent: NodeId, output: OutputSrc) -> *mut Self {
+        Box::into_raw(Box::new(OutputTask {
+            parent,
+            output,
+            state: OutputTaskState::WaitingWriteErr,
+            _marker: core::marker::PhantomData,
+        }))
+    }
+
+    /// Spec: interpreter.zig `OutputTask.start`.
+    ///
+    /// SAFETY: `this` was returned by `OutputTask::new` and not yet freed.
+    pub unsafe fn start(
+        this: *mut Self,
+        interp: &mut Interpreter,
+        errbuf: Option<&[u8]>,
+    ) -> Yield {
+        let me = unsafe { &mut *this };
+        log!(
+            "OutputTask(0x{:x}) start errbuf={:?}",
+            this as usize,
+            errbuf.map(|b| b.len())
+        );
+        me.state = OutputTaskState::WaitingWriteErr;
+        if let Some(err) = errbuf {
+            if let Some(y) = P::write_err(interp, me.parent, this, err) {
+                return y;
+            }
+            return unsafe { Self::next(this, interp) };
+        }
+        me.state = OutputTaskState::WaitingWriteOut;
+        if let Some(y) = P::write_out(interp, me.parent, this, &mut me.output) {
+            return y;
+        }
+        P::on_write_out(interp, me.parent);
+        me.state = OutputTaskState::Done;
+        unsafe { Self::deinit(this, interp) }
+    }
+
+    /// Spec: interpreter.zig `OutputTask.next`.
+    pub unsafe fn next(this: *mut Self, interp: &mut Interpreter) -> Yield {
+        let me = unsafe { &mut *this };
+        match me.state {
+            OutputTaskState::WaitingWriteErr => {
+                P::on_write_err(interp, me.parent);
+                me.state = OutputTaskState::WaitingWriteOut;
+                if let Some(y) = P::write_out(interp, me.parent, this, &mut me.output) {
+                    return y;
+                }
+                P::on_write_out(interp, me.parent);
+                me.state = OutputTaskState::Done;
+                unsafe { Self::deinit(this, interp) }
+            }
+            OutputTaskState::WaitingWriteOut => {
+                P::on_write_out(interp, me.parent);
+                me.state = OutputTaskState::Done;
+                unsafe { Self::deinit(this, interp) }
+            }
+            OutputTaskState::Done => panic!("Invalid state"),
+        }
+    }
+
+    /// Spec: interpreter.zig `OutputTask.onIOWriterChunk`.
+    pub unsafe fn on_io_writer_chunk(
+        this: *mut Self,
+        interp: &mut Interpreter,
+        _written: usize,
+        _err: Option<bun_sys::SystemError>,
+    ) -> Yield {
+        log!("OutputTask(0x{:x}) onIOWriterChunk", this as usize);
+        // Zig derefs the SystemError; in Rust drop handles it.
+        unsafe { Self::next(this, interp) }
+    }
+
+    /// Spec: interpreter.zig `OutputTask.deinit` — fires `on_done` then frees.
+    unsafe fn deinit(this: *mut Self, interp: &mut Interpreter) -> Yield {
+        debug_assert!(unsafe { (*this).state } == OutputTaskState::Done);
+        log!("OutputTask(0x{:x}) deinit", this as usize);
+        let parent = unsafe { (*this).parent };
+        // SAFETY: `this` was Box::into_raw'd in `new`; reclaim and drop.
+        drop(unsafe { Box::from_raw(this) });
+        P::on_done(interp, parent)
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// ShellTask (Spec: interpreter.zig `ShellTask`)
+// ────────────────────────────────────────────────────────────────────────────
+
+/// Thread-pool task wrapper used by mv/rm/ls/mkdir/touch/cp builtins. Spec:
+/// interpreter.zig `ShellTask(Ctx, runFromThreadPool, runFromMainThread, log)`.
+///
+/// The Zig version is a type-generator over the parent ctx + two fn pointers;
+/// here it's a trait the per-builtin task struct implements.
+///
+/// TODO(b2-blocked): WorkPool::schedule + EventLoopTask are opaque until
+/// `bun_threading` / `bun_jsc` compile. The state structs hold a `ShellTask`
+/// by value so the layout is real; `schedule()` is a no-op stub.
+pub trait ShellTaskCtx: Sized {
+    fn run_from_thread_pool(this: *mut Self);
+    fn run_from_main_thread(this: *mut Self, interp: &mut Interpreter);
+}
+
+#[derive(Default)]
+pub struct ShellTask {
+    pub event_loop: EventLoopHandle,
+    pub keep_alive: bun_aio::KeepAlive,
+    // TODO(b2-blocked): bun_threading::WorkPoolTask + bun_jsc::EventLoopTask.
+}
+
+impl ShellTask {
+    pub fn new(event_loop: EventLoopHandle) -> Self {
+        ShellTask { event_loop, keep_alive: Default::default() }
+    }
+
+    pub fn schedule(&mut self) {
+        // TODO(b2-blocked): self.keep_alive.ref_(self.event_loop);
+        //                   WorkPool::schedule(&mut self.task);
+    }
+
+    pub fn on_finish(&mut self) {
+        // TODO(b2-blocked): event_loop.enqueueTaskConcurrent(ctx).
+    }
+}
+
+#[cold]
+#[track_caller]
+pub fn unreachable_state(context: &str, state: &str) -> ! {
+    panic!(
+        "Bun shell has reached an unreachable state \"{}\" in the {} context. This indicates a bug, please open a GitHub issue.",
+        state, context
+    );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // Gated heavy body
 // ────────────────────────────────────────────────────────────────────────────
 //

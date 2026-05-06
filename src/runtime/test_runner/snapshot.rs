@@ -14,11 +14,10 @@ use bun_wyhash::hash;
 
 use super::diff_format::DiffFormatter;
 use super::expect::Expect;
-use crate::jest::{Jest, TestRunner};
+use super::jest::{Jest, TestRunner};
 
-// TODO(port): TestRunner.File.ID — exact path depends on jest.rs port; using a local alias.
-type FileId = <TestRunner as crate::jest::TestRunnerTypes>::FileId;
-// If the above associated-type pattern doesn't land in Phase B, replace with the concrete `u32`/newtype from jest.rs.
+// TestRunner.File.ID — concrete alias from jest.rs (`pub type FileId = u32`).
+type FileId = super::jest::FileId;
 
 bun_output::declare_scope!(inline_snapshot, visible);
 

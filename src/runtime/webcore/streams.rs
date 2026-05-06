@@ -21,7 +21,7 @@ type ByteList = BabyList<u8>;
 // Compat: `webcore::Pipe` and Body refer to `streams::Result` / `streams::result::StreamError`.
 pub use StreamResult as Result;
 pub mod result {
-    pub use super::{StreamError, StreamResult};
+    pub use super::{StreamError, StreamResult, Writable};
 }
 
 // ──────────────────────────────────────────────────────────────────────────

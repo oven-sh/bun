@@ -29,12 +29,13 @@ impl<'a> Tmpfile<'a> {
         'open: loop {
             // ALLOW_TMPFILE = false (Zig comment: O_TMPFILE doesn't seem to work
             // very well). Dead in Zig too, but Zig comptime drops it; Rust still
-            // type-checks `if false` bodies, so cfg-gate it instead.
-            #[cfg(any())]
+            // type-checks `if false` bodies, so the body must resolve.
             if ALLOW_TMPFILE {
+                // SAFETY: literal is NUL-terminated; len excludes the NUL.
+                let dot = unsafe { ZStr::from_raw(b".\0".as_ptr(), 1) };
                 match crate::openat(
                     destination_dir,
-                    ZStr::from_lit(b".\0"),
+                    dot,
                     O::WRONLY | O::TMPFILE | O::CLOEXEC,
                     perm,
                 ) {
@@ -42,8 +43,9 @@ impl<'a> Tmpfile<'a> {
                         tmpfile.fd = fd.make_lib_uv_owned_for_syscall(Tag::open, ErrorCase::CloseOnFail)?;
                         break 'open;
                     }
+                    // PORT NOTE: Zig matched .OPNOTSUPP; on Linux that aliases ENOTSUP.
                     Err(err) => match err.get_errno() {
-                        E::EINVAL | E::EOPNOTSUPP | E::ENOSYS => {
+                        E::EINVAL | E::ENOTSUP | E::ENOSYS => {
                             tmpfile.using_tmpfile = false;
                         }
                         _ => return Err(err),
@@ -67,7 +69,6 @@ impl<'a> Tmpfile<'a> {
     // TODO(port): narrow error set
     pub fn finish(&mut self, destname: &ZStr) -> Result<(), bun_core::Error> {
         // ALLOW_TMPFILE = false dead branch — see `create()` note above.
-        #[cfg(any())]
         if ALLOW_TMPFILE && self.using_tmpfile {
             let mut retry = true;
             // SAFETY: basename returns a suffix of `destname`, which is NUL-terminated,

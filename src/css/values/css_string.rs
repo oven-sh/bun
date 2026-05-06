@@ -10,7 +10,12 @@ pub type CssString = &'static [u8];
 pub struct CssStringFns;
 impl CssStringFns {
     pub fn parse(input: &mut css::Parser) -> Result<CssString> {
-        input.expect_string()
+        // SAFETY: `expect_string()` returns a sub-slice of the source buffer /
+        // arena which outlives the Parser; detach the elided `&mut self` borrow
+        // (same as `css_parser::src_str` — Token payloads are arena-static).
+        input
+            .expect_string()
+            .map(|s| -> &'static [u8] { unsafe { &*(s as *const [u8]) } })
     }
 
     pub fn to_css(this: &&[u8], dest: &mut Printer) -> core::result::Result<(), PrintErr> {

@@ -97,10 +97,30 @@ pub struct TranspileArgs<'a> {
     pub virtual_source: Option<&'a logger::Source>,
     pub global_object: *mut JSGlobalObject,
     pub flags: FetchFlags,
-    /// `(path, loader, module_type, source_code_printer)` — opaque, owned by
-    /// the high tier. Null when called from the low-tier `Bun__*` shims (the
-    /// hook recomputes them from `specifier`).
+    /// `*mut TranspileExtra` — opaque, owned by the high tier. Null when
+    /// called from the low-tier `Bun__*` shims (the hook recomputes them from
+    /// `specifier`).
     pub extra: *mut c_void,
+}
+
+/// Concrete shape behind [`TranspileArgs::extra`]. Declared here (not in
+/// `bun_runtime`) so both tiers agree on layout; every field type is already a
+/// `bun_jsc` dep (`bun_resolver`, `bun_bundler::options`, `bun_js_printer`).
+///
+/// PORT NOTE: Zig passed these as positional params to `transpileSourceCode`
+/// (ModuleLoader.zig:90-96). They're bundled because the §Dispatch fn-ptr
+/// signature must be stable across the crate boundary.
+#[repr(C)]
+pub struct TranspileExtra {
+    pub path: bun_resolver::fs::Path,
+    pub loader: bun_bundler::options::Loader,
+    pub module_type: bun_bundler::options::ModuleType,
+    /// `*js_printer.BufferPrinter` — the per-VM shared printer. Never null
+    /// when `extra` itself is non-null.
+    pub source_code_printer: *mut bun_js_printer::BufferPrinter,
+    /// `?*?*jsc.JSInternalPromise` — out-param for the async-module path
+    /// (ModuleLoader.zig:95). Null forbids async resolution.
+    pub promise_ptr: *mut *mut JSInternalPromise,
 }
 
 /// Result of `LoaderHooks::fetch_builtin_module` — tri-state to mirror

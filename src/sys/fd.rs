@@ -5,6 +5,9 @@ use bun_core::Output;
 // `Fd` (the packed handle struct + pure-data accessors) is canonical in
 // bun_core. This file adds the syscall-touching surface as an extension trait.
 pub use bun_core::{fd, Fd, FdKind, FdNative, FdOptional as Optional, Stdio, FD_PATH_HOOK};
+/// Platform-native fd integer (`c_int` on POSIX, `HANDLE` on Windows). Alias
+/// for callers porting Zig's `std.posix.fd_t` / `bun.FD.native()`.
+pub type RawFd = FdNative;
 #[cfg(windows)]
 pub use bun_core::DecodeWindows;
 

@@ -24,14 +24,17 @@ use core::ffi::c_void;
 use core::ptr;
 
 use bun_jsc::module_loader::{
-    FetchBuiltinResult, LoaderHooks, TranspileArgs,
+    FetchBuiltinResult, FetchFlags, LoaderHooks, ModuleLoader, TranspileArgs, TranspileExtra,
 };
 use bun_jsc::virtual_machine::{
     InitOptions, RuntimeHooks, RuntimeState as OpaqueRuntimeState, VirtualMachine,
 };
-use bun_jsc::{ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSValue};
+use bun_jsc::{ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSValue, ResolvedSource};
 
 use bun_bundler::entry_points::ServerEntryPoint;
+use bun_bundler::options::{self, Loader, ModuleType};
+use bun_resolver::fs as Fs;
+use bun_resolver::node_fallbacks;
 
 use crate::timer;
 

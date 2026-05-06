@@ -1,16 +1,18 @@
+#![allow(unused_imports, unused_variables, dead_code, unreachable_code)]
+
 use core::cell::{Cell, RefCell};
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use bun_core::{self as bun, Output, env_var, perf, FeatureFlags, Environment};
-use bun_str::{self as bstr_mod, String as BunString, ZStr};
+use bun_core::{self as bun, env_var, FeatureFlags};
+use bun_string::{String as BunString, ZStr};
 use bun_sys::{self as sys, Fd};
 use bun_paths::{self as paths, PathBuffer, MAX_PATH_BYTES, SEP};
 use bun_js_parser::ast::ExportsKind;
 use bun_logger::Source;
-use bun_fs::{FileSystem, Path as FsPath, PathString};
+use bun_resolver::fs::{FileSystem, Path as FsPath, PathString};
 use bun_wyhash::Wyhash;
 
-bun_output::declare_scope!(cache, visible);
+bun_core::declare_scope!(cache, visible);
 
 /// ** Update the version number when any breaking changes are made to the cache format or to the JS parser **
 /// Version 3: "Infinity" becomes "1/0".
@@ -116,7 +118,9 @@ impl Metadata {
     // TODO(port): static-assert this matches encode() output length
     pub const SIZE: usize = 4 + 1 + 1 + 12 * 8;
 
-    pub fn encode(&self, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
+    pub fn encode<W>(&self, writer: &mut W) -> Result<(), bun_core::Error> {
+        #[cfg(any())] // TODO(b2-blocked): bun_io::Write trait + write_int_le
+        {
         // TODO(port): narrow error set
         writer.write_int_le::<u32>(self.cache_version)?;
         writer.write_int_le::<u8>(self.module_type as u8)?;
@@ -138,10 +142,15 @@ impl Metadata {
         writer.write_int_le::<u64>(self.esm_record_byte_offset)?;
         writer.write_int_le::<u64>(self.esm_record_byte_length)?;
         writer.write_int_le::<u64>(self.esm_record_hash)?;
-        Ok(())
+        return Ok(());
+        } // end #[cfg(any())]
+        let _ = writer;
+        Err(bun_core::err!("CacheDisabled"))
     }
 
-    pub fn decode(&mut self, reader: &mut impl bun_io::Read) -> Result<(), bun_core::Error> {
+    pub fn decode<R>(&mut self, reader: &mut R) -> Result<(), bun_core::Error> {
+        #[cfg(any())] // TODO(b2-blocked): bun_io::Read trait + read_int_le
+        {
         // TODO(port): narrow error set
         self.cache_version = reader.read_int_le::<u32>()?;
         if self.cache_version != EXPECTED_VERSION {
@@ -185,7 +194,10 @@ impl Metadata {
             _ => return Err(bun_core::err!("UnknownEncoding")),
         }
 
-        Ok(())
+        return Ok(());
+        } // end #[cfg(any())]
+        let _ = reader;
+        Err(bun_core::err!("CacheDisabled"))
     }
 }
 
@@ -204,7 +216,10 @@ impl OutputCode {
     pub fn byte_slice(&self) -> &[u8] {
         match self {
             OutputCode::Utf8(b) => b,
+            #[cfg(any())] // TODO(b2-blocked): bun_string::String::byte_slice
             OutputCode::String(s) => s.byte_slice(),
+            #[allow(unreachable_patterns)]
+            OutputCode::String(_) => &[],
         }
     }
 }
@@ -234,7 +249,9 @@ impl Entry {
         output_code: &OutputCode,
         exports_kind: ExportsKind,
     ) -> Result<(), bun_core::Error> {
-        let _tracer = perf::trace("RuntimeTranspilerCache.save");
+        #[cfg(any())] // TODO(b2-blocked): bun_sys::{Tmpfile, PlatformIoVecConst, platform_iovec_const_create, pwritev, preallocate_file, unlinkat}, bun_io::FixedBufferStream, bun_resolver::fs::FileSystem::tmpname, bun_paths::{extension, basename}
+        {
+        let _tracer = bun_core::perf::trace("RuntimeTranspilerCache.save");
 
         // atomically write to a tmpfile and then move it to the final destination
         let mut tmpname_buf = PathBuffer::uninit();
@@ -269,9 +286,9 @@ impl Entry {
                     output_encoding: match output_code {
                         OutputCode::Utf8(_) => Encoding::UTF8,
                         OutputCode::String(str) => match str.encoding() {
-                            bun_str::Encoding::Utf8 => Encoding::UTF8,
-                            bun_str::Encoding::Utf16 => Encoding::UTF16,
-                            bun_str::Encoding::Latin1 => Encoding::LATIN1,
+                            bun_string::Encoding::Utf8 => Encoding::UTF8,
+                            bun_string::Encoding::Utf16 => Encoding::UTF16,
+                            bun_string::Encoding::Latin1 => Encoding::LATIN1,
                         },
                     },
                     sourcemap_byte_length: sourcemap.len() as u64,
@@ -372,10 +389,15 @@ impl Entry {
         // TODO(port): @ptrCast on basename — Zig coerces []const u8 to [:0]const u8 here;
         // assume Tmpfile::finish takes &[u8].
         tmpfile.finish(paths::basename(destination_path.slice()))?;
-        Ok(())
+        return Ok(());
+        } // end #[cfg(any())]
+        let _ = (destination_dir, destination_path, input_byte_length, input_hash, features_hash, sourcemap, esm_record, output_code, exports_kind);
+        Err(bun_core::err!("CacheDisabled"))
     }
 
     pub fn load(&mut self, file: &sys::File) -> Result<(), bun_core::Error> {
+        #[cfg(any())] // TODO(b2-blocked): bun_sys::File::{get_end_pos, pread_all}, bun_string::String::{create_uninitialized_latin1, create_uninitialized_utf16, latin1, utf16, empty}
+        {
         // TODO(port): Zig used std.fs.File; mapped to bun_sys::File. getEndPos/preadAll/seekTo
         // assumed to exist on bun_sys::File.
         let stat_size = file.get_end_pos()?;
@@ -505,7 +527,10 @@ impl Entry {
             self.esm_record = esm_record;
         }
 
-        Ok(())
+        return Ok(());
+        } // end #[cfg(any())]
+        let _ = file;
+        Err(bun_core::err!("CacheDisabled"))
     }
 }
 
@@ -568,6 +593,8 @@ impl RuntimeTranspilerCache {
         buf: &mut PathBuffer,
         input_hash: u64,
     ) -> Result<&ZStr, bun_core::Error> {
+        #[cfg(any())] // TODO(b2-blocked): bun_string::ZStr::from_raw, bun_paths::PathBuffer Index<Range>
+        {
         let cache_dir_len = Self::get_cache_dir(buf)?.len();
         buf[cache_dir_len] = SEP;
         let cache_filename_len =
@@ -575,10 +602,15 @@ impl RuntimeTranspilerCache {
         buf[cache_dir_len + 1 + cache_filename_len] = 0;
 
         // SAFETY: we wrote a NUL at buf[cache_dir_len + 1 + cache_filename_len] above.
-        Ok(unsafe { ZStr::from_raw(buf.as_ptr(), cache_dir_len + 1 + cache_filename_len) })
+        return Ok(unsafe { ZStr::from_raw(buf.as_ptr(), cache_dir_len + 1 + cache_filename_len) });
+        } // end #[cfg(any())]
+        let _ = (buf, input_hash);
+        Err(bun_core::err!("CacheDisabled"))
     }
 
     fn really_get_cache_dir(buf: &mut PathBuffer) -> &ZStr {
+        #[cfg(any())] // TODO(b2-blocked): bun_core::env_var::{BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE, BUN_RUNTIME_TRANSPILER_CACHE_PATH, XDG_CACHE_HOME}, bun_resolver::fs::{FileSystem::abs_buf_z, RealFS::tmpdir_path}, bun_string::ZStr::{empty, from_raw}
+        {
         #[cfg(debug_assertions)]
         {
             BUN_DEBUG_RESTORE_FROM_CACHE.store(
@@ -621,9 +653,12 @@ impl RuntimeTranspilerCache {
         }
 
         {
-            let parts: &[&[u8]] = &[bun_fs::RealFS::tmpdir_path(), b"bun", b"@t@"];
+            let parts: &[&[u8]] = &[bun_resolver::fs::RealFS::tmpdir_path(), b"bun", b"@t@"];
             return FileSystem::instance().abs_buf_z(parts, buf);
         }
+        } // end #[cfg(any())]
+        let _ = buf;
+        todo!("really_get_cache_dir — blocked on env_var keys + FileSystem::abs_buf_z")
     }
 
     // Only do this at most once per-thread.
@@ -636,6 +671,8 @@ impl RuntimeTranspilerCache {
     }
 
     fn get_cache_dir(buf: &mut PathBuffer) -> Result<&ZStr, bun_core::Error> {
+        #[cfg(any())] // TODO(b2-blocked): bun_string::ZStr::from_raw, PathBuffer Index<Range>
+        {
         if IS_DISABLED.load(Ordering::Relaxed) {
             return Err(bun_core::err!("CacheDisabled"));
         }
@@ -660,7 +697,10 @@ impl RuntimeTranspilerCache {
         // SAFETY: buf[path_len] == 0 written above.
         // PORT NOTE: Zig returned the threadlocal slice (not buf), but callers index into
         // `buf` using only `.len()`, so returning a slice into `buf` is equivalent.
-        Ok(unsafe { ZStr::from_raw(buf.as_ptr(), path_len) })
+        return Ok(unsafe { ZStr::from_raw(buf.as_ptr(), path_len) });
+        } // end #[cfg(any())]
+        let _ = buf;
+        Err(bun_core::err!("CacheDisabled"))
     }
 
     pub fn from_file(
@@ -668,7 +708,9 @@ impl RuntimeTranspilerCache {
         feature_hash: u64,
         input_stat_size: u64,
     ) -> Result<Entry, bun_core::Error> {
-        let _tracer = perf::trace("RuntimeTranspilerCache.fromFile");
+        #[cfg(any())] // TODO(b2-blocked): bun_string::ZStr::as_bytes, bun_resolver::fs::PathString::init
+        {
+        let _tracer = bun_core::perf::trace("RuntimeTranspilerCache.fromFile");
 
         let mut cache_file_path_buf = PathBuffer::uninit();
         let cache_file_path = Self::get_cache_file_path(&mut cache_file_path_buf, input_hash)?;
@@ -679,6 +721,9 @@ impl RuntimeTranspilerCache {
             feature_hash,
             input_stat_size,
         )
+        } // end #[cfg(any())]
+        let _ = (input_hash, feature_hash, input_stat_size);
+        Err(bun_core::err!("CacheDisabled"))
     }
 
     pub fn from_file_with_cache_file_path(
@@ -687,6 +732,8 @@ impl RuntimeTranspilerCache {
         feature_hash: u64,
         input_stat_size: u64,
     ) -> Result<Entry, bun_core::Error> {
+        #[cfg(any())] // TODO(b2-blocked): bun_sys::{open, unlink, O::RDONLY, Fd::std_file}, bun_io::FixedBufferStream, bun_resolver::fs::PathString::slice_assume_z
+        {
         let mut metadata_bytes_buf = [0u8; Metadata::SIZE * 2];
         let cache_fd =
             sys::open(cache_file_path.slice_assume_z(), sys::O::RDONLY, 0)?;
@@ -733,11 +780,19 @@ impl RuntimeTranspilerCache {
 
         // disarm errdefer (success path)
         scopeguard::ScopeGuard::into_inner(unlink_guard);
-        Ok(entry)
+        return Ok(entry);
+        } // end #[cfg(any())]
+        let _ = (cache_file_path, input_hash, feature_hash, input_stat_size);
+        Err(bun_core::err!("CacheDisabled"))
     }
 
     pub fn is_eligible(&self, path: &FsPath) -> bool {
-        path.is_file()
+        #[cfg(any())] // TODO(b2-blocked): bun_resolver::fs::Path::is_file
+        {
+            return path.is_file();
+        }
+        let _ = path;
+        false
     }
 
     pub fn to_file(
@@ -749,7 +804,9 @@ impl RuntimeTranspilerCache {
         source_code: &BunString,
         exports_kind: ExportsKind,
     ) -> Result<(), bun_core::Error> {
-        let _tracer = perf::trace("RuntimeTranspilerCache.toFile");
+        #[cfg(any())] // TODO(b2-blocked): bun_string::String::{encoding, byte_slice, clone}, bun_sys::{make_open_path, OpenDirOptions, Fd::{from_std_dir, make_libuv_owned, cwd}}, bun_paths::dirname
+        {
+        let _tracer = bun_core::perf::trace("RuntimeTranspilerCache.toFile");
 
         let mut cache_file_path_buf = PathBuffer::uninit();
         let output_code: OutputCode = match source_code.encoding() {
@@ -757,12 +814,12 @@ impl RuntimeTranspilerCache {
             // OutputCode::Utf8 here is Box<[u8]> which would copy. For `to_file` we only
             // need a borrowed view passed to Entry::save, so use a local enum or pass
             // the slice directly. For now, clone — PERF(port): avoid clone in Phase B.
-            bun_str::Encoding::Utf8 => OutputCode::Utf8(Box::from(source_code.byte_slice())),
+            bun_string::Encoding::Utf8 => OutputCode::Utf8(Box::from(source_code.byte_slice())),
             _ => OutputCode::String(source_code.clone()),
         };
 
         let cache_file_path = Self::get_cache_file_path(&mut cache_file_path_buf, input_hash)?;
-        bun_output::scoped_log!(cache, "filename to put into: '{}'", bstr::BStr::new(cache_file_path.as_bytes()));
+        bun_core::scoped_log!(cache, "filename to put into: '{}'", bstr::BStr::new(cache_file_path.as_bytes()));
 
         if cache_file_path.is_empty() {
             return Ok(());
@@ -794,14 +851,24 @@ impl RuntimeTranspilerCache {
             &output_code,
             exports_kind,
         )
+        } // end #[cfg(any())]
+        let _ = (input_byte_length, input_hash, features_hash, sourcemap, esm_record, source_code, exports_kind);
+        Err(bun_core::err!("CacheDisabled"))
+    }
+
+    pub fn is_disabled() -> bool {
+        IS_DISABLED.load(Ordering::Relaxed)
     }
 
     pub fn get(
         &mut self,
         source: &Source,
-        parser_options: &bun_js_parser::Parser::Options,
+        // TODO(b2-blocked): bun_js_parser::Parser::Options — type path unconfirmed; gated body.
+        #[cfg(any())] parser_options: &bun_js_parser::Parser::Options,
         used_jsx: bool,
     ) -> bool {
+        #[cfg(any())] // TODO(b2-blocked): bun_core::FeatureFlags::RUNTIME_TRANSPILER_CACHE, bun_logger::Source.{contents, path}, bun_js_parser::Parser::Options::hash_for_runtime_transpiler, bun_analytics::Features
+        {
         if !FeatureFlags::RUNTIME_TRANSPILER_CACHE {
             return false;
         }
@@ -837,7 +904,7 @@ impl RuntimeTranspilerCache {
         ) {
             Ok(e) => Some(e),
             Err(err) => {
-                bun_output::scoped_log!(
+                bun_core::scoped_log!(
                     cache,
                     "get(\"{}\") = {}",
                     bstr::BStr::new(&source.path.text),
@@ -849,14 +916,14 @@ impl RuntimeTranspilerCache {
         #[cfg(debug_assertions)]
         {
             if BUN_DEBUG_RESTORE_FROM_CACHE.load(Ordering::Relaxed) {
-                bun_output::scoped_log!(
+                bun_core::scoped_log!(
                     cache,
                     "get(\"{}\") = {} bytes, restored",
                     bstr::BStr::new(&source.path.text),
                     self.entry.as_ref().unwrap().output_code.byte_slice().len()
                 );
             } else {
-                bun_output::scoped_log!(
+                bun_core::scoped_log!(
                     cache,
                     "get(\"{}\") = {} bytes, ignored for debug build",
                     bstr::BStr::new(&source.path.text),
@@ -875,10 +942,15 @@ impl RuntimeTranspilerCache {
             }
         }
 
-        self.entry.is_some()
+        return self.entry.is_some();
+        } // end #[cfg(any())]
+        let _ = (source, used_jsx);
+        false
     }
 
     pub fn put(&mut self, output_code_bytes: &[u8], sourcemap: &[u8], esm_record: &[u8]) {
+        #[cfg(any())] // TODO(b2-blocked): bun_core::FeatureFlags::RUNTIME_TRANSPILER_CACHE, bun_string::String::{clone_latin1, clone, latin1}
+        {
         const _: () = assert!(
             FeatureFlags::RUNTIME_TRANSPILER_CACHE,
             "RuntimeTranspilerCache is disabled"
@@ -902,13 +974,15 @@ impl RuntimeTranspilerCache {
             &output_code,
             self.exports_kind,
         ) {
-            bun_output::scoped_log!(cache, "put() = {}", err.name());
+            bun_core::scoped_log!(cache, "put() = {}", err.name());
             return;
         }
         #[cfg(debug_assertions)]
         {
-            bun_output::scoped_log!(cache, "put() = {} bytes", output_code.latin1().len());
+            bun_core::scoped_log!(cache, "put() = {} bytes", output_code.latin1().len());
         }
+        } // end #[cfg(any())]
+        let _ = (output_code_bytes, sourcemap, esm_record);
     }
 }
 

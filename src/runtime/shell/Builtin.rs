@@ -21,6 +21,10 @@ pub struct Builtin {
     pub stdin: crate::shell::io::InKind,
     pub stdout: BuiltinIO,
     pub stderr: BuiltinIO,
+    /// Scratch for `fmt_error_arena` (replaces the Zig per-Cmd bump arena).
+    /// One outstanding error string at a time — same constraint as Zig, where
+    /// the arena is reset per-builtin.
+    pub err_buf: Vec<u8>,
     pub impl_: Impl,
 }
 
@@ -75,6 +79,57 @@ impl Kind {
         }
         Some(result)
     }
+
+    /// Spec: Builtin.zig `Kind.usageString`.
+    pub fn usage_string(self) -> &'static [u8] {
+        match self {
+            Kind::Cat => b"usage: cat [-belnstuv] [file ...]\n",
+            Kind::Touch => b"usage: touch [-A [-][[hh]mm]SS] [-achm] [-r file] [-t [[CC]YY]MMDDhhmm[.SS]]\n       [-d YYYY-MM-DDThh:mm:SS[.frac][tz]] file ...\n",
+            Kind::Mkdir => b"usage: mkdir [-pv] [-m mode] directory_name ...\n",
+            Kind::Export => b"",
+            Kind::Cd => b"",
+            Kind::Echo => b"",
+            Kind::Pwd => b"",
+            Kind::Which => b"",
+            Kind::Rm => b"usage: rm [-f | -i] [-dIPRrvWx] file ...\n       unlink [--] file\n",
+            Kind::Mv => b"usage: mv [-f | -i | -n] [-hv] source target\n       mv [-f | -i | -n] [-v] source ... directory\n",
+            Kind::Ls => b"usage: ls [-@ABCFGHILOPRSTUWabcdefghiklmnopqrstuvwxy1%,] [--color=when] [-D format] [file ...]\n",
+            Kind::Exit => b"usage: exit [n]\n",
+            Kind::True => b"",
+            Kind::False => b"",
+            Kind::Yes => b"usage: yes [expletive]\n",
+            Kind::Seq => b"usage: seq [-w] [-f format] [-s string] [-t string] [first [incr]] last\n",
+            Kind::Dirname => b"usage: dirname string\n",
+            Kind::Basename => b"usage: basename string\n",
+            Kind::Cp => b"usage: cp [-R [-H | -L | -P]] [-fi | -n] [-aclpsvXx] source_file target_file\n       cp [-R [-H | -L | -P]] [-fi | -n] [-aclpsvXx] source_file ... target_directory\n",
+        }
+    }
+
+    /// Lowercase tag for error prefixes (`"{kind}: ..."`). Spec: Zig
+    /// `@tagName(kind)`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Kind::Cat => "cat",
+            Kind::Touch => "touch",
+            Kind::Mkdir => "mkdir",
+            Kind::Export => "export",
+            Kind::Cd => "cd",
+            Kind::Echo => "echo",
+            Kind::Pwd => "pwd",
+            Kind::Which => "which",
+            Kind::Rm => "rm",
+            Kind::Mv => "mv",
+            Kind::Ls => "ls",
+            Kind::Exit => "exit",
+            Kind::True => "true",
+            Kind::False => "false",
+            Kind::Yes => "yes",
+            Kind::Seq => "seq",
+            Kind::Dirname => "dirname",
+            Kind::Basename => "basename",
+            Kind::Cp => "cp",
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -89,6 +144,53 @@ impl BuiltinIO {
     #[inline]
     pub fn needs_io(&self) -> Option<OutputNeedsIOSafeGuard> {
         self.kind.needs_io()
+    }
+
+    /// Queue `buf` on this stream's IOWriter and arrange for `child`'s
+    /// `on_io_writer_chunk` to fire when the chunk completes. Spec: Builtin.zig
+    /// `BuiltinIO.Output.enqueue` (via IOWriter).
+    ///
+    /// `_safeguard` proves the caller checked `needs_io()`.
+    pub fn enqueue(
+        &mut self,
+        _child: crate::shell::io_writer::ChildPtr,
+        buf: &[u8],
+        _safeguard: OutputNeedsIOSafeGuard,
+    ) -> Yield {
+        match &self.kind {
+            OutKind::Fd(fd) => {
+                // Tee into the captured buffer if any (Zig: `if (fd.captured) |cap| cap.append(...)`).
+                if let Some(cap) = fd.captured {
+                    // SAFETY: `captured` points into a live ShellExecEnv Bufio.
+                    let _ = unsafe { (*cap).append_slice(buf) };
+                }
+                // TODO(b2-blocked): IOWriter::enqueue(child, buf) — register the
+                // chunk on the underlying writer and return a `Yield` that
+                // either completes synchronously (`OnIoWriterChunk`) or
+                // suspends. Stubbed until IOWriter body lands.
+                Yield::suspended()
+            }
+            _ => unreachable!("enqueue() on non-fd output; caller must check needs_io()"),
+        }
+    }
+
+    /// Spec: Builtin.zig `BuiltinIO.Output.enqueueFmtBltn` — format then
+    /// enqueue. The arena allocation is owned by the Cmd's bump arena in Zig;
+    /// here we heap-allocate (the IOWriter copies into its own buffer anyway).
+    pub fn enqueue_fmt(
+        &mut self,
+        child: crate::shell::io_writer::ChildPtr,
+        kind: Option<Kind>,
+        args: core::fmt::Arguments<'_>,
+        safeguard: OutputNeedsIOSafeGuard,
+    ) -> Yield {
+        use std::io::Write as _;
+        let mut buf = Vec::new();
+        if let Some(k) = kind {
+            let _ = write!(&mut buf, "{}: ", k.as_str());
+        }
+        let _ = buf.write_fmt(args);
+        self.enqueue(child, &buf, safeguard)
     }
 }
 
@@ -107,9 +209,13 @@ pub enum Impl {
     Cat(Box<crate::shell::builtins::cat::Cat>),
     Mv(Box<crate::shell::builtins::mv::Mv>),
     Rm(Box<crate::shell::builtins::rm::Rm>),
-    // TODO(b2-blocked): Which, Ls, Mkdir, Touch, Cp, Seq, Yes — gated until
-    // their async-task plumbing (ShellTask/WorkPool) is converted.
-    Unimplemented,
+    Which(Box<crate::shell::builtins::which::Which>),
+    Ls(Box<crate::shell::builtins::ls::Ls>),
+    Mkdir(Box<crate::shell::builtins::mkdir::Mkdir>),
+    Touch(Box<crate::shell::builtins::touch::Touch>),
+    Cp(Box<crate::shell::builtins::cp::Cp>),
+    Seq(Box<crate::shell::builtins::seq::Seq>),
+    Yes(Box<crate::shell::builtins::yes::Yes>),
 }
 
 impl Builtin {
@@ -160,12 +266,13 @@ impl Builtin {
             Kind::Cat => Impl::Cat(Box::default()),
             Kind::Mv => Impl::Mv(Box::default()),
             Kind::Rm => Impl::Rm(Box::default()),
-            // TODO(b2-blocked): Which/Ls/Mkdir/Touch/Cp/Seq/Yes — async-task
-            // plumbing not yet ported. Dispatch to `Unimplemented` so
-            // `Builtin::start` returns exit 1.
-            Kind::Which | Kind::Ls | Kind::Mkdir | Kind::Touch | Kind::Cp | Kind::Seq | Kind::Yes => {
-                Impl::Unimplemented
-            }
+            Kind::Which => Impl::Which(Box::default()),
+            Kind::Ls => Impl::Ls(Box::default()),
+            Kind::Mkdir => Impl::Mkdir(Box::default()),
+            Kind::Touch => Impl::Touch(Box::default()),
+            Kind::Cp => Impl::Cp(Box::default()),
+            Kind::Seq => Impl::Seq(Box::default()),
+            Kind::Yes => Impl::Yes(Box::default()),
         };
 
         interp.as_cmd_mut(cmd).exec = Exec::Builtin(Box::new(Builtin {
@@ -175,6 +282,7 @@ impl Builtin {
             stdin,
             stdout,
             stderr,
+            err_buf: Vec::new(),
             impl_,
         }));
 
@@ -209,8 +317,13 @@ impl Builtin {
             Kind::Cat => cat::Cat::start(interp, cmd),
             Kind::Mv => mv::Mv::start(interp, cmd),
             Kind::Rm => rm::Rm::start(interp, cmd),
-            // TODO(b2-blocked): remaining builtins
-            _ => Self::done(interp, cmd, 1),
+            Kind::Which => which::Which::start(interp, cmd),
+            Kind::Ls => ls::Ls::start(interp, cmd),
+            Kind::Mkdir => mkdir::Mkdir::start(interp, cmd),
+            Kind::Touch => touch::Touch::start(interp, cmd),
+            Kind::Cp => cp::Cp::start(interp, cmd),
+            Kind::Seq => seq::Seq::start(interp, cmd),
+            Kind::Yes => yes::Yes::start(interp, cmd),
         }
     }
 
@@ -236,7 +349,13 @@ impl Builtin {
             Kind::Cat => cat::Cat::on_io_writer_chunk(interp, cmd, written, err),
             Kind::Mv => mv::Mv::on_io_writer_chunk(interp, cmd, written, err),
             Kind::Rm => rm::Rm::on_io_writer_chunk(interp, cmd, written, err),
-            _ => Yield::done(),
+            Kind::Which => which::Which::on_io_writer_chunk(interp, cmd, written, err),
+            Kind::Ls => ls::Ls::on_io_writer_chunk(interp, cmd, written, err),
+            Kind::Mkdir => mkdir::Mkdir::on_io_writer_chunk(interp, cmd, written, err),
+            Kind::Touch => touch::Touch::on_io_writer_chunk(interp, cmd, written, err),
+            Kind::Cp => cp::Cp::on_io_writer_chunk(interp, cmd, written, err),
+            Kind::Seq => seq::Seq::on_io_writer_chunk(interp, cmd, written, err),
+            Kind::Yes => yes::Yes::on_io_writer_chunk(interp, cmd, written, err),
         }
     }
 
@@ -309,6 +428,112 @@ impl Builtin {
     pub fn shell<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a crate::shell::interpreter::ShellExecEnv {
         // SAFETY: see Base::shell.
         unsafe { &*interp.as_cmd(cmd).base.shell }
+    }
+
+    /// The owning `Cmd` state node. Spec: Builtin.zig `parentCmd` (Zig used
+    /// `@fieldParentPtr`; in the NodeId port the builtin already stores `cmd`).
+    #[inline]
+    pub fn parent_cmd<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a Cmd {
+        interp.as_cmd(cmd)
+    }
+
+    #[inline]
+    pub fn parent_cmd_mut<'a>(interp: &'a mut Interpreter, cmd: NodeId) -> &'a mut Cmd {
+        interp.as_cmd_mut(cmd)
+    }
+
+    /// Event loop handle (forwarded from the interpreter). Spec: Builtin.zig
+    /// `eventLoop` → `parentCmd().base.eventLoop()`.
+    #[inline]
+    pub fn event_loop(interp: &Interpreter, _cmd: NodeId) -> crate::shell::interpreter::EventLoopHandle {
+        interp.event_loop
+    }
+
+    /// Cwd fd of the owning Cmd's shell env. Spec: Builtin.zig `this.cwd` /
+    /// `parentCmd().base.shell.cwd_fd`.
+    #[inline]
+    pub fn cwd(interp: &Interpreter, cmd: NodeId) -> bun_sys::Fd {
+        Self::shell(interp, cmd).cwd_fd
+    }
+
+    /// Format `"{kind}: {fmt}"` into a fresh heap buffer. Spec: Builtin.zig
+    /// `fmtErrorArena` (Zig allocates from the Cmd's bump arena; we use a
+    /// `Vec` — the per-builtin arena isn't ported yet).
+    ///
+    /// Stored on the `Builtin` so the returned `&[u8]` borrow stays valid
+    /// across the immediate `write_no_io` / `enqueue` call (matches the Zig
+    /// arena lifetime).
+    pub fn fmt_error_arena<'a>(
+        interp: &'a mut Interpreter,
+        cmd: NodeId,
+        kind: Option<Kind>,
+        args: core::fmt::Arguments<'_>,
+    ) -> &'a [u8] {
+        use std::io::Write as _;
+        let mut buf = Vec::new();
+        if let Some(k) = kind {
+            let _ = write!(&mut buf, "{}: ", k.as_str());
+        }
+        let _ = buf.write_fmt(args);
+        let me = Self::of_mut(interp, cmd);
+        me.err_buf = buf;
+        &me.err_buf
+    }
+
+    /// Error messages formatted to match bash. Spec: Builtin.zig
+    /// `taskErrorToString` (the `Syscall.Error` arm).
+    pub fn task_error_to_string<'a>(
+        interp: &'a mut Interpreter,
+        cmd: NodeId,
+        kind: Kind,
+        err: &bun_sys::Error,
+    ) -> &'a [u8] {
+        // TODO(b2-blocked): bun_sys::coreutils_error_map — map errno to the
+        // GNU coreutils-style message. For now use the generic name.
+        let path = err.path();
+        if !path.is_empty() {
+            Self::fmt_error_arena(
+                interp,
+                cmd,
+                Some(kind),
+                format_args!(
+                    "{}: {}\n",
+                    bstr::BStr::new(path),
+                    err.name()
+                ),
+            )
+        } else {
+            Self::fmt_error_arena(interp, cmd, Some(kind), format_args!("{}\n", err.name()))
+        }
+    }
+
+    /// Write `buf` to stderr (async if needed) then finish with `exit_code`.
+    /// Shared helper for builtins whose only failure path is "print error and
+    /// exit". Spec: per-builtin `writeFailingError` in Zig — hoisted here so
+    /// the NodeId-style builtins don't each repeat the needs_io branch.
+    ///
+    /// The caller must set its own `state = WaitingWriteErr` first if it needs
+    /// to distinguish that in `on_io_writer_chunk`.
+    pub fn write_failing_error(
+        interp: &mut Interpreter,
+        cmd: NodeId,
+        buf: &[u8],
+        exit_code: crate::shell::ExitCode,
+    ) -> Yield {
+        if let Some(safeguard) = Self::of(interp, cmd).stderr.needs_io() {
+            let child = crate::shell::io_writer::ChildPtr {
+                node: cmd,
+                tag: crate::shell::io_writer::WriterTag::Builtin,
+            };
+            // PORT NOTE: reshaped for borrowck — clone buf so the &mut on
+            // `stderr` doesn't overlap a borrow into `err_buf`.
+            let owned = buf.to_vec();
+            return Self::of_mut(interp, cmd)
+                .stderr
+                .enqueue(child, &owned, safeguard);
+        }
+        Self::write_no_io(interp, cmd, IoKind::Stderr, buf);
+        Self::done(interp, cmd, exit_code)
     }
 }
 

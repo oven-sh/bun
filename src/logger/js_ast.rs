@@ -10,15 +10,15 @@
 //! types and keeps its own *full* `expr::Data` (which adds `EUnary`/`ECall`/
 //! `EDot`/etc.). Zig source: `src/js_parser/ast/{E,G,Expr}.zig`.
 //!
-//! **Unification note (TODO b2-ast-unify):** `bun_js_parser::ast::expr::Data`
-//! is currently a *separate* enum — it stores `StoreRef<E::Unary>` payloads
-//! that name parser-only structs. Rust enums are closed, so the full variant
-//! set cannot live at T2 without dragging `Op`/`Stmt`/`Binding`/`Scope` down
-//! too. The leaf `E::*` value structs and `StoreRef` ARE shared (re-exported
-//! by `bun_js_parser::ast::e`), so a `bun_logger` `Expr` tree can be
-//! reinterpreted node-by-node, but the two `Data` enums are not bit-identical.
-//! A follow-up round either (a) moves the remaining `E::*`/`Op`/`G::Fn` defs
-//! down, or (b) reshapes the parser `Data` to embed this enum as one variant.
+//! **Unification note (b2-ast-unify):** `bun_js_parser::ast::expr::Data` is a
+//! *separate* enum — it stores `StoreRef<E::Unary>` payloads that name
+//! parser-only structs. Rust enums are closed, so the full variant set cannot
+//! live at T2 without dragging `Op`/`Stmt`/`Binding`/`Scope` down too. The
+//! leaf scalar `E::*` structs and `StoreRef` ARE shared (re-exported by
+//! `bun_js_parser::ast::e`). The deep-convert bridge lives at T4:
+//! `impl From<bun_logger::js_ast::Expr> for bun_js_parser::ast::Expr` (see
+//! `src/js_parser/ast/Expr.rs`). Downstream T4+ code that receives a T2 tree
+//! (e.g. `bun_ini` consuming `bun_interchange::json`) lifts via `Expr::from`.
 
 #![allow(non_snake_case, dead_code)]
 

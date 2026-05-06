@@ -46,13 +46,14 @@ impl Percentage {
 
         if self.v != 0.0 && self.v.abs() < 0.01 {
             // TODO(port): fixed-size stack writer — Zig used std.Io.Writer.fixed over [32]u8.
-            // PERF(port): was stack buffer; using small Vec for now — profile in Phase B.
-            let mut buf: Vec<u8> = Vec::with_capacity(32);
-            if percent.to_css_generic(&mut buf).is_err() {
+            let mut backing = [0u8; 32];
+            let mut fbs = css::serializer::FixedBufWriter::new(&mut backing);
+            if percent.to_css_generic(&mut fbs).is_err() {
                 return Err(dest.add_fmt_error());
             }
+            let buf = fbs.buffered();
             if self.v < 0.0 {
-                dest.write_char('-')?;
+                dest.write_char(b'-')?;
                 dest.write_str(bun_string::strings::trim_leading_pattern2(&buf, b'-', b'0'))?;
             } else {
                 dest.write_str(bun_string::strings::trim_leading_char(&buf, b'0'))?;
@@ -148,7 +149,6 @@ impl Percentage {
 // else @compileError). In Rust, `D: Clone` makes this distinction irrelevant for Copy types
 // (clone is memcpy). If a deep-clone protocol is required for non-Copy D, add a trait bound.
 
-#[derive(Debug)]
 pub enum DimensionPercentage<D> {
     Dimension(D),
     Percentage(Percentage),

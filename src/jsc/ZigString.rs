@@ -71,6 +71,52 @@ pub fn static_(s: &'static [u8]) -> bun_string::ZigString {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// Un-gated JSC-side surface — small helpers that need `JSGlobalObject`/
+// `JSValue` and so live here rather than in `bun_string`. These are inherent
+// on the *local* `ZigString` struct (which is `repr(C)`-identical to
+// `bun_string::ZigString`); callers that imported `bun_str::ZigString` reach
+// these via [`to_external_u16`] (free fn) instead.
+// ──────────────────────────────────────────────────────────────────────────
+
+impl ZigString {
+    /// `ZigString.toExternalU16` (ZigString.zig:571) — hand a globally-allocated
+    /// UTF-16 buffer to JSC as an external string. Ownership of `ptr[0..len]`
+    /// transfers to JSC on success; on the too-long path the buffer is freed
+    /// here, a `STRING_TOO_LONG` error is thrown, and `.zero` is returned.
+    ///
+    /// SAFETY: `ptr` must have been allocated by the global mimalloc allocator
+    /// (via `Box::into_raw`/`Vec::into_raw_parts`/`bun.default_allocator`) and
+    /// must not be used by the caller after this returns.
+    pub fn to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObject) -> JSValue {
+        to_external_u16(ptr, len, global)
+    }
+}
+
+/// Free-function form of [`ZigString::to_external_u16`] for callers that
+/// imported `bun_str::ZigString` (which cannot grow inherent methods from this
+/// crate).
+pub fn to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObject) -> JSValue {
+    if len > BunString::max_length() {
+        // SAFETY: caller contract — `ptr` came from the global mimalloc
+        // allocator. `mi_free` accepts the raw block pointer regardless of
+        // element size.
+        unsafe { bun_alloc::mimalloc::mi_free(ptr as *mut core::ffi::c_void) };
+        // TODO(port): Zig used `global.ERR(.STRING_TOO_LONG, msg).throw()`;
+        // the codegen'd `ErrorCode::ERR_STRING_TOO_LONG` builder hasn't landed
+        // yet, so throw a plain RangeError with the same message. Propagation
+        // is swallowed (matches Zig's `catch {}`).
+        let err = global.create_range_error_instance(format_args!(
+            "Cannot create a string longer than 2^32-1 characters"
+        ));
+        let _ = global.throw_value(err);
+        return JSValue::ZERO;
+    }
+    // SAFETY: ptr/len describe a globally-allocated UTF-16 buffer; ownership
+    // transfers to JSC (freed via the external-string finalizer).
+    unsafe { ZigString__toExternalU16(ptr, len, global) }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // phase-b2+: `JSValue` / `JSGlobalObject` surface has landed (~83 methods).
 // NOTE: this body was *never* blocked on JSValue surface — its blockers are
 // orthogonal lower-tier API gaps. Per PORTING.md the JSC-side methods (`to_js`/

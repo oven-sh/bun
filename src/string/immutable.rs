@@ -20,27 +20,31 @@ pub use self::unicode::{
 // B-2: heavy submodules gated; minimal inline `unicode` provides the 5 fns
 // immutable.rs itself needs. Un-gate each below as their deps land.
 #[path = "immutable/exact_size_matcher.rs"] pub mod exact_size_matcher;
-// TODO(b2-round9): escapeHTML.rs uses Zig `@Vector` SIMD ops (`.splat`,
-// `.simd_eq`, `.reduce`) on `AsciiVector`/`AsciiU16Vector`. With
-// `ENABLE_SIMD = false` the branches are unreachable but still must
-// type-check (Rust has no comptime laziness). Options: (a) `cfg(any())` each
-// `if ENABLE_SIMD { .. }` body (~6 blocks), (b) make AsciiVector a thin
-// wrapper with no-op `.splat`/`.simd_eq`/`.reduce_max`, (c) route through
-// `bun_highway::contains_any_of` (the actual scan). 17 errors.
-#[cfg(any())] #[path = "immutable/escapeHTML.rs"]         mod escape_html_draft;
-mod escape_html {}
+// AsciiVector/AsciiU16Vector are scalar `ScalarVec` wrappers (see below) so
+// the `if ENABLE_SIMD { .. }` branches type-check; `ENABLE_SIMD = false`
+// keeps them dead at runtime. PERF(port): swap to bun_highway in Phase B.
+#[path = "immutable/escapeHTML.rs"]         pub mod escape_html;
 #[path = "immutable/grapheme.rs"] pub mod grapheme;
 #[path = "immutable/grapheme_tables.rs"] pub mod grapheme_tables;
-#[cfg(any())] #[path = "immutable/paths.rs"]              mod paths_draft;
-#[cfg(any())] #[path = "immutable/unicode.rs"]            mod unicode_draft;
-#[cfg(any())] #[path = "immutable/visible.rs"]            mod visible_draft;
+#[path = "immutable/paths.rs"]              pub mod paths;
+#[path = "immutable/unicode.rs"]            mod unicode_draft;
+#[path = "immutable/visible.rs"]            mod visible_impl;
 
 mod escape_reg_exp { pub use crate::escape_reg_exp::*; }
-mod paths {}
 
-/// `bun.strings.visible` — terminal-visible-width helpers. Minimal scalar
-/// surface; full SIMD/grapheme-aware impls live in the gated `visible_draft`.
-pub mod visible {
+/// `bun.strings.visible` — terminal-visible-width helpers (East-Asian-width +
+/// grapheme-aware; SIMD paths demoted to scalar `ScalarVec` for B-2).
+pub use visible_impl::{
+    is_amgiguous_codepoint_type, is_full_width_codepoint_type, is_zero_width_codepoint_type,
+    visible, visible_codepoint_width, visible_codepoint_width_maybe_emoji,
+    visible_codepoint_width_type,
+};
+
+/// PORT NOTE (B-2): minimal scalar fallback that predates `visible_impl` —
+/// kept for diff parity with callers that imported `visible_fallback::*`.
+/// New code should use [`visible`] (the real impl).
+#[doc(hidden)]
+pub mod visible_fallback {
     pub mod width {
         pub mod exclude_ansi_colors {
             use crate::immutable::{index_of_char_usize, wtf8_byte_sequence_length};
@@ -1644,15 +1648,122 @@ pub fn substring(self_: &[u8], start: Option<usize>, stop: Option<usize>) -> &[u
 }
 
 // PORT NOTE: AsciiVector / @Vector aliases — Zig SIMD types have no stable
-// Rust equivalent. Exposed as plain arrays so dead-SIMD branches type-check;
-// `ENABLE_SIMD = false` makes those branches unreachable. Hot loops use
-// scalar fallbacks with `// PERF(port)` markers; Phase B routes through
-// bun_highway/portable_simd.
+// Rust equivalent. Exposed as thin scalar wrappers so dead-SIMD branches
+// type-check; `ENABLE_SIMD = false` makes those branches unreachable at
+// runtime. Hot loops use scalar fallbacks with `// PERF(port)` markers;
+// Phase B routes through bun_highway/portable_simd.
 pub const ENABLE_SIMD: bool = false;
 pub const ASCII_VECTOR_SIZE: usize = 16;
 pub const ASCII_U16_VECTOR_SIZE: usize = 8;
-pub type AsciiVector = [u8; ASCII_VECTOR_SIZE];
-pub type AsciiU16Vector = [u16; ASCII_U16_VECTOR_SIZE];
+
+/// Scalar stand-in for Zig `@Vector(N, T)` — just enough surface
+/// (`splat`/`from_slice`/`simd_eq`/`simd_gt`) for the `escape_html` SIMD
+/// branches to type-check. Every method is a plain elementwise loop.
+/// PERF(port): replace with `core::simd::Simd<T, N>` or `bun_highway` lanes.
+#[derive(Clone, Copy)]
+pub struct ScalarVec<T: Copy + Eq + Ord + Default, const N: usize>(pub [T; N]);
+
+/// Lane mask returned by `simd_eq`/`simd_gt`. `BitOr` combines masks; `any()`
+/// reduces to a single bool (Zig `@reduce(.Max, mask) == 1`).
+#[derive(Clone, Copy)]
+pub struct ScalarMask<const N: usize>(pub [bool; N]);
+
+impl<T: Copy + Eq + Ord + Default, const N: usize> ScalarVec<T, N> {
+    #[inline]
+    pub fn splat(v: T) -> Self {
+        Self([v; N])
+    }
+    #[inline]
+    pub fn from_slice(s: &[T]) -> Self {
+        let mut out = [T::default(); N];
+        out.copy_from_slice(&s[..N]);
+        Self(out)
+    }
+    #[inline]
+    pub fn simd_eq(self, other: Self) -> ScalarMask<N> {
+        let mut m = [false; N];
+        for i in 0..N {
+            m[i] = self.0[i] == other.0[i];
+        }
+        ScalarMask(m)
+    }
+    #[inline]
+    pub fn simd_gt(self, other: Self) -> ScalarMask<N> {
+        let mut m = [false; N];
+        for i in 0..N { m[i] = self.0[i] > other.0[i]; }
+        ScalarMask(m)
+    }
+    #[inline]
+    pub fn simd_ge(self, other: Self) -> ScalarMask<N> {
+        let mut m = [false; N];
+        for i in 0..N { m[i] = self.0[i] >= other.0[i]; }
+        ScalarMask(m)
+    }
+    #[inline]
+    pub fn simd_lt(self, other: Self) -> ScalarMask<N> {
+        let mut m = [false; N];
+        for i in 0..N { m[i] = self.0[i] < other.0[i]; }
+        ScalarMask(m)
+    }
+    #[inline]
+    pub fn simd_le(self, other: Self) -> ScalarMask<N> {
+        let mut m = [false; N];
+        for i in 0..N { m[i] = self.0[i] <= other.0[i]; }
+        ScalarMask(m)
+    }
+    #[inline]
+    pub fn simd_ne(self, other: Self) -> ScalarMask<N> {
+        let mut m = [false; N];
+        for i in 0..N { m[i] = self.0[i] != other.0[i]; }
+        ScalarMask(m)
+    }
+}
+impl<const N: usize> core::ops::BitOr for ScalarMask<N> {
+    type Output = Self;
+    #[inline]
+    fn bitor(self, rhs: Self) -> Self {
+        let mut m = [false; N];
+        for i in 0..N {
+            m[i] = self.0[i] | rhs.0[i];
+        }
+        Self(m)
+    }
+}
+impl<const N: usize> core::ops::BitAnd for ScalarMask<N> {
+    type Output = Self;
+    #[inline]
+    fn bitand(self, rhs: Self) -> Self {
+        let mut m = [false; N];
+        for i in 0..N { m[i] = self.0[i] & rhs.0[i]; }
+        Self(m)
+    }
+}
+impl<const N: usize> core::ops::BitOrAssign for ScalarMask<N> {
+    #[inline]
+    fn bitor_assign(&mut self, rhs: Self) {
+        for i in 0..N { self.0[i] |= rhs.0[i]; }
+    }
+}
+impl<const N: usize> ScalarMask<N> {
+    #[inline]
+    pub fn any(self) -> bool {
+        self.0.iter().any(|&b| b)
+    }
+    /// Packs lane truth into the low N bits of a u64 (LSB = lane 0). Mirrors
+    /// `core::simd::Mask::to_bitmask` so `popcount`/`trailing_zeros` work.
+    #[inline]
+    pub fn to_bitmask(self) -> u64 {
+        debug_assert!(N <= 64);
+        let mut bits: u64 = 0;
+        for i in 0..N {
+            bits |= (self.0[i] as u64) << i;
+        }
+        bits
+    }
+}
+
+pub type AsciiVector = ScalarVec<u8, ASCII_VECTOR_SIZE>;
+pub type AsciiU16Vector = ScalarVec<u16, ASCII_U16_VECTOR_SIZE>;
 
 /// `strings.utf16Codepoint` — surrogate-pair length + decoded code point.
 /// Minimal version for `escape_html` (only `.len` is used there); the full
@@ -1684,6 +1795,70 @@ pub fn utf16_codepoint(input: &[u16]) -> Utf16CodepointLen {
         }
     } else {
         Utf16CodepointLen { code_point: c0, len: 1 }
+    }
+}
+
+/// `strings.UTF16Replacement` — decoded UTF-16 codepoint with surrogate
+/// metadata. Used by `visible_utf16_width_fn` and the (gated) `unicode_draft`
+/// transcoding suite.
+#[derive(Clone, Copy)]
+pub struct UTF16Replacement {
+    pub code_point: u32,
+    pub len: U3Fast,
+    /// Explicit fail boolean to distinguish a Unicode Replacement Codepoint
+    /// that was already in the input from a genuine decode error.
+    pub fail: bool,
+    pub can_buffer: bool,
+    pub is_lead: bool,
+}
+impl Default for UTF16Replacement {
+    fn default() -> Self {
+        Self { code_point: UNICODE_REPLACEMENT, len: 0, fail: false, can_buffer: true, is_lead: false }
+    }
+}
+impl UTF16Replacement {
+    #[inline]
+    pub fn utf8_width(self) -> U3Fast {
+        match self.code_point {
+            0..=0x7F => 1,
+            0x80..=0x7FF => 2,
+            0x800..=0xFFFF => 3,
+            _ => 4,
+        }
+    }
+}
+
+/// `strings.utf16CodepointWithFFFD` — surrogate-pair decode that reports
+/// failure (`fail`/`is_lead`) instead of silently passing the lead through
+/// (unicode.zig:1378 vs. `utf16_codepoint`).
+pub fn utf16_codepoint_with_fffd(input: &[u16]) -> UTF16Replacement {
+    let c0 = input[0] as u32;
+    if c0 & !0x03ff == 0xd800 {
+        // surrogate pair
+        if input.len() == 1 {
+            return UTF16Replacement { len: 1, is_lead: true, ..Default::default() };
+        }
+        let c1 = input[1] as u32;
+        if c1 & !0x03ff != 0xdc00 {
+            // PORT NOTE: unicode.zig has a dead `if input.len() == 1` here
+            // (already excluded above); preserved fail+is_lead branch only.
+            return UTF16Replacement {
+                fail: true,
+                len: 1,
+                code_point: UNICODE_REPLACEMENT,
+                is_lead: true,
+                ..Default::default()
+            };
+        }
+        UTF16Replacement {
+            len: 2,
+            code_point: 0x10000 + (((c0 & 0x03ff) << 10) | (c1 & 0x03ff)),
+            ..Default::default()
+        }
+    } else if c0 & !0x03ff == 0xdc00 {
+        UTF16Replacement { fail: true, len: 1, code_point: UNICODE_REPLACEMENT, ..Default::default() }
+    } else {
+        UTF16Replacement { code_point: c0, len: 1, ..Default::default() }
     }
 }
 
@@ -2644,17 +2819,24 @@ pub struct QuoteEscapeFormat<'a> {
 }
 
 impl core::fmt::Display for QuoteEscapeFormat<'_> {
-    fn fmt(&self, _f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        #[cfg(any())]
-        {
-            // TODO(b2-gated): bun.js_printer.writePreQuotedString — MOVE_DOWN
-            // bun_js_parser::printer → bun_string::printer (string/lib.rs has
-            // a `printer` stub mod but not write_pre_quoted_string yet).
-            return crate::printer::write_pre_quoted_string(
-                self.data, _f, self.flags.quote_char, false, self.flags.json, self.flags.str_encoding,
-            );
-        }
-        todo!("QuoteEscapeFormat::fmt: printer::write_pre_quoted_string")
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // PERF(port): Zig wrote directly to the writer; here we buffer through
+        // a Vec so `write_pre_quoted_string`'s `PrinterWriter` bound is met
+        // without an adapter for `core::fmt::Formatter`. Profile in Phase B.
+        let mut buf: Vec<u8> = Vec::with_capacity(self.data.len() + 8);
+        crate::printer::write_pre_quoted_string(
+            self.data,
+            &mut buf,
+            self.flags.quote_char,
+            // Zig (immutable.zig:2159) hardcodes `false` here regardless of
+            // `flags.ascii_only`; the field is dead in QuoteEscapeFormat.
+            false,
+            self.flags.json,
+            self.flags.str_encoding,
+        )
+        .map_err(|_| core::fmt::Error)?;
+        // SAFETY: write_pre_quoted_string emits UTF-8 (escapes + ASCII + WTF-8).
+        f.write_str(unsafe { core::str::from_utf8_unchecked(&buf) })
     }
 }
 
@@ -3153,23 +3335,17 @@ pub fn to_utf16_alloc(
         // Copy ASCII prefix as-is (one u16 per byte).
         out.extend(remaining[..i].iter().map(|&b| b as u16));
         remaining = &remaining[i..];
-        // Decode one codepoint.
-        let len = unicode::wtf8_byte_sequence_length(remaining[0]).max(1) as usize;
-        let avail = len.min(remaining.len());
-        let mut buf = [0u8; 4];
-        buf[..avail].copy_from_slice(&remaining[..avail]);
-        let cp = unicode::decode_wtf8_rune_t::<i32>(&buf, len as u8, -1);
-        if cp < 0 || avail < len {
-            out.push(0xFFFD);
-            remaining = &remaining[1..];
-        } else if cp <= 0xFFFF {
-            out.push(cp as u16);
-            remaining = &remaining[len..];
+        // Decode one codepoint via the same routine Zig uses
+        // (`convertUTF8BytesIntoUTF16`) so the number/position of U+FFFD
+        // emissions matches: advance by `replacement.len.max(1)`, not 1.
+        let replacement = unicode_draft::convert_utf8_bytes_into_utf16(remaining);
+        remaining = &remaining[(replacement.len as usize).max(1)..];
+        let c = replacement.code_point;
+        if c <= 0xFFFF {
+            out.push(c as u16);
         } else {
-            let c = (cp - 0x10000) as u32;
-            out.push((0xD800 + (c >> 10)) as u16);
-            out.push((0xDC00 + (c & 0x3FF)) as u16);
-            remaining = &remaining[len..];
+            out.push(unicode_draft::u16_lead(c));
+            out.push(unicode_draft::u16_trail(c));
         }
     }
     out.extend(remaining.iter().map(|&b| b as u16));

@@ -5,23 +5,39 @@
 use core::sync::atomic::{AtomicI32, Ordering};
 
 use crate::{Fd, E};
-// TODO(port): exact module path for syscall tag enum (`.copyfile`, `.copy_file_range`)
 use crate::Tag;
 
-bun_output::declare_scope!(copy_file, hidden);
+// PORT NOTE: Zig was `const debug = bun.Output.scoped(.copy_file, .hidden)`.
+// `declare_scope!` uses the ident as both static name AND tag string, but
+// `copy_file` would shadow `pub fn copy_file()` below. Hand-expand with the
+// correct env-var tag and a non-colliding static name.
+// TODO(port): `scoped_log!` stringifies its scope ident for the `[tag]`
+// prefix, so log lines show `[debug]` instead of `[copy_file]`; fix when
+// `scoped_log!` grows a path/expr arm.
+static debug: bun_core::output::ScopedLogger =
+    bun_core::output::ScopedLogger::new("copy_file", bun_core::output::Visibility::Hidden);
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum CopyFileRangeError {
+    #[error("FileTooBig")]
     FileTooBig,
+    #[error("InputOutput")]
     InputOutput,
     /// `in` is not open for reading; or `out` is not open  for  writing;
     /// or the  `O.APPEND`  flag  is  set  for `out`.
+    #[error("FilesOpenedWithWrongFlags")]
     FilesOpenedWithWrongFlags,
+    #[error("IsDir")]
     IsDir,
+    #[error("OutOfMemory")]
     OutOfMemory,
+    #[error("NoSpaceLeft")]
     NoSpaceLeft,
+    #[error("Unseekable")]
     Unseekable,
+    #[error("PermissionDenied")]
     PermissionDenied,
+    #[error("FileBusy")]
     FileBusy,
     // TODO(port): Zig unioned `posix.PReadError || posix.PWriteError || posix.UnexpectedError`
     // here; in Rust those collapse into `bun_core::Error` via `From`.
@@ -33,9 +49,11 @@ impl From<CopyFileRangeError> for bun_core::Error {
 }
 
 #[cfg(windows)]
-pub type InputType<'a> = &'a bun_str::WStr; // bun.OSPathSliceZ == [:0]const u16
+pub type InputType<'a> = &'a bun_string::WStr; // bun.OSPathSliceZ == [:0]const u16
 #[cfg(not(windows))]
 pub type InputType<'a> = Fd;
+// PORT NOTE: lifetime param is unused on posix (Fd is Copy); kept so callers
+// can write `InputType<'_>` uniformly across platforms.
 
 /// In a `bun install` with prisma, this reduces the system call count from ~18,000 to ~12,000
 ///
@@ -97,14 +115,13 @@ pub fn copy_file_with_state(
 ) -> CopyFileReturnType {
     #[cfg(target_os = "macos")]
     {
-        // TODO(port): exact binding for `posix.system.fcopyfile` / `COPYFILE{ .DATA = true }`
         // SAFETY: FFI call; fds are valid open descriptors owned by caller, state ptr is null
         let rc = unsafe {
-            crate::darwin::fcopyfile(
+            libc::fcopyfile(
                 in_.native(),
                 out.native(),
                 core::ptr::null_mut(),
-                crate::darwin::COPYFILE_DATA,
+                libc::COPYFILE_DATA,
             )
         };
 
@@ -112,8 +129,8 @@ pub fn copy_file_with_state(
             E::SUCCESS => return Ok(()),
             // The source file is not a directory, symbolic link, or regular file.
             // Try with the fallback path before giving up.
-            E::OPNOTSUPP => {}
-            _ => return crate::Result::<()>::errno_sys(rc, Tag::copyfile).unwrap(),
+            E::EOPNOTSUPP => {}
+            e => return Err(crate::Error::from_code(e, Tag::copyfile)),
         }
     }
 
@@ -130,15 +147,16 @@ pub fn copy_file_with_state(
             crate::syslog!("ioctl_ficlone({}, {}) = {}", in_, out, rc);
             match crate::get_errno(rc) {
                 E::SUCCESS => return Ok(()),
-                E::XDEV => {
+                E::EXDEV => {
                     copy_file_state.insert(LinuxCopyFileState::HAS_SEEN_EXDEV);
                 }
 
                 // Don't worry about EINTR here.
-                E::INTR => {}
+                E::EINTR => {}
 
-                E::ACCES | E::BADF | E::INVAL | E::OPNOTSUPP | E::NOSYS | E::PERM => {
-                    bun_output::scoped_log!(copy_file, "ioctl_ficlonerange is NOT supported");
+                // PORT NOTE: Zig matched .OPNOTSUPP; on Linux EOPNOTSUPP == ENOTSUP.
+                E::EACCES | E::EBADF | E::EINVAL | E::ENOTSUP | E::ENOSYS | E::EPERM => {
+                    bun_core::scoped_log!(debug, "ioctl_ficlonerange is NOT supported");
                     CAN_USE_IOCTL_FICLONE_.store(-1, Ordering::Relaxed);
                     copy_file_state.insert(LinuxCopyFileState::HAS_IOCTL_FICLONE_FAILED);
                 }
@@ -201,8 +219,8 @@ pub fn copy_file_with_state(
                     }
                 }
                 // Cross-filesystem or unsupported fd type — fall back to r/w loop.
-                E::XDEV | E::INVAL | E::OPNOTSUPP | E::BADF => break,
-                E::INTR => continue,
+                E::EXDEV | E::EINVAL | E::EOPNOTSUPP | E::EBADF => break,
+                E::EINTR => continue,
                 e => return Err(crate::Error::from_code(e, Tag::copy_file_range)),
             }
         }
@@ -210,14 +228,11 @@ pub fn copy_file_with_state(
 
     #[cfg(windows)]
     {
-        if let Some(err) = crate::Result::<()>::errno_sys(
-            // SAFETY: FFI call; in_/out are NUL-terminated WStr, pointers valid for duration of call
-            unsafe { crate::windows::CopyFileW(in_.as_ptr(), out.as_ptr(), 0) },
-            Tag::copyfile,
-        ) {
-            return err;
+        // SAFETY: FFI call; in_/out are NUL-terminated WStr, pointers valid for duration of call
+        let rc = unsafe { crate::windows::CopyFileW(in_.as_ptr(), out.as_ptr(), 0) };
+        if rc == 0 {
+            return Err(crate::Error::from_code_int(crate::last_errno(), Tag::copyfile));
         }
-
         return Ok(());
     }
 
@@ -259,25 +274,22 @@ pub fn can_use_copy_file_range_syscall() -> bool {
     let result = CAN_USE_COPY_FILE_RANGE.load(Ordering::Relaxed);
     if result == 0 {
         // This flag mostly exists to make other code more easily testable.
-        if bun_core::env_var::BUN_CONFIG_DISABLE_COPY_FILE_RANGE.get() {
-            bun_output::scoped_log!(
-                copy_file,
+        if bun_core::env_var::BUN_CONFIG_DISABLE_COPY_FILE_RANGE.get().unwrap_or(false) {
+            bun_core::scoped_log!(
+                debug,
                 "copy_file_range is disabled by BUN_CONFIG_DISABLE_COPY_FILE_RANGE"
             );
             CAN_USE_COPY_FILE_RANGE.store(-1, Ordering::Relaxed);
             return false;
         }
 
-        let kernel = Platform::kernel_version();
-        // TODO(port): exact API for Semver-ish compare `orderWithoutTag(...).compare(.gte)`
-        if kernel.at_least(4, 5)
-            >= core::cmp::Ordering::Equal
-        {
-            bun_output::scoped_log!(copy_file, "copy_file_range is supported");
+        // Zig: `kernel.orderWithoutTag(.{ .major = 4, .minor = 5 }).compare(.gte)`
+        if kernel_at_least(4, 5) {
+            bun_core::scoped_log!(debug, "copy_file_range is supported");
             CAN_USE_COPY_FILE_RANGE.store(1, Ordering::Relaxed);
             return true;
         } else {
-            bun_output::scoped_log!(copy_file, "copy_file_range is NOT supported");
+            bun_core::scoped_log!(debug, "copy_file_range is NOT supported");
             CAN_USE_COPY_FILE_RANGE.store(-1, Ordering::Relaxed);
             return false;
         }
@@ -302,25 +314,22 @@ pub fn can_use_ioctl_ficlone() -> bool {
     let result = CAN_USE_IOCTL_FICLONE_.load(Ordering::Relaxed);
     if result == 0 {
         // This flag mostly exists to make other code more easily testable.
-        if bun_core::env_var::BUN_CONFIG_DISABLE_ioctl_ficlonerange.get() {
-            bun_output::scoped_log!(
-                copy_file,
+        if bun_core::env_var::BUN_CONFIG_DISABLE_ioctl_ficlonerange.get().unwrap_or(false) {
+            bun_core::scoped_log!(
+                debug,
                 "ioctl_ficlonerange is disabled by BUN_CONFIG_DISABLE_ioctl_ficlonerange"
             );
             CAN_USE_IOCTL_FICLONE_.store(-1, Ordering::Relaxed);
             return false;
         }
 
-        let kernel = Platform::kernel_version();
-        // TODO(port): exact API for Semver-ish compare `orderWithoutTag(...).compare(.gte)`
-        if kernel.at_least(4, 5)
-            >= core::cmp::Ordering::Equal
-        {
-            bun_output::scoped_log!(copy_file, "ioctl_ficlonerange is supported");
+        // Zig: `kernel.orderWithoutTag(.{ .major = 4, .minor = 5 }).compare(.gte)`
+        if kernel_at_least(4, 5) {
+            bun_core::scoped_log!(debug, "ioctl_ficlonerange is supported");
             CAN_USE_IOCTL_FICLONE_.store(1, Ordering::Relaxed);
             return true;
         } else {
-            bun_output::scoped_log!(copy_file, "ioctl_ficlonerange is NOT supported");
+            bun_core::scoped_log!(debug, "ioctl_ficlonerange is NOT supported");
             CAN_USE_IOCTL_FICLONE_.store(-1, Ordering::Relaxed);
             return false;
         }
@@ -356,22 +365,23 @@ pub fn copy_file_range(
             match crate::get_errno(rc) {
                 E::SUCCESS => return Ok(rc as usize),
                 // these may not be regular files, try fallback
-                E::INVAL => {
+                E::EINVAL => {
                     copy_file_state.insert(LinuxCopyFileState::HAS_COPY_FILE_RANGE_FAILED);
                 }
                 // support for cross-filesystem copy added in Linux 5.3
                 // and even then, it is frequently not supported.
-                E::XDEV => {
+                E::EXDEV => {
                     copy_file_state.insert(LinuxCopyFileState::HAS_SEEN_EXDEV);
                     copy_file_state.insert(LinuxCopyFileState::HAS_COPY_FILE_RANGE_FAILED);
                 }
                 // syscall added in Linux 4.5, use fallback
-                E::OPNOTSUPP | E::NOSYS => {
+                // PORT NOTE: Zig matched .OPNOTSUPP; on Linux EOPNOTSUPP == ENOTSUP.
+                E::ENOTSUP | E::ENOSYS => {
                     copy_file_state.insert(LinuxCopyFileState::HAS_COPY_FILE_RANGE_FAILED);
-                    bun_output::scoped_log!(copy_file, "copy_file_range is NOT supported");
+                    bun_core::scoped_log!(debug, "copy_file_range is NOT supported");
                     CAN_USE_COPY_FILE_RANGE.store(-1, Ordering::Relaxed);
                 }
-                E::INTR => continue,
+                E::EINTR => continue,
                 _ => {
                     // failed for some other reason
                     copy_file_state.insert(LinuxCopyFileState::HAS_COPY_FILE_RANGE_FAILED);
@@ -388,18 +398,19 @@ pub fn copy_file_range(
         crate::syslog!("sendfile({}, {}, {}) = {}", in_, out, len, rc);
         match crate::get_errno(rc) {
             E::SUCCESS => return Ok(rc as usize),
-            E::INTR => continue,
+            E::EINTR => continue,
             // these may not be regular files, try fallback
-            E::INVAL => {
+            E::EINVAL => {
                 copy_file_state.insert(LinuxCopyFileState::HAS_SENDFILE_FAILED);
             }
             // This shouldn't happen?
-            E::XDEV => {
+            E::EXDEV => {
                 copy_file_state.insert(LinuxCopyFileState::HAS_SEEN_EXDEV);
                 copy_file_state.insert(LinuxCopyFileState::HAS_SENDFILE_FAILED);
             }
             // they might not support it
-            E::OPNOTSUPP | E::NOSYS => {
+            // PORT NOTE: Zig matched .OPNOTSUPP; on Linux EOPNOTSUPP == ENOTSUP.
+            E::ENOTSUP | E::ENOSYS => {
                 copy_file_state.insert(LinuxCopyFileState::HAS_SENDFILE_FAILED);
             }
             _ => {
@@ -445,8 +456,21 @@ pub fn copy_file_read_write_loop(in_: fd_t, out: fd_t, len: usize) -> crate::Res
     }
 }
 
-// TODO(b0): GeneratePlatform arrives from move-in (CYCLEBREAK MOVE_DOWN generate_header → sys).
-use crate::generate_header::GeneratePlatform as Platform;
+/// `Platform.kernelVersion().orderWithoutTag(.{ major, minor }).compare(.gte)`.
+/// PORT NOTE: `bun_analytics::generate_header::Platform` (T6) is the canonical
+/// source; T1 routes through `bun_core::linux_kernel_version()` (TYPE_ONLY
+/// move-down) so this crate stays leaf. Compare matches Zig
+/// `std.SemanticVersion.orderWithoutTag` (lexicographic on major→minor→patch,
+/// patch defaults to 0 in the comparand).
+#[inline]
+fn kernel_at_least(major: u32, minor: u32) -> bool {
+    let v = bun_core::linux_kernel_version();
+    (v.major, v.minor, v.patch) >= (major, minor, 0)
+}
+
+/// Map a raw `copy_file`-path errno to `bun_core::Error` (kept for B-1 callers).
+#[inline]
+pub fn copy_file_error_convert(e: crate::Error) -> bun_core::Error { e.into() }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

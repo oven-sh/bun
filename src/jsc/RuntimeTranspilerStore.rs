@@ -1,3 +1,5 @@
+#![allow(unused_imports, unused_variables, dead_code, unreachable_code, unused_mut)]
+
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::mem::offset_of;
@@ -5,47 +7,31 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use bun_aio::KeepAlive;
-use bun_alloc::Arena;
-use bun_bundler::analyze_transpiled_module;
 use bun_bundler::options::{self, Loader, ModuleType};
-use bun_bundler::Transpiler;
-use bun_collections::{HiveArray, UnboundedQueue};
-use bun_core::{self as bun, feature_flag, Output};
 use bun_js_parser::ast as js_ast;
 use bun_js_printer as js_printer;
 use bun_logger as logger;
 use bun_paths::{self, PathBuffer};
-use bun_resolve_builtins::HardcodedModule;
 use bun_resolver::fs as Fs;
-use bun_resolver::node_fallbacks;
-use bun_resolver::package_json::{MacroMap as MacroRemap, PackageJSON};
-use bun_str::{strings, String};
+use bun_resolver::package_json::PackageJSON;
+use bun_string::{strings, String};
 use bun_sys::Fd;
-use bun_threading::{WorkPool, WorkPoolTask};
+use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
-use crate::async_module::AsyncModule;
 use crate::{
     ConcurrentTask, EventLoop, JSGlobalObject, JSInternalPromise, JSValue, JsResult,
     ResolvedSource, RuntimeTranspilerCache, Strong, VirtualMachine,
 };
 
-bun_output::declare_scope!(RuntimeTranspilerStore, hidden);
+bun_core::declare_scope!(RuntimeTranspilerStore, hidden);
 
 // ──────────────────────────────────────────────────────────────────────────
 // Debug source dumping
 // ──────────────────────────────────────────────────────────────────────────
 
-pub fn dump_source<P>(vm: &VirtualMachine, specifier: &[u8], printer: &P)
-where
-    // TODO(port): `printer: anytype` — body only uses `printer.ctx.getWritten()`
-    P: js_printer::HasBufferWriterCtx,
-{
-    dump_source_string(vm, specifier, printer.ctx().get_written());
-}
-
 pub fn dump_source_string(vm: &VirtualMachine, specifier: &[u8], written: &[u8]) {
     if let Err(e) = dump_source_string_failiable(vm, specifier, written) {
-        Output::debug_warn(format_args!("Failed to dump source string: {}", e.name()));
+        bun_core::debug_warn!("Failed to dump source string: {}", e.name());
     }
 }
 
@@ -54,11 +40,13 @@ pub fn dump_source_string_failiable(
     specifier: &[u8],
     written: &[u8],
 ) -> Result<(), bun_core::Error> {
+    #[cfg(any())] // TODO(b2-blocked): bun_sys::Dir, bun_io::BufWriter, bun_core::fmt::format_json_string_utf8, bun_paths::{dirname, basename, windows_filesystem_root}, vm.source_mappings, bun_resolver::fs::FileSystem::RealFS::platform_temp_dir
+    {
     // TODO(port): narrow error set
     if !cfg!(debug_assertions) {
         return Ok(());
     }
-    if feature_flag::BUN_DEBUG_NO_DUMP.get() {
+    if bun_core::env_var::BUN_DEBUG_NO_DUMP.get() {
         return Ok(());
     }
 
@@ -153,6 +141,8 @@ pub fn dump_source_string_failiable(
     } else {
         let _ = dir.write_file(bun_paths::basename(specifier), written);
     }
+    } // end #[cfg(any())]
+    let _ = (vm, specifier, written);
     Ok(())
 }
 
@@ -167,35 +157,29 @@ pub fn set_break_point_on_first_line() -> bool {
 
 pub struct RuntimeTranspilerStore {
     pub generation_number: AtomicU32,
-    pub store: TranspilerJobStore,
+    // TODO(b2-blocked): bun_collections::HiveArrayFallback<TranspilerJob, N> — gated until
+    // HiveArray::Fallback API is confirmed and TranspilerJob is fully constructible.
+    pub store: (),
     pub enabled: bool,
-    pub queue: Queue,
+    // TODO(b2-blocked): bun_collections::UnboundedQueue<TranspilerJob, OFFSET> — intrusive
+    // queue API shape unconfirmed.
+    pub queue: (),
 }
-
-pub type Queue = UnboundedQueue<TranspilerJob, { offset_of!(TranspilerJob, next) }>;
-// TODO(port): UnboundedQueue API in Rust — Zig takes (T, .field_name); using offset_of! const.
 
 impl Default for RuntimeTranspilerStore {
     fn default() -> Self {
         Self {
             generation_number: AtomicU32::new(0),
-            store: TranspilerJobStore::default(),
+            store: (),
             enabled: true,
-            queue: Queue::default(),
+            queue: (),
         }
     }
 }
 
 impl RuntimeTranspilerStore {
     pub fn init() -> RuntimeTranspilerStore {
-        RuntimeTranspilerStore {
-            generation_number: AtomicU32::new(0),
-            // Zig: TranspilerJob.Store.init(bun.typedAllocator(TranspilerJob))
-            // typedAllocator → global mimalloc; drop allocator param.
-            store: TranspilerJobStore::init(),
-            enabled: true,
-            queue: Queue::default(),
-        }
+        RuntimeTranspilerStore::default()
     }
 
     pub fn run_from_js_thread(
@@ -204,6 +188,8 @@ impl RuntimeTranspilerStore {
         global: &JSGlobalObject,
         vm: &mut VirtualMachine,
     ) {
+        #[cfg(any())] // TODO(b2-blocked): bun_collections::UnboundedQueue::{pop_batch, iterator}, EventLoop::drain_microtasks_with_global, JSGlobalObject::report_uncaught_exception_from_error
+        {
         let mut batch = self.queue.pop_batch();
         let jsc_vm = vm.jsc_vm;
         let mut iter = batch.iterator();
@@ -226,6 +212,8 @@ impl RuntimeTranspilerStore {
         }
 
         // immediately after this is called, the microtasks will be drained again.
+        } // end #[cfg(any())]
+        let _ = (event_loop, global, vm);
     }
 
     pub fn transpile(
@@ -238,6 +226,8 @@ impl RuntimeTranspilerStore {
         loader: Loader,
         package_json: Option<&PackageJSON>,
     ) -> *mut c_void {
+        #[cfg(any())] // TODO(b2-blocked): TranspilerJobStore::get, JSInternalPromise::create, ResolvedSource fields, ResolvedSourceTag, Strong::create, JSValue::from_cell, Fs::Path::init, PackageJSON.module_type
+        {
         let job: *mut TranspilerJob = self.store.get();
         let owned_path = Fs::Path::init(Box::<[u8]>::from(path.text));
         let promise = JSInternalPromise::create(global_object);
@@ -280,7 +270,7 @@ impl RuntimeTranspilerStore {
             });
         }
         #[cfg(debug_assertions)]
-        bun_output::scoped_log!(
+        bun_core::scoped_log!(
             RuntimeTranspilerStore,
             "transpile({}, {}, async)",
             bstr::BStr::new(path.text),
@@ -289,7 +279,10 @@ impl RuntimeTranspilerStore {
         );
         // SAFETY: job fully initialized above
         unsafe { (*job).schedule() };
-        promise as *mut c_void
+        return promise as *mut c_void;
+        } // end #[cfg(any())]
+        let _ = (vm, global_object, input_specifier, path, referrer, loader, package_json);
+        core::ptr::null_mut()
     }
 }
 
@@ -303,9 +296,8 @@ const TRANSPILER_JOB_HIVE_CAP: usize = 0;
 #[cfg(not(feature = "heap_breakdown"))]
 const TRANSPILER_JOB_HIVE_CAP: usize = 64;
 
-pub type TranspilerJobStore =
-    <HiveArray<TranspilerJob, TRANSPILER_JOB_HIVE_CAP> as bun_collections::HiveArrayExt>::Fallback;
-// TODO(port): exact spelling of HiveArray<T, N>::Fallback in bun_collections
+// TODO(b2-blocked): bun_collections::HiveArrayFallback<TranspilerJob, N> — type alias gated.
+pub type TranspilerJobStore = ();
 
 pub struct TranspilerJob {
     pub path: Fs::Path,
@@ -314,10 +306,12 @@ pub struct TranspilerJob {
     pub loader: Loader,
     pub promise: Strong, // Strong.Optional → bun_jsc::Strong (default empty)
     // LIFETIMES.tsv: JSC_BORROW → `&VirtualMachine` / `&JSGlobalObject` verbatim.
-    // TODO(port): lifetime — struct is stored in HiveArray and crosses to worker thread;
-    // Phase B may need *const VirtualMachine / *const JSGlobalObject instead of borrows.
-    pub vm: &VirtualMachine,
-    pub global_this: &JSGlobalObject,
+    // PORT NOTE: struct is stored in HiveArray and crosses to a worker thread; a borrow
+    // with no named lifetime cannot live in a struct. Stored as raw pointers; SAFETY
+    // invariant is the same as the Zig (`*jsc.VirtualMachine` / `*jsc.JSGlobalObject`
+    // outlive the job because the VM owns the store).
+    pub vm: *const VirtualMachine,
+    pub global_this: *const JSGlobalObject,
     pub fetcher: Fetcher,
     pub poll_ref: KeepAlive,
     pub generation_number: u32,
@@ -334,19 +328,16 @@ pub enum Fetcher {
     File,
 }
 
-impl Drop for Fetcher {
-    fn drop(&mut self) {
-        if let Fetcher::VirtualModule(s) = self {
-            s.deref_();
-        }
-    }
-}
+// PORT NOTE: Zig `Fetcher.deinit` called `.deref()` on the contained `bun.String`.
+// `bun_string::String` already derefs in its own `Drop`, so no manual `Drop` impl
+// is needed here — replacing the variant (as `reset_for_pool` does) drops the old
+// `String` automatically.
 
 thread_local! {
-    static AST_MEMORY_STORE: Cell<Option<NonNull<js_ast::ASTMemoryAllocator>>> =
-        const { Cell::new(None) };
-    static SOURCE_CODE_PRINTER: Cell<Option<NonNull<js_printer::BufferPrinter>>> =
-        const { Cell::new(None) };
+    // TODO(b2-blocked): bun_js_parser::ast::ASTMemoryAllocator, bun_js_printer::BufferPrinter
+    // — types unconfirmed; pointers stored as `*mut c_void` until they un-gate.
+    static AST_MEMORY_STORE: Cell<Option<NonNull<c_void>>> = const { Cell::new(None) };
+    static SOURCE_CODE_PRINTER: Cell<Option<NonNull<c_void>>> = const { Cell::new(None) };
 }
 
 impl TranspilerJob {
@@ -355,6 +346,8 @@ impl TranspilerJob {
     /// several fields are reset to sentinel values for reuse. Not exposed as `pub fn deinit`
     /// per PORTING.md; only caller is `run_from_js_thread`.
     fn reset_for_pool(&mut self) {
+        #[cfg(any())] // TODO(b2-blocked): Fs::Path::empty, bun_aio::KeepAlive::disable, bun_string::String::deref_, Strong::empty
+        {
         // bun.default_allocator.free(this.path.text) → path.text is Box<[u8]> in owned_path;
         // dropping the Fs::Path frees it.
         // TODO(port): Fs::Path ownership of .text — verify in bun_resolver::fs
@@ -371,21 +364,29 @@ impl TranspilerJob {
         // self.promise.deinit() → Drop via replace
         drop(core::mem::replace(&mut self.promise, Strong::empty()));
         // self.globalThis = undefined; — no-op in Rust
+        } // end #[cfg(any())]
     }
 
     pub fn dispatch_to_main_thread(&mut self) {
-        let vm = self.vm;
+        #[cfg(any())] // TODO(b2-blocked): VirtualMachine.transpiler_store, UnboundedQueue::push, ConcurrentTask::create_from, EventLoop::enqueue_task_concurrent
+        {
+        // SAFETY: vm outlives the job (BACKREF — VM owns the store).
+        let vm = unsafe { &*self.vm };
         let transpiler_store = &vm.transpiler_store;
         transpiler_store.queue.push(self);
         // Another thread may free `self` at any time after .push, so we cannot use it any more.
         vm.event_loop()
             .enqueue_task_concurrent(ConcurrentTask::create_from(transpiler_store));
+        } // end #[cfg(any())]
     }
 
     pub fn run_from_js_thread(&mut self) -> JsResult<()> {
-        let vm = self.vm;
+        #[cfg(any())] // TODO(b2-blocked): Strong::swap, bun_aio::KeepAlive::unref, bun_string::String::{empty, clone_utf8, create_if_different, dupe_ref}, ResolvedSource fields, AsyncModule::fulfill, TranspilerJobStore::put
+        {
+        // SAFETY: vm/global_this outlive the job (BACKREF).
+        let vm = unsafe { &*self.vm };
+        let global_this = unsafe { &*self.global_this };
         let promise = self.promise.swap();
-        let global_this = self.global_this;
         self.poll_ref.unref(vm);
 
         let referrer = core::mem::replace(&mut self.non_threadsafe_referrer, String::empty());
@@ -422,11 +423,17 @@ impl TranspilerJob {
             referrer,
             &mut log,
         )
+        } // end #[cfg(any())]
+        Ok(())
     }
 
     pub fn schedule(&mut self) {
-        self.poll_ref.ref_(self.vm);
-        WorkPool::schedule(&mut self.work_task);
+        #[cfg(any())] // TODO(b2-blocked): bun_aio::KeepAlive::ref_, bun_threading::WorkPool::schedule
+        {
+            // SAFETY: vm outlives the job (BACKREF).
+            self.poll_ref.ref_(unsafe { &*self.vm });
+            WorkPool::schedule(&mut self.work_task);
+        }
     }
 
     pub extern "C" fn run_from_worker_thread(work_task: *mut WorkPoolTask) {
@@ -440,6 +447,8 @@ impl TranspilerJob {
     }
 
     pub fn run(&mut self) {
+        #[cfg(any())] // TODO(b2-blocked): bun_alloc::Arena, bun_js_parser::ast::ASTMemoryAllocator, bun_transpiler::Transpiler, bun_watcher::Watcher::get_hash, bun_resolver::{node_fallbacks, package_json::MacroMap}, bun_resolve_builtins::HardcodedModule, bun_bundler::{analyze_transpiled_module, Transpiler::ParseOptions, parse_result::AlreadyBundled}, bun_js_printer::{BufferWriter, BufferPrinter, Format}, RuntimeTranspilerCache fields, ResolvedSource fields, VirtualMachine::{transpiler, bun_watcher, main, main_hash, debugger, module_loader, smol, source_map_handler, is_watcher_enabled, use_isolation_source_provider_cache, source_mappings}
+        {
         // PERF(port): was ArenaAllocator bulk-free feeding transpiler/AST — kept as Bump.
         let mut arena = Arena::new();
         let bump = &arena;
@@ -886,15 +895,20 @@ impl TranspilerJob {
 
         // arena drops here (bulk-free)
         let _ = arena;
+        } // end #[cfg(any())]
+        // Dispatch must always run to unblock the JS thread; mirrors `defer this.dispatchToMainThread()`.
+        self.parse_error = Some(bun_core::err!("RuntimeTranspilerStoreGated"));
+        self.dispatch_to_main_thread();
     }
 }
 
 // TODO(port): placeholder re-exports for types referenced by tag matching above; Phase B
-// resolves these against their real crates.
-use crate::resolved_source::Tag as ResolvedSourceTag;
-use bun_bundler::parse_result::AlreadyBundled;
-use bun_jsc::runtime_transpiler_cache::OutputCode;
-use crate::virtual_machine::BunWatcher;
+// resolves these against their real crates. All four are only used inside the
+// `#[cfg(any())]`-gated `run()` body so they are gated likewise.
+#[cfg(any())] use crate::resolved_source::Tag as ResolvedSourceTag;
+#[cfg(any())] use bun_bundler::parse_result::AlreadyBundled;
+#[cfg(any())] use crate::runtime_transpiler_cache::OutputCode;
+#[cfg(any())] use crate::virtual_machine::BunWatcher;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

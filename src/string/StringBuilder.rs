@@ -80,19 +80,25 @@ impl StringBuilder {
             Some(unsafe { ZStr::from_raw_mut(buf_ptr, count) })
         } else {
             // Fallback: WTF-16 → WTF-8 via the slow path that handles lone surrogates.
-            let mut out = crate::strings::to_utf8_alloc(slice);
-            if out.try_reserve(1).is_err() {
+            // Zig allocated from `fallback_allocator` and handed ownership to the
+            // caller; the Rust signature returns a borrow into `self`, so we copy
+            // the WTF-8 bytes into the builder's reserved buffer (count16_z reserved
+            // enough — simdutf's length estimate is an upper bound for WTF-16) and
+            // drop the temporary Vec normally. No `mem::forget`.
+            let out = crate::strings::to_utf8_alloc(slice);
+            let len = out.len();
+            let avail = self.cap - self.len;
+            if len + 1 > avail {
                 return None;
             }
-            out.push(0);
-            // TODO(port): Zig returns `out.items[0 .. out.items.len - 1 :0]`, i.e. a
-            // slice into a heap Vec that the *caller* now owns (leaked from this fn's
-            // perspective — fallback_allocator owned it). Phase B: decide ownership.
-            let len = out.len() - 1;
-            let ptr = out.as_mut_ptr();
-            core::mem::forget(out);
-            // SAFETY: ptr[len] == 0 pushed above; buffer leaked so it outlives the return.
-            Some(unsafe { ZStr::from_raw_mut(ptr, len) })
+            // SAFETY: buf_ptr points to `avail` writable bytes (self.writable()).
+            unsafe {
+                core::ptr::copy_nonoverlapping(out.as_ptr(), buf_ptr, len);
+                *buf_ptr.add(len) = 0;
+            }
+            self.len += len + 1;
+            // SAFETY: buf_ptr[len] == 0 written above.
+            Some(unsafe { ZStr::from_raw_mut(buf_ptr, len) })
         }
     }
 
@@ -115,15 +121,8 @@ impl StringBuilder {
     }
 
     pub fn append_str(&mut self, str: &BunString) -> &[u8] {
-        // TODO(b2-blocked): bun_str::String::to_utf8 (WTFStringImpl FFI). Body
-        // preserved; gate just this method until the String surface lands.
-        #[cfg(any())]
-        {
-            let slice = str.to_utf8();
-            return self.append(slice.as_bytes());
-        }
-        let _ = str;
-        todo!("append_str: blocked on bun_str::String::to_utf8")
+        let slice = str.to_utf8();
+        self.append(slice.slice())
     }
 
     pub fn append(&mut self, slice: &[u8]) -> &[u8] {

@@ -105,8 +105,20 @@ pub mod builtins {
     pub mod mv;
     #[path = "rm.rs"]
     pub mod rm;
-    // The remaining builtins (cp, ls, mkdir, seq, touch, which, yes) are still
-    // gated until their async-task plumbing is converted.
+    #[path = "which.rs"]
+    pub mod which;
+    #[path = "ls.rs"]
+    pub mod ls;
+    #[path = "mkdir.rs"]
+    pub mod mkdir;
+    #[path = "touch.rs"]
+    pub mod touch;
+    #[path = "cp.rs"]
+    pub mod cp;
+    #[path = "seq.rs"]
+    pub mod seq;
+    #[path = "yes.rs"]
+    pub mod yes;
 }
 
 // ─── re-exports ──────────────────────────────────────────────────────────────

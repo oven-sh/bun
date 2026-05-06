@@ -1257,11 +1257,24 @@ impl<'a> Parser<'a> {
         map: &mut Map,
         value_buffer: &mut Vec<u8>,
     ) -> Result<(), AllocError> {
+        Self::parse_bytes::<OVERRIDE, IS_PROCESS, EXPAND>(source.contents, map, value_buffer)
+    }
+
+    /// Same as [`parse`] but takes the source bytes directly. Exists so
+    /// `load_env_file*` can parse a transient `Vec<u8>` without constructing a
+    /// `logger::Source` (whose `contents` field is currently `&'static [u8]`).
+    // PORT NOTE: Zig built a `logger.Source` and passed `&source` — the only
+    // field `Parser` reads is `.contents`, so this is observationally identical.
+    pub fn parse_bytes<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
+        src: &[u8],
+        map: &mut Map,
+        value_buffer: &mut Vec<u8>,
+    ) -> Result<(), AllocError> {
         // Clear the buffer before each parse to ensure no leftover data
         value_buffer.clear();
         let mut parser = Parser {
             pos: 0,
-            src: source.contents,
+            src,
             value_buffer,
         };
         parser._parse::<OVERRIDE, IS_PROCESS, EXPAND>(map)

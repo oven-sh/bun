@@ -232,8 +232,6 @@ pub enum ScopeError {
 // TODO(b2-blocked): bun_api::npm_registry::Parser
 // TODO(b2-blocked): bun_api::Ca
 // TODO(b2-blocked): bun_install_types::NodeLinker::PnpmMatcher::from_expr
-// TODO(b2-blocked): bun_js_parser::Expr ⟷ bun_logger::js_ast::Expr unification
-//                   (prepare_str() Array/Object lift — scalars already lift inline)
 
 pub use draft::{
     ConfigIterator, Parser, ScopeItem, ScopeIterator, ToStringFormatter,
@@ -600,8 +598,9 @@ impl<'a> Parser<'a> {
                 }
                 // `bun_interchange::json::parse_utf8_impl` returns the T2
                 // value-subset `bun_logger::js_ast::Expr`; lift it into the T4
-                // `bun_js_parser::Expr` carried by `PrepareResult::Value` below.
-                use bun_logger::js_ast::expr::Data as JsonData;
+                // `bun_js_parser::Expr` (via the `From` impl in
+                // `bun_js_parser::ast::expr`) so the rest of this body works
+                // against a single `ExprData`.
                 // SAFETY: Phase-A `Str = &'static [u8]` lifetime erasure (see
                 // PORTING.md §Allocators / `Parser::init` above). `val` is a
                 // sub-slice of `self.src` and outlives the temporary `Source`.
@@ -610,8 +609,8 @@ impl<'a> Parser<'a> {
                 let src = Source::init_path_string(self.source.path.text, val_s);
                 let mut log = Log::init();
                 // Try to parse it and if it fails will just treat it as a string
-                let json_val = match bun_interchange::json::parse_utf8_impl::<true>(&src, &mut log, bump) {
-                    Ok(v) => v,
+                let json_val: Expr = match bun_interchange::json::parse_utf8_impl::<true>(&src, &mut log, bump) {
+                    Ok(v) => Expr::from(v),
                     Err(_) => {
                         // JSON parse failed (e.g., single-quoted string like '${VAR}')
                         // Still need to expand env vars in the content
@@ -627,7 +626,7 @@ impl<'a> Parser<'a> {
                 };
                 drop(log);
 
-                if let JsonData::EString(s) = &json_val.data {
+                if let ExprData::EString(s) = &json_val.data {
                     let str_ = s.string(bump)?;
                     // Expand env vars in the JSON-parsed string
                     let expanded = if usage == Usage::Value {
@@ -654,24 +653,12 @@ impl<'a> Parser<'a> {
                     // — the parsed Expr is returned as-is, preserving
                     // `E.Array`/`E.Object` tags so downstream `.e_array`/
                     // `.e_object` checks (e.g. ini.zig:178/192, loadNpmrc
-                    // `ca`/`omit`/`include`) fire. Until the T2⟷T4 Expr types
-                    // unify, deep-lift across the split instead of returning
-                    // `json_val` directly.
-                    // TODO(b2-blocked): bun_js_parser::Expr ⟷ bun_logger::js_ast::Expr unification — drop `lift_json_expr` and `return json_val` directly.
-                    let loc = Loc { start: offset };
-                    let lifted: Expr = match json_val.data {
-                        JsonData::EBoolean(b) => Expr::init(E::Boolean { value: b.value }, loc),
-                        JsonData::ENumber(n) => Expr::init(E::Number { value: n.value }, loc),
-                        JsonData::ENull(_) => Expr::init(E::Null, loc),
-                        JsonData::EUndefined(_) => Expr::init(E::Undefined, loc),
-                        JsonData::EMissing(_) => Expr::init(E::Missing {}, loc),
-                        // EString handled above; Array/Object deep-lifted to
-                        // preserve structure (not stringified).
-                        JsonData::EString(_) | JsonData::EArray(_) | JsonData::EObject(_) => {
-                            lift_json_expr(bump, &json_val)?
-                        }
-                    };
-                    return Ok(PrepareResult::Value(lifted));
+                    // `ca`/`omit`/`include`) fire. `json_val` was lifted to T4
+                    // at the parse site above.
+                    return Ok(PrepareResult::Value(Expr {
+                        loc: Loc { start: offset },
+                        data: json_val.data,
+                    }));
                 }
 
                 // unfortunately, we need to match npm/ini behavior here,
@@ -683,7 +670,7 @@ impl<'a> Parser<'a> {
                 // foo[json_val] = 'nice'
                 // ```
                 match &json_val.data {
-                    JsonData::EObject(_) => {
+                    ExprData::EObject(_) => {
                         if usage == Usage::Section {
                             return Ok(PrepareResult::Section(Self::single_str_rope(
                                 ropealloc,
@@ -695,7 +682,8 @@ impl<'a> Parser<'a> {
                     _ => {
                         // PERF(port): was std.fmt.allocPrint into arena
                         let mut buf = ArenaVec::<u8>::new_in(bump);
-                        json_val_to_string(&json_val.data, &mut buf);
+                        use core::fmt::Write as _;
+                        let _ = write!(&mut buf, "{}", ToStringFormatter { d: &json_val.data });
                         let str_ = buf.into_bump_slice();
                         if usage == Usage::Section {
                             return Ok(PrepareResult::Section(Self::single_str_rope(
@@ -1102,92 +1090,6 @@ impl<'a> Parser<'a> {
 }
 
 // `IniTestingAPIs` — *_jsc alias deleted (see PORTING.md "Idiom map").
-
-/// Deep-lift a T2 (`bun_logger::js_ast`) value-subset `Expr` — the result of
-/// `bun_interchange::json::parse*` — into a T4 `bun_js_parser::Expr`.
-///
-/// Spec ini.zig:247 returns the parsed `json_val` Expr directly for
-/// `usage == .value`, preserving `E.Array`/`E.Object`. The two `Expr`/`Data`
-/// enums are distinct types until the T2⟷T4 unification lands, so this walks
-/// the tree and rebuilds it node-for-node in the T4 shape. Drop once the
-/// unification makes `return json_val` type-correct.
-pub(super) fn lift_json_expr(
-    bump: &Arena,
-    json: &bun_logger::js_ast::Expr,
-) -> Result<Expr, AllocError> {
-    use bun_logger::js_ast::expr::Data as JsonData;
-    let loc = json.loc;
-    Ok(match &json.data {
-        JsonData::EBoolean(b) => Expr::init(E::Boolean { value: b.value }, loc),
-        JsonData::ENumber(n) => Expr::init(E::Number { value: n.value }, loc),
-        JsonData::ENull(_) => Expr::init(E::Null, loc),
-        JsonData::EUndefined(_) => Expr::init(E::Undefined, loc),
-        JsonData::EMissing(_) => Expr::init(E::Missing {}, loc),
-        JsonData::EString(s) => Expr::init(E::EString::init(s.string(bump)?), loc),
-        JsonData::EArray(arr) => {
-            let mut out = E::Array::default();
-            for item in arr.items.slice() {
-                out.push(bump, lift_json_expr(bump, item)?)?;
-            }
-            Expr::init(out, loc)
-        }
-        JsonData::EObject(obj) => {
-            let mut out = E::Object::default();
-            for prop in obj.properties.slice() {
-                let key = match &prop.key {
-                    Some(k) => Some(lift_json_expr(bump, k)?),
-                    None => None,
-                };
-                let value = match &prop.value {
-                    Some(v) => Some(lift_json_expr(bump, v)?),
-                    None => None,
-                };
-                out.properties.append(js_ast::G::Property {
-                    key,
-                    value,
-                    ..js_ast::G::Property::default()
-                })?;
-            }
-            Expr::init(out, loc)
-        }
-    })
-}
-
-/// Mirror of `ToStringFormatter` for the T2 (`bun_logger::js_ast`) value-subset
-/// `ExprData` returned by `bun_interchange::json::parse*`. Kept separate
-/// because `ToStringFormatter` is typed against `bun_js_parser::ExprData` and
-/// the two `Data` enums are distinct until the T2/T4 Expr unification lands.
-pub(super) fn json_val_to_string(d: &bun_logger::js_ast::ExprData, w: &mut ArenaVec<'_, u8>) {
-    use bun_logger::js_ast::expr::Data as JsonData;
-    match d {
-        JsonData::EArray(arr) => {
-            let items = arr.items.slice();
-            let last = items.len().saturating_sub(1);
-            for (i, e) in items.iter().enumerate() {
-                json_val_to_string(&e.data, w);
-                if i != last {
-                    let _ = w.write_all(b",");
-                }
-            }
-        }
-        JsonData::EObject(_) => {
-            let _ = w.write_all(b"[Object object]");
-        }
-        JsonData::EBoolean(b) => {
-            let _ = w.write_all(if b.value { b"true" } else { b"false" });
-        }
-        JsonData::ENumber(n) => {
-            let _ = write!(w, "{}", n.value);
-        }
-        JsonData::EString(s) => {
-            let _ = w.write_all(s.data);
-        }
-        JsonData::ENull(_) => {
-            let _ = w.write_all(b"null");
-        }
-        JsonData::EUndefined(_) | JsonData::EMissing(_) => {}
-    }
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // ToStringFormatter

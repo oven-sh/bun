@@ -1,17 +1,34 @@
-use bun_str::{strings, WStr, ZStr};
+use crate::{immutable as strings, WStr, ZStr};
 // MOVE_DOWN(b0): bun_sys::windows → bun_paths (path-prefix consts only).
 use bun_paths::windows;
+use bun_paths::resolve_path;
+use bun_paths::PathChar;
 
 // Generic code-unit bound for fns that operate over both u8 and u16 paths.
-// Zig used `comptime T: type`; the only operations needed are copy + compare-to-ASCII.
-// TODO(port): if bun_str already exports a `PathChar`/`CodeUnit` trait, switch to it.
-trait Ch: Copy + PartialEq + PartialOrd + From<u8> {}
+// Zig used `comptime T: type`; bound on `bun_paths::PathChar` (provides
+// `from_u8`/`IS_U16`) plus `Into<u32>` for `strings::contains_char_t`.
+pub trait Ch: PathChar + Into<u32> {}
 impl Ch for u8 {}
 impl Ch for u16 {}
 
 #[inline(always)]
 fn ch<T: Ch>(c: u8) -> T {
-    T::from(c)
+    T::from_u8(c)
+}
+
+/// Local helper: `has_prefix_ascii_t` — compare `&[T]` against an ASCII `&[u8]`
+/// literal by widening each prefix byte via `T::from_u8`.
+#[inline]
+fn has_prefix_ascii_t<T: Ch>(s: &[T], prefix: &[u8]) -> bool {
+    if s.len() < prefix.len() {
+        return false;
+    }
+    for (i, &b) in prefix.iter().enumerate() {
+        if s[i] != T::from_u8(b) {
+            return false;
+        }
+    }
+    true
 }
 
 /// Checks if a path is missing a windows drive letter. For windows APIs,
@@ -53,38 +70,40 @@ pub fn is_windows_absolute_path_missing_drive_letter<T: Ch>(chars: &[T]) -> bool
     // '\\Server\Share' -> false (unc)
     // '\\Server\\Share' -> true (not unc because extra slashes)
     // '\Server\Share' -> true (posix path)
-    bun_paths::windows_filesystem_root_t(chars).len() == 1
+    resolve_path::windows_filesystem_root_t(chars).len() == 1
 }
 
 pub fn from_w_path<'a>(buf: &'a mut [u8], utf16: &[u16]) -> &'a ZStr {
     debug_assert!(!buf.is_empty());
-    let to_copy = strings::trim_prefix_t::<u16>(utf16, &windows::LONG_PATH_PREFIX);
-    let encode_into_result = strings::copy_utf16_into_utf8(&mut buf[..buf.len() - 1], to_copy);
-    debug_assert!(encode_into_result.written < buf.len());
-    buf[encode_into_result.written] = 0;
-    // SAFETY: buf[encode_into_result.written] == 0 written above
-    unsafe { ZStr::from_raw(buf.as_ptr(), encode_into_result.written) }
+    let to_copy = strings::trim_prefix_comptime::<u16>(utf16, &windows::LONG_PATH_PREFIX);
+    let last = buf.len() - 1;
+    let encode_into_result = strings::copy_utf16_into_utf8(&mut buf[..last], to_copy);
+    let written = encode_into_result.written as usize;
+    debug_assert!(written < buf.len());
+    buf[written] = 0;
+    // SAFETY: buf[written] == 0 written above
+    unsafe { ZStr::from_raw(buf.as_ptr(), written) }
 }
 
 pub fn without_nt_prefix<T: Ch>(path: &[T]) -> &[T] {
     if !cfg!(windows) {
         return path;
     }
-    // TODO(port): Zig dispatched hasPrefixComptime vs hasPrefixComptimeUTF16 on T;
-    // assume bun_str::strings::has_prefix_ascii_t<T> handles both u8/u16 vs &[u8] literal.
-    if strings::has_prefix_ascii_t(path, &windows::NT_OBJECT_PREFIX_U8) {
+    // PORT NOTE: Zig dispatched hasPrefixComptime vs hasPrefixComptimeUTF16 on T;
+    // collapsed to a local `has_prefix_ascii_t` (widens each ASCII byte via T::from_u8).
+    if has_prefix_ascii_t(path, &windows::NT_OBJECT_PREFIX_U8) {
         return &path[windows::NT_OBJECT_PREFIX.len()..];
     }
-    if strings::has_prefix_ascii_t(path, &windows::LONG_PATH_PREFIX_U8) {
+    if has_prefix_ascii_t(path, &windows::LONG_PATH_PREFIX_U8) {
         return &path[windows::LONG_PATH_PREFIX.len()..];
     }
-    if strings::has_prefix_ascii_t(path, &windows::NT_UNC_OBJECT_PREFIX_U8) {
+    if has_prefix_ascii_t(path, &windows::NT_UNC_OBJECT_PREFIX_U8) {
         return &path[windows::NT_UNC_OBJECT_PREFIX.len()..];
     }
     path
 }
 
-pub fn to_nt_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a mut WStr {
+pub fn to_nt_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
     if !bun_paths::is_absolute_windows(utf8) {
         return to_w_path_normalized(wbuf, utf8);
     }
@@ -103,14 +122,14 @@ pub fn to_nt_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a mut WStr {
             let n = to_w_path_normalized(&mut wbuf[prefix.len()..], &utf8[4..]).len();
             let total = n + prefix.len();
             // SAFETY: inner call wrote NUL at wbuf[prefix.len() + n] == wbuf[total]
-            return unsafe { WStr::from_raw_mut(wbuf.as_mut_ptr(), total) };
+            return unsafe { WStr::from_raw(wbuf.as_ptr(), total) };
         }
         let prefix = windows::NT_UNC_OBJECT_PREFIX;
         wbuf[..prefix.len()].copy_from_slice(&prefix);
         let n = to_w_path_normalized(&mut wbuf[prefix.len()..], &utf8[2..]).len();
         let total = n + prefix.len();
         // SAFETY: inner call wrote NUL at wbuf[total]
-        return unsafe { WStr::from_raw_mut(wbuf.as_mut_ptr(), total) };
+        return unsafe { WStr::from_raw(wbuf.as_ptr(), total) };
     }
 
     let prefix = windows::NT_OBJECT_PREFIX;
@@ -118,35 +137,35 @@ pub fn to_nt_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a mut WStr {
     let n = to_w_path_normalized(&mut wbuf[prefix.len()..], utf8).len();
     let total = n + prefix.len();
     // SAFETY: inner call wrote NUL at wbuf[total]
-    unsafe { WStr::from_raw_mut(wbuf.as_mut_ptr(), total) }
+    unsafe { WStr::from_raw(wbuf.as_ptr(), total) }
 }
 
-pub fn to_nt_path16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &'a mut WStr {
-    if !bun_paths::is_absolute_windows_wtf16(path) {
+pub fn to_nt_path16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &'a WStr {
+    if !bun_paths::is_absolute_windows_t::<u16>(path) {
         return to_w_path_normalized16(wbuf, path);
     }
 
-    if strings::has_prefix_utf16(path, &windows::NT_OBJECT_PREFIX_U8)
-        || strings::has_prefix_utf16(path, &windows::NT_UNC_OBJECT_PREFIX_U8)
+    if strings::has_prefix_comptime_utf16(path, &windows::NT_OBJECT_PREFIX_U8)
+        || strings::has_prefix_comptime_utf16(path, &windows::NT_UNC_OBJECT_PREFIX_U8)
     {
         return to_w_path_normalized16(wbuf, path);
     }
 
-    if strings::has_prefix_utf16(path, b"\\\\") {
-        if strings::has_prefix_utf16(&path[2..], &windows::LONG_PATH_PREFIX_U8[2..]) {
+    if strings::has_prefix_comptime_utf16(path, b"\\\\") {
+        if strings::has_prefix_comptime_utf16(&path[2..], &windows::LONG_PATH_PREFIX_U8[2..]) {
             let prefix = windows::NT_OBJECT_PREFIX;
             wbuf[..prefix.len()].copy_from_slice(&prefix);
             let n = to_w_path_normalized16(&mut wbuf[prefix.len()..], &path[4..]).len();
             let total = n + prefix.len();
             // SAFETY: inner call wrote NUL at wbuf[total]
-            return unsafe { WStr::from_raw_mut(wbuf.as_mut_ptr(), total) };
+            return unsafe { WStr::from_raw(wbuf.as_ptr(), total) };
         }
         let prefix = windows::NT_UNC_OBJECT_PREFIX;
         wbuf[..prefix.len()].copy_from_slice(&prefix);
         let n = to_w_path_normalized16(&mut wbuf[prefix.len()..], &path[2..]).len();
         let total = n + prefix.len();
         // SAFETY: inner call wrote NUL at wbuf[total]
-        return unsafe { WStr::from_raw_mut(wbuf.as_mut_ptr(), total) };
+        return unsafe { WStr::from_raw(wbuf.as_ptr(), total) };
     }
 
     let prefix = windows::NT_OBJECT_PREFIX;
@@ -154,35 +173,35 @@ pub fn to_nt_path16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &'a mut WStr {
     let n = to_w_path_normalized16(&mut wbuf[prefix.len()..], path).len();
     let total = n + prefix.len();
     // SAFETY: inner call wrote NUL at wbuf[total]
-    unsafe { WStr::from_raw_mut(wbuf.as_mut_ptr(), total) }
+    unsafe { WStr::from_raw(wbuf.as_ptr(), total) }
 }
 
-pub fn add_nt_path_prefix<'a>(wbuf: &'a mut [u16], utf16: &[u16]) -> &'a mut WStr {
+pub fn add_nt_path_prefix<'a>(wbuf: &'a mut [u16], utf16: &[u16]) -> &'a WStr {
     let plen = windows::NT_OBJECT_PREFIX.len();
     wbuf[..plen].copy_from_slice(&windows::NT_OBJECT_PREFIX);
     wbuf[plen..plen + utf16.len()].copy_from_slice(utf16);
     wbuf[utf16.len() + plen] = 0;
     // SAFETY: wbuf[utf16.len() + plen] == 0 written above
-    unsafe { WStr::from_raw_mut(wbuf.as_mut_ptr(), utf16.len() + plen) }
+    unsafe { WStr::from_raw(wbuf.as_ptr(), utf16.len() + plen) }
 }
 
-pub fn add_long_path_prefix<'a>(wbuf: &'a mut [u16], utf16: &[u16]) -> &'a mut WStr {
+pub fn add_long_path_prefix<'a>(wbuf: &'a mut [u16], utf16: &[u16]) -> &'a WStr {
     let plen = windows::LONG_PATH_PREFIX.len();
     wbuf[..plen].copy_from_slice(&windows::LONG_PATH_PREFIX);
     wbuf[plen..plen + utf16.len()].copy_from_slice(utf16);
     wbuf[utf16.len() + plen] = 0;
     // SAFETY: wbuf[utf16.len() + plen] == 0 written above
-    unsafe { WStr::from_raw_mut(wbuf.as_mut_ptr(), utf16.len() + plen) }
+    unsafe { WStr::from_raw(wbuf.as_ptr(), utf16.len() + plen) }
 }
 
-pub fn add_nt_path_prefix_if_needed<'a>(wbuf: &'a mut [u16], utf16: &[u16]) -> &'a mut WStr {
-    if strings::has_prefix_type::<u16>(utf16, &windows::NT_OBJECT_PREFIX) {
+pub fn add_nt_path_prefix_if_needed<'a>(wbuf: &'a mut [u16], utf16: &[u16]) -> &'a WStr {
+    if strings::has_prefix_comptime_type::<u16>(utf16, &windows::NT_OBJECT_PREFIX) {
         wbuf[..utf16.len()].copy_from_slice(utf16);
         wbuf[utf16.len()] = 0;
         // SAFETY: wbuf[utf16.len()] == 0 written above
-        return unsafe { WStr::from_raw_mut(wbuf.as_mut_ptr(), utf16.len()) };
+        return unsafe { WStr::from_raw(wbuf.as_ptr(), utf16.len()) };
     }
-    if strings::has_prefix_type::<u16>(utf16, &windows::LONG_PATH_PREFIX) {
+    if strings::has_prefix_comptime_type::<u16>(utf16, &windows::LONG_PATH_PREFIX) {
         // Replace prefix
         return add_nt_path_prefix(wbuf, &utf16[windows::LONG_PATH_PREFIX.len()..]);
     }
@@ -213,20 +232,20 @@ pub fn to_w_path_normalize_auto_extend<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> 
     to_w_path_normalized(wbuf, utf8)
 }
 
-pub fn to_w_path_normalized<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a mut WStr {
-    let renormalized = bun_paths::path_buffer_pool().get();
+pub fn to_w_path_normalized<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
+    let mut renormalized = bun_paths::path_buffer_pool::get();
 
-    let mut path_to_use = normalize_slashes_only(&mut *renormalized, utf8, b'\\');
+    let mut path_to_use = normalize_slashes_only(&mut renormalized[..], utf8, b'\\');
 
     // is there a trailing slash? Let's remove it before converting to UTF-16
-    if path_to_use.len() > 3 && bun_paths::is_sep_any(path_to_use[path_to_use.len() - 1]) {
+    if path_to_use.len() > 3 && resolve_path::is_sep_any(path_to_use[path_to_use.len() - 1]) {
         path_to_use = &path_to_use[..path_to_use.len() - 1];
     }
 
     to_w_path(wbuf, path_to_use)
 }
 
-pub fn to_w_path_normalized16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &'a mut WStr {
+pub fn to_w_path_normalized16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &'a WStr {
     // PORT NOTE: reshaped for borrowck — Zig wrote into wbuf and then re-sliced wbuf;
     // here we capture the length and re-derive the mutable slice.
     let len = {
@@ -234,7 +253,7 @@ pub fn to_w_path_normalized16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &'a mut 
 
         // is there a trailing slash? Let's remove it before converting to UTF-16
         if path_to_use.len() > 3
-            && bun_paths::is_sep_any_t::<u16>(path_to_use[path_to_use.len() - 1])
+            && resolve_path::is_sep_any_t::<u16>(path_to_use[path_to_use.len() - 1])
         {
             path_to_use = &path_to_use[..path_to_use.len() - 1];
         }
@@ -244,16 +263,16 @@ pub fn to_w_path_normalized16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &'a mut 
     wbuf[len] = 0;
 
     // SAFETY: wbuf[len] == 0 written above
-    unsafe { WStr::from_raw_mut(wbuf.as_mut_ptr(), len) }
+    unsafe { WStr::from_raw(wbuf.as_ptr(), len) }
 }
 
 pub fn to_path_normalized<'a>(buf: &'a mut [u8], utf8: &[u8]) -> &'a ZStr {
-    let renormalized = bun_paths::path_buffer_pool().get();
+    let mut renormalized = bun_paths::path_buffer_pool::get();
 
-    let mut path_to_use = normalize_slashes_only(&mut *renormalized, utf8, b'\\');
+    let mut path_to_use = normalize_slashes_only(&mut renormalized[..], utf8, b'\\');
 
     // is there a trailing slash? Let's remove it before converting to UTF-16
-    if path_to_use.len() > 3 && bun_paths::is_sep_any(path_to_use[path_to_use.len() - 1]) {
+    if path_to_use.len() > 3 && resolve_path::is_sep_any(path_to_use[path_to_use.len() - 1]) {
         path_to_use = &path_to_use[..path_to_use.len() - 1];
     }
 
@@ -264,7 +283,9 @@ pub fn normalize_slashes_only_t<'a, T: Ch, const DESIRED_SLASH: u8, const ALWAYS
     buf: &'a mut [T],
     path: &'a [T],
 ) -> &'a [T] {
-    const _: () = assert!(DESIRED_SLASH == b'/' || DESIRED_SLASH == b'\\');
+    // PORT NOTE: was `const _: () = assert!(..)` but Rust forbids const items
+    // referencing outer const-generic params (E0401). Debug-assert instead.
+    debug_assert!(DESIRED_SLASH == b'/' || DESIRED_SLASH == b'\\');
     let undesired_slash: u8 = if DESIRED_SLASH == b'/' { b'\\' } else { b'/' };
 
     if strings::contains_char_t(path, undesired_slash) {
@@ -304,7 +325,7 @@ pub fn normalize_slashes_only<'a>(buf: &'a mut [u8], utf8: &'a [u8], desired_sla
     utf8
 }
 
-pub fn to_w_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a mut WStr {
+pub fn to_w_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
     to_w_path_maybe_dir::<false>(wbuf, utf8)
 }
 
@@ -316,7 +337,7 @@ pub fn to_w_dir_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
     to_w_path_maybe_dir::<true>(wbuf, utf8)
 }
 
-pub fn to_kernel32_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a mut WStr {
+pub fn to_kernel32_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
     let path = if utf8.starts_with(&windows::NT_OBJECT_PREFIX_U8) {
         &utf8[windows::NT_OBJECT_PREFIX_U8.len()..]
     } else {
@@ -326,14 +347,14 @@ pub fn to_kernel32_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a mut WStr {
         return to_w_path(wbuf, path);
     }
     if utf8.len() > 2
-        && bun_paths::is_drive_letter(utf8[0])
+        && resolve_path::is_drive_letter(utf8[0])
         && utf8[1] == b':'
-        && bun_paths::is_sep_any(utf8[2])
+        && resolve_path::is_sep_any(utf8[2])
     {
         wbuf[..4].copy_from_slice(&windows::LONG_PATH_PREFIX);
         let n = to_w_path(&mut wbuf[4..], path).len();
         // SAFETY: inner call wrote NUL at wbuf[4 + n]
-        return unsafe { WStr::from_raw_mut(wbuf.as_mut_ptr(), n + 4) };
+        return unsafe { WStr::from_raw(wbuf.as_ptr(), n + 4) };
     }
     to_w_path(wbuf, path)
 }
@@ -349,13 +370,16 @@ fn is_unc_path<T: Ch>(path: &[T]) -> bool {
 pub fn to_w_path_maybe_dir<'a, const ADD_TRAILING_LASH: bool>(
     wbuf: &'a mut [u16],
     utf8: &[u8],
-) -> &'a mut WStr {
+) -> &'a WStr {
     debug_assert!(!wbuf.is_empty());
 
     let cap = wbuf
         .len()
         .saturating_sub(1 + (ADD_TRAILING_LASH as usize));
-    let mut result = bun_simdutf::convert::utf8_to_utf16_le_with_errors(utf8, &mut wbuf[..cap]);
+    // PORT NOTE: Zig used `bun.simdutf.convert.utf8.to.utf16.le.with_errors`;
+    // route through `bun_core::strings::convert_utf8_to_utf16_in_buffer` (same
+    // simdutf primitive + WTF-8 fallback) to avoid a `bun_simdutf` crate dep.
+    let mut count = bun_core::strings::convert_utf8_to_utf16_in_buffer(&mut wbuf[..cap], utf8).len();
 
     // Many Windows APIs expect normalized path slashes, particularly when the
     // long path prefix is added or the nt object prefix. To make this easier,
@@ -363,17 +387,17 @@ pub fn to_w_path_maybe_dir<'a, const ADD_TRAILING_LASH: bool>(
     //
     // An example of this is GetFileAttributesW(L"C:\\hello/world.txt") being OK
     // but GetFileAttributesW(L"\\\\?\\C:\\hello/world.txt") is NOT
-    bun_paths::dangerously_convert_path_to_windows_in_place::<u16>(&mut wbuf[..result.count]);
+    resolve_path::dangerously_convert_path_to_windows_in_place::<u16>(&mut wbuf[..count]);
 
-    if ADD_TRAILING_LASH && result.count > 0 && wbuf[result.count - 1] != u16::from(b'\\') {
-        wbuf[result.count] = u16::from(b'\\');
-        result.count += 1;
+    if ADD_TRAILING_LASH && count > 0 && wbuf[count - 1] != u16::from(b'\\') {
+        wbuf[count] = u16::from(b'\\');
+        count += 1;
     }
 
-    wbuf[result.count] = 0;
+    wbuf[count] = 0;
 
-    // SAFETY: wbuf[result.count] == 0 written above
-    unsafe { WStr::from_raw_mut(wbuf.as_mut_ptr(), result.count) }
+    // SAFETY: wbuf[count] == 0 written above
+    unsafe { WStr::from_raw(wbuf.as_ptr(), count) }
 }
 
 pub fn to_path_maybe_dir<'a, const ADD_TRAILING_LASH: bool>(
@@ -473,7 +497,7 @@ pub fn without_trailing_slash_windows_path(input: &[u8]) -> &[u8] {
         return without_trailing_slash(input);
     }
 
-    let root_len = bun_paths::windows_filesystem_root(input).len() + 1;
+    let root_len = resolve_path::windows_filesystem_root(input).len() + 1;
 
     let mut path = input;
     while path.len() > root_len

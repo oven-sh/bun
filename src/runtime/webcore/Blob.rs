@@ -33,10 +33,11 @@ pub use store::Store;
 // name in the Phase-A draft. Alias the module form so `Store::Data` resolves.
 pub use store as Store_;
 
-// TODO(b2-blocked): blob/{read_file,write_file,copy_file}.rs depend on bun_jsc
-// method surface + bun_io state machines. Un-gate alongside FileSink/FileReader.
-#[cfg(any())] #[path = "blob/read_file.rs"]  pub mod read_file;
-#[cfg(any())] #[path = "blob/write_file.rs"] pub mod write_file;
+// blob/{read_file,write_file}.rs un-gated (heavy bodies re-gated inside each
+// file). copy_file.rs remains gated — depends on `ConstParamTy` adt const
+// generics + node_fs/NodeFS surface not yet wired.
+#[path = "blob/read_file.rs"]  pub mod read_file;
+#[path = "blob/write_file.rs"] pub mod write_file;
 #[cfg(any())] #[path = "blob/copy_file.rs"]  pub mod copy_file;
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -153,7 +153,7 @@ impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<'a, J
             this_ref.deref_();
             return this;
         }
-        if let crate::webcore::readable_stream::Ptr::Bytes(byte_stream_ptr) = stream.ptr {
+        if let crate::webcore::readable_stream::Source::Bytes(byte_stream_ptr) = stream.ptr {
             // SAFETY: ReadableStream.ptr.Bytes is a live *ByteStream owned by the stream.
             let byte_stream: &mut ByteStream = unsafe { &mut *byte_stream_ptr };
             // if pipe is empty, we can pipe
@@ -170,7 +170,7 @@ impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<'a, J
                     this_ref.status = Status::Done;
                     let err: Option<JSValue> = 'brk_err: {
                         let pending = &byte_stream.pending.result;
-                        if let crate::webcore::streams::PendingResult::Err(e) = pending {
+                        if let StreamResult::Err(e) = pending {
                             let (js_err, was_strong) = e.to_js_weak(this_ref.global_this);
                             js_err.ensure_still_alive();
                             if was_strong == crate::webcore::streams::WasStrong::Strong {
@@ -455,7 +455,7 @@ impl<'a, Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<'a, J
         self.status = Status::Done;
         let global_object = self.global_this;
         if let Some(stream_) = self.stream.get(global_object) {
-            if let crate::webcore::readable_stream::Ptr::Bytes(bytes_ptr) = stream_.ptr {
+            if let crate::webcore::readable_stream::Source::Bytes(bytes_ptr) = stream_.ptr {
                 // SAFETY: ByteStream is live while the ReadableStream.Strong holds it.
                 unsafe { (*bytes_ptr).pipe = Pipe::default() };
             }

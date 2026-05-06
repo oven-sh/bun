@@ -7,7 +7,16 @@
 // RESOLVED (B-2 round 7): `Fd` struct + pure-data accessors hoisted to
 // `bun_core::Fd` (canonical T0). `fd.rs` is now `pub trait FdExt` over that.
 pub mod fd;
-pub use fd::{FdExt, FdOptionalExt, ErrorCase, MakeLibUvOwnedError, HashMapContext, MovableIfWindowsFd, FdT, UvFile};
+pub use fd::{FdExt, FdOptionalExt, ErrorCase, MakeLibUvOwnedError, HashMapContext, MovableIfWindowsFd, FdT, UvFile, RawFd};
+// `File.rs` (Phase-A draft) stays gated: the inline `impl File` below is the
+// canonical, downstream-consumed surface (`read_to_end() -> Maybe<Vec<u8>>`,
+// `from_fd`, `create`, `read_from(Fd, &ZStr)`) and File.rs's shapes diverge
+// (`read_to_end() -> ReadToEndResult`, `read_from(impl Into<File>, &ZStr)`).
+// Swapping breaks T2+ callers. File.rs additionally blocked on
+// `bun_paths::OsPathZ` (T0, missing) and the `top_level_dir()` resolver hook.
+// B-2 follow-up: cherry-pick File.rs-only methods (`make_openat`, `kind`,
+// `is_tty`, `read_file_from`, `close_and_move_to`) into the inline impl as
+// higher tiers demand them.
 #[cfg(any())] #[path = "File.rs"] pub mod file;
 #[path = "Error.rs"] mod error;
 pub use error::Error;
@@ -46,64 +55,11 @@ impl core::fmt::Display for SystemError {
     }
 }
 pub mod walker_skippable;
-// `copy_file.rs` (full ioctl_ficlone/copy_file_range/sendfile state machine)
-// is still gated: it depends on `bun_output` (not a dep of this crate),
-// `crate::linux::{ioctl_ficlone,copy_file_range}` (not yet wired), and uses
-// pre-rename `E::XDEV`-style errno tags. The thin module below exposes the
-// stable surface (`CopyFileState`, `copy_file`, `copy_file_with_state`, the
-// runtime-probe toggles) so `bun_sys::copy_file::*` resolves; bodies route to
-// the read/write fallback at crate root until the full file is un-gated.
-#[cfg(any())] #[path = "copy_file.rs"] mod copy_file_full;
-pub mod copy_file {
-    use super::{Fd, Maybe};
-    use core::sync::atomic::{AtomicBool, Ordering};
-
-    /// On Windows `bun.copy_file` takes paths; everywhere else it takes fds.
-    #[cfg(windows)] pub type InputType<'a> = &'a bun_string::WStr;
-    #[cfg(not(windows))] pub type InputType<'a> = Fd;
-
-    bitflags::bitflags! {
-        #[derive(Clone, Copy, PartialEq, Eq)]
-        pub struct LinuxCopyFileState: u8 {
-            const HAS_SEEN_EXDEV             = 1 << 0;
-            const HAS_IOCTL_FICLONE_FAILED   = 1 << 1;
-            const HAS_COPY_FILE_RANGE_FAILED = 1 << 2;
-            const HAS_SENDFILE_FAILED        = 1 << 3;
-        }
-    }
-    impl Default for LinuxCopyFileState { fn default() -> Self { Self::empty() } }
-    #[derive(Default, Clone, Copy)]
-    pub struct EmptyCopyFileState;
-    #[cfg(target_os = "linux")] pub type CopyFileState = LinuxCopyFileState;
-    #[cfg(not(target_os = "linux"))] pub type CopyFileState = EmptyCopyFileState;
-
-    /// fd→fd copy. PORT NOTE: routes to the crate-root read/write loop until
-    /// `copy_file.rs` un-gates; the fast paths are PERF, not correctness.
-    #[inline]
-    pub fn copy_file(in_: InputType<'_>, out: InputType<'_>) -> Maybe<()> {
-        #[cfg(not(windows))] { super::copy_file(in_, out) }
-        #[cfg(windows)] { let _ = (in_, out); todo!("b2-windows: CopyFileW path-based copy") }
-    }
-    #[inline]
-    pub fn copy_file_with_state(in_: InputType<'_>, out: InputType<'_>, _state: &mut CopyFileState) -> Maybe<()> {
-        copy_file(in_, out)
-    }
-    /// `copy_file_range(2)` wrapper. Real impl in `copy_file.rs`; stub falls
-    /// through to a pread/pwrite loop so callers compile.
-    pub fn copy_file_range(_in: Fd, _off_in: u64, _out: Fd, _off_out: u64, _len: usize, _flags: u32) -> Maybe<usize> {
-        todo!("b2-blocked: copy_file_range — un-gate src/sys/copy_file.rs")
-    }
-    /// Map a raw `copy_file`-path errno to `bun_core::Error`.
-    #[inline]
-    pub fn copy_file_error_convert(e: super::Error) -> bun_core::Error { e.into() }
-
-    static CAN_USE_COPY_FILE_RANGE: AtomicBool = AtomicBool::new(cfg!(target_os = "linux"));
-    static CAN_USE_IOCTL_FICLONE:   AtomicBool = AtomicBool::new(cfg!(target_os = "linux"));
-    #[inline] pub fn can_use_copy_file_range_syscall() -> bool { CAN_USE_COPY_FILE_RANGE.load(Ordering::Relaxed) }
-    #[inline] pub fn disable_copy_file_range_syscall() { CAN_USE_COPY_FILE_RANGE.store(false, Ordering::Relaxed) }
-    #[inline] pub fn can_use_ioctl_ficlone() -> bool { CAN_USE_IOCTL_FICLONE.load(Ordering::Relaxed) }
-    #[inline] pub fn disable_ioctl_ficlone() { CAN_USE_IOCTL_FICLONE.store(false, Ordering::Relaxed) }
-}
+// `copy_file.rs` — full ioctl_ficlone / copy_file_range / sendfile / r-w-loop
+// state machine (port of `src/sys/copy_file.zig`). Un-gated B-2: raw kernel
+// thunks live in `crate::linux`, errno tags use the prefixed `E::E*` form,
+// kernel-version probe goes through `bun_core::linux_kernel_version()`.
+#[path = "copy_file.rs"] pub mod copy_file;
 
 // `std.fs.Dir.Entry.Kind` — same set as `bun_core::FileKind`.
 pub use bun_core::FileKind as EntryKind;
@@ -260,8 +216,10 @@ pub mod O {
     #[cfg(windows)] pub const DIRECTORY: i32 = 0;
     #[cfg(target_os = "linux")] pub const PATH: i32 = libc::O_PATH;
     #[cfg(target_os = "linux")] pub const NOATIME: i32 = libc::O_NOATIME;
+    #[cfg(target_os = "linux")] pub const TMPFILE: i32 = libc::O_TMPFILE;
     #[cfg(not(target_os = "linux"))] pub const PATH: i32 = 0;
     #[cfg(not(target_os = "linux"))] pub const NOATIME: i32 = 0;
+    #[cfg(not(target_os = "linux"))] pub const TMPFILE: i32 = 0;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -344,6 +302,7 @@ impl Tag {
     pub const epoll_ctl: Tag = Tag(58); pub const kqueue: Tag = Tag(59);
     pub const kevent: Tag = Tag(60);  pub const inotify: Tag = Tag(61);
     pub const ppoll: Tag = Tag(62);   pub const fallocate: Tag = Tag(63);
+    pub const copy_file_range: Tag = Tag(64);
     pub const TODO: Tag = Tag(0);
     /// Full tag enum (~200 variants) lives in `lib_draft_b1.rs`. This subset
     /// covers the un-gated posix surface; B-2 widens as syscalls land.
@@ -1230,7 +1189,10 @@ pub type EnvMap = std::collections::HashMap<String, String>;
 macro_rules! syslog {
     ($fmt:literal $(, $arg:expr)* $(,)?) => {
         if cfg!(feature = "debug_logs") && $crate::fd::SYS.is_visible() {
-            $crate::fd::SYS.log(::core::format_args!($fmt $(, $arg)*));
+            $crate::fd::SYS.log(
+                ::core::format_args!($fmt $(, $arg)*),
+                ::core::format_args!($fmt $(, $arg)*),
+            );
         }
     };
 }
@@ -1502,6 +1464,44 @@ pub mod linux {
     pub unsafe fn epoll_ctl(epfd: c_int, op: c_int, fd: c_int, event: *mut epoll_event) -> c_int {
         unsafe { libc::epoll_ctl(epfd, op, fd, event) }
     }
+
+    // ── `std.os.linux.*` syscall thunks ──
+    // PORT NOTE: Zig's `std.os.linux.ioctl`/`copy_file_range` are *true* raw
+    // syscalls returning the kernel `-errno`-in-`usize` ABI. glibc's
+    // `libc::syscall()` is NOT — it returns `-1` and sets thread-local errno
+    // on failure. Returning `isize` here routes callers through the
+    // libc-convention `GetErrno for isize` impl (reads `errno`), instead of
+    // the kernel-convention `GetErrno for usize` impl which would mis-decode
+    // every failure as EPERM (`-1 as usize` → errno 1).
+
+    /// `bun.linux.ioctl_ficlone` (platform/linux.zig:71): raw FICLONE ioctl.
+    /// Support for FICLONE is dependent on the filesystem driver.
+    #[inline]
+    pub fn ioctl_ficlone(dest_fd: super::Fd, src_fd: super::Fd) -> isize {
+        // FICLONE = _IOW(0x94, 9, c_int). Value matches Zig's `bun.c.FICLONE`.
+        const FICLONE: libc::c_ulong = 0x40049409;
+        // SAFETY: raw `ioctl(2)`; both fds owned by caller.
+        unsafe {
+            libc::syscall(libc::SYS_ioctl, dest_fd.native() as libc::c_long, FICLONE, src_fd.native() as libc::c_long) as isize
+        }
+    }
+
+    /// `std.os.linux.copy_file_range` raw syscall.
+    #[inline]
+    pub unsafe fn copy_file_range(
+        in_: c_int, off_in: *mut i64, out: c_int, off_out: *mut i64, len: usize, flags: u32,
+    ) -> isize {
+        // SAFETY: raw `copy_file_range(2)`; caller owns fds, offset ptrs may be null.
+        unsafe {
+            libc::syscall(
+                libc::SYS_copy_file_range,
+                in_ as libc::c_long, off_in, out as libc::c_long, off_out, len, flags as libc::c_long,
+            ) as isize
+        }
+    }
+
+    // `std.os.linux.sendfile` — use the existing `linux::sendfile` (libc
+    // wrapper, isize return) defined above; `get_errno::<isize>` decodes it.
 
     /// `bun.linux.RWFFlagSupport` — runtime probe for `RWF_NOWAIT` (kernel ≥ 4.14).
     pub struct RWFFlagSupport;
@@ -2048,9 +2048,15 @@ pub fn move_file_z_with_handle(
 
 /// `bun.sys.copyFile` — fd→fd full transfer using the best available kernel
 /// fast path (ioctl_ficlone / copy_file_range / sendfile / read-write loop).
-/// PORT NOTE: full state-machine lives in `copy_file.rs` (still gated); this
-/// is the read/write fallback so `move_file_z_with_handle` and friends work.
+#[inline]
+#[cfg(not(windows))]
 pub fn copy_file(in_: Fd, out: Fd) -> Maybe<()> {
+    copy_file::copy_file(in_, out)
+}
+#[cfg(windows)]
+pub fn copy_file(in_: Fd, out: Fd) -> Maybe<()> {
+    // Windows `bun.copyFile` takes paths, not fds; fd-based callers (e.g.
+    // `move_file_z_with_handle`'s EXDEV fallback) get the read/write loop.
     let mut buf = [0u8; 64 * 1024];
     loop {
         let n = read(in_, &mut buf)?;
@@ -2941,6 +2947,7 @@ pub static OUTPUT_SINK_VTABLE_IMPL: bun_core::output::OutputSinkVTable =
         },
         tty_winsize: sink_tty_winsize,
         is_terminal: |fd| isatty(fd),
+        read: |fd, buf| read(fd, buf).map_err(Into::into),
     };
 
 pub fn install_output_sink() {

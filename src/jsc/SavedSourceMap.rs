@@ -1,3 +1,5 @@
+#![allow(unused_imports, unused_variables, dead_code)]
+
 use core::ffi::c_void;
 use core::ptr;
 
@@ -9,7 +11,7 @@ use bun_sourcemap::{
     self as SourceMap, BakeSourceProvider, DevServerSourceProvider, InternalSourceMap,
     ParsedSourceMap, SourceProviderMap,
 };
-use bun_str::MutableString;
+use bun_string::MutableString;
 use bun_threading::Mutex;
 use bun_wyhash::hash;
 
@@ -21,8 +23,10 @@ pub struct SavedSourceMap {
     /// Warm cache for `remapStackFramePositions`: the last decoded sync window and
     /// the last (path_hash -> ISM) resolution. Guarded by `mutex`. Invalidated on
     /// any `putValue` since that may free the cached blob.
-    pub find_cache: <InternalSourceMap as SourceMap::InternalSourceMapExt>::FindCache,
-    // TODO(port): ^ InternalSourceMap.FindCache — verify path is `bun_sourcemap::internal_source_map::FindCache`
+    // TODO(b2-blocked): bun_sourcemap::internal_source_map::FindCache — type not yet exported.
+    // Stored as `()` placeholder until the FindCache aggregate (multi-slot wrapper around
+    // FindCacheSlot) is exposed from bun_sourcemap.
+    pub find_cache: (),
     pub last_path_hash: u64,
     pub last_ism: Option<InternalSourceMap>,
 }
@@ -50,21 +54,30 @@ impl SavedSourceMap {
             last_ism: None,
         });
 
-        // SAFETY: `map` is a valid pointer to the sibling HashTable on VirtualMachine.
-        unsafe { (*map).lock_pointers() };
+        #[cfg(any())] // TODO(b2-blocked): bun_collections::HashMap::lock_pointers
+        {
+            // SAFETY: `map` is a valid pointer to the sibling HashTable on VirtualMachine.
+            unsafe { (*map).lock_pointers() };
+        }
     }
 
     #[inline]
     pub fn lock(&mut self) {
         self.mutex.lock();
-        // SAFETY: `map` points at the live sibling HashTable on VirtualMachine.
-        unsafe { (*self.map).unlock_pointers() };
+        #[cfg(any())] // TODO(b2-blocked): bun_collections::HashMap::unlock_pointers
+        {
+            // SAFETY: `map` points at the live sibling HashTable on VirtualMachine.
+            unsafe { (*self.map).unlock_pointers() };
+        }
     }
 
     #[inline]
     pub fn unlock(&mut self) {
-        // SAFETY: `map` points at the live sibling HashTable on VirtualMachine.
-        unsafe { (*self.map).lock_pointers() };
+        #[cfg(any())] // TODO(b2-blocked): bun_collections::HashMap::lock_pointers
+        {
+            // SAFETY: `map` points at the live sibling HashTable on VirtualMachine.
+            unsafe { (*self.map).lock_pointers() };
+        }
         self.mutex.unlock();
     }
 }
@@ -96,13 +109,13 @@ pub mod missing_source_map_note_info {
                 return;
             }
             if let Some(note) = PATH {
-                Output::note(format_args!(
+                bun_core::note!(
                     "missing sourcemaps for {}",
                     bstr::BStr::new(note)
-                ));
-                Output::note(format_args!(
+                );
+                bun_core::note!(
                     "consider bundling with '--sourcemap' to get unminified traces"
-                ));
+                );
             }
         }
     }
@@ -131,6 +144,8 @@ impl SavedSourceMap {
         opaque_source_provider: *mut c_void,
         path: &[u8],
     ) {
+        #[cfg(any())] // TODO(b2-blocked): bun_collections::HashMap::{get_entry, remove_by_ptr}, bun_sourcemap::ParsedSourceMap::{underlying_provider, deref_}
+        {
         self.lock();
         // PORT NOTE: reshaped for borrowck — explicit unlock paired manually.
         // SAFETY: `map` points at the live sibling HashTable on VirtualMachine.
@@ -154,6 +169,8 @@ impl SavedSourceMap {
             }
         }
         self.unlock();
+        } // end #[cfg(any())]
+        let _ = (opaque_source_provider, path);
     }
 
     pub fn put_zig_source_provider(
@@ -170,6 +187,8 @@ impl SavedSourceMap {
         opaque_source_provider: *mut c_void,
         path: &[u8],
     ) {
+        #[cfg(any())] // TODO(b2-blocked): bun_collections::HashMap::{get_entry, remove_by_ptr}, bun_sourcemap::ParsedSourceMap::{underlying_provider, deref_}
+        {
         self.lock();
         // PORT NOTE: reshaped for borrowck — explicit unlock paired manually.
         // SAFETY: `map` points at the live sibling HashTable on VirtualMachine.
@@ -193,6 +212,8 @@ impl SavedSourceMap {
             }
         }
         self.unlock();
+        } // end #[cfg(any())]
+        let _ = (opaque_source_provider, path);
     }
 }
 
@@ -205,16 +226,25 @@ impl SavedSourceMap {
         chunk: SourceMap::Chunk,
         source: &logger::Source,
     ) -> Result<(), bun_core::Error> {
-        self.put_mappings(source, chunk.buffer)
+        #[cfg(any())] // TODO(b2-blocked): bun_sourcemap::Chunk.buffer field name
+        {
+            return self.put_mappings(source, chunk.buffer);
+        }
+        let _ = (chunk, source);
+        Ok(())
     }
 }
 
 // TODO(port): js_printer.SourceMapHandler.For(SavedSourceMap, onSourceMapChunk) — comptime type-generator;
 // implement `bun_js_printer::SourceMapHandler` trait for `SavedSourceMap` in Phase B.
-pub type SourceMapHandler = bun_js_printer::SourceMapHandler<SavedSourceMap>;
+// TODO(b2-blocked): bun_js_printer::SourceMapHandler is `<'a>` (lifetime), not `<Ctx>` —
+// the Zig `For(T, callback)` adapter needs a Rust-side trait or fn-pointer wrapper.
+pub type SourceMapHandler<'a> = bun_js_printer::SourceMapHandler<'a>;
 
 impl Drop for SavedSourceMap {
     fn drop(&mut self) {
+        #[cfg(any())] // TODO(b2-blocked): bun_collections::HashMap::{value_iterator, unlock_pointers, deinit}, bun_sourcemap::{ParsedSourceMap::deref_, InternalSourceMap::deinit}
+        {
         {
             self.lock();
             // SAFETY: `map` points at the live sibling HashTable on VirtualMachine.
@@ -242,6 +272,7 @@ impl Drop for SavedSourceMap {
             (*self.map).deinit();
             // TODO(port): deinit() on a backref-owned HashMap — ownership lives on VirtualMachine; verify Phase B.
         }
+        } // end #[cfg(any())]
     }
 }
 
@@ -251,6 +282,8 @@ impl SavedSourceMap {
         source: &logger::Source,
         mappings: MutableString,
     ) -> Result<(), bun_core::Error> {
+        #[cfg(any())] // TODO(b2-blocked): bun_string::MutableString.list shape, bun_collections::HashMap::contains, bun_logger::Source.path
+        {
         // TODO(port): narrow error set
         // --hot can re-read a file mid-rewrite (truncate + write) and transpile
         // a comment-only prefix into a 0-mapping map. Overwriting a real map
@@ -289,14 +322,22 @@ impl SavedSourceMap {
                 Err(e)
             }
         }
+        } // end #[cfg(any())]
+        let _ = (source, mappings);
+        Ok(())
     }
 
     pub fn put_value(&mut self, path: &[u8], value: Value) -> Result<(), bun_core::Error> {
+        #[cfg(any())] // TODO(b2-blocked): bun_collections::HashMap::get_or_put result shape, TaggedPtrUnion::from(*mut c_void), InternalSourceMap::deinit
+        {
         // TODO(port): narrow error set
         self.lock();
         // PORT NOTE: reshaped for borrowck — explicit unlock before each return.
 
-        self.find_cache.invalidate_all();
+        #[cfg(any())] // TODO(b2-blocked): bun_sourcemap::FindCache::invalidate_all
+        {
+            self.find_cache.invalidate_all();
+        }
         self.last_ism = None;
         // SAFETY: `map` points at the live sibling HashTable on VirtualMachine.
         let map = unsafe { &mut *self.map };
@@ -324,6 +365,9 @@ impl SavedSourceMap {
         }
         *entry.value_ptr_mut() = value.ptr();
         self.unlock();
+        return Ok(());
+        } // end #[cfg(any())]
+        let _ = (path, value);
         Ok(())
     }
 
@@ -333,6 +377,8 @@ impl SavedSourceMap {
         path: &[u8],
         hint: SourceMap::ParseUrlResultHint,
     ) -> SourceMap::ParseUrl {
+        #[cfg(any())] // TODO(b2-blocked): bun_collections::TaggedPtrUnion::{tag, tag_of, as_, init, from}, bun_sourcemap::ParsedSourceMap field shape, ParseUrl field shape
+        {
         let h = hash(path);
 
         // This lock is for the hash table
@@ -488,6 +534,9 @@ impl SavedSourceMap {
 
             return SourceMap::ParseUrl::default();
         }
+        } // end #[cfg(any())]
+        let _ = (path, hint);
+        SourceMap::ParseUrl::default()
     }
 
     /// You must `deref()` the returned value or you will leak memory
@@ -498,9 +547,14 @@ impl SavedSourceMap {
 
     /// Mutex must already be held. Returns the raw table value for `hash` if any.
     pub fn get_value_locked(&mut self, h: u64) -> Option<Value> {
-        // SAFETY: `map` points at the live sibling HashTable on VirtualMachine; caller holds mutex.
-        let raw = unsafe { (*self.map).get(h)? };
-        Some(Value::from(raw))
+        #[cfg(any())] // TODO(b2-blocked): bun_collections::HashMap::get, TaggedPtrUnion::from(*mut c_void)
+        {
+            // SAFETY: `map` points at the live sibling HashTable on VirtualMachine; caller holds mutex.
+            let raw = unsafe { (*self.map).get(h)? };
+            return Some(Value::from(raw));
+        }
+        let _ = h;
+        None
     }
 
     pub fn resolve_mapping(
@@ -510,6 +564,8 @@ impl SavedSourceMap {
         column: Ordinal,
         source_handling: SourceMap::SourceContentHandling,
     ) -> Option<SourceMap::mapping::Lookup> {
+        #[cfg(any())] // TODO(b2-blocked): bun_sourcemap::{ParseUrl fields, ParsedSourceMap::find_mapping, mapping::Lookup fields}
+        {
         let parse = self.get_with_content(
             path,
             match source_handling {
@@ -537,6 +593,9 @@ impl SavedSourceMap {
             source_map: map,
             prefetched_source_code: parse.source_contents,
         })
+        } // end #[cfg(any())]
+        let _ = (path, line, column, source_handling);
+        None
     }
 }
 

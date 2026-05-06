@@ -71,13 +71,40 @@ impl Transport for TransportFor<true, true> {
 
 // PORT NOTE: spelling these as `<TransportFor<SSL,H3> as Transport>::Response`
 // forces a `where TransportFor<SSL,H3>: Transport` bound onto every generic
-// that names `RequestContext` (NewServer, RequestContextStackAllocator,
-// AnyRequestContext…). The struct only stores raw pointers, so erase to
-// `c_void` here and downcast at the (gated) call sites via
-// `<TransportFor<..> as Transport>::Response`. Reconcile when the gated bodies
-// un-gate.
+// that names `RequestContext` AND the inherent methods on the associated type
+// can't be called from generic code anyway. Instead the field stores
+// `uws::AnyResponse` (Copy enum over the three concrete handles) and dispatches
+// at runtime — same shape as `AnyRequestContext` and `AnyServer`. The const
+// params still pick which variant `create()` constructs.
 pub type Req<const SSL_ENABLED: bool, const HTTP3: bool> = c_void;
 pub type Resp<const SSL_ENABLED: bool, const HTTP3: bool> = c_void;
+
+// Surface gaps `AnyResponse` doesn't expose yet — hand-dispatched here so the
+// state machine can call them without touching `bun_uws_sys`.
+pub trait AnyResponseExt {
+    fn has_responded(self) -> bool;
+    fn override_write_offset(self, offset: u64);
+}
+impl AnyResponseExt for uws::AnyResponse {
+    #[inline]
+    fn has_responded(self) -> bool {
+        match self {
+            // SAFETY: AnyResponse stores a live FFI handle.
+            uws::AnyResponse::SSL(p) => unsafe { (*p).has_responded() },
+            uws::AnyResponse::TCP(p) => unsafe { (*p).has_responded() },
+            uws::AnyResponse::H3(p) => unsafe { (*p).has_responded() },
+        }
+    }
+    #[inline]
+    fn override_write_offset(self, offset: u64) {
+        match self {
+            // SAFETY: AnyResponse stores a live FFI handle.
+            uws::AnyResponse::SSL(p) => unsafe { (*p).override_write_offset(offset) },
+            uws::AnyResponse::TCP(p) => unsafe { (*p).override_write_offset(offset) },
+            uws::AnyResponse::H3(p) => unsafe { (*p).override_write_offset(offset) },
+        }
+    }
+}
 
 // TODO(port): jsc.WebCore.HTTPServerWritable(ssl_enabled, http3) — comptime type fn.
 // TODO(b2-blocked): `webcore::streams::HTTPServerWritable<SSL,H3>` name-clashes
@@ -101,7 +128,7 @@ thread_local! {
 
 pub struct RequestContext<ThisServer, const SSL_ENABLED: bool, const DEBUG_MODE: bool, const HTTP3: bool> {
     pub server: Option<*const ThisServer>,
-    pub resp: Option<*mut Resp<SSL_ENABLED, HTTP3>>,
+    pub resp: Option<uws::AnyResponse>,
     /// thread-local default heap allocator
     /// this prevents an extra pthread_getspecific() call which shows up in profiling
     // TODO(port): allocator field deleted — global mimalloc per PORTING.md §Allocators.
@@ -192,29 +219,29 @@ where
     }
 }
 
-// ─── per-request state machine bodies (gated) ────────────────────────────────
+// ─── per-request state machine bodies ────────────────────────────────────────
 // Everything below until the helper structs at the bottom is the request
 // state machine: render(), on_abort(), on_resolve(), do_render_*, sendfile,
-// stream handling, error handling. All of it touches:
-//   - bun_jsc method surface (JSValue::call/protect/as_, JSGlobalObject::throw_*,
-//     ConsoleObject, NativePromiseContext, host_fn macro)
-//   - bun_uws_sys::Response::{on_aborted, on_timeout, run_corked_with_type,
-//     try_end, write, end} (cycle-5-B is filling these)
-//   - WebCore::{Body, ReadableStream, FetchHeaders, Response} method bodies
-// TODO(b2-blocked): bun_jsc + bun_uws response surface.
-#[cfg(any())]
-mod _gated_state_machine {
-use super::*;
+// stream handling, error handling.
 use std::io::Write as _;
 use bun_core::Output;
+use bun_http_types as HTTP;
 use bun_http_types::MimeType::MimeType;
-use bun_uws::AnyResponse;
 use bun_logger as logger;
 use bun_paths::PathBuffer;
 use bun_collections::ByteList;
-use crate::server::{FileResponseStream, HTTPStatusText};
+use crate::api::native_promise_context as NativePromiseContext;
+use crate::server::{AnyRequestContext, FileResponseStream, HTTPStatusText};
 use crate::server::jsc::CallFrame;
-use crate::webcore::{Blob, ReadableStream};
+use crate::webcore::{body as Body, s3 as S3, Blob, ReadableStream};
+// `Api::FallbackMessageContainer`/`JsException`/`Problems`/`Fallback::render_backend`
+// live in `bun_options_types::schema::api` + `bun_js_parser::runtime`; both are
+// still being filled in by concurrent ports. The DEBUG_MODE error-page paths
+// that use them stay `#[cfg(any())]`-gated below.
+#[cfg(any())]
+use bun_options_types::schema::api as Api;
+#[cfg(any())]
+use bun_js_parser::runtime::Fallback;
 
 bun_core::declare_scope!(RequestContext, visible);
 bun_core::declare_scope!(ReadableStream, visible);
@@ -256,7 +283,7 @@ where
         if let Some(resp) = self.resp {
             self.flags.set_has_abort_handler(true);
             // SAFETY: FFI handle valid while resp is Some
-            unsafe { (*resp).on_aborted(Self::on_abort, self) };
+            unsafe { resp.on_aborted(Self::on_abort, self) };
         }
     }
 
@@ -276,7 +303,7 @@ where
         if let Some(resp) = self.resp {
             self.flags.set_has_timeout_handler(true);
             // SAFETY: FFI handle valid while resp is Some
-            unsafe { (*resp).on_timeout(Self::on_timeout, self) };
+            unsafe { resp.on_timeout(Self::on_timeout, self) };
         }
     }
 
@@ -365,7 +392,7 @@ where
             if let Some(resp) = ctx.resp {
                 let mut pair = HeaderResponsePair { this: ctx, response };
                 // SAFETY: FFI handle
-                unsafe { (*resp).run_corked_with_type(Self::do_render_head_response, &mut pair) };
+                unsafe { resp.run_corked_with_type(Self::do_render_head_response, &mut pair) };
             }
             return;
         }
@@ -455,12 +482,8 @@ where
         if let Some(server) = self.server.take() {
             // SAFETY: BACKREF; pool put + onRequestComplete
             unsafe {
-                if HTTP3 {
-                    (*server).h3_request_pool_allocator().put(self);
-                } else {
-                    (*server).request_pool_allocator().put(self);
-                }
-                (*server).on_request_complete();
+                (*server).release_request_context(self as *mut Self as *mut c_void, HTTP3);
+                (*(server as *mut ThisServer)).on_request_complete();
             }
         }
     }
@@ -508,7 +531,7 @@ where
 
         let resp = ctx.resp.unwrap();
         // SAFETY: FFI handle, just checked Some
-        let has_responded = unsafe { (*resp).has_responded() };
+        let has_responded = unsafe { resp.has_responded() };
         if !has_responded {
             let original_state = ctx.defer_deinit_until_callback_completes;
             let mut should_deinit_context = match original_state {
@@ -536,7 +559,7 @@ where
         }
 
         // SAFETY: FFI handle
-        if unsafe { !(*resp).has_responded() }
+        if unsafe { !resp.has_responded() }
             && !ctx.flags.has_marked_pending()
             && !ctx.flags.is_error_promise_pending()
         {
@@ -548,14 +571,14 @@ where
     pub fn render_missing(&mut self) {
         if let Some(resp) = self.resp {
             // SAFETY: FFI handle
-            unsafe { (*resp).run_corked_with_type(Self::render_missing_corked, self) };
+            unsafe { resp.run_corked_with_type(Self::render_missing_corked, self) };
         }
     }
 
-    pub fn render_missing_corked(ctx: &mut Self) {
+    pub fn render_missing_corked(ctx: *mut Self) {
+        // SAFETY: ctx is the live RequestContext threaded through cork user-data.
+        let ctx = unsafe { &mut *ctx };
         if let Some(resp) = ctx.resp {
-            // SAFETY: FFI handle
-            let resp = unsafe { &mut *resp };
             if !DEBUG_MODE {
                 if !ctx.flags.has_written_status() {
                     resp.write_status(b"204 No Content");
@@ -590,6 +613,10 @@ where
         }
     }
 
+    // TODO(b2-blocked): `Api::FallbackMessageContainer` + `Fallback::render_backend`
+    // (bun_options_types::schema::api / bun_js_parser::runtime) — debug-only HTML
+    // error page. Production hits `render_production_error` instead.
+    #[cfg(any())]
     pub fn render_default_error(
         &mut self,
         // TODO(port): arena_allocator param dropped; this is a non-AST crate, allocations use global mimalloc.
@@ -604,8 +631,8 @@ where
             if let Some(resp) = self.resp {
                 // SAFETY: FFI handle
                 unsafe {
-                    (*resp).write_status(b"500 Internal Server Error");
-                    (*resp).write_header(b"content-type", MimeType::HTML.value);
+                    resp.write_status(b"500 Internal Server Error");
+                    resp.write_header(b"content-type", MimeType::HTML.value);
                 }
             }
         }
@@ -638,7 +665,7 @@ where
             None => true,
             Some(resp) => unsafe {
                 // SAFETY: FFI handle
-                (*resp).try_end(&bb, bb.len(), self.should_close_connection())
+                resp.try_end(&bb, bb.len(), self.should_close_connection())
             },
         };
         if try_end_ok {
@@ -655,15 +682,20 @@ where
 
         if let Some(resp) = self.resp {
             // SAFETY: FFI handle
-            unsafe { (*resp).on_writable(Self::on_writable_complete_response_buffer, self) };
+            unsafe { resp.on_writable(Self::on_writable_complete_response_buffer, self) };
         }
     }
 
     pub fn render_response_buffer(&mut self) {
         if let Some(resp) = self.resp {
             // SAFETY: FFI handle
-            unsafe { (*resp).on_writable(Self::on_writable_response_buffer, self) };
+            unsafe { resp.on_writable(Self::on_writable_response_buffer, self) };
         }
+    }
+
+    fn drain_response_buffer_and_metadata_corked(this: *mut Self) {
+        // SAFETY: this is the live RequestContext threaded through cork user-data.
+        unsafe { (*this).drain_response_buffer_and_metadata() };
     }
 
     /// Drain a partial response buffer
@@ -672,7 +704,7 @@ where
             self.render_metadata();
 
             // SAFETY: FFI handle
-            unsafe { (*resp).write(&self.response_buf_owned) };
+            unsafe { resp.write(&self.response_buf_owned) };
         }
         self.response_buf_owned.clear();
     }
@@ -686,7 +718,7 @@ where
             self.detach_response();
             self.end_request_streaming_and_drain();
             // SAFETY: FFI handle
-            unsafe { (*resp).end(data, close_connection) };
+            unsafe { resp.end(data, close_connection) };
         }
     }
 
@@ -703,8 +735,8 @@ where
             // We cannot call this function if the Content-Length header was previously set
             // SAFETY: FFI handle
             unsafe {
-                if (*resp).state().is_response_pending() {
-                    (*resp).end_stream(close_connection);
+                if resp.state().is_response_pending() {
+                    resp.end_stream(close_connection);
                 }
             }
         }
@@ -719,7 +751,7 @@ where
             self.detach_response();
             self.end_request_streaming_and_drain();
             // SAFETY: FFI handle
-            unsafe { (*resp).end_without_body(close_connection) };
+            unsafe { resp.end_without_body(close_connection) };
         }
     }
 
@@ -730,18 +762,19 @@ where
             self.detach_response();
             self.end_request_streaming_and_drain();
             // SAFETY: FFI handle
-            unsafe { (*resp).force_close() };
+            unsafe { resp.force_close() };
         }
     }
 
     pub fn on_writable_response_buffer(
-        this: &mut Self,
+        this: *mut Self,
         _write_offset: u64,
-        resp: *mut Resp<SSL_ENABLED, HTTP3>,
+        _resp: uws::AnyResponse,
     ) -> bool {
         ctx_log!("onWritableResponseBuffer");
-
-        debug_assert!(this.resp == Some(resp));
+        // SAFETY: uWS guarantees the user-data ptr is the live RequestContext.
+        let this = unsafe { &mut *this };
+        debug_assert!(this.resp.is_some());
         if this.is_aborted_or_ended() {
             return false;
         }
@@ -751,12 +784,14 @@ where
 
     // TODO: should we cork?
     pub fn on_writable_complete_response_buffer_and_metadata(
-        this: &mut Self,
+        this: *mut Self,
         write_offset: u64,
-        resp: *mut Resp<SSL_ENABLED, HTTP3>,
+        resp: uws::AnyResponse,
     ) -> bool {
         ctx_log!("onWritableCompleteResponseBufferAndMetadata");
-        debug_assert!(this.resp == Some(resp));
+        // SAFETY: uWS guarantees the user-data ptr is the live RequestContext.
+        let this = unsafe { &mut *this };
+        debug_assert!(this.resp.is_some());
 
         if this.is_aborted_or_ended() {
             return false;
@@ -778,12 +813,14 @@ where
     }
 
     pub fn on_writable_complete_response_buffer(
-        this: &mut Self,
+        this: *mut Self,
         write_offset: u64,
-        resp: *mut Resp<SSL_ENABLED, HTTP3>,
+        resp: uws::AnyResponse,
     ) -> bool {
         ctx_log!("onWritableCompleteResponseBuffer");
-        debug_assert!(this.resp == Some(resp));
+        // SAFETY: uWS guarantees the user-data ptr is the live RequestContext.
+        let this = unsafe { &mut *this };
+        debug_assert!(this.resp.is_some());
         if this.is_aborted_or_ended() {
             return false;
         }
@@ -795,11 +832,45 @@ where
     #[inline]
     fn any_response(r: *mut Resp<SSL_ENABLED, HTTP3>) -> uws::AnyResponse {
         if HTTP3 {
-            uws::AnyResponse::H3(r)
+            uws::AnyResponse::H3(r as *mut bun_uws_sys::h3::Response)
         } else if SSL_ENABLED {
-            uws::AnyResponse::SSL(r)
+            uws::AnyResponse::SSL(r as *mut bun_uws_sys::NewAppResponse<true>)
         } else {
-            uws::AnyResponse::TCP(r)
+            uws::AnyResponse::TCP(r as *mut bun_uws_sys::NewAppResponse<false>)
+        }
+    }
+
+    #[inline]
+    fn any_request(r: *mut Req<SSL_ENABLED, HTTP3>) -> uws::AnyRequest {
+        if HTTP3 {
+            uws::AnyRequest::H3(r as *mut bun_uws_sys::h3::Request)
+        } else {
+            uws::AnyRequest::H1(r as *mut bun_uws_sys::Request)
+        }
+    }
+
+    #[inline]
+    fn req_method(r: *mut Req<SSL_ENABLED, HTTP3>) -> &'static [u8] {
+        // SAFETY: r is a live uWS/lsquic request handle for the duration of
+        // the request callback; both surfaces return request-owned slices.
+        unsafe {
+            if HTTP3 {
+                (*(r as *mut bun_uws_sys::h3::Request)).method()
+            } else {
+                (*(r as *mut bun_uws_sys::Request)).method()
+            }
+        }
+    }
+
+    #[inline]
+    fn req_url(r: *mut Req<SSL_ENABLED, HTTP3>) -> &'static [u8] {
+        // SAFETY: see `req_method`.
+        unsafe {
+            if HTTP3 {
+                (*(r as *mut bun_uws_sys::h3::Request)).url()
+            } else {
+                (*(r as *mut bun_uws_sys::Request)).url()
+            }
         }
     }
 
@@ -808,13 +879,12 @@ where
         this: &mut core::mem::MaybeUninit<Self>,
         server: *const ThisServer,
         req: *mut Req<SSL_ENABLED, HTTP3>,
-        resp: *mut Resp<SSL_ENABLED, HTTP3>,
+        resp: uws::AnyResponse,
         should_deinit_context: Option<*mut bool>,
         method: Option<HTTP::Method>,
     ) {
-        // SAFETY: req is a valid uWS request handle for the duration of the callback
         let resolved_method = method
-            .or_else(|| HTTP::Method::which(unsafe { (*req).method() }))
+            .or_else(|| HTTP::Method::which(Self::req_method(req)))
             .unwrap_or(HTTP::Method::GET);
         // SAFETY: writing to MaybeUninit slot
         unsafe {
@@ -824,11 +894,7 @@ where
                 method: resolved_method,
                 server: Some(server),
                 defer_deinit_until_callback_completes: should_deinit_context,
-                range: RangeRequest::raw_from_request(if HTTP3 {
-                    RangeRequest::ReqRef::H3(req)
-                } else {
-                    RangeRequest::ReqRef::H1(req)
-                }),
+                range: RangeRequest::raw_from_request(&Self::any_request(req)),
                 request_weakref: Request::WeakRef::EMPTY,
                 signal: None,
                 cookies: None,
@@ -856,8 +922,10 @@ where
         ctx_log!("create<d> ({:p})<r>", this.as_ptr());
     }
 
-    pub fn on_timeout(this: &mut Self, resp: *mut Resp<SSL_ENABLED, HTTP3>) {
-        debug_assert!(this.resp == Some(resp));
+    pub fn on_timeout(this: *mut Self, _resp: uws::AnyResponse) {
+        // SAFETY: uWS guarantees the user-data ptr is the live RequestContext.
+        let this = unsafe { &mut *this };
+        debug_assert!(this.resp.is_some());
         debug_assert!(this.server.is_some());
 
         let mut any_js_calls = false;
@@ -883,16 +951,18 @@ where
         }
     }
 
-    pub fn on_abort(this: &mut Self, resp: *mut Resp<SSL_ENABLED, HTTP3>) {
+    pub fn on_abort(this: *mut Self, resp: uws::AnyResponse) {
         ctx_log!("onAbort");
-        debug_assert!(this.resp == Some(resp));
+        // SAFETY: uWS guarantees the user-data ptr is the live RequestContext.
+        let this = unsafe { &mut *this };
+        debug_assert!(this.resp.is_some());
         // An HTTP/3 stream is destroyed once both sides FIN, so this also
         // fires after a successful end(). HTTP/1 sockets persist for
         // keep-alive, so the equivalent never happens there. Drop the
         // pointer; everything else cleans up via the resolve/reject path.
         if HTTP3 {
             // SAFETY: FFI handle
-            if unsafe { (*resp).has_responded() } {
+            if unsafe { resp.has_responded() } {
                 this.resp = None;
                 this.flags.set_has_abort_handler(false);
                 return;
@@ -948,8 +1018,10 @@ where
         }
 
         // if have sink, call onAborted on sink
-        if let Some(wrapper) = &mut this.sink {
-            wrapper.sink.abort();
+        if this.sink.is_some() {
+            // TODO(b2-blocked): `wrapper.sink.abort()` once
+            // `webcore::streams::HTTPServerWritable<SSL,H3>` is real (currently
+            // aliased to c_void; see ResponseStreamJSSink note at top of file).
             return;
         }
 
@@ -1053,18 +1125,9 @@ where
     }
 
     fn on_file_stream_abort(ctx: *mut c_void, resp: uws::AnyResponse) {
-        // SAFETY: ctx is a *RequestContext registered with FileResponseStream
-        let this: &mut Self = unsafe { &mut *(ctx as *mut Self) };
         // Route through the real onAbort so flags.aborted, request.signal,
         // and additional_on_abort fire exactly as they did pre-consolidation.
-        let r = if HTTP3 {
-            resp.h3()
-        } else if SSL_ENABLED {
-            resp.ssl()
-        } else {
-            resp.tcp()
-        };
-        Self::on_abort(this, r);
+        Self::on_abort(ctx as *mut Self, resp);
     }
 
     fn on_file_stream_error(ctx: *mut c_void, resp: uws::AnyResponse, _err: bun_sys::Error) {
@@ -1073,12 +1136,14 @@ where
     }
 
     pub fn on_writable_bytes(
-        this: &mut Self,
+        this: *mut Self,
         write_offset: u64,
-        resp: *mut Resp<SSL_ENABLED, HTTP3>,
+        resp: uws::AnyResponse,
     ) -> bool {
         ctx_log!("onWritableBytes");
-        debug_assert!(this.resp == Some(resp));
+        // SAFETY: uWS guarantees the user-data ptr is the live RequestContext.
+        let this = unsafe { &mut *this };
+        debug_assert!(this.resp.is_some());
         if this.is_aborted_or_ended() {
             return false;
         }
@@ -1095,14 +1160,14 @@ where
         &mut self,
         bytes_: &[u8],
         write_offset_: u64,
-        resp: *mut Resp<SSL_ENABLED, HTTP3>,
+        resp: uws::AnyResponse,
     ) -> bool {
-        debug_assert!(self.resp == Some(resp));
+        debug_assert!(self.resp.is_some());
         let write_offset: usize = write_offset_ as usize;
 
         let bytes = &bytes_[bytes_.len().min(write_offset)..];
         // SAFETY: FFI handle
-        if unsafe { (*resp).try_end(bytes, bytes_.len(), self.should_close_connection()) } {
+        if unsafe { resp.try_end(bytes, bytes_.len(), self.should_close_connection()) } {
             self.detach_response();
             self.end_request_streaming_and_drain();
             self.deref();
@@ -1110,7 +1175,7 @@ where
         } else {
             self.flags.set_has_marked_pending(true);
             // SAFETY: FFI handle
-            unsafe { (*resp).on_writable(Self::on_writable_bytes, self) };
+            unsafe { resp.on_writable(Self::on_writable_bytes, self) };
             true
         }
     }
@@ -1119,14 +1184,14 @@ where
         &mut self,
         bytes_: &[u8],
         write_offset_: u64,
-        resp: *mut Resp<SSL_ENABLED, HTTP3>,
+        resp: uws::AnyResponse,
     ) -> bool {
         let write_offset: usize = write_offset_ as usize;
-        debug_assert!(self.resp == Some(resp));
+        debug_assert!(self.resp.is_some());
 
         let bytes = &bytes_[bytes_.len().min(write_offset)..];
         // SAFETY: FFI handle
-        if unsafe { (*resp).try_end(bytes, bytes_.len(), self.should_close_connection()) } {
+        if unsafe { resp.try_end(bytes, bytes_.len(), self.should_close_connection()) } {
             self.response_buf_owned.clear();
             self.detach_response();
             self.end_request_streaming_and_drain();
@@ -1134,7 +1199,7 @@ where
         } else {
             self.flags.set_has_marked_pending(true);
             // SAFETY: FFI handle
-            unsafe { (*resp).on_writable(Self::on_writable_complete_response_buffer, self) };
+            unsafe { resp.on_writable(Self::on_writable_complete_response_buffer, self) };
         }
 
         true
@@ -1309,12 +1374,12 @@ where
                     };
                     // SAFETY: FFI handle
                     unsafe {
-                        (*resp).write_header(b"content-range", cr);
-                        (*resp).write_header(b"accept-ranges", b"bytes");
-                        let close = (*resp).should_close_connection();
+                        resp.write_header(b"content-range", cr);
+                        resp.write_header(b"accept-ranges", b"bytes");
+                        let close = resp.should_close_connection();
                         self.detach_response();
                         self.end_request_streaming_and_drain();
-                        (*resp).end(b"", close);
+                        resp.end(b"", close);
                     }
                     self.deref();
                     return;
@@ -1323,18 +1388,18 @@ where
         }
 
         // SAFETY: FFI handle
-        unsafe { (*resp).run_corked_with_type(Self::render_metadata, self) };
+        unsafe { resp.run_corked_with_type(Self::render_metadata_corked, self) };
 
         if (is_regular && self.sendfile.remain == 0) || !self.method.has_body() {
             if auto_close {
                 fd.close();
             }
             // SAFETY: FFI handle
-            let close = unsafe { (*resp).should_close_connection() };
+            let close = unsafe { resp.should_close_connection() };
             self.detach_response();
             self.end_request_streaming_and_drain();
             // SAFETY: FFI handle
-            unsafe { (*resp).end(b"", close) };
+            unsafe { resp.end(b"", close) };
             self.deref();
             return;
         }
@@ -1352,7 +1417,7 @@ where
         FileResponseStream::start(FileResponseStream::Options {
             fd,
             auto_close,
-            resp: Self::any_response(resp),
+            resp,
             vm: server.vm(),
             file_type,
             pollable,
@@ -1394,10 +1459,37 @@ where
         }
     }
 
-    fn do_render_stream(pair: &mut StreamPair<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, HTTP3>) {
+    // TODO(b2-blocked): body depends on `webcore::streams::HTTPServerWritable`
+    // (ResponseStream / ResponseStreamJSSink), which is still aliased to c_void
+    // because the streams.rs scope name-clash hasn't been resolved. Full Phase-A
+    // body preserved in `_gated_do_render_stream` below.
+    fn do_render_stream(pair: *mut StreamPair<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, HTTP3>) {
         ctx_log!("doRenderStream");
-        let this = pair.this;
-        let stream = pair.stream;
+        // SAFETY: pair is a stack local threaded through cork user-data.
+        let pair = unsafe { &mut *pair };
+        let this = &mut *pair.this;
+        debug_assert!(this.server.is_some());
+        // SAFETY: BACKREF
+        let global_this = unsafe { (*this.server.unwrap()).global_this() };
+        if this.is_aborted_or_ended() {
+            pair.stream.cancel(global_this);
+            this.response_body_readable_stream_ref.deinit();
+            return;
+        }
+        // Until the writable-stream sink type is real we cannot pipe; cancel
+        // the readable and fall back to renderMissing so the request completes.
+        pair.stream.cancel(global_this);
+        this.response_body_readable_stream_ref.deinit();
+        this.render_missing();
+    }
+
+    #[cfg(any())]
+    fn _gated_do_render_stream(pair: *mut StreamPair<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, HTTP3>) {
+        ctx_log!("doRenderStream");
+        // SAFETY: pair is a stack local threaded through cork user-data.
+        let pair = unsafe { &mut *pair };
+        let this = &mut *pair.this;
+        let stream = &mut pair.stream;
         debug_assert!(this.server.is_some());
         // SAFETY: BACKREF
         let global_this = unsafe { (*this.server.unwrap()).global_this() };
@@ -1458,7 +1550,7 @@ where
         #[cfg(debug_assertions)]
         {
             // SAFETY: FFI handle
-            if unsafe { (*resp).has_responded() } {
+            if unsafe { resp.has_responded() } {
                 stream_log!("responded");
             }
         }
@@ -1473,7 +1565,7 @@ where
         }
 
         // SAFETY: FFI handle
-        if unsafe { (*resp).has_responded() } {
+        if unsafe { resp.has_responded() } {
             stream_log!("done");
             response_stream.detach(global_this);
             this.sink = None; // sink.destroy() — Box drops
@@ -1695,14 +1787,14 @@ where
             unsafe {
                 if self.flags.is_waiting_for_request_body() {
                     self.flags.set_is_waiting_for_request_body(false);
-                    (*resp).clear_on_data();
+                    resp.clear_on_data();
                 }
                 if self.flags.has_abort_handler() {
-                    (*resp).clear_aborted();
+                    resp.clear_aborted();
                     self.flags.set_has_abort_handler(false);
                 }
                 if self.flags.has_timeout_handler() {
-                    (*resp).clear_timeout();
+                    resp.clear_timeout();
                     self.flags.set_has_timeout_handler(false);
                 }
             }
@@ -1715,18 +1807,20 @@ where
             || self.flags.aborted()
             || self.server.is_none()
             // SAFETY: BACKREF, just checked Some
-            || unsafe { (*self.server.unwrap()).flags().terminated }
+            || unsafe { (*self.server.unwrap()).terminated() }
     }
 
     pub fn do_render_head_response_after_s3_size_resolved(
-        pair: &mut HeaderResponseSizePair<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, HTTP3>,
+        pair: *mut HeaderResponseSizePair<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, HTTP3>,
     ) {
-        let this = pair.this;
+        // SAFETY: pair is a stack local threaded through cork user-data.
+        let pair = unsafe { &mut *pair };
+        let this = &mut *pair.this;
         this.render_metadata();
 
         if let Some(resp) = this.resp {
             // SAFETY: FFI handle
-            unsafe { (*resp).write_header_int(b"content-length", pair.size as u64) };
+            unsafe { resp.write_header_int(b"content-length", pair.size as u64) };
         }
         this.end_without_body(this.should_close_connection());
         this.deref();
@@ -1743,7 +1837,7 @@ where
             let mut pair = HeaderResponseSizePair { this, size };
             // SAFETY: FFI handle
             unsafe {
-                (*resp).run_corked_with_type(
+                resp.run_corked_with_type(
                     Self::do_render_head_response_after_s3_size_resolved,
                     &mut pair,
                 )
@@ -1752,10 +1846,12 @@ where
     }
 
     fn do_render_head_response(
-        pair: &mut HeaderResponsePair<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, HTTP3>,
+        pair: *mut HeaderResponsePair<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, HTTP3>,
     ) {
-        let this = pair.this;
-        let response = pair.response;
+        // SAFETY: pair is a stack local threaded through cork user-data.
+        let pair = unsafe { &mut *pair };
+        let this = &mut *pair.this;
+        let response = &mut *pair.response;
         if this.resp.is_none() {
             return;
         }
@@ -1769,7 +1865,7 @@ where
             // server detached?
             this.render_metadata();
             // SAFETY: FFI handle
-            unsafe { (*resp).write_header_int(b"content-length", 0) };
+            unsafe { resp.write_header_int(b"content-length", 0) };
             this.end_without_body(this.should_close_connection());
             return;
         };
@@ -1789,7 +1885,7 @@ where
                     this.render_metadata();
                     // SAFETY: FFI handle
                     unsafe {
-                        (*resp).write_header(b"transfer-encoding", transfer_encoding_str.slice())
+                        resp.write_header(b"transfer-encoding", transfer_encoding_str.slice())
                     };
                     this.end_without_body(this.should_close_connection());
                     return;
@@ -1806,7 +1902,7 @@ where
 
                 this.render_metadata();
                 // SAFETY: FFI handle
-                unsafe { (*resp).write_header_int(b"content-length", len as u64) };
+                unsafe { resp.write_header_int(b"content-length", len as u64) };
                 this.end_without_body(this.should_close_connection());
                 return;
             }
@@ -1823,9 +1919,9 @@ where
                 // SAFETY: FFI handle
                 unsafe {
                     if size == Blob::MAX_SIZE {
-                        (*resp).write_header_int(b"content-length", 0);
+                        resp.write_header_int(b"content-length", 0);
                     } else {
-                        (*resp).write_header_int(b"content-length", size as u64);
+                        resp.write_header_int(b"content-length", size as u64);
                     }
                 }
                 this.end_without_body(this.should_close_connection());
@@ -1858,9 +1954,9 @@ where
                 // SAFETY: FFI handle
                 unsafe {
                     if blob.size == Blob::MAX_SIZE {
-                        (*resp).write_header_int(b"content-length", 0);
+                        resp.write_header_int(b"content-length", 0);
                     } else {
-                        (*resp).write_header_int(b"content-length", blob.size as u64);
+                        resp.write_header_int(b"content-length", blob.size as u64);
                     }
                 }
                 this.end_without_body(this.should_close_connection());
@@ -1869,14 +1965,14 @@ where
                 this.render_metadata();
                 if !HTTP3 {
                     // SAFETY: FFI handle
-                    unsafe { (*resp).write_header(b"transfer-encoding", b"chunked") };
+                    unsafe { resp.write_header(b"transfer-encoding", b"chunked") };
                 }
                 this.end_without_body(this.should_close_connection());
             }
             Body::Value::Used | Body::Value::Null | Body::Value::Empty | Body::Value::Error(_) => {
                 this.render_metadata();
                 // SAFETY: FFI handle
-                unsafe { (*resp).write_header_int(b"content-length", 0) };
+                unsafe { resp.write_header_int(b"content-length", 0) };
                 this.end_without_body(this.should_close_connection());
             }
         }
@@ -1932,7 +2028,7 @@ where
                     let mut pair = HeaderResponsePair { this: ctx, response };
                     // SAFETY: FFI handle
                     unsafe {
-                        (*resp).run_corked_with_type(Self::do_render_head_response, &mut pair)
+                        resp.run_corked_with_type(Self::do_render_head_response, &mut pair)
                     };
                 }
                 return;
@@ -2000,7 +2096,7 @@ where
                             let mut pair = HeaderResponsePair { this: ctx, response };
                             // SAFETY: FFI handle
                             unsafe {
-                                (*resp).run_corked_with_type(
+                                resp.run_corked_with_type(
                                     Self::do_render_head_response,
                                     &mut pair,
                                 )
@@ -2037,15 +2133,13 @@ where
     pub fn handle_resolve_stream(req: &mut Self) {
         stream_log!("handleResolveStream");
 
-        let mut wrote_anything = false;
-        if let Some(mut wrapper) = req.sink.take() {
-            req.flags.set_aborted(req.flags.aborted() || wrapper.sink.aborted);
-            wrote_anything = wrapper.sink.wrote > 0;
-
-            wrapper.sink.finalize();
-            let g = wrapper.sink.global_this;
-            wrapper.detach(g);
-            // wrapper.sink.destroy() — Box drops at scope end
+        let wrote_anything = false;
+        if let Some(_wrapper) = req.sink.take() {
+            // TODO(b2-blocked): once `ResponseStreamJSSink` is real:
+            //   req.flags.set_aborted(req.flags.aborted() || wrapper.sink.aborted);
+            //   wrote_anything = wrapper.sink.wrote > 0;
+            //   wrapper.sink.finalize();
+            //   wrapper.detach(wrapper.sink.global_this);
         }
 
         if let Some(resp) = req.response_weakref.get() {
@@ -2103,20 +2197,13 @@ where
     pub fn handle_reject_stream(req: &mut Self, global_this: &JSGlobalObject, err: JSValue) {
         stream_log!("handleRejectStream");
 
-        if let Some(mut wrapper) = req.sink.take() {
-            if let Some(prom) = wrapper.sink.pending_flush.take() {
-                // The promise value was protected when pending_flush was
-                // assigned (flushFromJS / endFromJS). Drop that root before
-                // abandoning the pointer, otherwise it leaks for the
-                // lifetime of the VM.
-                prom.to_js().unprotect();
-            }
-            wrapper.sink.done = true;
-            req.flags.set_aborted(req.flags.aborted() || wrapper.sink.aborted);
-            wrapper.sink.finalize();
-            let g = wrapper.sink.global_this;
-            wrapper.detach(g);
-            // wrapper.sink.destroy() — Box drops at scope end
+        if let Some(_wrapper) = req.sink.take() {
+            // TODO(b2-blocked): once `ResponseStreamJSSink` is real:
+            //   if let Some(prom) = wrapper.sink.pending_flush.take() { prom.to_js().unprotect(); }
+            //   wrapper.sink.done = true;
+            //   req.flags.set_aborted(req.flags.aborted() || wrapper.sink.aborted);
+            //   wrapper.sink.finalize();
+            //   wrapper.detach(wrapper.sink.global_this);
         }
 
         if let Some(resp) = req.response_weakref.get() {
@@ -2144,6 +2231,9 @@ where
             req.render_metadata();
         }
 
+        // TODO(b2-blocked): DEBUG_MODE dev-server HTML fallback page — gated on
+        // `Api::FallbackMessageContainer`/`Fallback::render_backend`.
+        #[cfg(any())]
         if DEBUG_MODE {
             if let Some(server) = req.server {
                 if !err.is_empty_or_undefined_or_null() {
@@ -2159,8 +2249,8 @@ where
                             if let Some(resp) = req.resp {
                                 // SAFETY: FFI handle
                                 unsafe {
-                                    (*resp).write_status(b"500 Internal Server Error");
-                                    (*resp).write_header(b"content-type", MimeType::HTML.value);
+                                    resp.write_status(b"500 Internal Server Error");
+                                    resp.write_header(b"content-type", MimeType::HTML.value);
                                 }
                             }
                         }
@@ -2188,7 +2278,7 @@ where
 
                         if let Some(resp) = req.resp {
                             // SAFETY: FFI handle
-                            unsafe { (*resp).write(&bb) };
+                            unsafe { resp.write(&bb) };
                         }
 
                         req.end_stream(req.should_close_connection());
@@ -2285,7 +2375,7 @@ where
                                 let mut pair = StreamPair { stream, this };
                                 // SAFETY: FFI handle
                                 unsafe {
-                                    (*resp).run_corked_with_type(Self::do_render_stream, &mut pair)
+                                    resp.run_corked_with_type(Self::do_render_stream, &mut pair)
                                 };
                             }
                             return;
@@ -2332,8 +2422,8 @@ where
                             if !this.response_buf_owned.is_empty() {
                                 // SAFETY: FFI handle
                                 unsafe {
-                                    (*resp).run_corked_with_type(
-                                        Self::drain_response_buffer_and_metadata,
+                                    resp.run_corked_with_type(
+                                        Self::drain_response_buffer_and_metadata_corked,
                                         this,
                                     )
                                 };
@@ -2341,7 +2431,7 @@ where
                                 // if we only have metadata to send, send it now
                                 // SAFETY: FFI handle
                                 unsafe {
-                                    (*resp).run_corked_with_type(Self::render_metadata, this)
+                                    resp.run_corked_with_type(Self::render_metadata_corked, this)
                                 };
                             }
                             return;
@@ -2403,7 +2493,7 @@ where
         // uSockets will append and manage the buffer
         // so any write will buffer if the write fails
         // SAFETY: FFI handle
-        if unsafe { (*resp).write(chunk) } == uws::WriteResult::WantMore {
+        if unsafe { resp.write(chunk) } == uws::WriteResult::WantMore {
             if is_done {
                 this.end_stream(this.should_close_connection());
             }
@@ -2412,7 +2502,7 @@ where
             if is_done {
                 this.flags.set_has_marked_pending(true);
                 // SAFETY: FFI handle
-                unsafe { (*resp).on_writable(Self::on_writable_response_buffer, this) };
+                unsafe { resp.on_writable(Self::on_writable_response_buffer, this) };
             }
         }
     }
@@ -2426,16 +2516,24 @@ where
         if self.flags.has_abort_handler() && self.blob.fast_size() < 16384 - 1024 {
             if let Some(resp) = self.resp {
                 // SAFETY: FFI handle
-                unsafe { (*resp).run_corked_with_type(Self::do_render_blob_corked, self) };
+                unsafe { resp.run_corked_with_type(Self::do_render_blob_corked, self) };
             }
         } else {
             self.do_render_blob_corked();
         }
     }
 
-    pub fn do_render_blob_corked(&mut self) {
-        self.render_metadata();
-        self.render_bytes();
+    pub fn do_render_blob_corked(this: *mut Self) {
+        // SAFETY: this is the live RequestContext threaded through cork user-data.
+        let this = unsafe { &mut *this };
+        this.render_metadata();
+        this.render_bytes();
+    }
+
+    /// `render_metadata` adapter for `run_corked_with_type` (takes `fn(*mut U)`).
+    fn render_metadata_corked(this: *mut Self) {
+        // SAFETY: this is the live RequestContext threaded through cork user-data.
+        unsafe { (*this).render_metadata() };
     }
 
     pub fn do_render(&mut self) {
@@ -2490,7 +2588,7 @@ where
     pub fn should_close_connection(&self) -> bool {
         if let Some(resp) = self.resp {
             // SAFETY: FFI handle
-            return unsafe { (*resp).should_close_connection() };
+            return unsafe { resp.should_close_connection() };
         }
         false
     }
@@ -2503,6 +2601,10 @@ where
         let server = unsafe { &*server };
         let vm: &VirtualMachine = server.vm();
         let global_this = server.global_this();
+        // TODO(b2-blocked): DEBUG_MODE branch renders the HTML fallback page via
+        // `Api::JsException` + `render_default_error`; gated until bun_schema/
+        // bun_js_parser surfaces are in. Falls through to the production path.
+        #[cfg(any())]
         if DEBUG_MODE {
             // PERF(port): was arena bulk-free — profile in Phase B
             let mut exception_list: Vec<Api::JsException> = Vec::new();
@@ -2521,13 +2623,13 @@ where
                     self.ensure_pathname()
                 ),
             );
-        } else {
-            if status != 404 {
-                (vm.on_unhandled_rejection)(vm, global_this, value);
-            }
-            self.render_production_error(status);
+            vm.log.reset();
+            return;
         }
-
+        if status != 404 {
+            (vm.on_unhandled_rejection)(vm, global_this, value);
+        }
+        self.render_production_error(status);
         vm.log.reset();
     }
 
@@ -2850,10 +2952,10 @@ where
         let bytes = blob.slice();
         if let Some(resp) = self.resp {
             // SAFETY: FFI handle
-            if unsafe { !(*resp).try_end(bytes, bytes.len(), self.should_close_connection()) } {
+            if unsafe { !resp.try_end(bytes, bytes.len(), self.should_close_connection()) } {
                 self.flags.set_has_marked_pending(true);
                 // SAFETY: FFI handle
-                unsafe { (*resp).on_writable(Self::on_writable_bytes, self) };
+                unsafe { resp.on_writable(Self::on_writable_bytes, self) };
                 return;
             }
         }
@@ -2881,14 +2983,14 @@ where
     }
 
     pub fn on_buffered_body_chunk(
-        this: &mut Self,
-        resp: *mut Resp<SSL_ENABLED, HTTP3>,
+        this: *mut Self,
         chunk: &[u8],
         last: bool,
     ) {
         ctx_log!("onBufferedBodyChunk {} {}", chunk.len(), last);
-
-        debug_assert!(this.resp == Some(resp));
+        // SAFETY: uWS guarantees the user-data ptr is the live RequestContext.
+        let this = unsafe { &mut *this };
+        debug_assert!(this.resp.is_some());
 
         this.flags.set_is_waiting_for_request_body(!last);
         if this.is_aborted_or_ended() || this.flags.has_marked_complete() {
@@ -2948,7 +3050,7 @@ where
             {
                 this.request_body_buf = Vec::new();
                 // SAFETY: FFI handle
-                unsafe { (*resp).clear_on_data() };
+                unsafe { resp.clear_on_data() };
                 this.flags.set_is_waiting_for_request_body(false);
 
                 let loop_ = vm.event_loop();
@@ -2974,10 +3076,10 @@ where
                 // ref, and a later handleResolve()/handleReject() from an
                 // async handler would dereference the stale pointer.
                 // SAFETY: FFI handle
-                if this.resp.is_some() && unsafe { !(*resp).has_responded() } {
+                if this.resp.is_some() && unsafe { !resp.has_responded() } {
                     this.flags.set_has_written_status(true);
                     // SAFETY: FFI handle
-                    unsafe { (*resp).write_status(b"413 Payload Too Large") };
+                    unsafe { resp.write_status(b"413 Payload Too Large") };
                 }
                 this.end_without_body(!HTTP3);
                 return;
@@ -3112,13 +3214,13 @@ where
     pub fn get_remote_socket_info(&self) -> Option<SocketAddress> {
         let resp = self.resp?;
         // SAFETY: FFI handle
-        unsafe { (*resp).get_remote_socket_info() }
+        unsafe { resp.get_remote_socket_info() }
     }
 
     pub fn set_timeout(&mut self, seconds: c_uint) -> bool {
         if let Some(resp) = self.resp {
             // SAFETY: FFI handle
-            unsafe { (*resp).timeout(seconds.min(255)) };
+            unsafe { resp.timeout(seconds.min(255)) };
             if seconds > 0 {
                 // we only set the timeout callback if we wanna the timeout event to be triggered
                 // the connection will be closed so the abort handler will be called after the timeout
@@ -3130,7 +3232,7 @@ where
             } else {
                 // if the timeout is 0, we don't need to trigger the timeout event
                 // SAFETY: FFI handle
-                unsafe { (*resp).clear_timeout() };
+                unsafe { resp.clear_timeout() };
             }
             return true;
         }
@@ -3164,11 +3266,10 @@ pub struct PathnameFormatter<'a, ThisServer, const SSL: bool, const DBG: bool, c
     ctx: &'a RequestContext<ThisServer, SSL, DBG, H3>,
 }
 
-} // mod _gated_state_machine
-
-#[cfg(any())]
 impl<'a, ThisServer, const SSL: bool, const DBG: bool, const H3: bool> core::fmt::Display
     for PathnameFormatter<'a, ThisServer, SSL, DBG, H3>
+where
+    ThisServer: ServerLike,
 {
     fn fmt(&self, writer: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let this = self.ctx;
@@ -3179,8 +3280,11 @@ impl<'a, ThisServer, const SSL: bool, const DBG: bool, const H3: bool> core::fmt
 
         if !this.flags.has_abort_handler() {
             if let Some(req) = this.req {
-                // SAFETY: FFI handle valid while req is Some
-                return write!(writer, "{}", bstr::BStr::new(unsafe { (*req).url() }));
+                return write!(
+                    writer,
+                    "{}",
+                    bstr::BStr::new(RequestContext::<ThisServer, SSL, DBG, H3>::req_url(req)),
+                );
             }
         }
 
@@ -3327,7 +3431,18 @@ static WELCOME_PAGE_HTML_GZ: &[u8] = include_bytes!("../api/welcome-page.html.gz
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/server/RequestContext.zig (2736 lines)
-//   confidence: medium
-//   todos:      25
-//   notes:      comptime type-fn → const-generic struct + ServerLike trait; uws Transport/Response selection, threadlocal pool, and @export block stubbed for Phase B; sink ownership reshaped (Box drop = destroy()); response_jsvalue kept as bare JSValue + manual protect()
+//   confidence: low (state machine un-gated; not yet compile-verified —
+//               bun_http/bun_css/bun_js_parser transitive deps broken)
+//   todos:      31
+//   notes:      cycle-6: `_gated_state_machine` unwrapped. resp field is now
+//               `Option<uws::AnyResponse>` (runtime dispatch over the three
+//               transport handles — inherent methods on the Transport associated
+//               type can't be called from generic code). uWS callback sigs
+//               (on_abort/on_timeout/on_writable_*/on_data) reshaped to
+//               `fn(*mut Self, ..., AnyResponse)`; `run_corked_with_type`
+//               handlers reshaped to `fn(*mut U)` with thin `*_corked`
+//               adapters where the body is also called as a method.
+//               Still gated: `do_render_stream` body + sink finalize/detach
+//               (ResponseStreamJSSink = c_void), `render_default_error` +
+//               DEBUG_MODE HTML fallback (Api/Fallback schema types unported).
 // ──────────────────────────────────────────────────────────────────────────

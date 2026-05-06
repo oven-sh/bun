@@ -303,16 +303,24 @@ impl<V: CalcValue> Calc<V> {
         Self::parse_with(input, (), parse_with_fn::<V>)
     }
 
-    pub fn parse_with<C: Copy>(
+    pub fn parse_with<C: Copy, F: Fn(C, &[u8]) -> Option<Self> + Copy>(
         input: &mut css::Parser,
         ctx: C,
-        parse_ident: fn(C, &[u8]) -> Option<Self>,
+        parse_ident: F,
     ) -> CssResult<Self> {
         let location = input.current_source_location();
-        let f = input.expect_function()?;
-
-        let Some(unit) = CalcUnit::get_any_case(f) else {
-            return Err(location.new_unexpected_token_error(css::Token::Ident(f)));
+        let unit = {
+            let f = input.expect_function()?;
+            match CalcUnit::get_any_case(f) {
+                Some(u) => u,
+                None => {
+                    // SAFETY: `f` borrows the source buffer / arena which outlives the
+                    // Parser; detach the borrow so `input` is reusable. Same trick as
+                    // `css_parser::src_str` (Token payloads are arena-static).
+                    let f: &'static [u8] = unsafe { &*(f as *const [u8]) };
+                    return Err(location.new_unexpected_token_error(css::Token::Ident(f)));
+                }
+            }
         };
 
         // PORT NOTE: Zig used explicit `Closure` structs because Zig lacks closures.
@@ -474,7 +482,7 @@ impl<V: CalcValue> Calc<V> {
             }),
             CalcUnit::Log => input.parse_nested_block(|i| {
                 let value = Self::parse_numeric(i, ctx, parse_ident)?;
-                if i.try_parse(css::Parser::expect_comma).is_ok() {
+                if i.try_parse(|p| p.expect_comma()).is_ok() {
                     let base = Self::parse_numeric(i, ctx, parse_ident)?;
                     return Ok(Calc::Number(value.log(base)));
                 }
@@ -526,7 +534,7 @@ impl<V: CalcValue> Calc<V> {
         input: &mut css::Parser,
         op: NumericFnOp,
         ctx: C,
-        parse_ident: fn(C, &[u8]) -> Option<Self>,
+        parse_ident: impl Fn(C, &[u8]) -> Option<Self> + Copy,
     ) -> CssResult<Self> {
         // PERF(port): was comptime monomorphization on `op` — profile in Phase B.
         input.parse_nested_block(|i| {
@@ -544,7 +552,7 @@ impl<V: CalcValue> Calc<V> {
         op: fn(OC, f32, f32) -> f32,
         fallback: fn(OC, Self, Self) -> MathFunction<V>,
         ctx_for_parse_ident: C,
-        parse_ident: fn(C, &[u8]) -> Option<Self>,
+        parse_ident: impl Fn(C, &[u8]) -> Option<Self> + Copy,
     ) -> CssResult<Self> {
         let a = Self::parse_sum(input, ctx_for_parse_ident, parse_ident)?;
         input.expect_comma()?;
@@ -556,10 +564,10 @@ impl<V: CalcValue> Calc<V> {
         Ok(val)
     }
 
-    pub fn parse_sum<C: Copy>(
+    pub fn parse_sum<C: Copy, F: Fn(C, &[u8]) -> Option<Self> + Copy>(
         input: &mut css::Parser,
         ctx: C,
-        parse_ident: fn(C, &[u8]) -> Option<Self>,
+        parse_ident: F,
     ) -> CssResult<Self> {
         let mut cur = Self::parse_product(input, ctx, parse_ident)?;
         loop {
@@ -596,10 +604,10 @@ impl<V: CalcValue> Calc<V> {
         Ok(cur)
     }
 
-    pub fn parse_product<C: Copy>(
+    pub fn parse_product<C: Copy, F: Fn(C, &[u8]) -> Option<Self> + Copy>(
         input: &mut css::Parser,
         ctx: C,
-        parse_ident: fn(C, &[u8]) -> Option<Self>,
+        parse_ident: F,
     ) -> CssResult<Self> {
         let mut node = Self::parse_value(input, ctx, parse_ident)?;
         loop {
@@ -612,7 +620,7 @@ impl<V: CalcValue> Calc<V> {
                 }
             };
 
-            if matches!(tok, css::Token::Delim(c) if c == b'*' as u32) {
+            if matches!(tok, css::Token::Delim(c) if *c == b'*' as u32) {
                 // At least one of the operands must be a number.
                 let rhs = Self::parse_value(input, ctx, parse_ident)?;
                 if let Calc::Number(n) = rhs {
@@ -623,7 +631,7 @@ impl<V: CalcValue> Calc<V> {
                 } else {
                     return Err(input.new_unexpected_token_error(css::Token::Delim(b'*' as u32)));
                 }
-            } else if matches!(tok, css::Token::Delim(c) if c == b'/' as u32) {
+            } else if matches!(tok, css::Token::Delim(c) if *c == b'/' as u32) {
                 let rhs = Self::parse_value(input, ctx, parse_ident)?;
                 if let Calc::Number(val) = rhs {
                     if val != 0.0 {
@@ -640,10 +648,10 @@ impl<V: CalcValue> Calc<V> {
         Ok(node)
     }
 
-    pub fn parse_value<C: Copy>(
+    pub fn parse_value<C: Copy, F: Fn(C, &[u8]) -> Option<Self> + Copy>(
         input: &mut css::Parser,
         ctx: C,
-        parse_ident: fn(C, &[u8]) -> Option<Self>,
+        parse_ident: F,
     ) -> CssResult<Self> {
         // Parse nested calc() and other math functions.
         if let Ok(calc) = input.try_parse(Self::parse) {
@@ -658,11 +666,11 @@ impl<V: CalcValue> Calc<V> {
             }
         }
 
-        if input.try_parse(css::Parser::expect_parenthesis_block).is_ok() {
+        if input.try_parse(|p| p.expect_parenthesis_block()).is_ok() {
             return input.parse_nested_block(|i| Self::parse_sum(i, ctx, parse_ident));
         }
 
-        if let Ok(num) = input.try_parse(css::Parser::expect_number) {
+        if let Ok(num) = input.try_parse(|p| p.expect_number()) {
             return Ok(Calc::Number(num));
         }
 
@@ -671,14 +679,20 @@ impl<V: CalcValue> Calc<V> {
         }
 
         let location = input.current_source_location();
-        if let Ok(ident) = input.try_parse(css::Parser::expect_ident) {
+        // PORT NOTE: `expect_ident()`'s borrow of `input` is detached via raw-ptr
+        // round-trip (same as `css_parser::src_str`) so `parse_ident` / V::parse
+        // can reborrow.
+        if let Ok(ident) = input.try_parse(|p| {
+            p.expect_ident()
+                .map(|s| -> &'static [u8] { unsafe { &*(s as *const [u8]) } })
+        }) {
             if let Some(c) = parse_ident(ctx, ident) {
                 return Ok(c);
             }
             return Err(location.new_unexpected_token_error(css::Token::Ident(ident)));
         }
 
-        let value = input.try_parse(V::parse)?;
+        let value = input.try_parse(|p| V::parse(p))?;
         Ok(Calc::Value(Box::new(value)))
     }
 
@@ -687,7 +701,7 @@ impl<V: CalcValue> Calc<V> {
         trig_fn_kind: TrigFnKind,
         to_angle: bool,
         ctx: C,
-        parse_ident: fn(C, &[u8]) -> Option<Self>,
+        parse_ident: impl Fn(C, &[u8]) -> Option<Self> + Copy,
     ) -> CssResult<Self> {
         // PERF(port): was comptime monomorphization on `trig_fn_kind` — profile in Phase B.
         let trig_fn = move |x: f32| -> f32 {
@@ -747,11 +761,12 @@ impl<V: CalcValue> Calc<V> {
     pub fn parse_atan2<C: Copy>(
         input: &mut css::Parser,
         ctx: C,
-        parse_ident: fn(C, &[u8]) -> Option<Self>,
+        parse_ident: impl Fn(C, &[u8]) -> Option<Self> + Copy,
     ) -> CssResult<Angle> {
         // atan2 supports arguments of any <number>, <dimension>, or <percentage>, even ones that wouldn't
         // normally be supported by V. The only requirement is that the arguments be of the same type.
         // Try parsing with each type, and return the first one that parses successfully.
+        #[cfg(any())] // blocked_on: values/length.rs un-gate
         if let Ok(v) = try_parse_atan2_args::<C, Length>(input, ctx) {
             return Ok(v);
         }
@@ -780,7 +795,7 @@ impl<V: CalcValue> Calc<V> {
     pub fn parse_atan2_args<C: Copy>(
         input: &mut css::Parser,
         ctx: C,
-        parse_ident: fn(C, &[u8]) -> Option<Self>,
+        parse_ident: impl Fn(C, &[u8]) -> Option<Self> + Copy,
     ) -> CssResult<Angle> {
         let a = Self::parse_sum(input, ctx, parse_ident)?;
         input.expect_comma()?;
@@ -804,7 +819,7 @@ impl<V: CalcValue> Calc<V> {
     pub fn parse_numeric<C: Copy>(
         input: &mut css::Parser,
         ctx: C,
-        parse_ident: fn(C, &[u8]) -> Option<Self>,
+        parse_ident: impl Fn(C, &[u8]) -> Option<Self> + Copy,
     ) -> CssResult<f32> {
         let parse_ident_fn = move |c: C, ident: &[u8]| -> Option<Calc<CSSNumber>> {
             let v = parse_ident(c, ident)?;
@@ -1293,6 +1308,16 @@ impl<V> MathFunction<V> {
     where
         V: CalcValue,
     {
+        // blocked_on: compat.rs autogenerated `Feature` variant table
+        // (build-prefixes.js --rs). The real body checks `Feature::*Function`
+        // per arm; until those variants exist, fall through to per-arg checks.
+        #[cfg(not(any()))]
+        {
+            let _ = browsers;
+            return false;
+        }
+        #[cfg(any())]
+        {
         use css::compat::Feature as F;
         match self {
             MathFunction::Calc(c) => {
@@ -1338,6 +1363,7 @@ impl<V> MathFunction<V> {
                     && h.iter().all(|arg| arg.is_compatible(browsers))
             }
         }
+        } // #[cfg(any())]
     }
 }
 
@@ -1359,8 +1385,25 @@ pub enum RoundingStrategy {
     ToZero,
 }
 
+impl css::EnumProperty for RoundingStrategy {
+    fn from_ascii_case_insensitive(ident: &[u8]) -> Option<Self> {
+        // PERF(port): Zig used a comptime enum map; manual match for now.
+        if bun_string::strings::eql_case_insensitive_ascii_check_length(ident, b"nearest") {
+            Some(Self::Nearest)
+        } else if bun_string::strings::eql_case_insensitive_ascii_check_length(ident, b"up") {
+            Some(Self::Up)
+        } else if bun_string::strings::eql_case_insensitive_ascii_check_length(ident, b"down") {
+            Some(Self::Down)
+        } else if bun_string::strings::eql_case_insensitive_ascii_check_length(ident, b"to-zero") {
+            Some(Self::ToZero)
+        } else {
+            None
+        }
+    }
+}
+
 impl RoundingStrategy {
-    pub fn as_str(&self) -> &'static [u8] {
+    pub fn as_str(&self) -> &'static str {
         css::enum_property_util::as_str(self)
     }
 
@@ -1438,8 +1481,27 @@ pub enum Constant {
     Nan,
 }
 
+impl css::EnumProperty for Constant {
+    fn from_ascii_case_insensitive(ident: &[u8]) -> Option<Self> {
+        // PERF(port): Zig used a comptime enum map; manual match for now.
+        if bun_string::strings::eql_case_insensitive_ascii_check_length(ident, b"e") {
+            Some(Self::E)
+        } else if bun_string::strings::eql_case_insensitive_ascii_check_length(ident, b"pi") {
+            Some(Self::Pi)
+        } else if bun_string::strings::eql_case_insensitive_ascii_check_length(ident, b"infinity") {
+            Some(Self::Infinity)
+        } else if bun_string::strings::eql_case_insensitive_ascii_check_length(ident, b"-infinity") {
+            Some(Self::NegInfinity)
+        } else if bun_string::strings::eql_case_insensitive_ascii_check_length(ident, b"nan") {
+            Some(Self::Nan)
+        } else {
+            None
+        }
+    }
+}
+
 impl Constant {
-    pub fn as_str(&self) -> &'static [u8] {
+    pub fn as_str(&self) -> &'static str {
         css::enum_property_util::as_str(self)
     }
 

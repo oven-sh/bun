@@ -1622,6 +1622,10 @@ pub type CloseCode = CloseKind;
 // arrive when the sys crate un-gates.
 
 /// State of a single connection. Full impl lives in bun_uws_sys::socket.
+// PORT NOTE: Copy/Clone — Zig passed `socket` by value through the entire
+// HTTP-client state machine; the Rust port mirrors that, so the handle must
+// be trivially copyable (it's just a tagged pointer).
+#[derive(Copy, Clone)]
 pub enum InternalSocket {
     Connected(*mut us_socket_t),
     Connecting(*mut ConnectingSocket),
@@ -1636,6 +1640,7 @@ pub enum InternalSocket {
 
 /// Zig `NewSocketHandler(comptime is_ssl: bool)`. The const generic only
 /// selects `*SSL` vs fd for `get_native_handle`; it is NOT forwarded to C.
+#[derive(Copy, Clone)]
 pub struct NewSocketHandler<const SSL: bool> {
     pub socket: InternalSocket,
 }

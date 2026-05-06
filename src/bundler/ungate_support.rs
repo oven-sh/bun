@@ -355,3 +355,159 @@ pub use crate::options_impl::PathTemplate;
 
 /// `bundle_v2.zig:MangledProps`.
 pub type MangledProps = bun_collections::ArrayHashMap<Ref, Box<[u8]>>;
+
+// ──────────────────────────────────────────────────────────────────────────
+// B-2 un-gate surface for `LinkerGraph.rs` + `linker_context/scanImportsAndExports.rs`.
+// Real value-type defs extracted from the gated `bundle_v2::__phase_a_draft`
+// (JSMeta, EntryPoint, ImportData, ExportData, …) so the freshly un-gated
+// modules can name them at `crate::*`. Once `bundle_v2.rs` un-gates its draft
+// body these collapse to re-exports.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `bun.logger` — alias used by Phase-A drafts as `crate::Logger::Source`.
+pub use bun_logger as Logger;
+
+/// `js_ast.BundledAst` (the bundler-facing AST view).
+pub use bun_js_parser::BundledAst as JSAst;
+pub use bun_js_parser::{Part, Ref, Symbol};
+
+/// Lowercase-module aliases mirroring Zig's `Index.Int` / `Part.List` /
+/// `ImportRecord.List` nesting so draft bodies that wrote `index::Int` /
+/// `part::List` / `import_record::List` resolve.
+pub mod index {
+    pub use crate::IndexInt as Int;
+    pub use crate::Index;
+}
+pub mod part {
+    pub use bun_js_parser::Dependency;
+    pub use bun_js_parser::PartList as List;
+    /// `Part.SymbolUse` (Symbol.zig:Use).
+    pub use bun_js_parser::ast::symbol::Use as SymbolUse;
+}
+pub mod import_record {
+    pub use bun_options_types::ImportRecordList as List;
+}
+
+/// `bundle_v2.zig:EntryPoint` — both a struct and (via the sibling module
+/// below) a namespace for `Kind`. Rust keeps types and modules in separate
+/// namespaces, so `use crate::EntryPoint` imports both.
+pub mod entry_point {
+    use bun_collections::MultiArrayList;
+    use bun_string::PathString;
+
+    #[derive(Default)]
+    pub struct EntryPoint {
+        /// This may be an absolute path or a relative path. If absolute, it will
+        /// eventually be turned into a relative path by computing the path
+        /// relative to the "outbase" directory. Then this relative path will be
+        /// joined onto the "outdir" directory to form the final output path for
+        /// this entry point.
+        pub output_path: PathString,
+        /// This is the source index of the entry point. This file must have a
+        /// valid entry point kind (i.e. not "none").
+        pub source_index: crate::IndexInt,
+        /// Manually specified output paths are ignored when computing the
+        /// default "outbase" directory.
+        pub output_path_was_auto_generated: bool,
+    }
+
+    pub type List = MultiArrayList<EntryPoint>;
+    pub use super::EntryPoint::Kind;
+}
+/// Module-namespace twin of the `EntryPoint` struct so `EntryPoint::Kind`
+/// resolves. Mirrors `bundle_v2.zig:EntryPoint.Kind`.
+#[allow(non_snake_case)]
+pub mod EntryPoint {
+    #[repr(u8)]
+    #[derive(Clone, Copy, PartialEq, Eq, Default)]
+    pub enum Kind {
+        #[default]
+        None,
+        UserSpecified,
+        DynamicImport,
+        Html,
+    }
+    impl Kind {
+        #[inline]
+        pub fn is_entry_point(self) -> bool {
+            self != Self::None
+        }
+        #[inline]
+        pub fn is_user_specified_entry_point(self) -> bool {
+            self == Self::UserSpecified
+        }
+        #[inline]
+        pub fn is_server_entry_point(self) -> bool {
+            self == Self::UserSpecified
+        }
+    }
+}
+
+/// `bundle_v2.zig:ImportData` / `ExportData` / `JSMeta` — see gated
+/// `bundle_v2::__phase_a_draft` for full doc-comments.
+pub mod js_meta {
+    use bun_collections::{ArrayHashMap, BabyList, StringArrayHashMap};
+    use bun_js_parser::{Dependency, Ref};
+
+    use crate::{ImportTracker, Index, WrapKind};
+
+    #[derive(Default)]
+    pub struct ImportData {
+        pub re_exports: BabyList<Dependency>,
+        pub data: ImportTracker,
+    }
+    /// Alias used by `LinkerGraph::generate_symbol_import_and_use`.
+    pub type ImportToBind = ImportData;
+
+    #[derive(Default)]
+    pub struct ExportData {
+        pub potentially_ambiguous_export_star_refs: BabyList<ImportData>,
+        pub data: ImportTracker,
+    }
+    /// Alias used by `LinkerGraph::load`.
+    pub type ResolvedExport = ExportData;
+
+    pub type RefImportData = ArrayHashMap<Ref, ImportData>;
+    pub type ResolvedExports = StringArrayHashMap<ExportData>;
+    pub type TopLevelSymbolToParts = bun_js_parser::ast::ast::TopLevelSymbolToParts;
+
+    /// `bundle_v2.zig:JSMeta.Flags` — packed struct(u8). Field-style access
+    /// (`flags.is_async_or_has_async_dependency = true`) is what the Phase-A
+    /// drafts wrote, so this is a plain struct of bools + `wrap` for now;
+    /// pack into a u8 once callers move to setters. PERF(port).
+    #[derive(Clone, Copy, Default)]
+    pub struct Flags {
+        pub is_async_or_has_async_dependency: bool,
+        pub needs_exports_variable: bool,
+        pub force_include_exports_for_entry_point: bool,
+        pub needs_export_symbol_from_runtime: bool,
+        pub did_wrap_dependencies: bool,
+        pub needs_synthetic_default_export: bool,
+        pub wrap: WrapKind,
+    }
+    /// `JSMeta.Wrap` alias used by `linker_context/` submodules.
+    pub use crate::WrapKind as Wrap;
+
+    #[derive(Default)]
+    pub struct JSMeta {
+        pub probably_typescript_type: ArrayHashMap<Ref, ()>,
+        pub imports_to_bind: RefImportData,
+        pub resolved_exports: ResolvedExports,
+        pub resolved_export_star: ExportData,
+        pub sorted_and_filtered_export_aliases: Box<[Box<[u8]>]>,
+        pub top_level_symbol_to_parts_overlay: TopLevelSymbolToParts,
+        pub cjs_export_copies: Box<[Ref]>,
+        pub wrapper_part_index: Index,
+        pub entry_point_part_index: Index,
+        pub flags: Flags,
+    }
+}
+pub use js_meta::{
+    ExportData, ImportData, JSMeta, RefImportData, ResolvedExports, TopLevelSymbolToParts,
+};
+/// Module-namespace twin of the `JSMeta` struct so `JSMeta::Flags` /
+/// `JSMeta::Wrap` resolve.
+#[allow(non_snake_case)]
+pub mod JSMeta {
+    pub use super::js_meta::{Flags, Wrap};
+}

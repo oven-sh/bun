@@ -66,32 +66,40 @@ impl SASL {
         connection: &mut PostgresSQLConnection,
     ) -> Result<(), bun_core::Error> {
         // Zig: `jsc.API.Bun.Crypto.EVP.pbkdf2` (src/runtime/api/crypto.zig).
-        #[cfg(any())]
-        {
-            // TODO(b2-blocked): bun_runtime::crypto::EVP::pbkdf2 — bun_runtime
-            // currently fails to compile (concurrent B-2 work). Re-enable the
-            // `bun_runtime` dep in Cargo.toml and drop this gate once green.
-            use bun_runtime::crypto::EVP;
-            self.salted_password_created = true;
-            if EVP::pbkdf2(
-                &mut self.salted_password_bytes,
-                &connection.password,
-                salt_bytes,
-                iteration_count,
-                EVP::Algorithm::Sha256,
+        // PORT NOTE: `bun_runtime::crypto::EVP::pbkdf2` is a thin wrapper over
+        // BoringSSL's `PKCS5_PBKDF2_HMAC` with `EVP_sha256`. Inlined here to
+        // avoid the `bun_runtime` dep (which would create a cycle through
+        // `bun_jsc`); `bun_boringssl_sys` is already a direct dependency.
+        use bun_boringssl_sys as boringssl;
+        use core::ffi::c_uint;
+
+        self.salted_password_created = true;
+        // SAFETY: `connection.password` is a self-referential slice into
+        // `connection.options_buf` (see PostgresSQLConnection::init); valid for
+        // the lifetime of `connection`.
+        let password: &[u8] = unsafe { &*connection.password };
+        let out = &mut self.salted_password_bytes;
+        out.fill(0);
+        // SAFETY: FFI into BoringSSL; ERR_clear_error has no preconditions.
+        unsafe { boringssl::ERR_clear_error() };
+        // SAFETY: password/salt/out are valid for the given lengths;
+        // `EVP_sha256()` returns a static EVP_MD singleton.
+        let rc = unsafe {
+            boringssl::PKCS5_PBKDF2_HMAC(
+                if password.is_empty() { core::ptr::null() } else { password.as_ptr() },
+                password.len(),
+                salt_bytes.as_ptr(),
+                salt_bytes.len(),
+                iteration_count as c_uint,
+                boringssl::EVP_sha256(),
+                out.len(),
+                out.as_mut_ptr(),
             )
-            .is_none()
-            {
-                return Err(bun_core::err!("PBKDFD2"));
-            }
-            return Ok(());
+        };
+        if rc <= 0 {
+            return Err(bun_core::err!("PBKDFD2"));
         }
-        #[cfg(not(any()))]
-        {
-            let _ = (salt_bytes, iteration_count, connection);
-            self.salted_password_created = true;
-            unimplemented!("b2-blocked: bun_runtime::crypto::EVP::pbkdf2")
-        }
+        Ok(())
     }
 
     pub fn salted_password(&self) -> &[u8] {
@@ -156,5 +164,5 @@ impl SASL {
 //   confidence: medium
 //   todos:      1
 //   notes:      hmac/nonce/client_key_signature un-gated (bun_sha_hmac + bun_core::csprng);
-//               compute_salted_password remains gated on bun_runtime::api::crypto::EVP::pbkdf2
+//               compute_salted_password inlines BoringSSL PKCS5_PBKDF2_HMAC (no bun_runtime dep)
 // ──────────────────────────────────────────────────────────────────────────

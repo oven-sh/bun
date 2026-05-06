@@ -466,21 +466,47 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 pub trait ServerLike {
     const SSL_ENABLED: bool;
     const DEBUG_MODE: bool;
-    fn global_this(&self) -> *const jsc::JSGlobalObject;
-    fn vm(&self) -> *const jsc::VirtualMachine;
+    fn global_this(&self) -> &jsc::JSGlobalObject;
+    fn vm(&self) -> &jsc::VirtualMachine;
     fn config(&self) -> &ServerConfig;
     fn on_request_complete(&mut self);
     fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer>;
+    fn js_value(&self) -> &jsc::JsRef;
+    fn h3_alt_svc(&self) -> Option<&[u8]>;
+    fn terminated(&self) -> bool;
+    /// Return `ctx` to the per-server HiveArray pool for the matching transport.
+    /// Erased to `*mut c_void` so the trait stays object-safe and doesn't need
+    /// to name `RequestContext<Self, ..>` (which would re-introduce the
+    /// generic-parameter cycle this trait exists to break).
+    fn release_request_context(&self, ctx: *mut c_void, is_h3: bool);
 }
 
 impl<const SSL: bool, const DEBUG: bool> ServerLike for NewServer<SSL, DEBUG> {
     const SSL_ENABLED: bool = SSL;
     const DEBUG_MODE: bool = DEBUG;
-    fn global_this(&self) -> *const jsc::JSGlobalObject { self.global_this }
-    fn vm(&self) -> *const jsc::VirtualMachine { self.vm }
+    // SAFETY: vm/global_this are STATIC refs (LIFETIMES.tsv); non-null for the
+    // server's entire lifetime once `init()` runs.
+    fn global_this(&self) -> &jsc::JSGlobalObject { unsafe { &*self.global_this } }
+    fn vm(&self) -> &jsc::VirtualMachine { unsafe { &*self.vm } }
     fn config(&self) -> &ServerConfig { &self.config }
     fn on_request_complete(&mut self) { Self::on_request_complete(self) }
     fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer> { self.dev_server.as_deref() }
+    fn js_value(&self) -> &jsc::JsRef { &self.js_value }
+    fn h3_alt_svc(&self) -> Option<&[u8]> { Self::h3_alt_svc(self) }
+    fn terminated(&self) -> bool { self.flags.contains(ServerFlags::TERMINATED) }
+    fn release_request_context(&self, ctx: *mut c_void, is_h3: bool) {
+        // SAFETY: ctx was allocated from this exact pool by `prepare_js_request_context`;
+        // it is `RequestContext<Self, SSL, DEBUG, is_h3>` by construction.
+        unsafe {
+            if is_h3 {
+                (*self.h3_request_pool_allocator)
+                    .put(&mut *(ctx as *mut request_context::RequestContext<Self, SSL, DEBUG, true>));
+            } else {
+                (*self.request_pool_allocator)
+                    .put(&mut *(ctx as *mut request_context::RequestContext<Self, SSL, DEBUG, false>));
+            }
+        }
+    }
 }
 
 // ─── Type aliases ────────────────────────────────────────────────────────────
@@ -625,10 +651,13 @@ pub struct ServerAllConnectionsClosedTask {
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/runtime/server/server.zig (5193 lines)
-//   confidence: low (cycle-5 struct + lifecycle un-gate)
+//   confidence: low (cycle-6: ServerLike widened for un-gated RequestContext)
 //   notes:      NewServer/AnyServer/AnyRoute structs real; stop/stop_listening/
-//               on_listen bodies real (uws calls only). listen()/init() and all
-//               JS-facing host_fn bodies gated — preserved in server_body.rs.
+//               on_listen bodies real (uws calls only). ServerLike grew
+//               js_value/h3_alt_svc/terminated/release_request_context and
+//               vm/global_this now hand back references so the per-request
+//               state machine can call straight through. listen()/init() and
+//               all JS-facing host_fn bodies gated — preserved in server_body.rs.
 //               Blocked on: bun_jsc dep (VirtualMachine/JsRef/Strong methods),
-//               bun_uws_sys h3::App close/num_connections (cycle-5-B).
+//               bun_uws_sys h3::App close/num_connections.
 // ──────────────────────────────────────────────────────────────────────────

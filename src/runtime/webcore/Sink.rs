@@ -1,16 +1,20 @@
 use core::ffi::c_void;
-use core::mem::size_of;
+use core::marker::PhantomData;
 
-use bun_collections::{ByteList, TaggedPtrUnion};
-use bun_core::Output;
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_runtime::api::Subprocess;
-use bun_runtime::webcore::streams::{self, Signal};
-use bun_runtime::webcore::Blob;
-use bun_str::{self as bunstr, strings};
+use bun_collections::TaggedPtrUnion;
+use crate::webcore::streams::{self, Signal};
 use bun_sys::{self as sys, Error as SysError};
 
-pub use super::ArrayBufferSink;
+// TODO(b2-blocked): ArrayBufferSink.rs is not yet wired into webcore (depends on
+// gated `streams::Start::ArrayBufferSink` variant). Stub here so
+// `crate::webcore::sink::ArrayBufferSink` resolves for gated consumers.
+#[derive(Debug, Default)]
+pub struct ArrayBufferSink;
+
+// Re-export FileSink so gated `streams::Start` references to
+// `crate::webcore::sink::{FileSink, FileSinkOptions, FileSinkInputPath}` resolve
+// once those callers un-gate. The Options/InputPath types live on FileSink.
+pub use crate::webcore::file_sink::FileSink;
 
 /// A `Sink` is a hand-rolled vtable-based writable stream sink.
 pub struct Sink<'a> {
@@ -82,8 +86,26 @@ pub fn init<T: SinkHandler>(handler: &mut T) -> Sink<'_> {
     init_with_type(handler)
 }
 
+impl<'a> Sink<'a> {
+    /// Associated-fn alias of the free `init<T>` so callers can write
+    /// `webcore::Sink::init(self)` (matches the Zig `Sink.init(self)` shape).
+    pub fn init<T: SinkHandler>(handler: &mut T) -> Sink<'_> {
+        init_with_type(handler)
+    }
+}
+
 pub struct UTF8Fallback;
 
+// `Sink::UTF8Fallback` is referenced as `webcore::Sink::UTF8Fallback` by
+// html_rewriter (Zig nested-type style). Expose via inherent-impl associated
+// type alias once inherent associated types are stable; for now consumers
+// should reference `crate::webcore::sink::UTF8Fallback` directly.
+// TODO(port): inherent associated type — `impl Sink { pub type UTF8Fallback = UTF8Fallback; }`.
+
+// TODO(b2-blocked): `bun_str::strings::{is_all_ascii, replace_latin1_with_utf8,
+// copy_utf16_into_utf8_impl, to_utf8_alloc}` + `ByteList::from_*` constructors
+// are not yet exported with these exact names. Body gated; signatures kept.
+#[cfg(any())]
 impl UTF8Fallback {
     const STACK_SIZE: usize = 1024;
 
@@ -324,10 +346,34 @@ impl<'a> Sink<'a> {
 // trait methods with default impls on `JsSinkType`.
 // ──────────────────────────────────────────────────────────────────────────
 
+/// `Sink.JSSink(SinkType, abi_name)` — generic sink-to-JS wrapper.
+/// In Zig this is a comptime type-generator. The full implementation is the
+/// `js_sink!` macro below (gated). Provide a thin generic stub here so
+/// `crate::webcore::sink::JSSink<T>` resolves for FileSink/NetworkSink/ArrayBufferSink.
+// TODO(b2-blocked): replace with `js_sink!` instantiation once bun_jsc method
+// surface (host_fn proc-macro, JSValue::js_number, ErrorCode, EnsureStillAlive)
+// is green.
+pub struct JSSink<T> {
+    pub sink: T,
+}
+
+impl<T> JSSink<T> {
+    pub fn create_object(
+        _global: &crate::webcore::jsc::JSGlobalObject,
+        _object: *mut T,
+        _destructor: usize,
+    ) -> crate::webcore::jsc::JSValue {
+        // TODO(b2-blocked): `${abi_name}__createObject` extern — needs per-T abi_name.
+        unimplemented!("JSSink::create_object — js_sink! macro gated")
+    }
+}
+
 /// Trait collecting every method `JSSink` may call on the wrapped `SinkType`.
 /// Zig used `@hasDecl(SinkType, "...")` to make most of these optional; Rust
 /// models that with default method bodies. Associated `const`s replace
 /// `@hasField` checks.
+// TODO(b2-blocked): `streams::Start` is gated inside streams.rs `_jsc_gated`.
+#[cfg(any())]
 pub trait JsSinkType: Sized {
     const NAME: &'static str;
     /// Mirrors `@hasDecl(SinkType, "construct")`.

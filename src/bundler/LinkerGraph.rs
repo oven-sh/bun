@@ -1,29 +1,39 @@
 use bun_alloc::Arena;
-use bun_collections::{AutoBitSet, BabyList, DynamicBitSet as BitSet, MultiArrayList};
+use bun_collections::{AutoBitSet, BabyList, DynamicBitSetUnmanaged as BitSet, MultiArrayList};
 use bun_js_parser as js_ast;
+use bun_js_parser::ast::symbol;
 use bun_js_parser::Symbol;
 use bun_options_types::{ImportKind, ImportRecord};
-use bun_str::PathString;
+use bun_string::PathString;
 
+use crate::IndexStringMap::IndexStringMap;
 use crate::{
-    entry_point, import_record, index, js_meta, part, EntryPoint, Index, IndexStringMap, JSAst,
-    JSMeta, Logger, Part, Ref, ResolvedExports, ServerComponentBoundary, TopLevelSymbolToParts,
+    entry_point, import_record, index, js_meta, part, EntryPoint, Index, JSAst, JSMeta, Logger,
+    Part, Ref, ResolvedExports, ServerComponentBoundary, TopLevelSymbolToParts,
 };
 
-bun_output::declare_scope!(LinkerGraph, visible);
+bun_core::declare_scope!(LinkerGraph, visible);
 
 // TODO(port): MultiArrayList per-field slice accessor API is assumed below as
 // `.items().field_name` (immutable) / `.items_mut().field_name` (mutable),
 // matching Zig's `.items(.field_name)`. Phase B: align with the real
-// `bun_collections::MultiArrayList` codegen.
+// `bun_collections::MultiArrayList` codegen — until then the method bodies
+// that depend on it stay re-gated; the struct itself is real so
+// `LinkerContext.graph` is no longer the `()` stub.
 
-pub struct LinkerGraph<'bump> {
+pub struct LinkerGraph {
     pub files: FileList,
     pub files_live: BitSet,
     pub entry_points: entry_point::List,
-    pub symbols: js_ast::symbol::Map,
+    pub symbols: symbol::Map,
 
-    pub bump: &'bump Arena,
+    // PORT NOTE: lifetime-erased. Zig stores `std.mem.Allocator`; the Rust
+    // arena is owned by `BundleV2` and outlives every `LinkerGraph` — kept as
+    // a raw pointer (matching `LinkerContext.parse_graph: *mut Graph`) so the
+    // struct stays `'static`-ish and `LinkerContext`/`Chunk` callers don't
+    // grow a `'bump` parameter yet. Phase B: thread `'bump` once `Chunk` and
+    // `html_import_manifest` gain lifetimes.
+    pub bump: *const Arena,
 
     pub code_splitting: bool,
 
@@ -39,38 +49,56 @@ pub struct LinkerGraph<'bump> {
     /// If you need to iterate over all files in the linking operation, iterate
     /// over this array. This array is also sorted in a deterministic ordering
     /// to help ensure deterministic builds (source indices are random).
-    pub reachable_files: &'bump [Index],
+    pub reachable_files: BabyList<Index>,
 
     /// Index from `.parse_graph.input_files` to index in `.files`
-    pub stable_source_indices: &'bump [u32],
+    pub stable_source_indices: BabyList<u32>,
 
     pub is_scb_bitset: BitSet,
 
     /// This is for cross-module inlining of detected inlinable constants
     // const_values: js_ast::Ast::ConstValuesMap,
     /// This is for cross-module inlining of TypeScript enum constants
-    pub ts_enums: js_ast::ast::TsEnumsMap,
+    pub ts_enums: js_ast::ast::ast::TsEnumsMap,
 }
 
-impl<'bump> LinkerGraph<'bump> {
-    pub fn init(bump: &'bump Arena, file_count: usize) -> Result<Self, bun_core::Error> {
+impl LinkerGraph {
+    pub fn init(bump: &Arena, file_count: usize) -> Result<Self, bun_core::Error> {
         // TODO(port): narrow error set
         Ok(LinkerGraph {
             files: FileList::default(),
             files_live: BitSet::init_empty(file_count)?,
             entry_points: entry_point::List::default(),
-            symbols: js_ast::symbol::Map::default(),
+            symbols: symbol::Map::default(),
             bump,
             code_splitting: false,
             ast: MultiArrayList::default(),
             meta: MultiArrayList::default(),
-            reachable_files: &[],
-            stable_source_indices: &[],
+            reachable_files: BabyList::default(),
+            stable_source_indices: BabyList::default(),
             is_scb_bitset: BitSet::default(),
-            ts_enums: js_ast::ast::TsEnumsMap::default(),
+            ts_enums: js_ast::ast::ast::TsEnumsMap::default(),
         })
     }
 
+    /// `&Arena` accessor — `bump` is a raw backref into `BundleV2`.
+    #[inline]
+    pub fn allocator(&self) -> &Arena {
+        // SAFETY: `bump` is a backref into `BundleV2.graph.allocator`, valid for
+        // the lifetime of the link step that constructed this LinkerGraph.
+        unsafe { &*self.bump }
+    }
+}
+
+// TODO(b2-blocked): every method below indexes `MultiArrayList` via the
+// assumed `.items().field_name` SoA accessor API which `bun_collections` does
+// not yet expose (it has only `.slice()` returning raw column ptrs). The
+// bodies are preserved verbatim from the Phase-A draft and re-gated; the
+// struct + `init` + `File`/`FileList` above are real so downstream
+// `LinkerContext.graph` no longer dead-ends on the `()` stub. Un-gate together
+// with the `MultiArrayElement` derive for `JSAst`/`JSMeta`/`File`/`EntryPoint`.
+#[cfg(any())]
+impl LinkerGraph {
     pub fn runtime_function(&self, name: &[u8]) -> Ref {
         self.ast.items().named_exports[Index::RUNTIME.value()]
             .get(name)

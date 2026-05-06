@@ -12,9 +12,9 @@ use bun_jsc::{
 use bun_logger as logger;
 use bun_str as strings;
 
-pub use crate::bun_test;
+pub use super::bun_test;
 use super::expect::{Expect, ExpectTypeOf};
-use crate::snapshot::Snapshots;
+use super::snapshot::Snapshots;
 
 #[derive(Default)]
 struct RepeatInfo {
@@ -229,8 +229,9 @@ impl<'a> TestRunner<'a> {
     }
 }
 
-// TODO(port): placeholder for timer state enum referenced via `.ACTIVE`
-use bun_jsc::timer::State as TimerState;
+// Timer state enum referenced via `.ACTIVE` — re-exported from bun_event_loop
+// through `crate::timer` (see src/runtime/timer/mod.rs).
+use crate::timer::EventLoopTimerState as TimerState;
 
 #[derive(Default)]
 pub struct Summary {

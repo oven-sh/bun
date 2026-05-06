@@ -1,15 +1,10 @@
-use core::ffi::{c_char, CStr};
-use core::mem::offset_of;
+use core::ffi::CStr;
 use std::io::Write as _;
 
-use bun_jsc::SystemError;
-
-use crate::interpreter::Builtin;
-// TODO(port): exact path for Builtin's nested `Impl` union — Zig: `Interpreter.Builtin.Impl`
-use crate::interpreter::builtin::Impl as BuiltinImpl;
-// TODO(port): exact path for Builtin's stdout/stderr selector enum — Zig: anon `.stdout` / `.stderr`
-use crate::interpreter::builtin::OutKind;
-use crate::Yield;
+use crate::shell::builtin::{Builtin, IoKind, Kind};
+use crate::shell::interpreter::{Interpreter, NodeId};
+use crate::shell::io_writer::{ChildPtr, WriterTag};
+use crate::shell::yield_::Yield;
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 enum State {
@@ -22,10 +17,10 @@ enum State {
 pub struct Seq {
     state: State,
     buf: Vec<u8>,
-    _start: f32,
-    _end: f32,
+    start: f32,
+    end: f32,
     increment: f32,
-    // TODO(port): lifetime — BACKREF: borrows Builtin's argv (`[*:0]const u8` slices); argv outlives Seq
+    /// Borrowed from argv (NUL-terminated arena strings) or `'static` literals.
     separator: *const [u8],
     terminator: *const [u8],
     fixed_width: bool,
@@ -36,8 +31,8 @@ impl Default for Seq {
         Self {
             state: State::Idle,
             buf: Vec::new(),
-            _start: 1.0,
-            _end: 1.0,
+            start: 1.0,
+            end: 1.0,
             increment: 1.0,
             separator: b"\n" as *const [u8],
             terminator: b"" as *const [u8],
@@ -47,205 +42,206 @@ impl Default for Seq {
 }
 
 impl Seq {
-    pub fn start(&mut self) -> Yield {
-        let args = self.bltn().args_slice();
-        let mut iter = bun_core::SliceIterator::<*const c_char>::init(args);
-
-        if args.is_empty() {
-            return self.fail(Builtin::Kind::usage_string(Builtin::Kind::Seq));
+    pub fn start(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+        let argc = Builtin::of(interp, cmd).args_slice().len();
+        if argc == 0 {
+            return Self::fail(interp, cmd, Kind::Seq.usage_string());
         }
-        while let Some(item) = iter.next() {
-            // SAFETY: argv entries are NUL-terminated C strings
-            let arg = unsafe { CStr::from_ptr(item) }.to_bytes();
+
+        let mut idx = 0usize;
+        // Flag parsing — operates on raw argv pointers so we can stash
+        // borrowed slices into separator/terminator.
+        while idx < argc {
+            let arg_ptr = Builtin::of(interp, cmd).args_slice()[idx];
+            // SAFETY: argv entries are NUL-terminated.
+            let arg = unsafe { CStr::from_ptr(arg_ptr) }.to_bytes();
 
             if arg == b"-s" || arg == b"--separator" {
-                let Some(next) = iter.next() else {
-                    return self.fail(b"seq: option requires an argument -- s\n");
-                };
-                // SAFETY: argv entries are NUL-terminated C strings
-                self.separator = unsafe { CStr::from_ptr(next) }.to_bytes() as *const [u8];
+                idx += 1;
+                if idx >= argc {
+                    return Self::fail(interp, cmd, b"seq: option requires an argument -- s\n");
+                }
+                let next = Builtin::of(interp, cmd).args_slice()[idx];
+                // SAFETY: argv entries are NUL-terminated.
+                let bytes = unsafe { CStr::from_ptr(next) }.to_bytes();
+                Self::state_mut(interp, cmd).separator = bytes as *const [u8];
+                idx += 1;
                 continue;
             }
-            if arg.starts_with(b"-s") {
-                self.separator = &arg[2..] as *const [u8];
+            if arg.starts_with(b"-s") && arg.len() > 2 {
+                Self::state_mut(interp, cmd).separator = &arg[2..] as *const [u8];
+                idx += 1;
                 continue;
             }
-
             if arg == b"-t" || arg == b"--terminator" {
-                let Some(next) = iter.next() else {
-                    return self.fail(b"seq: option requires an argument -- t\n");
-                };
-                // SAFETY: argv entries are NUL-terminated C strings
-                self.terminator = unsafe { CStr::from_ptr(next) }.to_bytes() as *const [u8];
+                idx += 1;
+                if idx >= argc {
+                    return Self::fail(interp, cmd, b"seq: option requires an argument -- t\n");
+                }
+                let next = Builtin::of(interp, cmd).args_slice()[idx];
+                // SAFETY: argv entries are NUL-terminated.
+                let bytes = unsafe { CStr::from_ptr(next) }.to_bytes();
+                Self::state_mut(interp, cmd).terminator = bytes as *const [u8];
+                idx += 1;
                 continue;
             }
-            if arg.starts_with(b"-t") {
-                self.terminator = &arg[2..] as *const [u8];
+            if arg.starts_with(b"-t") && arg.len() > 2 {
+                Self::state_mut(interp, cmd).terminator = &arg[2..] as *const [u8];
+                idx += 1;
                 continue;
             }
-
             if arg == b"-w" || arg == b"--fixed-width" {
-                self.fixed_width = true;
+                Self::state_mut(interp, cmd).fixed_width = true;
+                idx += 1;
                 continue;
             }
-
-            iter.index -= 1;
             break;
         }
 
-        let Some(maybe1) = iter.next() else {
-            return self.fail(Builtin::Kind::usage_string(Builtin::Kind::Seq));
+        // Positional args.
+        macro_rules! parse_num {
+            ($i:expr) => {{
+                let p = Builtin::of(interp, cmd).args_slice()[$i];
+                // SAFETY: argv entries are NUL-terminated.
+                let s = unsafe { CStr::from_ptr(p) }.to_bytes();
+                match parse_f32(s) {
+                    Some(n) if n.is_finite() => n,
+                    _ => return Self::fail(interp, cmd, b"seq: invalid argument\n"),
+                }
+            }};
+        }
+
+        if idx >= argc {
+            return Self::fail(interp, cmd, Kind::Seq.usage_string());
+        }
+        let int1 = parse_num!(idx);
+        idx += 1;
+        {
+            let me = Self::state_mut(interp, cmd);
+            me.end = int1;
+            if me.start > me.end {
+                me.increment = -1.0;
+            }
+        }
+
+        if idx < argc {
+            let int2 = parse_num!(idx);
+            idx += 1;
+            {
+                let me = Self::state_mut(interp, cmd);
+                me.start = int1;
+                me.end = int2;
+                me.increment = if me.start < me.end { 1.0 } else if me.start > me.end { -1.0 } else { me.increment };
+            }
+            if idx < argc {
+                let int3 = parse_num!(idx);
+                {
+                    let me = Self::state_mut(interp, cmd);
+                    me.start = int1;
+                    me.increment = int2;
+                    me.end = int3;
+                }
+                let me = Self::state_mut(interp, cmd);
+                if me.increment == 0.0 {
+                    return Self::fail(interp, cmd, b"seq: zero increment\n");
+                }
+                if me.start > me.end && me.increment > 0.0 {
+                    return Self::fail(interp, cmd, b"seq: needs negative decrement\n");
+                }
+                if me.start < me.end && me.increment < 0.0 {
+                    return Self::fail(interp, cmd, b"seq: needs positive increment\n");
+                }
+            }
+        }
+
+        Self::do_(interp, cmd)
+    }
+
+    fn fail(interp: &mut Interpreter, cmd: NodeId, msg: &[u8]) -> Yield {
+        if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
+            Self::state_mut(interp, cmd).state = State::Err;
+            let child = ChildPtr { node: cmd, tag: WriterTag::Builtin };
+            return Builtin::of_mut(interp, cmd)
+                .stderr
+                .enqueue(child, msg, safeguard);
+        }
+        Builtin::write_no_io(interp, cmd, IoKind::Stderr, msg);
+        Builtin::done(interp, cmd, 1)
+    }
+
+    fn do_(interp: &mut Interpreter, cmd: NodeId) -> Yield {
+        let needs_io = Builtin::of(interp, cmd).stdout.needs_io().is_some();
+        // PORT NOTE: reshaped for borrowck — render entirely into a local
+        // Vec, then either enqueue it or write_no_io it. Zig wrote each
+        // number directly when !needs_io; we buffer once for simplicity.
+        let (start, end, incr, sep, term) = {
+            let me = Self::state_mut(interp, cmd);
+            // SAFETY: separator/terminator borrow argv (outlives the builtin)
+            // or are 'static literals.
+            (me.start, me.end, me.increment, unsafe { &*me.separator }, unsafe {
+                &*me.terminator
+            })
         };
-        // SAFETY: argv entries are NUL-terminated C strings
-        let Ok(int1) = parse_f32(unsafe { CStr::from_ptr(maybe1) }.to_bytes()) else {
-            return self.fail(b"seq: invalid argument\n");
-        };
-        if !int1.is_finite() {
-            return self.fail(b"seq: invalid argument\n");
+        let mut out = Vec::new();
+        let mut current = start;
+        while if incr > 0.0 { current <= end } else { current >= end } {
+            // TODO(port): verify Rust `{}` f32 formatting matches Zig `{d}`.
+            let _ = write!(&mut out, "{}", current);
+            out.extend_from_slice(sep);
+            current += incr;
         }
-        self._end = int1;
-        if self._start > self._end {
-            self.increment = -1.0;
-        }
+        out.extend_from_slice(term);
 
-        let maybe2 = iter.next();
-        if maybe2.is_none() {
-            return self.r#do();
+        Self::state_mut(interp, cmd).state = State::Done;
+        if needs_io {
+            Self::state_mut(interp, cmd).buf = out;
+            let safeguard = Builtin::of(interp, cmd).stdout.needs_io().unwrap();
+            let child = ChildPtr { node: cmd, tag: WriterTag::Builtin };
+            // PORT NOTE: reshaped for borrowck — clone the slice so the &mut
+            // on stdout doesn't alias `buf`.
+            let buf = Self::state_mut(interp, cmd).buf.clone();
+            return Builtin::of_mut(interp, cmd)
+                .stdout
+                .enqueue(child, &buf, safeguard);
         }
-        // SAFETY: argv entries are NUL-terminated C strings
-        let Ok(int2) = parse_f32(unsafe { CStr::from_ptr(maybe2.unwrap()) }.to_bytes()) else {
-            return self.fail(b"seq: invalid argument\n");
-        };
-        if !int2.is_finite() {
-            return self.fail(b"seq: invalid argument\n");
-        }
-        self._start = int1;
-        self._end = int2;
-        if self._start < self._end {
-            self.increment = 1.0;
-        }
-        if self._start > self._end {
-            self.increment = -1.0;
-        }
-
-        let maybe3 = iter.next();
-        if maybe3.is_none() {
-            return self.r#do();
-        }
-        // SAFETY: argv entries are NUL-terminated C strings
-        let Ok(int3) = parse_f32(unsafe { CStr::from_ptr(maybe3.unwrap()) }.to_bytes()) else {
-            return self.fail(b"seq: invalid argument\n");
-        };
-        if !int3.is_finite() {
-            return self.fail(b"seq: invalid argument\n");
-        }
-        self._start = int1;
-        self.increment = int2;
-        self._end = int3;
-
-        if self.increment == 0.0 {
-            return self.fail(b"seq: zero increment\n");
-        }
-        if self._start > self._end && self.increment > 0.0 {
-            return self.fail(b"seq: needs negative decrement\n");
-        }
-        if self._start < self._end && self.increment < 0.0 {
-            return self.fail(b"seq: needs positive increment\n");
-        }
-
-        self.r#do()
+        Builtin::write_no_io(interp, cmd, IoKind::Stdout, &out);
+        Builtin::done(interp, cmd, 0)
     }
 
-    fn fail(&mut self, msg: &[u8]) -> Yield {
-        // TODO(port): borrowck — bltn() returns parent via @fieldParentPtr, then passes &mut self again
-        if let Some(safeguard) = self.bltn().stderr.needs_io() {
-            self.state = State::Err;
-            return self.bltn().stderr.enqueue(self, msg, safeguard);
+    pub fn on_io_writer_chunk(
+        interp: &mut Interpreter,
+        cmd: NodeId,
+        _: usize,
+        e: Option<bun_sys::SystemError>,
+    ) -> Yield {
+        if e.is_some() {
+            Self::state_mut(interp, cmd).state = State::Err;
+            return Builtin::done(interp, cmd, 1);
         }
-        // TODO(port): exact enum path for Builtin output kind (Zig: `.stderr`)
-        let _ = self.bltn().write_no_io(OutKind::Stderr, msg);
-        self.bltn().done(1)
-    }
-
-    fn r#do(&mut self) -> Yield {
-        let mut current = self._start;
-        // PERF(port): was arena bulk-free (ArenaAllocator.reset(.retain_capacity) per iter) — profile in Phase B
-        let mut scratch: Vec<u8> = Vec::new();
-
-        // PORT NOTE: reshaped for borrowck — copied separator/terminator out of self before &mut self.print()
-        // SAFETY: BACKREF — argv slices outlive Seq (owned by Builtin)
-        let sep = unsafe { &*self.separator };
-        let term = unsafe { &*self.terminator };
-
-        while if self.increment > 0.0 { current <= self._end } else { current >= self._end } {
-            scratch.clear();
-            // TODO(port): verify Rust `{}` f32 formatting matches Zig `{d}` exactly
-            write!(&mut scratch, "{}", current).expect("unreachable");
-            let _ = self.print(&scratch);
-            let _ = self.print(sep);
-            current += self.increment;
-        }
-        let _ = self.print(term);
-
-        self.state = State::Done;
-        // TODO(port): borrowck — bltn() parent-ptr aliasing with &self.buf
-        if let Some(safeguard) = self.bltn().stdout.needs_io() {
-            return self.bltn().stdout.enqueue(self, self.buf.as_slice(), safeguard);
-        }
-        self.bltn().done(0)
-    }
-
-    fn print(&mut self, msg: &[u8]) {
-        if self.bltn().stdout.needs_io().is_some() {
-            self.buf.extend_from_slice(msg);
-            return;
-        }
-        // TODO(port): exact enum path for Builtin output kind (Zig: `.stdout`)
-        let _ = self.bltn().write_no_io(OutKind::Stdout, msg);
-    }
-
-    pub fn on_io_writer_chunk(&mut self, _: usize, maybe_e: Option<SystemError>) -> Yield {
-        if let Some(_e) = maybe_e {
-            // `defer e.deref()` → SystemError's Drop handles the deref
-            self.state = State::Err;
-            return self.bltn().done(1);
-        }
-        match self.state {
-            State::Done => self.bltn().done(0),
-            State::Err => self.bltn().done(1),
-            State::Idle => crate::unreachable_state("Seq.onIOWriterChunk", "idle"),
+        match Self::state_mut(interp, cmd).state {
+            State::Done => Builtin::done(interp, cmd, 0),
+            State::Err => Builtin::done(interp, cmd, 1),
+            State::Idle => crate::shell::interpreter::unreachable_state("Seq.onIOWriterChunk", "idle"),
         }
     }
-
-    // Zig `deinit` only freed `self.buf` (Vec<u8> drops automatically) — no explicit Drop needed.
 
     #[inline]
-    pub fn bltn(&mut self) -> &mut Builtin {
-        // SAFETY: self is the `seq` field of Builtin::Impl, which is the `impl` field of Builtin
-        unsafe {
-            let impl_ptr = (self as *mut Self as *mut u8)
-                .sub(offset_of!(BuiltinImpl, seq))
-                .cast::<BuiltinImpl>();
-            &mut *(impl_ptr as *mut u8)
-                .sub(offset_of!(Builtin, r#impl))
-                .cast::<Builtin>()
+    fn state_mut(interp: &mut Interpreter, cmd: NodeId) -> &mut Seq {
+        match &mut Builtin::of_mut(interp, cmd).impl_ {
+            crate::shell::builtin::Impl::Seq(s) => &mut **s,
+            _ => unreachable!(),
         }
     }
 }
 
-// TODO(port): std.fmt.parseFloat on &[u8] — Zig accepts arbitrary bytes; Rust f32::from_str needs &str
 #[inline]
-fn parse_f32(bytes: &[u8]) -> Result<f32, ()> {
-    core::str::from_utf8(bytes)
-        .ok()
-        .and_then(|s| s.parse::<f32>().ok())
-        .ok_or(())
+fn parse_f32(bytes: &[u8]) -> Option<f32> {
+    core::str::from_utf8(bytes).ok().and_then(|s| s.parse::<f32>().ok())
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS
 //   source:     src/shell/builtin/seq.zig (148 lines)
-//   confidence: medium
-//   todos:      9
-//   notes:      separator/terminator are raw *const [u8] BACKREF into Builtin's argv; bltn() @fieldParentPtr aliasing needs raw-ptr reshape; OutKind enum path is a guess
+//   confidence: medium (NodeId style; full output buffered)
+//   blocked_on: IOWriter::enqueue body, f32 formatting parity
 // ──────────────────────────────────────────────────────────────────────────

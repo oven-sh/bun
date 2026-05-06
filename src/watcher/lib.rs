@@ -14,7 +14,7 @@
 // are now un-gated against their respective `bun_sys` platform surfaces. The
 // Windows backend's `init()` body alone remains re-gated on lower-tier
 // symbols that have not landed (`bun_windows_sys::ntdll::NtCreateFile`,
-// `bun_string::strings::to_nt_path`); see the `TODO(b2-blocked)` markers in
+// `bun_windows_sys::FILE_OPEN`); see the `TODO(b2-blocked)` marker in
 // `WindowsWatcher.rs`. A host build never compiles the non-native backends.
 
 #[cfg(target_os = "linux")]

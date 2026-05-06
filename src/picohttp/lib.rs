@@ -33,8 +33,18 @@ mod c {
         pub value_len: usize,
     }
     pub type struct_phr_header = phr_header;
+    /// Mirrors `struct phr_chunked_decoder` from picohttpparser.h. The HTTP
+    /// client writes `consume_trailer` directly and inspects `_state` via
+    /// `phr_decode_chunked_is_in_data`, so the layout must match C exactly.
     #[repr(C)]
-    pub struct phr_chunked_decoder { _opaque: [u8; 0] }
+    #[derive(Clone, Copy)]
+    pub struct phr_chunked_decoder {
+        pub bytes_left_in_chunk: usize,
+        /// Set to 1 to discard trailing headers after the terminal `0\r\n` chunk.
+        pub consume_trailer: core::ffi::c_char,
+        pub _hex_count: core::ffi::c_char,
+        pub _state: core::ffi::c_char,
+    }
     pub type struct_phr_chunked_decoder = phr_chunked_decoder;
     unsafe extern "C" {
         pub fn phr_parse_request(
@@ -93,6 +103,28 @@ pub struct Header {
 }
 
 impl Header {
+    /// All-zero sentinel — name/value are empty slices. Used by callers to
+    /// initialize fixed-size header arrays before filling them.
+    pub const ZERO: Self = Self {
+        name_ptr: b"".as_ptr(),
+        name_len: 0,
+        value_ptr: b"".as_ptr(),
+        value_len: 0,
+    };
+
+    /// Construct a `Header` from borrowed name/value slices. The caller is
+    /// responsible for keeping the backing storage alive for as long as the
+    /// `Header` is read (matches the Zig `[]const u8` field semantics).
+    #[inline]
+    pub const fn new(name: &[u8], value: &[u8]) -> Self {
+        Self {
+            name_ptr: name.as_ptr(),
+            name_len: name.len(),
+            value_ptr: value.as_ptr(),
+            value_len: value.len(),
+        }
+    }
+
     #[inline]
     pub fn name(&self) -> &[u8] {
         // picohttpparser sets `name = NULL, name_len = 0` for multiline /

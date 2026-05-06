@@ -1,3 +1,5 @@
+#![allow(unused_imports, dead_code, unused_variables)]
+
 use core::ffi::{c_char, c_int, c_short};
 use core::ptr;
 use std::ffi::{CStr, CString};
@@ -5,11 +7,95 @@ use std::ffi::{CStr, CString};
 use bun_core::{err, Error};
 use bun_sys::{self as sys, Fd};
 
-// TODO(port): these std.posix wrappers need a home in bun_sys; placeholder paths for Phase B
-use bun_sys::c as system; // std.posix.system (libc)
-use bun_sys::posix::{errno, fd_t, mode_t, pid_t, to_posix_path, unexpected_errno, Errno};
+// `std.posix.system` — `bun_sys::c` only re-exports a thin slice of libc
+// (no `posix_spawn*`/`waitpid`/`wait4`). Use the `libc` crate directly here;
+// `bun_sys::c` can re-export these later and this `use` swaps back.
+// TODO(port): swap to `bun_sys::c as system` once it forwards posix_spawn.
+#[cfg(unix)]
+use libc as system;
+
+// `std.posix.{errno, fd_t, mode_t, pid_t, toPosixPath, unexpectedErrno}` —
+// `bun_sys::posix` currently exposes only `mode_t`/`S`/`E`/`errno()` (the
+// MOVE_DOWN stub from `bun_errno`). Shim the remainder locally so this file
+// is self-contained; delete in favour of `bun_sys::posix::*` once that module
+// widens.
+use self::posix_compat::{errno, fd_t, mode_t, pid_t, to_posix_path, unexpected_errno, Errno};
+
+#[allow(non_camel_case_types)]
+mod posix_compat {
+    use core::ffi::c_int;
+    use std::ffi::CString;
+    use bun_core::{err, Error};
+
+    /// `std.posix.fd_t` — native fd backing int.
+    pub type fd_t = bun_core::FdNative;
+    /// `std.posix.pid_t`.
+    #[cfg(unix)]
+    pub type pid_t = libc::pid_t;
+    #[cfg(not(unix))]
+    pub type pid_t = i32;
+    pub use bun_sys::posix::mode_t;
+
+    /// `std.posix.E` — errno enum with **unprefixed** variant names. The real
+    /// `bun_errno::posix::E` aliases `SystemErrno` (E-prefixed); local newtype
+    /// keeps the body's `Errno::SUCCESS`/`NOMEM`/... matches intact.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    #[repr(transparent)]
+    pub struct Errno(pub c_int);
+    #[cfg(unix)]
+    impl Errno {
+        pub const SUCCESS: Errno = Errno(0);
+        pub const NOMEM: Errno = Errno(libc::ENOMEM);
+        pub const INVAL: Errno = Errno(libc::EINVAL);
+        pub const BADF: Errno = Errno(libc::EBADF);
+        pub const NAMETOOLONG: Errno = Errno(libc::ENAMETOOLONG);
+        pub const INTR: Errno = Errno(libc::EINTR);
+    }
+    #[cfg(not(unix))]
+    impl Errno {
+        pub const SUCCESS: Errno = Errno(0);
+        pub const NOMEM: Errno = Errno(12);
+        pub const INVAL: Errno = Errno(22);
+        pub const BADF: Errno = Errno(9);
+        pub const NAMETOOLONG: Errno = Errno(36);
+        pub const INTR: Errno = Errno(4);
+    }
+
+    /// `std.posix.errno(rc)` — Zig: with libc, `rc == -1 ⇒ read __errno`,
+    /// else `.SUCCESS`. The `posix_spawn*` family instead returns the errno
+    /// **directly** (0 on success). The Phase-A draft conflated both call
+    /// conventions; preserve that here so behaviour matches the .zig source
+    /// 1:1, and let Phase-B audit (TODO(port) below).
+    // TODO(port): split into `errno_from_posix_spawn(rc)` (rc IS errno) vs
+    // `errno_from_ret(rc)` (rc == -1 ⇒ read libc errno) and route call sites.
+    #[inline]
+    pub fn errno(rc: c_int) -> Errno {
+        if rc == -1 {
+            #[cfg(unix)]
+            // SAFETY: __errno_location() always returns a valid thread-local ptr.
+            return Errno(unsafe { *libc::__errno_location() });
+            #[cfg(not(unix))]
+            return Errno(0);
+        }
+        // posix_spawn* returns errno directly; treat nonzero as that errno.
+        Errno(rc)
+    }
+
+    /// `std.posix.toPosixPath` — copy into a NUL-terminated buffer.
+    pub fn to_posix_path(path: &[u8]) -> Result<CString, Error> {
+        CString::new(path).map_err(|_| err!("Unexpected"))
+    }
+
+    /// `std.posix.unexpectedErrno` — Zig logs + returns `error.Unexpected`.
+    pub fn unexpected_errno(_e: Errno) -> Error {
+        err!("Unexpected")
+    }
+}
 
 // child module: src/runtime/api/bun/spawn/stdio.zig
+// TODO(b2-blocked): stdio.rs imports `crate::api::bun::subprocess::StdioKind`
+// (subprocess body gated) and `bun_sys::windows::libuv`; un-gate once those land.
+#[cfg(any())]
 pub mod stdio;
 
 pub mod bun_spawn {
@@ -177,18 +263,32 @@ pub mod posix_spawn {
     use super::*;
     use super::bun_spawn;
 
+    // `bun.sys.Tag` has no `posix_spawn`/`waitpid` variants yet (subset table).
+    // TODO(b2-blocked): bun_sys::Tag::{posix_spawn,waitpid} — replace TODO with real tags.
+    const SYSCALL_POSIX_SPAWN: sys::Tag = sys::Tag::TODO;
+    const SYSCALL_WAITPID: sys::Tag = sys::Tag::TODO;
+
     #[derive(Copy, Clone)]
     pub struct WaitPidResult {
         pub pid: pid_t,
         pub status: u32,
     }
 
+    // ─── libc posix_spawn wrappers ───────────────────────────────────────────
+    // `PosixSpawnAttr`/`PosixSpawnActions` wrap `libc::posix_spawn*` directly.
+    // On Linux/FreeBSD the runtime path goes through `bun_spawn` (vfork-based
+    // `posix_spawn_bun`), so these are only **used** on macOS-non-PTY. Gate
+    // them on `target_os = "macos"` to avoid the Darwin-only `_np` extensions
+    // (`addinherit_np`) breaking the Linux build; the `not(unix)` Windows path
+    // never reaches them either.
+    #[cfg(target_os = "macos")]
     pub struct PosixSpawnAttr {
         pub attr: system::posix_spawnattr_t,
         pub detached: bool,
         pub pty_slave_fd: i32,
     }
 
+    #[cfg(target_os = "macos")]
     impl PosixSpawnAttr {
         pub fn init() -> Result<PosixSpawnAttr, Error> {
             let mut attr = core::mem::MaybeUninit::<system::posix_spawnattr_t>::uninit();
@@ -238,6 +338,7 @@ pub mod posix_spawn {
         }
     }
 
+    #[cfg(target_os = "macos")]
     impl Drop for PosixSpawnAttr {
         fn drop(&mut self) {
             // SAFETY: self.attr was initialized by posix_spawnattr_init
@@ -246,14 +347,17 @@ pub mod posix_spawn {
     }
 
     // TODO(port): move to runtime_sys
+    #[cfg(target_os = "macos")]
     unsafe extern "C" {
         fn posix_spawnattr_reset_signals(attr: *mut system::posix_spawnattr_t) -> c_int;
     }
 
+    #[cfg(target_os = "macos")]
     pub struct PosixSpawnActions {
         pub actions: system::posix_spawn_file_actions_t,
     }
 
+    #[cfg(target_os = "macos")]
     impl PosixSpawnActions {
         pub fn init() -> Result<PosixSpawnActions, Error> {
             let mut actions =
@@ -369,6 +473,7 @@ pub mod posix_spawn {
         }
     }
 
+    #[cfg(target_os = "macos")]
     impl Drop for PosixSpawnActions {
         fn drop(&mut self) {
             // SAFETY: self.actions was initialized by posix_spawn_file_actions_init
@@ -380,13 +485,11 @@ pub mod posix_spawn {
     // Windows uses different spawn mechanisms.
     #[cfg(unix)]
     pub type Actions = bun_spawn::Actions;
-    #[cfg(not(unix))]
-    pub type Actions = PosixSpawnActions;
-
     #[cfg(unix)]
     pub type Attr = bun_spawn::Attr;
-    #[cfg(not(unix))]
-    pub type Attr = PosixSpawnAttr;
+    // TODO(b2-blocked): not(unix) Actions/Attr aliased PosixSpawn* in the Zig
+    // draft, but Windows goes through `process.rs::spawn_process_windows`
+    // (libuv), never these. Leave undeclared on Windows for now.
 
     /// Used for Linux spawns and macOS PTY spawns via posix_spawn_bun.
     #[repr(C)]
@@ -483,13 +586,14 @@ pub mod posix_spawn {
             sys::Result::Err(sys::Error {
                 // @truncate(@intFromEnum(@as(std.c.E, @enumFromInt(rc))))
                 errno: rc as sys::ErrorInt,
-                syscall: sys::Syscall::PosixSpawn,
+                syscall: SYSCALL_POSIX_SPAWN,
                 path: arg0.into(),
                 ..Default::default()
             })
         }
     }
 
+    #[cfg(unix)]
     pub fn spawn_z(
         path: &CStr,
         actions: Option<&Actions>,
@@ -548,8 +652,8 @@ pub mod posix_spawn {
                 Ok(a) => a,
                 Err(_) => {
                     return sys::Result::Err(sys::Error {
-                        errno: Errno::NOMEM as sys::ErrorInt,
-                        syscall: sys::Syscall::PosixSpawn,
+                        errno: Errno::NOMEM.0 as sys::ErrorInt,
+                        syscall: SYSCALL_POSIX_SPAWN,
                         ..Default::default()
                     });
                 }
@@ -560,8 +664,8 @@ pub mod posix_spawn {
                 Ok(a) => a,
                 Err(_) => {
                     return sys::Result::Err(sys::Error {
-                        errno: Errno::NOMEM as sys::ErrorInt,
-                        syscall: sys::Syscall::PosixSpawn,
+                        errno: Errno::NOMEM.0 as sys::ErrorInt,
+                        syscall: SYSCALL_POSIX_SPAWN,
                         ..Default::default()
                     });
                 }
@@ -678,7 +782,7 @@ pub mod posix_spawn {
 
             return sys::Result::Err(sys::Error {
                 errno: rc as sys::ErrorInt,
-                syscall: sys::Syscall::PosixSpawn,
+                syscall: SYSCALL_POSIX_SPAWN,
                 path: path.to_bytes().into(),
                 ..Default::default()
             });
@@ -719,7 +823,7 @@ pub mod posix_spawn {
 
             sys::Result::Err(sys::Error {
                 errno: rc as sys::ErrorInt,
-                syscall: sys::Syscall::PosixSpawn,
+                syscall: SYSCALL_POSIX_SPAWN,
                 path: path.to_bytes().into(),
                 ..Default::default()
             })
@@ -730,6 +834,7 @@ pub mod posix_spawn {
     /// or `posix_spawnp` syscalls.
     /// See also `std.posix.waitpid` for an alternative if your child process was spawned via `fork` and
     /// `execve` method.
+    #[cfg(unix)]
     pub fn waitpid(pid: pid_t, flags: u32) -> sys::Result<WaitPidResult> {
         type PidStatus = c_int;
         let mut status: PidStatus = 0;
@@ -747,15 +852,17 @@ pub mod posix_spawn {
                     });
                 }
                 Errno::INTR => continue,
-                _ => {
-                    return sys::Result::<WaitPidResult>::errno_sys(rc, sys::Syscall::Waitpid)
-                        .unwrap();
+                e => {
+                    return sys::Result::Err(
+                        sys::Error::from_code_int(e.0, SYSCALL_WAITPID),
+                    );
                 }
             }
         }
     }
 
     /// Same as waitpid, but also returns resource usage information.
+    #[cfg(unix)]
     pub fn wait4(
         pid: pid_t,
         flags: u32,
@@ -765,7 +872,7 @@ pub mod posix_spawn {
         let mut status: PidStatus = 0;
         // PORT NOTE: reshaped for borrowck — Zig passes the same `?*Rusage` every loop
         // iteration via @ptrCast(usage); convert once to a raw ptr that is Copy.
-        let usage_ptr: *mut core::ffi::c_void = match usage {
+        let usage_ptr: *mut system::rusage = match usage {
             Some(u) => (u as *mut process::Rusage).cast(),
             None => ptr::null_mut(),
         };
@@ -788,9 +895,10 @@ pub mod posix_spawn {
                     });
                 }
                 Errno::INTR => continue,
-                _ => {
-                    return sys::Result::<WaitPidResult>::errno_sys(rc, sys::Syscall::Waitpid)
-                        .unwrap();
+                e => {
+                    return sys::Result::Err(
+                        sys::Error::from_code_int(e.0, SYSCALL_WAITPID),
+                    );
                 }
             }
         }
@@ -798,10 +906,16 @@ pub mod posix_spawn {
 
     pub use super::process;
     pub use process::{
-        spawn_process, sync, PosixSpawnResult, Process, Rusage, SpawnOptions,
-        SpawnProcessResult, Status, WindowsSpawnOptions, WindowsSpawnResult,
+        PosixSpawnResult, Process, Rusage, SpawnOptions, SpawnProcessResult, Status,
+        WindowsSpawnOptions, WindowsSpawnResult,
     };
+    // TODO(b2-blocked): process::spawn_process / process::sync gated behind
+    // `spawn_process_body` in process.rs.
+    #[cfg(any())]
+    pub use process::{spawn_process, sync};
 
+    // TODO(b2-blocked): stdio mod gated above (subprocess dep).
+    #[cfg(any())]
     pub use super::stdio::Stdio;
 }
 

@@ -204,21 +204,9 @@ pub use self::text_codec::TextCodec;
 pub use self::js_uint8_array::JSUint8Array;
 pub use self::marked_argument_buffer::MarkedArgumentBuffer;
 pub use self::js_cell::JSCell;
-pub use self::error_code::ErrorCode;
-
-// Node-compat error-code constants surfaced on `bun_jsc::ErrorCode` for callers
-// that dispatch via `JSGlobalObject::err(code, fmt)` (e.g. webcore TextDecoder).
-// Sentinel values until the full ErrorCode.ts codegen table lands; the C++ side
-// only compares for equality. `ErrorCode` is `#[repr(transparent)]` over `u16`,
-// so the transmute is layout-identical.
-impl ErrorCode {
-    pub const ERR_ENCODING_INVALID_ENCODED_DATA: ErrorCode =
-        // SAFETY: `ErrorCode` is `#[repr(transparent)]` around `u16`.
-        unsafe { core::mem::transmute::<u16, ErrorCode>(0xFFFC) };
-    pub const ERR_ENCODING_NOT_SUPPORTED: ErrorCode =
-        // SAFETY: `ErrorCode` is `#[repr(transparent)]` around `u16`.
-        unsafe { core::mem::transmute::<u16, ErrorCode>(0xFFFB) };
-}
+pub use self::error_code::{ErrorBuilder, ErrorCode};
+/// Some drafts spell this `jsc::ErrCode` — keep both until call-sites converge.
+pub use self::error_code::ErrorCode as ErrCode;
 pub use self::zig_error_type::ZigErrorType;
 pub use self::errorable::Errorable;
 pub use self::zig_stack_frame_position::ZigStackFramePosition;

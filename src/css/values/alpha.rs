@@ -1,5 +1,5 @@
-use crate::css_values::number::CSSNumberFns;
-use crate::css_values::percentage::NumberOrPercentage;
+use crate::values::number::CSSNumberFns;
+use crate::values::percentage::NumberOrPercentage;
 use crate::{Parser, PrintErr, Printer, Result};
 
 /// A CSS [`<alpha-value>`](https://www.w3.org/TR/css-color-4/#typedef-alpha-value),
@@ -35,13 +35,10 @@ impl AlphaValue {
         lhs.v == rhs.v
     }
 
-    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
-        // PORT NOTE: Zig used css.implementHash (comptime field reflection); hash the f32 bit pattern.
-        crate::implement_hash(self, hasher)
-        // TODO(port): confirm crate::implement_hash signature (likely a trait/derive in Phase B)
-    }
+    // TODO(port): css.implementHash (comptime field reflection) — wires once
+    // generics::CssHash blanket impl covers f32-payload structs.
 
-    pub fn deep_clone(&self, _allocator: &bun_alloc::Arena) -> Self {
+    pub fn deep_clone(&self) -> Self {
         // PORT NOTE: Zig used css.implementDeepClone; struct is Copy so this is a trivial copy.
         *self
     }

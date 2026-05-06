@@ -1,14 +1,15 @@
-// TODO(port): SIMD code uses core::simd (portable_simd, nightly-only). Phase B
-// must either gate behind #![feature(portable_simd)] at the bun_str crate root,
-// or rewrite hot loops with std::arch / bun_highway intrinsics.
+// PORT NOTE: SIMD code originally targeted `core::simd` (portable_simd,
+// nightly-only). For B-2, `u8x16`/`u16x8` alias the scalar `ScalarVec`
+// stand-ins from `crate::immutable`; the per-lane methods are scalar loops.
+// PERF(port): swap to `bun_highway` / `std::arch` intrinsics in Phase B.
 use core::ffi::c_uint;
-use core::simd::{cmp::*, num::*, u16x8, u8x16, Simd};
 
-use bun_str::strings::{
-    self, decode_wtf8_rune_t_multibyte, first_non_ascii, first_non_ascii16, grapheme,
+use crate::immutable::{
+    self as strings, decode_wtf8_rune_t_multibyte, first_non_ascii, first_non_ascii16, grapheme,
     index_of_char16_usize, index_of_char_usize, utf16_codepoint_with_fffd,
     wtf8_byte_sequence_length_with_invalid, U3Fast, UNICODE_REPLACEMENT,
 };
+use crate::immutable::{AsciiU16Vector as u16x8, AsciiVector as u8x16};
 
 pub fn is_zero_width_codepoint_type<T: Copy + Into<u32>>(cp: T) -> bool {
     let cp: u32 = cp.into();
@@ -757,79 +758,44 @@ pub mod visible {
         if (c >= 127 && c <= 159) || c < 32 || c == 0xAD { 0 } else { 1 }
     }
 
-    // SIMD scan for the first lane in the inclusive range [lo, hi]. Returns
-    // None if not found. Used to find the CSI final byte (0x40-0x7E). Same
-    // wrapping-subtract trick as the C++ ANSI helpers:
-    //   c in [Lo, Hi]  <=>  (c - Lo) <= (Hi - Lo) unsigned
-    // TODO(port): Zig version computes stride = 16/sizeof(T) and MaskInt at
-    // comptime. Rust const-generics can't derive STRIDE from T on stable, so
-    // STRIDE is an explicit const param (16 for u8, 8 for u16).
+    // Scan for the first element in the inclusive range [lo, hi]. Returns
+    // None if not found. Used to find the CSI final byte (0x40-0x7E).
+    //
+    // PORT NOTE: was a SIMD lane-scan via `core::simd::Simd<T, STRIDE>`
+    // (nightly-only). Demoted to a scalar loop for B-2 — `STRIDE` is kept as a
+    // dead const-generic so call sites (`scan_lane_in_range::<u8, 16>(...)`)
+    // diff cleanly against the Zig.
+    // PERF(port): re-SIMD via bun_highway in Phase B.
     pub(super) fn scan_lane_in_range<T, const STRIDE: usize>(lo: T, hi: T, slice: &[T]) -> Option<usize>
     where
-        T: core::simd::SimdElement + Copy + core::ops::Sub<Output = T> + PartialOrd,
-        Simd<T, STRIDE>: core::ops::Sub<Output = Simd<T, STRIDE>>,
-        core::simd::LaneCount<STRIDE>: core::simd::SupportedLaneCount,
+        T: Copy + PartialOrd,
     {
         debug_assert!(lo <= hi); // was `comptime bun.assert(Lo <= Hi)` — Lo/Hi demoted to runtime
-        let mut i: usize = 0;
-        let lo_v: Simd<T, STRIDE> = Simd::splat(lo);
-        let range_scalar = hi - lo;
-        let range: Simd<T, STRIDE> = Simd::splat(range_scalar);
-
-        while slice.len() - i >= STRIDE {
-            let chunk: Simd<T, STRIDE> = Simd::from_slice(&slice[i..i + STRIDE]);
-            // PERF(port): wrapping sub on Simd<T> — verify codegen matches Zig `-%`.
-            let shifted = chunk - lo_v;
-            let in_range = shifted.simd_le(range);
-            let mask = in_range.to_bitmask();
-            if mask != 0 {
-                return Some(i + mask.trailing_zeros() as usize);
-            }
-            i += STRIDE;
-        }
-        while i < slice.len() {
-            let c = slice[i];
-            // TODO(port): `.wrapping_sub` needs a trait bound on generic T
-            // (e.g. `num_traits::WrappingSub`) — Phase B wires the bound.
-            if c.wrapping_sub(lo) <= range_scalar {
+        for (i, &c) in slice.iter().enumerate() {
+            if c >= lo && c <= hi {
                 return Some(i);
             }
-            i += 1;
         }
         None
     }
 
-    // SIMD scan for the first lane equal to any of `targets`. Returns None if
+    // Scan for the first element equal to any of `targets`. Returns None if
     // not found. Used to find OSC terminators (BEL/ESC and the C1 ST 0x9C).
+    //
+    // PORT NOTE: was a SIMD lane-scan via `core::simd`. Demoted to scalar for
+    // B-2; `STRIDE` is kept for call-site diff parity.
+    // PERF(port): re-SIMD via bun_highway in Phase B.
     pub(super) fn scan_lane_any_of<T, const STRIDE: usize>(targets: &[T], slice: &[T]) -> Option<usize>
     where
-        T: core::simd::SimdElement + Copy + PartialEq,
-        core::simd::LaneCount<STRIDE>: core::simd::SupportedLaneCount,
+        T: Copy + PartialEq,
     {
-        debug_assert!(targets.len() > 0);
-        let mut i: usize = 0;
-
-        while slice.len() - i >= STRIDE {
-            let chunk: Simd<T, STRIDE> = Simd::from_slice(&slice[i..i + STRIDE]);
-            let mut hit = chunk.simd_eq(Simd::splat(targets[0]));
-            // PERF(port): was `inline for` — relies on LLVM to unroll small targets.
-            for &t in &targets[1..] {
-                hit |= chunk.simd_eq(Simd::splat(t));
-            }
-            let mask = hit.to_bitmask();
-            if mask != 0 {
-                return Some(i + mask.trailing_zeros() as usize);
-            }
-            i += STRIDE;
-        }
-        while i < slice.len() {
-            let c = slice[i];
+        debug_assert!(!targets.is_empty());
+        for (i, &c) in slice.iter().enumerate() {
             for &t in targets {
                 if c == t {
                     return Some(i);
                 }
             }
-            i += 1;
         }
         None
     }
@@ -1151,7 +1117,7 @@ pub mod visible {
         // width 2 instead of 1).
         let mut prev: Option<u32> = None;
         let mut prev_visible: Option<u32> = None;
-        let mut break_state: grapheme::BreakState = grapheme::BreakState::default();
+        let mut break_state: grapheme::BreakState = grapheme::BreakState::Default;
         let mut grapheme_state = GraphemeState::default();
         let mut saw_1b = false;
         let mut saw_csi = false; // CSI: ESC [
@@ -1190,7 +1156,7 @@ pub mod visible {
                         grapheme_state.reset(last_cp, ambiguous_as_wide);
                         prev = Some(last_cp);
                         prev_visible = Some(last_cp);
-                        break_state = grapheme::BreakState::default();
+                        break_state = grapheme::BreakState::Default;
 
                         // If we consumed everything, advance and continue
                         if bulk_end == idx {

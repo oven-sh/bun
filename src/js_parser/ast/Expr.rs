@@ -1138,6 +1138,90 @@ impl IntoExprData for &E::EString {
     }
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+// T2→T4 Expr lift (b2-ast-unify, option (b)).
+//
+// `bun_logger::js_ast::Expr` is the 8-variant value-shaped subset that
+// `bun_interchange::{json,toml,yaml}` / `bun_ini` produce. Its leaf scalar
+// payloads (`Boolean`/`Null`/`Undefined`/`Missing`/...) are *re-exported* by
+// `E` above, so those convert by identity. `EString`/`Number` are distinct
+// structs (T4 carries extra rope/method surface) so the bytes are field-
+// copied. `Array`/`Object` are deep-walked because their item lists hold T2
+// `Expr` and `G::Property`, not T4's.
+//
+// Nodes are interned into the thread-local `data::Store` (same as
+// `Expr::init`), so no `&Bump` is required and `From` fits. Callers that need
+// arena placement should walk the T2 tree themselves with `Expr::allocate`.
+// ───────────────────────────────────────────────────────────────────────────
+
+impl From<logger::js_ast::expr::Data> for Data {
+    fn from(d: logger::js_ast::expr::Data) -> Self {
+        use logger::js_ast::expr::Data as V;
+        match d {
+            // Shared (re-exported) leaf payloads — identity.
+            V::EBoolean(b) => Data::EBoolean(b),
+            V::ENull(n) => Data::ENull(n),
+            V::EUndefined(u) => Data::EUndefined(u),
+            V::EMissing(m) => Data::EMissing(m),
+            // Distinct-struct scalars — field copy.
+            V::ENumber(n) => Data::ENumber(E::Number { value: n.value }),
+            V::EString(s) => {
+                // T2 interchange strings are never ropes; copy data + encoding.
+                debug_assert!(s.next.is_none());
+                E::EString { data: s.data, is_utf16: s.is_utf16, ..Default::default() }
+                    .into_data_store()
+            }
+            // Recursive containers — deep rebuild.
+            V::EArray(arr) => {
+                let mut items: crate::ExprNodeList =
+                    BabyList::init_capacity(arr.items.len as usize).expect("OOM");
+                for it in arr.items.slice() {
+                    items.append(Expr::from(*it)).expect("OOM");
+                }
+                E::Array {
+                    items,
+                    comma_after_spread: arr.comma_after_spread,
+                    is_single_line: arr.is_single_line,
+                    is_parenthesized: arr.is_parenthesized,
+                    was_originally_macro: arr.was_originally_macro,
+                    close_bracket_loc: arr.close_bracket_loc,
+                }
+                .into_data_store()
+            }
+            V::EObject(obj) => {
+                let mut properties: G::PropertyList =
+                    BabyList::init_capacity(obj.properties.len as usize).expect("OOM");
+                for p in obj.properties.slice() {
+                    properties
+                        .append(G::Property {
+                            key: p.key.map(Expr::from),
+                            value: p.value.map(Expr::from),
+                            initializer: p.initializer.map(Expr::from),
+                            ..G::Property::default()
+                        })
+                        .expect("OOM");
+                }
+                E::Object {
+                    properties,
+                    comma_after_spread: obj.comma_after_spread,
+                    is_single_line: obj.is_single_line,
+                    is_parenthesized: obj.is_parenthesized,
+                    was_originally_macro: obj.was_originally_macro,
+                    close_brace_loc: obj.close_brace_loc,
+                }
+                .into_data_store()
+            }
+        }
+    }
+}
+
+impl From<logger::js_ast::Expr> for Expr {
+    #[inline]
+    fn from(v: logger::js_ast::Expr) -> Self {
+        Expr { loc: v.loc, data: Data::from(v.data) }
+    }
+}
+
 impl Expr {
     /// When the lifetime of an Expr.Data's pointer must exist longer than reset() is called, use this function.
     /// Be careful to free the memory (or use an allocator that does it for you)

@@ -115,6 +115,11 @@ pub struct ConsoleObject {
     pub default_indent: u16,
 
     counts: Counter,
+
+    // The writer adapters above hold raw pointers into `{stderr,stdout}_buffer`;
+    // moving the struct would dangle them. `PhantomPinned` opts out of `Unpin`
+    // so `Pin<Box<Self>>` (returned by `init`) actually enforces that.
+    _pin: core::marker::PhantomPinned,
 }
 
 impl core::fmt::Display for ConsoleObject {
@@ -125,15 +130,57 @@ impl core::fmt::Display for ConsoleObject {
 }
 
 impl ConsoleObject {
-    // PORT NOTE: keeps the Zig out-param shape (`out: *ConsoleObject`) instead
-    // of returning `Self`. `adapt_to_new_api(&mut out.stderr_buffer)` captures
-    // a raw pointer into the buffer field; returning `Self` by value would
-    // move the 8 KiB of buffers and leave `*_backing` pointing at the old
-    // stack frame (PORTING.md §Forbidden: lifetime-extension via raw pointer).
-    // Caller provides stable storage via `&mut MaybeUninit<Self>`.
+    // PORT NOTE: `adapt_to_new_api(&mut self.stderr_buffer)` captures a raw
+    // pointer into the buffer field, so the struct is self-referential once
+    // initialized. The previous out-param shape (`&mut MaybeUninit<Self>`)
+    // still let the caller move the value afterwards (e.g.
+    // `Box::new(unsafe { mu.assume_init() })`), which is exactly what
+    // `VirtualMachine` needs to do — and that move would dangle both
+    // adapter pointers.
+    //
+    // Instead, allocate the storage here and return it pinned:
+    // `Pin<Box<Self>>` puts the 8 KiB of buffers at a stable heap address
+    // before the adapters are wired up, and the `Pin` makes the
+    // "must not move" invariant a type-system fact rather than a comment.
+    // `VirtualMachine.console` stores the raw pointer (`*mut c_void`), so
+    // callers leak via `Box::into_raw(Pin::into_inner_unchecked(..))` — the
+    // VM owns it for the process lifetime.
+    //
     // TODO(port): Phase B — make `QuietWriterAdapter` own its 4 KiB buffer so
     // the self-reference disappears and this can become `-> Self`.
     pub fn init(
+        error_writer: Output::StreamType,
+        writer: Output::StreamType,
+    ) -> core::pin::Pin<Box<ConsoleObject>> {
+        let mut out = Box::new(ConsoleObject {
+            stderr_buffer: [0; 4096],
+            stdout_buffer: [0; 4096],
+            error_writer_backing: Output::QuietWriterAdapter::uninit(),
+            writer_backing: Output::QuietWriterAdapter::uninit(),
+            default_indent: 0,
+            counts: Counter::default(),
+            _pin: core::marker::PhantomPinned,
+        });
+        // SAFETY: `out` is heap-allocated at its final address; the adapters
+        // store raw pointers into `out.{stderr,stdout}_buffer`, which remain
+        // valid for the box's lifetime. We split the borrow through a raw
+        // pointer because `adapt_to_new_api` would otherwise hold a unique
+        // borrow of one field while we assign another.
+        let p: *mut ConsoleObject = &mut *out;
+        unsafe {
+            (*p).error_writer_backing =
+                error_writer.quiet_writer().adapt_to_new_api(&mut (*p).stderr_buffer);
+            (*p).writer_backing =
+                writer.quiet_writer().adapt_to_new_api(&mut (*p).stdout_buffer);
+        }
+        Box::into_pin(out)
+    }
+
+    /// Out-param variant kept for callers that already own pinned storage
+    /// (e.g. a static / arena slot). The address of `*out` MUST be stable for
+    /// the value's entire lifetime — moving it afterwards leaves the writer
+    /// adapters dangling. Prefer [`init`](Self::init) for new code.
+    pub fn init_in_place(
         out: &mut core::mem::MaybeUninit<ConsoleObject>,
         error_writer: Output::StreamType,
         writer: Output::StreamType,
@@ -145,12 +192,19 @@ impl ConsoleObject {
             writer_backing: Output::QuietWriterAdapter::uninit(),
             default_indent: 0,
             counts: Counter::default(),
+            _pin: core::marker::PhantomPinned,
         });
         // SAFETY: `out` is now fully initialized at its final address; the
         // adapters store raw pointers into `out.stderr_buffer` /
-        // `out.stdout_buffer`, which remain valid for `out`'s lifetime.
-        out.error_writer_backing = error_writer.quiet_writer().adapt_to_new_api(&mut out.stderr_buffer);
-        out.writer_backing = writer.quiet_writer().adapt_to_new_api(&mut out.stdout_buffer);
+        // `out.stdout_buffer`, which remain valid for `out`'s lifetime
+        // *provided the caller never moves it* (see fn doc).
+        let p: *mut ConsoleObject = out;
+        unsafe {
+            (*p).error_writer_backing =
+                error_writer.quiet_writer().adapt_to_new_api(&mut (*p).stderr_buffer);
+            (*p).writer_backing =
+                writer.quiet_writer().adapt_to_new_api(&mut (*p).stdout_buffer);
+        }
         out
     }
 
@@ -1306,7 +1360,7 @@ pub fn format2(
 }
 
 #[derive(Clone, Copy, Default)]
-struct CustomFormattedObject {
+pub struct CustomFormattedObject {
     function: JSValue,
     this: JSValue,
 }
@@ -1609,6 +1663,51 @@ pub mod formatter {
                 TagPayload::CustomGetterSetter => Tag::CustomGetterSetter,
                 TagPayload::Proxy => Tag::Proxy,
                 TagPayload::RevokedProxy => Tag::RevokedProxy,
+            }
+        }
+    }
+
+    /// Reverse of [`TagPayload::tag`]. The `CustomFormattedObject` arm gets a
+    /// default (zero) payload — used by the `ConsoleFormatter` trait bridge in
+    /// `lib.rs`, which never passes that tag (write_format hooks pick concrete
+    /// tags like `Double` / `Boolean` / `Object` / `Private`).
+    impl From<Tag> for TagPayload {
+        fn from(t: Tag) -> Self {
+            match t {
+                Tag::StringPossiblyFormatted => TagPayload::StringPossiblyFormatted,
+                Tag::String => TagPayload::String,
+                Tag::Undefined => TagPayload::Undefined,
+                Tag::Double => TagPayload::Double,
+                Tag::Integer => TagPayload::Integer,
+                Tag::Null => TagPayload::Null,
+                Tag::Boolean => TagPayload::Boolean,
+                Tag::Array => TagPayload::Array,
+                Tag::Object => TagPayload::Object,
+                Tag::Function => TagPayload::Function,
+                Tag::Class => TagPayload::Class,
+                Tag::Error => TagPayload::Error,
+                Tag::TypedArray => TagPayload::TypedArray,
+                Tag::Map => TagPayload::Map,
+                Tag::MapIterator => TagPayload::MapIterator,
+                Tag::SetIterator => TagPayload::SetIterator,
+                Tag::Set => TagPayload::Set,
+                Tag::BigInt => TagPayload::BigInt,
+                Tag::Symbol => TagPayload::Symbol,
+                Tag::CustomFormattedObject => {
+                    TagPayload::CustomFormattedObject(CustomFormattedObject::default())
+                }
+                Tag::GlobalObject => TagPayload::GlobalObject,
+                Tag::Private => TagPayload::Private,
+                Tag::Promise => TagPayload::Promise,
+                Tag::JSON => TagPayload::JSON,
+                Tag::ToJSON => TagPayload::ToJSON,
+                Tag::NativeCode => TagPayload::NativeCode,
+                Tag::JSX => TagPayload::JSX,
+                Tag::Event => TagPayload::Event,
+                Tag::GetterSetter => TagPayload::GetterSetter,
+                Tag::CustomGetterSetter => TagPayload::CustomGetterSetter,
+                Tag::Proxy => TagPayload::Proxy,
+                Tag::RevokedProxy => TagPayload::RevokedProxy,
             }
         }
     }

@@ -173,7 +173,7 @@ pub fn scan_imports_and_exports(
                 // pass column pointers instead of overlapping `&mut` slices.
                 let _ = this.scan_css_imports(
                     id as u32,
-                    col!(import_records_list)[id].slice_mut(),
+                    col_ref!(import_records_list)[id].slice(),
                     css_asts,
                     col_ref!(input_files),
                     col_ref!(loaders),
@@ -674,7 +674,7 @@ pub fn scan_imports_and_exports(
             }
 
             {
-                let imports_to_bind = &mut col!(imports_to_bind_list)[id];
+                let imports_to_bind = &col_ref!(imports_to_bind_list)[id];
                 debug_assert_eq!(imports_to_bind.keys().len(), imports_to_bind.values().len());
                 // PORT NOTE: reshaped for borrowck — iterate by index so we can
                 // re-borrow `parts` after each `top_level_symbol_to_parts` call.

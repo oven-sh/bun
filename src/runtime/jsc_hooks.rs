@@ -1095,21 +1095,21 @@ fn transpile_source_code_inner(
                 let parse_path = {
                     let store = Fs::FilenameStore::instance();
                     let text: &'static [u8] =
-                        bun_core::handle_oom(store.append(path.text));
+                        bun_core::handle_oom(store.append_slice(path.text));
                     let pretty: &'static [u8] =
                         if core::ptr::eq(path.pretty.as_ptr(), path.text.as_ptr())
                             && path.pretty.len() == path.text.len()
                         {
                             text
                         } else {
-                            bun_core::handle_oom(store.append(path.pretty))
+                            bun_core::handle_oom(store.append_slice(path.pretty))
                         };
                     // `Fs::Path::init` always sets namespace to the `b"file"`
                     // literal; only intern if a caller overrode it.
                     let namespace: &'static [u8] = if path.namespace == b"file" {
                         b"file"
                     } else {
-                        bun_core::handle_oom(store.append(path.namespace))
+                        bun_core::handle_oom(store.append_slice(path.namespace))
                     };
                     bun_logger::fs::Path {
                         pretty,

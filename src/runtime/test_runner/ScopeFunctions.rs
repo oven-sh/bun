@@ -702,40 +702,40 @@ pub fn parse_arguments(
     if options.is_number() {
         timeout_option = Some(options.as_number());
     } else if options.is_function() {
-        return global.throw(format_args!(
+        return Err(global.throw(format_args!(
             "{}() expects options to be a number or object, not a function",
             signature
-        ));
+        )));
     } else if options.is_object() {
         if let Some(timeout) = options.get(global, "timeout")? {
             if !timeout.is_number() {
-                return global.throw(format_args!("{}() expects timeout to be a number", signature));
+                return Err(global.throw(format_args!("{}() expects timeout to be a number", signature)));
             }
             timeout_option = Some(timeout.as_number());
         }
         if let Some(retries) = options.get(global, "retry")? {
             if !retries.is_number() {
-                return global.throw(format_args!("{}() expects retry to be a number", signature));
+                return Err(global.throw(format_args!("{}() expects retry to be a number", signature)));
             }
             // std.math.lossyCast(u32, f64) — Rust `as` saturates on overflow/NaN.
             result.options.retry = Some(retries.as_number() as u32);
         }
         if let Some(repeats) = options.get(global, "repeats")? {
             if !repeats.is_number() {
-                return global.throw(format_args!("{}() expects repeats to be a number", signature));
+                return Err(global.throw(format_args!("{}() expects repeats to be a number", signature)));
             }
             if result.options.retry.is_some() && result.options.retry.unwrap() != 0 {
-                return global.throw(format_args!("{}(): Cannot set both retry and repeats", signature));
+                return Err(global.throw(format_args!("{}(): Cannot set both retry and repeats", signature)));
             }
             result.options.repeats = repeats.as_number() as u32;
         }
     } else if options.is_undefined_or_null() {
         // no options
     } else {
-        return global.throw(format_args!(
+        return Err(global.throw(format_args!(
             "{}() expects a number, object, or undefined as the third argument",
             signature
-        ));
+        )));
     }
 
     result.description = if description.is_undefined_or_null() {

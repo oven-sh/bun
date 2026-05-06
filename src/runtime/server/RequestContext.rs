@@ -3401,7 +3401,7 @@ where
             if last {
                 let bytes = &mut this.request_body_buf;
 
-                let old = core::mem::replace(&mut body.value, Body::Value::Null);
+                let mut old = core::mem::replace(body, Body::Value::Null);
 
                 let total = bytes.len() + chunk.len();
                 'getter: {
@@ -3422,8 +3422,9 @@ where
                     unsafe { bytes.set_len(total) };
                     let slice = &mut bytes[prev_len..];
                     slice[..chunk.len()].copy_from_slice(chunk);
-                    body.value = Body::Value::InternalBlob(WebCore::InternalBlob {
+                    *body = Body::Value::InternalBlob(WebCore::InternalBlob {
                         bytes: core::mem::take(bytes),
+                        was_string: false,
                     });
                     // }
                     break 'getter;

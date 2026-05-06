@@ -4704,7 +4704,7 @@ impl NodeFS {
             if T::IS_DIRENT && dirent_path.is_empty() {
                 dirent_path = webcore::encoding::to_bun_string(
                     without_nt_prefix::<u8>(basename.as_bytes()),
-                    args.encoding,
+                    encoding_to_node(args.encoding),
                 );
             }
 

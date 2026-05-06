@@ -2798,7 +2798,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         raw_ref.ref_();
         // SAFETY: `raw` came from `TLSSocket::new` (Box::into_raw); intrusive +1 held.
         unsafe { (*tls_ptr).twin = Some(IntrusiveRc::from_raw(raw)) };
-        new_raw.set_ssl_raw_tap(true);
+        // SAFETY: `new_raw` is the live adopted `us_socket_t`.
+        unsafe { (*new_raw.as_ptr()).set_ssl_raw_tap(true) };
 
         // SAFETY: short-lived reborrow; no dispatch can fire until
         // `on_open`/`start_tls_handshake` below.

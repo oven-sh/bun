@@ -832,39 +832,46 @@ impl Writable {
             }
         }
         #[cfg(not(windows))]
-        match stdio {
-            Stdio::Dup2(_) => {
-                // The shell never uses this
-                panic!("Unimplemented stdin dup2");
-            }
-            Stdio::Pipe => {
-                // The shell never uses this
-                panic!("Unimplemented stdin pipe");
-            }
+        {
+            // PORT NOTE: `Stdio` impls Drop, so we cannot partially move out
+            // via match. Dispatch on `&mut` and `mem::take` Default-able payloads.
+            let mut stdio = stdio;
+            match &mut stdio {
+                Stdio::Dup2(_) => {
+                    // The shell never uses this
+                    panic!("Unimplemented stdin dup2");
+                }
+                Stdio::Pipe => {
+                    // The shell never uses this
+                    panic!("Unimplemented stdin pipe");
+                }
 
-            Stdio::Blob(blob) => Ok(Writable::Buffer(StaticPipeWriter::create(
-                event_loop,
-                subprocess,
-                result,
-                JscSubprocess::Source::Blob(blob),
-            ))),
-            Stdio::ArrayBuffer(array_buffer) => Ok(Writable::Buffer(StaticPipeWriter::create(
-                event_loop,
-                subprocess,
-                result,
-                JscSubprocess::Source::ArrayBuffer(array_buffer),
-            ))),
-            Stdio::Memfd(memfd) => {
-                debug_assert!(memfd.is_valid());
-                Ok(Writable::Memfd(memfd))
-            }
-            Stdio::Fd(_) => Ok(Writable::Fd(result.unwrap())),
-            Stdio::Inherit => Ok(Writable::Inherit),
-            Stdio::Path(_) | Stdio::Ignore => Ok(Writable::Ignore),
-            Stdio::Ipc | Stdio::Capture(_) => Ok(Writable::Ignore),
-            Stdio::ReadableStream(_) => {
-                // The shell never uses this
-                panic!("Unimplemented stdin readable_stream");
+                Stdio::Blob(blob) => Ok(Writable::Buffer(StaticPipeWriter::create(
+                    event_loop,
+                    subprocess,
+                    result,
+                    JscSubprocess::Source::Blob(core::mem::take(blob)),
+                ))),
+                Stdio::ArrayBuffer(array_buffer) => {
+                    Ok(Writable::Buffer(StaticPipeWriter::create(
+                        event_loop,
+                        subprocess,
+                        result,
+                        JscSubprocess::Source::ArrayBuffer(core::mem::take(array_buffer)),
+                    )))
+                }
+                Stdio::Memfd(memfd) => {
+                    debug_assert!(memfd.is_valid());
+                    Ok(Writable::Memfd(*memfd))
+                }
+                Stdio::Fd(_) => Ok(Writable::Fd(result.unwrap())),
+                Stdio::Inherit => Ok(Writable::Inherit),
+                Stdio::Path(_) | Stdio::Ignore => Ok(Writable::Ignore),
+                Stdio::Ipc | Stdio::Capture(_) => Ok(Writable::Ignore),
+                Stdio::ReadableStream(_) => {
+                    // The shell never uses this
+                    panic!("Unimplemented stdin readable_stream");
+                }
             }
         }
     }

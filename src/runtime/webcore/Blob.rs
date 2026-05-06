@@ -1457,7 +1457,7 @@ pub fn mkdir_if_not_exists<T: MkdirpTarget>(
 pub trait MkdirpTarget {
     fn mkdirp_if_not_exists(&self) -> bool;
     fn set_mkdirp_if_not_exists(&mut self, v: bool);
-    fn set_system_error(&mut self, e: jsc::SystemError);
+    fn set_system_error(&mut self, e: bun_sys::SystemError);
     fn set_errno_if_present(&mut self, _e: bun_core::Error) {}
     fn set_opened_fd_if_present(&mut self, _fd: Fd) {}
 }

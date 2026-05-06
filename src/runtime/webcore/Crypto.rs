@@ -99,22 +99,26 @@ impl Crypto {
         array_a: &JSUint8Array,
         array_b: &JSUint8Array,
     ) -> JSValue {
-        let a = array_a.slice();
-        let b = array_b.slice();
+        // `JSUint8Array::slice()` takes `&mut self`; use ptr/len (`&self`) instead.
+        let a_ptr = array_a.ptr();
+        let b_ptr = array_b.ptr();
+        let len = array_a.len();
 
-        let len = a.len();
-        if b.len() != len {
-            // TODO(port): see note above re: return type
-            return global
-                .ERR(
+        if array_b.len() != len {
+            // TODO(port): see note above re: return type — DOMJIT shim expects bare JSValue
+            // but the Zig error branch returns `bun.JSError`. Mirror by throwing then
+            // returning the encoded error-builder JSValue.
+            let _ = global
+                .err(
                     bun_jsc::ErrorCode::CRYPTO_TIMING_SAFE_EQUAL_LENGTH,
                     format_args!("Input buffers must have the same byte length"),
                 )
                 .throw();
+            return JSValue::ZERO;
         }
 
-        // SAFETY: a and b are valid for `len` bytes (just obtained from JSUint8Array::slice).
-        JSValue::from(unsafe { bun_boringssl_sys::CRYPTO_memcmp(a.as_ptr().cast::<c_void>(), b.as_ptr().cast::<c_void>(), len) } == 0)
+        // SAFETY: a_ptr/b_ptr are valid for `len` bytes (just obtained from JSUint8Array).
+        JSValue::from(unsafe { bun_boringssl_sys::CRYPTO_memcmp(a_ptr.cast::<c_void>(), b_ptr.cast::<c_void>(), len) } == 0)
     }
 
     #[bun_jsc::host_fn(method)]

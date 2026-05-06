@@ -1136,9 +1136,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     #[bun_jsc::host_fn(method)]
     pub fn timeout(&mut self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old(2).slice();
+        let arguments = callframe.arguments_old::<2>().slice();
         if arguments.len() < 2 || arguments[0].is_empty_or_undefined_or_null() {
-            return global.throw_not_enough_arguments("timeout", 2, arguments.len());
+            return Err(throw_not_enough_arguments(global, "timeout", 2, arguments.len()));
         }
 
         let seconds = arguments[1];
@@ -1149,18 +1149,20 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         if !seconds.is_number() {
             // SAFETY: global_this set in init() and outlives ThisServer (JSC_BORROW)
-            return unsafe { &*self.global_this }.throw(format_args!("timeout() requires a number"));
+            return Err(unsafe { &*self.global_this }.throw(format_args!("timeout() requires a number")));
         }
-        let value = seconds.to::<c_uint>();
+        let value = seconds.to_int32() as c_uint;
 
-        if let Some(request) = arguments[0].as_::<Request>() {
-            let _ = request.request_context.set_timeout(value);
-        } else if let Some(response) = arguments[0].as_::<NodeHTTPResponse>() {
-            response.set_timeout((value % 255) as u8);
+        if let Some(request) = request_from_js(arguments[0], global) {
+            // SAFETY: from_js returns a live *mut Request
+            let _ = unsafe { &mut *request }.request_context.set_timeout(value);
+        } else if let Some(response) = node_http_response_from_js(arguments[0], global) {
+            // SAFETY: from_js returns a live *mut NodeHTTPResponse
+            unsafe { &mut *response }.set_timeout((value % 255) as u8);
         } else {
             // SAFETY: global_this set in init() and outlives ThisServer (JSC_BORROW)
-            return unsafe { &*self.global_this }
-                .throw_invalid_arguments(format_args!("timeout() requires a Request object"));
+            return Err(unsafe { &*self.global_this }
+                .throw_invalid_arguments(format_args!("timeout() requires a Request object")));
         }
 
         Ok(JSValue::UNDEFINED)
@@ -1173,22 +1175,22 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub fn set_flags(&mut self, require_host_header: bool, use_strict_method_validation: bool) {
         if let Some(app) = self.app {
             // SAFETY: FFI handle
-            unsafe { &*app }.set_flags(require_host_header, use_strict_method_validation);
+            unsafe { &mut *app }.set_flags(require_host_header, use_strict_method_validation);
         }
     }
 
     pub fn set_max_http_header_size(&mut self, max_header_size: u64) {
         if let Some(app) = self.app {
             // SAFETY: FFI handle
-            unsafe { &*app }.set_max_http_header_size(max_header_size);
+            unsafe { &mut *app }.set_max_http_header_size(max_header_size);
         }
     }
 
     pub fn append_static_route(
         &mut self,
         path: &[u8],
-        route: AnyRoute,
-        method: Option<http::Method>,
+        route: super::AnyRoute,
+        method: server_config::MethodOptional,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         self.config.append_static_route(path, route, method)

@@ -61,6 +61,36 @@ mod protocol_shims {
     }
 }
 
+/// Drain a `SmallList<T, N>` into a `Box<[T]>`. `SmallList` has no `into_vec`;
+/// this bitwise-moves each element out and `set_len(0)`s the source so its
+/// `Drop` doesn't double-free. Mirrors Zig `toOwnedSlice`.
+fn small_list_into_box<T, const N: usize>(mut sl: SmallList<T, N>) -> Box<[T]> {
+    let len = sl.len() as usize;
+    let mut v: Vec<T> = Vec::with_capacity(len);
+    {
+        let src = sl.slice();
+        for i in 0..len {
+            // SAFETY: each index is read exactly once; `set_len(0)` below
+            // prevents `SmallList::drop` from re-dropping the moved elements.
+            unsafe { v.push(core::ptr::read(src.get_unchecked(i))) };
+        }
+    }
+    sl.set_len(0);
+    v.into_boxed_slice()
+}
+
+/// Phase-A arena placeholder: leak a lowercased copy so the resulting `Str`
+/// outlives the local `Vec`. Zig used `parser.allocator().alloc(u8, n)` (the
+/// bump arena owns the buffer for the parse session). Phase B re-threads
+/// `&'bump Bump` and switches to `bumpalo::collections::Vec<'bump, u8>` —
+/// every callsite is annotated `// PERF(port): was arena alloc`.
+#[inline]
+fn leak_lowercase(name: &[u8]) -> Str {
+    let mut buf = vec![0u8; name.len()];
+    let _ = strings::copy_lowercase(name, &mut buf[..]);
+    Box::leak(buf.into_boxed_slice())
+}
+
 /// Instantiation of generic selector structs using our implementation of the `SelectorImpl` trait.
 pub type Component = GenericComponent<impl_::Selectors>;
 pub type Selector = GenericSelector<impl_::Selectors>;
@@ -783,13 +813,19 @@ impl Direction {
     // PORT NOTE: `enum_property_util::parse` bounds on `EnumProperty` (a
     // strum-driven case-insensitive `from_name`). Two variants — hand-roll.
     pub fn parse(input: &mut CssParser) -> CResult<Self> {
-        let ident = input.expect_ident()?;
+        let location = input.current_source_location();
+        // PORT NOTE: clone the token so the `&mut *input` borrow is released
+        // before we may need `input` again to construct the error.
+        let tok = input.next()?.clone();
+        let Token::Ident(ident) = tok else {
+            return Err(location.new_unexpected_token_error(tok));
+        };
         if strings::eql_case_insensitive_ascii_check_length(ident, b"ltr") {
             Ok(Direction::Ltr)
         } else if strings::eql_case_insensitive_ascii_check_length(ident, b"rtl") {
             Ok(Direction::Rtl)
         } else {
-            Err(input.new_unexpected_token_error(Token::Ident(ident)))
+            Err(location.new_unexpected_token_error(Token::Ident(ident)))
         }
     }
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -1254,7 +1290,18 @@ impl<'a> SelectorParser<'a> {
         // todo_stuff.match_ignore_ascii_case
         let pseudo_class = 'pseudo_class: {
             if strings::eql_case_insensitive_ascii_check_length(name, b"lang") {
-                let languages = parser.parse_comma_separated(CssParser::expect_ident_or_string)?;
+                // PORT NOTE: `expect_ident_or_string` returns `&'_ [u8]`
+                // (lifetime-tied to `&mut self`), which can't satisfy
+                // `parse_comma_separated`'s HRTB. Clone the token to extract
+                // the underlying `&'static [u8]` payload directly.
+                let languages = parser.parse_comma_separated(|p| -> CResult<Str> {
+                    let loc = p.current_source_location();
+                    let tok = p.next()?.clone();
+                    match tok {
+                        Token::Ident(i) | Token::QuotedString(i) => Ok(i),
+                        t => Err(loc.new_unexpected_token_error(t)),
+                    }
+                })?;
                 return Ok(PseudoClass::Lang { languages });
             } else if strings::eql_case_insensitive_ascii_check_length(name, b"dir") {
                 break 'pseudo_class PseudoClass::Dir {
@@ -2682,7 +2729,7 @@ pub fn parse_type_selector<Impl: BunSelectorImpl>(
     let result = match parse_qualified_name::<Impl>(parser, input, false) {
         Ok(v) => v,
         Err(e) => {
-            if matches!(e.kind, css::ParseErrorKind::Basic(css::BasicParseErrorKind::EndOfInput)) {
+            if matches!(e.kind, css::ParseErrorKind::basic(css::BasicParseErrorKind::end_of_input)) {
                 return Ok(false);
             }
             return Err(e);
@@ -2743,13 +2790,10 @@ pub fn parse_type_selector<Impl: BunSelectorImpl>(
         sink.push_simple_selector(GenericComponent::LocalName(LocalName {
             lower_name: {
                 // PERF: check if it's already lowercase
-                // PERF(port): was arena alloc — profile in Phase B
-                let mut lowercase = vec![0u8; name.len()];
-                Ident { v: strings::copy_lowercase(name, &mut lowercase[..]).into() }
-                // TODO(port): `copy_lowercase` returns the slice into `lowercase`; in Zig the
-                // arena owns the buffer. Phase B: bump-alloc and store `&'bump [u8]`.
+                // PERF(port): was arena alloc — profile in Phase B (see `leak_lowercase`).
+                Ident { v: leak_lowercase(name) as *const [u8] }
             },
-            name: Ident { v: name },
+            name: Ident { v: name as *const [u8] },
         }));
     } else {
         sink.push_simple_selector(GenericComponent::ExplicitUniversalType);
@@ -2964,13 +3008,8 @@ pub fn parse_attribute_selector<Impl: BunSelectorImpl>(
             Ok(v) => v.clone(),
             Err(_) => {
                 // [foo]
-                let local_name_lower: Str = {
-                    // PERF(port): was arena alloc — profile in Phase B
-                    let mut lower = vec![0u8; local_name.len()];
-                    let _ = strings::copy_lowercase(local_name, &mut lower);
-                    lower.into()
-                    // TODO(port): arena lifetime for lowercased name
-                };
+                // PERF(port): was arena alloc — profile in Phase B (see `leak_lowercase`).
+                let local_name_lower: Str = leak_lowercase(local_name);
                 if let Some(ns) = namespace {
                     let x = attrs::AttrSelectorWithOptionalNamespace::<Impl> {
                         namespace: Some(ns),
@@ -3013,7 +3052,7 @@ pub fn parse_attribute_selector<Impl: BunSelectorImpl>(
     let value_str: Str = match input.expect_ident_or_string() {
         Ok(v) => v,
         Err(e) => {
-            if let css::ParseErrorKind::Basic(css::BasicParseErrorKind::UnexpectedToken(tok)) = &e.kind {
+            if let css::ParseErrorKind::basic(css::BasicParseErrorKind::unexpected_token(tok)) = &e.kind {
                 return Err(e.location.new_custom_error(
                     SelectorParseErrorKind::BadValueInAttr(tok.clone()).into_default_parser_error(),
                 ));

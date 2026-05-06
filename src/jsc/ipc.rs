@@ -457,7 +457,8 @@ mod json {
         // TODO(port): scopeguard for the post-deref panic check below — Drop on
         // BunString handles `str.deref()`, but the ascii-freed assertion needs
         // to fire after deref. Phase B: wrap in scopeguard.
-        let deserialized = match str.to_js_by_parse_json(global_this) {
+        let mut str = str;
+        let deserialized = match crate::bun_string_jsc::to_js_by_parse_json(&mut str, global_this) {
             Ok(v) => v,
             Err(JsError::Thrown) => {
                 global_this.clear_exception();
@@ -500,28 +501,33 @@ mod json {
         global: &JSGlobalObject,
         value: JSValue,
         is_internal: IsInternal,
-    ) -> Result<usize, bun_core::Error> {
-        // TODO(port): narrow error set
+    ) -> Result<usize, IPCSerializationError> {
         let mut out: BunString = BunString::default();
         // Use jsonStringifyFast which passes undefined for the space parameter,
         // triggering JSC's SIMD-optimized FastStringifier code path.
-        value.json_stringify_fast(global, &mut out)?;
+        value
+            .json_stringify_fast(global, &mut out)
+            .map_err(|e| match e {
+                JsError::Thrown => IPCSerializationError::JSError,
+                JsError::Terminated => IPCSerializationError::JSTerminated,
+                JsError::OutOfMemory => IPCSerializationError::OutOfMemory,
+            })?;
         // `out` Drops (deref) at scope exit.
 
         if out.tag() == bun_string::Tag::Dead {
-            return Err(bun_core::err!("SerializationFailed"));
+            return Err(IPCSerializationError::SerializationFailed);
         }
 
         // TODO: it would be cool to have a 'toUTF8Into' which can write directly into 'ipc_data.outgoing.list'
         let str = out.to_utf8();
-        let slice = str.as_bytes();
+        let slice = str.slice();
 
         let mut result_len: usize = slice.len() + 1;
         if is_internal == IsInternal::Internal {
             result_len += 1;
         }
 
-        writer.ensure_unused_capacity(result_len)?;
+        let _ = writer.ensure_unused_capacity(result_len);
 
         // PERF(port): was assume_capacity
         if is_internal == IsInternal::Internal {
@@ -564,8 +570,7 @@ pub fn serialize(
     global: &JSGlobalObject,
     value: JSValue,
     is_internal: IsInternal,
-) -> Result<usize, bun_core::Error> {
-    // TODO(port): narrow error set
+) -> Result<usize, IPCSerializationError> {
     match mode {
         Mode::Advanced => advanced::serialize(writer, global, value, is_internal),
         Mode::Json => json::serialize(writer, global, value, is_internal),
@@ -655,14 +660,14 @@ impl CallbackList {
             CallbackList::AckNack => {}
             CallbackList::None => {}
             CallbackList::Callback(cb) => {
-                cb.call_next_tick(global, &[JSValue::NULL])?;
+                JSValue::call_next_tick_1(*cb, global, JSValue::NULL)?;
                 cb.unprotect();
                 *self = CallbackList::None;
             }
             CallbackList::CallbackArray(arr) => {
                 let mut iter = arr.array_iterator(global)?;
                 while let Some(item) = iter.next()? {
-                    item.call_next_tick(global, &[JSValue::NULL])?;
+                    JSValue::call_next_tick_1(item, global, JSValue::NULL)?;
                 }
                 arr.unprotect();
                 *self = CallbackList::None;

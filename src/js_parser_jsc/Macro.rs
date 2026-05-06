@@ -467,11 +467,10 @@ impl<'a> Run<'a> {
     }
 
     pub fn run(&mut self, value: JSValue) -> Result<Expr, MacroError> {
-        // TODO(b2-blocked): bun_jsc::ConsoleObject::formatter::Tag (Private / ToJSON variants)
-        #[cfg(any())]
-        {
         use ConsoleObject::formatter::Tag as T;
-        match ConsoleObject::formatter::Tag::get(value, self.global)?.tag {
+        // PORT NOTE: `Tag::get` returns `TagResult { tag: TagPayload, .. }`;
+        // collapse the payload to its discriminant via `.tag()`.
+        match T::get(value, self.global)?.tag.tag() {
             T::Error => self.coerce(T::Error, value),
             T::Undefined => self.coerce(T::Undefined, value),
             T::Null => self.coerce(T::Null, value),
@@ -491,19 +490,18 @@ impl<'a> Run<'a> {
                     .add_error_fmt(
                         Some(self.source),
                         self.caller.loc,
+                        // PORT NOTE: `JSType` derives `Debug` (not `IntoStaticStr`);
+                        // Zig's `@tagName` ≈ `{:?}` here.
                         format_args!(
-                            "cannot coerce {} ({}) to Bun's AST. Please return a simpler type",
+                            "cannot coerce {} ({:?}) to Bun's AST. Please return a simpler type",
                             bstr::BStr::new(name),
-                            <&'static str>::from(value.js_type()),
+                            value.js_type(),
                         ),
                     )
                     .expect("unreachable");
-                return Err(MacroError::MacroFailed);
+                Err(MacroError::MacroFailed)
             }
         }
-        }
-        let _ = value;
-        Err(MacroError::MacroFailed)
     }
 
     // PORT NOTE: Zig dispatched on `comptime tag`; that requires

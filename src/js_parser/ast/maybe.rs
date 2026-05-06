@@ -727,71 +727,55 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 
     fn maybe_rewrite_property_access_for_namespace(
         &mut self,
-        name: &[u8],
+        name: &'a [u8],
         target: &Expr,
         loc: logger::Loc,
         name_loc: logger::Loc,
     ) -> Option<Expr> {
         let p = self;
-        let _ = (name, target, loc, name_loc);
-        todo!("b2-ast-E: maybe_rewrite_property_access_for_namespace body");
-        #[cfg(any())]
-        // blocked_on: P::{ignore_usage_of_identifier_in_dot_chain, wrap_inlined_enum} gated (P.rs:625);
-        //   RecentlyVisitedTSNamespace.map field shape; E::Dot has no Default (needs full struct-init).
-        {
-        if let Some(value) = p.ts_namespace.map.unwrap().get(name) {
+        // SAFETY: ts_namespace.map is `Option<*const TSNamespaceMemberMap>` set by the caller
+        // immediately before calling us; the map is arena-owned and valid for parser 'a.
+        let map = unsafe { &*p.ts_namespace.map.unwrap() };
+        if let Some(value) = map.get(name) {
             match value.data {
-                js_ast::TSNamespaceMemberData::EnumNumber(num) => {
+                js_ast::ts::Data::EnumNumber(num) => {
                     p.ignore_usage_of_identifier_in_dot_chain(*target);
                     return Some(p.wrap_inlined_enum(
-                        Expr {
-                            loc,
-                            data: Expr::Data::ENumber(E::Number { value: num }),
-                        },
+                        Expr { loc, data: js_ast::ExprData::ENumber(E::Number { value: num }) },
                         name,
                     ));
                 }
 
-                js_ast::TSNamespaceMemberData::EnumString(str_) => {
+                js_ast::ts::Data::EnumString(str_ptr) => {
                     p.ignore_usage_of_identifier_in_dot_chain(*target);
-                    return Some(p.wrap_inlined_enum(
-                        Expr {
-                            loc,
-                            data: Expr::Data::EString(str_),
-                        },
-                        name,
-                    ));
+                    // SAFETY: arena-owned EString valid for 'a.
+                    let value = p.new_expr(unsafe { &*str_ptr }, loc);
+                    return Some(p.wrap_inlined_enum(value, name));
                 }
 
-                js_ast::TSNamespaceMemberData::Namespace(namespace) => {
+                js_ast::ts::Data::Namespace(namespace) => {
                     // If this isn't a constant, return a clone of this property access
                     // but with the namespace member data associated with it so that
                     // more property accesses off of this property access are recognized.
+                    // TODO(port): E::Dot.name is `&'static [u8]` pending 'bump threading.
+                    // SAFETY: name is arena-owned ('a) and outlives every Expr.
+                    let name_static: &'static [u8] =
+                        unsafe { core::mem::transmute::<&'a [u8], &'static [u8]>(name) };
                     let expr = if js_lexer::is_identifier(name) {
                         p.new_expr(
-                            E::Dot {
-                                target: *target,
-                                name,
-                                name_loc,
-                                ..Default::default()
-                            },
+                            E::Dot { target: *target, name: name_static, name_loc, ..Default::default() },
                             loc,
                         )
                     } else {
                         p.new_expr(
-                            E::Dot {
-                                target: *target,
-                                name,
-                                name_loc,
-                                ..Default::default()
-                            },
+                            E::Dot { target: *target, name: name_static, name_loc, ..Default::default() },
                             loc,
                         )
                     };
 
-                    p.ts_namespace = js_parser::TSNamespace {
+                    p.ts_namespace = crate::ast::p::RecentlyVisitedTSNamespace {
                         expr: expr.data,
-                        map: Some(namespace),
+                        map: Some(namespace as *const _),
                     };
 
                     return Some(expr);
@@ -802,7 +786,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         }
 
         None
-        } // end #[cfg(any())]
     }
 
     pub fn check_if_defined_helper(&mut self, expr: Expr) -> Result<Expr, bun_core::Error> {

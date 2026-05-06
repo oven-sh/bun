@@ -792,10 +792,12 @@ dependencies = [
  "bun_http_types",
  "bun_io",
  "bun_jsc",
+ "bun_libdeflate_sys",
  "bun_ptr",
  "bun_string",
  "bun_uws",
  "bun_uws_sys",
+ "bun_zlib",
  "const_format",
  "enum-map",
  "enumset",
@@ -804,6 +806,7 @@ dependencies = [
  "phf",
  "scopeguard",
  "strum",
+ "thiserror",
 ]
 
 [[package]]

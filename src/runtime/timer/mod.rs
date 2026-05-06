@@ -276,7 +276,7 @@ impl ImmediateObject {
     #[inline]
     pub unsafe fn run_immediate_task(
         this: *mut Self,
-        vm: *mut crate::jsc::VirtualMachine,
+        vm: *mut crate::jsc::virtual_machine::VirtualMachine,
     ) -> bool {
         // SAFETY: per fn contract — `this` is live; `internals` is an embedded
         // field. Do NOT form `&mut *this` (the body may `deref()` and free).

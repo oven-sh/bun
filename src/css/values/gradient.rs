@@ -1055,15 +1055,11 @@ pub enum GradientItem<D> {
     Hint(D),
 }
 
-impl<D> GradientItem<D>
-where
-    D: Clone + PartialEq + GradientPosition + GradientPosition + GradientPosition,
-    // TODO(port): exact trait bounds for D — Phase B should narrow these.
-{
+impl<D: GradientPosition> GradientItem<D> {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
             GradientItem::ColorStop(c) => c.to_css(dest),
-            GradientItem::Hint(h) => css::generic::to_css(h, dest),
+            GradientItem::Hint(h) => h.to_css(dest),
         }
     }
 
@@ -1071,11 +1067,8 @@ where
         self == other
     }
 
-    pub fn deep_clone(&self, bump: &Arena) -> Self {
-        match self {
-            GradientItem::ColorStop(c) => GradientItem::ColorStop(c.deep_clone(bump)),
-            GradientItem::Hint(h) => GradientItem::Hint(h.deep_clone(bump)),
-        }
+    pub fn deep_clone(&self, _bump: &Arena) -> Self {
+        self.clone()
     }
 
     pub fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
@@ -1092,9 +1085,9 @@ where
         match self {
             GradientItem::ColorStop(stop) => GradientItem::ColorStop(ColorStop {
                 color: stop.color.get_fallback(bump, kind),
-                position: stop.position.as_ref().map(|p| p.deep_clone(bump)),
+                position: stop.position.clone(),
             }),
-            GradientItem::Hint(_) => self.deep_clone(bump),
+            GradientItem::Hint(_) => self.clone(),
         }
     }
 
@@ -1119,14 +1112,23 @@ pub enum EndingShape {
 }
 
 impl EndingShape {
-    // TODO(port): css.DeriveParse(@This()).parse — derive macro / trait impl.
+    // TODO(port): css.DeriveParse(@This()).parse — was comptime field-walk.
+    // Hand-expanded: try each variant in order (Ellipse first, matching Zig's
+    // field order), exactly as `DeriveParse` would generate.
     pub fn parse(input: &mut css::Parser) -> Result<EndingShape> {
-        css::derive_parse::<EndingShape>(input)
+        if let Ok(e) = input.try_parse(Ellipse::parse) {
+            return Ok(EndingShape::Ellipse(e));
+        }
+        Circle::parse(input).map(EndingShape::Circle)
     }
 
-    // TODO(port): css.DeriveToCss(@This()).toCss — derive macro / trait impl.
+    // TODO(port): css.DeriveToCss(@This()).toCss — was comptime field-walk.
+    // Hand-expanded.
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        css::derive_to_css(self, dest)
+        match self {
+            EndingShape::Ellipse(e) => e.to_css(dest),
+            EndingShape::Circle(c) => c.to_css(dest),
+        }
     }
 
     pub fn default() -> EndingShape {
@@ -1184,19 +1186,10 @@ pub enum WebKitGradientPointComponent<S> {
     Side(S),
 }
 
-impl<S> WebKitGradientPointComponent<S>
-where
-    S: Clone
-        + PartialEq
-        + GradientPosition
-        + GradientPosition
-        + css::css_values::position::IntoLengthPercentage
-        + GradientPosition,
-    // TODO(port): exact trait bounds for S — Phase B should narrow these.
-{
+impl<S: GradientSideKeyword> WebKitGradientPointComponent<S> {
     pub fn parse(input: &mut css::Parser) -> Result<Self> {
         if input
-            .try_parse(|i| i.expect_ident_matching("center"))
+            .try_parse(|i| i.expect_ident_matching(b"center"))
             .is_ok()
         {
             return Ok(WebKitGradientPointComponent::Center);
@@ -1206,7 +1199,7 @@ where
             return Ok(WebKitGradientPointComponent::Number(number));
         }
 
-        let keyword = css::generic::parse::<S>(input)?;
+        let keyword = S::parse(input)?;
         Ok(WebKitGradientPointComponent::Side(keyword))
     }
 
@@ -1343,22 +1336,18 @@ pub struct ColorStop<D> {
     pub position: Option<D>,
 }
 
-impl<D> ColorStop<D>
-where
-    D: Clone + PartialEq + GradientPosition + GradientPosition,
-    // TODO(port): exact trait bounds for D — Phase B should narrow these.
-{
+impl<D: GradientPosition> ColorStop<D> {
     pub fn parse(input: &mut css::Parser) -> Result<ColorStop<D>> {
         let color = CssColor::parse(input)?;
-        let position = input.try_parse(css::generic::parse_for::<D>).ok();
+        let position = input.try_parse(D::parse).ok();
         Ok(ColorStop { color, position })
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         self.color.to_css(dest)?;
         if let Some(position) = &self.position {
-            dest.write_char(' ')?;
-            css::generic::to_css(position, dest)?;
+            dest.write_char(b' ')?;
+            position.to_css(dest)?;
         }
         Ok(())
     }

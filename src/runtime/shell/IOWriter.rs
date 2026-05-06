@@ -445,21 +445,23 @@ impl IOWriter {
     }
 
     fn get_buffer_impl(&self) -> &[u8] {
+        // PORT NOTE: reshaped for borrowck — re-derive `state()` after
+        // `skip_dead()` instead of holding one `&mut State` across it.
+        {
+            let s = self.state();
+            if s.writer_idx >= s.writers.len() {
+                return &[];
+            }
+            if s.writers[s.writer_idx].is_dead() {
+                drop(s);
+                self.skip_dead();
+            }
+        }
         let s = self.state();
-        let writer = loop {
-            if s.writer_idx >= s.writers.len() {
-                return &[];
-            }
-            let w = &s.writers[s.writer_idx];
-            if !w.is_dead() {
-                break w;
-            }
-            self.skip_dead();
-            if s.writer_idx >= s.writers.len() {
-                return &[];
-            }
-            break &s.writers[s.writer_idx];
-        };
+        if s.writer_idx >= s.writers.len() {
+            return &[];
+        }
+        let writer = &s.writers[s.writer_idx];
         let remaining = writer.len - writer.written;
         debug_assert!(writer.len != writer.written);
         // SAFETY: detach the borrow from `s` (UnsafeCell interior) so the
@@ -524,13 +526,16 @@ impl IOWriter {
     /// Spec: IOWriter.zig `doFileWrite`. POSIX-only.
     #[cfg(not(windows))]
     fn do_file_write(&self) -> Yield {
-        let s = self.state();
-        debug_assert!(!s.flags.pollable);
-        debug_assert!(s.writer_idx < s.writers.len());
+        {
+            let s = self.state();
+            debug_assert!(!s.flags.pollable);
+            debug_assert!(s.writer_idx < s.writers.len());
+        }
 
         let _guard = scopeguard::guard((), |_| self.set_writing(false));
         self.skip_dead();
 
+        let s = self.state();
         let idx = s.writer_idx;
         debug_assert!(!s.writers[idx].is_dead());
 

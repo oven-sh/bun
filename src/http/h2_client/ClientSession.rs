@@ -151,7 +151,11 @@ impl ClientSession {
         unsafe { &mut *self.hpack }
     }
 
-    pub fn create(
+    // PORT NOTE: named `create_session` (not `create`) to avoid colliding with
+    // the `todo!()` bridge `impl h2::ClientSession { create/attach/enqueue }`
+    // in lib.rs while that file is outside this task's edit scope.
+    // TODO(b2-bridge): rename back to `create` once lib.rs stubs are removed.
+    pub fn create_session(
         ctx: *mut NewHTTPContext<true>,
         socket: Socket,
         client: &HTTPClient,
@@ -238,7 +242,7 @@ impl ClientSession {
             self.maybe_release();
             return;
         }
-        self.attach(client);
+        self.attach_client(client);
         // If attach() poisoned the encoder and left the session empty, release
         // it now — adopt() callers (keep-alive resume, active-session match)
         // have no tail maybeRelease of their own.
@@ -249,7 +253,8 @@ impl ClientSession {
 
     /// Park a coalesced request until the server's SETTINGS arrive. Abort
     /// is routed via the session socket so `abortByHttpId` can find it.
-    pub fn enqueue(&mut self, client: &mut HTTPClient) {
+    // PORT NOTE: see `create_session` rename note.
+    pub fn enqueue_client(&mut self, client: &mut HTTPClient) {
         client.h2_register_abort_tracker(self.socket);
         self.pending_attach.push(client as *mut _);
         self.rearm_timeout();
@@ -268,7 +273,7 @@ impl ClientSession {
             } else if client.signals.get(signals::Field::Aborted) {
                 client.h2_fail(err!(Aborted));
             } else if self.has_headroom() {
-                self.attach(client);
+                self.attach_client(client);
             } else {
                 client.h2_retry_after_coalesce();
             }

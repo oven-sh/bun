@@ -693,7 +693,7 @@ impl<C: SourceContext> NewSource<C> {
 
         self.ref_count -= 1;
         if self.ref_count == 0 {
-            self.close_jsvalue = bun_jsc::Strong::empty(); // close_jsvalue.deinit()
+            self.close_jsvalue.deinit();
             self.context.deinit_fn();
             return 0;
         }
@@ -714,19 +714,14 @@ impl<C: SourceContext> NewSource<C> {
             if !self.this_jsvalue.is_empty() {
                 break 'brk self.this_jsvalue;
             }
-            break 'brk self.to_js(global_this);
+            break 'brk <Self as NewSourceCodegen>::to_js(self, global_this);
         };
         out_value.ensure_still_alive();
         self.this_jsvalue = out_value;
         ReadableStream::from_native(global_this, out_value)
     }
 
-    // TODO(port): codegen-provided — `// TODO(b2-blocked): #[bun_jsc::JsClass]` wires this.
-    pub fn to_js(&mut self, _global_this: &JSGlobalObject) -> JSValue {
-        unimplemented!("provided by JsClass codegen")
-    }
-
-    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
+    // TODO(port): #[bun_jsc::host_fn(method)]
     pub fn set_raw_mode_from_js(
         this: &mut Self,
         global: &JSGlobalObject,
@@ -766,14 +761,14 @@ impl<C: SourceContext> NewSource<C> {
 pub mod js_readable_stream_source {
     use super::*;
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
+    // TODO(port): #[bun_jsc::host_fn(method)]
     pub fn pull<C: SourceContext>(
         this: &mut NewSource<C>,
         global_this: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
         let this_jsvalue = call_frame.this();
-        let arguments = call_frame.arguments_old(2);
+        let arguments = call_frame.arguments_old::<2>();
         let view = arguments.ptr[0];
         view.ensure_still_alive();
         this.this_jsvalue = this_jsvalue;
@@ -784,7 +779,7 @@ pub mod js_readable_stream_source {
         process_result::<C>(this_jsvalue, global_this, arguments.ptr[1], result)
     }
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(method)]
+    // TODO(port): #[bun_jsc::host_fn(method)]
     pub fn start<C: SourceContext>(
         this: &mut NewSource<C>,
         global_this: &JSGlobalObject,
@@ -796,7 +791,7 @@ pub mod js_readable_stream_source {
             streams::Start::Empty => Ok(JSValue::js_number(0)),
             streams::Start::Ready => Ok(JSValue::js_number(16384)),
             streams::Start::ChunkSize(size) => Ok(JSValue::js_number(size)),
-            streams::Start::Err(err) => global_this.throw_value(err.to_js(global_this)?),
+            streams::Start::Err(err) => Err(global_this.throw_value(err.to_js(global_this))),
             rc => rc.to_js(global_this),
         }
     }

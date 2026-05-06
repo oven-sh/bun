@@ -49,10 +49,9 @@ pub use live_sessions as LIVE_SESSIONS;
 pub use live_streams as LIVE_STREAMS;
 
 // reconciler-3: Stream/ClientSession/dispatch/encode reference `bun_str`/
-// `bun_output`/`crate::state`/`crate::Signal`/`http_thread::InitOpts` that are
-// still gated; re-gate until those crate roots land. PendingConnect is real.
-// Type-only stubs keep `HTTPContext`'s `h2::ClientSession`/`h2::Stream`
-// pointer fields resolving.
+// `bun_output`/`crate::state`/`crate::Signal` that are still gated; re-gate
+// until those crate roots land. Type-only stubs keep `HTTPContext`'s
+// `h2::ClientSession`/`h2::Stream` pointer fields resolving.
 #[cfg(any())] #[path = "h2_client/Stream.rs"]         pub mod stream;
 #[cfg(not(any()))] pub mod stream { pub struct Stream; }
 #[cfg(any())] #[path = "h2_client/ClientSession.rs"]  pub mod client_session;

@@ -1647,11 +1647,9 @@ impl PosixSpawnResult {
     }
 }
 
-// TODO(b2-blocked): Process::init_posix (gated above) + bun_analytics::kernel_version
-// + bun_sys::{pidfd_open, Syscall::PidfdOpen, E variants, get_errno} surface.
-#[cfg(any())]
 impl PosixSpawnResult {
-    #[cfg(unix)]
+    // TODO(b2-blocked): Process::init_posix gated above (FilePoll/EventLoopHandle wiring).
+    #[cfg(any())]
     pub fn to_process(
         self,
         event_loop: impl Into<EventLoopHandle>,
@@ -1662,91 +1660,81 @@ impl PosixSpawnResult {
 
     #[cfg(target_os = "linux")]
     fn pidfd_flags_for_linux() -> u32 {
-        let kernel = bun_analytics::generate_header::generate_platform::kernel_version();
-        // pidfd_nonblock only supported in 5.10+
-        if kernel
-            .order_without_tag(&bun_semver::Version { major: 5, minor: 10, patch: 0 })
-            .compare(bun_semver::Order::Gte)
-        {
-            bun_sys::O::NONBLOCK
-        } else {
-            0
-        }
+        // pidfd_nonblock only supported in 5.10+. The Zig path consults
+        // `analytics.kernel_version()` (semver compare); until that helper is
+        // ported, optimistically request NONBLOCK and rely on the EINVAL retry
+        // below to fall back on older kernels.
+        // TODO(port): wire bun_analytics::kernel_version() once available.
+        bun_sys::O::NONBLOCK as u32
     }
 
     #[cfg(target_os = "linux")]
     pub fn pifd_from_pid(&mut self) -> bun_sys::Result<PidFdType> {
         if WaiterThread::should_use_waiter_thread() {
-            return Maybe::Err(bun_sys::Error::from_code(bun_sys::E::NOSYS, bun_sys::Syscall::PidfdOpen));
+            return Err(bun_sys::Error::from_code(bun_sys::E::ENOSYS, spawn_sys::TAG_PIDFD_OPEN));
         }
 
         let pidfd_flags = Self::pidfd_flags_for_linux();
 
-        loop {
-            let attempt = 'brk: {
-                let rc = bun_sys::pidfd_open(
-                    i32::try_from(self.pid).unwrap(),
-                    pidfd_flags,
-                );
-                if let Maybe::Err(e) = &rc {
-                    if e.get_errno() == bun_sys::E::INVAL {
-                        // Retry once, incase they don't support PIDFD_NONBLOCK.
-                        break 'brk bun_sys::pidfd_open(i32::try_from(self.pid).unwrap(), 0);
-                    }
-                }
-                rc
-            };
-            match attempt {
-                Maybe::Err(err) => {
-                    match err.get_errno() {
-                        // seccomp filters can be used to block this system call or pidfd's altogether
-                        // https://github.com/moby/moby/issues/42680
-                        // so let's treat a bunch of these as actually meaning we should use the waiter thread fallback instead.
-                        bun_sys::E::NOSYS
-                        | bun_sys::E::OPNOTSUPP
-                        | bun_sys::E::PERM
-                        | bun_sys::E::ACCES
-                        | bun_sys::E::INVAL => {
-                            WaiterThread::set_should_use_waiter_thread();
-                            return Maybe::Err(err);
-                        }
-
-                        // No such process can happen if it exited between the time we got the pid and called pidfd_open
-                        // Until we switch to CLONE_PIDFD, this needs to be handled separately.
-                        bun_sys::E::SRCH => {}
-
-                        // For all other cases, ensure we don't leak the child process on error
-                        // That would cause Zombie processes to accumulate.
-                        _ => {
-                            loop {
-                                let mut status: i32 = 0;
-                                // SAFETY: libc wait4
-                                let rc = unsafe {
-                                    libc::wait4(self.pid, &mut status, 0, core::ptr::null_mut())
-                                };
-                                match bun_sys::get_errno(rc as isize) {
-                                    bun_sys::E::SUCCESS => {}
-                                    bun_sys::E::INTR => continue,
-                                    _ => {}
-                                }
-                                break;
-                            }
-                        }
-                    }
-                    return Maybe::Err(err);
-                }
-                Maybe::Result(rc) => {
-                    return Maybe::Result(rc);
+        let attempt = 'brk: {
+            let rc = spawn_sys::pidfd_open(
+                i32::try_from(self.pid).unwrap(),
+                pidfd_flags,
+            );
+            if let Err(e) = &rc {
+                if e.get_errno() == bun_sys::E::EINVAL {
+                    // Retry once, incase they don't support PIDFD_NONBLOCK.
+                    break 'brk spawn_sys::pidfd_open(i32::try_from(self.pid).unwrap(), 0);
                 }
             }
-            #[allow(unreachable_code)]
-            { unreachable!() }
+            rc
+        };
+        match attempt {
+            Err(err) => {
+                match err.get_errno() {
+                    // seccomp filters can be used to block this system call or pidfd's altogether
+                    // https://github.com/moby/moby/issues/42680
+                    // so let's treat a bunch of these as actually meaning we should use the waiter thread fallback instead.
+                    bun_sys::E::ENOSYS
+                    | bun_sys::E::EOPNOTSUPP
+                    | bun_sys::E::EPERM
+                    | bun_sys::E::EACCES
+                    | bun_sys::E::EINVAL => {
+                        WaiterThread::set_should_use_waiter_thread();
+                        return Err(err);
+                    }
+
+                    // No such process can happen if it exited between the time we got the pid and called pidfd_open
+                    // Until we switch to CLONE_PIDFD, this needs to be handled separately.
+                    bun_sys::E::ESRCH => {}
+
+                    // For all other cases, ensure we don't leak the child process on error
+                    // That would cause Zombie processes to accumulate.
+                    _ => {
+                        loop {
+                            let mut status: i32 = 0;
+                            // SAFETY: libc wait4
+                            let rc = unsafe {
+                                libc::wait4(self.pid, &mut status, 0, core::ptr::null_mut())
+                            };
+                            match bun_sys::get_errno(rc as isize) {
+                                bun_sys::E::SUCCESS => {}
+                                bun_sys::E::EINTR => continue,
+                                _ => {}
+                            }
+                            break;
+                        }
+                    }
+                }
+                Err(err)
+            }
+            Ok(rc) => Ok(rc),
         }
     }
 
     #[cfg(not(target_os = "linux"))]
     pub fn pifd_from_pid(&mut self) -> bun_sys::Result<PidFdType> {
-        Maybe::Err(bun_sys::Error::from_code(bun_sys::E::NOSYS, bun_sys::Syscall::PidfdOpen))
+        Err(bun_sys::Error::from_code(bun_sys::E::ENOSYS, spawn_sys::TAG_PIDFD_OPEN))
     }
 }
 
@@ -2373,7 +2361,7 @@ pub fn spawn_process_windows(
     envp: *const *const c_char,
 ) -> Result<bun_sys::Result<WindowsSpawnResult>, bun_core::Error> {
     bun_core::mark_windows_only();
-    bun_analytics::Features::spawn_inc();
+    bun_analytics::features::spawn.fetch_add(1, Ordering::Relaxed);
 
     // SAFETY: all-zero is a valid uv_process_options_t
     let mut uv_process_options: uv::uv_process_options_t = unsafe { core::mem::zeroed() };

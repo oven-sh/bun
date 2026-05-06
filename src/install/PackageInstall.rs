@@ -887,38 +887,40 @@ impl<'a> PackageInstall<'a> {
 
     // ───────────────────────────── install backends ─────────────────────────────
 
+    #[cfg(target_os = "macos")]
     fn install_with_clonefile_each_dir(
         &mut self,
         destination_dir: Dir,
     ) -> Result<InstallResult, bun_core::Error> {
-        let cached_package_dir = match bun_sys::open_dir(self.cache_dir, self.cache_dir_subpath) {
+        let cached_package_dir = match open_dir(self.cache_dir, self.cache_dir_subpath) {
             Ok(d) => d,
             Err(err) => return Ok(InstallResult::fail(err, Step::OpeningCacheDir, None)),
         };
         let _close_cache = scopeguard::guard(cached_package_dir, |d| d.close());
 
-        let mut walker_ = match Walker::walk(
-            Fd::from_std_dir(cached_package_dir),
-            &[] as &[OSPathSlice],
-            &[] as &[OSPathSlice],
+        let mut walker_ = match walker_skippable::walk(
+            cached_package_dir.fd(),
+            &[] as &[&OSPathSlice],
+            &[] as &[&OSPathSlice],
         ) {
             Ok(w) => w,
-            Err(err) => return Ok(InstallResult::fail(err, Step::OpeningCacheDir, None)),
+            Err(err) => return Ok(InstallResult::fail(err.into(), Step::OpeningCacheDir, None)),
         };
-        walker_.resolve_unknown_entry_types = true;
+        // TODO(port): `resolve_unknown_entry_types` is private on `Walker`; Zig sets it
+        // post-construction. Expose a setter on bun_sys::walker_skippable in Phase B.
         // walker_ dropped at scope exit
 
         fn copy(destination_dir_: Dir, walker: &mut Walker) -> Result<u32, bun_core::Error> {
             // TODO(port): narrow error set
             let mut real_file_count: u32 = 0;
             let mut stackpath = [0u8; MAX_PATH_BYTES];
-            while let Some(entry) = walker.next().unwrap()? {
+            while let Some(entry) = walker.next()? {
                 match entry.kind {
-                    Walker::Kind::Directory => {
-                        let _ = sys::mkdirat(Fd::from_std_dir(destination_dir_), entry.path, 0o755);
+                    EntryKind::Directory => {
+                        let _ = sys::mkdirat(destination_dir_.fd(), entry.path, 0o755);
                     }
-                    Walker::Kind::File => {
-                        stackpath[..entry.path.len()].copy_from_slice(entry.path);
+                    EntryKind::File => {
+                        stackpath[..entry.path.len()].copy_from_slice(entry.path.as_bytes());
                         stackpath[entry.path.len()] = 0;
                         // SAFETY: NUL written above.
                         let path_ =
@@ -932,22 +934,22 @@ impl<'a> PackageInstall<'a> {
                         // SAFETY: FFI — basename/path_ are valid NUL-terminated ZStr buffers
                         // built into stackpath above; fds are open for the loop iteration.
                         match unsafe {
-                            bun_sys::darwin::clonefileat(
+                            clonefileat(
                                 entry.dir.cast(),
                                 basename.as_ptr(),
-                                destination_dir_.fd(),
+                                destination_dir_.fd().cast(),
                                 path_.as_ptr(),
                                 0,
                             )
                         } {
                             0 => {}
-                            errno => match sys::posix_errno(errno) {
-                                sys::Errno::XDEV => return Err(bun_core::err!("NotSupported")), // not same file system
-                                sys::Errno::OPNOTSUPP => return Err(bun_core::err!("NotSupported")),
-                                sys::Errno::NOENT => return Err(bun_core::err!("FileNotFound")),
+                            _ => match sys::Errno::from_i32(sys::last_errno()) {
+                                sys::Errno::EXDEV => return Err(bun_core::err!("NotSupported")), // not same file system
+                                sys::Errno::EOPNOTSUPP => return Err(bun_core::err!("NotSupported")),
+                                sys::Errno::ENOENT => return Err(bun_core::err!("FileNotFound")),
                                 // sometimes the downloaded npm package has already node_modules with it, so just ignore exist error here
-                                sys::Errno::EXIST => {}
-                                sys::Errno::ACCES => return Err(bun_core::err!("AccessDenied")),
+                                sys::Errno::EEXIST => {}
+                                sys::Errno::EACCES => return Err(bun_core::err!("AccessDenied")),
                                 _ => return Err(bun_core::err!("Unexpected")),
                             },
                         }
@@ -961,7 +963,9 @@ impl<'a> PackageInstall<'a> {
             Ok(real_file_count)
         }
 
-        let subdir = match destination_dir.make_open_path(self.destination_dir_subpath.as_bytes()) {
+        let subdir = match destination_dir
+            .make_open_path(self.destination_dir_subpath.as_bytes(), OpenDirOptions::default())
+        {
             Ok(d) => d,
             Err(err) => return Ok(InstallResult::fail(err, Step::OpeningDestDir, None)),
         };
@@ -980,11 +984,12 @@ impl<'a> PackageInstall<'a> {
     fn install_with_clonefile(&mut self, destination_dir: Dir) -> Result<InstallResult, bun_core::Error> {
         if self.destination_dir_subpath.as_bytes()[0] == b'@' {
             if let Some(slash) = strings::index_of_char_z(self.destination_dir_subpath, SEP) {
+                let slash = slash as usize;
                 self.destination_dir_subpath_buf[slash] = 0;
                 // SAFETY: NUL written above.
                 let subdir =
                     unsafe { ZStr::from_raw(self.destination_dir_subpath_buf.as_ptr(), slash) };
-                let _ = destination_dir.make_dir_z(subdir);
+                let _ = sys::mkdirat(destination_dir.fd(), subdir, 0o755);
                 self.destination_dir_subpath_buf[slash] = SEP;
             }
         }
@@ -992,25 +997,25 @@ impl<'a> PackageInstall<'a> {
         // SAFETY: FFI — cache_dir_subpath/destination_dir_subpath are NUL-terminated ZStr
         // slices into long-lived path buffers; fds are open.
         match unsafe {
-            bun_sys::darwin::clonefileat(
-                self.cache_dir.fd(),
+            clonefileat(
+                self.cache_dir.fd().cast(),
                 self.cache_dir_subpath.as_ptr(),
-                destination_dir.fd(),
+                destination_dir.fd().cast(),
                 self.destination_dir_subpath.as_ptr(),
                 0,
             )
         } {
             0 => Ok(InstallResult::Success),
-            errno => match sys::posix_errno(errno) {
-                sys::Errno::XDEV => Err(bun_core::err!("NotSupported")), // not same file system
-                sys::Errno::OPNOTSUPP => Err(bun_core::err!("NotSupported")),
-                sys::Errno::NOENT => Err(bun_core::err!("FileNotFound")),
+            _ => match sys::Errno::from_i32(sys::last_errno()) {
+                sys::Errno::EXDEV => Err(bun_core::err!("NotSupported")), // not same file system
+                sys::Errno::EOPNOTSUPP => Err(bun_core::err!("NotSupported")),
+                sys::Errno::ENOENT => Err(bun_core::err!("FileNotFound")),
                 // We first try to delete the directory
                 // But, this can happen if this package contains a node_modules folder
                 // We want to continue installing as many packages as we can, so we shouldn't block while downloading
                 // We use the slow path in this case
-                sys::Errno::EXIST => self.install_with_clonefile_each_dir(destination_dir),
-                sys::Errno::ACCES => Err(bun_core::err!("AccessDenied")),
+                sys::Errno::EEXIST => self.install_with_clonefile_each_dir(destination_dir),
+                sys::Errno::EACCES => Err(bun_core::err!("AccessDenied")),
                 _ => Err(bun_core::err!("Unexpected")),
             },
         }

@@ -102,8 +102,10 @@ pub mod syntax;
 // ImageSetOption); `Image::parse`/`to_css` await the DeriveParse/DeriveToCss
 // proc-macro.
 pub mod color;
-pub mod gradient;
-pub mod image;
+// reconciler-3: gradient/image still reference `bun_str`/`ColorFallbackKind`/
+// `'bump`-DeepClone/`#[derive(css::Parse)]` that aren't on this track yet.
+gated_value!(gradient);
+gated_value!(image);
 // `gated_value!` retained for any future leaf that re-gates during a bisect.
 #[allow(unused_macros)]
 macro_rules! _gated_value_retired { () => {}; }

@@ -2341,10 +2341,10 @@ impl<AtRule> StyleSheet<AtRule> {
 }
 
 // ── StyleSheet behavior (parse/minify/to_css) ────────────────────────────────
-// blocked_on: rule_parsers impl bodies (TopLevelRuleParser as AtRuleParser/
-// QualifiedRuleParser), CssRuleList::{minify,to_css}, DeclarationHandler
-// per-property fields, MinifyContext full field set, Printer::new signature.
-#[cfg(any())]
+// B-2 round 6: un-gated. Method *signatures* are real so cross-crate dependents
+// (`bun_css_jsc::testing_impl`) type-check; method *bodies* that bottom out on
+// still-gated leaves are inline-`#[cfg(any())]`-gated with a `todo!()` fallback
+// noting the blocking module. Un-gate each body as its leaf lands.
 mod stylesheet_impl { use super::*;
 
 impl<AtRule> StyleSheet<AtRule> {
@@ -2354,6 +2354,11 @@ impl<AtRule> StyleSheet<AtRule> {
         options: &MinifyOptions,
         extra: &StylesheetExtra,
     ) -> Maybe<(), Err<MinifyErrorKind>> {
+        // blocked_on: MinifyContext full field set (rules/mod.rs), CssRuleList::minify
+        // (rules/mod.rs), PropertyHandlerContext::new unused_symbols arg type
+        // (`&HashSet<String>` vs `&ArrayHashMap<Box<[u8]>,()>`), CustomMediaRule::deep_clone
+        // arena arg.
+        #[cfg(any())] {
         let ctx = PropertyHandlerContext::new(options.targets, &options.unused_symbols);
         let mut handler = DeclarationHandler::default();
         let mut important_handler = DeclarationHandler::default();
@@ -2391,24 +2396,46 @@ impl<AtRule> StyleSheet<AtRule> {
             panic!("TODO: Handle");
         }
 
-        Ok(())
+        return Ok(());
+        }
+        #[cfg(not(any()))] {
+        let _ = (options, extra);
+        todo!("StyleSheet::minify — gated on rules::CssRuleList::minify + MinifyContext field set")
+        }
     }
 
-    pub fn to_css_with_writer(
-        &self,
-        writer: &mut dyn bun_io::Write,
-        options: PrinterOptions,
-        import_info: Option<ImportInfo>,
-        local_names: Option<&LocalsResultsMap>,
-        symbols: &bun_logger::symbol::Map,
+    pub fn to_css_with_writer<'a>(
+        &'a self,
+        allocator: &'a Bump,
+        writer: &'a mut dyn bun_io::Write,
+        options: PrinterOptions<'a>,
+        import_info: Option<ImportInfo<'a>>,
+        local_names: Option<&'a LocalsResultsMap>,
+        symbols: &'a bun_logger::symbol::Map,
     ) -> PrintResult<ToCssResultInternal> {
-        let mut printer = Printer::new(Vec::new(), writer, options, import_info, local_names, symbols);
-        match self.to_css_with_writer_impl(&mut printer, options) {
+        // blocked_on: PrinterOptions: Copy (printer.rs) — Zig passed by value
+        // twice; here `options` is moved into Printer::new then re-read.
+        #[cfg(any())] {
+        let mut printer = Printer::new(
+            allocator,
+            bun_alloc::BumpVec::new_in(allocator),
+            writer,
+            options,
+            import_info,
+            local_names,
+            symbols,
+        );
+        return match self.to_css_with_writer_impl(&mut printer, options) {
             Ok(result) => Ok(result),
             Err(_) => {
                 debug_assert!(printer.error_kind.is_some());
                 Err(printer.error_kind.unwrap())
             }
+        };
+        }
+        #[cfg(not(any()))] {
+        let _ = (allocator, writer, options, import_info, local_names, symbols);
+        todo!("StyleSheet::to_css_with_writer — gated on PrinterOptions: Copy + to_css_with_writer_impl")
         }
     }
 
@@ -2417,7 +2444,7 @@ impl<AtRule> StyleSheet<AtRule> {
         printer: &mut Printer,
         options: PrinterOptions,
     ) -> Result<ToCssResultInternal, PrintErr> {
-        let project_root = options.project_root;
+        let _project_root = options.project_root;
 
         // #[cfg(feature = "sourcemap")] { printer.sources = Some(&self.sources); }
         // #[cfg(feature = "sourcemap")] if printer.source_map.is_some() { ... }
@@ -2429,14 +2456,18 @@ impl<AtRule> StyleSheet<AtRule> {
             printer.newline()?;
         }
 
+        // blocked_on: CssRuleList::to_css (rules/mod.rs), CssModule::new sources
+        // arg type (`&Vec<String>` vs `&Vec<Box<[u8]>>`), printer.dependencies
+        // BumpVec→Vec conversion / 'bump threading.
+        #[cfg(any())] {
         if let Some(config) = &self.options.css_modules {
             let mut references = CssModuleReferences::default();
-            printer.css_module = Some(CssModule::new(config, &self.sources, project_root, &mut references));
+            printer.css_module = Some(CssModule::new(config, &self.sources, _project_root, &mut references));
 
             self.rules.to_css(printer)?;
             printer.newline()?;
 
-            Ok(ToCssResultInternal {
+            return Ok(ToCssResultInternal {
                 dependencies: printer.dependencies.take(),
                 exports: {
                     let val = core::mem::take(
@@ -2445,36 +2476,50 @@ impl<AtRule> StyleSheet<AtRule> {
                     Some(val)
                 },
                 references: Some(references),
-            })
+            });
         } else {
             self.rules.to_css(printer)?;
             printer.newline()?;
-            Ok(ToCssResultInternal {
+            return Ok(ToCssResultInternal {
                 dependencies: printer.dependencies.take(),
                 exports: None,
                 references: None,
-            })
+            });
+        }
+        }
+        #[cfg(not(any()))] {
+        let _ = printer;
+        todo!("StyleSheet::to_css_with_writer_impl — gated on rules::CssRuleList::to_css")
         }
     }
 
-    pub fn to_css(
-        &self,
-        options: PrinterOptions,
-        import_info: Option<ImportInfo>,
-        local_names: Option<&LocalsResultsMap>,
-        symbols: &bun_logger::symbol::Map,
+    pub fn to_css<'a>(
+        &'a self,
+        allocator: &'a Bump,
+        options: PrinterOptions<'a>,
+        import_info: Option<ImportInfo<'a>>,
+        local_names: Option<&'a LocalsResultsMap>,
+        symbols: &'a bun_logger::symbol::Map,
     ) -> PrintResult<ToCssResult> {
         // TODO: this is not necessary
         // Make sure we always have capacity > 0: https://github.com/napi-rs/napi-rs/issues/1124.
+        // TODO(port): writer adapter — Zig used std.Io.Writer.Allocating; here we
+        // route through bun_io::Write over Vec<u8> until 'bump dest threads.
+        // blocked_on: bun_io::Write impl for Vec<u8> / dest ownership reshape.
+        #[cfg(any())] {
         let mut dest: Vec<u8> = Vec::with_capacity(1);
-        // TODO(port): writer adapter — Zig used std.Io.Writer.Allocating.
-        let result = self.to_css_with_writer(&mut dest, options, import_info, local_names, symbols)?;
-        Ok(ToCssResult {
+        let result = self.to_css_with_writer(allocator, &mut dest, options, import_info, local_names, symbols)?;
+        return Ok(ToCssResult {
             code: dest,
             dependencies: result.dependencies,
             exports: result.exports,
             references: result.references,
-        })
+        });
+        }
+        #[cfg(not(any()))] {
+        let _ = (allocator, options, import_info, local_names, symbols);
+        todo!("StyleSheet::to_css — gated on to_css_with_writer dest adapter")
+        }
     }
 
     pub fn parse(
@@ -2482,7 +2527,10 @@ impl<AtRule> StyleSheet<AtRule> {
         options: ParserOptions,
         import_records: Option<&mut BabyList<ImportRecord>>,
         source_index: SrcIndex,
-    ) -> Maybe<(Self, StylesheetExtra), Err<ParserError>> {
+    ) -> Maybe<(Self, StylesheetExtra), Err<ParserError>>
+    where
+        AtRule: From<DefaultAtRule>,
+    {
         let mut default_at_rule_parser = DefaultAtRuleParser;
         Self::parse_with(code, options, &mut default_at_rule_parser, import_records, source_index)
     }
@@ -2492,7 +2540,14 @@ impl<AtRule> StyleSheet<AtRule> {
         options: ParserOptions,
         import_records: &mut BabyList<ImportRecord>,
         source_index: SrcIndex,
-    ) -> Maybe<(Self, StylesheetExtra), Err<ParserError>> {
+    ) -> Maybe<(Self, StylesheetExtra), Err<ParserError>>
+    where
+        AtRule: From<BundlerAtRule>,
+    {
+        // TODO(port): borrowck — Zig aliased `import_records` into both
+        // `BundlerAtRuleParser` and the parser's own slot. Phase B reshapes:
+        // `BundlerAtRuleParser` no longer owns `import_records`; it goes through
+        // the `Parser` instead. Until then, only the at-rule-parser holds it.
         let mut at_rule_parser = BundlerAtRuleParser {
             import_records,
             options: &options,
@@ -2500,10 +2555,15 @@ impl<AtRule> StyleSheet<AtRule> {
             anon_layer_count: 0,
             enclosing_layer: LayerName::default(),
         };
-        // TODO(port): borrowck — `import_records` is borrowed mutably twice
-        // (once in BundlerAtRuleParser, once passed to parse_with). Zig
-        // aliased; Phase B reshapes.
-        Self::parse_with(code, options, &mut at_rule_parser, Some(import_records), source_index)
+        // blocked_on: BundlerAtRuleParser: CustomAtRuleParser impl (gated above
+        // on BabyList push API). Signature kept; body re-enabled when that lands.
+        #[cfg(any())] {
+        return Self::parse_with(code, options, &mut at_rule_parser, None, source_index);
+        }
+        #[cfg(not(any()))] {
+        let _ = (code, source_index, &mut at_rule_parser);
+        todo!("StyleSheet::parse_bundler — gated on BundlerAtRuleParser: CustomAtRuleParser")
+        }
     }
 
     /// Parse a style sheet from a string.
@@ -2517,6 +2577,10 @@ impl<AtRule> StyleSheet<AtRule> {
     where
         AtRule: From<P::AtRule>, // TODO(port): Zig instantiates StyleSheet(AtRule) generically
     {
+        // blocked_on: rule_parsers impl bodies (TopLevelRuleParser: AtRuleParser
+        // + QualifiedRuleParser are `#[cfg(any())]`-gated above), 'bump lifetime
+        // threading from `code` → license_comments / options.filename → sources.
+        #[cfg(any())] {
         let mut composes = ComposesMap::default();
         let mut parser_extra = ParserExtra {
             local_scope: LocalScope::default(),
@@ -2529,7 +2593,7 @@ impl<AtRule> StyleSheet<AtRule> {
         let mut parser = Parser::new(
             &mut input,
             import_records,
-            ParserOpts { css_modules: options.css_modules.is_some(), ..Default::default() },
+            if options.css_modules.is_some() { ParserOpts::CSS_MODULES } else { ParserOpts::empty() },
             Some(&mut parser_extra),
         );
 
@@ -2581,7 +2645,7 @@ impl<AtRule> StyleSheet<AtRule> {
         // B adds a `take_layer_names()` method on `CustomAtRuleParser`.
         let layer_names = BabyList::default();
 
-        Ok((
+        return Ok((
             Self {
                 rules,
                 sources,
@@ -2595,7 +2659,12 @@ impl<AtRule> StyleSheet<AtRule> {
                 composes,
             },
             StylesheetExtra { symbols: parser_extra.symbols },
-        ))
+        ));
+        }
+        #[cfg(not(any()))] {
+        let _ = (code, options, at_rule_parser, import_records, source_index);
+        todo!("StyleSheet::parse_with — gated on rule_parsers (TopLevelRuleParser trait impls)")
+        }
     }
 
     pub fn debug_layer_rule_sanity_check(&self) {
@@ -2609,6 +2678,7 @@ impl<AtRule> StyleSheet<AtRule> {
                 actual_layer_rules_len += 1;
             }
         }
+        let _ = actual_layer_rules_len;
         // bun.debugAssert()
     }
 
@@ -2685,6 +2755,10 @@ impl<AtRule> StyleSheet<AtRule> {
         out.v.reserve(count as usize);
         // TODO(port): the Zig fn takes `*const @This()` but mutates
         // `rule.* = .ignored;` — that's `&mut self` in Rust. Phase B reshapes.
+        // blocked_on: CssRule<R>: Clone (rules/mod.rs leaf payloads), BabyList::push,
+        // ImportRecord: Default (bun_options_types). The count-pass above is real;
+        // exec-pass gated.
+        #[cfg(any())] {
         let mut saw_imports = false;
         // SAFETY: Phase A draft — Zig mutated through const ptr.
         let rules_mut = unsafe {
@@ -2702,7 +2776,7 @@ impl<AtRule> StyleSheet<AtRule> {
                     let import_record_idx = new_import_records.len();
                     import_rule.import_record_idx = import_record_idx;
                     new_import_records.push(ImportRecord {
-                        path: bun_fs::Path::init(import_rule.url),
+                        path: ast::fs::path_init(import_rule.url),
                         kind: if import_rule.supports.is_some() {
                             ImportKind::AtConditional
                         } else {
@@ -2724,6 +2798,10 @@ impl<AtRule> StyleSheet<AtRule> {
                 break;
             }
         }
+        }
+        #[cfg(not(any()))] {
+        let _ = (count, new_import_records);
+        }
     }
 }
 
@@ -2734,6 +2812,10 @@ impl StyleAttribute {
         import_records: &mut BabyList<ImportRecord>,
         source_index: SrcIndex,
     ) -> Maybe<StyleAttribute, Err<ParserError>> {
+        // blocked_on: DeclarationBlock::parse (declaration.rs gated body),
+        // 'bump lifetime threading (DeclarationBlock<'static> in StyleAttribute
+        // vs Parser<'a> here).
+        #[cfg(any())] {
         let mut parser_extra = ParserExtra {
             local_scope: LocalScope::default(),
             symbols: SymbolList::default(),
@@ -2743,19 +2825,24 @@ impl StyleAttribute {
         let mut parser = Parser::new(
             &mut input,
             Some(import_records),
-            ParserOpts { css_modules: options.css_modules.is_some(), ..Default::default() },
+            if options.css_modules.is_some() { ParserOpts::CSS_MODULES } else { ParserOpts::empty() },
             Some(&mut parser_extra),
         );
         let mut sources = Vec::with_capacity(1);
         sources.push(options.filename.into());
         // PERF(port): was appendAssumeCapacity
-        Ok(StyleAttribute {
+        return Ok(StyleAttribute {
             declarations: match DeclarationBlock::parse(&mut parser, &options) {
                 Ok(v) => v,
                 Err(e) => return Err(Err::from_parse_error(e, b"")),
             },
             sources,
-        })
+        });
+        }
+        #[cfg(not(any()))] {
+        let _ = (code, options, import_records, source_index);
+        todo!("StyleAttribute::parse — gated on DeclarationBlock::parse")
+        }
     }
 
     pub fn to_css(
@@ -2764,7 +2851,10 @@ impl StyleAttribute {
         import_info: Option<ImportInfo>,
     ) -> Result<ToCssResult, PrintErr> {
         // #[cfg(feature = "sourcemap")] assert!(options.source_map.is_none(), ...);
-
+        // blocked_on: DeclarationBlock::to_css (declaration.rs gated body),
+        // Printer::new dest-ownership / 'bump arena threading,
+        // printer.sources type (`&Vec<&[u8]>` vs `&Vec<Box<[u8]>>`).
+        #[cfg(any())] {
         let symbols = bun_logger::symbol::Map::default();
         let mut dest: Vec<u8> = Vec::new();
         // TODO(port): writer adapter
@@ -2773,14 +2863,18 @@ impl StyleAttribute {
 
         self.declarations.to_css(&mut printer)?;
 
-        Ok(ToCssResult {
+        return Ok(ToCssResult {
             dependencies: printer.dependencies.take(),
             code: dest,
             exports: None,
             references: None,
-        })
+        });
+        }
+        #[cfg(not(any()))] {
+        let _ = (options, import_info);
+        todo!("StyleAttribute::to_css — gated on DeclarationBlock::to_css")
+        }
     }
-
 }
 
 } // mod stylesheet_impl

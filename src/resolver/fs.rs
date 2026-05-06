@@ -1773,9 +1773,9 @@ impl RealFS {
     ) -> Result<EntryCache, bun_core::Error> {
         let mut outpath = PathBuffer::uninit();
 
-        let stat = bun_sys::lstat_absolute(absolute_path)?;
-        let is_symlink = stat.kind == bun_sys::FileKind::SymLink;
-        let mut kind_ = stat.kind;
+        let stat = bun_sys::lstat(absolute_path)?;
+        let mut kind_ = bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode);
+        let is_symlink = kind_ == bun_sys::FileKind::SymLink;
         let mut cache = EntryCache {
             kind: EntryKind::File,
             symlink: PathString::EMPTY,
@@ -1785,33 +1785,36 @@ impl RealFS {
 
         if is_symlink {
             // TODO(port): existing_fd != 0 — Zig compared FD to integer 0; using is_valid()
-            let file: bun_sys::File = if existing_fd.is_valid() {
-                bun_sys::File::from_handle(existing_fd)
+            let file: Fd = if existing_fd.is_valid() {
+                existing_fd
             } else if store_fd {
-                bun_sys::open_file_absolute_z(absolute_path, bun_sys::OpenMode::ReadOnly)?
+                bun_sys::open_file_absolute_z(absolute_path, bun_sys::OpenFlags::READ_ONLY)?.handle()
             } else {
-                bun_sys::open_file_for_path(absolute_path)?
+                // PORT NOTE: Zig `bun.openFileForPath` (O_PATH on Linux). Route through
+                // open() with O_PATH where available; fall back to RDONLY elsewhere.
+                bun_sys::open(absolute_path, bun_sys::O::PATH | bun_sys::O::CLOEXEC, 0)?
             };
-            FileSystem::set_max_fd(file.handle());
+            FileSystem::set_max_fd(file.native());
 
             // PORT NOTE: Zig `defer { if (...) file.close() else cache.fd = file }` runs on
             // BOTH success and error paths — use scopeguard so close-or-store happens even if
             // stat()/get_fd_path() return early with `?`.
             let need_to_close_files = self.need_to_close_files();
-            let _guard = scopeguard::guard((file, &mut cache), move |(file, cache)| {
+            let cache_ptr: *mut EntryCache = &mut cache;
+            let _guard = scopeguard::guard(file, move |file| {
                 if (!store_fd || need_to_close_files) && !existing_fd.is_valid() {
-                    file.close();
+                    let _ = bun_sys::close(file);
                 } else if FeatureFlags::STORE_FILE_DESCRIPTORS {
-                    cache.fd = file.handle().into();
+                    // SAFETY: `cache_ptr` points into a stack local that outlives this guard.
+                    unsafe { (*cache_ptr).fd = file };
                 }
             });
-            let (file, _) = &*_guard;
 
-            let stat_ = file.stat()?;
+            let stat_ = bun_sys::fstat(*_guard)?;
 
-            symlink = bun_sys::get_fd_path(file.handle().into(), &mut outpath)?;
+            symlink = bun_sys::get_fd_path(*_guard, &mut outpath)?;
 
-            kind_ = stat_.kind;
+            kind_ = bun_sys::kind_from_mode(stat_.st_mode as bun_sys::Mode);
         }
 
         debug_assert!(kind_ != bun_sys::FileKind::SymLink);
@@ -1844,11 +1847,10 @@ impl RealFS {
         let dir = dir_;
         let combo: [&[u8]; 2] = [dir, base];
         let mut outpath = PathBuffer::uninit();
-        let entry_path = path_handler::join_abs_string_buf(
+        let entry_path = path_handler::join_abs_string_buf::<platform::Auto>(
             self.cwd,
-            &mut outpath,
+            &mut outpath[..],
             &combo,
-            path_handler::Platform::Auto,
         );
         let entry_path_len = entry_path.len();
 
@@ -1940,9 +1942,9 @@ impl RealFS {
 
         #[cfg(not(windows))]
         {
-            let stat = bun_sys::lstat_absolute(absolute_path_c)?;
-            let is_symlink = stat.kind == bun_sys::FileKind::SymLink;
-            let mut file_kind = stat.kind;
+            let stat = bun_sys::lstat(absolute_path_c)?;
+            let mut file_kind = bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode);
+            let is_symlink = file_kind == bun_sys::FileKind::SymLink;
 
             let mut symlink: &[u8] = b"";
 
@@ -1950,12 +1952,11 @@ impl RealFS {
                 let file: Fd = if let Some(valid) = existing_fd.unwrap_valid() {
                     valid
                 } else if store_fd {
-                    Fd::from_std_file(bun_sys::open_file_absolute_z(
-                        absolute_path_c,
-                        bun_sys::OpenMode::ReadOnly,
-                    )?)
+                    bun_sys::open_file_absolute_z(absolute_path_c, bun_sys::OpenFlags::READ_ONLY)?
+                        .handle()
                 } else {
-                    Fd::from_std_file(bun_sys::open_file_for_path(absolute_path_c)?)
+                    // PORT NOTE: Zig `bun.openFileForPath` (O_PATH on Linux); fall back to RDONLY.
+                    bun_sys::open(absolute_path_c, bun_sys::O::PATH | bun_sys::O::CLOEXEC, 0)?
                 };
                 FileSystem::set_max_fd(file.native());
 
@@ -1963,18 +1964,19 @@ impl RealFS {
                 // BOTH success and error paths — use scopeguard so close-or-store happens even if
                 // stat()/get_fd_path() return early with `?`.
                 let need_to_close_files = self.need_to_close_files();
-                let _guard = scopeguard::guard((file, &mut cache), move |(file, cache)| {
+                let cache_ptr: *mut EntryCache = &mut cache;
+                let _guard = scopeguard::guard(file, move |file| {
                     if (!store_fd || need_to_close_files) && !existing_fd.is_valid() {
-                        file.close();
+                        let _ = bun_sys::close(file);
                     } else if FeatureFlags::STORE_FILE_DESCRIPTORS {
-                        cache.fd = file;
+                        // SAFETY: `cache_ptr` points into a stack local that outlives this guard.
+                        unsafe { (*cache_ptr).fd = file };
                     }
                 });
-                let (file, _) = &*_guard;
 
-                let file_stat = file.std_file().stat()?;
-                symlink = file.get_fd_path(&mut outpath)?;
-                file_kind = file_stat.kind;
+                let file_stat = bun_sys::fstat(*_guard)?;
+                symlink = bun_sys::get_fd_path(*_guard, &mut outpath)?;
+                file_kind = bun_sys::kind_from_mode(file_stat.st_mode as bun_sys::Mode);
             }
 
             debug_assert!(file_kind != bun_sys::FileKind::SymLink);
@@ -2109,7 +2111,7 @@ pub struct PathName {
 impl PathName {
     pub fn find_extname(path_: &[u8]) -> &[u8] {
         let mut start: usize = 0;
-        if let Some(i) = bun_paths::last_index_of_sep(path_) {
+        if let Some(i) = last_index_of_sep(path_) {
             start = i + 1;
         }
         let base = &path_[start..];
@@ -2179,7 +2181,7 @@ impl PathName {
         if self.dir.is_empty() {
             return b"./";
         }
-        let extend = (!bun_paths::is_sep_any(self.dir[self.dir.len() - 1])
+        let extend = (!is_sep_any(self.dir[self.dir.len() - 1])
             && (self.dir.as_ptr() as usize + self.dir.len() + 1) == self.base.as_ptr() as usize)
             as usize;
         // SAFETY: when extend==1, dir.ptr[dir.len] is the separator byte preceding base (same allocation)
@@ -2203,12 +2205,12 @@ impl PathName {
         let has_disk_designator = path.len() > 2
             && path[1] == b':'
             && matches!(path[0], b'a'..=b'z' | b'A'..=b'Z')
-            && bun_paths::is_sep_any(path[2]);
+            && is_sep_any(path[2]);
         if has_disk_designator {
             path = &path[2..];
         }
 
-        while let Some(i) = bun_paths::last_index_of_sep(path) {
+        while let Some(i) = last_index_of_sep(path) {
             // Stop if we found a non-trailing slash
             if i + 1 != path.len() && path.len() > i + 1 {
                 base = &path[i + 1..];
@@ -2233,7 +2235,7 @@ impl PathName {
             dir = b"";
         }
 
-        if base.len() > 1 && bun_paths::is_sep_any(base[base.len() - 1]) {
+        if base.len() > 1 && is_sep_any(base[base.len() - 1]) {
             base = &base[0..base.len() - 1];
         }
 
@@ -2309,11 +2311,13 @@ impl Path {
             return bun_wyhash::hash(self.text);
         }
 
-        let mut hasher = bun_wyhash::Wyhash::init(0);
-        hasher.update(self.namespace);
-        hasher.update(b"::::::::");
-        hasher.update(self.text);
-        hasher.final_()
+        // PERF(port): Zig used incremental `std.hash.Wyhash.update`; bun_wyhash exposes
+        // only stateless `WyhashStateless` + one-shot `hash`. Concat to a temp and one-shot.
+        let mut buf = Vec::with_capacity(self.namespace.len() + 8 + self.text.len());
+        buf.extend_from_slice(self.namespace);
+        buf.extend_from_slice(b"::::::::");
+        buf.extend_from_slice(self.text);
+        bun_wyhash::hash(&buf)
     }
 
     /// This hash is used by the hot-module-reloading client in order to
@@ -2335,7 +2339,7 @@ impl Path {
 
         // CYCLEBREAK: was `bun_bundler::options::jsx::Pragma::parse_package_name` —
         // pure byte-slice helper, inlined as a free fn to break the resolver→bundler edge.
-        let pkgname = parse_package_name(name_to_use);
+        let pkgname = crate::fs::parse_package_name(name_to_use);
         if pkgname.is_empty() || !pkgname[0].is_ascii_alphanumeric() {
             return None;
         }

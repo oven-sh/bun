@@ -150,25 +150,178 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
         expr
     }
 
-    // ─── heavy visitors (bodies still gated) ────────────────────────────────
-    // blocked_on: expr::Data field-style accessors (e_dot/e_index/e_if/e_unary/e_binary/
-    //   e_call/e_template/e_jsx_element/e_identifier — only e_string/e_object/e_array exist);
-    //   P::{find_symbol, maybe_rewrite_property_access, maybe_comma_spread_error,
-    //   jsx_import, jsx_import_automatic, transpose_import, transpose_require,
-    //   call_runtime, handle_import_meta_hot_accept_call, handle_react_refresh_hook_call};
-    //   BinaryExpressionVisitor::{check_and_prepare, visit_right_and_finish};
-    //   SideEffects::{simplify_boolean, to_boolean, simplify_unused_expr} on &mut P.
-    //   Full draft bodies preserved verbatim under `#[cfg(any())] mod _draft` below.
+    // ─── heavy visitors ─────────────────────────────────────────────────────
+    // Round-H: e_* accessors on `expr::Data` are now real (Option<StoreRef<T>>
+    // / Option<T>). The ten "structural" visitors below are un-gated from
+    // `_draft`; remaining JSX/template/import/arrow/function/class bodies still
+    // depend on `P::{jsx_import, value_for_this, visit_fn, visit_class}` and
+    // stay todo!()-gated with their drafts preserved in `mod _draft`.
 
     fn e_import_meta(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
         let _ = (p, in_);
         todo!("G-round-4: e_import_meta body — see _draft");
         #[allow(unreachable_code)] expr
     }
+
     fn e_identifier(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
-        let _ = (p, in_);
-        todo!("G-round-4: e_identifier body — see _draft");
-        #[allow(unreachable_code)] expr
+        let mut e_ = expr.data.e_identifier().unwrap();
+        let is_delete_target = matches!(p.delete_target.tag(), Tag::EIdentifier)
+            && e_.ref_.eql(p.delete_target.e_identifier().unwrap().ref_);
+
+        let name = p.load_name_from_ref(e_.ref_);
+        if p.is_strict_mode() && js_lexer::StrictModeReservedWords.contains(name) {
+            p.mark_strict_mode_feature(
+                StrictModeFeature::ReservedWord,
+                js_lexer::range_of_identifier(p.source, expr.loc),
+                name,
+            )
+            .expect("unreachable");
+        }
+
+        let result = p.find_symbol(expr.loc, name).expect("unreachable");
+
+        e_.must_keep_due_to_with_stmt = result.is_inside_with_scope;
+        e_.ref_ = result.r#ref;
+
+        // Handle assigning to a constant
+        if in_.assign_target != js_ast::AssignTarget::None {
+            if p.symbols[result.r#ref.inner_index() as usize].kind == js_ast::symbol::Kind::Constant {
+                // TODO: silence this for runtime transpiler
+                let r = js_lexer::range_of_identifier(p.source, expr.loc);
+                let notes: Box<[logger::Data]> = Box::new([logger::Data {
+                    text: {
+                        let mut v = Vec::new();
+                        write!(
+                            &mut v,
+                            "The symbol \"{}\" was declared a constant here:",
+                            BStr::new(name)
+                        )
+                        .unwrap();
+                        v.into_boxed_slice()
+                    },
+                    location: logger::Location::init_or_null(
+                        Some(p.source),
+                        js_lexer::range_of_identifier(p.source, result.declare_loc.unwrap()),
+                    ),
+                }]);
+
+                let is_error = p.const_values.contains_key(&result.r#ref) || p.options.bundle;
+                match is_error {
+                    true => p
+                        .log
+                        .add_range_error_fmt_with_notes(
+                            Some(p.source),
+                            r,
+                            notes,
+                            format_args!(
+                                "Cannot assign to \"{}\" because it is a constant",
+                                BStr::new(name)
+                            ),
+                        )
+                        .expect("unreachable"),
+
+                    false => p
+                        .log
+                        .add_range_error_fmt_with_notes(
+                            Some(p.source),
+                            r,
+                            notes,
+                            format_args!(
+                                "This assignment will throw because \"{}\" is a constant",
+                                BStr::new(name)
+                            ),
+                        )
+                        .expect("unreachable"),
+                }
+            } else if p.exports_ref.eql(e_.ref_) {
+                // Assigning to `exports` in a CommonJS module must be tracked to undo the
+                // `module.exports` -> `exports` optimization.
+                p.commonjs_module_exports_assigned_deoptimized = true;
+            }
+
+            p.symbols[result.r#ref.inner_index() as usize].has_been_assigned_to = true;
+        }
+
+        let mut original_name: Option<&[u8]> = None;
+
+        // Substitute user-specified defines for unbound symbols
+        if p.symbols[e_.ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Unbound
+            && !result.is_inside_with_scope
+            && !is_delete_target
+        {
+            if let Some(def) = p.define.for_identifier(name) {
+                if !def.valueless() {
+                    let newvalue =
+                        p.value_for_define(expr.loc, in_.assign_target, is_delete_target, def);
+
+                    // Don't substitute an identifier for a non-identifier if this is an
+                    // assignment target, since it'll cause a syntax error
+                    if matches!(newvalue.data.tag(), Tag::EIdentifier)
+                        || in_.assign_target == js_ast::AssignTarget::None
+                    {
+                        p.ignore_usage(e_.ref_);
+                        return newvalue;
+                    }
+
+                    original_name = def.original_name();
+                }
+
+                // Copy the side effect flags over in case this expression is unused
+                if def.can_be_removed_if_unused() {
+                    e_.can_be_removed_if_unused = true;
+                }
+                if def.call_can_be_unwrapped_if_unused() == E::CallUnwrap::IfUnused
+                    && !p.options.ignore_dce_annotations
+                {
+                    e_.call_can_be_unwrapped_if_unused = true;
+                }
+
+                // If the user passed --drop=console, drop all property accesses to console.
+                if def.method_call_must_be_replaced_with_undefined()
+                    && in_.property_access_for_method_call_maybe_should_replace_with_undefined
+                    && in_.assign_target == js_ast::AssignTarget::None
+                {
+                    p.method_call_must_be_replaced_with_undefined = true;
+                }
+            }
+
+            // Substitute uncalled "require" for the require target
+            if p.require_ref.eql(e_.ref_) && !p.is_source_runtime() {
+                // mark a reference to __require only if this is not about to be used for a call target
+                if !(matches!(p.call_target.tag(), Tag::EIdentifier)
+                    && expr
+                        .data
+                        .e_identifier()
+                        .unwrap()
+                        .ref_
+                        .eql(p.call_target.e_identifier().unwrap().ref_))
+                    && p.options.features.allow_runtime
+                {
+                    p.record_usage_of_runtime_require();
+                }
+
+                return p.value_for_require(expr.loc);
+            }
+        }
+
+        p.handle_identifier(
+            expr.loc,
+            e_,
+            original_name,
+            IdentifierOpts::default()
+                .with_assign_target(in_.assign_target)
+                .with_is_delete_target(is_delete_target)
+                .with_is_call_target(
+                    matches!(p.call_target.tag(), Tag::EIdentifier)
+                        && expr
+                            .data
+                            .e_identifier()
+                            .unwrap()
+                            .ref_
+                            .eql(p.call_target.e_identifier().unwrap().ref_),
+                )
+                .with_was_originally_identifier(true),
+        )
     }
     fn e_jsx_element(p: &mut Self, expr: Expr, in_: ExprIn) -> Expr {
         let _ = (p, in_);

@@ -8,7 +8,10 @@
 
 use core::mem::offset_of;
 
-use crate::jsc::{generated::JSImmediate, Debugger, JSGlobalObject, JSValue, JsRef, VirtualMachine};
+use crate::jsc::{generated::JSImmediate, Debugger, JSGlobalObject, JSValue, JsRef};
+// PORT NOTE: `bun_jsc::VirtualMachine` is a *module* alias; the struct lives at
+// `virtual_machine::VirtualMachine`.
+use crate::jsc::virtual_machine::VirtualMachine;
 
 use super::{EventLoopTimer, EventLoopTimerState, ImmediateObject, Kind, TimeoutObject, ID};
 

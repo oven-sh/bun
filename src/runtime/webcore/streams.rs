@@ -1831,17 +1831,20 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
                 self.buffer.clear_and_free();
             }
             // SAFETY: pooled is a valid pool node checkout
-            unsafe { pooled.as_ptr().as_mut().unwrap() }.data = self.buffer;
-            // TODO(port): ByteListPool::Node.data assignment
+            unsafe {
+                (*pooled.as_ptr()).data =
+                    core::mem::MaybeUninit::new(core::mem::take(&mut self.buffer));
+            }
 
-            self.buffer = ByteList::empty();
+            self.buffer = ByteList::default();
             self.pooled_buffer = None;
-            // SAFETY: pooled is a valid pool node
-            unsafe { pooled.as_ptr().as_mut().unwrap() }.release();
+            // PORT NOTE: Zig `pooled.release()` → Rust `ObjectPool::release(node)`
+            // (the Node `Parent` back-ref was dropped in the port; see pool.rs).
+            ByteListPool::release(pooled.as_ptr());
         } else if self.buffer.cap == 0 {
             //
         } else if FeatureFlags::HTTP_BUFFER_POOLING && !ByteListPool::full() {
-            let buffer = core::mem::replace(&mut self.buffer, ByteList::empty());
+            let buffer = core::mem::take(&mut self.buffer);
             ByteListPool::push(buffer);
         } else {
             // Don't release this buffer until destroy() is called

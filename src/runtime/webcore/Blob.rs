@@ -745,7 +745,7 @@ struct FormDataContext {
 }
 
 impl FormDataContext {
-    pub fn on_entry(&mut self, name: ZigString, entry: jsc::DOMFormData::FormDataEntry) {
+    pub fn on_entry(&mut self, name: ZigString, entry: FormDataEntry<'_>) {
         if self.failed {
             return;
         }
@@ -764,12 +764,12 @@ impl FormDataContext {
         joiner.push(name_slice.slice(), name_slice.allocator_get());
 
         match entry {
-            jsc::DOMFormData::FormDataEntry::String(value) => {
+            FormDataEntry::String(value) => {
                 joiner.push_static(b"\"\r\n\r\n");
                 let value_slice = value.to_slice();
                 joiner.push(value_slice.slice(), value_slice.allocator_get());
             }
-            jsc::DOMFormData::FormDataEntry::File(value) => {
+            FormDataEntry::File { blob, filename } => {
                 joiner.push_static(b"\"; filename=\"");
                 let filename_slice = value.filename.to_slice();
                 joiner.push(filename_slice.slice(), filename_slice.allocator_get());

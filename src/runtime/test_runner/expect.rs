@@ -1927,19 +1927,17 @@ impl ExpectStringMatching {
 
         let test_value = args[0];
 
-        let string_matching = Box::into_raw(Box::new(ExpectStringMatching { flags: Flags::default() }));
-
-        // SAFETY: freshly leaked Box; wrapper takes ownership, freed in finalize
-        let string_matching_js_value = unsafe { (*string_matching).to_js(global_this) };
-        Self::js::test_value_set_cached(string_matching_js_value, global_this, test_value);
+        let string_matching_js_value = ExpectStringMatching { flags: Flags::default() }.to_js(global_this);
+        expect_string_matching_js::test_value_set_cached(string_matching_js_value, global_this, test_value);
 
         let vm = global_this.bun_vm();
-        vm.auto_garbage_collect();
+        // SAFETY: bun_vm() returns the live VM pointer for this global.
+        unsafe { (*vm).auto_garbage_collect() };
         Ok(string_matching_js_value)
     }
 }
 
-#[bun_jsc::JsClass]
+#[bun_jsc::JsClass(no_construct)]
 pub struct ExpectCloseTo {
     pub flags: Flags,
 }

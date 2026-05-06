@@ -425,7 +425,7 @@ impl ReadableStream {
     pub fn from_pipe<P>(
         global_this: &JSGlobalObject,
         _parent: P,
-        buffered_reader: &mut bun_aio::PosixBufferedReader,
+        buffered_reader: &mut bun_io::pipe_reader::PosixBufferedReader,
     ) -> JsResult<JSValue> {
         // TODO(port): Zig's `buffered_reader: anytype` — only ever instantiated with the
         // platform `PipeReader`/`PosixBufferedReader`.

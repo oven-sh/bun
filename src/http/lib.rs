@@ -125,6 +125,28 @@ impl Default for HTTPResponseMetadata {
         }
     }
 }
+
+impl Drop for HTTPResponseMetadata {
+    // Port of Zig `HTTPResponseMetadata.deinit`: `owned_buf` is freed by
+    // `Box`'s own Drop; `response.headers.list` was `Box::leak`'d in
+    // `clone_metadata` and must be reclaimed here. `Default` / zero-header
+    // responses have an empty static slice, guarded by the len check.
+    fn drop(&mut self) {
+        let list = self.response.headers.list;
+        if !list.is_empty() {
+            // SAFETY: the only non-empty producer is `clone_metadata`, which
+            // `Box::leak`s exactly this slice; we are its sole owner.
+            unsafe {
+                drop(Box::from_raw(core::ptr::slice_from_raw_parts_mut(
+                    list.as_ptr() as *mut bun_picohttp::Header,
+                    list.len(),
+                )));
+            }
+        }
+        self.response.headers = bun_picohttp::HeaderList::default();
+        self.response.status = b"";
+    }
+}
 // TODO(b1): bun_http_types re-exports — verify these resolve in B-2.
 pub use bun_http_types::{ETag, FetchCacheMode, FetchRequestMode, MimeType, URLPath};
 

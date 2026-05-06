@@ -1198,11 +1198,7 @@ mod _gated_impl {
                 // SAFETY: per-thread VM.
                 let _ = unsafe {
                     (*jsc_vm).transpiler.print_with_source_map(
-                        // PORT NOTE: `print_with_source_map` consumes
-                        // `ParseResult` by value (it moves `ast` into
-                        // `print_ast`). Clone — `self.parse_result` is read
-                        // again below for `is_commonjs_module` / `input_fd`.
-                        parse_result.clone(),
+                        parse_result,
                         &mut printer,
                         bun_js_printer::Format::EsmAscii,
                         mapper.get(),

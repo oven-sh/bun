@@ -1042,6 +1042,6 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
 // PORT STATUS
 //   source:     src/js_parser/ast/parsePrefix.zig (831 lines)
 //   confidence: medium
-//   todos:      3
-//   notes:      Const-generic mixin lowered to direct `impl P` (J: JsxT); helper names pfx_-prefixed to dodge parseStmt/parseSuffix t_* collisions on the same impl; t_new/t_open_bracket/t_open_brace reshaped from in-place unusedCapacitySlice writes; single-ident arrow body kept gated on parseFn.rs args-type mismatch.
+//   todos:      0
+//   notes:      Const-generic mixin lowered to direct `impl P` (J: JsxT); helper names pfx_-prefixed to dodge parseStmt/parseSuffix t_* collisions on the same impl; t_new/t_open_bracket/t_open_brace reshaped from in-place unusedCapacitySlice writes; single-ident arrow body wired to parse_arrow_body via alloc_slice_fill_iter (Arg is non-Copy).
 // ──────────────────────────────────────────────────────────────────────────

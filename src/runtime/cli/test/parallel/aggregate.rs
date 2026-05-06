@@ -30,7 +30,7 @@ fn attr_value(head: &[u8], name: &'static [u8]) -> u32 {
     bun_str::parse_int::<u32>(&head[start..end], 10).unwrap_or(0)
 }
 
-pub fn merge_junit_fragments(coord: &mut Coordinator, outfile: &[u8], summary: &TestRunner::Summary) {
+pub fn merge_junit_fragments(coord: &mut Coordinator, outfile: &[u8], summary: &Summary) {
     let mut body: Vec<u8> = Vec::new();
     // Crashed workers never reach workerFlushAggregates, so any files they ran
     // (including earlier passing ones) have no fragment. Compute the outer
@@ -137,7 +137,7 @@ impl FileCoverage {
 /// functions of the same file. The non-parallel path has the same FN/FNDA gap.
 pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
     paths: &[&[u8]],
-    opts: &mut TestCommand::CodeCoverageOptions,
+    opts: &mut CodeCoverageOptions,
 ) {
     // PERF(port): was arena bulk-free (std.heap.ArenaAllocator) — profile in Phase B
 

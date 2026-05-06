@@ -119,7 +119,7 @@ impl ShellCondExprStatTask {
 pub struct ShellGlobTask {
     pub task: ShellTask,
     pub expansion: NodeId,
-    pub walker: bun_glob::GlobWalker,
+    pub walker: bun_glob::BunGlobWalkerZ,
     pub result: Vec<Vec<u8>>,
     pub err: Option<bun_core::Error>,
 }

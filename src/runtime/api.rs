@@ -206,6 +206,7 @@ pub use bun::process::Process as SpawnProcess;
 // ─── un-gated re-exports (targets compile) ───────────────────────────────────
 pub use crate::image as Image;
 pub use crate::shell as Shell;
+pub use crate::timer as Timer;
 
 // ─── un-gated re-exports (opaque structs / pure helpers compiling) ───────────
 /// `globalThis.Bun`

@@ -12,6 +12,7 @@
 //!   - `is_file_cached` (the one vtable slot whose body has no jsc/BundleV2 dep)
 
 #![allow(clippy::module_inception)]
+#![allow(unexpected_cfgs)] // `feature = "bake_debugging_features"` mirrors Zig `bun.FeatureFlags.bake_debugging_features`; not yet a declared cargo feature.
 
 use core::sync::atomic::{AtomicI32, Ordering};
 

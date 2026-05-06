@@ -3,7 +3,8 @@ use std::cell::Cell;
 use std::io::Write as _;
 
 use bun_core::{self, Environment, Global, Output, Progress, env_var, fmt as bun_fmt};
-use bun_core::MutableString;
+use bun_core::Global::SyncCStr;
+use bun_str::MutableString;
 use bun_dotenv as DotEnv;
 use bun_resolver::fs;
 use bun_url::URL;

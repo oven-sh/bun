@@ -231,9 +231,10 @@ impl<const SSL: bool> WebSocket<SSL> {
             // after we've already handled a clean close.
             // PORT NOTE: `RefPtr<T>` has no `Deref` (intentional — explicit
             // ref-count tracking); reach the inner via `.data`.
-            // SAFETY: `tunnel` holds a live ref.
-            let inner = unsafe { tunnel.data.as_ref() };
-            inner.clear_connected_websocket();
+            // SAFETY: `tunnel` holds a live ref; `clear_connected_web_socket`
+            // and `shutdown` mutate tunnel state on the owning thread.
+            let inner = unsafe { &mut *tunnel.data.as_ptr() };
+            inner.clear_connected_web_socket();
             inner.shutdown();
             // tunnel.deref() → IntrusiveArc::drop decrements the embedded refcount
             drop(tunnel);

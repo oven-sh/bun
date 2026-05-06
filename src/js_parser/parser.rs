@@ -1801,7 +1801,7 @@ impl Default for ThenCatchChain {
     fn default() -> Self {
         Self {
             // Zig: zero-init `js_ast.Expr.Data` → `.e_missing` (tag 0).
-            next_target: js_ast::ExprData::EMissing,
+            next_target: js_ast::ExprData::EMissing(E::Missing {}),
             has_multiple_args: false,
             has_catch: false,
         }

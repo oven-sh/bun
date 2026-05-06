@@ -753,15 +753,18 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                         let name: &[u8] = macro_ref_data
                             .name
                             .unwrap_or_else(|| e_.tag.unwrap().data.e_dot().unwrap().name);
-                        let record =
-                            &p.import_records.items()[macro_ref_data.import_record_id as usize];
+                        let (record_path_text, record_range) = {
+                            let record = &p.import_records.items()
+                                [macro_ref_data.import_record_id as usize];
+                            (record.path.text, record.range)
+                        };
                         // We must visit it to convert inline_identifiers and record usage
                         let macro_result = match macro_context_call(
                             p.options.macro_context.as_deref_mut(),
-                            record.path.text,
+                            record_path_text,
                             p.log,
                             p.source,
-                            record.range,
+                            record_range,
                             expr,
                             name,
                         ) {
@@ -2065,17 +2068,20 @@ impl<'a, const TYPESCRIPT: bool, J: JsxT, const SCAN_ONLY: bool> P<'a, TYPESCRIP
                 let name: &[u8] = macro_ref_data
                     .name
                     .unwrap_or_else(|| e_.target.data.e_dot().unwrap().name);
-                let record =
-                    &p.import_records.items()[macro_ref_data.import_record_id as usize];
+                let (record_path_text, record_range) = {
+                    let record =
+                        &p.import_records.items()[macro_ref_data.import_record_id as usize];
+                    (record.path.text, record.range)
+                };
                 let copied = Expr { loc: expr.loc, data: expr.data };
                 let start_error_count = p.log.errors;
                 p.macro_call_count += 1;
                 let macro_result = match macro_context_call(
                     p.options.macro_context.as_deref_mut(),
-                    record.path.text,
+                    record_path_text,
                     p.log,
                     p.source,
-                    record.range,
+                    record_range,
                     copied,
                     name,
                 ) {

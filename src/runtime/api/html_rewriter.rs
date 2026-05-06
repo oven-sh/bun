@@ -348,11 +348,21 @@ impl HTMLRewriterLoader {
             | Writable::IntoArrayAndDone(_) => {
                 self.done();
             }
-            Writable::Pending(_pending) => {
-                // TODO(b2-blocked): WritablePending::apply_backpressure not yet
-                // ported on streams::WritablePending.
-                let _ = bytes;
-                todo!("blocked_on: webcore::streams::WritablePending::apply_backpressure")
+            Writable::Pending(pending) => {
+                // PORT NOTE: Zig calls `pending.applyBackpressure(allocator,
+                // &this.output, pending, bytes)` — that fn does not exist in
+                // the Zig source (dead code; HTMLRewriterLoader.sink() is never
+                // referenced so Zig never compiles this arm). The intent,
+                // given the FIFO check at the top of this fn, is to buffer
+                // `bytes` locally and mark the pending write as having
+                // consumed them.
+                if self.backpressure.write(bytes).is_err() {
+                    self.fail(bun_sys::Error::oom());
+                    return;
+                }
+                // SAFETY: `pending` points at a heap WritablePending owned by
+                // the destination sink; valid for the duration of this call.
+                unsafe { (*pending).apply_backpressure(&mut self.output, bytes) };
             }
             Writable::IntoArray(_)
             | Writable::Owned(_)

@@ -51,6 +51,15 @@ pub struct ExportClause {
     pub is_single_line: bool,
 }
 
+impl Default for ExportClause {
+    fn default() -> Self {
+        Self {
+            items: core::ptr::slice_from_raw_parts_mut(core::ptr::NonNull::dangling().as_ptr(), 0),
+            is_single_line: false,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Default)]
 pub struct Empty {}
 
@@ -120,6 +129,7 @@ pub struct Function {
     pub func: G::Fn,
 }
 
+#[derive(Default)]
 pub struct Class {
     pub class: G::Class,
     pub is_export: bool, // = false

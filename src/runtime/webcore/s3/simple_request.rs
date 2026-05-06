@@ -72,7 +72,7 @@ pub enum S3DeleteResult<'a> {
 }
 
 pub enum S3ListObjectsResult<'a> {
-    Success(list_objects::S3ListObjectsV2Result),
+    Success(list_objects::S3ListObjectsV2Result<'a>),
     NotFound(S3Error<'a>),
     /// failure error is not owned and need to be copied if used after this callback
     Failure(S3Error<'a>),
@@ -386,7 +386,7 @@ impl Drop for S3HttpSimpleTask {
         // PORT NOTE: KeepAlive::unref takes an aio EventLoopCtx; the JS-loop ctx is fetched via
         // the global hook (registered by bun_runtime::init) — same pattern as
         // `event_loop_handle_to_ctx` in process.rs.
-        self.poll_ref.unref(bun_aio::get_vm_ctx(bun_aio::AllocatorType::Js));
+        self.poll_ref.unref(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
         self.http.clear_data();
     }
 }
@@ -483,7 +483,7 @@ pub fn execute_simple_s3_request(
     });
     // SAFETY: `task_ptr` is a freshly Box::into_raw'd pointer; exclusive access here.
     let task = unsafe { &mut *task_ptr };
-    task.poll_ref.ref_(bun_aio::get_vm_ctx(bun_aio::AllocatorType::Js));
+    task.poll_ref.ref_(bun_aio::posix_event_loop::get_vm_ctx(bun_aio::AllocatorType::Js));
 
     let proxy = options.proxy_url.unwrap_or(b"");
     task.proxy_url = if !proxy.is_empty() { Box::<[u8]>::from(proxy) } else { Box::default() };

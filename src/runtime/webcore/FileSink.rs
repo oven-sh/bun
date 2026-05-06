@@ -89,6 +89,22 @@ pub mod testing_apis {
     }
 }
 
+/// Port of `bun.sys.isPollable` (sys.zig:4162) — `bun_sys` does not yet export
+/// this helper, so re-derive it locally from `S_IFMT`. Windows always returns
+/// `false` (the spec gates on `bun.Environment.isWindows`).
+fn is_pollable(mode: sys::Mode) -> bool {
+    #[cfg(windows)]
+    {
+        let _ = mode;
+        false
+    }
+    #[cfg(unix)]
+    {
+        let fmt = mode & (libc::S_IFMT as sys::Mode);
+        fmt == (libc::S_IFIFO as sys::Mode) || fmt == (libc::S_IFSOCK as sys::Mode)
+    }
+}
+
 /// `bun.io.StreamingWriter(@This(), opaque { onClose, onWritable, onError, onWrite })`.
 /// The Zig passes a comptime vtable via an `opaque {}` with decls; in Rust the
 /// parent type implements the handler trait directly.
@@ -113,8 +129,8 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for FileSink {
     fn on_close(&mut self) {
         FileSink::on_close(self)
     }
-    fn event_loop(&self) -> EventLoopHandle {
-        self.event_loop_handle
+    fn event_loop(&self) -> bun_io::EventLoopHandle {
+        self.io_evtloop()
     }
     fn loop_(&self) -> *mut bun_uws_sys::Loop {
         self.event_loop_handle.loop_()
@@ -126,8 +142,8 @@ impl bun_io::pipe_writer::WindowsWriterParent for FileSink {
     fn on_close(&mut self) {
         FileSink::on_close(self)
     }
-    fn event_loop(&self) -> EventLoopHandle {
-        self.event_loop_handle
+    fn event_loop(&self) -> bun_io::EventLoopHandle {
+        self.io_evtloop()
     }
     fn loop_(&self) -> *mut bun_uws_sys::Loop {
         self.event_loop_handle.loop_().uv_loop
@@ -488,7 +504,7 @@ impl FileSink {
                     *fs = true;
                 }
             },
-            sys::is_pollable,
+            is_pollable,
         );
         #[cfg(unix)]
         if force_sync_out {
@@ -559,6 +575,15 @@ impl FileSink {
 
     pub fn event_loop(&self) -> EventLoopHandle {
         self.event_loop_handle
+    }
+
+    /// CYCLEBREAK: `bun_io::EventLoopHandle` is an opaque `*mut c_void` that the
+    /// io-layer `FilePollVTable` round-trips back to the runtime. We pass the
+    /// address of the stored `bun_jsc::EventLoopHandle` so the (runtime-registered)
+    /// vtable can recover it.
+    #[inline]
+    fn io_evtloop(&self) -> bun_io::EventLoopHandle {
+        bun_io::EventLoopHandle(&self.event_loop_handle as *const _ as *mut c_void)
     }
 
     pub fn connect(&mut self, signal: streams::Signal) {
@@ -703,7 +728,11 @@ impl FileSink {
     pub fn construct() -> FileSink {
         let this = FileSink {
             ref_count: Cell::new(1),
-            event_loop_handle: EventLoopHandle::init(bun_jsc::VirtualMachine::get().event_loop()),
+            // SAFETY: `construct` is only called from JSSink codegen on a thread
+            // that already has a Bun VM; `get()` panics otherwise.
+            event_loop_handle: EventLoopHandle::init(unsafe {
+                (*bun_jsc::VirtualMachineRef::get()).event_loop()
+            } as *mut ()),
             ..FileSink::default_fields()
         };
         LIVE_COUNT.fetch_add(1, Ordering::Relaxed);
@@ -853,9 +882,9 @@ impl FileSink {
 
     pub fn update_ref(&mut self, value: bool) {
         if value {
-            self.writer.enable_keeping_process_alive(self.event_loop_handle);
+            self.writer.enable_keeping_process_alive(self.io_evtloop());
         } else {
-            self.writer.disable_keeping_process_alive(self.event_loop_handle);
+            self.writer.disable_keeping_process_alive(self.io_evtloop());
         }
     }
 }
@@ -1042,24 +1071,34 @@ impl FileSink {
 
         if !promise_result.is_empty_or_undefined_or_null() {
             if let Some(promise) = promise_result.as_any_promise() {
-                match promise.status() {
-                    bun_jsc::PromiseStatus::Pending => {
-                        self.writer.enable_keeping_process_alive(self.event_loop_handle);
+                // PORT NOTE: `bun_jsc::AnyPromise` (the active raw-ptr variant in
+                // lib.rs) does not yet expose `status()`/`result()`; recover the
+                // underlying `JSPromise` (JSInternalPromise subclasses JSPromise
+                // in C++, so the cast is layout-safe).
+                let js_promise: *mut bun_jsc::JSPromise = match promise {
+                    bun_jsc::AnyPromise::Normal(p) => p,
+                    bun_jsc::AnyPromise::Internal(p) => p as *mut bun_jsc::JSPromise,
+                };
+                // SAFETY: `as_any_promise` returned non-null.
+                match unsafe { (*js_promise).status() } {
+                    bun_jsc::js_promise::Status::Pending => {
+                        self.writer.enable_keeping_process_alive(self.io_evtloop());
                         self.ref_();
-                        let _ = promise_result.then(
-                            global_this,
-                            self,
-                            on_resolve_stream,
-                            on_reject_stream,
-                        ); // TODO: properly propagate exception upwards
+                        let _ = (promise_result, on_resolve_stream, on_reject_stream);
+                        // TODO: properly propagate exception upwards
+                        todo!("blocked_on: bun_jsc::JSValue::then");
                     }
-                    bun_jsc::PromiseStatus::Fulfilled => {
+                    bun_jsc::js_promise::Status::Fulfilled => {
                         // These don't ref().
                         self.handle_resolve_stream(global_this);
                     }
-                    bun_jsc::PromiseStatus::Rejected => {
+                    bun_jsc::js_promise::Status::Rejected => {
                         // These don't ref().
-                        self.handle_reject_stream(global_this, promise.result(global_this.vm()));
+                        // SAFETY: `js_promise` is non-null; `vm()` returns a
+                        // shared ref but `JSC__JSPromise__result` only reads.
+                        let vm = global_this.vm() as *const bun_jsc::VM as *mut bun_jsc::VM;
+                        let result = unsafe { (*js_promise).result(&mut *vm) };
+                        self.handle_reject_stream(global_this, result);
                     }
                 }
             }
@@ -1070,14 +1109,35 @@ impl FileSink {
 }
 
 // `comptime { @export(&jsc.toJSHostFn(onResolveStream), ...) }`
-// The `#[bun_jsc::host_fn]` attribute above emits the `callconv(jsc.conv)` shim;
-// re-export under the C symbol names the C++ side expects.
-// TODO(port): gate on `export_cpp_apis` feature in Phase B.
+// `#[bun_jsc::host_fn]` proc-macro is not yet ported, so emit the
+// `callconv(jsc.conv)` shim by hand and export under the C symbol names the
+// C++ side expects.
+// TODO(port): gate on `export_cpp_apis` feature in Phase B; replace with
+// `#[bun_jsc::host_fn]` once the proc-macro lands.
+unsafe extern "C" fn on_resolve_stream_shim(
+    global: *mut JSGlobalObject,
+    callframe: *mut CallFrame,
+) -> JSValue {
+    // SAFETY: JSC guarantees both pointers are valid for the call.
+    match on_resolve_stream(unsafe { &*global }, unsafe { &*callframe }) {
+        Ok(v) => v,
+        Err(_) => JSValue::ZERO,
+    }
+}
+unsafe extern "C" fn on_reject_stream_shim(
+    global: *mut JSGlobalObject,
+    callframe: *mut CallFrame,
+) -> JSValue {
+    // SAFETY: JSC guarantees both pointers are valid for the call.
+    match on_reject_stream(unsafe { &*global }, unsafe { &*callframe }) {
+        Ok(v) => v,
+        Err(_) => JSValue::ZERO,
+    }
+}
 #[unsafe(no_mangle)]
-pub static Bun__FileSink__onResolveStream: bun_jsc::JSHostFn = on_resolve_stream::SHIM;
+pub static Bun__FileSink__onResolveStream: bun_jsc::JSHostFn = on_resolve_stream_shim;
 #[unsafe(no_mangle)]
-pub static Bun__FileSink__onRejectStream: bun_jsc::JSHostFn = on_reject_stream::SHIM;
-// TODO(port): exact mechanism for exporting host-fn shims by name TBD in `bun_jsc`.
+pub static Bun__FileSink__onRejectStream: bun_jsc::JSHostFn = on_reject_stream_shim;
 
 // ──────────────────────────────────────────────────────────────────────────
 // PORT STATUS

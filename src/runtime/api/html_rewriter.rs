@@ -235,7 +235,12 @@ impl HTMLRewriter {
         };
 
         if kind != ResponseKind::Other {
+            // TODO(b2-blocked): `webcore::body::extract` lives in Body.rs's
+            // `#[cfg(any())] mod _jsc_gated` block. Un-gate when that lands.
+            #[cfg(any())]
             let body_value = webcore::body::extract(global, response_value)?;
+            #[cfg(not(any()))]
+            let body_value: Body = todo!("blocked_on: webcore::body::extract");
             let resp = Box::into_raw(Box::new(Response::init(
                 webcore::response::Init { status_code: 200, ..Default::default() },
                 body_value,
@@ -505,6 +510,10 @@ pub struct BufferOutputSink {
     pub context: Rc<RefCell<LOLHTMLContext>>,
     pub response: *mut Response, // BORROW_FIELD: kept alive by response_value Strong
     pub response_value: Strong,
+    // TODO(b2-blocked): `webcore::body::ValueBufferer` is defined inside
+    // Body.rs's `#[cfg(any())] mod _jsc_gated` block. Field gated until that
+    // un-gates; downstream usages are gated alongside.
+    #[cfg(any())]
     pub body_value_bufferer: Option<webcore::body::ValueBufferer<'static>>,
     pub tmp_sync_error: Option<NonNull<JSValue>>, // TODO(port): lifetime — points at a stack local in init()
 }
@@ -545,6 +554,7 @@ impl BufferOutputSink {
             context,
             response: core::ptr::null_mut(),
             response_value: Strong::empty(),
+            #[cfg(any())] // TODO(b2-blocked): un-gate with webcore::body::ValueBufferer
             body_value_bufferer: None,
             tmp_sync_error: None,
         }));
@@ -654,14 +664,19 @@ impl BufferOutputSink {
         // SAFETY: sink is a live heap allocation (refcount >= 1).
         unsafe {
             (*sink).ref_();
-            (*sink).body_value_bufferer = Some(webcore::body::ValueBufferer::init(
-                sink as *mut core::ffi::c_void,
-                // PORT NOTE: `ValueBuffererCallback` takes `*mut c_void` for ctx;
-                // `on_finished_buffering` takes `*mut BufferOutputSink`. The
-                // wrapper trampoline restores the concrete type.
-                Self::on_finished_buffering_trampoline,
-                (*sink).global,
-            ));
+            // TODO(b2-blocked): `webcore::body::ValueBufferer` is gated upstream
+            // (Body.rs `_jsc_gated`). Un-gate this initialization with the field.
+            #[cfg(any())]
+            {
+                (*sink).body_value_bufferer = Some(webcore::body::ValueBufferer::init(
+                    sink as *mut core::ffi::c_void,
+                    // PORT NOTE: `ValueBuffererCallback` takes `*mut c_void` for ctx;
+                    // `on_finished_buffering` takes `*mut BufferOutputSink`. The
+                    // wrapper trampoline restores the concrete type.
+                    Self::on_finished_buffering_trampoline,
+                    (*sink).global,
+                ));
+            }
         }
         response_js_value.ensure_still_alive();
 
@@ -670,13 +685,13 @@ impl BufferOutputSink {
         // expression and does not overlap raw-pointer writes (the bufferer may
         // re-enter `BufferOutputSink::write/done` through the lol-html
         // callback, which writes through the raw `sink` pointer).
-        if let Err(buffering_error) = unsafe {
-            (*sink)
-                .body_value_bufferer
-                .as_mut()
-                .unwrap()
-                .run(value, owned_readable_stream)
-        } {
+        // TODO(b2-blocked): un-gate `.body_value_bufferer.run()` with
+        // webcore::body::ValueBufferer.
+        let _ = (value, owned_readable_stream);
+        let buffering_result: Result<(), bun_core::Error> =
+            todo!("blocked_on: webcore::body::ValueBufferer::run");
+        #[allow(unreachable_code)]
+        if let Err(buffering_error) = buffering_result {
             BufferOutputSink::deref(sink);
             return Ok(match buffering_error {
                 e if e == bun_core::err!("StreamAlreadyUsed") => {
@@ -709,10 +724,20 @@ impl BufferOutputSink {
         Ok(response_js_value)
     }
 
+    #[cfg(any())] // TODO(b2-blocked): un-gate with webcore::body::ValueBufferer
+    fn on_finished_buffering_trampoline(
+        ctx: *mut core::ffi::c_void,
+        bytes: &[u8],
+        js_err: Option<webcore::body::ValueError>,
+        is_async: bool,
+    ) {
+        Self::on_finished_buffering(ctx as *mut BufferOutputSink, bytes, js_err, is_async)
+    }
+
     pub fn on_finished_buffering(
         sink: *mut BufferOutputSink,
         bytes: &[u8],
-        js_err: Option<webcore::webcore::body::Value::ValueError>,
+        js_err: Option<webcore::body::ValueError>,
         is_async: bool,
     ) {
         let _g = scopeguard::guard(sink, |s| BufferOutputSink::deref(s));

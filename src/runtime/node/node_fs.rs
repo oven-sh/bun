@@ -3700,13 +3700,10 @@ impl NodeFS {
     }
 
     pub fn fstat(&mut self, args: &args::Fstat, _: Flavor) -> Maybe<ret::Fstat> {
-        #[cfg(target_os = "linux")]
-        if Syscall::SUPPORTS_STATX_ON_LINUX.load(Ordering::Relaxed) {
-            return match Syscall::fstatx(args.fd, &Syscall::STATX_DEFAULT_MASK) {
-                Maybe::Ok(result) => Maybe::Ok(Stats::init(&result, args.big_int)),
-                Maybe::Err(err) => Maybe::Err(err),
-            };
-        }
+        // TODO(port): `Syscall::fstatx` / `SUPPORTS_STATX_ON_LINUX` —
+        // blocked_on: bun_sys::statx (the statx fast-path is not yet wired
+        // into `bun_sys`; falls through to the plain `fstat` path, which is
+        // exactly what the Zig code does when statx is unavailable).
         match Syscall::fstat(args.fd) {
             Maybe::Ok(result) => Maybe::Ok(Stats::init(&PosixStat::init(&result), args.big_int)),
             Maybe::Err(err) => Maybe::Err(err),
@@ -3750,16 +3747,20 @@ impl NodeFS {
             return Maybe::Err(sys::Error { errno: E::OPNOTSUPP as _, syscall: sys::Tag::lchmod, path: args.path.slice().into(), ..Default::default() });
         }
         let path = args.path.slice_z(&mut self.sync_error_buf);
-        Maybe::<ret::Lchmod>::errno_sys_p(unsafe { bun_sys::c::lchmod(path.as_ptr(), args.mode as _) }, sys::Tag::lchmod, path)
-            .unwrap_or(Maybe::SUCCESS)
+        match Syscall::lchmod(path, args.mode) {
+            Maybe::Err(err) => Maybe::Err(err.with_path(args.path.slice())),
+            Maybe::Ok(_) => Maybe::SUCCESS,
+        }
     }
 
     pub fn lchown(&mut self, args: &args::LChown, _: Flavor) -> Maybe<ret::Lchown> {
         #[cfg(windows)]
         { return Maybe::<ret::Lchown>::todo(); }
         let path = args.path.slice_z(&mut self.sync_error_buf);
-        Maybe::<ret::Lchown>::errno_sys_p(unsafe { bun_sys::c::lchown(path.as_ptr(), args.uid, args.gid) }, sys::Tag::lchown, path)
-            .unwrap_or(Maybe::SUCCESS)
+        match Syscall::lchown(path, args.uid, args.gid) {
+            Maybe::Err(err) => Maybe::Err(err.with_path(args.path.slice())),
+            Maybe::Ok(_) => Maybe::SUCCESS,
+        }
     }
 
     pub fn link(&mut self, args: &args::Link, _: Flavor) -> Maybe<ret::Link> {
@@ -3773,23 +3774,13 @@ impl NodeFS {
                 Maybe::Ok(result) => Maybe::Ok(result),
             };
         }
-        Maybe::<ret::Link>::errno_sys_pd(unsafe { libc::link(from.as_ptr(), to.as_ptr()) }, sys::Tag::link, args.old_path.slice(), args.new_path.slice())
+        // SAFETY: `from`/`to` are NUL-terminated by `slice_z`; `link(2)` is the libc FFI.
+        Maybe::<ret::Link>::errno_sys_pd(unsafe { libc::link(from.as_ptr().cast(), to.as_ptr().cast()) }, sys::Tag::link, args.old_path.slice(), args.new_path.slice())
             .unwrap_or(Maybe::SUCCESS)
     }
 
     pub fn lstat(&mut self, args: &args::Lstat, _: Flavor) -> Maybe<ret::Lstat> {
-        #[cfg(target_os = "linux")]
-        if Syscall::SUPPORTS_STATX_ON_LINUX.load(Ordering::Relaxed) {
-            return match Syscall::lstatx(args.path.slice_z(&mut self.sync_error_buf), &Syscall::STATX_DEFAULT_MASK) {
-                Maybe::Ok(result) => Maybe::Ok(StatOrNotFound::Stats(Stats::init(&result, args.big_int))),
-                Maybe::Err(err) => {
-                    if !args.throw_if_no_entry && err.get_errno() == E::NOENT {
-                        return Maybe::Ok(StatOrNotFound::NotFound);
-                    }
-                    Maybe::Err(err.with_path(args.path.slice()))
-                }
-            };
-        }
+        // TODO(port): `Syscall::lstatx` — blocked_on: bun_sys::statx (see fstat).
         match Syscall::lstat(args.path.slice_z(&mut self.sync_error_buf)) {
             Maybe::Ok(result) => Maybe::Ok(StatOrNotFound::Stats(Stats::init(&PosixStat::init(&result), args.big_int))),
             Maybe::Err(err) => {
@@ -3822,7 +3813,7 @@ impl NodeFS {
     }
 
     pub fn mkdir_recursive_impl<Ctx: MkdirCtx>(&mut self, args: args::Mkdir, ctx: Ctx) -> Maybe<ret::Mkdir> {
-        let buf = paths::path_buffer_pool().get();
+        let mut buf = paths::path_buffer_pool::get();
         let path = args.path.os_path_kernel32(&mut *buf);
         if args.always_return_none {
             self.mkdir_recursive_os_path_impl::<Ctx, false>(ctx, path, args.mode)
@@ -5226,18 +5217,7 @@ impl NodeFS {
                 return Maybe::Ok(StatOrNotFound::Stats(Stats::init(&PosixStat::init(&result), args.big_int)));
             }
         }
-        #[cfg(target_os = "linux")]
-        if Syscall::SUPPORTS_STATX_ON_LINUX.load(Ordering::Relaxed) {
-            return match Syscall::statx(path, &Syscall::STATX_DEFAULT_MASK) {
-                Maybe::Ok(result) => Maybe::Ok(StatOrNotFound::Stats(Stats::init(&result, args.big_int))),
-                Maybe::Err(err) => {
-                    if !args.throw_if_no_entry && err.get_errno() == E::NOENT {
-                        return Maybe::Ok(StatOrNotFound::NotFound);
-                    }
-                    Maybe::Err(err.with_path(args.path.slice()))
-                }
-            };
-        }
+        // TODO(port): `Syscall::statx` — blocked_on: bun_sys::statx (see fstat).
         match Syscall::stat(path) {
             Maybe::Ok(result) => Maybe::Ok(StatOrNotFound::Stats(Stats::init(&PosixStat::init(&result), args.big_int))),
             Maybe::Err(err) => {

@@ -703,8 +703,8 @@ impl BinaryType {
     pub fn to_js(self, bytes: &[u8], global: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
             BinaryType::Buffer => ArrayBuffer::create_buffer(global, bytes),
-            BinaryType::ArrayBuffer => ArrayBuffer::create(global, JSType::ArrayBuffer, bytes),
-            BinaryType::Uint8Array => ArrayBuffer::create(global, JSType::Uint8Array, bytes),
+            BinaryType::ArrayBuffer => ArrayBuffer::create::<{ JSType::ArrayBuffer }>(global, bytes),
+            BinaryType::Uint8Array => ArrayBuffer::create::<{ JSType::Uint8Array }>(global, bytes),
 
             // These aren't documented, but they are supported
             BinaryType::Uint8ClampedArray
@@ -718,16 +718,18 @@ impl BinaryType {
             | BinaryType::Float64Array
             | BinaryType::BigInt64Array
             | BinaryType::BigUint64Array => {
-                let buffer = ArrayBuffer::create(global, JSType::ArrayBuffer, bytes)?;
-                // SAFETY: FFI — global is valid; buffer is a fresh ArrayBuffer JSValue.
-                Ok(JSValue::c(unsafe {
-                    jsc_c::JSObjectMakeTypedArrayWithArrayBuffer(
+                let buffer = ArrayBuffer::create::<{ JSType::ArrayBuffer }>(global, bytes)?;
+                // SAFETY: FFI — global is valid; `buffer` is a fresh ArrayBuffer
+                // JSValue (cell pointer), so its encoded bits are a valid JSObjectRef.
+                let obj = unsafe {
+                    JSObjectMakeTypedArrayWithArrayBuffer(
                         global as *const _ as *mut _,
                         self.to_typed_array_type().to_c(),
-                        buffer.as_object_ref(),
+                        buffer.0 as jsc_c::JSObjectRef,
                         ptr::null_mut(),
                     )
-                }))
+                };
+                Ok(JSValue::from_encoded(obj as usize))
             }
         }
     }

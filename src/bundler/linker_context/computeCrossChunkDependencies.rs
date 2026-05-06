@@ -70,11 +70,17 @@ pub fn compute_cross_chunk_dependencies(
         unsafe {
             (*(*c.parse_graph).pool.as_ref().worker_pool).each_ptr(
                 &mut cross_chunk_dependencies,
-                CrossChunkDependencies::walk,
+                |deps: &&mut CrossChunkDependencies<'_>, chunk: *mut Chunk, idx: usize| {
+                    // SAFETY: each_ptr partitions `chunks` by index; `walk` only mutates
+                    // chunk_meta[idx] / per-source columns disjointly (Zig shared-mutable
+                    // pattern). See TODO(port) below re: UnsafeCell.
+                    let deps = &**deps as *const CrossChunkDependencies<'_>
+                        as *mut CrossChunkDependencies<'_>;
+                    unsafe { (*deps).walk(&mut *chunk, idx) };
+                },
                 chunks,
-            )
+            );
         }
-        .expect("unreachable");
         // TODO(port): `each_ptr` runs `walk` concurrently across worker threads with a shared
         // `&mut CrossChunkDependencies`. In Zig this is permitted; in Rust the shared-mutable
         // access (symbols.assignChunkIndex, chunk_meta[i] writes, import_records[i] writes)
@@ -100,6 +106,12 @@ pub struct CrossChunkDependencies<'a> {
     ctx: &'a LinkerContext<'a>,
     symbols: &'a mut js_ast::ast::symbol::Map,
 }
+
+// SAFETY: `CrossChunkDependencies` is shared across worker threads via
+// `ThreadPool::each_ptr`, mirroring Zig's `*@This()` pattern. Mutation is
+// partitioned per-chunk-index (chunk_meta[i], symbols.assign_chunk_index);
+// see TODO(port) above re: UnsafeCell for a stricter model in Phase B.
+unsafe impl Sync for CrossChunkDependencies<'_> {}
 
 impl<'a> CrossChunkDependencies<'a> {
     pub fn walk(&mut self, chunk: &mut Chunk, chunk_index: usize) {
@@ -468,7 +480,10 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                             original_name: b"" as &[u8] as *const [u8],
                         };
 
-                        repr.exports_to_other_chunks.put(ref_, alias);
+                        // SAFETY: `alias` points into the link-pass arena (see PORT NOTE above),
+                        // which outlives `exports_to_other_chunks`; reborrow as &'static to match
+                        // the map's value type.
+                        repr.exports_to_other_chunks.put(ref_, unsafe { &*alias });
                         // PERF(port): was putAssumeCapacity — profile in Phase B
                     }
 
@@ -500,7 +515,11 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
     // be embedded in the generated import statements.
     {
         debug!("Generating cross-chunk imports");
-        let mut list: Vec<CrossChunkImport> = Vec::new();
+        // PORT NOTE: `CrossChunkImport` here is the `__phase_a_draft` definition (which owns
+        // `sorted_cross_chunk_imports`); the crate-root re-export is a structurally identical
+        // ungate stub without the method.
+        type CrossChunkImportD = crate::bundle_v2::__phase_a_draft::CrossChunkImport;
+        let mut list: Vec<CrossChunkImportD> = Vec::new();
         // defer list.deinit() — handled by Drop
         for chunk in chunks.iter_mut() {
             if !matches!(chunk.content, chunk::Content::Javascript(_)) {

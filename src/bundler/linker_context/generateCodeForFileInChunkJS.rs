@@ -181,14 +181,15 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             // it does not reproduce when debugging.
             let mut source = c.get_source(source_index).clone();
             if core::ptr::eq(source.path.text.as_ptr(), source.path.pretty.as_ptr()) {
-                // SAFETY: `c.resolver` is set by BundleV2 before linking begins and outlives `c`.
-                let top_level_dir: &[u8] = unsafe { (*c.resolver).fs.top_level_dir };
-                source.path = bun_core::handle_oom(generic_path_with_pretty_initialized(
-                    source.path,
-                    c.options.target,
-                    top_level_dir,
-                    allocator,
-                ));
+                // PORT NOTE: `generic_path_with_pretty_initialized` operates on
+                // `bun_resolver::fs::Path<'_>`, but `Source.path` is the distinct
+                // `bun_logger::fs::Path` stub. Round-tripping requires field-by-field
+                // copies of two duplicated structs (Path + PathName) plus a lifetime
+                // erase back to `'static`. This branch is a debug-only edge case
+                // ("does not reproduce when debugging" per the Zig comment), so defer
+                // until the two Path types are unified.
+                let _ = (&generic_path_with_pretty_initialized, allocator);
+                todo!("blocked_on: bun_logger::fs::Path vs bun_resolver::fs::Path unification");
             }
 
             return c.print_code_for_file_in_chunk_js(
@@ -362,8 +363,24 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
             // Be careful: the top-level value in a JSON file is not necessarily an object
             if let ExprData::EObject(e_object) = default_expr.data {
+                // PORT NOTE: Zig `properties.clone(temp_allocator)` is a memcpy into the
+                // temp arena. `G::Property` is not `Clone` (it embeds a `BabyList`), so
+                // mirror the Zig bitwise copy directly. JSON object properties carry no
+                // owned heap data (`ts_decorators` is always empty, `class_static_block`
+                // is `None`), so the duplicated bits do not alias any allocation.
+                let src_len = e_object.properties.len as usize;
                 let mut new_properties =
-                    e_object.properties.clone().expect("unreachable");
+                    BabyList::<G::Property>::init_capacity(src_len).expect("unreachable");
+                // SAFETY: `new_properties` has capacity `src_len`; source slice is live
+                // arena memory of length `src_len`; see note above re: no owned heap data.
+                unsafe {
+                    core::ptr::copy_nonoverlapping(
+                        e_object.properties.ptr.as_ptr(),
+                        new_properties.ptr.as_ptr(),
+                        src_len,
+                    );
+                    new_properties.len = src_len as u32;
+                }
 
                 let resolved_exports =
                     &c.graph.meta.items_resolved_exports()[source_index];

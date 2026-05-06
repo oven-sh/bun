@@ -100,26 +100,34 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
     });
     let result = Box::into_raw(result);
 
-    // CYCLEBREAK GENUINE: jsc::EventLoopHandle → vtable. PERF(port): was inline switch.
+    // PORT NOTE: Zig matched `worker.ctx.loop().*` on `EventLoopHandle::{js,mini}`.
+    // `r#loop` is currently CYCLEBREAK-erased to `Option<NonNull<()>>` (see
+    // LinkerContext.rs); until that un-erases to `bun_event_loop::EventLoopHandle`,
+    // treat the erased pointer as a `MiniEventLoop` (the CLI is the only path that
+    // reaches here without a JS VM). TODO(port): re-expand to `Js`/`Mini` match.
     // SAFETY: `worker.ctx` is a live BACKREF.
-    match unsafe { &mut *(worker.ctx as *mut BundleV2<'static>) }.r#loop() {
-        EventLoop::Js(jsc_event_loop) => {
-            jsc_event_loop.enqueue_task_concurrent(
-                bun_event_loop::ConcurrentTask::from_callback(result, on_complete),
-            );
-        }
-        EventLoop::Mini(mini) => {
-            mini.enqueue_task_concurrent_with_extra_ctx::<parse_task::Result, BundleV2>(
-                result,
-                BundleV2::on_parse_task_complete,
-                // TODO(port): Zig passes `.task` as the intrusive-field selector;
-                // Rust side encodes this via offset_of! inside the helper.
-                offset_of!(parse_task::Result, task),
-            );
-        }
-    }
-
+    let r#loop = *unsafe { &mut *(worker.ctx as *mut BundleV2<'static>) }.r#loop();
     worker.unget();
+    if let Some(mini) = r#loop {
+        let mini = mini.cast::<bun_event_loop::MiniEventLoop::MiniEventLoop>();
+        // SAFETY: erased BACKREF to a live MiniEventLoop for the bundle pass.
+        unsafe {
+            (*mini.as_ptr())
+                .enqueue_task_concurrent_with_extra_ctx::<parse_task::Result, BundleV2<'static>>(
+                    result,
+                    on_complete_mini,
+                    offset_of!(parse_task::Result, task),
+                );
+        }
+    } else {
+        // No event loop registered (e.g., synchronous CLI bundling) — run inline.
+        on_complete(result);
+    }
+}
+
+fn on_complete_mini(result: *mut parse_task::Result, _ctx: *mut BundleV2<'static>) {
+    // `on_complete` already recovers `ctx` from `result.ctx`.
+    on_complete(result);
 }
 
 fn task_callback(
@@ -129,9 +137,13 @@ fn task_callback(
 ) -> Result<Success, OOM> {
     // SAFETY: `task.ctx` is a live BACKREF to the owning BundleV2.
     let ctx: &BundleV2 = unsafe { &*task.ctx };
+    // PORT NOTE: `Source` is not `Clone`; the original is consumed here
+    // (Zig copied by value). Take it up-front so `ab`'s borrow of it ends
+    // (via NLL) before we move it into `Success`.
+    let source = core::mem::take(&mut task.source);
     let mut ab = AstBuilder::init(
         bump,
-        &task.source,
+        &source,
         ctx.transpiler().options.hot_module_reloading,
     )?;
 
@@ -146,17 +158,20 @@ fn task_callback(
         // Client-side,
         Data::ClientEntryWrapper(_) => Target::Browser,
     };
-    let mut bundled_ast = ab.to_bundled_ast(target)?;
+    let hmr_api_ref = ab.hmr_api_ref;
+    // SAFETY: `BundledAst` stores arena-backed raw pointers; the elided lifetime
+    // on `to_bundled_ast`'s return only ties it to `&mut ab` borrow-wise, not
+    // semantically. Erase to `'static` to match `Success.ast: JSAst`.
+    let mut bundled_ast: JSAst =
+        unsafe { core::mem::transmute::<_, JSAst>(ab.to_bundled_ast(target)?) };
 
     // `wrapper_ref` is used to hold the HMR api ref (see comment in
     // `src/ast/Ast.zig`)
-    bundled_ast.wrapper_ref = ab.hmr_api_ref;
+    bundled_ast.wrapper_ref = hmr_api_ref;
 
     Ok(Success {
         ast: bundled_ast,
-        // PORT NOTE: `Source` is not `Clone`; the original is consumed here
-        // (Zig copied by value). Ownership transfers to the result.
-        source: core::mem::take(&mut task.source),
+        source,
         loader: Loader::Js,
         log: core::mem::take(log),
         use_directive: UseDirective::None,
@@ -173,11 +188,33 @@ impl ServerComponentParseTask {
     pub const TASK_CALLBACK: fn(*mut ThreadPoolTask) = task_callback_wrap;
 }
 
+impl Default for ServerComponentParseTask {
+    /// Mirrors Zig's `task: ThreadPoolLib.Task = .{ .callback = &taskCallbackWrap }`
+    /// default-field-value. Callers (`bundle_v2.rs`) supply `data`/`ctx`/`source`
+    /// via FRU and rely on this for the intrusive `task` link.
+    fn default() -> Self {
+        Self {
+            task: ThreadPoolTask {
+                node: Default::default(),
+                callback: task_callback_wrap,
+            },
+            data: Data::ClientEntryWrapper(ClientEntryWrapper { path: Box::default() }),
+            ctx: core::ptr::null_mut(),
+            source: Source::default(),
+        }
+    }
+}
+
 fn generate_client_entry_wrapper(
     data: &ClientEntryWrapper,
     b: &mut AstBuilder,
 ) -> Result<(), OOM> {
-    let record = b.add_import_record(&data.path, ImportKind::Stmt)?;
+    // SAFETY: `add_import_record` requires `&'static [u8]` only because the
+    // resulting `ImportRecord` stores the slice raw; `data.path` outlives the
+    // bundle pass (owned by the heap-allocated task). Erase the lifetime.
+    let path: &'static [u8] =
+        unsafe { core::mem::transmute::<&[u8], &'static [u8]>(&data.path[..]) };
+    let record = b.add_import_record(path, ImportKind::Stmt)?;
     let namespace_ref = b.new_symbol(symbol::Kind::Other, b"main")?;
     b.append_stmt(S::Import {
         namespace_ref,

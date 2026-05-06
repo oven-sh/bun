@@ -11,9 +11,13 @@ use bun_core::fmt as bun_fmt;
 use bun_js_parser::ast::{self as js_ast, B, Binding, E, Expr, ExprData, G, Part, S, Stmt, StmtData, Symbol};
 use bun_js_parser::{js_lexer, Ref};
 use bun_logger::{Loc, Log, Source};
+use bun_options_types::ImportRecord;
 
-use crate::bun_css::{self, BundlerStyleSheet, CssRef};
-use crate::{Index, LinkerContext};
+#[cfg(feature = "css")]
+use crate::bun_css::{self, BundlerStyleSheet, CssRef, CssRefTag};
+#[cfg(feature = "css")]
+use crate::bun_css::properties::css_modules::Specifier as CssSpecifier;
+use crate::{Index, IndexInt, LinkerContext};
 
 type BitSet = DynamicBitSetUnmanaged;
 type SymbolList = BabyList<Symbol>;
@@ -24,10 +28,16 @@ pub fn generate_code_for_lazy_export(
 ) -> Result<(), AllocError> {
     let exports_kind = this.graph.ast.items_exports_kind()[source_index as usize];
     let all_sources = unsafe { &(*this.parse_graph).input_files }.items_source();
-    let all_css_asts = this.graph.ast.items_css();
-    let maybe_css_ast: Option<&BundlerStyleSheet> = all_css_asts[source_index as usize];
+    #[cfg(feature = "css")]
+    let all_css_asts: &[Option<*mut core::ffi::c_void>] = this.graph.ast.items_css();
+    #[cfg(feature = "css")]
+    // SAFETY: `css` SoA column is type-erased `*mut BundlerStyleSheet` (BundledAst.rs).
+    let maybe_css_ast: Option<&BundlerStyleSheet> =
+        all_css_asts[source_index as usize].map(|p| unsafe { &*(p as *const BundlerStyleSheet) });
+    #[cfg(not(feature = "css"))]
+    let _ = all_sources;
     // PORT NOTE: reshaped for borrowck — `parts` re-borrowed below after other graph borrows drop.
-    let parts = &mut this.graph.ast.items_mut().parts[source_index as usize];
+    let parts = &mut this.graph.ast.items_parts_mut()[source_index as usize];
 
     if parts.len() < 1 {
         panic!("Internal error: expected at least one part for lazy export");
@@ -48,6 +58,11 @@ pub fn generate_code_for_lazy_export(
     // If this JavaScript file is a stub from a CSS file, populate the exports of
     // this JavaScript stub with the local names from that CSS file. This is done
     // now instead of earlier because we need the whole bundle to be present.
+    //
+    // PORT NOTE: gated on `feature = "css"` — the no-css shim's
+    // `BundlerStyleSheet` lacks `composes`/`CssRef`/`LocalEntry`, and with CSS
+    // disabled `items_css()` is always `None` so this branch is unreachable.
+    #[cfg(feature = "css")]
     if let Some(css_ast) = maybe_css_ast {
         let stmt: Stmt = part.stmts[0];
         if !matches!(stmt.data, StmtData::SLazyExport(_)) {
@@ -60,7 +75,7 @@ pub fn generate_code_for_lazy_export(
             let mut exports = E::Object::default();
 
             let symbols: &SymbolList = &this.graph.ast.items_symbols()[source_index as usize];
-            let all_import_records: &[BabyList<bun_css::ImportRecord>] =
+            let all_import_records: &[BabyList<ImportRecord>] =
                 this.graph.ast.items_import_records();
 
             let values = css_ast.local_scope.values();
@@ -70,7 +85,7 @@ pub fn generate_code_for_lazy_export(
             let size: u32 = 'size: {
                 let mut size: u32 = 0;
                 for entry in values {
-                    size = size.max(entry.ref_.inner_index);
+                    size = size.max(entry.ref_.inner_index());
                 }
                 break 'size size + 1;
             };
@@ -85,9 +100,9 @@ pub fn generate_code_for_lazy_export(
                 // TODO(port): LIFETIMES.tsv said `HashMap<Ref, ()>`; Zig is AutoArrayHashMap → ArrayHashMap per collections map.
                 composes_visited: &'a mut ArrayHashMap<Ref, ()>,
                 parts: &'a mut Vec<E::TemplatePart>,
-                all_import_records: &'a [BabyList<bun_css::ImportRecord>],
-                // TODO(port): lifetime — slice of optional refs into graph.ast SoA storage.
-                all_css_asts: &'a [Option<&'a BundlerStyleSheet>],
+                all_import_records: &'a [BabyList<ImportRecord>],
+                // TODO(port): lifetime — type-erased `*mut BundlerStyleSheet` SoA column.
+                all_css_asts: &'a [Option<*mut core::ffi::c_void>],
                 all_sources: &'a [Source],
                 all_symbols: &'a [SymbolList],
                 source_index: IndexInt,
@@ -100,7 +115,7 @@ pub fn generate_code_for_lazy_export(
             impl<'a> Visitor<'a> {
                 fn clear_all(&mut self) {
                     self.inner_visited.set_all(false);
-                    self.composes_visited.clear();
+                    self.composes_visited.clear_retaining_capacity();
                 }
 
                 fn visit_name(
@@ -181,26 +196,27 @@ pub fn generate_code_for_lazy_export(
                             return;
                         };
                         // while parsing we check that we only allow `composes` on single class selectors
-                        debug_assert!(css_ref.tag.class);
+                        debug_assert!(css_ref.tag().contains(CssRefTag::CLASS));
 
                         for compose in composes.composes.slice() {
                             // it is imported
                             if compose.from.is_some() {
-                                // TODO(port): exact enum shape of `compose.from` (Specifier union).
                                 if matches!(
                                     compose.from.as_ref().unwrap(),
-                                    bun_css::Specifier::ImportRecordIndex(_)
+                                    CssSpecifier::ImportRecordIndex(_)
                                 ) {
                                     let import_record_idx = match compose.from.as_ref().unwrap() {
-                                        bun_css::Specifier::ImportRecordIndex(i) => *i,
+                                        CssSpecifier::ImportRecordIndex(i) => *i,
                                         _ => unreachable!(),
                                     };
-                                    let import_records: &BabyList<bun_css::ImportRecord> =
+                                    let import_records: &BabyList<ImportRecord> =
                                         &self.all_import_records[idx as usize];
                                     let import_record = import_records.at(import_record_idx as usize);
                                     if import_record.source_index.is_valid() {
+                                        // SAFETY: type-erased `*mut BundlerStyleSheet` (BundledAst.rs SoA column).
                                         let Some(other_file) =
                                             self.all_css_asts[import_record.source_index.get() as usize]
+                                                .map(|p| unsafe { &*(p as *const BundlerStyleSheet) })
                                         else {
                                             let _ = self.log.add_error_fmt(
                                                 &self.all_sources[idx as usize],

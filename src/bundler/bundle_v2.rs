@@ -4499,12 +4499,13 @@ impl<'a> BundleV2<'a> {
             ..Default::default()
         };
 
-        graph.input_files.append(fake_input_file.clone())?;
+        let fake_source_index = fake_input_file.source.index;
+        graph.input_files.append(fake_input_file)?;
         graph.ast.append(ast_for_html_entrypoint);
 
-        import_record.source_index = fake_input_file.source.index;
-        self.path_to_source_index_map(target).put(path_text.into(), fake_input_file.source.index.0);
-        graph.html_imports.server_source_indices.append(fake_input_file.source.index.0);
+        import_record.source_index = Index::init(fake_source_index.0);
+        self.path_to_source_index_map(target).put(path_text.into(), fake_source_index.0);
+        graph.html_imports.server_source_indices.append(fake_source_index.0);
         self.ensure_client_transpiler();
         Ok(())
     }
@@ -4568,17 +4569,17 @@ impl<'a> BundleV2<'a> {
 
         match &mut parse_result.value {
             parse_task::ResultValue::Empty { source_index: empty_source_index } => {
-                let input_files = graph.input_files.slice_mut();
-                let side_effects = input_files.items_side_effects_mut();
-                side_effects[(*empty_source_index).get() as usize] = _resolver::SideEffects::NoSideEffectsEmptyAst;
+                let empty_idx = (*empty_source_index).get() as usize;
+                graph.input_files.items_side_effects_mut()[empty_idx] = _resolver::SideEffects::NoSideEffectsEmptyAst;
                 if cfg!(debug_assertions) {
                     bun_core::scoped_log!(Bundle, "onParse({}, {}) = empty",
-                        (*empty_source_index).get(),
-                        bstr::BStr::new(&input_files.items_source()[(*empty_source_index).get() as usize].path.text));
+                        empty_idx,
+                        bstr::BStr::new(&graph.input_files.items_source()[empty_idx].path.text));
                 }
             }
             parse_task::ResultValue::Success(result) => {
-                result.log.clone_to_with_recycled(this.transpiler.log, true).expect("unreachable");
+                // SAFETY: `transpiler.log` is a live BACKREF set in BundleV2::init.
+                result.log.clone_to_with_recycled(unsafe { &mut *this.transpiler.log }, true).expect("unreachable");
 
                 this.has_any_top_level_await_modules = this.has_any_top_level_await_modules || !result.ast.top_level_await_keyword.is_empty();
 
@@ -4596,7 +4597,7 @@ impl<'a> BundleV2<'a> {
                     0
                 };
 
-                graph.input_files.items_unique_key_for_additional_file_mut()[result_source_index] = result.unique_key_for_additional_file.clone();
+                graph.input_files.items_unique_key_for_additional_file_mut()[result_source_index] = result.unique_key_for_additional_file.into();
                 graph.input_files.items_content_hash_for_additional_file_mut()[result_source_index] = result.content_hash_for_additional_file;
                 if !result.unique_key_for_additional_file.is_empty() && result.loader.should_copy_for_bundling() {
                     if let Some(dev) = this.dev_server {

@@ -257,12 +257,19 @@ use crate::webcore::{body as Body, s3 as S3, Blob, ReadableStream};
 // `Response` doesn't yet implement `JsClass` (codegen-gated). Route the
 // downcast through the codegen stub so the call sites type-check; the stub
 // returns `None` until codegen lands.
+//
+/// # Safety
+/// `from_js` returns the C++-owned cell pointer for `value`. The caller must
+/// guarantee that:
+/// - no other Rust `&mut Response` aliasing this cell is live for the
+///   lifetime of the returned reference (the .zig spec returns a raw
+///   `?*Response` with no exclusivity claim — the `&mut` here is a port-side
+///   upgrade), and
+/// - `value` is kept GC-rooted (ensure_still_alive / protect()) for as long
+///   as the returned reference is used, so the JSC-owned allocation outlives
+///   the borrow.
 #[inline]
-fn as_response(value: JSValue) -> Option<&'static mut Response> {
-    // SAFETY: `from_js` returns the C++-owned cell pointer for `value`; the
-    // Response heap object is uniquely addressed here (JSC-owned alloc, no
-    // other Rust `&mut` to it is live) and outlives the borrow because every
-    // call site keeps `value` GC-rooted (ensure_still_alive / protect()).
+unsafe fn as_response(value: JSValue) -> Option<&'static mut Response> {
     response::from_js(value).map(|p| unsafe { &mut *p.cast::<Response>() })
 }
 
@@ -461,7 +468,9 @@ where
             return;
         }
 
-        let Some(response) = as_response(value) else {
+        // SAFETY: sole `&mut Response` for this cell in scope; `value` is
+        // protect()'d immediately below and stored in `response_jsvalue`.
+        let Some(response) = (unsafe { as_response(value) }) else {
             ctx.render_missing_invalid_response(value);
             return;
         };
@@ -2118,7 +2127,10 @@ where
             return;
         }
 
-        if let Some(response) = as_response(response_value) {
+        // SAFETY: sole `&mut Response` for this cell in scope;
+        // `response_value` is rooted via ensure_still_alive() / protect()
+        // below for the duration of the borrow.
+        if let Some(response) = unsafe { as_response(response_value) } {
             ctx.response_jsvalue = response_value;
             ctx.response_jsvalue.ensure_still_alive();
             ctx.flags.set_response_protected(false);
@@ -2182,7 +2194,10 @@ where
                         ctx.render_missing_invalid_response(fulfilled_value);
                         return;
                     }
-                    let Some(response) = as_response(fulfilled_value) else {
+                    // SAFETY: sole `&mut Response` for this cell in scope;
+                    // `fulfilled_value` is rooted via ensure_still_alive() /
+                    // protect() below for the duration of the borrow.
+                    let Some(response) = (unsafe { as_response(fulfilled_value) }) else {
                         ctx.render_missing_invalid_response(fulfilled_value);
                         return;
                     };
@@ -2771,7 +2786,10 @@ where
                     } else if let Some(promise) = result.as_any_promise() {
                         self.process_on_error_promise(result, promise, value, status);
                         return;
-                    } else if let Some(response) = as_response(result) {
+                    // SAFETY: sole `&mut Response` for this cell in scope;
+                    // `result` is GC-rooted by `_keep` (EnsureStillAlive)
+                    // across the render() call.
+                    } else if let Some(response) = unsafe { as_response(result) } {
                         self.render(response);
                         return;
                     }
@@ -2815,7 +2833,10 @@ where
                     return;
                 }
 
-                let Some(response) = as_response(fulfilled_value) else {
+                // SAFETY: sole `&mut Response` for this cell in scope;
+                // `fulfilled_value` is rooted via ensure_still_alive() below
+                // for the duration of the borrow.
+                let Some(response) = (unsafe { as_response(fulfilled_value) }) else {
                     ctx.finish_running_error_handler(value, status);
                     return;
                 };

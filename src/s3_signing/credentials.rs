@@ -232,7 +232,52 @@ impl RefCounted for S3Credentials {
     }
 }
 
+impl Default for S3Credentials {
+    fn default() -> Self {
+        Self {
+            ref_count: RefCount::init(),
+            access_key_id: Box::default(),
+            secret_access_key: Box::default(),
+            region: Box::default(),
+            endpoint: Box::default(),
+            bucket: Box::default(),
+            session_token: Box::default(),
+            storage_class: None,
+            insecure_http: false,
+            virtual_hosted_style: false,
+        }
+    }
+}
+
 impl S3Credentials {
+    /// Construct a value (refcount = 1) from owned field data. Exists so
+    /// higher-tier callers (e.g. `bun_runtime`) can build the refcounted
+    /// signing credentials from the lower-tier `bun_dotenv::S3Credentials`
+    /// POD mirror without naming the private `ref_count` field.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_value(
+        access_key_id: Box<[u8]>,
+        secret_access_key: Box<[u8]>,
+        region: Box<[u8]>,
+        endpoint: Box<[u8]>,
+        bucket: Box<[u8]>,
+        session_token: Box<[u8]>,
+        insecure_http: bool,
+    ) -> Self {
+        Self {
+            ref_count: RefCount::init(),
+            access_key_id,
+            secret_access_key,
+            region,
+            endpoint,
+            bucket,
+            session_token,
+            storage_class: None,
+            insecure_http,
+            virtual_hosted_style: false,
+        }
+    }
+
     pub fn estimated_size(&self) -> usize {
         size_of::<S3Credentials>()
             + self.access_key_id.len()
@@ -1237,10 +1282,29 @@ impl From<SignError> for bun_core::Error {
     }
 }
 
+impl<'a> Default for SignOptions<'a> {
+    fn default() -> Self {
+        Self {
+            path: b"",
+            method: Method::GET,
+            content_hash: None,
+            content_md5: None,
+            search_params: None,
+            content_disposition: None,
+            content_type: None,
+            content_encoding: None,
+            acl: None,
+            storage_class: None,
+            request_payer: false,
+        }
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // S3CredentialsWithOptions
 // ──────────────────────────────────────────────────────────────────────────
 
+#[derive(Default)]
 pub struct S3CredentialsWithOptions {
     pub credentials: S3Credentials,
     pub options: MultiPartUploadOptions,
